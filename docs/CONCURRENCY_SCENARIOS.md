@@ -471,24 +471,6 @@ non-transactional Git/filesystem steps.
 partial rows. Startup diagnoses incomplete external stages. It does not infer
 authority from a directory, branch, tracker assignment, or outbox item alone.
 
-### P1-29: remote API cannot bypass host authority
-
-**Setup:** a client has Orchestrator API access but no filesystem or SQLite
-access. It races a local client for W-1 and retries after a lost response.
-
-**Expected:** both pass through the same claim idempotency/CAS use case. The
-remote response carries stable IDs and a host-scoped execution action, not a DB
-path or permission to mount arbitrary worktrees.
-
-### P1-30: local mission survives projection outage
-
-**Setup:** fake Team Kitty/outbox delivery always fails. Execute claim, handoff,
-review, and local integration.
-
-**Expected:** local authoritative transitions succeed and each queues one
-delivery item. Queue retry is bounded/diagnosable. Hosted outage cannot grant
-or revoke local leases and cannot corrupt mission/Git state.
-
 ## 6. WorkRevision reconciliation scenarios
 
 These can initially be domain/application tests if Phase 1 does not yet include
@@ -565,6 +547,8 @@ These are required before replacement release, but do not expand Phase 1.
 | SP-16 | Import active merge state | Refuse or import as recoverable operation; never declare merged. |
 | SP-17 | Unsupported old mission format | Explicit unsupported result and upgrade/export path. |
 | SP-18 | Research/plan/documentation mission | Preserve each typed workflow when its implementation phase arrives. |
+| SP-19 | Remote API races a local claim | Both use the same application CAS; API exposes stable IDs, never DB authority. |
+| SP-20 | Team Kitty is unavailable | Local authoritative work continues; delivery debt remains bounded and diagnosable. |
 
 ## 8. Failure diagnostics contract
 
