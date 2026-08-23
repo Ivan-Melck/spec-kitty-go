@@ -1,0 +1,12 @@
+project:
+  uuid: 86b83424-c758-4da2-8096-3ee627aa5d68
+  slug: go-kitty3
+  node_id: 752e6076aa27
+  build_id: 45eafaf7-536b-5207-8542-04ec80f01b11
+vcs:
+  type: git
+agents:
+  available:
+  - codex
+  auto_commit: true
+  lint_on_edit: false
