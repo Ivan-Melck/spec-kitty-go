@@ -433,7 +433,18 @@ func staticBindings(source *productionSourcePackage) map[types.Object]staticBind
 	return bindings
 }
 
-func staticFunctionValue(expression ast.Expr, info *types.Info, bindings map[types.Object]staticBinding, visiting map[types.Object]bool) (*types.Func, bool) {
+type staticCallable struct {
+	function *types.Func
+	literal  *ast.FuncLit
+}
+
+// staticCallableValue resolves only direct callable declarations and immutable
+// or uniquely assigned function values. Function literals have stable AST
+// identity, so the caller can bound recursion without guessing closure state.
+func staticCallableValue(expression ast.Expr, info *types.Info, bindings map[types.Object]staticBinding, visiting map[types.Object]bool) (staticCallable, bool) {
+	if literal, ok := expression.(*ast.FuncLit); ok {
+		return staticCallable{literal: literal}, true
+	}
 	object := calledObject(expression, info)
 	if selector, ok := expression.(*ast.SelectorExpr); ok {
 		if selection := info.Selections[selector]; selection != nil {
@@ -441,15 +452,15 @@ func staticFunctionValue(expression ast.Expr, info *types.Info, bindings map[typ
 		}
 	}
 	if function, ok := object.(*types.Func); ok {
-		return function, true
+		return staticCallable{function: function}, true
 	}
 	bound, ok := bindings[object]
 	if !ok || object == nil || visiting[object] || !bound.appliesAt(expression.Pos()) {
-		return nil, false
+		return staticCallable{}, false
 	}
 	visiting[object] = true
 	defer delete(visiting, object)
-	return staticFunctionValue(bound.expression, info, bindings, visiting)
+	return staticCallableValue(bound.expression, info, bindings, visiting)
 }
 
 func staticFunctions(source *productionSourcePackage) map[*types.Func]*ast.FuncDecl {
@@ -474,15 +485,37 @@ type staticStringEvaluator struct {
 	functions map[*types.Func]*ast.FuncDecl
 }
 
+func (c staticCallable) signature(info *types.Info) *types.Signature {
+	if c.function != nil {
+		signature, _ := c.function.Type().(*types.Signature)
+		return signature
+	}
+	if c.literal != nil {
+		signature, _ := info.TypeOf(c.literal).(*types.Signature)
+		return signature
+	}
+	return nil
+}
+
+func (c staticCallable) body(functions map[*types.Func]*ast.FuncDecl) *ast.BlockStmt {
+	if c.literal != nil {
+		return c.literal.Body
+	}
+	if declaration := functions[c.function]; declaration != nil {
+		return declaration.Body
+	}
+	return nil
+}
+
 func (e staticStringEvaluator) callParameters(
 	call *ast.CallExpr,
-	function *types.Func,
+	callable staticCallable,
 	parameters map[types.Object]string,
 	visitingObjects map[types.Object]bool,
-	visitingFunctions map[*types.Func]bool,
+	visitingFunctions map[staticCallable]bool,
 ) map[types.Object]string {
 	resolved := make(map[types.Object]string)
-	signature, _ := function.Type().(*types.Signature)
+	signature := callable.signature(e.info)
 	if signature == nil || signature.Variadic() || signature.Params().Len() != len(call.Args) {
 		return resolved
 	}
@@ -495,11 +528,11 @@ func (e staticStringEvaluator) callParameters(
 	return resolved
 }
 
-func soleStaticReturn(function *ast.FuncDecl) (ast.Expr, bool) {
-	if function == nil || function.Body == nil || len(function.Body.List) != 1 {
+func soleStaticReturn(body *ast.BlockStmt) (ast.Expr, bool) {
+	if body == nil || len(body.List) != 1 {
 		return nil, false
 	}
-	returned, ok := function.Body.List[0].(*ast.ReturnStmt)
+	returned, ok := body.List[0].(*ast.ReturnStmt)
 	if !ok || len(returned.Results) != 1 {
 		return nil, false
 	}
@@ -510,7 +543,7 @@ func (e staticStringEvaluator) value(
 	expression ast.Expr,
 	parameters map[types.Object]string,
 	visitingObjects map[types.Object]bool,
-	visitingFunctions map[*types.Func]bool,
+	visitingFunctions map[staticCallable]bool,
 ) (string, bool) {
 	if value := e.info.Types[expression].Value; value != nil && value.Kind() == constant.String {
 		return constant.StringVal(value), true
@@ -535,11 +568,12 @@ func (e staticStringEvaluator) value(
 	if !ok {
 		return "", false
 	}
-	function, resolved := staticFunctionValue(call.Fun, e.info, e.bindings, visitingObjects)
+	callable, resolved := staticCallableValue(call.Fun, e.info, e.bindings, visitingObjects)
 	if !resolved {
 		return "", false
 	}
-	if function.Pkg() != nil {
+	function := callable.function
+	if function != nil && function.Pkg() != nil {
 		parts := make([]string, len(call.Args))
 		allParts := true
 		for index, argument := range call.Args {
@@ -563,15 +597,15 @@ func (e staticStringEvaluator) value(
 			}
 		}
 	}
-	returned, ok := soleStaticReturn(e.functions[function])
-	if !ok || visitingFunctions[function] {
+	returned, ok := soleStaticReturn(callable.body(e.functions))
+	if !ok || visitingFunctions[callable] {
 		return "", false
 	}
-	visitingFunctions[function] = true
-	defer delete(visitingFunctions, function)
+	visitingFunctions[callable] = true
+	defer delete(visitingFunctions, callable)
 	return e.value(
 		returned,
-		e.callParameters(call, function, parameters, visitingObjects, visitingFunctions),
+		e.callParameters(call, callable, parameters, visitingObjects, visitingFunctions),
 		visitingObjects,
 		visitingFunctions,
 	)
@@ -810,13 +844,14 @@ func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) 
 		evaluator := staticStringEvaluator{
 			info: source.info, bindings: bindings, functions: staticFunctions(source),
 		}
-		var inspectCall func(*ast.CallExpr, map[types.Object]string, map[*types.Func]bool)
-		inspectCall = func(call *ast.CallExpr, parameters map[types.Object]string, visitingFunctions map[*types.Func]bool) {
-			function, ok := staticFunctionValue(call.Fun, source.info, bindings, make(map[types.Object]bool))
-			if !ok || function.Pkg() == nil {
+		var inspectCall func(*ast.CallExpr, map[types.Object]string, map[staticCallable]bool)
+		inspectCall = func(call *ast.CallExpr, parameters map[types.Object]string, visitingFunctions map[staticCallable]bool) {
+			callable, ok := staticCallableValue(call.Fun, source.info, bindings, make(map[types.Object]bool))
+			if !ok {
 				return
 			}
-			if function.Pkg().Path() == "os/exec" {
+			function := callable.function
+			if function != nil && function.Pkg() != nil && function.Pkg().Path() == "os/exec" {
 				commandFunction := function.Name()
 				if commandFunction == "Command" || commandFunction == "CommandContext" {
 					argumentIndex := 0
@@ -834,7 +869,10 @@ func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) 
 					}
 				}
 			}
-			firstPath, allPaths, readsFiles := deferredFilePathArguments(function)
+			firstPath, allPaths, readsFiles := 0, false, false
+			if function != nil && function.Pkg() != nil {
+				firstPath, allPaths, readsFiles = deferredFilePathArguments(function)
+			}
 			if readsFiles && len(call.Args) > firstPath {
 				lastPath := firstPath + 1
 				if allPaths {
@@ -854,16 +892,16 @@ func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) 
 				}
 			}
 
-			declaration := evaluator.functions[function]
-			if declaration == nil || visitingFunctions[function] {
+			body := callable.body(evaluator.functions)
+			if body == nil || visitingFunctions[callable] {
 				return
 			}
 			childParameters := evaluator.callParameters(
-				call, function, parameters, make(map[types.Object]bool), visitingFunctions,
+				call, callable, parameters, make(map[types.Object]bool), visitingFunctions,
 			)
-			visitingFunctions[function] = true
-			defer delete(visitingFunctions, function)
-			ast.Inspect(declaration.Body, func(node ast.Node) bool {
+			visitingFunctions[callable] = true
+			defer delete(visitingFunctions, callable)
+			ast.Inspect(body, func(node ast.Node) bool {
 				if _, nestedFunction := node.(*ast.FuncLit); nestedFunction {
 					return false
 				}
@@ -875,11 +913,16 @@ func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) 
 		}
 		for _, parsed := range source.files {
 			ast.Inspect(parsed, func(node ast.Node) bool {
+				// A closure is analyzed only when a direct or uniquely bound call
+				// supplies its arguments. Its mere declaration is not a root.
+				if _, closure := node.(*ast.FuncLit); closure {
+					return false
+				}
 				call, ok := node.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
-				inspectCall(call, nil, make(map[*types.Func]bool))
+				inspectCall(call, nil, make(map[staticCallable]bool))
 				return true
 			})
 		}

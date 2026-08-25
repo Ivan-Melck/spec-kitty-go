@@ -463,6 +463,20 @@ func TestDeferredRuntimeSurfaceRejectsMarkdownAuthorityParsing(t *testing.T) {
 			},
 			wantTarget: "markdown:doctrine.md",
 		},
+		{
+			name: "uniquely-bound-function-literal-with-known-argument",
+			files: map[string]string{
+				"internal/helpercmd/authority.go": "package helpercmd\nimport \"os\"\nfunc loadAuthority() { read := func(path string) []byte { content, _ := os.ReadFile(path); return content }; _ = read(\"literal.md\") }\n",
+			},
+			wantTarget: "markdown:literal.md",
+		},
+		{
+			name: "immediately-invoked-function-literal-with-known-argument",
+			files: map[string]string{
+				"internal/helpercmd/authority.go": "package helpercmd\nimport \"os\"\nfunc loadAuthority() { _ = func(path string) []byte { content, _ := os.ReadFile(path); return content }(\"iife.md\") }\n",
+			},
+			wantTarget: "markdown:iife.md",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -525,6 +539,22 @@ func TestDeferredRuntimeSurfaceDoesNotGuessAmbiguousMarkdownFlows(t *testing.T) 
 		{
 			name:   "short-declaration-reassigned-before-use",
 			source: "package helpercmd\nimport \"os\"\nfunc loadAuthority() { path := \"doctrine.md\"; path = \"policy.json\"; _, _ = os.ReadFile(path) }\n",
+		},
+		{
+			name:   "function-literal-dynamic-argument",
+			source: "package helpercmd\nimport \"os\"\nfunc loadAuthority(path string) { read := func(path string) []byte { content, _ := os.ReadFile(path); return content }; _ = read(path) }\n",
+		},
+		{
+			name:   "function-literal-ambiguous-binding",
+			source: "package helpercmd\nimport \"os\"\nfunc loadAuthority(markdown bool) { read := func(path string) []byte { content, _ := os.ReadFile(path); return content }; if markdown { read = func(path string) []byte { content, _ := os.ReadFile(path); return content } }; _ = read(\"doctrine.md\") }\n",
+		},
+		{
+			name:   "recursive-function-literal-path",
+			source: "package helpercmd\nimport \"os\"\nfunc loadAuthority() { var path func() string; path = func() string { return path() }; _, _ = os.ReadFile(path()) }\n",
+		},
+		{
+			name:   "uninvoked-function-literal-is-not-a-root",
+			source: "package helpercmd\nimport \"os\"\nfunc loadAuthority() { _ = func() { _, _ = os.ReadFile(\"uninvoked.md\") } }\n",
 		},
 	}
 	for _, test := range tests {
