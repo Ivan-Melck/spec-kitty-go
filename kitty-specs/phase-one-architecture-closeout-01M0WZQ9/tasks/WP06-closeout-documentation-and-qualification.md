@@ -142,10 +142,10 @@ This WP starts from the fully integrated dependency base in its assigned lane. I
 
 **Steps**:
 
-1. Run quality ten times and full campaign once.
+1. Declare the qualification reference host, run quality ten times there, and run the full campaign once.
 2. Run race, vet, staticcheck, govulncheck, module verification, formatting, and binary builds.
 3. Record exact commit, tool versions, durations, p95, test census, and terminal outcomes.
-4. Record any unavailable remote-only evidence honestly rather than marking it passed.
+4. Distinguish the qualified reference-host p95 from hosted CI samples; record any unavailable remote-only evidence honestly and never claim a hosted p95 before ten comparable samples exist.
 5. Write `docs/phase1-evidence/closeout-results.json` and mark T027–T031 done.
 
 ## Definition of Done
@@ -159,7 +159,7 @@ This WP starts from the fully integrated dependency base in its assigned lane. I
 ## Risks
 
 - Documentation can race code changes; inspect the integrated candidate, not WP planning assumptions.
-- Remote CI p95 cannot be inferred from local runs; label evidence source precisely.
+- Hosted CI p95 cannot be inferred from reference-host runs; label both evidence sources precisely and defer the hosted baseline until ten comparable samples exist.
 - Editing closed mission artifacts must preserve history and clearly identify the closeout correction.
 
 ## Reviewer Guidance

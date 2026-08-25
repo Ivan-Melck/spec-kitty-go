@@ -51,9 +51,13 @@
         "internal/execution/lease.go",
         "internal/execution/lease_test.go",
         "internal/execution/model.go",
+        "internal/execution/recovery.go",
+        "internal/execution/recovery_test.go",
         "internal/execution/start.go",
         "internal/execution/start_test.go",
         "internal/governancecontext/**",
+        "internal/helpercmd/start_run.go",
+        "internal/helpercmd/start_run_test.go",
         "internal/ids/governance_context.go"
       ],
       "predicted_surfaces": [
@@ -72,7 +76,11 @@
         "internal/controlstore/sqlite/db.go",
         "internal/controlstore/sqlite/governance_context.go",
         "internal/controlstore/sqlite/governance_context_test.go",
-        "internal/controlstore/sqlite/migrations.go"
+        "internal/controlstore/sqlite/migrations.go",
+        "internal/controlstore/sqlite/recovery.go",
+        "internal/controlstore/sqlite/recovery_test.go",
+        "internal/controlstore/sqlite/start_run.go",
+        "internal/controlstore/sqlite/start_run_test.go"
       ],
       "predicted_surfaces": [
         "api",
@@ -136,8 +144,8 @@
       "parallel_group": 3
     }
   ],
-  "computed_at": "2026-08-25T17:51:57.163594+00:00",
+  "computed_at": "2026-08-25T17:58:03.608619+00:00",
   "computed_from": "dependency_graph+ownership",
   "planning_artifact_wps": [],
-  "planning_commit_sha": "208c105fcc6b82abb503dcc295a60b25e5210b18"
+  "planning_commit_sha": "2904421fed62bd407b38aa95c3d3b0e144f3c674"
 }
