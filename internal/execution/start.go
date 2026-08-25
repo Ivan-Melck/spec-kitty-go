@@ -186,6 +186,7 @@ func workspaceDiagnostic(request StartRunRequest, capsule RunCapsule, cause erro
 		"operation_id": request.Claim.OperationID.String(), "project_id": request.Claim.ProjectID.String(), "mission_id": request.Claim.MissionID.String(),
 		"work_id": request.Claim.WorkID.String(), "work_revision_id": request.Claim.WorkRevisionID.String(), "actor_id": request.Claim.ActorID.String(), "process_id": request.Claim.ProcessID.String(),
 		"repository_id": request.Workspace.RepositoryID.String(), "lane_id": request.Workspace.LaneID.String(), "workspace_id": request.Workspace.WorkspaceID.String(),
+		"governance_context_id": request.Claim.GovernanceContext.ID().String(),
 	}
 	if capsule.RunID != "" {
 		aggregates["run_id"] = capsule.RunID.String()

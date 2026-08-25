@@ -182,14 +182,16 @@ func (s *StartSaga) Recover(ctx context.Context, request StartRecoveryRequest) (
 
 func recoveryState(record StartRecoveryRecord) map[string]string {
 	return map[string]string{
-		"operation_status":  record.OperationStatus,
-		"run_id":            record.RunID.String(),
-		"lease_id":          record.LeaseID.String(),
-		"generation":        fmt.Sprint(record.Generation),
-		"lease_status":      record.LeaseStatus,
-		"workspace_status":  record.WorkspaceStatus,
-		"workspace_stage":   string(record.WorkspaceStage),
-		"terminal_recorded": fmt.Sprint(record.TerminalRecorded),
+		"operation_status":             record.OperationStatus,
+		"run_id":                       record.RunID.String(),
+		"lease_id":                     record.LeaseID.String(),
+		"generation":                   fmt.Sprint(record.Generation),
+		"lease_status":                 record.LeaseStatus,
+		"workspace_status":             record.WorkspaceStatus,
+		"workspace_stage":              string(record.WorkspaceStage),
+		"terminal_recorded":            fmt.Sprint(record.TerminalRecorded),
+		"governance_context_id":        record.Request.Claim.GovernanceContext.ID().String(),
+		"governance_context_aggregate": record.Request.Claim.GovernanceContext.Aggregate().Algorithm() + ":" + record.Request.Claim.GovernanceContext.Aggregate().Digest(),
 	}
 }
 

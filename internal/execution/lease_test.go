@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
 
@@ -35,8 +36,58 @@ func TestStartUsesInjectedIdentityAndClock(t *testing.T) {
 	if _, err := service.Start(context.Background(), req); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if repo.request.Now != now || repo.runID != ids.RunID("run-fixed") || repo.leaseID != ids.LeaseID("lease-fixed") {
+	if repo.request.Now != now || repo.runID != ids.RunID("run-fixed") || repo.leaseID != ids.LeaseID("lease-fixed") || repo.request.GovernanceContext.ID() != ids.GovernanceContextID("context-test") || repo.request.CommandDigest == "" {
 		t.Fatalf("repository call = %+v %s %s", repo.request, repo.runID, repo.leaseID)
+	}
+}
+
+func TestStartReturnsRunOwnedGovernanceContextOnReplay(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	request := validRequest()
+	request.Now = now
+	repository := &recordingRepository{result: RunCapsule{RunID: "run-fixed", Replayed: true}}
+	capsule, err := NewService(repository, fixedGenerator{}, fixedClock{now}).Start(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capsule.GovernanceContextID != request.GovernanceContext.ID() || capsule.GovernanceContextAggregate != request.GovernanceContext.Aggregate() {
+		t.Fatalf("capsule context=%s/%+v want=%s/%+v", capsule.GovernanceContextID, capsule.GovernanceContextAggregate, request.GovernanceContext.ID(), request.GovernanceContext.Aggregate())
+	}
+	if repository.request.GovernanceContext.ID() != request.GovernanceContext.ID() {
+		t.Fatalf("claim did not receive context: %+v", repository.request)
+	}
+}
+
+func TestStartRejectsRepositoryContextMismatch(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	request := validRequest()
+	request.Now = now
+	other := governanceContextFixture("context-other", now)
+	repository := &recordingRepository{result: RunCapsule{GovernanceContextID: other.ID(), GovernanceContextAggregate: other.Aggregate()}}
+	_, err := NewService(repository, fixedGenerator{}, fixedClock{now}).Start(context.Background(), request)
+	if !IsKind(err, KindIdempotencyConflict) {
+		t.Fatalf("Start error=%v", err)
+	}
+}
+
+func TestReplacementLeaseGenerationRetainsRunGovernanceContext(t *testing.T) {
+	t.Parallel()
+
+	request := validRequest()
+	first, err := bindRunGovernanceContext(request, RunCapsule{RunID: "run-fixed", LeaseID: "lease-1", Generation: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := bindRunGovernanceContext(request, RunCapsule{RunID: "run-fixed", LeaseID: "lease-2", Generation: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.GovernanceContextID != replacement.GovernanceContextID || first.GovernanceContextAggregate != replacement.GovernanceContextAggregate {
+		t.Fatalf("replacement lease changed run context: first=%+v replacement=%+v", first, replacement)
 	}
 }
 
@@ -125,6 +176,22 @@ func validRequest() StartRequest {
 		OperationID: ids.OperationID("operation-1"), ProjectID: ids.ProjectID("project-1"),
 		MissionID: ids.MissionID("mission-1"), WorkRevisionID: ids.WorkRevisionID("revision-1"),
 		WorkID: ids.WorkID("work-1"), ActorID: ids.ActorID("actor-1"), ProcessID: ids.ProcessID("process-1"),
-		LeaseTTL: time.Minute,
+		LeaseTTL: time.Minute, GovernanceContext: governanceContextFixture("context-test", time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)),
 	}
+}
+
+func governanceContextFixture(contextID ids.GovernanceContextID, now time.Time) governancecontext.Context {
+	commitment, err := governancecontext.CommitSHA256([]byte("synthetic test governance"))
+	if err != nil {
+		panic(err)
+	}
+	entry, err := governancecontext.NewEntry(governancecontext.KindConfig, "test-config", "revision-1", commitment)
+	if err != nil {
+		panic(err)
+	}
+	value, err := governancecontext.NewContext(contextID, governancecontext.SchemaVersion, []governancecontext.Entry{entry}, now)
+	if err != nil {
+		panic(err)
+	}
+	return value
 }

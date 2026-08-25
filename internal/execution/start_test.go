@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
@@ -75,7 +76,10 @@ func TestStartRunDigestCoversEveryAuthorityBearingField(t *testing.T) {
 			r.Claim.Now = r.Claim.Now.Add(time.Second)
 			r.Assignment.Now = r.Assignment.Now.Add(time.Second)
 		},
-		"ttl":              func(r *StartRunRequest) { r.Claim.LeaseTTL++ },
+		"ttl": func(r *StartRunRequest) { r.Claim.LeaseTTL++ },
+		"governance context": func(r *StartRunRequest) {
+			r.Claim.GovernanceContext = governanceContextFixture("context-other", now)
+		},
 		"provider":         func(r *StartRunRequest) { r.Assignment.Provider = "other" },
 		"tracker-work":     func(r *StartRunRequest) { r.Assignment.WorkKey = "TK-2" },
 		"tracker-revision": func(r *StartRunRequest) { r.Assignment.ExpectedRevision++ },
@@ -142,10 +146,24 @@ func TestStartRunExactReplayAuthenticatesBindingBeforeAuthorityAndTracker(t *tes
 	}
 }
 
+func TestStartRunRejectsMissingGovernanceContextBeforeSideEffects(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	request := startRunRequestFixture(now)
+	request.Claim.GovernanceContext = governancecontext.Context{}
+	repository := &recordingRepository{}
+	preparer := &startPreparer{}
+	saga := NewStartSaga(NewService(repository, fixedGenerator{}, fixedClock{now}), NewTrackerSaga(&startEffectRepository{}, &startProvider{}, fixedClock{now}), preparer)
+
+	_, err := saga.Start(context.Background(), request)
+	if !IsKind(err, KindInvalidCommand) || repository.called || preparer.validateCalls != 0 {
+		t.Fatalf("error=%v claim=%v preflight=%d", err, repository.called, preparer.validateCalls)
+	}
+}
+
 func startRunRequestFixture(now time.Time) StartRunRequest {
 	return StartRunRequest{
 		SchemaVersion: ResultSchemaVersion,
-		Claim:         StartRequest{CorrelationID: "operation-1", OperationID: "operation-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-1", ActorID: "actor-1", ProcessID: "process-1", Now: now, LeaseTTL: time.Minute},
+		Claim:         StartRequest{CorrelationID: "operation-1", OperationID: "operation-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-1", ActorID: "actor-1", ProcessID: "process-1", Now: now, LeaseTTL: time.Minute, GovernanceContext: governanceContextFixture("context-test", now)},
 		Assignment:    TrackerAssignRequest{SchemaVersion: ResultSchemaVersion, CorrelationID: "operation-1", OperationID: "operation-1", ActorID: "actor-1", ProcessID: "process-1", Now: now, Provider: "fake", WorkKey: "TK-1", ExpectedRevision: 1, Assignee: "agent-1"},
 		Workspace:     WorkspaceRequest{RepositoryID: "repository-1", LaneID: "lane-1", WorkspaceID: "workspace-1", OwnedBranch: "runs/work-1", PinnedBase: "0123456789abcdef0123456789abcdef01234567"},
 	}

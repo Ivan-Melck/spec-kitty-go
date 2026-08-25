@@ -29,7 +29,7 @@ func TestRecoverStartRunUsesOnlyOperationIDAndReprobesLiveStages(t *testing.T) {
 	if decision.Disposition != RecoveryComplete || decision.Capsule == nil || decision.Capsule.OperationID != "operation-1" || repository.loaded != "operation-1" {
 		t.Fatalf("decision=%+v loaded=%s", decision, repository.loaded)
 	}
-	if repository.claim.ActorID != "actor-1" || repository.claim.ProcessID != "process-1" || provider.assignCalls != 1 || preparer.bindingCalls != 1 || preparer.calls != 1 {
+	if repository.claim.ActorID != "actor-1" || repository.claim.ProcessID != "process-1" || repository.claim.GovernanceContext.ID() != request.Claim.GovernanceContext.ID() || provider.assignCalls != 1 || preparer.bindingCalls != 1 || preparer.calls != 1 {
 		t.Fatalf("recovery did not use stored envelope/probes: claim=%+v tracker=%d binding=%d ready=%d", repository.claim, provider.assignCalls, preparer.bindingCalls, preparer.calls)
 	}
 	if repository.completed == nil || repository.completed.WorkspaceStage != workspace.StageReady {
