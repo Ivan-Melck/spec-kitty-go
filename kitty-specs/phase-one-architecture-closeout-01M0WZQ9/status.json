@@ -30,7 +30,8 @@
       "notes": [
         "Ready for review: closed capability-tier import policy, bounded Go graph loading, curated production reachability, deferred-surface guards, and repeated mutant coverage",
         "Ready for review: live architecture command, semantic Git adapter boundary, non-vacuous reachability registry, and strengthened deferred-runtime detection",
-        "Ready for review: validated live diagnostics and cross-file Python runtime aliases"
+        "Ready for review: validated live diagnostics and cross-file Python runtime aliases",
+        "Ready for review: typed reachability identity, scope-correct local Python alias detection, and dead LoadError surface corrected; required repeated mutants, race, vet, and repository scenario batches pass. Transition override is limited to the mission's absent pre-review gate contract and pre-existing inherited lane status artifacts."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
