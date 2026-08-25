@@ -3,6 +3,7 @@ package governancecontext
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -80,21 +81,19 @@ func TestEntryRejectsBlankIdentityAndDuplicateIdentity(t *testing.T) {
 	assertValidationCode(t, err, CodeDuplicateEntry)
 }
 
-func TestEntryKindsRequireExplicitRegistration(t *testing.T) {
+func TestEntryKindsAreClosedToThePortableKindsRequiredByThePlan(t *testing.T) {
 	t.Parallel()
 
 	commitment := commitmentFixture(t, "content")
 	if _, err := NewEntry("provider_prompt", "prompt", "revision-1", commitment); err == nil {
-		t.Fatal("unregistered kind unexpectedly accepted")
+		t.Fatal("unsupported kind unexpectedly accepted")
 	} else {
 		assertValidationCode(t, err, CodeInvalidEntryKind)
 	}
-	kind, err := RegisterEntryKind("provider_prompt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewEntry(kind, "prompt", "revision-1", commitment); err != nil {
-		t.Fatalf("registered extension rejected: %v", err)
+	for _, kind := range []EntryKind{KindConfig, KindDoctrine, KindProfile, KindMissionType} {
+		if _, err := NewEntry(kind, "portable", "revision-1", commitment); err != nil {
+			t.Fatalf("required kind %q rejected: %v", kind, err)
+		}
 	}
 }
 
@@ -148,34 +147,8 @@ func TestContextJSONRoundTripRevalidatesAndPreservesOrder(t *testing.T) {
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.ID() != want.ID() || got.Aggregate() != want.Aggregate() || got.CreatedAt() != want.CreatedAt() || !entriesEqual(got.Entries(), want.Entries()) {
+	if got.ID() != want.ID() || got.Aggregate() != want.Aggregate() || got.CreatedAt() != want.CreatedAt() || !reflect.DeepEqual(got.Entries(), want.Entries()) {
 		t.Fatalf("round trip=%+v want=%+v", got, want)
-	}
-}
-
-func TestContextIdentityConflictIsStableAndTyped(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
-	first, err := NewContext("context-1", SchemaVersion, []Entry{entryFixture(t, KindConfig, "config", "1", "first")}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := NewContext("context-1", SchemaVersion, []Entry{entryFixture(t, KindConfig, "config", "1", "second")}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = CheckIdentityConflict(first, second)
-	var conflict *IdentityConflictError
-	if !errors.As(err, &conflict) || !errors.Is(err, ErrIdentityConflict) || conflict.ID != "context-1" {
-		t.Fatalf("conflict=%#v", err)
-	}
-	sameContentLater, err := NewContext("context-1", SchemaVersion, first.Entries(), now.Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckIdentityConflict(first, sameContentLater); err != nil {
-		t.Fatalf("timestamp-only change reported as conflict: %v", err)
 	}
 }
 

@@ -15,13 +15,13 @@ import (
 func TestStartSagaPublishesCapsuleOnlyAfterTrackerAndExactWorkspaceReadiness(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	authorityRepository := &recordingRepository{result: RunCapsule{SchemaVersion: ResultSchemaVersion, Kind: "run_started", OperationID: "operation-1", AggregateIDs: map[string]string{}, RunID: "run-fixed", LeaseID: "lease-fixed", Generation: 3, Token: "fence-token", Deadline: now.Add(time.Minute)}}
+	request := startRunRequestFixture(now)
+	authorityRepository := &recordingRepository{result: RunCapsule{SchemaVersion: ResultSchemaVersion, Kind: "run_started", OperationID: "operation-1", AggregateIDs: map[string]string{}, RunID: "run-fixed", GovernanceContextID: request.Claim.GovernanceContext.ID(), GovernanceContextAggregate: request.Claim.GovernanceContext.Aggregate(), LeaseID: "lease-fixed", Generation: 3, Token: "fence-token", Deadline: now.Add(time.Minute)}}
 	authority := NewService(authorityRepository, fixedGenerator{}, fixedClock{now: now})
 	effects := &startEffectRepository{}
 	provider := &startProvider{work: tracker.Work{Key: "TK-1", Revision: 1}, mutation: tracker.Mutation{WorkKey: "TK-1", Assignee: "agent-1", Marker: "operation-1", Revision: 2}}
 	trackerSaga := NewTrackerSaga(effects, provider, fixedClock{now: now})
 	preparer := &startPreparer{record: workspace.Record{Reservation: workspace.Reservation{OperationID: "operation-1", RunID: "run-fixed", WorkspaceID: "workspace-1", RepositoryID: "repository-1", LaneID: "lane-1", Authority: workspace.Authority{LeaseID: "lease-fixed", Generation: 3, Token: "fence-token"}, OwnedBranch: "runs/work-1", PinnedBase: "0123456789abcdef0123456789abcdef01234567", Now: now}, CanonicalPath: "/runtime/workspaces/workspace-1", Stage: workspace.StageReady, Status: "ready", Registered: true, ObservedHead: "abcdef0123456789abcdef0123456789abcdef01", DependencyHead: "abcdef0123456789abcdef0123456789abcdef01", GitDir: "/repo/.git/worktrees/workspace-1", IndexPath: "/repo/.git/worktrees/workspace-1/index"}}
-	request := startRunRequestFixture(now)
 	capsule, err := NewStartSaga(authority, trackerSaga, preparer).Start(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)

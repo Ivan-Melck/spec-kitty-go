@@ -2,11 +2,9 @@ package governancecontext
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -48,23 +46,6 @@ func (e *ValidationError) Error() string {
 }
 
 func (e *ValidationError) Unwrap() error { return e.Cause }
-
-var ErrIdentityConflict = errors.New("governance context identity conflict")
-
-// IdentityConflictError reports an attempted update of immutable context
-// content. Adapters must return a conflict rather than overwrite the existing
-// value when this error is produced.
-type IdentityConflictError struct {
-	ID       ids.GovernanceContextID
-	Existing Commitment
-	Incoming Commitment
-}
-
-func (e *IdentityConflictError) Error() string {
-	return fmt.Sprintf("%v for %s: existing %s:%s, incoming %s:%s", ErrIdentityConflict, e.ID, e.Existing.Algorithm(), e.Existing.Digest(), e.Incoming.Algorithm(), e.Incoming.Digest())
-}
-
-func (e *IdentityConflictError) Is(target error) bool { return target == ErrIdentityConflict }
 
 type Commitment struct {
 	algorithm string
@@ -123,35 +104,17 @@ const (
 	KindMissionType EntryKind = "mission_type"
 )
 
-var (
-	entryKindPattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-	validSHA256Digest = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	entryKinds        = struct {
-		sync.RWMutex
-		values map[EntryKind]struct{}
-	}{values: map[EntryKind]struct{}{
-		KindConfig: {}, KindDoctrine: {}, KindProfile: {}, KindMissionType: {},
-	}}
-)
+var validSHA256Digest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// RegisterEntryKind is the explicit extension seam for future portable entry
-// kinds. Registration is process-wide, idempotent, and safe for concurrent use.
-func RegisterEntryKind(value string) (EntryKind, error) {
-	kind := EntryKind(value)
-	if !entryKindPattern.MatchString(value) {
-		return "", &ValidationError{Code: CodeInvalidEntryKind, Field: "kind", Message: "entry kind must be lowercase portable identifier"}
-	}
-	entryKinds.Lock()
-	entryKinds.values[kind] = struct{}{}
-	entryKinds.Unlock()
-	return kind, nil
-}
-
+// Entry kinds are intentionally closed. A future portable kind is an explicit
+// model and commitment-schema extension, not mutable process-global state.
 func validEntryKind(kind EntryKind) bool {
-	entryKinds.RLock()
-	_, ok := entryKinds.values[kind]
-	entryKinds.RUnlock()
-	return ok
+	switch kind {
+	case KindConfig, KindDoctrine, KindProfile, KindMissionType:
+		return true
+	default:
+		return false
+	}
 }
 
 type Entry struct {
@@ -298,28 +261,6 @@ type contextJSON struct {
 	Entries       []Entry                 `json:"entries"`
 	Aggregate     Commitment              `json:"aggregate"`
 	CreatedAt     time.Time               `json:"created_at"`
-}
-
-func CheckIdentityConflict(existing, incoming Context) error {
-	if existing.id != incoming.id {
-		return nil
-	}
-	if existing.schemaVersion == incoming.schemaVersion && existing.aggregate == incoming.aggregate && entriesEqual(existing.entries, incoming.entries) {
-		return nil
-	}
-	return &IdentityConflictError{ID: incoming.id, Existing: existing.aggregate, Incoming: incoming.aggregate}
-}
-
-func entriesEqual(left, right []Entry) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }
 
 func validateEntries(entries []Entry) error {

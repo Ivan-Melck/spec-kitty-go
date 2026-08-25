@@ -80,6 +80,7 @@ type StartRecoveryRepository interface {
 }
 
 func (s *Service) PrepareStartRun(ctx context.Context, request StartRunRequest) error {
+	request.Claim = withGovernanceCommandDigest(request.Claim)
 	if err := s.faults.Reach(ctx, "SR-00"); err != nil {
 		return err
 	}

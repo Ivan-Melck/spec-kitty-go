@@ -41,22 +41,72 @@ func TestStartUsesInjectedIdentityAndClock(t *testing.T) {
 	}
 }
 
-func TestStartReturnsRunOwnedGovernanceContextOnReplay(t *testing.T) {
+func TestStartReplayAndReplacementKeepTheOriginallyBoundGovernanceContext(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 	request := validRequest()
 	request.Now = now
-	repository := &recordingRepository{result: RunCapsule{RunID: "run-fixed", Replayed: true}}
-	capsule, err := NewService(repository, fixedGenerator{}, fixedClock{now}).Start(context.Background(), request)
+	request.CommandDigest = "broader-start-command"
+	repository := &statefulGovernanceRepository{}
+	service := NewService(repository, fixedGenerator{}, fixedClock{now})
+
+	first, err := service.Start(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capsule.GovernanceContextID != request.GovernanceContext.ID() || capsule.GovernanceContextAggregate != request.GovernanceContext.Aggregate() {
-		t.Fatalf("capsule context=%s/%+v want=%s/%+v", capsule.GovernanceContextID, capsule.GovernanceContextAggregate, request.GovernanceContext.ID(), request.GovernanceContext.Aggregate())
+	replay, err := service.Start(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if repository.request.GovernanceContext.ID() != request.GovernanceContext.ID() {
-		t.Fatalf("claim did not receive context: %+v", repository.request)
+	if !replay.Replayed || replay.RunID != first.RunID || replay.GovernanceContextID != first.GovernanceContextID || replay.GovernanceContextAggregate != first.GovernanceContextAggregate {
+		t.Fatalf("replay=%+v first=%+v", replay, first)
+	}
+
+	changedReplay := request
+	changedReplay.GovernanceContext = governanceContextFixture("context-other", now)
+	if _, err := service.Start(context.Background(), changedReplay); !IsKind(err, KindIdempotencyConflict) {
+		t.Fatalf("changed-context replay error=%v", err)
+	}
+	if repository.digestConflicts != 1 {
+		t.Fatalf("changed context did not participate in caller-supplied command digest: conflicts=%d", repository.digestConflicts)
+	}
+
+	replacement := request
+	replacement.OperationID = "operation-2"
+	replacement.CorrelationID = "operation-2"
+	replaced, err := service.Start(context.Background(), replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.Replayed || replaced.RunID != first.RunID || replaced.Generation != first.Generation+1 || replaced.GovernanceContextID != first.GovernanceContextID || replaced.GovernanceContextAggregate != first.GovernanceContextAggregate {
+		t.Fatalf("replacement=%+v first=%+v", replaced, first)
+	}
+
+	changedReplacement := replacement
+	changedReplacement.OperationID = "operation-3"
+	changedReplacement.CorrelationID = "operation-3"
+	changedReplacement.GovernanceContext = governanceContextFixture("context-other", now)
+	if _, err := service.Start(context.Background(), changedReplacement); !IsKind(err, KindIdempotencyConflict) {
+		t.Fatalf("changed-context replacement error=%v", err)
+	}
+}
+
+func TestStartRejectsReplayOrReplacementWithoutRepositoryBoundGovernanceContext(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	for name, result := range map[string]RunCapsule{
+		"replay":      {RunID: "run-fixed", Generation: 1, Replayed: true},
+		"replacement": {RunID: "run-fixed", Generation: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repository := &recordingRepository{result: result}
+			_, err := NewService(repository, fixedGenerator{}, fixedClock{now}).Start(context.Background(), validRequest())
+			if !IsKind(err, KindIdempotencyConflict) {
+				t.Fatalf("Start error=%v", err)
+			}
+		})
 	}
 }
 
@@ -71,23 +121,6 @@ func TestStartRejectsRepositoryContextMismatch(t *testing.T) {
 	_, err := NewService(repository, fixedGenerator{}, fixedClock{now}).Start(context.Background(), request)
 	if !IsKind(err, KindIdempotencyConflict) {
 		t.Fatalf("Start error=%v", err)
-	}
-}
-
-func TestReplacementLeaseGenerationRetainsRunGovernanceContext(t *testing.T) {
-	t.Parallel()
-
-	request := validRequest()
-	first, err := bindRunGovernanceContext(request, RunCapsule{RunID: "run-fixed", LeaseID: "lease-1", Generation: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	replacement, err := bindRunGovernanceContext(request, RunCapsule{RunID: "run-fixed", LeaseID: "lease-2", Generation: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.GovernanceContextID != replacement.GovernanceContextID || first.GovernanceContextAggregate != replacement.GovernanceContextAggregate {
-		t.Fatalf("replacement lease changed run context: first=%+v replacement=%+v", first, replacement)
 	}
 }
 
@@ -157,6 +190,71 @@ func (r *recordingRepository) Heartbeat(_ context.Context, request HeartbeatRequ
 }
 
 func (r *recordingRepository) Expire(context.Context, ExpireRequest) error { return nil }
+
+type statefulGovernanceRepository struct {
+	operations      map[ids.OperationID]governanceOperation
+	runID           ids.RunID
+	contextID       ids.GovernanceContextID
+	aggregate       governancecontext.Commitment
+	generation      int64
+	digestConflicts int
+}
+
+type governanceOperation struct {
+	digest  string
+	capsule RunCapsule
+}
+
+func (r *statefulGovernanceRepository) LookupStartOperation(_ context.Context, request StartRequest) (bool, error) {
+	operation, ok := r.operations[request.OperationID]
+	if !ok {
+		return false, nil
+	}
+	if operation.digest != request.CommandDigest {
+		return false, governanceReplayConflict(request, "operation command digest changed")
+	}
+	return true, nil
+}
+
+func (r *statefulGovernanceRepository) Claim(_ context.Context, request StartRequest, runID ids.RunID, leaseID ids.LeaseID) (RunCapsule, error) {
+	if r.operations == nil {
+		r.operations = make(map[ids.OperationID]governanceOperation)
+	}
+	if operation, ok := r.operations[request.OperationID]; ok {
+		if operation.digest != request.CommandDigest {
+			r.digestConflicts++
+			return RunCapsule{}, governanceReplayConflict(request, "operation command digest changed")
+		}
+		capsule := operation.capsule
+		capsule.Replayed = true
+		return capsule, nil
+	}
+	if r.runID == "" {
+		r.runID = runID
+		r.contextID = request.GovernanceContext.ID()
+		r.aggregate = request.GovernanceContext.Aggregate()
+	} else if r.contextID != request.GovernanceContext.ID() || r.aggregate != request.GovernanceContext.Aggregate() {
+		return RunCapsule{}, governanceReplayConflict(request, "replacement lease governance context changed")
+	}
+	r.generation++
+	capsule := RunCapsule{
+		RunID: r.runID, LeaseID: leaseID, Generation: r.generation,
+		GovernanceContextID: r.contextID, GovernanceContextAggregate: r.aggregate,
+	}
+	r.operations[request.OperationID] = governanceOperation{digest: request.CommandDigest, capsule: capsule}
+	return capsule, nil
+}
+
+func (*statefulGovernanceRepository) Heartbeat(_ context.Context, request HeartbeatRequest) (time.Time, error) {
+	return request.Now.Add(request.LeaseTTL), nil
+}
+
+func (*statefulGovernanceRepository) Expire(context.Context, ExpireRequest) error { return nil }
+
+func governanceReplayConflict(request StartRequest, message string) error {
+	return NewDiagnostic(KindIdempotencyConflict, message, RetryNever, request.CorrelationID, request.OperationID,
+		map[string]string{"operation_id": request.OperationID.String()}, nil, nil, request.Now)
+}
 
 type fixedGenerator struct{}
 

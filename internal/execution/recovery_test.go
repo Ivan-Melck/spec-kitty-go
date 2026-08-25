@@ -15,7 +15,7 @@ func TestRecoverStartRunUsesOnlyOperationIDAndReprobesLiveStages(t *testing.T) {
 	request := startRunRequestFixture(now)
 	repository := &recoveryRepository{
 		record:  StartRecoveryRecord{Request: request, OperationStatus: "succeeded", LeaseStatus: "active", WorkspaceStatus: "preparing", WorkspaceStage: workspace.StageWorktreeCreated},
-		capsule: RunCapsule{SchemaVersion: ResultSchemaVersion, Kind: "run_started", CorrelationID: request.Claim.CorrelationID, OperationID: request.Claim.OperationID, AggregateIDs: map[string]string{}, RunID: "run-fixed", LeaseID: "lease-fixed", Generation: 7, Token: "fence-token", Deadline: now.Add(time.Minute), Replayed: true},
+		capsule: RunCapsule{SchemaVersion: ResultSchemaVersion, Kind: "run_started", CorrelationID: request.Claim.CorrelationID, OperationID: request.Claim.OperationID, AggregateIDs: map[string]string{}, RunID: "run-fixed", GovernanceContextID: request.Claim.GovernanceContext.ID(), GovernanceContextAggregate: request.Claim.GovernanceContext.Aggregate(), LeaseID: "lease-fixed", Generation: 7, Token: "fence-token", Deadline: now.Add(time.Minute), Replayed: true},
 	}
 	authority := NewService(repository, fixedGenerator{}, fixedClock{now: now})
 	provider := &startProvider{work: trackerWorkFixture(), mutation: trackerMutationFixture()}
@@ -32,6 +32,9 @@ func TestRecoverStartRunUsesOnlyOperationIDAndReprobesLiveStages(t *testing.T) {
 	if repository.claim.ActorID != "actor-1" || repository.claim.ProcessID != "process-1" || repository.claim.GovernanceContext.ID() != request.Claim.GovernanceContext.ID() || provider.assignCalls != 1 || preparer.bindingCalls != 1 || preparer.calls != 1 {
 		t.Fatalf("recovery did not use stored envelope/probes: claim=%+v tracker=%d binding=%d ready=%d", repository.claim, provider.assignCalls, preparer.bindingCalls, preparer.calls)
 	}
+	if repository.prepared.Claim.CommandDigest == "" || repository.prepared.Claim.CommandDigest != repository.claim.CommandDigest {
+		t.Fatalf("prepared claim identity=%q final claim identity=%q", repository.prepared.Claim.CommandDigest, repository.claim.CommandDigest)
+	}
 	if repository.completed == nil || repository.completed.WorkspaceStage != workspace.StageReady {
 		t.Fatalf("terminal result not recorded: %+v", repository.completed)
 	}
@@ -42,7 +45,7 @@ func TestRecoverStartRunReturnsTypedDecisionForChangedGitFacts(t *testing.T) {
 	request := startRunRequestFixture(now)
 	repository := &recoveryRepository{
 		record:  StartRecoveryRecord{Request: request, OperationStatus: "succeeded", LeaseStatus: "active", WorkspaceStatus: "preparing", WorkspaceStage: workspace.StageBaseVerified},
-		capsule: RunCapsule{SchemaVersion: ResultSchemaVersion, OperationID: request.Claim.OperationID, AggregateIDs: map[string]string{}, RunID: "run-fixed", LeaseID: "lease-fixed", Generation: 7, Token: "fence-token", Deadline: now.Add(time.Minute), Replayed: true},
+		capsule: RunCapsule{SchemaVersion: ResultSchemaVersion, OperationID: request.Claim.OperationID, AggregateIDs: map[string]string{}, RunID: "run-fixed", GovernanceContextID: request.Claim.GovernanceContext.ID(), GovernanceContextAggregate: request.Claim.GovernanceContext.Aggregate(), LeaseID: "lease-fixed", Generation: 7, Token: "fence-token", Deadline: now.Add(time.Minute), Replayed: true},
 	}
 	preparer := &startPreparer{err: &workspace.Error{Kind: workspace.KindTargetMoved, Message: "dependency head changed", Observed: map[string]string{"head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, Expected: map[string]string{"head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 	saga := NewStartSaga(NewService(repository, fixedGenerator{}, fixedClock{now: now}), NewTrackerSaga(&startEffectRepository{}, &startProvider{work: trackerWorkFixture(), mutation: trackerMutationFixture()}, fixedClock{now: now}), preparer)
@@ -93,6 +96,7 @@ type recoveryRepository struct {
 	claimErr  error
 	loaded    ids.OperationID
 	claim     StartRequest
+	prepared  StartRunRequest
 	completed *RunCapsule
 	expired   *ExpireRequest
 }
@@ -111,7 +115,10 @@ func (r *recoveryRepository) Expire(_ context.Context, request ExpireRequest) er
 	r.expired = &request
 	return nil
 }
-func (*recoveryRepository) PrepareStartRun(context.Context, StartRunRequest) error { return nil }
+func (r *recoveryRepository) PrepareStartRun(_ context.Context, request StartRunRequest) error {
+	r.prepared = request
+	return nil
+}
 func (r *recoveryRepository) LoadStartRun(_ context.Context, operationID ids.OperationID) (StartRecoveryRecord, error) {
 	r.loaded = operationID
 	return r.record, nil
