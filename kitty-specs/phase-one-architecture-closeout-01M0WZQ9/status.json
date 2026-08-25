@@ -28,7 +28,8 @@
       "last_transition_at": "2026-08-25T20:12:06.855387+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: closed capability-tier import policy, bounded Go graph loading, curated production reachability, deferred-surface guards, and repeated mutant coverage"
+        "Ready for review: closed capability-tier import policy, bounded Go graph loading, curated production reachability, deferred-surface guards, and repeated mutant coverage",
+        "Ready for review: live architecture command, semantic Git adapter boundary, non-vacuous reachability registry, and strengthened deferred-runtime detection"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
