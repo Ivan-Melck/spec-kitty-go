@@ -73,6 +73,9 @@
       "last_event_id": "01M0X2EM31B5FGMBC1GF4W8A4E",
       "last_transition_at": "2026-08-25T18:20:50.145319+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: immutable ordered governance contexts, framed SHA-256 commitments, run admission/result/recovery propagation, narrow store contract, and explicit synthetic helper context; focused, race, vet, and build gates pass. Transition override: mission has no configured pre-review gate contract and lane history contains pre-existing shared artifacts."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3215564,
