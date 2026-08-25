@@ -22,7 +22,7 @@ requirement_refs:
 - NFR-008
 planning_base_branch: feat/phase-one-architecture-closeout
 merge_target_branch: feat/phase-one-architecture-closeout
-branch_strategy: Use the fully integrated dependency base; merge reviewed documentation and evidence to feat/phase-one-architecture-closeout for a PR to main.
+branch_strategy: Planning artifacts for this mission were generated on feat/phase-one-architecture-closeout. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/phase-one-architecture-closeout unless the human explicitly redirects the landing branch.
 subtasks:
 - T027
 - T028
@@ -34,6 +34,7 @@ agent_profile: curator-carla
 authoritative_surface: docs/
 create_intent:
 - docs/ORCHESTRATOR_API_1_3_PROJECTION.md
+- docs/PHASE1_ACCEPTANCE_ERRATA.md
 - docs/phase1-evidence/closeout-results.json
 execution_mode: code_change
 model: ''
@@ -41,10 +42,9 @@ owned_files:
 - .gitignore
 - README.md
 - docs/ORCHESTRATOR_API_1_3_PROJECTION.md
+- docs/PHASE1_ACCEPTANCE_ERRATA.md
 - docs/PYTHON_BEHAVIOR_INVENTORY.md
 - docs/phase1-evidence/closeout-results.json
-- kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/spec.md
-- kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/acceptance-matrix.json
 role: implementer
 tags: []
 tracker_refs: []
@@ -96,19 +96,19 @@ This WP starts from the fully integrated dependency base in its assigned lane. I
 
 **Files**: new `docs/ORCHESTRATOR_API_1_3_PROJECTION.md`.
 
-### T028: Reconcile the nonexistent waiver across Phase 1 artifacts
+### T028: Publish a visible erratum for the nonexistent waiver
 
 **Purpose**: Remove a promise the product does not implement.
 
 **Steps**:
 
-1. Locate the Phase 1 acceptance clause mentioning an explicit visible waiver.
-2. Change it to state that no waiver mechanism exists in Phase 1.
-3. Update acceptance matrix and behavior inventory consistently.
-4. Do not add force/bypass behavior.
-5. Check all remaining waiver references for accurate scope.
+1. Locate and cite the immutable Phase 1 acceptance clause mentioning an explicit visible waiver.
+2. Create a living erratum stating that no waiver mechanism exists in Phase 1.
+3. Link the erratum from README and update the behavior inventory consistently.
+4. Do not modify the completed mission's historical evidence and do not add force/bypass behavior.
+5. Check all remaining living-document waiver references for accurate scope.
 
-**Files**: prior Phase 1 spec/matrix and `docs/PYTHON_BEHAVIOR_INVENTORY.md`.
+**Files**: new `docs/PHASE1_ACCEPTANCE_ERRATA.md`, README, and `docs/PYTHON_BEHAVIOR_INVENTORY.md`.
 
 ### T029: Add binary-output hygiene and contributor commands
 

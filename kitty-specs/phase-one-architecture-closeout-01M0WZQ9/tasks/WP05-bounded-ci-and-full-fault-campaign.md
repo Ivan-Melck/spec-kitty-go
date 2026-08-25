@@ -17,7 +17,7 @@ requirement_refs:
 - NFR-009
 planning_base_branch: feat/phase-one-architecture-closeout
 merge_target_branch: feat/phase-one-architecture-closeout
-branch_strategy: Use the lane base containing WP01, WP02, and WP04; merge reviewed CI changes to feat/phase-one-architecture-closeout.
+branch_strategy: Planning artifacts for this mission were generated on feat/phase-one-architecture-closeout. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/phase-one-architecture-closeout unless the human explicitly redirects the landing branch.
 subtasks:
 - T021
 - T022
