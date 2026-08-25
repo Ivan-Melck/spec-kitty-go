@@ -398,6 +398,114 @@ func TestDeferredRuntimeSurfaceRejectsLocalShortDeclarationAlias(t *testing.T) {
 	}
 }
 
+func TestDeferredRuntimeSurfaceRejectsMarkdownAuthorityParsing(t *testing.T) {
+	const module = "example.test/markdown-authority"
+	tests := []struct {
+		name       string
+		files      map[string]string
+		wantTarget string
+	}{
+		{
+			name: "direct-standard-library-parser",
+			files: map[string]string{
+				"internal/helpercmd/authority.go":      "package helpercmd\nimport (\n\t\"os\"\n\t\"strings\"\n)\nfunc loadAuthority() { content, _ := os.ReadFile(\"doctrine.md\"); _ = strings.Split(string(content), \"# \" ) }\n",
+				"internal/helpercmd/authority_test.go": "package helpercmd\nimport (\n\t\"os\"\n\t\"strings\"\n)\nfunc testOnlyParser() { content, _ := os.ReadFile(\"ignored.md\"); _ = strings.Fields(string(content)) }\n",
+			},
+			wantTarget: "markdown:doctrine.md",
+		},
+		{
+			name: "cross-file-function-and-path-aliases",
+			files: map[string]string{
+				"internal/helpercmd/authority_path.go": "package helpercmd\nimport (\n\tsystem \"os\"\n\tpaths \"path/filepath\"\n)\nvar authorityPath = paths.Join(\"rules\", \"governance.md\")\nvar readAuthority = system.ReadFile\n",
+				"internal/helpercmd/authority.go":      "package helpercmd\nimport text \"strings\"\nfunc loadAuthority() { content, _ := readAuthority(authorityPath); _ = text.Split(string(content), \"##\") }\n",
+			},
+			wantTarget: "markdown:rules/governance.md",
+		},
+		{
+			name: "filesystem-function",
+			files: map[string]string{
+				"internal/helpercmd/authority.go": "package helpercmd\nimport (\n\t\"io/fs\"\n\t\"os\"\n\t\"strings\"\n)\nfunc loadAuthority() { content, _ := fs.ReadFile(os.DirFS(\".\"), \"policy.MD\"); _ = strings.Fields(string(content)) }\n",
+			},
+			wantTarget: "markdown:policy.MD",
+		},
+		{
+			name: "open-and-scan",
+			files: map[string]string{
+				"internal/helpercmd/authority.go": "package helpercmd\nimport (\n\t\"bufio\"\n\t\"os\"\n)\nfunc loadAuthority() { file, _ := os.Open(\"decisions.md\"); _ = bufio.NewScanner(file) }\n",
+			},
+			wantTarget: "markdown:decisions.md",
+		},
+		{
+			name: "standard-library-template-parser",
+			files: map[string]string{
+				"internal/helpercmd/authority.go": "package helpercmd\nimport \"text/template\"\nfunc loadAuthority() { _, _ = template.ParseFiles(\"authority.md\") }\n",
+			},
+			wantTarget: "markdown:authority.md",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			started := time.Now()
+			root := newReachabilityFixture(t, module)
+			for path, contents := range test.files {
+				writeGoFixture(t, root, path, contents)
+			}
+			graph, err := LoadGraph(context.Background(), root)
+			if err != nil {
+				t.Fatalf("load classified Markdown mutant: %v", err)
+			}
+			policy, err := DefaultPolicy(module)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := policy.Check(graph); err != nil {
+				t.Fatalf("mutant must reach the deferred-surface guard from an already classified package: %v", err)
+			}
+
+			err = CheckDeferredRuntimeSurfaces(context.Background(), root, module)
+			if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) ||
+				!strings.Contains(err.Error(), "source="+module+"/internal/helpercmd") ||
+				!strings.Contains(err.Error(), "target="+test.wantTarget) {
+				t.Fatalf("Markdown authority parser mutant survived: %v", err)
+			}
+			if strings.Contains(err.Error(), "ignored.md") {
+				t.Fatalf("test-only Markdown parser entered production diagnostics: %v", err)
+			}
+			t.Logf("mutant=markdown-authority-%s killed_in=%s", test.name, time.Since(started))
+		})
+	}
+}
+
+func TestDeferredRuntimeSurfaceDoesNotGrepMarkdownProse(t *testing.T) {
+	const module = "example.test/markdown-prose"
+	root := newReachabilityFixture(t, module)
+	writeGoFixture(t, root, "internal/helpercmd/config.go", `package helpercmd
+
+import (
+	"os"
+	"strings"
+)
+
+// The authority file used to be policy.md; prose is not runtime authority.
+const migrationNote = "do not parse governance.md in production"
+
+func loadJSON() {
+	content, _ := os.ReadFile("policy.json")
+	_ = strings.Contains(string(content), ".md")
+}
+`)
+	writeGoFixture(t, root, "internal/helpercmd/config_test.go", `package helpercmd
+
+import "os"
+
+func loadMarkdownFixture() { _, _ = os.ReadFile("fixture.md") }
+`)
+
+	if err := CheckDeferredRuntimeSurfaces(context.Background(), root, module); err != nil {
+		t.Fatalf("Markdown prose, non-Markdown reads, or test-only parsing triggered the production guard: %v", err)
+	}
+}
+
 func newReachabilityFixture(t *testing.T, module string) string {
 	t.Helper()
 	root := t.TempDir()

@@ -14,6 +14,7 @@ import (
 	"go/types"
 	"io"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -287,6 +288,59 @@ func calledObject(expression ast.Expr, info *types.Info) types.Object {
 	}
 }
 
+func staticBindings(source *productionSourcePackage) map[types.Object]ast.Expr {
+	bindings := make(map[types.Object]ast.Expr)
+	for _, parsed := range source.files {
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			switch declaration := node.(type) {
+			case *ast.ValueSpec:
+				if len(declaration.Names) != len(declaration.Values) {
+					return true
+				}
+				for index, name := range declaration.Names {
+					if object := source.info.Defs[name]; object != nil {
+						bindings[object] = declaration.Values[index]
+					}
+				}
+			case *ast.AssignStmt:
+				if declaration.Tok != token.DEFINE || len(declaration.Lhs) != len(declaration.Rhs) {
+					return true
+				}
+				for index, left := range declaration.Lhs {
+					name, ok := left.(*ast.Ident)
+					if !ok {
+						continue
+					}
+					if object := source.info.Defs[name]; object != nil {
+						bindings[object] = declaration.Rhs[index]
+					}
+				}
+			}
+			return true
+		})
+	}
+	return bindings
+}
+
+func staticFunctionValue(expression ast.Expr, info *types.Info, bindings map[types.Object]ast.Expr, visiting map[types.Object]bool) (*types.Func, bool) {
+	object := calledObject(expression, info)
+	if selector, ok := expression.(*ast.SelectorExpr); ok {
+		if selection := info.Selections[selector]; selection != nil {
+			object = selection.Obj()
+		}
+	}
+	if function, ok := object.(*types.Func); ok {
+		return function, true
+	}
+	bound, ok := bindings[object]
+	if !ok || object == nil || visiting[object] {
+		return nil, false
+	}
+	visiting[object] = true
+	defer delete(visiting, object)
+	return staticFunctionValue(bound, info, bindings, visiting)
+}
+
 type packageCallGraph struct {
 	edges map[types.Object]map[types.Object]struct{}
 	roots map[types.Object]struct{}
@@ -501,9 +555,10 @@ func CheckReachability(ctx context.Context, root, modulePath string, targets []R
 }
 
 // CheckDeferredRuntimeSurfaces rejects production code that launches a Python
-// interpreter. The caller context and an internal deadline bound Go tooling.
-// Import and package-based deferred surfaces are enforced by Policy; this
-// targeted AST check covers the runtime dependency that an import graph cannot
+// interpreter or reads a Markdown authority surface. The caller context and an
+// internal deadline bound Go tooling. Import and package-based deferred
+// surfaces are enforced by Policy; this targeted, type-aware AST check covers
+// runtime and authority-file dependencies that an import graph cannot
 // represent without returning to broad textual name matching.
 func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) error {
 	if modulePath == "" {
@@ -515,69 +570,50 @@ func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) 
 		return err
 	}
 	for _, source := range packages {
-		bindings := make(map[types.Object]ast.Expr)
-		for _, parsed := range source.files {
-			ast.Inspect(parsed, func(node ast.Node) bool {
-				switch declaration := node.(type) {
-				case *ast.ValueSpec:
-					if len(declaration.Names) != len(declaration.Values) {
-						return true
-					}
-					for index, name := range declaration.Names {
-						if object := source.info.Defs[name]; object != nil {
-							bindings[object] = declaration.Values[index]
-						}
-					}
-				case *ast.AssignStmt:
-					if declaration.Tok != token.DEFINE || len(declaration.Lhs) != len(declaration.Rhs) {
-						return true
-					}
-					for index, left := range declaration.Lhs {
-						name, ok := left.(*ast.Ident)
-						if !ok {
-							continue
-						}
-						if object := source.info.Defs[name]; object != nil {
-							bindings[object] = declaration.Rhs[index]
-						}
-					}
-				}
-				return true
-			})
-		}
+		bindings := staticBindings(source)
 		for _, parsed := range source.files {
 			ast.Inspect(parsed, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
 				if !ok || len(call.Args) == 0 {
 					return true
 				}
-				function, ok := calledObject(call.Fun, source.info).(*types.Func)
-				if !ok || function.Pkg() == nil || function.Pkg().Path() != "os/exec" {
+				function, ok := staticFunctionValue(call.Fun, source.info, bindings, make(map[types.Object]bool))
+				if !ok || function.Pkg() == nil {
 					return true
 				}
-				commandFunction := function.Name()
-				if commandFunction != "Command" && commandFunction != "CommandContext" {
+				if function.Pkg().Path() == "os/exec" {
+					commandFunction := function.Name()
+					if commandFunction == "Command" || commandFunction == "CommandContext" {
+						argumentIndex := 0
+						if commandFunction == "CommandContext" {
+							argumentIndex = 1
+						}
+						if len(call.Args) > argumentIndex {
+							command, resolved := staticStringValue(call.Args[argumentIndex], source.info, bindings, make(map[types.Object]bool))
+							if resolved && isPythonRuntime(command) {
+								seen[Violation{Rule: RuleDeferredSurface, SourcePackage: source.importPath, TargetPackage: "runtime:" + command}] = true
+							}
+						}
+					}
+				}
+				firstPath, allPaths, readsFiles := deferredFilePathArguments(function)
+				if !readsFiles || len(call.Args) <= firstPath {
 					return true
 				}
-				argumentIndex := 0
-				if commandFunction == "CommandContext" {
-					argumentIndex = 1
+				lastPath := firstPath + 1
+				if allPaths {
+					lastPath = len(call.Args)
 				}
-				if len(call.Args) <= argumentIndex {
-					return true
+				for _, argument := range call.Args[firstPath:lastPath] {
+					path, resolved := staticStringValue(argument, source.info, bindings, make(map[types.Object]bool))
+					if !resolved || !isMarkdownSurface(path) {
+						continue
+					}
+					seen[Violation{
+						Rule: RuleDeferredSurface, SourcePackage: source.importPath,
+						TargetPackage: "markdown:" + filepath.ToSlash(filepath.Clean(path)),
+					}] = true
 				}
-				command, ok := staticStringValue(call.Args[argumentIndex], source.info, bindings, make(map[types.Object]bool))
-				if !ok {
-					// Runtime-computed command strings are deliberately outside this
-					// static proof boundary. The guard proves literals and immutable
-					// package/local binding chains without treating arbitrary exec
-					// calls as Python merely because their value is dynamic.
-					return true
-				}
-				if !isPythonRuntime(command) {
-					return true
-				}
-				seen[Violation{Rule: RuleDeferredSurface, SourcePackage: source.importPath, TargetPackage: "runtime:" + command}] = true
 				return true
 			})
 		}
@@ -598,9 +634,86 @@ func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) 
 	return nil
 }
 
+// deferredFilePathArguments recognizes standard-library APIs that ingest file
+// contents or parse file-backed templates. Function identity comes from
+// go/types, so import aliases, dot imports, method selections, and function
+// values cannot evade the check by changing spelling.
+func deferredFilePathArguments(function *types.Func) (first int, all bool, ok bool) {
+	packagePath := function.Pkg().Path()
+	name := function.Name()
+	signature, _ := function.Type().(*types.Signature)
+	method := signature != nil && signature.Recv() != nil
+	switch packagePath {
+	case "os":
+		switch name {
+		case "ReadFile", "Open", "OpenFile":
+			return 0, false, true
+		case "OpenInRoot":
+			if !method {
+				return 1, false, true
+			}
+		}
+	case "io/ioutil":
+		if name == "ReadFile" && !method {
+			return 0, false, true
+		}
+	case "io/fs":
+		if name == "ReadFile" {
+			if method {
+				return 0, false, true
+			}
+			return 1, false, true
+		}
+		if name == "Open" && method {
+			return 0, false, true
+		}
+	case "embed":
+		if method && (name == "ReadFile" || name == "Open") {
+			return 0, false, true
+		}
+	case "text/template", "html/template":
+		switch name {
+		case "ParseFiles":
+			return 0, true, true
+		case "ParseGlob":
+			return 0, false, true
+		case "ParseFS":
+			return 1, true, true
+		}
+	}
+	return 0, false, false
+}
+
+func isMarkdownSurface(path string) bool {
+	return strings.EqualFold(filepath.Ext(filepath.Clean(path)), ".md")
+}
+
 func staticStringValue(expression ast.Expr, info *types.Info, bindings map[types.Object]ast.Expr, visiting map[types.Object]bool) (string, bool) {
 	if value := info.Types[expression].Value; value != nil && value.Kind() == constant.String {
 		return constant.StringVal(value), true
+	}
+	if call, ok := expression.(*ast.CallExpr); ok {
+		function, resolved := staticFunctionValue(call.Fun, info, bindings, visiting)
+		if resolved && function.Pkg() != nil {
+			parts := make([]string, len(call.Args))
+			for index, argument := range call.Args {
+				part, ok := staticStringValue(argument, info, bindings, visiting)
+				if !ok {
+					return "", false
+				}
+				parts[index] = part
+			}
+			switch {
+			case function.Pkg().Path() == "path/filepath" && function.Name() == "Join":
+				return filepath.Join(parts...), true
+			case function.Pkg().Path() == "path" && function.Name() == "Join":
+				return pathpkg.Join(parts...), true
+			case len(parts) == 1 && function.Pkg().Path() == "path/filepath" && function.Name() == "Clean":
+				return filepath.Clean(parts[0]), true
+			case len(parts) == 1 && function.Pkg().Path() == "path" && function.Name() == "Clean":
+				return pathpkg.Clean(parts[0]), true
+			}
+		}
 	}
 	identifier, ok := expression.(*ast.Ident)
 	if !ok {
