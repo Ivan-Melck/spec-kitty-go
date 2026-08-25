@@ -1,7 +1,7 @@
 {
   "event_count": 69,
-  "last_event_id": "01M0XERG8XPQJW9Z516HN6Q49E",
-  "materialized_at": "2026-08-25T21:55:56.829303+00:00",
+  "last_event_id": "01M0XESHW0JXJEHT0E3T9AT9BW",
+  "materialized_at": "2026-08-25T21:56:31.232624+00:00",
   "mission_number": "",
   "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
   "mission_type": "",
@@ -24,8 +24,8 @@
       "agent_profile_version": "1.0",
       "force_count": 7,
       "lane": "in_review",
-      "last_event_id": "01M0XERG8XPQJW9Z516HN6Q49E",
-      "last_transition_at": "2026-08-25T21:55:56.829303+00:00",
+      "last_event_id": "01M0XESHW0JXJEHT0E3T9AT9BW",
+      "last_transition_at": "2026-08-25T21:56:31.232624+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: closed capability-tier import policy, bounded Go graph loading, curated production reachability, deferred-surface guards, and repeated mutant coverage",
