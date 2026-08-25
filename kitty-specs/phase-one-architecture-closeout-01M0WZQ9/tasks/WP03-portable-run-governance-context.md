@@ -28,6 +28,7 @@ create_intent:
 - internal/governancecontext/digest.go
 - internal/governancecontext/digest_test.go
 - internal/ids/governance_context.go
+- internal/helpercmd/root_claim_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -42,6 +43,8 @@ owned_files:
 - internal/execution/recovery_test.go
 - internal/helpercmd/start_run.go
 - internal/helpercmd/start_run_test.go
+- internal/helpercmd/root.go
+- internal/helpercmd/root_claim_test.go
 - internal/controlstore/store.go
 role: implementer
 tags: []
