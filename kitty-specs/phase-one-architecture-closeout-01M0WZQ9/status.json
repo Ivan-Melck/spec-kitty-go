@@ -36,7 +36,8 @@
         "Ready for review: active custom build tags now follow go list and unrooted target recursion cycles fail reachability",
         "Ready for review: bounded cancellable typed-source loading with typed parse and type-check failures",
         "Cycle 8 ready at 2562d23: production-only Go AST/type guard rejects statically resolved Markdown authority reads/parsers with ARCH-DEFERRED-SURFACE source and markdown:path diagnostics; permanent classified temporary-module mutants cover direct, cross-file/function/path aliases, io/fs, os.Open, and template parsing while prose/tests remain accepted. Passed architecture and scoped scenario suites x10, both required race runs, vet, repository-wide compile, binary build, module verify, gofmt/diff checks, and live architecture-check (17 packages, 332 edges); monolithic campaign intentionally deferred to WP05.",
-        "Ready for review: cycle 9 kills reader-wrapper, constant-returning path-helper, and unique-assignment Markdown mutants"
+        "Ready for review: cycle 9 kills reader-wrapper, constant-returning path-helper, and unique-assignment Markdown mutants",
+        "Ready for review: callable function literals propagate known Markdown path arguments with conservative closure roots and bounded recursion"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
