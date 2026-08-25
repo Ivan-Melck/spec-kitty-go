@@ -10,3 +10,18 @@ agents:
   - codex
   auto_commit: true
   lint_on_edit: false
+activated_directives:
+- 001-architectural-integrity-standard
+- 010-specification-fidelity-requirement
+- 024-locality-of-change
+- 028-search-tool-discipline
+- 030-test-and-typecheck-quality-gate
+activated_tactics:
+- acceptance-test-first
+- boring-code-review
+activated_kinds:
+- directives
+- tactics
+mission_type_activations:
+- software-dev
+charter: .kittify/charter/charter.yaml
