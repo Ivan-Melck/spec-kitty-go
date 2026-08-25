@@ -58,7 +58,8 @@
         "Reviewer reassignment: claude OAuth expired before reading code; retrying with independent gemini reviewer",
         "Gemini reviewer process exited without emitting the required approval or rejection transition; preserving failed independent review attempt before redispatch.",
         "OpenCode reviewer failed before inspection because its local state database is incompatible (no such column: name); preserving failure before local independent-model review.",
-        "Local qwen reviewer returned prompt-only speculation without inspecting the candidate and did not emit a transition; discarding that non-review and redispatching to the durable reviewer actor."
+        "Local qwen reviewer returned prompt-only speculation without inspecting the candidate and did not emit a transition; discarding that non-review and redispatching to the durable reviewer actor.",
+        "Review passed: FR-007/FR-008 and C-004 regressions are production-path tests; 20x contention, 10x refusal/fence, full SQLite race, vet, formatting, and serialized integration/recovery checks pass; anti-pattern checklist has no failures. Force bypass is limited to pre-existing inherited planning artifacts on the lane."
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
