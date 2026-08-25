@@ -20,8 +20,8 @@
     "WP01": {
       "actor": "codex",
       "agent": null,
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 1,
       "lane": "in_progress",
       "last_event_id": "01M0X7TN5H5XX3MY1T0WH8MG5F",
@@ -39,8 +39,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 3955591,
+      "shell_pid_created_at": "1787687743.66",
       "subtasks": {
         "T001": "planned",
         "T002": "planned",
