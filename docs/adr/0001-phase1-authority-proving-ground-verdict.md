@@ -1,15 +1,17 @@
 # ADR 0001: Phase 1 authority proving-ground verdict
 
-- Status: proposed ratification; source campaign passed, independent WP08 review pending
+- Status: ratified within the Phase 1 single-machine boundary
 - Date: 2026-08-24
 - Scope: one machine and one local filesystem authority
 - Frozen source: `adf15aac42f3f03dd27ad6252df973bcd8b42433`
+- Independent attestation: `ae7c39adf1aecd9ced3da63a5a883d0b81fe4c46`
 - Evidence: `docs/phase1-evidence/results.json`, `final-campaign-manifest.json`, and `scenario-catalog.json`
 
 ## Decision
 
 Ratify the Phase 1 authority architecture inside the tested single-machine and
-local-filesystem boundary, subject to independent WP08 review. The executable catalog has
+local-filesystem boundary. Independent WP08 review approved the frozen source
+and evidence attestation. The executable catalog has
 complete evidence for 31 of 35 Phase 1 and WorkRevision scenarios. Four entries
 are intentionally partial: P1-15 defers human-authorized import choices; P1-18
 defers policy for superseding an already-recorded judgment; P1-21 defers
@@ -136,5 +138,5 @@ shared-filesystem design requires a new ADR and a new proving ground.
   iterations with no reruns; full test and race suites, vet, staticcheck,
   formatting, diff-check, module verification, vulnerability scan, and binary
   builds passed on the same frozen source.
-- This is the implementation verdict. Independent WP08 review remains the
-  governance gate before the work package is accepted.
+- Independent WP08 review approved the frozen source and attested campaign;
+  this is the final implementation verdict inside the stated Phase 1 boundary.
