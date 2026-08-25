@@ -43,7 +43,8 @@
       "last_transition_at": "2026-08-25T18:15:36.160651+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: pre-fence refusal observer and ordering mutant added; contention diagnostic stabilized; 20x contention, 10x refusal, full package, and race tests pass. Lane inherited mission planning commits; no pre-review gate contract is configured."
+        "Ready for review: pre-fence refusal observer and ordering mutant added; contention diagnostic stabilized; 20x contention, 10x refusal, full package, and race tests pass. Lane inherited mission planning commits; no pre-review gate contract is configured.",
+        "Reviewer reassignment: claude OAuth expired before reading code; retrying with independent gemini reviewer"
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
