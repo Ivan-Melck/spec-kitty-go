@@ -27,6 +27,9 @@
       "last_event_id": "01M0X2W48ERCVSKV6MBEGFKXFP",
       "last_transition_at": "2026-08-25T18:28:12.686027+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: closed capability-tier import policy, bounded Go graph loading, curated production reachability, deferred-surface guards, and repeated mutant coverage"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3215485,
