@@ -97,7 +97,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: immutable ordered governance contexts, framed SHA-256 commitments, run admission/result/recovery propagation, narrow store contract, and explicit synthetic helper context; focused, race, vet, and build gates pass. Transition override: mission has no configured pre-review gate contract and lane history contains pre-existing shared artifacts.",
-        "Ready for review: claim and start-run both supply explicit synthetic Phase 1 governance provenance; regression and required race gates pass"
+        "Ready for review: claim and start-run both supply explicit synthetic Phase 1 governance provenance; regression and required race gates pass",
+        "Ready for review: governance context now participates in every claim identity, replay/replacement fails closed on unbound context, stateful regressions cover exact replay and changed context, and speculative public seams were removed"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
