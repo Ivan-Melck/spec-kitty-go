@@ -1,7 +1,7 @@
 {
-  "event_count": 5,
-  "last_event_id": "01M0X0SA08CVFRW6MTERRY3JAV",
-  "materialized_at": "2026-08-25T17:51:43.112129+00:00",
+  "event_count": 6,
+  "last_event_id": "01M0X0SK3KSWDPTYFF2NESJGE4",
+  "materialized_at": "2026-08-25T17:51:52.435928+00:00",
   "mission_number": "",
   "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
   "mission_type": "",
@@ -14,7 +14,7 @@
     "for_review": 0,
     "in_progress": 0,
     "in_review": 0,
-    "planned": 5
+    "planned": 6
   },
   "work_packages": {
     "WP01": {
@@ -51,6 +51,13 @@
       "lane": "planned",
       "last_event_id": "01M0X0SA08CVFRW6MTERRY3JAV",
       "last_transition_at": "2026-08-25T17:51:43.112129+00:00"
+    },
+    "WP06": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M0X0SK3KSWDPTYFF2NESJGE4",
+      "last_transition_at": "2026-08-25T17:51:52.435928+00:00"
     }
   }
 }
