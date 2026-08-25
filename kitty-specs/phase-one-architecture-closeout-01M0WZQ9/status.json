@@ -34,7 +34,8 @@
         "Ready for review: typed reachability identity, scope-correct local Python alias detection, and dead LoadError surface corrected; required repeated mutants, race, vet, and repository scenario batches pass. Transition override is limited to the mission's absent pre-review gate contract and pre-existing inherited lane status artifacts.",
         "Ready for review: active Go build filtering and self-recursion reachability mutants fixed. Manual WP01 gate passed: required count=10 suites, race, vet, repository compilation, helper build, module verification, and live architecture check. Override used because this mission has no in_progress->for_review gate contract and earlier review-cycle planning artifacts already exist in lane history.",
         "Ready for review: active custom build tags now follow go list and unrooted target recursion cycles fail reachability",
-        "Ready for review: bounded cancellable typed-source loading with typed parse and type-check failures"
+        "Ready for review: bounded cancellable typed-source loading with typed parse and type-check failures",
+        "Cycle 8 ready at 2562d23: production-only Go AST/type guard rejects statically resolved Markdown authority reads/parsers with ARCH-DEFERRED-SURFACE source and markdown:path diagnostics; permanent classified temporary-module mutants cover direct, cross-file/function/path aliases, io/fs, os.Open, and template parsing while prose/tests remain accepted. Passed architecture and scoped scenario suites x10, both required race runs, vet, repository-wide compile, binary build, module verify, gofmt/diff checks, and live architecture-check (17 packages, 332 edges); monolithic campaign intentionally deferred to WP05."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
