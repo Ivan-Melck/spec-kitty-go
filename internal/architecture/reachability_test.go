@@ -3,6 +3,7 @@ package architecture
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,52 @@ func TestReachabilityRejectsGuardCalledOnlyByTest(t *testing.T) {
 		t.Fatalf("test-only guard caller was not rejected exactly: %v", err)
 	}
 	t.Logf("mutant=test-only-shadow killed_in=%s", time.Since(started))
+}
+
+func TestReachabilityRejectsBuildExcludedCallers(t *testing.T) {
+	module := "example.test/reachability"
+	excludedGOOS := "windows"
+	if runtime.GOOS == excludedGOOS {
+		excludedGOOS = "linux"
+	}
+	tests := []struct {
+		name       string
+		callerPath string
+		buildLine  string
+	}{
+		{name: "build-ignore", callerPath: "internal/app/caller.go", buildLine: "//go:build ignore\n\n"},
+		{name: "platform-excluded", callerPath: "internal/app/caller_" + excludedGOOS + ".go"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			started := time.Now()
+			root := t.TempDir()
+			writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nfunc EnforceAuthority() {}\n")
+			writeGoFixture(t, root, test.callerPath, test.buildLine+
+				"package app\nimport guardpkg \"example.test/reachability/internal/guard\"\nfunc useGuard() { guardpkg.EnforceAuthority() }\n")
+			target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerExternalPackage}
+			err := CheckReachability(root, module, []ReachabilityTarget{target})
+			if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) ||
+				!strings.Contains(err.Error(), target.Package) || !strings.Contains(err.Error(), "symbol=EnforceAuthority") {
+				t.Fatalf("build-excluded caller satisfied reachability: %v", err)
+			}
+			t.Logf("mutant=%s-caller killed_in=%s", test.name, time.Since(started))
+		})
+	}
+}
+
+func TestReachabilityRejectsTargetSelfRecursion(t *testing.T) {
+	started := time.Now()
+	root := t.TempDir()
+	module := "example.test/reachability"
+	writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nfunc EnforceAuthority() { EnforceAuthority() }\n")
+	target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerSamePackageProduction}
+	err := CheckReachability(root, module, []ReachabilityTarget{target})
+	if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) ||
+		!strings.Contains(err.Error(), target.Package) || !strings.Contains(err.Error(), "symbol=EnforceAuthority") {
+		t.Fatalf("self-recursive target satisfied reachability: %v", err)
+	}
+	t.Logf("mutant=self-recursive-target killed_in=%s", time.Since(started))
 }
 
 func TestReachabilityCallerPolicies(t *testing.T) {

@@ -3,6 +3,7 @@ package architecture
 import (
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/constant"
 	"go/importer"
 	"go/parser"
@@ -143,6 +144,13 @@ func loadTypedProductionSources(root, modulePath string) ([]*productionSourcePac
 		if filepath.Ext(filePath) != ".go" || strings.HasSuffix(filePath, "_test.go") {
 			return nil
 		}
+		matched, err := build.Default.MatchFile(filepath.Dir(filePath), entry.Name())
+		if err != nil {
+			return fmt.Errorf("match production source %s against active build: %w", filePath, err)
+		}
+		if !matched {
+			return nil
+		}
 		relativeDir, err := filepath.Rel(root, filepath.Dir(filePath))
 		if err != nil {
 			return err
@@ -193,8 +201,29 @@ func calledObject(expression ast.Expr, info *types.Info) types.Object {
 	}
 }
 
+func targetFunctionBodies(parsed *ast.File, info *types.Info, targets map[types.Object]ReachabilityTarget) map[types.Object]*ast.BlockStmt {
+	bodies := make(map[types.Object]*ast.BlockStmt)
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		object := info.Defs[function.Name]
+		if _, registered := targets[object]; registered {
+			bodies[object] = function.Body
+		}
+	}
+	return bodies
+}
+
+func isTargetSelfCall(call *ast.CallExpr, called types.Object, targetBodies map[types.Object]*ast.BlockStmt) bool {
+	body := targetBodies[called]
+	return body != nil && body.Pos() <= call.Pos() && call.End() <= body.End()
+}
+
 // CheckReachability parses production Go files and verifies the curated
-// targets. Files ending in _test.go never satisfy a target.
+// targets. Test files and files excluded from the active Go build never
+// satisfy a target.
 func CheckReachability(root, modulePath string, targets []ReachabilityTarget) error {
 	if modulePath == "" {
 		return fmt.Errorf("reachability module path is required")
@@ -242,13 +271,18 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 	}
 	for _, source := range packages {
 		for _, parsed := range source.files {
+			targetBodies := targetFunctionBodies(parsed, source.info, objects)
 			ast.Inspect(parsed, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
-				target, ok := objects[calledObject(call.Fun, source.info)]
+				called := calledObject(call.Fun, source.info)
+				target, ok := objects[called]
 				if !ok {
+					return true
+				}
+				if isTargetSelfCall(call, called, targetBodies) {
 					return true
 				}
 				if source.importPath == target.Package {
