@@ -17,7 +17,7 @@ The implementation remains intentionally small. It introduces no provider, serve
 **Testing**: Go unit tests, contract tests, black-box temporary-repository scenarios, race detector, staticcheck, govulncheck, architecture mutants, focused repeated tests, and scheduled fault/soak campaigns  
 **Target Platform**: Local Linux/macOS developer hosts; one control-store owner per machine/filesystem authority  
 **Project Type**: Single Go module organized by product capability  
-**Performance Goals**: Pull-request validation completes within 8 minutes at p95 over ten representative runs; isolated contention regression succeeds 20 consecutive times  
+**Performance Goals**: Pull-request validation completes within 8 minutes at p95 over ten representative runs on the declared qualification reference host; hosted runs retain comparable evidence until ten samples support a separate hosted baseline; isolated contention regression succeeds 20 consecutive times  
 **Constraints**: No Phase 2 integrations, no Python runtime or Markdown parsing in production, no donor-source copying, no weakening of Phase 1 authority invariants  
 **Scale/Scope**: Approximately fifteen existing production packages, one schema migration, two CI campaigns, and one version-pinned external-contract mapping
 
@@ -153,7 +153,7 @@ Makefile                         # named local quality campaigns
 1. Add portable `Commitment`, `Entry`, and `Context` values with validation and deterministic framed hashing.
 2. Add `GovernanceContextID` to the typed ID vocabulary.
 3. Require new `StartRunRequest` values to carry a validated governance-context reference.
-4. Extend the store contract so context persistence and run creation are one store-owned transaction.
+4. Extend the admission and recovery contracts, production command constructor, and adapter persistence so context persistence and run creation are one store-owned transaction and replay carries the identical context.
 5. Add SQLite tables for contexts and ordered entries plus a nullable run foreign key.
 6. Preserve existing rows with `NULL`, interpreted only as `unknown_pre_provenance`.
 7. Add a database trigger or equivalent adapter constraint preventing newly admitted runs from referencing missing context rows.

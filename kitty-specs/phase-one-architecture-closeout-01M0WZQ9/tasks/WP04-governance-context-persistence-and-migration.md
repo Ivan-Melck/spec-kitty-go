@@ -33,6 +33,10 @@ owned_files:
 - internal/controlstore/sqlite/migrations.go
 - internal/controlstore/sqlite/db.go
 - internal/controlstore/sqlite/authority.go
+- internal/controlstore/sqlite/start_run.go
+- internal/controlstore/sqlite/start_run_test.go
+- internal/controlstore/sqlite/recovery.go
+- internal/controlstore/sqlite/recovery_test.go
 - internal/controlstore/sqlite/governance_context.go
 - internal/controlstore/sqlite/governance_context_test.go
 role: implementer
@@ -112,7 +116,7 @@ This WP depends on WP03 and must use its dependency-resolved lane base. The miss
 4. Insert the run with its context foreign key in the same transaction.
 5. Preserve same-operation replay and concurrent claim semantics.
 
-**Files**: `authority.go`, new `governance_context.go`.
+**Files**: `authority.go`, `start_run.go`, `recovery.go`, new `governance_context.go`, and focused tests.
 
 ### T019: Read and inspect context through immutable run ownership
 
@@ -138,7 +142,7 @@ This WP depends on WP03 and must use its dependency-resolved lane base. The miss
 2. Create a new run and verify valid context linkage.
 3. Attempt missing context, rebound ID, reordered entries, and partial writes.
 4. Reopen the database and confirm replay/recovery returns identical context.
-5. Run focused race tests and record T016–T020 completion events.
+5. Prove the durable start envelope and terminal result expose the same context identity and aggregate after replay, then run focused race tests and record T016–T020 completion events.
 
 **Validation**:
 

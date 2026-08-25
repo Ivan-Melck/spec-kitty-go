@@ -12,5 +12,7 @@
   "purpose_tldr": "Harden the proven authority kernel so provider integration can begin without weakening its boundaries.",
   "slug": "phase-one-architecture-closeout-01M0WZQ9",
   "target_branch": "feat/phase-one-architecture-closeout",
-  "topology": "coord"
+  "topology": "coord",
+  "vcs": "git",
+  "vcs_locked_at": "2026-08-25T18:01:30.752801+00:00"
 }

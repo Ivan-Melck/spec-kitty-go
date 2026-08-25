@@ -3,7 +3,7 @@
 ## Quality campaign
 
 **Triggers**: pull request and push to the PR-bound branch.  
-**Budget**: p95 below eight minutes over ten representative runs.  
+**Budget**: p95 below eight minutes over ten representative runs on the declared qualification reference host. Hosted CI retains the same timing fields on every run and publishes a distinct hosted baseline only after ten comparable samples exist.  
 **Contents**:
 
 - formatting and build preflight;

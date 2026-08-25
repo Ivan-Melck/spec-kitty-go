@@ -34,6 +34,10 @@ work_packages:
       - "internal/execution/lease_test.go"
       - "internal/execution/start.go"
       - "internal/execution/start_test.go"
+      - "internal/execution/recovery.go"
+      - "internal/execution/recovery_test.go"
+      - "internal/helpercmd/start_run.go"
+      - "internal/helpercmd/start_run_test.go"
       - "internal/controlstore/store.go"
     requirement_refs: [FR-010, NFR-006, NFR-008, C-002, C-004, C-005, C-007]
     plan_concern_refs: [IC-04]
@@ -47,6 +51,10 @@ work_packages:
       - "internal/controlstore/sqlite/migrations.go"
       - "internal/controlstore/sqlite/db.go"
       - "internal/controlstore/sqlite/authority.go"
+      - "internal/controlstore/sqlite/start_run.go"
+      - "internal/controlstore/sqlite/start_run_test.go"
+      - "internal/controlstore/sqlite/recovery.go"
+      - "internal/controlstore/sqlite/recovery_test.go"
       - "internal/controlstore/sqlite/governance_context.go"
       - "internal/controlstore/sqlite/governance_context_test.go"
     requirement_refs: [FR-010, FR-011, NFR-006, NFR-007, NFR-008, C-002, C-004, C-007]
