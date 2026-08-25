@@ -29,7 +29,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: closed capability-tier import policy, bounded Go graph loading, curated production reachability, deferred-surface guards, and repeated mutant coverage",
-        "Ready for review: live architecture command, semantic Git adapter boundary, non-vacuous reachability registry, and strengthened deferred-runtime detection"
+        "Ready for review: live architecture command, semantic Git adapter boundary, non-vacuous reachability registry, and strengthened deferred-runtime detection",
+        "Ready for review: validated live diagnostics and cross-file Python runtime aliases"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
