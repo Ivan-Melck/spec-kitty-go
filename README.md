@@ -270,12 +270,12 @@ sequenceDiagram
     participant B as Process B
     participant W2 as Workspace W2
 
-    A->>K: claim work; receive lease 17
+    A->>K: claim work and receive lease 17
     K->>W1: create and bind W1 to lease 17
     A->>W1: implement
     Note over A,K: A stops heartbeating but remains alive
-    K->>K: expire lease 17; quarantine W1
-    B->>K: replacement claim; receive lease 18
+    K->>K: expire lease 17 and quarantine W1
+    B->>K: replacement claim receives lease 18
     K->>W2: create and bind fresh W2 to lease 18
     A-->>W1: zombie resumes writing
     Note over W1,K: W1 cannot be handed off under lease 18
