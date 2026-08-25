@@ -1,7 +1,7 @@
 {
   "event_count": 44,
-  "last_event_id": "01M0X79YTE3QCP1HEKBXVG1T2D",
-  "materialized_at": "2026-08-25T19:45:40.174831+00:00",
+  "last_event_id": "01M0X7AW44AKBX1WHKCNHMW6D2",
+  "materialized_at": "2026-08-25T19:46:10.180281+00:00",
   "mission_number": "",
   "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
   "mission_type": "",
@@ -92,8 +92,8 @@
       "agent_profile_version": "1.0",
       "force_count": 4,
       "lane": "in_review",
-      "last_event_id": "01M0X79YTE3QCP1HEKBXVG1T2D",
-      "last_transition_at": "2026-08-25T19:45:40.174831+00:00",
+      "last_event_id": "01M0X7AW44AKBX1WHKCNHMW6D2",
+      "last_transition_at": "2026-08-25T19:46:10.180281+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: immutable ordered governance contexts, framed SHA-256 commitments, run admission/result/recovery propagation, narrow store contract, and explicit synthetic helper context; focused, race, vet, and build gates pass. Transition override: mission has no configured pre-review gate contract and lane history contains pre-existing shared artifacts.",
