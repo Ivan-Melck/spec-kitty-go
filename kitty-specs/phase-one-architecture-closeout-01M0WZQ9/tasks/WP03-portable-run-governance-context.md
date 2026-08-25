@@ -38,6 +38,10 @@ owned_files:
 - internal/execution/lease_test.go
 - internal/execution/start.go
 - internal/execution/start_test.go
+- internal/execution/recovery.go
+- internal/execution/recovery_test.go
+- internal/helpercmd/start_run.go
+- internal/helpercmd/start_run_test.go
 - internal/controlstore/store.go
 role: implementer
 tags: []
@@ -128,9 +132,9 @@ Use the lane worktree assigned after task finalization. Planning and merge targe
 2. Add context ID and aggregate to the run capsule/result.
 3. Ensure same-operation replay returns identical context identity.
 4. Ensure replacement lease behavior retains the run context.
-5. Update start/lease tests and test collaborators without adding duplicate lease fields.
+5. Update start, lease, recovery, and helper-command construction tests without adding duplicate lease fields; the Phase 1 helper may construct an explicitly synthetic test context, but must not omit provenance silently.
 
-**Files**: execution model, lease/start implementation and tests.
+**Files**: execution model, lease/start/recovery implementation and tests, and the Phase 1 helper start command and tests.
 
 ### T015: Extend portable control-store contracts and test collaborators
 
@@ -140,7 +144,7 @@ Use the lane worktree assigned after task finalization. Planning and merge targe
 
 1. Extend the repository contract to persist/resolve a context as part of claim.
 2. Define conflict behavior for an existing ID with different content.
-3. Update all fake/recording repositories to inspect and return context consistently.
+3. Update all owned fake/recording repositories and durable recovery envelopes to inspect and return context consistently.
 4. Keep the port consumer-owned and narrow.
 5. Record T011–T015 completion in the event log.
 
