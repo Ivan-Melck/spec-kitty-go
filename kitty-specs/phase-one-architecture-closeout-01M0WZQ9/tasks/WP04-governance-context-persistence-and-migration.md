@@ -2,6 +2,8 @@
 work_package_id: WP04
 title: Governance Context Persistence and Migration
 dependencies:
+- WP01
+- WP02
 - WP03
 requirement_refs:
 - C-002
@@ -27,6 +29,11 @@ authoritative_surface: internal/controlstore/sqlite/
 create_intent:
 - internal/controlstore/sqlite/governance_context.go
 - internal/controlstore/sqlite/governance_context_test.go
+- internal/controlstore/sqlite/authority_test.go
+- internal/controlstore/sqlite/handoff_review_test.go
+- internal/controlstore/sqlite/workgraph_test.go
+- internal/scenario/repetition_test.go
+- internal/scenario/zombie_test.go
 execution_mode: code_change
 model: ''
 owned_files:
