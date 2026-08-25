@@ -156,10 +156,10 @@ This WP begins after WP01, WP02, and WP04 are integrated into its lane base. The
 
 **Steps**:
 
-1. Run the quality target ten times and compute p95.
+1. Declare the qualification reference host, run the quality target ten times there, and compute p95.
 2. Run one complete campaign locally.
 3. Verify architecture/authority mutants and test census.
-4. Confirm action pins, permissions, timeout, concurrency, and retention settings.
+4. Confirm action pins, permissions, timeout, concurrency, retention settings, and that every hosted run emits comparable timing evidence without claiming hosted p95 before ten samples exist.
 5. Record T021–T026 completion events; leave durable aggregate evidence for WP06.
 
 **Validation**:
