@@ -207,6 +207,7 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 // graph cannot represent without returning to broad textual name matching.
 func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 	seen := make(map[Violation]bool)
+	packageFiles := make(map[string][]string)
 	err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -224,7 +225,21 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 		if filepath.Ext(filePath) != ".go" || strings.HasSuffix(filePath, "_test.go") {
 			return nil
 		}
-		relativeDir, err := filepath.Rel(root, filepath.Dir(filePath))
+		packageFiles[filepath.Dir(filePath)] = append(packageFiles[filepath.Dir(filePath)], filePath)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	directories := make([]string, 0, len(packageFiles))
+	for directory := range packageFiles {
+		directories = append(directories, directory)
+	}
+	sort.Strings(directories)
+	for _, directory := range directories {
+		paths := packageFiles[directory]
+		sort.Strings(paths)
+		relativeDir, err := filepath.Rel(root, directory)
 		if err != nil {
 			return err
 		}
@@ -233,32 +248,19 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 			packagePath += "/" + filepath.ToSlash(relativeDir)
 		}
 		fileSet := token.NewFileSet()
-		parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
-		if err != nil {
-			return fmt.Errorf("parse production source %s: %w", filePath, err)
-		}
-		execAliases := make(map[string]bool)
-		dotExec := false
-		for _, declaration := range parsed.Imports {
-			importPath, err := strconv.Unquote(declaration.Path.Value)
+		parsedFiles := make([]*ast.File, 0, len(paths))
+		packageName := ""
+		for _, filePath := range paths {
+			parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
 			if err != nil {
-				return fmt.Errorf("parse import in %s: %w", filePath, err)
+				return fmt.Errorf("parse production source %s: %w", filePath, err)
 			}
-			if importPath != "os/exec" {
-				continue
+			if packageName == "" {
+				packageName = parsed.Name.Name
+			} else if parsed.Name.Name != packageName {
+				return fmt.Errorf("production package %s contains package names %q and %q", packagePath, packageName, parsed.Name.Name)
 			}
-			alias := "exec"
-			if declaration.Name != nil {
-				alias = declaration.Name.Name
-			}
-			if alias == "." {
-				dotExec = true
-			} else if alias != "_" {
-				execAliases[alias] = true
-			}
-		}
-		if len(execAliases) == 0 && !dotExec {
-			return nil
+			parsedFiles = append(parsedFiles, parsed)
 		}
 		typeInfo := &types.Info{
 			Types: make(map[ast.Expr]types.TypeAndValue),
@@ -266,61 +268,68 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 			Uses:  make(map[*ast.Ident]types.Object),
 		}
 		config := types.Config{Importer: importer.Default(), Error: func(error) {}}
-		_, _ = config.Check(packagePath, fileSet, []*ast.File{parsed}, typeInfo)
+		_, _ = config.Check(packagePath, fileSet, parsedFiles, typeInfo)
 		bindings := make(map[types.Object]ast.Expr)
-		ast.Inspect(parsed, func(node ast.Node) bool {
-			specification, ok := node.(*ast.ValueSpec)
-			if !ok || len(specification.Names) != len(specification.Values) {
-				return true
-			}
-			for index, name := range specification.Names {
-				if object := typeInfo.Defs[name]; object != nil {
-					bindings[object] = specification.Values[index]
+		for _, parsed := range parsedFiles {
+			ast.Inspect(parsed, func(node ast.Node) bool {
+				specification, ok := node.(*ast.ValueSpec)
+				if !ok || len(specification.Names) != len(specification.Values) {
+					return true
 				}
-			}
-			return true
-		})
-		ast.Inspect(parsed, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok || len(call.Args) == 0 {
-				return true
-			}
-			commandFunction := ""
-			switch function := call.Fun.(type) {
-			case *ast.SelectorExpr:
-				identifier, ok := function.X.(*ast.Ident)
-				if ok && execAliases[identifier.Name] {
-					commandFunction = function.Sel.Name
+				for index, name := range specification.Names {
+					if object := typeInfo.Defs[name]; object != nil {
+						bindings[object] = specification.Values[index]
+					}
 				}
-			case *ast.Ident:
-				if dotExec {
-					commandFunction = function.Name
+				return true
+			})
+		}
+		for _, parsed := range parsedFiles {
+			execAliases, dotExec, err := execImportNames(parsed)
+			if err != nil {
+				return err
+			}
+			if len(execAliases) == 0 && !dotExec {
+				continue
+			}
+			ast.Inspect(parsed, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || len(call.Args) == 0 {
+					return true
 				}
-			}
-			if commandFunction != "Command" && commandFunction != "CommandContext" {
+				commandFunction := ""
+				switch function := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					identifier, ok := function.X.(*ast.Ident)
+					if ok && execAliases[identifier.Name] {
+						commandFunction = function.Sel.Name
+					}
+				case *ast.Ident:
+					if dotExec {
+						commandFunction = function.Name
+					}
+				}
+				if commandFunction != "Command" && commandFunction != "CommandContext" {
+					return true
+				}
+				argumentIndex := 0
+				if commandFunction == "CommandContext" {
+					argumentIndex = 1
+				}
+				if len(call.Args) <= argumentIndex {
+					return true
+				}
+				command, ok := staticStringValue(call.Args[argumentIndex], typeInfo, bindings, make(map[types.Object]bool))
+				if !ok {
+					return true
+				}
+				if !isPythonRuntime(command) {
+					return true
+				}
+				seen[Violation{Rule: RuleDeferredSurface, SourcePackage: packagePath, TargetPackage: "runtime:" + command}] = true
 				return true
-			}
-			argumentIndex := 0
-			if commandFunction == "CommandContext" {
-				argumentIndex = 1
-			}
-			if len(call.Args) <= argumentIndex {
-				return true
-			}
-			command, ok := staticStringValue(call.Args[argumentIndex], typeInfo, bindings, make(map[types.Object]bool))
-			if !ok {
-				return true
-			}
-			if !isPythonRuntime(command) {
-				return true
-			}
-			seen[Violation{Rule: RuleDeferredSurface, SourcePackage: packagePath, TargetPackage: "runtime:" + command}] = true
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		return err
+			})
+		}
 	}
 	violations := make(Violations, 0, len(seen))
 	for violation := range seen {
@@ -336,6 +345,30 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 		return violations
 	}
 	return nil
+}
+
+func execImportNames(parsed *ast.File) (map[string]bool, bool, error) {
+	aliases := make(map[string]bool)
+	dotImport := false
+	for _, declaration := range parsed.Imports {
+		importPath, err := strconv.Unquote(declaration.Path.Value)
+		if err != nil {
+			return nil, false, fmt.Errorf("parse import %s: %w", declaration.Path.Value, err)
+		}
+		if importPath != "os/exec" {
+			continue
+		}
+		alias := "exec"
+		if declaration.Name != nil {
+			alias = declaration.Name.Name
+		}
+		if alias == "." {
+			dotImport = true
+		} else if alias != "_" {
+			aliases[alias] = true
+		}
+	}
+	return aliases, dotImport, nil
 }
 
 func staticStringValue(expression ast.Expr, info *types.Info, bindings map[types.Object]ast.Expr, visiting map[types.Object]bool) (string, bool) {

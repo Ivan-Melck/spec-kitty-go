@@ -177,3 +177,17 @@ func TestDeferredRuntimeSurfaceRejectsConstantAliasesAndDotImport(t *testing.T) 
 		})
 	}
 }
+
+func TestDeferredRuntimeSurfaceRejectsPackageAliasDeclaredInAnotherFile(t *testing.T) {
+	root := t.TempDir()
+	module := "example.test/reachability"
+	writeGoFixture(t, root, "internal/guard/runtime.go", "package guard\nconst runtimeName = \"python3\"\n")
+	writeGoFixture(t, root, "internal/guard/runner.go", "package guard\nimport \"os/exec\"\nfunc run() { _ = exec.Command(runtimeName) }\n")
+
+	err := CheckDeferredRuntimeSurfaces(root, module)
+	if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) ||
+		!strings.Contains(err.Error(), module+"/internal/guard") ||
+		!strings.Contains(err.Error(), "runtime:python3") {
+		t.Fatalf("cross-file Python runtime alias survived: %v", err)
+	}
+}

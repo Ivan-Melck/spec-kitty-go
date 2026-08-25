@@ -129,6 +129,10 @@ type Violations []Violation
 func (v Violations) Error() string {
 	parts := make([]string, len(v))
 	for index := range v {
+		if err := v[index].Validate(); err != nil {
+			parts[index] = fmt.Sprintf("invalid architecture violation[%d]: %v", index, err)
+			continue
+		}
 		parts[index] = v[index].Error()
 	}
 	return strings.Join(parts, "\n")

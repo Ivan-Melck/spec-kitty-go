@@ -152,6 +152,10 @@ func TestTierRuleAndViolationValueValidation(t *testing.T) {
 	if err := (Violation{Rule: RuleLocalDirection, SourcePackage: "source"}).Validate(); err == nil {
 		t.Fatal("violation without exact target accepted")
 	}
+	malformed := Violations{{Rule: RuleID("ARCH-TYPO"), SourcePackage: "source", TargetPackage: "target"}}.Error()
+	if !strings.Contains(malformed, "invalid architecture violation") || !strings.Contains(malformed, "ARCH-TYPO") {
+		t.Fatalf("live diagnostic path did not reject malformed violation: %q", malformed)
+	}
 }
 
 func fixturePolicy(t *testing.T) Policy {
