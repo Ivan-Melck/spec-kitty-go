@@ -1,7 +1,8 @@
 ---
 work_package_id: WP01
 title: Permanent Architecture and Reachability Guard
-dependencies: []
+dependencies:
+- WP03
 requirement_refs:
 - C-001
 - C-003
@@ -34,11 +35,23 @@ create_intent:
 - internal/architecture/graph.go
 - internal/architecture/reachability.go
 - internal/architecture/reachability_test.go
+- internal/gitrepo/handoff.go
+- internal/gitrepo/handoff_test.go
+- internal/helpercmd/architecture_check.go
+- internal/helpercmd/architecture_check_test.go
 execution_mode: code_change
 model: ''
 owned_files:
 - internal/architecture/**
 - internal/scenario/repetition_test.go
+- internal/handoff/git.go
+- internal/handoff/git_test.go
+- internal/gitrepo/handoff.go
+- internal/gitrepo/handoff_test.go
+- internal/helpercmd/review.go
+- internal/helpercmd/root.go
+- internal/helpercmd/architecture_check.go
+- internal/helpercmd/architecture_check_test.go
 role: implementer
 tags: []
 tracker_refs: []
