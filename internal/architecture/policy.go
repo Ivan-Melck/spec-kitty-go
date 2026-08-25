@@ -15,7 +15,6 @@ const (
 	TierFoundation       TierName = "typed-foundation"
 	TierAuthority        TierName = "authority-capability"
 	TierProviderContract TierName = "provider-contract"
-	TierInfrastructure   TierName = "provider-neutral-infrastructure"
 	TierAdapter          TierName = "provider-adapter"
 	TierComposition      TierName = "composition-root"
 	TierQuality          TierName = "quality-tooling"
@@ -140,7 +139,7 @@ func (v Violations) Error() string {
 // policy diff.
 func DefaultPolicy(modulePath string) (Policy, error) {
 	pkg := func(relative string) PackagePattern { return ExactPackage(modulePath + "/" + relative) }
-	allRuntime := []TierName{TierFoundation, TierAuthority, TierProviderContract, TierInfrastructure, TierAdapter, TierComposition}
+	allRuntime := []TierName{TierFoundation, TierAuthority, TierProviderContract, TierAdapter, TierComposition}
 	policy := Policy{
 		ModulePath: modulePath,
 		Tiers: []Tier{
@@ -155,7 +154,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 					pkg("internal/execution"), pkg("internal/handoff"), pkg("internal/integration"),
 					pkg("internal/review"), pkg("internal/workgraph"), pkg("internal/workspace"),
 				},
-				AllowedLocalTargets: []TierName{TierFoundation, TierAuthority, TierProviderContract, TierInfrastructure},
+				AllowedLocalTargets: []TierName{TierFoundation, TierAuthority, TierProviderContract},
 			},
 			{
 				Name: TierProviderContract, Production: true,
@@ -163,20 +162,15 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				AllowedLocalTargets: []TierName{TierFoundation, TierAuthority, TierProviderContract},
 			},
 			{
-				Name: TierInfrastructure, Production: true,
-				Packages:            []PackagePattern{pkg("internal/gitrepo")},
-				AllowedLocalTargets: []TierName{TierFoundation, TierAuthority, TierProviderContract, TierInfrastructure},
-			},
-			{
 				Name: TierAdapter, Production: true, ProviderAdapter: true,
-				Packages:                []PackagePattern{pkg("internal/controlstore/sqlite"), pkg("internal/tracker/fake")},
-				AllowedLocalTargets:     []TierName{TierFoundation, TierAuthority, TierProviderContract, TierInfrastructure, TierAdapter},
+				Packages:                []PackagePattern{pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake")},
+				AllowedLocalTargets:     []TierName{TierFoundation, TierAuthority, TierProviderContract, TierAdapter},
 				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
 			},
 			{
 				Name: TierComposition, Production: true,
 				Packages:            []PackagePattern{pkg("internal/helpercmd"), pkg("cmd/spk-phase1-helper")},
-				AllowedLocalTargets: append([]TierName(nil), allRuntime...),
+				AllowedLocalTargets: append(append([]TierName(nil), allRuntime...), TierQuality),
 			},
 			{
 				Name: TierQuality, Production: false,

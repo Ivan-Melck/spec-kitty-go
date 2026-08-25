@@ -53,30 +53,67 @@ func TestReachabilityCallerPolicies(t *testing.T) {
 func TestDefaultReachabilityRegistryPassesCurrentRepository(t *testing.T) {
 	root := architectureRepositoryRoot(t)
 	module := "github.com/spec-kitty/go-kitty3"
+	want := map[string]bool{
+		module + "/internal/handoff.VerifyCandidateAuthority": false,
+		module + "/internal/gitrepo.NewHandoffVerifier":       false,
+	}
+	for _, target := range DefaultReachabilityTargets(module) {
+		key := target.Package + "." + target.Symbol
+		if _, ok := want[key]; ok {
+			want[key] = true
+		}
+	}
+	for target, found := range want {
+		if !found {
+			t.Errorf("mandatory reachability target missing: %s", target)
+		}
+	}
 	if err := CheckReachability(root, module, DefaultReachabilityTargets(module)); err != nil {
 		t.Fatalf("current production reachability rejected: %v", err)
 	}
 }
 
-func TestRemovingRegisteredTargetsOnlyProductionCallerReddensFixture(t *testing.T) {
-	started := time.Now()
-	root := t.TempDir()
+func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *testing.T) {
 	module := "github.com/spec-kitty/go-kitty3"
-	writeGoFixture(t, root, "internal/integration/service.go", "package integration\nfunc NewService() {}\n")
-	callerPath := filepath.Join(root, "internal", "helpercmd", "integration.go")
-	writeGoFixture(t, root, "internal/helpercmd/integration.go", "package helpercmd\nimport \"github.com/spec-kitty/go-kitty3/internal/integration\"\nfunc compose() { integration.NewService() }\n")
-	targets := DefaultReachabilityTargets(module)
-	if err := CheckReachability(root, module, targets); err != nil {
-		t.Fatalf("registered target fixture rejected: %v", err)
+	fixtures := []struct {
+		name        string
+		declaration string
+		callerPath  string
+		caller      string
+		target      ReachabilityTarget
+	}{
+		{
+			name: "authority-guard", declaration: "package handoff\nfunc VerifyCandidateAuthority() {}\n",
+			callerPath: "internal/gitrepo/handoff.go", caller: "package gitrepo\nimport \"github.com/spec-kitty/go-kitty3/internal/handoff\"\nfunc verify() { handoff.VerifyCandidateAuthority() }\n",
+			target: ReachabilityTarget{Package: module + "/internal/handoff", Symbol: "VerifyCandidateAuthority", RequiredCallerClass: CallerExternalPackage},
+		},
+		{
+			name: "git-adapter", declaration: "package gitrepo\nfunc NewHandoffVerifier() {}\n",
+			callerPath: "internal/helpercmd/review.go", caller: "package helpercmd\nimport \"github.com/spec-kitty/go-kitty3/internal/gitrepo\"\nfunc compose() { gitrepo.NewHandoffVerifier() }\n",
+			target: ReachabilityTarget{Package: module + "/internal/gitrepo", Symbol: "NewHandoffVerifier", RequiredCallerClass: CallerExternalPackage},
+		},
 	}
-	if err := os.WriteFile(callerPath, []byte("package helpercmd\nfunc compose() {}\n"), 0o600); err != nil {
-		t.Fatal(err)
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			started := time.Now()
+			root := t.TempDir()
+			declarationPath := strings.TrimPrefix(strings.TrimSuffix(fixture.target.Package, "/")+"/target.go", module+"/")
+			writeGoFixture(t, root, declarationPath, fixture.declaration)
+			callerPath := filepath.Join(root, filepath.FromSlash(fixture.callerPath))
+			writeGoFixture(t, root, fixture.callerPath, fixture.caller)
+			if err := CheckReachability(root, module, []ReachabilityTarget{fixture.target}); err != nil {
+				t.Fatalf("registered target fixture rejected: %v", err)
+			}
+			if err := os.WriteFile(callerPath, []byte(strings.Split(fixture.caller, "func")[0]), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := CheckReachability(root, module, []ReachabilityTarget{fixture.target})
+			if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) || !strings.Contains(err.Error(), "symbol="+fixture.target.Symbol) {
+				t.Fatalf("removed sole production caller did not implicate registered target: %v", err)
+			}
+			t.Logf("mutant=%s-production-caller-removal killed_in=%s", fixture.name, time.Since(started))
+		})
 	}
-	err := CheckReachability(root, module, targets)
-	if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) || !strings.Contains(err.Error(), "symbol=NewService") {
-		t.Fatalf("removed sole production caller did not implicate registered target: %v", err)
-	}
-	t.Logf("mutant=registered-production-caller-removal killed_in=%s", time.Since(started))
 }
 
 func TestReachabilityRejectsMissingRegisteredTarget(t *testing.T) {
@@ -103,5 +140,40 @@ func TestDeferredRuntimeSurfaceRejectsProductionPythonButIgnoresTests(t *testing
 	}
 	if err := CheckDeferredRuntimeSurfaces(root, module); err != nil {
 		t.Fatalf("test-only Python runtime must not count: %v", err)
+	}
+}
+
+func TestDeferredRuntimeSurfaceRejectsConstantAliasesAndDotImport(t *testing.T) {
+	module := "example.test/reachability"
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "constant-alias",
+			source: "package guard\nimport cmd \"os/exec\"\nconst interpreter = pythonRuntime\nconst pythonRuntime = \"/usr/bin/\" + \"python3\"\nfunc run() { _ = cmd.Command(interpreter) }\n",
+			want:   "runtime:/usr/bin/python3",
+		},
+		{
+			name:   "dot-import",
+			source: "package guard\nimport . \"os/exec\"\nfunc run() { _ = Command(\"pypy3\") }\n",
+			want:   "runtime:pypy3",
+		},
+		{
+			name:   "variable-alias",
+			source: "package guard\nimport \"os/exec\"\nvar interpreter = pythonRuntime\nvar pythonRuntime = \"python3.12\"\nfunc run() { _ = exec.Command(interpreter) }\n",
+			want:   "runtime:python3.12",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeGoFixture(t, root, "internal/guard/guard.go", test.source)
+			err := CheckDeferredRuntimeSurfaces(root, module)
+			if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Python runtime mutant survived: %v", err)
+			}
+		})
 	}
 }

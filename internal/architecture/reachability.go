@@ -3,8 +3,11 @@ package architecture
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"path"
 	"path/filepath"
@@ -30,14 +33,19 @@ type ReachabilityTarget struct {
 	RequiredCallerClass CallerClass
 }
 
-// DefaultReachabilityTargets returns the curated production registry. The
-// integration constructor is a real composition seam with one external
-// production caller in internal/helpercmd.
+// DefaultReachabilityTargets returns the curated production registry. It
+// contains one authority guard and one concrete adapter composition seam.
 func DefaultReachabilityTargets(modulePath string) []ReachabilityTarget {
-	return []ReachabilityTarget{{
-		Package: modulePath + "/internal/integration", Symbol: "NewService",
-		RequiredCallerClass: CallerExternalPackage,
-	}}
+	return []ReachabilityTarget{
+		{
+			Package: modulePath + "/internal/handoff", Symbol: "VerifyCandidateAuthority",
+			RequiredCallerClass: CallerExternalPackage,
+		},
+		{
+			Package: modulePath + "/internal/gitrepo", Symbol: "NewHandoffVerifier",
+			RequiredCallerClass: CallerExternalPackage,
+		},
+	}
 }
 
 // ReachabilityViolation is a stable symbol-oriented diagnostic.
@@ -119,7 +127,8 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 		if relativeDir != "." {
 			packagePath += "/" + filepath.ToSlash(relativeDir)
 		}
-		parsed, err := parser.ParseFile(token.NewFileSet(), filePath, nil, 0)
+		fileSet := token.NewFileSet()
+		parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
 		if err != nil {
 			return fmt.Errorf("parse production source %s: %w", filePath, err)
 		}
@@ -223,11 +232,13 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 		if relativeDir != "." {
 			packagePath += "/" + filepath.ToSlash(relativeDir)
 		}
-		parsed, err := parser.ParseFile(token.NewFileSet(), filePath, nil, 0)
+		fileSet := token.NewFileSet()
+		parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
 		if err != nil {
 			return fmt.Errorf("parse production source %s: %w", filePath, err)
 		}
 		execAliases := make(map[string]bool)
+		dotExec := false
 		for _, declaration := range parsed.Imports {
 			importPath, err := strconv.Unquote(declaration.Path.Value)
 			if err != nil {
@@ -240,36 +251,67 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 			if declaration.Name != nil {
 				alias = declaration.Name.Name
 			}
-			if alias != "_" && alias != "." {
+			if alias == "." {
+				dotExec = true
+			} else if alias != "_" {
 				execAliases[alias] = true
 			}
 		}
+		if len(execAliases) == 0 && !dotExec {
+			return nil
+		}
+		typeInfo := &types.Info{
+			Types: make(map[ast.Expr]types.TypeAndValue),
+			Defs:  make(map[*ast.Ident]types.Object),
+			Uses:  make(map[*ast.Ident]types.Object),
+		}
+		config := types.Config{Importer: importer.Default(), Error: func(error) {}}
+		_, _ = config.Check(packagePath, fileSet, []*ast.File{parsed}, typeInfo)
+		bindings := make(map[types.Object]ast.Expr)
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			specification, ok := node.(*ast.ValueSpec)
+			if !ok || len(specification.Names) != len(specification.Values) {
+				return true
+			}
+			for index, name := range specification.Names {
+				if object := typeInfo.Defs[name]; object != nil {
+					bindings[object] = specification.Values[index]
+				}
+			}
+			return true
+		})
 		ast.Inspect(parsed, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
 			if !ok || len(call.Args) == 0 {
 				return true
 			}
-			selector, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || (selector.Sel.Name != "Command" && selector.Sel.Name != "CommandContext") {
-				return true
+			commandFunction := ""
+			switch function := call.Fun.(type) {
+			case *ast.SelectorExpr:
+				identifier, ok := function.X.(*ast.Ident)
+				if ok && execAliases[identifier.Name] {
+					commandFunction = function.Sel.Name
+				}
+			case *ast.Ident:
+				if dotExec {
+					commandFunction = function.Name
+				}
 			}
-			identifier, ok := selector.X.(*ast.Ident)
-			if !ok || !execAliases[identifier.Name] {
+			if commandFunction != "Command" && commandFunction != "CommandContext" {
 				return true
 			}
 			argumentIndex := 0
-			if selector.Sel.Name == "CommandContext" {
+			if commandFunction == "CommandContext" {
 				argumentIndex = 1
 			}
 			if len(call.Args) <= argumentIndex {
 				return true
 			}
-			literal, ok := call.Args[argumentIndex].(*ast.BasicLit)
-			if !ok || literal.Kind != token.STRING {
+			command, ok := staticStringValue(call.Args[argumentIndex], typeInfo, bindings, make(map[types.Object]bool))
+			if !ok {
 				return true
 			}
-			command, err := strconv.Unquote(literal.Value)
-			if err != nil || !isPythonRuntime(command) {
+			if !isPythonRuntime(command) {
 				return true
 			}
 			seen[Violation{Rule: RuleDeferredSurface, SourcePackage: packagePath, TargetPackage: "runtime:" + command}] = true
@@ -294,6 +336,27 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 		return violations
 	}
 	return nil
+}
+
+func staticStringValue(expression ast.Expr, info *types.Info, bindings map[types.Object]ast.Expr, visiting map[types.Object]bool) (string, bool) {
+	if value := info.Types[expression].Value; value != nil && value.Kind() == constant.String {
+		return constant.StringVal(value), true
+	}
+	identifier, ok := expression.(*ast.Ident)
+	if !ok {
+		return "", false
+	}
+	object := info.Uses[identifier]
+	if object == nil {
+		object = info.Defs[identifier]
+	}
+	bound, ok := bindings[object]
+	if !ok || visiting[object] {
+		return "", false
+	}
+	visiting[object] = true
+	defer delete(visiting, object)
+	return staticStringValue(bound, info, bindings, visiting)
 }
 
 func isPythonRuntime(command string) bool {

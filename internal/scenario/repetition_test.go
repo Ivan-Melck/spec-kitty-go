@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -845,22 +846,12 @@ func TestPhase1ProductionDependencyAndArchitectureScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph, err := architecture.LoadGraph(context.Background(), root)
-	if err != nil {
-		t.Fatalf("scenario=phase1-architecture load=%v", err)
+	var stdout, stderr bytes.Buffer
+	if code := helpercmd.Run(context.Background(), []string{"architecture-check", "--root", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("scenario=phase1-architecture code=%d state=%s recovery=repair the exact architecture diagnostic", code, strings.TrimSpace(stderr.String()))
 	}
-	policy, err := architecture.DefaultPolicy(graph.ModulePath)
-	if err != nil {
-		t.Fatalf("scenario=phase1-architecture policy=%v", err)
-	}
-	if err := policy.Check(graph); err != nil {
-		t.Fatalf("scenario=phase1-architecture invariant=directional-capability-policy state=%v recovery=classify the package or remove the forbidden production edge", err)
-	}
-	if err := architecture.CheckReachability(root, graph.ModulePath, architecture.DefaultReachabilityTargets(graph.ModulePath)); err != nil {
-		t.Fatalf("scenario=phase1-architecture invariant=production-reachability state=%v recovery=wire the registered target from production or remove the unshipped registration", err)
-	}
-	if err := architecture.CheckDeferredRuntimeSurfaces(root, graph.ModulePath); err != nil {
-		t.Fatalf("scenario=phase1-architecture invariant=no-python-runtime state=%v recovery=remove the deferred runtime integration", err)
+	if !strings.Contains(stdout.String(), "architecture check passed") {
+		t.Fatalf("scenario=phase1-architecture missing_success_evidence=%q", stdout.String())
 	}
 }
 

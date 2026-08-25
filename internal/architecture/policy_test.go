@@ -83,6 +83,26 @@ func TestPolicyRejectingFixturesNameExactRuleAndEdge(t *testing.T) {
 	}
 }
 
+func TestDefaultPolicyRejectsAuthorityImportOfGitAdapter(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := module + "/internal/handoff"
+	target := module + "/internal/gitrepo"
+	graph := fixtureGraph([]string{source, target}, ImportEdge{
+		SourcePackage: source,
+		TargetPackage: target,
+		Kind:          ImportModuleLocal,
+	})
+	graph.ModulePath = module
+	violations := policy.Evaluate(graph)
+	if len(violations) != 1 || violations[0].Rule != RuleLocalDirection || violations[0].SourcePackage != source || violations[0].TargetPackage != target {
+		t.Fatalf("authority-to-git-adapter edge was not rejected exactly: %+v", violations)
+	}
+}
+
 func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T) {
 	policy := fixturePolicy(t)
 	for index := range policy.Tiers {
