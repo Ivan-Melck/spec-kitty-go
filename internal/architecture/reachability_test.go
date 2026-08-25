@@ -442,6 +442,27 @@ func TestDeferredRuntimeSurfaceRejectsMarkdownAuthorityParsing(t *testing.T) {
 			},
 			wantTarget: "markdown:authority.md",
 		},
+		{
+			name: "reader-wrapper-with-known-argument",
+			files: map[string]string{
+				"internal/helpercmd/authority.go": "package helpercmd\nimport (\n\t\"os\"\n\t\"strings\"\n)\nfunc readAuthority(path string) []byte { content, _ := os.ReadFile(path); return content }\nfunc loadAuthority() { _ = strings.Fields(string(readAuthority(\"doctrine.md\"))) }\n",
+			},
+			wantTarget: "markdown:doctrine.md",
+		},
+		{
+			name: "constant-returning-path-helper",
+			files: map[string]string{
+				"internal/helpercmd/authority.go": "package helpercmd\nimport (\n\t\"os\"\n\t\"strings\"\n)\nfunc authorityPath() string { return \"doctrine.md\" }\nfunc loadAuthority() { content, _ := os.ReadFile(authorityPath()); _ = strings.Split(string(content), \"# \") }\n",
+			},
+			wantTarget: "markdown:doctrine.md",
+		},
+		{
+			name: "uniquely-reaching-ordinary-assignment",
+			files: map[string]string{
+				"internal/helpercmd/authority.go": "package helpercmd\nimport (\n\t\"os\"\n\t\"strings\"\n)\nfunc loadAuthority() { var path string; path = \"doctrine.md\"; content, _ := os.ReadFile(path); _ = strings.Fields(string(content)) }\n",
+			},
+			wantTarget: "markdown:doctrine.md",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -463,15 +484,56 @@ func TestDeferredRuntimeSurfaceRejectsMarkdownAuthorityParsing(t *testing.T) {
 			}
 
 			err = CheckDeferredRuntimeSurfaces(context.Background(), root, module)
-			if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) ||
-				!strings.Contains(err.Error(), "source="+module+"/internal/helpercmd") ||
-				!strings.Contains(err.Error(), "target="+test.wantTarget) {
+			violations, typed := err.(Violations)
+			want := Violation{
+				Rule: RuleDeferredSurface, SourcePackage: module + "/internal/helpercmd",
+				TargetPackage: test.wantTarget,
+			}
+			if !typed || len(violations) != 1 || violations[0] != want {
 				t.Fatalf("Markdown authority parser mutant survived: %v", err)
 			}
 			if strings.Contains(err.Error(), "ignored.md") {
 				t.Fatalf("test-only Markdown parser entered production diagnostics: %v", err)
 			}
 			t.Logf("mutant=markdown-authority-%s killed_in=%s", test.name, time.Since(started))
+		})
+	}
+}
+
+func TestDeferredRuntimeSurfaceDoesNotGuessAmbiguousMarkdownFlows(t *testing.T) {
+	const module = "example.test/markdown-ambiguous"
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{
+			name:   "dynamic-reader-wrapper-argument",
+			source: "package helpercmd\nimport \"os\"\nfunc readAuthority(path string) []byte { content, _ := os.ReadFile(path); return content }\nfunc loadAuthority(path string) { _ = readAuthority(path) }\n",
+		},
+		{
+			name:   "multiple-return-path-helper",
+			source: "package helpercmd\nimport \"os\"\nfunc authorityPath(markdown bool) string { if markdown { return \"doctrine.md\" }; return \"policy.json\" }\nfunc loadAuthority(markdown bool) { _, _ = os.ReadFile(authorityPath(markdown)) }\n",
+		},
+		{
+			name:   "multiple-ordinary-assignments",
+			source: "package helpercmd\nimport \"os\"\nfunc loadAuthority(markdown bool) { var path string; if markdown { path = \"doctrine.md\" } else { path = \"policy.json\" }; _, _ = os.ReadFile(path) }\n",
+		},
+		{
+			name:   "use-before-sole-assignment",
+			source: "package helpercmd\nimport \"os\"\nfunc loadAuthority() { var path string; _, _ = os.ReadFile(path); path = \"doctrine.md\"; _ = path }\n",
+		},
+		{
+			name:   "short-declaration-reassigned-before-use",
+			source: "package helpercmd\nimport \"os\"\nfunc loadAuthority() { path := \"doctrine.md\"; path = \"policy.json\"; _, _ = os.ReadFile(path) }\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := newReachabilityFixture(t, module)
+			writeGoFixture(t, root, "internal/helpercmd/authority.go", test.source)
+			if err := CheckDeferredRuntimeSurfaces(context.Background(), root, module); err != nil {
+				t.Fatalf("ambiguous Markdown flow must remain unresolved: %v", err)
+			}
 		})
 	}
 }

@@ -288,8 +288,36 @@ func calledObject(expression ast.Expr, info *types.Info) types.Object {
 	}
 }
 
-func staticBindings(source *productionSourcePackage) map[types.Object]ast.Expr {
-	bindings := make(map[types.Object]ast.Expr)
+type staticBinding struct {
+	expression     ast.Expr
+	availableAfter token.Pos
+	scopeStart     token.Pos
+	scopeEnd       token.Pos
+}
+
+func (b staticBinding) appliesAt(position token.Pos) bool {
+	if b.availableAfter == token.NoPos {
+		return true
+	}
+	return position > b.availableAfter && position > b.scopeStart && position < b.scopeEnd
+}
+
+func objectForAssignment(info *types.Info, name *ast.Ident) types.Object {
+	if object := info.Defs[name]; object != nil {
+		return object
+	}
+	return info.Uses[name]
+}
+
+// staticBindings retains only immutable declarations and the narrow ordinary
+// assignment form whose value is unambiguous: a zero-valued local declaration
+// followed by its sole write as a direct statement in the same block. The
+// recorded position prevents a later assignment from describing an earlier
+// use, while the single-write requirement rejects branch-dependent values.
+func staticBindings(source *productionSourcePackage) map[types.Object]staticBinding {
+	writes := make(map[types.Object]int)
+	candidates := make(map[types.Object]staticBinding)
+	escaped := make(map[types.Object]bool)
 	for _, parsed := range source.files {
 		ast.Inspect(parsed, func(node ast.Node) bool {
 			switch declaration := node.(type) {
@@ -299,11 +327,12 @@ func staticBindings(source *productionSourcePackage) map[types.Object]ast.Expr {
 				}
 				for index, name := range declaration.Names {
 					if object := source.info.Defs[name]; object != nil {
-						bindings[object] = declaration.Values[index]
+						writes[object]++
+						candidates[object] = staticBinding{expression: declaration.Values[index]}
 					}
 				}
 			case *ast.AssignStmt:
-				if declaration.Tok != token.DEFINE || len(declaration.Lhs) != len(declaration.Rhs) {
+				if len(declaration.Lhs) != len(declaration.Rhs) {
 					return true
 				}
 				for index, left := range declaration.Lhs {
@@ -311,18 +340,100 @@ func staticBindings(source *productionSourcePackage) map[types.Object]ast.Expr {
 					if !ok {
 						continue
 					}
-					if object := source.info.Defs[name]; object != nil {
-						bindings[object] = declaration.Rhs[index]
+					if object := objectForAssignment(source.info, name); object != nil {
+						writes[object]++
+						if declaration.Tok == token.DEFINE && source.info.Defs[name] != nil {
+							candidates[object] = staticBinding{expression: declaration.Rhs[index]}
+						}
+					}
+				}
+			case *ast.IncDecStmt:
+				if name, ok := declaration.X.(*ast.Ident); ok {
+					if object := source.info.Uses[name]; object != nil {
+						writes[object]++
+					}
+				}
+			case *ast.RangeStmt:
+				for _, expression := range []ast.Expr{declaration.Key, declaration.Value} {
+					if name, ok := expression.(*ast.Ident); ok {
+						if object := objectForAssignment(source.info, name); object != nil {
+							writes[object]++
+						}
+					}
+				}
+			case *ast.UnaryExpr:
+				if declaration.Op == token.AND {
+					if name, ok := declaration.X.(*ast.Ident); ok {
+						if object := source.info.Uses[name]; object != nil {
+							escaped[object] = true
+						}
 					}
 				}
 			}
 			return true
 		})
 	}
+
+	// Ordinary assignments are considered only when both the zero-valued
+	// declaration and the sole assignment are direct statements in one block.
+	for _, parsed := range source.files {
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			block, ok := node.(*ast.BlockStmt)
+			if !ok {
+				return true
+			}
+			declared := make(map[types.Object]token.Pos)
+			for _, statement := range block.List {
+				if declaration, ok := statement.(*ast.DeclStmt); ok {
+					general, _ := declaration.Decl.(*ast.GenDecl)
+					if general != nil && general.Tok == token.VAR {
+						for _, specification := range general.Specs {
+							values, _ := specification.(*ast.ValueSpec)
+							if values == nil || len(values.Values) != 0 {
+								continue
+							}
+							for _, name := range values.Names {
+								if object := source.info.Defs[name]; object != nil {
+									declared[object] = statement.Pos()
+								}
+							}
+						}
+					}
+				}
+				assignment, ok := statement.(*ast.AssignStmt)
+				if !ok || assignment.Tok != token.ASSIGN || len(assignment.Lhs) != len(assignment.Rhs) {
+					continue
+				}
+				for index, left := range assignment.Lhs {
+					name, ok := left.(*ast.Ident)
+					if !ok {
+						continue
+					}
+					object := source.info.Uses[name]
+					declarationPosition, local := declared[object]
+					if object == nil || !local || declarationPosition >= assignment.Pos() {
+						continue
+					}
+					candidates[object] = staticBinding{
+						expression: assignment.Rhs[index], availableAfter: assignment.End(),
+						scopeStart: block.Pos(), scopeEnd: block.End(),
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	bindings := make(map[types.Object]staticBinding)
+	for object, binding := range candidates {
+		if writes[object] == 1 && !escaped[object] {
+			bindings[object] = binding
+		}
+	}
 	return bindings
 }
 
-func staticFunctionValue(expression ast.Expr, info *types.Info, bindings map[types.Object]ast.Expr, visiting map[types.Object]bool) (*types.Func, bool) {
+func staticFunctionValue(expression ast.Expr, info *types.Info, bindings map[types.Object]staticBinding, visiting map[types.Object]bool) (*types.Func, bool) {
 	object := calledObject(expression, info)
 	if selector, ok := expression.(*ast.SelectorExpr); ok {
 		if selection := info.Selections[selector]; selection != nil {
@@ -333,12 +444,137 @@ func staticFunctionValue(expression ast.Expr, info *types.Info, bindings map[typ
 		return function, true
 	}
 	bound, ok := bindings[object]
-	if !ok || object == nil || visiting[object] {
+	if !ok || object == nil || visiting[object] || !bound.appliesAt(expression.Pos()) {
 		return nil, false
 	}
 	visiting[object] = true
 	defer delete(visiting, object)
-	return staticFunctionValue(bound, info, bindings, visiting)
+	return staticFunctionValue(bound.expression, info, bindings, visiting)
+}
+
+func staticFunctions(source *productionSourcePackage) map[*types.Func]*ast.FuncDecl {
+	functions := make(map[*types.Func]*ast.FuncDecl)
+	for _, parsed := range source.files {
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			if object, ok := source.info.Defs[function.Name].(*types.Func); ok {
+				functions[object] = function
+			}
+		}
+	}
+	return functions
+}
+
+type staticStringEvaluator struct {
+	info      *types.Info
+	bindings  map[types.Object]staticBinding
+	functions map[*types.Func]*ast.FuncDecl
+}
+
+func (e staticStringEvaluator) callParameters(
+	call *ast.CallExpr,
+	function *types.Func,
+	parameters map[types.Object]string,
+	visitingObjects map[types.Object]bool,
+	visitingFunctions map[*types.Func]bool,
+) map[types.Object]string {
+	resolved := make(map[types.Object]string)
+	signature, _ := function.Type().(*types.Signature)
+	if signature == nil || signature.Variadic() || signature.Params().Len() != len(call.Args) {
+		return resolved
+	}
+	for index := range call.Args {
+		value, ok := e.value(call.Args[index], parameters, visitingObjects, visitingFunctions)
+		if ok {
+			resolved[signature.Params().At(index)] = value
+		}
+	}
+	return resolved
+}
+
+func soleStaticReturn(function *ast.FuncDecl) (ast.Expr, bool) {
+	if function == nil || function.Body == nil || len(function.Body.List) != 1 {
+		return nil, false
+	}
+	returned, ok := function.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(returned.Results) != 1 {
+		return nil, false
+	}
+	return returned.Results[0], true
+}
+
+func (e staticStringEvaluator) value(
+	expression ast.Expr,
+	parameters map[types.Object]string,
+	visitingObjects map[types.Object]bool,
+	visitingFunctions map[*types.Func]bool,
+) (string, bool) {
+	if value := e.info.Types[expression].Value; value != nil && value.Kind() == constant.String {
+		return constant.StringVal(value), true
+	}
+	if identifier, ok := expression.(*ast.Ident); ok {
+		object := e.info.Uses[identifier]
+		if object == nil {
+			object = e.info.Defs[identifier]
+		}
+		if value, ok := parameters[object]; ok {
+			return value, true
+		}
+		bound, ok := e.bindings[object]
+		if !ok || object == nil || visitingObjects[object] || !bound.appliesAt(expression.Pos()) {
+			return "", false
+		}
+		visitingObjects[object] = true
+		defer delete(visitingObjects, object)
+		return e.value(bound.expression, parameters, visitingObjects, visitingFunctions)
+	}
+	call, ok := expression.(*ast.CallExpr)
+	if !ok {
+		return "", false
+	}
+	function, resolved := staticFunctionValue(call.Fun, e.info, e.bindings, visitingObjects)
+	if !resolved {
+		return "", false
+	}
+	if function.Pkg() != nil {
+		parts := make([]string, len(call.Args))
+		allParts := true
+		for index, argument := range call.Args {
+			part, ok := e.value(argument, parameters, visitingObjects, visitingFunctions)
+			if !ok {
+				allParts = false
+				break
+			}
+			parts[index] = part
+		}
+		if allParts {
+			switch {
+			case function.Pkg().Path() == "path/filepath" && function.Name() == "Join":
+				return filepath.Join(parts...), true
+			case function.Pkg().Path() == "path" && function.Name() == "Join":
+				return pathpkg.Join(parts...), true
+			case len(parts) == 1 && function.Pkg().Path() == "path/filepath" && function.Name() == "Clean":
+				return filepath.Clean(parts[0]), true
+			case len(parts) == 1 && function.Pkg().Path() == "path" && function.Name() == "Clean":
+				return pathpkg.Clean(parts[0]), true
+			}
+		}
+	}
+	returned, ok := soleStaticReturn(e.functions[function])
+	if !ok || visitingFunctions[function] {
+		return "", false
+	}
+	visitingFunctions[function] = true
+	defer delete(visitingFunctions, function)
+	return e.value(
+		returned,
+		e.callParameters(call, function, parameters, visitingObjects, visitingFunctions),
+		visitingObjects,
+		visitingFunctions,
+	)
 }
 
 type packageCallGraph struct {
@@ -571,41 +807,43 @@ func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) 
 	}
 	for _, source := range packages {
 		bindings := staticBindings(source)
-		for _, parsed := range source.files {
-			ast.Inspect(parsed, func(node ast.Node) bool {
-				call, ok := node.(*ast.CallExpr)
-				if !ok || len(call.Args) == 0 {
-					return true
-				}
-				function, ok := staticFunctionValue(call.Fun, source.info, bindings, make(map[types.Object]bool))
-				if !ok || function.Pkg() == nil {
-					return true
-				}
-				if function.Pkg().Path() == "os/exec" {
-					commandFunction := function.Name()
-					if commandFunction == "Command" || commandFunction == "CommandContext" {
-						argumentIndex := 0
-						if commandFunction == "CommandContext" {
-							argumentIndex = 1
-						}
-						if len(call.Args) > argumentIndex {
-							command, resolved := staticStringValue(call.Args[argumentIndex], source.info, bindings, make(map[types.Object]bool))
-							if resolved && isPythonRuntime(command) {
-								seen[Violation{Rule: RuleDeferredSurface, SourcePackage: source.importPath, TargetPackage: "runtime:" + command}] = true
-							}
+		evaluator := staticStringEvaluator{
+			info: source.info, bindings: bindings, functions: staticFunctions(source),
+		}
+		var inspectCall func(*ast.CallExpr, map[types.Object]string, map[*types.Func]bool)
+		inspectCall = func(call *ast.CallExpr, parameters map[types.Object]string, visitingFunctions map[*types.Func]bool) {
+			function, ok := staticFunctionValue(call.Fun, source.info, bindings, make(map[types.Object]bool))
+			if !ok || function.Pkg() == nil {
+				return
+			}
+			if function.Pkg().Path() == "os/exec" {
+				commandFunction := function.Name()
+				if commandFunction == "Command" || commandFunction == "CommandContext" {
+					argumentIndex := 0
+					if commandFunction == "CommandContext" {
+						argumentIndex = 1
+					}
+					if len(call.Args) > argumentIndex {
+						command, resolved := evaluator.value(
+							call.Args[argumentIndex], parameters,
+							make(map[types.Object]bool), visitingFunctions,
+						)
+						if resolved && isPythonRuntime(command) {
+							seen[Violation{Rule: RuleDeferredSurface, SourcePackage: source.importPath, TargetPackage: "runtime:" + command}] = true
 						}
 					}
 				}
-				firstPath, allPaths, readsFiles := deferredFilePathArguments(function)
-				if !readsFiles || len(call.Args) <= firstPath {
-					return true
-				}
+			}
+			firstPath, allPaths, readsFiles := deferredFilePathArguments(function)
+			if readsFiles && len(call.Args) > firstPath {
 				lastPath := firstPath + 1
 				if allPaths {
 					lastPath = len(call.Args)
 				}
 				for _, argument := range call.Args[firstPath:lastPath] {
-					path, resolved := staticStringValue(argument, source.info, bindings, make(map[types.Object]bool))
+					path, resolved := evaluator.value(
+						argument, parameters, make(map[types.Object]bool), visitingFunctions,
+					)
 					if !resolved || !isMarkdownSurface(path) {
 						continue
 					}
@@ -614,6 +852,34 @@ func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) 
 						TargetPackage: "markdown:" + filepath.ToSlash(filepath.Clean(path)),
 					}] = true
 				}
+			}
+
+			declaration := evaluator.functions[function]
+			if declaration == nil || visitingFunctions[function] {
+				return
+			}
+			childParameters := evaluator.callParameters(
+				call, function, parameters, make(map[types.Object]bool), visitingFunctions,
+			)
+			visitingFunctions[function] = true
+			defer delete(visitingFunctions, function)
+			ast.Inspect(declaration.Body, func(node ast.Node) bool {
+				if _, nestedFunction := node.(*ast.FuncLit); nestedFunction {
+					return false
+				}
+				if nested, ok := node.(*ast.CallExpr); ok {
+					inspectCall(nested, childParameters, visitingFunctions)
+				}
+				return true
+			})
+		}
+		for _, parsed := range source.files {
+			ast.Inspect(parsed, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				inspectCall(call, nil, make(map[*types.Func]bool))
 				return true
 			})
 		}
@@ -686,50 +952,6 @@ func deferredFilePathArguments(function *types.Func) (first int, all bool, ok bo
 
 func isMarkdownSurface(path string) bool {
 	return strings.EqualFold(filepath.Ext(filepath.Clean(path)), ".md")
-}
-
-func staticStringValue(expression ast.Expr, info *types.Info, bindings map[types.Object]ast.Expr, visiting map[types.Object]bool) (string, bool) {
-	if value := info.Types[expression].Value; value != nil && value.Kind() == constant.String {
-		return constant.StringVal(value), true
-	}
-	if call, ok := expression.(*ast.CallExpr); ok {
-		function, resolved := staticFunctionValue(call.Fun, info, bindings, visiting)
-		if resolved && function.Pkg() != nil {
-			parts := make([]string, len(call.Args))
-			for index, argument := range call.Args {
-				part, ok := staticStringValue(argument, info, bindings, visiting)
-				if !ok {
-					return "", false
-				}
-				parts[index] = part
-			}
-			switch {
-			case function.Pkg().Path() == "path/filepath" && function.Name() == "Join":
-				return filepath.Join(parts...), true
-			case function.Pkg().Path() == "path" && function.Name() == "Join":
-				return pathpkg.Join(parts...), true
-			case len(parts) == 1 && function.Pkg().Path() == "path/filepath" && function.Name() == "Clean":
-				return filepath.Clean(parts[0]), true
-			case len(parts) == 1 && function.Pkg().Path() == "path" && function.Name() == "Clean":
-				return pathpkg.Clean(parts[0]), true
-			}
-		}
-	}
-	identifier, ok := expression.(*ast.Ident)
-	if !ok {
-		return "", false
-	}
-	object := info.Uses[identifier]
-	if object == nil {
-		object = info.Defs[identifier]
-	}
-	bound, ok := bindings[object]
-	if !ok || visiting[object] {
-		return "", false
-	}
-	visiting[object] = true
-	defer delete(visiting, object)
-	return staticStringValue(bound, info, bindings, visiting)
 }
 
 func isPythonRuntime(command string) bool {
