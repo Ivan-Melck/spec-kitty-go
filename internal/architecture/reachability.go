@@ -1,15 +1,18 @@
 package architecture
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
-	"go/build"
 	"go/constant"
 	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
-	"io/fs"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -127,54 +130,55 @@ func (i *productionSourceImporter) check(source *productionSourcePackage) (*type
 func loadTypedProductionSources(root, modulePath string) ([]*productionSourcePackage, error) {
 	fileSet := token.NewFileSet()
 	byPath := make(map[string]*productionSourcePackage)
-	err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if filePath == root {
-				return nil
-			}
-			name := entry.Name()
-			if name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(filePath) != ".go" || strings.HasSuffix(filePath, "_test.go") {
-			return nil
-		}
-		matched, err := build.Default.MatchFile(filepath.Dir(filePath), entry.Name())
-		if err != nil {
-			return fmt.Errorf("match production source %s against active build: %w", filePath, err)
-		}
-		if !matched {
-			return nil
-		}
-		relativeDir, err := filepath.Rel(root, filepath.Dir(filePath))
-		if err != nil {
-			return err
-		}
-		packagePath := modulePath
-		if relativeDir != "." {
-			packagePath += "/" + filepath.ToSlash(relativeDir)
-		}
-		parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
-		if err != nil {
-			return fmt.Errorf("parse production source %s: %w", filePath, err)
-		}
-		source := byPath[packagePath]
-		if source == nil {
-			source = &productionSourcePackage{importPath: packagePath, packageName: parsed.Name.Name, fileSet: fileSet}
-			byPath[packagePath] = source
-		} else if source.packageName != parsed.Name.Name {
-			return fmt.Errorf("production package %s contains package names %q and %q", packagePath, source.packageName, parsed.Name.Name)
-		}
-		source.files = append(source.files, parsed)
-		return nil
-	})
+	result, err := runGraphCommand(context.Background(), root, "list", "-json", "./...")
 	if err != nil {
-		return nil, err
+		return nil, commandLoadError("go list -json ./...", result, err)
+	}
+	if result.overflow {
+		return nil, commandLoadError("go list -json ./...", result, errors.New("bounded output exceeded"))
+	}
+	type listedPackage struct {
+		Dir        string
+		ImportPath string
+		Name       string
+		GoFiles    []string
+		CgoFiles   []string
+		Module     *struct {
+			Path string
+			Main bool
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(result.stdout))
+	for {
+		var listed listedPackage
+		if err := decoder.Decode(&listed); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, &LoadError{Kind: LoadInvalidOutput, Command: "go list -json ./...", Cause: err}
+		}
+		if listed.Module == nil || !listed.Module.Main || listed.Module.Path != modulePath || !withinModule(modulePath, listed.ImportPath) {
+			continue
+		}
+		files := append(append([]string(nil), listed.GoFiles...), listed.CgoFiles...)
+		if len(files) == 0 {
+			continue
+		}
+		source := &productionSourcePackage{
+			importPath: listed.ImportPath, packageName: listed.Name, fileSet: fileSet,
+		}
+		for _, name := range files {
+			filePath := filepath.Join(listed.Dir, name)
+			parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
+			if err != nil {
+				return nil, fmt.Errorf("parse production source %s: %w", filePath, err)
+			}
+			if parsed.Name.Name != listed.Name {
+				return nil, fmt.Errorf("production package %s contains package names %q and %q", listed.ImportPath, listed.Name, parsed.Name.Name)
+			}
+			source.files = append(source.files, parsed)
+		}
+		byPath[listed.ImportPath] = source
 	}
 	packages := make([]*productionSourcePackage, 0, len(byPath))
 	for _, source := range byPath {
@@ -201,24 +205,120 @@ func calledObject(expression ast.Expr, info *types.Info) types.Object {
 	}
 }
 
-func targetFunctionBodies(parsed *ast.File, info *types.Info, targets map[types.Object]ReachabilityTarget) map[types.Object]*ast.BlockStmt {
-	bodies := make(map[types.Object]*ast.BlockStmt)
-	for _, declaration := range parsed.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Body == nil {
-			continue
-		}
-		object := info.Defs[function.Name]
-		if _, registered := targets[object]; registered {
-			bodies[object] = function.Body
-		}
-	}
-	return bodies
+type packageCallGraph struct {
+	edges map[types.Object]map[types.Object]struct{}
+	roots map[types.Object]struct{}
 }
 
-func isTargetSelfCall(call *ast.CallExpr, called types.Object, targetBodies map[types.Object]*ast.BlockStmt) bool {
-	body := targetBodies[called]
-	return body != nil && body.Pos() <= call.Pos() && call.End() <= body.End()
+func buildPackageCallGraph(source *productionSourcePackage) packageCallGraph {
+	graph := packageCallGraph{
+		edges: make(map[types.Object]map[types.Object]struct{}),
+		roots: make(map[types.Object]struct{}),
+	}
+	for _, parsed := range source.files {
+		ownedCalls := make(map[*ast.CallExpr]struct{})
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			caller := source.info.Defs[function.Name]
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				ownedCalls[call] = struct{}{}
+				called := calledObject(call.Fun, source.info)
+				if caller == nil || called == nil || called.Pkg() == nil || called.Pkg().Path() != source.importPath {
+					return true
+				}
+				if graph.edges[caller] == nil {
+					graph.edges[caller] = make(map[types.Object]struct{})
+				}
+				graph.edges[caller][called] = struct{}{}
+				return true
+			})
+		}
+		// A function literal is a callable body, not package initialization.
+		// Calls inside top-level closures are therefore not roots merely because
+		// the literal appears in a var declaration. Calls in literals nested in a
+		// FuncDecl are already attributed to that declaration above.
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			literal, ok := node.(*ast.FuncLit)
+			if !ok {
+				return true
+			}
+			ast.Inspect(literal.Body, func(nested ast.Node) bool {
+				if call, ok := nested.(*ast.CallExpr); ok {
+					ownedCalls[call] = struct{}{}
+				}
+				return true
+			})
+			return false
+		})
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if _, owned := ownedCalls[call]; owned {
+				return true
+			}
+			called := calledObject(call.Fun, source.info)
+			if called != nil && called.Pkg() != nil && called.Pkg().Path() == source.importPath {
+				graph.roots[called] = struct{}{}
+			}
+			return true
+		})
+	}
+	return graph
+}
+
+func (g packageCallGraph) reaches(start, target types.Object) bool {
+	visited := make(map[types.Object]bool)
+	pending := []types.Object{start}
+	for len(pending) > 0 {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if current == target {
+			return true
+		}
+		if visited[current] {
+			continue
+		}
+		visited[current] = true
+		for next := range g.edges[current] {
+			pending = append(pending, next)
+		}
+	}
+	return false
+}
+
+func (g packageCallGraph) hasCallerRootedOutsideTargetCycle(target types.Object) bool {
+	component := make(map[types.Object]bool)
+	component[target] = true
+	for caller := range g.edges {
+		if g.reaches(target, caller) && g.reaches(caller, target) {
+			component[caller] = true
+		}
+	}
+	for root := range g.roots {
+		if component[root] {
+			return true
+		}
+	}
+	for caller, callees := range g.edges {
+		if component[caller] {
+			continue
+		}
+		for called := range callees {
+			if component[called] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // CheckReachability parses production Go files and verifies the curated
@@ -269,9 +369,17 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 			objects[function] = target
 		}
 	}
+	callGraphs := make(map[string]packageCallGraph, len(packages))
+	for _, source := range packages {
+		callGraphs[source.importPath] = buildPackageCallGraph(source)
+	}
+	for object, target := range objects {
+		if callGraphs[target.Package].hasCallerRootedOutsideTargetCycle(object) {
+			observations[target].same = true
+		}
+	}
 	for _, source := range packages {
 		for _, parsed := range source.files {
-			targetBodies := targetFunctionBodies(parsed, source.info, objects)
 			ast.Inspect(parsed, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
 				if !ok {
@@ -282,12 +390,7 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 				if !ok {
 					return true
 				}
-				if isTargetSelfCall(call, called, targetBodies) {
-					return true
-				}
-				if source.importPath == target.Package {
-					observations[target].same = true
-				} else {
+				if source.importPath != target.Package {
 					observations[target].external = true
 				}
 				return true
