@@ -42,6 +42,9 @@
       "last_event_id": "01M0X1Z9R3EE0SZ3ZWEMCSBFCJ",
       "last_transition_at": "2026-08-25T18:12:28.035764+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: pre-fence refusal observer and ordering mutant added; contention diagnostic stabilized; 20x contention, 10x refusal, full package, and race tests pass. Lane inherited mission planning commits; no pre-review gate contract is configured."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
