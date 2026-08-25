@@ -50,6 +50,44 @@ func TestReachabilityCallerPolicies(t *testing.T) {
 	}
 }
 
+func TestReachabilityRejectsShadowedTargetCalls(t *testing.T) {
+	module := "example.test/reachability"
+	tests := []struct {
+		name       string
+		callerPath string
+		caller     string
+	}{
+		{
+			name:       "external-package-shadow",
+			callerPath: "internal/app/caller.go",
+			caller: "package app\n" +
+				"import guardpkg \"example.test/reachability/internal/guard\"\n" +
+				"var _ = guardpkg.Marker\n" +
+				"type shadow struct{}\n" +
+				"func (shadow) EnforceAuthority() {}\n" +
+				"func useGuard() { guardpkg := shadow{}; guardpkg.EnforceAuthority() }\n",
+		},
+		{
+			name:       "same-package-shadow",
+			callerPath: "internal/guard/caller.go",
+			caller: "package guard\n" +
+				"func useGuard() { EnforceAuthority := func() {}; EnforceAuthority() }\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nconst Marker = true\nfunc EnforceAuthority() {}\n")
+			writeGoFixture(t, root, test.callerPath, test.caller)
+			target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerEitherProduction}
+			err := CheckReachability(root, module, []ReachabilityTarget{target})
+			if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) || !strings.Contains(err.Error(), "symbol=EnforceAuthority") {
+				t.Fatalf("shadowed target call satisfied reachability: %v", err)
+			}
+		})
+	}
+}
+
 func TestDefaultReachabilityRegistryPassesCurrentRepository(t *testing.T) {
 	root := architectureRepositoryRoot(t)
 	module := "github.com/spec-kitty/go-kitty3"
@@ -189,5 +227,18 @@ func TestDeferredRuntimeSurfaceRejectsPackageAliasDeclaredInAnotherFile(t *testi
 		!strings.Contains(err.Error(), module+"/internal/guard") ||
 		!strings.Contains(err.Error(), "runtime:python3") {
 		t.Fatalf("cross-file Python runtime alias survived: %v", err)
+	}
+}
+
+func TestDeferredRuntimeSurfaceRejectsLocalShortDeclarationAlias(t *testing.T) {
+	root := t.TempDir()
+	module := "example.test/reachability"
+	writeGoFixture(t, root, "internal/guard/runner.go", "package guard\nimport \"os/exec\"\nfunc run() { interpreter := \"python3\"; _ = exec.Command(interpreter) }\n")
+
+	err := CheckDeferredRuntimeSurfaces(root, module)
+	if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) ||
+		!strings.Contains(err.Error(), module+"/internal/guard") ||
+		!strings.Contains(err.Error(), "runtime:python3") {
+		t.Fatalf("local Python runtime alias survived: %v", err)
 	}
 }

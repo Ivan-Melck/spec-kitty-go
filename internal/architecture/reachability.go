@@ -9,10 +9,8 @@ import (
 	"go/token"
 	"go/types"
 	"io/fs"
-	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -76,32 +74,58 @@ type reachabilityObservation struct {
 	external bool
 }
 
-// CheckReachability parses production Go files and verifies the curated
-// targets. Files ending in _test.go never satisfy a target.
-func CheckReachability(root, modulePath string, targets []ReachabilityTarget) error {
-	if modulePath == "" {
-		return fmt.Errorf("reachability module path is required")
-	}
-	ordered := append([]ReachabilityTarget(nil), targets...)
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].Package != ordered[j].Package {
-			return ordered[i].Package < ordered[j].Package
-		}
-		return ordered[i].Symbol < ordered[j].Symbol
-	})
-	observations := make(map[ReachabilityTarget]*reachabilityObservation, len(ordered))
-	for _, target := range ordered {
-		if !withinModule(modulePath, target.Package) || target.Symbol == "" || !token.IsIdentifier(target.Symbol) {
-			return fmt.Errorf("invalid reachability target package=%q symbol=%q", target.Package, target.Symbol)
-		}
-		switch target.RequiredCallerClass {
-		case CallerExternalPackage, CallerSamePackageProduction, CallerEitherProduction:
-		default:
-			return fmt.Errorf("invalid reachability caller class %q", target.RequiredCallerClass)
-		}
-		observations[target] = &reachabilityObservation{}
-	}
+type productionSourcePackage struct {
+	importPath  string
+	packageName string
+	fileSet     *token.FileSet
+	files       []*ast.File
+	info        *types.Info
+	typed       *types.Package
+	checking    bool
+}
 
+type productionSourceImporter struct {
+	packages map[string]*productionSourcePackage
+	fallback types.Importer
+}
+
+func (i *productionSourceImporter) Import(importPath string) (*types.Package, error) {
+	if source := i.packages[importPath]; source != nil {
+		return i.check(source)
+	}
+	return i.fallback.Import(importPath)
+}
+
+func (i *productionSourceImporter) check(source *productionSourcePackage) (*types.Package, error) {
+	if source.typed != nil {
+		return source.typed, nil
+	}
+	if source.checking {
+		return nil, fmt.Errorf("production import cycle includes %s", source.importPath)
+	}
+	source.checking = true
+	defer func() { source.checking = false }()
+	source.info = &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+	}
+	config := types.Config{Importer: i, Error: func(error) {}}
+	checked, _ := config.Check(source.importPath, source.fileSet, source.files, source.info)
+	if checked == nil {
+		return nil, fmt.Errorf("type-check production package %s", source.importPath)
+	}
+	// A package can still contain useful, exact object information when an
+	// unrelated third-party import has no gc export data. Local packages are
+	// always loaded from source through this importer.
+	source.typed = checked
+	return checked, nil
+}
+
+func loadTypedProductionSources(root, modulePath string) ([]*productionSourcePackage, error) {
+	fileSet := token.NewFileSet()
+	byPath := make(map[string]*productionSourcePackage)
 	err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -127,58 +151,114 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 		if relativeDir != "." {
 			packagePath += "/" + filepath.ToSlash(relativeDir)
 		}
-		fileSet := token.NewFileSet()
 		parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
 		if err != nil {
 			return fmt.Errorf("parse production source %s: %w", filePath, err)
 		}
-		aliases := make(map[string]string, len(parsed.Imports))
-		for _, declaration := range parsed.Imports {
-			importPath, err := strconv.Unquote(declaration.Path.Value)
-			if err != nil {
-				return fmt.Errorf("parse import in %s: %w", filePath, err)
-			}
-			alias := path.Base(importPath)
-			if declaration.Name != nil {
-				alias = declaration.Name.Name
-			}
-			if alias != "_" && alias != "." {
-				aliases[alias] = importPath
-			}
+		source := byPath[packagePath]
+		if source == nil {
+			source = &productionSourcePackage{importPath: packagePath, packageName: parsed.Name.Name, fileSet: fileSet}
+			byPath[packagePath] = source
+		} else if source.packageName != parsed.Name.Name {
+			return fmt.Errorf("production package %s contains package names %q and %q", packagePath, source.packageName, parsed.Name.Name)
 		}
+		source.files = append(source.files, parsed)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	packages := make([]*productionSourcePackage, 0, len(byPath))
+	for _, source := range byPath {
+		packages = append(packages, source)
+	}
+	sort.Slice(packages, func(left, right int) bool { return packages[left].importPath < packages[right].importPath })
+	checker := &productionSourceImporter{packages: byPath, fallback: importer.Default()}
+	for _, source := range packages {
+		if _, err := checker.check(source); err != nil {
+			return nil, err
+		}
+	}
+	return packages, nil
+}
+
+func calledObject(expression ast.Expr, info *types.Info) types.Object {
+	switch function := expression.(type) {
+	case *ast.Ident:
+		return info.Uses[function]
+	case *ast.SelectorExpr:
+		return info.Uses[function.Sel]
+	default:
+		return nil
+	}
+}
+
+// CheckReachability parses production Go files and verifies the curated
+// targets. Files ending in _test.go never satisfy a target.
+func CheckReachability(root, modulePath string, targets []ReachabilityTarget) error {
+	if modulePath == "" {
+		return fmt.Errorf("reachability module path is required")
+	}
+	ordered := append([]ReachabilityTarget(nil), targets...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Package != ordered[j].Package {
+			return ordered[i].Package < ordered[j].Package
+		}
+		return ordered[i].Symbol < ordered[j].Symbol
+	})
+	observations := make(map[ReachabilityTarget]*reachabilityObservation, len(ordered))
+	for _, target := range ordered {
+		if !withinModule(modulePath, target.Package) || target.Symbol == "" || !token.IsIdentifier(target.Symbol) {
+			return fmt.Errorf("invalid reachability target package=%q symbol=%q", target.Package, target.Symbol)
+		}
+		switch target.RequiredCallerClass {
+		case CallerExternalPackage, CallerSamePackageProduction, CallerEitherProduction:
+		default:
+			return fmt.Errorf("invalid reachability caller class %q", target.RequiredCallerClass)
+		}
+		observations[target] = &reachabilityObservation{}
+	}
+	packages, err := loadTypedProductionSources(root, modulePath)
+	if err != nil {
+		return err
+	}
+	objects := make(map[types.Object]ReachabilityTarget, len(ordered))
+	for _, source := range packages {
 		for _, target := range ordered {
-			observation := observations[target]
-			if packagePath == target.Package {
-				for _, declaration := range parsed.Decls {
-					function, ok := declaration.(*ast.FuncDecl)
-					if ok && function.Recv == nil && function.Name.Name == target.Symbol {
-						observation.declared = true
-					}
-				}
+			if source.importPath != target.Package {
+				continue
 			}
+			function, ok := source.typed.Scope().Lookup(target.Symbol).(*types.Func)
+			if !ok {
+				continue
+			}
+			signature, ok := function.Type().(*types.Signature)
+			if !ok || signature.Recv() != nil {
+				continue
+			}
+			observations[target].declared = true
+			objects[function] = target
+		}
+	}
+	for _, source := range packages {
+		for _, parsed := range source.files {
 			ast.Inspect(parsed, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
-				switch function := call.Fun.(type) {
-				case *ast.Ident:
-					if packagePath == target.Package && function.Name == target.Symbol {
-						observation.same = true
-					}
-				case *ast.SelectorExpr:
-					identifier, ok := function.X.(*ast.Ident)
-					if ok && function.Sel.Name == target.Symbol && aliases[identifier.Name] == target.Package && packagePath != target.Package {
-						observation.external = true
-					}
+				target, ok := objects[calledObject(call.Fun, source.info)]
+				if !ok {
+					return true
+				}
+				if source.importPath == target.Package {
+					observations[target].same = true
+				} else {
+					observations[target].external = true
 				}
 				return true
 			})
 		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 
 	violations := make(reachabilityViolations, 0)
@@ -206,109 +286,56 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 // Policy; this targeted AST check covers the runtime dependency that an import
 // graph cannot represent without returning to broad textual name matching.
 func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
+	if modulePath == "" {
+		return fmt.Errorf("deferred runtime module path is required")
+	}
 	seen := make(map[Violation]bool)
-	packageFiles := make(map[string][]string)
-	err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if filePath == root {
-				return nil
-			}
-			name := entry.Name()
-			if name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(filePath) != ".go" || strings.HasSuffix(filePath, "_test.go") {
-			return nil
-		}
-		packageFiles[filepath.Dir(filePath)] = append(packageFiles[filepath.Dir(filePath)], filePath)
-		return nil
-	})
+	packages, err := loadTypedProductionSources(root, modulePath)
 	if err != nil {
 		return err
 	}
-	directories := make([]string, 0, len(packageFiles))
-	for directory := range packageFiles {
-		directories = append(directories, directory)
-	}
-	sort.Strings(directories)
-	for _, directory := range directories {
-		paths := packageFiles[directory]
-		sort.Strings(paths)
-		relativeDir, err := filepath.Rel(root, directory)
-		if err != nil {
-			return err
-		}
-		packagePath := modulePath
-		if relativeDir != "." {
-			packagePath += "/" + filepath.ToSlash(relativeDir)
-		}
-		fileSet := token.NewFileSet()
-		parsedFiles := make([]*ast.File, 0, len(paths))
-		packageName := ""
-		for _, filePath := range paths {
-			parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
-			if err != nil {
-				return fmt.Errorf("parse production source %s: %w", filePath, err)
-			}
-			if packageName == "" {
-				packageName = parsed.Name.Name
-			} else if parsed.Name.Name != packageName {
-				return fmt.Errorf("production package %s contains package names %q and %q", packagePath, packageName, parsed.Name.Name)
-			}
-			parsedFiles = append(parsedFiles, parsed)
-		}
-		typeInfo := &types.Info{
-			Types: make(map[ast.Expr]types.TypeAndValue),
-			Defs:  make(map[*ast.Ident]types.Object),
-			Uses:  make(map[*ast.Ident]types.Object),
-		}
-		config := types.Config{Importer: importer.Default(), Error: func(error) {}}
-		_, _ = config.Check(packagePath, fileSet, parsedFiles, typeInfo)
+	for _, source := range packages {
 		bindings := make(map[types.Object]ast.Expr)
-		for _, parsed := range parsedFiles {
+		for _, parsed := range source.files {
 			ast.Inspect(parsed, func(node ast.Node) bool {
-				specification, ok := node.(*ast.ValueSpec)
-				if !ok || len(specification.Names) != len(specification.Values) {
-					return true
-				}
-				for index, name := range specification.Names {
-					if object := typeInfo.Defs[name]; object != nil {
-						bindings[object] = specification.Values[index]
+				switch declaration := node.(type) {
+				case *ast.ValueSpec:
+					if len(declaration.Names) != len(declaration.Values) {
+						return true
+					}
+					for index, name := range declaration.Names {
+						if object := source.info.Defs[name]; object != nil {
+							bindings[object] = declaration.Values[index]
+						}
+					}
+				case *ast.AssignStmt:
+					if declaration.Tok != token.DEFINE || len(declaration.Lhs) != len(declaration.Rhs) {
+						return true
+					}
+					for index, left := range declaration.Lhs {
+						name, ok := left.(*ast.Ident)
+						if !ok {
+							continue
+						}
+						if object := source.info.Defs[name]; object != nil {
+							bindings[object] = declaration.Rhs[index]
+						}
 					}
 				}
 				return true
 			})
 		}
-		for _, parsed := range parsedFiles {
-			execAliases, dotExec, err := execImportNames(parsed)
-			if err != nil {
-				return err
-			}
-			if len(execAliases) == 0 && !dotExec {
-				continue
-			}
+		for _, parsed := range source.files {
 			ast.Inspect(parsed, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
 				if !ok || len(call.Args) == 0 {
 					return true
 				}
-				commandFunction := ""
-				switch function := call.Fun.(type) {
-				case *ast.SelectorExpr:
-					identifier, ok := function.X.(*ast.Ident)
-					if ok && execAliases[identifier.Name] {
-						commandFunction = function.Sel.Name
-					}
-				case *ast.Ident:
-					if dotExec {
-						commandFunction = function.Name
-					}
+				function, ok := calledObject(call.Fun, source.info).(*types.Func)
+				if !ok || function.Pkg() == nil || function.Pkg().Path() != "os/exec" {
+					return true
 				}
+				commandFunction := function.Name()
 				if commandFunction != "Command" && commandFunction != "CommandContext" {
 					return true
 				}
@@ -319,14 +346,18 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 				if len(call.Args) <= argumentIndex {
 					return true
 				}
-				command, ok := staticStringValue(call.Args[argumentIndex], typeInfo, bindings, make(map[types.Object]bool))
+				command, ok := staticStringValue(call.Args[argumentIndex], source.info, bindings, make(map[types.Object]bool))
 				if !ok {
+					// Runtime-computed command strings are deliberately outside this
+					// static proof boundary. The guard proves literals and immutable
+					// package/local binding chains without treating arbitrary exec
+					// calls as Python merely because their value is dynamic.
 					return true
 				}
 				if !isPythonRuntime(command) {
 					return true
 				}
-				seen[Violation{Rule: RuleDeferredSurface, SourcePackage: packagePath, TargetPackage: "runtime:" + command}] = true
+				seen[Violation{Rule: RuleDeferredSurface, SourcePackage: source.importPath, TargetPackage: "runtime:" + command}] = true
 				return true
 			})
 		}
@@ -345,30 +376,6 @@ func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
 		return violations
 	}
 	return nil
-}
-
-func execImportNames(parsed *ast.File) (map[string]bool, bool, error) {
-	aliases := make(map[string]bool)
-	dotImport := false
-	for _, declaration := range parsed.Imports {
-		importPath, err := strconv.Unquote(declaration.Path.Value)
-		if err != nil {
-			return nil, false, fmt.Errorf("parse import %s: %w", declaration.Path.Value, err)
-		}
-		if importPath != "os/exec" {
-			continue
-		}
-		alias := "exec"
-		if declaration.Name != nil {
-			alias = declaration.Name.Name
-		}
-		if alias == "." {
-			dotImport = true
-		} else if alias != "_" {
-			aliases[alias] = true
-		}
-	}
-	return aliases, dotImport, nil
 }
 
 func staticStringValue(expression ast.Expr, info *types.Info, bindings map[types.Object]ast.Expr, visiting map[types.Object]bool) (string, bool) {

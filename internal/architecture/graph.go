@@ -71,8 +71,6 @@ func (e *LoadError) Error() string {
 	return fmt.Sprintf("architecture graph load kind=%s command=%q stderr=%q: %v", e.Kind, e.Command, e.Stderr, e.Cause)
 }
 
-func (e *LoadError) Unwrap() error { return e.Cause }
-
 type commandResult struct {
 	stdout   []byte
 	stderr   []byte
