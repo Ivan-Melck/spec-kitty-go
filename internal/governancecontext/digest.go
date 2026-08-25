@@ -39,11 +39,12 @@ func computeAggregate(schemaVersion uint16, entries []Entry) (Commitment, error)
 	binary.BigEndian.PutUint64(count[:], uint64(len(entries)))
 	writeFrame(hasher, count[:])
 	for _, entry := range entries {
-		writeFrame(hasher, []byte(entry.kind))
-		writeFrame(hasher, []byte(entry.ref))
-		writeFrame(hasher, []byte(entry.revision))
-		writeFrame(hasher, []byte(entry.commitment.algorithm))
-		writeFrame(hasher, []byte(entry.commitment.digest))
+		commitment := entry.Commitment()
+		writeFrame(hasher, []byte(entry.Kind()))
+		writeFrame(hasher, []byte(entry.Ref()))
+		writeFrame(hasher, []byte(entry.Revision()))
+		writeFrame(hasher, []byte(commitment.Algorithm()))
+		writeFrame(hasher, []byte(commitment.Digest()))
 	}
 	return NewCommitment(AlgorithmSHA256, hex.EncodeToString(hasher.Sum(nil)))
 }

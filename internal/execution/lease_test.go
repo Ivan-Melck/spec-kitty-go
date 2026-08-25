@@ -64,12 +64,19 @@ func TestStartReplayAndReplacementKeepTheOriginallyBoundGovernanceContext(t *tes
 	}
 
 	changedReplay := request
-	changedReplay.GovernanceContext = governanceContextFixture("context-other", now)
+	changedReplay.GovernanceContext = governanceContextFixtureAtRevision("context-test", "revision-2", now)
 	if _, err := service.Start(context.Background(), changedReplay); !IsKind(err, KindIdempotencyConflict) {
-		t.Fatalf("changed-context replay error=%v", err)
+		t.Fatalf("same-ID/different-content replay error=%v", err)
 	}
 	if repository.digestConflicts != 1 {
-		t.Fatalf("changed context did not participate in caller-supplied command digest: conflicts=%d", repository.digestConflicts)
+		t.Fatalf("changed content did not participate in caller-supplied command digest: conflicts=%d", repository.digestConflicts)
+	}
+	replayAfterConflict, err := service.Start(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayAfterConflict.GovernanceContextID != first.GovernanceContextID || replayAfterConflict.GovernanceContextAggregate != first.GovernanceContextAggregate {
+		t.Fatalf("failed replay conflict rebound run context: replay=%+v first=%+v", replayAfterConflict, first)
 	}
 
 	replacement := request
@@ -86,9 +93,20 @@ func TestStartReplayAndReplacementKeepTheOriginallyBoundGovernanceContext(t *tes
 	changedReplacement := replacement
 	changedReplacement.OperationID = "operation-3"
 	changedReplacement.CorrelationID = "operation-3"
-	changedReplacement.GovernanceContext = governanceContextFixture("context-other", now)
+	changedReplacement.GovernanceContext = governanceContextFixtureAtRevision("context-test", "revision-2", now)
 	if _, err := service.Start(context.Background(), changedReplacement); !IsKind(err, KindIdempotencyConflict) {
-		t.Fatalf("changed-context replacement error=%v", err)
+		t.Fatalf("same-ID/different-content replacement error=%v", err)
+	}
+
+	replacementAfterConflict := replacement
+	replacementAfterConflict.OperationID = "operation-4"
+	replacementAfterConflict.CorrelationID = "operation-4"
+	replacedAfterConflict, err := service.Start(context.Background(), replacementAfterConflict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacedAfterConflict.RunID != first.RunID || replacedAfterConflict.Generation != replaced.Generation+1 || replacedAfterConflict.GovernanceContextID != first.GovernanceContextID || replacedAfterConflict.GovernanceContextAggregate != first.GovernanceContextAggregate {
+		t.Fatalf("failed replacement conflict rebound run context: replacement=%+v first=%+v", replacedAfterConflict, first)
 	}
 }
 
@@ -279,11 +297,15 @@ func validRequest() StartRequest {
 }
 
 func governanceContextFixture(contextID ids.GovernanceContextID, now time.Time) governancecontext.Context {
+	return governanceContextFixtureAtRevision(contextID, "revision-1", now)
+}
+
+func governanceContextFixtureAtRevision(contextID ids.GovernanceContextID, revision string, now time.Time) governancecontext.Context {
 	commitment, err := governancecontext.CommitSHA256([]byte("synthetic test governance"))
 	if err != nil {
 		panic(err)
 	}
-	entry, err := governancecontext.NewEntry(governancecontext.KindConfig, "test-config", "revision-1", commitment)
+	entry, err := governancecontext.NewEntry(governancecontext.KindConfig, "test-config", revision, commitment)
 	if err != nil {
 		panic(err)
 	}

@@ -1,7 +1,6 @@
 package governancecontext
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -73,28 +72,6 @@ func (c Commitment) Validate() error {
 	return nil
 }
 
-func (c Commitment) MarshalJSON() ([]byte, error) {
-	return json.Marshal(commitmentJSON{Algorithm: c.algorithm, Digest: c.digest})
-}
-
-func (c *Commitment) UnmarshalJSON(data []byte) error {
-	var wire commitmentJSON
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	value, err := NewCommitment(wire.Algorithm, wire.Digest)
-	if err != nil {
-		return err
-	}
-	*c = value
-	return nil
-}
-
-type commitmentJSON struct {
-	Algorithm string `json:"algorithm"`
-	Digest    string `json:"digest"`
-}
-
 type EntryKind string
 
 const (
@@ -148,30 +125,6 @@ func (e Entry) Validate() error {
 		return &ValidationError{Code: CodeInvalidRevision, Field: "revision", Message: "entry revision must not be blank"}
 	}
 	return e.commitment.Validate()
-}
-
-func (e Entry) MarshalJSON() ([]byte, error) {
-	return json.Marshal(entryJSON{Kind: e.kind, Ref: e.ref, Revision: e.revision, Commitment: e.commitment})
-}
-
-func (e *Entry) UnmarshalJSON(data []byte) error {
-	var wire entryJSON
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	value, err := NewEntry(wire.Kind, wire.Ref, wire.Revision, wire.Commitment)
-	if err != nil {
-		return err
-	}
-	*e = value
-	return nil
-}
-
-type entryJSON struct {
-	Kind       EntryKind  `json:"kind"`
-	Ref        string     `json:"ref"`
-	Revision   string     `json:"revision"`
-	Commitment Commitment `json:"commitment"`
 }
 
 type Context struct {
@@ -236,31 +189,6 @@ func (c Context) Validate() error {
 		return &ValidationError{Code: CodeAggregateMismatch, Field: "aggregate", Message: "claimed aggregate does not match the ordered context entries"}
 	}
 	return nil
-}
-
-func (c Context) MarshalJSON() ([]byte, error) {
-	return json.Marshal(contextJSON{ID: c.id, SchemaVersion: c.schemaVersion, Entries: c.entries, Aggregate: c.aggregate, CreatedAt: c.createdAt})
-}
-
-func (c *Context) UnmarshalJSON(data []byte) error {
-	var wire contextJSON
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	value, err := RestoreContext(wire.ID, wire.SchemaVersion, wire.Entries, wire.Aggregate, wire.CreatedAt)
-	if err != nil {
-		return err
-	}
-	*c = value
-	return nil
-}
-
-type contextJSON struct {
-	ID            ids.GovernanceContextID `json:"id"`
-	SchemaVersion uint16                  `json:"schema_version"`
-	Entries       []Entry                 `json:"entries"`
-	Aggregate     Commitment              `json:"aggregate"`
-	CreatedAt     time.Time               `json:"created_at"`
 }
 
 func validateEntries(entries []Entry) error {
