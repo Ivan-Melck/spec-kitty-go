@@ -1,0 +1,682 @@
+schema_version: 2.0.0
+governance:
+  testing:
+    min_coverage: 0
+    tdd_required: false
+    framework: ''
+    type_checking: ''
+  quality:
+    linting: ''
+    pr_approvals: 1
+    pre_commit_hooks: false
+  commits: {}
+  performance:
+    cli_timeout_seconds: 2.0
+    dashboard_max_wps: 100
+  branch_strategy:
+    main_branch: main
+    rules: []
+  doctrine:
+    selected_paradigms: []
+    selected_directives: []
+    selected_tactics: []
+    selected_styleguides: []
+    selected_toolguides: []
+    selected_procedures: []
+    selected_agent_profiles: []
+    selected_mission_step_contracts: []
+    selected_glossary_packs: []
+    selected_assets: []
+    available_tools: []
+    authority_paths: []
+    governance_references: []
+  activations: []
+  enforcement: {}
+directives:
+  directives: []
+catalog:
+  mission: software-dev
+  template_set: software-dev-default
+  references:
+  - id: USER:PROJECT_PROFILE
+    kind: user_profile
+    title: User Project Profile
+    summary: Project-specific interview answers captured for charter compilation.
+    source_path: .kittify/charter/interview/answers.yaml
+    local_path: _LIBRARY/user-project-profile.md
+  - id: DIRECTIVE:DIRECTIVE_001
+    kind: directive
+    title: DIRECTIVE_001
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-001.md
+  - id: DIRECTIVE:DIRECTIVE_003
+    kind: directive
+    title: DIRECTIVE_003
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-003.md
+  - id: DIRECTIVE:DIRECTIVE_010
+    kind: directive
+    title: DIRECTIVE_010
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-010.md
+  - id: DIRECTIVE:DIRECTIVE_024
+    kind: directive
+    title: DIRECTIVE_024
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-024.md
+  - id: DIRECTIVE:DIRECTIVE_025
+    kind: directive
+    title: DIRECTIVE_025
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-025.md
+  - id: DIRECTIVE:DIRECTIVE_028
+    kind: directive
+    title: DIRECTIVE_028
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-028.md
+  - id: DIRECTIVE:DIRECTIVE_030
+    kind: directive
+    title: DIRECTIVE_030
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-030.md
+  - id: DIRECTIVE:DIRECTIVE_031
+    kind: directive
+    title: DIRECTIVE_031
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-031.md
+  - id: DIRECTIVE:DIRECTIVE_032
+    kind: directive
+    title: DIRECTIVE_032
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-032.md
+  - id: DIRECTIVE:DIRECTIVE_034
+    kind: directive
+    title: DIRECTIVE_034
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-034.md
+  - id: DIRECTIVE:DIRECTIVE_037
+    kind: directive
+    title: DIRECTIVE_037
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-037.md
+  - id: DIRECTIVE:DIRECTIVE_040
+    kind: directive
+    title: DIRECTIVE_040
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-040.md
+  - id: DIRECTIVE:DIRECTIVE_041
+    kind: directive
+    title: DIRECTIVE_041
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-041.md
+  - id: DIRECTIVE:DIRECTIVE_043
+    kind: directive
+    title: DIRECTIVE_043
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-043.md
+  - id: DIRECTIVE:DIRECTIVE_045
+    kind: directive
+    title: DIRECTIVE_045
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-directive-045.md
+  - id: DIRECTIVE:RECONCILE_CHANGE_SCOPE_TENSIONS
+    kind: directive
+    title: RECONCILE_CHANGE_SCOPE_TENSIONS
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-reconcile-change-scope-tensions.md
+  - id: DIRECTIVE:USE_MUTATION_TESTING_TO_VALIDATE_TEST_QUALITY
+    kind: directive
+    title: USE_MUTATION_TESTING_TO_VALIDATE_TEST_QUALITY
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/directive-use-mutation-testing-to-validate-test-quality.md
+  - id: TACTIC:acceptance-test-first
+    kind: tactic
+    title: Acceptance Test Driven Development (ATDD)
+    summary: Anchor implementation work in externally observable behavior before internal coding begins.
+    source_path: ''
+    local_path: _LIBRARY/tactic-acceptance-test-first.md
+  - id: TACTIC:adversarial-qa-handoff
+    kind: tactic
+    title: adversarial-qa-handoff
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-adversarial-qa-handoff.md
+  - id: TACTIC:aggregate-boundary-design
+    kind: tactic
+    title: aggregate-boundary-design
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-aggregate-boundary-design.md
+  - id: TACTIC:ammerse-impact-analysis
+    kind: tactic
+    title: ammerse-impact-analysis
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-ammerse-impact-analysis.md
+  - id: TACTIC:anti-corruption-layer
+    kind: tactic
+    title: anti-corruption-layer
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-anti-corruption-layer.md
+  - id: TACTIC:architectural-gate-non-vacuity
+    kind: tactic
+    title: architectural-gate-non-vacuity
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-architectural-gate-non-vacuity.md
+  - id: TACTIC:atdd-adversarial-acceptance
+    kind: tactic
+    title: atdd-adversarial-acceptance
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-atdd-adversarial-acceptance.md
+  - id: TACTIC:avoid-gold-plating
+    kind: tactic
+    title: avoid-gold-plating
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-avoid-gold-plating.md
+  - id: TACTIC:behavior-driven-development
+    kind: tactic
+    title: behavior-driven-development
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-behavior-driven-development.md
+  - id: TACTIC:black-box-integration-testing
+    kind: tactic
+    title: black-box-integration-testing
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-black-box-integration-testing.md
+  - id: TACTIC:boring-code-review
+    kind: tactic
+    title: Boring Code Review
+    summary: "Keep implementation choices predictable, idiomatic, and easy to inspect. Challenge clever control flow, needless abstraction, and DRY violations that duplicate business meaning rather than harmless syntax.\n"
+    source_path: ''
+    local_path: _LIBRARY/tactic-boring-code-review.md
+  - id: TACTIC:bounded-context-canvas-fill
+    kind: tactic
+    title: bounded-context-canvas-fill
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-bounded-context-canvas-fill.md
+  - id: TACTIC:bounded-context-identification
+    kind: tactic
+    title: bounded-context-identification
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-bounded-context-identification.md
+  - id: TACTIC:change-apply-smallest-viable-diff
+    kind: tactic
+    title: change-apply-smallest-viable-diff
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-change-apply-smallest-viable-diff.md
+  - id: TACTIC:clean-linear-commit-history
+    kind: tactic
+    title: clean-linear-commit-history
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-clean-linear-commit-history.md
+  - id: TACTIC:code-documentation-analysis
+    kind: tactic
+    title: code-documentation-analysis
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-code-documentation-analysis.md
+  - id: TACTIC:code-review-incremental
+    kind: tactic
+    title: code-review-incremental
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-code-review-incremental.md
+  - id: TACTIC:connascence-analysis
+    kind: tactic
+    title: connascence-analysis
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-connascence-analysis.md
+  - id: TACTIC:context-boundary-inference
+    kind: tactic
+    title: context-boundary-inference
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-context-boundary-inference.md
+  - id: TACTIC:context-mapping-classification
+    kind: tactic
+    title: context-mapping-classification
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-context-mapping-classification.md
+  - id: TACTIC:decision-marker-capture
+    kind: tactic
+    title: decision-marker-capture
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-decision-marker-capture.md
+  - id: TACTIC:delete-the-assertion-not-the-test
+    kind: tactic
+    title: delete-the-assertion-not-the-test
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-delete-the-assertion-not-the-test.md
+  - id: TACTIC:development-bdd
+    kind: tactic
+    title: development-bdd
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-development-bdd.md
+  - id: TACTIC:domain-event-capture
+    kind: tactic
+    title: domain-event-capture
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-domain-event-capture.md
+  - id: TACTIC:easy-to-change
+    kind: tactic
+    title: easy-to-change
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-easy-to-change.md
+  - id: TACTIC:eisenhower-prioritisation
+    kind: tactic
+    title: eisenhower-prioritisation
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-eisenhower-prioritisation.md
+  - id: TACTIC:entity-value-object-classification
+    kind: tactic
+    title: entity-value-object-classification
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-entity-value-object-classification.md
+  - id: TACTIC:five-paradigm-parallel-debugging
+    kind: tactic
+    title: five-paradigm-parallel-debugging
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-five-paradigm-parallel-debugging.md
+  - id: TACTIC:forensic-repository-audit
+    kind: tactic
+    title: forensic-repository-audit
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-forensic-repository-audit.md
+  - id: TACTIC:formalized-constraint-testing
+    kind: tactic
+    title: formalized-constraint-testing
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-formalized-constraint-testing.md
+  - id: TACTIC:frozen-baseline-shrink-only-ratchet
+    kind: tactic
+    title: frozen-baseline-shrink-only-ratchet
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-frozen-baseline-shrink-only-ratchet.md
+  - id: TACTIC:function-over-form-testing
+    kind: tactic
+    title: function-over-form-testing
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-function-over-form-testing.md
+  - id: TACTIC:glossary-curation-interview
+    kind: tactic
+    title: glossary-curation-interview
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-glossary-curation-interview.md
+  - id: TACTIC:input-validation-fail-fast
+    kind: tactic
+    title: input-validation-fail-fast
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-input-validation-fail-fast.md
+  - id: TACTIC:language-driven-design
+    kind: tactic
+    title: language-driven-design
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-language-driven-design.md
+  - id: TACTIC:mutation-testing-workflow
+    kind: tactic
+    title: mutation-testing-workflow
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-mutation-testing-workflow.md
+  - id: TACTIC:no-parallel-duplicate-test-runs
+    kind: tactic
+    title: no-parallel-duplicate-test-runs
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-no-parallel-duplicate-test-runs.md
+  - id: TACTIC:paula-patterns-architecture-scout-review
+    kind: tactic
+    title: paula-patterns-architecture-scout-review
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-paula-patterns-architecture-scout-review.md
+  - id: TACTIC:pr-agent-worktree-isolation
+    kind: tactic
+    title: pr-agent-worktree-isolation
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-pr-agent-worktree-isolation.md
+  - id: TACTIC:premortem-risk-identification
+    kind: tactic
+    title: premortem-risk-identification
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-premortem-risk-identification.md
+  - id: TACTIC:problem-decomposition
+    kind: tactic
+    title: problem-decomposition
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-problem-decomposition.md
+  - id: TACTIC:quality-gate-verification
+    kind: tactic
+    title: quality-gate-verification
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-quality-gate-verification.md
+  - id: TACTIC:refactoring-strangler-fig
+    kind: tactic
+    title: refactoring-strangler-fig
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-refactoring-strangler-fig.md
+  - id: TACTIC:reverse-speccing
+    kind: tactic
+    title: reverse-speccing
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-reverse-speccing.md
+  - id: TACTIC:review-intent-and-risk-first
+    kind: tactic
+    title: review-intent-and-risk-first
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-review-intent-and-risk-first.md
+  - id: TACTIC:safe-to-fail-experiment
+    kind: tactic
+    title: safe-to-fail-experiment
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-safe-to-fail-experiment.md
+  - id: TACTIC:stakeholder-alignment
+    kind: tactic
+    title: stakeholder-alignment
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-stakeholder-alignment.md
+  - id: TACTIC:strategic-domain-classification
+    kind: tactic
+    title: strategic-domain-classification
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-strategic-domain-classification.md
+  - id: TACTIC:tdd-red-green-refactor
+    kind: tactic
+    title: tdd-red-green-refactor
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-tdd-red-green-refactor.md
+  - id: TACTIC:terminology-extraction-mapping
+    kind: tactic
+    title: terminology-extraction-mapping
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-terminology-extraction-mapping.md
+  - id: TACTIC:test-boundaries-by-responsibility
+    kind: tactic
+    title: test-boundaries-by-responsibility
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-test-boundaries-by-responsibility.md
+  - id: TACTIC:test-minimisation
+    kind: tactic
+    title: test-minimisation
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-test-minimisation.md
+  - id: TACTIC:test-pyramid-progression
+    kind: tactic
+    title: test-pyramid-progression
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-test-pyramid-progression.md
+  - id: TACTIC:test-readability-clarity-check
+    kind: tactic
+    title: test-readability-clarity-check
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-test-readability-clarity-check.md
+  - id: TACTIC:test-to-system-reconstruction
+    kind: tactic
+    title: test-to-system-reconstruction
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-test-to-system-reconstruction.md
+  - id: TACTIC:traceable-decisions
+    kind: tactic
+    title: traceable-decisions
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-traceable-decisions.md
+  - id: TACTIC:usage-examples-sync
+    kind: tactic
+    title: usage-examples-sync
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-usage-examples-sync.md
+  - id: TACTIC:work-package-completion-validation
+    kind: tactic
+    title: work-package-completion-validation
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-work-package-completion-validation.md
+  - id: TACTIC:zombies-tdd
+    kind: tactic
+    title: zombies-tdd
+    summary: Definition unavailable in bundled doctrine.
+    source_path: ''
+    local_path: _LIBRARY/tactic-zombies-tdd.md
+  - id: STYLEGUIDE:adversarial-squad-cadence
+    kind: styleguide
+    title: Adversarial Squad Cadence
+    summary: "Run a bounded multi-profile adversarial squad at each planning point-cut as strong guidance, not a gate. A mission is not blocked for skipping the squad.\n"
+    source_path: ''
+    local_path: _LIBRARY/styleguide-adversarial-squad-cadence.md
+  - id: STYLEGUIDE:aggregate-design-rules
+    kind: styleguide
+    title: Aggregate Design Rules
+    summary: "Reference other aggregates by identity only: an aggregate must not hold a direct object reference to another aggregate. Use the other aggregate's ID instead to prevent transaction scope from spanning multiple aggregates."
+    source_path: ''
+    local_path: _LIBRARY/styleguide-aggregate-design-rules.md
+  - id: STYLEGUIDE:given-when-then-authoring
+    kind: styleguide
+    title: Given-When-Then Scenario Authoring
+    summary: 'A scenario has three parts: Given (the precondition/context), When (the single trigger), Then (the observable outcome). This is the same behavioural skeleton the specs in this repository already use — one scenario describes one behaviour.'
+    source_path: ''
+    local_path: _LIBRARY/styleguide-given-when-then-authoring.md
+  - id: STYLEGUIDE:kitty-glossary-writing
+    kind: styleguide
+    title: Kitty Glossary Writing Styleguide
+    summary: 'Clear, not clever: definitions exist to help the reader understand, not to demonstrate expertise.'
+    source_path: ''
+    local_path: _LIBRARY/styleguide-kitty-glossary-writing.md
+  - id: STYLEGUIDE:mutation-aware-test-design
+    kind: styleguide
+    title: Mutation-Aware Test Design
+    summary: 'Test boundary values: provide a test at the exact equality point for every >= or <= comparison, plus one step either side.'
+    source_path: ''
+    local_path: _LIBRARY/styleguide-mutation-aware-test-design.md
+  - id: STYLEGUIDE:python-conventions
+    kind: styleguide
+    title: Python Conventions Styleguide
+    summary: 'Guard clauses over nesting: validate inputs early and fail fast rather than wrapping logic in conditional branches.'
+    source_path: ''
+    local_path: _LIBRARY/styleguide-python-conventions.md
+  - id: STYLEGUIDE:quadruple-a-test-format
+    kind: styleguide
+    title: Quadruple-A Test Format
+    summary: 'A test has four phases: Arrange, Assumption checks, Act, Assert. Naming them turns a test into the canonical skeleton for pinning ONE behaviour.'
+    source_path: ''
+    local_path: _LIBRARY/styleguide-quadruple-a-test-format.md
+  - id: STYLEGUIDE:test-desiderata-and-boundaries
+    kind: styleguide
+    title: Test Desiderata and Clear Test Boundaries
+    summary: 'Desiderata are trade-offs: choose which properties a given test optimizes; do not pretend one test maximizes all twelve at once.'
+    source_path: ''
+    local_path: _LIBRARY/styleguide-test-desiderata-and-boundaries.md
+  - id: STYLEGUIDE:testing-principles
+    kind: styleguide
+    title: Testing Principles Styleguide
+    summary: 'Fast: tests execute quickly enough that running them after every small change is not a burden.'
+    source_path: ''
+    local_path: _LIBRARY/styleguide-testing-principles.md
+  - id: STYLEGUIDE:tiered-standards
+    kind: styleguide
+    title: Tiered Coding Standards
+    summary: 'Rigour must match risk: the closer a package is to mission-critical state management or runtime execution, the higher the quality bar it must meet.'
+    source_path: ''
+    local_path: _LIBRARY/styleguide-tiered-standards.md
+  - id: TOOLGUIDE:contextive
+    kind: toolguide
+    title: Contextive
+    summary: "Reference guide for using Contextive to manage ubiquitous language in software projects. Covers glossary file setup, term definition syntax, multi-context repository layouts, IDE integration, and alignment with Spec Kitty glossary curation workflows.\n"
+    source_path: ''
+    local_path: _LIBRARY/toolguide-contextive.md
+  - id: TOOLGUIDE:efficient-local-tooling
+    kind: toolguide
+    title: Efficient Local Tooling
+    summary: Operation-oriented guidance for using efficient local tools during repository work.
+    source_path: ''
+    local_path: _LIBRARY/toolguide-efficient-local-tooling.md
+  - id: TOOLGUIDE:gherkin
+    kind: toolguide
+    title: The Gherkin Scenario Language
+    summary: "Reference for the Gherkin DSL itself — the language, not any runner. Covers Feature, Background, Scenario, Scenario Outline, the Given/When/Then/And/But steps, Examples tables, tags, and doc strings / data tables. Explicitly scoped to the notation only; the runner that executes Gherkin (Cucumber, behave, SpecFlow, and others) is out of scope and named only to draw the boundary.\n"
+    source_path: ''
+    local_path: _LIBRARY/toolguide-gherkin.md
+  - id: TOOLGUIDE:python-mutation-tools
+    kind: toolguide
+    title: Python Mutation Testing with mutmut
+    summary: "Operator reference and mutmut workflow for Python mutation testing. Covers Python-specific mutation families (identity operators, membership, floor division, any/all, break/continue) and the mutmut run/browse/apply cycle.\n"
+    source_path: ''
+    local_path: _LIBRARY/toolguide-python-mutation-tools.md
+  - id: TOOLGUIDE:python-review-checks
+    kind: toolguide
+    title: Python Review Checks
+    summary: "Catalog of automated checks a reviewer should run or verify have been run before approving Python code. Organized by category: formatting, linting, type safety, architecture, security, and test quality.\n"
+    source_path: ''
+    local_path: _LIBRARY/toolguide-python-review-checks.md
+  - id: TOOLGUIDE:sonar
+    kind: toolguide
+    title: SonarQube Static Analysis and Quality Gate
+    summary: "Operator reference for SonarQube static analysis and its quality gate. Covers the four measure families (new-code coverage, code smells / maintainability, security hotspots and vulnerabilities, duplication), why the gate is evaluated on NEW code rather than the whole project, and the loopback-safe handling of a local Sonar or control-plane URL (do not force HTTPS on 127.0.0.1).\n"
+    source_path: ''
+    local_path: _LIBRARY/toolguide-sonar.md
+  - id: TOOLGUIDE:typescript-mutation-tools
+    kind: toolguide
+    title: TypeScript Mutation Testing with Stryker
+    summary: "Operator reference and Stryker workflow for TypeScript/JavaScript mutation testing. Covers JS/TS-specific mutation families (optional chaining ?., nullish coalescing ??, some/every, array literals) and the Stryker run/incremental/HTML-report cycle.\n"
+    source_path: ''
+    local_path: _LIBRARY/toolguide-typescript-mutation-tools.md
+  - id: PROCEDURE:adversarial-squad-deployment
+    kind: procedure
+    title: Adversarial Squad Deployment
+    summary: "Deploy a small, bounded set of profile-loaded subagents in parallel at high-leverage review point-cuts so independent doctrine lenses converge on findings no single reviewer would catch. Turns review from one perspective into a cheap adversarial panel that resists laziness, accidental-pass, and single-lens blind spots. Optional and charter- or memory-activated — it enriches the flow, it does not gate it.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-adversarial-squad-deployment.md
+  - id: PROCEDURE:bdd-scenario-lifecycle
+    kind: procedure
+    title: BDD Scenario Lifecycle
+    summary: "Guide the Formulation, Automation, and Maintenance phases of the BDD cycle, picking up where the Example Mapping Workshop (Discovery phase) leaves off. Covers translating validated examples into Gherkin specifications, wiring them to executable step definitions, and maintaining them as living documentation as the system evolves. Toolchain-agnostic — applicable with Cucumber-JVM, Cucumber-JS, Behave, SpecFlow, or any Given/When/Then runner.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-bdd-scenario-lifecycle.md
+  - id: PROCEDURE:event-storming-discovery
+    kind: procedure
+    title: Event Storming Discovery
+    summary: "Discover domain events, commands, aggregates, policies, read models, and bounded context boundaries through a structured analysis of business flows. The procedure produces a shared domain model grounded in real business behaviour rather than technical assumptions. Based on Alberto Brandolini's Event Storming technique, adapted for agent-assisted discovery with human-in-charge validation at key decision points.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-event-storming-discovery.md
+  - id: PROCEDURE:example-mapping-workshop
+    kind: procedure
+    title: Example Mapping Workshop
+    summary: "Turn a behavior request into concrete rules, examples, and open questions that stakeholders and implementers can share as a canonical specification set.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-example-mapping-workshop.md
+  - id: PROCEDURE:legacy-codebase-triage
+    kind: procedure
+    title: Legacy Codebase Triage
+    summary: "Convert an unfamiliar brownfield codebase into a defensible action plan by gathering version-control evidence, overlaying structural and complexity signals, optionally classifying domains, and bucketing the resulting findings into fix-this-week, fix-this-quarter, do-not-worry, and parallelisable work. The output is a triage document that anchors subsequent planning conversations and ADRs; it is not a replacement for deeper investigation, only a fast, evidence-backed first pass.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-legacy-codebase-triage.md
+  - id: PROCEDURE:mission-tracer-files
+    kind: procedure
+    title: Mission Tracer Files
+    summary: "Give every mission a lightweight running log of tooling friction, approach evolution, and design rationale through three sparse tracer files. The files are seeded at mission start, appended to during implementation, and assessed at mission close. Captured friction and rationale feed the next mission's planning and make recurring tool and process gaps visible instead of repeatedly re-discovered.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-mission-tracer-files.md
+  - id: PROCEDURE:post-merge-arch-gate-adjudication
+    kind: procedure
+    title: Post-Merge Arch-Gate Adjudication
+    summary: "After merging one or more lane branches, architectural gate failures may appear that were not visible during per-lane review. This procedure distinguishes pre-existing failures (present on the mission base branch before any lane work) from regressions introduced by the merge. Correct adjudication prevents teams from either ignoring real regressions or blocking on failures they did not cause.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-post-merge-arch-gate-adjudication.md
+  - id: PROCEDURE:red-main-release-discipline
+    kind: procedure
+    title: Red Main & Release Discipline
+    summary: "Keep the mainline CI signal honest and authoritative for release. A red main is a true signal of known release-blocking (P0) defects, never something to hide by reverting an honest failure or declining a bug's reproduction test. Mainline CI status is the single authoritative release gate; expensive QA and manual testing are not spent on a known-broken base; and red main is worked down as top priority. Consensus policy (CEO/product owner, QA lead, maintainers); governing decision ADR 2026-07-17-1, operational guide docs/development/red-main-and-release-readiness.md.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-red-main-release-discipline.md
+  - id: PROCEDURE:situational-assessment
+    kind: procedure
+    title: Situational Assessment
+    summary: "Establish a shared, documented understanding of the context, stakeholders, constraints, and problem structure before any solution is designed or selected. A situational assessment ensures that architectural decisions are grounded in operational reality rather than technology preference, and that the trade-off assessments that follow address the right problem.\n"
+    source_path: ''
+    local_path: _LIBRARY/procedure-situational-assessment.md
+  - id: TEMPLATE_SET:software-dev-default
+    kind: template_set
+    title: software-dev-default
+    summary: Build high-quality software with structured workflows and test-driven development
+    source_path: /home/lynn/.local/share/uv/tools/spec-kitty-cli/lib/python3.11/site-packages/packs/built-in/missions/software-dev/mission.yaml
+    local_path: _LIBRARY/template-set-software-dev-default.md
+overrides: {}
+metadata:
+  generated_at: '2026-08-25T17:32:53Z'
+  bundle_schema_version: 2
+activated_kinds:
+- directives
+- tactics
+activated_directives:
+- 001-architectural-integrity-standard
+- 010-specification-fidelity-requirement
+- 024-locality-of-change
+- 028-search-tool-discipline
+- 030-test-and-typecheck-quality-gate
+activated_tactics:
+- acceptance-test-first
+- boring-code-review
+mission_type_activations:
+- software-dev
