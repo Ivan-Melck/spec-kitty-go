@@ -1,6 +1,8 @@
 package architecture
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +11,66 @@ import (
 	"time"
 )
 
+func TestTypedProductionSourceLoaderCancelsStalledGoList(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	cancelled := make(chan struct{})
+	runner := func(ctx context.Context, _ string, _ ...string) (commandResult, error) {
+		<-ctx.Done()
+		close(cancelled)
+		return commandResult{}, ctx.Err()
+	}
+
+	_, err := loadTypedProductionSources(ctx, t.TempDir(), "example.test/stalled", runner)
+	var typed *LoadError
+	if !errors.As(err, &typed) || typed.Kind != LoadCommandFailed || typed.Command != "go list -e -deps -json ./..." {
+		t.Fatalf("stalled production source load did not return a typed command failure: %T %v", err, err)
+	}
+	if !errors.Is(typed.Cause, context.DeadlineExceeded) {
+		t.Fatalf("stalled production source load lost cancellation cause: %+v", typed)
+	}
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("stalling Go command runner was not cancelled")
+	}
+}
+
+func TestTypedProductionSourceLoadFailuresAreTyped(t *testing.T) {
+	const module = "example.test/load-failure"
+	tests := []struct {
+		name      string
+		source    string
+		operation string
+	}{
+		{
+			name:      "parse",
+			source:    "package guard\nfunc Broken( {\n",
+			operation: "parse production source",
+		},
+		{
+			name:      "type-check",
+			source:    "package guard\nfunc broken() { var number int = \"not-an-int\"; _ = number }\n",
+			operation: "type-check production package " + module + "/internal/guard",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := newReachabilityFixture(t, module)
+			writeGoFixture(t, root, "internal/guard/guard.go", test.source)
+
+			err := CheckReachability(context.Background(), root, module, nil)
+			var typed *LoadError
+			if !errors.As(err, &typed) || typed.Kind != LoadInvalidSource {
+				t.Fatalf("source load failure is not typed: %T %v", err, err)
+			}
+			if !strings.Contains(typed.Command, test.operation) {
+				t.Fatalf("source load failure lacks stable operation context %q: %+v", test.operation, typed)
+			}
+		})
+	}
+}
+
 func TestReachabilityRejectsGuardCalledOnlyByTest(t *testing.T) {
 	started := time.Now()
 	module := "example.test/reachability"
@@ -16,7 +78,7 @@ func TestReachabilityRejectsGuardCalledOnlyByTest(t *testing.T) {
 	writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nfunc EnforceAuthority() {}\n")
 	writeGoFixture(t, root, "internal/guard/guard_test.go", "package guard\nimport \"testing\"\nfunc TestShadow(t *testing.T) { EnforceAuthority() }\n")
 	target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerEitherProduction}
-	err := CheckReachability(root, module, []ReachabilityTarget{target})
+	err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
 	if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) || !strings.Contains(err.Error(), target.Package) || !strings.Contains(err.Error(), "symbol=EnforceAuthority") {
 		t.Fatalf("test-only guard caller was not rejected exactly: %v", err)
 	}
@@ -45,7 +107,7 @@ func TestReachabilityRejectsBuildExcludedCallers(t *testing.T) {
 			writeGoFixture(t, root, test.callerPath, test.buildLine+
 				"package app\nimport guardpkg \"example.test/reachability/internal/guard\"\nfunc useGuard() { guardpkg.EnforceAuthority() }\n")
 			target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerExternalPackage}
-			err := CheckReachability(root, module, []ReachabilityTarget{target})
+			err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
 			if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) ||
 				!strings.Contains(err.Error(), target.Package) || !strings.Contains(err.Error(), "symbol=EnforceAuthority") {
 				t.Fatalf("build-excluded caller satisfied reachability: %v", err)
@@ -74,7 +136,7 @@ func TestReachabilityHonorsActiveCustomBuildTags(t *testing.T) {
 				"package app\nimport guardpkg \"example.test/reachability/internal/guard\"\nfunc useGuard() { guardpkg.EnforceAuthority() }\n")
 			t.Setenv("GOFLAGS", "-tags=reviewactive")
 			target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerExternalPackage}
-			err := CheckReachability(root, module, []ReachabilityTarget{target})
+			err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
 			if !test.wantError && err != nil {
 				t.Fatalf("active custom-tag caller was excluded: %v", err)
 			}
@@ -93,7 +155,7 @@ func TestReachabilityRejectsTargetSelfRecursion(t *testing.T) {
 	root := newReachabilityFixture(t, module)
 	writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nfunc EnforceAuthority() { EnforceAuthority() }\n")
 	target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerSamePackageProduction}
-	err := CheckReachability(root, module, []ReachabilityTarget{target})
+	err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
 	if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) ||
 		!strings.Contains(err.Error(), target.Package) || !strings.Contains(err.Error(), "symbol=EnforceAuthority") {
 		t.Fatalf("self-recursive target satisfied reachability: %v", err)
@@ -107,7 +169,7 @@ func TestReachabilityRejectsUnrootedMutualRecursion(t *testing.T) {
 	root := newReachabilityFixture(t, module)
 	writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nfunc EnforceAuthority() { helper() }\nfunc helper() { EnforceAuthority() }\n")
 	target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerSamePackageProduction}
-	err := CheckReachability(root, module, []ReachabilityTarget{target})
+	err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
 	if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) ||
 		!strings.Contains(err.Error(), target.Package) || !strings.Contains(err.Error(), "symbol=EnforceAuthority") {
 		t.Fatalf("unrooted mutual-recursion cycle satisfied reachability: %v", err)
@@ -136,7 +198,7 @@ func TestReachabilityCallerPolicies(t *testing.T) {
 			}
 			writeGoFixture(t, root, test.caller, contents)
 			target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: test.class}
-			if err := CheckReachability(root, module, []ReachabilityTarget{target}); err != nil {
+			if err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -173,7 +235,7 @@ func TestReachabilityRejectsShadowedTargetCalls(t *testing.T) {
 			writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nconst Marker = true\nfunc EnforceAuthority() {}\n")
 			writeGoFixture(t, root, test.callerPath, test.caller)
 			target := ReachabilityTarget{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerEitherProduction}
-			err := CheckReachability(root, module, []ReachabilityTarget{target})
+			err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
 			if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) || !strings.Contains(err.Error(), "symbol=EnforceAuthority") {
 				t.Fatalf("shadowed target call satisfied reachability: %v", err)
 			}
@@ -199,7 +261,7 @@ func TestDefaultReachabilityRegistryPassesCurrentRepository(t *testing.T) {
 			t.Errorf("mandatory reachability target missing: %s", target)
 		}
 	}
-	if err := CheckReachability(root, module, DefaultReachabilityTargets(module)); err != nil {
+	if err := CheckReachability(context.Background(), root, module, DefaultReachabilityTargets(module)); err != nil {
 		t.Fatalf("current production reachability rejected: %v", err)
 	}
 }
@@ -232,13 +294,13 @@ func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *test
 			writeGoFixture(t, root, declarationPath, fixture.declaration)
 			callerPath := filepath.Join(root, filepath.FromSlash(fixture.callerPath))
 			writeGoFixture(t, root, fixture.callerPath, fixture.caller)
-			if err := CheckReachability(root, module, []ReachabilityTarget{fixture.target}); err != nil {
+			if err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{fixture.target}); err != nil {
 				t.Fatalf("registered target fixture rejected: %v", err)
 			}
-			if err := os.WriteFile(callerPath, []byte(strings.Split(fixture.caller, "func")[0]), 0o600); err != nil {
+			if err := os.WriteFile(callerPath, []byte(strings.Split(fixture.caller, "\n")[0]+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			err := CheckReachability(root, module, []ReachabilityTarget{fixture.target})
+			err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{fixture.target})
 			if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) || !strings.Contains(err.Error(), "symbol="+fixture.target.Symbol) {
 				t.Fatalf("removed sole production caller did not implicate registered target: %v", err)
 			}
@@ -251,7 +313,7 @@ func TestReachabilityRejectsMissingRegisteredTarget(t *testing.T) {
 	module := "example.test/reachability"
 	root := newReachabilityFixture(t, module)
 	writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nfunc DifferentGuard() {}\n")
-	err := CheckReachability(root, module, []ReachabilityTarget{{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerEitherProduction}})
+	err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{{Package: module + "/internal/guard", Symbol: "EnforceAuthority", RequiredCallerClass: CallerEitherProduction}})
 	if err == nil || !strings.Contains(err.Error(), string(RuleReachabilityTarget)) {
 		t.Fatalf("missing target accepted: %v", err)
 	}
@@ -262,14 +324,14 @@ func TestDeferredRuntimeSurfaceRejectsProductionPythonButIgnoresTests(t *testing
 	root := newReachabilityFixture(t, module)
 	writeGoFixture(t, root, "internal/guard/guard.go", "package guard\nimport cmd \"os/exec\"\nfunc run() { _ = cmd.CommandContext(nil, \"/usr/bin/python3.12\") }\n")
 	writeGoFixture(t, root, "internal/guard/guard_test.go", "package guard\nimport \"os/exec\"\nfunc shadow() { _ = exec.Command(\"python\") }\n")
-	err := CheckDeferredRuntimeSurfaces(root, module)
+	err := CheckDeferredRuntimeSurfaces(context.Background(), root, module)
 	if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) || !strings.Contains(err.Error(), module+"/internal/guard") || !strings.Contains(err.Error(), "runtime:/usr/bin/python3.12") {
 		t.Fatalf("production Python runtime was not rejected exactly: %v", err)
 	}
 	if removeErr := os.WriteFile(filepath.Join(root, "internal", "guard", "guard.go"), []byte("package guard\n"), 0o600); removeErr != nil {
 		t.Fatal(removeErr)
 	}
-	if err := CheckDeferredRuntimeSurfaces(root, module); err != nil {
+	if err := CheckDeferredRuntimeSurfaces(context.Background(), root, module); err != nil {
 		t.Fatalf("test-only Python runtime must not count: %v", err)
 	}
 }
@@ -301,7 +363,7 @@ func TestDeferredRuntimeSurfaceRejectsConstantAliasesAndDotImport(t *testing.T) 
 		t.Run(test.name, func(t *testing.T) {
 			root := newReachabilityFixture(t, module)
 			writeGoFixture(t, root, "internal/guard/guard.go", test.source)
-			err := CheckDeferredRuntimeSurfaces(root, module)
+			err := CheckDeferredRuntimeSurfaces(context.Background(), root, module)
 			if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Python runtime mutant survived: %v", err)
 			}
@@ -315,7 +377,7 @@ func TestDeferredRuntimeSurfaceRejectsPackageAliasDeclaredInAnotherFile(t *testi
 	writeGoFixture(t, root, "internal/guard/runtime.go", "package guard\nconst runtimeName = \"python3\"\n")
 	writeGoFixture(t, root, "internal/guard/runner.go", "package guard\nimport \"os/exec\"\nfunc run() { _ = exec.Command(runtimeName) }\n")
 
-	err := CheckDeferredRuntimeSurfaces(root, module)
+	err := CheckDeferredRuntimeSurfaces(context.Background(), root, module)
 	if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) ||
 		!strings.Contains(err.Error(), module+"/internal/guard") ||
 		!strings.Contains(err.Error(), "runtime:python3") {
@@ -328,7 +390,7 @@ func TestDeferredRuntimeSurfaceRejectsLocalShortDeclarationAlias(t *testing.T) {
 	root := newReachabilityFixture(t, module)
 	writeGoFixture(t, root, "internal/guard/runner.go", "package guard\nimport \"os/exec\"\nfunc run() { interpreter := \"python3\"; _ = exec.Command(interpreter) }\n")
 
-	err := CheckDeferredRuntimeSurfaces(root, module)
+	err := CheckDeferredRuntimeSurfaces(context.Background(), root, module)
 	if err == nil || !strings.Contains(err.Error(), string(RuleDeferredSurface)) ||
 		!strings.Contains(err.Error(), module+"/internal/guard") ||
 		!strings.Contains(err.Error(), "runtime:python3") {

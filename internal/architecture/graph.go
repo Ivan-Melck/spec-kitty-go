@@ -56,10 +56,11 @@ const (
 	LoadCommandFailed LoadErrorKind = "command_failed"
 	LoadOutputLimit   LoadErrorKind = "output_limit"
 	LoadInvalidOutput LoadErrorKind = "invalid_output"
+	LoadInvalidSource LoadErrorKind = "invalid_source"
 	LoadEmptyGraph    LoadErrorKind = "empty_graph"
 )
 
-// LoadError is a bounded, typed failure from production graph loading.
+// LoadError is a bounded, typed failure from production graph or source loading.
 type LoadError struct {
 	Kind    LoadErrorKind
 	Command string
@@ -68,7 +69,7 @@ type LoadError struct {
 }
 
 func (e *LoadError) Error() string {
-	return fmt.Sprintf("architecture graph load kind=%s command=%q stderr=%q: %v", e.Kind, e.Command, e.Stderr, e.Cause)
+	return fmt.Sprintf("architecture load kind=%s command=%q stderr=%q: %v", e.Kind, e.Command, e.Stderr, e.Cause)
 }
 
 type commandResult struct {

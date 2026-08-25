@@ -13,6 +13,7 @@ import (
 	"go/token"
 	"go/types"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -93,6 +94,19 @@ type productionSourceImporter struct {
 	fallback types.Importer
 }
 
+type productionDependencyImporter struct {
+	exports  map[string]string
+	exported types.Importer
+	source   types.Importer
+}
+
+func (i *productionDependencyImporter) Import(importPath string) (*types.Package, error) {
+	if i.exports[importPath] != "" {
+		return i.exported.Import(importPath)
+	}
+	return i.source.Import(importPath)
+}
+
 func (i *productionSourceImporter) Import(importPath string) (*types.Package, error) {
 	if source := i.packages[importPath]; source != nil {
 		return i.check(source)
@@ -116,38 +130,46 @@ func (i *productionSourceImporter) check(source *productionSourcePackage) (*type
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
 	}
 	config := types.Config{Importer: i, Error: func(error) {}}
-	checked, _ := config.Check(source.importPath, source.fileSet, source.files, source.info)
+	checked, err := config.Check(source.importPath, source.fileSet, source.files, source.info)
+	if err != nil {
+		return nil, err
+	}
 	if checked == nil {
 		return nil, fmt.Errorf("type-check production package %s", source.importPath)
 	}
-	// A package can still contain useful, exact object information when an
-	// unrelated third-party import has no gc export data. Local packages are
-	// always loaded from source through this importer.
 	source.typed = checked
 	return checked, nil
 }
 
-func loadTypedProductionSources(root, modulePath string) ([]*productionSourcePackage, error) {
+func loadTypedProductionSources(ctx context.Context, root, modulePath string, run graphCommandRunner) ([]*productionSourcePackage, error) {
+	ctx, cancel := context.WithTimeout(ctx, goListTimeout)
+	defer cancel()
+
 	fileSet := token.NewFileSet()
 	byPath := make(map[string]*productionSourcePackage)
-	result, err := runGraphCommand(context.Background(), root, "list", "-json", "./...")
+	const sourceListCommand = "go list -e -deps -json ./..."
+	result, err := run(ctx, root, "list", "-e", "-deps", "-json", "./...")
 	if err != nil {
-		return nil, commandLoadError("go list -json ./...", result, err)
+		return nil, commandLoadError(sourceListCommand, result, err)
 	}
 	if result.overflow {
-		return nil, commandLoadError("go list -json ./...", result, errors.New("bounded output exceeded"))
+		return nil, commandLoadError(sourceListCommand, result, errors.New("bounded output exceeded"))
 	}
 	type listedPackage struct {
 		Dir        string
 		ImportPath string
+		Imports    []string
 		Name       string
 		GoFiles    []string
 		CgoFiles   []string
+		Standard   bool
 		Module     *struct {
 			Path string
 			Main bool
 		}
 	}
+	listedByPath := make(map[string]listedPackage)
+	mainImports := make(map[string]struct{})
 	decoder := json.NewDecoder(bytes.NewReader(result.stdout))
 	for {
 		var listed listedPackage
@@ -155,10 +177,14 @@ func loadTypedProductionSources(root, modulePath string) ([]*productionSourcePac
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return nil, &LoadError{Kind: LoadInvalidOutput, Command: "go list -json ./...", Cause: err}
+			return nil, &LoadError{Kind: LoadInvalidOutput, Command: sourceListCommand, Cause: err}
 		}
+		listedByPath[listed.ImportPath] = listed
 		if listed.Module == nil || !listed.Module.Main || listed.Module.Path != modulePath || !withinModule(modulePath, listed.ImportPath) {
 			continue
+		}
+		for _, imported := range listed.Imports {
+			mainImports[imported] = struct{}{}
 		}
 		files := append(append([]string(nil), listed.GoFiles...), listed.CgoFiles...)
 		if len(files) == 0 {
@@ -171,10 +197,14 @@ func loadTypedProductionSources(root, modulePath string) ([]*productionSourcePac
 			filePath := filepath.Join(listed.Dir, name)
 			parsed, err := parser.ParseFile(fileSet, filePath, nil, 0)
 			if err != nil {
-				return nil, fmt.Errorf("parse production source %s: %w", filePath, err)
+				return nil, &LoadError{Kind: LoadInvalidSource, Command: "parse production source " + filePath, Cause: err}
 			}
 			if parsed.Name.Name != listed.Name {
-				return nil, fmt.Errorf("production package %s contains package names %q and %q", listed.ImportPath, listed.Name, parsed.Name.Name)
+				return nil, &LoadError{
+					Kind:    LoadInvalidSource,
+					Command: "validate production package " + listed.ImportPath + " file " + filePath,
+					Cause:   fmt.Errorf("package names %q and %q do not match", listed.Name, parsed.Name.Name),
+				}
 			}
 			source.files = append(source.files, parsed)
 		}
@@ -185,10 +215,62 @@ func loadTypedProductionSources(root, modulePath string) ([]*productionSourcePac
 		packages = append(packages, source)
 	}
 	sort.Slice(packages, func(left, right int) bool { return packages[left].importPath < packages[right].importPath })
-	checker := &productionSourceImporter{packages: byPath, fallback: importer.Default()}
+	var exportImports []string
+	hasExternalImport := false
+	for imported := range mainImports {
+		metadata, found := listedByPath[imported]
+		if found && metadata.Module != nil && metadata.Module.Main {
+			continue
+		}
+		exportImports = append(exportImports, imported)
+		if !found || !metadata.Standard {
+			hasExternalImport = true
+		}
+	}
+	sort.Strings(exportImports)
+	var fallback types.Importer = importer.ForCompiler(fileSet, "source", nil)
+	if hasExternalImport {
+		arguments := append([]string{"list", "-deps", "-export", "-json"}, exportImports...)
+		exportCommand := "go " + strings.Join(arguments, " ")
+		exportResult, err := run(ctx, root, arguments...)
+		if err != nil {
+			return nil, commandLoadError(exportCommand, exportResult, err)
+		}
+		if exportResult.overflow {
+			return nil, commandLoadError(exportCommand, exportResult, errors.New("bounded output exceeded"))
+		}
+		exports := make(map[string]string)
+		exportDecoder := json.NewDecoder(bytes.NewReader(exportResult.stdout))
+		for {
+			var listed struct {
+				ImportPath string
+				Export     string
+			}
+			if err := exportDecoder.Decode(&listed); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				return nil, &LoadError{Kind: LoadInvalidOutput, Command: exportCommand, Cause: err}
+			}
+			if listed.Export != "" {
+				exports[listed.ImportPath] = listed.Export
+			}
+		}
+		exported := importer.ForCompiler(fileSet, "gc", importer.Lookup(func(importPath string) (io.ReadCloser, error) {
+			exportPath := exports[importPath]
+			if exportPath == "" {
+				return nil, fmt.Errorf("Go tooling returned no export data for %s", importPath)
+			}
+			return os.Open(exportPath)
+		}))
+		fallback = &productionDependencyImporter{
+			exports: exports, exported: exported, source: importer.ForCompiler(fileSet, "source", nil),
+		}
+	}
+	checker := &productionSourceImporter{packages: byPath, fallback: fallback}
 	for _, source := range packages {
 		if _, err := checker.check(source); err != nil {
-			return nil, err
+			return nil, &LoadError{Kind: LoadInvalidSource, Command: "type-check production package " + source.importPath, Cause: err}
 		}
 	}
 	return packages, nil
@@ -321,10 +403,10 @@ func (g packageCallGraph) hasCallerRootedOutsideTargetCycle(target types.Object)
 	return false
 }
 
-// CheckReachability parses production Go files and verifies the curated
-// targets. Test files and files excluded from the active Go build never
-// satisfy a target.
-func CheckReachability(root, modulePath string, targets []ReachabilityTarget) error {
+// CheckReachability parses active production Go files and verifies the curated
+// targets. The caller context and an internal deadline bound Go tooling. Test
+// files and files excluded from the active Go build never satisfy a target.
+func CheckReachability(ctx context.Context, root, modulePath string, targets []ReachabilityTarget) error {
 	if modulePath == "" {
 		return fmt.Errorf("reachability module path is required")
 	}
@@ -347,7 +429,7 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 		}
 		observations[target] = &reachabilityObservation{}
 	}
-	packages, err := loadTypedProductionSources(root, modulePath)
+	packages, err := loadTypedProductionSources(ctx, root, modulePath, runGraphCommand)
 	if err != nil {
 		return err
 	}
@@ -419,15 +501,16 @@ func CheckReachability(root, modulePath string, targets []ReachabilityTarget) er
 }
 
 // CheckDeferredRuntimeSurfaces rejects production code that launches a Python
-// interpreter. Import and package-based deferred surfaces are enforced by
-// Policy; this targeted AST check covers the runtime dependency that an import
-// graph cannot represent without returning to broad textual name matching.
-func CheckDeferredRuntimeSurfaces(root, modulePath string) error {
+// interpreter. The caller context and an internal deadline bound Go tooling.
+// Import and package-based deferred surfaces are enforced by Policy; this
+// targeted AST check covers the runtime dependency that an import graph cannot
+// represent without returning to broad textual name matching.
+func CheckDeferredRuntimeSurfaces(ctx context.Context, root, modulePath string) error {
 	if modulePath == "" {
 		return fmt.Errorf("deferred runtime module path is required")
 	}
 	seen := make(map[Violation]bool)
-	packages, err := loadTypedProductionSources(root, modulePath)
+	packages, err := loadTypedProductionSources(ctx, root, modulePath, runGraphCommand)
 	if err != nil {
 		return err
 	}

@@ -37,11 +37,11 @@ func runArchitectureCheck(ctx context.Context, args []string, stdout, stderr io.
 		fmt.Fprintf(stderr, "architecture check: %v\n", err)
 		return 1
 	}
-	if err := architecture.CheckReachability(root, graph.ModulePath, architecture.DefaultReachabilityTargets(graph.ModulePath)); err != nil {
+	if err := architecture.CheckReachability(ctx, root, graph.ModulePath, architecture.DefaultReachabilityTargets(graph.ModulePath)); err != nil {
 		fmt.Fprintf(stderr, "architecture check: %v\n", err)
 		return 1
 	}
-	if err := architecture.CheckDeferredRuntimeSurfaces(root, graph.ModulePath); err != nil {
+	if err := architecture.CheckDeferredRuntimeSurfaces(ctx, root, graph.ModulePath); err != nil {
 		fmt.Fprintf(stderr, "architecture check: %v\n", err)
 		return 1
 	}
