@@ -1,0 +1,306 @@
+schema_version: 1
+mission_id: 01M0Q4A8889J13B2G0FZ2MEG7J
+mission_slug: phase1-two-agent-authority-proving-ground-01M0Q4A8
+mission_number:
+friendly_name: phase1 two agent authority proving ground
+mission_type: software-dev
+target_branch: mission/phase1-authority-proving-ground
+created_at: '2026-08-25T12:36:48.469059+00:00'
+created_by:
+  kind: runtime
+  id: spec-kitty-generator
+  display: Spec Kitty Generator
+provenance:
+  kind: runtime_post_completion
+  invoked_at: '2026-08-25T12:36:48.469059+00:00'
+  policy_resolved_from:
+    enabled: <default>
+    timing: <default>
+    failure_policy: <default>
+    write_record: <default>
+    generate_proposals: <default>
+    apply_proposals: <default>
+    permissions.write_record: <default>
+    permissions.inspect_mission_artifacts: <default>
+    permissions.propose_glossary_changes: <default>
+    permissions.propose_drg_changes: <default>
+    permissions.propose_doctrine_changes: <default>
+    permissions.apply_low_risk_changes: <default>
+    permissions.apply_structural_changes: <default>
+    precedence: <default>
+    generator: <default>
+policy_source:
+  enabled: <default>
+  timing: <default>
+  failure_policy: <default>
+  write_record: <default>
+  generate_proposals: <default>
+  apply_proposals: <default>
+  permissions.write_record: <default>
+  permissions.inspect_mission_artifacts: <default>
+  permissions.propose_glossary_changes: <default>
+  permissions.propose_drg_changes: <default>
+  permissions.propose_doctrine_changes: <default>
+  permissions.apply_low_risk_changes: <default>
+  permissions.apply_structural_changes: <default>
+  precedence: <default>
+  generator: <default>
+findings_status: has_findings
+helped:
+- id: h-001
+  category: implementation
+  summary: WP08 completed without rejection cycles
+  evidence_refs:
+  - e-013
+not_helpful:
+- id: n-018
+  category: doc
+  summary: analysis-report.md present with findings
+  evidence_refs:
+  - e-032
+  details: An analysis-report.md artifact is present for this mission. Review its findings to understand documented
+    issues and decisions.
+- id: n-011
+  category: implementation
+  summary: WP01 needed 4 implementation cycles
+  evidence_refs:
+  - e-025
+  details: WP WP01 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-012
+  category: implementation
+  summary: WP02 needed 5 implementation cycles
+  evidence_refs:
+  - e-026
+  details: WP WP02 entered in_progress 5 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-013
+  category: implementation
+  summary: WP03 needed 4 implementation cycles
+  evidence_refs:
+  - e-027
+  details: WP WP03 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-014
+  category: implementation
+  summary: WP04 needed 4 implementation cycles
+  evidence_refs:
+  - e-028
+  details: WP WP04 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-015
+  category: implementation
+  summary: WP05 needed 2 implementation cycles
+  evidence_refs:
+  - e-029
+  details: WP WP05 entered in_progress 2 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-016
+  category: implementation
+  summary: WP06 needed 5 implementation cycles
+  evidence_refs:
+  - e-030
+  details: WP WP06 entered in_progress 5 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-017
+  category: implementation
+  summary: WP07 needed 3 implementation cycles
+  evidence_refs:
+  - e-031
+  details: WP WP07 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-008
+  category: process
+  summary: WP06 required 5 --force override(s) during workflow
+  evidence_refs:
+  - e-021
+  details: WP WP06 required 5 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-009
+  category: process
+  summary: WP07 required 2 --force override(s) during workflow
+  evidence_refs:
+  - e-022
+  details: WP WP07 required 2 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-010
+  category: process
+  summary: WP08 required 1 --force override(s) during workflow
+  evidence_refs:
+  - e-023
+  details: WP WP08 required 1 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-001
+  category: review_loop
+  summary: WP01 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-014
+  details: WP WP01 was sent back from review to planning 3 time(s).
+- id: n-002
+  category: review_loop
+  summary: WP02 required 4 rejection cycle(s) before approval
+  evidence_refs:
+  - e-015
+  details: WP WP02 was sent back from review to planning 4 time(s).
+- id: n-003
+  category: review_loop
+  summary: WP03 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-016
+  details: WP WP03 was sent back from review to planning 3 time(s).
+- id: n-004
+  category: review_loop
+  summary: WP04 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-017
+  details: WP WP04 was sent back from review to planning 3 time(s).
+- id: n-005
+  category: review_loop
+  summary: WP05 required 1 rejection cycle(s) before approval
+  evidence_refs:
+  - e-018
+  details: WP WP05 was sent back from review to planning 1 time(s).
+- id: n-006
+  category: review_loop
+  summary: WP06 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-019
+  details: WP WP06 was sent back from review to planning 3 time(s).
+- id: n-007
+  category: review_loop
+  summary: WP07 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-020
+  details: WP WP07 was sent back from review to planning 2 time(s).
+gaps:
+- id: g-001
+  category: process
+  summary: Arbiter override needed for WP04 (1x)
+  evidence_refs:
+  - e-024
+  details: WP WP04 required 1 arbiter override(s). Arbiter overrides are an escape hatch; recurring use suggests the
+    normal review path is blocked and the underlying policy/guard may need adjustment.
+proposals: []
+evidence_refs:
+- id: e-001
+  kind: file
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/meta.json
+- id: e-002
+  kind: file
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/spec.md
+- id: e-003
+  kind: file
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/plan.md
+- id: e-004
+  kind: file
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks.md
+- id: e-005
+  kind: file
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP01-authority-seed-and-real-claim-race.md
+- id: e-006
+  kind: file
+  path:
+    kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP02-stupid-tracker-and-attribution-safe-saga.md
+- id: e-007
+  kind: file
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP03-immutable-work-graph-generations.md
+- id: e-008
+  kind: file
+  path:
+    kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP04-lease-scoped-git-workspaces-and-concurrent-start.md
+- id: e-009
+  kind: file
+  path:
+    kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP05-start-run-recovery-and-zombie-containment.md
+- id: e-010
+  kind: file
+  path:
+    kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP06-immutable-handoff-and-independent-review.md
+- id: e-011
+  kind: file
+  path:
+    kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP07-serialized-integration-and-git-fact-recovery.md
+- id: e-012
+  kind: file
+  path:
+    kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP08-two-agent-torture-chamber-and-adr-verdict.md
+- id: e-013
+  kind: file
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+- id: e-014
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0RYJW5GQ1GXRKQ0BG87Y3YF..01M0S2BXJK5T7816X6FZRNXD0W
+- id: e-015
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0SHTT026PMAV1180BGRZZMS..01M0SN9EC7Q1KADWSRJJCJEESD
+- id: e-016
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0SJ278PD4HMV8A65NP1KWRS..01M0SP4TVRKJBQNNV744CGRNSY
+- id: e-017
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0SYF8X2TY6PTMFTHFF6QYN8..01M0T32GKTMCDYNXCJ1CC0AW7H
+- id: e-018
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0T9VA675Y5HCSG68ET3J5S1
+- id: e-019
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0T9YJZBR5BGTG7597R0E5Z5..01M0VKTC75BC2TYCGHM6SMXYJF
+- id: e-020
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0TH8M65D4T1GE34YYET7QYM..01M0TR3AWB3BR6AEEBPYPGYKGA
+- id: e-021
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0TBDZT0J7MP4KJ309J6PYFK..01M0VKTC75BC2TYCGHM6SMXYJF
+- id: e-022
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0TH8M65D4T1GE34YYET7QYM..01M0TR3AWB3BR6AEEBPYPGYKGA
+- id: e-023
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0WCAVZJGA40YE17KMRDD14J
+- id: e-024
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: 01M0T5WEJXQX282MFT7JF3YK2P
+- id: e-025
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: implementation_cycles
+- id: e-026
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: implementation_cycles
+- id: e-027
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: implementation_cycles
+- id: e-028
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: implementation_cycles
+- id: e-029
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: implementation_cycles
+- id: e-030
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: implementation_cycles
+- id: e-031
+  kind: event_range
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/status.events.jsonl
+  range: implementation_cycles
+- id: e-032
+  kind: file
+  path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/analysis-report.md
+generator_version: '1.0'
+provenance_history: []
