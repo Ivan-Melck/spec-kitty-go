@@ -68,7 +68,7 @@ As a maintainer investigating an inadmissible integration, I can prove that refu
 
 1. **Given** an integration request that is already inadmissible, **when** integration evaluates it, **then** it refuses before acquiring the repository fence.
 2. **Given** the early refusal is deliberately removed, **when** the rejecting mutant runs, **then** the test detects the forbidden fence acquisition.
-3. **Given** the Phase 1 acceptance policy has no implemented waiver mechanism, **when** documentation and acceptance criteria are evaluated, **then** they consistently state that no waiver exists rather than promising an unavailable bypass.
+3. **Given** the Phase 1 acceptance policy has no implemented waiver mechanism, **when** current documentation is evaluated, **then** it states that no waiver exists and links a visible erratum for the immutable historical acceptance artifact rather than promising an unavailable bypass.
 
 ---
 
@@ -129,7 +129,7 @@ As an orchestrator maintainer, I can map the kernel's typed commands, results, e
 | FR-006 | Tiered validation workflows | The repository must provide a bounded pull-request gate and a distinct full fault/soak campaign with explicit commands, triggers, and result evidence. | High | Open |
 | FR-007 | Stable contention diagnostic | The isolated contention test must assert diagnostic kind and a safe upper bound without an empirically unstable minimum-duration assertion. | High | Open |
 | FR-008 | Pre-fence refusal proof | Integration tests must prove that known-inadmissible work is refused before repository-fence acquisition and include a rejecting mutant for the missing early check. | High | Open |
-| FR-009 | Repository hygiene | Generated local binaries must be ignored, and existing Phase 1 acceptance text must be reconciled to state truthfully that no waiver mechanism exists. | Medium | Open |
+| FR-009 | Repository hygiene | Generated local binaries must be ignored, and living documentation must publish a visible erratum stating truthfully that the immutable Phase 1 acceptance record mentions a waiver mechanism that does not exist. | Medium | Open |
 | FR-010 | Run-owned governance context | Persistent run authority must support one immutable governance-context reference with deterministic, algorithm-qualified commitments; leases must inherit that reference through the run. | High | Open |
 | FR-011 | Forward-compatible migration | The control store must migrate existing databases forward without fabricating historical governance provenance or making existing authority records unreadable. | High | Open |
 | FR-012 | Orchestrator 1.3 projection record | A version-pinned technical record must map kernel commands, results, errors, identity fields, and host-only authority boundaries onto Orchestrator API 1.3 and enumerate gaps. | Medium | Open |
@@ -192,7 +192,7 @@ As an orchestrator maintainer, I can map the kernel's typed commands, results, e
 - **SC-005**: Existing Phase 1 universal invariants, focused race tests, static analysis, dependency verification, formatting, and binary builds all pass.
 - **SC-006**: Governance-context commitments are deterministic over 100 identical evaluations, reject incomplete commitments, detect reordered or altered entries, and survive an existing-database migration without data loss.
 - **SC-007**: A reviewer can trace every relevant kernel command and result to an explicit Orchestrator API 1.3 projection classification with zero unexplained contract operations.
-- **SC-008**: Repository documentation consistently states that no Phase 1 waiver exists, no generated binary is left unignored, and no Phase 2 production integration has entered the dependency graph.
+- **SC-008**: Repository documentation consistently states that no Phase 1 waiver exists, preserves the original mission artifact as immutable history with a linked erratum, leaves no generated binary unignored, and admits no Phase 2 production integration into the dependency graph.
 
 ## Out of Scope
 
