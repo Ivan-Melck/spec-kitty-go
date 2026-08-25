@@ -44,7 +44,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: pre-fence refusal observer and ordering mutant added; contention diagnostic stabilized; 20x contention, 10x refusal, full package, and race tests pass. Lane inherited mission planning commits; no pre-review gate contract is configured.",
-        "Reviewer reassignment: claude OAuth expired before reading code; retrying with independent gemini reviewer"
+        "Reviewer reassignment: claude OAuth expired before reading code; retrying with independent gemini reviewer",
+        "Gemini reviewer process exited without emitting the required approval or rejection transition; preserving failed independent review attempt before redispatch."
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
@@ -52,7 +53,7 @@
         "reviewer": "gemini",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 3760839,
       "shell_pid_created_at": "1787619279.6",
       "subtasks": {
