@@ -1,0 +1,6 @@
+source_id,title,publisher,url,accessed_at,source_type,relevance
+SRC-001,"Package modernc.org/sqlite","Go package documentation",https://pkg.go.dev/modernc.org/sqlite,2026-08-23,primary,"CGo-free database/sql driver and supported DSN parameters"
+SRC-002,"Write-Ahead Logging","SQLite",https://sqlite.org/wal.html,2026-08-23,primary,"WAL reader/writer behavior one-writer limit same-host constraint and checkpoints"
+SRC-003,"Set A Busy Timeout","SQLite",https://sqlite.org/c3ref/busy_timeout.html,2026-08-23,primary,"Bounded busy-handler behavior"
+SRC-004,"Transaction","SQLite",https://sqlite.org/lang_transaction.html,2026-08-23,primary,"Deferred versus immediate write transaction behavior"
+SRC-005,"Local Go toolchain and module resolver","Local proving environment",local://go-toolchain/2026-08-23,2026-08-23,environment,"Resolved Go OS architecture CGo state and modernc module metadata"

@@ -1,0 +1,13 @@
+{
+  "wp_id": "WP05",
+  "captured_at": "2026-08-24T15:25:11Z",
+  "base_branch": "mission/phase1-authority-proving-ground",
+  "base_commit": "224062b75e41eb280a2cafeb82715921c6dfe30e",
+  "test_runner": "pytest",
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "failures": [],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}

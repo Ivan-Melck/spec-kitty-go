@@ -1,0 +1,8 @@
+evidence_id,source_id,observation,decision,confidence
+EVD-001,SRC-001,"modernc.org/sqlite is a CGo-free database/sql driver and v1.57.0 documents _busy_timeout _foreign_keys _journal_mode and _txlock settings","Pin modernc.org/sqlite v1.57.0 and verify effective settings",high
+EVD-002,SRC-002,"WAL allows readers with a writer but only one writer at a time","Keep transactions short and prove multi-process contention",high
+EVD-003,SRC-002,"WAL requires processes on the same host and does not work over a network filesystem","Declare one machine/filesystem authority per control store",high
+EVD-004,SRC-002,"Long-running readers can prevent checkpoint completion past their end marks","Forbid long-lived application reads and add a checkpoint-pressure diagnostic test",high
+EVD-005,SRC-003,"A busy handler sleeps up to an accumulated bound before SQLITE_BUSY is returned","Use 5000 ms busy timeout and return typed contention after the bound",high
+EVD-006,SRC-004,"BEGIN IMMEDIATE starts the write transaction immediately and can fail with SQLITE_BUSY","Acquire writer authority at transaction start instead of relying on deferred upgrade",high
+EVD-007,SRC-005,"go version is go1.26.4 linux/amd64; modernc.org/sqlite v1.57.0 resolves and declares Go 1.25","The proving environment can pin and build the selected driver",high

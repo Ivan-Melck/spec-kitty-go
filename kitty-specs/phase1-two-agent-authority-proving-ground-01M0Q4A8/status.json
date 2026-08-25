@@ -1,0 +1,289 @@
+{
+  "event_count": 157,
+  "last_event_id": "01M0WEM2KW763RDGK1KJNJEEDD",
+  "materialized_at": "2026-08-25T12:34:17.340818+00:00",
+  "mission_number": "1",
+  "mission_slug": "phase1-two-agent-authority-proving-ground-01M0Q4A8",
+  "mission_type": "software-dev",
+  "summary": {
+    "approved": 0,
+    "blocked": 0,
+    "canceled": 0,
+    "claimed": 0,
+    "done": 8,
+    "for_review": 0,
+    "in_progress": 0,
+    "in_review": 0,
+    "planned": 0
+  },
+  "work_packages": {
+    "WP01": {
+      "actor": "merge",
+      "agent": "mini-local",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 0,
+      "lane": "done",
+      "last_event_id": "01M0WEKA05G5S6RS3Q6JT3RPGQ",
+      "last_transition_at": "2026-08-25T12:33:52.133610+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review: atomic claim race, durable replay/refusal, fencing CAS, SQLite policy, and process fault harness verified",
+        "Addressed review cycle 2 findings; full Go gates and 100-run real-process claim race pass",
+        "Addressed review cycle 3: exact v1 migration/replay, full lease diagnostics, SR-02 crash replay, immutable seed conflict, and concurrent first-open convergence; all full gates pass",
+        "Addressed cycle 4 evidence gaps: synchronized 32-process pre-open race, exact actor/process diagnostic assertions, and production inspect path; full gates and 100-run race pass",
+        "Review passed: cycle 5 closes CS-00 first-open, diagnostic attribution, and inspect-consumer blockers; full, race, migration, concurrency, and ClaimRace count=100 gates pass"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "Review passed: cycle 5 closes CS-00 first-open, diagnostic attribution, and inspect-consumer blockers; full, race, migration, concurrency, and ClaimRace count=100 gates pass",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 51597,
+      "shell_pid_created_at": "1787462152.05",
+      "subtasks": {
+        "T001": "done",
+        "T002": "done",
+        "T003": "done",
+        "T004": "done",
+        "T005": "done"
+      }
+    },
+    "WP02": {
+      "actor": "merge",
+      "agent": "mini-local",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 0,
+      "lane": "done",
+      "last_event_id": "01M0WEKDTW9C3EWW38Z2S5NPGC",
+      "last_transition_at": "2026-08-25T12:33:56.060856+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: durable fake tracker, ambiguity-safe observation, and attribution-safe compensation",
+        "Ready for review: cycle-1 crash-window, envelope, marker, and versioned-migration remediation",
+        "Ready for review: cycle-3 repository diagnostics and compensation observation remediation",
+        "Ready for review: cycle-5 truthful unknown assignment and coherent compensation replay observations",
+        "Ready for review: cycle-7 authenticated compensation replay history and corruption decision path",
+        "Review passed: cycle 9 provenance, crash, migration, diagnostics, concurrency, race, vet, and static gates satisfied at candidate 5a67743"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "Review passed: cycle 9 provenance, crash, migration, diagnostics, concurrency, race, vet, and static gates satisfied at candidate 5a67743",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 51597,
+      "shell_pid_created_at": "1787462152.05",
+      "subtasks": {
+        "T006": "done",
+        "T007": "done",
+        "T008": "done",
+        "T009": "done"
+      }
+    },
+    "WP03": {
+      "actor": "merge",
+      "agent": "reviewer-renata",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 0,
+      "lane": "done",
+      "last_event_id": "01M0WEKH9VR6299XM40FNS8KNF",
+      "last_transition_at": "2026-08-25T12:33:59.611326+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: immutable canonical graph generations, optimistic numbered persistence, and explicit reconciliation consequences",
+        "Ready for review: enforced reconciliation authority, sealed immutable graph storage, semantic replay, versioned v5 migration, and typed helper process surface",
+        "Cycle 3 remediation: durable finalize replay, terminal authority/state guards, fail-closed canonical claims, and complete helper command identity",
+        "Cycle 5: frozen shipped v5, forward-only v6 upgrade, command-only graph mutations, and finalize ProcessID mutation coverage",
+        "Review passed: candidate c2468c8; evidence in tasks/WP03-immutable-work-graph-generations/review-cycle-7.md"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "Review passed: candidate c2468c8; evidence in tasks/WP03-immutable-work-graph-generations/review-cycle-7.md",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 51597,
+      "shell_pid_created_at": "1787462152.05",
+      "subtasks": {
+        "T010": "done",
+        "T011": "done",
+        "T012": "done",
+        "T013": "done"
+      }
+    },
+    "WP04": {
+      "actor": "merge",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 0,
+      "lane": "done",
+      "last_event_id": "01M0WEKMWFXDF5BRWRE0Q47QFX",
+      "last_transition_at": "2026-08-25T12:34:03.279125+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: lease-scoped real Git workspaces, staged durable readiness, existing tracker-saga composition, deterministic dependency preparation, OS-process concurrency/crash proof. Commit 74137da. go test ./...; go test -race ./...; WorkspaceConcurrency count=100; go vet; staticcheck all pass. ruff diff-scoped check: no changed Python files, exit 0.",
+        "Ready for review: remediated path, digest, lane/base, ready-replay, and helper contract blockers with full crash/adversarial coverage",
+        "Ready for review: sealed target-ref publication, durable replay precedence, and v7 workspace lifecycle triggers with exact cycle-3 attacks",
+        "Authenticated exact replays against durable canonical physical repository binding before authority/tracker and at readiness; added SR04 repo-A/clone-B rejection, canonical alias success, idempotent repo-A replay, complete decision diagnostic, and mutation evidence. Full/race/vet/staticcheck green; concurrency x20.",
+        "Arbiter override: cycle-8 independent review of candidate ff7d85f supersedes retained cycle-7 copy of the cycle-6 rejection; physical-clone exact replay is refused before mutation, canonical and symlink-alias recovery is idempotent, and focused/full/100x-concurrency/race/vet/format/diff/contract/deletion-mutant checks passed. Canonical cycle-8 report is committed at 224062b."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "Arbiter override: cycle-8 independent review of candidate ff7d85f supersedes retained cycle-7 copy of the cycle-6 rejection; physical-clone exact replay is refused before mutation, canonical and symlink-alias recovery is idempotent, and focused/full/100x-concurrency/race/vet/format/diff/contract/deletion-mutant checks passed. Canonical cycle-8 report is committed at 224062b.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 51597,
+      "shell_pid_created_at": "1787462152.05",
+      "subtasks": {
+        "T014": "done",
+        "T015": "done",
+        "T016": "done",
+        "T017": "done",
+        "T018": "done"
+      }
+    },
+    "WP05": {
+      "actor": "merge",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 0,
+      "lane": "done",
+      "last_event_id": "01M0WEKR6YHTCKW5F068EF67CQ",
+      "last_transition_at": "2026-08-25T12:34:06.686762+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: commit 443fa0e; SR00-SR09 recovery, v8 immutable envelopes/results, atomic expiry/quarantine, safe Git inspection, and live gen17/gen18 zombie containment validated x100.",
+        "Remediation ready for review: b238465 live-wires workspace-inspect/workspace-cleanup, complete typed diagnostics, shared refusal policy, OS helper matrix x10, and removes dead test-only surfaces.",
+        "Review passed: b238465 live workspace inspection/cleanup remediation; canonical evidence in review-cycle-3.md"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "Review passed: b238465 live workspace inspection/cleanup remediation; canonical evidence in review-cycle-3.md",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 51597,
+      "shell_pid_created_at": "1787462152.05",
+      "subtasks": {
+        "T019": "done",
+        "T020": "done",
+        "T021": "done",
+        "T022": "done",
+        "T023": "done"
+      }
+    },
+    "WP06": {
+      "actor": "merge",
+      "agent": "reviewer-renata",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 5,
+      "lane": "done",
+      "last_event_id": "01M0WEKVHV8Z20MY0ENA9WSX0D",
+      "last_transition_at": "2026-08-25T12:34:10.107167+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review: commit f10a09f. Immutable candidate handoff, ActorID independence, stale-authority rejection, atomic verdict plus criteria, v9 forward-only migration, live helper wiring, HR-00 through HR-07 crash replay, contention and mutation coverage. Gates: full test pass; full race pass; Review x100 pass (782.216s); HR boundary x10 pass (243.094s); vet pass; staticcheck pass; ruff diff-scoped check: no changed Python files, exit 0. Integration coordination: replace lane-f reserved no-op v8 with WP05 real recovery v8 before retaining WP06 independent v9.",
+        "Ready for review: durable replay precedes moving authority probes; helper judgments use complete typed envelopes; OS replay, mutation, fault, contention, full, race, vet, and staticcheck gates pass. Force used only to acknowledge inherited committed coordination artifacts on lane-f; T024-T027 are done and implementation commit is clean.",
+        "Ready for review: malformed criteria JSON now parses and retains all review identifiers before decoding, emits complete typed diagnostic context, and has OS-level identifier-drop mutation coverage. Review x3, HR x1, full, focused race, vet, and staticcheck pass. Force acknowledges inherited committed coordination artifacts on lane-f only.",
+        "Review passed: candidate 1034dad; malformed criteria preserves every applicable typed identifier and stable diagnostic metadata; replay, ActorID independence, atomic judgment, SQL seals, migration coordination, Review x3, HR00-HR07, full, race, vet, and staticcheck gates passed.",
+        "Ready for review: candidate 6c5aea3 preserves moved-branch C/B under atomic product refs, persists one immutable refusal per OperationID, replays after branch restoration and lease expiry, survives reflog expiration plus gc --prune=now x100 (338.030s), and passes full/race/vet/staticcheck/gofmt/diff gates. Python ruff diff-scoped check: not applicable (no Python files changed).",
+        "Review cycle 6 rejected candidate 6c5aea3: replay must revalidate or safely restore product-owned Git evidence refs; scenario must use public expiry",
+        "Ready for independent review: persisted refusal replay now revalidates and atomically repairs exact evidence refs; mutation conflicts are typed and non-destructive; public expiry path and GC/replay scenarios pass.",
+        "Independent review approved candidate 7eb5b99: exact replay revalidation/repair/conflict semantics, public expiry, mutant controls, full/race/vet/staticcheck, and real v10+v11 migration union passed"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "reference": "7eb5b99705fdcca921c9418f31a8fd5da67f23b8",
+        "reviewer": "reviewer-renata",
+        "verdict": "approved"
+      },
+      "role": "implementer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T024": "done",
+        "T025": "done",
+        "T026": "done",
+        "T027": "done"
+      }
+    },
+    "WP07": {
+      "actor": "merge",
+      "agent": "reviewer-renata",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 2,
+      "lane": "done",
+      "last_event_id": "01M0WEKYX28YEPSR4KPFMQCN44",
+      "last_transition_at": "2026-08-25T12:34:13.538870+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review at e734aec; reviewer evidence is recorded in WP07 history.",
+        "Cycle-1 findings remediated in cb47cd3; exact stale publisher, primary attachment race, IG boundary cleanup publication, and typed helper diagnostics are covered. Independent review required.",
+        "Cycle-2 repository-first monotonic fencing remediation complete at 7c09838; independent review required.",
+        "Review passed: cycle-3 independently reproduced both cycle-2 controls red on cb47cd3 and green on 7c09838. Repository-first generation publication precedes SQLite authority; exact-predecessor CAS refuses delayed/older installers; same-predecessor races have one winner; same-operation Git-first recovery reconstructs exactly once; expired orphan supersession is monotonic and old OperationIDs cannot revive; immutable history refs survive reflog expiry and prune-now GC. The IG00-09 real-process matrix, separate acquisition/publication locks, atomic fence+expected-old target update, protected-primary recheck, exact parents+tree recovery, one done fact, cleanup preservation, typed diagnostics, two-mission exclusion, WorkRevision eligibility, migration v10 seal/v8 placeholder/v9 ordering, full tests, focused race, vet, staticcheck, formatting, and diff checks all pass. Anti-patterns: 1 dead code PASS; 2 synthetic fixtures PASS; 3 silent empty return N/A; 4 FR coverage PASS; 5 frozen surface PASS; 6 locked decision PASS; 7 shared ownership PASS with explicit coordination note that WP07 extends WP04-owned internal/gitrepo/workspace.go only to factor the existing target lock helper and add the separate repository-scoped acquisition lock, with workspace regressions green; 8 production fragility N/A."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "reference": "Review passed: cycle-3 independently reproduced both cycle-2 controls red on cb47cd3 and green on 7c09838. Repository-first generation publication precedes SQLite authority; exact-predecessor CAS refuses delayed/older installers; same-predecessor races have one winner; same-operation Git-first recovery reconstructs exactly once; expired orphan supersession is monotonic and old OperationIDs cannot revive; immutable history refs survive reflog expiry and prune-now GC. The IG00-09 real-process matrix, separate acquisition/publication locks, atomic fence+expected-old target update, protected-primary recheck, exact parents+tree recovery, one done fact, cleanup preservation, typed diagnostics, two-mission exclusion, WorkRevision eligibility, migration v10 seal/v8 placeholder/v9 ordering, full tests, focused race, vet, staticcheck, formatting, and diff checks all pass. Anti-patterns: 1 dead code PASS; 2 synthetic fixtures PASS; 3 silent empty return N/A; 4 FR coverage PASS; 5 frozen surface PASS; 6 locked decision PASS; 7 shared ownership PASS with explicit coordination note that WP07 extends WP04-owned internal/gitrepo/workspace.go only to factor the existing target lock helper and add the separate repository-scoped acquisition lock, with workspace regressions green; 8 production fragility N/A.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 51597,
+      "shell_pid_created_at": "1787462152.05",
+      "subtasks": {
+        "T028": "done",
+        "T029": "done",
+        "T030": "done",
+        "T031": "done",
+        "T032": "done"
+      }
+    },
+    "WP08": {
+      "actor": "merge",
+      "agent": "reviewer-renata",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 1,
+      "lane": "done",
+      "last_event_id": "01M0WEM2KW763RDGK1KJNJEEDD",
+      "last_transition_at": "2026-08-25T12:34:17.340818+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Forced lane transition only because approved dependency-union commits contain governed kitty-specs runtime artifacts that must be preserved. Frozen source adf15aac passed independent pre-freeze audit, 65-shard Phase1 x100 campaign, full/race/static/build gates; evidence payload c02d6a7, attestation ae7c39a. Independent review required.",
+        "Independent formal review approved frozen source adf15aac and evidence attestation ae7c39a: 65 disjoint Phase1 shards x100, exact log hashes, full/race/static/build gates, anti-vacuity and contract review passed; forced handoff event audited nonblocking"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "ae7c39adf1aecd9ced3da63a5a883d0b81fe4c46",
+        "reviewer": "reviewer-renata",
+        "verdict": "approved"
+      },
+      "role": "implementer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T033": "done",
+        "T034": "done",
+        "T035": "done",
+        "T036": "done"
+      }
+    }
+  }
+}

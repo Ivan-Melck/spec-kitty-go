@@ -1,0 +1,18 @@
+{
+  "coordination_branch": "kitty/mission-phase1-two-agent-authority-proving-ground-01M0Q4A8",
+  "created_at": "2026-08-23T10:57:57.512468+00:00",
+  "flattened": false,
+  "friendly_name": "phase1 two agent authority proving ground",
+  "merge_target_branch": "main",
+  "mission_id": "01M0Q4A8889J13B2G0FZ2MEG7J",
+  "mission_number": 1,
+  "mission_slug": "phase1-two-agent-authority-proving-ground-01M0Q4A8",
+  "mission_type": "software-dev",
+  "purpose_context": "This mission advances phase1 two agent authority proving ground on mission/phase1-authority-proving-ground so stakeholders can track the work from mission creation onward.",
+  "purpose_tldr": "phase1 two agent authority proving ground",
+  "slug": "phase1-two-agent-authority-proving-ground-01M0Q4A8",
+  "target_branch": "mission/phase1-authority-proving-ground",
+  "topology": "lanes_with_coord",
+  "vcs": "git",
+  "vcs_locked_at": "2026-08-23T11:28:10.123464+00:00"
+}

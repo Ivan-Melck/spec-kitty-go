@@ -1,0 +1,572 @@
+{
+  "schema_version": 3,
+  "mission": "phase1-two-agent-authority-proving-ground-01M0Q4A8",
+  "work_package": "WP08",
+  "recorded_at_utc": "2026-08-25T11:47:00Z",
+  "dependency_union": {
+    "initial_wp07_wp06_union_commit": "90e47d1e6da854ace4850f7d2a1a5f101e8a5a0f",
+    "wp05_merge_commit": "a74961882e493e4a70eb2f0c3ae12e647ab86f78",
+    "wp06_frozen_product_commit": "7eb5b99705fdcca921c9418f31a8fd5da67f23b8",
+    "wp06_union_merge_commit": "eb13688fe3174a39a77097f90a89b57bb9f739d2",
+    "schema_version": 11,
+    "schema_order": [
+      "v8-start-recovery",
+      "v9-handoff-review",
+      "v10-integration",
+      "v11-handoff-refusal"
+    ]
+  },
+  "environment": {
+    "os": "Linux 7.0.0-28-generic x86_64",
+    "go": "go1.26.4 linux/amd64",
+    "git": "2.43.0",
+    "sqlite_driver": "modernc.org/sqlite v1.57.0",
+    "logical_cpus": 12,
+    "memory_gib": 62,
+    "filesystem_authority": "one local machine"
+  },
+  "runs": [
+    {
+      "id": "dependency-union-baseline",
+      "command": "go test ./...",
+      "status": "pass",
+      "exit_code": 0,
+      "recorded_at_utc": "2026-08-24T23:32:00Z"
+    },
+    {
+      "id": "phase1-first-combined",
+      "command": "go test ./internal/scenario -run Phase1 -count=1",
+      "status": "pass",
+      "exit_code": 0,
+      "duration_seconds": 125.016,
+      "recorded_at_utc": "2026-08-25T00:13:00Z"
+    }
+  ],
+  "superseded_repetition_campaign": {
+    "candidate_commit": "a72dd5367260a9c88bbbbf7fbd96eb8e77a39c27",
+    "status": "superseded_by_preliminary_audit",
+    "started_at_utc": "2026-08-25T01:56:41Z",
+    "ended_at_utc": "2026-08-25T03:49:27Z",
+    "completed_shards": 46,
+    "planned_shards": 47,
+    "iterations_per_completed_shard": 100,
+    "completed_union": [
+      "SR-00",
+      "SR-01",
+      "SR-02",
+      "SR-03",
+      "SR-04",
+      "SR-05",
+      "SR-06",
+      "SR-07",
+      "SR-08",
+      "SR-09",
+      "HR-00",
+      "HR-01",
+      "HR-02",
+      "HR-03",
+      "HR-04",
+      "HR-05",
+      "HR-06",
+      "HR-07",
+      "IG-00",
+      "IG-01",
+      "IG-02",
+      "IG-03",
+      "IG-04",
+      "IG-05",
+      "IG-06",
+      "IG-07",
+      "IG-08",
+      "IG-09",
+      "P1-owned-branch-movement",
+      "P1-merge-conflict",
+      "fault-manifest",
+      "WR-catalog",
+      "production-scope",
+      "source-scope-mutants",
+      "P1-02",
+      "P1-03",
+      "P1-06",
+      "P1-09",
+      "P1-10",
+      "P1-11",
+      "P1-15",
+      "P1-17",
+      "P1-18",
+      "P1-22",
+      "P1-23",
+      "P1-27"
+    ],
+    "not_completed": [
+      "two-agent-narrative"
+    ],
+    "sum_completed_shard_duration_seconds": 36100,
+    "minimum_shard_duration_seconds": 0,
+    "maximum_shard_duration_seconds": 1385,
+    "admissible_as_final_evidence": false,
+    "reason": "preliminary audit found universal-order, exact-catalog, WorkRevision-consumer, and evidence-shape blockers after the source had been frozen"
+  },
+  "superseded_runner_attempts": [
+    {
+      "id": "narrative-attempt-1",
+      "duration_seconds": 91,
+      "exit_code": 1,
+      "classification": "runner_configuration",
+      "reason": "terminated after discovering the generic 45 minute campaign ceiling was too low; raw log was empty"
+    },
+    {
+      "id": "catalog-regressions-attempt-1",
+      "duration_seconds": 199,
+      "exit_code": 1,
+      "classification": "runner_configuration",
+      "reason": "terminated because the generic timeout did not fit the whole-family catalog selector; raw log retained"
+    },
+    {
+      "id": "catalog-regressions-attempt-2",
+      "duration_seconds": 40,
+      "exit_code": 1,
+      "classification": "runner_configuration",
+      "reason": "terminated to replace a whole-family run with an explicit equivalent shard union; raw log retained"
+    },
+    {
+      "id": "narrative-attempt-2-preaudit",
+      "duration_seconds": 2676,
+      "exit_code": 1,
+      "classification": "audit_stop",
+      "reason": "terminated deliberately when preliminary audit found blocking test-architecture gaps; raw log retained"
+    },
+    {
+      "id": "final-go-test-all-default-timeout",
+      "source_sha": "adf15aac42f3f03dd27ad6252df973bcd8b42433",
+      "command": "go test ./...",
+      "started_at_utc": "2026-08-25T11:08:59Z",
+      "ended_at_utc": "2026-08-25T11:19:00Z",
+      "duration_ms": 600954,
+      "exit_code": 1,
+      "classification": "runner_configuration",
+      "reason": "Go default 10 minute package timeout expired while the long Phase1 suite was executing WR-02; no product assertion failed. Replaced by the same exact source with -timeout=30m.",
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-go-test-all.log",
+      "log_sha256": "427f703ed16f7140c2a8ed6c51fde7db50e743e937e671e8a86e0f495243ce93"
+    },
+    {
+      "id": "final-static-gates-xargs-attempt-1",
+      "source_sha": "adf15aac42f3f03dd27ad6252df973bcd8b42433",
+      "started_at_utc": "2026-08-25T11:45:46Z",
+      "ended_at_utc": "2026-08-25T11:45:46Z",
+      "classification": "runner_configuration",
+      "reason": "xargs split commands on spaces instead of newline records, producing four malformed child invocations. Corrected runner used NUL-safe newline records; no product gate was evaluated by this attempt.",
+      "children": [
+        {
+          "parsed_id": "./...",
+          "exit_code": 125,
+          "duration_ms": 2,
+          "log_path": "/tmp/wp08-final-adf15aac/logs/runner-attempt1-dotdotdot.log",
+          "log_sha256": "91b37c7d5d30f7d5904ce89c76a97985334b4d3b48c933b500922dc45aa2f388"
+        },
+        {
+          "parsed_id": "vet",
+          "exit_code": 125,
+          "duration_ms": 2,
+          "log_path": "/tmp/wp08-final-adf15aac/logs/runner-attempt1-vet.log",
+          "log_sha256": "91b37c7d5d30f7d5904ce89c76a97985334b4d3b48c933b500922dc45aa2f388"
+        },
+        {
+          "parsed_id": "gate-go-vet",
+          "parsed_command": "go",
+          "exit_code": 2,
+          "duration_ms": 20,
+          "log_path": "/tmp/wp08-final-adf15aac/logs/runner-attempt1-gate-go-vet.log",
+          "log_sha256": "aeb48f8a1efaeec17b3210775f5156519fff4cde4e43a63c40896a588088e5aa"
+        },
+        {
+          "parsed_id": "gate-staticcheck",
+          "parsed_command": "staticcheck",
+          "exit_code": 1,
+          "duration_ms": 39,
+          "log_path": "/tmp/wp08-final-adf15aac/logs/runner-attempt1-gate-staticcheck.log",
+          "log_sha256": "d226cac47fb4fd450013cf39d1eb47f0d8659490860ec69f57f3085272d4cc53"
+        }
+      ]
+    }
+  ],
+  "remediation_attempts": [
+    {
+      "command": "go test ./internal/scenario -run '^(TestPhase1OwnedBranchMovementRefusesHandoff|TestPhase1ApprovedBeforeExpiryRemainsIntegrable)$' -count=1 -v -timeout=5m",
+      "status": "fail",
+      "classification": "harness_assertion",
+      "reason": "the pre-command universal checkpoint incorrectly required product-ref retention before the handoff command had an opportunity to create product-owned evidence refs; P1-14 passed in the same run"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1DurableWorkRevisionConsumerScenarios$/^WR-06$' -count=1 -v",
+      "status": "fail",
+      "classification": "harness_expectation",
+      "reason": "the first WR-06 assertion retained the pre-reconciliation active-lease expectation even though invalidation durably ended the old revision authority; Git history and integration_done were unaffected"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1NamedFaultBoundaryMatrix$' -count=1 -v",
+      "status": "fail",
+      "classification": "harness_architecture",
+      "duration_seconds": 250.554,
+      "reason": "the first same-fixture run exposed an SR-01 expectation built from an empty pre-claim record and a stale integration probe inheriting the matrix crash barrier; the run was interrupted after the defects were understood, and both were corrected without product timing changes"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1NamedFaultBoundaryMatrix$' -count=1 -timeout=15m -v",
+      "status": "fail",
+      "classification": "superseded_harness_assertion",
+      "duration_seconds": 257.244,
+      "reason": "the already-running binary retained an SR-01 local identity comparison against blank pre-claim RunID/LeaseID; it confirmed the corrected same-fixture stale integration seam through IG-03 before deliberate interruption, then the local comparison was narrowed to identities that existed pre-fault"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1NamedFaultBoundaryMatrix$' -count=1 -timeout=15m -v",
+      "status": "fail",
+      "classification": "harness_cardinality",
+      "duration_seconds": 349.969,
+      "reason": "all HR and IG cases and SR-01..09 passed; SR-00's boundary-local operation count omitted the one independently provisioned stale authority operation even though the universal exact row assertion included it, so the boundary assertion now receives that known fixture baseline"
+    },
+    {
+      "command": "go test ./internal/scenario -run Phase1 -count=1 -timeout=20m",
+      "status": "fail",
+      "classification": "harness_expectation",
+      "duration_seconds": 514.235,
+      "reason": "the full gate exposed that TRACKER-OUTAGE acquires generation-2 authority before returning its typed provider refusal; the narrative now blocks at SR-02 and captures that exact authority as a pre-fault record rather than enumerating post-fault rows"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1TwoAgentTortureChamber$' -count=1 -v -timeout=5m",
+      "status": "fail",
+      "classification": "superseded_harness_boundary",
+      "duration_seconds": 15.696,
+      "reason": "the first pre-fault capture used SR-01, which precedes lease commit and therefore contained blank authority; moving the capture to SR-02 produced the exact committed generation before tracker failure"
+    }
+  ],
+  "focused_remediation_runs": [
+    {
+      "command": "go test ./internal/scenario -run 'TestPhase1FaultManifestIsComplete|TestPhase1SourceScopeMutantControl' -count=1",
+      "status": "pass",
+      "recorded_at_utc": "2026-08-25T04:00:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1ExactCatalogScenarios$' -count=1 -v",
+      "status": "pass",
+      "duration_seconds": 22.60,
+      "recorded_at_utc": "2026-08-25T04:04:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1DurableWorkRevisionConsumerScenarios$' -count=1 -v",
+      "status": "pass",
+      "duration_seconds": 34.89,
+      "recorded_at_utc": "2026-08-25T04:07:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1TwoAgentTortureChamber$' -count=1 -v",
+      "status": "pass",
+      "duration_seconds": 56.80,
+      "recorded_at_utc": "2026-08-25T04:10:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1NamedFaultBoundaryMatrix$' -count=1 -timeout=15m -v",
+      "status": "pass",
+      "duration_seconds": 354.36,
+      "recorded_at_utc": "2026-08-25T04:20:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^(TestPhase1OwnedBranchMovementRefusesHandoff|TestPhase1MergeConflictPreservesEvidence)$' -count=1 -v",
+      "status": "pass",
+      "duration_seconds": 6.85,
+      "recorded_at_utc": "2026-08-25T04:21:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run Phase1 -count=1 -timeout=20m",
+      "status": "pass",
+      "duration_seconds": 527.440,
+      "recorded_at_utc": "2026-08-25T04:34:37Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^(TestPhase1OwnedBranchMovementRefusesHandoff|TestPhase1ApprovedBeforeExpiryRemainsIntegrable)$' -count=1 -v -timeout=5m",
+      "status": "pass",
+      "duration_seconds": 15.802,
+      "recorded_at_utc": "2026-08-25T05:30:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^(TestPhase1FaultManifestIsComplete|TestPhase1ExactCatalogScenarios|TestPhase1SourceScopeMutantControl|TestPhase1ProductionDependencyAndSourceScope)$' -count=1 -v -timeout=5m",
+      "status": "pass",
+      "duration_seconds": 24.257,
+      "recorded_at_utc": "2026-08-25T05:31:00Z"
+    },
+    {
+      "command": "go test ./internal/controlstore/sqlite -run 'Migration|Integration' -count=1 -v",
+      "status": "pass",
+      "duration_seconds": 0.400,
+      "recorded_at_utc": "2026-08-25T05:31:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run Phase1 -count=1 -timeout=20m",
+      "status": "pass",
+      "duration_seconds": 539.979,
+      "recorded_at_utc": "2026-08-25T05:37:01Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1UniversalAntiVacuityControls$' -count=1 -v",
+      "status": "pass",
+      "duration_seconds": 1.691,
+      "recorded_at_utc": "2026-08-25T06:00:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^(TestPhase1FaultManifestIsComplete|TestPhase1EvidenceCatalogMutationControls|TestPhase1NewHandoffSupersedesPendingReview|TestPhase1ReviewRejectionIsDurable|TestPhase1MovedCandidateCannotUsePriorApproval|TestPhase1DurableWorkRevisionConsumerScenarios)$' -count=1 -v",
+      "status": "pass",
+      "duration_seconds": 53.161,
+      "recorded_at_utc": "2026-08-25T06:08:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1NamedFaultBoundaryMatrix$' -count=1 -timeout=15m",
+      "status": "pass",
+      "duration_seconds": 354.415,
+      "recorded_at_utc": "2026-08-25T06:30:43Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1TwoAgentTortureChamber$' -count=1 -v -timeout=5m",
+      "status": "pass",
+      "duration_seconds": 57.423,
+      "recorded_at_utc": "2026-08-25T06:43:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run Phase1 -count=1 -timeout=20m",
+      "status": "pass",
+      "duration_seconds": 557.655,
+      "recorded_at_utc": "2026-08-25T06:52:09Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^(TestPhase1ProductionDependencyAndSourceScope|TestPhase1SourceScopeMutantControl|TestPhase1FaultManifestIsComplete|TestPhase1EvidenceCatalogMutationControls|TestPhase1UniversalAntiVacuityControls)$' -count=1",
+      "status": "pass",
+      "duration_seconds": 1.861,
+      "recorded_at_utc": "2026-08-25T06:53:00Z"
+    },
+    {
+      "command": "go test ./internal/controlstore/sqlite -run 'Migration|Integration' -count=1",
+      "status": "pass",
+      "duration_seconds": 0.459,
+      "recorded_at_utc": "2026-08-25T06:53:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1UniversalAntiVacuityControls$' -count=1 -v",
+      "status": "pass",
+      "duration_seconds": 1.693,
+      "recorded_at_utc": "2026-08-25T07:08:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1NamedFaultBoundaryMatrix$/^start-run$/^SR-02$' -count=1 -v -timeout=3m",
+      "status": "pass",
+      "duration_seconds": 11.542,
+      "recorded_at_utc": "2026-08-25T07:09:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1NamedFaultBoundaryMatrix$/^handoff-review$/^HR-06$' -count=1 -v -timeout=3m",
+      "status": "pass",
+      "duration_seconds": 13.665,
+      "recorded_at_utc": "2026-08-25T07:09:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1NamedFaultBoundaryMatrix$/^integration$/^IG-07$' -count=1 -v -timeout=3m",
+      "status": "pass",
+      "duration_seconds": 14.824,
+      "recorded_at_utc": "2026-08-25T07:09:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1TwoAgentTortureChamber$' -count=1 -v -timeout=5m",
+      "status": "pass",
+      "duration_seconds": 57.327,
+      "recorded_at_utc": "2026-08-25T07:10:00Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run Phase1 -count=1 -timeout=20m",
+      "status": "pass",
+      "duration_seconds": 556.667,
+      "recorded_at_utc": "2026-08-25T07:18:56Z"
+    },
+    {
+      "command": "go test ./internal/scenario -run '^TestPhase1UniversalAntiVacuityControls$' -count=10 -timeout=5m",
+      "status": "pass",
+      "duration_seconds": 13.118,
+      "recorded_at_utc": "2026-08-25T07:20:00Z"
+    }
+  ],
+  "adjudication_required": [],
+  "deferred_scope": [
+    {
+      "scenario": "P1-15",
+      "owner": "workspace reconciliation policy",
+      "scope": "human-authorized quarantined-output import choices",
+      "covered_half": "read-only inspection, exact commit preservation, stale-publication refusal, and cleanup refusal"
+    },
+    {
+      "scenario": "P1-18",
+      "owner": "WP06 review policy",
+      "scope": "superseding an already-recorded prior judgment",
+      "covered_half": "a newer immutable handoff rejects a pending judgment for the older handoff"
+    },
+    {
+      "scenario": "P1-21",
+      "owner": "WP06 review workflow",
+      "scope": "automatic explicit rejection-to-rework-run creation",
+      "covered_half": "distinct reviewer approval and durable rejection with failed criterion evidence"
+    },
+    {
+      "scenario": "P1-23",
+      "owner": "future acceptance and queue capabilities",
+      "scope": "negative acceptance and queue commands",
+      "covered_half": "integration refuses moved C2 under C's approval and leaves the target unchanged"
+    }
+  ],
+  "final_gates": {
+    "status": "pass",
+    "source_sha": "adf15aac42f3f03dd27ad6252df973bcd8b42433",
+    "results": [
+      {
+        "id": "go-test-all",
+        "command": "go test ./... -timeout=30m",
+        "started_at_utc": "2026-08-25T11:19:32Z",
+        "ended_at_utc": "2026-08-25T11:31:46Z",
+        "duration_ms": 733450,
+        "exit_code": 0,
+        "log_path": "/tmp/wp08-final-adf15aac/logs/gate-go-test-all-timeout30m.log",
+        "log_sha256": "f2cba3ea69eee838e9aa649cc7d6bfd5207d240feea2d3cebb5d63321bea2e4d"
+      },
+      {
+        "id": "go-test-race-all",
+        "command": "go test -race ./... -timeout=60m",
+        "started_at_utc": "2026-08-25T11:32:03Z",
+        "ended_at_utc": "2026-08-25T11:45:00Z",
+        "duration_ms": 777018,
+        "exit_code": 0,
+        "log_path": "/tmp/wp08-final-adf15aac/logs/gate-go-test-race-all.log",
+        "log_sha256": "f65ffd1f047f97a90c670ebab8c8e9d8b8ad548b0eab10398a061ca5368a9349"
+      },
+      {
+      "id": "go-vet",
+      "command": "go vet ./...",
+      "started_at_utc": "2026-08-25T11:46:31Z",
+      "ended_at_utc": "2026-08-25T11:46:31Z",
+      "duration_ms": 470,
+      "exit_code": 0,
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-go-vet.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+      "id": "staticcheck",
+      "command": "staticcheck ./...",
+      "started_at_utc": "2026-08-25T11:46:31Z",
+      "ended_at_utc": "2026-08-25T11:46:32Z",
+      "duration_ms": 1151,
+      "exit_code": 0,
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-staticcheck.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+      "id": "gofmt",
+      "command": "gofmt -l .",
+      "started_at_utc": "2026-08-25T11:46:31Z",
+      "ended_at_utc": "2026-08-25T11:46:31Z",
+      "duration_ms": 57,
+      "exit_code": 0,
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-gofmt.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+      "id": "git-diff-check",
+      "command": "git diff --check",
+      "started_at_utc": "2026-08-25T11:46:31Z",
+      "ended_at_utc": "2026-08-25T11:46:31Z",
+      "duration_ms": 17,
+      "exit_code": 0,
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-git-diff-check.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+      "id": "go-mod-verify",
+      "command": "go mod verify",
+      "started_at_utc": "2026-08-25T11:46:31Z",
+      "ended_at_utc": "2026-08-25T11:46:32Z",
+      "duration_ms": 1187,
+      "exit_code": 0,
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-go-mod-verify.log",
+        "log_sha256": "b4537ed75f533f993f371954de47e42a793b8e5b0587577de7e27fb3e50696bd"
+      },
+      {
+      "id": "govulncheck",
+      "command": "govulncheck ./...",
+      "started_at_utc": "2026-08-25T11:46:31Z",
+      "ended_at_utc": "2026-08-25T11:46:36Z",
+      "duration_ms": 5050,
+      "exit_code": 0,
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-govulncheck.log",
+        "log_sha256": "6ffb4af21d107033db145c76b49be676af6d31641cea573a775ef218542669eb"
+      },
+      {
+      "id": "go-build-all",
+      "command": "go build ./...",
+      "started_at_utc": "2026-08-25T11:46:31Z",
+      "ended_at_utc": "2026-08-25T11:46:32Z",
+      "duration_ms": 545,
+      "exit_code": 0,
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-go-build-all.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+      "id": "helper-binary-build",
+      "command": "go build -o /tmp/wp08-final-adf15aac/spk-phase1-helper ./cmd/spk-phase1-helper",
+      "started_at_utc": "2026-08-25T11:46:32Z",
+      "ended_at_utc": "2026-08-25T11:46:32Z",
+      "duration_ms": 435,
+      "exit_code": 0,
+      "log_path": "/tmp/wp08-final-adf15aac/logs/gate-helper-binary-build.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ]
+  },
+  "scope_assertion": {
+    "test": "TestPhase1ProductionDependencyAndSourceScope",
+    "binary_graph": "cmd/spk-phase1-helper production dependencies",
+    "source_roots": [
+      "cmd",
+      "internal"
+    ],
+    "excluded_kernel_integrations": [
+      "Beads",
+      "Team Kitty",
+      "API",
+      "MCP",
+      "Python",
+      "Markdown compatibility"
+    ]
+  },
+  "limitations": [
+    "No claim is made for multiple machines, shared filesystems, or direct SQLite access by remote agents.",
+    "The tracker is the portable fake provider, not Beads or a hosted tracker.",
+    "Process crashes are deterministic helper exits at named durable boundaries; the zombie case additionally uses POSIX process stop/resume.",
+    "The run does not model sudden machine power loss, kernel failure, disk loss, or network partitions.",
+    "Passing is evidence for the tested local authority boundary, not production adoption approval."
+  ],
+  "source_freeze": {
+    "candidate_commit": "adf15aac42f3f03dd27ad6252df973bcd8b42433",
+    "independent_pre_freeze_audit": "clear_to_freeze",
+    "source_changes_after_freeze": false,
+    "evidence_payload_commit": "c02d6a7bb60ed1495734bb3e23744f872db629e5",
+    "attestation_note": "The payload commit contains the final manifest, results, README, and ADR. This field is added by a separate docs-only attestation commit so the payload hash is not circular."
+  },
+  "final_repetition_campaign": {
+    "candidate_commit": "adf15aac42f3f03dd27ad6252df973bcd8b42433",
+    "status": "pass",
+    "requested_command": "go test ./internal/scenario -run Phase1 -count=100",
+    "execution": "65 exact, disjoint shards; 6-way bounded parallelism with GOMAXPROCS=2",
+    "started_at_utc": "2026-08-25T07:24:32Z",
+    "ended_at_utc": "2026-08-25T11:08:25Z",
+    "shards": 65,
+    "passed_shards": 65,
+    "iterations_per_shard": 100,
+    "reruns": 0,
+    "serial_shard_duration_ms": 57245582,
+    "manifest": "docs/phase1-evidence/final-campaign-manifest.json",
+    "raw_logs": "/tmp/wp08-final-adf15aac/logs",
+    "raw_logs_retention": "ephemeral local boundary; exact path and SHA-256 are recorded per attempt"
+  }
+}

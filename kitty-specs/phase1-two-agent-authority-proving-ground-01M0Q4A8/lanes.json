@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "mission_slug": "phase1-two-agent-authority-proving-ground-01M0Q4A8",
+  "mission_id": "01M0Q4A8889J13B2G0FZ2MEG7J",
+  "mission_branch": "kitty/mission-phase1-two-agent-authority-proving-ground-01M0Q4A8",
+  "target_branch": "mission/phase1-authority-proving-ground",
+  "lanes": [
+    {
+      "lane_id": "lane-a",
+      "wp_ids": [
+        "WP01"
+      ],
+      "write_scope": [
+        "cmd/spk-phase1-helper/main.go",
+        "go.mod",
+        "go.sum",
+        "internal/controlstore/sqlite/authority.go",
+        "internal/controlstore/sqlite/authority_test.go",
+        "internal/controlstore/sqlite/db.go",
+        "internal/controlstore/sqlite/migrations.go",
+        "internal/controlstore/store.go",
+        "internal/execution/lease.go",
+        "internal/execution/lease_test.go",
+        "internal/execution/model.go",
+        "internal/faults/**",
+        "internal/helpercmd/root.go",
+        "internal/ids/**",
+        "internal/scenario/claim_race_test.go",
+        "internal/scenario/harness.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-b",
+      "wp_ids": [
+        "WP02"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/external_effect.go",
+        "internal/execution/external_effect.go",
+        "internal/helpercmd/tracker.go",
+        "internal/scenario/tracker_saga_test.go",
+        "internal/tracker/fake/provider.go",
+        "internal/tracker/fake/provider_test.go",
+        "internal/tracker/fake/store.go",
+        "internal/tracker/provider.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-c",
+      "wp_ids": [
+        "WP03"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/workgraph.go",
+        "internal/controlstore/sqlite/workgraph_test.go",
+        "internal/helpercmd/workgraph.go",
+        "internal/scenario/reconciliation_test.go",
+        "internal/workgraph/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-d",
+      "wp_ids": [
+        "WP04"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/start_run.go",
+        "internal/execution/start.go",
+        "internal/execution/start_test.go",
+        "internal/gitrepo/repository.go",
+        "internal/gitrepo/runner.go",
+        "internal/gitrepo/workspace.go",
+        "internal/gitrepo/workspace_test.go",
+        "internal/helpercmd/start_run.go",
+        "internal/scenario/workspace_concurrency_test.go",
+        "internal/workspace/model.go",
+        "internal/workspace/service.go",
+        "internal/workspace/service_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b",
+        "lane-c"
+      ],
+      "parallel_group": 2
+    },
+    {
+      "lane_id": "lane-e",
+      "wp_ids": [
+        "WP05"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/recovery.go",
+        "internal/execution/recovery.go",
+        "internal/execution/recovery_test.go",
+        "internal/gitrepo/inspection.go",
+        "internal/gitrepo/inspection_test.go",
+        "internal/helpercmd/recovery.go",
+        "internal/scenario/start_run_recovery_test.go",
+        "internal/scenario/zombie_test.go",
+        "internal/workspace/quarantine.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-d"
+      ],
+      "parallel_group": 3
+    },
+    {
+      "lane_id": "lane-f",
+      "wp_ids": [
+        "WP06"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/handoff_review.go",
+        "internal/controlstore/sqlite/handoff_review_test.go",
+        "internal/handoff/**",
+        "internal/helpercmd/review.go",
+        "internal/review/**",
+        "internal/scenario/review_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-c",
+        "lane-d"
+      ],
+      "parallel_group": 3
+    },
+    {
+      "lane_id": "lane-g",
+      "wp_ids": [
+        "WP07"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/integration.go",
+        "internal/controlstore/sqlite/integration_test.go",
+        "internal/gitrepo/integration.go",
+        "internal/gitrepo/integration_test.go",
+        "internal/helpercmd/integration.go",
+        "internal/integration/**",
+        "internal/scenario/integration_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-f"
+      ],
+      "parallel_group": 4
+    },
+    {
+      "lane_id": "lane-h",
+      "wp_ids": [
+        "WP08"
+      ],
+      "write_scope": [
+        "docs/adr/**",
+        "docs/phase1-evidence/**",
+        "internal/scenario/phase1_test.go",
+        "internal/scenario/repetition_test.go",
+        "internal/scenario/universal_assertions.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-b",
+        "lane-c",
+        "lane-e",
+        "lane-f",
+        "lane-g"
+      ],
+      "parallel_group": 5
+    }
+  ],
+  "computed_at": "2026-08-23T11:22:18.154103+00:00",
+  "computed_from": "dependency_graph+ownership",
+  "planning_artifact_wps": []
+}

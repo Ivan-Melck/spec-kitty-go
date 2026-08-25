@@ -1,0 +1,140 @@
+work_packages:
+  - id: WP01
+    title: "Authority Seed And Real Claim Race"
+    dependencies: []
+    owned_files:
+      - "go.mod"
+      - "go.sum"
+      - "cmd/spk-phase1-helper/main.go"
+      - "internal/helpercmd/root.go"
+      - "internal/ids/**"
+      - "internal/faults/**"
+      - "internal/controlstore/store.go"
+      - "internal/controlstore/sqlite/db.go"
+      - "internal/controlstore/sqlite/migrations.go"
+      - "internal/controlstore/sqlite/authority.go"
+      - "internal/controlstore/sqlite/authority_test.go"
+      - "internal/execution/model.go"
+      - "internal/execution/lease.go"
+      - "internal/execution/lease_test.go"
+      - "internal/scenario/harness.go"
+      - "internal/scenario/claim_race_test.go"
+    requirement_refs: [FR-001, FR-003, FR-004, FR-007, FR-018, FR-019, NFR-001, NFR-003, NFR-004, NFR-006, NFR-008, NFR-010, C-001, C-002, C-008]
+    plan_concern_refs: [IC-01, IC-02, IC-05, IC-09]
+    subtasks: [T001, T002, T003, T004, T005]
+    prompt_file: "tasks/WP01-authority-seed-and-real-claim-race.md"
+
+  - id: WP02
+    title: "Stupid Tracker And Attribution-Safe Saga"
+    dependencies: [WP01]
+    owned_files:
+      - "internal/tracker/provider.go"
+      - "internal/tracker/fake/store.go"
+      - "internal/tracker/fake/provider.go"
+      - "internal/tracker/fake/provider_test.go"
+      - "internal/execution/external_effect.go"
+      - "internal/controlstore/sqlite/external_effect.go"
+      - "internal/helpercmd/tracker.go"
+      - "internal/scenario/tracker_saga_test.go"
+    requirement_refs: [FR-004, FR-015, FR-016, FR-018, FR-019, NFR-004, NFR-006, NFR-009, NFR-010, C-004, C-005, C-008]
+    plan_concern_refs: [IC-04, IC-05, IC-09]
+    subtasks: [T006, T007, T008, T009]
+    prompt_file: "tasks/WP02-stupid-tracker-and-attribution-safe-saga.md"
+
+  - id: WP03
+    title: "Immutable Work Graph Generations"
+    dependencies: [WP01]
+    owned_files:
+      - "internal/workgraph/**"
+      - "internal/controlstore/sqlite/workgraph.go"
+      - "internal/controlstore/sqlite/workgraph_test.go"
+      - "internal/helpercmd/workgraph.go"
+      - "internal/scenario/reconciliation_test.go"
+    requirement_refs: [FR-002, FR-017, FR-018, NFR-004, NFR-006, NFR-008, NFR-010, C-006, C-008]
+    plan_concern_refs: [IC-03, IC-09]
+    subtasks: [T010, T011, T012, T013]
+    prompt_file: "tasks/WP03-immutable-work-graph-generations.md"
+
+  - id: WP04
+    title: "Lease-Scoped Git Workspaces And Concurrent Start"
+    dependencies: [WP01, WP02, WP03]
+    owned_files:
+      - "internal/gitrepo/runner.go"
+      - "internal/gitrepo/repository.go"
+      - "internal/gitrepo/workspace.go"
+      - "internal/gitrepo/workspace_test.go"
+      - "internal/workspace/model.go"
+      - "internal/workspace/service.go"
+      - "internal/workspace/service_test.go"
+      - "internal/execution/start.go"
+      - "internal/execution/start_test.go"
+      - "internal/controlstore/sqlite/start_run.go"
+      - "internal/helpercmd/start_run.go"
+      - "internal/scenario/workspace_concurrency_test.go"
+    requirement_refs: [FR-004, FR-005, FR-006, FR-007, FR-008, FR-009, FR-018, FR-019, FR-020, NFR-003, NFR-004, NFR-005, NFR-006, NFR-007, NFR-009, NFR-010, C-003, C-007, C-008]
+    plan_concern_refs: [IC-05, IC-06, IC-09]
+    subtasks: [T014, T015, T016, T017, T018]
+    prompt_file: "tasks/WP04-lease-scoped-git-workspaces-and-concurrent-start.md"
+
+  - id: WP05
+    title: "Start-Run Recovery And Zombie Containment"
+    dependencies: [WP04]
+    owned_files:
+      - "internal/execution/recovery.go"
+      - "internal/execution/recovery_test.go"
+      - "internal/workspace/quarantine.go"
+      - "internal/gitrepo/inspection.go"
+      - "internal/gitrepo/inspection_test.go"
+      - "internal/controlstore/sqlite/recovery.go"
+      - "internal/helpercmd/recovery.go"
+      - "internal/scenario/start_run_recovery_test.go"
+      - "internal/scenario/zombie_test.go"
+    requirement_refs: [FR-004, FR-005, FR-007, FR-008, FR-009, FR-017, FR-018, FR-019, FR-020, NFR-003, NFR-004, NFR-005, NFR-006, NFR-007, C-003, C-007, C-008]
+    plan_concern_refs: [IC-05, IC-06, IC-09]
+    subtasks: [T019, T020, T021, T022, T023]
+    prompt_file: "tasks/WP05-start-run-recovery-and-zombie-containment.md"
+
+  - id: WP06
+    title: "Immutable Handoff And Independent Review"
+    dependencies: [WP03, WP04]
+    owned_files:
+      - "internal/handoff/**"
+      - "internal/review/**"
+      - "internal/controlstore/sqlite/handoff_review.go"
+      - "internal/controlstore/sqlite/handoff_review_test.go"
+      - "internal/helpercmd/review.go"
+      - "internal/scenario/review_test.go"
+    requirement_refs: [FR-002, FR-007, FR-010, FR-011, FR-017, FR-018, FR-019, NFR-004, NFR-006, NFR-008, NFR-010, C-003, C-007, C-008]
+    plan_concern_refs: [IC-07, IC-09]
+    subtasks: [T024, T025, T026, T027]
+    prompt_file: "tasks/WP06-immutable-handoff-and-independent-review.md"
+
+  - id: WP07
+    title: "Serialized Integration And Git-Fact Recovery"
+    dependencies: [WP06]
+    owned_files:
+      - "internal/integration/**"
+      - "internal/gitrepo/integration.go"
+      - "internal/gitrepo/integration_test.go"
+      - "internal/controlstore/sqlite/integration.go"
+      - "internal/controlstore/sqlite/integration_test.go"
+      - "internal/helpercmd/integration.go"
+      - "internal/scenario/integration_test.go"
+    requirement_refs: [FR-007, FR-012, FR-013, FR-014, FR-017, FR-018, FR-019, FR-020, NFR-003, NFR-004, NFR-005, NFR-006, NFR-007, NFR-008, NFR-010, C-003, C-008]
+    plan_concern_refs: [IC-08, IC-09]
+    subtasks: [T028, T029, T030, T031, T032]
+    prompt_file: "tasks/WP07-serialized-integration-and-git-fact-recovery.md"
+
+  - id: WP08
+    title: "Two-Agent Torture Chamber And ADR Verdict"
+    dependencies: [WP02, WP03, WP05, WP06, WP07]
+    owned_files:
+      - "internal/scenario/universal_assertions.go"
+      - "internal/scenario/phase1_test.go"
+      - "internal/scenario/repetition_test.go"
+      - "docs/adr/**"
+      - "docs/phase1-evidence/**"
+    requirement_refs: [FR-001, FR-002, FR-003, FR-004, FR-005, FR-006, FR-007, FR-008, FR-009, FR-010, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-018, FR-019, FR-020, NFR-001, NFR-002, NFR-003, NFR-004, NFR-005, NFR-006, NFR-007, NFR-008, NFR-009, NFR-010, C-001, C-002, C-003, C-004, C-005, C-006, C-007, C-008]
+    plan_concern_refs: [IC-09, IC-10]
+    subtasks: [T033, T034, T035, T036]
+    prompt_file: "tasks/WP08-two-agent-torture-chamber-and-adr-verdict.md"
