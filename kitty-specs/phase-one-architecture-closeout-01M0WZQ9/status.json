@@ -1,7 +1,7 @@
 {
-  "event_count": 19,
-  "last_event_id": "01M0X2EM31B5FGMBC1GF4W8A4E",
-  "materialized_at": "2026-08-25T18:20:50.145319+00:00",
+  "event_count": 20,
+  "last_event_id": "01M0X2FJ6WPNBWRRFX0CH6774B",
+  "materialized_at": "2026-08-25T18:21:20.988765+00:00",
   "mission_number": "",
   "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
   "mission_type": "",
@@ -11,9 +11,9 @@
     "canceled": 0,
     "claimed": 0,
     "done": 0,
-    "for_review": 1,
+    "for_review": 2,
     "in_progress": 1,
-    "in_review": 1,
+    "in_review": 0,
     "planned": 3
   },
   "work_packages": {
@@ -37,10 +37,10 @@
       "agent": "opencode",
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
-      "force_count": 3,
-      "lane": "in_review",
-      "last_event_id": "01M0X2C7V8MMZHMEW8RKZCBW09",
-      "last_transition_at": "2026-08-25T18:19:32.072720+00:00",
+      "force_count": 4,
+      "lane": "for_review",
+      "last_event_id": "01M0X2FJ6WPNBWRRFX0CH6774B",
+      "last_transition_at": "2026-08-25T18:21:20.988765+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: pre-fence refusal observer and ordering mutant added; contention diagnostic stabilized; 20x contention, 10x refusal, full package, and race tests pass. Lane inherited mission planning commits; no pre-review gate contract is configured.",
@@ -49,8 +49,8 @@
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
-        "reference": "Gemini reviewer process exited without emitting the required approval or rejection transition; preserving failed independent review attempt before redispatch.",
-        "reviewer": "gemini",
+        "reference": "OpenCode reviewer failed before inspection because its local state database is incompatible (no such column: name); preserving failure before local independent-model review.",
+        "reviewer": "opencode",
         "verdict": "changes_requested"
       },
       "role": "reviewer",
