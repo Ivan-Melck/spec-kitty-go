@@ -32,7 +32,8 @@
         "Ready for review: live architecture command, semantic Git adapter boundary, non-vacuous reachability registry, and strengthened deferred-runtime detection",
         "Ready for review: validated live diagnostics and cross-file Python runtime aliases",
         "Ready for review: typed reachability identity, scope-correct local Python alias detection, and dead LoadError surface corrected; required repeated mutants, race, vet, and repository scenario batches pass. Transition override is limited to the mission's absent pre-review gate contract and pre-existing inherited lane status artifacts.",
-        "Ready for review: active Go build filtering and self-recursion reachability mutants fixed. Manual WP01 gate passed: required count=10 suites, race, vet, repository compilation, helper build, module verification, and live architecture check. Override used because this mission has no in_progress->for_review gate contract and earlier review-cycle planning artifacts already exist in lane history."
+        "Ready for review: active Go build filtering and self-recursion reachability mutants fixed. Manual WP01 gate passed: required count=10 suites, race, vet, repository compilation, helper build, module verification, and live architecture check. Override used because this mission has no in_progress->for_review gate contract and earlier review-cycle planning artifacts already exist in lane history.",
+        "Ready for review: active custom build tags now follow go list and unrooted target recursion cycles fail reachability"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
