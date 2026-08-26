@@ -270,7 +270,7 @@
     },
     "WP08": {
       "actor": "codex",
-      "agent": null,
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
@@ -280,7 +280,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass.",
-        "Cycle 2 candidate ba6a6d4. Shared 12-case registry passes durable fake and scripted dishonest provider; exact 25-case typed fault census includes real create/update/dependency/comment/assignment apply-before-loss, universal audit and real stale probe; TrackerSaga plus reopened SQLite preserves 100/100 human assignments. Gates: conformance count=10, adversarial repetition count=10 (457.983s), human 100/100 (113.048s), race full Beads/Conformance (198.930s) plus final focused race (31.903s), architecture, vet, staticcheck, compile-all, diff-check all pass. Ruff diff-scoped: no Python files, not applicable."
+        "Cycle 2 candidate ba6a6d4. Shared 12-case registry passes durable fake and scripted dishonest provider; exact 25-case typed fault census includes real create/update/dependency/comment/assignment apply-before-loss, universal audit and real stale probe; TrackerSaga plus reopened SQLite preserves 100/100 human assignments. Gates: conformance count=10, adversarial repetition count=10 (457.983s), human 100/100 (113.048s), race full Beads/Conformance (198.930s) plus final focused race (31.903s), architecture, vet, staticcheck, compile-all, diff-check all pass. Ruff diff-scoped: no Python files, not applicable.",
+        "Cycle-3 candidate f3a4c11; preserving consolidated WP09 planning artifact already committed by another lane; all WP08 regression and race gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -291,8 +292,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 4177689,
+      "shell_pid_created_at": "1787767912.13",
       "subtasks": {
         "T038": "done",
         "T039": "done",
