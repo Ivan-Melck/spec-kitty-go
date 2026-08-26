@@ -1,0 +1,216 @@
+work_packages:
+  - id: WP01
+    title: "Provider-Neutral Tracker Capabilities"
+    dependencies: []
+    owned_files:
+      - "internal/tracker/provider.go"
+      - "internal/tracker/capabilities.go"
+      - "internal/tracker/capabilities_test.go"
+      - "internal/tracker/fake/store.go"
+      - "internal/tracker/fake/provider.go"
+      - "internal/tracker/fake/provider_test.go"
+      - "internal/tracker/fake/conformance_test.go"
+    requirement_refs: [FR-001, FR-006, FR-013, FR-014, FR-015, FR-017, NFR-014, C-001, C-004, C-007]
+    plan_concern_refs: [IC-01]
+    subtasks: [T001, T002, T003, T004, T005]
+    prompt_file: "tasks/WP01-provider-neutral-tracker-capabilities.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP02
+    title: "Permanent Beads Adapter Architecture Guard"
+    dependencies: []
+    owned_files:
+      - "internal/architecture/policy.go"
+      - "internal/architecture/policy_test.go"
+    requirement_refs: [FR-021, NFR-008, C-002, C-008]
+    plan_concern_refs: [IC-02]
+    subtasks: [T006, T007, T008, T009]
+    prompt_file: "tasks/WP02-permanent-beads-adapter-architecture-guard.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP03
+    title: "Bounded Beads JSON Command Protocol"
+    dependencies: [WP01, WP02]
+    owned_files:
+      - "internal/tracker/beads/adapter.go"
+      - "internal/tracker/beads/command.go"
+      - "internal/tracker/beads/command_test.go"
+      - "internal/tracker/beads/protocol.go"
+      - "internal/tracker/beads/protocol_test.go"
+      - "internal/tracker/beads/errors.go"
+      - "internal/tracker/beads/errors_test.go"
+    requirement_refs: [FR-002, FR-003, FR-016, FR-017, NFR-003, NFR-007, NFR-012, C-002, C-003]
+    plan_concern_refs: [IC-03]
+    subtasks: [T010, T011, T012, T013, T014, T015]
+    prompt_file: "tasks/WP03-bounded-beads-json-command-protocol.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP04
+    title: "Canonical Binding and Provider Health"
+    dependencies: [WP03]
+    owned_files:
+      - "internal/tracker/beads/binding.go"
+      - "internal/tracker/beads/binding_test.go"
+      - "internal/tracker/beads/inspect.go"
+      - "internal/tracker/beads/inspect_test.go"
+      - "internal/tracker/beads/writer_lock.go"
+      - "internal/tracker/beads/writer_lock_test.go"
+    requirement_refs: [FR-003, FR-004, FR-005, FR-006, FR-017, FR-019, NFR-001, NFR-011, C-003, C-005, C-006]
+    plan_concern_refs: [IC-04]
+    subtasks: [T016, T017, T018, T019, T020]
+    prompt_file: "tasks/WP04-canonical-binding-and-provider-health.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP05
+    title: "Mapped Work Catalog and Observation Revisions"
+    dependencies: [WP04]
+    owned_files:
+      - "internal/tracker/beads/metadata.go"
+      - "internal/tracker/beads/metadata_test.go"
+      - "internal/tracker/beads/revision.go"
+      - "internal/tracker/beads/revision_test.go"
+      - "internal/tracker/beads/catalog.go"
+      - "internal/tracker/beads/catalog_test.go"
+    requirement_refs: [FR-007, FR-008, FR-009, FR-013, FR-016, NFR-002, NFR-006, C-007]
+    plan_concern_refs: [IC-05]
+    subtasks: [T021, T022, T023, T024, T025, T026]
+    prompt_file: "tasks/WP05-mapped-work-catalog-and-observation-revisions.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP06
+    title: "Dependency Graph and Durable Discussion"
+    dependencies: [WP05]
+    owned_files:
+      - "internal/tracker/beads/graph.go"
+      - "internal/tracker/beads/graph_test.go"
+      - "internal/tracker/beads/discussion.go"
+      - "internal/tracker/beads/discussion_test.go"
+    requirement_refs: [FR-010, FR-011, FR-016, C-001, C-008]
+    plan_concern_refs: [IC-06]
+    subtasks: [T027, T028, T029, T030, T031]
+    prompt_file: "tasks/WP06-dependency-graph-and-durable-discussion.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP07
+    title: "Assignment Projection and Safe Reconciliation"
+    dependencies: [WP05]
+    owned_files:
+      - "internal/tracker/beads/assignment.go"
+      - "internal/tracker/beads/assignment_test.go"
+      - "internal/execution/external_effect.go"
+      - "internal/execution/external_effect_test.go"
+      - "internal/controlstore/sqlite/external_effect.go"
+      - "internal/controlstore/sqlite/external_effect_test.go"
+    requirement_refs: [FR-012, FR-014, FR-015, FR-016, FR-017, FR-022, NFR-004, NFR-005, NFR-009, C-004, C-012]
+    plan_concern_refs: [IC-07]
+    subtasks: [T032, T033, T034, T035, T036, T037]
+    prompt_file: "tasks/WP07-assignment-projection-and-safe-reconciliation.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP08
+    title: "Adversarial Portable Conformance"
+    dependencies: [WP06, WP07]
+    owned_files:
+      - "internal/tracker/conformance/suite.go"
+      - "internal/tracker/conformance/suite_test.go"
+      - "internal/tracker/conformance/catalog.go"
+      - "internal/tracker/conformance/graph.go"
+      - "internal/tracker/conformance/discussion.go"
+      - "internal/tracker/conformance/assignment.go"
+      - "internal/tracker/beads/testdata/dishonest_bd.go"
+      - "internal/tracker/beads/testdata/scenario.schema.json"
+      - "internal/scenario/beads_fault_test.go"
+      - "internal/scenario/beads_fault_helpers_test.go"
+    requirement_refs: [FR-018, FR-022, NFR-004, NFR-005, NFR-007, NFR-009, NFR-014, C-007, C-012]
+    plan_concern_refs: [IC-08]
+    subtasks: [T038, T039, T040, T041, T042]
+    prompt_file: "tasks/WP08-adversarial-portable-conformance.md"
+    agent_profile: debugger-debbie
+    role: investigator
+    agent: codex
+    model: ""
+
+  - id: WP09
+    title: "Real Beads Qualification and Backup"
+    dependencies: [WP06, WP07]
+    owned_files:
+      - "internal/tracker/beads/real_integration_test.go"
+      - "internal/tracker/beads/worktree_integration_test.go"
+      - "internal/tracker/beads/backup_integration_test.go"
+      - "internal/testcampaign/cmd/beads-qualification/main.go"
+      - "internal/testcampaign/cmd/beads-qualification/main_test.go"
+      - "internal/testcampaign/cmd/beads-qualification/fixture.go"
+      - "internal/testcampaign/cmd/beads-qualification/fixture_test.go"
+      - "internal/testcampaign/cmd/beads-qualification/runner.go"
+      - "internal/testcampaign/cmd/beads-qualification/runner_test.go"
+      - "scripts/install-qualified-beads.sh"
+    requirement_refs: [FR-003, FR-004, FR-005, FR-007, FR-008, FR-009, FR-010, FR-011, FR-012, FR-018, FR-019, FR-020, FR-023, NFR-001, NFR-002, NFR-006, NFR-011, NFR-013]
+    plan_concern_refs: [IC-08]
+    subtasks: [T043, T044, T045, T046, T047, T048]
+    prompt_file: "tasks/WP09-real-beads-qualification-and-backup.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP10
+    title: "Provider Campaign and CI Evidence"
+    dependencies: [WP08, WP09]
+    owned_files:
+      - "internal/testcampaign/manifest.go"
+      - "internal/testcampaign/census_test.go"
+      - "internal/testcampaign/beads_evidence.go"
+      - "internal/testcampaign/beads_evidence_test.go"
+      - "Makefile"
+      - ".github/workflows/beads-qualification.yml"
+    requirement_refs: [FR-018, FR-019, FR-021, FR-022, FR-023, NFR-008, NFR-009, NFR-010, NFR-012, NFR-013]
+    plan_concern_refs: [IC-08]
+    subtasks: [T049, T050, T051, T052, T053]
+    prompt_file: "tasks/WP10-provider-campaign-and-ci-evidence.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP11
+    title: "Operations Documentation and Phase Two Evidence"
+    dependencies: [WP10]
+    owned_files:
+      - "README.md"
+      - "docs/TECHNICAL_PROJECT_PLAN.md"
+      - "docs/phase2-evidence/README.md"
+      - "docs/phase2-evidence/qualification-evidence.json"
+      - "docs/phase2-evidence/campaign-census.json"
+      - "docs/phase2-evidence/results.md"
+      - "docs/phase2-evidence/limitations.md"
+      - "docs/phase2-evidence/SHA256SUMS"
+      - "internal/architecture/beads_documentation_test.go"
+    requirement_refs: [FR-020, FR-023, FR-024, NFR-011, NFR-012, NFR-015, C-001, C-002, C-003, C-004, C-005, C-006, C-008, C-009, C-010, C-011]
+    plan_concern_refs: [IC-09]
+    subtasks: [T054, T055, T056, T057, T058]
+    prompt_file: "tasks/WP11-operations-documentation-and-phase-two-evidence.md"
+    agent_profile: curator-carla
+    role: curator
+    agent: codex
+    model: ""
