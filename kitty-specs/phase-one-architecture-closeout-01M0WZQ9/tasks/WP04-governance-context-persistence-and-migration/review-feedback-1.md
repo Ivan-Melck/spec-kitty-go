@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 1
-mission_slug: phase-one-architecture-closeout-01M0WZQ9
-reproduction_command:
-reviewed_at: '2026-08-26T00:47:01Z'
-reviewer_agent: user
-wp_id: WP04
----
-
 # WP04 Review Feedback — Cycle 1
 
 ## Blocking issue 1: the run-owned governance binding is mutable after insert

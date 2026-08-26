@@ -1,14 +1,4 @@
 ---
-affected_files: []
-cycle_number: 7
-mission_slug: phase-one-architecture-closeout-01M0WZQ9
-reproduction_command:
-reviewed_at: '2026-08-25T22:34:03Z'
-reviewer_agent: user
-wp_id: WP01
----
-
----
 affected_files:
   - internal/architecture/policy.go
   - internal/architecture/reachability.go

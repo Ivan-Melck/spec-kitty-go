@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 1
-mission_slug: phase-one-architecture-closeout-01M0WZQ9
-reproduction_command:
-reviewed_at: '2026-08-25T18:29:44Z'
-reviewer_agent: user
-wp_id: WP03
----
-
 **Issue 1 — live `claim` admission path omits required governance provenance (FR-010 / T014)**
 
 `internal/execution.StartRequest.Validate` now rejects a zero governance context, but the production `runClaim` constructor in `internal/helpercmd/root.go:166` still creates `StartRequest` without `GovernanceContext`. A direct invocation with otherwise valid IDs returns `invalid_command: governance_context is invalid` before repository admission. The new helper test only exercises `syntheticStartGovernanceContext`/`start-run`, so deleting or breaking the `claim` integration remains undetected.

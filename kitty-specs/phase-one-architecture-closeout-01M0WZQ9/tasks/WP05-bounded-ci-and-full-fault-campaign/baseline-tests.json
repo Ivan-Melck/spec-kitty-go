@@ -1,0 +1,13 @@
+{
+  "wp_id": "WP05",
+  "captured_at": "2026-08-26T01:04:52Z",
+  "base_branch": "feat/phase-one-architecture-closeout",
+  "base_commit": "61c64eea12354a1c14153de1323c1e6d2d7b665e",
+  "test_runner": "pytest",
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "failures": [],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}
