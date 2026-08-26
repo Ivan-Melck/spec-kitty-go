@@ -259,7 +259,7 @@
     },
     "WP08": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -271,6 +271,7 @@
         "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP08-adversarial-portable-conformance/review-cycle-1.md",
         "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP08-adversarial-portable-conformance/review-cycle-1.md",
@@ -278,14 +279,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T038": "done",
-        "T039": "done",
-        "T040": "done",
-        "T041": "done",
-        "T042": "done"
+        "T038": "planned",
+        "T039": "planned",
+        "T040": "planned",
+        "T041": "planned",
+        "T042": "planned"
       }
     },
     "WP09": {
