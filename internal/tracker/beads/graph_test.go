@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -79,9 +80,11 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 	case CommandVersion:
 		data = map[string]any{"version": SupportedBeadsVersion, "build": "wp06-test"}
 	case CommandWhere:
-		data = map[string]any{"workspace_path": runner.workspace, "database_id": runner.databaseID}
-	case CommandInfo:
-		data = map[string]any{"protocol_schema": 1, "storage_mode": tracker.ConcurrencyEmbeddedSerialized, "read_only": false}
+		data = map[string]any{"path": runner.workspace, "prefix": runner.databaseID, "database_path": filepath.Join(runner.workspace, "embeddeddolt")}
+	case CommandDoltShow:
+		data = map[string]any{"backend": "dolt", "data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "database": runner.databaseID, "embedded": true}
+	case CommandDoltStatus:
+		data = map[string]any{"data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "data_dir_exists": true, "mode": "embedded", "server_running": false}
 	case CommandList:
 		data = runner.issueWiresLocked(nil)
 	case CommandShow:

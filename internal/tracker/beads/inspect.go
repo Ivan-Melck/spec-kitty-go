@@ -6,7 +6,7 @@ import (
 	"errors"
 	"os"
 	"sort"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
@@ -75,59 +75,37 @@ func cloneCredentials(source map[string]string) map[string]string {
 }
 
 type wherePayload struct {
-	WorkspacePath string `json:"workspace_path"`
-	Path          string `json:"path"`
-	DatabasePath  string `json:"database_path"`
-	DatabaseID    string `json:"database_id"`
-	WorkspaceID   string `json:"workspace_id"`
+	Path         string `json:"path"`
+	Prefix       string `json:"prefix"`
+	DatabasePath string `json:"database_path"`
 }
 
-func (payload wherePayload) workspace() string {
-	for _, candidate := range []string{payload.WorkspacePath, payload.Path, payload.DatabasePath} {
-		if candidate != "" {
-			return candidate
-		}
-	}
-	return ""
+type doltShowPayload struct {
+	Backend      string `json:"backend"`
+	DataDir      string `json:"data_dir"`
+	Database     string `json:"database"`
+	Embedded     *bool  `json:"embedded"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	User         string `json:"user"`
+	SharedServer *bool  `json:"shared_server"`
+	ConnectionOK *bool  `json:"connection_ok"`
 }
 
-func (payload wherePayload) databaseIdentity() string {
-	if payload.DatabaseID != "" {
-		return payload.DatabaseID
-	}
-	return payload.WorkspaceID
-}
-
-type infoPayload struct {
-	SchemaVersion  uint16 `json:"schema_version"`
-	ProtocolSchema uint16 `json:"protocol_schema"`
-	StorageMode    string `json:"storage_mode"`
-	Mode           string `json:"mode"`
-	ReadOnly       bool   `json:"read_only"`
-	ServerID       string `json:"server_id"`
-	ServerEndpoint string `json:"server_endpoint"`
-	ServerHealthy  *bool  `json:"server_healthy"`
-}
-
-func (payload infoPayload) schema() uint16 {
-	if payload.ProtocolSchema != 0 {
-		return payload.ProtocolSchema
-	}
-	return payload.SchemaVersion
-}
-
-func (payload infoPayload) mode() string {
-	if payload.StorageMode != "" {
-		return payload.StorageMode
-	}
-	return payload.Mode
-}
-
-type doctorPayload struct {
-	Healthy        *bool  `json:"healthy"`
-	Status         string `json:"status"`
-	ServerID       string `json:"server_id"`
-	ServerEndpoint string `json:"server_endpoint"`
+type doltStatusPayload struct {
+	Mode          string `json:"mode"`
+	DataDir       string `json:"data_dir"`
+	DataDirExists *bool  `json:"data_dir_exists"`
+	ServerRunning *bool  `json:"server_running"`
+	Running       *bool  `json:"running"`
+	PID           int    `json:"pid"`
+	Host          string `json:"host"`
+	Port          int    `json:"port"`
+	User          string `json:"user"`
+	Database      string `json:"database"`
+	TLS           *bool  `json:"tls"`
+	Version       string `json:"version"`
+	Error         string `json:"error"`
 }
 
 func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
@@ -154,6 +132,9 @@ func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
 	if err != nil {
 		return Readiness{}, err
 	}
+	if err := requireInspectionSchema(versionResponse); err != nil {
+		return Readiness{}, err
+	}
 	identity, err := decodeExecutableIdentity(versionResponse.payload)
 	if err != nil {
 		result := versionResponse.result
@@ -171,79 +152,122 @@ func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
 	if err != nil {
 		return Readiness{}, err
 	}
+	if err := requireInspectionSchema(whereResponse); err != nil {
+		return Readiness{}, err
+	}
 	var where wherePayload
-	if json.Unmarshal(whereResponse.payload, &where) != nil || where.workspace() == "" {
+	if json.Unmarshal(whereResponse.payload, &where) != nil || where.Path == "" || where.Prefix == "" || where.DatabasePath == "" {
 		return Readiness{}, malformedInspection("workspace observation is malformed", nil)
 	}
-	observedWorkspace, _, err := canonicalExisting(where.workspace(), true)
+	observedWorkspace, _, err := canonicalExisting(where.Path, true)
 	if err != nil {
 		return Readiness{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider workspace is unavailable", Cause: err}
 	}
 	if observedWorkspace != bound.binding.WorkspacePath {
-		return Readiness{}, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(observedWorkspace, where.databaseIdentity()))
+		return Readiness{}, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(observedWorkspace, where.DatabasePath))
 	}
-	observedIdentity := deriveWorkspaceIdentity(observedWorkspace, where.databaseIdentity())
-	// A provider that does not expose a database identity is still pinned by its
-	// canonical path. If it does expose one, the binding must have included it.
+	observedDatabase, _, err := canonicalExisting(where.DatabasePath, true)
+	if err != nil {
+		return Readiness{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider database is unavailable", Cause: err}
+	}
+	observedIdentity := deriveWorkspaceIdentity(observedWorkspace, observedDatabase)
 	if observedIdentity != bound.binding.WorkspaceIdentity {
 		return Readiness{}, workspaceMismatch(bound.binding.WorkspaceIdentity, observedIdentity)
 	}
-	infoRequest, err := newInfoCommand(binding)
+	showRequest, err := newDoltShowCommand(binding)
 	if err != nil {
 		return Readiness{}, err
 	}
-	infoResponse, err := bound.adapter.execute(ctx, infoRequest)
+	showResponse, err := bound.adapter.execute(ctx, showRequest)
 	if err != nil {
 		return Readiness{}, err
 	}
-	var providerInfo infoPayload
-	if json.Unmarshal(infoResponse.payload, &providerInfo) != nil {
-		return Readiness{}, malformedInspection("provider information is malformed", nil)
+	if err := requireInspectionSchema(showResponse); err != nil {
+		return Readiness{}, err
 	}
-	if infoResponse.metadata.schemaVersion != SupportedProtocolSchema || providerInfo.schema() != SupportedProtocolSchema {
-		return Readiness{}, &tracker.Error{Kind: tracker.ErrorSchemaSkew, RecoveryCode: "install_supported_provider", Message: "provider protocol schema is unsupported"}
+	var show doltShowPayload
+	if json.Unmarshal(showResponse.payload, &show) != nil || show.Backend != "dolt" || show.Embedded == nil || show.Database == "" {
+		return Readiness{}, malformedInspection("provider storage observation is malformed", nil)
 	}
-	if providerInfo.ReadOnly || bound.binding.ReadOnly {
+	statusRequest, err := newDoltStatusCommand(binding)
+	if err != nil {
+		return Readiness{}, err
+	}
+	statusResponse, err := bound.adapter.execute(ctx, statusRequest)
+	if err != nil {
+		return Readiness{}, err
+	}
+	if err := requireInspectionSchema(statusResponse); err != nil {
+		return Readiness{}, err
+	}
+	var status doltStatusPayload
+	if json.Unmarshal(statusResponse.payload, &status) != nil {
+		return Readiness{}, malformedInspection("provider health observation is malformed", nil)
+	}
+	serverQualified, err := bound.qualifyStorageObservation(observedDatabase, where.Prefix, show, status)
+	if err != nil {
+		return Readiness{}, err
+	}
+	// Read-only is an explicit local binding policy in Beads v1.2.2. The
+	// provider does not expose one authoritative effective-read-only field.
+	if bound.binding.ReadOnly {
 		return Readiness{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "use_writable_provider", Message: "provider binding is read-only"}
-	}
-	wantMode := string(bound.binding.ConcurrencyMode)
-	if providerInfo.mode() != wantMode {
-		return Readiness{}, invalidBinding("observed provider concurrency mode differs from binding", nil)
 	}
 	readiness := Readiness{binding: bound.binding, executableSize: info.Size(), executableMTime: info.ModTime()}
 	if bound.binding.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter {
-		doctorBinding := binding
-		doctorBinding.timeout = defaultReadTimeout
-		doctorRequest, buildErr := newDoctorCommand(doctorBinding)
-		if buildErr != nil {
-			return Readiness{}, buildErr
-		}
-		doctorResponse, executeErr := bound.adapter.execute(ctx, doctorRequest)
-		if executeErr != nil {
-			return Readiness{}, executeErr
-		}
-		var doctor doctorPayload
-		if json.Unmarshal(doctorResponse.payload, &doctor) != nil {
-			return Readiness{}, malformedInspection("provider health response is malformed", nil)
-		}
-		healthy := doctor.Healthy != nil && *doctor.Healthy || strings.EqualFold(doctor.Status, "healthy")
-		serverID := doctor.ServerID
-		if serverID == "" {
-			serverID = providerInfo.ServerID
-		}
-		serverEndpoint := doctor.ServerEndpoint
-		if serverEndpoint == "" {
-			serverEndpoint = providerInfo.ServerEndpoint
-		}
-		if !healthy || serverID != bound.connection.serverIdentity || serverEndpoint != bound.connection.serverEndpoint ||
-			providerInfo.ServerID != bound.connection.serverIdentity || providerInfo.ServerEndpoint != bound.connection.serverEndpoint {
+		if !serverQualified {
 			return Readiness{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_server", Message: "provider server is not qualified healthy"}
 		}
 		now := bound.now().UTC()
-		readiness.serverIdentity, readiness.serverEndpoint, readiness.serverQualified = serverID, serverEndpoint, true
+		readiness.serverIdentity, readiness.serverEndpoint, readiness.serverQualified = bound.connection.serverIdentity, bound.connection.serverEndpoint, true
 		readiness.qualifiedAt, readiness.expiresAt = now, now.Add(serverReadinessLifetime)
 	}
 	return readiness, nil
+}
+
+func requireInspectionSchema(response commandResponse) error {
+	if response.metadata.schemaVersion != SupportedProtocolSchema {
+		return &tracker.Error{Kind: tracker.ErrorSchemaSkew, RecoveryCode: "install_supported_provider", Message: "provider protocol schema is unsupported"}
+	}
+	return nil
+}
+
+func (bound *BoundAdapter) qualifyStorageObservation(databasePath, databaseName string, show doltShowPayload, status doltStatusPayload) (bool, error) {
+	if show.Database != databaseName || show.DataDir == "" {
+		return false, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(bound.binding.WorkspacePath, show.DataDir))
+	}
+	showDataDir, _, err := canonicalExisting(show.DataDir, true)
+	if err != nil {
+		return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider data directory is unavailable", Cause: err}
+	}
+	if showDataDir != databasePath {
+		return false, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(bound.binding.WorkspacePath, showDataDir))
+	}
+	if bound.binding.ConcurrencyMode == tracker.ConcurrencyEmbeddedSerialized {
+		if !*show.Embedded || show.DataDir == "" || status.Mode != "embedded" || status.DataDir == "" ||
+			status.DataDirExists == nil || !*status.DataDirExists || status.ServerRunning == nil || *status.ServerRunning {
+			return false, invalidBinding("observed provider storage mode differs from embedded binding", nil)
+		}
+		statusDataDir, _, err := canonicalExisting(status.DataDir, true)
+		if err != nil {
+			return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider status directory is unavailable", Cause: err}
+		}
+		if statusDataDir != databasePath {
+			return false, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(bound.binding.WorkspacePath, statusDataDir))
+		}
+		return false, nil
+	}
+	if *show.Embedded || show.Host == "" || show.Port <= 0 || show.SharedServer == nil || !*show.SharedServer || show.ConnectionOK == nil || !*show.ConnectionOK ||
+		status.Mode != "external" || status.Running == nil || !*status.Running || status.Error != "" {
+		return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_server", Message: "provider server is not qualified healthy"}
+	}
+	showEndpoint := show.Host + ":" + strconv.Itoa(show.Port)
+	statusEndpoint := status.Host + ":" + strconv.Itoa(status.Port)
+	if showEndpoint != bound.connection.serverEndpoint || statusEndpoint != bound.connection.serverEndpoint ||
+		status.Database == "" || status.Database != show.Database {
+		return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_server", Message: "provider server endpoint or database differs from binding"}
+	}
+	return true, nil
 }
 
 // Inspect returns useful bounded diagnostics even when mutation readiness is
