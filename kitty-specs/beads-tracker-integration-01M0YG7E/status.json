@@ -279,7 +279,8 @@
       "last_transition_at": "2026-08-26T17:19:11.537160+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass."
+        "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass.",
+        "Cycle 2 candidate ba6a6d4. Shared 12-case registry passes durable fake and scripted dishonest provider; exact 25-case typed fault census includes real create/update/dependency/comment/assignment apply-before-loss, universal audit and real stale probe; TrackerSaga plus reopened SQLite preserves 100/100 human assignments. Gates: conformance count=10, adversarial repetition count=10 (457.983s), human 100/100 (113.048s), race full Beads/Conformance (198.930s) plus final focused race (31.903s), architecture, vet, staticcheck, compile-all, diff-check all pass. Ruff diff-scoped: no Python files, not applicable."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
