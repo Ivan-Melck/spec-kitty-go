@@ -111,55 +111,76 @@ type documentedError struct {
 	Code          string  `json:"code"`
 }
 
+type documentedErrorShape uint8
+
+const (
+	documentedErrorObject documentedErrorShape = iota + 1
+	documentedDataErrorEnvelope
+)
+
 type errorDecode struct {
-	providerCode    string
-	schemaVersion   uint16
-	warningsPresent bool
-	warningCount    int
+	providerCode  string
+	schemaVersion uint16
+	shape         documentedErrorShape
 }
 
-func decodeDocumentedError(stderr []byte, truncated bool) (errorDecode, error) {
+func decodeDocumentedError(stdout []byte, truncated bool) (errorDecode, error) {
 	if truncated {
 		return errorDecode{}, &protocolError{cause: protocolOversized}
 	}
-	if !utf8.Valid(stderr) {
+	if !utf8.Valid(stdout) {
 		return errorDecode{}, &protocolError{cause: protocolMalformed}
 	}
-	var found *documentedError
-	warningCount := 0
-	for _, line := range bytes.Split(stderr, []byte{'\n'}) {
-		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) == 0 {
-			continue
-		}
-		var fields map[string]json.RawMessage
-		if decodeOne(trimmed, &fields) != nil {
-			warningCount++
-			continue
-		}
-		_, hasSchema := fields["schema_version"]
-		_, hasMessage := fields["error"]
-		_, hasCode := fields["code"]
-		if !hasSchema && !hasMessage && !hasCode {
-			warningCount++
-			continue
-		}
-		if !hasSchema || !hasMessage || !hasCode || len(fields) != 3 || found != nil {
+	var fields map[string]json.RawMessage
+	if err := decodeOne(stdout, &fields); err != nil || fields == nil {
+		return errorDecode{}, &protocolError{cause: protocolMalformed, underlying: err}
+	}
+	schemaPayload, hasSchema := fields["schema_version"]
+	if !hasSchema {
+		return errorDecode{}, &protocolError{cause: protocolMalformed}
+	}
+	var schema uint16
+	if err := json.Unmarshal(schemaPayload, &schema); err != nil {
+		return errorDecode{}, &protocolError{cause: protocolMalformed, underlying: err}
+	}
+	result := errorDecode{schemaVersion: schema}
+	if schema != SupportedProtocolSchema {
+		return result, &protocolError{cause: protocolSchema, schema: schema}
+	}
+
+	dataPayload, hasData := fields["data"]
+	if hasData {
+		if _, hasMessage := fields["error"]; hasMessage {
 			return errorDecode{}, &protocolError{cause: protocolMalformed}
 		}
-		var candidate documentedError
-		if err := json.Unmarshal(trimmed, &candidate); err != nil || candidate.SchemaVersion == nil || candidate.Message == "" || candidate.Code == "" {
+		if _, hasCode := fields["code"]; hasCode {
+			return errorDecode{}, &protocolError{cause: protocolMalformed}
+		}
+		var dataFields map[string]json.RawMessage
+		if err := decodeOne(dataPayload, &dataFields); err != nil || dataFields == nil {
 			return errorDecode{}, &protocolError{cause: protocolMalformed, underlying: err}
 		}
-		found = &candidate
+		messagePayload, hasMessage := dataFields["error"]
+		if !hasMessage {
+			return errorDecode{}, &protocolError{cause: protocolMalformed}
+		}
+		var message string
+		if err := json.Unmarshal(messagePayload, &message); err != nil || message == "" {
+			return errorDecode{}, &protocolError{cause: protocolMalformed, underlying: err}
+		}
+		result.shape = documentedDataErrorEnvelope
+		return result, nil
 	}
-	if found == nil {
+
+	if len(fields) != 3 {
 		return errorDecode{}, &protocolError{cause: protocolMalformed}
 	}
-	result := errorDecode{providerCode: found.Code, schemaVersion: *found.SchemaVersion, warningCount: warningCount, warningsPresent: warningCount > 0}
-	if *found.SchemaVersion != SupportedProtocolSchema {
-		return result, &protocolError{cause: protocolSchema, schema: *found.SchemaVersion}
+	var candidate documentedError
+	if err := decodeOne(stdout, &candidate); err != nil || candidate.SchemaVersion == nil || candidate.Message == "" || candidate.Code == "" {
+		return errorDecode{}, &protocolError{cause: protocolMalformed, underlying: err}
 	}
+	result.providerCode = candidate.Code
+	result.shape = documentedErrorObject
 	return result, nil
 }
 
