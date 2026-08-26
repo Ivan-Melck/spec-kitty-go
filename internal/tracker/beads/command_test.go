@@ -106,8 +106,8 @@ func TestCommandArgvVocabulary(t *testing.T) {
 	}{
 		{"version", func() (command, error) { return newVersionCommand(binding) }, []string{"version", "--json"}, expectedObject, false},
 		{"where", func() (command, error) { return newWhereCommand(binding) }, []string{"where", "--json"}, expectedObject, false},
-		{"info", func() (command, error) { return newInfoCommand(binding) }, []string{"info", "--schema", "--json"}, expectedObject, false},
-		{"doctor", func() (command, error) { return newDoctorCommand(binding) }, []string{"doctor", "--agent", "--json"}, expectedObject, false},
+		{"dolt-show", func() (command, error) { return newDoltShowCommand(binding) }, []string{"dolt", "show", "--json"}, expectedObject, false},
+		{"dolt-status", func() (command, error) { return newDoltStatusCommand(binding) }, []string{"dolt", "status", "--json"}, expectedObject, false},
 		{"show", func() (command, error) { return newShowCommand(binding, "x") }, []string{"show", "x", "--json"}, expectedObject, false},
 		{"list", func() (command, error) { return newListCommand(binding) }, []string{"list", "--json"}, expectedArray, false},
 		{"ready", func() (command, error) { return newReadyCommand(binding) }, []string{"ready", "--json"}, expectedArray, false},
@@ -160,7 +160,7 @@ func TestCommandValidationBeforeSpawn(t *testing.T) {
 		{"relative cwd", func() error { b := valid; b.workingDir = "."; _, err := newListCommand(b); return err }},
 		{"negative timeout", func() error { b := valid; b.timeout = -1; _, err := newListCommand(b); return err }},
 		{"too long timeout", func() error { b := valid; b.timeout = 31 * time.Second; _, err := newListCommand(b); return err }},
-		{"explicit timeout absent", func() error { b := valid; b.timeout = 0; _, err := newDoctorCommand(b); return err }},
+		{"explicit timeout absent", func() error { b := valid; b.timeout = 0; _, err := newExportCommand(b); return err }},
 		{"empty id", func() error { _, err := newShowCommand(valid, ""); return err }},
 		{"nul id", func() error { _, err := newShowCommand(valid, "x\x00y"); return err }},
 		{"empty update", func() error { _, err := newUpdateCommand(valid, updateValues{id: "x"}); return err }},
@@ -456,6 +456,8 @@ func TestPermissionFailureIsUnavailableAndNotStarted(t *testing.T) {
 
 func TestProcessRunnerSanitizesEnvironment(t *testing.T) {
 	t.Setenv("WP03_SECRET_SENTINEL", "do-not-inherit")
+	t.Setenv("BD_DISABLE_METRICS", "0")
+	t.Setenv("BD_DISABLE_EVENT_FLUSH", "0")
 	base := helperCommand(t, "environment", false, 5*time.Second, 1<<20, 1024)
 	cmd, err := newListCommand(base.binding)
 	if err != nil {
@@ -471,7 +473,7 @@ func TestProcessRunnerSanitizesEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(environment, "\n")
-	for _, required := range []string{"BEADS_DIR=", "BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1", "DOLT_SERVER_HOST=localhost"} {
+	for _, required := range []string{"BEADS_DIR=", "BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1", "BD_DISABLE_METRICS=1", "BD_DISABLE_EVENT_FLUSH=1", "DOLT_SERVER_HOST=localhost"} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("missing %s", required)
 		}
