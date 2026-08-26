@@ -29,25 +29,26 @@ const (
 type CommandKind string
 
 const (
-	CommandVersion        CommandKind = "version"
-	CommandWhere          CommandKind = "where"
-	CommandInfo           CommandKind = "info"
-	CommandDoctor         CommandKind = "doctor"
-	CommandShow           CommandKind = "show"
-	CommandList           CommandKind = "list"
-	CommandReady          CommandKind = "ready"
-	CommandCreate         CommandKind = "create"
-	CommandUpdate         CommandKind = "update"
-	CommandAtomicClaim    CommandKind = "atomic_claim"
-	CommandDependencyAdd  CommandKind = "dependency_add"
-	CommandDependencyList CommandKind = "dependency_list"
-	CommandCommentAppend  CommandKind = "comment_append"
-	CommandCommentList    CommandKind = "comment_list"
-	CommandExport         CommandKind = "export"
-	CommandBackupInit     CommandKind = "backup_init"
-	CommandBackupSync     CommandKind = "backup_sync"
-	CommandBackupStatus   CommandKind = "backup_status"
-	CommandBackupRestore  CommandKind = "backup_restore"
+	CommandVersion          CommandKind = "version"
+	CommandWhere            CommandKind = "where"
+	CommandInfo             CommandKind = "info"
+	CommandDoctor           CommandKind = "doctor"
+	CommandShow             CommandKind = "show"
+	CommandList             CommandKind = "list"
+	CommandReady            CommandKind = "ready"
+	CommandCreate           CommandKind = "create"
+	CommandUpdate           CommandKind = "update"
+	CommandAtomicClaim      CommandKind = "atomic_claim"
+	CommandDependencyAdd    CommandKind = "dependency_add"
+	CommandDependencyRemove CommandKind = "dependency_remove"
+	CommandDependencyList   CommandKind = "dependency_list"
+	CommandCommentAppend    CommandKind = "comment_append"
+	CommandCommentList      CommandKind = "comment_list"
+	CommandExport           CommandKind = "export"
+	CommandBackupInit       CommandKind = "backup_init"
+	CommandBackupSync       CommandKind = "backup_sync"
+	CommandBackupStatus     CommandKind = "backup_status"
+	CommandBackupRestore    CommandKind = "backup_restore"
 )
 
 type expectedShape uint8
@@ -202,6 +203,19 @@ func newDependencyListCommand(binding commandBinding, id string) (command, error
 		return command{}, err
 	}
 	return buildCommand(CommandDependencyList, binding, []string{"dep", "list", id, "--json"}, expectedArray, false, false)
+}
+
+func newDependencyRemoveCommand(binding commandBinding, blocked, blocker string) (command, error) {
+	if err := requiredExternalID("blocked work id", blocked); err != nil {
+		return command{}, err
+	}
+	if err := requiredExternalID("blocking work id", blocker); err != nil {
+		return command{}, err
+	}
+	if blocked == blocker {
+		return command{}, validationError("dependency cannot reference the same work twice")
+	}
+	return buildCommand(CommandDependencyRemove, binding, []string{"dep", "remove", blocked, blocker, "--json"}, expectedObject, true, false)
 }
 
 func newCommentAppendCommand(binding commandBinding, id, body string) (command, error) {
@@ -423,6 +437,10 @@ func validateArgvShape(kind CommandKind, argv []string) error {
 		if len(argv) != 7 || argv[0] != "dep" || argv[1] != "add" || argv[4] != "--type" || argv[5] != "blocks" || argv[6] != "--json" {
 			return validationError("dependency arguments do not match the typed command shape")
 		}
+	case CommandDependencyRemove:
+		if len(argv) != 5 || argv[0] != "dep" || argv[1] != "remove" || argv[4] != "--json" {
+			return validationError("dependency removal arguments do not match the typed command shape")
+		}
 	case CommandDependencyList:
 		if len(argv) != 4 || argv[0] != "dep" || argv[1] != "list" || argv[3] != "--json" {
 			return validationError("dependency list arguments do not match the typed command shape")
@@ -511,7 +529,7 @@ func commandContractFor(kind CommandKind) (commandContract, bool) {
 		return commandContract{shape: expectedObject, explicitDeadline: true, json: true}, true
 	case CommandList, CommandReady, CommandDependencyList, CommandCommentList:
 		return commandContract{shape: expectedArray, json: true}, true
-	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandCommentAppend:
+	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandDependencyRemove, CommandCommentAppend:
 		return commandContract{shape: expectedObject, mutating: true, json: true}, true
 	case CommandExport:
 		return commandContract{shape: expectedJSONL, explicitDeadline: true, json: true}, true

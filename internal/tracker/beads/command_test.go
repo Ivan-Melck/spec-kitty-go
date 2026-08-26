@@ -119,6 +119,7 @@ func TestCommandArgvVocabulary(t *testing.T) {
 		}, []string{"update", "x", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--assignee", "ivan", "--json"}, expectedObject, true},
 		{"claim", func() (command, error) { return newAtomicClaimCommand(binding, "x") }, []string{"update", "x", "--claim", "--json"}, expectedObject, true},
 		{"dep-add", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, []string{"dep", "add", "blocked", "blocker", "--type", "blocks", "--json"}, expectedObject, true},
+		{"dep-remove", func() (command, error) { return newDependencyRemoveCommand(binding, "blocked", "blocker") }, []string{"dep", "remove", "blocked", "blocker", "--json"}, expectedObject, true},
 		{"dep-list", func() (command, error) { return newDependencyListCommand(binding, "x") }, []string{"dep", "list", "x", "--json"}, expectedArray, false},
 		{"comment-add", func() (command, error) { return newCommentAppendCommand(binding, "x", "body") }, []string{"comments", "add", "x", "body", "--json"}, expectedObject, true},
 		{"comment-list", func() (command, error) { return newCommentListCommand(binding, "x") }, []string{"comments", "x", "--json"}, expectedArray, false},
@@ -164,6 +165,7 @@ func TestCommandValidationBeforeSpawn(t *testing.T) {
 		{"nul id", func() error { _, err := newShowCommand(valid, "x\x00y"); return err }},
 		{"empty update", func() error { _, err := newUpdateCommand(valid, updateValues{id: "x"}); return err }},
 		{"self dependency", func() error { _, err := newDependencyAddCommand(valid, "x", "x"); return err }},
+		{"self dependency removal", func() error { _, err := newDependencyRemoveCommand(valid, "x", "x"); return err }},
 		{"relative backup", func() error { _, err := newBackupInitCommand(valid, "backup"); return err }},
 		{"credential", func() error {
 			b := valid
@@ -225,6 +227,8 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 		{"claim id", func() error { _, err := newAtomicClaimCommand(binding, "--version"); return err }},
 		{"blocked id", func() error { _, err := newDependencyAddCommand(binding, "--help", "blocker-1"); return err }},
 		{"blocker id", func() error { _, err := newDependencyAddCommand(binding, "blocked-1", "--help"); return err }},
+		{"removed blocked id", func() error { _, err := newDependencyRemoveCommand(binding, "--help", "blocker-1"); return err }},
+		{"removed blocker id", func() error { _, err := newDependencyRemoveCommand(binding, "blocked-1", "--help"); return err }},
 		{"dependency id", func() error { _, err := newDependencyListCommand(binding, "--help"); return err }},
 		{"comment id", func() error { _, err := newCommentAppendCommand(binding, "--help", "body"); return err }},
 		{"comment body", func() error { _, err := newCommentAppendCommand(binding, "work-1", "--help"); return err }},

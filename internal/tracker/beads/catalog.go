@@ -235,7 +235,7 @@ func (bound *BoundAdapter) catalogCapabilities() tracker.ProviderCapabilities {
 	}
 	return tracker.ProviderCapabilities{
 		CatalogRead: tracker.SupportSupported, CatalogCreate: tracker.SupportSupported, CatalogUpdate: tracker.UpdateUnguarded,
-		BlockingGraph: tracker.SupportUnsupported, Discussion: tracker.DiscussionUnsupported, Assignment: tracker.AssignmentUnsupported,
+		BlockingGraph: tracker.SupportSupported, Discussion: tracker.DiscussionAppendOnly, Assignment: tracker.AssignmentUnsupported,
 		ObservationRevision: tracker.ObservationRevisionContentDerived, SafeCompensation: tracker.CompensationUnsupported,
 		ConcurrentWriters: writers, PortableExport: tracker.SupportUnsupported, RestorableBackup: tracker.SupportUnsupported,
 	}

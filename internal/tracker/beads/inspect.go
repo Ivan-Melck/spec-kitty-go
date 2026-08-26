@@ -279,19 +279,27 @@ func (bound *BoundAdapter) Inspect(ctx context.Context, request tracker.InspectR
 
 func capabilitiesForCurrentPorts(mode tracker.ConcurrencyMode, compatible, serverQualified bool) tracker.ProviderCapabilities {
 	writers := tracker.ConcurrentWritersNone
+	graph := tracker.SupportUnsupported
+	discussion := tracker.DiscussionUnsupported
+	observation := tracker.ObservationRevisionUnsupported
 	if compatible && mode == tracker.ConcurrencyEmbeddedSerialized {
 		writers = tracker.ConcurrentWritersAdapterSerialized
 	}
 	if compatible && mode == tracker.ConcurrencyServerMultiwriter && serverQualified {
 		writers = tracker.ConcurrentWritersProviderNative
 	}
-	// WP04 implements inspection and the writer boundary only. Future ports
-	// remain unsupported until their production implementations are qualified.
+	if compatible {
+		graph = tracker.SupportSupported
+		discussion = tracker.DiscussionAppendOnly
+		observation = tracker.ObservationRevisionContentDerived
+	}
+	// Only ports with production implementations are advertised. Compatibility
+	// failure closes every provider operation even when its Go method exists.
 	return tracker.ProviderCapabilities{
 		CatalogRead: tracker.SupportUnsupported, CatalogCreate: tracker.SupportUnsupported,
-		CatalogUpdate: tracker.UpdateUnsupported, BlockingGraph: tracker.SupportUnsupported,
-		Discussion: tracker.DiscussionUnsupported, Assignment: tracker.AssignmentUnsupported,
-		ObservationRevision: tracker.ObservationRevisionUnsupported,
+		CatalogUpdate: tracker.UpdateUnsupported, BlockingGraph: graph,
+		Discussion: discussion, Assignment: tracker.AssignmentUnsupported,
+		ObservationRevision: observation,
 		SafeCompensation:    tracker.CompensationUnsupported, ConcurrentWriters: writers,
 		PortableExport: tracker.SupportUnsupported, RestorableBackup: tracker.SupportUnsupported,
 	}
