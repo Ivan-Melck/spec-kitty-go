@@ -382,7 +382,3 @@ For every execution-adjacent case, inspect the recorded applicability, universal
 Finally run the hundred human-change repetitions under `-race`. Confirm 100 expected/started/terminal/passed, zero compensation writes, and the human value after each run. Remove one registry entry and enable the overwrite mutant to prove the census and invariant are load-bearing.
 
 Reject function-only process mocks, network/real-Beads requirements in portable tests, sleeps as coordination, capability-name provider switches, silent skips, raw payload diagnostics, blind retries, false CAS language, a reduced Beads-specific authority checker, missing stale probes, mutable global scripts, or edits outside WP08 ownership.
-
-## Activity Log
-
-- 2026-08-26T18:11:34Z – codex – Cycle-3 correction complete at f3a4c11: shared fake/dishonest registry now drives real BoundAdapter typed ports with 12 deletion controls; 25-case evidence derives from typed diagnostics and mutation observations with before/after authority callbacks; explicit process barriers pass prior combined command count=3 and load count=10; real TrackerSaga 100/100 human campaign shares provider/control authority state and kills post-attribution overwrite. Focused race (including 100-run campaign), vet, staticcheck, architecture, and diff gates pass.

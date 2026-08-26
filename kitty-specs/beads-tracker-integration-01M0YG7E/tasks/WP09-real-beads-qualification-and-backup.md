@@ -34,7 +34,7 @@ subtasks:
 - T047
 - T048
 history: []
-agent_profile: reviewer-renata
+agent_profile: implementer-ivan
 authoritative_surface: internal/tracker/beads/
 create_intent:
 - internal/tracker/beads/real_integration_test.go
@@ -60,7 +60,7 @@ owned_files:
 - internal/testcampaign/cmd/beads-qualification/runner.go
 - internal/testcampaign/cmd/beads-qualification/runner_test.go
 - scripts/install-qualified-beads.sh
-role: reviewer
+role: implementer
 tags: []
 tracker_refs: []
 ---
@@ -517,7 +517,3 @@ inspect through the adapter. Confirm JSONL is called interchange, not backup.
 Validate exact scenario census, latency samples, source/provider identity,
 redaction, and verdict rules; any skipped required scenario, invariant failure,
 or restore mismatch must prevent a passing record.
-
-## Activity Log
-
-- 2026-08-26T14:29:24Z – codex – shell_pid=3760839 – Blocked after real pinned v1.2.2 qualification: adapter preflight requires JSON from info --schema --json and doctor --agent --json, but embedded v1.2.2 emits human prose for both; the 11/11 terminal campaign therefore recorded 0 pass, 10 fail, and 1 server-prerequisite skip. WP04 was reopened for governed correction. WP09 implementation evidence commit 7e1566b.
