@@ -4,7 +4,7 @@
   "materialized_at": "2026-08-26T05:32:29.302972+00:00",
   "mission_number": "",
   "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
-  "mission_type": "",
+  "mission_type": "software-dev",
   "summary": {
     "approved": 0,
     "blocked": 0,
@@ -20,92 +20,217 @@
     "WP01": {
       "actor": "merge",
       "agent": "codex",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "force_count": 12,
       "lane": "done",
       "last_event_id": "01M0Y8VXQE1315QJTA0Z0E17CR",
       "last_transition_at": "2026-08-26T05:32:11.886523+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: closed capability-tier import policy, bounded Go graph loading, curated production reachability, deferred-surface guards, and repeated mutant coverage",
+        "Ready for review: live architecture command, semantic Git adapter boundary, non-vacuous reachability registry, and strengthened deferred-runtime detection",
+        "Ready for review: validated live diagnostics and cross-file Python runtime aliases",
+        "Ready for review: typed reachability identity, scope-correct local Python alias detection, and dead LoadError surface corrected; required repeated mutants, race, vet, and repository scenario batches pass. Transition override is limited to the mission's absent pre-review gate contract and pre-existing inherited lane status artifacts.",
+        "Ready for review: active Go build filtering and self-recursion reachability mutants fixed. Manual WP01 gate passed: required count=10 suites, race, vet, repository compilation, helper build, module verification, and live architecture check. Override used because this mission has no in_progress->for_review gate contract and earlier review-cycle planning artifacts already exist in lane history.",
+        "Ready for review: active custom build tags now follow go list and unrooted target recursion cycles fail reachability",
+        "Ready for review: bounded cancellable typed-source loading with typed parse and type-check failures",
+        "Cycle 8 ready at 2562d23: production-only Go AST/type guard rejects statically resolved Markdown authority reads/parsers with ARCH-DEFERRED-SURFACE source and markdown:path diagnostics; permanent classified temporary-module mutants cover direct, cross-file/function/path aliases, io/fs, os.Open, and template parsing while prose/tests remain accepted. Passed architecture and scoped scenario suites x10, both required race runs, vet, repository-wide compile, binary build, module verify, gofmt/diff checks, and live architecture-check (17 packages, 332 edges); monolithic campaign intentionally deferred to WP05.",
+        "Ready for review: cycle 9 kills reader-wrapper, constant-returning path-helper, and unique-assignment Markdown mutants",
+        "Ready for review: callable function literals propagate known Markdown path arguments with conservative closure roots and bounded recursion",
+        "Ready for review: lowercased WP01 reachability error; focused staticcheck and required hygiene gates pass",
+        "Review passed: cycle 11 one-line lowercase error hygiene fix preserves behavior; staticcheck, focused Markdown regressions, architecture tests, vet, compile-only, module, formatting, and diff gates are green"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "reference": "Review passed: cycle 11 one-line lowercase error hygiene fix preserves behavior; staticcheck, focused Markdown regressions, architecture tests, vet, compile-only, module, formatting, and diff gates are green",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
+      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6"
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T001": "done",
+        "T002": "done",
+        "T003": "done",
+        "T004": "done",
+        "T005": "done",
+        "T006": "done"
+      }
     },
     "WP02": {
       "actor": "merge",
-      "agent": "codex",
+      "agent": "reviewer-renata",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "force_count": 7,
       "lane": "done",
       "last_event_id": "01M0Y8W1FR4ZG01BAKTC5D3NTB",
       "last_transition_at": "2026-08-26T05:32:15.736158+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: pre-fence refusal observer and ordering mutant added; contention diagnostic stabilized; 20x contention, 10x refusal, full package, and race tests pass. Lane inherited mission planning commits; no pre-review gate contract is configured.",
+        "Reviewer reassignment: claude OAuth expired before reading code; retrying with independent gemini reviewer",
+        "Gemini reviewer process exited without emitting the required approval or rejection transition; preserving failed independent review attempt before redispatch.",
+        "OpenCode reviewer failed before inspection because its local state database is incompatible (no such column: name); preserving failure before local independent-model review.",
+        "Local qwen reviewer returned prompt-only speculation without inspecting the candidate and did not emit a transition; discarding that non-review and redispatching to the durable reviewer actor.",
+        "Review passed: FR-007/FR-008 and C-004 regressions are production-path tests; 20x contention, 10x refusal/fence, full SQLite race, vet, formatting, and serialized integration/recovery checks pass; anti-pattern checklist has no failures. Force bypass is limited to pre-existing inherited planning artifacts on the lane.",
+        "Independent Reviewer Renata review passed: production-path early-refusal and late-order mutant evidence; 20x contention, 10x refusal/fence, full SQLite race, vet, formatting, and serialized integration/recovery checks pass. Force is limited to inherited planning artifacts on the lane."
+      ],
+      "provider": "__resolved_provider_absent__",
       "review_result": {
         "reference": "Review passed: FR-007/FR-008 and C-004 regressions are production-path tests; 20x contention, 10x refusal/fence, full SQLite race, vet, formatting, and serialized integration/recovery checks pass; anti-pattern checklist has no failures. Force bypass is limited to pre-existing inherited planning artifacts on the lane.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
+      "role": "implementer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6"
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T007": "done",
+        "T008": "done",
+        "T009": "done",
+        "T010": "done"
+      }
     },
     "WP03": {
       "actor": "merge",
-      "agent": "codex",
+      "agent": "reviewer-renata",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "force_count": 4,
       "lane": "done",
       "last_event_id": "01M0Y8W4TJE3EFEWTHGSHGF0H3",
       "last_transition_at": "2026-08-26T05:32:19.154626+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: immutable ordered governance contexts, framed SHA-256 commitments, run admission/result/recovery propagation, narrow store contract, and explicit synthetic helper context; focused, race, vet, and build gates pass. Transition override: mission has no configured pre-review gate contract and lane history contains pre-existing shared artifacts.",
+        "Ready for review: claim and start-run both supply explicit synthetic Phase 1 governance provenance; regression and required race gates pass",
+        "Ready for review: governance context now participates in every claim identity, replay/replacement fails closed on unbound context, stateful regressions cover exact replay and changed context, and speculative public seams were removed",
+        "Ready for review: accessor-backed governance context framing/serialization and same-ID different-content replay/replacement conflict regressions",
+        "Review passed: immutable framed governance context, run-owned replay/replacement binding, live helper construction, and targeted/race/vet gates pass; remaining full-suite failures are WP04-owned downstream fixtures."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "reference": "Review passed: immutable framed governance context, run-owned replay/replacement binding, live helper construction, and targeted/race/vet gates pass; remaining full-suite failures are WP04-owned downstream fixtures.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
+      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6"
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T011": "done",
+        "T012": "done",
+        "T013": "done",
+        "T014": "done",
+        "T015": "done"
+      }
     },
     "WP04": {
       "actor": "merge",
       "agent": "codex",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "force_count": 1,
       "lane": "done",
       "last_event_id": "01M0Y8W807NEHJ3P8G6SPSWBG7",
       "last_transition_at": "2026-08-26T05:32:22.407068+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: schema v12 preserves every shipped version, persists immutable ordered governance contexts atomically with runs, exposes run/lease provenance, rejects rebinding/corruption/partial writes, and passes ten-pass plus race qualification",
+        "Cycle 2 ready: sealed immutable run governance binding, production recovery inspection, and all mutation/recovery proofs pass. WP04's authority_test.go edits remain fixture-only coordination for WP02's lane-owned tests.",
+        "Review passed: cycle-two immutability and production inspection blockers resolved; all mandatory validations and anti-pattern checks pass"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "reference": "Review passed: cycle-two immutability and production inspection blockers resolved; all mandatory validations and anti-pattern checks pass",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
+      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6"
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T016": "done",
+        "T017": "done",
+        "T018": "done",
+        "T019": "done",
+        "T020": "done"
+      }
     },
     "WP05": {
       "actor": "merge",
-      "agent": "codex",
+      "agent": "reviewer-renata",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "force_count": 5,
       "lane": "done",
       "last_event_id": "01M0Y8WBN1E7Y1RWFQ0AXK5NHP",
       "last_transition_at": "2026-08-26T05:32:26.145569+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review: product commit 4d2a6f1 adds censused quality/full campaigns, layered quality-tier guard, pinned CI, ten-run local p95 80.500s, and clean 825.95s full campaign. Cross-WP qualification repair explicitly updated three adversarial fixtures to preserve mandatory governance provenance.",
+        "Administrative identity correction: generated review capsule resolved implementer-ivan despite requested reviewer-renata; no review performed. Releasing claim for independent Reviewer Renata.",
+        "Cycle 2 resolves all four review blockers; clean quality and full campaigns passed with source-bound evidence. Administrative override clears the stale reviewer assignee retained after cycle-1 rejection.",
+        "Cycle 2 rejected: universal package binding, fail-closed source identity, and transcript digest correction required.",
+        "Cycle 3 resolves universal package binding, fail-closed source identity with profile drift checks, and the malformed digest; clean quality passed at 8d539b8. Administrative override clears stale reviewer assignment retained after rejection.",
+        "Review passed cycle 3: universal package binding, fail-closed source identity/drift, hashes, quality, p95, full 71-test evidence, workflows, race, and mutants independently verified."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "reference": "review-cycle-3",
         "reviewer": "reviewer-renata",
         "verdict": "approved"
       },
+      "role": "implementer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6"
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T021": "done",
+        "T022": "done",
+        "T023": "done",
+        "T024": "done",
+        "T025": "done",
+        "T026": "done"
+      }
     },
     "WP06": {
       "actor": "merge",
       "agent": "codex",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "force_count": 1,
       "lane": "done",
       "last_event_id": "01M0Y8WEQPA0ZCE7ZTV3EK88FS",
       "last_transition_at": "2026-08-26T05:32:29.302972+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: corrected Phase 1 review policy and API 1.3 projection, added executable documentation guards, and requalified 10x quality plus 71-scenario full campaign",
+        "Review passed: independent Reviewer Renata verified cycle-1 corrections, canonical API mapping, executable FR coverage, and qualification evidence"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "reference": "/tmp/wp06-review-cycle2.txt",
         "reviewer": "reviewer-renata",
         "verdict": "approved"
       },
+      "role": "implementer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6"
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T027": "done",
+        "T028": "done",
+        "T029": "done",
+        "T030": "done",
+        "T031": "done"
+      }
     }
   }
 }
