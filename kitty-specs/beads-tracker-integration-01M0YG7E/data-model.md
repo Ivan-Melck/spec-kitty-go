@@ -163,7 +163,7 @@ Closed typed subprocess request.
 
 | Field | Type | Rule |
 |---|---|---|
-| `Kind` | closed enum | version, where, info, doctor, show, list, ready, create, update, dep-add, dep-list, comments, backup, export |
+| `Kind` | closed enum | version, where, dolt-show, dolt-status, show, list, ready, create, update, dep-add, dep-list, comments, backup, export |
 | `Arguments` | typed command-specific value | Validated before rendering argv |
 | `WorkspacePath` | absolute path | Must match binding |
 | `Timeout` | duration | Positive; default <= 30 s |

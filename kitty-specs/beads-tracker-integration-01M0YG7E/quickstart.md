@@ -93,12 +93,24 @@ BD_NON_INTERACTIVE=1 \
 Then inspect only documented JSON:
 
 ```bash
-BD_JSON_ENVELOPE=1 /tmp/go-kitty3-beads-tools/bd where --json
-BD_JSON_ENVELOPE=1 /tmp/go-kitty3-beads-tools/bd info --schema --json
-BD_JSON_ENVELOPE=1 /tmp/go-kitty3-beads-tools/bd list --json
+export BEADS_DIR=/tmp/go-kitty3-beads-debug/.beads
+export BD_JSON_ENVELOPE=1
+export BD_NON_INTERACTIVE=1
+export BD_DISABLE_METRICS=1
+export BD_DISABLE_EVENT_FLUSH=1
+
+/tmp/go-kitty3-beads-tools/bd version --json
+/tmp/go-kitty3-beads-tools/bd where --json
+/tmp/go-kitty3-beads-tools/bd dolt show --json
+/tmp/go-kitty3-beads-tools/bd dolt status --json
 ```
 
-Do not infer product state from human output.
+These are the complete mutation-preflight observations for v1.2.2. Supply the
+absolute existing `where.data.database_path` as the binding's
+`--database-identity` value; the adapter canonicalizes it before deriving
+workspace identity. Read-only state and logical server identity remain sealed
+local binding policy. Do not infer product state from human output or substitute
+`info`/`doctor` prose.
 
 ## Verify worktree convergence
 

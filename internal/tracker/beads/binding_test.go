@@ -16,17 +16,24 @@ func TestBindingWorkspaceIdentityConvergesAcrossAliasesAndWorktrees(t *testing.T
 	executable := testExecutable(t, root)
 	workspace := filepath.Join(root, "catalog")
 	mustMkdir(t, workspace)
+	databasePath := filepath.Join(workspace, "embeddeddolt")
+	mustMkdir(t, databasePath)
 	alias := filepath.Join(root, "catalog-alias")
 	if err := os.Symlink(workspace, alias); err != nil {
 		t.Fatal(err)
 	}
 
-	config := BindingConfig{ProjectID: ids.ProjectID("project-1"), ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: "db-1", ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized}
+	databaseAlias := filepath.Join(root, "database-alias")
+	if err := os.Symlink(databasePath, databaseAlias); err != nil {
+		t.Fatal(err)
+	}
+	config := BindingConfig{ProjectID: ids.ProjectID("project-1"), ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized}
 	first, err := ResolveBinding(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	config.WorkspacePath = filepath.Join(alias, ".")
+	config.ProviderDatabaseIdentity = filepath.Join(databaseAlias, ".")
 	second, err := ResolveBinding(config)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +72,10 @@ func TestBindingWorkspaceIdentityDistinguishesWorkspacesAndDatabaseIdentity(t *t
 	for _, name := range []string{"one/same", "two/same"} {
 		workspace := filepath.Join(root, name)
 		mustMkdir(t, workspace)
+		databasePath := filepath.Join(workspace, "embeddeddolt")
+		mustMkdir(t, databasePath)
 		config.WorkspacePath = workspace
+		config.ProviderDatabaseIdentity = databasePath
 		binding, err := ResolveBinding(config)
 		if err != nil {
 			t.Fatal(err)
@@ -76,7 +86,8 @@ func TestBindingWorkspaceIdentityDistinguishesWorkspacesAndDatabaseIdentity(t *t
 		t.Fatal("distinct workspaces share identity")
 	}
 	config.WorkspacePath = filepath.Join(root, "one/same")
-	config.ProviderDatabaseIdentity = "other-db"
+	config.ProviderDatabaseIdentity = filepath.Join(root, "one/same", "other-db")
+	mustMkdir(t, config.ProviderDatabaseIdentity)
 	third, err := ResolveBinding(config)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +102,13 @@ func TestBindingRejectsInvalidExplicitInputs(t *testing.T) {
 	executable := testExecutable(t, root)
 	workspace := filepath.Join(root, "workspace")
 	mustMkdir(t, workspace)
-	valid := BindingConfig{ProjectID: ids.ProjectID("project-1"), ExecutablePath: executable, WorkspacePath: workspace, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized}
+	databasePath := filepath.Join(workspace, "embeddeddolt")
+	mustMkdir(t, databasePath)
+	databaseFile := filepath.Join(workspace, "database-file")
+	if err := os.WriteFile(databaseFile, []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	valid := BindingConfig{ProjectID: ids.ProjectID("project-1"), ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized}
 	tests := []struct {
 		name string
 		edit func(*BindingConfig)
@@ -100,6 +117,10 @@ func TestBindingRejectsInvalidExplicitInputs(t *testing.T) {
 		{"relative executable", func(c *BindingConfig) { c.ExecutablePath = "bd" }},
 		{"relative workspace", func(c *BindingConfig) { c.WorkspacePath = "." }},
 		{"missing workspace", func(c *BindingConfig) { c.WorkspacePath = filepath.Join(root, "missing") }},
+		{"empty database path", func(c *BindingConfig) { c.ProviderDatabaseIdentity = "" }},
+		{"relative database path", func(c *BindingConfig) { c.ProviderDatabaseIdentity = "embeddeddolt" }},
+		{"missing database path", func(c *BindingConfig) { c.ProviderDatabaseIdentity = filepath.Join(root, "missing-database") }},
+		{"database path is file", func(c *BindingConfig) { c.ProviderDatabaseIdentity = databaseFile }},
 		{"unknown mode", func(c *BindingConfig) { c.ConcurrencyMode = "surprise" }},
 		{"zero schema", func(c *BindingConfig) { c.ProtocolSchema = 0 }},
 		{"bad digest", func(c *BindingConfig) { c.ExpectedExecutableDigest = "ABC" }},
@@ -121,14 +142,16 @@ func TestBindingPinsExecutableDigest(t *testing.T) {
 	executable := testExecutable(t, root)
 	workspace := filepath.Join(root, "workspace")
 	mustMkdir(t, workspace)
-	binding, err := ResolveBinding(BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized})
+	databasePath := filepath.Join(workspace, "embeddeddolt")
+	mustMkdir(t, databasePath)
+	binding, err := ResolveBinding(BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !validDigest(binding.ExecutableDigest) {
 		t.Fatalf("digest=%q", binding.ExecutableDigest)
 	}
-	_, err = ResolveBinding(BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized, ExpectedExecutableDigest: strings.Repeat("0", 64)})
+	_, err = ResolveBinding(BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized, ExpectedExecutableDigest: strings.Repeat("0", 64)})
 	if !tracker.IsKind(err, tracker.ErrorUnavailable) {
 		t.Fatalf("error=%v", err)
 	}
@@ -139,7 +162,9 @@ func TestServerBindingRequiresPinnedConnectionAndCopiesCredentials(t *testing.T)
 	executable := testExecutable(t, root)
 	workspace := filepath.Join(root, "workspace")
 	mustMkdir(t, workspace)
-	base := BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyServerMultiwriter, ServerIdentity: "server-1", ServerEndpoint: "127.0.0.1:3306", Credentials: map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306"}}
+	databasePath := filepath.Join(workspace, "embeddeddolt")
+	mustMkdir(t, databasePath)
+	base := BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyServerMultiwriter, ServerIdentity: "server-1", ServerEndpoint: "127.0.0.1:3306", Credentials: map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306"}}
 	tests := []struct {
 		name string
 		edit func(*BindingConfig)
