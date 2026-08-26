@@ -183,6 +183,15 @@ func (bound *BoundAdapter) UpdateWork(ctx context.Context, request tracker.Updat
 			}
 			return bound.recoverAmbiguousUpdate(ctx, request, contentDigest, currentRecord, executeErr)
 		}
+		reported, err := decodeSingularProviderIssue(response.payload)
+		if err != nil || reported.externalID != request.ExternalRef.ExternalID ||
+			validateIssueMapping(reported, request.ExternalRef.ProjectID, request.ExternalRef.WorkID, request.ExternalRef.CreatedByOperation) != nil ||
+			!issueMatchesUpdate(reported, request, contentDigest) {
+			if err == nil {
+				err = metadataProtocolError("provider update response does not contain the requested singular issue", nil)
+			}
+			return bound.recoverAmbiguousUpdate(ctx, request, contentDigest, currentRecord, err)
+		}
 		updated, err := bound.readIssue(ctx, request.ExternalRef.ExternalID)
 		if err != nil {
 			return tracker.WorkMutation{}, &tracker.Error{Kind: tracker.ErrorAmbiguous, RecoveryCode: "observe_then_reconcile", Message: "updated provider issue could not be verified", Cause: err}
@@ -320,7 +329,7 @@ func (bound *BoundAdapter) readIssue(ctx context.Context, id string) (providerIs
 	if err != nil {
 		return providerIssue{}, err
 	}
-	issue, err := decodeProviderIssue(response.payload)
+	issue, err := decodeSingularProviderIssue(response.payload)
 	if err != nil {
 		return providerIssue{}, err
 	}
@@ -328,6 +337,17 @@ func (bound *BoundAdapter) readIssue(ctx context.Context, id string) (providerIs
 		return providerIssue{}, mappingConflict("provider returned a different external issue")
 	}
 	return issue, nil
+}
+
+func decodeSingularProviderIssue(payload []byte) (providerIssue, error) {
+	var records []json.RawMessage
+	if err := json.Unmarshal(payload, &records); err != nil {
+		return providerIssue{}, metadataProtocolError("provider singular issue response must be a JSON array", err)
+	}
+	if len(records) != 1 {
+		return providerIssue{}, metadataProtocolError("provider singular issue response must contain exactly one record", nil)
+	}
+	return decodeProviderIssue(records[0])
 }
 
 func (bound *BoundAdapter) observeMapping(ctx context.Context, projectID ids.ProjectID, workID ids.WorkID) ([]providerIssue, error) {
@@ -384,7 +404,7 @@ func decodeProviderIssue(payload []byte) (providerIssue, error) {
 	if issue.description, err = optionalStringPointer(fields, "description"); err != nil {
 		return providerIssue{}, metadataProtocolError("provider description is malformed", err)
 	}
-	if issue.acceptance, err = optionalStringPointer(fields, "acceptance"); err != nil {
+	if issue.acceptance, err = optionalStringPointer(fields, "acceptance_criteria"); err != nil {
 		return providerIssue{}, metadataProtocolError("provider acceptance is malformed", err)
 	}
 	metadata, err := metadataPayload(fields["metadata"])

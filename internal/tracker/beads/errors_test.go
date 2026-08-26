@@ -107,7 +107,7 @@ func TestCommandFailureAndProtocolFailureTypedWrapping(t *testing.T) {
 }
 
 func TestAdapterCompositionUsesNarrowRunner(t *testing.T) {
-	fake := &fakeRunner{result: commandResult{kind: CommandShow, started: true, exitCode: intPointer(0), stdout: []byte(`{"schema_version":1,"data":{"id":"x"}}`)}}
+	fake := &fakeRunner{result: commandResult{kind: CommandShow, started: true, exitCode: intPointer(0), stdout: []byte(`{"schema_version":1,"data":[{"id":"x"}]}`)}}
 	adapter := newAdapter(fake)
 	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
 	binding.timeout = time.Second
@@ -119,7 +119,7 @@ func TestAdapterCompositionUsesNarrowRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fake.calls != 1 || string(response.payload) != `{"id":"x"}` {
+	if fake.calls != 1 || string(response.payload) != `[{"id":"x"}]` {
 		t.Fatalf("calls=%d payload=%s", fake.calls, response.payload)
 	}
 	if got := newAdapter(nil); got.runner == nil {

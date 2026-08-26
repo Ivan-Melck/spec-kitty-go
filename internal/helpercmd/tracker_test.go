@@ -230,7 +230,7 @@ dolt)
   *) exit 64 ;;
   esac ;;
 show)
-  printf '%s\n' '{"schema_version":1,"data":{"id":"bd-live-1","title":"Live work","description":"Production caller","acceptance":"criterion-1 — required — test — verified","metadata":{"foreign":{"preserved":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"updated_at":"2026-08-26T12:00:00Z"}}'
+  printf '%s\n' '{"schema_version":1,"data":[{"id":"bd-live-1","title":"Live work","description":"Production caller","acceptance_criteria":"criterion-1 — required — test — verified","metadata":{"foreign":{"preserved":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"updated_at":"2026-08-26T12:00:00Z","dependency_count":0,"comment_count":0}]}'
   ;;
 *) exit 64 ;;
 esac
