@@ -1,8 +1,10 @@
 package tracker
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -479,6 +481,59 @@ type CreateWorkRequest struct {
 	DesignContext  string
 	Criteria       []Criterion
 	MetadataSchema uint16
+	// ProviderMetadata is a bounded opaque JSON object owned by the caller and
+	// provider. An adapter may add or update only its documented namespace and
+	// must preserve every other key. The zero value means an empty object.
+	ProviderMetadata OpaqueMetadata
+}
+
+const MaxOpaqueMetadataBytes = 1 << 20
+
+// OpaqueMetadata carries provider-neutral JSON without exposing any provider
+// schema to the kernel. Construction validates the object root and takes a
+// defensive copy; access returns another copy.
+type OpaqueMetadata struct{ encoded []byte }
+
+func NewOpaqueMetadata(encoded []byte) (OpaqueMetadata, error) {
+	trimmed := bytes.TrimSpace(encoded)
+	if len(trimmed) == 0 {
+		return OpaqueMetadata{}, nil
+	}
+	if len(trimmed) > MaxOpaqueMetadataBytes || trimmed[0] != '{' || !json.Valid(trimmed) {
+		return OpaqueMetadata{}, fmt.Errorf("tracker opaque metadata: bounded JSON object required")
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &object); err != nil || object == nil {
+		return OpaqueMetadata{}, fmt.Errorf("tracker opaque metadata: bounded JSON object required")
+	}
+	canonical, err := json.Marshal(object)
+	if err != nil {
+		return OpaqueMetadata{}, fmt.Errorf("tracker opaque metadata: encode object: %w", err)
+	}
+	return OpaqueMetadata{encoded: canonical}, nil
+}
+
+func (metadata OpaqueMetadata) Bytes() []byte {
+	if len(metadata.encoded) == 0 {
+		return nil
+	}
+	return append([]byte(nil), metadata.encoded...)
+}
+
+func (metadata OpaqueMetadata) MarshalJSON() ([]byte, error) {
+	if len(metadata.encoded) == 0 {
+		return []byte(`{}`), nil
+	}
+	return metadata.Bytes(), nil
+}
+
+func (metadata *OpaqueMetadata) UnmarshalJSON(encoded []byte) error {
+	value, err := NewOpaqueMetadata(encoded)
+	if err != nil {
+		return err
+	}
+	*metadata = value
+	return nil
 }
 
 type UpdateWorkRequest struct {

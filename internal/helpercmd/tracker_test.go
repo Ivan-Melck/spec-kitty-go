@@ -121,8 +121,61 @@ func TestTrackerInspectBeadsRequiresExplicitReadOnlyAndUsageNamesCommand(t *test
 	if code := RunTracker(context.Background(), nil, &stdout, &stderr); code != 2 {
 		t.Fatalf("usage code=%d", code)
 	}
-	if !strings.Contains(stderr.String(), "inspect-beads") {
+	if !strings.Contains(stderr.String(), "inspect-beads") || !strings.Contains(stderr.String(), "catalog-beads") {
 		t.Fatalf("usage=%q", stderr.String())
+	}
+}
+
+func TestTrackerCatalogBeadsReadReachesProductionAdapter(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	executable := helperCatalogBeadsExecutable(t, root)
+	requestPath := filepath.Join(root, "read-request.json")
+	request := []byte(`{"work_id":"work-1","external_id":"bd-live-1","metadata_schema":1,"created_by_operation":"operation-create"}`)
+	if err := os.WriteFile(requestPath, request, 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{
+		"tracker", "catalog-beads", "read", "--project", "project-1", "--executable", executable,
+		"--workspace", workspace, "--database-identity", "db-1", "--protocol-schema", "1",
+		"--mode", "embedded_serialized", "--read-only=false", "--request-file", requestPath,
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), args, &stdout, &stderr); code != 0 {
+		t.Fatalf("code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var response BeadsCatalogResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.OK || response.Action != "read" || response.Record == nil || response.Mutation != nil || response.Error != nil ||
+		response.Record.Reference.WorkID != "work-1" || response.Record.Reference.ExternalID != "bd-live-1" ||
+		response.Record.Title != "Live work" || len(response.Record.Criteria) != 1 || response.Record.Observation.Revision == 0 {
+		t.Fatalf("response=%+v stdout=%s", response, stdout.String())
+	}
+}
+
+func TestTrackerCatalogBeadsRejectsUnboundedOrUnknownRequestBeforeAdapter(t *testing.T) {
+	root := t.TempDir()
+	requestPath := filepath.Join(root, "bad-request.json")
+	if err := os.WriteFile(requestPath, []byte(`{"work_id":"work-1","unknown":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{
+		"catalog-beads", "read", "--project", "project-1", "--executable", "/missing/bd",
+		"--workspace", "/missing/workspace", "--database-identity", "db-1", "--protocol-schema", "1",
+		"--mode", "embedded_serialized", "--read-only=true", "--request-file", requestPath,
+	}
+	var stdout, stderr bytes.Buffer
+	if code := RunTracker(context.Background(), args, &stdout, &stderr); code != 1 {
+		t.Fatalf("code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var response BeadsCatalogResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil || response.Error == nil || response.Error.Kind != tracker.ErrorInvalidRequest {
+		t.Fatalf("response=%+v error=%v", response, err)
 	}
 }
 
@@ -139,6 +192,24 @@ doctor) printf '%%s\n' '{"schema_version":1,"data":{"healthy":true,"server_id":"
 *) exit 64 ;;
 esac
 `, mode)
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func helperCatalogBeadsExecutable(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "bd-catalog-helper")
+	script := `#!/bin/sh
+set -eu
+case "$1" in
+show)
+  printf '%s\n' '{"schema_version":1,"data":{"id":"bd-live-1","title":"Live work","description":"Production caller","acceptance":"criterion-1 — required — test — verified","metadata":{"foreign":{"preserved":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"updated_at":"2026-08-26T12:00:00Z"}}'
+  ;;
+*) exit 64 ;;
+esac
+`
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -1,12 +1,15 @@
 package helpercmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +23,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/tracker/fake"
 )
 
-const trackerUsage = "usage: tracker assign|compensate|inspect-beads [options]"
+const trackerUsage = "usage: tracker assign|compensate|inspect-beads|catalog-beads [options]"
 
 type TrackerResponse struct {
 	OK      bool                           `json:"ok"`
@@ -58,6 +61,9 @@ func RunTracker(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	action := args[0]
 	if action == "inspect-beads" {
 		return runInspectBeads(ctx, args[1:], stdout, stderr)
+	}
+	if action == "catalog-beads" {
+		return runCatalogBeads(ctx, args[1:], stdout, stderr)
 	}
 	if action != "assign" && action != "compensate" {
 		fmt.Fprintln(stderr, trackerUsage)
@@ -127,6 +133,238 @@ func RunTracker(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	}
 	_ = json.NewEncoder(stdout).Encode(TrackerResponse{OK: true, Result: &result})
 	return 0
+}
+
+const maxCatalogRequestBytes = 2 << 20
+
+type beadsCatalogCriterion struct {
+	ID           string               `json:"id"`
+	Text         string               `json:"text"`
+	Verifier     tracker.VerifierKind `json:"verifier"`
+	Required     bool                 `json:"required"`
+	EvidenceHint string               `json:"evidence_hint,omitempty"`
+}
+
+type beadsCatalogInput struct {
+	WorkID              string                  `json:"work_id"`
+	OperationID         string                  `json:"operation_id,omitempty"`
+	ExternalID          string                  `json:"external_id,omitempty"`
+	MetadataSchema      uint16                  `json:"metadata_schema"`
+	CreatedByOperation  string                  `json:"created_by_operation,omitempty"`
+	ExpectedObservation tracker.Revision        `json:"expected_observation,omitempty"`
+	RequiredGuard       tracker.UpdateLevel     `json:"required_guard,omitempty"`
+	Title               string                  `json:"title,omitempty"`
+	Description         string                  `json:"description,omitempty"`
+	DesignContext       string                  `json:"design_context,omitempty"`
+	Criteria            []beadsCatalogCriterion `json:"criteria,omitempty"`
+	ProviderMetadata    json.RawMessage         `json:"provider_metadata,omitempty"`
+}
+
+type BeadsCatalogRecord struct {
+	Reference        tracker.ExternalWorkRef     `json:"reference"`
+	Title            string                      `json:"title"`
+	Description      string                      `json:"description"`
+	DesignContext    string                      `json:"design_context"`
+	Criteria         []tracker.Criterion         `json:"criteria"`
+	VisibleAssignee  string                      `json:"visible_assignee,omitempty"`
+	AssignmentMarker string                      `json:"assignment_marker,omitempty"`
+	Observation      tracker.ProviderObservation `json:"observation"`
+}
+
+type BeadsCatalogMutation struct {
+	Record    BeadsCatalogRecord  `json:"record"`
+	Guarantee tracker.UpdateLevel `json:"guarantee"`
+	Replayed  bool                `json:"replayed"`
+	Noop      bool                `json:"noop"`
+}
+
+type BeadsCatalogResponse struct {
+	SchemaVersion uint16                `json:"schema_version"`
+	OK            bool                  `json:"ok"`
+	Action        string                `json:"action"`
+	Record        *BeadsCatalogRecord   `json:"record,omitempty"`
+	Mutation      *BeadsCatalogMutation `json:"mutation,omitempty"`
+	Error         *BeadsInspectionError `json:"error,omitempty"`
+}
+
+func runCatalogBeads(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || (args[0] != "create" && args[0] != "read" && args[0] != "update") {
+		fmt.Fprintln(stderr, trackerUsage)
+		return 2
+	}
+	action := args[0]
+	flags := flag.NewFlagSet("tracker catalog-beads "+action, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var project, executable, workspace, databaseIdentity, expectedDigest, mode, requestFile string
+	var protocolSchema uint64
+	var readOnly explicitBool
+	flags.StringVar(&project, "project", "", "project ID")
+	flags.StringVar(&executable, "executable", "", "absolute Beads executable path")
+	flags.StringVar(&workspace, "workspace", "", "absolute canonical Beads workspace path")
+	flags.StringVar(&databaseIdentity, "database-identity", "", "provider database identity")
+	flags.Uint64Var(&protocolSchema, "protocol-schema", 0, "pinned JSON protocol schema")
+	flags.StringVar(&mode, "mode", "", "embedded_serialized")
+	flags.Var(&readOnly, "read-only", "explicit binding read-only state")
+	flags.StringVar(&expectedDigest, "expected-digest", "", "optional pinned executable SHA-256")
+	flags.StringVar(&requestFile, "request-file", "", "absolute path to bounded typed JSON request")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if len(flags.Args()) != 0 {
+		return encodeBeadsCatalogFailure(stdout, action, invalidInspectRequest("unexpected positional arguments"))
+	}
+	projectID, err := ids.ParseProjectID(project)
+	if err != nil || strings.TrimSpace(databaseIdentity) == "" || protocolSchema == 0 || protocolSchema > uint64(^uint16(0)) {
+		return encodeBeadsCatalogFailure(stdout, action, invalidInspectRequest("catalog binding is invalid"))
+	}
+	if tracker.ConcurrencyMode(mode) != tracker.ConcurrencyEmbeddedSerialized {
+		return encodeBeadsCatalogFailure(stdout, action, invalidInspectRequest("credential-free catalog command requires embedded_serialized mode"))
+	}
+	if !readOnly.set {
+		return encodeBeadsCatalogFailure(stdout, action, invalidInspectRequest("read-only state must be explicit"))
+	}
+	input, err := readBeadsCatalogInput(requestFile)
+	if err != nil {
+		return encodeBeadsCatalogFailure(stdout, action, err)
+	}
+	bound, err := beads.Open(beads.BindingConfig{
+		ProjectID: projectID, ExecutablePath: executable, WorkspacePath: workspace,
+		ProviderDatabaseIdentity: databaseIdentity, ProtocolSchema: uint16(protocolSchema),
+		ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized, ReadOnly: readOnly.value,
+		ExpectedExecutableDigest: expectedDigest,
+	})
+	if err != nil {
+		return encodeBeadsCatalogFailure(stdout, action, err)
+	}
+	criteria := make([]tracker.Criterion, len(input.Criteria))
+	for index, criterion := range input.Criteria {
+		criteria[index] = tracker.Criterion{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
+	}
+	workID, err := ids.ParseWorkID(input.WorkID)
+	if err != nil {
+		return encodeBeadsCatalogFailure(stdout, action, invalidInspectRequest("work ID is invalid"))
+	}
+	switch action {
+	case "create":
+		operationID, err := ids.ParseOperationID(input.OperationID)
+		if err != nil {
+			return encodeBeadsCatalogFailure(stdout, action, invalidInspectRequest("operation ID is invalid"))
+		}
+		metadata, err := tracker.NewOpaqueMetadata(input.ProviderMetadata)
+		if err != nil {
+			return encodeBeadsCatalogFailure(stdout, action, invalidInspectRequest("provider metadata is invalid"))
+		}
+		mutation, err := bound.CreateWork(ctx, tracker.CreateWorkRequest{
+			ProjectID: projectID, WorkID: workID, OperationID: operationID, Title: input.Title,
+			Description: input.Description, DesignContext: input.DesignContext, Criteria: criteria,
+			MetadataSchema: input.MetadataSchema, ProviderMetadata: metadata,
+		})
+		if err != nil {
+			return encodeBeadsCatalogFailure(stdout, action, err)
+		}
+		return encodeBeadsCatalogMutation(stdout, action, mutation)
+	case "read":
+		reference, err := catalogExternalReference(projectID, workID, input)
+		if err != nil {
+			return encodeBeadsCatalogFailure(stdout, action, err)
+		}
+		record, err := bound.ReadWork(ctx, reference)
+		if err != nil {
+			return encodeBeadsCatalogFailure(stdout, action, err)
+		}
+		projected := projectCatalogRecord(record)
+		_ = json.NewEncoder(stdout).Encode(BeadsCatalogResponse{SchemaVersion: 1, OK: true, Action: action, Record: &projected})
+		return 0
+	default:
+		reference, err := catalogExternalReference(projectID, workID, input)
+		if err != nil {
+			return encodeBeadsCatalogFailure(stdout, action, err)
+		}
+		operationID, err := ids.ParseOperationID(input.OperationID)
+		if err != nil {
+			return encodeBeadsCatalogFailure(stdout, action, invalidInspectRequest("operation ID is invalid"))
+		}
+		mutation, err := bound.UpdateWork(ctx, tracker.UpdateWorkRequest{
+			ExternalRef: reference, OperationID: operationID, ExpectedObservation: input.ExpectedObservation,
+			RequiredGuard: input.RequiredGuard, Title: input.Title, Description: input.Description,
+			DesignContext: input.DesignContext, Criteria: criteria,
+		})
+		if err != nil {
+			return encodeBeadsCatalogFailure(stdout, action, err)
+		}
+		return encodeBeadsCatalogMutation(stdout, action, mutation)
+	}
+}
+
+func readBeadsCatalogInput(path string) (beadsCatalogInput, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return beadsCatalogInput{}, invalidInspectRequest("request file path must be absolute and clean")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxCatalogRequestBytes {
+		return beadsCatalogInput{}, invalidInspectRequest("request file must be a bounded regular file")
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return beadsCatalogInput{}, invalidInspectRequest("request file cannot be read")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var input beadsCatalogInput
+	if err := decoder.Decode(&input); err != nil {
+		return beadsCatalogInput{}, invalidInspectRequest("catalog request JSON is invalid")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return beadsCatalogInput{}, invalidInspectRequest("catalog request must contain one JSON object")
+	}
+	return input, nil
+}
+
+func catalogExternalReference(projectID ids.ProjectID, workID ids.WorkID, input beadsCatalogInput) (tracker.ExternalWorkRef, error) {
+	created, err := ids.ParseOperationID(input.CreatedByOperation)
+	if err != nil {
+		return tracker.ExternalWorkRef{}, invalidInspectRequest("creation operation ID is invalid")
+	}
+	reference := tracker.ExternalWorkRef{
+		ProjectID: projectID, WorkID: workID, Provider: "beads", ExternalID: input.ExternalID,
+		MetadataSchema: input.MetadataSchema, CreatedByOperation: created, LastObservation: input.ExpectedObservation,
+	}
+	if err := reference.Validate(); err != nil {
+		return tracker.ExternalWorkRef{}, invalidInspectRequest("external work reference is invalid")
+	}
+	return reference, nil
+}
+
+func projectCatalogRecord(record tracker.WorkRecord) BeadsCatalogRecord {
+	criteria := record.Criteria()
+	if criteria == nil {
+		criteria = []tracker.Criterion{}
+	}
+	return BeadsCatalogRecord{
+		Reference: record.ExternalRef, Title: record.Title, Description: record.Description,
+		DesignContext: record.DesignContext, Criteria: criteria, VisibleAssignee: record.VisibleAssignee,
+		AssignmentMarker: record.AssignmentMarker, Observation: record.Observation,
+	}
+}
+
+func encodeBeadsCatalogMutation(stdout io.Writer, action string, mutation tracker.WorkMutation) int {
+	projected := BeadsCatalogMutation{
+		Record: projectCatalogRecord(mutation.Record), Guarantee: mutation.Guarantee,
+		Replayed: mutation.Replayed, Noop: mutation.Noop,
+	}
+	_ = json.NewEncoder(stdout).Encode(BeadsCatalogResponse{SchemaVersion: 1, OK: true, Action: action, Mutation: &projected})
+	return 0
+}
+
+func encodeBeadsCatalogFailure(stdout io.Writer, action string, err error) int {
+	result := BeadsInspectionError{Kind: tracker.ErrorUnavailable, RecoveryCode: "operator_decision", Message: "catalog operation failed"}
+	var portable *tracker.Error
+	if errors.As(err, &portable) {
+		result.Kind, result.RecoveryCode, result.Message = portable.Kind, portable.RecoveryAction(), portable.Message
+	}
+	_ = json.NewEncoder(stdout).Encode(BeadsCatalogResponse{SchemaVersion: 1, OK: false, Action: action, Error: &result})
+	return 1
 }
 
 type explicitBool struct {
