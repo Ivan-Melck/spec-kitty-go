@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,14 +20,21 @@ import (
 
 type inspectionRunner struct {
 	workspace      string
+	databasePath   string
 	databaseID     string
+	showDataDir    string
+	statusDataDir  string
+	showDatabase   string
+	statusDatabase string
 	version        string
 	schema         uint16
+	schemaByKind   map[CommandKind]uint16
 	mode           tracker.ConcurrencyMode
-	readOnly       bool
-	serverID       string
 	serverEndpoint string
+	showEndpoint   string
+	statusEndpoint string
 	healthy        bool
+	showEmbedded   *bool
 	malformed      CommandKind
 	calls          []CommandKind
 	argvs          [][]string
@@ -43,11 +51,31 @@ func (runner *inspectionRunner) run(_ context.Context, request command) commandR
 	case CommandVersion:
 		data = map[string]any{"version": runner.version, "build": "qualified", "future_optional": true}
 	case CommandWhere:
-		data = map[string]any{"workspace_path": runner.workspace, "database_id": runner.databaseID, "future_optional": true}
-	case CommandInfo:
-		data = map[string]any{"protocol_schema": runner.schema, "storage_mode": runner.mode, "read_only": runner.readOnly, "server_id": runner.serverID, "server_endpoint": runner.serverEndpoint, "future_optional": true}
-	case CommandDoctor:
-		data = map[string]any{"healthy": runner.healthy, "server_id": runner.serverID, "server_endpoint": runner.serverEndpoint, "future_optional": true}
+		data = map[string]any{"path": runner.workspace, "prefix": runner.databaseID, "database_path": runner.databasePath, "future_optional": true}
+	case CommandDoltShow:
+		dataDir := firstNonEmpty(runner.showDataDir, runner.databasePath)
+		database := firstNonEmpty(runner.showDatabase, runner.databaseID)
+		embedded := runner.mode == tracker.ConcurrencyEmbeddedSerialized
+		if runner.showEmbedded != nil {
+			embedded = *runner.showEmbedded
+		}
+		data = map[string]any{"backend": "dolt", "data_dir": dataDir, "database": database, "embedded": embedded, "future_optional": true}
+		if !embedded {
+			host, port := splitTestEndpoint(firstNonEmpty(runner.showEndpoint, runner.serverEndpoint))
+			data = map[string]any{"backend": "dolt", "data_dir": dataDir, "database": database, "embedded": false, "host": host, "port": port, "user": "dolt", "shared_server": true, "connection_ok": runner.healthy, "future_optional": true}
+		}
+	case CommandDoltStatus:
+		dataDir := firstNonEmpty(runner.statusDataDir, runner.databasePath)
+		database := firstNonEmpty(runner.statusDatabase, runner.databaseID)
+		if runner.mode == tracker.ConcurrencyEmbeddedSerialized {
+			data = map[string]any{"data_dir": dataDir, "data_dir_exists": true, "mode": "embedded", "server_running": false, "future_optional": true}
+		} else {
+			host, port := splitTestEndpoint(firstNonEmpty(runner.statusEndpoint, runner.serverEndpoint))
+			data = map[string]any{"mode": "external", "host": host, "port": port, "user": "dolt", "database": database, "tls": false, "running": runner.healthy, "version": "1.70.0", "future_optional": true}
+			if !runner.healthy {
+				data.(map[string]any)["error"] = "unavailable"
+			}
+		}
 	default:
 		data = map[string]any{"ok": true}
 	}
@@ -55,9 +83,31 @@ func (runner *inspectionRunner) run(_ context.Context, request command) commandR
 		result.stdout = []byte("not-json")
 		return result
 	}
-	payload, _ := json.Marshal(map[string]any{"schema_version": runner.schema, "data": data})
+	schema := runner.schema
+	if override, ok := runner.schemaByKind[request.kind]; ok {
+		schema = override
+	}
+	payload, _ := json.Marshal(map[string]any{"schema_version": schema, "data": data})
 	result.stdout = payload
 	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func splitTestEndpoint(endpoint string) (string, int) {
+	parts := strings.Split(endpoint, ":")
+	if len(parts) != 2 {
+		return endpoint, 0
+	}
+	port, _ := strconv.Atoi(parts[1])
+	return parts[0], port
 }
 
 type countingLocker struct {
@@ -81,7 +131,9 @@ func testBoundAdapter(t *testing.T, mode tracker.ConcurrencyMode, databaseID str
 	executable := testExecutable(t, root)
 	workspace := root + "/workspace"
 	mustMkdir(t, workspace)
-	config := BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databaseID, ProtocolSchema: 1, ConcurrencyMode: mode}
+	databasePath := filepath.Join(workspace, "embeddeddolt")
+	mustMkdir(t, databasePath)
+	config := BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: mode}
 	connection := providerConnection{}
 	if mode == tracker.ConcurrencyServerMultiwriter {
 		config.ServerIdentity, config.ServerEndpoint = "server-1", "127.0.0.1:3306"
@@ -92,7 +144,7 @@ func testBoundAdapter(t *testing.T, mode tracker.ConcurrencyMode, databaseID str
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &inspectionRunner{workspace: workspace, databaseID: databaseID, version: SupportedBeadsVersion, schema: 1, mode: mode, healthy: true, serverID: "server-1", serverEndpoint: "127.0.0.1:3306"}
+	runner := &inspectionRunner{workspace: workspace, databasePath: databasePath, databaseID: databaseID, version: SupportedBeadsVersion, schema: 1, mode: mode, healthy: true, serverEndpoint: "127.0.0.1:3306"}
 	bound, err := newConfiguredBoundAdapter(binding, newAdapter(runner), nil, connection)
 	if err != nil {
 		t.Fatal(err)
@@ -161,9 +213,12 @@ func TestPreflightRefusesVersionSchemaWorkspaceAndReadOnly(t *testing.T) {
 			r.workspace = r.workspace + "/nested"
 			mustMkdir(t, r.workspace)
 		}, tracker.ErrorWorkspaceMismatch},
-		{"database redirect", func(_ *BoundAdapter, r *inspectionRunner) { r.databaseID = "other" }, tracker.ErrorWorkspaceMismatch},
-		{"read only", func(_ *BoundAdapter, r *inspectionRunner) { r.readOnly = true }, tracker.ErrorUnavailable},
-		{"malformed", func(_ *BoundAdapter, r *inspectionRunner) { r.malformed = CommandInfo }, tracker.ErrorMalformedProtocol},
+		{"database redirect", func(_ *BoundAdapter, r *inspectionRunner) {
+			r.databasePath = filepath.Join(filepath.Dir(r.databasePath), "other-database")
+			mustMkdir(t, r.databasePath)
+		}, tracker.ErrorWorkspaceMismatch},
+		{"read only", func(b *BoundAdapter, _ *inspectionRunner) { b.binding.ReadOnly = true }, tracker.ErrorUnavailable},
+		{"malformed", func(_ *BoundAdapter, r *inspectionRunner) { r.malformed = CommandDoltShow }, tracker.ErrorMalformedProtocol},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -172,6 +227,71 @@ func TestPreflightRefusesVersionSchemaWorkspaceAndReadOnly(t *testing.T) {
 			_, err := bound.Preflight(context.Background())
 			if !tracker.IsKind(err, test.kind) {
 				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestPreflightChecksSchemaOnEveryV122Observation(t *testing.T) {
+	for _, kind := range []CommandKind{CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus} {
+		t.Run(string(kind), func(t *testing.T) {
+			bound, runner := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "db-1")
+			runner.schemaByKind = map[CommandKind]uint16{kind: 2}
+			if _, err := bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorSchemaSkew) {
+				t.Fatalf("error=%v calls=%v", err, runner.calls)
+			}
+		})
+	}
+}
+
+func TestPreflightCrossChecksIndependentDatabaseAndServerObservations(t *testing.T) {
+	t.Run("embedded show directory", func(t *testing.T) {
+		bound, runner := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "db-1")
+		runner.showDataDir = filepath.Join(runner.workspace, "other-show")
+		mustMkdir(t, runner.showDataDir)
+		if _, err := bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorWorkspaceMismatch) {
+			t.Fatalf("error=%v", err)
+		}
+	})
+	t.Run("embedded status directory", func(t *testing.T) {
+		bound, runner := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "db-1")
+		runner.statusDataDir = filepath.Join(runner.workspace, "other-status")
+		mustMkdir(t, runner.statusDataDir)
+		if _, err := bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorWorkspaceMismatch) {
+			t.Fatalf("error=%v", err)
+		}
+	})
+	t.Run("server observation splice", func(t *testing.T) {
+		bound, runner := testBoundAdapter(t, tracker.ConcurrencyServerMultiwriter, "db-1")
+		runner.statusEndpoint = "attacker:3306"
+		if _, err := bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorUnavailable) {
+			t.Fatalf("error=%v", err)
+		}
+	})
+	t.Run("server database splice", func(t *testing.T) {
+		bound, runner := testBoundAdapter(t, tracker.ConcurrencyServerMultiwriter, "db-1")
+		runner.statusDatabase = "other-db"
+		if _, err := bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorUnavailable) {
+			t.Fatalf("error=%v", err)
+		}
+	})
+}
+
+func TestV122InspectionFixturesUseDocumentedSchemaOneEnvelopes(t *testing.T) {
+	fixtures := []struct {
+		name string
+		body string
+	}{
+		{"version", "{\n  \"data\": {\n    \"build\": \"dev\",\n    \"version\": \"1.2.2\"\n  },\n  \"schema_version\": 1\n}\n"},
+		{"where", "{\n  \"data\": {\n    \"path\": \"/tmp/provider/.beads\",\n    \"prefix\": \"pf\",\n    \"database_path\": \"/tmp/provider/.beads/embeddeddolt\"\n  },\n  \"schema_version\": 1\n}\n"},
+		{"dolt-show", "{\n  \"data\": {\n    \"backend\": \"dolt\",\n    \"data_dir\": \"/tmp/provider/.beads/embeddeddolt\",\n    \"database\": \"pf\",\n    \"embedded\": true\n  },\n  \"schema_version\": 1\n}\n"},
+		{"dolt-status", "{\n  \"data\": {\n    \"data_dir\": \"/tmp/provider/.beads/embeddeddolt\",\n    \"data_dir_exists\": true,\n    \"mode\": \"embedded\",\n    \"server_running\": false\n  },\n  \"schema_version\": 1\n}\n"},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			payload, metadata, err := decodeEnvelope([]byte(fixture.body), expectedObject)
+			if err != nil || metadata.schemaVersion != SupportedProtocolSchema || len(payload) == 0 {
+				t.Fatalf("metadata=%#v payload=%s err=%v", metadata, payload, err)
 			}
 		})
 	}
@@ -191,8 +311,8 @@ func TestIncompatibleInspectionFailsAllCapabilitiesClosed(t *testing.T) {
 }
 
 func TestReadOnlyInspectionIsDegradedAndFailsCapabilitiesClosed(t *testing.T) {
-	bound, runner := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "db-1")
-	runner.readOnly = true
+	bound, _ := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "db-1")
+	bound.binding.ReadOnly = true
 	inspection, err := bound.Inspect(context.Background(), tracker.InspectRequest{ProjectID: bound.binding.ProjectID})
 	if err != nil {
 		t.Fatal(err)
@@ -220,11 +340,11 @@ func TestUnavailableInspectionFailsCapabilitiesClosed(t *testing.T) {
 
 func TestServerIdentitySpoofAndStaleReadinessRefuseBeforeMutation(t *testing.T) {
 	bound, runner := testBoundAdapter(t, tracker.ConcurrencyServerMultiwriter, "db-1")
-	runner.serverID = "spoofed"
+	runner.serverEndpoint = "attacker:3306"
 	if _, err := bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorUnavailable) {
 		t.Fatalf("spoofed server error=%v", err)
 	}
-	runner.serverID = bound.connection.serverIdentity
+	runner.serverEndpoint = bound.connection.serverEndpoint
 	readiness, err := bound.Preflight(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +367,7 @@ func TestUnqualifiedServerPreflightAndReadinessRefuseBeforeSideEffects(t *testin
 	tests := []struct {
 		name string
 		edit func(*inspectionRunner)
-	}{{"identity", func(r *inspectionRunner) { r.serverID = "spoofed" }}, {"endpoint", func(r *inspectionRunner) { r.serverEndpoint = "attacker:3306" }}, {"unhealthy", func(r *inspectionRunner) { r.healthy = false }}}
+	}{{"mode", func(r *inspectionRunner) { value := true; r.showEmbedded = &value }}, {"endpoint", func(r *inspectionRunner) { r.serverEndpoint = "attacker:3306" }}, {"unhealthy", func(r *inspectionRunner) { r.healthy = false }}}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			bound, runner := testBoundAdapter(t, tracker.ConcurrencyServerMultiwriter, "db-1")
@@ -373,6 +493,8 @@ func TestPreflightLatencyCharacterization(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	mustMkdir(t, workspace)
+	databasePath := filepath.Join(workspace, "embeddeddolt")
+	mustMkdir(t, databasePath)
 	executable := testProtocolExecutable(t, root, tracker.ConcurrencyEmbeddedSerialized)
 	helperSource, err := os.ReadFile(executable)
 	if err != nil {
@@ -383,7 +505,7 @@ func TestPreflightLatencyCharacterization(t *testing.T) {
 			t.Fatalf("latency helper attempts remote operation %q", remote)
 		}
 	}
-	bound, err := Open(BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: "db-1", ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized})
+	bound, err := Open(BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,6 +543,8 @@ func TestInspectionFixturesRemainByteIdentical(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "provider")
 	mustMkdir(t, workspace)
+	databasePath := filepath.Join(workspace, "embeddeddolt")
+	mustMkdir(t, databasePath)
 	laneA, laneB := filepath.Join(root, "lane-a"), filepath.Join(root, "lane-b")
 	for _, lane := range []string{laneA, laneB} {
 		mustMkdir(t, filepath.Join(lane, ".git", "hooks"))
@@ -435,7 +559,7 @@ func TestInspectionFixturesRemainByteIdentical(t *testing.T) {
 		}
 	}
 	executable := testProtocolExecutable(t, root, tracker.ConcurrencyEmbeddedSerialized)
-	bound, err := Open(BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: "db-1", ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized})
+	bound, err := Open(BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,15 +580,30 @@ func TestInspectionArgvHasNoInitializationRepairOrRepositorySetup(t *testing.T) 
 	}
 	for _, argv := range runner.argvs {
 		joined := strings.ToLower(strings.Join(argv, " "))
+		if len(argv) > 0 && (argv[0] == "info" || argv[0] == "doctor") {
+			t.Fatalf("obsolete non-machine inspection command invoked: %q", argv)
+		}
 		for _, forbidden := range []string{"init", "fix", "hook", "agent setup", "git config", "install"} {
 			if strings.Contains(joined, forbidden) {
 				t.Fatalf("forbidden inspection argv %q", joined)
 			}
 		}
 	}
-	want := []CommandKind{CommandVersion, CommandWhere, CommandInfo, CommandDoctor}
+	want := []CommandKind{CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("inspection calls=%v want=%v", runner.calls, want)
+	}
+}
+
+func TestServerIdentityIsLocalSealedPolicy(t *testing.T) {
+	bound, _ := testBoundAdapter(t, tracker.ConcurrencyServerMultiwriter, "db-1")
+	readiness, err := bound.Preflight(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound.connection.serverIdentity = "different-local-policy"
+	if err := bound.validateReadiness(readiness); !tracker.IsKind(err, tracker.ErrorUnavailable) {
+		t.Fatalf("changed local server identity accepted: %v", err)
 	}
 }
 
@@ -474,11 +613,13 @@ func TestWorktreeConvergenceAndDivergenceThroughProductionComposition(t *testing
 	other := filepath.Join(root, "other")
 	mustMkdir(t, workspace)
 	mustMkdir(t, other)
+	mustMkdir(t, filepath.Join(workspace, "embeddeddolt"))
+	mustMkdir(t, filepath.Join(other, "embeddeddolt"))
 	laneA, laneB := filepath.Join(root, "lane-a"), filepath.Join(root, "lane-b")
 	mustMkdir(t, laneA)
 	mustMkdir(t, laneB)
 	executable := testProtocolExecutable(t, root, tracker.ConcurrencyEmbeddedSerialized)
-	config := BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: "db-1", ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized}
+	config := BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: filepath.Join(workspace, "embeddeddolt"), ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized}
 	first, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
@@ -511,6 +652,7 @@ func TestWorktreeConvergenceAndDivergenceThroughProductionComposition(t *testing
 	}
 	divergent := config
 	divergent.WorkspacePath = other
+	divergent.ProviderDatabaseIdentity = filepath.Join(other, "embeddeddolt")
 	third, err := Open(divergent)
 	if err != nil {
 		t.Fatal(err)
@@ -524,7 +666,7 @@ func TestWorktreeConvergenceAndDivergenceThroughProductionComposition(t *testing
 	if three.binding.WorkspaceIdentity == one.binding.WorkspaceIdentity {
 		t.Fatal("divergent lane workspace compared equal")
 	}
-	redirectedRunner := &inspectionRunner{workspace: other, databaseID: "db-1", version: SupportedBeadsVersion, schema: 1, mode: tracker.ConcurrencyEmbeddedSerialized, healthy: true}
+	redirectedRunner := &inspectionRunner{workspace: other, databasePath: filepath.Join(other, "embeddeddolt"), databaseID: "db-1", version: SupportedBeadsVersion, schema: 1, mode: tracker.ConcurrencyEmbeddedSerialized, healthy: true}
 	locker := &countingLocker{}
 	redirected, err := newConfiguredBoundAdapter(first.binding, newAdapter(redirectedRunner), locker, providerConnection{})
 	if err != nil {
@@ -556,8 +698,10 @@ func TestInspectProviderProductionEntry(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	mustMkdir(t, workspace)
+	databasePath := filepath.Join(workspace, "embeddeddolt")
+	mustMkdir(t, databasePath)
 	executable := testProtocolExecutable(t, root, tracker.ConcurrencyEmbeddedSerialized)
-	inspection, err := InspectProvider(context.Background(), BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: "db-1", ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized})
+	inspection, err := InspectProvider(context.Background(), BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,9 +742,23 @@ func testProtocolExecutable(t *testing.T, root string, mode tracker.ConcurrencyM
 set -eu
 case "$1" in
   version) printf '%%s\n' '{"schema_version":1,"data":{"version":"1.2.2","build":"test-helper"}}' ;;
-  where) printf '{"schema_version":1,"data":{"workspace_path":"%%s","database_id":"db-1"}}\n' "$BEADS_DIR" ;;
-  info) printf '{"schema_version":1,"data":{"protocol_schema":1,"storage_mode":"%s","read_only":false,"server_id":"server-1","server_endpoint":"127.0.0.1:3306"}}\n' ;;
-  doctor) printf '%%s\n' '{"schema_version":1,"data":{"healthy":true,"server_id":"server-1","server_endpoint":"127.0.0.1:3306"}}' ;;
+  where) printf '{"schema_version":1,"data":{"path":"%%s","prefix":"db-1","database_path":"%%s/embeddeddolt"}}\n' "$BEADS_DIR" "$BEADS_DIR" ;;
+  dolt)
+    case "$2" in
+      show)
+        if [ "%s" = "server_multiwriter" ]; then
+          printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":false,"host":"127.0.0.1","port":3306,"user":"dolt","shared_server":true,"connection_ok":true}}\n' "$BEADS_DIR"
+        else
+          printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":true}}\n' "$BEADS_DIR"
+        fi ;;
+      status)
+        if [ "%s" = "server_multiwriter" ]; then
+          printf '%%s\n' '{"schema_version":1,"data":{"mode":"external","host":"127.0.0.1","port":3306,"user":"dolt","database":"db-1","tls":false,"running":true,"version":"1.70.0"}}'
+        else
+          printf '{"schema_version":1,"data":{"data_dir":"%%s/embeddeddolt","data_dir_exists":true,"mode":"embedded","server_running":false}}\n' "$BEADS_DIR"
+        fi ;;
+      *) exit 64 ;;
+    esac ;;
   create)
     if [ -n "${DOLT_CREDENTIALS_PATH:-}" ]; then
       printf 'ready\n' > "${DOLT_CREDENTIALS_PATH}.$$.ready"
@@ -614,7 +772,7 @@ case "$1" in
     printf '%%s\n' '{"schema_version":1,"data":{"id":"work-1"}}' ;;
   *) exit 64 ;;
 esac
-`, mode)
+`, mode, mode)
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
