@@ -374,7 +374,9 @@ func TestUncodedDataErrorEnvelopeIsConclusiveOnlyForShow(t *testing.T) {
 		}, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
 		{"list read", func() (command, error) { return newListCommand(binding) }, tracker.ErrorMalformedProtocol, mutationUnknown, "repair_provider_binding"},
 		{"create", func() (command, error) { return newCreateCommand(binding, createValues{title: "work"}) }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
-		{"update", func() (command, error) { return newUpdateCommand(binding, updateValues{id: "work", title: "changed"}) }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"update", func() (command, error) {
+			return newUpdateCommand(binding, updateValues{id: "work", title: presentUpdateValue("changed")})
+		}, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
 		{"dependency", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
 		{"comment", func() (command, error) { return newCommentAppendCommand(binding, "work", "body") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
 		{"assignment", func() (command, error) { return newAtomicClaimCommand(binding, "work") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
