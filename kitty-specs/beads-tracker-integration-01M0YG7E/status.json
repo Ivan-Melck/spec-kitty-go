@@ -29,7 +29,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review",
-        "Ready for review: portable ports wired and canonical tracker binding added"
+        "Ready for review: portable ports wired and canonical tracker binding added",
+        "Ready for review: persisted author is part of discussion replay identity; diff-scoped gofmt + staticcheck: 0 issues, exit 0"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
