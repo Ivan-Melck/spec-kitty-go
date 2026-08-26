@@ -1,7 +1,12 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/testcampaign"
 )
@@ -11,6 +16,77 @@ func TestSourceIdentityFailsClosedOutsideGitRepository(t *testing.T) {
 	commit, tree, dirty, err := sourceIdentity(directory)
 	if err == nil || commit != "" || tree != "" || dirty {
 		t.Fatalf("commit=%q tree=%q dirty=%t err=%v", commit, tree, dirty, err)
+	}
+}
+
+func TestSourceIdentityIncludesRelevantUntrackedFiles(t *testing.T) {
+	repository := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		command := exec.Command("git", args...)
+		command.Dir = repository
+		command.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.invalid")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(repository, "tracked.go"), []byte("package tracked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "tracked.go")
+	git("commit", "-qm", "fixture")
+	if err := os.WriteFile(filepath.Join(repository, "new.go"), []byte("package tracked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, dirty, err := sourceIdentity(repository)
+	if err != nil || !dirty {
+		t.Fatalf("relevant untracked source dirty=%t err=%v", dirty, err)
+	}
+}
+
+func TestRunProfileRefusesDirtySourceBeforeExecuting(t *testing.T) {
+	original := readCampaignSourceIdentity
+	t.Cleanup(func() { readCampaignSourceIdentity = original })
+	readCampaignSourceIdentity = func(string) (string, string, bool, error) {
+		return strings.Repeat("a", 40), strings.Repeat("b", 40), true, nil
+	}
+	directory := t.TempDir()
+	if _, _, err := runProfile("provider-portable", directory, "pre-dirty", time.Minute); err == nil || !strings.Contains(err.Error(), "dirty before") {
+		t.Fatalf("dirty preflight error=%v", err)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(directory, "pre-dirty.*")); len(matches) != 0 {
+		t.Fatalf("profile executed before dirty refusal: %v", matches)
+	}
+}
+
+func TestRunProfileRebindsSourceAfterExecutionAndRefusesDrift(t *testing.T) {
+	working, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Clean(filepath.Join(working, "..", "..", "..", ".."))
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(working) })
+	original := readCampaignSourceIdentity
+	t.Cleanup(func() { readCampaignSourceIdentity = original })
+	calls := 0
+	readCampaignSourceIdentity = func(string) (string, string, bool, error) {
+		calls++
+		if calls == 1 {
+			return strings.Repeat("a", 40), strings.Repeat("b", 40), false, nil
+		}
+		return strings.Repeat("a", 40), strings.Repeat("c", 40), false, nil
+	}
+	directory := t.TempDir()
+	report, path, err := runProfile("provider-portable", directory, "post-drift", 2*time.Minute)
+	if err == nil || report.Verdict == "pass" || !strings.Contains(strings.Join(report.Issues, " "), "source identity drifted") {
+		t.Fatalf("post-run drift report=%+v path=%q err=%v", report, path, err)
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("truthful failed report missing: %v", statErr)
 	}
 }
 

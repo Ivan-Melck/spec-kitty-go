@@ -1,0 +1,246 @@
+name: beads-qualification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "feat/**"
+  schedule:
+    - cron: "41 7 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beads-qualification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+
+jobs:
+  bounded-provider:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # The measured campaign budget is ten minutes; setup and evidence upload
+    # have a separate five-minute envelope so a red run still publishes data.
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      HOSTED_BASELINE_REQUIRED: "10"
+      HOSTED_BASELINE_SAMPLE_COUNT: "0"
+      HOSTED_BASELINE_STATE: baseline_pending
+    steps:
+      - name: Check out committed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.4
+          cache: true
+
+      - name: Configure isolated paths
+        run: |
+          echo "ARTIFACT_DIR=$RUNNER_TEMP/beads-bounded-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-build-cache-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$RUNNER_TEMP/go-tmp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "TMPDIR=$RUNNER_TEMP/process-tmp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Prepare isolated paths
+        run: mkdir -p "$ARTIFACT_DIR" "$GOCACHE" "$GOTMPDIR" "$TMPDIR"
+
+      - name: Warm module cache before the offline provider target
+        run: go mod download
+
+      - name: Record bounded start
+        run: |
+          printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ARTIFACT_DIR/.started-at"
+          python3 -c 'import time; print(time.monotonic_ns())' > "$ARTIFACT_DIR/.started-monotonic"
+
+      - name: Run exact offline provider campaign
+        id: bounded
+        continue-on-error: true
+        env:
+          GOPROXY: "off"
+          GOSUMDB: "off"
+        run: make beads-contract ARTIFACT_DIR="$ARTIFACT_DIR"
+
+      - name: Materialize safe hosted timing
+        if: always()
+        run: |
+          started_at=$(cat "$ARTIFACT_DIR/.started-at")
+          started_ns=$(cat "$ARTIFACT_DIR/.started-monotonic")
+          finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          finished_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          duration_ms=$(( (finished_ns - started_ns) / 1000000 ))
+          verdict=pass
+          if [ "${{ steps.bounded.outcome }}" != success ]; then verdict=fail; fi
+          printf '{"schema_version":1,"profile":"provider_bounded","started_at":"%s","finished_at":"%s","duration_ms":%d,"budget_ms":600000,"baseline_required":%s,"baseline_sample_count":%s,"baseline_state":"%s","verdict":"%s"}\n' \
+            "$started_at" "$finished_at" "$duration_ms" "$HOSTED_BASELINE_REQUIRED" "$HOSTED_BASELINE_SAMPLE_COUNT" "$HOSTED_BASELINE_STATE" "$verdict" > "$ARTIFACT_DIR/hosted-timing.json"
+          rm -f "$ARTIFACT_DIR/.started-at" "$ARTIFACT_DIR/.started-monotonic"
+
+      - name: Upload bounded machine evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beads-bounded-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ARTIFACT_DIR }}/*.report.json
+            ${{ env.ARTIFACT_DIR }}/*.campaign.json
+            ${{ env.ARTIFACT_DIR }}/hosted-timing.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enforce bounded verdict and budget
+        if: always()
+        run: |
+          test "${{ steps.bounded.outcome }}" = success
+          test "$(jq -r .duration_ms "$ARTIFACT_DIR/hosted-timing.json")" -le 600000
+
+  real-provider:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOTOOLCHAIN: local
+      QUALIFIED_BEADS_DIGEST: 0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
+      QUALIFIED_DOLT_MODULE: github.com/dolthub/dolt/go/cmd/dolt@v0.40.5-0.20260605230755-1bf533220ab0
+    steps:
+      - name: Check out committed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.4
+          cache: true
+
+      - name: Configure isolated paths
+        run: |
+          echo "ARTIFACT_DIR=$RUNNER_TEMP/beads-real-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "PROVIDER_TMP_DIR=$RUNNER_TEMP/beads-provider-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "TOOL_DIR=$RUNNER_TEMP/beads-tool-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-build-cache-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$RUNNER_TEMP/go-module-cache-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOPATH=$RUNNER_TEMP/go-path-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Prepare fallback evidence before prerequisites
+        run: |
+          mkdir -p "$ARTIFACT_DIR" "$PROVIDER_TMP_DIR" "$TOOL_DIR" "$GOCACHE" "$GOMODCACHE" "$GOPATH"
+          started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          printf '%s\n' "$started_at" > "$ARTIFACT_DIR/.real-started-at"
+          python3 -c 'import time; print(time.monotonic_ns())' > "$ARTIFACT_DIR/.real-started-monotonic"
+          commit=$(git rev-parse HEAD)
+          tree=$(git rev-parse 'HEAD^{tree}')
+          fallback="$ARTIFACT_DIR/setup.non-admissible.json"
+          temporary="$fallback.tmp"
+          printf '{"schema_version":1,"source_commit":"%s","source_tree":"%s","provider_version":"1.2.2","provider_digest_sha256":"%s","protocol_schema":1,"storage_mode":"embedded_serialized","host":{"goos":"linux","goarch":"amd64","runner":"github-hosted"},"started_at":"%s","finished_at":"%s","scenarios":{"expected":11,"started":0,"terminal":0,"passed":0,"failed":0},"authority_audits":0,"authority_invariant_failures":0,"issues":[{"kind":"prerequisite_missing","message":"verified offline Beads prerequisite unavailable"}],"verdict":"non_admissible"}\n' \
+            "$commit" "$tree" "$QUALIFIED_BEADS_DIGEST" "$started_at" "$started_at" > "$temporary"
+          chmod 600 "$temporary"
+          mv -f "$temporary" "$fallback"
+
+      - name: Warm module cache before network isolation
+        run: go mod download
+
+      - name: Install and verify pinned Beads
+        id: install
+        continue-on-error: true
+        run: |
+          scripts/install-qualified-beads.sh --dest "$TOOL_DIR" > "$ARTIFACT_DIR/installer-identity.json"
+          beads_bin=$(jq -r .executable_path "$ARTIFACT_DIR/installer-identity.json")
+          case "$beads_bin" in "$RUNNER_TEMP"/*) ;; *) exit 1;; esac
+          jq -e --arg path "$beads_bin" --arg digest "$QUALIFIED_BEADS_DIGEST" \
+            'type == "object" and (keys | length == 9) and .schema_version == 1 and .version == "1.2.2" and .digest_sha256 == $digest and .executable_path == $path and .source_version == "v1.2.2" and .source_commit == "6c124203e771433a3550c348771a5b5e27fd3c21" and .goos == "linux" and .goarch == "amd64" and .build_method == "go-install-cgo-gms_pure_go-trimpath-nobuildid-go1.26.4"' \
+            "$ARTIFACT_DIR/installer-identity.json" >/dev/null
+          test "$(sha256sum -- "$beads_bin" | awk '{print $1}')" = "$QUALIFIED_BEADS_DIGEST"
+          GOBIN="$TOOL_DIR" go install "$QUALIFIED_DOLT_MODULE"
+          dolt_bin="$TOOL_DIR/dolt"
+          test -x "$dolt_bin"
+          go version -m "$dolt_bin" | grep -F $'mod\tgithub.com/dolthub/dolt/go\tv0.40.5-0.20260605230755-1bf533220ab0' >/dev/null
+          echo "BEADS_BIN=$beads_bin" >> "$GITHUB_ENV"
+          echo "DOLT_BIN=$dolt_bin" >> "$GITHUB_ENV"
+          echo "BEADS_INSTALL_RESULT=$ARTIFACT_DIR/installer-identity.json" >> "$GITHUB_ENV"
+
+      - name: Run qualification in an offline network namespace
+        id: real
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          GOPROXY: "off"
+          GOSUMDB: "off"
+        run: |
+          test "$(sha256sum -- "$BEADS_BIN" | awk '{print $1}')" = "$QUALIFIED_BEADS_DIGEST"
+          set +e
+          sudo --preserve-env=PATH,HOME,GOCACHE,GOMODCACHE,GOPATH,GOROOT,RUNNER_TEMP,ARTIFACT_DIR,PROVIDER_TMP_DIR,BEADS_BIN,DOLT_BIN,BEADS_INSTALL_RESULT \
+            unshare --net --mount-proc bash -euo pipefail -c '
+              ip link set lo up
+              test -x "$DOLT_BIN"
+              server_root="$PROVIDER_TMP_DIR/dolt-server"
+              mkdir -p "$server_root"
+              cleanup() {
+                status=$?
+                if test -n "${server_pid:-}"; then kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; fi
+                exit "$status"
+              }
+              trap cleanup EXIT INT TERM
+              "$DOLT_BIN" sql-server --host 127.0.0.1 --port 3307 --data-dir "$server_root" > "$ARTIFACT_DIR/dolt-server.private.log" 2>&1 &
+              server_pid=$!
+              ready=0
+              for attempt in $(seq 1 120); do
+                if python3 -c "import socket; s=socket.create_connection((\"127.0.0.1\",3307),.25); s.close()" 2>/dev/null; then ready=1; break; fi
+                if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+                sleep .25
+              done
+              test "$ready" = 1
+              export BEADS_SERVER_ID=dolt-v0.40.5-1bf533220ab0
+              export BEADS_SERVER_ENDPOINT=127.0.0.1:3307
+              export DOLT_SERVER_HOST=127.0.0.1
+              export DOLT_SERVER_PORT=3307
+              make beads-qualification ARTIFACT_DIR="$ARTIFACT_DIR" PROVIDER_TMP_DIR="$PROVIDER_TMP_DIR" BEADS_BIN="$BEADS_BIN" BEADS_INSTALL_RESULT="$BEADS_INSTALL_RESULT" OFFLINE_ENFORCED=linux-network-namespace
+            '
+          status=$?
+          set -e
+          rm -f "$ARTIFACT_DIR/dolt-server.private.log"
+          if find "$ARTIFACT_DIR" -maxdepth 1 -type f -name 'beads-qualification*.json' -print -quit | grep -q .; then
+            rm -f "$ARTIFACT_DIR/setup.non-admissible.json"
+          fi
+          exit "$status"
+
+      - name: Materialize real timing and verdict
+        if: always()
+        run: |
+          started_at=$(cat "$ARTIFACT_DIR/.real-started-at")
+          started_ns=$(cat "$ARTIFACT_DIR/.real-started-monotonic")
+          finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          finished_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          duration_ms=$(( (finished_ns - started_ns) / 1000000 ))
+          verdict=non_admissible
+          evidence=$(find "$ARTIFACT_DIR" -maxdepth 1 -type f -name 'beads-qualification*.json' -print -quit)
+          if [ -n "$evidence" ]; then verdict=$(jq -r .verdict "$evidence"); fi
+          printf '{"schema_version":1,"profile":"provider_real","started_at":"%s","finished_at":"%s","duration_ms":%d,"budget_ms":2700000,"baseline_required":10,"baseline_sample_count":0,"baseline_state":"baseline_pending","verdict":"%s"}\n' \
+            "$started_at" "$finished_at" "$duration_ms" "$verdict" > "$ARTIFACT_DIR/real-timing.json"
+          rm -f "$ARTIFACT_DIR/.real-started-at" "$ARTIFACT_DIR/.real-started-monotonic"
+
+      - name: Upload real machine evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beads-real-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ARTIFACT_DIR }}/*.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enforce admissible real verdict
+        if: always()
+        run: |
+          test "${{ steps.install.outcome }}" = success
+          test "${{ steps.real.outcome }}" = success
+          evidence=$(find "$ARTIFACT_DIR" -maxdepth 1 -type f -name 'beads-qualification.json' -print -quit)
+          test -n "$evidence"
+          test "$(jq -r .verdict "$evidence")" = pass

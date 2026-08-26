@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.dev/testing/dishonest-beads-scenario.schema.json",
+  "title": "Dishonest Beads deterministic scenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "steps"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "initial_state": {"type": "object", "additionalProperties": {"type": "string"}},
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "argv", "required_env", "workspace"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "argv": {
+            "type": "array",
+            "minItems": 1,
+            "prefixItems": [{"enum": ["version", "where", "dolt", "show", "list", "ready", "create", "update", "dep", "comments", "export", "backup"]}],
+            "items": {"type": "string"}
+          },
+          "required_env": {"type": "object", "additionalProperties": {"type": "string"}},
+          "workspace": {"type": "string", "minLength": 1},
+          "precondition": {"type": "object", "additionalProperties": {"type": "string"}},
+          "transition_timing": {"enum": ["none", "before_response", "after_response"]},
+          "transition": {"type": "object", "additionalProperties": {"type": "string"}},
+          "stdout": {"type": "string"},
+          "stderr": {"type": "string"},
+          "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+          "wait_for": {"type": "string"},
+          "wait_timing": {"enum": ["before_apply", "after_apply"]},
+          "next_observation": {"type": "object", "additionalProperties": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

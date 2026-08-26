@@ -1,9 +1,14 @@
 package testcampaign
 
 import (
+	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -81,7 +86,7 @@ func TestVerifyRejectsProcessAndJSONVerdictDisagreement(t *testing.T) {
 }
 
 func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
-	for _, name := range []string{"acceptance", "architecture", "scope", "fault", "soak", "full-scenario"} {
+	for _, name := range []string{"acceptance", "architecture", "scope", "fault", "soak", "full-scenario", "provider-portable", "provider-adversarial", "provider-real"} {
 		profile, err := ProfileByName(name)
 		if err != nil {
 			t.Fatalf("profile %s: %v", name, err)
@@ -92,9 +97,24 @@ func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
 			t.Fatalf("profile %s leaked caller mutation: %+v err=%v", name, again, err)
 		}
 	}
-	for _, name := range []string{"quality", "full_campaign"} {
-		if _, err := CampaignByName(name); err != nil {
+	for _, name := range []string{"quality", "full_campaign", "provider_bounded", "provider_real"} {
+		campaign, err := CampaignByName(name)
+		if err != nil {
 			t.Fatalf("campaign %s: %v", name, err)
+		}
+		if len(campaign.RequiredTests) > 0 {
+			campaign.RequiredTests[0] = "mutated"
+			again, err := CampaignByName(name)
+			if err != nil || again.RequiredTests[0] == "mutated" {
+				t.Fatalf("campaign %s leaked required-test mutation: %+v err=%v", name, again, err)
+			}
+		}
+		if len(campaign.RequiredProfiles) > 0 {
+			campaign.RequiredProfiles[0] = "mutated"
+			again, err := CampaignByName(name)
+			if err != nil || again.RequiredProfiles[0] == "mutated" {
+				t.Fatalf("campaign %s leaked required-profile mutation: %+v err=%v", name, again, err)
+			}
 		}
 	}
 	quality, err := CampaignByName("quality")
@@ -107,6 +127,136 @@ func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
 	}
 }
 
+func TestProviderProfilesMatchAcceptedTopLevelTests(t *testing.T) {
+	root := campaignRepositoryRoot(t)
+	tests := []struct {
+		profile   string
+		directory string
+		relevant  func(string) bool
+	}{
+		{"provider-portable", filepath.Join(root, "internal", "tracker", "conformance"), func(name string) bool { return strings.HasPrefix(name, "Test") }},
+		{"provider-adversarial", filepath.Join(root, "internal", "scenario"), func(name string) bool { return strings.HasPrefix(name, "TestBeads") }},
+		{"provider-real", filepath.Join(root, "internal", "tracker", "beads"), func(name string) bool {
+			return strings.HasPrefix(name, "TestRealBeads") && name != "TestRealBeadsProcessCreate"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.profile, func(t *testing.T) {
+			profile, err := ProfileByName(test.profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			discovered := discoverTopLevelTests(t, test.directory, test.relevant)
+			if err := compareExactCensus(profile.ExpectedTests, discovered); err != nil {
+				t.Fatalf("accepted top-level census drifted: %v", err)
+			}
+			if !strings.HasPrefix(profile.Pattern, "^(") || !strings.HasSuffix(profile.Pattern, ")$") {
+				t.Fatalf("profile selector is not exactly anchored: %s", profile.Pattern)
+			}
+			selector := regexp.MustCompile(profile.Pattern)
+			all := discoverTopLevelTests(t, test.directory, func(name string) bool { return strings.HasPrefix(name, "Test") })
+			selected := slices.DeleteFunc(append([]string(nil), all...), func(name string) bool { return !selector.MatchString(name) })
+			if !slices.Equal(selected, profile.ExpectedTests) {
+				t.Fatalf("profile selector is not exact\nexpected=%v\nselected=%v", profile.ExpectedTests, selected)
+			}
+		})
+	}
+}
+
+func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
+	bounded, err := CampaignByName("provider_bounded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutants := []struct {
+		name   string
+		want   string
+		mutate func(*Campaign)
+	}{
+		{"portable profile", "provider-portable", func(c *Campaign) { c.Profiles = c.Profiles[1:] }},
+		{"universal", "stale probing", func(c *Campaign) { c.RequireStaleProbe = false }},
+		{"universal test", "TestDeletedUniversal", func(c *Campaign) { c.UniversalTest = "TestDeletedUniversal" }},
+		{"human preservation", "TestDeletedHumanPreservation", func(c *Campaign) { c.RequiredTests[1] = "TestDeletedHumanPreservation" }},
+	}
+	for _, test := range mutants {
+		t.Run(test.name, func(t *testing.T) {
+			mutant := bounded
+			mutant.Profiles = append([]string(nil), bounded.Profiles...)
+			mutant.RequiredTests = append([]string(nil), bounded.RequiredTests...)
+			test.mutate(&mutant)
+			if err := ValidateCampaign(mutant); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("mutant error=%v want=%q", err, test.want)
+			}
+		})
+	}
+
+	original := profiles["provider-adversarial"]
+	mutantProfile := original
+	mutantProfile.ExpectedTests = slices.DeleteFunc(append([]string(nil), original.ExpectedTests...), func(name string) bool { return name == "TestBeadsHumanAssignmentPreservation100" })
+	profiles["provider-adversarial"] = mutantProfile
+	t.Cleanup(func() { profiles["provider-adversarial"] = original })
+	if err := ValidateCampaign(bounded); err == nil || !strings.Contains(err.Error(), "TestBeadsHumanAssignmentPreservation100") {
+		t.Fatalf("missing expected-test mutant did not name the control: %v", err)
+	}
+
+	architecture := profiles["architecture"]
+	architectureMutant := architecture
+	architectureMutant.ExpectedTests = slices.DeleteFunc(append([]string(nil), architecture.ExpectedTests...), func(name string) bool {
+		return name == "TestDefaultPolicyPinsTrackerConformanceAsOneWayQualityTooling"
+	})
+	if err := compareExactCensus(architectureMutant.ExpectedTests, architecture.ExpectedTests); err == nil || !strings.Contains(err.Error(), "TestDefaultPolicyPinsTrackerConformanceAsOneWayQualityTooling") {
+		t.Fatalf("accepted provider architecture removal mutant error=%v", err)
+	}
+}
+
+func compareExactCensus(expected, discovered []string) error {
+	for _, name := range discovered {
+		if !slices.Contains(expected, name) {
+			return fmt.Errorf("manifest omits accepted top-level test %s", name)
+		}
+	}
+	for _, name := range expected {
+		if !slices.Contains(discovered, name) {
+			return fmt.Errorf("manifest names undiscovered top-level test %s", name)
+		}
+	}
+	return nil
+}
+
+func discoverTopLevelTests(t *testing.T, directory string, relevant func(string) bool) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(directory, "*_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := token.NewFileSet()
+	names := make([]string, 0)
+	for _, match := range matches {
+		parsed, err := parser.ParseFile(set, match, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", match, err)
+		}
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Recv != nil || function.Name.Name == "TestMain" || !relevant(function.Name.Name) {
+				continue
+			}
+			names = append(names, function.Name.Name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+func campaignRepositoryRoot(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("test source path is unavailable")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
+}
+
 func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *testing.T) {
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {
@@ -117,7 +267,7 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		t.Fatal(err)
 	}
 	makefile := string(content)
-	for target, campaign := range map[string]string{"quality": "quality", "full-campaign": "full_campaign"} {
+	for target, campaign := range map[string]string{"quality": "quality", "full-campaign": "full_campaign", "beads-contract": "provider_bounded"} {
 		if err := validateMakeCampaignBinding(makefile, target, campaign); err != nil {
 			t.Fatal(err)
 		}
@@ -126,6 +276,178 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 			t.Fatalf("real Make binding mutant survived for %s", target)
 		}
 	}
+	if err := validateProviderMakeControls(makefile); err != nil {
+		t.Fatal(err)
+	}
+	mutants := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{"one profile", "-campaign provider_bounded", "-profile provider-portable"},
+		{"raised PR budget", "-timeout 5m", "-timeout 6m"},
+		{"removed PR budget", "-timeout 5m", ""},
+		{"PATH fallback", `case "$(BEADS_BIN)" in /*)`, `command -v bd >/dev/null; case "$(BEADS_BIN)" in *)`},
+		{"missing digest comparison", `test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)"`, `test -n "$$observed"`},
+		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`, `test -n "$(OFFLINE_ENFORCED)"`},
+		{"missing namespace proof", `test "$$current_net" != "$$host_net"`, `test -n "$$current_net"`},
+		{"missing inherited offline Go modules", `GOENV="$$go_env"`, `GOENV=`},
+		{"quality omits bounded campaign", "quality: preflight contract beads-contract", "quality: preflight contract"},
+	}
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			changed := strings.Replace(makefile, mutant.old, mutant.new, 1)
+			if changed == makefile {
+				t.Fatal("mutant did not alter Makefile fixture")
+			}
+			want := mutant.name
+			for _, prefix := range []string{"missing ", "removed ", "raised "} {
+				want = strings.TrimPrefix(want, prefix)
+			}
+			if err := validateProviderMakeControls(changed); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("mutant error=%v want control=%q", err, want)
+			}
+		})
+	}
+}
+
+func TestBeadsQualificationWorkflowControlsAndMutants(t *testing.T) {
+	path := filepath.Join(campaignRepositoryRoot(t), ".github", "workflows", "beads-qualification.yml")
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(payload)
+	if err := validateBeadsWorkflow(workflow); err != nil {
+		t.Fatal(err)
+	}
+	mutants := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{"unpinned action", "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "actions/checkout@v4"},
+		{"checkout credentials", "persist-credentials: false", "persist-credentials: true"},
+		{"missing digest comparison", `test "$(sha256sum -- "$BEADS_BIN" | awk '{print $1}')" = "$QUALIFIED_BEADS_DIGEST"`, `test -x "$BEADS_BIN"`},
+		{"missing installer schema", `(keys | length == 9) and .schema_version == 1`, `.schema_version == 1`},
+		{"PATH fallback", `case "$beads_bin" in "$RUNNER_TEMP"/*)`, `command -v bd; case "$beads_bin" in *)`},
+		{"network-enabled qualification", "unshare --net --mount-proc", "sh"},
+		{"unpinned dolt server", "github.com/dolthub/dolt/go/cmd/dolt@v0.40.5-0.20260605230755-1bf533220ab0", "github.com/dolthub/dolt/go/cmd/dolt@latest"},
+		{"missing shared server", `"$DOLT_BIN" sql-server --host 127.0.0.1 --port 3307`, `test -x "$DOLT_BIN"`},
+		{"missing exact server tuple", "export BEADS_SERVER_ID=dolt-v0.40.5-1bf533220ab0", "export BEADS_SERVER_ID="},
+		{"missing server cleanup", "trap cleanup EXIT INT TERM", "true # cleanup omitted"},
+		{"omitted artifact on failure", "if: always()\n        uses: actions/upload-artifact", "if: success()\n        uses: actions/upload-artifact"},
+		{"accepted skip", `test "$(jq -r .verdict "$evidence")" = pass`, `test "$(jq -r .verdict "$evidence")" != fail`},
+		{"raised PR budget", `"budget_ms":600000`, `"budget_ms":700000`},
+	}
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			changed := strings.Replace(workflow, mutant.old, mutant.new, 1)
+			if changed == workflow {
+				t.Fatal("mutant did not alter workflow fixture")
+			}
+			if err := validateBeadsWorkflow(changed); err == nil || !strings.Contains(err.Error(), mutant.name) {
+				t.Fatalf("mutant error=%v want=%q", err, mutant.name)
+			}
+		})
+	}
+}
+
+func validateBeadsWorkflow(workflow string) error {
+	controls := []struct {
+		name string
+		text string
+	}{
+		{"permissions", "permissions:\n  contents: read"},
+		{"checkout credentials", "persist-credentials: false"},
+		{"concurrency cancellation", "cancel-in-progress:"},
+		{"bounded trigger", "if: github.event_name == 'pull_request' || github.event_name == 'push'"},
+		{"real trigger", "if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"},
+		{"bounded timeout", "timeout-minutes: 15"},
+		{"real timeout", "timeout-minutes: 45"},
+		{"missing digest comparison", `test "$(sha256sum -- "$BEADS_BIN" | awk '{print $1}')" = "$QUALIFIED_BEADS_DIGEST"`},
+		{"missing installer schema", `(keys | length == 9) and .schema_version == 1`},
+		{"PATH fallback", `case "$beads_bin" in "$RUNNER_TEMP"/*)`},
+		{"network-enabled qualification", "unshare --net --mount-proc"},
+		{"unpinned dolt server", "github.com/dolthub/dolt/go/cmd/dolt@v0.40.5-0.20260605230755-1bf533220ab0"},
+		{"missing shared server", `"$DOLT_BIN" sql-server --host 127.0.0.1 --port 3307`},
+		{"missing exact server tuple", "export BEADS_SERVER_ID=dolt-v0.40.5-1bf533220ab0"},
+		{"missing server endpoint", "export BEADS_SERVER_ENDPOINT=127.0.0.1:3307"},
+		{"missing server host", "export DOLT_SERVER_HOST=127.0.0.1"},
+		{"missing server port", "export DOLT_SERVER_PORT=3307"},
+		{"missing server cleanup", "trap cleanup EXIT INT TERM"},
+		{"missing server termination", `kill "$server_pid" 2>/dev/null || true`},
+		{"offline modules", "GOPROXY: \"off\""},
+		{"setup evidence", "setup.non-admissible.json"},
+		{"isolated runner paths", "$RUNNER_TEMP/beads-provider-"},
+		{"pinned installer", "scripts/install-qualified-beads.sh --dest \"$TOOL_DIR\""},
+		{"accepted skip", `test "$(jq -r .verdict "$evidence")" = pass`},
+		{"raised PR budget", `"budget_ms":600000`},
+		{"real budget", `"budget_ms":2700000`},
+		{"baseline pending", `HOSTED_BASELINE_STATE: baseline_pending`},
+		{"baseline count", `HOSTED_BASELINE_SAMPLE_COUNT: "0"`},
+		{"monotonic timing", "time.monotonic_ns()"},
+		{"finite retention", "retention-days: 14"},
+	}
+	for _, control := range controls {
+		if !strings.Contains(workflow, control.text) {
+			return fmt.Errorf("%s control is missing", control.name)
+		}
+	}
+	install := strings.Index(workflow, `go install "$QUALIFIED_DOLT_MODULE"`)
+	offline := strings.Index(workflow, "unshare --net --mount-proc")
+	server := strings.Index(workflow, `"$DOLT_BIN" sql-server`)
+	qualification := strings.Index(workflow, "make beads-qualification")
+	if install < 0 || offline < 0 || server < 0 || qualification < 0 || !(install < offline && offline < server && server < qualification) {
+		return errors.New("offline pinned shared-server lifecycle ordering is invalid")
+	}
+	if strings.Count(workflow, `GOPROXY: "off"`) < 2 || strings.Count(workflow, `GOSUMDB: "off"`) < 2 {
+		return errors.New("offline modules control is missing")
+	}
+	if strings.Count(workflow, "persist-credentials: false") != 2 {
+		return errors.New("checkout credentials control is missing")
+	}
+	if strings.Count(workflow, "if: always()\n        uses: actions/upload-artifact") != 2 {
+		return errors.New("omitted artifact on failure control is missing")
+	}
+	pinnedAction := regexp.MustCompile(`(?m)^\s*uses:\s*[^@\s]+@[0-9a-f]{40}(?:\s+#.*)?$`)
+	for _, line := range strings.Split(workflow, "\n") {
+		if strings.Contains(line, "uses:") && !pinnedAction.MatchString(line) {
+			return fmt.Errorf("unpinned action control rejected %q", line)
+		}
+	}
+	for _, forbidden := range []string{"*.stderr.log", "*.go-test.jsonl", "provider database", "native-backup"} {
+		if strings.Contains(workflow, forbidden) {
+			return fmt.Errorf("artifact allowlist contains forbidden %q", forbidden)
+		}
+	}
+	return nil
+}
+
+func validateProviderMakeControls(makefile string) error {
+	required := []struct {
+		control string
+		text    string
+	}{
+		{"one profile", "-campaign provider_bounded"},
+		{"raised PR budget", "-timeout 5m"},
+		{"PATH fallback", `case "$(BEADS_BIN)" in /*)`},
+		{"missing digest comparison", `test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)"`},
+		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`},
+		{"missing namespace proof", `test "$$current_net" != "$$host_net"`},
+		{"quality omits bounded campaign", "quality: preflight contract beads-contract"},
+		{"installer tuple", `.source_commit == "6c124203e771433a3550c348771a5b5e27fd3c21"`},
+		{"installer schema", `(keys | length == 9) and .schema_version == 1`},
+		{"offline Go modules", "GOPROXY=off GOSUMDB=off"},
+		{"inherited offline Go modules", `GOENV="$$go_env"`},
+		{"failure evidence", "beads-qualification.non-admissible.json"},
+	}
+	for _, requirement := range required {
+		if !strings.Contains(makefile, requirement.text) {
+			return fmt.Errorf("%s control is missing", requirement.control)
+		}
+	}
+	return nil
 }
 
 func validateMakeCampaignBinding(makefile, target, campaign string) error {

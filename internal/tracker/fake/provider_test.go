@@ -43,13 +43,13 @@ func TestProviderPersistsWorkAndCASMutations(t *testing.T) {
 		t.Fatalf("same-operation replay = %+v, %v", replayed, err)
 	}
 	comment, err := provider.CompareAndAddComment(ctx, tracker.CommentRequest{
-		WorkKey: "TK-1", ExpectedRevision: 2, Body: "observed", Marker: "operation-comment",
+		WorkKey: "TK-1", ExpectedRevision: 2, Author: "agent-a", Body: "observed", Marker: "operation-comment",
 	})
 	if err != nil || comment.Revision != 3 || comment.Marker != "operation-comment" {
 		t.Fatalf("comment = %+v, %v", comment, err)
 	}
 	replayedComment, err := provider.CompareAndAddComment(ctx, tracker.CommentRequest{
-		WorkKey: "TK-1", ExpectedRevision: 2, Body: "observed", Marker: "operation-comment",
+		WorkKey: "TK-1", ExpectedRevision: 2, Author: "agent-a", Body: "observed", Marker: "operation-comment",
 	})
 	if err != nil || !replayedComment.Replayed || replayedComment.Marker != "operation-comment" || replayedComment.Revision != 3 {
 		t.Fatalf("comment replay = %+v, %v", replayedComment, err)
@@ -61,7 +61,7 @@ func TestProviderPersistsWorkAndCASMutations(t *testing.T) {
 	}
 	provider = fake.NewProvider(store)
 	work, err = provider.Read(ctx, "TK-1")
-	if err != nil || work.Revision != 3 || work.Assignee != "agent-a" || work.AssignmentMarker != "operation-assign" || len(work.Comments) != 1 {
+	if err != nil || work.Revision != 3 || work.Assignee != "agent-a" || work.AssignmentMarker != "operation-assign" || len(work.Comments) != 1 || work.Comments[0].Author != "agent-a" {
 		t.Fatalf("reopened work = %+v, %v", work, err)
 	}
 }

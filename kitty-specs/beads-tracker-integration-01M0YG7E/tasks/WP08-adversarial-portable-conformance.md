@@ -16,7 +16,7 @@ requirement_refs:
 - NFR-014
 planning_base_branch: feat/beads-tracker-integration
 merge_target_branch: feat/beads-tracker-integration
-branch_strategy: Planning artifacts for this mission were generated on feat/beads-tracker-integration. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/beads-tracker-integration unless the human explicitly redirects the landing branch.
+branch_strategy: Start the WP08 lane from the accepted combined results of WP06 and WP07, use only the Spec Kitty worktree allocated to this package, and merge the reviewed candidate into feat/beads-tracker-integration; do not edit or push directly to main.
 subtasks:
 - T038
 - T039
@@ -40,14 +40,8 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
-- internal/tracker/conformance/suite.go
-- internal/tracker/conformance/suite_test.go
-- internal/tracker/conformance/catalog.go
-- internal/tracker/conformance/graph.go
-- internal/tracker/conformance/discussion.go
-- internal/tracker/conformance/assignment.go
-- internal/tracker/beads/testdata/dishonest_bd.go
-- internal/tracker/beads/testdata/scenario.schema.json
+- internal/tracker/conformance/**
+- internal/tracker/beads/testdata/**
 - internal/scenario/beads_fault_test.go
 - internal/scenario/beads_fault_helpers_test.go
 role: investigator

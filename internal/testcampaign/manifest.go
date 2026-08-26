@@ -21,7 +21,9 @@ type Profile struct {
 type Campaign struct {
 	Name              string
 	Profiles          []string
+	RequiredProfiles  []string
 	UniversalTest     string
+	RequiredTests     []string
 	RequireUniversal  bool
 	RequireStaleProbe bool
 }
@@ -35,6 +37,7 @@ var profiles = map[string]Profile{
 			"TestCloseoutOrchestratorAPI13ProjectionContract",
 			"TestCurrentProductionGraphPassesClosedPolicy",
 			"TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority",
+			"TestDefaultPolicyPinsTrackerConformanceAsOneWayQualityTooling",
 			"TestDefaultPolicyRejectsAuthorityImportOfGitAdapter",
 			"TestDefaultReachabilityRegistryPassesCurrentRepository",
 			"TestDeferredRuntimeSurfaceDoesNotGrepMarkdownProse",
@@ -83,6 +86,52 @@ var profiles = map[string]Profile{
 		ExpectedTests: []string{
 			"TestPhase1ProductionDependencyAndArchitectureScope",
 			"TestPhase1SourceScopeMutantControl",
+		},
+	},
+	"provider-portable": {
+		Name:    "provider-portable",
+		Package: "./internal/tracker/conformance",
+		Pattern: "^(TestDurableFakePortableConformance|TestRegistryAndCapabilityMutantsFailClosed)$",
+		ExpectedTests: []string{
+			"TestDurableFakePortableConformance",
+			"TestRegistryAndCapabilityMutantsFailClosed",
+		},
+	},
+	"provider-adversarial": {
+		Name:    "provider-adversarial",
+		Package: "./internal/scenario",
+		Pattern: "^(TestBeadsDishonestRunsSharedPortableConformance|TestBeadsDishonestSharedConformanceKillsDeletedPublicMethods|TestBeadsDishonestProtocolFaultMatrix|TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions|TestBeadsFaultRegistryExactCensus|TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant|TestBeadsFaultAuthorityAuditKillsUnrelatedProviderRoutingMutant|TestBeadsDishonestTruthfulWarningStaleAndWrongState|TestBeadsDishonestSlowCancellationKillsChild|TestBeadsDishonestExplicitBarrierSurvivesSchedulerLoad|TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry|TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry|TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry|TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry|TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry|TestBeadsUnsafeDecisionMutantsAreKilled|TestBeadsHumanAssignmentPreservation100|TestBeadsHumanAssignmentCampaignKillsPostAttributionOverwriteMutant|TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe|TestBeadsFaultDiagnosticsNeverTreatProseAsAuthority)$",
+		ExpectedTests: []string{
+			"TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry",
+			"TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry",
+			"TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry",
+			"TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry",
+			"TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry",
+			"TestBeadsDishonestExplicitBarrierSurvivesSchedulerLoad",
+			"TestBeadsDishonestProtocolFaultMatrix",
+			"TestBeadsDishonestRunsSharedPortableConformance",
+			"TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions",
+			"TestBeadsDishonestSharedConformanceKillsDeletedPublicMethods",
+			"TestBeadsDishonestSlowCancellationKillsChild",
+			"TestBeadsDishonestTruthfulWarningStaleAndWrongState",
+			"TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant",
+			"TestBeadsFaultAuthorityAuditKillsUnrelatedProviderRoutingMutant",
+			"TestBeadsFaultDiagnosticsNeverTreatProseAsAuthority",
+			"TestBeadsFaultRegistryExactCensus",
+			"TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe",
+			"TestBeadsHumanAssignmentCampaignKillsPostAttributionOverwriteMutant",
+			"TestBeadsHumanAssignmentPreservation100",
+			"TestBeadsUnsafeDecisionMutantsAreKilled",
+		},
+	},
+	"provider-real": {
+		Name:    "provider-real",
+		Package: "./internal/tracker/beads",
+		Pattern: "^(TestRealBeadsBackupQualification|TestRealBeadsQualification|TestRealBeadsWorktreeQualification)$",
+		ExpectedTests: []string{
+			"TestRealBeadsBackupQualification",
+			"TestRealBeadsQualification",
+			"TestRealBeadsWorktreeQualification",
 		},
 	},
 	"fault": {
@@ -200,6 +249,20 @@ var campaigns = map[string]Campaign{
 		Name: "full_campaign", Profiles: []string{"full-scenario"},
 		UniversalTest: "TestFullCampaignUniversalInvariants", RequireUniversal: true, RequireStaleProbe: true,
 	},
+	"provider_bounded": {
+		Name: "provider_bounded", Profiles: []string{"provider-portable", "provider-adversarial"},
+		RequiredProfiles: []string{"provider-adversarial", "provider-portable"},
+		UniversalTest:    "TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe",
+		RequiredTests:    []string{"TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe", "TestBeadsHumanAssignmentPreservation100"},
+		RequireUniversal: true, RequireStaleProbe: true,
+	},
+	"provider_real": {
+		Name: "provider_real", Profiles: []string{"provider-real"},
+		RequiredProfiles: []string{"provider-real"},
+		UniversalTest:    "TestRealBeadsQualification",
+		RequiredTests:    []string{"TestRealBeadsBackupQualification", "TestRealBeadsQualification", "TestRealBeadsWorktreeQualification"},
+		RequireUniversal: true, RequireStaleProbe: true,
+	},
 }
 
 func ProfileByName(name string) (Profile, error) {
@@ -217,6 +280,8 @@ func CampaignByName(name string) (Campaign, error) {
 		return Campaign{}, fmt.Errorf("unknown campaign %q", name)
 	}
 	campaign.Profiles = append([]string(nil), campaign.Profiles...)
+	campaign.RequiredProfiles = append([]string(nil), campaign.RequiredProfiles...)
+	campaign.RequiredTests = append([]string(nil), campaign.RequiredTests...)
 	return campaign, ValidateCampaign(campaign)
 }
 
@@ -228,17 +293,57 @@ func ValidateCampaign(campaign Campaign) error {
 		return fmt.Errorf("campaign %s must require universal invariants and stale probing", campaign.Name)
 	}
 	foundUniversal := false
+	foundTests := make(map[string]bool)
+	seenProfiles := make(map[string]bool, len(campaign.Profiles))
 	for _, name := range campaign.Profiles {
+		if seenProfiles[name] {
+			return fmt.Errorf("campaign %s repeats profile %s", campaign.Name, name)
+		}
+		seenProfiles[name] = true
 		profile, err := ProfileByName(name)
 		if err != nil {
 			return err
 		}
 		foundUniversal = foundUniversal || slices.Contains(profile.ExpectedTests, campaign.UniversalTest)
+		for _, test := range profile.ExpectedTests {
+			foundTests[test] = true
+		}
 	}
 	if !foundUniversal {
 		return fmt.Errorf("campaign %s omits universal test %s", campaign.Name, campaign.UniversalTest)
 	}
+	for _, required := range campaign.RequiredProfiles {
+		if !seenProfiles[required] {
+			return fmt.Errorf("campaign %s omits required profile %s", campaign.Name, required)
+		}
+	}
+	if !sortedUniqueNonempty(campaign.RequiredProfiles) {
+		return fmt.Errorf("campaign %s required profiles must be sorted, unique, and nonempty", campaign.Name)
+	}
+	if !sortedUniqueNonempty(campaign.RequiredTests) {
+		return fmt.Errorf("campaign %s required tests must be sorted, unique, and nonempty", campaign.Name)
+	}
+	for _, required := range campaign.RequiredTests {
+		if !foundTests[required] {
+			return fmt.Errorf("campaign %s omits required test %s", campaign.Name, required)
+		}
+	}
 	return nil
+}
+
+func sortedUniqueNonempty(values []string) bool {
+	if len(values) == 0 {
+		return true
+	}
+	if !slices.IsSorted(values) {
+		return false
+	}
+	for index, value := range values {
+		if strings.TrimSpace(value) == "" || (index > 0 && values[index-1] == value) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateProfile(profile Profile) error {
