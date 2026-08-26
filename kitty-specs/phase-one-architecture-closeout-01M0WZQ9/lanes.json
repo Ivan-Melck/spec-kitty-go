@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
+  "mission_id": "01M0WZQ99NY46D61XSJA6BYSGV",
+  "mission_branch": "kitty/mission-phase-one-architecture-closeout-01M0WZQ9",
+  "target_branch": "feat/phase-one-architecture-closeout",
+  "lanes": [
+    {
+      "lane_id": "lane-a",
+      "wp_ids": [
+        "WP01"
+      ],
+      "write_scope": [
+        "internal/architecture/**",
+        "internal/scenario/repetition_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-b",
+      "wp_ids": [
+        "WP02"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/authority_test.go",
+        "internal/controlstore/sqlite/integration.go",
+        "internal/controlstore/sqlite/integration_refusal_test.go",
+        "internal/controlstore/sqlite/integration_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-c",
+      "wp_ids": [
+        "WP03"
+      ],
+      "write_scope": [
+        "internal/controlstore/store.go",
+        "internal/execution/lease.go",
+        "internal/execution/lease_test.go",
+        "internal/execution/model.go",
+        "internal/execution/start.go",
+        "internal/execution/start_test.go",
+        "internal/governancecontext/**",
+        "internal/ids/governance_context.go"
+      ],
+      "predicted_surfaces": [
+        "api"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-d",
+      "wp_ids": [
+        "WP04"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/authority.go",
+        "internal/controlstore/sqlite/db.go",
+        "internal/controlstore/sqlite/governance_context.go",
+        "internal/controlstore/sqlite/governance_context_test.go",
+        "internal/controlstore/sqlite/migrations.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-c"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-e",
+      "wp_ids": [
+        "WP05"
+      ],
+      "write_scope": [
+        ".github/workflows/full-campaign.yml",
+        ".github/workflows/quality.yml",
+        "Makefile",
+        "internal/scenario/campaign_test.go",
+        "internal/testcampaign/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b",
+        "lane-d"
+      ],
+      "parallel_group": 2
+    },
+    {
+      "lane_id": "lane-f",
+      "wp_ids": [
+        "WP06"
+      ],
+      "write_scope": [
+        ".gitignore",
+        "README.md",
+        "docs/ORCHESTRATOR_API_1_3_PROJECTION.md",
+        "docs/PHASE1_ACCEPTANCE_ERRATA.md",
+        "docs/PYTHON_BEHAVIOR_INVENTORY.md",
+        "docs/phase1-evidence/closeout-results.json"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b",
+        "lane-d",
+        "lane-e"
+      ],
+      "parallel_group": 3
+    }
+  ],
+  "computed_at": "2026-08-25T17:51:57.163594+00:00",
+  "computed_from": "dependency_graph+ownership",
+  "planning_artifact_wps": [],
+  "planning_commit_sha": "208c105fcc6b82abb503dcc295a60b25e5210b18"
+}
