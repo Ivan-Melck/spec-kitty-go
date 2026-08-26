@@ -194,6 +194,9 @@
       "last_event_id": "01M0Z31VD12X45DC9MDTG9DNJN",
       "last_transition_at": "2026-08-26T13:09:49.089758+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: exact dependency direction/remove, diagnostic readiness, durable marked discussion, and ambiguity refusal are implemented; focused/race/repeat/vet/static/architecture/scope gates pass"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
