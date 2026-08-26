@@ -202,7 +202,7 @@
     },
     "WP06": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 1,
@@ -211,6 +211,7 @@
       "last_transition_at": "2026-08-26T04:33:38.970539+00:00",
       "model": "__resolved_model_absent__",
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/phase-one-architecture-closeout-01M0WZQ9/tasks/WP06-closeout-documentation-and-qualification/review-cycle-1.md",
         "reference": "review-cycle://phase-one-architecture-closeout-01M0WZQ9/WP06-closeout-documentation-and-qualification/review-cycle-1.md",
@@ -218,14 +219,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T027": "done",
-        "T028": "done",
-        "T029": "done",
-        "T030": "done",
-        "T031": "done"
+        "T027": "planned",
+        "T028": "planned",
+        "T029": "planned",
+        "T030": "planned",
+        "T031": "planned"
       }
     }
   }
