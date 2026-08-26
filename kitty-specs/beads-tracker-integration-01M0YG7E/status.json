@@ -186,7 +186,7 @@
     },
     "WP06": {
       "actor": "codex",
-      "agent": null,
+      "agent": "codex",
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 7,
@@ -197,7 +197,8 @@
       "notes": [
         "Ready for review: exact dependency direction/remove, diagnostic readiness, durable marked discussion, and ambiguity refusal are implemented; focused/race/repeat/vet/static/architecture/scope gates pass",
         "Correction cycle 2: complete-catalog readiness validation, consistent fail-closed capabilities, and bounded provider-neutral graph/discussion caller; approved command/catalog/inspect/helpercmd ownership expansion retained. Forced only past the known inherited planning-artifact lane guard.",
-        "Correction cycle 3: recording Graph/Discussion doubles prove exact helper mutation dispatch, request translation, result forwarding, error propagation, and deletion sensitivity. Forced only past the known inherited planning-artifact lane guard."
+        "Correction cycle 3: recording Graph/Discussion doubles prove exact helper mutation dispatch, request translation, result forwarding, error propagation, and deletion sensitivity. Forced only past the known inherited planning-artifact lane guard.",
+        "Correction cycle 4: every mutation helper test now asserts a complete six-method Graph/Discussion call census on success and sentinel-error paths, with an explicit extra cross-interface-call mutant control. Forced only past the known inherited planning-artifact lane guard."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
