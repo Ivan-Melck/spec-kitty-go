@@ -550,8 +550,8 @@ func helperCoordinationBeadsExecutable(t *testing.T, root string) string {
 	path := filepath.Join(root, "bd-coordination-helper")
 	script := `#!/bin/sh
 set -eu
-issue_a='{"id":"bd-a","title":"Work A","description":"","acceptance":"","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-a","created_by_operation":"operation-create-a","last_operation":"operation-create-a","criteria":[],"design_context":"","content_digest":"digest-a"}},"updated_at":"2026-08-26T12:00:00Z"}'
-issue_b='{"id":"bd-b","title":"Work B","description":"","acceptance":"","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-b","created_by_operation":"operation-create-b","last_operation":"operation-create-b","criteria":[],"design_context":"","content_digest":"digest-b"}},"updated_at":"2026-08-26T12:00:01Z"}'
+issue_a='{"id":"bd-a","title":"Work A","description":"","acceptance_criteria":"","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-a","created_by_operation":"operation-create-a","last_operation":"operation-create-a","criteria":[],"design_context":"","content_digest":"digest-a"}},"updated_at":"2026-08-26T12:00:00Z","dependency_count":1,"dependent_count":0,"comment_count":1}'
+issue_b='{"id":"bd-b","title":"Work B","description":"","acceptance_criteria":"","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-b","created_by_operation":"operation-create-b","last_operation":"operation-create-b","criteria":[],"design_context":"","content_digest":"digest-b"}},"updated_at":"2026-08-26T12:00:01Z","dependency_count":0,"dependent_count":1,"comment_count":0}'
 case "$1:$2" in
 version:--json) printf '%s\n' '{"schema_version":1,"data":{"version":"1.2.2","build":"helper-coordination"}}' ;;
 where:--json) printf '{"schema_version":1,"data":{"path":"%s","prefix":"db-1","database_path":"%s/embeddeddolt"}}\n' "$BEADS_DIR" "$BEADS_DIR" ;;
@@ -560,8 +560,8 @@ dolt:status) printf '{"schema_version":1,"data":{"data_dir":"%s/embeddeddolt","d
 list:--json) printf '{"schema_version":1,"data":[%s,%s]}\n' "$issue_a" "$issue_b" ;;
 ready:--json) printf '{"schema_version":1,"data":[%s]}\n' "$issue_a" ;;
 show:bd-a) printf '{"schema_version":1,"data":[%s]}\n' "$issue_a" ;;
-dep:list) printf '%s\n' '{"schema_version":1,"data":[{"blocked":"bd-a","blocking":"bd-b","kind":"blocks","edge_id":"edge-1"}]}' ;;
-comments:bd-a) printf '%s\n' '{"schema_version":1,"data":[{"id":"comment-human","author":"human","body":"human discussion","created_at":"2026-08-26T12:00:02Z"}]}' ;;
+dep:list) printf '%s\n' '{"schema_version":1,"data":[{"id":"bd-b","dependency_type":"blocks","edge_id":"edge-1","future_optional":true}]}' ;;
+comments:bd-a) printf '%s\n' '{"schema_version":1,"data":[{"id":"comment-human","author":"human","text":"human discussion","created_at":"2026-08-26T12:00:02Z","future_optional":true}]}' ;;
 *) exit 64 ;;
 esac
 `

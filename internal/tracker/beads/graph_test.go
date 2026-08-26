@@ -26,17 +26,10 @@ type wp06Issue struct {
 }
 
 func (issue wp06Issue) wire() map[string]any {
-	comments := make([]map[string]any, 0, len(issue.Comments))
-	for _, comment := range issue.Comments {
-		comments = append(comments, map[string]any{
-			"id": comment.ID, "author": comment.Author, "body": comment.Body,
-			"created_at": comment.CreatedAt, "future_optional": true,
-		})
-	}
 	return map[string]any{
-		"id": issue.ID, "title": issue.Title, "description": "description", "acceptance": "",
-		"metadata": json.RawMessage(issue.Metadata), "comments": comments, "updated_at": issue.UpdatedAt,
-		"future_optional": map[string]any{"ignored": true},
+		"id": issue.ID, "title": issue.Title, "description": "description", "acceptance_criteria": "",
+		"metadata": json.RawMessage(issue.Metadata), "updated_at": issue.UpdatedAt,
+		"dependency_count": 0, "comment_count": len(issue.Comments), "future_optional": map[string]any{"ignored": true},
 	}
 }
 
@@ -92,21 +85,24 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 		if !present {
 			return providerFailureResult(request.kind, "not_found")
 		}
-		data = issue.wire()
+		data = []map[string]any{issue.wire()}
 	case CommandReady:
 		data = runner.issueWiresLocked(runner.ready)
 	case CommandDependencyList:
 		blocked := request.argv[2]
-		edges := make([]observationDependency, 0)
+		edges := make([]map[string]any, 0)
 		for _, edge := range runner.edges {
 			if edge.Blocked == blocked {
-				edges = append(edges, edge)
+				edges = append(edges, map[string]any{
+					"id": edge.Blocking, "dependency_type": edge.Kind,
+					"edge_id": edge.EdgeID, "future_optional": true,
+				})
 			}
 		}
 		data = edges
 	case CommandDependencyAdd:
 		runner.edges = append(runner.edges, observationDependency{Blocked: request.argv[2], Blocking: request.argv[3], Kind: "blocks", EdgeID: "edge-1"})
-		data = map[string]any{"ok": true}
+		data = map[string]any{"depends_on_id": request.argv[3], "dependency_type": "blocks", "future_optional": true}
 		result.mutationOutcome = mutationApplied
 	case CommandDependencyRemove:
 		blocked, blocker := request.argv[2], request.argv[3]
@@ -117,13 +113,13 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 			}
 		}
 		runner.edges = kept
-		data = map[string]any{"ok": true}
+		data = map[string]any{"depends_on_id": blocker, "dependency_type": "blocks", "future_optional": true}
 		result.mutationOutcome = mutationApplied
 	case CommandCommentList:
 		issue := runner.issues[request.argv[1]]
 		comments := make([]map[string]any, 0, len(issue.Comments))
 		for _, comment := range issue.Comments {
-			comments = append(comments, map[string]any{"id": comment.ID, "author": comment.Author, "body": comment.Body, "created_at": comment.CreatedAt, "unknown": 1})
+			comments = append(comments, map[string]any{"id": comment.ID, "author": comment.Author, "text": comment.Body, "created_at": comment.CreatedAt, "unknown": 1})
 		}
 		data = comments
 	case CommandCommentAppend:
@@ -147,6 +143,53 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 	}
 	result.stdout, _ = json.Marshal(map[string]any{"schema_version": 1, "data": data})
 	return result
+}
+
+const realV122DependencyList = `[{"id":"bd-distinct-prerequisite","dependency_type":"blocks","title":"Blocker","status":"open","dependency_count":0,"future_optional":{"ignored":true}}]`
+
+const realV122DependencyReceipt = `{"depends_on_id":"bd-distinct-prerequisite","dependency_type":"blocks","future_optional":{"ignored":true}}`
+
+const realV122ReadyList = `[{"id":"bd-ready","title":"Ready work","description":"","acceptance_criteria":"","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-ready","created_by_operation":"operation-create-ready","last_operation":"operation-create-ready","criteria":[],"design_context":"","content_digest":"digest-ready"}},"updated_at":"2026-08-26T12:00:00Z","dependency_count":0,"dependent_count":0,"comment_count":0,"future_optional":{"ignored":true}}]`
+
+func TestRealV122DependencyAndReadyPayloadShapes(t *testing.T) {
+	var dependencies []json.RawMessage
+	if err := json.Unmarshal([]byte(realV122DependencyList), &dependencies); err != nil || len(dependencies) != 1 {
+		t.Fatalf("dependency fixture records=%d error=%v", len(dependencies), err)
+	}
+	edge, err := decodeProviderDependency(dependencies[0], "bd-asymmetric-blocked")
+	if err != nil || edge.Blocked != "bd-asymmetric-blocked" || edge.Blocking != "bd-distinct-prerequisite" || edge.Kind != "blocks" {
+		t.Fatalf("edge=%#v error=%v", edge, err)
+	}
+	var receipt map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(realV122DependencyReceipt), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	receiptBlocker, present, err := optionalString(receipt, "depends_on_id")
+	if err != nil || !present || receiptBlocker != "bd-distinct-prerequisite" {
+		t.Fatalf("receipt blocker=%q present=%t error=%v", receiptBlocker, present, err)
+	}
+	for name, payload := range map[string]string{
+		"receipt cannot masquerade as list record": realV122DependencyReceipt,
+		"missing blocker":                          `{"dependency_type":"blocks"}`,
+		"non-string blocker":                       `{"id":7,"dependency_type":"blocks"}`,
+		"missing kind":                             `{"id":"bd-distinct-prerequisite"}`,
+		"non-object record":                        `[]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeProviderDependency([]byte(payload), "bd-asymmetric-blocked"); !tracker.IsKind(err, tracker.ErrorMalformedProtocol) {
+				t.Fatalf("payload=%s error=%v", payload, err)
+			}
+		})
+	}
+
+	var ready []json.RawMessage
+	if err := json.Unmarshal([]byte(realV122ReadyList), &ready); err != nil || len(ready) != 1 {
+		t.Fatalf("ready fixture records=%d error=%v", len(ready), err)
+	}
+	issue, err := decodeProviderIssue(ready[0])
+	if err != nil || issue.externalID != "bd-ready" || issue.document.kitty.WorkID != "work-ready" {
+		t.Fatalf("ready issue=%#v error=%v", issue, err)
+	}
 }
 
 func (runner *wp06Runner) issueWiresLocked(selected []string) []map[string]any {

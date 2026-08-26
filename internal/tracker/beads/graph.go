@@ -352,26 +352,19 @@ func decodeProviderDependency(payload []byte, defaultBlocked string) (observatio
 	if err := decodeJSONObject(payload, &fields); err != nil {
 		return observationDependency{}, metadataProtocolError("provider dependency must be a JSON object", err)
 	}
-	blocked, err := firstOptionalString(fields, "blocked", "issue_id", "dependent_id")
-	if err != nil {
-		return observationDependency{}, metadataProtocolError("provider blocked endpoint is malformed", err)
-	}
-	if blocked == "" {
-		blocked = defaultBlocked
-	}
-	blocking, err := firstOptionalString(fields, "blocking", "depends_on_id", "dependency_id")
-	if err != nil || blocking == "" {
+	blocking, present, err := optionalString(fields, "id")
+	if err != nil || !present || blocking == "" {
 		return observationDependency{}, metadataProtocolError("provider blocking endpoint is missing or malformed", err)
 	}
-	kind, err := firstOptionalString(fields, "kind", "type", "dependency_type")
-	if err != nil || kind == "" {
+	kind, present, err := optionalString(fields, "dependency_type")
+	if err != nil || !present || kind == "" {
 		return observationDependency{}, metadataProtocolError("provider dependency kind is missing or malformed", err)
 	}
 	edgeID, err := firstOptionalString(fields, "edge_id")
 	if err != nil {
 		return observationDependency{}, metadataProtocolError("provider dependency identity is malformed", err)
 	}
-	return observationDependency{Blocked: blocked, Blocking: blocking, Kind: kind, EdgeID: edgeID}, nil
+	return observationDependency{Blocked: defaultBlocked, Blocking: blocking, Kind: kind, EdgeID: edgeID}, nil
 }
 
 func firstOptionalString(fields map[string]json.RawMessage, keys ...string) (string, error) {

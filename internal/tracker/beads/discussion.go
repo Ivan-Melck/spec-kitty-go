@@ -244,9 +244,9 @@ func decodeProviderComment(payload []byte) (tracker.DiscussionEntry, observation
 	if err != nil {
 		return tracker.DiscussionEntry{}, observationComment{}, metadataProtocolError("provider comment author is malformed", err)
 	}
-	body, present, err := optionalString(fields, "body")
+	body, present, err := optionalString(fields, "text")
 	if err != nil || !present {
-		return tracker.DiscussionEntry{}, observationComment{}, metadataProtocolError("provider comment body is missing or malformed", err)
+		return tracker.DiscussionEntry{}, observationComment{}, metadataProtocolError("provider comment text is missing or malformed", err)
 	}
 	createdAtText, err := firstOptionalString(fields, "created_at", "created")
 	if err != nil {
