@@ -38,16 +38,24 @@ func runCommandHelper() int {
 		fmt.Fprintln(os.Stderr, "completely different warning wording {not-json}")
 		fmt.Print(`{"schema_version":1,"data":{"id":"work-1"}}`)
 	case "error":
-		fmt.Fprintln(os.Stderr, `{"schema_version":1,"error":"gone","code":"not_found"}`)
+		fmt.Print(`{"schema_version":1,"error":"gone","code":"not_found"}`)
+		fmt.Fprintln(os.Stderr, "human provider error")
 		return 7
+	case "real-show-missing":
+		fmt.Print(realV122MissingShowStdout)
+		fmt.Fprint(os.Stderr, realV122MissingShowStderr)
+		return 1
 	case "prose-error":
 		fmt.Fprintln(os.Stderr, "not found maybe")
+		return 7
+	case "stderr-error-mutant":
+		fmt.Fprintln(os.Stderr, `{"schema_version":1,"error":"gone","code":"not_found"}`)
 		return 7
 	case "nested-error-warning":
 		fmt.Fprintln(os.Stderr, `{"wrapper":{"schema_version":1,"error":"spoof","code":"not_found"}}`)
 		return 7
 	case "signal-error":
-		fmt.Fprintln(os.Stderr, `{"schema_version":1,"error":"gone","code":"not_found"}`)
+		fmt.Print(`{"schema_version":1,"error":"gone","code":"not_found"}`)
 		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
 		time.Sleep(time.Second)
 		return 7
@@ -91,6 +99,10 @@ func runCommandHelper() int {
 	}
 	return 0
 }
+
+const realV122MissingShowStdout = "{\n  \"data\": {\n    \"error\": \"no issues found matching the provided IDs\"\n  },\n  \"schema_version\": 1\n}\n"
+
+const realV122MissingShowStderr = "Error fetching skt-missing: no issue found matching \"skt-missing\"\n"
 
 func mustGetwd() string { value, _ := os.Getwd(); return value }
 
@@ -333,6 +345,51 @@ func TestProcessRunnerSuccessWarningsAndDocumentedError(t *testing.T) {
 	response, err = adapter.execute(context.Background(), rejected)
 	if err == nil || response.result.mutationOutcome != mutationNotApplied {
 		t.Fatalf("err=%v outcome=%s", err, response.result.mutationOutcome)
+	}
+}
+
+func TestRealV122MissingShowMapsNotFoundFromStdoutEnvelope(t *testing.T) {
+	adapter := newAdapter(newProcessRunner())
+	missing := helperCommand(t, "real-show-missing", false, 5*time.Second, 1024, 1024)
+	response, err := adapter.execute(context.Background(), missing)
+	if !tracker.IsKind(err, tracker.ErrorNotFound) {
+		t.Fatalf("expected typed not_found, got result=%+v err=%v", response.result, err)
+	}
+	if response.metadata.schemaVersion != 1 || !response.metadata.warningsPresent || response.metadata.warningCount < 1 {
+		t.Fatalf("metadata=%+v", response.metadata)
+	}
+}
+
+func TestNonzeroStderrJSONMutantNeverSelectsProviderState(t *testing.T) {
+	adapter := newAdapter(newProcessRunner())
+	mutant := helperCommand(t, "stderr-error-mutant", false, 5*time.Second, 1024, 1024)
+	response, err := adapter.execute(context.Background(), mutant)
+	if !tracker.IsKind(err, tracker.ErrorMalformedProtocol) || tracker.IsKind(err, tracker.ErrorNotFound) {
+		t.Fatalf("stderr mutant selected provider state: result=%+v err=%v", response.result, err)
+	}
+}
+
+func TestNonzeroErrorEnvelopeAndHumanStderrRemainRedacted(t *testing.T) {
+	const stdoutSecret = "STDOUT_ERROR_SECRET"
+	const stderrSecret = "STDERR_HUMAN_SECRET"
+	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
+	binding.timeout = time.Second
+	request, err := newShowCommand(binding, "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit := 1
+	runner := &fakeRunner{result: commandResult{
+		kind: request.kind, started: true, exitCode: &exit,
+		stdout: []byte(`{"schema_version":1,"data":{"error":"` + stdoutSecret + `"}}`),
+		stderr: []byte(stderrSecret),
+	}}
+	_, err = newAdapter(runner).execute(context.Background(), request)
+	if !tracker.IsKind(err, tracker.ErrorNotFound) {
+		t.Fatalf("kind=%v", err)
+	}
+	if strings.Contains(err.Error(), stdoutSecret) || strings.Contains(err.Error(), stderrSecret) {
+		t.Fatalf("provider streams leaked through typed error: %v", err)
 	}
 }
 
