@@ -182,7 +182,7 @@ func newAtomicClaimCommand(binding commandBinding, id string) (command, error) {
 	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
-	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedObject, true, false)
+	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedArray, true, false)
 }
 
 func newDependencyAddCommand(binding commandBinding, blocked, blocker string) (command, error) {
@@ -510,9 +510,9 @@ func commandContractFor(kind CommandKind) (commandContract, bool) {
 		return commandContract{shape: expectedObject, json: true}, true
 	case CommandShow, CommandList, CommandReady, CommandDependencyList, CommandCommentList:
 		return commandContract{shape: expectedArray, json: true}, true
-	case CommandCreate, CommandAtomicClaim, CommandDependencyAdd, CommandCommentAppend:
+	case CommandCreate, CommandDependencyAdd, CommandCommentAppend:
 		return commandContract{shape: expectedObject, mutating: true, json: true}, true
-	case CommandUpdate:
+	case CommandUpdate, CommandAtomicClaim:
 		return commandContract{shape: expectedArray, mutating: true, json: true}, true
 	case CommandExport:
 		return commandContract{shape: expectedJSONL, explicitDeadline: true, json: true}, true
