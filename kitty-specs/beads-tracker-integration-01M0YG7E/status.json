@@ -222,8 +222,8 @@
     "WP07": {
       "actor": "codex",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 7,
       "lane": "planned",
       "last_event_id": "01M0Z81PZ0RJ0YG6R65GX2CRCC",
@@ -242,16 +242,16 @@
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T032": "done",
-        "T033": "done",
-        "T034": "done",
-        "T035": "done",
-        "T036": "done",
-        "T037": "done"
+        "T032": "planned",
+        "T033": "planned",
+        "T034": "planned",
+        "T035": "planned",
+        "T036": "planned",
+        "T037": "planned"
       }
     },
     "WP08": {
