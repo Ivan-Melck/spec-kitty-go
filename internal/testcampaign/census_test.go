@@ -125,6 +125,16 @@ func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
 	if err != nil || !slices.Contains(architecture.ExpectedTests, "TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority") || !slices.Contains(architecture.ExpectedTests, "TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture") {
 		t.Fatalf("architecture mutant census=%+v err=%v", architecture, err)
 	}
+	for _, name := range []string{
+		"TestBeadsDocumentationDeliveryClaims",
+		"TestBeadsDocumentationLinksMermaidAndCommands",
+		"TestPhase2EvidenceDocumentationMutants",
+		"TestPhase2EvidenceIntegrity",
+	} {
+		if !slices.Contains(architecture.ExpectedTests, name) {
+			t.Errorf("architecture census omits WP11 control %s", name)
+		}
+	}
 }
 
 func TestProviderProfilesMatchAcceptedTopLevelTests(t *testing.T) {
@@ -206,6 +216,23 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 	})
 	if err := compareExactCensus(architectureMutant.ExpectedTests, architecture.ExpectedTests); err == nil || !strings.Contains(err.Error(), "TestDefaultPolicyPinsTrackerConformanceAsOneWayQualityTooling") {
 		t.Fatalf("accepted provider architecture removal mutant error=%v", err)
+	}
+
+	for _, name := range []string{
+		"TestBeadsDocumentationDeliveryClaims",
+		"TestBeadsDocumentationLinksMermaidAndCommands",
+		"TestPhase2EvidenceDocumentationMutants",
+		"TestPhase2EvidenceIntegrity",
+	} {
+		t.Run("WP11 architecture removal "+name, func(t *testing.T) {
+			mutant := architecture
+			mutant.ExpectedTests = slices.DeleteFunc(append([]string(nil), architecture.ExpectedTests...), func(candidate string) bool {
+				return candidate == name
+			})
+			if err := compareExactCensus(mutant.ExpectedTests, architecture.ExpectedTests); err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("accepted WP11 architecture removal mutant error=%v", err)
+			}
+		})
 	}
 }
 

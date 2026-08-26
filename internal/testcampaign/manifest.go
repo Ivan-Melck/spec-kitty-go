@@ -33,6 +33,8 @@ var profiles = map[string]Profile{
 		Name:    "architecture",
 		Package: "./internal/architecture",
 		ExpectedTests: []string{
+			"TestBeadsDocumentationDeliveryClaims",
+			"TestBeadsDocumentationLinksMermaidAndCommands",
 			"TestCloseoutBinaryAndReviewPolicyDocumentation",
 			"TestCloseoutOrchestratorAPI13ProjectionContract",
 			"TestCurrentProductionGraphPassesClosedPolicy",
@@ -51,6 +53,8 @@ var profiles = map[string]Profile{
 			"TestLoadGraphReturnsTypedAndBoundedFailures",
 			"TestLoadedUnknownRootCannotDisappearThroughGraphExemption",
 			"TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic",
+			"TestPhase2EvidenceDocumentationMutants",
+			"TestPhase2EvidenceIntegrity",
 			"TestPolicyAcceptsProviderOnlyFromClassifiedAdapter",
 			"TestPolicyRejectingFixturesNameExactRuleAndEdge",
 			"TestPolicyValidationConfinesProviderAllowancesToAdapters",
