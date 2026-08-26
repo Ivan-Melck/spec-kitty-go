@@ -5,9 +5,24 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 )
+
+func TestSyntheticStartGovernanceContextIsExplicitAndSemanticallyStable(t *testing.T) {
+	first, err := syntheticStartGovernanceContext(time.Date(2026, 8, 25, 1, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := syntheticStartGovernanceContext(time.Date(2030, 1, 1, 1, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID() != second.ID() || first.Aggregate() != second.Aggregate() || len(first.Entries()) != 1 || first.Entries()[0].Ref() != "phase1-helper-synthetic" {
+		t.Fatalf("synthetic context is not explicit and stable: first=%+v second=%+v", first, second)
+	}
+}
 
 func TestStartRunFlagFailuresAlwaysEmitCompleteDiagnosticJSON(t *testing.T) {
 	for _, args := range [][]string{

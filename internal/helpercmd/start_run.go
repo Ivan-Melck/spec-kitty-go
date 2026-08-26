@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/faults"
 	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 	"github.com/spec-kitty/go-kitty3/internal/tracker/fake"
@@ -79,6 +80,10 @@ func runStartRun(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if err != nil {
 		return encodeFailure(stdout, execution.NewDiagnostic(execution.KindInvalidCommand, err.Error(), execution.RetryNever, correlation, parsed.operation, nil, map[string]string{"dependencies": dependencyText}, map[string]string{"dependencies": "WorkID=commit pairs"}, now))
 	}
+	governanceContext, err := syntheticStartGovernanceContext(now)
+	if err != nil {
+		return encodeStartFailure(stdout, execution.KindInvalidCommand, "construct synthetic Phase 1 governance context", operation, correlation, actor, process, now, err)
+	}
 	repositoryAdapter, err := gitrepo.Bind(ctx, gitrepo.Runner{}, parsed.repository, parsed.project, primary, workspaceRoot, "refs/heads/main", now)
 	if err != nil {
 		return encodeFailure(stdout, executionWorkspaceFailure(parsed.operation, correlation, err, now))
@@ -116,7 +121,7 @@ func runStartRun(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	saga := execution.NewStartSaga(authority, trackerSaga, workspaceService)
 	request := execution.StartRunRequest{
 		SchemaVersion: uint16(schemaVersion),
-		Claim:         execution.StartRequest{CorrelationID: correlation, OperationID: parsed.operation, ProjectID: parsed.project, MissionID: parsed.mission, WorkRevisionID: parsed.revision, WorkID: parsed.work, ActorID: parsed.actor, ProcessID: parsed.process, Now: now, LeaseTTL: ttl},
+		Claim:         execution.StartRequest{CorrelationID: correlation, OperationID: parsed.operation, ProjectID: parsed.project, MissionID: parsed.mission, WorkRevisionID: parsed.revision, WorkID: parsed.work, ActorID: parsed.actor, ProcessID: parsed.process, Now: now, LeaseTTL: ttl, GovernanceContext: governanceContext},
 		Assignment:    execution.TrackerAssignRequest{SchemaVersion: uint16(schemaVersion), CorrelationID: correlation, OperationID: parsed.operation, ActorID: parsed.actor, ProcessID: parsed.process, Now: now, Provider: provider, WorkKey: trackerWork, ExpectedRevision: tracker.Revision(providerRevision), Assignee: assignee},
 		Workspace:     execution.WorkspaceRequest{RepositoryID: parsed.repository, LaneID: parsed.lane, WorkspaceID: parsed.workspace, OwnedBranch: branch, PinnedBase: base, Dependencies: dependencies},
 	}
@@ -143,6 +148,26 @@ func runStartRun(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		response.Work = &work
 	}
 	return encodeJSON(stdout, response)
+}
+
+func syntheticStartGovernanceContext(createdAt time.Time) (governancecontext.Context, error) {
+	commitment, err := governancecontext.CommitSHA256([]byte("go-kitty3/phase1-helper/synthetic-governance/v1"))
+	if err != nil {
+		return governancecontext.Context{}, err
+	}
+	entry, err := governancecontext.NewEntry(governancecontext.KindConfig, "phase1-helper-synthetic", "v1", commitment)
+	if err != nil {
+		return governancecontext.Context{}, err
+	}
+	aggregate, err := governancecontext.ComputeAggregate(governancecontext.SchemaVersion, []governancecontext.Entry{entry})
+	if err != nil {
+		return governancecontext.Context{}, err
+	}
+	contextID, err := ids.ParseGovernanceContextID("context-synthetic-" + aggregate.Digest())
+	if err != nil {
+		return governancecontext.Context{}, err
+	}
+	return governancecontext.NewContext(contextID, governancecontext.SchemaVersion, []governancecontext.Entry{entry}, createdAt)
 }
 
 func commitWorkspaceEdit(ctx context.Context, controller faults.FileController, capsule execution.RunCapsule, name, content string) (WorkspaceCommit, error) {

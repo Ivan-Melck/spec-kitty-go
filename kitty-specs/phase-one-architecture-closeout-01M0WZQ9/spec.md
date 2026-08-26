@@ -139,7 +139,7 @@ As an orchestrator maintainer, I can map the kernel's typed commands, results, e
 
 | ID | Title | Requirement | Category | Priority | Status |
 |----|-------|-------------|----------|----------|--------|
-| NFR-001 | Pull-request feedback budget | The standard pull-request gate must complete within 8 minutes at p95 on the repository's configured CI runner over ten representative executions. | Performance | High | Open |
+| NFR-001 | Pull-request feedback budget | The standard pull-request gate must complete within 8 minutes at p95 over ten representative executions on the declared qualification reference host. Every hosted CI run must retain comparable timing evidence, and no hosted-runner p95 may be claimed until ten comparable samples exist. | Performance | High | Open |
 | NFR-002 | Isolated timing stability | The contention diagnostic test must pass 20 consecutive isolated executions on the development host without relying on unrelated suite contention. | Reliability | High | Open |
 | NFR-003 | Mutant effectiveness | Every declared architectural and authority mutant must be killed in 100% of ten consecutive gate executions and must implicate the mutated rule rather than an unrelated failure. | Test quality | High | Open |
 | NFR-004 | Existing invariant preservation | All existing universal authority invariants, including stale-process probes, must pass unchanged in both short and full campaigns. | Reliability | High | Open |
@@ -187,7 +187,7 @@ As an orchestrator maintainer, I can map the kernel's typed commands, results, e
 
 - **SC-001**: A provider-specific adapter fixture is accepted while kernel-to-provider and kernel-to-adapter mutants are rejected in all ten repeated architecture-gate runs.
 - **SC-002**: An unclassified production package and a test-only shadow implementation are rejected with diagnostics naming the offending package or symbol.
-- **SC-003**: The standard pull-request gate meets the 8-minute p95 budget over ten representative executions, while the complete scenario campaign remains available on schedule and manual dispatch.
+- **SC-003**: The standard pull-request gate meets the 8-minute p95 budget over ten representative executions on the declared qualification reference host, every hosted CI run retains comparable timing evidence without prematurely claiming a hosted p95, and the complete scenario campaign remains available on schedule and manual dispatch.
 - **SC-004**: The isolated contention regression passes 20 consecutive runs and the early-refusal mutant is detected before any repository-fence acquisition is recorded.
 - **SC-005**: Existing Phase 1 universal invariants, focused race tests, static analysis, dependency verification, formatting, and binary builds all pass.
 - **SC-006**: Governance-context commitments are deterministic over 100 identical evaluations, reject incomplete commitments, detect reordered or altered entries, and survive an existing-database migration without data loss.

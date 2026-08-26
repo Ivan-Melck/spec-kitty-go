@@ -35,7 +35,7 @@ func TestWorkspaceReservationBindingAndRepositoryFactsAreImmutable(t *testing.T)
 	if _, err := store.FinalizeWorkRevision(ctx, FinalizeWorkRevisionRequest{SchemaVersion: 1, CorrelationID: "finalize-1", OperationID: "operation-finalize-1", ActorID: revision.ActorID(), ProcessID: "process-finalize-1", OccurredAt: revision.FinalizedAt(), Revision: revision}); err != nil {
 		t.Fatal(err)
 	}
-	claim := execution.StartRequest{CorrelationID: "operation-1", OperationID: "operation-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-1", ActorID: "actor-1", ProcessID: "process-1", Now: now, LeaseTTL: time.Minute}
+	claim := execution.StartRequest{CorrelationID: "operation-1", OperationID: "operation-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-1", ActorID: "actor-1", ProcessID: "process-1", Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, "context-1", now)}
 	capsule, err := store.Claim(ctx, claim, "run-1", "lease-1")
 	if err != nil {
 		t.Fatal(err)

@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 2
-mission_slug: phase-one-architecture-closeout-01M0WZQ9
-reproduction_command:
-reviewed_at: '2026-08-25T18:48:10Z'
-reviewer_agent: user
-wp_id: WP03
----
-
 **Issue 1 — same-operation claim replay can be rebound to a different governance context (FR-010 / T014)**
 
 `internal/execution/lease.go:202-208` leaves a non-empty caller-supplied `CommandDigest` unchanged. The live control-store request identity includes that digest but not the `GovernanceContext` independently. Consequently, two direct `Service.Start` calls can reuse the same operation ID and caller digest while supplying different valid contexts; the repository sees the same request identity, and `bindRunGovernanceContext` accepts a replay capsule with empty governance fields and fills it from the second request. That violates the locked contract that replacement/replay cannot change the run-owned context.

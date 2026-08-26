@@ -96,13 +96,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return RunTracker(ctx, args[1:], stdout, stderr)
 	case "workgraph":
 		return RunWorkGraph(ctx, args[1:], stdout, stderr)
+	case "architecture-check":
+		return runArchitectureCheck(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, helperUsage)
 		return 2
 	}
 }
 
-const helperUsage = "usage: spk-phase1-helper claim|start-run|recover-start|expire-authority|zombie-write|workspace-inspect|workspace-cleanup|handoff|review|integrate|inspect|tracker|workgraph [options]"
+const helperUsage = "usage: spk-phase1-helper claim|start-run|recover-start|expire-authority|zombie-write|workspace-inspect|workspace-cleanup|handoff|review|integrate|inspect|tracker|workgraph|architecture-check [options]"
 
 func runClaim(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("claim", flag.ContinueOnError)
@@ -150,6 +152,13 @@ func runClaim(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if err != nil {
 		return encodeInvalidID(stdout, operation, "process_id", err)
 	}
+	now := time.Now().UTC()
+	governanceContext, err := syntheticStartGovernanceContext(now)
+	if err != nil {
+		diagnostic := execution.NewDiagnostic(execution.KindInvalidCommand, "construct synthetic Phase 1 governance context", execution.RetryNever, operationID.String(), operationID, nil, nil, nil, now)
+		diagnostic.Cause = err
+		return encodeFailure(stdout, diagnostic)
+	}
 	faultController := faults.FileController{Directory: barrier, Participant: processID.String()}
 	if err := faultController.Reach(ctx, "CS-00"); errors.Is(err, faults.ErrCrashRequested) {
 		return 86
@@ -165,7 +174,8 @@ func runClaim(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	service.WithFaults(faultController)
 	request := execution.StartRequest{
 		CorrelationID: operationID.String(), OperationID: operationID, ProjectID: projectID, MissionID: missionID,
-		WorkRevisionID: revisionID, WorkID: workID, ActorID: actorID, ProcessID: processID, LeaseTTL: ttl,
+		WorkRevisionID: revisionID, WorkID: workID, ActorID: actorID, ProcessID: processID, Now: now, LeaseTTL: ttl,
+		GovernanceContext: governanceContext,
 	}
 	capsule, err := service.Start(ctx, request)
 	if errors.Is(err, faults.ErrCrashRequested) {
