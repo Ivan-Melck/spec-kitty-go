@@ -107,7 +107,7 @@ func newShowCommand(binding commandBinding, id string) (command, error) {
 	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
-	return buildCommand(CommandShow, binding, []string{"show", id, "--json"}, expectedObject, false, false)
+	return buildCommand(CommandShow, binding, []string{"show", id, "--json"}, expectedArray, false, false)
 }
 
 func newListCommand(binding commandBinding) (command, error) {
@@ -175,7 +175,7 @@ func newUpdateCommand(binding commandBinding, values updateValues) (command, err
 		return command{}, validationError("update requires at least one changed field")
 	}
 	argv = append(argv, "--json")
-	return buildCommand(CommandUpdate, binding, argv, expectedObject, true, false)
+	return buildCommand(CommandUpdate, binding, argv, expectedArray, true, false)
 }
 
 func newAtomicClaimCommand(binding commandBinding, id string) (command, error) {
@@ -523,12 +523,14 @@ type commandContract struct {
 
 func commandContractFor(kind CommandKind) (commandContract, bool) {
 	switch kind {
-	case CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus, CommandShow:
+	case CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus:
 		return commandContract{shape: expectedObject, json: true}, true
-	case CommandList, CommandReady, CommandDependencyList, CommandCommentList:
+	case CommandShow, CommandList, CommandReady, CommandDependencyList, CommandCommentList:
 		return commandContract{shape: expectedArray, json: true}, true
-	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandDependencyRemove, CommandCommentAppend:
+	case CommandCreate, CommandDependencyAdd, CommandDependencyRemove, CommandCommentAppend:
 		return commandContract{shape: expectedObject, mutating: true, json: true}, true
+	case CommandUpdate, CommandAtomicClaim:
+		return commandContract{shape: expectedArray, mutating: true, json: true}, true
 	case CommandExport:
 		return commandContract{shape: expectedJSONL, explicitDeadline: true, json: true}, true
 	case CommandBackupInit, CommandBackupSync, CommandBackupRestore:
