@@ -303,8 +303,8 @@
     "WP09": {
       "actor": "codex",
       "agent": "codex",
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 0,
       "lane": "in_progress",
       "last_event_id": "01M0Z5WB29PFG29AKX97G6QNR6",
