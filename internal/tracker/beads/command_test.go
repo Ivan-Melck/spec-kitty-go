@@ -115,7 +115,7 @@ func TestCommandArgvVocabulary(t *testing.T) {
 			return newCreateCommand(binding, createValues{title: "t", description: "d", acceptance: "a", metadata: "{}"})
 		}, []string{"create", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--json"}, expectedObject, true},
 		{"update", func() (command, error) {
-			return newUpdateCommand(binding, updateValues{id: "x", title: "t", description: "d", acceptance: "a", metadata: "{}", assignee: "ivan"})
+			return newUpdateCommand(binding, updateValues{id: "x", title: presentUpdateValue("t"), description: presentUpdateValue("d"), acceptance: presentUpdateValue("a"), metadata: presentUpdateValue("{}"), assignee: presentUpdateValue("ivan")})
 		}, []string{"update", "x", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--assignee", "ivan", "--json"}, expectedObject, true},
 		{"claim", func() (command, error) { return newAtomicClaimCommand(binding, "x") }, []string{"update", "x", "--claim", "--json"}, expectedObject, true},
 		{"dep-add", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, []string{"dep", "add", "blocked", "blocker", "--type", "blocks", "--json"}, expectedObject, true},
@@ -218,7 +218,10 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 		build func() error
 	}{
 		{"show id", func() error { _, err := newShowCommand(binding, "--help"); return err }},
-		{"update id", func() error { _, err := newUpdateCommand(binding, updateValues{id: "-h", title: "x"}); return err }},
+		{"update id", func() error {
+			_, err := newUpdateCommand(binding, updateValues{id: "-h", title: presentUpdateValue("x")})
+			return err
+		}},
 		{"claim id", func() error { _, err := newAtomicClaimCommand(binding, "--version"); return err }},
 		{"blocked id", func() error { _, err := newDependencyAddCommand(binding, "--help", "blocker-1"); return err }},
 		{"blocker id", func() error { _, err := newDependencyAddCommand(binding, "blocked-1", "--help"); return err }},
@@ -228,7 +231,7 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 		{"comment list id", func() error { _, err := newCommentListCommand(binding, "--help"); return err }},
 		{"create title", func() error { _, err := newCreateCommand(binding, createValues{title: "--help"}); return err }},
 		{"update title", func() error {
-			_, err := newUpdateCommand(binding, updateValues{id: "work-1", title: "--help"})
+			_, err := newUpdateCommand(binding, updateValues{id: "work-1", title: presentUpdateValue("--help")})
 			return err
 		}},
 	}
@@ -238,6 +241,28 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 				t.Fatal("option-like value accepted")
 			}
 		})
+	}
+}
+
+func TestUpdateCommandDistinguishesExplicitEmptyFromOmitted(t *testing.T) {
+	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
+	command, err := newUpdateCommand(binding, updateValues{
+		id: "work-1", title: presentUpdateValue("title"),
+		description: presentUpdateValue(""), acceptance: presentUpdateValue(""),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"update", "work-1", "--title", "title", "--description", "", "--acceptance", "", "--json"}
+	if !reflect.DeepEqual(command.renderedArgv(), want) {
+		t.Fatalf("argv=%q want=%q", command.renderedArgv(), want)
+	}
+	omitted, err := newUpdateCommand(binding, updateValues{id: "work-1", title: presentUpdateValue("title")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := omitted.renderedArgv(); !reflect.DeepEqual(got, []string{"update", "work-1", "--title", "title", "--json"}) {
+		t.Fatalf("omitted argv=%q", got)
 	}
 }
 

@@ -137,27 +137,38 @@ func newCreateCommand(binding commandBinding, values createValues) (command, err
 	return buildCommand(CommandCreate, binding, argv, expectedObject, true, false)
 }
 
-type updateValues struct{ id, title, description, acceptance, metadata, assignee string }
+type updateValue struct {
+	value string
+	set   bool
+}
+
+func presentUpdateValue(value string) updateValue { return updateValue{value: value, set: true} }
+
+type updateValues struct {
+	id                                       string
+	title, description, acceptance, metadata updateValue
+	assignee                                 updateValue
+}
 
 func newUpdateCommand(binding commandBinding, values updateValues) (command, error) {
 	if err := requiredExternalID("work id", values.id); err != nil {
 		return command{}, err
 	}
 	argv := []string{"update", values.id}
-	if values.title != "" {
-		argv = append(argv, "--title", values.title)
+	if values.title.set {
+		argv = append(argv, "--title", values.title.value)
 	}
-	if values.description != "" {
-		argv = append(argv, "--description", values.description)
+	if values.description.set {
+		argv = append(argv, "--description", values.description.value)
 	}
-	if values.acceptance != "" {
-		argv = append(argv, "--acceptance", values.acceptance)
+	if values.acceptance.set {
+		argv = append(argv, "--acceptance", values.acceptance.value)
 	}
-	if values.metadata != "" {
-		argv = append(argv, "--metadata", values.metadata)
+	if values.metadata.set {
+		argv = append(argv, "--metadata", values.metadata.value)
 	}
-	if values.assignee != "" {
-		argv = append(argv, "--assignee", values.assignee)
+	if values.assignee.set {
+		argv = append(argv, "--assignee", values.assignee.value)
 	}
 	if len(argv) == 2 {
 		return command{}, validationError("update requires at least one changed field")
@@ -462,8 +473,12 @@ func validateOptionCommand(argv []string, verb string, start int, orderedFlags [
 		if position+1 >= len(argv)-1 {
 			return validationError(verb + " option is missing its typed value")
 		}
-		if err := requiredValue(strings.TrimPrefix(flag, "--"), argv[position+1]); err != nil {
-			return err
+		value := argv[position+1]
+		explicitEmptyUpdate := verb == "update" && (flag == "--description" || flag == "--acceptance")
+		if !explicitEmptyUpdate {
+			if err := requiredValue(strings.TrimPrefix(flag, "--"), value); err != nil {
+				return err
+			}
 		}
 		position += 2
 		seen++
