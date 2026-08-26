@@ -264,6 +264,9 @@
       "last_event_id": "01M0Z84Z6RVBACG8W2M3P1TCBF",
       "last_transition_at": "2026-08-26T14:38:54.168379+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
