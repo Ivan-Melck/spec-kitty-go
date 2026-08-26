@@ -1,7 +1,7 @@
 {
-  "event_count": 126,
-  "last_event_id": "01M0Y4VPSKADDG0ZZ5P17A6XZP",
-  "materialized_at": "2026-08-26T04:22:10.483367+00:00",
+  "event_count": 127,
+  "last_event_id": "01M0Y5GQ4TZ4KYYET60MRPDN1R",
+  "materialized_at": "2026-08-26T04:33:38.970539+00:00",
   "mission_number": "",
   "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
   "mission_type": "",
@@ -13,8 +13,8 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 0
+    "in_review": 0,
+    "planned": 1
   },
   "work_packages": {
     "WP01": {
@@ -201,16 +201,22 @@
       }
     },
     "WP06": {
-      "actor": "codex",
+      "actor": "user",
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 0,
-      "lane": "in_review",
-      "last_event_id": "01M0Y4VPSKADDG0ZZ5P17A6XZP",
-      "last_transition_at": "2026-08-26T04:22:10.483367+00:00",
+      "force_count": 1,
+      "lane": "planned",
+      "last_event_id": "01M0Y5GQ4TZ4KYYET60MRPDN1R",
+      "last_transition_at": "2026-08-26T04:33:38.970539+00:00",
       "model": "__resolved_model_absent__",
       "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/phase-one-architecture-closeout-01M0WZQ9/tasks/WP06-closeout-documentation-and-qualification/review-cycle-1.md",
+        "reference": "review-cycle://phase-one-architecture-closeout-01M0WZQ9/WP06-closeout-documentation-and-qualification/review-cycle-1.md",
+        "reviewer": "user",
+        "verdict": "changes_requested"
+      },
       "role": "reviewer",
       "shell_pid": 3760839,
       "shell_pid_created_at": "1787619279.6",
