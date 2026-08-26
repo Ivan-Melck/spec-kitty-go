@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controlstore/sqlite"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/faults"
+	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/review"
@@ -67,7 +68,7 @@ func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	}
 	defer store.Close()
 	controller := faults.FileController{Directory: barrier, Participant: process}
-	record, err := handoff.NewService(store, handoff.GitVerifier{}).WithFaults(controller).Submit(ctx, request)
+	record, err := handoff.NewService(store, gitrepo.NewHandoffVerifier()).WithFaults(controller).Submit(ctx, request)
 	if errors.Is(err, faults.ErrCrashRequested) {
 		return 86
 	}
