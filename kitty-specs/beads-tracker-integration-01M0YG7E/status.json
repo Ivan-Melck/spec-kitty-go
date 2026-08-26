@@ -169,7 +169,8 @@
         "Ready for review: commit 301ab53 implements mapped catalog metadata/revisions, replay and ambiguity recovery, honest unguarded updates, latency and 1,000-create identity evidence; focused repeat/race/tracker-wide/vet/staticcheck/architecture/scope green",
         "Ready for re-review: fixed partial clearing, drift-aware replay, live catalog caller, opaque metadata preservation, and same-mapping server serialization",
         "Ready for re-review: confirmed creates validate exact live provider state and caller metadata; JSON number comparison is lossless",
-        "Review passed: confirmed create validates exact live mapping, provenance, semantic fields, and caller metadata; lossless bounded JSON-number comparison closes cycle 2; prior closures and focused race/architecture gates pass. Force overrides only known action-review auto-rebase of coordination kitty-specs artifacts."
+        "Review passed: confirmed create validates exact live mapping, provenance, semantic fields, and caller metadata; lossless bounded JSON-number comparison closes cycle 2; prior closures and focused race/architecture gates pass. Force overrides only known action-review auto-rebase of coordination kitty-specs artifacts.",
+        "Ready for review: real Beads v1.2.2 catalog envelopes and acceptance_criteria mapped with strict singular cardinality; metadata/revision/serialization laws preserved; Show and ordinary Update command contracts corrected transitively; focused, repeat, race, tracker-wide, helper, vet, and staticcheck gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
