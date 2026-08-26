@@ -23,9 +23,11 @@ const workspaceIdentityEncodingVersion uint16 = 1
 // executable nor provider workspace is discovered from PATH or the caller's
 // current directory.
 type BindingConfig struct {
-	ProjectID                ids.ProjectID
-	ExecutablePath           string
-	WorkspacePath            string
+	ProjectID      ids.ProjectID
+	ExecutablePath string
+	WorkspacePath  string
+	// ProviderDatabaseIdentity is the absolute existing database directory
+	// reported by `bd where --json`; ResolveBinding canonicalizes it before use.
 	ProviderDatabaseIdentity string
 	ProtocolSchema           uint16
 	ConcurrencyMode          tracker.ConcurrencyMode
@@ -106,7 +108,11 @@ func ResolveBinding(config BindingConfig) (tracker.TrackerBinding, error) {
 	if config.ExpectedExecutableDigest != "" && config.ExpectedExecutableDigest != digest {
 		return tracker.TrackerBinding{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "install_verified_provider", Message: "configured executable digest does not match its bytes"}
 	}
-	identity := deriveWorkspaceIdentity(workspace, config.ProviderDatabaseIdentity)
+	databasePath, _, err := canonicalExisting(config.ProviderDatabaseIdentity, true)
+	if err != nil {
+		return tracker.TrackerBinding{}, invalidBinding("provider database path cannot be resolved", err)
+	}
+	identity := deriveWorkspaceIdentity(workspace, databasePath)
 	binding := tracker.TrackerBinding{
 		ProjectID:         config.ProjectID,
 		Provider:          "beads",

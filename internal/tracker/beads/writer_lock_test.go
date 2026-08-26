@@ -230,6 +230,7 @@ func TestQualifiedServerProcessesOverlap(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	mustMkdir(t, workspace)
+	mustMkdir(t, filepath.Join(workspace, "embeddeddolt"))
 	executable := testProtocolExecutable(t, root, tracker.ConcurrencyServerMultiwriter)
 	record := filepath.Join(root, "server-writes")
 	commands := make([]*exec.Cmd, 0, 2)
@@ -265,7 +266,8 @@ func TestQualifiedServerProcessesOverlap(t *testing.T) {
 }
 
 func serverMutationHelper() {
-	config := BindingConfig{ProjectID: trackerProjectID(os.Getenv("BEADS_SERVER_PROJECT")), ExecutablePath: os.Getenv("BEADS_SERVER_EXECUTABLE"), WorkspacePath: os.Getenv("BEADS_SERVER_WORKSPACE"), ProviderDatabaseIdentity: "db-1", ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyServerMultiwriter, ServerIdentity: "server-1", ServerEndpoint: "127.0.0.1:3306", Credentials: map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306", "DOLT_CREDENTIALS_PATH": os.Getenv("BEADS_SERVER_RECORD")}}
+	workspace := os.Getenv("BEADS_SERVER_WORKSPACE")
+	config := BindingConfig{ProjectID: trackerProjectID(os.Getenv("BEADS_SERVER_PROJECT")), ExecutablePath: os.Getenv("BEADS_SERVER_EXECUTABLE"), WorkspacePath: workspace, ProviderDatabaseIdentity: filepath.Join(workspace, "embeddeddolt"), ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyServerMultiwriter, ServerIdentity: "server-1", ServerEndpoint: "127.0.0.1:3306", Credentials: map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306", "DOLT_CREDENTIALS_PATH": os.Getenv("BEADS_SERVER_RECORD")}}
 	bound, err := Open(config)
 	if err != nil {
 		os.Exit(2)

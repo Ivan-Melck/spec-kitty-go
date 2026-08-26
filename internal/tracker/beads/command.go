@@ -31,8 +31,8 @@ type CommandKind string
 const (
 	CommandVersion          CommandKind = "version"
 	CommandWhere            CommandKind = "where"
-	CommandInfo             CommandKind = "info"
-	CommandDoctor           CommandKind = "doctor"
+	CommandDoltShow         CommandKind = "dolt_show"
+	CommandDoltStatus       CommandKind = "dolt_status"
 	CommandShow             CommandKind = "show"
 	CommandList             CommandKind = "list"
 	CommandReady            CommandKind = "ready"
@@ -95,19 +95,19 @@ func newWhereCommand(binding commandBinding) (command, error) {
 	return buildCommand(CommandWhere, binding, []string{"where", "--json"}, expectedObject, false, false)
 }
 
-func newInfoCommand(binding commandBinding) (command, error) {
-	return buildCommand(CommandInfo, binding, []string{"info", "--schema", "--json"}, expectedObject, false, false)
+func newDoltShowCommand(binding commandBinding) (command, error) {
+	return buildCommand(CommandDoltShow, binding, []string{"dolt", "show", "--json"}, expectedObject, false, false)
 }
 
-func newDoctorCommand(binding commandBinding) (command, error) {
-	return buildCommand(CommandDoctor, binding, []string{"doctor", "--agent", "--json"}, expectedObject, false, true)
+func newDoltStatusCommand(binding commandBinding) (command, error) {
+	return buildCommand(CommandDoltStatus, binding, []string{"dolt", "status", "--json"}, expectedObject, false, false)
 }
 
 func newShowCommand(binding commandBinding, id string) (command, error) {
 	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
-	return buildCommand(CommandShow, binding, []string{"show", id, "--json"}, expectedObject, false, false)
+	return buildCommand(CommandShow, binding, []string{"show", id, "--json"}, expectedArray, false, false)
 }
 
 func newListCommand(binding commandBinding) (command, error) {
@@ -175,14 +175,14 @@ func newUpdateCommand(binding commandBinding, values updateValues) (command, err
 		return command{}, validationError("update requires at least one changed field")
 	}
 	argv = append(argv, "--json")
-	return buildCommand(CommandUpdate, binding, argv, expectedObject, true, false)
+	return buildCommand(CommandUpdate, binding, argv, expectedArray, true, false)
 }
 
 func newAtomicClaimCommand(binding commandBinding, id string) (command, error) {
 	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
-	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedObject, true, false)
+	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedArray, true, false)
 }
 
 func newDependencyAddCommand(binding commandBinding, blocked, blocker string) (command, error) {
@@ -405,10 +405,10 @@ func validateArgvShape(kind CommandKind, argv []string) error {
 		return fixed("version", "--json")
 	case CommandWhere:
 		return fixed("where", "--json")
-	case CommandInfo:
-		return fixed("info", "--schema", "--json")
-	case CommandDoctor:
-		return fixed("doctor", "--agent", "--json")
+	case CommandDoltShow:
+		return fixed("dolt", "show", "--json")
+	case CommandDoltStatus:
+		return fixed("dolt", "status", "--json")
 	case CommandList:
 		return fixed("list", "--json")
 	case CommandReady:
@@ -523,14 +523,14 @@ type commandContract struct {
 
 func commandContractFor(kind CommandKind) (commandContract, bool) {
 	switch kind {
-	case CommandVersion, CommandWhere, CommandInfo, CommandShow:
+	case CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus:
 		return commandContract{shape: expectedObject, json: true}, true
-	case CommandDoctor:
-		return commandContract{shape: expectedObject, explicitDeadline: true, json: true}, true
-	case CommandList, CommandReady, CommandDependencyList, CommandCommentList:
+	case CommandShow, CommandList, CommandReady, CommandDependencyList, CommandCommentList:
 		return commandContract{shape: expectedArray, json: true}, true
-	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandDependencyRemove, CommandCommentAppend:
+	case CommandCreate, CommandDependencyAdd, CommandDependencyRemove, CommandCommentAppend:
 		return commandContract{shape: expectedObject, mutating: true, json: true}, true
+	case CommandUpdate, CommandAtomicClaim:
+		return commandContract{shape: expectedArray, mutating: true, json: true}, true
 	case CommandExport:
 		return commandContract{shape: expectedJSONL, explicitDeadline: true, json: true}, true
 	case CommandBackupInit, CommandBackupSync, CommandBackupRestore:
@@ -673,7 +673,7 @@ var credentialEnvironmentNames = map[string]struct{}{
 func allowedCredential(name string) bool { _, ok := credentialEnvironmentNames[name]; return ok }
 
 func childEnvironment(binding commandBinding) []string {
-	values := make(map[string]string, len(baseEnvironmentNames)+len(binding.credentials)+3)
+	values := make(map[string]string, len(baseEnvironmentNames)+len(binding.credentials)+5)
 	for _, name := range baseEnvironmentNames {
 		if value, ok := os.LookupEnv(name); ok {
 			values[name] = value
@@ -685,6 +685,11 @@ func childEnvironment(binding commandBinding) []string {
 	values["BEADS_DIR"] = binding.workspace
 	values["BD_JSON_ENVELOPE"] = "1"
 	values["BD_NON_INTERACTIVE"] = "1"
+	// Beads otherwise writes metrics and deferred event state during nominally
+	// read-only commands. These values are fixed process policy, not caller-
+	// supplied credentials, so inspection cannot modify provider or user state.
+	values["BD_DISABLE_METRICS"] = "1"
+	values["BD_DISABLE_EVENT_FLUSH"] = "1"
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
