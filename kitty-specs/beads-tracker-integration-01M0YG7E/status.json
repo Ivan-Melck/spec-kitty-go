@@ -1,7 +1,7 @@
 {
-  "event_count": 20,
-  "last_event_id": "01M0YPSCH6CM4AR6EZB283J46P",
-  "materialized_at": "2026-08-26T09:35:28.806326+00:00",
+  "event_count": 21,
+  "last_event_id": "01M0YQ2Z0HXH593APJ4NE2CE8Q",
+  "materialized_at": "2026-08-26T09:40:42.641622+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "",
@@ -13,24 +13,30 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 9
+    "in_review": 0,
+    "planned": 10
   },
   "work_packages": {
     "WP01": {
-      "actor": "codex",
+      "actor": "user",
       "agent": "codex",
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
-      "force_count": 0,
-      "lane": "in_review",
-      "last_event_id": "01M0YPSCH6CM4AR6EZB283J46P",
-      "last_transition_at": "2026-08-26T09:35:28.806326+00:00",
+      "force_count": 1,
+      "lane": "planned",
+      "last_event_id": "01M0YQ2Z0HXH593APJ4NE2CE8Q",
+      "last_transition_at": "2026-08-26T09:40:42.641622+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review"
       ],
       "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP01-provider-neutral-tracker-capabilities/review-cycle-1.md",
+        "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP01-provider-neutral-tracker-capabilities/review-cycle-1.md",
+        "reviewer": "user",
+        "verdict": "changes_requested"
+      },
       "role": "reviewer",
       "shell_pid": 3760839,
       "shell_pid_created_at": "1787619279.6",
