@@ -1,19 +1,19 @@
 {
-  "event_count": 188,
-  "last_event_id": "01M0ZQFGCNWW8579G7ZK477NGZ",
-  "materialized_at": "2026-08-26T19:06:48.085279+00:00",
+  "event_count": 189,
+  "last_event_id": "01M0ZQFSET1NKZWBNB855SNQ0J",
+  "materialized_at": "2026-08-26T19:06:57.370134+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 7,
+    "approved": 8,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 1,
     "in_progress": 0,
-    "in_review": 1,
+    "in_review": 0,
     "planned": 2
   },
   "work_packages": {
@@ -304,14 +304,14 @@
       }
     },
     "WP09": {
-      "actor": "codex",
+      "actor": "user",
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 5,
-      "lane": "in_review",
-      "last_event_id": "01M0ZQ4DH66MJ05F4K4Z0C94V4",
-      "last_transition_at": "2026-08-26T19:00:44.710083+00:00",
+      "lane": "approved",
+      "last_event_id": "01M0ZQFSET1NKZWBNB855SNQ0J",
+      "last_transition_at": "2026-08-26T19:06:57.370134+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: pinned Beads v1.2.2 rebuilt at reviewed digest; 11/11 commit-bound real-provider scenarios pass across embedded and pinned shared-server modes, including native backup/restore and 1,000-create contention with zero collisions or duplicate mappings. Cross-WP corrections are explicitly evidence-driven: v1.2.2 comment --author propagation and external server identity without a fabricated local data_dir.",
@@ -321,10 +321,9 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP09-real-beads-qualification-and-backup/review-cycle-2.md",
-        "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP09-real-beads-qualification-and-backup/review-cycle-2.md",
-        "reviewer": "user",
-        "verdict": "changes_requested"
+        "reference": "Review passed: cycle-3 candidate 8afdc21/tree 453dd79c closes honest non-pass evidence contract. Fresh current-tree no-server evidence SHA256 449981d796c66630993b0ead3a6b66cc94a0cf3d265007310d548cae4e753fa7 is schema-valid non_admissible with exact 11/11 terminal, 10 pass, no contention, one bounded skip issue, 100/200 latency, 20/20 assignment preservation, and 23/0 authority. Conditional pass law, typed runtime validation, strict roundtrip/redaction, actual serialized pass/fail/nonadmissible schema tests, and atomic create-only publication verified. Count100, race count10, focused real-independent packages, vet, staticcheck, module verification, architecture/scope, and zero-reachable govulncheck pass. jsonschema is test-graph only. Prior server pass remains bound only to 315660f/tree b5368db9 and is not attributed to the new tree; provider/server paths are unchanged. Anti-pattern checklist 1-8 PASS.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
       },
       "role": "reviewer",
       "shell_pid": 3760839,
