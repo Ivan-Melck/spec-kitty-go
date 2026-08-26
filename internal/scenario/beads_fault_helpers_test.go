@@ -76,6 +76,10 @@ func newDishonestFixture(t *testing.T, executable string, steps []dishonestStep,
 
 func newDishonestFixtureAt(t *testing.T, root, executable string, steps []dishonestStep, initial map[string]string) dishonestFixture {
 	t.Helper()
+	databasePath := filepath.Join(root, "embeddeddolt")
+	if err := os.MkdirAll(databasePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	for index := range steps {
 		steps[index].Workspace = root
 		if steps[index].RequiredEnv == nil {
@@ -85,7 +89,7 @@ func newDishonestFixtureAt(t *testing.T, root, executable string, steps []dishon
 	writeDishonestScenario(t, root, dishonestScenario{SchemaVersion: 1, InitialState: initial, Steps: steps})
 	adapter, err := beads.Open(beads.BindingConfig{
 		ProjectID: "project-fault", ExecutablePath: executable, WorkspacePath: root,
-		ProviderDatabaseIdentity: "db-fault", ProtocolSchema: 1,
+		ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1,
 		ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized,
 	})
 	if err != nil {
@@ -147,17 +151,33 @@ func assertDishonestConsumed(t *testing.T, root string, expected int) dishonestR
 func envelope(data string) string { return `{"schema_version":1,"data":` + data + `}` }
 
 func issueJSON(assignee, marker, project, work, revision string) string {
+	return namedIssueJSON("bd-fault", "fault fixture", assignee, marker, project, work, "operation-create-fault", revision)
+}
+
+func namedIssueJSON(externalID, title, assignee, marker, project, work, createdOperation, revision string) string {
 	metadata := map[string]any{"spec_kitty": map[string]any{
 		"schema_version": 1, "project_id": project, "work_id": work,
-		"created_by_operation": "operation-create-fault", "last_operation": "operation-create-fault",
+		"created_by_operation": createdOperation, "last_operation": createdOperation,
 		"criteria": []any{}, "assignment_marker": marker,
 	}}
 	if marker == "" {
 		delete(metadata["spec_kitty"].(map[string]any), "assignment_marker")
 	}
-	value := map[string]any{"id": "bd-fault", "title": "fault fixture", "description": "", "acceptance": "", "metadata": metadata, "assignee": assignee, "updated_at": "2026-08-26T12:00:00Z", "revision": revision}
+	value := map[string]any{"id": externalID, "title": title, "description": "", "acceptance_criteria": "", "metadata": metadata, "assignee": assignee, "updated_at": "2026-08-26T12:00:00Z", "revision": revision}
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+func issueJSONWithMetadata(externalID, title, assignee, metadataJSON, revision string) string {
+	var metadata map[string]any
+	_ = json.Unmarshal([]byte(metadataJSON), &metadata)
+	value := map[string]any{"id": externalID, "title": title, "description": "", "acceptance_criteria": "", "metadata": metadata, "assignee": assignee, "updated_at": "2026-08-26T12:00:00Z", "revision": revision}
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+func issueEnvelope(assignee, marker, project, work, revision string) string {
+	return envelope("[" + issueJSON(assignee, marker, project, work, revision) + "]")
 }
 
 func showStep(id, stdout, stderr string, exit int) dishonestStep {
@@ -165,10 +185,12 @@ func showStep(id, stdout, stderr string, exit int) dishonestStep {
 }
 
 func preflightSteps(root string) []dishonestStep {
+	databasePath := filepath.Join(root, "embeddeddolt")
 	return []dishonestStep{
 		{ID: "preflight.version", Argv: []string{"version", "--json"}, Stdout: envelope(`{"version":"1.2.2","build":"dishonest-test"}`)},
-		{ID: "preflight.where", Argv: []string{"where", "--json"}, Stdout: envelope(fmt.Sprintf(`{"workspace_path":%q,"database_id":"db-fault"}`, root))},
-		{ID: "preflight.info", Argv: []string{"info", "--schema", "--json"}, Stdout: envelope(`{"protocol_schema":1,"storage_mode":"embedded_serialized","read_only":false}`)},
+		{ID: "preflight.where", Argv: []string{"where", "--json"}, Stdout: envelope(fmt.Sprintf(`{"path":%q,"prefix":"db-fault","database_path":%q}`, root, databasePath))},
+		{ID: "preflight.dolt-show", Argv: []string{"dolt", "show", "--json"}, Stdout: envelope(fmt.Sprintf(`{"backend":"dolt","data_dir":%q,"database":"db-fault","embedded":true}`, databasePath))},
+		{ID: "preflight.dolt-status", Argv: []string{"dolt", "status", "--json"}, Stdout: envelope(fmt.Sprintf(`{"data_dir":%q,"data_dir_exists":true,"mode":"embedded","server_running":false}`, databasePath))},
 	}
 }
 
@@ -203,12 +225,12 @@ func protocolFaultRegistry() []faultCase {
 		{ID: "malformed.empty", Family: "malformed", Kind: tracker.ErrorMalformedProtocol, Recovery: "repair_provider_binding"},
 		{ID: "malformed.truncated", Family: "malformed", Stdout: `{"schema_version":1,"data":`, Kind: tracker.ErrorMalformedProtocol, Recovery: "repair_provider_binding"},
 		{ID: "malformed.oversized", Family: "malformed", Stdout: large, Kind: tracker.ErrorMalformedProtocol, Recovery: "repair_provider_binding"},
-		{ID: "malformed.multiple", Family: "malformed", Stdout: envelope(issueJSON("", "", "project-fault", "work-fault", "r1")) + `{}`, Kind: tracker.ErrorMalformedProtocol, Recovery: "repair_provider_binding"},
+		{ID: "malformed.multiple", Family: "malformed", Stdout: issueEnvelope("", "", "project-fault", "work-fault", "r1") + `{}`, Kind: tracker.ErrorMalformedProtocol, Recovery: "repair_provider_binding"},
 		{ID: "malformed.future-schema", Family: "malformed", Stdout: `{"schema_version":2,"data":{}}`, Kind: tracker.ErrorSchemaSkew, Recovery: "install_supported_provider"},
-		{ID: "malformed.wrong-shape", Family: "malformed", Stdout: envelope(`[]`), Kind: tracker.ErrorMalformedProtocol, Recovery: "repair_provider_binding"},
-		{ID: "unavailable.documented", Family: "unavailable", Stderr: "arbitrary warning prose\n" + `{"schema_version":1,"error":"secret-provider-body","code":"database_locked"}` + "\n", ExitCode: 7, Kind: tracker.ErrorLockContended, Recovery: "repair_provider_state"},
+		{ID: "malformed.wrong-shape", Family: "malformed", Stdout: envelope(`[]`), Kind: tracker.ErrorMalformedProtocol, Recovery: "reconcile_provider_metadata"},
+		{ID: "unavailable.documented", Family: "unavailable", Stdout: `{"schema_version":1,"error":"secret-provider-body","code":"database_locked"}`, Stderr: "arbitrary warning prose\n", ExitCode: 7, Kind: tracker.ErrorLockContended, Recovery: "repair_provider_state"},
 		{ID: "unavailable.nondocumented", Family: "unavailable", Stderr: "secret-provider-body", ExitCode: 7, Kind: tracker.ErrorMalformedProtocol, Recovery: "repair_provider_binding"},
-		{ID: "wrong.foreign-mapping", Family: "wrong", Stdout: envelope(issueJSON("", "", "project-foreign", "work-fault", "r1")), Kind: tracker.ErrorRevisionConflict, Recovery: "reconcile_mapping"},
+		{ID: "wrong.foreign-mapping", Family: "wrong", Stdout: issueEnvelope("", "", "project-foreign", "work-fault", "r1"), Kind: tracker.ErrorRevisionConflict, Recovery: "reconcile_mapping"},
 	}
 	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
 	return cases

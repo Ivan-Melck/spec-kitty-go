@@ -171,6 +171,9 @@ func loadScenario(path string) (scenario, error) {
 		if current.ID == "" || len(current.Argv) == 0 || current.Workspace == "" {
 			return plan, fmt.Errorf("incomplete step")
 		}
+		if !knownAction(current.Argv) {
+			return plan, fmt.Errorf("unknown scripted action")
+		}
 		if _, ok := seen[current.ID]; ok {
 			return plan, fmt.Errorf("duplicate step")
 		}
@@ -185,6 +188,26 @@ func loadScenario(path string) (scenario, error) {
 		}
 	}
 	return plan, nil
+}
+
+func knownAction(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	switch argv[0] {
+	case "version", "where", "show", "list", "ready", "create", "update", "export":
+		return true
+	case "dolt":
+		return len(argv) >= 2 && (argv[1] == "show" || argv[1] == "status")
+	case "dep":
+		return len(argv) >= 2 && (argv[1] == "add" || argv[1] == "remove" || argv[1] == "list")
+	case "comments":
+		return len(argv) >= 2 && argv[1] != "" && !strings.HasPrefix(argv[1], "-")
+	case "backup":
+		return len(argv) >= 2 && (argv[1] == "init" || argv[1] == "sync" || argv[1] == "status" || argv[1] == "restore")
+	default:
+		return false
+	}
 }
 
 func loadState(path string, initial map[string]string) (runtimeState, error) {
