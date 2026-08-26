@@ -140,6 +140,9 @@
       "last_event_id": "01M0XR25MW737HGX7VE9R7J65V",
       "last_transition_at": "2026-08-26T00:38:30.812525+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: schema v12 preserves every shipped version, persists immutable ordered governance contexts atomically with runs, exposes run/lease provenance, rejects rebinding/corruption/partial writes, and passes ten-pass plus race qualification"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
