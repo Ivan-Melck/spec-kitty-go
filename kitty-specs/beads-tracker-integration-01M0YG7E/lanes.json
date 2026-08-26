@@ -1,0 +1,293 @@
+{
+  "version": 1,
+  "mission_slug": "beads-tracker-integration-01M0YG7E",
+  "mission_id": "01M0YG7E8DJ3P3EFR13DN39P8Z",
+  "mission_branch": "kitty/mission-beads-tracker-integration-01M0YG7E",
+  "target_branch": "feat/beads-tracker-integration",
+  "lanes": [
+    {
+      "lane_id": "lane-a",
+      "wp_ids": [
+        "WP01"
+      ],
+      "write_scope": [
+        "internal/tracker/capabilities.go",
+        "internal/tracker/capabilities_test.go",
+        "internal/tracker/fake/conformance_test.go",
+        "internal/tracker/fake/provider.go",
+        "internal/tracker/fake/provider_test.go",
+        "internal/tracker/fake/store.go",
+        "internal/tracker/provider.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-b",
+      "wp_ids": [
+        "WP02"
+      ],
+      "write_scope": [
+        "internal/architecture/policy.go",
+        "internal/architecture/policy_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-c",
+      "wp_ids": [
+        "WP03"
+      ],
+      "write_scope": [
+        "internal/tracker/beads/adapter.go",
+        "internal/tracker/beads/command.go",
+        "internal/tracker/beads/command_test.go",
+        "internal/tracker/beads/errors.go",
+        "internal/tracker/beads/errors_test.go",
+        "internal/tracker/beads/protocol.go",
+        "internal/tracker/beads/protocol_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-d",
+      "wp_ids": [
+        "WP04"
+      ],
+      "write_scope": [
+        "internal/tracker/beads/binding.go",
+        "internal/tracker/beads/binding_test.go",
+        "internal/tracker/beads/inspect.go",
+        "internal/tracker/beads/inspect_test.go",
+        "internal/tracker/beads/writer_lock.go",
+        "internal/tracker/beads/writer_lock_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-c"
+      ],
+      "parallel_group": 2
+    },
+    {
+      "lane_id": "lane-e",
+      "wp_ids": [
+        "WP05"
+      ],
+      "write_scope": [
+        "internal/tracker/beads/catalog.go",
+        "internal/tracker/beads/catalog_test.go",
+        "internal/tracker/beads/metadata.go",
+        "internal/tracker/beads/metadata_test.go",
+        "internal/tracker/beads/revision.go",
+        "internal/tracker/beads/revision_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-d"
+      ],
+      "parallel_group": 3
+    },
+    {
+      "lane_id": "lane-f",
+      "wp_ids": [
+        "WP06"
+      ],
+      "write_scope": [
+        "internal/tracker/beads/discussion.go",
+        "internal/tracker/beads/discussion_test.go",
+        "internal/tracker/beads/graph.go",
+        "internal/tracker/beads/graph_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-e"
+      ],
+      "parallel_group": 4
+    },
+    {
+      "lane_id": "lane-g",
+      "wp_ids": [
+        "WP07"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/external_effect.go",
+        "internal/controlstore/sqlite/external_effect_test.go",
+        "internal/execution/external_effect.go",
+        "internal/execution/external_effect_test.go",
+        "internal/tracker/beads/assignment.go",
+        "internal/tracker/beads/assignment_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-e"
+      ],
+      "parallel_group": 4
+    },
+    {
+      "lane_id": "lane-h",
+      "wp_ids": [
+        "WP08"
+      ],
+      "write_scope": [
+        "internal/scenario/beads_fault_helpers_test.go",
+        "internal/scenario/beads_fault_test.go",
+        "internal/tracker/beads/testdata/dishonest_bd.go",
+        "internal/tracker/beads/testdata/scenario.schema.json",
+        "internal/tracker/conformance/assignment.go",
+        "internal/tracker/conformance/catalog.go",
+        "internal/tracker/conformance/discussion.go",
+        "internal/tracker/conformance/graph.go",
+        "internal/tracker/conformance/suite.go",
+        "internal/tracker/conformance/suite_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-f",
+        "lane-g"
+      ],
+      "parallel_group": 5
+    },
+    {
+      "lane_id": "lane-i",
+      "wp_ids": [
+        "WP09"
+      ],
+      "write_scope": [
+        "internal/testcampaign/cmd/beads-qualification/fixture.go",
+        "internal/testcampaign/cmd/beads-qualification/fixture_test.go",
+        "internal/testcampaign/cmd/beads-qualification/main.go",
+        "internal/testcampaign/cmd/beads-qualification/main_test.go",
+        "internal/testcampaign/cmd/beads-qualification/runner.go",
+        "internal/testcampaign/cmd/beads-qualification/runner_test.go",
+        "internal/tracker/beads/backup_integration_test.go",
+        "internal/tracker/beads/real_integration_test.go",
+        "internal/tracker/beads/worktree_integration_test.go",
+        "scripts/install-qualified-beads.sh"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tests",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-f",
+        "lane-g"
+      ],
+      "parallel_group": 5
+    },
+    {
+      "lane_id": "lane-j",
+      "wp_ids": [
+        "WP10"
+      ],
+      "write_scope": [
+        ".github/workflows/beads-qualification.yml",
+        "Makefile",
+        "internal/testcampaign/beads_evidence.go",
+        "internal/testcampaign/beads_evidence_test.go",
+        "internal/testcampaign/census_test.go",
+        "internal/testcampaign/manifest.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tests",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-h",
+        "lane-i"
+      ],
+      "parallel_group": 6
+    },
+    {
+      "lane_id": "lane-planning",
+      "wp_ids": [
+        "WP11"
+      ],
+      "write_scope": [
+        "README.md",
+        "docs/TECHNICAL_PROJECT_PLAN.md",
+        "docs/phase2-evidence/README.md",
+        "docs/phase2-evidence/SHA256SUMS",
+        "docs/phase2-evidence/campaign-census.json",
+        "docs/phase2-evidence/limitations.md",
+        "docs/phase2-evidence/qualification-evidence.json",
+        "docs/phase2-evidence/results.md",
+        "internal/architecture/beads_documentation_test.go"
+      ],
+      "predicted_surfaces": [
+        "planning"
+      ],
+      "depends_on_lanes": [
+        "lane-j"
+      ],
+      "parallel_group": 7
+    }
+  ],
+  "computed_at": "2026-08-26T08:18:05.914107+00:00",
+  "computed_from": "dependency_graph+ownership",
+  "planning_artifact_wps": [
+    "WP11"
+  ],
+  "planning_commit_sha": "c874fc4a8f98037939a76c44fa43e305af7f1665"
+}

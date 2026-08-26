@@ -22,7 +22,7 @@ requirement_refs:
 - NFR-015
 planning_base_branch: feat/beads-tracker-integration
 merge_target_branch: feat/beads-tracker-integration
-branch_strategy: Start the WP11 lane from the accepted WP10 qualification and CI result, use only the Spec Kitty worktree allocated to this package, preserve machine-generated evidence for its exact qualified source, and merge the reviewed documentation/evidence candidate into feat/beads-tracker-integration; do not edit or push directly to main.
+branch_strategy: Planning artifacts for this mission were generated on feat/beads-tracker-integration. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/beads-tracker-integration unless the human explicitly redirects the landing branch.
 subtasks:
 - T054
 - T055
@@ -45,7 +45,12 @@ model: ''
 owned_files:
 - README.md
 - docs/TECHNICAL_PROJECT_PLAN.md
-- docs/phase2-evidence/**
+- docs/phase2-evidence/README.md
+- docs/phase2-evidence/qualification-evidence.json
+- docs/phase2-evidence/campaign-census.json
+- docs/phase2-evidence/results.md
+- docs/phase2-evidence/limitations.md
+- docs/phase2-evidence/SHA256SUMS
 - internal/architecture/beads_documentation_test.go
 role: curator
 tags: []

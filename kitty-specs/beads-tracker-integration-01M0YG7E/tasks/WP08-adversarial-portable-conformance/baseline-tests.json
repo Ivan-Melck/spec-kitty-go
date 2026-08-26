@@ -1,0 +1,19 @@
+{
+  "wp_id": "WP08",
+  "captured_at": "2026-08-26T13:58:26Z",
+  "base_branch": "feat/beads-tracker-integration",
+  "base_commit": "6a0c89e8836bd3231c1d01d047b63a466bcfdf4a",
+  "test_runner": "pytest",
+  "total": 1,
+  "passed": 0,
+  "failed": 1,
+  "skipped": 0,
+  "failures": [
+    {
+      "test": "<gate-coverage-junit>",
+      "error": "no JUnit XML artifact produced by the scoped run",
+      "file": "unknown"
+    }
+  ],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}
