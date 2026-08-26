@@ -316,7 +316,8 @@ func TestCatalogCapabilitiesDescribeImplementedGuarantees(t *testing.T) {
 	}
 	if capabilities.CatalogRead != tracker.SupportSupported || capabilities.CatalogCreate != tracker.SupportSupported ||
 		capabilities.CatalogUpdate != tracker.UpdateUnguarded || capabilities.ObservationRevision != tracker.ObservationRevisionContentDerived ||
-		capabilities.ConcurrentWriters != tracker.ConcurrentWritersAdapterSerialized || capabilities.SafeCompensation != tracker.CompensationUnsupported {
+		capabilities.ConcurrentWriters != tracker.ConcurrentWritersAdapterSerialized || capabilities.SafeCompensation != tracker.CompensationUnsupported ||
+		capabilities.BlockingGraph != tracker.SupportSupported || capabilities.Discussion != tracker.DiscussionAppendOnly {
 		t.Fatalf("capabilities=%#v", capabilities)
 	}
 }
