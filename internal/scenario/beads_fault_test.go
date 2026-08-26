@@ -382,7 +382,7 @@ func TestBeadsFaultRegistryExactCensus(t *testing.T) {
 			required := faultRequiresAuthority(caseID)
 			var authorityFixture workspaceScenario
 			var staleAuthority phase1StaleAuthority
-			providerRoot := t.TempDir()
+			route := faultProviderRoute{Root: t.TempDir()}
 			if required {
 				workID := ids.WorkID("work-fault")
 				if caseID == "apply-timeout.create" {
@@ -391,34 +391,35 @@ func TestBeadsFaultRegistryExactCensus(t *testing.T) {
 				authorityFixture = newWorkspaceScenario(t, []workspaceItem{{work: workID, lane: "lane-fault", tracker: "bd-fault"}})
 				suffix := "fault-" + strings.ReplaceAll(caseID, ".", "-")
 				staleAuthority = provisionWP08StaleAuthority(t, authorityFixture, newPhase1ExpectedState(), workID, "lane-fault", "bd-fault", suffix)
-				providerRoot = filepath.Join(staleAuthority.capsule.WorkspacePath, ".wp08-provider")
+				route.Root = filepath.Join(staleAuthority.capsule.WorkspacePath, ".wp08-provider")
 			}
 			audit := newFaultAuthorityAudit(t, authorityFixture, staleAuthority, caseID, required)
-			audit.providerRoot = providerRoot
-			if err := audit.run("before"); err != nil {
-				t.Fatal(err)
+			if required {
+				route.Prepared = audit.observePreparedProvider
 			}
 			var evidence executableFaultEvidence
 			if family == "apply-timeout" {
 				switch caseID {
 				case "apply-timeout.create":
-					evidence = runCatalogCreateApplyTimeout(t, executable, providerRoot)
+					evidence = runCatalogCreateApplyTimeout(t, executable, route)
 				case "apply-timeout.catalog-update":
-					evidence = runCatalogUpdateApplyTimeout(t, executable, providerRoot)
+					evidence = runCatalogUpdateApplyTimeout(t, executable, route)
 				case "apply-timeout.dependency":
-					evidence = runDependencyApplyTimeout(t, executable, providerRoot)
+					evidence = runDependencyApplyTimeout(t, executable, route)
 				case "apply-timeout.comment":
-					evidence = runCommentApplyTimeout(t, executable, providerRoot)
+					evidence = runCommentApplyTimeout(t, executable, route)
 				case "apply-timeout.assignment":
-					evidence = runAssignmentApplyTimeout(t, executable, providerRoot)
+					evidence = runAssignmentApplyTimeout(t, executable, route)
 				default:
 					t.Fatalf("unhandled apply-timeout case %s", caseID)
 				}
 			} else {
-				evidence = runNamedReadFault(t, executable, caseID, providerRoot)
+				evidence = runNamedReadFault(t, executable, caseID, route)
 			}
-			if err := audit.run("after"); err != nil {
-				t.Fatal(err)
+			if required {
+				if err := audit.runAfterProvider(evidence.Provider); err != nil {
+					t.Fatal(err)
+				}
 			}
 			result := conformance.Result{ID: caseID, Disposition: conformance.Passed, CapabilityDisposition: "supported", Operation: evidence.Operation, DiagnosticKind: evidence.DiagnosticKind, RecoveryCode: evidence.RecoveryCode, MutationOutcome: evidence.MutationOutcome, RetrySafety: evidence.RetrySafety}
 			audit.populate(&result)
@@ -455,24 +456,19 @@ func TestBeadsFaultRegistryExactCensus(t *testing.T) {
 
 func TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant(t *testing.T) {
 	executable := buildDishonestExecutable(t)
-	newTopology := func(t *testing.T, suffix string) (workspaceScenario, phase1StaleAuthority, *faultAuthorityAudit) {
+	newTopology := func(t *testing.T, suffix string) (workspaceScenario, phase1StaleAuthority, *faultAuthorityAudit, faultProviderRoute) {
 		t.Helper()
 		fixture := newWorkspaceScenario(t, []workspaceItem{{work: "work-fault", lane: "lane-fault", tracker: "bd-fault"}})
 		stale := provisionWP08StaleAuthority(t, fixture, newPhase1ExpectedState(), "work-fault", "lane-fault", "bd-fault", suffix)
 		audit := newFaultAuthorityAudit(t, fixture, stale, "topology-mutant-"+suffix, true)
-		audit.providerRoot = filepath.Join(stale.capsule.WorkspacePath, ".wp08-provider")
-		return fixture, stale, audit
+		route := faultProviderRoute{Root: filepath.Join(stale.capsule.WorkspacePath, ".wp08-provider"), Prepared: audit.observePreparedProvider}
+		return fixture, stale, audit, route
 	}
 
-	caseFixture, caseStale, caseAudit := newTopology(t, "case")
-	_, _, canaryAudit := newTopology(t, "canary")
-	if err := caseAudit.run("before"); err != nil {
-		t.Fatal(err)
-	}
-	if err := canaryAudit.run("before"); err != nil {
-		t.Fatal(err)
-	}
-	runNamedReadFault(t, executable, "stale.old-revision-tied-timestamp", caseAudit.providerRoot)
+	caseFixture, caseStale, caseAudit, caseRoute := newTopology(t, "case")
+	_, _, canaryAudit, canaryRoute := newTopology(t, "canary")
+	caseEvidence := runNamedReadFault(t, executable, "stale.old-revision-tied-timestamp", caseRoute)
+	canaryEvidence := runNamedReadFault(t, executable, "stale.old-revision-tied-timestamp", canaryRoute)
 
 	// This mutant removes the database guard and corrupts the exact workspace
 	// that hosted the provider fault. The unrelated canary remains healthy.
@@ -491,15 +487,93 @@ func TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant(t *testin
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := canaryAudit.run("after"); err != nil {
+	if err := canaryAudit.runAfterProvider(canaryEvidence.Provider); err != nil {
 		t.Fatalf("separate canary should remain healthy: %v", err)
 	}
-	if err := caseAudit.run("after"); err == nil || !strings.Contains(err.Error(), "immutable_workspace_binding") {
+	if err := caseAudit.runAfterProvider(caseEvidence.Provider); err == nil || !strings.Contains(err.Error(), "immutable_workspace_binding") {
 		t.Fatalf("case-owned topology mutant escaped exact audit: %v", err)
 	}
 }
 
-type executableFaultEvidence struct{ Operation, DiagnosticKind, RecoveryCode, MutationOutcome, RetrySafety string }
+func TestBeadsFaultAuthorityAuditKillsUnrelatedProviderRoutingMutant(t *testing.T) {
+	executable := buildDishonestExecutable(t)
+	newTopology := func(t *testing.T, suffix string) (phase1StaleAuthority, *faultAuthorityAudit) {
+		t.Helper()
+		fixture := newWorkspaceScenario(t, []workspaceItem{{work: "work-fault", lane: "lane-fault", tracker: "bd-fault"}})
+		stale := provisionWP08StaleAuthority(t, fixture, newPhase1ExpectedState(), "work-fault", "lane-fault", "bd-fault", suffix)
+		return stale, newFaultAuthorityAudit(t, fixture, stale, "provider-routing-mutant-"+suffix, true)
+	}
+
+	caseStale, caseAudit := newTopology(t, "case")
+	canaryStale, canaryAudit := newTopology(t, "canary")
+	declaredLeaseRoot := filepath.Join(caseStale.capsule.WorkspacePath, ".wp08-provider")
+	if err := os.MkdirAll(declaredLeaseRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mutantRoute := faultProviderRoute{Root: t.TempDir(), Prepared: caseAudit.observePreparedProvider}
+	caseEvidence := runNamedReadFault(t, executable, "stale.old-revision-tied-timestamp", mutantRoute)
+	if caseEvidence.Provider.Root != mutantRoute.Root || !caseEvidence.Provider.RuntimeObserved {
+		t.Fatalf("routing mutant did not execute real provider fault: %+v", caseEvidence.Provider)
+	}
+	canaryRoute := faultProviderRoute{Root: filepath.Join(canaryStale.capsule.WorkspacePath, ".wp08-provider"), Prepared: canaryAudit.observePreparedProvider}
+	canaryEvidence := runNamedReadFault(t, executable, "stale.old-revision-tied-timestamp", canaryRoute)
+	if err := canaryAudit.runAfterProvider(canaryEvidence.Provider); err != nil {
+		t.Fatalf("separate canary should remain healthy: %v", err)
+	}
+	if _, err := os.Stat(declaredLeaseRoot); err != nil {
+		t.Fatalf("declared lease path should remain healthy: %v", err)
+	}
+	err := caseAudit.runAfterProvider(caseEvidence.Provider)
+	if err == nil || !strings.Contains(err.Error(), "case=provider-routing-mutant-case") || !strings.Contains(err.Error(), "invariant=provider_topology") {
+		t.Fatalf("unrelated-provider routing mutant escaped exact audit: %v", err)
+	}
+}
+
+type faultProviderFact struct {
+	Root, DatabaseIdentity string
+	Reference              tracker.ExternalWorkRef
+	TargetWorkID           ids.WorkID
+	InvocationAttempted    bool
+	RuntimeObserved        bool
+	Runtime                dishonestRuntime
+	MutationOperation      bool
+	MutationCount          int
+	MutationApplied        bool
+}
+
+type faultProviderRoute struct {
+	Root     string
+	Prepared func(faultProviderFact)
+}
+
+type executableFaultEvidence struct {
+	Operation, DiagnosticKind, RecoveryCode, MutationOutcome, RetrySafety string
+	Provider                                                              faultProviderFact
+}
+
+func preparedProviderFact(fixture dishonestFixture, targetWorkID ids.WorkID, mutation bool) faultProviderFact {
+	return faultProviderFact{
+		Root: fixture.root, DatabaseIdentity: fixture.providerDatabaseIdentity, Reference: fixture.reference,
+		TargetWorkID: targetWorkID, MutationOperation: mutation,
+	}
+}
+
+func observedProviderFact(fixture dishonestFixture, targetWorkID ids.WorkID, mutation, applied bool) faultProviderFact {
+	fact := preparedProviderFact(fixture, targetWorkID, mutation)
+	fact.InvocationAttempted = true
+	fact.MutationCount = dishonestMutationCount(fixture.root)
+	fact.MutationApplied = applied
+	if runtimeState, err := loadDishonestRuntime(fixture.root); err == nil {
+		fact.RuntimeObserved, fact.Runtime = true, runtimeState
+	}
+	return fact
+}
+
+func (route faultProviderRoute) announcePrepared(fact faultProviderFact) {
+	if route.Prepared != nil {
+		route.Prepared(fact)
+	}
+}
 
 func evidenceFromObservation(operation string, err error, mutations int, applied bool) executableFaultEvidence {
 	evidence := executableFaultEvidence{Operation: operation, MutationOutcome: "none", RetrySafety: "safe"}
@@ -529,7 +603,9 @@ type faultAuthorityAudit struct {
 	stale                                                  phase1StaleAuthority
 	fault                                                  string
 	required                                               bool
-	providerRoot                                           string
+	providerFact                                           *faultProviderFact
+	providerRequired                                       bool
+	providerBeforeErr                                      error
 	attributionProbe                                       func(context.Context) error
 	beforeStarted, beforePassed, afterStarted, afterPassed bool
 }
@@ -546,14 +622,16 @@ func (a *faultAuthorityAudit) run(stage string) error {
 	} else {
 		a.afterStarted = true
 	}
-	if a.providerRoot != "" {
-		relative, err := filepath.Rel(a.stale.capsule.WorkspacePath, a.providerRoot)
-		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("fault=%s provider_root=%q workspace=%q is not lease-scoped", a.fault, a.providerRoot, a.stale.capsule.WorkspacePath)
-		}
-	}
 	state := quickStaleFaultAuthority(a.t, a.fixture, a.stale, "WP08."+a.fault+"."+stage)
 	state.AttributionProbe = a.attributionProbe
+	if a.providerRequired {
+		if a.providerFact == nil {
+			state.ProviderTopologyProbe = func(context.Context) error { return fmt.Errorf("fault=%s provider fact is absent", a.fault) }
+		} else {
+			fact := *a.providerFact
+			state.ProviderTopologyProbe = func(context.Context) error { return a.assertProviderTopology(stage, fact) }
+		}
+	}
 	err := auditBeadsFault(context.Background(), state)
 	if err == nil {
 		if stage == "before" {
@@ -563,6 +641,54 @@ func (a *faultAuthorityAudit) run(stage string) error {
 		}
 	}
 	return err
+}
+
+func (a *faultAuthorityAudit) observePreparedProvider(fact faultProviderFact) {
+	a.providerRequired = true
+	a.providerFact = &fact
+	a.providerBeforeErr = a.run("before")
+}
+
+func (a *faultAuthorityAudit) runAfterProvider(fact faultProviderFact) error {
+	a.providerRequired = true
+	a.providerFact = &fact
+	if a.providerBeforeErr != nil {
+		return a.providerBeforeErr
+	}
+	return a.run("after")
+}
+
+func (a *faultAuthorityAudit) assertProviderTopology(stage string, fact faultProviderFact) error {
+	relative, err := filepath.Rel(a.stale.capsule.WorkspacePath, fact.Root)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("case=%s provider_root=%q workspace=%q is not lease-scoped", a.fault, fact.Root, a.stale.capsule.WorkspacePath)
+	}
+	if fact.TargetWorkID != a.stale.capsule.WorkID {
+		return fmt.Errorf("case=%s provider_work=%s authority_work=%s", a.fault, fact.TargetWorkID, a.stale.capsule.WorkID)
+	}
+	if fact.Reference.Provider != "beads" || fact.Reference.ExternalID == "" || fact.Reference.ProjectID == "" {
+		return fmt.Errorf("case=%s provider_binding=%+v is incomplete", a.fault, fact.Reference)
+	}
+	wantDatabase := filepath.Join(fact.Root, "embeddeddolt")
+	if fact.DatabaseIdentity != wantDatabase {
+		return fmt.Errorf("case=%s provider_database=%q want=%q", a.fault, fact.DatabaseIdentity, wantDatabase)
+	}
+	if _, err := os.Stat(filepath.Join(fact.Root, "scenario.json")); err != nil {
+		return fmt.Errorf("case=%s provider_script=%v", a.fault, err)
+	}
+	if stage == "after" {
+		if !fact.InvocationAttempted {
+			return fmt.Errorf("case=%s provider invocation was not observed", a.fault)
+		}
+		if fact.MutationOperation {
+			if !fact.RuntimeObserved || fact.MutationCount != 1 || !fact.MutationApplied || len(fact.Runtime.State) == 0 {
+				return fmt.Errorf("case=%s provider_mutation runtime=%t count=%d applied=%t state=%v", a.fault, fact.RuntimeObserved, fact.MutationCount, fact.MutationApplied, fact.Runtime.State)
+			}
+		} else if fact.RuntimeObserved && fact.Runtime.Position != len(fact.Runtime.Invocations) {
+			return fmt.Errorf("case=%s provider_runtime position=%d invocations=%d", a.fault, fact.Runtime.Position, len(fact.Runtime.Invocations))
+		}
+	}
+	return nil
 }
 func (a *faultAuthorityAudit) populate(result *conformance.Result) {
 	result.UniversalRequired, result.StaleProbeRequired = a.required, a.required
@@ -576,23 +702,24 @@ func faultRequiresAuthority(caseID string) bool {
 	return family != "malformed"
 }
 
-func faultProviderRoot(t *testing.T, roots []string) string {
+func resolveFaultProviderRoute(t *testing.T, routes []faultProviderRoute) faultProviderRoute {
 	t.Helper()
-	if len(roots) == 0 {
-		return t.TempDir()
+	if len(routes) == 0 {
+		return faultProviderRoute{Root: t.TempDir()}
 	}
-	if len(roots) != 1 || strings.TrimSpace(roots[0]) == "" {
-		t.Fatalf("fault provider requires exactly one non-empty root: %v", roots)
+	if len(routes) != 1 || strings.TrimSpace(routes[0].Root) == "" {
+		t.Fatalf("fault provider requires exactly one non-empty route: %v", routes)
 	}
-	if err := os.MkdirAll(roots[0], 0o700); err != nil {
+	if err := os.MkdirAll(routes[0].Root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return roots[0]
+	return routes[0]
 }
 
-func runNamedReadFault(t *testing.T, executable, caseID string, roots ...string) executableFaultEvidence {
+func runNamedReadFault(t *testing.T, executable, caseID string, routes ...faultProviderRoute) executableFaultEvidence {
 	t.Helper()
-	root := faultProviderRoot(t, roots)
+	route := resolveFaultProviderRoute(t, routes)
+	root := route.Root
 	valid := issueEnvelope("", "", "project-fault", "work-fault", "r1")
 	step := showStep(caseID, valid, "", 0)
 	wantKind, wantRecovery := tracker.ErrorKind(""), ""
@@ -602,6 +729,7 @@ func runNamedReadFault(t *testing.T, executable, caseID string, roots ...string)
 		step.WaitFor, wantKind, wantRecovery = "never.release", tracker.ErrorTimeout, "observe_then_reconcile"
 	case "unavailable.spawn-failure":
 		fixture := newDishonestFixtureAt(t, root, executable, []dishonestStep{step}, nil)
+		route.announcePrepared(preparedProviderFact(fixture, fixture.reference.WorkID, false))
 		moved := fixture.executable + ".offline"
 		if err := os.Rename(fixture.executable, moved); err != nil {
 			t.Fatal(err)
@@ -609,7 +737,9 @@ func runNamedReadFault(t *testing.T, executable, caseID string, roots ...string)
 		_, err := fixture.adapter.ReadWork(context.Background(), fixture.reference)
 		_ = os.Rename(moved, fixture.executable)
 		expectTrackerFault(t, err, tracker.ErrorUnavailable, "repair_provider_binding")
-		return evidenceFromObservation("catalog_read", err, 0, false)
+		evidence := evidenceFromObservation("catalog_read", err, 0, false)
+		evidence.Provider = observedProviderFact(fixture, fixture.reference.WorkID, false, false)
+		return evidence
 	case "unavailable.documented-json-error", "unavailable.workspace-lock":
 		step.Stdout, step.Stderr, step.ExitCode = `{"schema_version":1,"error":"bounded","code":"database_locked"}`, "arbitrary warning prose", 7
 		wantKind, wantRecovery = tracker.ErrorLockContended, "repair_provider_state"
@@ -641,6 +771,7 @@ func runNamedReadFault(t *testing.T, executable, caseID string, roots ...string)
 		t.Fatalf("unhandled fault case %s", caseID)
 	}
 	fixture := newDishonestFixtureAt(t, root, executable, []dishonestStep{step}, map[string]string{"truth_revision": "r-current"})
+	route.announcePrepared(preparedProviderFact(fixture, fixture.reference.WorkID, false))
 	var record tracker.WorkRecord
 	var err error
 	if step.WaitFor != "" {
@@ -686,7 +817,9 @@ func runNamedReadFault(t *testing.T, executable, caseID string, roots ...string)
 			t.Fatalf("real warning decision rejected: %v", err)
 		}
 	}
-	return evidenceFromObservation("catalog_read", err, dishonestMutationCount(fixture.root), false)
+	evidence := evidenceFromObservation("catalog_read", err, dishonestMutationCount(fixture.root), false)
+	evidence.Provider = observedProviderFact(fixture, fixture.reference.WorkID, false, false)
+	return evidence
 }
 
 func TestBeadsDishonestTruthfulWarningStaleAndWrongState(t *testing.T) {
@@ -781,8 +914,9 @@ func TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry(t *testing.T
 	runCatalogCreateApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runCatalogCreateApplyTimeout(t *testing.T, executable string, roots ...string) executableFaultEvidence {
-	root := faultProviderRoot(t, roots)
+func runCatalogCreateApplyTimeout(t *testing.T, executable string, routes ...faultProviderRoute) executableFaultEvidence {
+	route := resolveFaultProviderRoute(t, routes)
+	root := route.Root
 	steps := preflightSteps(root)
 	digest := portableRequestDigest("portable timeout", "", "")
 	metadata := fmt.Sprintf(`{"spec_kitty":{"content_digest":%q,"created_by_operation":"operation-create-timeout","criteria":[],"design_context":"","last_operation":"operation-create-timeout","project_id":"project-fault","schema_version":1,"work_id":"work-timeout"}}`, digest)
@@ -797,8 +931,10 @@ func runCatalogCreateApplyTimeout(t *testing.T, executable string, roots ...stri
 	)
 	steps[5].Argv[4] = metadata
 	fixture := newDishonestFixtureAt(t, root, executable, steps, nil)
+	request := tracker.CreateWorkRequest{ProjectID: "project-fault", WorkID: "work-timeout", OperationID: "operation-create-timeout", Title: "portable timeout", MetadataSchema: 1}
+	route.announcePrepared(preparedProviderFact(fixture, request.WorkID, true))
 	err := cancelAtDishonestBarrier(t, fixture.root, "never.release", func(ctx context.Context) error {
-		_, callErr := fixture.adapter.CreateWork(ctx, tracker.CreateWorkRequest{ProjectID: "project-fault", WorkID: "work-timeout", OperationID: "operation-create-timeout", Title: "portable timeout", MetadataSchema: 1})
+		_, callErr := fixture.adapter.CreateWork(ctx, request)
 		return callErr
 	})
 	expectTrackerFault(t, err, tracker.ErrorAmbiguous, "observe_then_reconcile")
@@ -831,15 +967,19 @@ func runCatalogCreateApplyTimeout(t *testing.T, executable string, roots ...stri
 	if rawState.State["applied"] != "true" {
 		t.Fatalf("apply-before-loss absent: %+v", rawState.State)
 	}
-	return evidenceFromObservation("create", err, dishonestMutationCount(fixture.root), state.State["created"] == "bd-timeout")
+	applied := state.State["created"] == "bd-timeout"
+	evidence := evidenceFromObservation("create", err, dishonestMutationCount(fixture.root), applied)
+	evidence.Provider = observedProviderFact(fixture, request.WorkID, true, applied)
+	return evidence
 }
 
 func TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runAssignmentApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runAssignmentApplyTimeout(t *testing.T, executable string, roots ...string) executableFaultEvidence {
-	root := faultProviderRoot(t, roots)
+func runAssignmentApplyTimeout(t *testing.T, executable string, routes ...faultProviderRoute) executableFaultEvidence {
+	route := resolveFaultProviderRoute(t, routes)
+	root := route.Root
 	operation := ids.OperationID("operation-assignment-timeout")
 	metadata := `{"spec_kitty":{"assignment_marker":"operation-assignment-timeout","content_digest":"","created_by_operation":"operation-create-fault","criteria":[],"design_context":"","last_operation":"operation-assignment-timeout","project_id":"project-fault","schema_version":1,"work_id":"work-fault"}}`
 	steps := []dishonestStep{showStep("assignment.before-request", issueEnvelope("", "", "project-fault", "work-fault", "r-before"), "", 0)}
@@ -850,6 +990,7 @@ func runAssignmentApplyTimeout(t *testing.T, executable string, roots ...string)
 		showStep("assignment.observe-after-loss", issueEnvelope("actor-timeout", operation.String(), "project-fault", "work-fault", "r-after"), "", 0),
 	)
 	fixture := newDishonestFixtureAt(t, root, executable, steps, nil)
+	route.announcePrepared(preparedProviderFact(fixture, fixture.reference.WorkID, true))
 	before, err := fixture.adapter.ObserveAssignment(context.Background(), fixture.reference)
 	if err != nil {
 		t.Fatal(err)
@@ -869,15 +1010,19 @@ func runAssignmentApplyTimeout(t *testing.T, executable string, roots ...string)
 	}
 	final := assertDishonestConsumed(t, root, len(steps))
 	assertSingleMutationInvocation(t, final, "update")
-	return evidenceFromObservation("assignment", err, dishonestMutationCount(root), state.State["assignment"] == "actor-timeout")
+	applied := state.State["assignment"] == "actor-timeout"
+	evidence := evidenceFromObservation("assignment", err, dishonestMutationCount(root), applied)
+	evidence.Provider = observedProviderFact(fixture, fixture.reference.WorkID, true, applied)
+	return evidence
 }
 
 func TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runCommentApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runCommentApplyTimeout(t *testing.T, executable string, roots ...string) executableFaultEvidence {
-	root := faultProviderRoot(t, roots)
+func runCommentApplyTimeout(t *testing.T, executable string, routes ...faultProviderRoute) executableFaultEvidence {
+	route := resolveFaultProviderRoute(t, routes)
+	root := route.Root
 	operation := ids.OperationID("operation-comment-timeout")
 	providerBody := "<!-- spec-kitty:discussion:v1;op=" + base64.RawURLEncoding.EncodeToString([]byte(operation.String())) + " -->\nportable body"
 	comment := fmt.Sprintf(`[{"id":"comment-1","author":"actor-timeout","text":%q,"created_at":"2026-08-26T12:01:00Z"}]`, providerBody)
@@ -893,6 +1038,7 @@ func runCommentApplyTimeout(t *testing.T, executable string, roots ...string) ex
 		dishonestStep{ID: "comment.list-after", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(comment)},
 	)
 	fixture := newDishonestFixtureAt(t, root, executable, steps, nil)
+	route.announcePrepared(preparedProviderFact(fixture, fixture.reference.WorkID, true))
 	record, err := fixture.adapter.ReadWork(context.Background(), fixture.reference)
 	if err != nil {
 		t.Fatal(err)
@@ -912,15 +1058,19 @@ func runCommentApplyTimeout(t *testing.T, executable string, roots ...string) ex
 	}
 	final := assertDishonestConsumed(t, root, len(steps))
 	assertSingleMutationInvocation(t, final, "comments", "add")
-	return evidenceFromObservation("comment", err, dishonestMutationCount(root), state.State["comment"] == operation.String())
+	applied := state.State["comment"] == operation.String()
+	evidence := evidenceFromObservation("comment", err, dishonestMutationCount(root), applied)
+	evidence.Provider = observedProviderFact(fixture, fixture.reference.WorkID, true, applied)
+	return evidence
 }
 
 func TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runDependencyApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runDependencyApplyTimeout(t *testing.T, executable string, roots ...string) executableFaultEvidence {
-	root := faultProviderRoot(t, roots)
+func runDependencyApplyTimeout(t *testing.T, executable string, routes ...faultProviderRoute) executableFaultEvidence {
+	route := resolveFaultProviderRoute(t, routes)
+	root := route.Root
 	current := issueJSON("", "", "project-fault", "work-fault", "r-before")
 	blocker := namedIssueJSON("bd-blocker", "blocker", "", "", "project-fault", "work-blocker", "operation-create-blocker", "r-blocker")
 	catalog := envelope("[" + current + "," + blocker + "]")
@@ -933,6 +1083,7 @@ func runDependencyApplyTimeout(t *testing.T, executable string, roots ...string)
 		dishonestStep{ID: "dependency.list-after", Argv: []string{"dep", "list", "bd-fault", "--json"}, Stdout: envelope(`[{"id":"bd-blocker","dependency_type":"blocks"}]`)},
 	)
 	fixture := newDishonestFixtureAt(t, root, executable, steps, nil)
+	route.announcePrepared(preparedProviderFact(fixture, fixture.reference.WorkID, true))
 	edge := tracker.DependencyRef{BlockedWorkID: "work-fault", BlockingWorkID: "work-blocker", Kind: tracker.DependencyBlocks}
 	err := cancelAtDishonestBarrier(t, fixture.root, "never.release", func(ctx context.Context) error {
 		_, callErr := fixture.adapter.PutBlockingDependency(ctx, tracker.DependencyRequest{ProjectID: "project-fault", OperationID: "operation-dependency-timeout", Dependency: edge})
@@ -949,15 +1100,19 @@ func runDependencyApplyTimeout(t *testing.T, executable string, roots ...string)
 	}
 	final := assertDishonestConsumed(t, root, len(steps))
 	assertSingleMutationInvocation(t, final, "dep", "add")
-	return evidenceFromObservation("dependency", err, dishonestMutationCount(root), state.State["dependency"] == "bd-fault<-bd-blocker")
+	applied := state.State["dependency"] == "bd-fault<-bd-blocker"
+	evidence := evidenceFromObservation("dependency", err, dishonestMutationCount(root), applied)
+	evidence.Provider = observedProviderFact(fixture, fixture.reference.WorkID, true, applied)
+	return evidence
 }
 
 func TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runCatalogUpdateApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runCatalogUpdateApplyTimeout(t *testing.T, executable string, roots ...string) executableFaultEvidence {
-	root := faultProviderRoot(t, roots)
+func runCatalogUpdateApplyTimeout(t *testing.T, executable string, routes ...faultProviderRoute) executableFaultEvidence {
+	route := resolveFaultProviderRoute(t, routes)
+	root := route.Root
 	operation := ids.OperationID("operation-catalog-update-timeout")
 	digest := portableRequestDigest("portable update", "", "")
 	metadata := fmt.Sprintf(`{"spec_kitty":{"content_digest":%q,"created_by_operation":"operation-create-fault","criteria":[],"design_context":"","last_operation":%q,"project_id":"project-fault","schema_version":1,"work_id":"work-fault"}}`, digest, operation)
@@ -971,6 +1126,7 @@ func runCatalogUpdateApplyTimeout(t *testing.T, executable string, roots ...stri
 		showStep("catalog-update.observe-after-loss", afterIssue, "", 0),
 	)
 	fixture := newDishonestFixtureAt(t, root, executable, steps, nil)
+	route.announcePrepared(preparedProviderFact(fixture, fixture.reference.WorkID, true))
 	before, err := fixture.adapter.ReadWork(context.Background(), fixture.reference)
 	if err != nil {
 		t.Fatal(err)
@@ -990,7 +1146,10 @@ func runCatalogUpdateApplyTimeout(t *testing.T, executable string, roots ...stri
 	}
 	final := assertDishonestConsumed(t, root, len(steps))
 	assertSingleMutationInvocation(t, final, "update")
-	return evidenceFromObservation("catalog-update", err, dishonestMutationCount(root), state.State["catalog_operation"] == operation.String())
+	applied := state.State["catalog_operation"] == operation.String()
+	evidence := evidenceFromObservation("catalog-update", err, dishonestMutationCount(root), applied)
+	evidence.Provider = observedProviderFact(fixture, fixture.reference.WorkID, true, applied)
+	return evidence
 }
 
 func assertSingleMutationInvocation(t *testing.T, state dishonestRuntime, action ...string) {

@@ -82,10 +82,11 @@ type dishonestRuntime struct {
 }
 
 type dishonestFixture struct {
-	root       string
-	executable string
-	adapter    *beads.BoundAdapter
-	reference  tracker.ExternalWorkRef
+	root                     string
+	providerDatabaseIdentity string
+	executable               string
+	adapter                  *beads.BoundAdapter
+	reference                tracker.ExternalWorkRef
 }
 
 type deletedBoundAdapterPort struct {
@@ -208,7 +209,7 @@ func newDishonestFixtureAt(t *testing.T, root, executable string, steps []dishon
 	if err != nil {
 		t.Fatal(err)
 	}
-	return dishonestFixture{root: root, executable: executable, adapter: adapter, reference: tracker.ExternalWorkRef{
+	return dishonestFixture{root: root, providerDatabaseIdentity: databasePath, executable: executable, adapter: adapter, reference: tracker.ExternalWorkRef{
 		ProjectID: "project-fault", WorkID: "work-fault", Provider: "beads", ExternalID: "bd-fault",
 		MetadataSchema: 1, CreatedByOperation: "operation-create-fault",
 	}}
@@ -231,15 +232,23 @@ func writeDishonestScenario(t *testing.T, root string, scenario dishonestScenari
 
 func readDishonestRuntime(t *testing.T, root string) dishonestRuntime {
 	t.Helper()
-	var state dishonestRuntime
-	encoded, err := os.ReadFile(filepath.Join(root, "scenario.state.json"))
+	state, err := loadDishonestRuntime(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(encoded, &state); err != nil {
-		t.Fatal(err)
-	}
 	return state
+}
+
+func loadDishonestRuntime(root string) (dishonestRuntime, error) {
+	var state dishonestRuntime
+	encoded, err := os.ReadFile(filepath.Join(root, "scenario.state.json"))
+	if err != nil {
+		return state, err
+	}
+	if err := json.Unmarshal(encoded, &state); err != nil {
+		return state, err
+	}
+	return state, nil
 }
 
 func assertDishonestConsumed(t *testing.T, root string, expected int) dishonestRuntime {
