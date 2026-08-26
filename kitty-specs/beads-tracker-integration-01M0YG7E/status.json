@@ -374,7 +374,7 @@
     },
     "WP11": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
@@ -395,14 +395,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T054": "done",
-        "T055": "done",
-        "T056": "done",
-        "T057": "done",
-        "T058": "done"
+        "T054": "planned",
+        "T055": "planned",
+        "T056": "planned",
+        "T057": "planned",
+        "T058": "planned"
       }
     }
   }
