@@ -1,0 +1,202 @@
+{
+  "event_count": 55,
+  "last_event_id": "01M0YY3HQPKRAXK83VECRA8AQ2",
+  "materialized_at": "2026-08-26T11:43:21.846204+00:00",
+  "mission_number": "",
+  "mission_slug": "beads-tracker-integration-01M0YG7E",
+  "mission_type": "software-dev",
+  "summary": {
+    "approved": 3,
+    "blocked": 0,
+    "canceled": 0,
+    "claimed": 0,
+    "done": 0,
+    "for_review": 0,
+    "in_progress": 0,
+    "in_review": 1,
+    "planned": 7
+  },
+  "work_packages": {
+    "WP01": {
+      "actor": "user",
+      "agent": "codex",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
+      "force_count": 2,
+      "lane": "approved",
+      "last_event_id": "01M0YRMEHR2568R52A2D6M7R65",
+      "last_transition_at": "2026-08-26T10:07:44.184687+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review",
+        "Ready for review: portable ports wired and canonical tracker binding added",
+        "Ready for review: persisted author is part of discussion replay identity; diff-scoped gofmt + staticcheck: 0 issues, exit 0",
+        "Review passed cycle 3: discussion author persists across reopen, participates in replay identity, and is returned from persisted state; same-marker/body/different-author is rejected before mutation with file, revision, history, and queued-failure sentinels unchanged. TrackerBinding and portable-port wiring remain intact. Anti-pattern checklist: dead code PASS; synthetic fixtures PASS; silent empty returns PASS; FR coverage PASS; frozen surface PASS; locked decisions PASS; shared-file ownership PASS; production fragility PASS. Evidence: focused count-50, package count-10, uncached race, vet, compatibility compilation, and diff checks passed."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "reference": "Review passed cycle 3: discussion author persists across reopen, participates in replay identity, and is returned from persisted state; same-marker/body/different-author is rejected before mutation with file, revision, history, and queued-failure sentinels unchanged. TrackerBinding and portable-port wiring remain intact. Anti-pattern checklist: dead code PASS; synthetic fixtures PASS; silent empty returns PASS; FR coverage PASS; frozen surface PASS; locked decisions PASS; shared-file ownership PASS; production fragility PASS. Evidence: focused count-50, package count-10, uncached race, vet, compatibility compilation, and diff checks passed.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T001": "done",
+        "T002": "done",
+        "T003": "done",
+        "T004": "done",
+        "T005": "done"
+      }
+    },
+    "WP02": {
+      "actor": "user",
+      "agent": "codex",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
+      "force_count": 1,
+      "lane": "approved",
+      "last_event_id": "01M0YNR81EN1RJX0CMJ7KAQK4H",
+      "last_transition_at": "2026-08-26T09:17:22.862287+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: permanent layered Beads adapter boundary; architecture tests and race checks pass",
+        "Review passed: exact slash-bounded adapter classification; production-shaped graph-loader fixture; stable local-direction, deferred-surface, and look-alike controls; 33/33/33 architecture and 2/2/2 scope censuses; race, repeated focused tests, formatting, ownership, and module-dependency checks all pass. Anti-patterns: dead code N/A; synthetic fixtures PASS; silent empty return PASS; FR coverage PASS; frozen surface PASS; locked decisions PASS; shared-file ownership PASS; production fragility N/A. Force used solely because coordination-merge status history remained detectable after the lane kitty-specs tree was restored to exactly match feat/beads-tracker-integration."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "Review passed: exact slash-bounded adapter classification; production-shaped graph-loader fixture; stable local-direction, deferred-surface, and look-alike controls; 33/33/33 architecture and 2/2/2 scope censuses; race, repeated focused tests, formatting, ownership, and module-dependency checks all pass. Anti-patterns: dead code N/A; synthetic fixtures PASS; silent empty return PASS; FR coverage PASS; frozen surface PASS; locked decisions PASS; shared-file ownership PASS; production fragility N/A. Force used solely because coordination-merge status history remained detectable after the lane kitty-specs tree was restored to exactly match feat/beads-tracker-integration.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T006": "done",
+        "T007": "done",
+        "T008": "done",
+        "T009": "done"
+      }
+    },
+    "WP03": {
+      "actor": "user",
+      "agent": "codex",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
+      "force_count": 1,
+      "lane": "approved",
+      "last_event_id": "01M0YV4Z987CFK9DV1W43RFPV9",
+      "last_transition_at": "2026-08-26T10:51:42.760134+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: closed typed bd command vocabulary, bounded POSIX process-group runner, schema-1 envelope/error and JSONL decoders, stable redacted diagnostics, ambiguity monotonicity, and adversarial tests; protocol.go 100% statement coverage; focused race/repeat/vet/staticcheck plus contract/scope campaigns pass.",
+        "Correction cycle 2 ready: option-like values fail closed under bounded ID/value grammar, runtime argv tampering fails before spawn, documented errors require exact top-level wire lines, build identity requires non-empty build, and the complete hostile process matrix passes normal/race/repeat/coverage/vet/static/contract/scope gates.",
+        "Independent correction-cycle-2 review passed: hostile argv, exact error envelope, build identity, process reaping, race/repeat/coverage/vet verified; approval transition retried after planning-base lane reconciliation"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "reference": "Independent correction-cycle-2 review passed: hostile argv, exact error envelope, build identity, process reaping, race/repeat/coverage/vet verified; approval transition retried after planning-base lane reconciliation",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T010": "done",
+        "T011": "done",
+        "T012": "done",
+        "T013": "done",
+        "T014": "done",
+        "T015": "done"
+      }
+    },
+    "WP04": {
+      "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
+      "force_count": 5,
+      "lane": "in_review",
+      "last_event_id": "01M0YY3HQPKRAXK83VECRA8AQ2",
+      "last_transition_at": "2026-08-26T11:43:21.846204+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: canonical executable/workspace binding with SHA-256 identity, typed v1.2.2/schema-1 health and capability inspection, immutable pre-mutation readiness, refusal-before-lock ordering, qualified server mode, and OS-process embedded writer serialization. Commit e859e15. Gates: focused count=10; tracker count=10; tracker race; vet; staticcheck; architecture guard; go test -short ./...; diff check all pass. Runtime defects: lane-d did not materialize approved WP01-WP03 code, so only authorized code commits were cherry-picked; lane auto-rebase also carried committed coordination artifacts and the transition required --force rather than rewriting dependency/status history.",
+        "Correction cycle 2 ready: commit 0e18cfa. Capability reports now fail closed and advertise only currently implemented writer concurrency; incompatible/unavailable/read-only states advertise no usable capability. Server mode pins configured identity, endpoint, and defensively copied allowlisted connection facts, compares both info/doctor observations, and expires readiness after a bounded interval. NFR-001 now measures 100 real WP03 subprocess starts separately from 100 full preflights. Added complete lane/provider census, forbidden setup argv guard, divergent-lane refusal-before-lock/mutation, canonical-lock mutant across two lane CWD processes, and actual two-process qualified-server overlap. Added owned Open/InspectProvider production composition seam over existing WP03 Adapter. External helpercmd composition is outside WP04 ownership and remains for later integration; adapter.go was not owned and was not edited. Gates: focused count=10, tracker count=10, tracker race, vet, staticcheck, architecture, diff check all pass. Broken repository -short campaign intentionally not run per review instruction. Runtime artifact-placement defect again required supported --force transition rather than rewriting inherited dependency/status history.",
+        "Correction cycle 3 ready: commit 57cc7e4. Narrow ownership expansion was explicitly authorized for internal/helpercmd/tracker.go and tracker_test.go because review proved WP04's otherwise-complete Beads graph had no shipped application caller. Added root-dispatched 'tracker inspect-beads' with explicit project/executable/workspace/database/schema/mode/read-only/server/allowlisted-credential flags, typed JSON inspection and stable typed errors, and credential-redaction tests. Existing fake assign/compensate path remains unchanged. Removed unused executeCheckedMutation scaffolding; direct tests now separately prove incompatible Preflight failure and zero-readiness refusal before lock/mutation, reserving real mutation composition for WP05. Gates: helpercmd+beads count=10, race, vet, staticcheck, architecture, binary build, diff check all pass. Broken repository short campaign not run. Known inherited kitty-specs lane-artifact defect again required supported --force transition rather than rewriting coordination history."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP04-canonical-binding-and-provider-health/review-cycle-2.md",
+        "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP04-canonical-binding-and-provider-health/review-cycle-2.md",
+        "reviewer": "user",
+        "verdict": "changes_requested"
+      },
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T016": "done",
+        "T017": "done",
+        "T018": "done",
+        "T019": "done",
+        "T020": "done"
+      }
+    },
+    "WP05": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M0YJB05HXF7T9309SEMA82TC",
+      "last_transition_at": "2026-08-26T08:17:43.089210+00:00"
+    },
+    "WP06": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M0YJB3684DQR2QWXXHKFXH0H",
+      "last_transition_at": "2026-08-26T08:17:46.184400+00:00"
+    },
+    "WP07": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M0YJB6RXZXEXA8YJ37G5DGET",
+      "last_transition_at": "2026-08-26T08:17:49.854006+00:00"
+    },
+    "WP08": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M0YJBA7PJAJBP57TYZH1P9PN",
+      "last_transition_at": "2026-08-26T08:17:53.398694+00:00"
+    },
+    "WP09": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M0YJBDAEBFV13NQQ0453M4JT",
+      "last_transition_at": "2026-08-26T08:17:56.558604+00:00"
+    },
+    "WP10": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M0YJBGSCAQ508RVR1075ZE9H",
+      "last_transition_at": "2026-08-26T08:18:00.108049+00:00"
+    },
+    "WP11": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M0YJBMF665JD0Q6E74A4BDRF",
+      "last_transition_at": "2026-08-26T08:18:03.878126+00:00"
+    }
+  }
+}
