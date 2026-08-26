@@ -38,16 +38,24 @@ func runCommandHelper() int {
 		fmt.Fprintln(os.Stderr, "completely different warning wording {not-json}")
 		fmt.Print(`{"schema_version":1,"data":{"id":"work-1"}}`)
 	case "error":
-		fmt.Fprintln(os.Stderr, `{"schema_version":1,"error":"gone","code":"not_found"}`)
+		fmt.Print(`{"schema_version":1,"error":"gone","code":"not_found"}`)
+		fmt.Fprintln(os.Stderr, "human provider error")
 		return 7
+	case "real-show-missing":
+		fmt.Print(realV122MissingShowStdout)
+		fmt.Fprint(os.Stderr, realV122MissingShowStderr)
+		return 1
 	case "prose-error":
 		fmt.Fprintln(os.Stderr, "not found maybe")
+		return 7
+	case "stderr-error-mutant":
+		fmt.Fprintln(os.Stderr, `{"schema_version":1,"error":"gone","code":"not_found"}`)
 		return 7
 	case "nested-error-warning":
 		fmt.Fprintln(os.Stderr, `{"wrapper":{"schema_version":1,"error":"spoof","code":"not_found"}}`)
 		return 7
 	case "signal-error":
-		fmt.Fprintln(os.Stderr, `{"schema_version":1,"error":"gone","code":"not_found"}`)
+		fmt.Print(`{"schema_version":1,"error":"gone","code":"not_found"}`)
 		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
 		time.Sleep(time.Second)
 		return 7
@@ -92,6 +100,10 @@ func runCommandHelper() int {
 	return 0
 }
 
+const realV122MissingShowStdout = "{\n  \"data\": {\n    \"error\": \"no issues found matching the provided IDs\"\n  },\n  \"schema_version\": 1\n}\n"
+
+const realV122MissingShowStderr = "Error fetching skt-missing: no issue found matching \"skt-missing\"\n"
+
 func mustGetwd() string { value, _ := os.Getwd(); return value }
 
 func TestCommandArgvVocabulary(t *testing.T) {
@@ -106,8 +118,8 @@ func TestCommandArgvVocabulary(t *testing.T) {
 	}{
 		{"version", func() (command, error) { return newVersionCommand(binding) }, []string{"version", "--json"}, expectedObject, false},
 		{"where", func() (command, error) { return newWhereCommand(binding) }, []string{"where", "--json"}, expectedObject, false},
-		{"dolt-show", func() (command, error) { return newDoltShowCommand(binding) }, []string{"dolt", "show", "--json"}, expectedObject, false},
-		{"dolt-status", func() (command, error) { return newDoltStatusCommand(binding) }, []string{"dolt", "status", "--json"}, expectedObject, false},
+		{"info", func() (command, error) { return newInfoCommand(binding) }, []string{"info", "--schema", "--json"}, expectedObject, false},
+		{"doctor", func() (command, error) { return newDoctorCommand(binding) }, []string{"doctor", "--agent", "--json"}, expectedObject, false},
 		{"show", func() (command, error) { return newShowCommand(binding, "x") }, []string{"show", "x", "--json"}, expectedObject, false},
 		{"list", func() (command, error) { return newListCommand(binding) }, []string{"list", "--json"}, expectedArray, false},
 		{"ready", func() (command, error) { return newReadyCommand(binding) }, []string{"ready", "--json"}, expectedArray, false},
@@ -115,11 +127,10 @@ func TestCommandArgvVocabulary(t *testing.T) {
 			return newCreateCommand(binding, createValues{title: "t", description: "d", acceptance: "a", metadata: "{}"})
 		}, []string{"create", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--json"}, expectedObject, true},
 		{"update", func() (command, error) {
-			return newUpdateCommand(binding, updateValues{id: "x", title: presentUpdateValue("t"), description: presentUpdateValue("d"), acceptance: presentUpdateValue("a"), metadata: presentUpdateValue("{}"), assignee: presentUpdateValue("ivan")})
+			return newUpdateCommand(binding, updateValues{id: "x", title: "t", description: "d", acceptance: "a", metadata: "{}", assignee: "ivan"})
 		}, []string{"update", "x", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--assignee", "ivan", "--json"}, expectedObject, true},
 		{"claim", func() (command, error) { return newAtomicClaimCommand(binding, "x") }, []string{"update", "x", "--claim", "--json"}, expectedObject, true},
 		{"dep-add", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, []string{"dep", "add", "blocked", "blocker", "--type", "blocks", "--json"}, expectedObject, true},
-		{"dep-remove", func() (command, error) { return newDependencyRemoveCommand(binding, "blocked", "blocker") }, []string{"dep", "remove", "blocked", "blocker", "--json"}, expectedObject, true},
 		{"dep-list", func() (command, error) { return newDependencyListCommand(binding, "x") }, []string{"dep", "list", "x", "--json"}, expectedArray, false},
 		{"comment-add", func() (command, error) { return newCommentAppendCommand(binding, "x", "body") }, []string{"comments", "add", "x", "body", "--json"}, expectedObject, true},
 		{"comment-list", func() (command, error) { return newCommentListCommand(binding, "x") }, []string{"comments", "x", "--json"}, expectedArray, false},
@@ -160,12 +171,11 @@ func TestCommandValidationBeforeSpawn(t *testing.T) {
 		{"relative cwd", func() error { b := valid; b.workingDir = "."; _, err := newListCommand(b); return err }},
 		{"negative timeout", func() error { b := valid; b.timeout = -1; _, err := newListCommand(b); return err }},
 		{"too long timeout", func() error { b := valid; b.timeout = 31 * time.Second; _, err := newListCommand(b); return err }},
-		{"explicit timeout absent", func() error { b := valid; b.timeout = 0; _, err := newExportCommand(b); return err }},
+		{"explicit timeout absent", func() error { b := valid; b.timeout = 0; _, err := newDoctorCommand(b); return err }},
 		{"empty id", func() error { _, err := newShowCommand(valid, ""); return err }},
 		{"nul id", func() error { _, err := newShowCommand(valid, "x\x00y"); return err }},
 		{"empty update", func() error { _, err := newUpdateCommand(valid, updateValues{id: "x"}); return err }},
 		{"self dependency", func() error { _, err := newDependencyAddCommand(valid, "x", "x"); return err }},
-		{"self dependency removal", func() error { _, err := newDependencyRemoveCommand(valid, "x", "x"); return err }},
 		{"relative backup", func() error { _, err := newBackupInitCommand(valid, "backup"); return err }},
 		{"credential", func() error {
 			b := valid
@@ -220,22 +230,17 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 		build func() error
 	}{
 		{"show id", func() error { _, err := newShowCommand(binding, "--help"); return err }},
-		{"update id", func() error {
-			_, err := newUpdateCommand(binding, updateValues{id: "-h", title: presentUpdateValue("x")})
-			return err
-		}},
+		{"update id", func() error { _, err := newUpdateCommand(binding, updateValues{id: "-h", title: "x"}); return err }},
 		{"claim id", func() error { _, err := newAtomicClaimCommand(binding, "--version"); return err }},
 		{"blocked id", func() error { _, err := newDependencyAddCommand(binding, "--help", "blocker-1"); return err }},
 		{"blocker id", func() error { _, err := newDependencyAddCommand(binding, "blocked-1", "--help"); return err }},
-		{"removed blocked id", func() error { _, err := newDependencyRemoveCommand(binding, "--help", "blocker-1"); return err }},
-		{"removed blocker id", func() error { _, err := newDependencyRemoveCommand(binding, "blocked-1", "--help"); return err }},
 		{"dependency id", func() error { _, err := newDependencyListCommand(binding, "--help"); return err }},
 		{"comment id", func() error { _, err := newCommentAppendCommand(binding, "--help", "body"); return err }},
 		{"comment body", func() error { _, err := newCommentAppendCommand(binding, "work-1", "--help"); return err }},
 		{"comment list id", func() error { _, err := newCommentListCommand(binding, "--help"); return err }},
 		{"create title", func() error { _, err := newCreateCommand(binding, createValues{title: "--help"}); return err }},
 		{"update title", func() error {
-			_, err := newUpdateCommand(binding, updateValues{id: "work-1", title: presentUpdateValue("--help")})
+			_, err := newUpdateCommand(binding, updateValues{id: "work-1", title: "--help"})
 			return err
 		}},
 	}
@@ -245,28 +250,6 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 				t.Fatal("option-like value accepted")
 			}
 		})
-	}
-}
-
-func TestUpdateCommandDistinguishesExplicitEmptyFromOmitted(t *testing.T) {
-	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
-	command, err := newUpdateCommand(binding, updateValues{
-		id: "work-1", title: presentUpdateValue("title"),
-		description: presentUpdateValue(""), acceptance: presentUpdateValue(""),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"update", "work-1", "--title", "title", "--description", "", "--acceptance", "", "--json"}
-	if !reflect.DeepEqual(command.renderedArgv(), want) {
-		t.Fatalf("argv=%q want=%q", command.renderedArgv(), want)
-	}
-	omitted, err := newUpdateCommand(binding, updateValues{id: "work-1", title: presentUpdateValue("title")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := omitted.renderedArgv(); !reflect.DeepEqual(got, []string{"update", "work-1", "--title", "title", "--json"}) {
-		t.Fatalf("omitted argv=%q", got)
 	}
 }
 
@@ -333,6 +316,98 @@ func TestProcessRunnerSuccessWarningsAndDocumentedError(t *testing.T) {
 	response, err = adapter.execute(context.Background(), rejected)
 	if err == nil || response.result.mutationOutcome != mutationNotApplied {
 		t.Fatalf("err=%v outcome=%s", err, response.result.mutationOutcome)
+	}
+}
+
+func TestRealV122MissingShowMapsNotFoundFromStdoutEnvelope(t *testing.T) {
+	adapter := newAdapter(newProcessRunner())
+	missing := helperCommand(t, "real-show-missing", false, 5*time.Second, 1024, 1024)
+	response, err := adapter.execute(context.Background(), missing)
+	if !tracker.IsKind(err, tracker.ErrorNotFound) {
+		t.Fatalf("expected typed not_found, got result=%+v err=%v", response.result, err)
+	}
+	if response.metadata.schemaVersion != 1 || !response.metadata.warningsPresent || response.metadata.warningCount < 1 {
+		t.Fatalf("metadata=%+v", response.metadata)
+	}
+}
+
+func TestUncodedDataErrorEnvelopeIsConclusiveOnlyForShow(t *testing.T) {
+	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
+	binding.timeout = time.Second
+	tests := []struct {
+		name     string
+		build    func() (command, error)
+		wantKind tracker.ErrorKind
+		outcome  mutationOutcome
+		recovery string
+	}{
+		{"show", func() (command, error) { return newShowCommand(binding, "missing") }, tracker.ErrorNotFound, mutationUnknown, "repair_provider_state"},
+		{"mutating show mutant", func() (command, error) {
+			request, err := newShowCommand(binding, "missing")
+			request.mutating = true
+			return request, err
+		}, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"list read", func() (command, error) { return newListCommand(binding) }, tracker.ErrorMalformedProtocol, mutationUnknown, "repair_provider_binding"},
+		{"create", func() (command, error) { return newCreateCommand(binding, createValues{title: "work"}) }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"update", func() (command, error) { return newUpdateCommand(binding, updateValues{id: "work", title: "changed"}) }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"dependency", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"comment", func() (command, error) { return newCommentAppendCommand(binding, "work", "body") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"assignment", func() (command, error) { return newAtomicClaimCommand(binding, "work") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request, err := test.build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			exit := 1
+			runner := &fakeRunner{result: commandResult{
+				kind: request.kind, started: true, exitCode: &exit,
+				stdout: []byte(realV122MissingShowStdout), stderr: []byte(realV122MissingShowStderr),
+				mutationOutcome: mutationUnknown,
+			}}
+			response, err := newAdapter(runner).execute(context.Background(), request)
+			if !tracker.IsKind(err, test.wantKind) || response.result.mutationOutcome != test.outcome {
+				t.Fatalf("kind=%v outcome=%s response=%+v", err, response.result.mutationOutcome, response.result)
+			}
+			var portable *tracker.Error
+			if !errors.As(err, &portable) || portable.RecoveryAction() != test.recovery {
+				t.Fatalf("portable=%+v", portable)
+			}
+		})
+	}
+}
+
+func TestNonzeroStderrJSONMutantNeverSelectsProviderState(t *testing.T) {
+	adapter := newAdapter(newProcessRunner())
+	mutant := helperCommand(t, "stderr-error-mutant", false, 5*time.Second, 1024, 1024)
+	response, err := adapter.execute(context.Background(), mutant)
+	if !tracker.IsKind(err, tracker.ErrorMalformedProtocol) || tracker.IsKind(err, tracker.ErrorNotFound) {
+		t.Fatalf("stderr mutant selected provider state: result=%+v err=%v", response.result, err)
+	}
+}
+
+func TestNonzeroErrorEnvelopeAndHumanStderrRemainRedacted(t *testing.T) {
+	const stdoutSecret = "STDOUT_ERROR_SECRET"
+	const stderrSecret = "STDERR_HUMAN_SECRET"
+	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
+	binding.timeout = time.Second
+	request, err := newShowCommand(binding, "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit := 1
+	runner := &fakeRunner{result: commandResult{
+		kind: request.kind, started: true, exitCode: &exit,
+		stdout: []byte(`{"schema_version":1,"data":{"error":"` + stdoutSecret + `"}}`),
+		stderr: []byte(stderrSecret),
+	}}
+	_, err = newAdapter(runner).execute(context.Background(), request)
+	if !tracker.IsKind(err, tracker.ErrorNotFound) {
+		t.Fatalf("kind=%v", err)
+	}
+	if strings.Contains(err.Error(), stdoutSecret) || strings.Contains(err.Error(), stderrSecret) {
+		t.Fatalf("provider streams leaked through typed error: %v", err)
 	}
 }
 
@@ -456,8 +531,6 @@ func TestPermissionFailureIsUnavailableAndNotStarted(t *testing.T) {
 
 func TestProcessRunnerSanitizesEnvironment(t *testing.T) {
 	t.Setenv("WP03_SECRET_SENTINEL", "do-not-inherit")
-	t.Setenv("BD_DISABLE_METRICS", "0")
-	t.Setenv("BD_DISABLE_EVENT_FLUSH", "0")
 	base := helperCommand(t, "environment", false, 5*time.Second, 1<<20, 1024)
 	cmd, err := newListCommand(base.binding)
 	if err != nil {
@@ -473,7 +546,7 @@ func TestProcessRunnerSanitizesEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(environment, "\n")
-	for _, required := range []string{"BEADS_DIR=", "BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1", "BD_DISABLE_METRICS=1", "BD_DISABLE_EVENT_FLUSH=1", "DOLT_SERVER_HOST=localhost"} {
+	for _, required := range []string{"BEADS_DIR=", "BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1", "DOLT_SERVER_HOST=localhost"} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("missing %s", required)
 		}

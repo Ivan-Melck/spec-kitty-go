@@ -55,13 +55,13 @@ func TestDecodeEnvelopeContract(t *testing.T) {
 	}
 }
 
-func TestDecodeDocumentedErrorAmongWarnings(t *testing.T) {
-	input := []byte("first warning\n{\"schema_version\":1,\"error\":\"secret body\",\"code\":\"not_found\"}\nsecond warning\n")
+func TestDecodeDocumentedErrorFromBoundedStdout(t *testing.T) {
+	input := []byte(`{"schema_version":1,"error":"secret body","code":"not_found"}`)
 	got, err := decodeDocumentedError(input, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.providerCode != "not_found" || !got.warningsPresent || got.warningCount != 2 {
+	if got.providerCode != "not_found" || got.shape != documentedErrorObject {
 		t.Fatalf("got=%+v", got)
 	}
 	if strings.Contains(got.providerCode, "secret") {
@@ -79,7 +79,14 @@ func TestDecodeDocumentedErrorAmongWarnings(t *testing.T) {
 		{"partial", []byte(`{"schema_version":1,"error":`), false, protocolMalformed},
 		{"missing code", []byte(`{"schema_version":1,"error":"x"}`), false, protocolMalformed},
 		{"wrong field type", []byte(`{"schema_version":{},"error":"x","code":"bad"}`), false, protocolMalformed},
+		{"direct error empty", []byte(`{"schema_version":1,"error":"","code":"bad"}`), false, protocolMalformed},
 		{"extra top-level field", []byte(`{"schema_version":1,"error":"x","code":"bad","wrapper":true}`), false, protocolMalformed},
+		{"data is array", []byte(`{"schema_version":1,"data":[]}`), false, protocolMalformed},
+		{"data missing error", []byte(`{"schema_version":1,"data":{"id":"x"}}`), false, protocolMalformed},
+		{"data error empty", []byte(`{"schema_version":1,"data":{"error":""}}`), false, protocolMalformed},
+		{"data error wrong type", []byte(`{"schema_version":1,"data":{"error":7}}`), false, protocolMalformed},
+		{"mixed data and direct error", []byte(`{"schema_version":1,"data":{"error":"x"},"error":"x","code":"not_found"}`), false, protocolMalformed},
+		{"mixed data and direct code", []byte(`{"schema_version":1,"data":{"error":"x"},"code":"not_found"}`), false, protocolMalformed},
 		{"future schema", []byte(`{"schema_version":2,"error":"x","code":"bad"}`), false, protocolSchema},
 		{"multiple", []byte("{\"schema_version\":1,\"error\":\"x\",\"code\":\"a\"}\n{\"schema_version\":1,\"error\":\"y\",\"code\":\"b\"}"), false, protocolMalformed},
 		{"nested spoof", []byte(`{"wrapper":{"schema_version":1,"error":"x","code":"not_found"}}`), false, protocolMalformed},
@@ -94,13 +101,9 @@ func TestDecodeDocumentedErrorAmongWarnings(t *testing.T) {
 			}
 		})
 	}
-	clean, err := decodeDocumentedError([]byte(`{"schema_version":1,"error":"x","code":"invalid_request"}`), false)
-	if err != nil || clean.warningsPresent || clean.warningCount != 0 {
-		t.Fatalf("clean=%+v err=%v", clean, err)
-	}
-	withFragment, err := decodeDocumentedError([]byte("warning {\"wrapper\":{\"schema_version\":1,\"error\":\"spoof\",\"code\":\"not_found\"}} suffix\n{\"schema_version\":1,\"error\":\"real\",\"code\":\"invalid_request\"}\n"), false)
-	if err != nil || withFragment.providerCode != "invalid_request" || withFragment.warningCount != 1 {
-		t.Fatalf("fragment=%+v err=%v", withFragment, err)
+	real, err := decodeDocumentedError([]byte(realV122MissingShowStdout), false)
+	if err != nil || real.providerCode != "" || real.shape != documentedDataErrorEnvelope || real.schemaVersion != 1 {
+		t.Fatalf("real=%+v err=%v", real, err)
 	}
 }
 

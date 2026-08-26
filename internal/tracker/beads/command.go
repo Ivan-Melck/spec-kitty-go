@@ -29,26 +29,25 @@ const (
 type CommandKind string
 
 const (
-	CommandVersion          CommandKind = "version"
-	CommandWhere            CommandKind = "where"
-	CommandDoltShow         CommandKind = "dolt_show"
-	CommandDoltStatus       CommandKind = "dolt_status"
-	CommandShow             CommandKind = "show"
-	CommandList             CommandKind = "list"
-	CommandReady            CommandKind = "ready"
-	CommandCreate           CommandKind = "create"
-	CommandUpdate           CommandKind = "update"
-	CommandAtomicClaim      CommandKind = "atomic_claim"
-	CommandDependencyAdd    CommandKind = "dependency_add"
-	CommandDependencyRemove CommandKind = "dependency_remove"
-	CommandDependencyList   CommandKind = "dependency_list"
-	CommandCommentAppend    CommandKind = "comment_append"
-	CommandCommentList      CommandKind = "comment_list"
-	CommandExport           CommandKind = "export"
-	CommandBackupInit       CommandKind = "backup_init"
-	CommandBackupSync       CommandKind = "backup_sync"
-	CommandBackupStatus     CommandKind = "backup_status"
-	CommandBackupRestore    CommandKind = "backup_restore"
+	CommandVersion        CommandKind = "version"
+	CommandWhere          CommandKind = "where"
+	CommandInfo           CommandKind = "info"
+	CommandDoctor         CommandKind = "doctor"
+	CommandShow           CommandKind = "show"
+	CommandList           CommandKind = "list"
+	CommandReady          CommandKind = "ready"
+	CommandCreate         CommandKind = "create"
+	CommandUpdate         CommandKind = "update"
+	CommandAtomicClaim    CommandKind = "atomic_claim"
+	CommandDependencyAdd  CommandKind = "dependency_add"
+	CommandDependencyList CommandKind = "dependency_list"
+	CommandCommentAppend  CommandKind = "comment_append"
+	CommandCommentList    CommandKind = "comment_list"
+	CommandExport         CommandKind = "export"
+	CommandBackupInit     CommandKind = "backup_init"
+	CommandBackupSync     CommandKind = "backup_sync"
+	CommandBackupStatus   CommandKind = "backup_status"
+	CommandBackupRestore  CommandKind = "backup_restore"
 )
 
 type expectedShape uint8
@@ -95,12 +94,12 @@ func newWhereCommand(binding commandBinding) (command, error) {
 	return buildCommand(CommandWhere, binding, []string{"where", "--json"}, expectedObject, false, false)
 }
 
-func newDoltShowCommand(binding commandBinding) (command, error) {
-	return buildCommand(CommandDoltShow, binding, []string{"dolt", "show", "--json"}, expectedObject, false, false)
+func newInfoCommand(binding commandBinding) (command, error) {
+	return buildCommand(CommandInfo, binding, []string{"info", "--schema", "--json"}, expectedObject, false, false)
 }
 
-func newDoltStatusCommand(binding commandBinding) (command, error) {
-	return buildCommand(CommandDoltStatus, binding, []string{"dolt", "status", "--json"}, expectedObject, false, false)
+func newDoctorCommand(binding commandBinding) (command, error) {
+	return buildCommand(CommandDoctor, binding, []string{"doctor", "--agent", "--json"}, expectedObject, false, true)
 }
 
 func newShowCommand(binding commandBinding, id string) (command, error) {
@@ -138,38 +137,27 @@ func newCreateCommand(binding commandBinding, values createValues) (command, err
 	return buildCommand(CommandCreate, binding, argv, expectedObject, true, false)
 }
 
-type updateValue struct {
-	value string
-	set   bool
-}
-
-func presentUpdateValue(value string) updateValue { return updateValue{value: value, set: true} }
-
-type updateValues struct {
-	id                                       string
-	title, description, acceptance, metadata updateValue
-	assignee                                 updateValue
-}
+type updateValues struct{ id, title, description, acceptance, metadata, assignee string }
 
 func newUpdateCommand(binding commandBinding, values updateValues) (command, error) {
 	if err := requiredExternalID("work id", values.id); err != nil {
 		return command{}, err
 	}
 	argv := []string{"update", values.id}
-	if values.title.set {
-		argv = append(argv, "--title", values.title.value)
+	if values.title != "" {
+		argv = append(argv, "--title", values.title)
 	}
-	if values.description.set {
-		argv = append(argv, "--description", values.description.value)
+	if values.description != "" {
+		argv = append(argv, "--description", values.description)
 	}
-	if values.acceptance.set {
-		argv = append(argv, "--acceptance", values.acceptance.value)
+	if values.acceptance != "" {
+		argv = append(argv, "--acceptance", values.acceptance)
 	}
-	if values.metadata.set {
-		argv = append(argv, "--metadata", values.metadata.value)
+	if values.metadata != "" {
+		argv = append(argv, "--metadata", values.metadata)
 	}
-	if values.assignee.set {
-		argv = append(argv, "--assignee", values.assignee.value)
+	if values.assignee != "" {
+		argv = append(argv, "--assignee", values.assignee)
 	}
 	if len(argv) == 2 {
 		return command{}, validationError("update requires at least one changed field")
@@ -203,19 +191,6 @@ func newDependencyListCommand(binding commandBinding, id string) (command, error
 		return command{}, err
 	}
 	return buildCommand(CommandDependencyList, binding, []string{"dep", "list", id, "--json"}, expectedArray, false, false)
-}
-
-func newDependencyRemoveCommand(binding commandBinding, blocked, blocker string) (command, error) {
-	if err := requiredExternalID("blocked work id", blocked); err != nil {
-		return command{}, err
-	}
-	if err := requiredExternalID("blocking work id", blocker); err != nil {
-		return command{}, err
-	}
-	if blocked == blocker {
-		return command{}, validationError("dependency cannot reference the same work twice")
-	}
-	return buildCommand(CommandDependencyRemove, binding, []string{"dep", "remove", blocked, blocker, "--json"}, expectedObject, true, false)
 }
 
 func newCommentAppendCommand(binding commandBinding, id, body string) (command, error) {
@@ -405,10 +380,10 @@ func validateArgvShape(kind CommandKind, argv []string) error {
 		return fixed("version", "--json")
 	case CommandWhere:
 		return fixed("where", "--json")
-	case CommandDoltShow:
-		return fixed("dolt", "show", "--json")
-	case CommandDoltStatus:
-		return fixed("dolt", "status", "--json")
+	case CommandInfo:
+		return fixed("info", "--schema", "--json")
+	case CommandDoctor:
+		return fixed("doctor", "--agent", "--json")
 	case CommandList:
 		return fixed("list", "--json")
 	case CommandReady:
@@ -436,10 +411,6 @@ func validateArgvShape(kind CommandKind, argv []string) error {
 	case CommandDependencyAdd:
 		if len(argv) != 7 || argv[0] != "dep" || argv[1] != "add" || argv[4] != "--type" || argv[5] != "blocks" || argv[6] != "--json" {
 			return validationError("dependency arguments do not match the typed command shape")
-		}
-	case CommandDependencyRemove:
-		if len(argv) != 5 || argv[0] != "dep" || argv[1] != "remove" || argv[4] != "--json" {
-			return validationError("dependency removal arguments do not match the typed command shape")
 		}
 	case CommandDependencyList:
 		if len(argv) != 4 || argv[0] != "dep" || argv[1] != "list" || argv[3] != "--json" {
@@ -491,12 +462,8 @@ func validateOptionCommand(argv []string, verb string, start int, orderedFlags [
 		if position+1 >= len(argv)-1 {
 			return validationError(verb + " option is missing its typed value")
 		}
-		value := argv[position+1]
-		explicitEmptyUpdate := verb == "update" && (flag == "--description" || flag == "--acceptance")
-		if !explicitEmptyUpdate {
-			if err := requiredValue(strings.TrimPrefix(flag, "--"), value); err != nil {
-				return err
-			}
+		if err := requiredValue(strings.TrimPrefix(flag, "--"), argv[position+1]); err != nil {
+			return err
 		}
 		position += 2
 		seen++
@@ -523,11 +490,13 @@ type commandContract struct {
 
 func commandContractFor(kind CommandKind) (commandContract, bool) {
 	switch kind {
-	case CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus, CommandShow:
+	case CommandVersion, CommandWhere, CommandInfo, CommandShow:
 		return commandContract{shape: expectedObject, json: true}, true
+	case CommandDoctor:
+		return commandContract{shape: expectedObject, explicitDeadline: true, json: true}, true
 	case CommandList, CommandReady, CommandDependencyList, CommandCommentList:
 		return commandContract{shape: expectedArray, json: true}, true
-	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandDependencyRemove, CommandCommentAppend:
+	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandCommentAppend:
 		return commandContract{shape: expectedObject, mutating: true, json: true}, true
 	case CommandExport:
 		return commandContract{shape: expectedJSONL, explicitDeadline: true, json: true}, true
@@ -671,7 +640,7 @@ var credentialEnvironmentNames = map[string]struct{}{
 func allowedCredential(name string) bool { _, ok := credentialEnvironmentNames[name]; return ok }
 
 func childEnvironment(binding commandBinding) []string {
-	values := make(map[string]string, len(baseEnvironmentNames)+len(binding.credentials)+5)
+	values := make(map[string]string, len(baseEnvironmentNames)+len(binding.credentials)+3)
 	for _, name := range baseEnvironmentNames {
 		if value, ok := os.LookupEnv(name); ok {
 			values[name] = value
@@ -683,11 +652,6 @@ func childEnvironment(binding commandBinding) []string {
 	values["BEADS_DIR"] = binding.workspace
 	values["BD_JSON_ENVELOPE"] = "1"
 	values["BD_NON_INTERACTIVE"] = "1"
-	// Beads otherwise writes metrics and deferred event state during nominally
-	// read-only commands. These values are fixed process policy, not caller-
-	// supplied credentials, so inspection cannot modify provider or user state.
-	values["BD_DISABLE_METRICS"] = "1"
-	values["BD_DISABLE_EVENT_FLUSH"] = "1"
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
