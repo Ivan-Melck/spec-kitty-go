@@ -12,6 +12,42 @@ type Provider struct{ store *Store }
 func NewProvider(store *Store) *Provider { return &Provider{store: store} }
 
 var _ tracker.Provider = (*Provider)(nil)
+var _ tracker.CapabilityReporter = (*Provider)(nil)
+
+func (p *Provider) Capabilities(context.Context) (tracker.ProviderCapabilities, error) {
+	capabilities := tracker.ProviderCapabilities{
+		CatalogRead:         tracker.SupportSupported,
+		CatalogCreate:       tracker.SupportUnsupported,
+		CatalogUpdate:       tracker.UpdateUnsupported,
+		BlockingGraph:       tracker.SupportUnsupported,
+		Discussion:          tracker.DiscussionIdempotent,
+		Assignment:          tracker.AssignmentAtomicClaim,
+		ObservationRevision: tracker.ObservationRevisionProviderNative,
+		SafeCompensation:    tracker.CompensationConditional,
+		ConcurrentWriters:   tracker.ConcurrentWritersProviderNative,
+		PortableExport:      tracker.SupportUnsupported,
+		RestorableBackup:    tracker.SupportUnsupported,
+	}
+	return capabilities, capabilities.Validate()
+}
+
+// RequireCapability is a non-mutating preflight. Unsupported requirements are
+// rejected before the durable store lock, failure queue, or revision is touched.
+func (p *Provider) RequireCapability(capability tracker.CapabilityName) error {
+	capabilities, err := p.Capabilities(context.Background())
+	if err != nil {
+		return err
+	}
+	return capabilities.Require(capability)
+}
+
+func (p *Provider) RequireCatalogUpdate(required tracker.UpdateLevel) error {
+	capabilities, err := p.Capabilities(context.Background())
+	if err != nil {
+		return err
+	}
+	return capabilities.RequireCatalogUpdate(required)
+}
 
 func (p *Provider) Read(ctx context.Context, workKey string) (tracker.Work, error) {
 	var result tracker.Work
