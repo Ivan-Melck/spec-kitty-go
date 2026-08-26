@@ -1,9 +1,11 @@
 package testcampaign
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -282,7 +284,31 @@ func EncodeBeadsEvidence(e BeadsQualificationEvidence) ([]byte, error) {
 	if containsProhibitedEvidence(string(payload)) {
 		return nil, errors.New("beads evidence serialization contains prohibited human or secret material")
 	}
+	if err := strictBeadsEvidenceRoundTrip(payload); err != nil {
+		return nil, err
+	}
 	return payload, nil
+}
+
+func strictBeadsEvidenceRoundTrip(payload []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var roundTrip BeadsQualificationEvidence
+	if err := decoder.Decode(&roundTrip); err != nil {
+		return fmt.Errorf("strictly decode serialized beads evidence: %w", err)
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return errors.New("serialized beads evidence contains trailing JSON data")
+	}
+	reencoded, err := json.MarshalIndent(roundTrip, "", "  ")
+	if err != nil {
+		return fmt.Errorf("re-encode serialized beads evidence: %w", err)
+	}
+	reencoded = append(reencoded, '\n')
+	if !bytes.Equal(reencoded, payload) {
+		return errors.New("serialized beads evidence does not round-trip through its canonical typed contract")
+	}
+	return nil
 }
 
 func WriteBeadsEvidence(path string, e BeadsQualificationEvidence) error {

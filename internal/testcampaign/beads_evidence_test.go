@@ -134,6 +134,21 @@ func TestBeadsEvidenceEncodingDoesNotReorderCallerCollections(t *testing.T) {
 	}
 }
 
+func TestBeadsEvidenceStrictRoundTripRejectsUnknownAndTrailingJSON(t *testing.T) {
+	payload, err := EncodeBeadsEvidence(validBeadsPassEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := append([]byte(`{"unknown":true,`), payload[1:]...)
+	if err := strictBeadsEvidenceRoundTrip(unknown); err == nil {
+		t.Fatal("unknown serialized field was accepted")
+	}
+	trailing := append(append([]byte(nil), payload...), []byte("{}")...)
+	if err := strictBeadsEvidenceRoundTrip(trailing); err == nil {
+		t.Fatal("trailing serialized value was accepted")
+	}
+}
+
 func TestBeadsEvidenceAtomicWriteIsRestrictedAndRedacted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "qualification.json")
 	first := validBeadsNonAdmissibleEvidence()
