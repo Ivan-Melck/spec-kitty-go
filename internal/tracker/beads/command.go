@@ -3,11 +3,13 @@ package beads
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -81,6 +83,7 @@ type command struct {
 	shape            expectedShape
 	mutating         bool
 	explicitDeadline bool
+	argvSeal         [sha256.Size]byte
 }
 
 func newVersionCommand(binding commandBinding) (command, error) {
@@ -100,7 +103,7 @@ func newDoctorCommand(binding commandBinding) (command, error) {
 }
 
 func newShowCommand(binding commandBinding, id string) (command, error) {
-	if err := requiredValue("work id", id); err != nil {
+	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
 	return buildCommand(CommandShow, binding, []string{"show", id, "--json"}, expectedObject, false, false)
@@ -137,7 +140,7 @@ func newCreateCommand(binding commandBinding, values createValues) (command, err
 type updateValues struct{ id, title, description, acceptance, metadata, assignee string }
 
 func newUpdateCommand(binding commandBinding, values updateValues) (command, error) {
-	if err := requiredValue("work id", values.id); err != nil {
+	if err := requiredExternalID("work id", values.id); err != nil {
 		return command{}, err
 	}
 	argv := []string{"update", values.id}
@@ -164,17 +167,17 @@ func newUpdateCommand(binding commandBinding, values updateValues) (command, err
 }
 
 func newAtomicClaimCommand(binding commandBinding, id string) (command, error) {
-	if err := requiredValue("work id", id); err != nil {
+	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
 	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedObject, true, false)
 }
 
 func newDependencyAddCommand(binding commandBinding, blocked, blocker string) (command, error) {
-	if err := requiredValue("blocked work id", blocked); err != nil {
+	if err := requiredExternalID("blocked work id", blocked); err != nil {
 		return command{}, err
 	}
-	if err := requiredValue("blocking work id", blocker); err != nil {
+	if err := requiredExternalID("blocking work id", blocker); err != nil {
 		return command{}, err
 	}
 	if blocked == blocker {
@@ -184,14 +187,14 @@ func newDependencyAddCommand(binding commandBinding, blocked, blocker string) (c
 }
 
 func newDependencyListCommand(binding commandBinding, id string) (command, error) {
-	if err := requiredValue("work id", id); err != nil {
+	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
 	return buildCommand(CommandDependencyList, binding, []string{"dep", "list", id, "--json"}, expectedArray, false, false)
 }
 
 func newCommentAppendCommand(binding commandBinding, id, body string) (command, error) {
-	if err := requiredValue("work id", id); err != nil {
+	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
 	if err := requiredValue("comment body", body); err != nil {
@@ -201,7 +204,7 @@ func newCommentAppendCommand(binding commandBinding, id, body string) (command, 
 }
 
 func newCommentListCommand(binding commandBinding, id string) (command, error) {
-	if err := requiredValue("work id", id); err != nil {
+	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
 	return buildCommand(CommandCommentList, binding, []string{"comments", id, "--json"}, expectedArray, false, false)
@@ -235,17 +238,35 @@ func newBackupRestoreCommand(binding commandBinding, source string) (command, er
 
 func buildCommand(kind CommandKind, binding commandBinding, argv []string, shape expectedShape, mutating, explicitDeadline bool) (command, error) {
 	cmd := command{kind: kind, binding: binding, argv: append([]string(nil), argv...), shape: shape, mutating: mutating, explicitDeadline: explicitDeadline}
-	if err := cmd.validate(); err != nil {
+	if err := cmd.validateStructure(); err != nil {
 		return command{}, err
 	}
+	cmd.argvSeal = sealArgv(cmd)
 	return cmd, nil
 }
 
 func requiredValue(name, value string) error {
-	if strings.TrimSpace(value) == "" || strings.IndexByte(value, 0) >= 0 {
-		return validationError(name + " is required and must not contain NUL")
+	if strings.TrimSpace(value) == "" || strings.IndexByte(value, 0) >= 0 || strings.HasPrefix(value, "-") {
+		return validationError(name + " is required and must not contain NUL or begin with an option prefix")
 	}
 	return nil
+}
+
+func requiredExternalID(name, value string) error {
+	if len(value) == 0 || len(value) > 256 || !isASCIIAlphanumeric(value[0]) {
+		return validationError(name + " must use the bounded provider identifier grammar")
+	}
+	for index := 1; index < len(value); index++ {
+		current := value[index]
+		if !isASCIIAlphanumeric(current) && current != '-' && current != '_' && current != '.' {
+			return validationError(name + " must use the bounded provider identifier grammar")
+		}
+	}
+	return nil
+}
+
+func isASCIIAlphanumeric(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
 
 func validationError(message string) error {
@@ -253,6 +274,16 @@ func validationError(message string) error {
 }
 
 func (cmd *command) validate() error {
+	if err := cmd.validateStructure(); err != nil {
+		return err
+	}
+	if cmd.argvSeal != sealArgv(*cmd) {
+		return validationError("command arguments changed after typed construction")
+	}
+	return nil
+}
+
+func (cmd *command) validateStructure() error {
 	if cmd == nil {
 		return validationError("command is missing")
 	}
@@ -314,10 +345,138 @@ func (cmd *command) validate() error {
 	if hasJSON != contract.json {
 		return validationError("command JSON flag is inconsistent with its documented protocol")
 	}
+	if err := validateArgvShape(cmd.kind, cmd.argv); err != nil {
+		return err
+	}
 	for key, value := range cmd.binding.credentials {
 		if !allowedCredential(key) || strings.IndexByte(key, 0) >= 0 || strings.IndexByte(value, 0) >= 0 {
 			return validationError("credential environment is invalid")
 		}
+	}
+	return nil
+}
+
+func sealArgv(cmd command) [sha256.Size]byte {
+	parts := make([]string, 0, len(cmd.argv)+4)
+	parts = append(parts, string(cmd.kind), strconv.Itoa(int(cmd.shape)), strconv.FormatBool(cmd.mutating), strconv.FormatBool(cmd.explicitDeadline))
+	parts = append(parts, cmd.argv...)
+	return sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+}
+
+func validateArgvShape(kind CommandKind, argv []string) error {
+	fixed := func(want ...string) error {
+		if len(argv) != len(want) {
+			return validationError("command arguments do not match the typed command shape")
+		}
+		for index := range want {
+			if argv[index] != want[index] {
+				return validationError("command arguments do not match the typed command shape")
+			}
+		}
+		return nil
+	}
+	switch kind {
+	case CommandVersion:
+		return fixed("version", "--json")
+	case CommandWhere:
+		return fixed("where", "--json")
+	case CommandInfo:
+		return fixed("info", "--schema", "--json")
+	case CommandDoctor:
+		return fixed("doctor", "--agent", "--json")
+	case CommandList:
+		return fixed("list", "--json")
+	case CommandReady:
+		return fixed("ready", "--json")
+	case CommandShow:
+		if len(argv) != 3 || argv[0] != "show" || argv[2] != "--json" {
+			return validationError("show arguments do not match the typed command shape")
+		}
+		return requiredExternalID("work id", argv[1])
+	case CommandCreate:
+		return validateOptionCommand(argv, "create", 1, []string{"--title", "--description", "--acceptance", "--metadata"})
+	case CommandUpdate:
+		if len(argv) < 5 || argv[0] != "update" {
+			return validationError("update arguments do not match the typed command shape")
+		}
+		if err := requiredExternalID("work id", argv[1]); err != nil {
+			return err
+		}
+		return validateOptionCommand(argv, "update", 2, []string{"--title", "--description", "--acceptance", "--metadata", "--assignee"})
+	case CommandAtomicClaim:
+		if len(argv) != 4 || argv[0] != "update" || argv[2] != "--claim" || argv[3] != "--json" {
+			return validationError("claim arguments do not match the typed command shape")
+		}
+		return requiredExternalID("work id", argv[1])
+	case CommandDependencyAdd:
+		if len(argv) != 7 || argv[0] != "dep" || argv[1] != "add" || argv[4] != "--type" || argv[5] != "blocks" || argv[6] != "--json" {
+			return validationError("dependency arguments do not match the typed command shape")
+		}
+	case CommandDependencyList:
+		if len(argv) != 4 || argv[0] != "dep" || argv[1] != "list" || argv[3] != "--json" {
+			return validationError("dependency list arguments do not match the typed command shape")
+		}
+		return requiredExternalID("work id", argv[2])
+	case CommandCommentAppend:
+		if len(argv) != 5 || argv[0] != "comments" || argv[1] != "add" || argv[4] != "--json" {
+			return validationError("comment arguments do not match the typed command shape")
+		}
+		if err := requiredExternalID("work id", argv[2]); err != nil {
+			return err
+		}
+		return requiredValue("comment body", argv[3])
+	case CommandCommentList:
+		if len(argv) != 3 || argv[0] != "comments" || argv[2] != "--json" {
+			return validationError("comment list arguments do not match the typed command shape")
+		}
+		return requiredExternalID("work id", argv[1])
+	case CommandExport:
+		return fixed("export", "--json")
+	case CommandBackupInit:
+		return validateBackupPath(argv, "init")
+	case CommandBackupSync:
+		return fixed("backup", "sync")
+	case CommandBackupStatus:
+		return fixed("backup", "status")
+	case CommandBackupRestore:
+		return validateBackupPath(argv, "restore")
+	default:
+		return validationError("unsupported command kind")
+	}
+	if err := requiredExternalID("blocked work id", argv[2]); err != nil {
+		return err
+	}
+	return requiredExternalID("blocking work id", argv[3])
+}
+
+func validateOptionCommand(argv []string, verb string, start int, orderedFlags []string) error {
+	if len(argv) <= start+2 || argv[0] != verb || argv[len(argv)-1] != "--json" {
+		return validationError(verb + " arguments do not match the typed command shape")
+	}
+	position := start
+	seen := 0
+	for _, flag := range orderedFlags {
+		if position >= len(argv)-1 || argv[position] != flag {
+			continue
+		}
+		if position+1 >= len(argv)-1 {
+			return validationError(verb + " option is missing its typed value")
+		}
+		if err := requiredValue(strings.TrimPrefix(flag, "--"), argv[position+1]); err != nil {
+			return err
+		}
+		position += 2
+		seen++
+	}
+	if position != len(argv)-1 || seen == 0 || verb == "create" && argv[start] != "--title" {
+		return validationError(verb + " arguments do not match the typed command shape")
+	}
+	return nil
+}
+
+func validateBackupPath(argv []string, operation string) error {
+	if len(argv) != 3 || argv[0] != "backup" || argv[1] != operation || !filepath.IsAbs(argv[2]) || filepath.Clean(argv[2]) != argv[2] {
+		return validationError("backup arguments do not match the typed command shape")
 	}
 	return nil
 }
