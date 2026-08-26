@@ -165,7 +165,7 @@
     },
     "WP05": {
       "actor": "codex",
-      "agent": "reviewer-renata",
+      "agent": "codex",
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 5,
@@ -177,7 +177,8 @@
         "Ready for independent review: product commit 4d2a6f1 adds censused quality/full campaigns, layered quality-tier guard, pinned CI, ten-run local p95 80.500s, and clean 825.95s full campaign. Cross-WP qualification repair explicitly updated three adversarial fixtures to preserve mandatory governance provenance.",
         "Administrative identity correction: generated review capsule resolved implementer-ivan despite requested reviewer-renata; no review performed. Releasing claim for independent Reviewer Renata.",
         "Cycle 2 resolves all four review blockers; clean quality and full campaigns passed with source-bound evidence. Administrative override clears the stale reviewer assignee retained after cycle-1 rejection.",
-        "Cycle 2 rejected: universal package binding, fail-closed source identity, and transcript digest correction required."
+        "Cycle 2 rejected: universal package binding, fail-closed source identity, and transcript digest correction required.",
+        "Cycle 3 resolves universal package binding, fail-closed source identity with profile drift checks, and the malformed digest; clean quality passed at 8d539b8. Administrative override clears stale reviewer assignment retained after rejection."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -188,8 +189,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 1957898,
+      "shell_pid_created_at": "1787714985.01",
       "subtasks": {
         "T021": "done",
         "T022": "done",
