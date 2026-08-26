@@ -91,6 +91,9 @@
       "last_event_id": "01M0YSYR7MZKGTKQR5JVDNMYKA",
       "last_transition_at": "2026-08-26T10:30:50.356637+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: closed typed bd command vocabulary, bounded POSIX process-group runner, schema-1 envelope/error and JSONL decoders, stable redacted diagnostics, ambiguity monotonicity, and adversarial tests; protocol.go 100% statement coverage; focused race/repeat/vet/staticcheck plus contract/scope campaigns pass."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
