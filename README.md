@@ -438,14 +438,31 @@ make quality
 The exact real-provider target requires the installer identity, verified binary,
 a pinned external Dolt server tuple, and an enforced offline network namespace.
 The CI workflow in [`.github/workflows/beads-qualification.yml`](.github/workflows/beads-qualification.yml)
-provisions those prerequisites and invokes:
+provisions the reviewed Dolt binary and starts its disposable server on loopback
+inside that namespace. For a local reproduction, first perform that same
+provisioning; then, from inside the same disposable namespace and while that
+server is listening, invoke the target with the complete tuple:
 
 ```bash
-make beads-qualification \
-  BEADS_BIN=/absolute/path/to/verified/bd \
-  BEADS_INSTALL_RESULT=/absolute/path/to/installer-identity.json \
-  OFFLINE_ENFORCED=linux-network-namespace
+BEADS_BIN=/absolute/path/to/verified/bd \
+BEADS_INSTALL_RESULT=/absolute/path/to/installer-identity.json \
+BEADS_SERVER_ID=dolt-v0.40.5-1bf533220ab0 \
+BEADS_SERVER_ENDPOINT=127.0.0.1:3307 \
+DOLT_SERVER_HOST=127.0.0.1 \
+DOLT_SERVER_PORT=3307 \
+OFFLINE_ENFORCED=linux-network-namespace \
+make beads-qualification
 ```
+
+The two absolute paths are placeholders that must be replaced by the verified
+installer outputs. `127.0.0.1:3307` is not a generic example endpoint: it is the
+exact host/port binding used by the accepted runner, so
+`BEADS_SERVER_ENDPOINT` must equal `DOLT_SERVER_HOST:DOLT_SERVER_PORT` for the
+same already-running disposable server. All four server variables are required;
+omitting any one deliberately selects `embedded_serialized`, which cannot
+reproduce the qualified `server_multiwriter` evidence. This command neither
+starts nor repairs Dolt and never authorizes initialization in a project
+workspace.
 
 Additional closeout gates:
 

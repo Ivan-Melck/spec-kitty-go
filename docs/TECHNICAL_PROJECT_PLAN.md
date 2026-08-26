@@ -1,8 +1,8 @@
 # Spec Kitty Go Re-architecture: Technical Project Plan
 
-Status: Behaviorally characterized revised draft; authority ADRs may be
-ratified after the inventory amendments are recorded, while concurrency
-mechanism ADRs remain provisional through the Phase 1 proving experiment
+Status: Phase 1 authority kernel and Phase 2 Beads tracker integration are
+delivered and qualified. Later mission-method and external-surface phases remain
+future work.
 
 Working repository: `go-kitty3`
 
@@ -381,10 +381,10 @@ Proposed first-party capabilities:
 
 This table is a target ownership map, not permission to scaffold fourteen
 packages at the start. A capability becomes a package only when an executable
-slice demonstrates an independent policy boundary. Phase 1 begins with the
-smallest cohesive implementation of control state, execution authority,
-workspace isolation, review, and integration. Names and boundaries are split
-only when pressure from real behavior earns the separation.
+slice demonstrates an independent policy boundary. Phase 1 began with—and
+qualified—the smallest cohesive implementation of control state, execution
+authority, workspace isolation, review, and integration. Later names and
+boundaries are split only when pressure from real behavior earns the separation.
 
 ### 8.3 Narrow ports, not a mega-plugin interface
 
@@ -742,10 +742,11 @@ do not appear in feature branches.
 
 ### 11.2 Control-state persistence
 
-Use a small Spec Kitty control database with transactional uniqueness and an
-outbox. SQLite in WAL mode is the leading implementation choice because it
-supports multiple local processes, compare-and-swap state changes, crash-safe
-transactions, and operational inspection without requiring a daemon.
+The delivered authority kernel uses a small Spec Kitty control database with
+transactional uniqueness and an outbox. SQLite in WAL mode is the current
+qualified control store because it supports multiple local processes,
+compare-and-swap state changes, crash-safe transactions, and operational
+inspection without requiring a daemon.
 
 This is a single-machine design. Only processes under the machine/filesystem
 authority owning the project may open the database. Remote clients cross the
@@ -1201,11 +1202,11 @@ preflights, stale worktrees, and migration.
 Each phase ends in an executable vertical result. Package scaffolding without a
 working scenario does not count as progress.
 
-### Phase 0: Behavioral characterization and architectural ratification
+### Phase 0: Behavioral characterization and architectural ratification — complete
 
-Objective: attack the proposed product laws with current Python behavior before
-freezing foundational architecture. This plan is provisional input to the
-inventory, not a decision that outranks observed product behavior.
+Objective achieved: current Python behavior attacked the proposed product laws
+before the delivered authority architecture was frozen. The inventory remained
+authoritative over the earlier draft while those decisions were being tested.
 
 Current progress:
 
@@ -1213,46 +1214,51 @@ Current progress:
   recorded in `docs/PYTHON_BEHAVIOR_INVENTORY.md`.
 - Phase 1 executable scenario definitions: complete in
   `docs/CONCURRENCY_SCENARIOS.md`.
-- Foundational ADR ratification and selected golden Python fixtures: pending.
+- Foundational authority decisions and the selected fixtures used by the Phase 1
+  experiment: complete and enforced by executable contracts. Broader migration
+  fixtures remain future work.
 
-Work:
+Completed work for the delivered boundary:
 
-- Build the behavior inventory for current Python Spec Kitty.
-- Capture golden command/result fixtures for critical mission transitions.
-- Classify every behavior as preserve exactly, preserve semantically, project
+- Built the behavior inventory for current Python Spec Kitty.
+- Captured the selected command/result fixtures required by the authority slice.
+- Classified relevant behavior as preserve exactly, preserve semantically, project
   for compatibility, or intentionally retire.
-- Use obscure recovery, lane, review, and integration behavior to challenge the
+- Used obscure recovery, lane, review, and integration behavior to challenge the
   proposed authority boundaries.
-- Define the two-agent concurrency proving experiment in Phase 1.
+- Defined and executed the two-agent concurrency proving experiment in Phase 1.
 - Define supported Beads versions and the upgrade/skew policy. Completed in
   Phase 2 with an exact version/schema/source/binary tuple.
-- Decide the control-store driver after a focused SQLite WAL spike. SQLite is
-  the current qualified control store; Gapdb remains a separate adoption
-  decision requiring equivalent evidence and an explicit signed human record.
-- Define stable JSON error and result envelopes.
-- Revise this plan from the inventory, then ratify product laws and foundational
-  ADRs.
+- Selected and qualified SQLite after focused WAL testing. Gapdb remains a
+  separate adoption decision requiring equivalent evidence and an explicit
+  signed human record.
+- Defined stable JSON error and result envelopes for the delivered commands.
+- Revised this plan from the inventory and ratified the delivered product laws
+  through architecture guards, fault scenarios, and mutant controls.
 
-Exit criteria:
+Exit evidence:
 
-- Every preserved behavior has an owner and planned test.
-- No foundational ADR is final until relevant legacy behavior has attacked it.
-- Authority and source-of-truth matrices are approved.
-- A reviewer can explain why Beads cannot advance a mission or authorize a
-  worktree.
-- The Phase 1 torture scenario and failure points are executable test
-  descriptions.
+- Every behavior preserved in the delivered slice has an owner and executable
+  test.
+- Relevant legacy behavior attacked the foundational authority decisions before
+  qualification.
+- Authority and source-of-truth matrices are approved for the delivered slice.
+- The implementation and documentation show why Beads cannot advance a mission
+  or authorize a worktree.
+- The Phase 1 torture scenario and failure points are executable tests.
 
-### Phase 1: Two-agent authority proving ground
+### Phase 1: Two-agent authority proving ground — delivered and qualified
 
-Objective: disprove the hardest architectural claim as cheaply as possible:
-safe parallel execution when authority, process lifetime, filesystem state, Git
-state, and recovery disagree.
+Objective achieved: the executable campaign attacked the hardest architectural
+claim—safe parallel execution when authority, process lifetime, filesystem
+state, Git state, and recovery disagree—and retained passing, source-bound
+evidence.
 
-This phase deliberately does not implement Beads, a complete mission, MCP,
-Team Kitty, migration, projections, or multiple mission types.
+The Phase 1 boundary deliberately excluded Beads, a complete mission, MCP, Team
+Kitty, migration, projections, and multiple mission types. Phase 2 subsequently
+delivered the bounded Beads adapter; the other surfaces remain future work.
 
-Work packages:
+Delivered work packages:
 
 1. Go module plus the minimum race/fault-injection test harness.
 2. Stable IDs, deterministic clock, typed failures, and operation IDs needed by
@@ -1578,9 +1584,10 @@ is reconciled visibly.
 Risk: a fast-moving dependency migrates data incompatibly or a user's `bd`
 binary disagrees with the embedded library.
 
-Mitigation: pin a version, use published APIs only, preflight schema
-compatibility, document an upgrade coordinator, back up before migrations, and
-test adjacent supported versions.
+Mitigation: pin an executable version, source identity, binary digest, and JSON
+schema; use only the documented argv JSON protocol; preflight compatibility,
+back up before migrations, and qualify every future tuple before allowlisting
+it.
 
 ### Modularity becomes plugin soup
 
@@ -1639,10 +1646,14 @@ Risk: reproducing legacy artifacts and commands recreates Python structure.
 Mitigation: compatibility is an outer adapter and projection layer with a
 sunset policy. The new capability model never imports it.
 
-## 21. Foundational ADR queue
+## 21. Foundational decision record and future ADR queue
 
-After Phase 0 behavioral characterization, the project should ratify and record
-these decisions before their corresponding implementation phase:
+Phase 0 characterization and the Phase 1 proving experiment are complete. The
+delivered Phase 1/2 decisions below are ratified through executable contracts,
+architecture guards, and retained evidence; separate narrative ADR files may
+improve discoverability but do not make the shipped behavior provisional. The
+Team Kitty/API serving and Python migration entries retain approved authority
+boundaries while their implementations remain future work.
 
 1. Beads as the default tracker, behind provider-neutral work ports.
 2. Mission authority versus tracker authority.

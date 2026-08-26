@@ -1,12 +1,18 @@
 package architecture
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -137,6 +143,8 @@ func TestBeadsDocumentationDeliveryClaims(t *testing.T) {
 func TestBeadsDocumentationLinksMermaidAndCommands(t *testing.T) {
 	root := phase2RepositoryRoot(t)
 	readme := phase2Read(t, root, "README.md")
+	makefile := phase2Read(t, root, "Makefile")
+	runner := phase2Read(t, root, "internal/testcampaign/cmd/beads-qualification/runner.go")
 	evidenceIndex := phase2Read(t, root, "docs/phase2-evidence/README.md")
 	const checksumCommand = "(cd docs/phase2-evidence && sha256sum --check SHA256SUMS)"
 	for path, document := range map[string]string{
@@ -166,30 +174,37 @@ func TestBeadsDocumentationLinksMermaidAndCommands(t *testing.T) {
 		phase2CheckRelativeLinks(t, root, path, document)
 	}
 
-	makefile := phase2Read(t, root, "Makefile")
-	for _, target := range []string{"build", "beads-contract", "quality", "beads-qualification", "full-campaign"} {
+	targets := []string{"build", "beads-contract", "quality", "beads-qualification", "full-campaign"}
+	for _, target := range targets {
 		matched, err := regexp.MatchString("(?m)^"+regexp.QuoteMeta(target)+":", makefile)
 		if err != nil || !matched {
 			t.Errorf("documented Make target %q is absent", target)
 		}
 	}
+	phase2SmokeMakeTargets(t, root, targets)
 	for _, path := range []string{"cmd/spk-phase1-helper", "scripts/install-qualified-beads.sh"} {
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
 			t.Errorf("documented local command path %s: %v", path, err)
 		}
 	}
-	contract := phase2Read(t, root, "internal/tracker/beads/command.go")
-	for _, argv := range []string{
-		`[]string{"version", "--json"}`,
-		`[]string{"where", "--json"}`,
-		`[]string{"export", "--json"}`,
-		`[]string{"backup", "sync"}`,
-		`[]string{"backup", "status"}`,
-	} {
-		if !strings.Contains(contract, argv) {
-			t.Errorf("documented provider argv is absent from typed contract: %s", argv)
-		}
+	if err := phase2ValidateQualificationCommand(readme, makefile, runner); err != nil {
+		t.Error(err)
 	}
+	help := phase2SmokeHelperAndInstaller(t, root)
+	if err := phase2ValidateHelperCommand(readme, help); err != nil {
+		t.Error(err)
+	}
+	if err := phase2ValidateInstallerCommand(readme); err != nil {
+		t.Error(err)
+	}
+	providerArgv, err := phase2TypedProviderArgv(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := phase2ValidateProviderCommands(readme, providerArgv); err != nil {
+		t.Error(err)
+	}
+	phase2RunCommand(t, root, 0, "go", "test", "./internal/tracker/beads", "-run", "^TestCommandArgvVocabulary$", "-count=1")
 }
 
 func TestPhase2EvidenceIntegrity(t *testing.T) {
@@ -200,8 +215,8 @@ func TestPhase2EvidenceIntegrity(t *testing.T) {
 	if qualification.SchemaVersion != 1 || qualification.ProviderVersion != qualifiedBeadsVersion || qualification.ProviderDigestSHA256 != qualifiedBeadsDigest || qualification.ProtocolSchema != 1 {
 		t.Fatalf("qualification tuple is not the exact approved v1.2.2/schema-1/digest tuple: %+v", qualification)
 	}
-	if !phase2GitObjectID(qualification.SourceCommit) || !phase2GitObjectID(qualification.SourceTree) {
-		t.Fatal("qualification evidence lacks full source commit/tree identities")
+	if err := phase2ValidateSourceIdentity(qualification.SourceCommit, qualification.SourceTree); err != nil {
+		t.Fatal(err)
 	}
 	if qualification.StorageMode != "server_multiwriter" || qualification.Verdict != "pass" || qualification.AuthorityInvariantFail != 0 || qualification.AuthorityAudits == 0 {
 		t.Fatalf("qualification result is not admissible: %+v", qualification)
@@ -244,12 +259,13 @@ func TestPhase2EvidenceIntegrity(t *testing.T) {
 
 func TestPhase2EvidenceDocumentationMutants(t *testing.T) {
 	for name, fixture := range map[string]string{
-		"public API":           "production uses a published Beads Go consumer API",
-		"authority":            "Beads assignment authorizes execution",
-		"export backup":        "JSONL export is a complete restorable backup",
-		"loose version":        "any supported Beads version is accepted",
-		"read write is CAS":    "read-before-write is compare-and-swap",
-		"tracker accepts work": "tracker status advances the mission",
+		"public API":            "production uses a published Beads Go consumer API",
+		"authority":             "Beads assignment authorizes execution",
+		"export backup":         "JSONL export is a complete restorable backup",
+		"loose version":         "any supported Beads version is accepted",
+		"read write is CAS":     "read-before-write is compare-and-swap",
+		"tracker accepts work":  "tracker status advances the mission",
+		"provisional phase one": "SQLite in WAL mode is the leading implementation choice",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := phase2RejectLivingClaims(fixture); err == nil {
@@ -258,9 +274,9 @@ func TestPhase2EvidenceDocumentationMutants(t *testing.T) {
 		})
 	}
 	for name, values := range map[string][5]int{
-		"missing source":   {11, 0, 0, 0, 0},
-		"missing terminal": {11, 11, 10, 10, 0},
-		"hidden failure":   {11, 11, 11, 11, 1},
+		"no scenarios started": {11, 0, 0, 0, 0},
+		"missing terminal":     {11, 11, 10, 10, 0},
+		"hidden failure":       {11, 11, 11, 11, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := phase2EqualCensus(values[0], values[1], values[2], values[3], values[4]); err == nil {
@@ -268,6 +284,66 @@ func TestPhase2EvidenceDocumentationMutants(t *testing.T) {
 			}
 		})
 	}
+	t.Run("missing source identity", func(t *testing.T) {
+		if err := phase2ValidateSourceIdentity("", strings.Repeat("a", 40)); err == nil {
+			t.Fatal("missing source commit mutant was accepted")
+		}
+	})
+	t.Run("corrupt source tree identity", func(t *testing.T) {
+		if err := phase2ValidateSourceIdentity(strings.Repeat("a", 40), "not-a-tree"); err == nil {
+			t.Fatal("corrupt source tree mutant was accepted")
+		}
+	})
+
+	root := phase2RepositoryRoot(t)
+	readme := phase2Read(t, root, "README.md")
+	makefile := phase2Read(t, root, "Makefile")
+	runner := phase2Read(t, root, "internal/testcampaign/cmd/beads-qualification/runner.go")
+	for _, variable := range []string{
+		"BEADS_BIN", "BEADS_INSTALL_RESULT", "BEADS_SERVER_ID", "BEADS_SERVER_ENDPOINT",
+		"DOLT_SERVER_HOST", "DOLT_SERVER_PORT", "OFFLINE_ENFORCED",
+	} {
+		t.Run("qualification variable "+variable, func(t *testing.T) {
+			mutant := strings.Replace(readme, variable+"=", variable+"_BOGUS=", 1)
+			if err := phase2ValidateQualificationCommand(mutant, makefile, runner); err == nil {
+				t.Fatalf("qualification variable typo %s was accepted", variable)
+			}
+		})
+	}
+	t.Run("qualification endpoint drift", func(t *testing.T) {
+		mutant := strings.Replace(readme, "BEADS_SERVER_ENDPOINT=127.0.0.1:3307", "BEADS_SERVER_ENDPOINT=127.0.0.1:3308", 1)
+		if err := phase2ValidateQualificationCommand(mutant, makefile, runner); err == nil {
+			t.Fatal("server endpoint mismatch was accepted")
+		}
+	})
+	t.Run("qualification target typo", func(t *testing.T) {
+		mutant := strings.Replace(readme, "make beads-qualification", "make beads-qualifiction", 1)
+		if err := phase2ValidateQualificationCommand(mutant, makefile, runner); err == nil {
+			t.Fatal("qualification target typo was accepted")
+		}
+	})
+	t.Run("provider argv typo", func(t *testing.T) {
+		providerArgv, err := phase2TypedProviderArgv(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutant := strings.Replace(readme, `"$beads_bin" export --json`, `"$beads_bin" export --jsoon`, 1)
+		if err := phase2ValidateProviderCommands(mutant, providerArgv); err == nil {
+			t.Fatal("provider argv typo was accepted")
+		}
+	})
+	t.Run("helper flag typo", func(t *testing.T) {
+		mutant := strings.Replace(readme, "--protocol-schema 1", "--protocol-scheme 1", 1)
+		if err := phase2ValidateHelperCommand(mutant, phase2ExpectedInspectHelp()); err == nil {
+			t.Fatal("helper flag typo was accepted")
+		}
+	})
+	t.Run("installer flag typo", func(t *testing.T) {
+		mutant := strings.Replace(readme, "--dest \"$tool_root\"", "--destination \"$tool_root\"", 1)
+		if err := phase2ValidateInstallerCommand(mutant); err == nil {
+			t.Fatal("installer flag typo was accepted")
+		}
+	})
 }
 
 func phase2RejectLivingClaims(document string) error {
@@ -285,6 +361,13 @@ func phase2RejectLivingClaims(document string) error {
 		"beads readiness authorizes execution",
 		"tracker status advances the mission",
 		"tracker closure advances the mission",
+		"mechanism adrs remain provisional through the phase 1 proving experiment",
+		"sqlite in wal mode is the leading implementation choice",
+		"foundational adr ratification and selected golden python fixtures: pending",
+		"define the two-agent concurrency proving experiment in phase 1",
+		"decide the control-store driver after a focused sqlite wal spike",
+		"after phase 0 behavioral characterization, the project should ratify",
+		"pin a version, use published apis only",
 	} {
 		if strings.Contains(lower, stale) {
 			return fmt.Errorf("stale or unsafe claim %q", stale)
@@ -298,6 +381,243 @@ func phase2EqualCensus(expected, started, terminal, passed, failed int) error {
 		return fmt.Errorf("non-passing exact census expected=%d started=%d terminal=%d passed=%d failed=%d", expected, started, terminal, passed, failed)
 	}
 	return nil
+}
+
+func phase2ValidateSourceIdentity(commit, tree string) error {
+	if !phase2GitObjectID(commit) || !phase2GitObjectID(tree) {
+		return errors.New("qualification evidence lacks full source commit/tree identities")
+	}
+	return nil
+}
+
+func phase2ValidateQualificationCommand(document, makefile, runner string) error {
+	block, err := phase2FencedBlockContaining(document, "make beads-qualification")
+	if err != nil {
+		return err
+	}
+	if !regexp.MustCompile(`(?m)(^|\\\n)\s*make beads-qualification(?:\s|\\|$)`).MatchString(block) {
+		return errors.New("README lacks the exact make beads-qualification invocation")
+	}
+	if !regexp.MustCompile(`(?m)^beads-qualification:`).MatchString(makefile) {
+		return errors.New("Makefile lacks the beads-qualification target")
+	}
+	assignments := map[string]string{}
+	for _, match := range regexp.MustCompile(`\b([A-Z][A-Z0-9_]*)=([^\s\\]+)`).FindAllStringSubmatch(block, -1) {
+		assignments[match[1]] = strings.Trim(match[2], `"'`)
+	}
+	required := map[string]string{
+		"BEADS_BIN":             "/absolute/path/to/verified/bd",
+		"BEADS_INSTALL_RESULT":  "/absolute/path/to/installer-identity.json",
+		"BEADS_SERVER_ID":       "dolt-v0.40.5-1bf533220ab0",
+		"BEADS_SERVER_ENDPOINT": "127.0.0.1:3307",
+		"DOLT_SERVER_HOST":      "127.0.0.1",
+		"DOLT_SERVER_PORT":      "3307",
+		"OFFLINE_ENFORCED":      "linux-network-namespace",
+	}
+	for name, value := range required {
+		if assignments[name] != value {
+			return fmt.Errorf("qualification command %s=%q, want %q", name, assignments[name], value)
+		}
+		if name == "BEADS_SERVER_ID" || name == "BEADS_SERVER_ENDPOINT" || name == "DOLT_SERVER_HOST" || name == "DOLT_SERVER_PORT" {
+			if !strings.Contains(runner, `"`+name+`"`) {
+				return fmt.Errorf("qualification runner does not select storage mode from %s", name)
+			}
+		}
+	}
+	if assignments["BEADS_SERVER_ENDPOINT"] != assignments["DOLT_SERVER_HOST"]+":"+assignments["DOLT_SERVER_PORT"] {
+		return errors.New("qualification endpoint must equal the documented Dolt host/port binding")
+	}
+	return nil
+}
+
+func phase2ValidateHelperCommand(document, help string) error {
+	block, err := phase2FencedBlockContaining(document, "tracker inspect-beads")
+	if err != nil {
+		return err
+	}
+	for _, flag := range []string{
+		"--project", "--executable", "--workspace", "--database-identity", "--protocol-schema",
+		"--mode", "--read-only", "--expected-digest",
+	} {
+		if !strings.Contains(block, flag) {
+			return fmt.Errorf("documented inspect-beads command lacks %s", flag)
+		}
+		if !strings.Contains(help, flag) && !strings.Contains(help, strings.TrimPrefix(flag, "-")) {
+			return fmt.Errorf("inspect-beads help lacks documented flag %s", flag)
+		}
+	}
+	return nil
+}
+
+func phase2ValidateInstallerCommand(document string) error {
+	block, err := phase2FencedBlockContaining(document, "scripts/install-qualified-beads.sh")
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(block, `scripts/install-qualified-beads.sh --dest "$tool_root"`) {
+		return errors.New("installer example lacks the accepted --dest argument")
+	}
+	return nil
+}
+
+func phase2ValidateProviderCommands(document string, argv map[string][]string) error {
+	for function, prefix := range map[string]string{
+		"newVersionCommand":      `"$beads_bin"`,
+		"newWhereCommand":        `"$beads_bin"`,
+		"newDoltShowCommand":     `"$beads_bin"`,
+		"newDoltStatusCommand":   `"$beads_bin"`,
+		"newExportCommand":       `"$beads_bin"`,
+		"newBackupSyncCommand":   `"$beads_bin"`,
+		"newBackupStatusCommand": `"$beads_bin"`,
+	} {
+		arguments, ok := argv[function]
+		if !ok {
+			return fmt.Errorf("typed provider command %s is absent", function)
+		}
+		command := prefix + " " + strings.Join(arguments, " ")
+		if !strings.Contains(document, command) {
+			return fmt.Errorf("README lacks typed provider command %q from %s", command, function)
+		}
+	}
+	return nil
+}
+
+func phase2TypedProviderArgv(root string) (map[string][]string, error) {
+	path := filepath.Join(root, "internal", "tracker", "beads", "command.go")
+	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse typed provider commands: %w", err)
+	}
+	wanted := map[string]bool{
+		"newVersionCommand": true, "newWhereCommand": true, "newDoltShowCommand": true,
+		"newDoltStatusCommand": true, "newExportCommand": true,
+		"newBackupSyncCommand": true, "newBackupStatusCommand": true,
+	}
+	result := map[string][]string{}
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || !wanted[function.Name.Name] {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || len(call.Args) < 3 {
+				return true
+			}
+			name, ok := call.Fun.(*ast.Ident)
+			if !ok || name.Name != "buildCommand" {
+				return true
+			}
+			literal, ok := call.Args[2].(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			var arguments []string
+			for _, element := range literal.Elts {
+				value, ok := element.(*ast.BasicLit)
+				if !ok || value.Kind != token.STRING {
+					arguments = nil
+					return false
+				}
+				decoded, decodeErr := strconv.Unquote(value.Value)
+				if decodeErr != nil {
+					arguments = nil
+					return false
+				}
+				arguments = append(arguments, decoded)
+			}
+			result[function.Name.Name] = arguments
+			return false
+		})
+	}
+	for function := range wanted {
+		if len(result[function]) == 0 {
+			return nil, fmt.Errorf("typed provider builder %s has no static argv contract", function)
+		}
+	}
+	return result, nil
+}
+
+func phase2FencedBlockContaining(document, needle string) (string, error) {
+	parts := strings.Split(document, "```")
+	for index := 1; index < len(parts); index += 2 {
+		block := parts[index]
+		if newline := strings.IndexByte(block, '\n'); newline >= 0 {
+			block = block[newline+1:]
+		}
+		if strings.Contains(block, needle) {
+			return block, nil
+		}
+	}
+	return "", fmt.Errorf("documentation lacks fenced command containing %q", needle)
+}
+
+func phase2SmokeMakeTargets(t *testing.T, root string, targets []string) {
+	t.Helper()
+	for _, target := range targets {
+		t.Run("make -n "+target, func(t *testing.T) {
+			phase2RunCommand(t, root, 0, "make", "-n", target,
+				"ARTIFACT_DIR=/tmp/spec-kitty-doc-smoke-artifacts",
+				"BUILD_DIR=/tmp/spec-kitty-doc-smoke-build",
+				"PROVIDER_TMP_DIR=/tmp/spec-kitty-doc-smoke-provider",
+				"BEADS_BIN=/absolute/path/to/verified/bd",
+				"BEADS_INSTALL_RESULT=/absolute/path/to/installer-identity.json",
+				"OFFLINE_ENFORCED=linux-network-namespace")
+		})
+	}
+}
+
+func phase2SmokeHelperAndInstaller(t *testing.T, root string) string {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "spk-phase1-helper")
+	phase2RunCommand(t, root, 0, "go", "build", "-trimpath", "-o", binary, "./cmd/spk-phase1-helper")
+	help := phase2RunCommand(t, root, 2, binary, "tracker", "inspect-beads", "--help")
+	if !strings.Contains(help, "Usage of tracker inspect-beads") {
+		t.Fatalf("inspect-beads help seam returned unexpected output: %q", help)
+	}
+	installer := filepath.Join(root, "scripts", "install-qualified-beads.sh")
+	relative := phase2RunCommand(t, root, 2, "sh", installer, "--dest", "relative")
+	if !strings.Contains(relative, "destination must be absolute") {
+		t.Fatalf("installer --dest parser seam returned unexpected output: %q", relative)
+	}
+	offlineDestination := filepath.Join(t.TempDir(), "verified-provider")
+	offline := phase2RunCommand(t, root, 1, "sh", installer, "--dest", offlineDestination, "--offline")
+	if !strings.Contains(offline, "offline installation requires an already verified target") {
+		t.Fatalf("installer --offline parser seam returned unexpected output: %q", offline)
+	}
+	return help
+}
+
+func phase2ExpectedInspectHelp() string {
+	return strings.Join([]string{
+		"--project", "--executable", "--workspace", "--database-identity", "--protocol-schema",
+		"--mode", "--read-only", "--expected-digest",
+	}, " ")
+}
+
+func phase2RunCommand(t *testing.T, directory string, expectedExit int, name string, args ...string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, name, args...)
+	command.Dir = directory
+	command.Env = append(os.Environ(), "GOTOOLCHAIN=local")
+	output, err := command.CombinedOutput()
+	exitCode := 0
+	if err != nil {
+		var exitError *exec.ExitError
+		if !errors.As(err, &exitError) {
+			t.Fatalf("run %s: %v", name, err)
+		}
+		exitCode = exitError.ExitCode()
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("run %s timed out: %v", name, ctx.Err())
+	}
+	if exitCode != expectedExit {
+		t.Fatalf("run %s %q exit=%d want=%d output=%q", name, args, exitCode, expectedExit, output)
+	}
+	return string(output)
 }
 
 func phase2VerifyChecksums(t *testing.T, evidenceDir string) {
