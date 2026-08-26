@@ -46,6 +46,7 @@ type catalogRunner struct {
 	clock                uint64
 	ambiguousKind        CommandKind
 	applyBeforeAmbiguous bool
+	afterCreate          func(*storedCatalogIssue)
 	mode                 tracker.ConcurrencyMode
 	serverID             string
 	serverEndpoint       string
@@ -94,6 +95,10 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 		}
 		issue := runner.createIssue(request.argv)
 		data = issue.wire()
+		if runner.afterCreate != nil {
+			runner.afterCreate(&issue)
+			runner.issues[issue.ID] = issue
+		}
 		result.mutationOutcome = mutationApplied
 		if runner.ambiguousKind == CommandCreate {
 			runner.ambiguousKind = ""
@@ -368,6 +373,107 @@ func TestCatalogCreatePreservesCallerOwnedProviderMetadata(t *testing.T) {
 	}
 }
 
+func TestCatalogConfirmedCreateRejectsDishonestLiveProviderState(t *testing.T) {
+	metadata, err := tracker.NewOpaqueMetadata([]byte(`{"human":{"approval":"keep","sequence":9007199254740992},"provider_extension":[1,"two"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		corrupt func(*storedCatalogIssue)
+	}{
+		{name: "title", corrupt: func(issue *storedCatalogIssue) { issue.Title = "provider-stored-wrong-title" }},
+		{name: "description", corrupt: func(issue *storedCatalogIssue) { issue.Description = "provider-stored-wrong-description" }},
+		{name: "acceptance", corrupt: func(issue *storedCatalogIssue) { issue.Acceptance = "provider-stored-wrong-acceptance" }},
+		{name: "design context", corrupt: corruptKittyMetadata(t, func(namespace map[string]json.RawMessage) {
+			namespace["design_context"] = json.RawMessage(`"provider-stored-wrong-design"`)
+		})},
+		{name: "structured criteria", corrupt: corruptKittyMetadata(t, func(namespace map[string]json.RawMessage) {
+			namespace["criteria"] = json.RawMessage(`[{"id":"criterion-1","text":"provider-stored-wrong-criterion","verifier":"test","required":true}]`)
+		})},
+		{name: "work mapping", corrupt: corruptKittyMetadata(t, func(namespace map[string]json.RawMessage) {
+			namespace["work_id"] = json.RawMessage(`"work-other"`)
+		})},
+		{name: "project mapping", corrupt: corruptKittyMetadata(t, func(namespace map[string]json.RawMessage) {
+			namespace["project_id"] = json.RawMessage(`"project-other"`)
+		})},
+		{name: "creation operation mapping", corrupt: corruptKittyMetadata(t, func(namespace map[string]json.RawMessage) {
+			namespace["created_by_operation"] = json.RawMessage(`"operation-other"`)
+		})},
+		{name: "last operation provenance", corrupt: corruptKittyMetadata(t, func(namespace map[string]json.RawMessage) {
+			namespace["last_operation"] = json.RawMessage(`"operation-other"`)
+		})},
+		{name: "caller metadata removed", corrupt: corruptRootMetadata(t, func(root map[string]json.RawMessage) {
+			delete(root, "human")
+		})},
+		{name: "caller metadata changed", corrupt: corruptRootMetadata(t, func(root map[string]json.RawMessage) {
+			root["human"] = json.RawMessage(`{"approval":"changed","sequence":9007199254740992}`)
+		})},
+		{name: "caller large integer changed", corrupt: corruptRootMetadata(t, func(root map[string]json.RawMessage) {
+			root["human"] = json.RawMessage(`{"approval":"keep","sequence":9007199254740993}`)
+		})},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			bound, runner := newCatalogTestAdapter(t)
+			runner.afterCreate = test.corrupt
+			request := createRequest(1)
+			request.ProviderMetadata = metadata
+			_, err := bound.CreateWork(context.Background(), request)
+			if !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.issueCount() != 1 || runner.mutationCount() != 1 {
+				t.Fatalf("confirmed dishonest create error=%v issues=%d mutations=%d", err, runner.issueCount(), runner.mutationCount())
+			}
+		})
+	}
+}
+
+func corruptRootMetadata(t *testing.T, corrupt func(map[string]json.RawMessage)) func(*storedCatalogIssue) {
+	t.Helper()
+	return func(issue *storedCatalogIssue) {
+		var root map[string]json.RawMessage
+		if err := json.Unmarshal(issue.Metadata, &root); err != nil {
+			t.Fatalf("decode root metadata: %v", err)
+		}
+		corrupt(root)
+		issue.Metadata, _ = json.Marshal(root)
+	}
+}
+
+func corruptKittyMetadata(t *testing.T, corrupt func(map[string]json.RawMessage)) func(*storedCatalogIssue) {
+	t.Helper()
+	return corruptRootMetadata(t, func(root map[string]json.RawMessage) {
+		var namespace map[string]json.RawMessage
+		if err := json.Unmarshal(root[metadataNamespace], &namespace); err != nil {
+			t.Fatalf("decode adapter metadata: %v", err)
+		}
+		corrupt(namespace)
+		root[metadataNamespace], _ = json.Marshal(namespace)
+	})
+}
+
+func TestSemanticJSONEqualIsLosslessAndStructural(t *testing.T) {
+	tests := []struct {
+		name        string
+		left, right string
+		equal       bool
+	}{
+		{name: "distinct integers beyond float precision", left: `9007199254740992`, right: `9007199254740993`, equal: false},
+		{name: "equivalent map order", left: `{"a":1,"b":2}`, right: `{"b":2,"a":1}`, equal: true},
+		{name: "nested structural equality", left: `{"a":[1,{"x":true,"y":null}],"b":{"n":1.25}}`, right: `{"b":{"n":1.2500},"a":[1e0,{"y":null,"x":true}]}`, equal: true},
+		{name: "mathematically equal number forms", left: `1`, right: `1.0e0`, equal: true},
+		{name: "large exponent stays bounded", left: `1e100000`, right: `10e99999`, equal: true},
+		{name: "signed zero is equivalent", left: `-0.000e99999`, right: `0`, equal: true},
+		{name: "array order remains significant", left: `[1,2]`, right: `[2,1]`, equal: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := semanticJSONEqual([]byte(test.left), []byte(test.right)); got != test.equal {
+				t.Fatalf("semanticJSONEqual(%s, %s)=%t want=%t", test.left, test.right, got, test.equal)
+			}
+		})
+	}
+}
+
 func TestCatalogReplayRefusesLiveProviderDrift(t *testing.T) {
 	t.Run("create", func(t *testing.T) {
 		bound, runner := newCatalogTestAdapter(t)
@@ -384,6 +490,31 @@ func TestCatalogReplayRefusesLiveProviderDrift(t *testing.T) {
 		before := runner.mutationCount()
 		if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
 			t.Fatalf("error=%v mutations=%d", err, runner.mutationCount())
+		}
+	})
+
+	t.Run("create caller large integer", func(t *testing.T) {
+		bound, runner := newCatalogTestAdapter(t)
+		metadata, err := tracker.NewOpaqueMetadata([]byte(`{"human":{"sequence":9007199254740992}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := createRequest(1)
+		request.ProviderMetadata = metadata
+		created, err := bound.CreateWork(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner.mu.Lock()
+		issue := runner.issues[created.Record.ExternalRef.ExternalID]
+		corruptRootMetadata(t, func(root map[string]json.RawMessage) {
+			root["human"] = json.RawMessage(`{"sequence":9007199254740993}`)
+		})(&issue)
+		runner.issues[issue.ID] = issue
+		runner.mu.Unlock()
+		before := runner.mutationCount()
+		if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
+			t.Fatalf("large-integer replay drift error=%v mutations=%d", err, runner.mutationCount())
 		}
 	})
 
