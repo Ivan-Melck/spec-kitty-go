@@ -47,6 +47,151 @@ func TestCycle1ExternalEffectPriorEvidenceIsImmutable(t *testing.T) {
 	}
 }
 
+func TestProjectionReconciliationObservationSurvivesCloseAndReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effect := projectionPersistenceEffect(execution.CompensationUnsupported, 13, "human-owner", "human-marker")
+	if err := store.SaveExternalEffect(ctx, effect); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	loaded, err := store.ExternalEffect(ctx, effect.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CompensationStatus != execution.CompensationUnsupported || loaded.CompensationRevision != 0 || loaded.ObservationRevision != 13 || loaded.ObservationValue != "human-owner" || loaded.ObservationMarker != "human-marker" {
+		t.Fatalf("reopened reconciliation evidence is not one coherent tuple: %+v", loaded)
+	}
+	var status execution.CompensationStatus
+	var revision int64
+	var value, marker string
+	if err := store.db.QueryRowContext(ctx, `SELECT compensation_status,provider_revision,provider_value,provider_marker FROM external_effect_observations WHERE operation_id=? ORDER BY sequence DESC LIMIT 1`, effect.OperationID).Scan(&status, &revision, &value, &marker); err != nil {
+		t.Fatal(err)
+	}
+	if status != execution.CompensationUnsupported || revision != 13 || value != "human-owner" || marker != "human-marker" {
+		t.Fatalf("unsupported observation ledger = %s/%d/%q/%q", status, revision, value, marker)
+	}
+}
+
+func TestProjectionTerminalEvidenceCannotBeDowngradedOrSpliced(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	effect := projectionPersistenceEffect(execution.CompensationAttributionLost, 14, "human-owner", "")
+	if err := store.SaveExternalEffect(ctx, effect); err != nil {
+		t.Fatal(err)
+	}
+	weaker := effect
+	weaker.CompensationStatus = execution.CompensationUnavailable
+	weaker.ObservationRevision, weaker.ObservationValue, weaker.ObservationMarker = 0, "", ""
+	weaker.ObservedAt = weaker.ObservedAt.Add(time.Second)
+	if err := store.SaveExternalEffect(ctx, weaker); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.ExternalEffect(ctx, effect.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CompensationStatus != execution.CompensationAttributionLost || loaded.ObservationRevision != 14 || loaded.ObservationValue != "human-owner" || loaded.ObservationMarker != "" {
+		t.Fatalf("terminal observation was downgraded or spliced: %+v", loaded)
+	}
+	var unknownRevision int64
+	var unknownValue, unknownMarker string
+	if err := store.db.QueryRowContext(ctx, `SELECT provider_revision,provider_value,provider_marker FROM external_effect_observations WHERE operation_id=? ORDER BY sequence DESC LIMIT 1`, effect.OperationID).Scan(&unknownRevision, &unknownValue, &unknownMarker); err != nil {
+		t.Fatal(err)
+	}
+	if unknownRevision != 0 || unknownValue != "" || unknownMarker != "" {
+		t.Fatalf("unavailable save fabricated provider state: %d/%q/%q", unknownRevision, unknownValue, unknownMarker)
+	}
+}
+
+func TestProjectionConfirmedObservationSurvivesStalePendingReplay(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	confirmed := projectionPersistenceEffect(execution.CompensationPending, 12, "actor-a", "operation-projection-store")
+	if err := store.SaveExternalEffect(ctx, confirmed); err != nil {
+		t.Fatal(err)
+	}
+	stale := confirmed
+	stale.ResponseStatus = execution.EffectPending
+	stale.AppliedRevision = 0
+	stale.ObservationRevision, stale.ObservationValue, stale.ObservationMarker = 11, "original", ""
+	stale.ObservedAt = stale.ObservedAt.Add(time.Second)
+	if err := store.SaveExternalEffect(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.ExternalEffect(ctx, confirmed.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ResponseStatus != execution.EffectConfirmed || loaded.AppliedRevision != 12 || loaded.ObservationRevision != 12 || loaded.ObservationValue != "actor-a" || loaded.ObservationMarker != "operation-projection-store" {
+		t.Fatalf("stale replay erased confirmed coherent observation: %+v", loaded)
+	}
+}
+
+func TestProjectionConcurrentSemanticReplayConvergesOrConflicts(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	base := projectionPersistenceEffect(execution.CompensationPending, 12, "actor-a", "operation-projection-store")
+	const workers = 16
+	results := make(chan error, workers)
+	for index := 0; index < workers; index++ {
+		go func() { results <- store.SaveExternalEffect(ctx, base) }()
+	}
+	for index := 0; index < workers; index++ {
+		if err := <-results; err != nil && !execution.IsKind(err, execution.KindControlStoreBusy) {
+			t.Fatalf("same-semantic concurrent save = %v", err)
+		}
+	}
+	changed := base
+	changed.AppliedValue = "different-actor"
+	if err := store.SaveExternalEffect(ctx, changed); !execution.IsKind(err, execution.KindIdempotencyConflict) {
+		t.Fatalf("changed semantic replay = %v", err)
+	}
+}
+
+func TestProjectionBusyFailureUsesStableSameOperationDiagnostic(t *testing.T) {
+	at := time.Date(2026, 8, 26, 13, 30, 0, 0, time.UTC)
+	err := externalEffectStoreError("operation-busy-effect", "correlation-busy-effect", "actor-busy-effect", "process-busy-effect", at, "save external effect", errors.New("database is locked"))
+	var diagnostic *execution.DiagnosticError
+	if !errors.As(err, &diagnostic) || diagnostic.Kind != execution.KindControlStoreBusy || diagnostic.RetrySafety != execution.RetrySafeSameOperation || diagnostic.OperationID != "operation-busy-effect" || diagnostic.CorrelationID != "correlation-busy-effect" || diagnostic.AggregateIDs["actor_id"] != "actor-busy-effect" || diagnostic.AggregateIDs["process_id"] != "process-busy-effect" || diagnostic.OccurredAt != at {
+		t.Fatalf("busy external-effect diagnostic = %+v", diagnostic)
+	}
+}
+
+func projectionPersistenceEffect(status execution.CompensationStatus, revision tracker.Revision, value, marker string) execution.ExternalEffect {
+	return execution.ExternalEffect{
+		SchemaVersion: execution.ResultSchemaVersion, OperationID: "operation-projection-store", CorrelationID: "correlation-projection-store",
+		ActorID: "actor-projection-store", ProcessID: "process-projection-store", Provider: "portable", WorkKey: "external-projection",
+		Marker: "operation-projection-store", PriorRevision: 11, PriorValue: "original", AppliedRevision: 12, AppliedValue: "actor-a",
+		ResponseStatus: execution.EffectConfirmed, CompensationStatus: status,
+		ObservationRevision: revision, ObservationValue: value, ObservationMarker: marker,
+		ObservedAt: time.Date(2026, 8, 26, 13, 0, 0, 0, time.UTC),
+	}
+}
+
 func TestCycle3CompensationObservationRecordsOnlyProvenProviderReality(t *testing.T) {
 	for _, test := range []struct {
 		name           string

@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	KindTrackerUnavailable      ErrorKind = "tracker_unavailable"
-	KindExternalAttributionLost ErrorKind = "external_attribution_lost"
-	KindDecisionRequired        ErrorKind = "decision_required"
+	KindTrackerUnavailable          ErrorKind = "tracker_unavailable"
+	KindExternalAttributionLost     ErrorKind = "external_attribution_lost"
+	KindDecisionRequired            ErrorKind = "decision_required"
+	KindSafeCompensationUnsupported ErrorKind = "safe_compensation_unsupported"
 )
 
 type EffectResponseStatus string
@@ -35,6 +36,8 @@ const (
 	CompensationUnavailable     CompensationStatus = "unavailable"
 	CompensationDone            CompensationStatus = "compensated"
 	CompensationAttributionLost CompensationStatus = "attribution_lost"
+	CompensationUnsupported     CompensationStatus = "safe_compensation_unsupported"
+	CompensationReconciliation  CompensationStatus = "reconciliation_required"
 )
 
 type ExternalEffect struct {
@@ -68,16 +71,18 @@ type ExternalEffectRepository interface {
 }
 
 type TrackerAssignRequest struct {
-	SchemaVersion    uint16
-	CorrelationID    string
-	OperationID      ids.OperationID
-	ActorID          ids.ActorID
-	ProcessID        ids.ProcessID
-	Now              time.Time
-	Provider         string
-	WorkKey          string
-	ExpectedRevision tracker.Revision
-	Assignee         string
+	SchemaVersion     uint16
+	CorrelationID     string
+	OperationID       ids.OperationID
+	ActorID           ids.ActorID
+	ProcessID         ids.ProcessID
+	Now               time.Time
+	Provider          string
+	WorkKey           string
+	ExpectedRevision  tracker.Revision
+	Assignee          string
+	ExternalRef       tracker.ExternalWorkRef
+	RequiredGuarantee tracker.AssignmentLevel
 }
 
 type TrackerCompensateRequest struct {
@@ -90,6 +95,7 @@ type TrackerCompensateRequest struct {
 	Provider         string
 	WorkKey          string
 	ExpectedRevision tracker.Revision
+	ExternalRef      tracker.ExternalWorkRef
 }
 
 type TrackerEffectResult struct {
@@ -111,12 +117,21 @@ type TrackerEffectResult struct {
 
 type TrackerSaga struct {
 	repository ExternalEffectRepository
-	provider   tracker.Provider
+	provider   legacyAssignmentProvider
+	projection tracker.AssignmentProjection
 	faults     faults.Hook
 }
 
-func NewTrackerSaga(repository ExternalEffectRepository, provider tracker.Provider, _ Clock) *TrackerSaga {
-	return &TrackerSaga{repository: repository, provider: provider, faults: faults.Noop{}}
+type legacyAssignmentProvider interface {
+	Read(context.Context, string) (tracker.Work, error)
+	CompareAndSetAssignment(context.Context, tracker.AssignmentRequest) (tracker.Mutation, error)
+	CompareBeforeCompensate(context.Context, tracker.CompensationRequest) (tracker.Mutation, error)
+}
+
+func NewTrackerSaga(repository ExternalEffectRepository, provider any, _ Clock) *TrackerSaga {
+	legacy, _ := provider.(legacyAssignmentProvider)
+	projection, _ := provider.(tracker.AssignmentProjection)
+	return &TrackerSaga{repository: repository, provider: legacy, projection: projection, faults: faults.Noop{}}
 }
 
 func (s *TrackerSaga) WithFaults(hook faults.Hook) *TrackerSaga {
@@ -127,9 +142,189 @@ func (s *TrackerSaga) WithFaults(hook faults.Hook) *TrackerSaga {
 	return s
 }
 
+func (s *TrackerSaga) assignProjection(ctx context.Context, request TrackerAssignRequest) (TrackerEffectResult, error) {
+	envelope := assignEnvelope(request)
+	if s.projection == nil {
+		return TrackerEffectResult{}, commandDiagnostic(KindInvalidCommand, "provider does not implement assignment projection", RetryNever, envelope, nil, request.Now)
+	}
+	effect, err := s.readEffect(ctx, envelope)
+	switch {
+	case err == nil:
+		if effect.Provider != envelope.Provider || effect.WorkKey != envelope.WorkKey || effect.AppliedValue != request.Assignee || effect.PriorRevision != request.ExpectedRevision || effect.Marker != request.OperationID.String() {
+			return TrackerEffectResult{}, commandDiagnostic(KindIdempotencyConflict, "operation ID was reused for a different tracker assignment", RetryNever, envelope, &effect, request.Now)
+		}
+		if effect.ResponseStatus == EffectConfirmed {
+			return effectResult(effect, envelope, true, true), nil
+		}
+	case IsKind(err, KindNotFound):
+		observed, observeErr := s.projection.ObserveAssignment(ctx, request.ExternalRef)
+		if observeErr != nil {
+			return TrackerEffectResult{}, s.providerFailure(ctx, envelope, nil, observeErr)
+		}
+		if observed.Observation.Revision != request.ExpectedRevision {
+			return TrackerEffectResult{}, assignmentDriftDiagnostic(envelope, nil, observed, request.Now)
+		}
+		effect = ExternalEffect{
+			SchemaVersion: ResultSchemaVersion, OperationID: request.OperationID, CorrelationID: request.CorrelationID,
+			ActorID: request.ActorID, ProcessID: request.ProcessID, Provider: envelope.Provider, WorkKey: envelope.WorkKey,
+			Marker: request.OperationID.String(), PriorRevision: observed.Observation.Revision, PriorValue: observed.Assignee,
+			AppliedValue: request.Assignee, ResponseStatus: EffectPending, CompensationStatus: CompensationPending,
+			ObservationRevision: observed.Observation.Revision, ObservationValue: observed.Assignee, ObservationMarker: observed.OperationMarker,
+			ObservedAt: observed.Observation.ObservedAt,
+		}
+		if err := s.saveEffect(ctx, envelope, effect); err != nil {
+			return TrackerEffectResult{}, err
+		}
+	case err != nil:
+		return TrackerEffectResult{}, err
+	}
+
+	mutation, mutationErr := s.projection.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{
+		ExternalRef: request.ExternalRef, OperationID: request.OperationID, Assignee: request.Assignee,
+		ExpectedObservation: effect.PriorRevision, RequiredGuarantee: request.RequiredGuarantee,
+	})
+	actual := mutation.Observation
+	if mutationErr == nil && actual.Observation.Revision != 0 && actual.Assignee == request.Assignee && actual.OperationMarker == effect.Marker {
+		effect.ResponseStatus = EffectConfirmed
+		effect.AppliedRevision = actual.Observation.Revision
+		setEffectObservation(&effect, actual)
+		if err := s.saveEffect(ctx, envelope, effect); err != nil {
+			return TrackerEffectResult{}, err
+		}
+		return effectResult(effect, envelope, mutation.Replayed, mutation.Noop), nil
+	}
+	if tracker.IsKind(mutationErr, tracker.ErrorAmbiguous) {
+		effect.ResponseStatus = EffectAmbiguous
+		clearEffectObservation(&effect, request.Now)
+	} else if tracker.IsKind(mutationErr, tracker.ErrorUnavailable) || tracker.IsKind(mutationErr, tracker.ErrorTimeout) {
+		effect.ResponseStatus = EffectUnavailable
+		clearEffectObservation(&effect, request.Now)
+	} else if actual.Observation.Revision != 0 {
+		effect.ResponseStatus = EffectDecisionRequired
+		effect.ConflictRevision, effect.ConflictValue, effect.ConflictMarker = actual.Observation.Revision, actual.Assignee, actual.OperationMarker
+		setEffectObservation(&effect, actual)
+	}
+	if saveErr := s.saveEffect(ctx, envelope, effect); saveErr != nil {
+		return TrackerEffectResult{}, saveErr
+	}
+	if mutationErr == nil {
+		mutationErr = &tracker.Error{Kind: tracker.ErrorAmbiguous, RecoveryCode: "observe_then_reconcile", Message: "assignment post-observation did not prove the complete effect"}
+	}
+	return TrackerEffectResult{}, s.providerFailure(ctx, envelope, &effect, mutationErr)
+}
+
+func (s *TrackerSaga) compensateProjection(ctx context.Context, request TrackerCompensateRequest) (TrackerEffectResult, error) {
+	envelope := compensateEnvelope(request)
+	if s.projection == nil {
+		return TrackerEffectResult{}, commandDiagnostic(KindInvalidCommand, "provider does not implement assignment projection", RetryNever, envelope, nil, request.Now)
+	}
+	effect, err := s.readEffect(ctx, envelope)
+	if err != nil {
+		if IsKind(err, KindNotFound) {
+			return TrackerEffectResult{}, commandDiagnostic(KindNotFound, "external effect was not found", RetryNever, envelope, nil, request.Now)
+		}
+		return TrackerEffectResult{}, err
+	}
+	if effect.Provider != envelope.Provider || effect.WorkKey != envelope.WorkKey || effect.AppliedRevision != request.ExpectedRevision {
+		return TrackerEffectResult{}, commandDiagnostic(KindIdempotencyConflict, "compensation command does not match the recorded external effect", RetryNever, envelope, &effect, request.Now)
+	}
+	if effect.ResponseStatus != EffectConfirmed {
+		return TrackerEffectResult{}, commandDiagnostic(KindDecisionRequired, "only a confirmed attributable effect can be compensated", RetryDecisionRequired, envelope, &effect, request.Now)
+	}
+	if effect.CompensationStatus == CompensationDone {
+		return compensationResult(effect, envelope, true, true), nil
+	}
+	if effect.CompensationStatus == CompensationUnsupported || effect.CompensationStatus == CompensationAttributionLost || effect.CompensationStatus == CompensationReconciliation {
+		return TrackerEffectResult{}, compensationDecisionDiagnostic(envelope, effect, request.Now)
+	}
+
+	mutation, mutationErr := s.projection.CompensateAssignment(ctx, tracker.CompensateAssignmentRequest{
+		ExternalRef: request.ExternalRef, OperationID: request.OperationID, ExpectedObservation: effect.AppliedRevision,
+		ExpectedAssignee: effect.AppliedValue, ExpectedMarker: effect.Marker, RestoreAssignee: effect.PriorValue,
+	})
+	actual := mutation.Observation
+	switch {
+	case mutationErr == nil && actual.Observation.Revision != 0:
+		effect.CompensationStatus = CompensationDone
+		effect.CompensationRevision = actual.Observation.Revision
+		setEffectObservation(&effect, actual)
+		if err := s.saveEffect(ctx, envelope, effect); err != nil {
+			return TrackerEffectResult{}, err
+		}
+		return compensationResult(effect, envelope, mutation.Replayed, mutation.Noop), nil
+	case tracker.IsKind(mutationErr, tracker.ErrorSafeCompensationUnsupported):
+		effect.CompensationStatus = CompensationUnsupported
+		setEffectObservation(&effect, actual)
+	case tracker.IsKind(mutationErr, tracker.ErrorAttributionLost):
+		effect.CompensationStatus = CompensationAttributionLost
+		effect.ConflictRevision, effect.ConflictValue, effect.ConflictMarker = actual.Observation.Revision, actual.Assignee, actual.OperationMarker
+		setEffectObservation(&effect, actual)
+	case tracker.IsKind(mutationErr, tracker.ErrorAmbiguous):
+		effect.CompensationStatus = CompensationAmbiguous
+		clearEffectObservation(&effect, request.Now)
+	case tracker.IsKind(mutationErr, tracker.ErrorUnavailable), tracker.IsKind(mutationErr, tracker.ErrorTimeout):
+		effect.CompensationStatus = CompensationUnavailable
+		clearEffectObservation(&effect, request.Now)
+	default:
+		effect.CompensationStatus = CompensationReconciliation
+		if actual.Observation.Revision != 0 {
+			setEffectObservation(&effect, actual)
+		}
+	}
+	if err := s.saveEffect(ctx, envelope, effect); err != nil {
+		return TrackerEffectResult{}, err
+	}
+	if effect.CompensationStatus == CompensationUnsupported || effect.CompensationStatus == CompensationAttributionLost || effect.CompensationStatus == CompensationReconciliation {
+		diagnostic := compensationDecisionDiagnostic(envelope, effect, request.Now)
+		diagnostic.Cause = mutationErr
+		return TrackerEffectResult{}, diagnostic
+	}
+	return TrackerEffectResult{}, s.providerFailure(ctx, envelope, &effect, mutationErr)
+}
+
+func setEffectObservation(effect *ExternalEffect, actual tracker.AssignmentObservation) {
+	effect.ObservationRevision = actual.Observation.Revision
+	effect.ObservationValue = actual.Assignee
+	effect.ObservationMarker = actual.OperationMarker
+	effect.ObservedAt = actual.Observation.ObservedAt.UTC()
+}
+
+func clearEffectObservation(effect *ExternalEffect, now time.Time) {
+	effect.ObservationRevision, effect.ObservationValue, effect.ObservationMarker = 0, "", ""
+	effect.ObservedAt = now.UTC()
+}
+
+func assignmentDriftDiagnostic(envelope trackerEnvelope, effect *ExternalEffect, actual tracker.AssignmentObservation, now time.Time) *DiagnosticError {
+	diagnostic := commandDiagnostic(KindDecisionRequired, "provider observation changed before assignment", RetryDecisionRequired, envelope, effect, now)
+	diagnostic.ObservedState = map[string]string{"provider_revision": fmt.Sprint(actual.Observation.Revision), "assignee": actual.Assignee, "operation_marker": actual.OperationMarker}
+	diagnostic.ExpectedState = map[string]string{"provider_revision": fmt.Sprint(envelope.ExpectedRevision)}
+	diagnostic.RecoveryActions = []string{"preserve the current provider state", "reconcile the mapping before issuing a new operation"}
+	return diagnostic
+}
+
+func compensationDecisionDiagnostic(envelope trackerEnvelope, effect ExternalEffect, now time.Time) *DiagnosticError {
+	kind, message := KindDecisionRequired, "external assignment requires explicit reconciliation"
+	if effect.CompensationStatus == CompensationUnsupported {
+		kind, message = KindSafeCompensationUnsupported, "provider cannot enforce safe automatic compensation"
+	} else if effect.CompensationStatus == CompensationAttributionLost {
+		kind, message = KindExternalAttributionLost, "current tracker assignment is no longer attributable to this operation"
+	}
+	diagnostic := commandDiagnostic(kind, message, RetryNever, envelope, &effect, now)
+	diagnostic.ObservedState = map[string]string{"provider_revision": fmt.Sprint(effect.ObservationRevision), "assignee": effect.ObservationValue, "operation_marker": effect.ObservationMarker, "compensation_status": string(effect.CompensationStatus)}
+	diagnostic.ExpectedState = map[string]string{"provider_revision": fmt.Sprint(effect.AppliedRevision), "assignee": effect.AppliedValue, "operation_marker": effect.Marker}
+	diagnostic.RecoveryActions = []string{"preserve the current provider assignment", "record an explicit reconciliation decision"}
+	return diagnostic
+}
+
 func (s *TrackerSaga) Assign(ctx context.Context, request TrackerAssignRequest) (TrackerEffectResult, error) {
 	if err := validateAssignRequest(request); err != nil {
 		return TrackerEffectResult{}, err
+	}
+	if request.ExternalRef.ExternalID != "" {
+		return s.assignProjection(ctx, request)
+	}
+	if s.provider == nil {
+		return TrackerEffectResult{}, commandDiagnostic(KindInvalidCommand, "tracker assignment projection is unavailable", RetryNever, assignEnvelope(request), nil, request.Now)
 	}
 	envelope := assignEnvelope(request)
 	effect, err := s.readEffect(ctx, envelope)
@@ -247,6 +442,12 @@ func (s *TrackerSaga) Compensate(ctx context.Context, request TrackerCompensateR
 	if err := validateCompensateRequest(request); err != nil {
 		return TrackerEffectResult{}, err
 	}
+	if request.ExternalRef.ExternalID != "" {
+		return s.compensateProjection(ctx, request)
+	}
+	if s.provider == nil {
+		return TrackerEffectResult{}, commandDiagnostic(KindInvalidCommand, "tracker assignment projection is unavailable", RetryNever, compensateEnvelope(request), nil, request.Now)
+	}
 	envelope := compensateEnvelope(request)
 	effect, err := s.readEffect(ctx, envelope)
 	if err != nil {
@@ -289,6 +490,9 @@ func (s *TrackerSaga) Compensate(ctx context.Context, request TrackerCompensateR
 		effect.ConflictRevision = work.Revision
 		effect.ConflictValue = work.Assignee
 		effect.ConflictMarker = work.AssignmentMarker
+		effect.ObservationRevision = work.Revision
+		effect.ObservationValue = work.Assignee
+		effect.ObservationMarker = work.AssignmentMarker
 		effect.ObservedAt = request.Now.UTC()
 		if saveErr := s.saveEffect(ctx, envelope, effect); saveErr != nil {
 			return TrackerEffectResult{}, saveErr
@@ -330,11 +534,19 @@ type trackerEnvelope struct {
 }
 
 func assignEnvelope(request TrackerAssignRequest) trackerEnvelope {
-	return trackerEnvelope{request.SchemaVersion, request.CorrelationID, request.OperationID, request.ActorID, request.ProcessID, request.Now, request.Provider, request.WorkKey, request.ExpectedRevision}
+	provider, workKey := request.Provider, request.WorkKey
+	if request.ExternalRef.ExternalID != "" {
+		provider, workKey = request.ExternalRef.Provider, request.ExternalRef.ExternalID
+	}
+	return trackerEnvelope{request.SchemaVersion, request.CorrelationID, request.OperationID, request.ActorID, request.ProcessID, request.Now, provider, workKey, request.ExpectedRevision}
 }
 
 func compensateEnvelope(request TrackerCompensateRequest) trackerEnvelope {
-	return trackerEnvelope(request)
+	provider, workKey := request.Provider, request.WorkKey
+	if request.ExternalRef.ExternalID != "" {
+		provider, workKey = request.ExternalRef.Provider, request.ExternalRef.ExternalID
+	}
+	return trackerEnvelope{request.SchemaVersion, request.CorrelationID, request.OperationID, request.ActorID, request.ProcessID, request.Now, provider, workKey, request.ExpectedRevision}
 }
 
 func validateAssignRequest(request TrackerAssignRequest) error {
@@ -344,11 +556,33 @@ func validateAssignRequest(request TrackerAssignRequest) error {
 	if request.Assignee == "" {
 		return commandDiagnostic(KindInvalidCommand, "assignee is required", RetryNever, assignEnvelope(request), nil, request.Now)
 	}
+	if request.ExternalRef.ExternalID != "" {
+		if err := request.ExternalRef.Validate(); err != nil {
+			return commandDiagnostic(KindInvalidCommand, "external work mapping is invalid", RetryNever, assignEnvelope(request), nil, request.Now)
+		}
+		if request.Provider != "" && request.Provider != request.ExternalRef.Provider || request.WorkKey != "" && request.WorkKey != request.ExternalRef.ExternalID {
+			return commandDiagnostic(KindInvalidCommand, "external work mapping conflicts with provider envelope", RetryNever, assignEnvelope(request), nil, request.Now)
+		}
+		if request.RequiredGuarantee != tracker.AssignmentUnguarded && request.RequiredGuarantee != tracker.AssignmentAtomicClaim {
+			return commandDiagnostic(KindInvalidCommand, "assignment guarantee is required", RetryNever, assignEnvelope(request), nil, request.Now)
+		}
+	}
 	return nil
 }
 
 func validateCompensateRequest(request TrackerCompensateRequest) error {
-	return validateEnvelope(compensateEnvelope(request))
+	if err := validateEnvelope(compensateEnvelope(request)); err != nil {
+		return err
+	}
+	if request.ExternalRef.ExternalID != "" {
+		if err := request.ExternalRef.Validate(); err != nil {
+			return commandDiagnostic(KindInvalidCommand, "external work mapping is invalid", RetryNever, compensateEnvelope(request), nil, request.Now)
+		}
+		if request.Provider != "" && request.Provider != request.ExternalRef.Provider || request.WorkKey != "" && request.WorkKey != request.ExternalRef.ExternalID {
+			return commandDiagnostic(KindInvalidCommand, "external work mapping conflicts with provider envelope", RetryNever, compensateEnvelope(request), nil, request.Now)
+		}
+	}
+	return nil
 }
 
 func validateEnvelope(envelope trackerEnvelope) error {
