@@ -44,8 +44,9 @@ func TestTrackerInspectBeadsRunsFromShippedRootAndEmitsTypedJSON(t *testing.T) {
 	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
+	databasePath := helperDatabasePath(t, workspace)
 	executable := helperBeadsExecutable(t, root, tracker.ConcurrencyEmbeddedSerialized)
-	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", "db-1", "--protocol-schema", "1", "--mode", "embedded_serialized", "--read-only=false"}
+	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", databasePath, "--protocol-schema", "1", "--mode", "embedded_serialized", "--read-only=false"}
 	var stdout, stderr bytes.Buffer
 	if code := Run(context.Background(), args, &stdout, &stderr); code != 0 {
 		t.Fatalf("code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
@@ -68,9 +69,10 @@ func TestTrackerInspectBeadsServerCredentialsAreNeverSerialized(t *testing.T) {
 	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
+	databasePath := helperDatabasePath(t, workspace)
 	executable := helperBeadsExecutable(t, root, tracker.ConcurrencyServerMultiwriter)
 	secret := "super-secret-password"
-	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", "db-1", "--protocol-schema", "1", "--mode", "server_multiwriter", "--read-only=false", "--server-identity", "server-1", "--server-endpoint", "127.0.0.1:3306", "--dolt-server-host", "127.0.0.1", "--dolt-server-port", "3306", "--dolt-remote-user", "operator", "--dolt-remote-password", secret}
+	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", databasePath, "--protocol-schema", "1", "--mode", "server_multiwriter", "--read-only=false", "--server-identity", "server-1", "--server-endpoint", "127.0.0.1:3306", "--dolt-server-host", "127.0.0.1", "--dolt-server-port", "3306", "--dolt-remote-user", "operator", "--dolt-remote-password", secret}
 	var stdout, stderr bytes.Buffer
 	if code := Run(context.Background(), args, &stdout, &stderr); code != 0 {
 		t.Fatalf("code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
@@ -132,6 +134,7 @@ func TestTrackerCatalogBeadsReadReachesProductionAdapter(t *testing.T) {
 	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
+	databasePath := helperDatabasePath(t, workspace)
 	executable := helperCatalogBeadsExecutable(t, root)
 	requestPath := filepath.Join(root, "read-request.json")
 	request := []byte(`{"work_id":"work-1","external_id":"bd-live-1","metadata_schema":1,"created_by_operation":"operation-create"}`)
@@ -140,7 +143,7 @@ func TestTrackerCatalogBeadsReadReachesProductionAdapter(t *testing.T) {
 	}
 	args := []string{
 		"tracker", "catalog-beads", "read", "--project", "project-1", "--executable", executable,
-		"--workspace", workspace, "--database-identity", "db-1", "--protocol-schema", "1",
+		"--workspace", workspace, "--database-identity", databasePath, "--protocol-schema", "1",
 		"--mode", "embedded_serialized", "--read-only=false", "--request-file", requestPath,
 	}
 	var stdout, stderr bytes.Buffer
@@ -186,12 +189,26 @@ func helperBeadsExecutable(t *testing.T, root string, mode tracker.ConcurrencyMo
 set -eu
 case "$1" in
 version) printf '%%s\n' '{"schema_version":1,"data":{"version":"1.2.2","build":"helper"}}' ;;
-where) printf '{"schema_version":1,"data":{"workspace_path":"%%s","database_id":"db-1"}}\n' "$BEADS_DIR" ;;
-info) printf '{"schema_version":1,"data":{"protocol_schema":1,"storage_mode":"%s","read_only":false,"server_id":"server-1","server_endpoint":"127.0.0.1:3306"}}\n' ;;
-doctor) printf '%%s\n' '{"schema_version":1,"data":{"healthy":true,"server_id":"server-1","server_endpoint":"127.0.0.1:3306"}}' ;;
+where) printf '{"schema_version":1,"data":{"path":"%%s","prefix":"db-1","database_path":"%%s/embeddeddolt"}}\n' "$BEADS_DIR" "$BEADS_DIR" ;;
+dolt)
+  case "$2" in
+  show)
+    if [ "%s" = "server_multiwriter" ]; then
+      printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":false,"host":"127.0.0.1","port":3306,"user":"operator","shared_server":true,"connection_ok":true}}\n' "$BEADS_DIR"
+    else
+      printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":true}}\n' "$BEADS_DIR"
+    fi ;;
+  status)
+    if [ "%s" = "server_multiwriter" ]; then
+      printf '%%s\n' '{"schema_version":1,"data":{"mode":"external","host":"127.0.0.1","port":3306,"user":"operator","database":"db-1","tls":false,"running":true,"version":"1.70.0"}}'
+    else
+      printf '{"schema_version":1,"data":{"data_dir":"%%s/embeddeddolt","data_dir_exists":true,"mode":"embedded","server_running":false}}\n' "$BEADS_DIR"
+    fi ;;
+  *) exit 64 ;;
+  esac ;;
 *) exit 64 ;;
 esac
-`, mode)
+`, mode, mode)
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -204,6 +221,14 @@ func helperCatalogBeadsExecutable(t *testing.T, root string) string {
 	script := `#!/bin/sh
 set -eu
 case "$1" in
+version) printf '%s\n' '{"schema_version":1,"data":{"version":"1.2.2","build":"helper-catalog"}}' ;;
+where) printf '{"schema_version":1,"data":{"path":"%s","prefix":"db-1","database_path":"%s/embeddeddolt"}}\n' "$BEADS_DIR" "$BEADS_DIR" ;;
+dolt)
+  case "$2" in
+  show) printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%s/embeddeddolt","database":"db-1","embedded":true}}\n' "$BEADS_DIR" ;;
+  status) printf '{"schema_version":1,"data":{"data_dir":"%s/embeddeddolt","data_dir_exists":true,"mode":"embedded","server_running":false}}\n' "$BEADS_DIR" ;;
+  *) exit 64 ;;
+  esac ;;
 show)
   printf '%s\n' '{"schema_version":1,"data":{"id":"bd-live-1","title":"Live work","description":"Production caller","acceptance":"criterion-1 — required — test — verified","metadata":{"foreign":{"preserved":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"updated_at":"2026-08-26T12:00:00Z"}}'
   ;;
@@ -211,6 +236,15 @@ show)
 esac
 `
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func helperDatabasePath(t *testing.T, workspace string) string {
+	t.Helper()
+	path := filepath.Join(workspace, "embeddeddolt")
+	if err := os.MkdirAll(path, 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path

@@ -201,7 +201,7 @@ func runCatalogBeads(ctx context.Context, args []string, stdout, stderr io.Write
 	flags.StringVar(&project, "project", "", "project ID")
 	flags.StringVar(&executable, "executable", "", "absolute Beads executable path")
 	flags.StringVar(&workspace, "workspace", "", "absolute canonical Beads workspace path")
-	flags.StringVar(&databaseIdentity, "database-identity", "", "provider database identity")
+	flags.StringVar(&databaseIdentity, "database-identity", "", "absolute existing Beads database directory from where --json")
 	flags.Uint64Var(&protocolSchema, "protocol-schema", 0, "pinned JSON protocol schema")
 	flags.StringVar(&mode, "mode", "", "embedded_serialized")
 	flags.Var(&readOnly, "read-only", "explicit binding read-only state")
@@ -393,7 +393,7 @@ func runInspectBeads(ctx context.Context, args []string, stdout, stderr io.Write
 	flags.StringVar(&project, "project", "", "project ID")
 	flags.StringVar(&executable, "executable", "", "absolute Beads executable path")
 	flags.StringVar(&workspace, "workspace", "", "absolute canonical Beads workspace path")
-	flags.StringVar(&databaseIdentity, "database-identity", "", "provider database identity")
+	flags.StringVar(&databaseIdentity, "database-identity", "", "absolute existing Beads database directory from where --json")
 	flags.Uint64Var(&protocolSchema, "protocol-schema", 0, "pinned JSON protocol schema")
 	flags.StringVar(&mode, "mode", "", "embedded_serialized or server_multiwriter")
 	flags.Var(&readOnly, "read-only", "explicit binding read-only state")
@@ -416,7 +416,7 @@ func runInspectBeads(ctx context.Context, args []string, stdout, stderr io.Write
 		return encodeBeadsInspectionFailure(stdout, invalidInspectRequest("project ID is invalid"))
 	}
 	if strings.TrimSpace(databaseIdentity) == "" {
-		return encodeBeadsInspectionFailure(stdout, invalidInspectRequest("database identity is required"))
+		return encodeBeadsInspectionFailure(stdout, invalidInspectRequest("database directory is required"))
 	}
 	if protocolSchema == 0 || protocolSchema > uint64(^uint16(0)) {
 		return encodeBeadsInspectionFailure(stdout, invalidInspectRequest("protocol schema is invalid"))

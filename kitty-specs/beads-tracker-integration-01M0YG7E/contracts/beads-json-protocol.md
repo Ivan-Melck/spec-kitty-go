@@ -19,12 +19,18 @@ Each command receives:
 - explicit canonical workspace configuration;
 - `BD_JSON_ENVELOPE=1`;
 - `BD_NON_INTERACTIVE=1`;
+- `BD_DISABLE_METRICS=1`;
+- `BD_DISABLE_EVENT_FLUSH=1`;
 - an explicit working directory;
 - a minimal inherited environment allowlist plus required Beads/Dolt credentials for the chosen binding;
 - a context deadline and process-group termination behavior;
 - `--json` where the command documents it.
 
 The adapter never invokes shell parsing. Arguments are passed as an argv vector assembled from typed values.
+
+The two disable variables are fixed adapter policy, not caller-overridable
+credentials. They prevent metrics and deferred-event writes from turning the
+four preflight observations into filesystem mutations.
 
 ## Envelope
 
@@ -58,9 +64,9 @@ Stderr may also contain warnings. The decoder locates at most one valid document
 | Capability | Command shape | Expected payload |
 |---|---|---|
 | executable identity | `bd version --json` | object containing `version`, `build`; optional commit/branch |
-| workspace identity | `bd where --json` | object; exact fields characterized by real-provider tests |
-| schema/database info | `bd info --schema --json` | object |
-| health | `bd doctor --agent --json` or narrower non-fixing probe | object/array characterized by tests |
+| workspace and database location | `bd where --json` | object containing `path`, `prefix`, and absolute `database_path` |
+| storage/database mode | `bd dolt show --json` | object containing `backend`, `data_dir`, `database`, and `embedded`; server mode also supplies endpoint and connection facts |
+| storage/server health | `bd dolt status --json` | embedded status or external-server status object characterized by real-provider tests |
 | read work | `bd show <id> --json` | issue object including description, acceptance, dependencies, comments |
 | list/ready | `bd list --json`, `bd ready --json` | issue array |
 | create work | `bd create ... --metadata <json> --json` | created issue object |
@@ -74,6 +80,25 @@ Stderr may also contain warnings. The decoder locates at most one valid document
 | native backup | `bd backup init <path>`, `bd backup sync`, status/restore probes | output shapes characterized before automation |
 
 If a documented command lacks `--json` in v1.2.2, production automation does not parse its human output. The capability is either implemented through another documented JSON command or reported unsupported. Qualification scripts may use exit status for setup commands but may not derive product state from prose.
+
+### Preflight authority boundary
+
+The mutation-qualified preflight surface is exactly `version`, `where`,
+`dolt show`, and `dolt status`, each using its schema-1 JSON envelope. The
+adapter cross-checks the canonical workspace/database directory, database
+name, storage mode, and—when configured—the server endpoint and health across
+those observations. `bd info --schema` and `bd doctor --agent` are not product
+state protocol alternatives in v1.2.2 and must not be parsed by automation.
+
+Beads v1.2.2 does not expose one authoritative effective-read-only field or a
+durable logical server identity through these commands. Read-only state and
+logical server identity are therefore sealed local binding policy. They may be
+validated against observed storage/endpoint facts, but must never be invented
+as provider-returned fields.
+
+Coordination note: this WP04 correction supersedes the earlier provisional
+`info`/`doctor` command table. Dependent work packages and shipped helper
+fixtures must use the four-command surface above.
 
 ## Output limits
 
@@ -90,9 +115,9 @@ Limits are safety defaults, not acceptance thresholds; tests verify boundary beh
 
 ## Timeout classification
 
-- Version/where/show/list/ready: default 10 s.
+- Version/where/dolt-show/dolt-status/show/list/ready: default 10 s.
 - Create/update/dependency/comment: default 30 s.
-- Doctor/backup/export: caller-supplied bounded operation deadline.
+- Backup/export: caller-supplied bounded operation deadline.
 
 A mutating process killed after start yields `ambiguous`, never `not_applied`, until an independent observation classifies the result.
 
