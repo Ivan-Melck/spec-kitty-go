@@ -1,7 +1,7 @@
 {
-  "event_count": 130,
-  "last_event_id": "01M0Z8VPZXK21Q9GB1G668PNJB",
-  "materialized_at": "2026-08-26T14:51:19.413002+00:00",
+  "event_count": 132,
+  "last_event_id": "01M0Z91W58BGBVMW581C9GZ4MD",
+  "materialized_at": "2026-08-26T14:54:41.320533+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 2,
-    "in_review": 0,
+    "in_progress": 1,
+    "in_review": 1,
     "planned": 7
   },
   "work_packages": {
@@ -83,19 +83,20 @@
     },
     "WP03": {
       "actor": "codex",
-      "agent": null,
-      "agent_profile": "implementer-ivan",
+      "agent": "codex",
+      "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 3,
-      "lane": "in_progress",
-      "last_event_id": "01M0Z8VPZXK21Q9GB1G668PNJB",
-      "last_transition_at": "2026-08-26T14:51:19.413002+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M0Z91W58BGBVMW581C9GZ4MD",
+      "last_transition_at": "2026-08-26T14:54:41.320533+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: closed typed bd command vocabulary, bounded POSIX process-group runner, schema-1 envelope/error and JSONL decoders, stable redacted diagnostics, ambiguity monotonicity, and adversarial tests; protocol.go 100% statement coverage; focused race/repeat/vet/staticcheck plus contract/scope campaigns pass.",
         "Correction cycle 2 ready: option-like values fail closed under bounded ID/value grammar, runtime argv tampering fails before spawn, documented errors require exact top-level wire lines, build identity requires non-empty build, and the complete hostile process matrix passes normal/race/repeat/coverage/vet/static/contract/scope gates.",
         "Independent correction-cycle-2 review passed: hostile argv, exact error envelope, build identity, process reaping, race/repeat/coverage/vet verified; approval transition retried after planning-base lane reconciliation",
-        "Ready for independent review: real v1.2.2 nonzero stdout error envelope decoded structurally; stderr remains non-semantic; byte-real and mutant controls pass"
+        "Ready for independent review: real v1.2.2 nonzero stdout error envelope decoded structurally; stderr remains non-semantic; byte-real and mutant controls pass",
+        "Cycle-5 correction ready: uncoded data.error is conclusive only for non-mutating show; cross-command mutation matrix preserves ambiguity"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -105,16 +106,16 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
       "subtasks": {
-        "T010": "planned",
-        "T011": "planned",
-        "T012": "planned",
-        "T013": "planned",
-        "T014": "planned",
-        "T015": "planned"
+        "T010": "done",
+        "T011": "done",
+        "T012": "done",
+        "T013": "done",
+        "T014": "done",
+        "T015": "done"
       }
     },
     "WP04": {
