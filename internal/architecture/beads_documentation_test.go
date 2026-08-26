@@ -187,13 +187,21 @@ func TestBeadsDocumentationLinksMermaidAndCommands(t *testing.T) {
 			t.Errorf("documented local command path %s: %v", path, err)
 		}
 	}
-	if err := phase2ValidateQualificationCommand(readme, makefile, runner); err != nil {
+	storageKeys, err := phase2QualificationStorageModeContract(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := phase2ValidateStorageModeSemantics(storageKeys); err != nil {
+		t.Fatal(err)
+	}
+	if err := phase2ValidateQualificationCommand(readme, makefile, storageKeys); err != nil {
 		t.Error(err)
 	}
-	help := phase2SmokeHelperAndInstaller(t, root)
+	binary, help := phase2SmokeHelperAndInstaller(t, root)
 	if err := phase2ValidateHelperCommand(readme, help); err != nil {
 		t.Error(err)
 	}
+	phase2SmokeDocumentedHelper(t, root, binary, readme)
 	if err := phase2ValidateInstallerCommand(readme); err != nil {
 		t.Error(err)
 	}
@@ -201,7 +209,11 @@ func TestBeadsDocumentationLinksMermaidAndCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := phase2ValidateProviderCommands(readme, providerArgv); err != nil {
+	initArgv, err := phase2AcceptedDisposableInitArgv(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := phase2ValidateProviderCommands(readme, providerArgv, initArgv); err != nil {
 		t.Error(err)
 	}
 	phase2RunCommand(t, root, 0, "go", "test", "./internal/tracker/beads", "-run", "^TestCommandArgvVocabulary$", "-count=1")
@@ -299,26 +311,45 @@ func TestPhase2EvidenceDocumentationMutants(t *testing.T) {
 	readme := phase2Read(t, root, "README.md")
 	makefile := phase2Read(t, root, "Makefile")
 	runner := phase2Read(t, root, "internal/testcampaign/cmd/beads-qualification/runner.go")
+	storageKeys, err := phase2QualificationStorageModeContract(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, variable := range []string{
 		"BEADS_BIN", "BEADS_INSTALL_RESULT", "BEADS_SERVER_ID", "BEADS_SERVER_ENDPOINT",
 		"DOLT_SERVER_HOST", "DOLT_SERVER_PORT", "OFFLINE_ENFORCED",
 	} {
 		t.Run("qualification variable "+variable, func(t *testing.T) {
 			mutant := strings.Replace(readme, variable+"=", variable+"_BOGUS=", 1)
-			if err := phase2ValidateQualificationCommand(mutant, makefile, runner); err == nil {
+			if err := phase2ValidateQualificationCommand(mutant, makefile, storageKeys); err == nil {
 				t.Fatalf("qualification variable typo %s was accepted", variable)
 			}
 		})
 	}
+	t.Run("storage mode required tuple", func(t *testing.T) {
+		mutant := strings.Replace(runner,
+			`[]string{"BEADS_SERVER_ID", "BEADS_SERVER_ENDPOINT", "DOLT_SERVER_HOST", "DOLT_SERVER_PORT"}`,
+			`[]string{"BEADS_SERVER_ID", "BEADS_SERVER_ENDPOINT", "DOLT_SERVER_HOST"}`, 1)
+		mutantKeys, contractErr := phase2QualificationStorageModeContract(mutant)
+		if contractErr == nil {
+			contractErr = phase2ValidateStorageModeSemantics(mutantKeys)
+		}
+		if contractErr == nil || !strings.Contains(contractErr.Error(), "required keys") {
+			t.Fatalf("qualificationStorageMode three-key mutant error=%v; want required-key rejection", contractErr)
+		}
+		if !strings.Contains(mutant, `"DOLT_SERVER_PORT"`) {
+			t.Fatal("storage-mode mutant accidentally removed every DOLT_SERVER_PORT occurrence")
+		}
+	})
 	t.Run("qualification endpoint drift", func(t *testing.T) {
 		mutant := strings.Replace(readme, "BEADS_SERVER_ENDPOINT=127.0.0.1:3307", "BEADS_SERVER_ENDPOINT=127.0.0.1:3308", 1)
-		if err := phase2ValidateQualificationCommand(mutant, makefile, runner); err == nil {
+		if err := phase2ValidateQualificationCommand(mutant, makefile, storageKeys); err == nil {
 			t.Fatal("server endpoint mismatch was accepted")
 		}
 	})
 	t.Run("qualification target typo", func(t *testing.T) {
 		mutant := strings.Replace(readme, "make beads-qualification", "make beads-qualifiction", 1)
-		if err := phase2ValidateQualificationCommand(mutant, makefile, runner); err == nil {
+		if err := phase2ValidateQualificationCommand(mutant, makefile, storageKeys); err == nil {
 			t.Fatal("qualification target typo was accepted")
 		}
 	})
@@ -328,14 +359,58 @@ func TestPhase2EvidenceDocumentationMutants(t *testing.T) {
 			t.Fatal(err)
 		}
 		mutant := strings.Replace(readme, `"$beads_bin" export --json`, `"$beads_bin" export --jsoon`, 1)
-		if err := phase2ValidateProviderCommands(mutant, providerArgv); err == nil {
+		initArgv, initErr := phase2AcceptedDisposableInitArgv(root)
+		if initErr != nil {
+			t.Fatal(initErr)
+		}
+		if err := phase2ValidateProviderCommands(mutant, providerArgv, initArgv); err == nil {
 			t.Fatal("provider argv typo was accepted")
+		}
+	})
+	t.Run("backup init verb", func(t *testing.T) {
+		providerArgv, contractErr := phase2TypedProviderArgv(root)
+		if contractErr != nil {
+			t.Fatal(contractErr)
+		}
+		initArgv, initErr := phase2AcceptedDisposableInitArgv(root)
+		if initErr != nil {
+			t.Fatal(initErr)
+		}
+		mutant := strings.Replace(readme, `"$beads_bin" backup init "$backup_root"`, `"$beads_bin" backup begin "$backup_root"`, 1)
+		if err := phase2ValidateProviderCommands(mutant, providerArgv, initArgv); err == nil || !strings.Contains(err.Error(), "backup initialization") {
+			t.Fatalf("backup init verb mutant error=%v; want backup initialization rejection", err)
+		}
+	})
+	t.Run("disposable init safety flags", func(t *testing.T) {
+		providerArgv, contractErr := phase2TypedProviderArgv(root)
+		if contractErr != nil {
+			t.Fatal(contractErr)
+		}
+		initArgv, initErr := phase2AcceptedDisposableInitArgv(root)
+		if initErr != nil {
+			t.Fatal(initErr)
+		}
+		mutant := strings.Replace(readme, "--stealth --skip-agents --skip-hooks --non-interactive", "--stealth --skip-agents --non-interactive", 1)
+		if err := phase2ValidateProviderCommands(mutant, providerArgv, initArgv); err == nil || !strings.Contains(err.Error(), "disposable initialization") {
+			t.Fatalf("disposable init safety mutant error=%v; want disposable initialization rejection", err)
 		}
 	})
 	t.Run("helper flag typo", func(t *testing.T) {
 		mutant := strings.Replace(readme, "--protocol-schema 1", "--protocol-scheme 1", 1)
 		if err := phase2ValidateHelperCommand(mutant, phase2ExpectedInspectHelp()); err == nil {
 			t.Fatal("helper flag typo was accepted")
+		}
+	})
+	t.Run("helper read-only false", func(t *testing.T) {
+		mutant := strings.Replace(readme, "--read-only=true", "--read-only=false", 1)
+		if err := phase2ValidateHelperCommand(mutant, phase2ExpectedInspectHelp()); err == nil || !strings.Contains(err.Error(), "read-only") {
+			t.Fatalf("writable inspection mutant error=%v; want read-only rejection", err)
+		}
+	})
+	t.Run("helper unknown mode", func(t *testing.T) {
+		mutant := strings.Replace(readme, "--mode embedded_serialized", "--mode nonsense", 1)
+		if err := phase2ValidateHelperCommand(mutant, phase2ExpectedInspectHelp()); err == nil || !strings.Contains(err.Error(), "mode") {
+			t.Fatalf("unknown helper mode mutant error=%v; want mode rejection", err)
 		}
 	})
 	t.Run("installer flag typo", func(t *testing.T) {
@@ -390,7 +465,7 @@ func phase2ValidateSourceIdentity(commit, tree string) error {
 	return nil
 }
 
-func phase2ValidateQualificationCommand(document, makefile, runner string) error {
+func phase2ValidateQualificationCommand(document, makefile string, storageKeys []string) error {
 	block, err := phase2FencedBlockContaining(document, "make beads-qualification")
 	if err != nil {
 		return err
@@ -418,16 +493,129 @@ func phase2ValidateQualificationCommand(document, makefile, runner string) error
 		if assignments[name] != value {
 			return fmt.Errorf("qualification command %s=%q, want %q", name, assignments[name], value)
 		}
-		if name == "BEADS_SERVER_ID" || name == "BEADS_SERVER_ENDPOINT" || name == "DOLT_SERVER_HOST" || name == "DOLT_SERVER_PORT" {
-			if !strings.Contains(runner, `"`+name+`"`) {
-				return fmt.Errorf("qualification runner does not select storage mode from %s", name)
-			}
-		}
 	}
 	if assignments["BEADS_SERVER_ENDPOINT"] != assignments["DOLT_SERVER_HOST"]+":"+assignments["DOLT_SERVER_PORT"] {
 		return errors.New("qualification endpoint must equal the documented Dolt host/port binding")
 	}
+	if err := phase2ValidateStorageModeSemantics(storageKeys); err != nil {
+		return err
+	}
 	return nil
+}
+
+func phase2QualificationStorageModeContract(source string) ([]string, error) {
+	parsed, err := parser.ParseFile(token.NewFileSet(), "runner.go", source, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse qualification runner: %w", err)
+	}
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Name.Name != "qualificationStorageMode" || function.Body == nil {
+			continue
+		}
+		if len(function.Body.List) != 2 {
+			return nil, errors.New("qualificationStorageMode must be one required-key range followed by the server result")
+		}
+		rangeStatement, ok := function.Body.List[0].(*ast.RangeStmt)
+		if !ok {
+			return nil, errors.New("qualificationStorageMode no longer ranges over its required server tuple")
+		}
+		literal, ok := rangeStatement.X.(*ast.CompositeLit)
+		if !ok {
+			return nil, errors.New("qualificationStorageMode required tuple is not a static literal")
+		}
+		keys, err := phase2StringLiteralElements(literal)
+		if err != nil {
+			return nil, fmt.Errorf("qualificationStorageMode required tuple: %w", err)
+		}
+		if len(rangeStatement.Body.List) != 1 {
+			return nil, errors.New("qualificationStorageMode range must contain exactly the missing-key decision")
+		}
+		missing, ok := rangeStatement.Body.List[0].(*ast.IfStmt)
+		if !ok || !phase2IsMissingEnvironmentKey(missing.Cond, rangeStatement.Value) || !phase2ReturnsString(missing.Body.List, "embedded_serialized") {
+			return nil, errors.New("qualificationStorageMode no longer maps a missing required key to embedded_serialized")
+		}
+		if !phase2ReturnsString(function.Body.List[1:], "server_multiwriter") {
+			return nil, errors.New("qualificationStorageMode no longer maps the complete tuple to server_multiwriter")
+		}
+		return keys, nil
+	}
+	return nil, errors.New("qualificationStorageMode is absent")
+}
+
+func phase2ValidateStorageModeSemantics(keys []string) error {
+	want := []string{"BEADS_SERVER_ID", "BEADS_SERVER_ENDPOINT", "DOLT_SERVER_HOST", "DOLT_SERVER_PORT"}
+	if strings.Join(keys, "\x00") != strings.Join(want, "\x00") {
+		return fmt.Errorf("qualificationStorageMode required keys=%q want=%q", keys, want)
+	}
+	complete := map[string]string{}
+	for _, key := range want {
+		complete[key] = "present"
+	}
+	if phase2ClassifyStorageMode(keys, complete) != "server_multiwriter" {
+		return errors.New("complete four-key server tuple did not select server_multiwriter")
+	}
+	for _, missing := range want {
+		fixture := make(map[string]string, len(complete)-1)
+		for key, value := range complete {
+			if key != missing {
+				fixture[key] = value
+			}
+		}
+		if phase2ClassifyStorageMode(keys, fixture) != "embedded_serialized" {
+			return fmt.Errorf("missing %s did not select embedded_serialized", missing)
+		}
+	}
+	return nil
+}
+
+func phase2ClassifyStorageMode(keys []string, environment map[string]string) string {
+	for _, key := range keys {
+		if environment[key] == "" {
+			return "embedded_serialized"
+		}
+	}
+	return "server_multiwriter"
+}
+
+func phase2IsMissingEnvironmentKey(expression ast.Expr, rangeValue ast.Expr) bool {
+	condition, ok := expression.(*ast.BinaryExpr)
+	if !ok || condition.Op != token.EQL {
+		return false
+	}
+	empty, ok := condition.Y.(*ast.BasicLit)
+	if !ok || empty.Kind != token.STRING || empty.Value != `""` {
+		return false
+	}
+	call, ok := condition.X.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Getenv" {
+		return false
+	}
+	packageName, ok := selector.X.(*ast.Ident)
+	if !ok || packageName.Name != "os" {
+		return false
+	}
+	argument, argumentOK := call.Args[0].(*ast.Ident)
+	value, valueOK := rangeValue.(*ast.Ident)
+	return argumentOK && valueOK && argument.Name == value.Name
+}
+
+func phase2ReturnsString(statements []ast.Stmt, value string) bool {
+	for _, statement := range statements {
+		result, ok := statement.(*ast.ReturnStmt)
+		if !ok || len(result.Results) != 1 {
+			continue
+		}
+		literal, ok := result.Results[0].(*ast.BasicLit)
+		if ok && literal.Kind == token.STRING && literal.Value == strconv.Quote(value) {
+			return true
+		}
+	}
+	return false
 }
 
 func phase2ValidateHelperCommand(document, help string) error {
@@ -435,6 +623,7 @@ func phase2ValidateHelperCommand(document, help string) error {
 	if err != nil {
 		return err
 	}
+	options := phase2DocumentedOptions(block)
 	for _, flag := range []string{
 		"--project", "--executable", "--workspace", "--database-identity", "--protocol-schema",
 		"--mode", "--read-only", "--expected-digest",
@@ -446,7 +635,39 @@ func phase2ValidateHelperCommand(document, help string) error {
 			return fmt.Errorf("inspect-beads help lacks documented flag %s", flag)
 		}
 	}
+	if options["--project"] != "example-project" {
+		return fmt.Errorf("documented inspect-beads project=%q", options["--project"])
+	}
+	if options["--executable"] != "$beads_bin" {
+		return fmt.Errorf("documented inspect-beads executable=%q; want the verified absolute-path variable", options["--executable"])
+	}
+	for _, name := range []string{"--workspace", "--database-identity"} {
+		if !filepath.IsAbs(options[name]) {
+			return fmt.Errorf("documented inspect-beads %s=%q is not absolute", name, options[name])
+		}
+	}
+	if options["--protocol-schema"] != "1" {
+		return fmt.Errorf("documented inspect-beads protocol schema=%q", options["--protocol-schema"])
+	}
+	if options["--mode"] != "embedded_serialized" {
+		return fmt.Errorf("documented inspect-beads mode=%q", options["--mode"])
+	}
+	if options["--read-only"] != "true" {
+		return fmt.Errorf("documented inspect-beads read-only=%q; inspection must be read-only", options["--read-only"])
+	}
+	if options["--expected-digest"] != qualifiedBeadsDigest || !phase2FullSHA(options["--expected-digest"]) {
+		return fmt.Errorf("documented inspect-beads digest is not the qualified lowercase SHA-256")
+	}
 	return nil
+}
+
+func phase2DocumentedOptions(block string) map[string]string {
+	normalized := strings.ReplaceAll(block, "\\\n", " ")
+	result := map[string]string{}
+	for _, match := range regexp.MustCompile(`(--[a-z][a-z-]*)(?:=|\s+)([^\s\\]+)`).FindAllStringSubmatch(normalized, -1) {
+		result[match[1]] = strings.Trim(match[2], `"'`)
+	}
+	return result
 }
 
 func phase2ValidateInstallerCommand(document string) error {
@@ -460,7 +681,7 @@ func phase2ValidateInstallerCommand(document string) error {
 	return nil
 }
 
-func phase2ValidateProviderCommands(document string, argv map[string][]string) error {
+func phase2ValidateProviderCommands(document string, argv map[string][]string, disposableInit []string) error {
 	for function, prefix := range map[string]string{
 		"newVersionCommand":      `"$beads_bin"`,
 		"newWhereCommand":        `"$beads_bin"`,
@@ -479,6 +700,22 @@ func phase2ValidateProviderCommands(document string, argv map[string][]string) e
 			return fmt.Errorf("README lacks typed provider command %q from %s", command, function)
 		}
 	}
+	backupInit, ok := argv["newBackupInitCommand"]
+	if !ok || strings.Join(backupInit, " ") != "backup init <dynamic>" {
+		return fmt.Errorf("typed backup-init contract=%q", backupInit)
+	}
+	if !strings.Contains(document, `"$beads_bin" backup init "$backup_root"`) {
+		return errors.New("README backup initialization does not match newBackupInitCommand")
+	}
+	initBlock, err := phase2FencedBlockContaining(document, `"$beads_bin" init`)
+	if err != nil {
+		return err
+	}
+	normalizedInit := strings.Join(strings.Fields(strings.ReplaceAll(initBlock, "\\\n", " ")), " ")
+	wantInit := `BD_NON_INTERACTIVE=1 "$beads_bin" ` + strings.Join(disposableInit, " ")
+	if !strings.Contains(normalizedInit, wantInit) {
+		return fmt.Errorf("disposable initialization must match accepted safe argv %q", disposableInit)
+	}
 	return nil
 }
 
@@ -491,7 +728,7 @@ func phase2TypedProviderArgv(root string) (map[string][]string, error) {
 	wanted := map[string]bool{
 		"newVersionCommand": true, "newWhereCommand": true, "newDoltShowCommand": true,
 		"newDoltStatusCommand": true, "newExportCommand": true,
-		"newBackupSyncCommand": true, "newBackupStatusCommand": true,
+		"newBackupInitCommand": true, "newBackupSyncCommand": true, "newBackupStatusCommand": true,
 	}
 	result := map[string][]string{}
 	for _, declaration := range parsed.Decls {
@@ -516,8 +753,8 @@ func phase2TypedProviderArgv(root string) (map[string][]string, error) {
 			for _, element := range literal.Elts {
 				value, ok := element.(*ast.BasicLit)
 				if !ok || value.Kind != token.STRING {
-					arguments = nil
-					return false
+					arguments = append(arguments, "<dynamic>")
+					continue
 				}
 				decoded, decodeErr := strconv.Unquote(value.Value)
 				if decodeErr != nil {
@@ -536,6 +773,47 @@ func phase2TypedProviderArgv(root string) (map[string][]string, error) {
 		}
 	}
 	return result, nil
+}
+
+func phase2AcceptedDisposableInitArgv(root string) ([]string, error) {
+	path := filepath.Join(root, "internal", "testcampaign", "cmd", "beads-qualification", "fixture.go")
+	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse accepted disposable setup contract: %w", err)
+	}
+	want := []string{"init", "--stealth", "--skip-agents", "--skip-hooks", "--non-interactive", "--prefix", "skt"}
+	var matches int
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		values, literalErr := phase2StringLiteralElements(literal)
+		if literalErr == nil && strings.Join(values, "\x00") == strings.Join(want, "\x00") {
+			matches++
+		}
+		return true
+	})
+	if matches != 1 {
+		return nil, fmt.Errorf("accepted disposable setup contract matches=%d want=1", matches)
+	}
+	return want, nil
+}
+
+func phase2StringLiteralElements(literal *ast.CompositeLit) ([]string, error) {
+	values := make([]string, 0, len(literal.Elts))
+	for _, element := range literal.Elts {
+		value, ok := element.(*ast.BasicLit)
+		if !ok || value.Kind != token.STRING {
+			return nil, errors.New("contains a non-string-literal element")
+		}
+		decoded, err := strconv.Unquote(value.Value)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, decoded)
+	}
+	return values, nil
 }
 
 func phase2FencedBlockContaining(document, needle string) (string, error) {
@@ -567,7 +845,7 @@ func phase2SmokeMakeTargets(t *testing.T, root string, targets []string) {
 	}
 }
 
-func phase2SmokeHelperAndInstaller(t *testing.T, root string) string {
+func phase2SmokeHelperAndInstaller(t *testing.T, root string) (string, string) {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "spk-phase1-helper")
 	phase2RunCommand(t, root, 0, "go", "build", "-trimpath", "-o", binary, "./cmd/spk-phase1-helper")
@@ -585,7 +863,49 @@ func phase2SmokeHelperAndInstaller(t *testing.T, root string) string {
 	if !strings.Contains(offline, "offline installation requires an already verified target") {
 		t.Fatalf("installer --offline parser seam returned unexpected output: %q", offline)
 	}
-	return help
+	return binary, help
+}
+
+func phase2SmokeDocumentedHelper(t *testing.T, root, binary, document string) {
+	t.Helper()
+	block, err := phase2FencedBlockContaining(document, "tracker inspect-beads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := phase2DocumentedOptions(block)
+	fixture := t.TempDir()
+	marker := filepath.Join(fixture, "provider-started")
+	executable := filepath.Join(fixture, "bd")
+	script := "#!/bin/sh\nprintf started > " + strconv.Quote(marker) + "\nexit 97\n"
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	workspace := filepath.Join(fixture, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missingDatabase := filepath.Join(workspace, "missing-database")
+	output := phase2RunCommand(t, root, 1, binary,
+		"tracker", "inspect-beads",
+		"--project", options["--project"],
+		"--executable", executable,
+		"--workspace", workspace,
+		"--database-identity", missingDatabase,
+		"--protocol-schema", options["--protocol-schema"],
+		"--mode", options["--mode"],
+		"--read-only="+options["--read-only"],
+		"--expected-digest", hex.EncodeToString(digest[:]))
+	if !strings.Contains(output, `"ok":false`) || !strings.Contains(output, `"kind":"invalid_request"`) || !strings.Contains(output, "provider database path cannot be resolved") {
+		t.Fatalf("documented inspect-beads invocation did not reach the expected pre-provider validation boundary: %q", output)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("documented helper smoke reached provider state: %v", err)
+	}
 }
 
 func phase2ExpectedInspectHelp() string {
