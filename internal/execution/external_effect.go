@@ -2,8 +2,11 @@ package execution
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/faults"
@@ -86,16 +89,17 @@ type TrackerAssignRequest struct {
 }
 
 type TrackerCompensateRequest struct {
-	SchemaVersion    uint16
-	CorrelationID    string
-	OperationID      ids.OperationID
-	ActorID          ids.ActorID
-	ProcessID        ids.ProcessID
-	Now              time.Time
-	Provider         string
-	WorkKey          string
-	ExpectedRevision tracker.Revision
-	ExternalRef      tracker.ExternalWorkRef
+	SchemaVersion     uint16
+	CorrelationID     string
+	OperationID       ids.OperationID
+	ActorID           ids.ActorID
+	ProcessID         ids.ProcessID
+	Now               time.Time
+	Provider          string
+	WorkKey           string
+	ExpectedRevision  tracker.Revision
+	ExternalRef       tracker.ExternalWorkRef
+	RequiredGuarantee tracker.AssignmentLevel
 }
 
 type TrackerEffectResult struct {
@@ -150,7 +154,7 @@ func (s *TrackerSaga) assignProjection(ctx context.Context, request TrackerAssig
 	effect, err := s.readEffect(ctx, envelope)
 	switch {
 	case err == nil:
-		if effect.Provider != envelope.Provider || effect.WorkKey != envelope.WorkKey || effect.AppliedValue != request.Assignee || effect.PriorRevision != request.ExpectedRevision || effect.Marker != request.OperationID.String() {
+		if !projectionAssignmentMatches(effect, request) {
 			return TrackerEffectResult{}, commandDiagnostic(KindIdempotencyConflict, "operation ID was reused for a different tracker assignment", RetryNever, envelope, &effect, request.Now)
 		}
 		if effect.ResponseStatus == EffectConfirmed {
@@ -166,7 +170,7 @@ func (s *TrackerSaga) assignProjection(ctx context.Context, request TrackerAssig
 		}
 		effect = ExternalEffect{
 			SchemaVersion: ResultSchemaVersion, OperationID: request.OperationID, CorrelationID: request.CorrelationID,
-			ActorID: request.ActorID, ProcessID: request.ProcessID, Provider: envelope.Provider, WorkKey: envelope.WorkKey,
+			ActorID: request.ActorID, ProcessID: request.ProcessID, Provider: envelope.Provider, WorkKey: projectionIntentWorkKey(request.ExternalRef, request.RequiredGuarantee),
 			Marker: request.OperationID.String(), PriorRevision: observed.Observation.Revision, PriorValue: observed.Assignee,
 			AppliedValue: request.Assignee, ResponseStatus: EffectPending, CompensationStatus: CompensationPending,
 			ObservationRevision: observed.Observation.Revision, ObservationValue: observed.Assignee, ObservationMarker: observed.OperationMarker,
@@ -225,7 +229,7 @@ func (s *TrackerSaga) compensateProjection(ctx context.Context, request TrackerC
 		}
 		return TrackerEffectResult{}, err
 	}
-	if effect.Provider != envelope.Provider || effect.WorkKey != envelope.WorkKey || effect.AppliedRevision != request.ExpectedRevision {
+	if !projectionCompensationMatches(effect, request) {
 		return TrackerEffectResult{}, commandDiagnostic(KindIdempotencyConflict, "compensation command does not match the recorded external effect", RetryNever, envelope, &effect, request.Now)
 	}
 	if effect.ResponseStatus != EffectConfirmed {
@@ -243,8 +247,13 @@ func (s *TrackerSaga) compensateProjection(ctx context.Context, request TrackerC
 		ExpectedAssignee: effect.AppliedValue, ExpectedMarker: effect.Marker, RestoreAssignee: effect.PriorValue,
 	})
 	actual := mutation.Observation
+	coherent := coherentAssignmentObservation(actual, request.ExternalRef)
+	// Loaded evidence describes the last durable observation, not this provider
+	// call. Clear it before classifying the fresh result so a dishonest or
+	// partial provider cannot relabel historical applied state as current.
+	clearEffectObservation(&effect, request.Now)
 	switch {
-	case mutationErr == nil && actual.Observation.Revision != 0:
+	case mutationErr == nil && coherent:
 		effect.CompensationStatus = CompensationDone
 		effect.CompensationRevision = actual.Observation.Revision
 		setEffectObservation(&effect, actual)
@@ -252,10 +261,10 @@ func (s *TrackerSaga) compensateProjection(ctx context.Context, request TrackerC
 			return TrackerEffectResult{}, err
 		}
 		return compensationResult(effect, envelope, mutation.Replayed, mutation.Noop), nil
-	case tracker.IsKind(mutationErr, tracker.ErrorSafeCompensationUnsupported):
+	case tracker.IsKind(mutationErr, tracker.ErrorSafeCompensationUnsupported) && coherent:
 		effect.CompensationStatus = CompensationUnsupported
 		setEffectObservation(&effect, actual)
-	case tracker.IsKind(mutationErr, tracker.ErrorAttributionLost):
+	case tracker.IsKind(mutationErr, tracker.ErrorAttributionLost) && coherent:
 		effect.CompensationStatus = CompensationAttributionLost
 		effect.ConflictRevision, effect.ConflictValue, effect.ConflictMarker = actual.Observation.Revision, actual.Assignee, actual.OperationMarker
 		setEffectObservation(&effect, actual)
@@ -267,7 +276,7 @@ func (s *TrackerSaga) compensateProjection(ctx context.Context, request TrackerC
 		clearEffectObservation(&effect, request.Now)
 	default:
 		effect.CompensationStatus = CompensationReconciliation
-		if actual.Observation.Revision != 0 {
+		if coherent {
 			setEffectObservation(&effect, actual)
 		}
 	}
@@ -292,6 +301,42 @@ func setEffectObservation(effect *ExternalEffect, actual tracker.AssignmentObser
 func clearEffectObservation(effect *ExternalEffect, now time.Time) {
 	effect.ObservationRevision, effect.ObservationValue, effect.ObservationMarker = 0, "", ""
 	effect.ObservedAt = now.UTC()
+}
+
+func coherentAssignmentObservation(actual tracker.AssignmentObservation, expected tracker.ExternalWorkRef) bool {
+	observed := actual.Observation
+	return observed.Revision != 0 && !observed.ObservedAt.IsZero() && observed.ExternalID == expected.ExternalID &&
+		actual.ExternalRef.ProjectID == expected.ProjectID && actual.ExternalRef.WorkID == expected.WorkID &&
+		actual.ExternalRef.Provider == expected.Provider && actual.ExternalRef.ExternalID == expected.ExternalID &&
+		actual.ExternalRef.MetadataSchema == expected.MetadataSchema && actual.ExternalRef.CreatedByOperation == expected.CreatedByOperation &&
+		observed.Assignee == actual.Assignee && observed.OperationMarker == actual.OperationMarker
+}
+
+func projectionAssignmentMatches(effect ExternalEffect, request TrackerAssignRequest) bool {
+	return effect.SchemaVersion == request.SchemaVersion && effect.OperationID == request.OperationID &&
+		effect.CorrelationID == request.CorrelationID && effect.ActorID == request.ActorID && effect.ProcessID == request.ProcessID &&
+		effect.Provider == request.ExternalRef.Provider && effect.WorkKey == projectionIntentWorkKey(request.ExternalRef, request.RequiredGuarantee) &&
+		effect.AppliedValue == request.Assignee && effect.PriorRevision == request.ExpectedRevision && effect.Marker == request.OperationID.String()
+}
+
+func projectionCompensationMatches(effect ExternalEffect, request TrackerCompensateRequest) bool {
+	return effect.SchemaVersion == request.SchemaVersion && effect.OperationID == request.OperationID &&
+		effect.CorrelationID == request.CorrelationID && effect.ActorID == request.ActorID && effect.ProcessID == request.ProcessID &&
+		effect.Provider == request.ExternalRef.Provider && effect.WorkKey == projectionIntentWorkKey(request.ExternalRef, request.RequiredGuarantee) &&
+		effect.AppliedRevision == request.ExpectedRevision && effect.Marker == request.OperationID.String()
+}
+
+// projectionIntentWorkKey persists the complete provider-neutral mapping and
+// requested guarantee without adding provider facts to the control schema. The
+// external ID remains visible for diagnostics; the digest is compared only for
+// equality and is never interpreted as provider authority.
+func projectionIntentWorkKey(reference tracker.ExternalWorkRef, guarantee tracker.AssignmentLevel) string {
+	fields := []string{
+		reference.ProjectID.String(), reference.WorkID.String(), reference.Provider, reference.ExternalID,
+		fmt.Sprint(reference.MetadataSchema), reference.CreatedByOperation.String(), fmt.Sprint(reference.LastObservation), guarantee.String(),
+	}
+	digest := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
+	return reference.ExternalID + "#spec-kitty-intent=" + hex.EncodeToString(digest[:])
 }
 
 func assignmentDriftDiagnostic(envelope trackerEnvelope, effect *ExternalEffect, actual tracker.AssignmentObservation, now time.Time) *DiagnosticError {
@@ -580,6 +625,9 @@ func validateCompensateRequest(request TrackerCompensateRequest) error {
 		}
 		if request.Provider != "" && request.Provider != request.ExternalRef.Provider || request.WorkKey != "" && request.WorkKey != request.ExternalRef.ExternalID {
 			return commandDiagnostic(KindInvalidCommand, "external work mapping conflicts with provider envelope", RetryNever, compensateEnvelope(request), nil, request.Now)
+		}
+		if request.RequiredGuarantee != tracker.AssignmentUnguarded && request.RequiredGuarantee != tracker.AssignmentAtomicClaim {
+			return commandDiagnostic(KindInvalidCommand, "assignment guarantee is required", RetryNever, compensateEnvelope(request), nil, request.Now)
 		}
 	}
 	return nil

@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
@@ -131,41 +130,96 @@ func TestAssignmentAmbiguityRecoveryDoesNotDuplicateOrOverstate(t *testing.T) {
 	}
 }
 
-func TestAssignmentHumanChangesSurviveOneHundredRecoveryAttempts(t *testing.T) {
+func TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces(t *testing.T) {
+	for repetition := 0; repetition < 100; repetition++ {
+		ctx := context.Background()
+		bound, runner, reference := assignmentFixture(t, "original")
+		before, err := bound.ObserveAssignment(ctx, reference)
+		if err != nil {
+			t.Fatal(err)
+		}
+		applied, err := bound.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: reference, OperationID: "operation-human-race", Assignee: "actor-a", ExpectedObservation: before.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded})
+		if err != nil {
+			t.Fatal(err)
+		}
+		locker := &countingAssignmentLocker{}
+		bound.locker = locker
+		baselineWrites, baselineLocks := runner.mutationCount(), locker.count()
+		humanChanged := make(chan struct{})
+		go func() {
+			runner.mu.Lock()
+			issue := runner.issues[reference.ExternalID]
+			issue.Assignee = "human-owner"
+			issue.UpdatedAt = runner.tick()
+			runner.issues[reference.ExternalID] = issue
+			runner.mu.Unlock()
+			close(humanChanged)
+		}()
+		<-humanChanged // the direct write wins after Spec Kitty's applied observation and before recovery's fresh observation.
+		result, compensateErr := bound.CompensateAssignment(ctx, tracker.CompensateAssignmentRequest{
+			ExternalRef: reference, OperationID: "operation-human-recovery", ExpectedObservation: applied.Observation.Observation.Revision,
+			ExpectedAssignee: "actor-a", ExpectedMarker: "operation-human-race", RestoreAssignee: "original",
+		})
+		if !tracker.IsKind(compensateErr, tracker.ErrorAttributionLost) || result.Observation.Assignee != "human-owner" {
+			t.Fatalf("repetition %d lost human evidence: result=%+v err=%v", repetition, result, compensateErr)
+		}
+		if runner.mutationCount() != baselineWrites || locker.count() != baselineLocks {
+			t.Fatalf("repetition %d recovery crossed mutation boundary: writes=%d/%d locks=%d/%d", repetition, runner.mutationCount(), baselineWrites, locker.count(), baselineLocks)
+		}
+	}
+}
+
+func TestSafeCompensationRefusalSensorsKillReadCompareUpdateMutant(t *testing.T) {
 	ctx := context.Background()
 	bound, runner, reference := assignmentFixture(t, "original")
 	before, err := bound.ObserveAssignment(ctx, reference)
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied, err := bound.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: reference, OperationID: "operation-human-race", Assignee: "actor-a", ExpectedObservation: before.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded})
+	applied, err := bound.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: reference, OperationID: "operation-mutant", Assignee: "actor-a", ExpectedObservation: before.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded})
 	if err != nil {
 		t.Fatal(err)
 	}
-	baselineWrites := runner.mutationCount()
-	for repetition := 0; repetition < 100; repetition++ {
-		human := "human-owner"
-		runner.mu.Lock()
-		issue := runner.issues[reference.ExternalID]
-		issue.Assignee = human
-		issue.UpdatedAt = runner.tick()
-		runner.issues[reference.ExternalID] = issue
-		runner.mu.Unlock()
-		result, compensateErr := bound.CompensateAssignment(ctx, tracker.CompensateAssignmentRequest{
-			ExternalRef: reference, OperationID: ids.OperationID("operation-human-recovery"), ExpectedObservation: applied.Observation.Observation.Revision,
-			ExpectedAssignee: "actor-a", ExpectedMarker: "operation-human-race", RestoreAssignee: "original",
-		})
-		if !tracker.IsKind(compensateErr, tracker.ErrorAttributionLost) || result.Observation.Assignee != human {
-			t.Fatalf("repetition %d lost human evidence: result=%+v err=%v", repetition, result, compensateErr)
+	locker := &countingAssignmentLocker{}
+	bound.locker = locker
+	writes, locks := runner.mutationCount(), locker.count()
+	request := tracker.CompensateAssignmentRequest{ExternalRef: reference, OperationID: "operation-mutant-recovery", ExpectedObservation: applied.Observation.Observation.Revision, ExpectedAssignee: "actor-a", ExpectedMarker: "operation-mutant", RestoreAssignee: "original"}
+	if _, err := bound.CompensateAssignment(ctx, request); !tracker.IsKind(err, tracker.ErrorSafeCompensationUnsupported) {
+		t.Fatalf("safe refusal = %v", err)
+	}
+	if runner.mutationCount() != writes || locker.count() != locks {
+		t.Fatalf("safe refusal crossed sensors: writes=%d/%d locks=%d/%d", runner.mutationCount(), writes, locker.count(), locks)
+	}
+	if err := unsafeReadCompareUpdateMutant(ctx, bound, request); err != nil {
+		t.Fatal(err)
+	}
+	if runner.mutationCount() == writes || locker.count() == locks {
+		t.Fatalf("read-compare-update mutant survived sensors: writes=%d/%d locks=%d/%d", runner.mutationCount(), writes, locker.count(), locks)
+	}
+}
+
+func unsafeReadCompareUpdateMutant(ctx context.Context, bound *BoundAdapter, request tracker.CompensateAssignmentRequest) error {
+	actual, err := bound.ObserveAssignment(ctx, request.ExternalRef)
+	if err != nil {
+		return err
+	}
+	if actual.Observation.Revision != request.ExpectedObservation || actual.Assignee != request.ExpectedAssignee || actual.OperationMarker != request.ExpectedMarker {
+		return nil
+	}
+	readiness, err := bound.Preflight(ctx)
+	if err != nil {
+		return err
+	}
+	returnValue := request.RestoreAssignee
+	_, err = bound.withAssignmentMutation(ctx, readiness, func() (tracker.AssignmentMutation, error) {
+		command, buildErr := newUpdateCommand(bound.commandBinding(), updateValues{id: request.ExternalRef.ExternalID, assignee: presentUpdateValue(returnValue)})
+		if buildErr != nil {
+			return tracker.AssignmentMutation{}, buildErr
 		}
-	}
-	if runner.mutationCount() != baselineWrites {
-		t.Fatalf("recovery overwrote human state: before=%d after=%d", baselineWrites, runner.mutationCount())
-	}
-	current, err := bound.ObserveAssignment(ctx, reference)
-	if err != nil || current.Assignee != "human-owner" {
-		t.Fatalf("human assignment was not preserved: %+v %v", current, err)
-	}
+		_, executeErr := bound.adapter.execute(ctx, command)
+		return tracker.AssignmentMutation{}, executeErr
+	})
+	return err
 }
 
 func assignmentFixture(t *testing.T, assignee string) (*BoundAdapter, *catalogRunner, tracker.ExternalWorkRef) {
@@ -193,6 +247,12 @@ func assignmentFixture(t *testing.T, assignee string) (*BoundAdapter, *catalogRu
 type countingAssignmentLocker struct {
 	mu    sync.Mutex
 	calls int
+}
+
+func (locker *countingAssignmentLocker) count() int {
+	locker.mu.Lock()
+	defer locker.mu.Unlock()
+	return locker.calls
 }
 
 func (locker *countingAssignmentLocker) acquire(context.Context, tracker.TrackerBinding) (acquiredWriterLock, error) {
