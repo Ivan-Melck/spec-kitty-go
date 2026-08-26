@@ -187,8 +187,8 @@
     "WP06": {
       "actor": "codex",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 8,
       "lane": "planned",
       "last_event_id": "01M0Z819FRXSJWPRAKRVNT170W",
@@ -208,15 +208,15 @@
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T027": "done",
-        "T028": "done",
-        "T029": "done",
-        "T030": "done",
-        "T031": "done"
+        "T027": "planned",
+        "T028": "planned",
+        "T029": "planned",
+        "T030": "planned",
+        "T031": "planned"
       }
     },
     "WP07": {
