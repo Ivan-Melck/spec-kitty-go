@@ -311,6 +311,9 @@
       "last_event_id": "01M0ZJ9NENC6QKPK3EDX5V0RKV",
       "last_transition_at": "2026-08-26T17:36:13.781247+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: pinned Beads v1.2.2 rebuilt at reviewed digest; 11/11 commit-bound real-provider scenarios pass across embedded and pinned shared-server modes, including native backup/restore and 1,000-create contention with zero collisions or duplicate mappings. Cross-WP corrections are explicitly evidence-driven: v1.2.2 comment --author propagation and external server identity without a fabricated local data_dir."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
