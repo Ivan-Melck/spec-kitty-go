@@ -30,13 +30,13 @@ func runCommandHelper() int {
 	scenario := filepath.Base(os.Getenv("BEADS_DIR"))
 	switch scenario {
 	case "valid":
-		fmt.Print(`{"schema_version":1,"data":{"id":"work-1"}}`)
+		fmt.Print(`{"schema_version":1,"data":[{"id":"work-1"}]}`)
 	case "warning":
 		fmt.Fprintln(os.Stderr, "warning text is deliberately non-semantic")
-		fmt.Print(`{"schema_version":1,"data":{"id":"work-1"}}`)
+		fmt.Print(`{"schema_version":1,"data":[{"id":"work-1"}]}`)
 	case "warning-alternate":
 		fmt.Fprintln(os.Stderr, "completely different warning wording {not-json}")
-		fmt.Print(`{"schema_version":1,"data":{"id":"work-1"}}`)
+		fmt.Print(`{"schema_version":1,"data":[{"id":"work-1"}]}`)
 	case "error":
 		fmt.Print(`{"schema_version":1,"error":"gone","code":"not_found"}`)
 		fmt.Fprintln(os.Stderr, "human provider error")
@@ -120,7 +120,7 @@ func TestCommandArgvVocabulary(t *testing.T) {
 		{"where", func() (command, error) { return newWhereCommand(binding) }, []string{"where", "--json"}, expectedObject, false},
 		{"dolt-show", func() (command, error) { return newDoltShowCommand(binding) }, []string{"dolt", "show", "--json"}, expectedObject, false},
 		{"dolt-status", func() (command, error) { return newDoltStatusCommand(binding) }, []string{"dolt", "status", "--json"}, expectedObject, false},
-		{"show", func() (command, error) { return newShowCommand(binding, "x") }, []string{"show", "x", "--json"}, expectedObject, false},
+		{"show", func() (command, error) { return newShowCommand(binding, "x") }, []string{"show", "x", "--json"}, expectedArray, false},
 		{"list", func() (command, error) { return newListCommand(binding) }, []string{"list", "--json"}, expectedArray, false},
 		{"ready", func() (command, error) { return newReadyCommand(binding) }, []string{"ready", "--json"}, expectedArray, false},
 		{"create", func() (command, error) {
@@ -128,7 +128,7 @@ func TestCommandArgvVocabulary(t *testing.T) {
 		}, []string{"create", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--json"}, expectedObject, true},
 		{"update", func() (command, error) {
 			return newUpdateCommand(binding, updateValues{id: "x", title: presentUpdateValue("t"), description: presentUpdateValue("d"), acceptance: presentUpdateValue("a"), metadata: presentUpdateValue("{}"), assignee: presentUpdateValue("ivan")})
-		}, []string{"update", "x", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--assignee", "ivan", "--json"}, expectedObject, true},
+		}, []string{"update", "x", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--assignee", "ivan", "--json"}, expectedArray, true},
 		{"claim", func() (command, error) { return newAtomicClaimCommand(binding, "x") }, []string{"update", "x", "--claim", "--json"}, expectedObject, true},
 		{"dep-add", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, []string{"dep", "add", "blocked", "blocker", "--type", "blocks", "--json"}, expectedObject, true},
 		{"dep-list", func() (command, error) { return newDependencyListCommand(binding, "x") }, []string{"dep", "list", "x", "--json"}, expectedArray, false},
@@ -326,7 +326,7 @@ func TestProcessRunnerSuccessWarningsAndDocumentedError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(response.payload) != `{"id":"work-1"}` {
+	if string(response.payload) != `[{"id":"work-1"}]` {
 		t.Fatalf("payload=%s", response.payload)
 	}
 	warning := helperCommand(t, "warning", false, 5*time.Second, 1024, 1024)
