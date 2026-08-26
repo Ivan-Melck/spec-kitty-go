@@ -27,6 +27,43 @@ type Campaign struct {
 }
 
 var profiles = map[string]Profile{
+	"architecture": {
+		Name:    "architecture",
+		Package: "./internal/architecture",
+		ExpectedTests: []string{
+			"TestCurrentProductionGraphPassesClosedPolicy",
+			"TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority",
+			"TestDefaultPolicyRejectsAuthorityImportOfGitAdapter",
+			"TestDefaultReachabilityRegistryPassesCurrentRepository",
+			"TestDeferredRuntimeSurfaceDoesNotGrepMarkdownProse",
+			"TestDeferredRuntimeSurfaceDoesNotGuessAmbiguousMarkdownFlows",
+			"TestDeferredRuntimeSurfaceRejectsConstantAliasesAndDotImport",
+			"TestDeferredRuntimeSurfaceRejectsLocalShortDeclarationAlias",
+			"TestDeferredRuntimeSurfaceRejectsMarkdownAuthorityParsing",
+			"TestDeferredRuntimeSurfaceRejectsPackageAliasDeclaredInAnotherFile",
+			"TestDeferredRuntimeSurfaceRejectsProductionPythonButIgnoresTests",
+			"TestLoadGraphDistinguishesProductionAndTestImports",
+			"TestLoadGraphReturnsTypedAndBoundedFailures",
+			"TestLoadedUnknownRootCannotDisappearThroughGraphExemption",
+			"TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic",
+			"TestPolicyAcceptsProviderOnlyFromClassifiedAdapter",
+			"TestPolicyRejectingFixturesNameExactRuleAndEdge",
+			"TestPolicyValidationConfinesProviderAllowancesToAdapters",
+			"TestReachabilityCallerPolicies",
+			"TestReachabilityHonorsActiveCustomBuildTags",
+			"TestReachabilityRejectsBuildExcludedCallers",
+			"TestReachabilityRejectsGuardCalledOnlyByTest",
+			"TestReachabilityRejectsMissingRegisteredTarget",
+			"TestReachabilityRejectsShadowedTargetCalls",
+			"TestReachabilityRejectsTargetSelfRecursion",
+			"TestReachabilityRejectsUnrootedMutualRecursion",
+			"TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture",
+			"TestRemovingRealAuthorityToContractRuleNamesRealEdge",
+			"TestTierRuleAndViolationValueValidation",
+			"TestTypedProductionSourceLoadFailuresAreTyped",
+			"TestTypedProductionSourceLoaderCancelsStalledGoList",
+		},
+	},
 	"acceptance": {
 		Name:    "acceptance",
 		Package: "./internal/scenario",
@@ -154,7 +191,7 @@ var profiles = map[string]Profile{
 
 var campaigns = map[string]Campaign{
 	"quality": {
-		Name: "quality", Profiles: []string{"acceptance", "scope"},
+		Name: "quality", Profiles: []string{"acceptance", "architecture", "scope"},
 		UniversalTest: "TestQualityCampaignUniversalInvariants", RequireUniversal: true, RequireStaleProbe: true,
 	},
 	"full_campaign": {

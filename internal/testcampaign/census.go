@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const ReportSchemaVersion = 1
+const ReportSchemaVersion = 2
 
 type testEvent struct {
 	Action  string  `json:"Action"`
@@ -34,6 +34,9 @@ type Report struct {
 	ProcessExit   int               `json:"process_exit"`
 	Verdict       string            `json:"verdict"`
 	Issues        []string          `json:"issues,omitempty"`
+	SourceCommit  string            `json:"source_commit,omitempty"`
+	SourceTree    string            `json:"source_tree,omitempty"`
+	SourceDirty   bool              `json:"source_dirty"`
 }
 
 type VerifyRequest struct {
@@ -89,7 +92,15 @@ func Verify(reader io.Reader, request VerifyRequest) (Report, error) {
 			continue
 		}
 		if event.Test == "" {
-			packageFailed = packageFailed || event.Action == "fail"
+			if event.Package == request.Package {
+				packageFailed = packageFailed || event.Action == "fail"
+			} else if event.Package != "" && (event.Action == "start" || event.Action == "pass" || event.Action == "fail" || event.Action == "skip") {
+				issues = append(issues, fmt.Sprintf("unexpected package event %s for %s", event.Package, event.Action))
+			}
+			continue
+		}
+		if event.Package != request.Package {
+			issues = append(issues, fmt.Sprintf("test event package mismatch for %s: got %q want %q", event.Test, event.Package, request.Package))
 			continue
 		}
 		if strings.Contains(event.Test, "/") {

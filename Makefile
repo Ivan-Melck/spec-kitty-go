@@ -6,6 +6,7 @@ STATICCHECK ?= staticcheck
 GOVULNCHECK ?= govulncheck
 GO_TEST_PARALLEL ?= 2
 ARTIFACT_DIR ?= $(shell mktemp -d /tmp/go-kitty3-campaign.XXXXXX)
+BUILD_DIR ?= $(shell mktemp -d /tmp/go-kitty3-build.XXXXXX)
 
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
@@ -23,8 +24,8 @@ fmt-check: ## Reject unformatted Go source.
 
 build: ## Compile every package and command without running tests.
 	$(GO) test -run '^$$' ./...
-	@mkdir -p "$(ARTIFACT_DIR)/bin"
-	$(GO) build -trimpath -o "$(ARTIFACT_DIR)/bin/spk-phase1-helper" ./cmd/spk-phase1-helper
+	@mkdir -p "$(BUILD_DIR)"
+	$(GO) build -trimpath -o "$(BUILD_DIR)/spk-phase1-helper" ./cmd/spk-phase1-helper
 
 tools:
 	@command -v $(GO) >/dev/null 2>&1 || { echo "required tool missing: $(GO)"; exit 1; }
@@ -43,7 +44,7 @@ acceptance: ## Run the bounded acceptance selector with an exact JSON census.
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile acceptance -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 
 scope: ## Run architecture, reachability, and rejecting-mutant guards.
-	$(GO) test -count=1 ./internal/architecture
+	$(GO) run ./internal/testcampaign/cmd/campaign -profile architecture -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile scope -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 
 race: ## Run the authority-critical packages under the race detector.
@@ -60,7 +61,8 @@ dependencies: ## Verify module bytes and scan reachable vulnerabilities.
 	@git diff --exit-code -- go.mod go.sum
 	$(GOVULNCHECK) ./...
 
-quality: preflight contract acceptance scope race static dependencies ## Run the bounded pull-request campaign.
+quality: preflight contract race static dependencies ## Run the bounded pull-request campaign.
+	$(GO) run ./internal/testcampaign/cmd/campaign -campaign quality -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 	@printf 'quality campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
 
 fault: ## Run crash, recovery, stale-writer, and zombie profiles.
@@ -72,5 +74,6 @@ soak: ## Run the repeated contention and serialization profile once.
 scenario-full: ## Run every scenario with an exact top-level JSON census.
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile full-scenario -artifact-dir "$(ARTIFACT_DIR)" -timeout 60m
 
-full-campaign: quality scenario-full ## Run quality plus the exhaustive scenario/fault/soak campaign.
+full-campaign: quality ## Run quality plus the exhaustive scenario/fault/soak campaign.
+	$(GO) run ./internal/testcampaign/cmd/campaign -campaign full_campaign -artifact-dir "$(ARTIFACT_DIR)" -timeout 60m
 	@printf 'full campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"

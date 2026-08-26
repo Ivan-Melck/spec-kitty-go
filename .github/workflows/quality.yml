@@ -20,6 +20,7 @@ jobs:
     env:
       GOTOOLCHAIN: local
       ARTIFACT_DIR: ${{ runner.temp }}/go-kitty3-quality-${{ github.run_id }}-${{ github.run_attempt }}
+      BUILD_DIR: ${{ runner.temp }}/go-kitty3-build-${{ github.run_id }}-${{ github.run_attempt }}
       GOCACHE: ${{ runner.temp }}/go-build-cache-${{ github.run_id }}-${{ github.run_attempt }}
       GOTMPDIR: ${{ runner.temp }}/go-tmp-${{ github.run_id }}-${{ github.run_attempt }}
       TMPDIR: ${{ runner.temp }}/process-tmp-${{ github.run_id }}-${{ github.run_attempt }}
@@ -37,7 +38,7 @@ jobs:
           cache: true
 
       - name: Prepare isolated mutable paths
-        run: mkdir -p "$ARTIFACT_DIR" "$GOCACHE" "$GOTMPDIR" "$TMPDIR"
+        run: mkdir -p "$ARTIFACT_DIR" "$BUILD_DIR" "$GOCACHE" "$GOTMPDIR" "$TMPDIR"
 
       - name: Install pinned analysis tools
         run: |

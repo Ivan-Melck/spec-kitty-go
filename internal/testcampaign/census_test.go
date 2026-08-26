@@ -1,6 +1,11 @@
 package testcampaign
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +39,8 @@ func TestVerifyRejectsMalformedDuplicateMissingUnexpectedAndZeroMatchTranscripts
 		{name: "missing terminal", transcript: events("run"), expected: []string{"TestAlpha"}, want: "missing terminal event"},
 		{name: "terminal without start", transcript: events("pass"), expected: []string{"TestAlpha"}, want: "terminal event without start"},
 		{name: "unexpected", transcript: strings.ReplaceAll(events("run", "pass"), "TestAlpha", "TestOther"), expected: []string{"TestAlpha"}, want: "unexpected top-level test event"},
+		{name: "wrong package", transcript: strings.ReplaceAll(events("run", "pass"), "example.test/pkg", "other.test/pkg"), expected: []string{"TestAlpha"}, want: "test event package mismatch"},
+		{name: "mixed package", transcript: events("run") + "\n" + strings.ReplaceAll(events("pass"), "example.test/pkg", "other.test/pkg"), expected: []string{"TestAlpha"}, want: "test event package mismatch"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -67,7 +74,7 @@ func TestVerifyRejectsProcessAndJSONVerdictDisagreement(t *testing.T) {
 }
 
 func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
-	for _, name := range []string{"acceptance", "scope", "fault", "soak", "full-scenario"} {
+	for _, name := range []string{"acceptance", "architecture", "scope", "fault", "soak", "full-scenario"} {
 		profile, err := ProfileByName(name)
 		if err != nil {
 			t.Fatalf("profile %s: %v", name, err)
@@ -83,6 +90,52 @@ func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
 			t.Fatalf("campaign %s: %v", name, err)
 		}
 	}
+	quality, err := CampaignByName("quality")
+	if err != nil || !slices.Equal(quality.Profiles, []string{"acceptance", "architecture", "scope"}) {
+		t.Fatalf("quality execution graph=%+v err=%v", quality, err)
+	}
+	architecture, err := ProfileByName("architecture")
+	if err != nil || !slices.Contains(architecture.ExpectedTests, "TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority") || !slices.Contains(architecture.ExpectedTests, "TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture") {
+		t.Fatalf("architecture mutant census=%+v err=%v", architecture, err)
+	}
+}
+
+func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("test source path is unavailable")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(source), "..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	makefile := string(content)
+	for target, campaign := range map[string]string{"quality": "quality", "full-campaign": "full_campaign"} {
+		if err := validateMakeCampaignBinding(makefile, target, campaign); err != nil {
+			t.Fatal(err)
+		}
+		mutant := strings.Replace(makefile, "-campaign "+campaign, "-profile acceptance", 1)
+		if err := validateMakeCampaignBinding(mutant, target, campaign); err == nil {
+			t.Fatalf("real Make binding mutant survived for %s", target)
+		}
+	}
+}
+
+func validateMakeCampaignBinding(makefile, target, campaign string) error {
+	lines := strings.Split(makefile, "\n")
+	header := target + ":"
+	for index, line := range lines {
+		if !strings.HasPrefix(line, header) {
+			continue
+		}
+		for next := index + 1; next < len(lines) && strings.HasPrefix(lines[next], "\t"); next++ {
+			if strings.Contains(lines[next], "-campaign "+campaign) {
+				return nil
+			}
+		}
+		return fmt.Errorf("Make target %s does not invoke authoritative campaign %s", target, campaign)
+	}
+	return fmt.Errorf("Make target %s is absent", target)
 }
 
 func events(actions ...string) string {
