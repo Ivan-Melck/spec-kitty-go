@@ -25,6 +25,7 @@
   "purpose_context": "Deliver a narrow Phase 2 vertical slice through the tracker port using Beads v1.2.2's supported versioned JSON CLI contract. Preserve kernel isolation, immutable WorkRevision execution, lease-scoped workspaces, independent review, serialized integration, and attribution-safe compensation under slow, unavailable, stale, and human-modified provider state. The mission deliberately excludes Beads identity, Molecules, Git hooks, merge authority, and human-output parsing.",
   "purpose_tldr": "Make Beads the default work catalog without transferring execution, review, or integration authority out of Spec Kitty.",
   "slug": "beads-tracker-integration-01M0YG7E",
+  "status_phase": "1",
   "target_branch": "feat/beads-tracker-integration",
   "topology": "lanes_with_coord",
   "vcs": "git",
