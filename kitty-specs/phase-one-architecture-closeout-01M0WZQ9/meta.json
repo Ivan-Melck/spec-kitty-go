@@ -14,9 +14,8 @@
   "accepted_by": "codex",
   "accepted_from_commit": "c497bdb2c2c38c94d1639e5225f3625b76c19a43",
   "baseline_merge_commit": "570dce4f0a206fda219dfc6b467a088b7cdedf37",
-  "coordination_branch": "kitty/mission-phase-one-architecture-closeout-01M0WZQ9",
   "created_at": "2026-08-25T17:33:08.279269+00:00",
-  "flattened": false,
+  "flattened": true,
   "friendly_name": "Phase One Architecture Closeout",
   "mission_id": "01M0WZQ99NY46D61XSJA6BYSGV",
   "mission_number": null,
@@ -28,7 +27,6 @@
   "slug": "phase-one-architecture-closeout-01M0WZQ9",
   "status_phase": "1",
   "target_branch": "feat/phase-one-architecture-closeout",
-  "topology": "coord",
   "vcs": "git",
   "vcs_locked_at": "2026-08-25T18:01:30.752801+00:00"
 }
