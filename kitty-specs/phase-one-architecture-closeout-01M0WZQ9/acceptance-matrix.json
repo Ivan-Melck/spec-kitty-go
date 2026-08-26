@@ -2,7 +2,7 @@
   "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
   "mission_number": "",
   "mission_type": "software-dev",
-  "overall_verdict": "pending",
+  "overall_verdict": "pass",
   "criteria": [
     {
       "criterion_id": "FR-001",
@@ -127,11 +127,11 @@
     {
       "criterion_id": "FR-013",
       "description": "Verify FR-013 is satisfied",
-      "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:34.986551+00:00",
       "notes": "TODO: replace with a real acceptance criterion"
     }
   ],
