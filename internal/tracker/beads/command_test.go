@@ -3,6 +3,7 @@ package beads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,11 +34,17 @@ func runCommandHelper() int {
 	case "warning":
 		fmt.Fprintln(os.Stderr, "warning text is deliberately non-semantic")
 		fmt.Print(`{"schema_version":1,"data":{"id":"work-1"}}`)
+	case "warning-alternate":
+		fmt.Fprintln(os.Stderr, "completely different warning wording {not-json}")
+		fmt.Print(`{"schema_version":1,"data":{"id":"work-1"}}`)
 	case "error":
 		fmt.Fprintln(os.Stderr, `{"schema_version":1,"error":"gone","code":"not_found"}`)
 		return 7
 	case "prose-error":
 		fmt.Fprintln(os.Stderr, "not found maybe")
+		return 7
+	case "nested-error-warning":
+		fmt.Fprintln(os.Stderr, `{"wrapper":{"schema_version":1,"error":"spoof","code":"not_found"}}`)
 		return 7
 	case "signal-error":
 		fmt.Fprintln(os.Stderr, `{"schema_version":1,"error":"gone","code":"not_found"}`)
@@ -49,7 +56,17 @@ func runCommandHelper() int {
 	case "stderr-overflow":
 		fmt.Fprint(os.Stderr, strings.Repeat("x", 4096))
 		return 7
+	case "infinite-noise":
+		_ = os.WriteFile(filepath.Join(mustGetwd(), "producer.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600)
+		chunk := strings.Repeat("x", 4096)
+		for {
+			_, _ = fmt.Fprint(os.Stdout, chunk)
+			_, _ = fmt.Fprint(os.Stderr, chunk)
+		}
 	case "sleep":
+		time.Sleep(10 * time.Second)
+	case "read-start-sleep":
+		_ = os.WriteFile(filepath.Join(mustGetwd(), "read-started"), []byte("yes"), 0o600)
 		time.Sleep(10 * time.Second)
 	case "applied-sleep":
 		_ = os.WriteFile(filepath.Join(mustGetwd(), "applied"), []byte("yes"), 0o600)
@@ -193,6 +210,53 @@ func TestCommandTimeoutDefaults(t *testing.T) {
 	}
 }
 
+func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
+	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
+	binding.timeout = time.Second
+	tests := []struct {
+		name  string
+		build func() error
+	}{
+		{"show id", func() error { _, err := newShowCommand(binding, "--help"); return err }},
+		{"update id", func() error { _, err := newUpdateCommand(binding, updateValues{id: "-h", title: "x"}); return err }},
+		{"claim id", func() error { _, err := newAtomicClaimCommand(binding, "--version"); return err }},
+		{"blocked id", func() error { _, err := newDependencyAddCommand(binding, "--help", "blocker-1"); return err }},
+		{"blocker id", func() error { _, err := newDependencyAddCommand(binding, "blocked-1", "--help"); return err }},
+		{"dependency id", func() error { _, err := newDependencyListCommand(binding, "--help"); return err }},
+		{"comment id", func() error { _, err := newCommentAppendCommand(binding, "--help", "body"); return err }},
+		{"comment body", func() error { _, err := newCommentAppendCommand(binding, "work-1", "--help"); return err }},
+		{"comment list id", func() error { _, err := newCommentListCommand(binding, "--help"); return err }},
+		{"create title", func() error { _, err := newCreateCommand(binding, createValues{title: "--help"}); return err }},
+		{"update title", func() error {
+			_, err := newUpdateCommand(binding, updateValues{id: "work-1", title: "--help"})
+			return err
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.build(); err == nil {
+				t.Fatal("option-like value accepted")
+			}
+		})
+	}
+}
+
+func TestRuntimeArgvMutationFailsBeforeSpawn(t *testing.T) {
+	cmd := helperCommand(t, "applied-sleep", true, time.Second, 1024, 1024)
+	cmd.argv = []string{"create", "--help", "--json"}
+	response, err := newAdapter(newProcessRunner()).execute(context.Background(), cmd)
+	if !tracker.IsKind(err, tracker.ErrorInvalidRequest) || response.result.started || response.result.mutationOutcome != mutationNotStarted {
+		t.Fatalf("result=%+v err=%v", response.result, err)
+	}
+	var portable *tracker.Error
+	if !errors.As(err, &portable) || portable.RecoveryAction() != "repair_request" {
+		t.Fatalf("portable=%+v", portable)
+	}
+	if _, err := os.Stat(filepath.Join(cmd.binding.workingDir, "applied")); !os.IsNotExist(err) {
+		t.Fatalf("mutated argv reached helper: %v", err)
+	}
+}
+
 func helperCommand(t *testing.T, scenario string, mutating bool, timeout time.Duration, stdoutLimit, stderrLimit int64) command {
 	t.Helper()
 	executable, err := os.Executable()
@@ -243,6 +307,28 @@ func TestProcessRunnerSuccessWarningsAndDocumentedError(t *testing.T) {
 	}
 }
 
+func TestAdapterRejectsProseNestedErrorsAndIgnoresWarningWording(t *testing.T) {
+	adapter := newAdapter(newProcessRunner())
+	for _, scenario := range []string{"warning", "warning-alternate"} {
+		cmd := helperCommand(t, scenario, false, 5*time.Second, 1024, 1024)
+		response, err := adapter.execute(context.Background(), cmd)
+		if err != nil || !response.metadata.warningsPresent || response.metadata.warningCount < 1 {
+			t.Fatalf("scenario=%s response=%+v err=%v", scenario, response, err)
+		}
+	}
+	for _, scenario := range []string{"prose-error", "nested-error-warning"} {
+		cmd := helperCommand(t, scenario, false, 5*time.Second, 1024, 1024)
+		response, err := adapter.execute(context.Background(), cmd)
+		if !tracker.IsKind(err, tracker.ErrorMalformedProtocol) || response.result.started != true || response.result.mutationOutcome != mutationUnknown {
+			t.Fatalf("scenario=%s result=%+v err=%v", scenario, response.result, err)
+		}
+		var portable *tracker.Error
+		if !errors.As(err, &portable) || portable.RecoveryAction() != "repair_provider_binding" {
+			t.Fatalf("scenario=%s portable=%+v", scenario, portable)
+		}
+	}
+}
+
 func TestProcessRunnerBoundsCancellationAndAmbiguity(t *testing.T) {
 	adapter := newAdapter(&processRunner{killGrace: 5 * time.Millisecond})
 	for _, scenario := range []string{"stdout-overflow", "stderr-overflow"} {
@@ -279,6 +365,63 @@ func TestProcessRunnerBoundsCancellationAndAmbiguity(t *testing.T) {
 	response, err = adapter.execute(context.Background(), signaled)
 	if !tracker.IsKind(err, tracker.ErrorAmbiguous) || !response.result.signaled || response.result.mutationOutcome != mutationAmbiguous {
 		t.Fatalf("signal err=%v result=%+v", err, response.result)
+	}
+}
+
+func TestInfiniteProducerIsBoundedKilledAndReaped(t *testing.T) {
+	cmd := helperCommand(t, "infinite-noise", true, 80*time.Millisecond, 64, 64)
+	response, err := newAdapter(&processRunner{killGrace: 5 * time.Millisecond}).execute(context.Background(), cmd)
+	if !tracker.IsKind(err, tracker.ErrorAmbiguous) || !response.result.stdoutTruncated || !response.result.stderrTruncated || response.result.mutationOutcome != mutationAmbiguous {
+		t.Fatalf("result=%+v err=%v", response.result, err)
+	}
+	var portable *tracker.Error
+	if !errors.As(err, &portable) || portable.RecoveryAction() != "observe_then_reconcile" {
+		t.Fatalf("portable=%+v", portable)
+	}
+	pidBytes, readErr := os.ReadFile(filepath.Join(cmd.binding.workingDir, "producer.pid"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	pid, _ := strconv.Atoi(string(pidBytes))
+	if err := syscall.Kill(pid, 0); err != syscall.ESRCH {
+		t.Fatalf("producer %d was not reaped: %v", pid, err)
+	}
+}
+
+func TestReadTimeoutAfterStartPreservesStartedEvidence(t *testing.T) {
+	cmd := helperCommand(t, "read-start-sleep", false, 80*time.Millisecond, 1024, 1024)
+	response, err := newAdapter(&processRunner{killGrace: 5 * time.Millisecond}).execute(context.Background(), cmd)
+	if !tracker.IsKind(err, tracker.ErrorTimeout) || !response.result.started || response.result.mutationOutcome != mutationUnknown {
+		t.Fatalf("result=%+v err=%v", response.result, err)
+	}
+	var portable *tracker.Error
+	if !errors.As(err, &portable) || portable.RecoveryAction() != "observe_then_reconcile" {
+		t.Fatalf("portable=%+v", portable)
+	}
+	if _, statErr := os.Stat(filepath.Join(cmd.binding.workingDir, "read-started")); statErr != nil {
+		t.Fatalf("read did not begin: %v", statErr)
+	}
+}
+
+func TestPermissionFailureIsUnavailableAndNotStarted(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "bd-no-exec")
+	if err := os.WriteFile(executable, []byte("not executable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binding := defaultBinding(executable, root, root)
+	binding.timeout = time.Second
+	cmd, err := newCreateCommand(binding, createValues{title: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := newAdapter(newProcessRunner()).execute(context.Background(), cmd)
+	if !tracker.IsKind(err, tracker.ErrorUnavailable) || response.result.started || response.result.mutationOutcome != mutationNotStarted {
+		t.Fatalf("result=%+v err=%v", response.result, err)
+	}
+	var portable *tracker.Error
+	if !errors.As(err, &portable) || portable.RecoveryAction() != "repair_provider_binding" {
+		t.Fatalf("portable=%+v", portable)
 	}
 }
 
