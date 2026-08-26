@@ -1,7 +1,7 @@
 {
-  "event_count": 185,
-  "last_event_id": "01M0ZNVCM70ED0VC538E8B63KT",
-  "materialized_at": "2026-08-26T18:38:20.288156+00:00",
+  "event_count": 187,
+  "last_event_id": "01M0ZQ4DH66MJ05F4K4Z0C94V4",
+  "materialized_at": "2026-08-26T19:00:44.710083+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 2,
-    "in_review": 0,
+    "in_progress": 1,
+    "in_review": 1,
     "planned": 2
   },
   "work_packages": {
@@ -304,17 +304,18 @@
     },
     "WP09": {
       "actor": "codex",
-      "agent": null,
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 4,
-      "lane": "in_progress",
-      "last_event_id": "01M0ZNVCM70ED0VC538E8B63KT",
-      "last_transition_at": "2026-08-26T18:38:20.288156+00:00",
+      "force_count": 5,
+      "lane": "in_review",
+      "last_event_id": "01M0ZQ4DH66MJ05F4K4Z0C94V4",
+      "last_transition_at": "2026-08-26T19:00:44.710083+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: pinned Beads v1.2.2 rebuilt at reviewed digest; 11/11 commit-bound real-provider scenarios pass across embedded and pinned shared-server modes, including native backup/restore and 1,000-create contention with zero collisions or duplicate mappings. Cross-WP corrections are explicitly evidence-driven: v1.2.2 comment --author propagation and external server identity without a fabricated local data_dir.",
-        "Correction cycle 2 commit 315660fcabc0a72c538934a326748a09600afb36; tree b5368db98c0a2270fc53bcb741635d182bb10e20. Fresh schema-valid real evidence /tmp/go-kitty3-wp09-cycle2-evidence.JAfdeq/qualification.json SHA256 7a7cf13a03885ef8a1f2099f4f704e2334305983a918dbf19151542918921103: 11/11; assignment 20/20 preserved (10 attribution_lost, 10 safe_compensation_unsupported); authority 23 audits/0 failures; contention 1000/1000, 0 collisions/duplicates; p95 340.600ms preflight and 173.087ms read. Embedded, external server, complete JSONL graph and fresh-adapter native restore passed. Full race, repeat, vet, staticcheck, dependency/vulnerability, preflight, architecture/scope passed. Honest limitation note: an export-shape probe was launched from the lane checkout, init aborted, then exactly two synthetic tracker records r6-9kj/r6-9ml were inadvertently created; exact dry-run and exact two-ID deletion removed 2 records, 1 dependency, and 2 events, and both IDs were verified not_found before work continued. Disposable server removed; lane clean. Force override is limited to the intentionally coordinated evidence-schema and WP09 reviewer-profile planning artifacts."
+        "Correction cycle 2 commit 315660fcabc0a72c538934a326748a09600afb36; tree b5368db98c0a2270fc53bcb741635d182bb10e20. Fresh schema-valid real evidence /tmp/go-kitty3-wp09-cycle2-evidence.JAfdeq/qualification.json SHA256 7a7cf13a03885ef8a1f2099f4f704e2334305983a918dbf19151542918921103: 11/11; assignment 20/20 preserved (10 attribution_lost, 10 safe_compensation_unsupported); authority 23 audits/0 failures; contention 1000/1000, 0 collisions/duplicates; p95 340.600ms preflight and 173.087ms read. Embedded, external server, complete JSONL graph and fresh-adapter native restore passed. Full race, repeat, vet, staticcheck, dependency/vulnerability, preflight, architecture/scope passed. Honest limitation note: an export-shape probe was launched from the lane checkout, init aborted, then exactly two synthetic tracker records r6-9kj/r6-9ml were inadvertently created; exact dry-run and exact two-ID deletion removed 2 records, 1 dependency, and 2 events, and both IDs were verified not_found before work continued. Disposable server removed; lane clean. Force override is limited to the intentionally coordinated evidence-schema and WP09 reviewer-profile planning artifacts.",
+        "Cycle 3 ready. Intentional WP09 schema correction triggers the known lane kitty-spec guard; no unrelated planning artifact was edited. Pass-only completeness is conditional on verdict=pass; fail/non_admissible preserve bounded missing or partial observations. Runtime fails closed through typed laws, strict unknown-field JSON round-trip, redaction, and atomic create-only publication; tests compile the exact checked-in schema against serialized pass/fail/non_admissible bytes and mutants. jsonschema remains test-only; govulncheck has zero reachable findings on pinned Go 1.26.4. Prior cycle-2 server pass remains source-bound to 315660fc/tree b5368db; cycle-3 real embedded evidence is honestly non_admissible at 10/11 with contention absent, bound to 8afdc21/tree 453dd79, SHA-256 449981d796c66630993b0ead3a6b66cc94a0cf3d265007310d548cae4e753fa7. No measured provider runtime semantics changed, so server pass was not rerun."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -324,16 +325,16 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
       "subtasks": {
-        "T043": "planned",
-        "T044": "planned",
-        "T045": "planned",
-        "T046": "planned",
-        "T047": "planned",
-        "T048": "planned"
+        "T043": "done",
+        "T044": "done",
+        "T045": "done",
+        "T046": "done",
+        "T047": "done",
+        "T048": "done"
       }
     },
     "WP10": {
