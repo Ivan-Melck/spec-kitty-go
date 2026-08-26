@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
@@ -110,6 +111,13 @@ func (s *Store) Claim(ctx context.Context, request execution.StartRequest, runID
 		replay.Replayed = true
 		return replay, nil
 	}
+	if err := request.GovernanceContext.Validate(); err != nil {
+		diagnostic := claimDiagnostic(request, execution.KindInvalidCommand, "governance_context is invalid", execution.RetryNever, aggregates,
+			map[string]string{"governance_context": "invalid"}, map[string]string{"governance_context": "validated immutable context"})
+		diagnostic.Cause = err
+		return execution.RunCapsule{}, diagnostic
+	}
+	aggregates["governance_context_id"] = request.GovernanceContext.ID().String()
 
 	var state, ownerProject, ownerMission string
 	err = tx.QueryRowContext(ctx, `SELECT wi.state, wr.project_id, wr.mission_id
@@ -194,7 +202,10 @@ EXISTS(SELECT 1 FROM work_graph_items WHERE work_revision_id=? AND work_id=?)`, 
 		return execution.RunCapsule{}, claimDiagnostic(request, execution.KindInvalidCommand, "ProcessID is already bound to a different ActorID", execution.RetryNever, aggregates,
 			map[string]string{"actor_id": "different durable actor"}, map[string]string{"actor_id": request.ActorID.String()})
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO runs(run_id, operation_id, project_id, mission_id, work_id, work_revision_id, actor_id, process_id, generation, status, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`, runID, request.OperationID, request.ProjectID, request.MissionID, request.WorkID, request.WorkRevisionID, request.ActorID, request.ProcessID, generation, now.Format(time.RFC3339Nano)); err != nil {
+	if err := saveGovernanceContextTx(ctx, tx, request.GovernanceContext, request.OperationID, now); err != nil {
+		return execution.RunCapsule{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO runs(run_id, operation_id, project_id, mission_id, work_id, work_revision_id, actor_id, process_id, generation, status, created_at, governance_context_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`, runID, request.OperationID, request.ProjectID, request.MissionID, request.WorkID, request.WorkRevisionID, request.ActorID, request.ProcessID, generation, now.Format(time.RFC3339Nano), request.GovernanceContext.ID()); err != nil {
 		return execution.RunCapsule{}, translateClaim(err, request, aggregates)
 	}
 	token := s.tokenFor(request.OperationID, runID, leaseID, generation)
@@ -210,7 +221,8 @@ EXISTS(SELECT 1 FROM work_graph_items WHERE work_revision_id=? AND work_id=?)`, 
 		ObservedState: map[string]string{"lease": "active", "work_state": state}, ExpectedState: map[string]string{"work_state": "ready"},
 		RetrySafety: execution.RetryNever, RecoveryActions: []string{"heartbeat before the lease deadline"},
 		WorkID: request.WorkID, WorkRevisionID: request.WorkRevisionID,
-		RunID: runID, LeaseID: leaseID, Generation: generation, Token: token, Deadline: deadline,
+		RunID: runID, GovernanceContextID: request.GovernanceContext.ID(), GovernanceContextAggregate: request.GovernanceContext.Aggregate(),
+		LeaseID: leaseID, Generation: generation, Token: token, Deadline: deadline,
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='succeeded', result_run_id=?, result_lease_id=?, result_generation=?, result_deadline=? WHERE operation_id=?`, runID, leaseID, generation, deadline.Format(time.RFC3339Nano), request.OperationID); err != nil {
 		return execution.RunCapsule{}, translateClaim(err, request, aggregates)
@@ -278,16 +290,29 @@ func (s *Store) loadOperation(ctx context.Context, tx *sql.Tx, request execution
 			return execution.RunCapsule{}, false, fmt.Errorf("recover migrated operation token: %w", err)
 		}
 	}
+	governance, err := loadRunGovernance(ctx, tx, ids.RunID(runID), ids.LeaseID(leaseID))
+	if err != nil {
+		return execution.RunCapsule{}, false, err
+	}
+	aggregateIDs := map[string]string{
+		"operation_id": operationID.String(), "project_id": request.ProjectID.String(), "mission_id": request.MissionID.String(),
+		"work_id": request.WorkID.String(), "work_revision_id": request.WorkRevisionID.String(), "actor_id": request.ActorID.String(), "process_id": request.ProcessID.String(),
+	}
+	var governanceID ids.GovernanceContextID
+	var governanceAggregate governancecontext.Commitment
+	if governance.Provenance == GovernanceVerified {
+		governanceID = governance.Context.ID()
+		governanceAggregate = governance.Context.Aggregate()
+		aggregateIDs["governance_context_id"] = governanceID.String()
+	}
 	return execution.RunCapsule{
 		SchemaVersion: execution.ResultSchemaVersion, Kind: "run_started", CorrelationID: correlationID,
-		OperationID: operationID, AggregateIDs: map[string]string{
-			"operation_id": operationID.String(), "project_id": request.ProjectID.String(), "mission_id": request.MissionID.String(),
-			"work_id": request.WorkID.String(), "work_revision_id": request.WorkRevisionID.String(), "actor_id": request.ActorID.String(), "process_id": request.ProcessID.String(),
-		},
+		OperationID: operationID, AggregateIDs: aggregateIDs,
 		ObservedState: map[string]string{"lease": "active", "work_state": "ready"}, ExpectedState: map[string]string{"work_state": "ready"},
 		RetrySafety: execution.RetryNever, RecoveryActions: []string{"heartbeat before the lease deadline"},
 		WorkID: request.WorkID, WorkRevisionID: request.WorkRevisionID,
-		RunID: ids.RunID(runID), LeaseID: ids.LeaseID(leaseID), Generation: generation, Token: token, Deadline: deadline,
+		RunID: ids.RunID(runID), GovernanceContextID: governanceID, GovernanceContextAggregate: governanceAggregate,
+		LeaseID: ids.LeaseID(leaseID), Generation: generation, Token: token, Deadline: deadline,
 	}, true, nil
 }
 

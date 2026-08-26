@@ -11,7 +11,7 @@ import (
 	"io"
 )
 
-const currentSchemaVersion = 11
+const currentSchemaVersion = 12
 
 var migrations = []string{
 	`CREATE TABLE projects (
@@ -137,7 +137,46 @@ CREATE TABLE external_effect_observations (
 	handoffReviewMigrationV9,
 	integrationMigrationV10,
 	handoffRefusalMigrationV11,
+	governanceContextMigrationV12,
 }
+
+const governanceContextMigrationV12 = `
+CREATE TABLE governance_contexts (
+  context_id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL CHECK(schema_version > 0),
+  aggregate_algorithm TEXT NOT NULL CHECK(aggregate_algorithm <> ''),
+  aggregate_digest TEXT NOT NULL CHECK(aggregate_digest <> ''),
+  created_at TEXT NOT NULL CHECK(created_at <> '')
+);
+CREATE TABLE governance_context_entries (
+  context_id TEXT NOT NULL REFERENCES governance_contexts(context_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  position INTEGER NOT NULL CHECK(position >= 0),
+  kind TEXT NOT NULL CHECK(kind <> ''),
+  entry_ref TEXT NOT NULL CHECK(entry_ref <> ''),
+  revision TEXT NOT NULL CHECK(revision <> ''),
+  commitment_algorithm TEXT NOT NULL CHECK(commitment_algorithm <> ''),
+  commitment_digest TEXT NOT NULL CHECK(commitment_digest <> ''),
+  PRIMARY KEY(context_id, position),
+  UNIQUE(context_id, kind, entry_ref)
+);
+ALTER TABLE runs ADD COLUMN governance_context_id TEXT REFERENCES governance_contexts(context_id) ON DELETE RESTRICT;
+CREATE INDEX runs_by_governance_context ON runs(governance_context_id);
+CREATE TRIGGER sealed_governance_context_entry_insert
+BEFORE INSERT ON governance_context_entries
+WHEN EXISTS(SELECT 1 FROM governance_contexts WHERE context_id=NEW.context_id)
+BEGIN SELECT RAISE(ABORT,'governance context entry set is sealed'); END;
+CREATE TRIGGER immutable_governance_context_update
+BEFORE UPDATE ON governance_contexts BEGIN SELECT RAISE(ABORT,'governance context is immutable'); END;
+CREATE TRIGGER immutable_governance_context_delete
+BEFORE DELETE ON governance_contexts BEGIN SELECT RAISE(ABORT,'governance context is immutable'); END;
+CREATE TRIGGER immutable_governance_context_entry_update
+BEFORE UPDATE ON governance_context_entries BEGIN SELECT RAISE(ABORT,'governance context entry is immutable'); END;
+CREATE TRIGGER immutable_governance_context_entry_delete
+BEFORE DELETE ON governance_context_entries BEGIN SELECT RAISE(ABORT,'governance context entry is immutable'); END;
+CREATE TRIGGER require_governance_context_on_new_run
+BEFORE INSERT ON runs
+WHEN NEW.governance_context_id IS NULL OR NEW.governance_context_id=''
+BEGIN SELECT RAISE(ABORT,'new run requires governance context'); END;`
 
 const integrationMigrationV10 = `
 CREATE TABLE integration_commands (

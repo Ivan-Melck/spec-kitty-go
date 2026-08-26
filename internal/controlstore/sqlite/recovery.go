@@ -147,6 +147,24 @@ EXISTS(SELECT 1 FROM start_run_results z WHERE z.operation_id=o.operation_id)
 }
 
 func (s *Store) CompleteStartRun(ctx context.Context, capsule execution.RunCapsule, completedAt time.Time) error {
+	var requestJSON []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT request_json FROM start_run_requests WHERE operation_id=?`, capsule.OperationID).Scan(&requestJSON); err != nil {
+		return recoveryStoreError(capsule.OperationID, time.Now(), "load governance context from durable start-run request", err)
+	}
+	var request execution.StartRunRequest
+	if err := json.Unmarshal(requestJSON, &request); err != nil {
+		return recoveryStoreError(capsule.OperationID, time.Now(), "decode governance context from durable start-run request", err)
+	}
+	wantID := request.Claim.GovernanceContext.ID()
+	wantAggregate := request.Claim.GovernanceContext.Aggregate()
+	if err := request.Claim.GovernanceContext.Validate(); err != nil || capsule.GovernanceContextID != wantID || capsule.GovernanceContextAggregate != wantAggregate {
+		diagnostic := execution.NewDiagnostic(execution.KindIdempotencyConflict, "terminal start-run result changed governance context", execution.RetryNever,
+			capsule.CorrelationID, capsule.OperationID, capsule.AggregateIDs,
+			map[string]string{"governance_context_id": capsule.GovernanceContextID.String(), "governance_context_aggregate": capsule.GovernanceContextAggregate.Algorithm() + ":" + capsule.GovernanceContextAggregate.Digest()},
+			map[string]string{"governance_context_id": wantID.String(), "governance_context_aggregate": wantAggregate.Algorithm() + ":" + wantAggregate.Digest()}, completedAt)
+		diagnostic.Cause = err
+		return diagnostic
+	}
 	terminal := capsule
 	terminal.Token = ""
 	terminal.Replayed = false

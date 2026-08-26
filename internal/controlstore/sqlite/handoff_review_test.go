@@ -378,7 +378,7 @@ func newHandoffReviewFixture(t *testing.T) *handoffReviewFixture {
 	if _, err := store.FinalizeWorkRevision(ctx, FinalizeWorkRevisionRequest{SchemaVersion: 1, CorrelationID: "finalize-1", OperationID: "operation-finalize-1", ActorID: revision.ActorID(), ProcessID: "process-finalize", OccurredAt: revision.FinalizedAt(), Revision: revision}); err != nil {
 		t.Fatal(err)
 	}
-	claim := execution.StartRequest{CorrelationID: "claim-1", OperationID: "operation-claim-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-1", ActorID: "actor-implementer", ProcessID: "process-implementer", Now: now, LeaseTTL: time.Hour}
+	claim := execution.StartRequest{CorrelationID: "claim-1", OperationID: "operation-claim-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-1", ActorID: "actor-implementer", ProcessID: "process-implementer", Now: now, LeaseTTL: time.Hour, GovernanceContext: testGovernanceContext(t, "context-handoff", now)}
 	capsule, err := store.Claim(ctx, claim, "run-1", "lease-1")
 	if err != nil {
 		t.Fatal(err)
