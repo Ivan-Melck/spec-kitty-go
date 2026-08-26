@@ -159,6 +159,9 @@
       "last_event_id": "01M0YZNNYD9HZQ0A14SBXAM98V",
       "last_transition_at": "2026-08-26T12:10:44.557220+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: commit 301ab53 implements mapped catalog metadata/revisions, replay and ambiguity recovery, honest unguarded updates, latency and 1,000-create identity evidence; focused repeat/race/tracker-wide/vet/staticcheck/architecture/scope green"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
