@@ -5,7 +5,7 @@ qualified_version='1.2.2'
 qualified_source_commit='6c124203e771433a3550c348771a5b5e27fd3c21'
 qualified_module_sum='h1:2K5ki3k1GGGKuYdFIuJtqHHziGQcepN+H2f/EYfE0X4='
 qualified_go_version='go1.26.4'
-qualified_build_method='go-install-cgo-gms_pure_go-go1.26.4'
+qualified_build_method='go-install-cgo-gms_pure_go-trimpath-nobuildid-go1.26.4'
 
 usage() {
     printf '%s\n' 'usage: install-qualified-beads.sh --dest ABSOLUTE_DIRECTORY [--offline]'
@@ -55,8 +55,8 @@ fi
 goos=$(go env GOOS)
 goarch=$(go env GOARCH)
 case "$goos/$goarch/$qualified_build_method" in
-    linux/amd64/go-install-cgo-gms_pure_go-go1.26.4)
-        qualified_digest='ced868e41ca37d9e0cec2d10a3ec9fa1b324ee91e7d89c163569518803de13d4'
+    linux/amd64/go-install-cgo-gms_pure_go-trimpath-nobuildid-go1.26.4)
+        qualified_digest='0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6'
         ;;
     *)
         printf '%s\n' 'no reviewed binary digest exists for this platform and build method' >&2
@@ -108,6 +108,10 @@ command -v gcc >/dev/null 2>&1 || {
 
 install_scratch=$(mktemp -d "${TMPDIR:-/tmp}/spec-kitty-beads-install.XXXXXX")
 cleanup_install_scratch() {
+    if [ -d "$install_scratch/modcache" ]; then
+        GOMODCACHE="$install_scratch/modcache" go clean -modcache >/dev/null 2>&1 || true
+    fi
+    chmod -R u+w -- "$install_scratch" 2>/dev/null || true
     rm -rf -- "$install_scratch"
 }
 trap cleanup_install_scratch EXIT HUP INT TERM
@@ -132,7 +136,7 @@ GOMODCACHE="$install_scratch/modcache" \
 GOCACHE="$install_scratch/gocache" \
 GOPATH="$install_scratch/gopath" \
 CGO_ENABLED=1 \
-GOFLAGS='-tags=gms_pure_go' \
+GOFLAGS='-tags=gms_pure_go -trimpath -ldflags=-buildid=' \
 GOTOOLCHAIN="$qualified_go_version" \
 go install "github.com/steveyegge/beads/cmd/bd@v${qualified_version}"
 
