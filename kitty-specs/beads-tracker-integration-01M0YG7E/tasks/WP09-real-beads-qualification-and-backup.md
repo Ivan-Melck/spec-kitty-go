@@ -34,7 +34,7 @@ subtasks:
 - T047
 - T048
 history: []
-agent_profile: implementer-ivan
+agent_profile: reviewer-renata
 authoritative_surface: internal/tracker/beads/
 create_intent:
 - internal/tracker/beads/real_integration_test.go
@@ -60,7 +60,7 @@ owned_files:
 - internal/testcampaign/cmd/beads-qualification/runner.go
 - internal/testcampaign/cmd/beads-qualification/runner_test.go
 - scripts/install-qualified-beads.sh
-role: implementer
+role: reviewer
 tags: []
 tracker_refs: []
 ---

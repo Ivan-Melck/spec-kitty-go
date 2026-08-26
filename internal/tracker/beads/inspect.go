@@ -303,7 +303,7 @@ func (bound *BoundAdapter) qualifyStorageObservation(databasePath, databaseName 
 	}
 	host := bound.connection.credentials["DOLT_SERVER_HOST"]
 	port := bound.connection.credentials["DOLT_SERVER_PORT"]
-	observedIdentity := deriveServerWorkspaceIdentity(bound.binding.WorkspacePath, host, port, show.Database)
+	observedIdentity := deriveServerWorkspaceIdentity(host, port, show.Database)
 	if observedIdentity != bound.binding.WorkspaceIdentity {
 		return false, workspaceMismatch(bound.binding.WorkspaceIdentity, observedIdentity)
 	}

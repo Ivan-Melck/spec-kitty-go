@@ -125,7 +125,7 @@ func ResolveBinding(config BindingConfig) (tracker.TrackerBinding, error) {
 		}
 		host := connection.credentials["DOLT_SERVER_HOST"]
 		port := connection.credentials["DOLT_SERVER_PORT"]
-		identity = deriveServerWorkspaceIdentity(workspace, host, port, databaseIdentity)
+		identity = deriveServerWorkspaceIdentity(host, port, databaseIdentity)
 	}
 	binding := tracker.TrackerBinding{
 		ProjectID:         config.ProjectID,
@@ -225,13 +225,12 @@ func deriveWorkspaceIdentity(canonicalPath, databaseIdentity string) string {
 	return "ws1:" + hex.EncodeToString(hash.Sum(nil))
 }
 
-func deriveServerWorkspaceIdentity(canonicalPath, host, port, database string) string {
+func deriveServerWorkspaceIdentity(host, port, database string) string {
 	hash := sha256.New()
 	var version [2]byte
 	binary.BigEndian.PutUint16(version[:], workspaceIdentityEncodingVersion)
 	_, _ = hash.Write(version[:])
 	writeIdentityField(hash, "provider", "beads")
-	writeIdentityField(hash, "path", canonicalPath)
 	writeIdentityField(hash, "server_host", host)
 	writeIdentityField(hash, "server_port", port)
 	writeIdentityField(hash, "server_database", database)

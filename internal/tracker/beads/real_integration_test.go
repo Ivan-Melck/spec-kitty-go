@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -559,28 +560,85 @@ func TestRealBeadsQualification(t *testing.T) {
 	})
 
 	t.Run("assignment_safe_refusal", func(t *testing.T) {
-		record := createRealWork(t, bound, fixture.projectID, 104, nil).Record
-		projected, err := bound.ProjectAssignment(context.Background(), tracker.ProjectAssignmentRequest{
-			ExternalRef: record.ExternalRef, OperationID: ids.OperationID("op-assign"), Assignee: "mapped-actor",
-			ExpectedObservation: record.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded,
-		})
-		if err != nil {
-			t.Fatal(err)
+		spy := &realCommandCensusRunner{delegate: bound.adapter.runner}
+		bound.adapter.runner = spy
+		const repetitions = 10
+		census := map[string]int{"attempted": repetitions * 2}
+		var audited []tracker.ExternalWorkRef
+		compensationRefusalsWithoutMutation := 0
+		for index := 0; index < repetitions; index++ {
+			record := createRealWork(t, bound, fixture.projectID, 1100+index, nil).Record
+			operation := ids.OperationID(fmt.Sprintf("op-assign-human-%02d", index))
+			projected, err := bound.ProjectAssignment(context.Background(), tracker.ProjectAssignmentRequest{
+				ExternalRef: record.ExternalRef, OperationID: operation, Assignee: "mapped-actor",
+				ExpectedObservation: record.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := fixture.runBD(t, "update", record.ExternalRef.ExternalID, "--assignee", "human-actor", "--json"); err != nil {
+				t.Fatal(err)
+			}
+			beforeCompensation := spy.mutations()
+			_, err = bound.CompensateAssignment(context.Background(), tracker.CompensateAssignmentRequest{
+				ExternalRef: record.ExternalRef, OperationID: ids.OperationID(fmt.Sprintf("op-compensate-human-%02d", index)),
+				ExpectedObservation: projected.Observation.Observation.Revision, ExpectedAssignee: "mapped-actor",
+				ExpectedMarker: operation.String(), RestoreAssignee: "",
+			})
+			if !tracker.IsKind(err, tracker.ErrorAttributionLost) || spy.mutations() != beforeCompensation {
+				t.Fatalf("human mutation was not refused before provider update: err=%v mutations=%d/%d", err, beforeCompensation, spy.mutations())
+			}
+			compensationRefusalsWithoutMutation++
+			actual, observeErr := bound.ObserveAssignment(context.Background(), record.ExternalRef)
+			if observeErr != nil || actual.Assignee != "human-actor" {
+				t.Fatalf("human assignment did not survive: %+v err=%v", actual, observeErr)
+			}
+			census["terminal"]++
+			census["preserved"]++
+			census["attribution_lost"]++
+			audited = append(audited, record.ExternalRef)
 		}
-		if _, _, err := fixture.runBD(t, "update", record.ExternalRef.ExternalID, "--assignee", "human-actor", "--json"); err != nil {
-			t.Fatal(err)
+		for index := 0; index < repetitions; index++ {
+			record := createRealWork(t, bound, fixture.projectID, 1200+index, nil).Record
+			operation := ids.OperationID(fmt.Sprintf("op-assign-matching-%02d", index))
+			projected, err := bound.ProjectAssignment(context.Background(), tracker.ProjectAssignmentRequest{
+				ExternalRef: record.ExternalRef, OperationID: operation, Assignee: "mapped-actor",
+				ExpectedObservation: record.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeCompensation := spy.mutations()
+			_, err = bound.CompensateAssignment(context.Background(), tracker.CompensateAssignmentRequest{
+				ExternalRef: record.ExternalRef, OperationID: ids.OperationID(fmt.Sprintf("op-compensate-matching-%02d", index)),
+				ExpectedObservation: projected.Observation.Observation.Revision, ExpectedAssignee: "mapped-actor",
+				ExpectedMarker: operation.String(), RestoreAssignee: "",
+			})
+			if !tracker.IsKind(err, tracker.ErrorSafeCompensationUnsupported) || spy.mutations() != beforeCompensation {
+				t.Fatalf("matching state did not refuse unsupported compensation before provider update: err=%v mutations=%d/%d", err, beforeCompensation, spy.mutations())
+			}
+			compensationRefusalsWithoutMutation++
+			actual, observeErr := bound.ObserveAssignment(context.Background(), record.ExternalRef)
+			if observeErr != nil || actual.Assignee != "mapped-actor" || actual.OperationMarker != operation.String() {
+				t.Fatalf("matching assignment changed during refusal: %+v err=%v", actual, observeErr)
+			}
+			census["terminal"]++
+			census["preserved"]++
+			census["safe_compensation_unsupported"]++
+			audited = append(audited, record.ExternalRef)
 		}
-		_, err = bound.CompensateAssignment(context.Background(), tracker.CompensateAssignmentRequest{
-			ExternalRef: record.ExternalRef, OperationID: ids.OperationID("op-compensate"),
-			ExpectedObservation: projected.Observation.Observation.Revision, ExpectedAssignee: "mapped-actor",
-			ExpectedMarker: "op-assign", RestoreAssignee: "",
-		})
-		if !tracker.IsKind(err, tracker.ErrorAttributionLost) {
-			t.Fatalf("human mutation was not preserved as attribution loss: %v", err)
+		census["failed"] = census["attempted"] - census["preserved"]
+		if census["attempted"] != 20 || census["terminal"] != 20 || census["preserved"] != 20 || census["failed"] != 0 || census["attribution_lost"] != 10 || census["safe_compensation_unsupported"] != 10 {
+			t.Fatalf("assignment preservation census is incomplete: %+v", census)
 		}
-		actual, observeErr := bound.ObserveAssignment(context.Background(), record.ExternalRef)
-		if observeErr != nil || actual.Assignee != "human-actor" {
-			t.Fatalf("human assignment did not survive: %+v err=%v", actual, observeErr)
+		assignmentPayload, _ := json.Marshal(census)
+		t.Logf("WP09_ASSIGNMENT_PRESERVATION %s", assignmentPayload)
+
+		audits, failures := auditRealAuthorityIsolation(t, bound, audited, compensationRefusalsWithoutMutation)
+		authorityPayload, _ := json.Marshal(map[string]int{"audits": audits, "failures": failures})
+		t.Logf("WP09_AUTHORITY_AUDIT %s", authorityPayload)
+		if failures != 0 {
+			t.Fatalf("production-relevant authority audit failures=%d", failures)
 		}
 	})
 
@@ -605,6 +663,65 @@ func TestRealBeadsQualification(t *testing.T) {
 		}
 		emitLatency(t, "warm_single_item_read", reads, 500*time.Millisecond)
 	})
+}
+
+type realCommandCensusRunner struct {
+	delegate      commandRunner
+	mu            sync.Mutex
+	totalCount    int
+	mutatingCount int
+}
+
+func (runner *realCommandCensusRunner) run(ctx context.Context, request command) commandResult {
+	runner.mu.Lock()
+	runner.totalCount++
+	if request.mutating {
+		runner.mutatingCount++
+	}
+	runner.mu.Unlock()
+	return runner.delegate.run(ctx, request)
+}
+
+func (runner *realCommandCensusRunner) mutations() int {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return runner.mutatingCount
+}
+
+func (runner *realCommandCensusRunner) commands() int {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return runner.totalCount
+}
+
+func auditRealAuthorityIsolation(t *testing.T, bound *BoundAdapter, references []tracker.ExternalWorkRef, compensationRefusalsWithoutMutation int) (int, int) {
+	t.Helper()
+	audits, failures := 0, 0
+	audit := func(passed bool) {
+		audits++
+		if !passed {
+			failures++
+		}
+	}
+	beforeIdentity := bound.binding.WorkspaceIdentity
+	readiness, err := bound.Preflight(context.Background())
+	audit(err == nil && readiness.binding.WorkspaceIdentity == beforeIdentity && bound.binding.WorkspaceIdentity == beforeIdentity)
+	capabilities := implementedCapabilities(bound.binding.ConcurrencyMode)
+	audit(capabilities.SafeCompensation == tracker.CompensationUnsupported)
+	audit(compensationRefusalsWithoutMutation == 20)
+	for _, reference := range references {
+		issue, err := bound.readIssue(context.Background(), reference.ExternalID)
+		forbidden := false
+		if err == nil {
+			for _, key := range []string{"run_id", "lease_id", "workspace_id", "fencing_token", "review_verdict", "acceptance_result", "integration_result"} {
+				_, inRoot := issue.document.root[key]
+				_, inNamespace := issue.document.namespace[key]
+				forbidden = forbidden || inRoot || inNamespace
+			}
+		}
+		audit(err == nil && !forbidden)
+	}
+	return audits, failures
 }
 
 func createRealWork(t *testing.T, bound *BoundAdapter, projectID ids.ProjectID, index int, criteria []tracker.Criterion) tracker.WorkMutation {

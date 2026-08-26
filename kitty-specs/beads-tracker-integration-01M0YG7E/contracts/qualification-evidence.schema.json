@@ -16,6 +16,10 @@
     "started_at",
     "finished_at",
     "scenarios",
+    "latency",
+    "contention",
+    "assignment_preservation",
+    "authority_audits",
     "authority_invariant_failures",
     "verdict"
   ],
@@ -111,6 +115,38 @@
     },
     "latency": {
       "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "operation": {
+                "const": "preflight"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "operation": {
+                "const": "warm_single_item_read"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ],
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -123,8 +159,10 @@
         ],
         "properties": {
           "operation": {
-            "type": "string",
-            "minLength": 1
+            "enum": [
+              "preflight",
+              "warm_single_item_read"
+            ]
           },
           "samples": {
             "type": "integer",
@@ -142,12 +180,129 @@
             "type": "number",
             "minimum": 0
           }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "preflight"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "samples": {
+                  "const": 100
+                },
+                "p95_ms": {
+                  "maximum": 1000
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "warm_single_item_read"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "samples": {
+                  "const": 200
+                },
+                "p95_ms": {
+                  "maximum": 500
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "contention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "processes",
+        "attempted",
+        "terminal",
+        "passed",
+        "collisions",
+        "duplicates",
+        "duration_ms"
+      ],
+      "properties": {
+        "mode": {
+          "const": "server_multiwriter"
+        },
+        "processes": {
+          "const": 8
+        },
+        "attempted": {
+          "const": 1000
+        },
+        "terminal": {
+          "const": 1000
+        },
+        "passed": {
+          "const": 1000
+        },
+        "collisions": {
+          "const": 0
+        },
+        "duplicates": {
+          "const": 0
+        },
+        "duration_ms": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "assignment_preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempted",
+        "terminal",
+        "preserved",
+        "failed",
+        "attribution_lost",
+        "safe_compensation_unsupported"
+      ],
+      "properties": {
+        "attempted": {
+          "const": 20
+        },
+        "terminal": {
+          "const": 20
+        },
+        "preserved": {
+          "const": 20
+        },
+        "failed": {
+          "const": 0
+        },
+        "attribution_lost": {
+          "const": 10
+        },
+        "safe_compensation_unsupported": {
+          "const": 10
         }
       }
     },
     "authority_invariant_failures": {
       "type": "integer",
       "minimum": 0
+    },
+    "authority_audits": {
+      "type": "integer",
+      "minimum": 1
     },
     "issues": {
       "type": "array",

@@ -9,51 +9,102 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
+
+type representativeBackupGraph struct {
+	blocked, blocker       tracker.WorkRecord
+	criteria               []tracker.Criterion
+	dependency             tracker.DependencyRef
+	adapterAuthor          string
+	adapterBody            string
+	adapterOperation       ids.OperationID
+	humanAuthor, humanBody string
+}
 
 func TestRealBeadsBackupQualification(t *testing.T) {
 	fixture := newRealBeadsFixture(t)
 	bound := fixture.adapter(t)
+	graph := seedRepresentativeBackupGraph(t, fixture, bound)
 
 	t.Run("jsonl_interchange", func(t *testing.T) {
-		created := createRealWork(t, bound, fixture.projectID, 300, []tracker.Criterion{{ID: "export-criterion", Text: "survives interchange", Verifier: tracker.VerifierReview, Required: true}})
 		stdout, _, err := fixture.runBD(t, "export", "--json")
 		if err != nil {
 			t.Fatal(err)
 		}
 		scanner := bufio.NewScanner(bytes.NewReader(stdout))
 		scanner.Buffer(make([]byte, 64<<10), 2<<20)
-		found := false
+		foundBlocked, foundBlocker := false, false
 		count := 0
+		totalBytes := 0
 		for scanner.Scan() {
 			count++
+			totalBytes += len(scanner.Bytes()) + 1
+			if count > 10_000 || int64(totalBytes) > defaultJSONLAggregateLimit {
+				t.Fatal("portable interchange exceeded its record or aggregate bound")
+			}
 			var issue struct {
-				ID       string         `json:"id"`
-				Metadata map[string]any `json:"metadata"`
+				Type         string          `json:"_type"`
+				ID           string          `json:"id"`
+				Metadata     json.RawMessage `json:"metadata"`
+				Dependencies []struct {
+					IssueID     string `json:"issue_id"`
+					DependsOnID string `json:"depends_on_id"`
+					Type        string `json:"type"`
+				} `json:"dependencies"`
+				Comments []struct {
+					Author string `json:"author"`
+					Text   string `json:"text"`
+				} `json:"comments"`
 			}
 			if json.Unmarshal(scanner.Bytes(), &issue) != nil {
 				t.Fatal("portable export contains malformed JSONL")
 			}
-			if issue.ID == created.Record.ExternalRef.ExternalID {
-				found = true
-				namespace, _ := issue.Metadata["spec_kitty"].(map[string]any)
-				if namespace["work_id"] != created.Record.ExternalRef.WorkID.String() {
-					t.Fatal("portable export lost the stable work mapping")
+			if issue.Type != "issue" {
+				t.Fatalf("portable interchange record type=%q", issue.Type)
+			}
+			metadata, metadataErr := metadataPayload(issue.Metadata)
+			if metadataErr != nil {
+				t.Fatal(metadataErr)
+			}
+			document, metadataErr := decodeMetadata(metadata)
+			if metadataErr != nil {
+				t.Fatal(metadataErr)
+			}
+			switch issue.ID {
+			case graph.blocked.ExternalRef.ExternalID:
+				foundBlocked = true
+				if document.kitty.WorkID != graph.blocked.ExternalRef.WorkID || !reflect.DeepEqual(document.kitty.Criteria, graph.criteria) {
+					t.Fatal("portable interchange lost the blocked mapping or structured criteria")
 				}
+				if len(issue.Dependencies) != 1 || issue.Dependencies[0].IssueID != graph.blocked.ExternalRef.ExternalID || issue.Dependencies[0].DependsOnID != graph.blocker.ExternalRef.ExternalID || issue.Dependencies[0].Type != "blocks" {
+					t.Fatalf("portable interchange lost asymmetric dependency: %+v", issue.Dependencies)
+				}
+				adapterSeen, humanSeen := false, false
+				for _, comment := range issue.Comments {
+					body, marker, marked := parseDiscussionBody(comment.Text)
+					adapterSeen = adapterSeen || marked && marker == graph.adapterOperation.String() && comment.Author == graph.adapterAuthor && body == graph.adapterBody
+					humanSeen = humanSeen || !marked && comment.Author == graph.humanAuthor && body == graph.humanBody
+				}
+				if !adapterSeen || !humanSeen {
+					t.Fatalf("portable interchange lost adapter or human discussion: %+v", issue.Comments)
+				}
+			case graph.blocker.ExternalRef.ExternalID:
+				foundBlocker = document.kitty.WorkID == graph.blocker.ExternalRef.WorkID
 			}
 		}
-		if scanner.Err() != nil || count == 0 || !found {
-			t.Fatalf("portable interchange census count=%d found=%t err=%v", count, found, scanner.Err())
+		if scanner.Err() != nil || count < 2 || !foundBlocked || !foundBlocker {
+			t.Fatalf("portable interchange census count=%d blocked=%t blocker=%t err=%v", count, foundBlocked, foundBlocker, scanner.Err())
 		}
 	})
 
 	t.Run("native_backup_restore", func(t *testing.T) {
-		created := createRealWork(t, bound, fixture.projectID, 301, []tracker.Criterion{{ID: "backup-criterion", Text: "survives native restore", Verifier: tracker.VerifierTest, Required: true}})
 		if err := validateRestorePath(fixture.root, fixture.restore, true); err != nil {
 			t.Fatal(err)
 		}
@@ -100,14 +151,70 @@ func TestRealBeadsBackupQualification(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		record, err := restored.ReadWork(context.Background(), created.Record.ExternalRef)
+		inspection, err := restored.Inspect(context.Background(), tracker.InspectRequest{ProjectID: fixture.projectID})
+		if err != nil || inspection.Health != tracker.HealthHealthy || inspection.Binding.WorkspacePath != filepath.Clean(fixture.restore) || inspection.Binding.WorkspaceIdentity != deriveWorkspaceIdentity(filepath.Clean(fixture.restore), filepath.Clean(where.Data.DatabasePath)) {
+			t.Fatalf("restored adapter inspection or workspace identity failed: inspection=%+v err=%v", inspection, err)
+		}
+		record, err := restored.ReadWork(context.Background(), graph.blocked.ExternalRef)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if record.Title != created.Record.Title || len(record.Criteria()) != 1 || record.Criteria()[0].ID != "backup-criterion" {
-			t.Fatal("native restore does not match the provider-neutral source observation")
+		blocker, err := restored.ReadWork(context.Background(), graph.blocker.ExternalRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.Title != graph.blocked.Title || blocker.Title != graph.blocker.Title || !reflect.DeepEqual(record.Criteria(), graph.criteria) {
+			t.Fatal("native restore does not match the complete provider-neutral catalog observation")
+		}
+		edges, err := restored.ListDependencies(context.Background(), graph.blocked.ExternalRef)
+		if err != nil || len(edges) != 1 || edges[0] != graph.dependency {
+			t.Fatalf("native restore lost asymmetric dependency: %+v err=%v", edges, err)
+		}
+		discussion, err := restored.ListDiscussion(context.Background(), graph.blocked.ExternalRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		adapterSeen, humanSeen := false, false
+		for _, entry := range discussion {
+			adapterSeen = adapterSeen || entry.Author == graph.adapterAuthor && entry.Body == graph.adapterBody && entry.OperationMarker == graph.adapterOperation.String()
+			humanSeen = humanSeen || entry.Author == graph.humanAuthor && entry.Body == graph.humanBody && entry.OperationMarker == ""
+		}
+		if !adapterSeen || !humanSeen {
+			t.Fatalf("native restore lost adapter or human discussion: %+v", discussion)
 		}
 	})
+}
+
+func seedRepresentativeBackupGraph(t *testing.T, fixture *realBeadsFixture, bound *BoundAdapter) representativeBackupGraph {
+	t.Helper()
+	graph := representativeBackupGraph{
+		criteria: []tracker.Criterion{
+			{ID: "backup-required", Text: "survives interchange and native restore", Verifier: tracker.VerifierTest, Required: true, EvidenceHint: "go test ./internal/tracker/beads"},
+			{ID: "backup-review", Text: "retains human review context", Verifier: tracker.VerifierReview, Required: false, EvidenceHint: "inspect restored discussion"},
+		},
+		adapterAuthor: "qualified-adapter", adapterBody: "adapter discussion survives recovery", adapterOperation: ids.OperationID("op-backup-discussion"),
+		humanAuthor: "qualified-human", humanBody: "human discussion survives recovery",
+	}
+	graph.blocked = createRealWork(t, bound, fixture.projectID, 300, graph.criteria).Record
+	graph.blocker = createRealWork(t, bound, fixture.projectID, 301, nil).Record
+	graph.dependency = tracker.DependencyRef{BlockedWorkID: graph.blocked.ExternalRef.WorkID, BlockingWorkID: graph.blocker.ExternalRef.WorkID, Kind: tracker.DependencyBlocks}
+	if _, err := bound.PutBlockingDependency(context.Background(), tracker.DependencyRequest{ProjectID: fixture.projectID, OperationID: ids.OperationID("op-backup-dependency"), Dependency: graph.dependency}); err != nil {
+		t.Fatal(err)
+	}
+	entries, observation, err := bound.observeDiscussion(context.Background(), graph.blocked.ExternalRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		observation.Revision = entries[len(entries)-1].Observation
+	}
+	if _, err := bound.AppendDiscussion(context.Background(), tracker.AppendDiscussionRequest{ExternalRef: graph.blocked.ExternalRef, OperationID: graph.adapterOperation, Author: graph.adapterAuthor, Body: graph.adapterBody, ExpectedObservation: observation.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fixture.runBD(t, "comments", "add", graph.blocked.ExternalRef.ExternalID, graph.humanBody, "--author", graph.humanAuthor, "--json"); err != nil {
+		t.Fatal(err)
+	}
+	return graph
 }
 
 func validateRestorePath(root, target string, requireEmpty bool) error {

@@ -192,6 +192,63 @@ func TestServerBindingRequiresPinnedConnectionAndCopiesCredentials(t *testing.T)
 	}
 }
 
+func TestServerWorkspaceIdentityUsesOnlyQualifiedServerTuple(t *testing.T) {
+	root := t.TempDir()
+	executable := testExecutable(t, root)
+	firstWorkspace := filepath.Join(root, "checkout-a", ".beads")
+	secondWorkspace := filepath.Join(root, "checkout-b", ".beads")
+	mustMkdir(t, firstWorkspace)
+	mustMkdir(t, secondWorkspace)
+	base := BindingConfig{
+		ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: firstWorkspace,
+		ProviderDatabaseIdentity: "project_db", ProtocolSchema: 1,
+		ConcurrencyMode: tracker.ConcurrencyServerMultiwriter, ServerIdentity: "server-1",
+		ServerEndpoint: "127.0.0.1:3306",
+		Credentials:    map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306"},
+	}
+	first, err := ResolveBinding(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.WorkspacePath = secondWorkspace
+	second, err := ResolveBinding(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.WorkspacePath == second.WorkspacePath || first.WorkspaceIdentity != second.WorkspaceIdentity {
+		t.Fatalf("same server tuple did not converge across local paths: first=%+v second=%+v", first, second)
+	}
+
+	mutants := []struct {
+		name string
+		edit func(*BindingConfig)
+	}{
+		{"host", func(config *BindingConfig) {
+			config.ServerEndpoint = "localhost:3306"
+			config.Credentials["DOLT_SERVER_HOST"] = "localhost"
+		}},
+		{"port", func(config *BindingConfig) {
+			config.ServerEndpoint = "127.0.0.1:3307"
+			config.Credentials["DOLT_SERVER_PORT"] = "3307"
+		}},
+		{"database", func(config *BindingConfig) { config.ProviderDatabaseIdentity = "other_db" }},
+	}
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			candidate := base
+			candidate.Credentials = map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306"}
+			mutant.edit(&candidate)
+			resolved, err := ResolveBinding(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved.WorkspaceIdentity == first.WorkspaceIdentity {
+				t.Fatalf("%s tuple mutant retained the qualified identity", mutant.name)
+			}
+		})
+	}
+}
+
 func TestWorkspaceMismatchDiagnosticIsPayloadFree(t *testing.T) {
 	err := workspaceMismatch("secret-expected", "secret-observed")
 	var portable *tracker.Error

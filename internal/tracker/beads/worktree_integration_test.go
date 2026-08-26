@@ -68,12 +68,23 @@ func TestRealBeadsWorktreeQualification(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := spliced.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorWorkspaceMismatch) {
-			t.Fatalf("divergent database identity was not refused: %v", err)
+		spy := &realCommandCensusRunner{delegate: spliced.adapter.runner}
+		spliced.adapter.runner = spy
+		beforeCount := realCatalogCount(t, before)
+		_, err = spliced.CreateWork(context.Background(), tracker.CreateWorkRequest{
+			ProjectID: fixture.projectID, WorkID: ids.WorkID("mismatch-refusal-work"), OperationID: ids.OperationID("mismatch-refusal-operation"),
+			Title: "must not reach provider mutation", MetadataSchema: 1,
+		})
+		if !tracker.IsKind(err, tracker.ErrorWorkspaceMismatch) {
+			t.Fatalf("divergent database identity was not refused through the create port: %v", err)
+		}
+		if spy.commands() == 0 || spy.mutations() != 0 {
+			t.Fatalf("mismatch command census total=%d mutating=%d", spy.commands(), spy.mutations())
 		}
 		after, _, err := fixture.runBD(t, "list", "--json")
-		if err != nil || !bytes.Equal(before, after) {
-			t.Fatalf("mismatch refusal changed provider state: err=%v", err)
+		afterCount := realCatalogCount(t, after)
+		if err != nil || !bytes.Equal(before, after) || beforeCount != afterCount {
+			t.Fatalf("mismatch refusal changed provider state: err=%v before=%d after=%d", err, beforeCount, afterCount)
 		}
 	})
 
@@ -127,6 +138,17 @@ func TestRealBeadsWorktreeQualification(t *testing.T) {
 		})
 		t.Logf("WP09_CONTENTION %s", payload)
 	})
+}
+
+func realCatalogCount(t *testing.T, payload []byte) int {
+	t.Helper()
+	var envelope struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if decodeRealEnvelope(payload, &envelope) != nil {
+		t.Fatal("real provider catalog census is malformed")
+	}
+	return len(envelope.Data)
 }
 
 func assertCrossWorktreeCatalog(t *testing.T, fixture *realBeadsFixture, left, right string, expected int) []byte {

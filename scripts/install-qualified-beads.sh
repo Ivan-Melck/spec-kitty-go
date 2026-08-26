@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+LC_ALL=C
+export LC_ALL
 
 qualified_version='1.2.2'
 qualified_source_commit='6c124203e771433a3550c348771a5b5e27fd3c21'
@@ -40,6 +42,10 @@ esac
 destination=$(realpath -m -- "$destination")
 case "$destination" in
     /|/home|/tmp|/usr|/var) printf '%s\n' 'destination is too broad' >&2; exit 2 ;;
+    *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./+=,@:%-]*)
+        printf '%s\n' 'destination contains bytes unsupported by the JSON result contract' >&2
+        exit 2
+        ;;
 esac
 
 if repository_root=$(git rev-parse --show-toplevel 2>/dev/null); then
