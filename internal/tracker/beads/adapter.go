@@ -58,11 +58,17 @@ func (adapter *Adapter) execute(ctx context.Context, request command) (commandRe
 	if *result.exitCode != 0 {
 		decoded, err := decodeDocumentedError(result.stdout, result.stdoutTruncated)
 		if err == nil {
+			if decoded.shape == documentedDataErrorEnvelope && (request.kind != CommandShow || request.mutating) {
+				result.mutationOutcome = ambiguousIfMutation(request, result)
+				portable, _ := translateFailure(result, &protocolError{cause: protocolMalformed})
+				metadata.schemaVersion = decoded.schemaVersion
+				return commandResponse{metadata: metadata, result: result}, portable
+			}
 			if request.mutating {
 				result.mutationOutcome = mutationNotApplied
 			}
 			providerCode := decoded.providerCode
-			if decoded.shape == documentedDataErrorEnvelope && request.kind == CommandShow {
+			if decoded.shape == documentedDataErrorEnvelope {
 				providerCode = "not_found"
 			}
 			cause := &commandFailure{class: failureProvider, providerCode: providerCode, schema: decoded.schemaVersion}
