@@ -355,7 +355,8 @@ func assertAttributionFacts(ctx context.Context, db *sql.DB, trackerPath string)
 		return err
 	}
 	for workKey, allowed := range allowedByWork {
-		work, err := provider.Read(ctx, workKey)
+		providerKey, _, _ := strings.Cut(workKey, "#spec-kitty-intent=")
+		work, err := provider.Read(ctx, providerKey)
 		if err != nil {
 			return fmt.Errorf("work=%s provider_read=%v", workKey, err)
 		}

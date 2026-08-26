@@ -3,7 +3,6 @@ package conformance
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -81,7 +80,11 @@ func TestRegistryAndCapabilityMutantsFailClosed(t *testing.T) {
 	})
 }
 
-func fakeFactory(ctx context.Context, root, _ string) (Fixture, error) {
+func fakeFactory(ctx context.Context, root, caseID string) (Fixture, error) {
+	return fakeFactoryForCase(ctx, root, caseID)
+}
+
+func fakeFactoryForCase(ctx context.Context, root, caseID string) (Fixture, error) {
 	path := filepath.Join(root, "fake-tracker.json")
 	store, err := fake.Open(path)
 	if err != nil {
@@ -91,62 +94,43 @@ func fakeFactory(ctx context.Context, root, _ string) (Fixture, error) {
 		return Fixture{}, err
 	}
 	provider := fake.NewProvider(store)
+	catalog := tracker.Catalog(provider)
 	capabilities, err := provider.Capabilities(ctx)
 	if err != nil {
 		return Fixture{}, err
 	}
 	reference := tracker.ExternalWorkRef{ProjectID: "project-1", WorkID: "work-1", Provider: "durable_fake", ExternalID: "external-1", MetadataSchema: 1}
+	diagnostic := DiagnosticExpectation{Reference: reference}
+	switch caseID {
+	case "diagnostic.unavailable.typed":
+		catalog = fakeUnavailableCatalog{Catalog: provider}
+		diagnostic.Kind, diagnostic.RecoveryCode = tracker.ErrorUnavailable, "repair_provider_binding"
+	case "observation.stale.not-normalized":
+		record, readErr := provider.ReadWork(ctx, reference)
+		if readErr != nil {
+			return Fixture{}, readErr
+		}
+		diagnostic.ProviderToken, diagnostic.Assignee, diagnostic.Marker = record.Observation.ProviderToken, record.VisibleAssignee, record.AssignmentMarker
+	case "safety.wrong-state.refused":
+		diagnostic.Reference = reference
+		diagnostic.Reference.ExternalID = "missing-wrong-state"
+		diagnostic.Kind = tracker.ErrorNotFound
+	}
 	return Fixture{
 		Capabilities: capabilities, Reference: reference,
-		Catalog: provider, Graph: provider, Discussion: provider, Assignment: provider,
+		Catalog: catalog, Graph: provider, Discussion: provider, Assignment: provider,
+		Diagnostic: diagnostic,
 		MutationCount: func(ctx context.Context) (int, error) {
 			history, err := store.History(ctx)
 			return len(history), err
 		},
-		Fault: func(ctx context.Context, id string) error {
-			switch id {
-			case "unavailable":
-				if err := store.Inject(ctx, fake.FailureUnavailable); err != nil {
-					return err
-				}
-				before, readErr := provider.ReadWork(ctx, reference)
-				if readErr != nil {
-					return readErr
-				}
-				_, err := provider.AppendDiscussion(ctx, tracker.AppendDiscussionRequest{ExternalRef: reference, OperationID: "operation-unavailable-probe", Author: "actor-probe", Body: "probe", ExpectedObservation: before.Observation.Revision})
-				if !tracker.IsKind(err, tracker.ErrorUnavailable) {
-					return fmt.Errorf("unavailable diagnostic=%v", err)
-				}
-				return nil
-			case "stale":
-				old, err := provider.ReadWork(ctx, reference)
-				if err != nil {
-					return err
-				}
-				if err := store.HumanAssign(ctx, reference.ExternalID, "human-new"); err != nil {
-					return err
-				}
-				current, err := provider.ReadWork(ctx, reference)
-				if err != nil {
-					return err
-				}
-				if old.Observation.Revision == current.Observation.Revision || old.VisibleAssignee == current.VisibleAssignee {
-					return fmt.Errorf("stale observation was normalized")
-				}
-				return nil
-			case "wrong":
-				wrong := reference
-				wrong.ExternalID = "missing-wrong-state"
-				_, err := provider.ReadWork(ctx, wrong)
-				if !tracker.IsKind(err, tracker.ErrorNotFound) {
-					return fmt.Errorf("wrong state diagnostic=%v", err)
-				}
-				return nil
-			default:
-				return fmt.Errorf("unknown portable fault %q", id)
-			}
-		},
 	}, nil
+}
+
+type fakeUnavailableCatalog struct{ tracker.Catalog }
+
+func (fakeUnavailableCatalog) ReadWork(context.Context, tracker.ExternalWorkRef) (tracker.WorkRecord, error) {
+	return tracker.WorkRecord{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "provider unavailable"}
 }
 
 func clearProviderEnvironment(t *testing.T) {

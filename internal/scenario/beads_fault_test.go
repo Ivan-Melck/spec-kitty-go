@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -29,39 +30,39 @@ import (
 func TestBeadsDishonestRunsSharedPortableConformance(t *testing.T) {
 	executable := buildDishonestExecutable(t)
 	factory := func(ctx context.Context, root, caseID string) (conformance.Fixture, error) {
-		fixture := newDishonestFixtureAt(t, root, executable, nil, nil)
-		store, err := fake.Open(filepath.Join(root, "portable-fake.json"))
-		if err != nil {
-			return conformance.Fixture{}, err
-		}
-		if err := store.Seed(ctx, fake.WorkSeed{Key: "external-1", Title: "portable contract", Criteria: []string{"observable result"}, Assignee: "original"}); err != nil {
-			return conformance.Fixture{}, err
-		}
-		semantic := fake.NewProvider(store)
-		reference := tracker.ExternalWorkRef{ProjectID: "project-1", WorkID: "work-1", Provider: "durable_fake", ExternalID: "external-1", MetadataSchema: 1}
-		if caseID == "assignment.compensation.attribution" {
-			before, observeErr := semantic.ObserveAssignment(ctx, reference)
-			if observeErr != nil {
-				return conformance.Fixture{}, observeErr
-			}
-			if _, projectErr := semantic.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: reference, OperationID: "operation-conformance-compensable", Assignee: "actor-compensable", ExpectedObservation: before.Observation.Revision, RequiredGuarantee: tracker.AssignmentAtomicClaim}); projectErr != nil {
-				return conformance.Fixture{}, projectErr
-			}
-		}
-		provider := &dishonestPortableProvider{t: t, caseID: caseID, fixture: fixture, store: store, semantic: semantic}
+		steps, initial, diagnostic, offline := dishonestConformancePlan(t, root, caseID)
+		fixture := newDishonestFixtureAt(t, root, executable, steps, initial)
 		capabilities := tracker.ProviderCapabilities{
 			CatalogRead: tracker.SupportSupported, CatalogCreate: tracker.SupportSupported, CatalogUpdate: tracker.UpdateUnguarded,
 			BlockingGraph: tracker.SupportSupported, Discussion: tracker.DiscussionAppendOnly, Assignment: tracker.AssignmentUnguarded,
 			ObservationRevision: tracker.ObservationRevisionContentDerived, SafeCompensation: tracker.CompensationUnsupported,
 			ConcurrentWriters: tracker.ConcurrentWritersAdapterSerialized, PortableExport: tracker.SupportUnsupported, RestorableBackup: tracker.SupportUnsupported,
 		}
+		moved := ""
+		if offline {
+			moved = executable + "." + strings.ReplaceAll(caseID, ".", "-")
+			if err := os.Rename(executable, moved); err != nil {
+				return conformance.Fixture{}, err
+			}
+		}
+		expectedConsumption := len(steps)
+		if offline {
+			expectedConsumption = 0
+		}
 		return conformance.Fixture{
 			Capabilities: capabilities,
-			Reference:    reference,
-			Catalog:      provider, Graph: provider, Discussion: provider, Assignment: provider,
-			MutationCount: provider.mutationCount,
-			Fault:         provider.exerciseFault,
-			Close:         provider.close,
+			Reference:    fixture.reference,
+			Catalog:      fixture.adapter, Graph: fixture.adapter, Discussion: fixture.adapter, Assignment: fixture.adapter,
+			Diagnostic:    diagnostic,
+			MutationCount: func(context.Context) (int, error) { return dishonestMutationCount(root), nil },
+			Close: func() error {
+				if moved != "" {
+					if err := os.Rename(moved, executable); err != nil {
+						return err
+					}
+				}
+				return verifyDishonestConsumption(root, expectedConsumption)
+			},
 		}, nil
 	}
 	census, err := conformance.Run(context.Background(), t.TempDir(), factory, conformance.DefaultCases())
@@ -73,239 +74,174 @@ func TestBeadsDishonestRunsSharedPortableConformance(t *testing.T) {
 	}
 }
 
-// dishonestPortableProvider makes every shared provider-neutral operation
-// cross the production bounded-command decoder before applying its portable
-// semantic assertion to an isolated durable store. The scripted child is not
-// a function mock: every probe is an exact argv/environment/workspace step,
-// and close proves no expected step was bypassed.
-type dishonestPortableProvider struct {
-	t         *testing.T
-	caseID    string
-	fixture   dishonestFixture
-	store     *fake.Store
-	semantic  *fake.Provider
-	mu        sync.Mutex
-	steps     []dishonestStep
-	mutations int
-	created   map[ids.OperationID]tracker.WorkMutation
-	updated   map[ids.OperationID]tracker.WorkMutation
-	edges     []tracker.DependencyRef
+func TestBeadsDishonestSharedConformanceKillsDeletedPublicMethods(t *testing.T) {
+	executable := buildDishonestExecutable(t)
+	methods := map[string]string{
+		"ReadWork": "catalog.read.complete", "CreateWork": "catalog.create.replay", "UpdateWork": "catalog.update.guarantee",
+		"PutBlockingDependency": "graph.blocking.direction", "RemoveBlockingDependency": "graph.blocking.direction", "ListDependencies": "graph.blocking.direction", "ReadyProjection": "graph.ready.diagnostic",
+		"AppendDiscussion": "discussion.append.order.replay", "ListDiscussion": "discussion.append.order.replay",
+		"ObserveAssignment": "assignment.project.observe.replay", "ProjectAssignment": "assignment.project.observe.replay", "CompensateAssignment": "assignment.compensation.attribution",
+	}
+	registry := conformance.DefaultCases()
+	for method, caseID := range methods {
+		method, caseID := method, caseID
+		t.Run(method, func(t *testing.T) {
+			var selected conformance.Case
+			for _, candidate := range registry {
+				if candidate.ID == caseID {
+					selected = candidate
+				}
+			}
+			factory := func(_ context.Context, root, id string) (conformance.Fixture, error) {
+				steps, initial, diagnostic, _ := dishonestConformancePlan(t, root, id)
+				fixture := newDishonestFixtureAt(t, root, executable, steps, initial)
+				deleted := deletedBoundAdapterPort{BoundAdapter: fixture.adapter, method: method}
+				capabilities := tracker.ProviderCapabilities{CatalogRead: tracker.SupportSupported, CatalogCreate: tracker.SupportSupported, CatalogUpdate: tracker.UpdateUnguarded, BlockingGraph: tracker.SupportSupported, Discussion: tracker.DiscussionAppendOnly, Assignment: tracker.AssignmentUnguarded, ObservationRevision: tracker.ObservationRevisionContentDerived, SafeCompensation: tracker.CompensationUnsupported, ConcurrentWriters: tracker.ConcurrentWritersAdapterSerialized, PortableExport: tracker.SupportUnsupported, RestorableBackup: tracker.SupportUnsupported}
+				return conformance.Fixture{Capabilities: capabilities, Reference: fixture.reference, Catalog: deleted, Graph: deleted, Discussion: deleted, Assignment: deleted, Diagnostic: diagnostic, MutationCount: func(context.Context) (int, error) { return dishonestMutationCount(root), nil }}, nil
+			}
+			if _, err := conformance.Run(context.Background(), t.TempDir(), factory, []conformance.Case{selected}); err == nil || !strings.Contains(err.Error(), caseID) {
+				t.Fatalf("deleted %s escaped shared case %s: %v", method, caseID, err)
+			}
+		})
+	}
 }
 
-func (provider *dishonestPortableProvider) probe(ctx context.Context, operation string) error {
-	_, err := provider.probePayload(ctx, operation, issueEnvelope("", "", "project-fault", "work-fault", "r1"))
-	return err
-}
-
-func (provider *dishonestPortableProvider) probePayload(ctx context.Context, operation, payload string) (tracker.WorkRecord, error) {
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	step := showStep(fmt.Sprintf("conformance.%s.%03d.%s", provider.caseID, len(provider.steps)+1, operation), payload, "", 0)
-	step.Workspace = provider.fixture.root
-	step.RequiredEnv = safeDishonestEnvironment(provider.fixture.root)
-	provider.steps = append(provider.steps, step)
-	writeDishonestScenario(provider.t, provider.fixture.root, dishonestScenario{SchemaVersion: 1, Steps: provider.steps})
-	return provider.fixture.adapter.ReadWork(ctx, provider.fixture.reference)
-}
-
-func (provider *dishonestPortableProvider) exerciseFault(ctx context.Context, id string) error {
-	switch id {
-	case "unavailable":
-		moved := provider.fixture.executable + ".offline"
-		if err := os.Rename(provider.fixture.executable, moved); err != nil {
-			return err
+func dishonestConformancePlan(t *testing.T, root, caseID string) ([]dishonestStep, map[string]string, conformance.DiagnosticExpectation, bool) {
+	t.Helper()
+	reference := tracker.ExternalWorkRef{ProjectID: "project-fault", WorkID: "work-fault", Provider: "beads", ExternalID: "bd-fault", MetadataSchema: 1, CreatedByOperation: "operation-create-fault"}
+	diagnostic := conformance.DiagnosticExpectation{Reference: reference}
+	base := issueEnvelope("", "", "project-fault", "work-fault", "r1")
+	show := func(id, payload string) dishonestStep { return showStep(id, payload, "", 0) }
+	preflight := func(prefix string) []dishonestStep {
+		steps := preflightSteps(root)
+		for index := range steps {
+			steps[index].ID = prefix + "." + steps[index].ID
 		}
-		_, err := provider.fixture.adapter.ReadWork(ctx, provider.fixture.reference)
-		restoreErr := os.Rename(moved, provider.fixture.executable)
-		if restoreErr != nil {
-			return restoreErr
+		return steps
+	}
+	switch caseID {
+	case "validation.capabilities.complete", "catalog.read.complete":
+		return []dishonestStep{show(caseID+".read", base)}, nil, diagnostic, false
+	case "diagnostic.unavailable.typed":
+		diagnostic.Kind, diagnostic.RecoveryCode = tracker.ErrorUnavailable, "repair_provider_binding"
+		return []dishonestStep{show(caseID+".unconsumed", base)}, nil, diagnostic, true
+	case "observation.stale.not-normalized":
+		diagnostic.ProviderToken, diagnostic.Assignee, diagnostic.Marker = "r-old", "actor-old", "operation-old"
+		return []dishonestStep{show(caseID+".read", issueEnvelope("actor-old", "operation-old", "project-fault", "work-fault", "r-old"))}, map[string]string{"truth_revision": "r-current"}, diagnostic, false
+	case "safety.wrong-state.refused":
+		diagnostic.Reference.ProjectID = "project-foreign"
+		diagnostic.Kind = tracker.ErrorRevisionConflict
+		return nil, nil, diagnostic, false
+	case "catalog.create.replay":
+		digest := portableRequestDigest("portable create", "", "")
+		metadata := fmt.Sprintf(`{"spec_kitty":{"content_digest":%q,"created_by_operation":"operation-conformance-create","criteria":[],"design_context":"","last_operation":"operation-conformance-create","project_id":"project-fault","schema_version":1,"work_id":"work-conformance-create"}}`, digest)
+		created := envelope("[" + issueJSONWithMetadata("bd-created", "portable create", "", metadata, "r-created") + "]")
+		steps := preflight("create.first")
+		steps = append(steps,
+			dishonestStep{ID: "create.first.list", Argv: []string{"list", "--json"}, Stdout: envelope(`[]`)},
+			dishonestStep{ID: "create.first.mutate", Argv: []string{"create", "--title", "portable create", "--metadata", metadata, "--json"}, Stdout: envelope(`{"id":"bd-created"}`), TransitionTiming: "before_response", Transition: map[string]string{"created": "bd-created"}},
+			dishonestStep{ID: "create.first.verify", Argv: []string{"show", "bd-created", "--json"}, Stdout: created},
+		)
+		steps = append(steps, preflight("create.replay")...)
+		steps = append(steps, dishonestStep{ID: "create.replay.list", Argv: []string{"list", "--json"}, Stdout: created})
+		return steps, nil, diagnostic, false
+	case "catalog.update.guarantee":
+		digest := portableRequestDigest("portable update", "", "")
+		metadata := fmt.Sprintf(`{"spec_kitty":{"content_digest":%q,"created_by_operation":"operation-create-fault","criteria":[],"design_context":"","last_operation":"operation-conformance-update","project_id":"project-fault","schema_version":1,"work_id":"work-fault"}}`, digest)
+		after := envelope("[" + issueJSONWithMetadata("bd-fault", "portable update", "", metadata, "r2") + "]")
+		steps := []dishonestStep{show("update.initial", base), show("update.confirm", base)}
+		steps = append(steps, preflight("update.first")...)
+		steps = append(steps, show("update.first.before", base), dishonestStep{ID: "update.first.mutate", Argv: []string{"update", "bd-fault", "--title", "portable update", "--description", "", "--acceptance", "", "--metadata", metadata, "--json"}, Stdout: after}, show("update.first.verify", after))
+		steps = append(steps, preflight("update.replay")...)
+		steps = append(steps, show("update.replay.read", after))
+		return steps, nil, diagnostic, false
+	case "graph.blocking.direction":
+		blocker := namedIssueJSON("bd-blocker", "blocker", "", "", "project-fault", "work-conformance-blocker", "operation-create-blocker", "r-blocker")
+		catalog := envelope("[" + issueJSON("", "", "project-fault", "work-fault", "r1") + "," + blocker + "]")
+		empty, edge := envelope(`[]`), envelope(`[{"id":"bd-blocker","dependency_type":"blocks","edge_id":"edge-1"}]`)
+		steps := preflight("graph.put")
+		steps = append(steps, dishonestStep{ID: "graph.put.catalog", Argv: []string{"list", "--json"}, Stdout: catalog}, dishonestStep{ID: "graph.put.before", Argv: []string{"dep", "list", "bd-fault", "--json"}, Stdout: empty}, dishonestStep{ID: "graph.put.mutate", Argv: []string{"dep", "add", "bd-fault", "bd-blocker", "--type", "blocks", "--json"}, Stdout: envelope(`{}`)}, dishonestStep{ID: "graph.put.after", Argv: []string{"dep", "list", "bd-fault", "--json"}, Stdout: edge})
+		steps = append(steps, dishonestStep{ID: "graph.list.catalog", Argv: []string{"list", "--json"}, Stdout: catalog}, dishonestStep{ID: "graph.list.edges", Argv: []string{"dep", "list", "bd-fault", "--json"}, Stdout: edge})
+		steps = append(steps, preflight("graph.remove")...)
+		steps = append(steps, dishonestStep{ID: "graph.remove.catalog", Argv: []string{"list", "--json"}, Stdout: catalog}, dishonestStep{ID: "graph.remove.before", Argv: []string{"dep", "list", "bd-fault", "--json"}, Stdout: edge}, dishonestStep{ID: "graph.remove.mutate", Argv: []string{"dep", "remove", "bd-fault", "bd-blocker", "--json"}, Stdout: envelope(`{}`)}, dishonestStep{ID: "graph.remove.after", Argv: []string{"dep", "list", "bd-fault", "--json"}, Stdout: empty})
+		return steps, nil, diagnostic, false
+	case "graph.ready.diagnostic":
+		return []dishonestStep{{ID: "ready.catalog", Argv: []string{"list", "--json"}, Stdout: envelope("[" + issueJSON("", "", "project-fault", "work-fault", "r1") + "]")}, {ID: "ready.provider", Argv: []string{"ready", "--json"}, Stdout: envelope("[" + issueJSON("", "", "project-fault", "work-fault", "r1") + "]")}}, nil, diagnostic, false
+	case "discussion.append.order.replay":
+		providerBody := "<!-- spec-kitty:discussion:v1;op=" + base64.RawURLEncoding.EncodeToString([]byte("operation-conformance-discussion")) + " -->\nportable body"
+		comment := fmt.Sprintf(`[{"id":"comment-1","author":"actor-conformance","text":%q,"created_at":"2026-08-26T12:01:00Z"}]`, providerBody)
+		steps := []dishonestStep{show("discussion.initial", base)}
+		appendAttempt := func(prefix string, comments string, mutate bool) {
+			steps = append(steps, preflight(prefix)...)
+			steps = append(steps, show(prefix+".show", base), dishonestStep{ID: prefix + ".comments", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(comments)}, dishonestStep{ID: prefix + ".scope", Argv: []string{"list", "--json"}, Stdout: envelope("[" + issueJSON("", "", "project-fault", "work-fault", "r1") + "]")})
+			if mutate {
+				steps = append(steps, dishonestStep{ID: prefix + ".mutate", Argv: []string{"comments", "add", "bd-fault", providerBody, "--json"}, Stdout: envelope(`{}`)}, show(prefix+".after-show", base), dishonestStep{ID: prefix + ".after-comments", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(comment)})
+			}
 		}
-		if !tracker.IsKind(err, tracker.ErrorUnavailable) {
-			return fmt.Errorf("unavailable diagnostic=%v", err)
-		}
-		return nil
-	case "stale":
-		record, err := provider.probePayload(ctx, "stale", issueEnvelope("actor-old", "operation-old", "project-fault", "work-fault", "r-old"))
-		if err != nil {
-			return err
-		}
-		if record.Observation.ProviderToken != "r-old" || record.VisibleAssignee != "actor-old" || record.AssignmentMarker != "operation-old" {
-			return fmt.Errorf("stale provider response was normalized")
-		}
-		state := readDishonestRuntime(provider.t, provider.fixture.root)
-		if state.Position != len(provider.steps) {
-			return fmt.Errorf("stale script was not consumed")
-		}
-		return nil
-	case "wrong":
-		_, err := provider.probePayload(ctx, "wrong", issueEnvelope("", "", "project-foreign", "work-fault", "r1"))
-		if !tracker.IsKind(err, tracker.ErrorRevisionConflict) {
-			return fmt.Errorf("wrong-state diagnostic=%v", err)
-		}
-		return nil
+		appendAttempt("discussion.first", `[]`, true)
+		appendAttempt("discussion.replay", comment, false)
+		steps = append(steps, show("discussion.list.show", base), dishonestStep{ID: "discussion.list.comments", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(comment)})
+		appendAttempt("discussion.conflict", comment, false)
+		return steps, nil, diagnostic, false
+	case "assignment.project.observe.replay":
+		metadata := `{"spec_kitty":{"assignment_marker":"operation-conformance-assignment","content_digest":"","created_by_operation":"operation-create-fault","criteria":[],"design_context":"","last_operation":"operation-conformance-assignment","project_id":"project-fault","schema_version":1,"work_id":"work-fault"}}`
+		after := envelope("[" + issueJSONWithMetadata("bd-fault", "fault fixture", "actor-conformance", metadata, "r2") + "]")
+		steps := []dishonestStep{show("assignment.initial", base)}
+		steps = append(steps, preflight("assignment.first")...)
+		steps = append(steps, show("assignment.first.before", base), dishonestStep{ID: "assignment.first.mutate", Argv: []string{"update", "bd-fault", "--metadata", metadata, "--assignee", "actor-conformance", "--json"}, Stdout: after}, show("assignment.first.after", after))
+		steps = append(steps, preflight("assignment.replay")...)
+		steps = append(steps, show("assignment.replay.read", after), show("assignment.final", after))
+		return steps, nil, diagnostic, false
+	case "assignment.compensation.attribution":
+		metadata := `{"spec_kitty":{"assignment_marker":"operation-conformance-compensable","content_digest":"","created_by_operation":"operation-create-fault","criteria":[],"design_context":"","last_operation":"operation-conformance-compensable","project_id":"project-fault","schema_version":1,"work_id":"work-fault"}}`
+		attributed := envelope("[" + issueJSONWithMetadata("bd-fault", "fault fixture", "actor-compensable", metadata, "r2") + "]")
+		return []dishonestStep{show("compensation.initial", attributed), show("compensation.observe", attributed)}, nil, diagnostic, false
 	default:
-		return fmt.Errorf("unknown portable fault %q", id)
+		t.Fatalf("unhandled dishonest conformance case %q", caseID)
+		return nil, nil, diagnostic, false
 	}
 }
 
-func (provider *dishonestPortableProvider) close() error {
-	if len(provider.steps) == 0 {
+func dishonestMutationCount(root string) int {
+	encoded, err := os.ReadFile(filepath.Join(root, "scenario.state.json"))
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		return -1
+	}
+	var state dishonestRuntime
+	if json.Unmarshal(encoded, &state) != nil {
+		return -1
+	}
+	count := 0
+	for _, call := range state.Invocations {
+		if len(call.Argv) == 0 {
+			continue
+		}
+		if call.Argv[0] == "create" || call.Argv[0] == "update" || (len(call.Argv) >= 2 && call.Argv[0] == "dep" && (call.Argv[1] == "add" || call.Argv[1] == "remove")) || (len(call.Argv) >= 2 && call.Argv[0] == "comments" && call.Argv[1] == "add") {
+			count++
+		}
+	}
+	return count
+}
+
+func verifyDishonestConsumption(root string, expected int) error {
+	encoded, err := os.ReadFile(filepath.Join(root, "scenario.state.json"))
+	if os.IsNotExist(err) && expected == 0 {
 		return nil
 	}
-	state := readDishonestRuntime(provider.t, provider.fixture.root)
-	if state.Position != len(provider.steps) || len(state.Invocations) != len(provider.steps) {
-		return fmt.Errorf("dishonest conformance script consumption=%d/%d invocations=%d", state.Position, len(provider.steps), len(state.Invocations))
+	if err != nil {
+		return err
+	}
+	var state dishonestRuntime
+	if err := json.Unmarshal(encoded, &state); err != nil {
+		return err
+	}
+	if state.Position != expected || len(state.Invocations) != expected {
+		return fmt.Errorf("dishonest conformance script consumption=%d/%d invocations=%d", state.Position, expected, len(state.Invocations))
 	}
 	return nil
-}
-
-func (provider *dishonestPortableProvider) CreateWork(ctx context.Context, request tracker.CreateWorkRequest) (tracker.WorkMutation, error) {
-	if err := provider.probe(ctx, "catalog-create"); err != nil {
-		return tracker.WorkMutation{}, err
-	}
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	if provider.created == nil {
-		provider.created = map[ids.OperationID]tracker.WorkMutation{}
-	}
-	if prior, ok := provider.created[request.OperationID]; ok {
-		prior.Replayed, prior.Noop = true, true
-		return prior, nil
-	}
-	reference := tracker.ExternalWorkRef{ProjectID: request.ProjectID, WorkID: request.WorkID, Provider: "durable_fake", ExternalID: "created-" + request.WorkID.String(), MetadataSchema: request.MetadataSchema, CreatedByOperation: request.OperationID}
-	record, err := portableDishonestRecord(reference, request.Title, request.Description, request.DesignContext, request.Criteria, 2)
-	if err != nil {
-		return tracker.WorkMutation{}, err
-	}
-	result := tracker.WorkMutation{Record: record, Guarantee: tracker.UpdateUnguarded}
-	provider.created[request.OperationID], provider.mutations = result, provider.mutations+1
-	return result, nil
-}
-func (provider *dishonestPortableProvider) ReadWork(ctx context.Context, reference tracker.ExternalWorkRef) (tracker.WorkRecord, error) {
-	if err := provider.probe(ctx, "catalog-read"); err != nil {
-		return tracker.WorkRecord{}, err
-	}
-	return provider.semantic.ReadWork(ctx, reference)
-}
-func (provider *dishonestPortableProvider) UpdateWork(ctx context.Context, request tracker.UpdateWorkRequest) (tracker.WorkMutation, error) {
-	if err := provider.probe(ctx, "catalog-update"); err != nil {
-		return tracker.WorkMutation{}, err
-	}
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	if provider.updated == nil {
-		provider.updated = map[ids.OperationID]tracker.WorkMutation{}
-	}
-	if prior, ok := provider.updated[request.OperationID]; ok {
-		prior.Replayed, prior.Noop = true, true
-		return prior, nil
-	}
-	record, err := portableDishonestRecord(request.ExternalRef, request.Title, request.Description, request.DesignContext, request.Criteria, request.ExpectedObservation+1)
-	if err != nil {
-		return tracker.WorkMutation{}, err
-	}
-	result := tracker.WorkMutation{Record: record, Guarantee: tracker.UpdateUnguarded}
-	provider.updated[request.OperationID], provider.mutations = result, provider.mutations+1
-	return result, nil
-}
-func (provider *dishonestPortableProvider) PutBlockingDependency(ctx context.Context, request tracker.DependencyRequest) (tracker.DependencyMutation, error) {
-	if err := provider.probe(ctx, "dependency-put"); err != nil {
-		return tracker.DependencyMutation{}, err
-	}
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	provider.edges = append(provider.edges, request.Dependency)
-	provider.mutations++
-	observation, _ := tracker.NewProviderObservation(provider.fixture.reference.ExternalID, []byte("dependency-put"), tracker.Revision(2), "", "dependency-2", time.Now().UTC())
-	return tracker.DependencyMutation{Dependency: request.Dependency, Observation: observation}, nil
-}
-func (provider *dishonestPortableProvider) RemoveBlockingDependency(ctx context.Context, request tracker.DependencyRequest) (tracker.DependencyMutation, error) {
-	if err := provider.probe(ctx, "dependency-remove"); err != nil {
-		return tracker.DependencyMutation{}, err
-	}
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	for index, edge := range provider.edges {
-		if edge == request.Dependency {
-			provider.edges = append(provider.edges[:index], provider.edges[index+1:]...)
-			provider.mutations++
-			break
-		}
-	}
-	observation, _ := tracker.NewProviderObservation(provider.fixture.reference.ExternalID, []byte("dependency-remove"), tracker.Revision(3), "", "dependency-3", time.Now().UTC())
-	return tracker.DependencyMutation{Dependency: request.Dependency, Observation: observation}, nil
-}
-func (provider *dishonestPortableProvider) ListDependencies(ctx context.Context, reference tracker.ExternalWorkRef) ([]tracker.DependencyRef, error) {
-	if err := provider.probe(ctx, "dependency-list"); err != nil {
-		return nil, err
-	}
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	return append([]tracker.DependencyRef(nil), provider.edges...), nil
-}
-func (provider *dishonestPortableProvider) ReadyProjection(ctx context.Context, request tracker.ReadyRequest) (tracker.ReadyProjection, error) {
-	if err := provider.probe(ctx, "ready"); err != nil {
-		return tracker.ReadyProjection{}, err
-	}
-	observation, _ := tracker.NewProviderObservation(provider.fixture.reference.ExternalID, []byte("ready"), tracker.Revision(1), "", "ready-1", time.Now().UTC())
-	return tracker.ReadyProjection{ProviderReadyIDs: append([]ids.WorkID(nil), request.PinnedReadyIDs...), Observation: observation}, nil
-}
-func (provider *dishonestPortableProvider) AppendDiscussion(ctx context.Context, request tracker.AppendDiscussionRequest) (tracker.DiscussionMutation, error) {
-	if err := provider.probe(ctx, "discussion-append"); err != nil {
-		return tracker.DiscussionMutation{}, err
-	}
-	return provider.semantic.AppendDiscussion(ctx, request)
-}
-func (provider *dishonestPortableProvider) ListDiscussion(ctx context.Context, reference tracker.ExternalWorkRef) ([]tracker.DiscussionEntry, error) {
-	if err := provider.probe(ctx, "discussion-list"); err != nil {
-		return nil, err
-	}
-	return provider.semantic.ListDiscussion(ctx, reference)
-}
-func (provider *dishonestPortableProvider) ObserveAssignment(ctx context.Context, reference tracker.ExternalWorkRef) (tracker.AssignmentObservation, error) {
-	if err := provider.probe(ctx, "assignment-observe"); err != nil {
-		return tracker.AssignmentObservation{}, err
-	}
-	return provider.semantic.ObserveAssignment(ctx, reference)
-}
-func (provider *dishonestPortableProvider) ProjectAssignment(ctx context.Context, request tracker.ProjectAssignmentRequest) (tracker.AssignmentMutation, error) {
-	if err := provider.probe(ctx, "assignment-project"); err != nil {
-		return tracker.AssignmentMutation{}, err
-	}
-	return provider.semantic.ProjectAssignment(ctx, request)
-}
-func (provider *dishonestPortableProvider) CompensateAssignment(ctx context.Context, request tracker.CompensateAssignmentRequest) (tracker.AssignmentMutation, error) {
-	if err := provider.probe(ctx, "assignment-compensate"); err != nil {
-		return tracker.AssignmentMutation{}, err
-	}
-	actual, err := provider.semantic.ObserveAssignment(ctx, request.ExternalRef)
-	if err != nil {
-		return tracker.AssignmentMutation{}, err
-	}
-	return tracker.AssignmentMutation{Observation: actual, Guarantee: tracker.AssignmentUnguarded, Noop: true}, &tracker.Error{Kind: tracker.ErrorSafeCompensationUnsupported, Capability: tracker.CapabilitySafeCompensation, RecoveryCode: "reconcile_without_mutation", Message: "provider cannot conditionally compensate assignment"}
-}
-
-func (provider *dishonestPortableProvider) mutationCount(ctx context.Context) (int, error) {
-	history, err := provider.semanticStoreHistory(ctx)
-	if err != nil {
-		return 0, err
-	}
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	return len(history) + provider.mutations, nil
-}
-
-func (provider *dishonestPortableProvider) semanticStoreHistory(ctx context.Context) ([]fake.HistoryEntry, error) {
-	return provider.store.History(ctx)
-}
-
-func portableDishonestRecord(reference tracker.ExternalWorkRef, title, description, design string, criteria []tracker.Criterion, revision tracker.Revision) (tracker.WorkRecord, error) {
-	observation, err := tracker.NewProviderObservation(reference.ExternalID, []byte(fmt.Sprintf("%s\x00%d", reference.ExternalID, revision)), revision, "", fmt.Sprintf("revision-%d", revision), time.Now().UTC())
-	if err != nil {
-		return tracker.WorkRecord{}, err
-	}
-	reference.LastObservation = revision
-	return tracker.NewWorkRecord(reference, title, description, design, criteria, nil, "", "", nil, observation)
 }
 
 func TestBeadsDishonestProtocolFaultMatrix(t *testing.T) {
@@ -329,6 +265,12 @@ func TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions(t *testing.T) {
 		command.Env = append(os.Environ(), "BEADS_DIR="+root, "BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1")
 		return command.Run()
 	}
+	writeRaw := func(t *testing.T, root, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, "scenario.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Run("unknown-action", func(t *testing.T) {
 		root := t.TempDir()
 		writeDishonestScenario(t, root, dishonestScenario{SchemaVersion: 1, Steps: []dishonestStep{{ID: "unknown", Argv: []string{"invented", "--json"}, RequiredEnv: safeDishonestEnvironment(root), Workspace: root}}})
@@ -337,6 +279,56 @@ func TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(root, "scenario.state.json")); !os.IsNotExist(err) {
 			t.Fatalf("unknown action consumed state: %v", err)
+		}
+	})
+	for _, test := range []struct {
+		name string
+		argv []string
+		plan func(string) string
+	}{
+		{name: "schema-version-drift", argv: []string{"show", "bd-fault", "--json"}, plan: func(root string) string {
+			return fmt.Sprintf(`{"schema_version":2,"steps":[{"id":"one","argv":["show","bd-fault","--json"],"required_env":%s,"workspace":%q}]}`, mustJSON(safeDishonestEnvironment(root)), root)
+		}},
+		{name: "unknown-scenario-field", argv: []string{"show", "bd-fault", "--json"}, plan: func(root string) string {
+			return fmt.Sprintf(`{"schema_version":1,"unknown":true,"steps":[{"id":"one","argv":["show","bd-fault","--json"],"required_env":%s,"workspace":%q}]}`, mustJSON(safeDishonestEnvironment(root)), root)
+		}},
+		{name: "unknown-step-field", argv: []string{"show", "bd-fault", "--json"}, plan: func(root string) string {
+			return fmt.Sprintf(`{"schema_version":1,"steps":[{"id":"one","argv":["show","bd-fault","--json"],"required_env":%s,"workspace":%q,"unknown":true}]}`, mustJSON(safeDishonestEnvironment(root)), root)
+		}},
+		{name: "duplicate-step-id", argv: []string{"show", "bd-fault", "--json"}, plan: func(root string) string {
+			return fmt.Sprintf(`{"schema_version":1,"steps":[{"id":"same","argv":["show","bd-fault","--json"],"required_env":%s,"workspace":%q},{"id":"same","argv":["list","--json"],"required_env":%s,"workspace":%q}]}`, mustJSON(safeDishonestEnvironment(root)), root, mustJSON(safeDishonestEnvironment(root)), root)
+		}},
+		{name: "unknown-subaction", argv: []string{"comments", "invented", "bd-fault", "--json"}, plan: func(root string) string {
+			return fmt.Sprintf(`{"schema_version":1,"steps":[{"id":"one","argv":["comments","invented","bd-fault","--json"],"required_env":%s,"workspace":%q}]}`, mustJSON(safeDishonestEnvironment(root)), root)
+		}},
+		{name: "extra-argv", argv: []string{"show", "bd-fault", "--json", "extra"}, plan: func(root string) string {
+			return fmt.Sprintf(`{"schema_version":1,"steps":[{"id":"one","argv":["show","bd-fault","--json","extra"],"required_env":%s,"workspace":%q}]}`, mustJSON(safeDishonestEnvironment(root)), root)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeRaw(t, root, test.plan(root))
+			if err := run(root, test.argv...); err == nil {
+				t.Fatalf("invalid scenario %s was accepted", test.name)
+			}
+		})
+	}
+	t.Run("environment-mismatch", func(t *testing.T) {
+		root := t.TempDir()
+		step := showStep("env", issueEnvelope("", "", "project-fault", "work-fault", "r1"), "", 0)
+		step.Workspace, step.RequiredEnv = root, map[string]string{"BEADS_DIR": root, "BD_JSON_ENVELOPE": "wrong", "BD_NON_INTERACTIVE": "1"}
+		writeDishonestScenario(t, root, dishonestScenario{SchemaVersion: 1, Steps: []dishonestStep{step}})
+		if err := run(root, step.Argv...); err == nil {
+			t.Fatal("environment mismatch was accepted")
+		}
+	})
+	t.Run("workspace-mismatch", func(t *testing.T) {
+		root := t.TempDir()
+		step := showStep("workspace", issueEnvelope("", "", "project-fault", "work-fault", "r1"), "", 0)
+		step.Workspace, step.RequiredEnv = filepath.Join(root, "other"), safeDishonestEnvironment(root)
+		writeDishonestScenario(t, root, dishonestScenario{SchemaVersion: 1, Steps: []dishonestStep{step}})
+		if err := run(root, step.Argv...); err == nil {
+			t.Fatal("workspace mismatch was accepted")
 		}
 	})
 	t.Run("argv-mismatch-and-exhaustion", func(t *testing.T) {
@@ -367,6 +359,14 @@ func TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions(t *testing.T) {
 	}
 }
 
+func mustJSON(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
 func TestBeadsFaultRegistryExactCensus(t *testing.T) {
 	executable := buildDishonestExecutable(t)
 	expected := exactFaultRegistryIDs()
@@ -381,35 +381,34 @@ func TestBeadsFaultRegistryExactCensus(t *testing.T) {
 			started = append(started, caseID)
 			family, _, _ := strings.Cut(caseID, ".")
 			families[family]++
+			audit := newFaultAuthorityAudit(t, authorityFixture, staleAuthority, caseID, faultRequiresAuthority(caseID))
+			if err := audit.run("before"); err != nil {
+				t.Fatal(err)
+			}
+			var evidence executableFaultEvidence
 			if family == "apply-timeout" {
 				switch caseID {
 				case "apply-timeout.create":
-					runCatalogCreateApplyTimeout(t, executable)
+					evidence = runCatalogCreateApplyTimeout(t, executable)
 				case "apply-timeout.catalog-update":
-					runCatalogUpdateApplyTimeout(t, executable)
+					evidence = runCatalogUpdateApplyTimeout(t, executable)
 				case "apply-timeout.dependency":
-					runDependencyApplyTimeout(t, executable)
+					evidence = runDependencyApplyTimeout(t, executable)
 				case "apply-timeout.comment":
-					runCommentApplyTimeout(t, executable)
+					evidence = runCommentApplyTimeout(t, executable)
 				case "apply-timeout.assignment":
-					runAssignmentApplyTimeout(t, executable)
+					evidence = runAssignmentApplyTimeout(t, executable)
 				default:
 					t.Fatalf("unhandled apply-timeout case %s", caseID)
 				}
 			} else {
-				runNamedReadFault(t, executable, caseID)
+				evidence = runNamedReadFault(t, executable, caseID)
 			}
-			operation, diagnostic, recovery, mutation, retry := faultEvidenceSummary(caseID)
-			result := conformance.Result{ID: caseID, Disposition: conformance.Passed, CapabilityDisposition: "supported", Operation: operation, DiagnosticKind: diagnostic, RecoveryCode: recovery, MutationOutcome: mutation, RetrySafety: retry}
-			if faultRequiresAuthority(caseID) {
-				result.UniversalRequired, result.UniversalStarted = true, true
-				result.StaleProbeRequired, result.StaleProbeStarted = true, true
-				state := quickStaleFaultAuthority(t, authorityFixture, staleAuthority, "WP08."+caseID)
-				if err := auditBeadsFault(context.Background(), state); err != nil {
-					t.Fatal(err)
-				}
-				result.UniversalPassed, result.StaleProbePassed = true, true
+			if err := audit.run("after"); err != nil {
+				t.Fatal(err)
 			}
+			result := conformance.Result{ID: caseID, Disposition: conformance.Passed, CapabilityDisposition: "supported", Operation: evidence.Operation, DiagnosticKind: evidence.DiagnosticKind, RecoveryCode: evidence.RecoveryCode, MutationOutcome: evidence.MutationOutcome, RetrySafety: evidence.RetrySafety}
+			audit.populate(&result)
 			results = append(results, result)
 			terminal = append(terminal, caseID)
 			passed = append(passed, caseID)
@@ -441,38 +440,75 @@ func TestBeadsFaultRegistryExactCensus(t *testing.T) {
 	}
 }
 
+type executableFaultEvidence struct{ Operation, DiagnosticKind, RecoveryCode, MutationOutcome, RetrySafety string }
+
+func evidenceFromObservation(operation string, err error, mutations int, applied bool) executableFaultEvidence {
+	evidence := executableFaultEvidence{Operation: operation, MutationOutcome: "none", RetrySafety: "safe"}
+	var typed *tracker.Error
+	if errors.As(err, &typed) {
+		evidence.DiagnosticKind, evidence.RecoveryCode = string(typed.Kind), typed.RecoveryAction()
+		switch typed.Kind {
+		case tracker.ErrorAmbiguous, tracker.ErrorTimeout:
+			evidence.RetrySafety = "observe_before_retry"
+		case tracker.ErrorUnavailable, tracker.ErrorLockContended, tracker.ErrorSchemaSkew, tracker.ErrorMalformedProtocol:
+			evidence.RetrySafety = "repair_then_retry"
+		case tracker.ErrorRevisionConflict:
+			evidence.RetrySafety = "reconcile"
+		}
+	}
+	if mutations > 0 && applied {
+		evidence.MutationOutcome = "applied_before_response_loss"
+	} else if err != nil {
+		evidence.MutationOutcome = "not_applied"
+	}
+	return evidence
+}
+
+type faultAuthorityAudit struct {
+	t                                                      *testing.T
+	fixture                                                workspaceScenario
+	stale                                                  phase1StaleAuthority
+	fault                                                  string
+	required                                               bool
+	beforeStarted, beforePassed, afterStarted, afterPassed bool
+}
+
+func newFaultAuthorityAudit(t *testing.T, fixture workspaceScenario, stale phase1StaleAuthority, fault string, required bool) *faultAuthorityAudit {
+	return &faultAuthorityAudit{t: t, fixture: fixture, stale: stale, fault: fault, required: required}
+}
+func (a *faultAuthorityAudit) run(stage string) error {
+	if !a.required {
+		return nil
+	}
+	if stage == "before" {
+		a.beforeStarted = true
+	} else {
+		a.afterStarted = true
+	}
+	state := quickStaleFaultAuthority(a.t, a.fixture, a.stale, "WP08."+a.fault+"."+stage)
+	err := auditBeadsFault(context.Background(), state)
+	if err == nil {
+		if stage == "before" {
+			a.beforePassed = true
+		} else {
+			a.afterPassed = true
+		}
+	}
+	return err
+}
+func (a *faultAuthorityAudit) populate(result *conformance.Result) {
+	result.UniversalRequired, result.StaleProbeRequired = a.required, a.required
+	result.UniversalStarted = a.beforeStarted && a.afterStarted
+	result.UniversalPassed = a.beforePassed && a.afterPassed
+	result.StaleProbeStarted, result.StaleProbePassed = result.UniversalStarted, result.UniversalPassed
+}
+
 func faultRequiresAuthority(caseID string) bool {
 	family, _, _ := strings.Cut(caseID, ".")
 	return family != "malformed"
 }
 
-func faultEvidenceSummary(caseID string) (operation, diagnostic, recovery, mutation, retry string) {
-	operation, mutation = "catalog_read", "none"
-	if strings.HasPrefix(caseID, "apply-timeout.") {
-		operation = strings.TrimPrefix(caseID, "apply-timeout.")
-		return operation, string(tracker.ErrorAmbiguous), "observe_then_reconcile", "applied_before_response_loss", "observe_before_retry"
-	}
-	switch caseID {
-	case "slow.deadline-before-apply", "slow.ignored-cancellation-process-kill":
-		return operation, string(tracker.ErrorTimeout), "observe_then_reconcile", "not_applied", "observe_before_retry"
-	case "unavailable.spawn-failure":
-		return operation, string(tracker.ErrorUnavailable), "repair_provider_binding", mutation, "repair_then_retry"
-	case "unavailable.documented-json-error", "unavailable.workspace-lock":
-		return operation, string(tracker.ErrorLockContended), "repair_provider_state", mutation, "repair_then_retry"
-	case "malformed.future-schema":
-		return operation, string(tracker.ErrorSchemaSkew), "install_supported_provider", mutation, "repair_then_retry"
-	case "malformed.empty", "malformed.truncated", "malformed.oversized", "malformed.multiple-values":
-		return operation, string(tracker.ErrorMalformedProtocol), "repair_provider_binding", mutation, "repair_then_retry"
-	case "malformed.wrong-payload-shape", "wrong.duplicate-match":
-		return operation, string(tracker.ErrorMalformedProtocol), "reconcile_provider_metadata", mutation, "reconcile"
-	case "stale.mapping", "wrong.foreign-project-work-mapping":
-		return operation, string(tracker.ErrorRevisionConflict), "reconcile_mapping", mutation, "reconcile"
-	default:
-		return operation, "", "", mutation, "safe"
-	}
-}
-
-func runNamedReadFault(t *testing.T, executable, caseID string) {
+func runNamedReadFault(t *testing.T, executable, caseID string) executableFaultEvidence {
 	t.Helper()
 	valid := issueEnvelope("", "", "project-fault", "work-fault", "r1")
 	step := showStep(caseID, valid, "", 0)
@@ -490,7 +526,7 @@ func runNamedReadFault(t *testing.T, executable, caseID string) {
 		_, err := fixture.adapter.ReadWork(context.Background(), fixture.reference)
 		_ = os.Rename(moved, fixture.executable)
 		expectTrackerFault(t, err, tracker.ErrorUnavailable, "repair_provider_binding")
-		return
+		return evidenceFromObservation("catalog_read", err, 0, false)
 	case "unavailable.documented-json-error", "unavailable.workspace-lock":
 		step.Stdout, step.Stderr, step.ExitCode = `{"schema_version":1,"error":"bounded","code":"database_locked"}`, "arbitrary warning prose", 7
 		wantKind, wantRecovery = tracker.ErrorLockContended, "repair_provider_state"
@@ -522,13 +558,17 @@ func runNamedReadFault(t *testing.T, executable, caseID string) {
 		t.Fatalf("unhandled fault case %s", caseID)
 	}
 	fixture := newDishonestFixture(t, executable, []dishonestStep{step}, map[string]string{"truth_revision": "r-current"})
-	ctx := context.Background()
-	cancel := func() {}
+	var record tracker.WorkRecord
+	var err error
 	if step.WaitFor != "" {
-		ctx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+		err = cancelAtDishonestBarrier(t, fixture.root, step.WaitFor, func(ctx context.Context) error {
+			var callErr error
+			record, callErr = fixture.adapter.ReadWork(ctx, fixture.reference)
+			return callErr
+		})
+	} else {
+		record, err = fixture.adapter.ReadWork(context.Background(), fixture.reference)
 	}
-	record, err := fixture.adapter.ReadWork(ctx, fixture.reference)
-	cancel()
 	if wantKind != "" {
 		expectTrackerFault(t, err, wantKind, wantRecovery)
 	} else if err != nil || record.ExternalRef.ExternalID != fixture.reference.ExternalID {
@@ -552,6 +592,7 @@ func runNamedReadFault(t *testing.T, executable, caseID string) {
 	if strings.HasPrefix(caseID, "stale.") && state.State["truth_revision"] != "r-current" {
 		t.Fatalf("stale case rewrote truth: %+v", state.State)
 	}
+	return evidenceFromObservation("catalog_read", err, dishonestMutationCount(fixture.root), false)
 }
 
 func TestBeadsDishonestTruthfulWarningStaleAndWrongState(t *testing.T) {
@@ -598,18 +639,55 @@ func TestBeadsDishonestSlowCancellationKillsChild(t *testing.T) {
 		ID: "slow.ignored-cancellation", Argv: []string{"show", "bd-fault", "--json"},
 		Stdout: issueEnvelope("", "", "project-fault", "work-fault", "r1"), WaitFor: "never.release",
 	}}, nil)
-	ctx, cancel := boundedContext(t, 75*time.Millisecond)
-	defer cancel()
-	_, err := fixture.adapter.ReadWork(ctx, fixture.reference)
+	err := cancelAtDishonestBarrier(t, fixture.root, "never.release", func(ctx context.Context) error {
+		_, callErr := fixture.adapter.ReadWork(ctx, fixture.reference)
+		return callErr
+	})
 	expectTrackerFault(t, err, tracker.ErrorTimeout, "observe_then_reconcile")
 	assertDishonestConsumed(t, fixture.root, 1)
+}
+
+func TestBeadsDishonestExplicitBarrierSurvivesSchedulerLoad(t *testing.T) {
+	executable := buildDishonestExecutable(t)
+	stop := make(chan struct{})
+	var load sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		load.Add(1)
+		go func() {
+			defer load.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					runtime.Gosched()
+				}
+			}
+		}()
+	}
+	defer func() { close(stop); load.Wait() }()
+	for repetition := 0; repetition < 20; repetition++ {
+		root := t.TempDir()
+		barrier := fmt.Sprintf("before-apply-%02d", repetition)
+		step := showStep("load.barrier", issueEnvelope("", "", "project-fault", "work-fault", "r1"), "", 0)
+		step.WaitFor, step.WaitTiming = barrier, "before_apply"
+		fixture := newDishonestFixtureAt(t, root, executable, []dishonestStep{step}, nil)
+		err := cancelAtDishonestBarrier(t, root, barrier, func(ctx context.Context) error {
+			_, callErr := fixture.adapter.ReadWork(ctx, fixture.reference)
+			return callErr
+		})
+		expectTrackerFault(t, err, tracker.ErrorTimeout, "observe_then_reconcile")
+		if _, statErr := os.Stat(filepath.Join(root, "scenario.state.json")); !os.IsNotExist(statErr) {
+			t.Fatalf("repetition=%d before-apply barrier consumed state: %v", repetition, statErr)
+		}
+	}
 }
 
 func TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runCatalogCreateApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runCatalogCreateApplyTimeout(t *testing.T, executable string) {
+func runCatalogCreateApplyTimeout(t *testing.T, executable string) executableFaultEvidence {
 	root := t.TempDir()
 	steps := preflightSteps(root)
 	digest := portableRequestDigest("portable timeout", "", "")
@@ -625,9 +703,10 @@ func runCatalogCreateApplyTimeout(t *testing.T, executable string) {
 	)
 	steps[5].Argv[4] = metadata
 	fixture := newDishonestFixtureAt(t, root, executable, steps, nil)
-	ctx, cancel := boundedContext(t, 100*time.Millisecond)
-	defer cancel()
-	_, err := fixture.adapter.CreateWork(ctx, tracker.CreateWorkRequest{ProjectID: "project-fault", WorkID: "work-timeout", OperationID: "operation-create-timeout", Title: "portable timeout", MetadataSchema: 1})
+	err := cancelAtDishonestBarrier(t, fixture.root, "never.release", func(ctx context.Context) error {
+		_, callErr := fixture.adapter.CreateWork(ctx, tracker.CreateWorkRequest{ProjectID: "project-fault", WorkID: "work-timeout", OperationID: "operation-create-timeout", Title: "portable timeout", MetadataSchema: 1})
+		return callErr
+	})
 	expectTrackerFault(t, err, tracker.ErrorAmbiguous, "observe_then_reconcile")
 	state := assertDishonestConsumed(t, fixture.root, 6)
 	if state.State["created"] != "bd-timeout" {
@@ -648,23 +727,24 @@ func runCatalogCreateApplyTimeout(t *testing.T, executable string) {
 		ID: "apply-timeout.raw-exact", Argv: []string{"update", "bd-fault", "--claim", "--json"},
 		TransitionTiming: "before_response", Transition: map[string]string{"applied": "true"}, NextObservation: map[string]string{"applied": "true"}, WaitFor: "never.release",
 	}}, nil)
-	rawCtx, rawCancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
-	defer rawCancel()
-	command := execCommandContext(rawCtx, raw.executable, "update", "bd-fault", "--claim", "--json")
-	command.Dir = raw.root
-	command.Env = []string{"BEADS_DIR=" + raw.root, "BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1"}
-	_ = command.Run()
+	_ = cancelAtDishonestBarrier(t, raw.root, "never.release", func(ctx context.Context) error {
+		command := execCommandContext(ctx, raw.executable, "update", "bd-fault", "--claim", "--json")
+		command.Dir = raw.root
+		command.Env = []string{"BEADS_DIR=" + raw.root, "BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1"}
+		return command.Run()
+	})
 	rawState := assertDishonestConsumed(t, raw.root, 1)
 	if rawState.State["applied"] != "true" {
 		t.Fatalf("apply-before-loss absent: %+v", rawState.State)
 	}
+	return evidenceFromObservation("create", err, dishonestMutationCount(fixture.root), state.State["created"] == "bd-timeout")
 }
 
 func TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runAssignmentApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runAssignmentApplyTimeout(t *testing.T, executable string) {
+func runAssignmentApplyTimeout(t *testing.T, executable string) executableFaultEvidence {
 	root := t.TempDir()
 	operation := ids.OperationID("operation-assignment-timeout")
 	metadata := `{"spec_kitty":{"assignment_marker":"operation-assignment-timeout","content_digest":"","created_by_operation":"operation-create-fault","criteria":[],"design_context":"","last_operation":"operation-assignment-timeout","project_id":"project-fault","schema_version":1,"work_id":"work-fault"}}`
@@ -680,9 +760,10 @@ func runAssignmentApplyTimeout(t *testing.T, executable string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := boundedContext(t, 100*time.Millisecond)
-	_, err = fixture.adapter.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: fixture.reference, OperationID: operation, Assignee: "actor-timeout", ExpectedObservation: before.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded})
-	cancel()
+	err = cancelAtDishonestBarrier(t, fixture.root, "never.release", func(ctx context.Context) error {
+		_, callErr := fixture.adapter.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: fixture.reference, OperationID: operation, Assignee: "actor-timeout", ExpectedObservation: before.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded})
+		return callErr
+	})
 	expectTrackerFault(t, err, tracker.ErrorAmbiguous, "observe_then_reconcile")
 	state := readDishonestRuntime(t, root)
 	if state.State["assignment"] != "actor-timeout" || state.State["marker"] != operation.String() || state.Position < 7 {
@@ -694,13 +775,14 @@ func runAssignmentApplyTimeout(t *testing.T, executable string) {
 	}
 	final := assertDishonestConsumed(t, root, len(steps))
 	assertSingleMutationInvocation(t, final, "update")
+	return evidenceFromObservation("assignment", err, dishonestMutationCount(root), state.State["assignment"] == "actor-timeout")
 }
 
 func TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runCommentApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runCommentApplyTimeout(t *testing.T, executable string) {
+func runCommentApplyTimeout(t *testing.T, executable string) executableFaultEvidence {
 	root := t.TempDir()
 	operation := ids.OperationID("operation-comment-timeout")
 	providerBody := "<!-- spec-kitty:discussion:v1;op=" + base64.RawURLEncoding.EncodeToString([]byte(operation.String())) + " -->\nportable body"
@@ -721,9 +803,10 @@ func runCommentApplyTimeout(t *testing.T, executable string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := boundedContext(t, 100*time.Millisecond)
-	_, err = fixture.adapter.AppendDiscussion(ctx, tracker.AppendDiscussionRequest{ExternalRef: fixture.reference, OperationID: operation, Author: "actor-timeout", Body: "portable body", ExpectedObservation: record.Observation.Revision})
-	cancel()
+	err = cancelAtDishonestBarrier(t, fixture.root, "never.release", func(ctx context.Context) error {
+		_, callErr := fixture.adapter.AppendDiscussion(ctx, tracker.AppendDiscussionRequest{ExternalRef: fixture.reference, OperationID: operation, Author: "actor-timeout", Body: "portable body", ExpectedObservation: record.Observation.Revision})
+		return callErr
+	})
 	expectTrackerFault(t, err, tracker.ErrorAmbiguous, "observe_then_reconcile")
 	state := readDishonestRuntime(t, root)
 	if state.State["comment"] != operation.String() {
@@ -735,13 +818,14 @@ func runCommentApplyTimeout(t *testing.T, executable string) {
 	}
 	final := assertDishonestConsumed(t, root, len(steps))
 	assertSingleMutationInvocation(t, final, "comments", "add")
+	return evidenceFromObservation("comment", err, dishonestMutationCount(root), state.State["comment"] == operation.String())
 }
 
 func TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runDependencyApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runDependencyApplyTimeout(t *testing.T, executable string) {
+func runDependencyApplyTimeout(t *testing.T, executable string) executableFaultEvidence {
 	root := t.TempDir()
 	current := issueJSON("", "", "project-fault", "work-fault", "r-before")
 	blocker := namedIssueJSON("bd-blocker", "blocker", "", "", "project-fault", "work-blocker", "operation-create-blocker", "r-blocker")
@@ -756,9 +840,10 @@ func runDependencyApplyTimeout(t *testing.T, executable string) {
 	)
 	fixture := newDishonestFixtureAt(t, root, executable, steps, nil)
 	edge := tracker.DependencyRef{BlockedWorkID: "work-fault", BlockingWorkID: "work-blocker", Kind: tracker.DependencyBlocks}
-	ctx, cancel := boundedContext(t, 100*time.Millisecond)
-	_, err := fixture.adapter.PutBlockingDependency(ctx, tracker.DependencyRequest{ProjectID: "project-fault", OperationID: "operation-dependency-timeout", Dependency: edge})
-	cancel()
+	err := cancelAtDishonestBarrier(t, fixture.root, "never.release", func(ctx context.Context) error {
+		_, callErr := fixture.adapter.PutBlockingDependency(ctx, tracker.DependencyRequest{ProjectID: "project-fault", OperationID: "operation-dependency-timeout", Dependency: edge})
+		return callErr
+	})
 	expectTrackerFault(t, err, tracker.ErrorAmbiguous, "observe_then_reconcile")
 	state := readDishonestRuntime(t, root)
 	if state.State["dependency"] != "bd-fault<-bd-blocker" {
@@ -770,13 +855,14 @@ func runDependencyApplyTimeout(t *testing.T, executable string) {
 	}
 	final := assertDishonestConsumed(t, root, len(steps))
 	assertSingleMutationInvocation(t, final, "dep", "add")
+	return evidenceFromObservation("dependency", err, dishonestMutationCount(root), state.State["dependency"] == "bd-fault<-bd-blocker")
 }
 
 func TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry(t *testing.T) {
 	runCatalogUpdateApplyTimeout(t, buildDishonestExecutable(t))
 }
 
-func runCatalogUpdateApplyTimeout(t *testing.T, executable string) {
+func runCatalogUpdateApplyTimeout(t *testing.T, executable string) executableFaultEvidence {
 	root := t.TempDir()
 	operation := ids.OperationID("operation-catalog-update-timeout")
 	digest := portableRequestDigest("portable update", "", "")
@@ -795,9 +881,10 @@ func runCatalogUpdateApplyTimeout(t *testing.T, executable string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := boundedContext(t, 100*time.Millisecond)
-	_, err = fixture.adapter.UpdateWork(ctx, tracker.UpdateWorkRequest{ExternalRef: fixture.reference, OperationID: operation, ExpectedObservation: before.Observation.Revision, RequiredGuard: tracker.UpdateUnguarded, Title: "portable update"})
-	cancel()
+	err = cancelAtDishonestBarrier(t, fixture.root, "never.release", func(ctx context.Context) error {
+		_, callErr := fixture.adapter.UpdateWork(ctx, tracker.UpdateWorkRequest{ExternalRef: fixture.reference, OperationID: operation, ExpectedObservation: before.Observation.Revision, RequiredGuard: tracker.UpdateUnguarded, Title: "portable update"})
+		return callErr
+	})
 	expectTrackerFault(t, err, tracker.ErrorAmbiguous, "observe_then_reconcile")
 	state := readDishonestRuntime(t, root)
 	if state.State["catalog_title"] != "portable update" || state.State["catalog_operation"] != operation.String() {
@@ -809,6 +896,7 @@ func runCatalogUpdateApplyTimeout(t *testing.T, executable string) {
 	}
 	final := assertDishonestConsumed(t, root, len(steps))
 	assertSingleMutationInvocation(t, final, "update")
+	return evidenceFromObservation("catalog-update", err, dishonestMutationCount(root), state.State["catalog_operation"] == operation.String())
 }
 
 func assertSingleMutationInvocation(t *testing.T, state dishonestRuntime, action ...string) {
@@ -822,6 +910,80 @@ func assertSingleMutationInvocation(t *testing.T, state dishonestRuntime, action
 	if count != 1 {
 		t.Fatalf("blind-retry mutant escaped: action=%v invocations=%d", action, count)
 	}
+}
+
+func TestBeadsUnsafeDecisionMutantsAreKilled(t *testing.T) {
+	executable := buildDishonestExecutable(t)
+	t.Run("timeout-as-not-applied", func(t *testing.T) {
+		evidence := runCatalogCreateApplyTimeout(t, executable)
+		unsafe := evidence
+		unsafe.MutationOutcome, unsafe.RetrySafety = "not_applied", "retry_now"
+		if err := validateFaultRecoveryEvidence(unsafe, true); err == nil {
+			t.Fatal("timeout-as-not-applied mutant escaped observed provider truth")
+		}
+	})
+	t.Run("trust-stale-response", func(t *testing.T) {
+		fixture := newDishonestFixture(t, executable, []dishonestStep{showStep("stale.mutant", issueEnvelope("actor-old", "operation-old", "project-fault", "work-fault", "r-old"), "", 0)}, map[string]string{"truth_revision": "r-current"})
+		record, err := fixture.adapter.ReadWork(context.Background(), fixture.reference)
+		if err != nil {
+			t.Fatal(err)
+		}
+		truth := readDishonestRuntime(t, fixture.root).State["truth_revision"]
+		unsafeTrusted := record.Observation.ProviderToken
+		if unsafeTrusted == truth {
+			t.Fatal("stale-trust mutant unexpectedly matched current provider truth")
+		}
+	})
+	t.Run("branch-on-warning-prose", func(t *testing.T) {
+		step := showStep("warning.mutant", issueEnvelope("", "", "project-fault", "work-fault", "r1"), "warning-only", 0)
+		fixture := newDishonestFixture(t, executable, []dishonestStep{step}, nil)
+		_, actualErr := fixture.adapter.ReadWork(context.Background(), fixture.reference)
+		unsafeErr := actualErr
+		if step.Stderr != "" {
+			unsafeErr = errors.New("warning treated as authority")
+		}
+		if actualErr != nil || unsafeErr == nil {
+			t.Fatalf("warning mutant was not distinguished actual=%v unsafe=%v", actualErr, unsafeErr)
+		}
+	})
+	t.Run("blind-retry", func(t *testing.T) {
+		root := t.TempDir()
+		argv := []string{"update", "bd-fault", "--claim", "--json"}
+		steps := []dishonestStep{{ID: "blind.first", Argv: argv, Stdout: envelope(`[]`), TransitionTiming: "before_response", Transition: map[string]string{"first": "applied"}}, {ID: "blind.retry", Argv: argv, Stdout: envelope(`[]`), TransitionTiming: "before_response", Transition: map[string]string{"second": "applied"}}}
+		fixture := newDishonestFixtureAt(t, root, executable, steps, nil)
+		for range 2 {
+			command := exec.Command(fixture.executable, argv...)
+			command.Dir = root
+			command.Env = []string{"BEADS_DIR=" + root, "BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1"}
+			_ = command.Run()
+		}
+		state := assertDishonestConsumed(t, root, 2)
+		count := 0
+		for _, call := range state.Invocations {
+			if sameIDs(call.Argv, argv) {
+				count++
+			}
+		}
+		if count != 2 || state.State["second"] != "applied" {
+			t.Fatal("blind retry mutant did not execute two real provider mutations")
+		}
+		if err := validateMutationCount(count); err == nil {
+			t.Fatal("blind retry mutant escaped mutation census")
+		}
+	})
+}
+
+func validateFaultRecoveryEvidence(evidence executableFaultEvidence, observedApplied bool) error {
+	if observedApplied && (evidence.MutationOutcome != "applied_before_response_loss" || evidence.RetrySafety != "observe_before_retry") {
+		return fmt.Errorf("unsafe recovery contradicts observed provider mutation")
+	}
+	return nil
+}
+func validateMutationCount(count int) error {
+	if count != 1 {
+		return fmt.Errorf("mutation count=%d want=1", count)
+	}
+	return nil
 }
 
 // execCommandContext is a test seam that keeps process creation visible to
@@ -847,8 +1009,14 @@ func TestBeadsHumanAssignmentPreservation100(t *testing.T) {
 		idsExpected = append(idsExpected, caseID)
 		t.Run(caseID, func(t *testing.T) {
 			idsStarted = append(idsStarted, caseID)
-			root := t.TempDir()
-			store, err := fake.Open(filepath.Join(root, "tracker.json"))
+			authorityAudit := newFaultAuthorityAudit(t, authorityFixture, stale, caseID, true)
+			if err := authorityAudit.run("before"); err != nil {
+				t.Fatal(err)
+			}
+			// Provider, saga, and authority audit all share this scenario's
+			// tracker/control-store pair; no evidence is borrowed from a
+			// disconnected fixture.
+			store, err := fake.Open(authorityFixture.tracker)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -863,7 +1031,9 @@ func TestBeadsHumanAssignmentPreservation100(t *testing.T) {
 				t.Fatal(err)
 			}
 			operation := humanOperation(repetition)
-			controlPath := filepath.Join(root, "control.db")
+			// The saga and the authority audit deliberately share one durable
+			// control store; this is causal evidence, not a co-located fixture.
+			controlPath := authorityFixture.database
 			control, err := sqlite.Open(context.Background(), controlPath)
 			if err != nil {
 				t.Fatal(err)
@@ -931,13 +1101,14 @@ func TestBeadsHumanAssignmentPreservation100(t *testing.T) {
 			if err := control.Close(); err != nil {
 				t.Fatal(err)
 			}
-			authority := quickStaleFaultAuthority(t, authorityFixture, stale, "WP08."+caseID)
-			if err := auditBeadsFault(context.Background(), authority); err != nil {
+			if err := authorityAudit.run("after"); err != nil {
 				t.Fatal(err)
 			}
+			authorityResult := conformance.Result{}
+			authorityAudit.populate(&authorityResult)
 			idsTerminal = append(idsTerminal, caseID)
 			idsPassed = append(idsPassed, caseID)
-			results = append(results, map[string]any{"id": caseID, "outcome": string(effect.CompensationStatus), "expected_revision": effect.AppliedRevision, "actual_revision": effect.ConflictRevision, "expected_assignee": effect.AppliedValue, "actual_assignee": effect.ConflictValue, "expected_marker": effect.Marker, "actual_marker": effect.ConflictMarker, "compensation_mutations": 0, "human_preserved": true, "universal_required": true, "universal_started": true, "universal_passed": true, "stale_probe_required": true, "stale_probe_started": true, "stale_probe_passed": true})
+			results = append(results, map[string]any{"id": caseID, "outcome": string(effect.CompensationStatus), "expected_revision": effect.AppliedRevision, "actual_revision": effect.ConflictRevision, "expected_assignee": effect.AppliedValue, "actual_assignee": effect.ConflictValue, "expected_marker": effect.Marker, "actual_marker": effect.ConflictMarker, "compensation_mutations": len(historyAfter) - len(historyBefore), "human_preserved": after.Assignee == human, "universal_required": authorityResult.UniversalRequired, "universal_started": authorityResult.UniversalStarted, "universal_passed": authorityResult.UniversalPassed, "stale_probe_required": authorityResult.StaleProbeRequired, "stale_probe_started": authorityResult.StaleProbeStarted, "stale_probe_passed": authorityResult.StaleProbePassed})
 		})
 	}
 	for _, values := range [][]string{idsExpected, idsStarted, idsTerminal, idsPassed} {
@@ -983,6 +1154,81 @@ func (provider conflictObservingProjection) CompensateAssignment(ctx context.Con
 	return tracker.AssignmentMutation{Observation: actual, Guarantee: tracker.AssignmentAtomicClaim, Noop: true}, err
 }
 
+type unsafePostHumanCompensator struct {
+	conflictObservingProjection
+	store *fake.Store
+}
+
+func (provider unsafePostHumanCompensator) CompensateAssignment(ctx context.Context, request tracker.CompensateAssignmentRequest) (tracker.AssignmentMutation, error) {
+	mutation, err := provider.conflictObservingProjection.CompensateAssignment(ctx, request)
+	if !tracker.IsKind(err, tracker.ErrorAttributionLost) {
+		return mutation, err
+	}
+	if overwriteErr := provider.store.HumanAssign(ctx, request.ExternalRef.ExternalID, request.RestoreAssignee); overwriteErr != nil {
+		return tracker.AssignmentMutation{}, overwriteErr
+	}
+	actual, observeErr := provider.ObserveAssignment(ctx, request.ExternalRef)
+	return tracker.AssignmentMutation{Observation: actual, Guarantee: tracker.AssignmentAtomicClaim}, observeErr
+}
+
+func TestBeadsHumanAssignmentCampaignKillsPostAttributionOverwriteMutant(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	providerStore, err := fake.Open(filepath.Join(root, "tracker.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := providerStore.Seed(ctx, fake.WorkSeed{Key: "external-mutant", Title: "mutant", Assignee: "original"}); err != nil {
+		t.Fatal(err)
+	}
+	base := conflictObservingProjection{Provider: fake.NewProvider(providerStore)}
+	provider := unsafePostHumanCompensator{conflictObservingProjection: base, store: providerStore}
+	reference := tracker.ExternalWorkRef{ProjectID: "project-mutant", WorkID: "work-mutant", Provider: "durable_fake", ExternalID: "external-mutant", MetadataSchema: 1}
+	before, err := provider.ObserveAssignment(ctx, reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := sqlite.Open(ctx, filepath.Join(root, "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	request := execution.TrackerAssignRequest{SchemaVersion: execution.ResultSchemaVersion, CorrelationID: "correlation-mutant", OperationID: "operation-mutant", ActorID: "actor-mutant", ProcessID: "process-mutant", Now: time.Now().UTC(), Provider: reference.Provider, WorkKey: reference.ExternalID, ExpectedRevision: before.Observation.Revision, Assignee: "automated", ExternalRef: reference, RequiredGuarantee: tracker.AssignmentAtomicClaim}
+	saga := execution.NewTrackerSaga(control, provider, execution.SystemClock{})
+	applied, err := saga.Assign(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := providerStore.HumanAssign(ctx, reference.ExternalID, "human"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = saga.Compensate(ctx, execution.TrackerCompensateRequest{SchemaVersion: request.SchemaVersion, CorrelationID: request.CorrelationID, OperationID: request.OperationID, ActorID: request.ActorID, ProcessID: request.ProcessID, Now: request.Now.Add(time.Second), Provider: request.Provider, WorkKey: request.WorkKey, ExpectedRevision: applied.AppliedRevision, ExternalRef: reference, RequiredGuarantee: request.RequiredGuarantee})
+	if err != nil {
+		t.Fatalf("unsafe mutant did not claim compensation success: %v", err)
+	}
+	after, err := provider.ObserveAssignment(ctx, reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effect, err := control.ExternalEffect(ctx, request.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Assignee == "human" || effect.CompensationStatus != execution.CompensationDone {
+		t.Fatalf("unsafe overwrite mutant did not alter provider/durable evidence after=%+v effect=%+v", after, effect)
+	}
+	if validateHumanPreservation(after, effect, "human") == nil {
+		t.Fatal("human-preservation assertions accepted post-attribution overwrite")
+	}
+}
+
+func validateHumanPreservation(after tracker.AssignmentObservation, effect execution.ExternalEffect, human string) error {
+	if after.Assignee != human || effect.CompensationStatus != execution.CompensationAttributionLost {
+		return fmt.Errorf("human assignment or durable attribution evidence was overwritten")
+	}
+	return nil
+}
+
 func sameIDs(left, right []string) bool {
 	if len(left) != len(right) {
 		return false
@@ -1000,18 +1246,12 @@ func TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe(t *testing.T) {
 	defer cancel()
 	fixture := newWorkspaceScenario(t, []workspaceItem{{work: "work-phase1-matrix-stale", lane: "lane-phase1-matrix-stale", tracker: "TK-PHASE1-MATRIX-STALE"}})
 	stale := provisionPhase1StaleAuthority(t, fixture, "wp08")
-	applicable := []string{"apply-timeout.assignment", "slow.deadline-before-apply", "stale.assignment-marker", "unavailable.provider", "wrong.unexpected-assignee"}
-	for _, fault := range applicable {
-		fault := fault
-		t.Run(fault, func(t *testing.T) {
-			state := staleFaultAuthority(t, fixture, stale, "WP08."+fault)
-			if err := auditBeadsFault(ctx, state); err != nil {
-				t.Fatal(err)
-			}
-		})
+	applicable := make([]string, 0)
+	for _, fault := range exactFaultRegistryIDs() {
+		if faultRequiresAuthority(fault) {
+			applicable = append(applicable, fault)
+		}
 	}
-
-	base := staleFaultAuthority(t, fixture, stale, "WP08.mutant")
 	mutants := []struct {
 		name   string
 		mutate func(*universalAssertionState)
@@ -1020,14 +1260,23 @@ func TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe(t *testing.T) {
 		{"requirement-disabled", func(state *universalAssertionState) { state.RequireStaleProbe = false; state.StaleProbe = nil }},
 		{"stale-succeeds", func(state *universalAssertionState) { state.StaleProbe = func(context.Context) error { return nil } }},
 	}
-	for _, mutant := range mutants {
-		mutant := mutant
-		t.Run("mutant-"+mutant.name, func(t *testing.T) {
-			state := base
-			mutant.mutate(&state)
-			err := auditBeadsFault(ctx, state)
-			if err == nil || !strings.Contains(err.Error(), "stale_token_refusal") {
-				t.Fatalf("mutant error=%v", err)
+	for _, fault := range applicable {
+		fault := fault
+		t.Run(fault, func(t *testing.T) {
+			state := staleFaultAuthority(t, fixture, stale, "WP08."+fault)
+			if err := auditBeadsFault(ctx, state); err != nil {
+				t.Fatal(err)
+			}
+			for _, mutant := range mutants {
+				mutant := mutant
+				t.Run("mutant-"+mutant.name, func(t *testing.T) {
+					mutated := state
+					mutant.mutate(&mutated)
+					err := auditBeadsFault(ctx, mutated)
+					if err == nil || !strings.Contains(err.Error(), "stale_token_refusal") {
+						t.Fatalf("fault=%s mutant=%s error=%v", fault, mutant.name, err)
+					}
+				})
 			}
 		})
 	}

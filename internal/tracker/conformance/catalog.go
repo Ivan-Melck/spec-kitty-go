@@ -57,6 +57,14 @@ func exerciseCatalogUpdate(ctx context.Context, fixture Fixture, supported bool)
 	if readErr != nil && supported {
 		return readErr
 	}
+	confirmed, confirmErr := fixture.Catalog.ReadWork(ctx, fixture.Reference)
+	if confirmErr != nil && supported {
+		return confirmErr
+	}
+	if supported && confirmed.Observation.Revision != record.Observation.Revision {
+		return fmt.Errorf("catalog baseline changed during read-only confirmation")
+	}
+	record = confirmed
 	request := tracker.UpdateWorkRequest{ExternalRef: fixture.Reference, OperationID: "operation-conformance-update", ExpectedObservation: record.Observation.Revision, RequiredGuard: tracker.UpdateUnguarded, Title: "portable update"}
 	first, err := fixture.Catalog.UpdateWork(ctx, request)
 	if !supported {
@@ -65,7 +73,9 @@ func exerciseCatalogUpdate(ctx context.Context, fixture Fixture, supported bool)
 	if err != nil {
 		return err
 	}
-	second, err := fixture.Catalog.UpdateWork(ctx, request)
+	replayRequest := request
+	replayRequest.ExpectedObservation = first.Record.Observation.Revision
+	second, err := fixture.Catalog.UpdateWork(ctx, replayRequest)
 	if err != nil {
 		return err
 	}
