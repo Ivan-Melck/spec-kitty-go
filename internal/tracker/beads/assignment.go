@@ -2,6 +2,7 @@ package beads
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -75,9 +76,25 @@ func (bound *BoundAdapter) ProjectAssignment(ctx context.Context, request tracke
 			return tracker.AssignmentMutation{}, err
 		}
 		response, executeErr := bound.adapter.execute(ctx, command)
+		var responseErr error
+		if executeErr == nil {
+			returned, decodeErr := decodeSingularAssignmentMutation(response.payload)
+			switch {
+			case decodeErr != nil:
+				responseErr = decodeErr
+			case returned.issue.externalID != request.ExternalRef.ExternalID:
+				responseErr = metadataProtocolError("assignment mutation returned a different external issue", nil)
+			}
+		}
 		after, observeErr := bound.ObserveAssignment(ctx, request.ExternalRef)
-		if observeErr == nil && exactAssignment(after, request.Assignee, request.OperationID.String()) {
+		if responseErr == nil && !assignmentMutationProtocolFailure(executeErr) && observeErr == nil && exactAssignment(after, request.Assignee, request.OperationID.String()) {
 			return tracker.AssignmentMutation{Observation: after, Guarantee: tracker.AssignmentUnguarded}, nil
+		}
+		if responseErr != nil {
+			if observeErr != nil {
+				responseErr = errors.Join(responseErr, observeErr)
+			}
+			return tracker.AssignmentMutation{Observation: after, Guarantee: tracker.AssignmentUnguarded}, ambiguousAssignment("assignment mutation response did not identify exactly one work item", responseErr)
 		}
 		if executeErr != nil {
 			if !mutationCouldHaveApplied(response) && observeErr == nil && sameAssignmentObservation(before, after) {
@@ -90,6 +107,46 @@ func (bound *BoundAdapter) ProjectAssignment(ctx context.Context, request tracke
 		}
 		return tracker.AssignmentMutation{Observation: after, Guarantee: tracker.AssignmentUnguarded}, ambiguousAssignment("assignment value and operation marker are only partially visible", nil)
 	})
+}
+
+// assignmentMutationRecord retains the complete issue plus the provider's
+// visible status. Status is not portable execution authority, but preserving it
+// at this decoding boundary proves that assignment updates do not silently
+// reinterpret the provider's workflow state.
+type assignmentMutationRecord struct {
+	issue  providerIssue
+	status *string
+}
+
+func decodeSingularAssignmentMutation(payload []byte) (assignmentMutationRecord, error) {
+	var records []json.RawMessage
+	if err := json.Unmarshal(payload, &records); err != nil {
+		return assignmentMutationRecord{}, metadataProtocolError("assignment mutation response must be a JSON array", err)
+	}
+	if len(records) != 1 {
+		return assignmentMutationRecord{}, metadataProtocolError("assignment mutation response must contain exactly one record", nil)
+	}
+	issue, err := decodeProviderIssue(records[0])
+	if err != nil {
+		return assignmentMutationRecord{}, err
+	}
+	var fields map[string]json.RawMessage
+	if err := decodeJSONObject(records[0], &fields); err != nil {
+		return assignmentMutationRecord{}, metadataProtocolError("assignment mutation record is malformed", err)
+	}
+	status, err := optionalStringPointer(fields, "status")
+	if err != nil {
+		return assignmentMutationRecord{}, metadataProtocolError("provider status is malformed", err)
+	}
+	return assignmentMutationRecord{issue: issue, status: status}, nil
+}
+
+func assignmentMutationProtocolFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var protocol *protocolError
+	return errors.As(err, &protocol)
 }
 
 // CompensateAssignment never emulates provider CAS with a read followed by an

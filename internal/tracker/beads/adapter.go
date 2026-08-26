@@ -54,21 +54,32 @@ func (adapter *Adapter) execute(ctx context.Context, request command) (commandRe
 		portable, _ := translateFailure(result, &commandFailure{class: failureOverflow, message: "provider process was signaled or its output was truncated"})
 		return commandResponse{result: result}, portable
 	}
+	metadata := protocolMetadata{warningsPresent: len(bytes.TrimSpace(result.stderr)) > 0, warningCount: countNonEmptyLines(result.stderr)}
 	if *result.exitCode != 0 {
-		decoded, err := decodeDocumentedError(result.stderr, result.stderrTruncated)
+		decoded, err := decodeDocumentedError(result.stdout, result.stdoutTruncated)
 		if err == nil {
+			if decoded.shape == documentedDataErrorEnvelope && (request.kind != CommandShow || request.mutating) {
+				result.mutationOutcome = ambiguousIfMutation(request, result)
+				portable, _ := translateFailure(result, &protocolError{cause: protocolMalformed})
+				metadata.schemaVersion = decoded.schemaVersion
+				return commandResponse{metadata: metadata, result: result}, portable
+			}
 			if request.mutating {
 				result.mutationOutcome = mutationNotApplied
 			}
-			cause := &commandFailure{class: failureProvider, providerCode: decoded.providerCode, schema: decoded.schemaVersion}
+			providerCode := decoded.providerCode
+			if decoded.shape == documentedDataErrorEnvelope {
+				providerCode = "not_found"
+			}
+			cause := &commandFailure{class: failureProvider, providerCode: providerCode, schema: decoded.schemaVersion}
 			portable, _ := translateFailure(result, cause)
-			return commandResponse{metadata: protocolMetadata{schemaVersion: decoded.schemaVersion, warningsPresent: decoded.warningsPresent, warningCount: decoded.warningCount}, result: result}, portable
+			metadata.schemaVersion = decoded.schemaVersion
+			return commandResponse{metadata: metadata, result: result}, portable
 		}
 		result.mutationOutcome = ambiguousIfMutation(request, result)
 		portable, _ := translateFailure(result, err)
 		return commandResponse{result: result}, portable
 	}
-	metadata := protocolMetadata{warningsPresent: len(bytes.TrimSpace(result.stderr)) > 0, warningCount: countNonEmptyLines(result.stderr)}
 	if request.shape == expectedEmpty {
 		if len(bytes.TrimSpace(result.stdout)) != 0 {
 			result.mutationOutcome = ambiguousIfMutation(request, result)

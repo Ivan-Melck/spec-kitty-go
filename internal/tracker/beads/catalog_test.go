@@ -1,14 +1,17 @@
 package beads
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,8 +33,9 @@ type storedCatalogIssue struct {
 func (issue storedCatalogIssue) wire() map[string]any {
 	return map[string]any{
 		"id": issue.ID, "title": issue.Title, "description": issue.Description,
-		"acceptance": issue.Acceptance, "metadata": issue.Metadata, "assignee": issue.Assignee,
-		"updated_at": issue.UpdatedAt, "future_optional": map[string]any{"ignored": true},
+		"acceptance_criteria": issue.Acceptance, "metadata": issue.Metadata, "assignee": issue.Assignee,
+		"updated_at": issue.UpdatedAt, "dependency_count": 0, "comment_count": 0,
+		"future_optional": map[string]any{"ignored": true},
 	}
 }
 
@@ -65,11 +69,19 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 	case CommandVersion:
 		data = map[string]any{"version": SupportedBeadsVersion, "build": "catalog-test"}
 	case CommandWhere:
-		data = map[string]any{"workspace_path": runner.workspace, "database_id": runner.databaseID}
-	case CommandInfo:
-		data = map[string]any{"protocol_schema": 1, "storage_mode": runner.mode, "read_only": false, "server_id": runner.serverID, "server_endpoint": runner.serverEndpoint}
-	case CommandDoctor:
-		data = map[string]any{"healthy": true, "server_id": runner.serverID, "server_endpoint": runner.serverEndpoint}
+		data = map[string]any{"path": runner.workspace, "prefix": runner.databaseID, "database_path": filepath.Join(runner.workspace, "embeddeddolt")}
+	case CommandDoltShow:
+		if runner.mode == tracker.ConcurrencyServerMultiwriter {
+			data = map[string]any{"backend": "dolt", "data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "database": runner.databaseID, "embedded": false, "host": "127.0.0.1", "port": 3306, "user": "dolt", "shared_server": true, "connection_ok": true}
+		} else {
+			data = map[string]any{"backend": "dolt", "data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "database": runner.databaseID, "embedded": true}
+		}
+	case CommandDoltStatus:
+		if runner.mode == tracker.ConcurrencyServerMultiwriter {
+			data = map[string]any{"mode": "external", "host": "127.0.0.1", "port": 3306, "user": "dolt", "database": runner.databaseID, "tls": false, "running": true, "version": "1.70.0"}
+		} else {
+			data = map[string]any{"data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "data_dir_exists": true, "mode": "embedded", "server_running": false}
+		}
 	case CommandList:
 		ids := make([]string, 0, len(runner.issues))
 		for id := range runner.issues {
@@ -87,7 +99,7 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 		if !ok {
 			return providerFailureResult(request.kind, "not_found")
 		}
-		data = issue.wire()
+		data = []map[string]any{issue.wire()}
 	case CommandCreate:
 		if runner.ambiguousKind == CommandCreate && !runner.applyBeforeAmbiguous {
 			runner.ambiguousKind = ""
@@ -117,7 +129,7 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 		applyUpdateArgv(&issue, request.argv)
 		issue.UpdatedAt = runner.tick()
 		runner.issues[id] = issue
-		data = issue.wire()
+		data = []map[string]any{issue.wire()}
 		result.mutationOutcome = mutationApplied
 		if runner.ambiguousKind == CommandUpdate {
 			runner.ambiguousKind = ""
@@ -170,7 +182,8 @@ func providerFailureResult(kind CommandKind, code string) commandResult {
 	exit := 7
 	return commandResult{
 		kind: kind, started: true, exitCode: &exit, mutationOutcome: mutationNotApplied,
-		stderr: []byte(fmt.Sprintf(`{"schema_version":1,"error":"provider refusal","code":%q}`, code)),
+		stdout: []byte(fmt.Sprintf(`{"schema_version":1,"error":"provider refusal","code":%q}`, code)),
+		stderr: []byte("human provider refusal"),
 	}
 }
 
@@ -257,6 +270,44 @@ func catalogCriterion() []tracker.Criterion {
 	return []tracker.Criterion{{ID: "criterion-1", Text: "the behavior is verified", Verifier: tracker.VerifierTest, Required: true, EvidenceHint: "focused test"}}
 }
 
+const realV122CatalogRecord = `{"id":"skt-a1b2","title":"Real catalog","description":"Provider shape","acceptance_criteria":"criterion-1 — required — test — verified","metadata":{"foreign":{"number":9007199254740993},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"real provider","content_digest":"digest"}},"assignee":"","updated_at":"2026-08-26T12:00:00Z","dependency_count":0,"comment_count":0,"future_optional":{"ignored":true}}`
+
+const realV122CatalogSingularArray = `[` + realV122CatalogRecord + `]`
+
+func TestRealV122CatalogPayloadShapesAndSingularCardinality(t *testing.T) {
+	id, err := decodeMutationExternalID([]byte(realV122CatalogRecord))
+	if err != nil || id != "skt-a1b2" {
+		t.Fatalf("create object id=%q error=%v", id, err)
+	}
+	for _, operation := range []string{"show", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			issue, err := decodeSingularProviderIssue([]byte(realV122CatalogSingularArray))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if issue.externalID != "skt-a1b2" || pointerValue(issue.acceptance) != "criterion-1 — required — test — verified" {
+				t.Fatalf("issue=%#v", issue)
+			}
+			if !bytes.Contains(issue.metadata, []byte(`9007199254740993`)) {
+				t.Fatalf("lossless foreign number missing from metadata: %s", issue.metadata)
+			}
+		})
+	}
+	for _, payload := range []string{realV122CatalogRecord, `[]`, `[` + realV122CatalogRecord + `,` + realV122CatalogRecord + `]`} {
+		if _, err := decodeSingularProviderIssue([]byte(payload)); !tracker.IsKind(err, tracker.ErrorMalformedProtocol) {
+			t.Fatalf("singular mutant %s error=%v", payload, err)
+		}
+	}
+	legacy := strings.Replace(realV122CatalogRecord, `"acceptance_criteria"`, `"acceptance"`, 1)
+	issue, err := decodeProviderIssue([]byte(legacy))
+	if err != nil || issue.acceptance != nil {
+		t.Fatalf("legacy acceptance field became provider state: issue=%#v error=%v", issue, err)
+	}
+	if _, err := decodeMutationExternalID([]byte(realV122CatalogSingularArray)); !tracker.IsKind(err, tracker.ErrorMalformedProtocol) {
+		t.Fatalf("create accepted array payload: %v", err)
+	}
+}
+
 func createRequest(index int) tracker.CreateWorkRequest {
 	return tracker.CreateWorkRequest{
 		ProjectID: "project-1", WorkID: ids.WorkID(fmt.Sprintf("work-%d", index)), OperationID: ids.OperationID(fmt.Sprintf("operation-create-%d", index)),
@@ -282,7 +333,7 @@ func TestCatalogCreateReadReplayAndChangedReplay(t *testing.T) {
 	if created.Replayed || created.Record.ExternalRef.WorkID != request.WorkID || created.Record.ExternalRef.ExternalID == "" || created.Record.Observation.Revision == 0 || len(created.Record.Observation.Digest) != 64 {
 		t.Fatalf("created=%#v", created)
 	}
-	if got, want := runner.snapshotCalls(), []CommandKind{CommandVersion, CommandWhere, CommandInfo, CommandList, CommandCreate, CommandShow}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.snapshotCalls(), []CommandKind{CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus, CommandList, CommandCreate, CommandShow}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("create command order=%v want=%v", got, want)
 	}
 	read, err := bound.ReadWork(context.Background(), created.Record.ExternalRef)
