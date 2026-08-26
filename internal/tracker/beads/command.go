@@ -29,25 +29,26 @@ const (
 type CommandKind string
 
 const (
-	CommandVersion        CommandKind = "version"
-	CommandWhere          CommandKind = "where"
-	CommandInfo           CommandKind = "info"
-	CommandDoctor         CommandKind = "doctor"
-	CommandShow           CommandKind = "show"
-	CommandList           CommandKind = "list"
-	CommandReady          CommandKind = "ready"
-	CommandCreate         CommandKind = "create"
-	CommandUpdate         CommandKind = "update"
-	CommandAtomicClaim    CommandKind = "atomic_claim"
-	CommandDependencyAdd  CommandKind = "dependency_add"
-	CommandDependencyList CommandKind = "dependency_list"
-	CommandCommentAppend  CommandKind = "comment_append"
-	CommandCommentList    CommandKind = "comment_list"
-	CommandExport         CommandKind = "export"
-	CommandBackupInit     CommandKind = "backup_init"
-	CommandBackupSync     CommandKind = "backup_sync"
-	CommandBackupStatus   CommandKind = "backup_status"
-	CommandBackupRestore  CommandKind = "backup_restore"
+	CommandVersion          CommandKind = "version"
+	CommandWhere            CommandKind = "where"
+	CommandDoltShow         CommandKind = "dolt_show"
+	CommandDoltStatus       CommandKind = "dolt_status"
+	CommandShow             CommandKind = "show"
+	CommandList             CommandKind = "list"
+	CommandReady            CommandKind = "ready"
+	CommandCreate           CommandKind = "create"
+	CommandUpdate           CommandKind = "update"
+	CommandAtomicClaim      CommandKind = "atomic_claim"
+	CommandDependencyAdd    CommandKind = "dependency_add"
+	CommandDependencyRemove CommandKind = "dependency_remove"
+	CommandDependencyList   CommandKind = "dependency_list"
+	CommandCommentAppend    CommandKind = "comment_append"
+	CommandCommentList      CommandKind = "comment_list"
+	CommandExport           CommandKind = "export"
+	CommandBackupInit       CommandKind = "backup_init"
+	CommandBackupSync       CommandKind = "backup_sync"
+	CommandBackupStatus     CommandKind = "backup_status"
+	CommandBackupRestore    CommandKind = "backup_restore"
 )
 
 type expectedShape uint8
@@ -94,12 +95,12 @@ func newWhereCommand(binding commandBinding) (command, error) {
 	return buildCommand(CommandWhere, binding, []string{"where", "--json"}, expectedObject, false, false)
 }
 
-func newInfoCommand(binding commandBinding) (command, error) {
-	return buildCommand(CommandInfo, binding, []string{"info", "--schema", "--json"}, expectedObject, false, false)
+func newDoltShowCommand(binding commandBinding) (command, error) {
+	return buildCommand(CommandDoltShow, binding, []string{"dolt", "show", "--json"}, expectedObject, false, false)
 }
 
-func newDoctorCommand(binding commandBinding) (command, error) {
-	return buildCommand(CommandDoctor, binding, []string{"doctor", "--agent", "--json"}, expectedObject, false, true)
+func newDoltStatusCommand(binding commandBinding) (command, error) {
+	return buildCommand(CommandDoltStatus, binding, []string{"dolt", "status", "--json"}, expectedObject, false, false)
 }
 
 func newShowCommand(binding commandBinding, id string) (command, error) {
@@ -391,10 +392,10 @@ func validateArgvShape(kind CommandKind, argv []string) error {
 		return fixed("version", "--json")
 	case CommandWhere:
 		return fixed("where", "--json")
-	case CommandInfo:
-		return fixed("info", "--schema", "--json")
-	case CommandDoctor:
-		return fixed("doctor", "--agent", "--json")
+	case CommandDoltShow:
+		return fixed("dolt", "show", "--json")
+	case CommandDoltStatus:
+		return fixed("dolt", "status", "--json")
 	case CommandList:
 		return fixed("list", "--json")
 	case CommandReady:
@@ -505,10 +506,8 @@ type commandContract struct {
 
 func commandContractFor(kind CommandKind) (commandContract, bool) {
 	switch kind {
-	case CommandVersion, CommandWhere, CommandInfo, CommandShow:
+	case CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus, CommandShow:
 		return commandContract{shape: expectedObject, json: true}, true
-	case CommandDoctor:
-		return commandContract{shape: expectedObject, explicitDeadline: true, json: true}, true
 	case CommandList, CommandReady, CommandDependencyList, CommandCommentList:
 		return commandContract{shape: expectedArray, json: true}, true
 	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandCommentAppend:
@@ -655,7 +654,7 @@ var credentialEnvironmentNames = map[string]struct{}{
 func allowedCredential(name string) bool { _, ok := credentialEnvironmentNames[name]; return ok }
 
 func childEnvironment(binding commandBinding) []string {
-	values := make(map[string]string, len(baseEnvironmentNames)+len(binding.credentials)+3)
+	values := make(map[string]string, len(baseEnvironmentNames)+len(binding.credentials)+5)
 	for _, name := range baseEnvironmentNames {
 		if value, ok := os.LookupEnv(name); ok {
 			values[name] = value
@@ -667,6 +666,11 @@ func childEnvironment(binding commandBinding) []string {
 	values["BEADS_DIR"] = binding.workspace
 	values["BD_JSON_ENVELOPE"] = "1"
 	values["BD_NON_INTERACTIVE"] = "1"
+	// Beads otherwise writes metrics and deferred event state during nominally
+	// read-only commands. These values are fixed process policy, not caller-
+	// supplied credentials, so inspection cannot modify provider or user state.
+	values["BD_DISABLE_METRICS"] = "1"
+	values["BD_DISABLE_EVENT_FLUSH"] = "1"
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
@@ -65,11 +66,19 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 	case CommandVersion:
 		data = map[string]any{"version": SupportedBeadsVersion, "build": "catalog-test"}
 	case CommandWhere:
-		data = map[string]any{"workspace_path": runner.workspace, "database_id": runner.databaseID}
-	case CommandInfo:
-		data = map[string]any{"protocol_schema": 1, "storage_mode": runner.mode, "read_only": false, "server_id": runner.serverID, "server_endpoint": runner.serverEndpoint}
-	case CommandDoctor:
-		data = map[string]any{"healthy": true, "server_id": runner.serverID, "server_endpoint": runner.serverEndpoint}
+		data = map[string]any{"path": runner.workspace, "prefix": runner.databaseID, "database_path": filepath.Join(runner.workspace, "embeddeddolt")}
+	case CommandDoltShow:
+		if runner.mode == tracker.ConcurrencyServerMultiwriter {
+			data = map[string]any{"backend": "dolt", "data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "database": runner.databaseID, "embedded": false, "host": "127.0.0.1", "port": 3306, "user": "dolt", "shared_server": true, "connection_ok": true}
+		} else {
+			data = map[string]any{"backend": "dolt", "data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "database": runner.databaseID, "embedded": true}
+		}
+	case CommandDoltStatus:
+		if runner.mode == tracker.ConcurrencyServerMultiwriter {
+			data = map[string]any{"mode": "external", "host": "127.0.0.1", "port": 3306, "user": "dolt", "database": runner.databaseID, "tls": false, "running": true, "version": "1.70.0"}
+		} else {
+			data = map[string]any{"data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "data_dir_exists": true, "mode": "embedded", "server_running": false}
+		}
 	case CommandList:
 		ids := make([]string, 0, len(runner.issues))
 		for id := range runner.issues {
@@ -282,7 +291,7 @@ func TestCatalogCreateReadReplayAndChangedReplay(t *testing.T) {
 	if created.Replayed || created.Record.ExternalRef.WorkID != request.WorkID || created.Record.ExternalRef.ExternalID == "" || created.Record.Observation.Revision == 0 || len(created.Record.Observation.Digest) != 64 {
 		t.Fatalf("created=%#v", created)
 	}
-	if got, want := runner.snapshotCalls(), []CommandKind{CommandVersion, CommandWhere, CommandInfo, CommandList, CommandCreate, CommandShow}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.snapshotCalls(), []CommandKind{CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus, CommandList, CommandCreate, CommandShow}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("create command order=%v want=%v", got, want)
 	}
 	read, err := bound.ReadWork(context.Background(), created.Record.ExternalRef)
