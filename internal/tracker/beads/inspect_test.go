@@ -148,6 +148,7 @@ func assertWP06Capabilities(t *testing.T, capabilities tracker.ProviderCapabilit
 	wantCatalogRead := tracker.SupportUnsupported
 	wantCatalogCreate := tracker.SupportUnsupported
 	wantCatalogUpdate := tracker.UpdateUnsupported
+	wantAssignment := tracker.AssignmentUnsupported
 	if compatible {
 		wantGraph = tracker.SupportSupported
 		wantDiscussion = tracker.DiscussionAppendOnly
@@ -155,10 +156,11 @@ func assertWP06Capabilities(t *testing.T, capabilities tracker.ProviderCapabilit
 		wantCatalogRead = tracker.SupportSupported
 		wantCatalogCreate = tracker.SupportSupported
 		wantCatalogUpdate = tracker.UpdateUnguarded
+		wantAssignment = tracker.AssignmentUnguarded
 	}
 	if capabilities.CatalogRead != wantCatalogRead || capabilities.CatalogCreate != wantCatalogCreate ||
 		capabilities.CatalogUpdate != wantCatalogUpdate || capabilities.BlockingGraph != wantGraph ||
-		capabilities.Discussion != wantDiscussion || capabilities.Assignment != tracker.AssignmentUnsupported ||
+		capabilities.Discussion != wantDiscussion || capabilities.Assignment != wantAssignment ||
 		capabilities.ObservationRevision != wantObservation || capabilities.SafeCompensation != tracker.CompensationUnsupported ||
 		capabilities.PortableExport != tracker.SupportUnsupported || capabilities.RestorableBackup != tracker.SupportUnsupported {
 		t.Fatalf("unimplemented port advertised: %#v", capabilities)

@@ -165,3 +165,142 @@ func cycle3Effect(request TrackerAssignRequest) ExternalEffect {
 		ResponseStatus: EffectPending, CompensationStatus: CompensationPending, ObservedAt: request.Now,
 	}
 }
+
+func TestProjectionSagaPersistsActualObservationAndReplaysWithoutMutation(t *testing.T) {
+	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	reference := projectionReference()
+	prior := projectionObservation(t, reference, 11, "human", "", now)
+	applied := projectionObservation(t, reference, 12, "actor-a", "operation-projection", now.Add(time.Second))
+	provider := &projectionProvider{observed: prior, projected: tracker.AssignmentMutation{Observation: applied, Guarantee: tracker.AssignmentUnguarded}}
+	repository := &cycle3Repository{}
+	request := projectionAssignRequest(now, reference)
+	saga := NewTrackerSaga(repository, provider, SystemClock{})
+	result, err := saga.Assign(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Revision != 12 || result.Assignee != "actor-a" || repository.effect.ObservationRevision != 12 || repository.effect.ObservationValue != "actor-a" || repository.effect.ObservationMarker != "operation-projection" {
+		t.Fatalf("projection result did not use actual provider evidence: result=%+v effect=%+v", result, repository.effect)
+	}
+	if provider.projects != 1 {
+		t.Fatalf("projection mutations = %d", provider.projects)
+	}
+	replayed, err := saga.Assign(context.Background(), request)
+	if err != nil || !replayed.Replayed || !replayed.Noop || provider.projects != 1 {
+		t.Fatalf("durable replay duplicated projection: result=%+v err=%v projects=%d", replayed, err, provider.projects)
+	}
+	changed := request
+	changed.Assignee = "actor-b"
+	if _, err := saga.Assign(context.Background(), changed); !IsKind(err, KindIdempotencyConflict) || provider.projects != 1 {
+		t.Fatalf("operation semantic conflict crossed provider boundary: err=%v projects=%d", err, provider.projects)
+	}
+}
+
+func TestProjectionSagaSafeCompensationUnsupportedIsDurableDecision(t *testing.T) {
+	now := time.Date(2026, 8, 26, 11, 0, 0, 0, time.UTC)
+	reference := projectionReference()
+	actual := projectionObservation(t, reference, 12, "actor-a", "operation-projection", now)
+	effect := projectionEffect(now, reference, actual)
+	repository := &cycle3Repository{effect: &effect}
+	provider := &projectionProvider{
+		compensated:   tracker.AssignmentMutation{Observation: actual, Guarantee: tracker.AssignmentUnguarded, Noop: true},
+		compensateErr: &tracker.Error{Kind: tracker.ErrorSafeCompensationUnsupported, RecoveryCode: "reconcile_without_mutation", Message: "conditional primitive absent"},
+	}
+	saga := NewTrackerSaga(repository, provider, SystemClock{})
+	request := projectionCompensateRequest(now, reference)
+	_, err := saga.Compensate(context.Background(), request)
+	var diagnostic *DiagnosticError
+	if !errors.As(err, &diagnostic) || diagnostic.Kind != KindSafeCompensationUnsupported || diagnostic.RetrySafety != RetryNever {
+		t.Fatalf("unsupported compensation diagnostic = %#v %v", diagnostic, err)
+	}
+	if repository.effect.CompensationStatus != CompensationUnsupported || repository.effect.CompensationRevision != 0 || repository.effect.ObservationRevision != 12 || provider.compensations != 1 {
+		t.Fatalf("unsupported compensation evidence = effect=%+v calls=%d", repository.effect, provider.compensations)
+	}
+	_, err = saga.Compensate(context.Background(), request)
+	if !errors.As(err, &diagnostic) || diagnostic.RetrySafety != RetryNever || provider.compensations != 1 {
+		t.Fatalf("automatic replay retried unsupported mutation: diagnostic=%+v calls=%d", diagnostic, provider.compensations)
+	}
+}
+
+func TestProjectionSagaAttributionLossPreservesExactHumanObservation(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	reference := projectionReference()
+	human := projectionObservation(t, reference, 13, "human-owner", "", now)
+	effect := projectionEffect(now, reference, projectionObservation(t, reference, 12, "actor-a", "operation-projection", now.Add(-time.Second)))
+	repository := &cycle3Repository{effect: &effect}
+	provider := &projectionProvider{
+		compensated:   tracker.AssignmentMutation{Observation: human, Guarantee: tracker.AssignmentUnguarded, Noop: true},
+		compensateErr: &tracker.Error{Kind: tracker.ErrorAttributionLost, Message: "human changed assignment"},
+	}
+	_, err := NewTrackerSaga(repository, provider, SystemClock{}).Compensate(context.Background(), projectionCompensateRequest(now, reference))
+	var diagnostic *DiagnosticError
+	if !errors.As(err, &diagnostic) || diagnostic.Kind != KindExternalAttributionLost || diagnostic.RetrySafety != RetryNever {
+		t.Fatalf("attribution diagnostic = %+v %v", diagnostic, err)
+	}
+	if repository.effect.CompensationStatus != CompensationAttributionLost || repository.effect.ObservationRevision != 13 || repository.effect.ObservationValue != "human-owner" || repository.effect.CompensationRevision != 0 {
+		t.Fatalf("human observation was spliced or lost: %+v", repository.effect)
+	}
+}
+
+type projectionProvider struct {
+	observed      tracker.AssignmentObservation
+	projected     tracker.AssignmentMutation
+	projectErr    error
+	compensated   tracker.AssignmentMutation
+	compensateErr error
+	projects      int
+	compensations int
+}
+
+func (provider *projectionProvider) ObserveAssignment(context.Context, tracker.ExternalWorkRef) (tracker.AssignmentObservation, error) {
+	return provider.observed, nil
+}
+
+func (provider *projectionProvider) ProjectAssignment(_ context.Context, _ tracker.ProjectAssignmentRequest) (tracker.AssignmentMutation, error) {
+	provider.projects++
+	return provider.projected, provider.projectErr
+}
+
+func (provider *projectionProvider) CompensateAssignment(_ context.Context, _ tracker.CompensateAssignmentRequest) (tracker.AssignmentMutation, error) {
+	provider.compensations++
+	return provider.compensated, provider.compensateErr
+}
+
+func projectionReference() tracker.ExternalWorkRef {
+	return tracker.ExternalWorkRef{ProjectID: "project-projection", WorkID: "work-projection", Provider: "portable", ExternalID: "external-projection", MetadataSchema: 1, CreatedByOperation: "operation-create", LastObservation: 11}
+}
+
+func projectionObservation(t *testing.T, reference tracker.ExternalWorkRef, revision tracker.Revision, assignee, marker string, at time.Time) tracker.AssignmentObservation {
+	t.Helper()
+	observation, err := tracker.NewProviderObservation(reference.ExternalID, []byte(fmt.Sprintf("%s-%d-%s-%s", reference.ExternalID, revision, assignee, marker)), revision, "", "", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation.Assignee, observation.OperationMarker = assignee, marker
+	return tracker.AssignmentObservation{ExternalRef: reference, Assignee: assignee, OperationMarker: marker, Observation: observation}
+}
+
+func projectionAssignRequest(now time.Time, reference tracker.ExternalWorkRef) TrackerAssignRequest {
+	return TrackerAssignRequest{
+		SchemaVersion: ResultSchemaVersion, CorrelationID: "correlation-projection", OperationID: "operation-projection",
+		ActorID: "actor-projection", ProcessID: "process-projection", Now: now, ExpectedRevision: 11,
+		Assignee: "actor-a", ExternalRef: reference, RequiredGuarantee: tracker.AssignmentUnguarded,
+	}
+}
+
+func projectionCompensateRequest(now time.Time, reference tracker.ExternalWorkRef) TrackerCompensateRequest {
+	return TrackerCompensateRequest{
+		SchemaVersion: ResultSchemaVersion, CorrelationID: "correlation-projection", OperationID: "operation-projection",
+		ActorID: "actor-projection", ProcessID: "process-projection", Now: now, ExpectedRevision: 12, ExternalRef: reference,
+	}
+}
+
+func projectionEffect(now time.Time, reference tracker.ExternalWorkRef, actual tracker.AssignmentObservation) ExternalEffect {
+	return ExternalEffect{
+		SchemaVersion: ResultSchemaVersion, OperationID: "operation-projection", CorrelationID: "correlation-projection",
+		ActorID: "actor-projection", ProcessID: "process-projection", Provider: reference.Provider, WorkKey: reference.ExternalID,
+		Marker: "operation-projection", PriorRevision: 11, PriorValue: "human", AppliedRevision: 12, AppliedValue: "actor-a",
+		ResponseStatus: EffectConfirmed, CompensationStatus: CompensationPending,
+		ObservationRevision: actual.Observation.Revision, ObservationValue: actual.Assignee, ObservationMarker: actual.OperationMarker, ObservedAt: now,
+	}
+}
