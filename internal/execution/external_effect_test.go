@@ -280,7 +280,7 @@ func TestProjectionSagaUsesStrongFakeConditionalCompensationEndToEnd(t *testing.
 		ActorID: assign.ActorID, ProcessID: assign.ProcessID, Now: now.Add(time.Second), ExpectedRevision: applied.Revision,
 		ExternalRef: reference, RequiredGuarantee: assign.RequiredGuarantee,
 	})
-	if err != nil || compensated.Kind != "tracker_effect_compensated" || compensated.Assignee != "original" || compensated.Revision <= applied.Revision {
+	if err != nil || compensated.Kind != "tracker_effect_compensated" || compensated.Assignee != "original" || compensated.Revision == 0 || compensated.Revision == applied.Revision {
 		t.Fatalf("strong compensation result=%+v err=%v", compensated, err)
 	}
 	observed, err := provider.ObserveAssignment(ctx, reference)

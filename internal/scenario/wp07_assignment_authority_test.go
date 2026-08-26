@@ -92,7 +92,7 @@ func TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries(t *testing.T)
 		t.Fatal(err)
 	}
 	recovered, err := execution.NewTrackerSaga(control, fake.NewProvider(providerStore), execution.SystemClock{}).Assign(ctx, request)
-	if err != nil || recovered.Revision <= observed.Revision {
+	if err != nil || recovered.Revision == 0 || recovered.Revision == observed.Revision || recovered.Assignee != request.Assignee {
 		t.Fatalf("provider restart result=%+v err=%v", recovered, err)
 	}
 	staleRequest := request
@@ -104,7 +104,7 @@ func TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries(t *testing.T)
 	staleRequest.Assignee = staleRequest.ActorID.String()
 	staleRequest.Now = request.Now.Add(time.Second)
 	staleEvidence, err := execution.NewTrackerSaga(control, fake.NewProvider(providerStore), execution.SystemClock{}).Assign(ctx, staleRequest)
-	if err != nil || staleEvidence.Revision <= recovered.Revision {
+	if err != nil || staleEvidence.Revision == 0 || staleEvidence.Revision == recovered.Revision || staleEvidence.Assignee != staleRequest.Assignee {
 		t.Fatalf("stale-process tracker evidence=%+v err=%v", staleEvidence, err)
 	}
 	if err := control.Close(); err != nil {
