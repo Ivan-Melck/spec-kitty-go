@@ -1,11 +1,14 @@
 package beads
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math/big"
 	"strings"
 	"time"
 
@@ -82,8 +85,8 @@ func (bound *BoundAdapter) CreateWork(ctx context.Context, request tracker.Creat
 		if err := validateIssueMapping(issue, request.ProjectID, request.WorkID, request.OperationID); err != nil {
 			return tracker.WorkMutation{}, err
 		}
-		if issue.document.kitty.ContentDigest != contentDigest {
-			return tracker.WorkMutation{}, mappingConflict("created provider issue content differs from the requested mapping")
+		if !issueMatchesCreate(issue, request, contentDigest) {
+			return tracker.WorkMutation{}, mappingConflict("created provider issue differs from the confirmed request")
 		}
 		record, err := bound.issueRecord(issue)
 		if err != nil {
@@ -546,8 +549,7 @@ func classifyCreateReplay(bound *BoundAdapter, request tracker.CreateWorkRequest
 	if issue.document.kitty.ContentDigest != digest {
 		return tracker.WorkMutation{}, invalidCatalogRequest("operation replay has different semantic input", nil)
 	}
-	if !issueMatchesWorkInput(issue, request.Title, request.Description, request.DesignContext, request.Criteria, digest) ||
-		!issueContainsProviderMetadata(issue, request.ProviderMetadata.Bytes()) {
+	if !issueMatchesCreate(issue, request, digest) {
 		return tracker.WorkMutation{}, mappingConflict("provider work drifted after the recorded create operation")
 	}
 	record, err := bound.issueRecord(issue)
@@ -599,6 +601,13 @@ func issueMatchesUpdate(issue providerIssue, request tracker.UpdateWorkRequest, 
 	return issueMatchesWorkInput(issue, request.Title, request.Description, request.DesignContext, request.Criteria, digest)
 }
 
+func issueMatchesCreate(issue providerIssue, request tracker.CreateWorkRequest, digest string) bool {
+	return issue.document.namespace != nil && issue.document.kitty.CreatedByOperation == request.OperationID &&
+		issue.document.kitty.LastOperation == request.OperationID &&
+		issueMatchesWorkInput(issue, request.Title, request.Description, request.DesignContext, request.Criteria, digest) &&
+		issueContainsProviderMetadata(issue, request.ProviderMetadata.Bytes())
+}
+
 func issueMatchesWorkInput(issue providerIssue, title, description, designContext string, criteria []tracker.Criterion, digest string) bool {
 	if issue.document.namespace == nil || issue.document.kitty.ContentDigest != digest {
 		return false
@@ -626,13 +635,114 @@ func issueContainsProviderMetadata(issue providerIssue, expected []byte) bool {
 }
 
 func semanticJSONEqual(left, right []byte) bool {
-	var leftValue, rightValue any
-	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+	leftValue, leftErr := decodeSemanticJSON(left)
+	rightValue, rightErr := decodeSemanticJSON(right)
+	if leftErr != nil || rightErr != nil {
 		return false
 	}
-	leftCanonical, leftErr := json.Marshal(leftValue)
-	rightCanonical, rightErr := json.Marshal(rightValue)
-	return leftErr == nil && rightErr == nil && string(leftCanonical) == string(rightCanonical)
+	return semanticJSONValueEqual(leftValue, rightValue)
+}
+
+func decodeSemanticJSON(encoded []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("JSON value has trailing content")
+	}
+	return value, nil
+}
+
+func semanticJSONValueEqual(left, right any) bool {
+	switch value := left.(type) {
+	case nil:
+		return right == nil
+	case bool:
+		other, ok := right.(bool)
+		return ok && value == other
+	case string:
+		other, ok := right.(string)
+		return ok && value == other
+	case json.Number:
+		other, ok := right.(json.Number)
+		return ok && semanticJSONNumbersEqual(value, other)
+	case []any:
+		other, ok := right.([]any)
+		if !ok || len(value) != len(other) {
+			return false
+		}
+		for index := range value {
+			if !semanticJSONValueEqual(value[index], other[index]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		other, ok := right.(map[string]any)
+		if !ok || len(value) != len(other) {
+			return false
+		}
+		for key, child := range value {
+			otherChild, present := other[key]
+			if !present || !semanticJSONValueEqual(child, otherChild) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+type normalizedJSONNumber struct {
+	negative    bool
+	coefficient string
+	exponent    big.Int
+}
+
+func semanticJSONNumbersEqual(left, right json.Number) bool {
+	leftNumber, leftOK := normalizeJSONNumber(left.String())
+	rightNumber, rightOK := normalizeJSONNumber(right.String())
+	return leftOK && rightOK && leftNumber.negative == rightNumber.negative &&
+		leftNumber.coefficient == rightNumber.coefficient && leftNumber.exponent.Cmp(&rightNumber.exponent) == 0
+}
+
+// normalizeJSONNumber produces an exact coefficient × 10^exponent form. It
+// never expands an exponent into a giant integer, so work remains proportional
+// to the bounded provider metadata rather than to the number's magnitude.
+func normalizeJSONNumber(encoded string) (normalizedJSONNumber, bool) {
+	number := normalizedJSONNumber{}
+	if strings.HasPrefix(encoded, "-") {
+		number.negative = true
+		encoded = encoded[1:]
+	}
+	mantissa, exponentText := encoded, "0"
+	if exponentIndex := strings.IndexAny(encoded, "eE"); exponentIndex >= 0 {
+		mantissa, exponentText = encoded[:exponentIndex], encoded[exponentIndex+1:]
+	}
+	if _, ok := number.exponent.SetString(exponentText, 10); !ok {
+		return normalizedJSONNumber{}, false
+	}
+	fractionDigits := 0
+	if decimalIndex := strings.IndexByte(mantissa, '.'); decimalIndex >= 0 {
+		fractionDigits = len(mantissa) - decimalIndex - 1
+		mantissa = mantissa[:decimalIndex] + mantissa[decimalIndex+1:]
+	}
+	number.exponent.Sub(&number.exponent, big.NewInt(int64(fractionDigits)))
+	mantissa = strings.TrimLeft(mantissa, "0")
+	if mantissa == "" {
+		number.negative = false
+		number.coefficient = "0"
+		number.exponent.SetInt64(0)
+		return number, true
+	}
+	trimmed := strings.TrimRight(mantissa, "0")
+	number.exponent.Add(&number.exponent, big.NewInt(int64(len(mantissa)-len(trimmed))))
+	number.coefficient = trimmed
+	return number, true
 }
 
 func pointerValue(value *string) string {
