@@ -208,12 +208,14 @@ func TestTrackerCoordinateBeadsMutationBranchesCallProviderNeutralPorts(t *testi
 	t.Run("dependency-put", func(t *testing.T) {
 		want := tracker.DependencyMutation{Dependency: dependencyRequest.Dependency, Replayed: true}
 		graph := &recordingCoordinationGraph{putResult: want}
-		response, err := executeBeadsCoordination(ctx, "dependency-put", projectID, graph, &recordingCoordinationDiscussion{}, dependencyInput)
+		discussion := &recordingCoordinationDiscussion{}
+		response, err := executeBeadsCoordination(ctx, "dependency-put", projectID, graph, discussion, dependencyInput)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(graph.putRequests) != 1 || !reflect.DeepEqual(graph.putRequests[0], dependencyRequest) || len(graph.removeRequests) != 0 {
-			t.Fatalf("put calls=%#v remove calls=%#v", graph.putRequests, graph.removeRequests)
+		assertCoordinationCallCensus(t, graph, discussion, "dependency-put")
+		if !reflect.DeepEqual(graph.putRequests[0], dependencyRequest) {
+			t.Fatalf("put request=%#v want=%#v", graph.putRequests[0], dependencyRequest)
 		}
 		wantResponse := BeadsCoordinationResponse{SchemaVersion: 1, OK: true, Action: "dependency-put", DependencyMutation: &want}
 		if !reflect.DeepEqual(response, wantResponse) {
@@ -224,12 +226,14 @@ func TestTrackerCoordinateBeadsMutationBranchesCallProviderNeutralPorts(t *testi
 	t.Run("dependency-remove", func(t *testing.T) {
 		want := tracker.DependencyMutation{Dependency: dependencyRequest.Dependency, Noop: true}
 		graph := &recordingCoordinationGraph{removeResult: want}
-		response, err := executeBeadsCoordination(ctx, "dependency-remove", projectID, graph, &recordingCoordinationDiscussion{}, dependencyInput)
+		discussion := &recordingCoordinationDiscussion{}
+		response, err := executeBeadsCoordination(ctx, "dependency-remove", projectID, graph, discussion, dependencyInput)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(graph.removeRequests) != 1 || !reflect.DeepEqual(graph.removeRequests[0], dependencyRequest) || len(graph.putRequests) != 0 {
-			t.Fatalf("remove calls=%#v put calls=%#v", graph.removeRequests, graph.putRequests)
+		assertCoordinationCallCensus(t, graph, discussion, "dependency-remove")
+		if !reflect.DeepEqual(graph.removeRequests[0], dependencyRequest) {
+			t.Fatalf("remove request=%#v want=%#v", graph.removeRequests[0], dependencyRequest)
 		}
 		wantResponse := BeadsCoordinationResponse{SchemaVersion: 1, OK: true, Action: "dependency-remove", DependencyMutation: &want}
 		if !reflect.DeepEqual(response, wantResponse) {
@@ -250,13 +254,15 @@ func TestTrackerCoordinateBeadsMutationBranchesCallProviderNeutralPorts(t *testi
 			OperationID: "operation-comment", Author: "agent-a", Body: "durable note", ExpectedObservation: 41,
 		}
 		want := tracker.DiscussionMutation{Entry: tracker.DiscussionEntry{ExternalCommentID: "comment-1", Author: "agent-a", Body: "durable note"}, Replayed: true}
+		graph := &recordingCoordinationGraph{}
 		discussion := &recordingCoordinationDiscussion{appendResult: want}
-		response, err := executeBeadsCoordination(ctx, "discussion-append", projectID, &recordingCoordinationGraph{}, discussion, input)
+		response, err := executeBeadsCoordination(ctx, "discussion-append", projectID, graph, discussion, input)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(discussion.appendRequests) != 1 || !reflect.DeepEqual(discussion.appendRequests[0], wantRequest) || discussion.listCalls != 0 {
-			t.Fatalf("append calls=%#v list calls=%d", discussion.appendRequests, discussion.listCalls)
+		assertCoordinationCallCensus(t, graph, discussion, "discussion-append")
+		if !reflect.DeepEqual(discussion.appendRequests[0], wantRequest) {
+			t.Fatalf("append request=%#v want=%#v", discussion.appendRequests[0], wantRequest)
 		}
 		wantResponse := BeadsCoordinationResponse{SchemaVersion: 1, OK: true, Action: "discussion-append", DiscussionMutation: &want}
 		if !reflect.DeepEqual(response, wantResponse) {
@@ -305,29 +311,81 @@ func TestTrackerCoordinateBeadsMutationBranchesPropagatePortErrors(t *testing.T)
 		test := &tests[index]
 		t.Run(test.name, func(t *testing.T) {
 			response, err := executeBeadsCoordination(context.Background(), test.action, projectID, test.graph, test.discussion, test.input)
-			calls := 0
+			assertCoordinationCallCensus(t, test.graph, test.discussion, test.action)
 			requestMatches := false
 			switch test.action {
 			case "dependency-put":
-				calls = len(test.graph.putRequests)
-				requestMatches = calls == 1 && reflect.DeepEqual(test.graph.putRequests[0], dependencyRequest)
+				requestMatches = reflect.DeepEqual(test.graph.putRequests[0], dependencyRequest)
 			case "dependency-remove":
-				calls = len(test.graph.removeRequests)
-				requestMatches = calls == 1 && reflect.DeepEqual(test.graph.removeRequests[0], dependencyRequest)
+				requestMatches = reflect.DeepEqual(test.graph.removeRequests[0], dependencyRequest)
 			case "discussion-append":
-				calls = len(test.discussion.appendRequests)
-				requestMatches = calls == 1 && reflect.DeepEqual(test.discussion.appendRequests[0], discussionRequest)
+				requestMatches = reflect.DeepEqual(test.discussion.appendRequests[0], discussionRequest)
 			}
-			if err != sentinel || !reflect.DeepEqual(response, BeadsCoordinationResponse{}) || calls != 1 || !requestMatches {
-				t.Fatalf("response=%#v error=%v calls=%d request_matches=%t", response, err, calls, requestMatches)
+			if err != sentinel || !reflect.DeepEqual(response, BeadsCoordinationResponse{}) || !requestMatches {
+				t.Fatalf("response=%#v error=%v request_matches=%t", response, err, requestMatches)
 			}
 		})
+	}
+}
+
+func TestCoordinationCallCensusRejectsExtraCrossInterfaceCall(t *testing.T) {
+	graph := &recordingCoordinationGraph{}
+	discussion := &recordingCoordinationDiscussion{}
+	_, _ = graph.PutBlockingDependency(context.Background(), tracker.DependencyRequest{})
+	_, _ = discussion.AppendDiscussion(context.Background(), tracker.AppendDiscussionRequest{})
+	if err := coordinationCallCensusFor(graph, discussion).validate("dependency-put"); err == nil {
+		t.Fatal("census accepted an extra wrong cross-interface discussion call")
+	}
+}
+
+type coordinationCallCensus struct {
+	dependencyPut, dependencyRemove, dependencyList, ready, discussionAppend, discussionList int
+}
+
+func coordinationCallCensusFor(graph *recordingCoordinationGraph, discussion *recordingCoordinationDiscussion) coordinationCallCensus {
+	return coordinationCallCensus{
+		dependencyPut: len(graph.putRequests), dependencyRemove: len(graph.removeRequests),
+		dependencyList: graph.listCalls, ready: graph.readyCalls,
+		discussionAppend: len(discussion.appendRequests), discussionList: discussion.listCalls,
+	}
+}
+
+func (census coordinationCallCensus) validate(selected string) error {
+	methods := []struct {
+		name  string
+		calls int
+	}{
+		{"dependency-put", census.dependencyPut},
+		{"dependency-remove", census.dependencyRemove},
+		{"dependency-list", census.dependencyList},
+		{"ready", census.ready},
+		{"discussion-append", census.discussionAppend},
+		{"discussion-list", census.discussionList},
+	}
+	for _, method := range methods {
+		want := 0
+		if method.name == selected {
+			want = 1
+		}
+		if method.calls != want {
+			return fmt.Errorf("coordination method %s calls=%d want=%d (selected %s)", method.name, method.calls, want, selected)
+		}
+	}
+	return nil
+}
+
+func assertCoordinationCallCensus(t *testing.T, graph *recordingCoordinationGraph, discussion *recordingCoordinationDiscussion, selected string) {
+	t.Helper()
+	if err := coordinationCallCensusFor(graph, discussion).validate(selected); err != nil {
+		t.Fatal(err)
 	}
 }
 
 type recordingCoordinationGraph struct {
 	putRequests    []tracker.DependencyRequest
 	removeRequests []tracker.DependencyRequest
+	listCalls      int
+	readyCalls     int
 	putResult      tracker.DependencyMutation
 	removeResult   tracker.DependencyMutation
 	putErr         error
@@ -344,12 +402,14 @@ func (graph *recordingCoordinationGraph) RemoveBlockingDependency(_ context.Cont
 	return graph.removeResult, graph.removeErr
 }
 
-func (*recordingCoordinationGraph) ListDependencies(context.Context, tracker.ExternalWorkRef) ([]tracker.DependencyRef, error) {
-	panic("unexpected ListDependencies call")
+func (graph *recordingCoordinationGraph) ListDependencies(context.Context, tracker.ExternalWorkRef) ([]tracker.DependencyRef, error) {
+	graph.listCalls++
+	return nil, nil
 }
 
-func (*recordingCoordinationGraph) ReadyProjection(context.Context, tracker.ReadyRequest) (tracker.ReadyProjection, error) {
-	panic("unexpected ReadyProjection call")
+func (graph *recordingCoordinationGraph) ReadyProjection(context.Context, tracker.ReadyRequest) (tracker.ReadyProjection, error) {
+	graph.readyCalls++
+	return tracker.ReadyProjection{}, nil
 }
 
 type recordingCoordinationDiscussion struct {
@@ -366,7 +426,7 @@ func (discussion *recordingCoordinationDiscussion) AppendDiscussion(_ context.Co
 
 func (discussion *recordingCoordinationDiscussion) ListDiscussion(context.Context, tracker.ExternalWorkRef) ([]tracker.DiscussionEntry, error) {
 	discussion.listCalls++
-	panic("unexpected ListDiscussion call")
+	return nil, nil
 }
 
 func TestTrackerCatalogBeadsReadReachesProductionAdapter(t *testing.T) {
