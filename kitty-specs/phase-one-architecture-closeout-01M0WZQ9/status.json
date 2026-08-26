@@ -141,7 +141,8 @@
       "last_transition_at": "2026-08-26T00:54:48.116710+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: schema v12 preserves every shipped version, persists immutable ordered governance contexts atomically with runs, exposes run/lease provenance, rejects rebinding/corruption/partial writes, and passes ten-pass plus race qualification"
+        "Ready for review: schema v12 preserves every shipped version, persists immutable ordered governance contexts atomically with runs, exposes run/lease provenance, rejects rebinding/corruption/partial writes, and passes ten-pass plus race qualification",
+        "Cycle 2 ready: sealed immutable run governance binding, production recovery inspection, and all mutation/recovery proofs pass. WP04's authority_test.go edits remain fixture-only coordination for WP02's lane-owned tests."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
