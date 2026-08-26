@@ -30,7 +30,8 @@
       "notes": [
         "Ready for review",
         "Ready for review: portable ports wired and canonical tracker binding added",
-        "Ready for review: persisted author is part of discussion replay identity; diff-scoped gofmt + staticcheck: 0 issues, exit 0"
+        "Ready for review: persisted author is part of discussion replay identity; diff-scoped gofmt + staticcheck: 0 issues, exit 0",
+        "Review passed cycle 3: discussion author persists across reopen, participates in replay identity, and is returned from persisted state; same-marker/body/different-author is rejected before mutation with file, revision, history, and queued-failure sentinels unchanged. TrackerBinding and portable-port wiring remain intact. Anti-pattern checklist: dead code PASS; synthetic fixtures PASS; silent empty returns PASS; FR coverage PASS; frozen surface PASS; locked decisions PASS; shared-file ownership PASS; production fragility PASS. Evidence: focused count-50, package count-10, uncached race, vet, compatibility compilation, and diff checks passed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
