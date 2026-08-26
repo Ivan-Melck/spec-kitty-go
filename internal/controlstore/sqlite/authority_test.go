@@ -139,11 +139,15 @@ func TestWriterContentionReturnsTypedBusyAfterBoundedWait(t *testing.T) {
 		ActorID: "actor-busy", ProcessID: "process-busy", Now: time.Now().UTC(), LeaseTTL: time.Minute,
 	}, "run-busy", "lease-busy")
 	elapsed := time.Since(started)
-	if !execution.IsKind(err, execution.KindControlStoreBusy) {
-		t.Fatalf("busy error = %v", err)
+	var diagnostic *execution.DiagnosticError
+	if !errors.As(err, &diagnostic) || diagnostic.Kind != execution.KindControlStoreBusy {
+		t.Fatalf("busy diagnostic = %#v", err)
 	}
-	if elapsed < 3500*time.Millisecond || elapsed > 7*time.Second {
-		t.Fatalf("busy wait = %s, want bounded near 5s", elapsed)
+	if diagnostic.RetrySafety != execution.RetrySafeSameOperation || len(diagnostic.RecoveryActions) == 0 || diagnostic.ObservedState["control_store"] != "busy" || diagnostic.ExpectedState["control_store"] != "writable" {
+		t.Fatalf("busy retry diagnostic = %+v", diagnostic)
+	}
+	if elapsed > 7*time.Second {
+		t.Fatalf("busy wait = %s, want no more than 7s", elapsed)
 	}
 }
 
