@@ -41,7 +41,12 @@ func (s *Store) GovernanceForLease(ctx context.Context, leaseID ids.LeaseID) (Ru
 		}
 		return RunGovernance{}, governanceDiagnostic("read lease governance binding", map[string]string{"lease_id": leaseID.String()}, err)
 	}
-	return loadRunGovernance(ctx, s.db, runID, leaseID)
+	result, err := s.GovernanceForRun(ctx, runID)
+	if err != nil {
+		return RunGovernance{}, err
+	}
+	result.LeaseID = leaseID
+	return result, nil
 }
 
 func saveGovernanceContextTx(ctx context.Context, tx *sql.Tx, value governancecontext.Context, operationID ids.OperationID, now time.Time) error {

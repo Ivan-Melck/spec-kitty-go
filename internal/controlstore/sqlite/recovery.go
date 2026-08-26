@@ -143,6 +143,35 @@ EXISTS(SELECT 1 FROM start_run_results z WHERE z.operation_id=o.operation_id)
 	if result.LeaseID != "" && result.Generation > 0 {
 		result.Token = s.tokenFor(operationID, result.RunID, result.LeaseID, result.Generation)
 	}
+	if result.LeaseID != "" {
+		governance, err := s.GovernanceForLease(ctx, result.LeaseID)
+		if err != nil {
+			return result, err
+		}
+		requestContext := result.Request.Claim.GovernanceContext
+		switch governance.Provenance {
+		case GovernanceVerified:
+			if validationErr := requestContext.Validate(); validationErr != nil ||
+				requestContext.ID() != governance.Context.ID() ||
+				requestContext.Aggregate() != governance.Context.Aggregate() {
+				diagnostic := execution.NewDiagnostic(execution.KindIdempotencyConflict, "durable start-run request disagrees with immutable run governance", execution.RetryNever,
+					result.Request.Claim.CorrelationID, operationID,
+					map[string]string{"operation_id": operationID.String(), "run_id": result.RunID.String(), "lease_id": result.LeaseID.String()},
+					map[string]string{"governance_context_id": requestContext.ID().String(), "governance_context_aggregate": requestContext.Aggregate().Algorithm() + ":" + requestContext.Aggregate().Digest()},
+					map[string]string{"governance_context_id": governance.Context.ID().String(), "governance_context_aggregate": governance.Context.Aggregate().Algorithm() + ":" + governance.Context.Aggregate().Digest()}, time.Now().UTC())
+				diagnostic.Cause = validationErr
+				return result, diagnostic
+			}
+		case GovernanceUnknownPreProvenance:
+			if requestContext.ID() != "" {
+				return result, execution.NewDiagnostic(execution.KindIdempotencyConflict, "historical run has no governance provenance but its recovery envelope claims one", execution.RetryNever,
+					result.Request.Claim.CorrelationID, operationID,
+					map[string]string{"operation_id": operationID.String(), "run_id": result.RunID.String(), "lease_id": result.LeaseID.String()},
+					map[string]string{"governance_context_id": requestContext.ID().String()},
+					map[string]string{"governance_context": string(GovernanceUnknownPreProvenance)}, time.Now().UTC())
+			}
+		}
+	}
 	return result, nil
 }
 

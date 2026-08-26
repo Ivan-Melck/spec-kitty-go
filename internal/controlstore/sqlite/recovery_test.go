@@ -108,6 +108,17 @@ func TestRecoveryEnvelopeAndTerminalResultAreImmutableAndTokenFree(t *testing.T)
 		loaded.Request.Claim.GovernanceContext.ID() != request.Claim.GovernanceContext.ID() || loaded.Request.Claim.GovernanceContext.Aggregate() != request.Claim.GovernanceContext.Aggregate() {
 		t.Fatalf("loaded=%+v err=%v", loaded, err)
 	}
+	seedCanonicalAuthority(t, ctx, store, Seed{ProjectID: request.Claim.ProjectID, MissionID: request.Claim.MissionID, WorkRevisionID: request.Claim.WorkRevisionID, WorkID: request.Claim.WorkID})
+	claimed, err := store.Claim(ctx, request.Claim, "run-envelope", "lease-envelope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = store.LoadStartRun(ctx, request.Claim.OperationID)
+	if err != nil || loaded.RunID != claimed.RunID || loaded.LeaseID != claimed.LeaseID ||
+		loaded.Request.Claim.GovernanceContext.ID() != request.Claim.GovernanceContext.ID() ||
+		loaded.Request.Claim.GovernanceContext.Aggregate() != request.Claim.GovernanceContext.Aggregate() {
+		t.Fatalf("claimed recovery governance=%+v err=%v", loaded, err)
+	}
 	capsule := execution.RunCapsule{SchemaVersion: execution.ResultSchemaVersion, Kind: "run_ready", CorrelationID: request.Claim.CorrelationID, OperationID: request.Claim.OperationID, AggregateIDs: map[string]string{"operation_id": request.Claim.OperationID.String(), "governance_context_id": request.Claim.GovernanceContext.ID().String()}, GovernanceContextID: request.Claim.GovernanceContext.ID(), GovernanceContextAggregate: request.Claim.GovernanceContext.Aggregate(), Token: "must-not-persist", Replayed: true}
 	mismatched := capsule
 	mismatched.GovernanceContextID = "context-mismatched"
@@ -140,5 +151,47 @@ func TestRecoveryEnvelopeAndTerminalResultAreImmutableAndTokenFree(t *testing.T)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE start_run_requests SET request_digest='changed' WHERE operation_id=?`, request.Claim.OperationID); err == nil {
 		t.Fatal("immutable recovery request accepted update")
+	}
+}
+
+func TestRecoveryGovernanceConsumerRejectsEnvelopeRunDisagreement(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	request := execution.StartRunRequest{
+		SchemaVersion: execution.ResultSchemaVersion,
+		Claim: execution.StartRequest{
+			CorrelationID: "operation-governance-recovery", OperationID: "operation-governance-recovery",
+			ProjectID: "project-governance-recovery", MissionID: "mission-governance-recovery",
+			WorkRevisionID: "revision-governance-recovery", WorkID: "work-governance-recovery",
+			ActorID: "actor-governance-recovery", ProcessID: "process-governance-recovery",
+			Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, "context-governance-recovery", now),
+		},
+	}
+	seedCanonicalAuthority(t, ctx, store, Seed{ProjectID: request.Claim.ProjectID, MissionID: request.Claim.MissionID, WorkRevisionID: request.Claim.WorkRevisionID, WorkID: request.Claim.WorkID})
+	if err := store.PrepareStartRun(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim(ctx, request.Claim, "run-governance-recovery", "lease-governance-recovery"); err != nil {
+		t.Fatal(err)
+	}
+	tampered := request
+	tampered.Claim.GovernanceContext = testGovernanceContext(t, "context-tampered-recovery", now)
+	encoded, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DROP TRIGGER immutable_start_run_request_update`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE start_run_requests SET request_json=? WHERE operation_id=?`, encoded, request.Claim.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadStartRun(ctx, request.Claim.OperationID); !execution.IsKind(err, execution.KindIdempotencyConflict) {
+		t.Fatalf("recovery governance disagreement error=%v", err)
 	}
 }

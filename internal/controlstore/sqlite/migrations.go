@@ -176,7 +176,11 @@ BEFORE DELETE ON governance_context_entries BEGIN SELECT RAISE(ABORT,'governance
 CREATE TRIGGER require_governance_context_on_new_run
 BEFORE INSERT ON runs
 WHEN NEW.governance_context_id IS NULL OR NEW.governance_context_id=''
-BEGIN SELECT RAISE(ABORT,'new run requires governance context'); END;`
+BEGIN SELECT RAISE(ABORT,'new run requires governance context'); END;
+CREATE TRIGGER immutable_run_governance_context_update
+BEFORE UPDATE OF governance_context_id ON runs
+WHEN NEW.governance_context_id IS NOT OLD.governance_context_id
+BEGIN SELECT RAISE(ABORT,'run governance context binding is immutable'); END;`
 
 const integrationMigrationV10 = `
 CREATE TABLE integration_commands (

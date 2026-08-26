@@ -123,6 +123,29 @@ func TestGovernanceContextClaimIsAtomicImmutableInspectableAndReplayable(t *test
 	if err != nil || byLease.RunID != first.RunID || byLease.Context.Aggregate() != request.GovernanceContext.Aggregate() {
 		t.Fatalf("lease governance=%+v err=%v", byLease, err)
 	}
+	otherContext := testGovernanceContext(t, "context-other", now)
+	persistGovernanceContextForTest(t, ctx, store, otherContext)
+	for _, mutation := range []struct {
+		name      string
+		statement string
+		args      []any
+	}{
+		{name: "verified value to another value", statement: `UPDATE runs SET governance_context_id=? WHERE run_id=?`, args: []any{otherContext.ID(), first.RunID}},
+		{name: "verified value to null", statement: `UPDATE runs SET governance_context_id=NULL WHERE run_id=?`, args: []any{first.RunID}},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			if _, err := store.db.ExecContext(ctx, mutation.statement, mutation.args...); err == nil {
+				t.Fatal("mutable run governance binding was accepted")
+			}
+		})
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE runs SET status=status WHERE run_id=?`, first.RunID); err != nil {
+		t.Fatalf("unrelated run lifecycle update was rejected: %v", err)
+	}
+	afterMutation, err := store.GovernanceForLease(ctx, first.LeaseID)
+	if err != nil || afterMutation.Provenance != GovernanceVerified || afterMutation.Context.ID() != request.GovernanceContext.ID() || afterMutation.Context.Aggregate() != request.GovernanceContext.Aggregate() {
+		t.Fatalf("governance changed after rejected run mutation: %+v err=%v", afterMutation, err)
+	}
 	for _, statement := range []string{
 		`UPDATE governance_contexts SET aggregate_digest='changed' WHERE context_id='context-governance'`,
 		`UPDATE governance_context_entries SET revision='changed' WHERE context_id='context-governance'`,
@@ -144,6 +167,51 @@ func TestGovernanceContextClaimIsAtomicImmutableInspectableAndReplayable(t *test
 	afterReopen, err := reopened.GovernanceForLease(ctx, first.LeaseID)
 	if err != nil || afterReopen.Context.Aggregate() != request.GovernanceContext.Aggregate() {
 		t.Fatalf("reopened governance=%+v err=%v", afterReopen, err)
+	}
+}
+
+func TestGovernanceContextMigrationKeepsHistoricalUnknownBindingImmutable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < currentSchemaVersion-1; index++ {
+		if _, err := raw.ExecContext(ctx, migrations[index]); err != nil {
+			t.Fatalf("apply migration %d: %v", index+1, err)
+		}
+	}
+	if _, err := raw.ExecContext(ctx, "PRAGMA user_version="+strconv.Itoa(currentSchemaVersion-1)); err != nil {
+		t.Fatal(err)
+	}
+	seedHistoricalAuthority(t, ctx, raw, currentSchemaVersion-1)
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".token-key", make([]byte, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	persistGovernanceContextForTest(t, ctx, store, testGovernanceContext(t, "context-current", time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)))
+	if _, err := store.db.ExecContext(ctx, `UPDATE runs SET governance_context_id='context-current' WHERE run_id='run-history'`); err == nil {
+		t.Fatal("historical NULL provenance was backfilled")
+	}
+	for name, inspect := range map[string]func() (RunGovernance, error){
+		"run":   func() (RunGovernance, error) { return store.GovernanceForRun(ctx, "run-history") },
+		"lease": func() (RunGovernance, error) { return store.GovernanceForLease(ctx, "lease-history") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			governance, err := inspect()
+			if err != nil || governance.Provenance != GovernanceUnknownPreProvenance || governance.Context.ID() != "" {
+				t.Fatalf("historical governance=%+v err=%v", governance, err)
+			}
+		})
 	}
 }
 
@@ -311,6 +379,21 @@ func testGovernanceContextOrdered(t *testing.T, id ids.GovernanceContextID, revi
 		t.Fatal(err)
 	}
 	return value
+}
+
+func persistGovernanceContextForTest(t *testing.T, ctx context.Context, store *Store, value governancecontext.Context) {
+	t.Helper()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := saveGovernanceContextTx(ctx, tx, value, "operation-test-context", value.CreatedAt()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func seedHistoricalAuthority(t *testing.T, ctx context.Context, db *sql.DB, version int) {
