@@ -16,7 +16,7 @@ requirement_refs:
 - NFR-012
 planning_base_branch: feat/beads-tracker-integration
 merge_target_branch: feat/beads-tracker-integration
-branch_strategy: Implement in the Spec Kitty lane allocated from the finalized dependency base after WP01 and WP02; merge the accepted candidate into feat/beads-tracker-integration. Do not choose or recreate a base branch manually.
+branch_strategy: Planning artifacts for this mission were generated on feat/beads-tracker-integration. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/beads-tracker-integration unless the human explicitly redirects the landing branch.
 subtasks:
 - T010
 - T011
