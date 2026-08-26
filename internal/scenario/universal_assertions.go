@@ -19,19 +19,20 @@ import (
 // universalAssertionState is the evidence visible at one named fault. The
 // optional probes must be read-only or expected-to-refuse public operations.
 type universalAssertionState struct {
-	ScenarioID         string
-	FaultID            string
-	Database           string
-	TrackerPath        string
-	RepositoryPath     string
-	Repository         gitrepo.Repository
-	ExpectedPrimary    workspace.PrimarySnapshot
-	ExpectedWorkspaces map[ids.WorkspaceID]workspaceBindingFact
-	ExpectedAuthority  map[string]activeLeaseFact
-	CandidateCommits   []string
-	StaleProbe         func(context.Context) error
-	RequireStaleProbe  bool
-	AttributionProbe   func(context.Context) error
+	ScenarioID            string
+	FaultID               string
+	Database              string
+	TrackerPath           string
+	RepositoryPath        string
+	Repository            gitrepo.Repository
+	ExpectedPrimary       workspace.PrimarySnapshot
+	ExpectedWorkspaces    map[ids.WorkspaceID]workspaceBindingFact
+	ExpectedAuthority     map[string]activeLeaseFact
+	CandidateCommits      []string
+	StaleProbe            func(context.Context) error
+	RequireStaleProbe     bool
+	AttributionProbe      func(context.Context) error
+	ProviderTopologyProbe func(context.Context) error
 }
 
 type workspaceBindingFact struct {
@@ -94,6 +95,11 @@ func assertUniversalInvariants(ctx context.Context, state universalAssertionStat
 	}
 	if err := assertAttributionFacts(ctx, db, state.TrackerPath); err != nil {
 		return invariantFailure(state, "attribution_safe_compensation", err, "preserve provider state and require compare-before-compensate evidence")
+	}
+	if state.ProviderTopologyProbe != nil {
+		if err := state.ProviderTopologyProbe(ctx); err != nil {
+			return invariantFailure(state, "provider_topology", err, "bind the provider operation and observation to this lease-scoped workspace")
+		}
 	}
 	if state.RequireStaleProbe && state.StaleProbe == nil {
 		return invariantFailure(state, "stale_token_refusal", errors.New("required stale probe is absent"), "provision expired authority in this scenario fixture")
