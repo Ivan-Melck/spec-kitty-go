@@ -92,7 +92,8 @@
       "last_transition_at": "2026-08-26T10:47:28.894133+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: closed typed bd command vocabulary, bounded POSIX process-group runner, schema-1 envelope/error and JSONL decoders, stable redacted diagnostics, ambiguity monotonicity, and adversarial tests; protocol.go 100% statement coverage; focused race/repeat/vet/staticcheck plus contract/scope campaigns pass."
+        "Ready for review: closed typed bd command vocabulary, bounded POSIX process-group runner, schema-1 envelope/error and JSONL decoders, stable redacted diagnostics, ambiguity monotonicity, and adversarial tests; protocol.go 100% statement coverage; focused race/repeat/vet/staticcheck plus contract/scope campaigns pass.",
+        "Correction cycle 2 ready: option-like values fail closed under bounded ID/value grammar, runtime argv tampering fails before spawn, documented errors require exact top-level wire lines, build identity requires non-empty build, and the complete hostile process matrix passes normal/race/repeat/coverage/vet/static/contract/scope gates."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
