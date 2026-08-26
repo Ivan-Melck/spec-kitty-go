@@ -36,6 +36,7 @@ type step struct {
 	Stderr           string            `json:"stderr,omitempty"`
 	ExitCode         int               `json:"exit_code,omitempty"`
 	WaitFor          string            `json:"wait_for,omitempty"`
+	WaitTiming       string            `json:"wait_timing,omitempty"`
 	NextObservation  map[string]string `json:"next_observation,omitempty"`
 }
 
@@ -103,6 +104,24 @@ func run() error {
 	if err := validateInvocation(root, current, os.Args[1:], state.State); err != nil {
 		return err
 	}
+	if current.WaitFor != "" && current.WaitTiming == "before_apply" {
+		if err := enterBarrier(root, current.WaitFor); err != nil {
+			return err
+		}
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+			return err
+		}
+		if err := awaitBarrier(root, current.WaitFor); err != nil {
+			return err
+		}
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+			return err
+		}
+		state, err = loadState(statePath, plan.InitialState)
+		if err != nil || state.Position >= len(plan.Steps) || state.Position != currentPosition(plan, current.ID) {
+			return fmt.Errorf("scenario moved while waiting before apply")
+		}
+	}
 	if current.TransitionTiming == "before_response" {
 		apply(state.State, current.Transition)
 		if err := assertObservation(current, state.State); err != nil {
@@ -118,15 +137,12 @@ func run() error {
 		return err
 	}
 
-	if current.WaitFor != "" {
-		barrier := filepath.Join(root, current.WaitFor)
-		for {
-			if _, err := os.Stat(barrier); err == nil {
-				break
-			} else if !os.IsNotExist(err) {
-				return err
-			}
-			_ = syscall.Nanosleep(&syscall.Timespec{Nsec: 1_000_000}, nil)
+	if current.WaitFor != "" && current.WaitTiming != "before_apply" {
+		if err := enterBarrier(root, current.WaitFor); err != nil {
+			return err
+		}
+		if err := awaitBarrier(root, current.WaitFor); err != nil {
+			return err
 		}
 	}
 	if _, err := io.Copy(os.Stdout, strings.NewReader(current.Stdout)); err != nil {
@@ -158,6 +174,31 @@ func run() error {
 	return nil
 }
 
+func currentPosition(plan scenario, id string) int {
+	for index := range plan.Steps {
+		if plan.Steps[index].ID == id {
+			return index
+		}
+	}
+	return -1
+}
+
+func enterBarrier(root, name string) error {
+	return os.WriteFile(filepath.Join(root, name+".entered"), []byte("entered\n"), 0o600)
+}
+
+func awaitBarrier(root, name string) error {
+	barrier := filepath.Join(root, name)
+	for {
+		if _, err := os.Stat(barrier); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		_ = syscall.Nanosleep(&syscall.Timespec{Nsec: 1_000_000}, nil)
+	}
+}
+
 func loadScenario(path string) (scenario, error) {
 	var plan scenario
 	if err := decodeStrictFile(path, &plan); err != nil {
@@ -183,6 +224,11 @@ func loadScenario(path string) (scenario, error) {
 		default:
 			return plan, fmt.Errorf("unknown transition timing")
 		}
+		switch current.WaitTiming {
+		case "", "before_apply", "after_apply":
+		default:
+			return plan, fmt.Errorf("unknown wait timing")
+		}
 		if filepath.IsAbs(current.WaitFor) || strings.Contains(current.WaitFor, "..") {
 			return plan, fmt.Errorf("unsafe barrier")
 		}
@@ -195,19 +241,55 @@ func knownAction(argv []string) bool {
 		return false
 	}
 	switch argv[0] {
-	case "version", "where", "show", "list", "ready", "create", "update", "export":
-		return true
+	case "version", "where", "list", "ready", "export":
+		return len(argv) == 2 && argv[1] == "--json"
+	case "show":
+		return len(argv) == 3 && argv[1] != "" && argv[2] == "--json"
+	case "create":
+		return validOptionPairs(argv, 1, map[string]bool{"--title": true, "--description": true, "--acceptance": true, "--metadata": true}) && containsOption(argv, "--title")
+	case "update":
+		if len(argv) == 4 && argv[1] != "" && argv[2] == "--claim" && argv[3] == "--json" {
+			return true
+		}
+		return len(argv) >= 5 && argv[1] != "" && validOptionPairs(argv, 2, map[string]bool{"--title": true, "--description": true, "--acceptance": true, "--metadata": true, "--assignee": true})
 	case "dolt":
-		return len(argv) >= 2 && (argv[1] == "show" || argv[1] == "status")
+		return len(argv) == 3 && (argv[1] == "show" || argv[1] == "status") && argv[2] == "--json"
 	case "dep":
-		return len(argv) >= 2 && (argv[1] == "add" || argv[1] == "remove" || argv[1] == "list")
+		return (len(argv) == 5 && argv[1] == "remove" && argv[2] != "" && argv[3] != "" && argv[4] == "--json") ||
+			(len(argv) == 7 && argv[1] == "add" && argv[2] != "" && argv[3] != "" && argv[4] == "--type" && argv[5] == "blocks" && argv[6] == "--json") ||
+			(len(argv) == 4 && argv[1] == "list" && argv[2] != "" && argv[3] == "--json")
 	case "comments":
-		return len(argv) >= 2 && argv[1] != "" && !strings.HasPrefix(argv[1], "-")
+		return (len(argv) == 3 && argv[1] != "" && argv[2] == "--json") ||
+			(len(argv) == 5 && argv[1] == "add" && argv[2] != "" && argv[3] != "" && argv[4] == "--json")
 	case "backup":
-		return len(argv) >= 2 && (argv[1] == "init" || argv[1] == "sync" || argv[1] == "status" || argv[1] == "restore")
+		return (len(argv) == 2 && (argv[1] == "sync" || argv[1] == "status")) ||
+			(len(argv) == 3 && (argv[1] == "init" || argv[1] == "restore") && filepath.IsAbs(argv[2]))
 	default:
 		return false
 	}
+}
+
+func containsOption(argv []string, want string) bool {
+	for _, value := range argv {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func validOptionPairs(argv []string, first int, allowed map[string]bool) bool {
+	if len(argv) < first+3 || argv[len(argv)-1] != "--json" || (len(argv)-first-1)%2 != 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for index := first; index < len(argv)-1; index += 2 {
+		if !allowed[argv[index]] || seen[argv[index]] {
+			return false
+		}
+		seen[argv[index]] = true
+	}
+	return true
 }
 
 func loadState(path string, initial map[string]string) (runtimeState, error) {

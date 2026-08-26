@@ -8,6 +8,7 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,9 +32,20 @@ type Fixture struct {
 	Graph         tracker.Graph
 	Discussion    tracker.Discussion
 	Assignment    tracker.AssignmentProjection
-	Fault         func(context.Context, string) error
+	Diagnostic    DiagnosticExpectation
 	MutationCount func(context.Context) (int, error)
 	Close         func() error
+}
+
+// DiagnosticExpectation is provider state, not provider behavior. The shared
+// case owns the public operation and every assertion.
+type DiagnosticExpectation struct {
+	Reference     tracker.ExternalWorkRef
+	Kind          tracker.ErrorKind
+	RecoveryCode  string
+	ProviderToken string
+	Assignee      string
+	Marker        string
 }
 
 type Disposition string
@@ -82,9 +94,9 @@ type Case struct {
 func DefaultCases() []Case {
 	cases := []Case{
 		{ID: "validation.capabilities.complete", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exerciseCapabilities},
-		{ID: "diagnostic.unavailable.typed", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exercisePortableFault("unavailable")},
-		{ID: "observation.stale.not-normalized", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exercisePortableFault("stale")},
-		{ID: "safety.wrong-state.refused", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exercisePortableFault("wrong")},
+		{ID: "diagnostic.unavailable.typed", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exerciseUnavailable},
+		{ID: "observation.stale.not-normalized", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exerciseStaleObservation},
+		{ID: "safety.wrong-state.refused", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exerciseWrongState},
 	}
 	cases = append(cases, catalogCases()...)
 	cases = append(cases, graphCases()...)
@@ -94,13 +106,35 @@ func DefaultCases() []Case {
 	return append([]Case(nil), cases...)
 }
 
-func exercisePortableFault(id string) func(context.Context, Fixture, bool) error {
-	return func(ctx context.Context, fixture Fixture, _ bool) error {
-		if fixture.Fault == nil {
-			return fmt.Errorf("portable fault port is absent for %s", id)
-		}
-		return fixture.Fault(ctx, id)
+func exerciseUnavailable(ctx context.Context, fixture Fixture, _ bool) error {
+	_, err := fixture.Catalog.ReadWork(ctx, fixture.Diagnostic.Reference)
+	if !tracker.IsKind(err, fixture.Diagnostic.Kind) {
+		return fmt.Errorf("unavailable diagnostic=%v", err)
 	}
+	var typed *tracker.Error
+	if !errors.As(err, &typed) || typed.RecoveryAction() != fixture.Diagnostic.RecoveryCode {
+		return fmt.Errorf("unavailable recovery=%v", err)
+	}
+	return nil
+}
+
+func exerciseStaleObservation(ctx context.Context, fixture Fixture, _ bool) error {
+	record, err := fixture.Catalog.ReadWork(ctx, fixture.Diagnostic.Reference)
+	if err != nil {
+		return err
+	}
+	if record.Observation.ProviderToken != fixture.Diagnostic.ProviderToken || record.VisibleAssignee != fixture.Diagnostic.Assignee || record.AssignmentMarker != fixture.Diagnostic.Marker {
+		return fmt.Errorf("stale provider response was normalized")
+	}
+	return nil
+}
+
+func exerciseWrongState(ctx context.Context, fixture Fixture, _ bool) error {
+	_, err := fixture.Catalog.ReadWork(ctx, fixture.Diagnostic.Reference)
+	if !tracker.IsKind(err, fixture.Diagnostic.Kind) {
+		return fmt.Errorf("wrong-state diagnostic=%v", err)
+	}
+	return nil
 }
 
 func exerciseCapabilities(ctx context.Context, fixture Fixture, _ bool) error {
@@ -188,8 +222,12 @@ func Run(ctx context.Context, root string, factory Factory, cases []Case) (Censu
 			err = fmt.Errorf("unsupported guarantee mutated provider: before=%d after=%d", before, after)
 		}
 		if fixture.Close != nil {
-			if closeErr := fixture.Close(); closeErr != nil && err == nil {
-				err = fmt.Errorf("fixture cleanup: %w", closeErr)
+			if closeErr := fixture.Close(); closeErr != nil {
+				if err == nil {
+					err = fmt.Errorf("fixture cleanup: %w", closeErr)
+				} else {
+					err = errors.Join(err, closeErr)
+				}
 			}
 		}
 		if err != nil {

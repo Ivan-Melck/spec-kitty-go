@@ -36,7 +36,39 @@ type dishonestStep struct {
 	Stderr           string            `json:"stderr,omitempty"`
 	ExitCode         int               `json:"exit_code,omitempty"`
 	WaitFor          string            `json:"wait_for,omitempty"`
+	WaitTiming       string            `json:"wait_timing,omitempty"`
 	NextObservation  map[string]string `json:"next_observation,omitempty"`
+}
+
+func waitForDishonestBarrier(t *testing.T, root, name string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	entered := filepath.Join(root, name+".entered")
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(entered); err == nil {
+			return
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("dishonest process did not enter barrier %q", name)
+}
+
+func cancelAtDishonestBarrier(t *testing.T, root, name string, invoke func(context.Context) error) error {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- invoke(ctx) }()
+	waitForDishonestBarrier(t, root, name)
+	cancel()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(10 * time.Second):
+		t.Fatal("dishonest process did not stop after cancellation")
+		return nil
+	}
 }
 
 type dishonestRuntime struct {
@@ -54,6 +86,87 @@ type dishonestFixture struct {
 	executable string
 	adapter    *beads.BoundAdapter
 	reference  tracker.ExternalWorkRef
+}
+
+type deletedBoundAdapterPort struct {
+	*beads.BoundAdapter
+	method string
+}
+
+func deletedPortError(method string) error {
+	return &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "deleted adapter method: " + method}
+}
+func (p deletedBoundAdapterPort) CreateWork(ctx context.Context, r tracker.CreateWorkRequest) (tracker.WorkMutation, error) {
+	if p.method == "CreateWork" {
+		return tracker.WorkMutation{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.CreateWork(ctx, r)
+}
+func (p deletedBoundAdapterPort) ReadWork(ctx context.Context, r tracker.ExternalWorkRef) (tracker.WorkRecord, error) {
+	if p.method == "ReadWork" {
+		return tracker.WorkRecord{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.ReadWork(ctx, r)
+}
+func (p deletedBoundAdapterPort) UpdateWork(ctx context.Context, r tracker.UpdateWorkRequest) (tracker.WorkMutation, error) {
+	if p.method == "UpdateWork" {
+		return tracker.WorkMutation{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.UpdateWork(ctx, r)
+}
+func (p deletedBoundAdapterPort) PutBlockingDependency(ctx context.Context, r tracker.DependencyRequest) (tracker.DependencyMutation, error) {
+	if p.method == "PutBlockingDependency" {
+		return tracker.DependencyMutation{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.PutBlockingDependency(ctx, r)
+}
+func (p deletedBoundAdapterPort) RemoveBlockingDependency(ctx context.Context, r tracker.DependencyRequest) (tracker.DependencyMutation, error) {
+	if p.method == "RemoveBlockingDependency" {
+		return tracker.DependencyMutation{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.RemoveBlockingDependency(ctx, r)
+}
+func (p deletedBoundAdapterPort) ListDependencies(ctx context.Context, r tracker.ExternalWorkRef) ([]tracker.DependencyRef, error) {
+	if p.method == "ListDependencies" {
+		return nil, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.ListDependencies(ctx, r)
+}
+func (p deletedBoundAdapterPort) ReadyProjection(ctx context.Context, r tracker.ReadyRequest) (tracker.ReadyProjection, error) {
+	if p.method == "ReadyProjection" {
+		return tracker.ReadyProjection{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.ReadyProjection(ctx, r)
+}
+func (p deletedBoundAdapterPort) AppendDiscussion(ctx context.Context, r tracker.AppendDiscussionRequest) (tracker.DiscussionMutation, error) {
+	if p.method == "AppendDiscussion" {
+		return tracker.DiscussionMutation{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.AppendDiscussion(ctx, r)
+}
+func (p deletedBoundAdapterPort) ListDiscussion(ctx context.Context, r tracker.ExternalWorkRef) ([]tracker.DiscussionEntry, error) {
+	if p.method == "ListDiscussion" {
+		return nil, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.ListDiscussion(ctx, r)
+}
+func (p deletedBoundAdapterPort) ObserveAssignment(ctx context.Context, r tracker.ExternalWorkRef) (tracker.AssignmentObservation, error) {
+	if p.method == "ObserveAssignment" {
+		return tracker.AssignmentObservation{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.ObserveAssignment(ctx, r)
+}
+func (p deletedBoundAdapterPort) ProjectAssignment(ctx context.Context, r tracker.ProjectAssignmentRequest) (tracker.AssignmentMutation, error) {
+	if p.method == "ProjectAssignment" {
+		return tracker.AssignmentMutation{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.ProjectAssignment(ctx, r)
+}
+func (p deletedBoundAdapterPort) CompensateAssignment(ctx context.Context, r tracker.CompensateAssignmentRequest) (tracker.AssignmentMutation, error) {
+	if p.method == "CompensateAssignment" {
+		return tracker.AssignmentMutation{}, deletedPortError(p.method)
+	}
+	return p.BoundAdapter.CompensateAssignment(ctx, r)
 }
 
 func buildDishonestExecutable(t *testing.T) string {
@@ -293,9 +406,4 @@ func stableID(prefix string, repetition int) string {
 }
 func humanOperation(repetition int) ids.OperationID {
 	return ids.OperationID(stableID("operation-human-preservation", repetition))
-}
-
-func boundedContext(t *testing.T, duration time.Duration) (context.Context, context.CancelFunc) {
-	t.Helper()
-	return context.WithTimeout(context.Background(), duration)
 }
