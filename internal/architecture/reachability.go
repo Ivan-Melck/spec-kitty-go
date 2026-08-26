@@ -260,7 +260,7 @@ func loadTypedProductionSources(ctx context.Context, root, modulePath string, ru
 		exported := importer.ForCompiler(fileSet, "gc", importer.Lookup(func(importPath string) (io.ReadCloser, error) {
 			exportPath := exports[importPath]
 			if exportPath == "" {
-				return nil, fmt.Errorf("Go tooling returned no export data for %s", importPath)
+				return nil, fmt.Errorf("go tooling returned no export data for %s", importPath)
 			}
 			return os.Open(exportPath)
 		}))
