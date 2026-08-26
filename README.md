@@ -1,267 +1,169 @@
 # Spec Kitty Redesign
 
-> A Go-native authority kernel for safe, concurrent, mission-shaped software work.
+> A Go-native authority kernel with a qualified Beads ticket substrate for safe,
+> concurrent, mission-shaped software work.
 
-| Project property | Current value |
+| Project property | Delivered value |
 |---|---|
-| Maturity | Qualified Phase 1 authority kernel |
-| Language | Go 1.26+ |
-| Control store | SQLite today; Gapdb adoption requires a separate qualified decision |
-| Execution model | Lease-scoped Git worktrees with independent review and serialized integration |
+| Maturity | Qualified Phase 1 authority kernel plus qualified Phase 2 Beads tracker integration |
+| Language | Go 1.26.4 |
+| Default tracker | Beads 1.2.2 through a checksum-pinned JSON command protocol |
+| Control store | SQLite; Gapdb adoption is a separate evidence and human-approval decision |
+| Execution model | Lease-scoped Git worktrees, independent review, serialized target-ref integration |
 | License | MIT |
 
 ## Abstract
 
-Spec Kitty Redesign asks a narrower and more consequential question than “can the
-Python application be translated into Go?” It asks:
+Spec Kitty Redesign is not a source-level translation of the Python application.
+It preserves the behaviors that made Spec Kitty valuable—mission governance,
+concurrent isolated work, independent review, and safe integration—while choosing
+Go-native boundaries for authority, failure, and recovery.
 
-> Which behaviors make Spec Kitty valuable, and what is the smallest Go-native
-> architecture that can preserve those behaviors under concurrency, failure,
-> and recovery?
+Phase 2 adds the first production tracker adapter. Beads supplies a revisioned
+ticket catalog, dependencies, discussion, and visible assignment. It does not gain
+mission authority. The governing separation remains:
 
-The answer developed here is an authority kernel organized around explicit
-capabilities. A tracker describes **what work exists**. Spec Kitty decides
-**whether that work may run, under which authority, and how its result may be
-accepted**. Git records **what actually happened**. The implementation preserves
-the original system's hard-won mission methodology, isolated concurrent
-worktrees, independent review, and serialized integration while deliberately
-leaving behind Python package structure, Markdown task-list mechanics, implicit
-global state, and provider-specific orchestration semantics.
+```text
+Beads:       what work exists, what blocks it, and what humans discuss
+Spec Kitty: whether work may run, where it runs, and how it is accepted
+Git:         what actually happened
+```
 
-This repository ships the qualified Phase 1 implementation of the hardest
-architectural claim: two agents can work concurrently, a process can die or
-become stale at any boundary, and the system can recover without transferring
-stale filesystem authority or corrupting Git history. Later product surfaces
-compose this kernel; they do not redefine its authority laws.
+This replaces agent labor spent constructing and reparsing Markdown task lists
+with a provider-neutral ticket interface. Mission steps, executable graph
+generations, leases, workspace ownership, review verdicts, acceptance, and
+integration remain Spec Kitty facts.
 
 ## Contents
 
-- [The architectural thesis](#the-architectural-thesis)
+- [Architectural thesis](#architectural-thesis)
 - [What changed relative to Python Spec Kitty](#what-changed-relative-to-python-spec-kitty)
-- [Correctness model](#correctness-model)
 - [Architecture](#architecture)
-- [Concurrent execution protocol](#concurrent-execution-protocol)
-- [Persistence and recovery](#persistence-and-recovery)
-- [Tracker boundary](#tracker-boundary)
-- [External compatibility boundary](#external-compatibility-boundary)
-- [Repository guide](#repository-guide)
+- [Authority and concurrency](#authority-and-concurrency)
+- [Beads compatibility contract](#beads-compatibility-contract)
 - [Build and installation](#build-and-installation)
+- [Project binding and inspection](#project-binding-and-inspection)
+- [Capabilities and authority limits](#capabilities-and-authority-limits)
+- [Operations and recovery](#operations-and-recovery)
+- [Export and backup](#export-and-backup)
 - [Verification](#verification)
-- [Current scope and limitations](#current-scope-and-limitations)
-- [Design record and evidence](#design-record-and-evidence)
-- [Contributing](#contributing)
-- [License](#license)
+- [Delivered boundary](#delivered-boundary)
+- [Evidence and design record](#evidence-and-design-record)
 
-## The architectural thesis
+## Architectural thesis
 
-The redesign assigns each kind of fact to one authoritative subsystem.
+Each kind of fact has one owner.
 
 ```mermaid
 flowchart LR
-    Tracker["Tracker provider<br/><b>What work exists</b>"]
-    Kernel["Spec Kitty authority kernel<br/><b>Whether and how it may run</b>"]
-    Git["Git repository<br/><b>What actually happened</b>"]
+    Beads["Beads tracker<br/><b>work, blockers, discussion</b>"]
+    Kernel["Spec Kitty kernel<br/><b>authority, review, acceptance</b>"]
+    Git["Git repository<br/><b>commits, refs, ancestry</b>"]
 
-    Tracker -->|"revisioned work facts"| Kernel
-    Kernel -->|"attribution-safe assignment and comments"| Tracker
-    Kernel -->|"argv-only worktree and ref operations"| Git
-    Git -->|"commits, refs, conflicts, and ancestry"| Kernel
+    Beads -->|"provider-neutral observations"| Kernel
+    Kernel -->|"attribution-safe projections"| Beads
+    Kernel -->|"argv-only Git operations"| Git
+    Git -->|"observed repository facts"| Kernel
 ```
 
-This separation is the central product decision:
+The consequences are deliberate:
 
-- A ticket assignment is not an execution lease.
-- An agent identity is not a live process identity.
-- A lane is not a reusable mutable directory.
-- A database row cannot prevent arbitrary POSIX filesystem writes.
+- A Beads assignment is not an execution lease.
+- Beads readiness is not permission to run.
+- Beads comments are not review verdicts.
+- A tracker closure or status is not mission acceptance.
+- A database fencing token cannot stop an arbitrary POSIX write.
 - A completed implementation is not an approved implementation.
 - An approved implementation is not an integrated commit.
-- A tracker, even a sophisticated one, is not the mission authority.
-
-The model is intentionally compatible with different ticket substrates. Beads
-is the leading candidate for a first production provider, while GitHub Issues,
-Jira, or another revision-capable system can implement the same narrow port.
-None of those integrations is implemented in Phase 1, and none is permitted to
-own execution authority.
 
 ## What changed relative to Python Spec Kitty
 
-The original Python system is treated as behavioral evidence, not as a package
-template. The redesign begins with the observed behavior inventory and then
-chooses idiomatic Go boundaries that make the underlying laws enforceable.
+The original implementation is behavioral evidence, not a package template.
 
-| Concern | Original or inherited tendency | Go-native decision | Why |
+| Concern | Inherited tendency | Go-native decision | Why |
 |---|---|---|---|
-| Porting strategy | Translate commands, modules, and data shapes | Preserve externally valuable behavior; redesign internal structure | Source parity would preserve accidental complexity and obscure ownership |
-| Work representation | Markdown-inspired task lists are both artifact and working interface | A narrow tracker port supplies revisioned work facts | Agents should not spend mission time constructing and repeatedly parsing a presentation format |
-| Mission semantics | Mission state and task artifacts are closely coupled | Missions remain Spec Kitty-owned orchestration law | Tickets describe work; they do not determine whether work may execute or be accepted |
-| Modularity | Python package boundaries and shared helpers can carry implicit policy | Capability-oriented domain packages with explicit ports and adapters | Dependencies reveal authority instead of hiding it in framework conventions |
-| Identity | An agent name can ambiguously mean a person, model, or process | `ActorID` is durable identity; `ProcessID` is one execution | Independent review and recovery require answering both “who?” and “which process?” |
-| Executable plan | Mutable task descriptions can drift while work is running | `WorkRevision` freezes one generation of the executable graph | A running agent needs a stable contract; later edits require explicit reconciliation |
-| Reconciliation | Drift is detected but can become procedural ambiguity | Reconciliation yields `continue`, `supersede`, `invalidate`, or `fork` | Immutability is useful only when change has defined operational consequences |
-| Concurrency | Lanes and worktrees provide effective parallel isolation | Preserve lanes as durable lineage; make workspaces lease-scoped and disposable | The concurrency gain is product behavior; directory reuse is not |
-| Stale processes | A fencing token can appear to fence all mutation | Tokens fence control-plane operations; fresh leases receive fresh worktrees | A database cannot stop a zombie editor, shell, compiler, or agent from writing files |
-| Handoff | Review may accidentally observe a live mutable checkout | Handoff records an immutable candidate commit and evidence | Review must assess a stable object, not a moving workspace |
-| Review | Process separation may be mistaken for reviewer independence | Reviewer actor differs from every candidate contributor actor; Phase 1 has no waiver | Two processes with the same actor are not independent judgment |
-| Integration | Per-mission serialization can miss cross-mission races | Serialize by `(RepositoryID, TargetRef)` and fence with monotonic Git state | The target branch is the contested resource, regardless of mission boundaries |
-| Compensation | Recovery can blindly undo an earlier external mutation | Compare revision, value, and operation marker before compensation | Recovery may undo only state still attributable to the failed operation |
-| Control persistence | Files and process-local state can become hidden coordinators | SQLite WAL is the local control authority | Transactions, compare-and-swap, idempotency, and recovery become explicit and testable |
-| Distribution | A local store may later be opened from several hosts | One control store has one machine/filesystem owner | Remote agents must eventually use the Orchestrator API rather than share SQLite or worktrees |
-
-### What is deliberately preserved
-
-This is not a rejection of the original product. It preserves the parts the
-behavioral study identified as Spec Kitty's distinctive strength:
-
-1. Mission-shaped work rather than an unstructured queue of tickets.
-2. Parallel implementation in isolated Git worktrees.
-3. Durable lane lineage across attempts and recovery.
-4. Independent review of immutable implementation evidence.
-5. Explicit acceptance rather than self-approval by the implementing run.
-6. Serialized, conflict-aware integration into a target ref.
-7. Recoverable operations with inspectable authority and provenance.
-
-## Correctness model
-
-The kernel is designed around invariants rather than command choreography.
-Identifiers are typed so that conceptually different authorities cannot be
-silently substituted for one another.
-
-### Core identities
-
-| Identity | Meaning |
-|---|---|
-| `ProjectID` / `RepositoryID` | Product and Git repository boundaries |
-| `MissionID` | A governed objective and its acceptance context |
-| `WorkID` | Logical work across graph generations |
-| `WorkRevisionID` | Immutable generation of the executable work graph |
-| `LaneID` | Durable lineage for a stream of work |
-| `ActorID` | Durable accountable identity |
-| `ProcessID` | One concrete execution of an actor |
-| `RunID` / `LeaseID` | One authorized attempt and its renewable authority |
-| `WorkspaceID` | One mutable checkout bound to one lease |
-| `OperationID` | Idempotency and external-attribution boundary |
-| `HandoffID` / `ReviewID` | Immutable implementation and judgment records |
-
-### Product laws
-
-For a finalized `(WorkRevisionID, WorkID)`:
-
-1. At most one implementation lease is valid at a time.
-2. A lease is renewed by compare-and-swap and carries a monotonic fencing token.
-3. A workspace is created for one lease and is never transferred to its
-   replacement.
-4. Expiration quarantines the old workspace from Spec Kitty's perspective; a
-   replacement lease receives a different workspace.
-5. A stale token cannot mutate control state, tracker state through the kernel,
-   review state, or Git refs through the kernel.
-6. A stale process may still write its old directory; those writes have no path
-   to acceptance or integration.
-7. A handoff pins a candidate commit and evidence. Subsequent review never reads
-   mutable implementation files as its source of truth.
-8. Review independence is evaluated at the actor boundary, not merely the
-   process boundary.
-9. Only an approved candidate may enter target-ref integration.
-10. Integration authority is exclusive for a repository and target ref, even
-    when competing candidates belong to different missions.
-11. External compensation is permitted only while the observed external state
-    remains demonstrably attributable to the operation being compensated.
-
-These laws turn the filesystem-fencing problem into a tractable isolation
-problem. Spec Kitty cannot make POSIX obey a database token, but it can ensure a
-stale directory is never promoted into current authority.
+| Port strategy | Reproduce modules and command choreography | Preserve product behavior behind explicit capabilities | Structural parity preserves accidental coupling |
+| Work representation | Markdown task lists double as a mutable work database | Provider-neutral tracker ports with Beads as the first qualified adapter | Agents should work on the product, not maintain presentation syntax |
+| Mission semantics | Work artifacts and mission state can blur together | Mission authority stays in the kernel | A ticket edit must not authorize execution or acceptance |
+| Identity | Agent name can ambiguously mean actor or process | Durable `ActorID`; per-execution `ProcessID` | Recovery and independent review need both answers |
+| Plan stability | Work text can drift under a running agent | `WorkRevision` freezes an executable graph generation | Reconciliation becomes explicit: continue, supersede, invalidate, or fork |
+| Concurrency | Durable lanes use mutable worktrees | Lane lineage is durable; lease workspaces are disposable | Preserve concurrency while isolating stale writers |
+| Provider integration | Copy provider concepts into mission logic | Kernel imports only provider-neutral tracker contracts | Beads stays replaceable and cannot acquire authority by convenience |
+| Persistence | Implicit files coordinate processes | SQLite transactions coordinate the single-machine authority kernel | CAS, idempotency, refusal evidence, and crash recovery become explicit |
 
 ## Architecture
 
-The implementation is organized as a set of small capabilities. The arrows in
-the following diagram describe conceptual dependence and data flow, not a
-promise that every package imports every adjacent package.
+The kernel and the Beads adapter are intentionally separated by a failing-CI
+dependency guard.
 
 ```mermaid
 flowchart TB
-    subgraph Entry["Executable and scenario surfaces"]
+    subgraph Surface["Executable and qualification surfaces"]
         Helper["cmd/spk-phase1-helper"]
-        Scenarios["internal/scenario<br/>fault-injected executable experiments"]
+        Campaign["internal/testcampaign"]
     end
 
-    subgraph Domain["Authority capabilities"]
-        Graph["workgraph<br/>finalization and reconciliation"]
-        Exec["execution<br/>claims, leases, runs"]
-        Workspace["workspace<br/>lease-scoped checkouts"]
-        Handoff["handoff<br/>immutable candidate evidence"]
-        Review["review<br/>independent verdicts"]
-        Integrate["integration<br/>target-ref serialization"]
+    subgraph Kernel["Authority kernel — cannot import Beads"]
+        Workgraph["workgraph"]
+        Execution["execution"]
+        Workspace["workspace"]
+        Handoff["handoff"]
+        Review["review"]
+        Integration["integration"]
+        Control["controlstore/sqlite"]
     end
 
-    subgraph Ports["Explicit boundary contracts"]
-        StorePort["control-store contracts"]
-        GitPort["Git repository operations"]
-        TrackerPort["tracker compare-and-set port"]
-        Diag["typed diagnostics and retry safety"]
+    subgraph Ports["Provider-neutral tracker contracts"]
+        Catalog["catalog and observation"]
+        Graph["blocking graph and readiness"]
+        Discussion["discussion"]
+        Assignment["assignment projection"]
+        Diagnostics["typed capabilities and diagnostics"]
     end
 
-    subgraph Adapters["Phase 1 adapters"]
-        SQLite["controlstore/sqlite<br/>WAL + CAS + operation log"]
-        GitAdapter["gitrepo<br/>argv-only Git execution"]
-        FakeTracker["tracker/fake<br/>durable revisioned test provider"]
+    subgraph Providers["Tracker implementations and proof"]
+        Fake["tracker/fake<br/>portable conformance"]
+        Dishonest["dishonest subprocess<br/>fault conformance"]
+        BeadsAdapter["tracker/beads<br/>bounded argv + JSON"]
+        Real["real Beads qualification<br/>contention + recovery"]
     end
 
-    Helper --> Domain
-    Scenarios --> Domain
-    Domain --> Ports
-    StorePort --> SQLite
-    GitPort --> GitAdapter
-    TrackerPort --> FakeTracker
-    Domain --> Diag
+    Surface --> Kernel
+    Kernel --> Ports
+    Fake --> Ports
+    Dishonest --> Ports
+    BeadsAdapter --> Ports
+    Campaign --> Fake
+    Campaign --> Dishonest
+    Campaign --> BeadsAdapter
+    BeadsAdapter --> Real
 ```
 
-### Capability boundaries
+Repository guide:
 
-- **`workgraph`** finalizes immutable graph generations and defines the explicit
-  consequences of later tracker drift.
-- **`execution`** owns claims, renewable leases, runs, fencing tokens, and
-  idempotent start/recovery behavior.
-- **`workspace`** allocates, inspects, quarantines, and safely cleans
-  lease-scoped Git worktrees.
-- **`handoff`** converts a mutable implementation attempt into an immutable
-  candidate commit plus recorded evidence.
-- **`review`** records independent, replay-safe judgments over handoffs.
-- **`integration`** serializes movement of the real contested resource: the Git
-  target ref.
-- **`controlstore/sqlite`** persists authority transitions and recovery facts.
-- **`gitrepo`** invokes Git with argument vectors, validates repository
-  bindings, and treats Git refs and ancestry as facts rather than cached lore.
-- **`tracker/fake`** proves that the kernel depends on a deliberately small
-  provider contract, not on Beads semantics by accident.
-- **`faults`** gives failures a stable kind, operation context, and retry-safety
-  classification.
-
-## Concurrent execution protocol
-
-### Nominal lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> FinalizedGraph: pin work and dependencies
-    FinalizedGraph --> Leased: transactional claim
-    Leased --> Preparing: create lease-scoped workspace
-    Preparing --> Ready: validate repository and branch
-    Ready --> HandedOff: pin candidate commit and evidence
-    HandedOff --> Reviewed: independent actor records verdict
-    Reviewed --> Integrating: approved candidate queues for target ref
-    Integrating --> Done: ref movement and outcome recorded
-    Reviewed --> Rework: changes requested
-    Rework --> Leased: new authorized attempt
-    Leased --> Quarantined: lease expires or authority is revoked
-    Ready --> Quarantined: lease expires or authority is revoked
-    Quarantined --> Leased: replacement receives a fresh workspace
+```text
+cmd/spk-phase1-helper/       Thin JSON helper composition surface
+internal/tracker/            Provider-neutral capabilities and ports
+internal/tracker/fake/       Durable portable reference provider
+internal/tracker/conformance Shared provider-neutral contract suite
+internal/tracker/beads/      Qualified Beads protocol and adapter
+internal/testcampaign/       Exact censuses and evidence producers
+internal/execution/          Claims, leases, runs, fencing, recovery
+internal/workspace/          Lease-scoped workspace lifecycle
+internal/handoff/            Immutable candidate evidence
+internal/review/             Actor-independent judgments
+internal/integration/        Repository/target-ref serialization
+internal/controlstore/sqlite Single-machine transactional authority
+docs/phase2-evidence/        Published Phase 2 evidence and limitations
 ```
 
-### Why a replacement never inherits a workspace
+## Authority and concurrency
 
-The most important adversarial finding in the design review was that fencing
-tokens cannot fence direct filesystem writes. The corrected protocol isolates
-the stale writer instead.
+### Lease-scoped workspaces
+
+A fencing token can fence kernel operations; it cannot fence an editor, shell,
+compiler, or zombie agent writing directly to a directory. A replacement lease
+therefore never inherits a mutable workspace.
 
 ```mermaid
 sequenceDiagram
@@ -271,397 +173,325 @@ sequenceDiagram
     participant B as Process B
     participant W2 as Workspace W2
 
-    A->>K: claim work and receive lease 17
-    K->>W1: create and bind W1 to lease 17
+    A->>K: claim and receive lease 17
+    K->>W1: bind fresh W1 to lease 17
     A->>W1: implement
-    Note over A,K: A stops heartbeating but remains alive
-    K->>K: expire lease 17 and quarantine W1
-    B->>K: replacement claim receives lease 18
-    K->>W2: create and bind fresh W2 to lease 18
+    Note over A,K: heartbeat stops; process remains alive
+    K->>K: expire lease 17
+    K->>W1: quarantine W1
+    B->>K: replacement receives lease 18
+    K->>W2: bind fresh W2 to lease 18
     A-->>W1: zombie resumes writing
-    Note over W1,K: W1 cannot be handed off under lease 18
-    B->>W2: implement and create candidate
-    B->>K: handoff with lease 18 and current fence
-    K-->>B: accept immutable candidate evidence
+    Note over W1,K: W1 cannot become lease 18 workspace
+    B->>W2: produce candidate commit
+    B->>K: hand off immutable candidate
 ```
 
-The old directory need not become physically unwritable for the invariant to
-hold. It becomes **unauthorized and non-transferable**. Inspection and explicit
-reconciliation determine whether any useful artifact should later be recovered.
+The stale process may change W1, but those bytes have no route to handoff,
+approval, or integration under lease 18. Review evaluates a pinned candidate
+commit. Its actor must differ from every candidate contributor actor. Integration
+then serializes the contested `(RepositoryID, TargetRef)` and re-observes Git.
+Phase 1 has no waiver for actor-level review independence; the historical
+contract correction is recorded in
+[`PHASE1_ACCEPTANCE_ERRATA.md`](docs/PHASE1_ACCEPTANCE_ERRATA.md).
 
-### Review and integration
+### One-machine control authority
 
-An implementation run cannot approve itself. By default, the reviewing
-`ActorID` must differ from the implementing `ActorID`; starting a second process
-under the same actor does not create independent judgment.
+One Spec Kitty control store belongs to one machine and one filesystem authority.
+SQLite WAL is not opened across a shared filesystem by several hosts. Remote
+clients will use the future Orchestrator API served by the owning host instead of
+opening the control database or mutable worktrees directly.
 
-After approval, integration is serialized by `(RepositoryID, TargetRef)`, not by
-mission. The integration protocol re-reads Git, detects manual branch movement,
-uses monotonic repository-side fencing, and records conflicts as durable
-outcomes. This prevents two otherwise independent missions from racing the same
-branch through separate mission-local locks.
+## Beads compatibility contract
 
-## Persistence and recovery
-
-### SQLite control authority
-
-Phase 1 uses `modernc.org/sqlite`, a pure-Go SQLite implementation. The store
-enables WAL mode, foreign keys, a bounded busy timeout, and a small connection
-pool. Schema migrations currently cover work graphs, start-run operations,
-recovery, handoffs, reviews, integration, and refusal evidence.
-
-SQLite is an intentional **local** boundary:
-
-> One Spec Kitty control store is owned by one machine and one filesystem
-> authority.
-
-The database must not be placed on a shared filesystem and opened directly by
-agents on several machines. A future remote agent will communicate through the
-Orchestrator API hosted by the store's owner. This constraint keeps transaction,
-locking, filesystem, and process assumptions explicit rather than pretending a
-local database is a distributed coordinator.
-
-### Three mutually checking records
-
-```mermaid
-flowchart TD
-    DB["SQLite control record<br/>leases, operations, verdicts, integration"]
-    FS["Filesystem/worktree observation<br/>path, binding, quarantine state"]
-    Git["Git fact<br/>commit, ancestry, branch and target ref"]
-
-    DB <-->|"recovery compares"| FS
-    DB <-->|"recovery compares"| Git
-    FS <-->|"repository binding"| Git
-
-    Decision["Deterministic recovery decision"]
-    DB --> Decision
-    FS --> Decision
-    Git --> Decision
-```
-
-Recovery does not assume that the last command completed merely because it was
-attempted. It compares the durable operation record with the observed workspace,
-tracker revision, and Git state. Commands use `OperationID` for replay, and
-typed diagnostics state whether a caller may retry the same operation, must
-start a new operation, requires a decision, or must never retry automatically.
-
-### Attribution-safe compensation
-
-Every external compensation follows one rule:
-
-> Compensation may undo only external state still demonstrably attributable to
-> the operation being compensated.
-
-For example, recovery may clear a tracker assignment only if the provider still
-reports the expected revision, expected assignee, and operation marker. If a
-human or another process has since changed the ticket, recovery refuses to erase
-the newer fact.
-
-## Tracker boundary
-
-The provider contract is intentionally less expressive than most issue trackers.
-Phase 1 requires only four conceptual operations:
-
-1. Read a work item with its provider revision.
-2. Compare-and-set an assignment.
-3. Compare-and-add an attributed comment.
-4. Compare-before-compensate an external change.
-
-The durable fake tracker supports revisions, operation markers, ambiguity,
-unavailability, and injected failures. Contract tests against this deliberately
-plain provider defend the kernel against the semantic gravity of any future
-default, including Beads.
-
-The tracker may own descriptions, dependencies, acceptance criteria, and human
-workflow metadata. It may not mint Spec Kitty leases, choose workspaces, approve
-its own implementations, reserve merge slots, mutate Git refs, or redefine
-mission state.
-
-## Repository guide
+The supported tuple is exact:
 
 ```text
-.
-├── cmd/spk-phase1-helper/       Phase 1 JSON command/helper executable
-├── internal/
-│   ├── controlstore/sqlite/     Durable local authority adapter
-│   ├── execution/               Claims, leases, runs, and recovery
-│   ├── faults/                  Typed diagnostics and retry safety
-│   ├── gitrepo/                 Safe Git process boundary
-│   ├── handoff/                 Immutable implementation candidates
-│   ├── helpercmd/               Helper command application layer
-│   ├── ids/                     Strong domain identifiers
-│   ├── integration/             Target-ref integration protocol
-│   ├── review/                  Independent review protocol
-│   ├── scenario/                End-to-end and fault-injection experiments
-│   ├── tracker/fake/            Durable tracker contract test adapter
-│   ├── workgraph/               Finalization and drift reconciliation
-│   └── workspace/               Lease-scoped worktree lifecycle
-├── docs/
-│   ├── adr/                     Ratified architecture decision records
-│   ├── phase1-evidence/         Final adversarial campaign evidence
-│   ├── PYTHON_BEHAVIOR_INVENTORY.md
-│   └── TECHNICAL_PROJECT_PLAN.md
-└── kitty-specs/                 Governed mission artifacts and review record
+Beads executable: 1.2.2
+source tag commit: 6c124203e771433a3550c348771a5b5e27fd3c21
+JSON envelope:    BD_JSON_ENVELOPE=1
+schema_version:   1
+integration:      argv-only documented JSON CLI
+binary SHA-256:   0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
 ```
 
-The `spk-phase1-helper` executable is an operator and test-harness surface. It is
-not the final user-facing Spec Kitty CLI. Its current command families expose
-the reference protocols directly:
+Beads 1.2.2 has no supported public Go consumer package for this module. Useful
+implementation packages are beneath Go `internal/`; importing them is both
+forbidden and semantically unsafe. Spec Kitty also does not couple to the Dolt
+schema. `internal/tracker/beads` issues only allowlisted argument vectors, sets a
+fixed environment, reads bounded structured output, and rejects unsupported
+versions or envelope schemas before mutation.
 
-```text
-claim             start-run          recover-start
-expire-authority  zombie-write       workspace-inspect
-workspace-cleanup handoff            review
-integrate         inspect            tracker
-workgraph
-```
+Unknown optional fields in schema 1 are ignored. An unknown envelope schema,
+metadata schema, executable version, or binary digest fails closed. Version
+ordering is not compatibility: 1.2.2 is a tested recovery release, not a promise
+about 1.2.0, 1.2.1, or a future release. Expanding support requires portable,
+dishonest, real-provider, contention, export/backup, and authority-invariant
+qualification plus a new allowlisted digest.
 
 ## Build and installation
 
-### Prerequisites
+### Portable development
 
-- Go 1.26 or later, as declared by [`go.mod`](go.mod).
-- Git with worktree and atomic reference-update support.
-- A local filesystem suitable for Git worktrees and SQLite WAL.
-- Linux for the complete process-suspension and signal-based torture tests.
-
-The final Phase 1 evidence was produced with Go 1.26.4, Git 2.43, and
-`modernc.org/sqlite` 1.57 on Linux/amd64. The domain packages are portable Go,
-but the complete adversarial test matrix has not yet been certified on every OS.
-
-### Clone and compile
+Ordinary development needs Go, Git, and downloaded Go modules. It needs no `bd`,
+Dolt server, hosted account, or network after dependencies are present.
 
 ```bash
-git clone https://github.com/spec-kitty/spec-kitty-redesign.git
-cd spec-kitty-redesign
 go mod download
-go build ./...
+make preflight
+make beads-contract
 ```
 
-To produce a named local helper binary:
+Build all packages and the repository helper into an explicit directory:
 
 ```bash
-mkdir -p bin
-go build -trimpath -o ./bin/spk-phase1-helper ./cmd/spk-phase1-helper
+make build BUILD_DIR="$(pwd)/bin"
 ```
 
-Running the binary without a subcommand prints its current command synopsis:
-
-```bash
-./bin/spk-phase1-helper
-```
-
-The synopsis exits non-zero because a command is required. This helper expects
-explicit IDs and paths and is principally useful to scenario authors, adapter
-implementers, and architecture reviewers.
-
-### Install the helper into the Go binary path
+Or install the helper into the selected Go binary directory:
 
 ```bash
 go install ./cmd/spk-phase1-helper
 ```
 
-Go installs it in `GOBIN`, or in `GOPATH/bin` when `GOBIN` is unset. Confirm the
-resolved destination with:
+The helper remains a thin Phase 1/2 composition and diagnostic surface; it is
+not the eventual full Spec Kitty CLI.
+
+### Install the checksum-qualified provider
+
+The reviewed installer supports Linux/amd64 with Go 1.26.4 and a C compiler. Its
+destination must be absolute, outside the source repository, and narrower than a
+top-level system directory.
 
 ```bash
-go env GOBIN GOPATH
+tool_root="$(mktemp -d /tmp/spec-kitty-beads-tools.XXXXXX)"
+identity_file="$(mktemp /tmp/spec-kitty-beads-identity.XXXXXX.json)"
+scripts/install-qualified-beads.sh --dest "$tool_root" > "$identity_file"
+jq . "$identity_file"
+beads_bin="$(jq -r .executable_path "$identity_file")"
+sha256sum -- "$beads_bin"
+BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" version --json
 ```
 
-No system service, shared database, hosted account, Beads installation, or
-Python runtime is required to compile and exercise Phase 1.
+After a verified target already exists, `--offline` checks and selects it without
+downloading. The installer rejects an existing mismatched target rather than
+overwriting it.
+
+## Project binding and inspection
+
+A project binding records:
+
+- the absolute, canonical executable and its version/digest;
+- protocol schema 1;
+- one absolute canonical Beads workspace shared by every linked worktree;
+- a derived `ws1:` workspace identity;
+- explicit read-only state; and
+- either `embedded_serialized` or `server_multiwriter` concurrency.
+
+The canonical Beads workspace is project-scoped. It is not a lease workspace and
+must not silently become `<linked-worktree>/.beads`. All linked worktrees pass the
+same binding. Inspection rejects a different observed workspace or database as
+`workspace_mismatch`; mutations do not repair or switch it.
+
+Provider inspection is read-only. It never initializes Beads, installs hooks, edits
+`AGENTS.md`, `CLAUDE.md`, or `.cursorrules`, enables Git automation, repairs
+provider state, or chooses a per-worktree database. It observes the exact JSON
+preflight only:
+
+```bash
+BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" version --json
+BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" where --json
+BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" dolt show --json
+BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" dolt status --json
+```
+
+For an existing embedded binding, the helper can return the normalized binding,
+capability report, health, and typed diagnostics. Substitute only absolute paths
+obtained from the read-only preflight:
+
+```bash
+go run ./cmd/spk-phase1-helper tracker inspect-beads \
+  --project example-project \
+  --executable "$beads_bin" \
+  --workspace /absolute/canonical/beads-workspace \
+  --database-identity /absolute/existing/database-directory \
+  --protocol-schema 1 \
+  --mode embedded_serialized \
+  --read-only=true \
+  --expected-digest 0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
+```
+
+Initialization is an explicit operator act and is shown only for an obviously
+disposable repository. Never run it in this checkout merely to make discovery
+succeed.
+
+```bash
+disposable="$(mktemp -d /tmp/spec-kitty-beads-disposable.XXXXXX)"
+git -C "$disposable" init
+(
+  cd "$disposable"
+  BD_NON_INTERACTIVE=1 "$beads_bin" init \
+    --stealth --skip-agents --skip-hooks --non-interactive --prefix skt
+)
+```
+
+## Capabilities and authority limits
+
+The capability report describes provider guarantees, not overall product
+quality. A request stronger than the provider guarantee is refused before
+mutation.
+
+The qualified guarded arbitrary update and safe arbitrary compensation levels
+are deliberately unsupported, as the matrix makes explicit.
+
+| Capability | Qualified 1.2.2 level | Operational meaning |
+|---|---|---|
+| Catalog read | `supported` | Decode bounded schema-1 records |
+| Catalog create | `supported` | Create with Spec Kitty metadata and operation marker |
+| Catalog update | `unguarded` | Arbitrary fields can change, but not under provider-side CAS |
+| Blocking graph | `supported` | Add/remove/list blockers; pinned graph remains execution authority |
+| Readiness | diagnostic projection | Cross-check provider state; never permission to run |
+| Discussion | `observably_idempotent` append | Append and re-observe an operation marker; not a review verdict |
+| Assignment | `atomic_claim` where characterized | Visible ownership projection; not a lease |
+| Observation revision | `content_derived` | Opaque content digest; neither ordered revision nor CAS token |
+| Guarded arbitrary update | `unsupported` | Fails `guarded_update_unsupported` before mutation |
+| Safe arbitrary compensation | `unsupported` | Fails `safe_compensation_unsupported`; human state is preserved |
+| Embedded concurrency | `adapter_serialized` | Coordinates Spec Kitty processes sharing the binding |
+| Server concurrency | `provider_native` | Qualified shared-server multiwriter mode |
+| Portable export | `supported` | Bounded JSONL interchange |
+| Restorable backup | `supported` | Dolt-native backup, restore, and disposable inspection |
+
+Local serialization is not compare-and-swap against humans or external tools.
+Direct `bd` users do not pass through the adapter lock. Before compensating,
+Spec Kitty compares the current mapping, operation marker, value, and content
+revision. If attribution has changed, it preserves the provider state and records
+a reconciliation conflict.
+
+## Operations and recovery
+
+Inspection output includes executable version/digest, protocol schema, canonical
+workspace identity, storage/concurrency mode, read-only state, capability levels,
+health, stable diagnostic kind, and recovery code. Automation branches only on
+those typed fields, never warning prose or human-formatted CLI output.
+
+| Diagnostic | Safe operator response |
+|---|---|
+| `unavailable` / spawn failure | Repair the absolute binding or install the verified binary; do not substitute an arbitrary PATH executable |
+| `version_skew` | Restore 1.2.2 or qualify a new exact version and digest |
+| `schema_skew` | Stop before mutation; update protocol contracts and requalify |
+| `workspace_mismatch` | Correct the project binding so every worktree resolves the same canonical workspace |
+| `lock_contended` | Retry within bounded policy or select a qualified server-multiwriter binding |
+| `malformed_protocol` / bounded-output failure | Stop automation, verify the binary tuple, and capture only redacted diagnostics |
+| `ambiguous` | Observe mapping, operation marker, current value, and content revision before deciding; never repeat blindly |
+| `revision_conflict` | Preserve provider state and reconcile the durable conflict explicitly |
+| `attribution_lost` | A human or external writer changed the fact; preserve it and resolve explicitly |
+| `guarded_update_unsupported` | Reconcile without mutation or choose a provider with an actual guarded primitive |
+| `safe_compensation_unsupported` | Do not emulate safety with read-then-write; leave state intact for operator resolution |
+
+If Beads is unavailable, portable fake conformance and existing Spec Kitty
+authority/control data remain usable. Provider-dependent reads or mutations
+return typed diagnostics; they do not reconstruct mission state from tickets.
+
+Embedded serialization coordinates Spec Kitty processes only. It cannot fence a
+human or external writer. Server mode is accepted only with a pinned logical
+server identity, endpoint, allowlisted connection inputs, provider-native
+multiwriter behavior, and successful qualification.
+
+## Export and backup
+
+Portable JSONL export is interchange, not full backup and not a restorable copy
+of Dolt history:
+
+```bash
+export_file="$(mktemp /tmp/spec-kitty-beads-export.XXXXXX.jsonl)"
+BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 \
+  "$beads_bin" export --json > "$export_file"
+```
+
+A Dolt-native restorable backup uses an absolute destination outside the active
+workspace. Sync and inspect it before depending on it:
+
+```bash
+backup_root="$(mktemp -d /tmp/spec-kitty-beads-backup.XXXXXX)"
+BD_NON_INTERACTIVE=1 "$beads_bin" backup init "$backup_root"
+BD_NON_INTERACTIVE=1 "$beads_bin" backup sync
+BD_NON_INTERACTIVE=1 "$beads_bin" backup status
+```
+
+Qualification verifies restoration in a fresh, empty, disposable workspace and
+then inspects recovered catalog, dependencies, criteria metadata, and discussion.
+Destructive restore never runs automatically against the project binding. An
+operator must inspect the backup, select an empty disposable target, and explicitly
+choose restoration. Do not copy a live Dolt database or issue direct Dolt SQL.
 
 ## Verification
 
-### Canonical validation ladder
-
-The Makefile is the canonical local and CI entry point. Use the bounded quality
-campaign for pull requests:
+The portable pull-request ladder is offline after modules are present:
 
 ```bash
+make preflight
+make contract
+make beads-contract
 make quality
 ```
 
-`make quality` performs formatting and build preflight, portable contract tests,
-authority-critical race tests, vet, staticcheck, module verification,
-govulncheck, and exact-census acceptance, architecture, and scope profiles. It
-requires the pinned analysis tools used by CI:
+The exact real-provider target requires the installer identity, verified binary,
+a pinned external Dolt server tuple, and an enforced offline network namespace.
+The CI workflow in [`.github/workflows/beads-qualification.yml`](.github/workflows/beads-qualification.yml)
+provisions those prerequisites and invokes:
 
 ```bash
-go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
-go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+make beads-qualification \
+  BEADS_BIN=/absolute/path/to/verified/bd \
+  BEADS_INSTALL_RESULT=/absolute/path/to/installer-identity.json \
+  OFFLINE_ENFORCED=linux-network-namespace
 ```
 
-Run the exhaustive scenario, crash, recovery, fault, and soak campaign before a
-release or architecture qualification:
+Additional closeout gates:
 
 ```bash
 make full-campaign
+go test -race ./...
+go vet ./...
+staticcheck ./...
+go mod verify
+govulncheck ./...
+go test ./internal/architecture -run 'BeadsDocumentation|Phase2Evidence' -count=10
+sha256sum --check docs/phase2-evidence/SHA256SUMS
+git diff --check
 ```
 
-The two commands are deliberately distinct. `quality` is bounded for change
-feedback; `full-campaign` is scheduled nightly, manually dispatchable, and
-retains a complete machine-readable artifact directory. A passing command is
-evidence only for its exact commit, source tree, environment, test census, and
-captured result. Empty or mismatched selectors fail rather than producing a
-misleading green check.
+## Delivered boundary
 
-Focused targets remain available through `make help`: `contract`, `acceptance`,
-`scope`, `race`, `static`, `dependencies`, `fault`, `soak`, and
-`scenario-full`. Use them while developing, then run the appropriate aggregate
-campaign before making a repository-wide claim.
+Phase 2 delivers a qualified default tracker substrate composed with the Phase 1
+authority kernel. It does not deliver the eventual full mission method and CLI,
+Team Kitty or hosted sync, Orchestrator API serving, MCP, Python-project
+migration, alternate production trackers, multi-machine control authority, or a
+complete replacement of mission artifacts by tickets. Those are future missions;
+they are listed here once so the delivered Beads adapter does not read like a
+hypothesis or an unfinished experiment.
 
-### What the torture chamber attacks
+SQLite remains the qualified control store in this repository. Gapdb has its own
+successful MVP evidence, but replacing SQLite is a separate migration/adoption
+decision requiring equivalent external-adapter evidence and an explicit signed
+human record. Phase 2 neither performs nor implies that adoption.
 
-The experiment uses two work items, two agents, one durable fake tracker, one
-real SQLite control database, and one real Git repository. It injects failures
-after lease acquisition, workspace creation, tracker operations, handoff,
-review, and integration. It also exercises stale writers, manual branch
-movement, tracker outages, simultaneous integration, and merge conflicts.
+## Evidence and design record
 
-The original adversarial campaign executed 65 disjoint test shards for 100
-iterations each and passed without reruns. The closeout qualification exercises
-the expanded 71-test integrated census through the canonical campaign runner.
-Both are commit-bound evidence, not a substitute for testing a changed tree.
+- [Phase 2 evidence index](docs/phase2-evidence/README.md)
+- [Phase 2 results](docs/phase2-evidence/results.md)
+- [Phase 2 limitations](docs/phase2-evidence/limitations.md)
+- [Technical project plan](docs/TECHNICAL_PROJECT_PLAN.md)
+- [Python behavior inventory](docs/PYTHON_BEHAVIOR_INVENTORY.md)
+- [Concurrency scenarios](docs/CONCURRENCY_SCENARIOS.md)
+- [Orchestrator API 1.3 projection](docs/ORCHESTRATOR_API_1_3_PROJECTION.md)
+- [Phase 1 evidence index](docs/phase1-evidence/README.md)
 
-See the [evidence guide](docs/phase1-evidence/README.md) and
-[closeout result](docs/phase1-evidence/closeout-results.json) for the
-reproducible records.
-
-### Diagnostics as protocol output
-
-Failures are typed rather than reduced to prose. A diagnostic records a stable
-kind, the failed operation, contextual IDs, and retry safety. Important kinds
-include authority conflict, idempotency conflict, stale authority, target
-movement, dependency conflict, unsafe path, cleanup refusal, and Git failure.
-
-Callers should branch on the structured kind and retry-safety value, never on
-English error text. That rule is important for future CLI, MCP, Team Kitty, and
-Orchestrator API adapters.
-
-## External compatibility boundary
-
-Orchestrator API 1.3 is a compatibility target, not an implemented transport.
-Every canonical command, envelope field, policy input, identity translation,
-typed failure, and host-only authority rule has been mapped to the kernel in the
-[Orchestrator API 1.3 projection record](docs/ORCHESTRATOR_API_1_3_PROJECTION.md).
-That record demonstrates that the kernel is projectable without making the
-external API, MCP, Team Kitty, or hosted sync part of Phase 1.
-
-The completed Phase 1 mission contains historical acceptance wording about an
-“explicit visible waiver.” No such waiver or bypass exists in the shipped
-gate. The [Phase 1 acceptance erratum](docs/PHASE1_ACCEPTANCE_ERRATA.md) records
-the correction while preserving the immutable mission artifact.
-
-## Delivered boundary and next milestones
-
-Phase 1's product is the local authority and concurrency kernel. The following
-surfaces are deliberately assigned to later milestones:
-
-- the complete production Spec Kitty command-line experience;
-- a Beads, GitHub Issues, Jira, or Team Kitty tracker adapter;
-- the Orchestrator API, MCP surface, hosted sync, or remote-agent transport;
-- migration of existing Python Spec Kitty projects;
-- every production mission type or compatibility command;
-- distributed control-store ownership or shared-filesystem coordination;
-- automatic human acceptance of migration risk.
-
-Four cataloged behaviors remain intentionally outside this phase: human-
-authorized import choices, superseding a previously recorded judgment,
-rejection-to-rework-run creation, and the complete acceptance/queue surfaces.
-They are preserved as explicit future work rather than silently claimed as
-implemented.
-
-The next product milestone should remain scenario-led: introduce one real
-tracker adapter and one thin product workflow without weakening the fake-tracker
-contract or the authority laws. Package scaffolding alone is not progress.
-
-### Storage adoption boundary
-
-SQLite remains the active control-store adapter in this commit. Gapdb has passed
-its own native portable-adapter scenarios and is the planned candidate for this
-repository, but it is not in this module graph and has not been qualified
-against this kernel's external-adapter, migration, crash-recovery, and authority
-suite. Replacing SQLite requires equivalent evidence plus an explicit human
-adoption record. That is a migration decision, not an inference from Gapdb's
-implementation completeness.
-
-### Design-source and donor boundary
-
-The separate Go port at `spec-kitty-projects/spec-kitty-go` was reviewed for
-context at commit `733f4daef7660c9d372d35c3ba00aac1bb3a41f7`. Its repository
-explicitly says it has no repository-level license grant. No source, test body,
-or prose was copied from it; this implementation was independently written from
-Spec Kitty behavior, local canonical contracts, and this project's tests.
-
-Its useful contextual lesson is the value of a strict external machine seam.
-The redesign did not adopt its in-memory ownership of worktree lifecycle,
-SQLite-canonical work tracker, universal ledger/protobuf core, or Orchestrator
-API 1.1 adapter. Those choices conflict respectively with durable recovery,
-tracker portability, capability-oriented authority ownership, and the current
-1.3 compatibility target.
-
-## Design record and evidence
-
-The repository keeps design claims close to their supporting evidence:
-
-- [`PYTHON_BEHAVIOR_INVENTORY.md`](docs/PYTHON_BEHAVIOR_INVENTORY.md) — observed
-  Python behavior, including the lane/worktree concurrency gains that must not
-  be lost.
-- [`TECHNICAL_PROJECT_PLAN.md`](docs/TECHNICAL_PROJECT_PLAN.md) — detailed capability
-  architecture, phases, risks, and validation strategy.
-- [`MINI_REVIEW_BRIEF.md`](docs/MINI_REVIEW_BRIEF.md) — adversarial architecture
-  review prompt.
-- [`MINI_REVIEW_RESOLUTION.md`](docs/MINI_REVIEW_RESOLUTION.md) — resolution of
-  workspace fencing, graph generations, reviewer identity, compensation, and
-  machine ownership findings.
-- [`CONCURRENCY_SCENARIOS.md`](docs/CONCURRENCY_SCENARIOS.md) — executable scenario
-  catalog and fault boundaries.
-- [`0001-phase1-authority-proving-ground-verdict.md`](docs/adr/0001-phase1-authority-proving-ground-verdict.md)
-  — ratified Phase 1 architecture within the single-machine boundary.
-- [`phase1-evidence/`](docs/phase1-evidence/) — final repeated-run campaign
-  manifest, results, scenario catalog, and hashes.
-- [`ORCHESTRATOR_API_1_3_PROJECTION.md`](docs/ORCHESTRATOR_API_1_3_PROJECTION.md)
-  — command-by-command compatibility and host-authority mapping.
-- [`PHASE1_ACCEPTANCE_ERRATA.md`](docs/PHASE1_ACCEPTANCE_ERRATA.md) — visible
-  correction of the historical waiver promise without inventing a bypass.
-
-Terminology in these documents is intentional:
-
-- **mission** is the governed objective and acceptance context;
-- **work item** is tracker-described work;
-- **lane** is durable lineage, not a mutable checkout;
-- **workspace** is a lease-scoped Git worktree;
-- **handoff** is an immutable implementation candidate and its evidence;
-- **review** is an independent judgment over a handoff;
-- **integration** is serialized target-ref mutation.
-
-New documentation should use these terms consistently and clearly label future
-designs as future designs. The README must not become a second, conflicting
-source of truth for commands or behavior; detailed laws belong in ADRs and
-executable tests.
-
-## Contributing
-
-Contributions are welcome when they preserve the architecture's evidence-first
-discipline.
-
-1. Ground behavior changes in an executable scenario.
-2. Keep tracker convenience outside the authority kernel.
-3. Model authority, identity, revisions, and idempotency explicitly.
-4. Treat direct filesystem writes and out-of-band Git movement as normal facts,
-   not impossible events.
-5. Add fault injection at every new durable or external boundary.
-6. Preserve actor-level review independence.
-7. Run formatting, relevant focused tests, the full suite, and the race detector
-   in proportion to the risk of the change.
-8. Update the design record when a product law changes; do not hide an
-   architectural decision in a helper package.
-
-When adding a user-facing workflow, the next valid action should be obvious from
-the workflow itself. Internal helper commands are not a substitute for a coherent
-product surface.
+The evidence uses two-step provenance. Machine artifacts bind the exact frozen
+source commit/tree that ran. The evidence payload is committed afterward, and a
+following docs-only attestation names that payload commit and checksums. A later
+commit does not inherit qualification merely because this directory still exists.
 
 ## License
 
-Spec Kitty Redesign is released under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE).

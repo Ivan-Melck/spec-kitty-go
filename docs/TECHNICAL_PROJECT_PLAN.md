@@ -257,6 +257,8 @@ Remote agents use the Orchestrator API and host-owned execution tools; they do
 not open the control database. An agent requiring direct shell access to a
 worktree executes within the same machine authority that owns the control store.
 Distributed control-store ownership is a separate future architecture.
+The first-release invariant is exact: one control store is owned by one machine
+and one filesystem authority.
 
 ## 6. Conceptual model
 
@@ -455,13 +457,30 @@ modularity without inheriting ABI fragility or plugin discovery magic.
 Beads is the standard provider for `WorkCatalog`, `WorkGraph`,
 `WorkDiscussion`, visible assignment, and work-history projections.
 
-Use the published Go consumer API behind `adapters/tracker/beads`. Pin an exact
-compatible Beads version. Do not import Beads `internal` packages, issue direct
-SQL against its schema, or copy its domain structs into the Spec Kitty kernel.
+The Phase 2 investigation superseded the original public-library hypothesis.
+Beads 1.2.2 does not expose a supported Go consumer package usable by this
+module: the reusable implementation is beneath Go `internal/`, and its domain
+and storage contracts are not a compatibility promise. Importing those packages
+would also encourage the same semantic-copying mistake this redesign avoids and
+would couple Spec Kitty directly to Dolt schema details.
 
-The initial conformance spike must validate whether the public Go API covers
-every required operation. Any CLI fallback must be isolated behind the same
-adapter and consume documented JSON, never human-formatted output.
+The delivered adapter is `internal/tracker/beads`. The authority kernel depends
+only on provider-neutral tracker ports. The provider boundary is the bounded,
+documented JSON command protocol with this exact tuple:
+
+```text
+Beads executable: 1.2.2
+source tag commit: 6c124203e771433a3550c348771a5b5e27fd3c21
+JSON envelope:    BD_JSON_ENVELOPE=1
+schema_version:   1
+integration:      argv-only documented JSON CLI
+binary SHA-256:   0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
+```
+
+The adapter never parses human-formatted output, imports Beads implementation
+packages, issues direct Dolt SQL, or copies Beads domain structs into the kernel.
+Unknown optional fields in schema 1 are ignored. A future envelope or metadata
+schema fails before mutation.
 
 ### 9.2 Mapping
 
@@ -507,17 +526,18 @@ making that projection authoritative.
 
 ### 9.4 Concurrency mode
 
-The adapter must recognize the operational distinction between Beads embedded
-and server modes.
+The delivered adapter distinguishes two explicit modes:
 
-- A single-agent or read-heavy local workflow may use embedded mode.
-- A mission permitting multiple concurrent writer processes must use a
-  multi-writer-safe Beads configuration or an adapter-owned serialization
-  mechanism proven by contention tests.
-- Startup performs a capability and health preflight before the first parallel
-  run.
-- Worktrees must resolve to the same canonical Beads workspace. Spec Kitty must
-  not create one independent ticket database per worktree.
+- `embedded_serialized` takes an adapter-owned writer lock keyed by the
+  canonical binding. This coordinates Spec Kitty processes only; it cannot fence
+  direct human or external writers.
+- `server_multiwriter` requires a pinned server identity and endpoint and uses
+  provider-native concurrent writes. Phase 2 qualified eight processes creating
+  1,000 records with zero collisions or duplicates.
+- Startup performs a capability and health preflight before the first mutation.
+- Every linked worktree receives the same canonical Beads workspace binding.
+  Divergence returns `workspace_mismatch`; the adapter never creates or selects
+  one independent ticket database per worktree.
 
 ### 9.5 Beads claims are useful but not sufficient
 
@@ -550,7 +570,50 @@ the strongest available provider primitive: revision/ETag, expected assignee,
 operation marker, or guarded update. If the current assignment no longer
 matches, recovery leaves it untouched and records a reconciliation conflict.
 
-### 9.6 Features intentionally not adopted
+### 9.6 Compatibility and safety policy
+
+Version numbers do not imply compatibility. Beads 1.2.2 is the tested recovery
+release; this plan makes no inference about behavior accidentally present in
+1.2.0, 1.2.1, or a future release. A new executable version or schema remains
+unsupported until portable, dishonest, real-provider, contention,
+backup/export, and authority-invariant qualification passes and a new binary
+digest is allowlisted.
+
+The content-derived observation revision is an opaque observation token. It is
+not ordered and is not compare-and-swap. Local serialization likewise cannot
+turn a read followed by `bd update` into a provider-side conditional mutation.
+Consequently, guarded arbitrary update and safe arbitrary compensation are
+unsupported for 1.2.2; requests for either guarantee fail before mutation.
+
+### 9.7 Operations and recovery
+
+Provider inspection is read-only. It reports the exact executable
+version/digest, JSON schema, canonical Beads workspace identity, concurrency
+mode, capability levels, health, and recovery code. It never initializes Beads,
+installs hooks, edits agent instruction files, repairs state, or chooses a
+per-worktree database. Explicit disposable initialization uses
+`--stealth --skip-agents --skip-hooks --non-interactive`.
+
+The stable response policy is:
+
+| Diagnostic | Recovery policy |
+|---|---|
+| `unavailable` | Repair the absolute binding or install the qualified binary |
+| `version_skew` / `schema_skew` | Stop before mutation and restore or qualify an exact tuple |
+| `workspace_mismatch` | Repair the project binding; never initialize or switch silently |
+| `lock_contended` | Use bounded retry or a qualified server-multiwriter binding |
+| `malformed_protocol` | Stop automation and verify the binary/digest; do not parse prose |
+| `ambiguous` | Observe mapping, operation marker, value, and revision before deciding |
+| `revision_conflict` / `attribution_lost` | Preserve current provider state and reconcile explicitly |
+| `guarded_update_unsupported` | Reconcile without mutation |
+| `safe_compensation_unsupported` | Do not emulate a guard with read-then-write |
+
+JSONL is portable interchange, not a restorable backup. Full recovery uses the
+Dolt-native backup path, a constrained absolute destination, and restore
+inspection in a new disposable workspace. Destructive restore never targets the
+live project binding automatically.
+
+### 9.8 Features intentionally not adopted
 
 The standard adapter will not use the following as mission authority:
 
@@ -997,14 +1060,12 @@ internal/
     documentation/
     minimal/
 
-  adapter/
-    controlsqlite/
-    trackerbeads/
-    gitnative/
-    filesystem/
-    teamkitty/
-    httpapi/
-    mcp/
+  controlstore/sqlite/         current transactional authority adapter
+  tracker/                     provider-neutral capability contracts
+    fake/                      portable reference provider
+    conformance/               provider-neutral contract suite
+    beads/                     bounded Beads JSON command adapter
+  gitrepo/                     argv-only Git adapter
 
   transport/
     cli/
@@ -1163,8 +1224,11 @@ Work:
 - Use obscure recovery, lane, review, and integration behavior to challenge the
   proposed authority boundaries.
 - Define the two-agent concurrency proving experiment in Phase 1.
-- Define supported Beads versions and the upgrade/skew policy.
-- Decide the control-store driver after a focused SQLite WAL spike.
+- Define supported Beads versions and the upgrade/skew policy. Completed in
+  Phase 2 with an exact version/schema/source/binary tuple.
+- Decide the control-store driver after a focused SQLite WAL spike. SQLite is
+  the current qualified control store; Gapdb remains a separate adoption
+  decision requiring equivalent evidence and an explicit signed human record.
 - Define stable JSON error and result envelopes.
 - Revise this plan from the inventory, then ratify product laws and foundational
   ADRs.
@@ -1244,20 +1308,31 @@ used to revise authority, persistence, and workspace ADRs before Phase 2.
 
 ### Phase 2: Beads default tracker
 
-Objective: replace the fake tracker with a production-quality Beads adapter.
+Objective: compose the proven authority kernel with a production-quality Beads
+adapter while retaining the fake and dishonest providers as contract evidence.
+
+Status: delivered and qualified. Beads is the default tracker substrate behind
+provider-neutral ports; it is not mission, execution, workspace, review,
+acceptance, or integration authority.
 
 Work packages:
 
-1. Public Go API evaluation and pinned dependency.
-2. Beads initialization/discovery without unsolicited agent-file mutation.
-3. Catalog, graph, discussion, assignment, and acceptance adapters.
+1. Bounded JSON command protocol, version/schema preflight, and a
+   checksum-qualified Beads 1.2.2 executable.
+2. Read-only discovery and explicit disposable initialization without
+   unsolicited agent-file or Git-hook mutation.
+3. Catalog, graph, discussion, assignment, and observation adapters.
 4. Stable WorkID-to-Beads mapping and namespaced metadata.
-5. Provider capability and health detection.
-6. Embedded/safe-multi-writer mode selection and worktree discovery.
-7. Error translation, schema/version skew handling, and recovery guidance.
-8. Beads conformance suite using temporary databases.
-9. High-contention create, ready, claim, update, and comment tests.
-10. Backup/export diagnostic and no-network operation test.
+5. Typed provider capability, health, and recovery diagnostics.
+6. Embedded adapter serialization, qualified server-multiwriter operation, and
+   canonical worktree binding.
+7. Error translation, source re-binding, schema/version skew refusal, and
+   attribution-safe reconciliation guidance.
+8. Portable fake and dishonest-provider conformance.
+9. High-contention create, readiness, assignment-preservation, and stale-
+   authority tests.
+10. JSONL interchange, Dolt-native backup/restore, offline qualification, and
+    immutable evidence.
 
 Exit criteria:
 
@@ -1268,6 +1343,8 @@ Exit criteria:
 - Beads failure never corrupts mission or lane state.
 - Version/schema mismatch fails before mutation with a recovery path.
 - No human-formatted CLI output is parsed.
+- Guarded arbitrary update and safe arbitrary compensation fail before mutation
+  because Beads 1.2.2 does not enforce those guarantees.
 
 ### Phase 3: Software-development mission method
 
@@ -1589,8 +1666,8 @@ these decisions before their corresponding implementation phase:
 
 These are bounded technical decisions, not unresolved product direction:
 
-- Confirm the exact Beads public API surface needed for criteria metadata,
-  comments, events, worktree redirects, and backup operations.
+- Qualify each future Beads executable version, JSON envelope or metadata
+  schema, capability change, and binary digest before expanding the allowlist.
 - Measure SQLite WAL behavior under the intended number of local agent
   processes and supported local filesystems; network filesystems remain out of
   scope.
@@ -1603,6 +1680,9 @@ These are bounded technical decisions, not unresolved product direction:
   intentionally unsupported.
 - Select the first non-Beads conformance adapter: fake-only, GitHub, or a local
   in-memory reference.
+- Evaluate Gapdb as a control-store replacement only through a separate
+  migration campaign and explicit signed human adoption record; SQLite remains
+  current until then.
 
 None of these decisions should reopen the authority boundaries in this plan.
 
@@ -1693,8 +1773,6 @@ Please also answer three summary questions:
 
 - Beads repository and product surface:
   <https://github.com/gastownhall/beads>
-- Beads public Go consumer API:
-  <https://raw.githubusercontent.com/gastownhall/beads/main/beads.go>
 - Beads multi-agent coordination:
   <https://github.com/gastownhall/beads/blob/main/docs/multi-agent/coordination.md>
 - Beads architecture and issue fields:
