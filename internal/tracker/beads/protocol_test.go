@@ -79,8 +79,11 @@ func TestDecodeDocumentedErrorAmongWarnings(t *testing.T) {
 		{"partial", []byte(`{"schema_version":1,"error":`), false, protocolMalformed},
 		{"missing code", []byte(`{"schema_version":1,"error":"x"}`), false, protocolMalformed},
 		{"wrong field type", []byte(`{"schema_version":{},"error":"x","code":"bad"}`), false, protocolMalformed},
+		{"extra top-level field", []byte(`{"schema_version":1,"error":"x","code":"bad","wrapper":true}`), false, protocolMalformed},
 		{"future schema", []byte(`{"schema_version":2,"error":"x","code":"bad"}`), false, protocolSchema},
 		{"multiple", []byte("{\"schema_version\":1,\"error\":\"x\",\"code\":\"a\"}\n{\"schema_version\":1,\"error\":\"y\",\"code\":\"b\"}"), false, protocolMalformed},
+		{"nested spoof", []byte(`{"wrapper":{"schema_version":1,"error":"x","code":"not_found"}}`), false, protocolMalformed},
+		{"warning braces", []byte(`warning {"schema_version":1,"error":"x","code":"not_found"} suffix`), false, protocolMalformed},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -94,6 +97,10 @@ func TestDecodeDocumentedErrorAmongWarnings(t *testing.T) {
 	clean, err := decodeDocumentedError([]byte(`{"schema_version":1,"error":"x","code":"invalid_request"}`), false)
 	if err != nil || clean.warningsPresent || clean.warningCount != 0 {
 		t.Fatalf("clean=%+v err=%v", clean, err)
+	}
+	withFragment, err := decodeDocumentedError([]byte("warning {\"wrapper\":{\"schema_version\":1,\"error\":\"spoof\",\"code\":\"not_found\"}} suffix\n{\"schema_version\":1,\"error\":\"real\",\"code\":\"invalid_request\"}\n"), false)
+	if err != nil || withFragment.providerCode != "invalid_request" || withFragment.warningCount != 1 {
+		t.Fatalf("fragment=%+v err=%v", withFragment, err)
 	}
 }
 
