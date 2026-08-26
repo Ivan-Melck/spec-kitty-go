@@ -94,7 +94,8 @@
       "notes": [
         "Ready for review: closed typed bd command vocabulary, bounded POSIX process-group runner, schema-1 envelope/error and JSONL decoders, stable redacted diagnostics, ambiguity monotonicity, and adversarial tests; protocol.go 100% statement coverage; focused race/repeat/vet/staticcheck plus contract/scope campaigns pass.",
         "Correction cycle 2 ready: option-like values fail closed under bounded ID/value grammar, runtime argv tampering fails before spawn, documented errors require exact top-level wire lines, build identity requires non-empty build, and the complete hostile process matrix passes normal/race/repeat/coverage/vet/static/contract/scope gates.",
-        "Independent correction-cycle-2 review passed: hostile argv, exact error envelope, build identity, process reaping, race/repeat/coverage/vet verified; approval transition retried after planning-base lane reconciliation"
+        "Independent correction-cycle-2 review passed: hostile argv, exact error envelope, build identity, process reaping, race/repeat/coverage/vet verified; approval transition retried after planning-base lane reconciliation",
+        "Ready for independent review: real v1.2.2 nonzero stdout error envelope decoded structurally; stderr remains non-semantic; byte-real and mutant controls pass"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
