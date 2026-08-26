@@ -1,7 +1,7 @@
 {
-  "event_count": 26,
-  "last_event_id": "01M0YQZWT4NR1EQZJ5VF42HM79",
-  "materialized_at": "2026-08-26T09:56:30.660611+00:00",
+  "event_count": 28,
+  "last_event_id": "01M0YR0MPN8PG1722MSAN2G2DE",
+  "materialized_at": "2026-08-26T09:56:55.119707+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "",
@@ -12,20 +12,20 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
-    "planned": 10
+    "planned": 9
   },
   "work_packages": {
     "WP01": {
-      "actor": "user",
+      "actor": "codex",
       "agent": null,
-      "agent_profile": "reviewer-renata",
+      "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 2,
-      "lane": "planned",
-      "last_event_id": "01M0YQZWT4NR1EQZJ5VF42HM79",
-      "last_transition_at": "2026-08-26T09:56:30.660611+00:00",
+      "lane": "in_progress",
+      "last_event_id": "01M0YR0MPN8PG1722MSAN2G2DE",
+      "last_transition_at": "2026-08-26T09:56:55.119707+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review",
@@ -39,7 +39,7 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
