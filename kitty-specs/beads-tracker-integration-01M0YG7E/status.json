@@ -1,7 +1,7 @@
 {
-  "event_count": 148,
-  "last_event_id": "01M0ZDY5SAMWAFWGHMSACJPJCT",
-  "materialized_at": "2026-08-26T16:20:02.986398+00:00",
+  "event_count": 149,
+  "last_event_id": "01M0ZDZ5KCKRG2WM2WFXA12V2S",
+  "materialized_at": "2026-08-26T16:20:35.564782+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
@@ -11,8 +11,8 @@
     "canceled": 0,
     "claimed": 0,
     "done": 0,
-    "for_review": 1,
-    "in_progress": 2,
+    "for_review": 2,
+    "in_progress": 1,
     "in_review": 0,
     "planned": 3
   },
@@ -234,9 +234,9 @@
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 7,
-      "lane": "in_progress",
-      "last_event_id": "01M0ZCJD90MZGYFJ0EKNVHDBTP",
-      "last_transition_at": "2026-08-26T15:56:08.856187+00:00",
+      "lane": "for_review",
+      "last_event_id": "01M0ZDZ5KCKRG2WM2WFXA12V2S",
+      "last_transition_at": "2026-08-26T16:20:35.564782+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: capability-aware assignment, replay recovery, safe compensation refusal, and coherent durable reconciliation evidence",
@@ -255,12 +255,12 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T032": "planned",
-        "T033": "planned",
-        "T034": "planned",
-        "T035": "planned",
-        "T036": "planned",
-        "T037": "planned"
+        "T032": "done",
+        "T033": "done",
+        "T034": "done",
+        "T035": "done",
+        "T036": "done",
+        "T037": "done"
       }
     },
     "WP08": {
