@@ -113,10 +113,14 @@ func TestPreflightAndInspectHealthyEmbeddedCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.Health != tracker.HealthHealthy || inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersAdapterSerialized || inspection.Capabilities.CatalogUpdate != tracker.UpdateUnsupported || inspection.Capabilities.SafeCompensation != tracker.CompensationUnsupported {
+	if inspection.Health != tracker.HealthHealthy || inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersAdapterSerialized || inspection.Capabilities.CatalogUpdate != tracker.UpdateUnguarded || inspection.Capabilities.SafeCompensation != tracker.CompensationUnsupported {
 		t.Fatalf("inspection=%#v", inspection)
 	}
 	assertWP06Capabilities(t, inspection.Capabilities, true)
+	reported, err := bound.Capabilities(context.Background())
+	if err != nil || !reflect.DeepEqual(reported, inspection.Capabilities) {
+		t.Fatalf("capability surfaces disagree: inspect=%#v report=%#v error=%v", inspection.Capabilities, reported, err)
+	}
 	for _, kind := range runner.calls {
 		if kind == CommandCreate || kind == CommandUpdate || kind == CommandBackupInit {
 			t.Fatalf("inspection started mutation %s", kind)
@@ -141,13 +145,19 @@ func assertWP06Capabilities(t *testing.T, capabilities tracker.ProviderCapabilit
 	wantGraph := tracker.SupportUnsupported
 	wantDiscussion := tracker.DiscussionUnsupported
 	wantObservation := tracker.ObservationRevisionUnsupported
+	wantCatalogRead := tracker.SupportUnsupported
+	wantCatalogCreate := tracker.SupportUnsupported
+	wantCatalogUpdate := tracker.UpdateUnsupported
 	if compatible {
 		wantGraph = tracker.SupportSupported
 		wantDiscussion = tracker.DiscussionAppendOnly
 		wantObservation = tracker.ObservationRevisionContentDerived
+		wantCatalogRead = tracker.SupportSupported
+		wantCatalogCreate = tracker.SupportSupported
+		wantCatalogUpdate = tracker.UpdateUnguarded
 	}
-	if capabilities.CatalogRead != tracker.SupportUnsupported || capabilities.CatalogCreate != tracker.SupportUnsupported ||
-		capabilities.CatalogUpdate != tracker.UpdateUnsupported || capabilities.BlockingGraph != wantGraph ||
+	if capabilities.CatalogRead != wantCatalogRead || capabilities.CatalogCreate != wantCatalogCreate ||
+		capabilities.CatalogUpdate != wantCatalogUpdate || capabilities.BlockingGraph != wantGraph ||
 		capabilities.Discussion != wantDiscussion || capabilities.Assignment != tracker.AssignmentUnsupported ||
 		capabilities.ObservationRevision != wantObservation || capabilities.SafeCompensation != tracker.CompensationUnsupported ||
 		capabilities.PortableExport != tracker.SupportUnsupported || capabilities.RestorableBackup != tracker.SupportUnsupported {
@@ -196,6 +206,10 @@ func TestIncompatibleInspectionFailsAllCapabilitiesClosed(t *testing.T) {
 	if inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersNone {
 		t.Fatalf("incompatible provider advertised writer capability: %#v", inspection.Capabilities)
 	}
+	reported, err := bound.Capabilities(context.Background())
+	if err != nil || !reflect.DeepEqual(reported, inspection.Capabilities) {
+		t.Fatalf("incompatible capability surfaces disagree: inspect=%#v report=%#v error=%v", inspection.Capabilities, reported, err)
+	}
 }
 
 func TestReadOnlyInspectionIsDegradedAndFailsCapabilitiesClosed(t *testing.T) {
@@ -209,6 +223,10 @@ func TestReadOnlyInspectionIsDegradedAndFailsCapabilitiesClosed(t *testing.T) {
 		t.Fatalf("inspection=%#v", inspection)
 	}
 	assertWP06Capabilities(t, inspection.Capabilities, false)
+	reported, err := bound.Capabilities(context.Background())
+	if err != nil || !reflect.DeepEqual(reported, inspection.Capabilities) {
+		t.Fatalf("read-only capability surfaces disagree: inspect=%#v report=%#v error=%v", inspection.Capabilities, reported, err)
+	}
 }
 
 func TestUnavailableInspectionFailsCapabilitiesClosed(t *testing.T) {
@@ -224,6 +242,10 @@ func TestUnavailableInspectionFailsCapabilitiesClosed(t *testing.T) {
 		t.Fatalf("inspection=%#v", inspection)
 	}
 	assertWP06Capabilities(t, inspection.Capabilities, false)
+	reported, err := bound.Capabilities(context.Background())
+	if err != nil || !reflect.DeepEqual(reported, inspection.Capabilities) {
+		t.Fatalf("unavailable capability surfaces disagree: inspect=%#v report=%#v error=%v", inspection.Capabilities, reported, err)
+	}
 }
 
 func TestServerIdentitySpoofAndStaleReadinessRefuseBeforeMutation(t *testing.T) {

@@ -135,6 +135,10 @@ func (bound *BoundAdapter) ensureDiscussionOperationScoped(ctx context.Context, 
 	if err != nil {
 		return err
 	}
+	mapped, err := index.resolve(current.ProjectID, current.WorkID)
+	if err != nil || mapped.ExternalID != current.ExternalID {
+		return mappingConflict("discussion work mapping is not unique in the provider catalog")
+	}
 	references := make([]tracker.ExternalWorkRef, 0, len(index.byExternal))
 	for _, reference := range index.byExternal {
 		if reference.ProjectID == current.ProjectID && reference.ExternalID != current.ExternalID {

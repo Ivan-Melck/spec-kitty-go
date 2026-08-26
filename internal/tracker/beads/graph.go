@@ -13,8 +13,15 @@ import (
 )
 
 type workMappingIndex struct {
-	byExternal map[string]tracker.ExternalWorkRef
-	byWork     map[ids.WorkID]tracker.ExternalWorkRef
+	byExternal          map[string]tracker.ExternalWorkRef
+	byWork              map[workMappingKey]tracker.ExternalWorkRef
+	conflictingExternal map[string]struct{}
+	conflictingWork     map[workMappingKey]struct{}
+}
+
+type workMappingKey struct {
+	projectID ids.ProjectID
+	workID    ids.WorkID
 }
 
 // beginProviderMutation keeps observe/mutate/verify inside the adapter writer
@@ -55,7 +62,10 @@ func (bound *BoundAdapter) loadMappingIndex(ctx context.Context) (workMappingInd
 	if err := json.Unmarshal(response.payload, &encoded); err != nil {
 		return workMappingIndex{}, metadataProtocolError("provider issue list is malformed", err)
 	}
-	index := workMappingIndex{byExternal: make(map[string]tracker.ExternalWorkRef), byWork: make(map[ids.WorkID]tracker.ExternalWorkRef)}
+	index := workMappingIndex{
+		byExternal: make(map[string]tracker.ExternalWorkRef), byWork: make(map[workMappingKey]tracker.ExternalWorkRef),
+		conflictingExternal: make(map[string]struct{}), conflictingWork: make(map[workMappingKey]struct{}),
+	}
 	for _, raw := range encoded {
 		issue, err := decodeProviderIssue(raw)
 		if err != nil {
@@ -69,27 +79,70 @@ func (bound *BoundAdapter) loadMappingIndex(ctx context.Context) (workMappingInd
 			ProjectID: kitty.ProjectID, WorkID: kitty.WorkID, Provider: beadsProvider, ExternalID: issue.externalID,
 			MetadataSchema: kitty.SchemaVersion, CreatedByOperation: kitty.CreatedByOperation,
 		}
+		key := workMappingKey{projectID: kitty.ProjectID, workID: kitty.WorkID}
 		if prior, present := index.byExternal[issue.externalID]; present && (prior.ProjectID != reference.ProjectID || prior.WorkID != reference.WorkID) {
-			return workMappingIndex{}, mappingConflict("one external issue claims multiple stable work identities")
+			delete(index.byExternal, issue.externalID)
+			index.conflictingExternal[issue.externalID] = struct{}{}
+			index.conflictingWork[workMappingKey{projectID: prior.ProjectID, workID: prior.WorkID}] = struct{}{}
+			index.conflictingWork[key] = struct{}{}
+			delete(index.byWork, workMappingKey{projectID: prior.ProjectID, workID: prior.WorkID})
+			delete(index.byWork, key)
+			continue
 		}
-		if prior, present := index.byWork[kitty.WorkID]; present && (prior.ProjectID == kitty.ProjectID && prior.ExternalID != issue.externalID) {
-			return workMappingIndex{}, mappingConflict("multiple provider issues claim one stable work identity")
+		if _, conflicted := index.conflictingExternal[issue.externalID]; !conflicted {
+			index.byExternal[issue.externalID] = reference
 		}
-		index.byExternal[issue.externalID] = reference
-		if prior, present := index.byWork[kitty.WorkID]; !present || prior.ProjectID != bound.binding.ProjectID {
-			index.byWork[kitty.WorkID] = reference
+		if prior, present := index.byWork[key]; present && prior.ExternalID != issue.externalID {
+			delete(index.byWork, key)
+			index.conflictingWork[key] = struct{}{}
+			continue
+		}
+		if _, conflicted := index.conflictingWork[key]; !conflicted {
+			index.byWork[key] = reference
 		}
 	}
 	return index, nil
 }
 
 func (index workMappingIndex) resolve(projectID ids.ProjectID, workID ids.WorkID) (tracker.ExternalWorkRef, error) {
-	reference, present := index.byWork[workID]
+	key := workMappingKey{projectID: projectID, workID: workID}
+	if _, conflicted := index.conflictingWork[key]; conflicted {
+		return tracker.ExternalWorkRef{}, mappingConflict("multiple provider issues claim one stable work identity")
+	}
+	reference, present := index.byWork[key]
 	if !present {
+		for candidate := range index.byWork {
+			if candidate.workID == workID && candidate.projectID != projectID {
+				return tracker.ExternalWorkRef{}, mappingConflict("work mapping belongs to another project")
+			}
+		}
+		for candidate := range index.conflictingWork {
+			if candidate.workID == workID && candidate.projectID != projectID {
+				return tracker.ExternalWorkRef{}, mappingConflict("work mapping belongs to another project")
+			}
+		}
 		return tracker.ExternalWorkRef{}, &tracker.Error{Kind: tracker.ErrorNotFound, RecoveryCode: "reconcile_mapping", Message: "work has no provider mapping"}
 	}
 	if reference.ProjectID != projectID || reference.Provider != beadsProvider || reference.MetadataSchema != metadataSchemaV1 {
 		return tracker.ExternalWorkRef{}, mappingConflict("work mapping belongs to another project or provider")
+	}
+	return reference, nil
+}
+
+func (index workMappingIndex) resolveExternal(externalID string) (tracker.ExternalWorkRef, error) {
+	if _, conflicted := index.conflictingExternal[externalID]; conflicted {
+		return tracker.ExternalWorkRef{}, mappingConflict("one external issue claims multiple stable work identities")
+	}
+	reference, present := index.byExternal[externalID]
+	if !present {
+		return tracker.ExternalWorkRef{}, &tracker.Error{Kind: tracker.ErrorNotFound, RecoveryCode: "reconcile_mapping", Message: "external issue has no stable provider mapping"}
+	}
+	resolved, err := index.resolve(reference.ProjectID, reference.WorkID)
+	if err != nil {
+		return tracker.ExternalWorkRef{}, err
+	}
+	if resolved.ExternalID != externalID {
+		return tracker.ExternalWorkRef{}, mappingConflict("external issue mapping is not unique")
 	}
 	return reference, nil
 }
@@ -247,12 +300,12 @@ func (bound *BoundAdapter) observeDependencies(ctx context.Context, blocked trac
 		if edge.Kind != string(tracker.DependencyBlocks) {
 			continue
 		}
-		blockedMapping, ok := index.byExternal[edge.Blocked]
-		if !ok {
+		blockedMapping, err := index.resolveExternal(edge.Blocked)
+		if err != nil {
 			return nil, tracker.ProviderObservation{}, mappingConflict("blocking edge references an unmapped blocked issue")
 		}
-		blockingMapping, ok := index.byExternal[edge.Blocking]
-		if !ok {
+		blockingMapping, err := index.resolveExternal(edge.Blocking)
+		if err != nil {
 			return nil, tracker.ProviderObservation{}, mappingConflict("blocking edge references an unmapped prerequisite issue")
 		}
 		if blockedMapping.ProjectID != blocked.ProjectID || blockingMapping.ProjectID != blocked.ProjectID {
@@ -361,6 +414,10 @@ func (bound *BoundAdapter) ReadyProjection(ctx context.Context, request tracker.
 		}
 		pinned[workID] = struct{}{}
 	}
+	catalogIndex, err := bound.loadMappingIndex(ctx)
+	if err != nil {
+		return tracker.ReadyProjection{}, err
+	}
 	command, err := newReadyCommand(bound.commandBinding())
 	if err != nil {
 		return tracker.ReadyProjection{}, err
@@ -378,10 +435,17 @@ func (bound *BoundAdapter) ReadyProjection(ctx context.Context, request tracker.
 		return tracker.ReadyProjection{}, metadataProtocolError("provider ready list is malformed", err)
 	}
 	providerSet := make(map[ids.WorkID]struct{})
-	providerMapping := make(map[ids.WorkID]string)
-	conflictingMapping := make(map[ids.WorkID]struct{})
 	diagnostics := make([]tracker.Diagnostic, 0)
 	observationLabels := make([]string, 0, len(encoded))
+	for externalID, reference := range catalogIndex.byExternal {
+		observationLabels = append(observationLabels, "catalog:"+externalID+"@"+reference.ProjectID.String()+"/"+reference.WorkID.String())
+	}
+	for key := range catalogIndex.conflictingWork {
+		observationLabels = append(observationLabels, "catalog-conflict:"+key.projectID.String()+"/"+key.workID.String())
+	}
+	for externalID := range catalogIndex.conflictingExternal {
+		observationLabels = append(observationLabels, "catalog-external-conflict:"+externalID)
+	}
 	for _, raw := range encoded {
 		issue, err := decodeProviderIssue(raw)
 		if err != nil {
@@ -399,14 +463,9 @@ func (bound *BoundAdapter) ReadyProjection(ctx context.Context, request tracker.
 			diagnostics = append(diagnostics, tracker.Diagnostic{Kind: tracker.ErrorRevisionConflict, RecoveryCode: "reconcile_mapping", Message: "provider-ready issue belongs to another project", ExternalID: issue.externalID})
 			continue
 		}
-		if prior, present := providerMapping[kitty.WorkID]; present && prior != issue.externalID {
-			delete(providerSet, kitty.WorkID)
-			conflictingMapping[kitty.WorkID] = struct{}{}
-			diagnostics = append(diagnostics, tracker.Diagnostic{Kind: tracker.ErrorRevisionConflict, RecoveryCode: "reconcile_mapping", Message: "multiple provider-ready issues claim one stable work identity", ExternalID: kitty.WorkID.String()})
-			continue
-		}
-		providerMapping[kitty.WorkID] = issue.externalID
-		if _, conflicted := conflictingMapping[kitty.WorkID]; conflicted {
+		catalogReference, resolveErr := catalogIndex.resolveExternal(issue.externalID)
+		if resolveErr != nil || catalogReference.ProjectID != kitty.ProjectID || catalogReference.WorkID != kitty.WorkID || catalogReference.MetadataSchema != kitty.SchemaVersion || catalogReference.CreatedByOperation != kitty.CreatedByOperation {
+			diagnostics = append(diagnostics, tracker.Diagnostic{Kind: tracker.ErrorRevisionConflict, RecoveryCode: "reconcile_mapping", Message: "provider-ready issue does not have one unique catalog mapping", ExternalID: issue.externalID})
 			continue
 		}
 		providerSet[kitty.WorkID] = struct{}{}

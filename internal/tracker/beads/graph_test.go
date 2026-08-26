@@ -410,21 +410,27 @@ func TestReadyProjectionReportsProviderUnavailable(t *testing.T) {
 }
 
 func TestReadyProjectionRefusesConflictingStableMapping(t *testing.T) {
-	bound, runner := newWP06Adapter(t)
-	addWP06Issue(t, runner, "project-1", "work-a", "bd-a-one")
-	addWP06Issue(t, runner, "project-1", "work-a", "bd-a-two")
-	runner.ready = []string{"bd-a-one", "bd-a-two"}
-	projection, err := bound.ReadyProjection(context.Background(), tracker.ReadyRequest{ProjectID: "project-1", PinnedReadyIDs: []ids.WorkID{"work-a"}})
-	if err != nil || len(projection.ProviderReadyIDs) != 0 {
-		t.Fatalf("projection=%#v error=%v", projection, err)
-	}
-	found := false
-	for _, diagnostic := range projection.Diagnostics {
-		if diagnostic.RecoveryCode == "reconcile_mapping" && strings.Contains(diagnostic.Message, "multiple") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("mapping conflict diagnostic absent: %#v", projection.Diagnostics)
+	for _, readyExternal := range []string{"bd-a-one", "bd-a-two"} {
+		t.Run(readyExternal, func(t *testing.T) {
+			bound, runner := newWP06Adapter(t)
+			addWP06Issue(t, runner, "project-1", "work-a", "bd-a-one")
+			addWP06Issue(t, runner, "project-1", "work-a", "bd-a-two")
+			// Only one conflicting claim is returned by bd ready. The complete
+			// catalog observation must still prevent positive readiness.
+			runner.ready = []string{readyExternal}
+			projection, err := bound.ReadyProjection(context.Background(), tracker.ReadyRequest{ProjectID: "project-1", PinnedReadyIDs: []ids.WorkID{"work-a"}})
+			if err != nil || len(projection.ProviderReadyIDs) != 0 {
+				t.Fatalf("conflicting catalog mapping became positively ready: projection=%#v error=%v", projection, err)
+			}
+			found := false
+			for _, diagnostic := range projection.Diagnostics {
+				if diagnostic.RecoveryCode == "reconcile_mapping" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("mapping conflict diagnostic absent: %#v", projection.Diagnostics)
+			}
+		})
 	}
 }
