@@ -23,12 +23,21 @@ import (
 )
 
 type realBeadsFixture struct {
-	root, repository, workspace, backup, restore, worktrees string
-	binary, digest, sourceStatus                            string
-	projectID                                               ids.ProjectID
+	root, repository, workspace, database, backup, restore, worktrees string
+	binary, digest, sourceStatus                                      string
+	projectID                                                         ids.ProjectID
+	server                                                            bool
 }
 
 func newRealBeadsFixture(t *testing.T) *realBeadsFixture {
+	return newRealBeadsFixtureMode(t, false)
+}
+
+func newRealBeadsServerFixture(t *testing.T) *realBeadsFixture {
+	return newRealBeadsFixtureMode(t, true)
+}
+
+func newRealBeadsFixtureMode(t *testing.T, server bool) *realBeadsFixture {
 	t.Helper()
 	if os.Getenv("SPEC_KITTY_REAL_BEADS_QUALIFICATION") != "1" {
 		t.Skip("real Beads qualification requires SPEC_KITTY_REAL_BEADS_QUALIFICATION=1")
@@ -54,12 +63,21 @@ func newRealBeadsFixture(t *testing.T) *realBeadsFixture {
 		t.Fatal("BEADS_BIN digest differs from the explicit qualification digest")
 	}
 	root := t.TempDir()
+	workspace := filepath.Join(root, "beads-workspace")
+	if server {
+		workspace = filepath.Join(root, "repository", ".beads")
+	}
 	fixture := &realBeadsFixture{
-		root: root, repository: filepath.Join(root, "repository"), workspace: filepath.Join(root, "beads-workspace"),
+		root: root, repository: filepath.Join(root, "repository"), workspace: workspace,
 		backup: filepath.Join(root, "native-backup"), restore: filepath.Join(root, "restore-workspace"),
 		worktrees: filepath.Join(root, "worktrees"), binary: binary, digest: digest, projectID: ids.ProjectID("wp09-real-provider"),
+		server: server,
 	}
-	for _, path := range []string{fixture.repository, fixture.workspace, fixture.backup, fixture.restore, fixture.worktrees} {
+	paths := []string{fixture.repository, fixture.backup, fixture.restore, fixture.worktrees, filepath.Join(root, "home")}
+	if !server {
+		paths = append(paths, fixture.workspace)
+	}
+	for _, path := range paths {
 		if err := os.Mkdir(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -73,8 +91,50 @@ func newRealBeadsFixture(t *testing.T) *realBeadsFixture {
 	if _, _, err := fixture.run(t, "git", "init", "--quiet"); err != nil {
 		t.Fatalf("initialize disposable git repository: %v", err)
 	}
-	if _, _, err := fixture.runBD(t, "init", "--stealth", "--skip-agents", "--skip-hooks", "--non-interactive", "--prefix", "skt"); err != nil {
+	initArgs := []string{"init", "--stealth", "--skip-agents", "--skip-hooks", "--non-interactive", "--prefix", "skt"}
+	initEnvironment := fixture.environment()
+	if server {
+		hash := sha256.Sum256([]byte(root))
+		initArgs[len(initArgs)-1] = fmt.Sprintf("skq%x", hash[:4])
+		initArgs = append(initArgs, "--shared-server", "--external", "--server-host", os.Getenv("DOLT_SERVER_HOST"), "--server-port", os.Getenv("DOLT_SERVER_PORT"), "--server-user", "root")
+		initEnvironment = withoutEnvironmentKeys(initEnvironment, "BEADS_DIR")
+	}
+	if _, _, err := fixture.runWithEnvironment(t, fixture.repository, initEnvironment, fixture.binary, initArgs...); err != nil {
 		t.Fatalf("initialize disposable Beads workspace: %v", err)
+	}
+	if server {
+		if _, _, err := fixture.runBD(t, "config", "set", "dolt.auto-start", "false"); err != nil {
+			t.Fatalf("pin external server lifecycle configuration: %v", err)
+		}
+	}
+	wherePayload, _, err := fixture.runBD(t, "where", "--json")
+	if err != nil {
+		t.Fatalf("inspect initialized Beads workspace: %v", err)
+	}
+	var where struct {
+		Data struct {
+			DatabasePath string `json:"database_path"`
+		} `json:"data"`
+	}
+	if decodeRealEnvelope(wherePayload, &where) != nil || !filepath.IsAbs(where.Data.DatabasePath) {
+		t.Fatal("initialized Beads workspace did not report an absolute database path")
+	}
+	if server {
+		showPayload, _, showErr := fixture.runBD(t, "dolt", "show", "--json")
+		if showErr != nil {
+			t.Fatalf("inspect initialized Beads server binding: %v", showErr)
+		}
+		var show struct {
+			Data struct {
+				Database string `json:"database"`
+			} `json:"data"`
+		}
+		if decodeRealEnvelope(showPayload, &show) != nil || !validServerDatabase(show.Data.Database) {
+			t.Fatal("initialized Beads server did not report a logical database identity")
+		}
+		fixture.database = show.Data.Database
+	} else {
+		fixture.database = filepath.Clean(where.Data.DatabasePath)
 	}
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md", ".cursorrules"} {
 		for _, parent := range []string{fixture.repository, fixture.workspace} {
@@ -110,15 +170,29 @@ func newRealBeadsFixture(t *testing.T) *realBeadsFixture {
 
 func (fixture *realBeadsFixture) adapter(t *testing.T) *BoundAdapter {
 	t.Helper()
-	bound, err := Open(BindingConfig{
-		ProjectID: fixture.projectID, ExecutablePath: fixture.binary, WorkspacePath: fixture.workspace,
-		ProtocolSchema: SupportedProtocolSchema, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized,
-		ExpectedExecutableDigest: fixture.digest,
-	})
+	mode := tracker.ConcurrencyEmbeddedSerialized
+	if fixture.server {
+		mode = tracker.ConcurrencyServerMultiwriter
+	}
+	bound, err := Open(fixture.bindingConfig(mode))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return bound
+}
+
+func (fixture *realBeadsFixture) bindingConfig(mode tracker.ConcurrencyMode) BindingConfig {
+	config := BindingConfig{
+		ProjectID: fixture.projectID, ExecutablePath: fixture.binary, WorkspacePath: fixture.workspace,
+		ProviderDatabaseIdentity: fixture.database, ProtocolSchema: SupportedProtocolSchema,
+		ConcurrencyMode: mode, ExpectedExecutableDigest: fixture.digest,
+	}
+	if mode == tracker.ConcurrencyServerMultiwriter {
+		config.ServerIdentity = os.Getenv("BEADS_SERVER_ID")
+		config.ServerEndpoint = os.Getenv("BEADS_SERVER_ENDPOINT")
+		config.Credentials = map[string]string{"DOLT_SERVER_HOST": os.Getenv("DOLT_SERVER_HOST"), "DOLT_SERVER_PORT": os.Getenv("DOLT_SERVER_PORT")}
+	}
+	return config
 }
 
 func (fixture *realBeadsFixture) runBD(t *testing.T, args ...string) ([]byte, []byte, error) {
@@ -128,11 +202,16 @@ func (fixture *realBeadsFixture) runBD(t *testing.T, args ...string) ([]byte, []
 
 func (fixture *realBeadsFixture) run(t *testing.T, executable string, args ...string) ([]byte, []byte, error) {
 	t.Helper()
+	return fixture.runWithEnvironment(t, fixture.repository, fixture.environment(), executable, args...)
+}
+
+func (fixture *realBeadsFixture) runWithEnvironment(t *testing.T, directory string, environment []string, executable string, args ...string) ([]byte, []byte, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, args...)
-	command.Dir = fixture.repository
-	command.Env = realBeadsEnvironment(fixture.root, fixture.workspace)
+	command.Dir = directory
+	command.Env = environment
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
@@ -142,8 +221,35 @@ func (fixture *realBeadsFixture) run(t *testing.T, executable string, args ...st
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
+func (fixture *realBeadsFixture) environment() []string {
+	result := realBeadsEnvironment(fixture.root, fixture.workspace)
+	if fixture.server {
+		result = append(result,
+			"BEADS_DOLT_SERVER_HOST="+os.Getenv("DOLT_SERVER_HOST"),
+			"BEADS_DOLT_SERVER_PORT="+os.Getenv("DOLT_SERVER_PORT"),
+			"BEADS_DOLT_AUTO_START=0",
+		)
+	}
+	return result
+}
+
+func withoutEnvironmentKeys(environment []string, excluded ...string) []string {
+	blocked := make(map[string]struct{}, len(excluded))
+	for _, key := range excluded {
+		blocked[key] = struct{}{}
+	}
+	result := make([]string, 0, len(environment))
+	for _, item := range environment {
+		key, _, _ := strings.Cut(item, "=")
+		if _, skip := blocked[key]; !skip {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 func realBeadsEnvironment(root, workspace string) []string {
-	allowed := map[string]bool{"PATH": true, "TMPDIR": true, "LANG": true, "LC_ALL": true, "TZ": true, "HOME": true}
+	allowed := map[string]bool{"PATH": true, "TMPDIR": true, "LANG": true, "LC_ALL": true, "TZ": true}
 	result := make([]string, 0, 12)
 	for _, item := range os.Environ() {
 		key, _, ok := strings.Cut(item, "=")
@@ -153,6 +259,7 @@ func realBeadsEnvironment(root, workspace string) []string {
 	}
 	return append(result,
 		"BD_JSON_ENVELOPE=1", "BD_NON_INTERACTIVE=1", "BEADS_DIR="+workspace,
+		"BD_DISABLE_METRICS=1", "BD_DISABLE_EVENT_FLUSH=1", "HOME="+filepath.Join(root, "home"),
 		"XDG_CONFIG_HOME="+filepath.Join(root, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(root, "xdg-data"),
 		"XDG_CACHE_HOME="+filepath.Join(root, "xdg-cache"), "GIT_CONFIG_GLOBAL="+filepath.Join(root, "gitconfig"),
 		"GIT_CONFIG_NOSYSTEM=1",
@@ -434,11 +541,11 @@ func TestRealBeadsQualification(t *testing.T) {
 		if err != nil || len(edges) != 1 || edges[0].BlockingWorkID != blocker.ExternalRef.WorkID {
 			t.Fatalf("blocking direction did not survive round trip: %+v err=%v", edges, err)
 		}
-		entries, err := bound.ListDiscussion(context.Background(), blocked.ExternalRef)
+		entries, discussionObservation, err := bound.observeDiscussion(context.Background(), blocked.ExternalRef)
 		if err != nil {
 			t.Fatal(err)
 		}
-		observation := blocked.Observation.Revision
+		observation := discussionObservation.Revision
 		if len(entries) != 0 {
 			observation = entries[len(entries)-1].Observation
 		}

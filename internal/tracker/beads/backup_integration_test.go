@@ -79,10 +79,23 @@ func TestRealBeadsBackupQualification(t *testing.T) {
 			"backup", "restore", fixture.backup, "--force"); err != nil {
 			t.Fatalf("native restore failed: %v", err)
 		}
+		wherePayload, _, err := runRealCommand(restoreRepository, realBeadsEnvironment(fixture.root, fixture.restore), fixture.binary, "where", "--json")
+		if err != nil {
+			t.Fatalf("inspect restored Beads workspace: %v", err)
+		}
+		var where struct {
+			Data struct {
+				DatabasePath string `json:"database_path"`
+			} `json:"data"`
+		}
+		if decodeRealEnvelope(wherePayload, &where) != nil || !filepath.IsAbs(where.Data.DatabasePath) {
+			t.Fatal("restored Beads workspace did not report an absolute database path")
+		}
 
 		restored, err := Open(BindingConfig{
 			ProjectID: fixture.projectID, ExecutablePath: fixture.binary, WorkspacePath: fixture.restore,
-			ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized, ExpectedExecutableDigest: fixture.digest,
+			ProviderDatabaseIdentity: filepath.Clean(where.Data.DatabasePath),
+			ProtocolSchema:           1, ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized, ExpectedExecutableDigest: fixture.digest,
 		})
 		if err != nil {
 			t.Fatal(err)

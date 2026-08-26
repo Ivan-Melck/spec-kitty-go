@@ -267,7 +267,7 @@ func TestQualifiedServerProcessesOverlap(t *testing.T) {
 
 func serverMutationHelper() {
 	workspace := os.Getenv("BEADS_SERVER_WORKSPACE")
-	config := BindingConfig{ProjectID: trackerProjectID(os.Getenv("BEADS_SERVER_PROJECT")), ExecutablePath: os.Getenv("BEADS_SERVER_EXECUTABLE"), WorkspacePath: workspace, ProviderDatabaseIdentity: filepath.Join(workspace, "embeddeddolt"), ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyServerMultiwriter, ServerIdentity: "server-1", ServerEndpoint: "127.0.0.1:3306", Credentials: map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306", "DOLT_CREDENTIALS_PATH": os.Getenv("BEADS_SERVER_RECORD")}}
+	config := BindingConfig{ProjectID: trackerProjectID(os.Getenv("BEADS_SERVER_PROJECT")), ExecutablePath: os.Getenv("BEADS_SERVER_EXECUTABLE"), WorkspacePath: workspace, ProviderDatabaseIdentity: "db-1", ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyServerMultiwriter, ServerIdentity: "server-1", ServerEndpoint: "127.0.0.1:3306", Credentials: map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306", "DOLT_CREDENTIALS_PATH": os.Getenv("BEADS_SERVER_RECORD")}}
 	bound, err := Open(config)
 	if err != nil {
 		os.Exit(2)

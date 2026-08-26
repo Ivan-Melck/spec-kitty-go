@@ -27,7 +27,9 @@ type BindingConfig struct {
 	ExecutablePath string
 	WorkspacePath  string
 	// ProviderDatabaseIdentity is the absolute existing database directory
-	// reported by `bd where --json`; ResolveBinding canonicalizes it before use.
+	// reported by `bd where --json` for embedded mode. In server mode it is the
+	// exact logical database name reported by the server inspection commands;
+	// external databases intentionally have no local data directory to resolve.
 	ProviderDatabaseIdentity string
 	ProtocolSchema           uint16
 	ConcurrencyMode          tracker.ConcurrencyMode
@@ -81,7 +83,8 @@ func ResolveBinding(config BindingConfig) (tracker.TrackerBinding, error) {
 	if config.ConcurrencyMode != tracker.ConcurrencyEmbeddedSerialized && config.ConcurrencyMode != tracker.ConcurrencyServerMultiwriter {
 		return tracker.TrackerBinding{}, invalidBinding("concurrency mode is unknown", nil)
 	}
-	if _, err := connectionFromConfig(config); err != nil {
+	connection, err := connectionFromConfig(config)
+	if err != nil {
 		return tracker.TrackerBinding{}, err
 	}
 	executable, executableInfo, err := canonicalExisting(config.ExecutablePath, false)
@@ -108,11 +111,22 @@ func ResolveBinding(config BindingConfig) (tracker.TrackerBinding, error) {
 	if config.ExpectedExecutableDigest != "" && config.ExpectedExecutableDigest != digest {
 		return tracker.TrackerBinding{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "install_verified_provider", Message: "configured executable digest does not match its bytes"}
 	}
-	databasePath, _, err := canonicalExisting(config.ProviderDatabaseIdentity, true)
-	if err != nil {
-		return tracker.TrackerBinding{}, invalidBinding("provider database path cannot be resolved", err)
+	databaseIdentity := config.ProviderDatabaseIdentity
+	var identity string
+	if config.ConcurrencyMode == tracker.ConcurrencyEmbeddedSerialized {
+		databaseIdentity, _, err = canonicalExisting(databaseIdentity, true)
+		if err != nil {
+			return tracker.TrackerBinding{}, invalidBinding("provider database path cannot be resolved", err)
+		}
+		identity = deriveWorkspaceIdentity(workspace, databaseIdentity)
+	} else {
+		if !validServerDatabase(databaseIdentity) {
+			return tracker.TrackerBinding{}, invalidBinding("provider server database identity is invalid", nil)
+		}
+		host := connection.credentials["DOLT_SERVER_HOST"]
+		port := connection.credentials["DOLT_SERVER_PORT"]
+		identity = deriveServerWorkspaceIdentity(workspace, host, port, databaseIdentity)
 	}
-	identity := deriveWorkspaceIdentity(workspace, databasePath)
 	binding := tracker.TrackerBinding{
 		ProjectID:         config.ProjectID,
 		Provider:          "beads",
@@ -209,6 +223,32 @@ func deriveWorkspaceIdentity(canonicalPath, databaseIdentity string) string {
 	writeIdentityField(hash, "path", canonicalPath)
 	writeIdentityField(hash, "database", databaseIdentity)
 	return "ws1:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func deriveServerWorkspaceIdentity(canonicalPath, host, port, database string) string {
+	hash := sha256.New()
+	var version [2]byte
+	binary.BigEndian.PutUint16(version[:], workspaceIdentityEncodingVersion)
+	_, _ = hash.Write(version[:])
+	writeIdentityField(hash, "provider", "beads")
+	writeIdentityField(hash, "path", canonicalPath)
+	writeIdentityField(hash, "server_host", host)
+	writeIdentityField(hash, "server_port", port)
+	writeIdentityField(hash, "server_database", database)
+	writeIdentityField(hash, "shared_server", "true")
+	return "ws1:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func validServerDatabase(value string) bool {
+	if value == "" || len(value) > 256 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if character != '_' && character != '-' && (character < '0' || character > '9') && (character < 'A' || character > 'Z') && (character < 'a' || character > 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 func writeIdentityField(destination io.Writer, name, value string) {

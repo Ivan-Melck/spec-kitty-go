@@ -61,27 +61,39 @@ type latencyEvidence struct {
 	MaxMS     float64 `json:"max_ms"`
 }
 
+type contentionEvidence struct {
+	Mode       string  `json:"mode"`
+	Processes  int     `json:"processes"`
+	Attempted  int     `json:"attempted"`
+	Terminal   int     `json:"terminal"`
+	Passed     int     `json:"passed"`
+	Collisions int     `json:"collisions"`
+	Duplicates int     `json:"duplicates"`
+	DurationMS float64 `json:"duration_ms"`
+}
+
 type issueEvidence struct {
 	Kind    string `json:"kind"`
 	Message string `json:"message"`
 }
 
 type qualificationEvidence struct {
-	SchemaVersion              int               `json:"schema_version"`
-	SourceCommit               string            `json:"source_commit"`
-	SourceTree                 string            `json:"source_tree"`
-	ProviderVersion            string            `json:"provider_version"`
-	ProviderDigestSHA256       string            `json:"provider_digest_sha256"`
-	ProtocolSchema             int               `json:"protocol_schema"`
-	StorageMode                string            `json:"storage_mode"`
-	Host                       hostEvidence      `json:"host"`
-	StartedAt                  time.Time         `json:"started_at"`
-	FinishedAt                 time.Time         `json:"finished_at"`
-	Scenarios                  scenarioCensus    `json:"scenarios"`
-	Latency                    []latencyEvidence `json:"latency,omitempty"`
-	AuthorityInvariantFailures int               `json:"authority_invariant_failures"`
-	Issues                     []issueEvidence   `json:"issues,omitempty"`
-	Verdict                    string            `json:"verdict"`
+	SchemaVersion              int                 `json:"schema_version"`
+	SourceCommit               string              `json:"source_commit"`
+	SourceTree                 string              `json:"source_tree"`
+	ProviderVersion            string              `json:"provider_version"`
+	ProviderDigestSHA256       string              `json:"provider_digest_sha256"`
+	ProtocolSchema             int                 `json:"protocol_schema"`
+	StorageMode                string              `json:"storage_mode"`
+	Host                       hostEvidence        `json:"host"`
+	StartedAt                  time.Time           `json:"started_at"`
+	FinishedAt                 time.Time           `json:"finished_at"`
+	Scenarios                  scenarioCensus      `json:"scenarios"`
+	Latency                    []latencyEvidence   `json:"latency,omitempty"`
+	Contention                 *contentionEvidence `json:"contention,omitempty"`
+	AuthorityInvariantFailures int                 `json:"authority_invariant_failures"`
+	Issues                     []issueEvidence     `json:"issues,omitempty"`
+	Verdict                    string              `json:"verdict"`
 }
 
 type testEvent struct {
@@ -125,13 +137,13 @@ func runQualification(ctx context.Context, input options) (qualificationEvidence
 		return qualificationEvidence{}, err
 	}
 
-	census, latencies, issues, runErr := runProviderTests(ctx, repository, identity, input.Timeout)
+	census, latencies, contention, issues, runErr := runProviderTests(ctx, repository, identity, input.Timeout)
 	result := qualificationEvidence{
 		SchemaVersion: 1, SourceCommit: commit, SourceTree: tree,
 		ProviderVersion: identity.Version, ProviderDigestSHA256: identity.Digest,
 		ProtocolSchema: identity.Schema, StorageMode: qualificationStorageMode(),
 		Host:      hostEvidence{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Runner: safeRunnerName()},
-		StartedAt: started, FinishedAt: time.Now().UTC(), Scenarios: census, Latency: latencies,
+		StartedAt: started, FinishedAt: time.Now().UTC(), Scenarios: census, Latency: latencies, Contention: contention,
 		AuthorityInvariantFailures: 0, Issues: issues, Verdict: "non_admissible",
 	}
 	if census.Started == census.Expected && census.Terminal == census.Expected && census.Passed == census.Expected && census.Failed == 0 && len(issues) == 0 && runErr == nil {
@@ -152,7 +164,7 @@ func runQualification(ctx context.Context, input options) (qualificationEvidence
 	return result, nil
 }
 
-func runProviderTests(ctx context.Context, repository string, identity binaryIdentity, timeout time.Duration) (scenarioCensus, []latencyEvidence, []issueEvidence, error) {
+func runProviderTests(ctx context.Context, repository string, identity binaryIdentity, timeout time.Duration) (scenarioCensus, []latencyEvidence, *contentionEvidence, []issueEvidence, error) {
 	census := scenarioCensus{Expected: len(requiredProviderScenarios)}
 	pattern := `^(TestRealBeadsQualification|TestRealBeadsWorktreeQualification|TestRealBeadsBackupQualification)$`
 	testCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -170,15 +182,16 @@ func runProviderTests(ctx context.Context, repository string, identity binaryIde
 	)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
-		return census, nil, nil, err
+		return census, nil, nil, nil, err
 	}
 	var stderr limitedBuffer
 	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
-		return census, nil, nil, err
+		return census, nil, nil, nil, err
 	}
 	states := make(map[string]string, len(requiredProviderScenarios))
 	latencies := make([]latencyEvidence, 0, 2)
+	var contention *contentionEvidence
 	issues := make([]issueEvidence, 0)
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), 2<<20)
@@ -216,6 +229,14 @@ func runProviderTests(ctx context.Context, repository string, identity binaryIde
 				latencies = append(latencies, sample)
 			}
 		}
+		if marker := strings.Index(event.Output, "WP09_CONTENTION "); marker >= 0 {
+			var sample contentionEvidence
+			if json.Unmarshal([]byte(strings.TrimSpace(event.Output[marker+len("WP09_CONTENTION "):])), &sample) == nil && contention == nil {
+				contention = &sample
+			} else {
+				issues = append(issues, issueEvidence{Kind: "malformed_contention", Message: "contention evidence was malformed or duplicated"})
+			}
+		}
 	}
 	scanErr := scanner.Err()
 	waitErr := command.Wait()
@@ -227,14 +248,21 @@ func runProviderTests(ctx context.Context, repository string, identity binaryIde
 			issues = append(issues, issueEvidence{Kind: "scenario_missing", Message: name})
 		}
 	}
+	if qualificationStorageMode() == "server_multiwriter" {
+		if contention == nil {
+			issues = append(issues, issueEvidence{Kind: "contention_missing", Message: "provider-native contention evidence was not emitted"})
+		} else if contention.Mode != "server_multiwriter" || contention.Processes != 8 || contention.Attempted != 1000 || contention.Terminal != 1000 || contention.Passed != 1000 || contention.Collisions != 0 || contention.Duplicates != 0 || contention.DurationMS <= 0 {
+			issues = append(issues, issueEvidence{Kind: "contention_invalid", Message: "provider-native contention evidence failed its exact census"})
+		}
+	}
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i].Operation < latencies[j].Operation })
 	if scanErr != nil {
-		return census, latencies, issues, scanErr
+		return census, latencies, contention, issues, scanErr
 	}
 	if waitErr != nil {
-		return census, latencies, issues, errors.New("real-provider test process failed; inspect redacted test output locally")
+		return census, latencies, contention, issues, errors.New("real-provider test process failed; inspect redacted test output locally")
 	}
-	return census, latencies, issues, nil
+	return census, latencies, contention, issues, nil
 }
 
 func isRequiredScenario(name string) bool {

@@ -42,7 +42,6 @@ type wp06Runner struct {
 	calls                     []CommandKind
 	argvs                     [][]string
 	clock                     int64
-	commentAuthor             string
 	ambiguousKind             CommandKind
 	applyBeforeAmbiguous      bool
 	failCommentListAfterWrite bool
@@ -127,7 +126,7 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 		data = comments
 	case CommandCommentAppend:
 		issue := runner.issues[request.argv[2]]
-		comment := wp06Comment{ID: fmt.Sprintf("comment-%d", len(issue.Comments)+1), Author: runner.commentAuthor, Body: request.argv[3], CreatedAt: runner.tickLocked()}
+		comment := wp06Comment{ID: fmt.Sprintf("comment-%d", len(issue.Comments)+1), Author: request.argv[5], Body: request.argv[3], CreatedAt: runner.tickLocked()}
 		issue.Comments = append(issue.Comments, comment)
 		issue.UpdatedAt = comment.CreatedAt
 		runner.issues[issue.ID] = issue
@@ -278,7 +277,7 @@ func newWP06Adapter(t *testing.T) (*BoundAdapter, *wp06Runner) {
 	bound, inspection := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "wp06-db")
 	runner := &wp06Runner{
 		workspace: inspection.workspace, databaseID: "wp06-db", issues: make(map[string]wp06Issue),
-		commentAuthor: "agent-a", clock: 10,
+		clock: 10,
 	}
 	bound.adapter = newAdapter(runner)
 	bound.locker = &serialCatalogLocker{}
