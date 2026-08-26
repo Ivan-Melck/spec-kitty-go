@@ -41,7 +41,7 @@ func (bound *BoundAdapter) CreateWork(ctx context.Context, request tracker.Creat
 		Criteria: append([]tracker.Criterion(nil), request.Criteria...), DesignContext: request.DesignContext,
 		ContentDigest: contentDigest,
 	}
-	metadata, err := mergeMetadata(nil, desired)
+	metadata, err := mergeMetadata(request.ProviderMetadata.Bytes(), desired)
 	if err != nil {
 		return tracker.WorkMutation{}, err
 	}
@@ -49,7 +49,7 @@ func (bound *BoundAdapter) CreateWork(ctx context.Context, request tracker.Creat
 	if err != nil {
 		return tracker.WorkMutation{}, err
 	}
-	return bound.withCatalogMutation(ctx, readiness, func() (tracker.WorkMutation, error) {
+	return bound.withCatalogMutation(ctx, readiness, request.WorkID, func() (tracker.WorkMutation, error) {
 		matches, err := bound.observeMapping(ctx, request.ProjectID, request.WorkID)
 		if err != nil {
 			return tracker.WorkMutation{}, err
@@ -130,7 +130,7 @@ func (bound *BoundAdapter) UpdateWork(ctx context.Context, request tracker.Updat
 	if err != nil {
 		return tracker.WorkMutation{}, err
 	}
-	return bound.withCatalogMutation(ctx, readiness, func() (tracker.WorkMutation, error) {
+	return bound.withCatalogMutation(ctx, readiness, request.ExternalRef.WorkID, func() (tracker.WorkMutation, error) {
 		current, err := bound.readIssue(ctx, request.ExternalRef.ExternalID)
 		if err != nil {
 			return tracker.WorkMutation{}, err
@@ -152,6 +152,9 @@ func (bound *BoundAdapter) UpdateWork(ctx context.Context, request tracker.Updat
 			if current.document.kitty.ContentDigest != contentDigest {
 				return tracker.WorkMutation{}, invalidCatalogRequest("operation replay has different semantic input", nil)
 			}
+			if !issueMatchesUpdate(current, request, contentDigest) {
+				return tracker.WorkMutation{}, mappingConflict("provider work drifted after the recorded update operation")
+			}
 			return tracker.WorkMutation{Record: currentRecord, Guarantee: tracker.UpdateUnguarded, Replayed: true, Noop: true}, nil
 		}
 		desired := current.document.kitty
@@ -164,8 +167,8 @@ func (bound *BoundAdapter) UpdateWork(ctx context.Context, request tracker.Updat
 			return tracker.WorkMutation{}, err
 		}
 		command, err := newUpdateCommand(bound.commandBinding(), updateValues{
-			id: request.ExternalRef.ExternalID, title: request.Title, description: request.Description,
-			acceptance: renderCriteria(request.Criteria), metadata: string(metadata),
+			id: request.ExternalRef.ExternalID, title: presentUpdateValue(request.Title), description: presentUpdateValue(request.Description),
+			acceptance: presentUpdateValue(renderCriteria(request.Criteria)), metadata: presentUpdateValue(string(metadata)),
 		})
 		if err != nil {
 			return tracker.WorkMutation{}, err
@@ -192,11 +195,26 @@ func (bound *BoundAdapter) UpdateWork(ctx context.Context, request tracker.Updat
 	})
 }
 
-func (bound *BoundAdapter) withCatalogMutation(ctx context.Context, readiness Readiness, action func() (tracker.WorkMutation, error)) (tracker.WorkMutation, error) {
+func (bound *BoundAdapter) withCatalogMutation(ctx context.Context, readiness Readiness, workID ids.WorkID, action func() (tracker.WorkMutation, error)) (tracker.WorkMutation, error) {
 	if err := bound.validateReadiness(readiness); err != nil {
 		return tracker.WorkMutation{}, err
 	}
 	if bound.binding.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter {
+		// Provider-native writers may proceed concurrently for distinct work, but
+		// Beads has no uniqueness constraint over our namespaced stable mapping.
+		// A process-shared mapping lock therefore protects only the list/create
+		// identity decision for this WorkID; it is not provider CAS.
+		mappingBinding := bound.binding
+		digest := sha256.Sum256([]byte(bound.binding.WorkspaceIdentity + "\x00catalog-mapping\x00" + bound.binding.ProjectID.String() + "\x00" + workID.String()))
+		mappingBinding.WorkspaceIdentity = fmt.Sprintf("mapping:%x", digest[:])
+		lock, err := bound.locker.acquire(ctx, mappingBinding)
+		if err != nil {
+			return tracker.WorkMutation{}, err
+		}
+		defer lock.release()
+		if err := bound.validateReadiness(readiness); err != nil {
+			return tracker.WorkMutation{}, err
+		}
 		return action()
 	}
 	lock, err := bound.locker.acquire(ctx, bound.binding)
@@ -255,6 +273,15 @@ func validateCreateRequest(bound *BoundAdapter, request tracker.CreateWorkReques
 	}
 	if err := validateCriteria(request.Criteria); err != nil {
 		return invalidCatalogRequest("criteria are invalid", err)
+	}
+	if encoded := request.ProviderMetadata.Bytes(); len(encoded) != 0 {
+		document, err := decodeMetadata(encoded)
+		if err != nil {
+			return invalidCatalogRequest("provider metadata is invalid", err)
+		}
+		if document.namespace != nil {
+			return invalidCatalogRequest("caller metadata cannot own the adapter namespace", nil)
+		}
 	}
 	return nil
 }
@@ -519,6 +546,10 @@ func classifyCreateReplay(bound *BoundAdapter, request tracker.CreateWorkRequest
 	if issue.document.kitty.ContentDigest != digest {
 		return tracker.WorkMutation{}, invalidCatalogRequest("operation replay has different semantic input", nil)
 	}
+	if !issueMatchesWorkInput(issue, request.Title, request.Description, request.DesignContext, request.Criteria, digest) ||
+		!issueContainsProviderMetadata(issue, request.ProviderMetadata.Bytes()) {
+		return tracker.WorkMutation{}, mappingConflict("provider work drifted after the recorded create operation")
+	}
 	record, err := bound.issueRecord(issue)
 	if err != nil {
 		return tracker.WorkMutation{}, err
@@ -565,8 +596,43 @@ func issueMatchesUpdate(issue providerIssue, request tracker.UpdateWorkRequest, 
 	if issue.document.namespace == nil || issue.document.kitty.LastOperation != request.OperationID || issue.document.kitty.ContentDigest != digest {
 		return false
 	}
-	return pointerValue(issue.title) == request.Title && pointerValue(issue.description) == request.Description &&
-		pointerValue(issue.acceptance) == renderCriteria(request.Criteria)
+	return issueMatchesWorkInput(issue, request.Title, request.Description, request.DesignContext, request.Criteria, digest)
+}
+
+func issueMatchesWorkInput(issue providerIssue, title, description, designContext string, criteria []tracker.Criterion, digest string) bool {
+	if issue.document.namespace == nil || issue.document.kitty.ContentDigest != digest {
+		return false
+	}
+	liveDigest := requestContentDigest(pointerValue(issue.title), pointerValue(issue.description), issue.document.kitty.DesignContext, issue.document.kitty.Criteria)
+	return liveDigest == digest && pointerValue(issue.title) == title && pointerValue(issue.description) == description &&
+		issue.document.kitty.DesignContext == designContext && pointerValue(issue.acceptance) == renderCriteria(criteria)
+}
+
+func issueContainsProviderMetadata(issue providerIssue, expected []byte) bool {
+	if len(expected) == 0 {
+		return true
+	}
+	var wanted map[string]json.RawMessage
+	if decodeJSONObject(expected, &wanted) != nil {
+		return false
+	}
+	for key, value := range wanted {
+		observed, exists := issue.document.root[key]
+		if !exists || !semanticJSONEqual(observed, value) {
+			return false
+		}
+	}
+	return true
+}
+
+func semanticJSONEqual(left, right []byte) bool {
+	var leftValue, rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+	leftCanonical, leftErr := json.Marshal(leftValue)
+	rightCanonical, rightErr := json.Marshal(rightValue)
+	return leftErr == nil && rightErr == nil && string(leftCanonical) == string(rightCanonical)
 }
 
 func pointerValue(value *string) string {

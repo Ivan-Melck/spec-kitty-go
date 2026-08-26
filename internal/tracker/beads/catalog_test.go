@@ -46,6 +46,9 @@ type catalogRunner struct {
 	clock                uint64
 	ambiguousKind        CommandKind
 	applyBeforeAmbiguous bool
+	mode                 tracker.ConcurrencyMode
+	serverID             string
+	serverEndpoint       string
 }
 
 func (runner *catalogRunner) run(_ context.Context, request command) commandResult {
@@ -63,7 +66,9 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 	case CommandWhere:
 		data = map[string]any{"workspace_path": runner.workspace, "database_id": runner.databaseID}
 	case CommandInfo:
-		data = map[string]any{"protocol_schema": 1, "storage_mode": tracker.ConcurrencyEmbeddedSerialized, "read_only": false}
+		data = map[string]any{"protocol_schema": 1, "storage_mode": runner.mode, "read_only": false, "server_id": runner.serverID, "server_endpoint": runner.serverEndpoint}
+	case CommandDoctor:
+		data = map[string]any{"healthy": true, "server_id": runner.serverID, "server_endpoint": runner.serverEndpoint}
 	case CommandList:
 		ids := make([]string, 0, len(runner.issues))
 		for id := range runner.issues {
@@ -196,12 +201,51 @@ func (locker *serialCatalogLocker) acquire(context.Context, tracker.TrackerBindi
 func (lock *serialCatalogLock) release() { lock.mutex.Unlock() }
 
 func newCatalogTestAdapter(t *testing.T) (*BoundAdapter, *catalogRunner) {
+	return newCatalogTestAdapterMode(t, tracker.ConcurrencyEmbeddedSerialized)
+}
+
+func newCatalogTestAdapterMode(t *testing.T, mode tracker.ConcurrencyMode) (*BoundAdapter, *catalogRunner) {
 	t.Helper()
-	bound, inspection := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "catalog-db")
-	runner := &catalogRunner{workspace: inspection.workspace, databaseID: "catalog-db", issues: make(map[string]storedCatalogIssue)}
+	bound, inspection := testBoundAdapter(t, mode, "catalog-db")
+	runner := &catalogRunner{
+		workspace: inspection.workspace, databaseID: "catalog-db", issues: make(map[string]storedCatalogIssue), mode: mode,
+		serverID: "server-1", serverEndpoint: "127.0.0.1:3306",
+	}
 	bound.adapter = newAdapter(runner)
 	bound.locker = &serialCatalogLocker{}
 	return bound, runner
+}
+
+type mappingBarrierLocker struct {
+	guard      sync.Mutex
+	held       sync.Mutex
+	attempts   int
+	identities []string
+	ready      chan struct{}
+}
+
+func newMappingBarrierLocker() *mappingBarrierLocker {
+	return &mappingBarrierLocker{ready: make(chan struct{})}
+}
+
+func (locker *mappingBarrierLocker) acquire(_ context.Context, binding tracker.TrackerBinding) (acquiredWriterLock, error) {
+	locker.guard.Lock()
+	locker.attempts++
+	locker.identities = append(locker.identities, binding.WorkspaceIdentity)
+	if locker.attempts == 2 {
+		close(locker.ready)
+	}
+	ready := locker.ready
+	locker.guard.Unlock()
+	<-ready
+	locker.held.Lock()
+	return &serialCatalogLock{mutex: &locker.held}, nil
+}
+
+func (locker *mappingBarrierLocker) snapshot() (int, []string) {
+	locker.guard.Lock()
+	defer locker.guard.Unlock()
+	return locker.attempts, append([]string(nil), locker.identities...)
 }
 
 func catalogCriterion() []tracker.Criterion {
@@ -288,6 +332,168 @@ func TestCatalogDuplicateMappingIsAConflictWithoutSecondMutation(t *testing.T) {
 	if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
 		t.Fatalf("error=%v mutations=%d", err, runner.mutationCount())
 	}
+}
+
+func TestCatalogCreatePreservesCallerOwnedProviderMetadata(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	metadata, err := tracker.NewOpaqueMetadata([]byte(`{"human":{"nested":{"keep":true}},"provider_extension":[1,"two"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := createRequest(1)
+	request.ProviderMetadata = metadata
+	created, err := bound.CreateWork(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	stored := runner.issues[created.Record.ExternalRef.ExternalID]
+	runner.mu.Unlock()
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(stored.Metadata, &root); err != nil {
+		t.Fatal(err)
+	}
+	if string(root["human"]) != `{"nested":{"keep":true}}` || string(root["provider_extension"]) != `[1,"two"]` || len(root[metadataNamespace]) == 0 {
+		t.Fatalf("metadata=%s", stored.Metadata)
+	}
+	owned, err := tracker.NewOpaqueMetadata([]byte(`{"spec_kitty":{"stolen":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = createRequest(2)
+	request.ProviderMetadata = owned
+	before := runner.mutationCount()
+	if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorInvalidRequest) || runner.mutationCount() != before {
+		t.Fatalf("namespace theft error=%v mutations=%d", err, runner.mutationCount())
+	}
+}
+
+func TestCatalogReplayRefusesLiveProviderDrift(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		bound, runner := newCatalogTestAdapter(t)
+		request := createRequest(1)
+		created, err := bound.CreateWork(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner.mu.Lock()
+		issue := runner.issues[created.Record.ExternalRef.ExternalID]
+		issue.Title = "human drift"
+		runner.issues[issue.ID] = issue
+		runner.mu.Unlock()
+		before := runner.mutationCount()
+		if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
+			t.Fatalf("error=%v mutations=%d", err, runner.mutationCount())
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		bound, runner := newCatalogTestAdapter(t)
+		created, err := bound.CreateWork(context.Background(), createRequest(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := updateRequest(created.Record, "operation-update")
+		updated, err := bound.UpdateWork(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner.mu.Lock()
+		issue := runner.issues[updated.Record.ExternalRef.ExternalID]
+		issue.Acceptance = "human drift"
+		runner.issues[issue.ID] = issue
+		runner.mu.Unlock()
+		drifted, err := bound.ReadWork(context.Background(), updated.Record.ExternalRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.ExpectedObservation = drifted.Observation.Revision
+		before := runner.mutationCount()
+		if _, err := bound.UpdateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
+			t.Fatalf("error=%v mutations=%d", err, runner.mutationCount())
+		}
+	})
+}
+
+func TestCatalogUpdateCanClearDescriptionAndAcceptanceAtomically(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	created, err := bound.CreateWork(context.Background(), createRequest(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := updateRequest(created.Record, "operation-clear")
+	request.Title = created.Record.Title
+	request.Description = ""
+	request.DesignContext = ""
+	request.Criteria = nil
+	mutation, err := bound.UpdateWork(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutation.Record.Description != "" || mutation.Record.DesignContext != "" || len(mutation.Record.Criteria()) != 0 {
+		t.Fatalf("record=%#v criteria=%#v", mutation.Record, mutation.Record.Criteria())
+	}
+	runner.mu.Lock()
+	stored := runner.issues[created.Record.ExternalRef.ExternalID]
+	runner.mu.Unlock()
+	if stored.Description != "" || stored.Acceptance != "" {
+		t.Fatalf("provider retained cleared values: %#v", stored)
+	}
+	var updateArgv []string
+	for index, kind := range runner.snapshotCalls() {
+		if kind == CommandUpdate {
+			runner.mu.Lock()
+			updateArgv = append([]string(nil), runner.argvs[index]...)
+			runner.mu.Unlock()
+		}
+	}
+	if !containsAdjacent(updateArgv, "--description", "") || !containsAdjacent(updateArgv, "--acceptance", "") {
+		t.Fatalf("clear argv=%q", updateArgv)
+	}
+	document, err := decodeMetadata(stored.Metadata)
+	if err != nil || document.kitty.LastOperation != "operation-clear" || len(document.kitty.Criteria) != 0 {
+		t.Fatalf("metadata=%s document=%#v error=%v", stored.Metadata, document.kitty, err)
+	}
+}
+
+func TestCatalogServerModeSerializesOnlyIdenticalStableMapping(t *testing.T) {
+	bound, runner := newCatalogTestAdapterMode(t, tracker.ConcurrencyServerMultiwriter)
+	locker := newMappingBarrierLocker()
+	bound.locker = locker
+	request := createRequest(1)
+	start := make(chan struct{})
+	results := make(chan tracker.WorkMutation, 2)
+	errs := make(chan error, 2)
+	for index := 0; index < 2; index++ {
+		go func() {
+			<-start
+			mutation, err := bound.CreateWork(context.Background(), request)
+			results <- mutation
+			errs <- err
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	firstErr, secondErr := <-errs, <-errs
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("errors=%v/%v", firstErr, secondErr)
+	}
+	if first.Replayed == second.Replayed || runner.issueCount() != 1 || runner.mutationCount() != 1 {
+		t.Fatalf("first=%#v second=%#v issues=%d mutations=%d", first, second, runner.issueCount(), runner.mutationCount())
+	}
+	attempts, identities := locker.snapshot()
+	if attempts != 2 || len(identities) != 2 || identities[0] != identities[1] || identities[0] == bound.binding.WorkspaceIdentity {
+		t.Fatalf("mapping lock attempts=%d identities=%v base=%s", attempts, identities, bound.binding.WorkspaceIdentity)
+	}
+}
+
+func containsAdjacent(values []string, left, right string) bool {
+	for index := 0; index+1 < len(values); index++ {
+		if values[index] == left && values[index+1] == right {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCatalogAmbiguousCreateRecoveryAndAbsenceProof(t *testing.T) {
