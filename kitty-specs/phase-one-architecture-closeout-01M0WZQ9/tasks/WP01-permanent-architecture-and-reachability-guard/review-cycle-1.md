@@ -1,3 +1,13 @@
+---
+affected_files: []
+cycle_number: 1
+mission_slug: phase-one-architecture-closeout-01M0WZQ9
+reproduction_command:
+reviewed_at: '2026-08-25T18:43:17Z'
+reviewer_agent: user
+wp_id: WP01
+---
+
 # WP01 review feedback — cycle 1
 
 Verdict: changes requested.

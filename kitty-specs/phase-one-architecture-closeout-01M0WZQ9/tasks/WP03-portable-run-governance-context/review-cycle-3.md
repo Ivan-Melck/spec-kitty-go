@@ -1,3 +1,13 @@
+---
+affected_files: []
+cycle_number: 3
+mission_slug: phase-one-architecture-closeout-01M0WZQ9
+reproduction_command:
+reviewed_at: '2026-08-25T19:09:06Z'
+reviewer_agent: user
+wp_id: WP03
+---
+
 **Issue 1 — required exported accessors still have no production callers (anti-pattern: dead code)**
 
 Targeted non-test call-site searches find zero uses of `Entry.Kind`, `Entry.Ref`, `Entry.Revision`, `Entry.Commitment`, `Context.SchemaVersion`, `Context.CreatedAt`, and `Context.Entries` outside `internal/governancecontext/model.go`. These accessors are part of T012's required portable boundary, so do not remove the boundary merely to satisfy the check. Instead, make the production package consume its own public value surface where appropriate—for example, use entry accessors in aggregate framing and context accessors in JSON boundary construction—while preserving `Entries`' defensive copy. Re-run targeted `rg` call-site checks excluding tests and add/retain assertions that mutations of caller and returned slices cannot alter the validated context.
