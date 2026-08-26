@@ -148,21 +148,42 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 	return result
 }
 
-const realV122DependencyList = `[{"id":"bd-distinct-prerequisite","dependency_type":"blocks"}]`
+// The dependency-list and ready data payloads were captured without field
+// projection from the pinned v1.2.2 binary whose SHA-256 is
+// 0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6.
+const realV122DependencyList = `[{"id":"skt-mm3","title":"Pinned blocker capture","status":"open","priority":1,"issue_type":"task","owner":"review@example.invalid","created_at":"2026-08-26T16:37:11Z","created_by":"spec-kitty-review","updated_at":"2026-08-26T16:37:11Z","metadata":{"spec_kitty":{"work_id":"work-blocker","criteria":[],"project_id":"project-1","content_digest":"digest-blocker","design_context":"","last_operation":"operation-create-blocker","schema_version":1,"created_by_operation":"operation-create-blocker"}},"dependency_type":"blocks"}]`
 
 const realV122DependencyAddReceipt = `{"status":"added","issue_id":"bd-asymmetric-blocked","depends_on_id":"bd-distinct-prerequisite","type":"blocks"}`
 
 const realV122DependencyRemoveReceipt = `{"status":"removed","issue_id":"bd-asymmetric-blocked","depends_on_id":"bd-distinct-prerequisite"}`
 
-const realV122ReadyList = `[{"id":"bd-ready","title":"Ready work","description":"","acceptance_criteria":"","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-ready","created_by_operation":"operation-create-ready","last_operation":"operation-create-ready","criteria":[],"design_context":"","content_digest":"digest-ready"}},"updated_at":"2026-08-26T12:00:00Z","dependency_count":0,"dependent_count":0,"comment_count":0}]`
+const realV122ReadyList = `[{"id":"skt-mm3","title":"Pinned blocker capture","status":"open","priority":1,"issue_type":"task","owner":"review@example.invalid","created_at":"2026-08-26T16:37:11Z","created_by":"spec-kitty-review","updated_at":"2026-08-26T16:37:11Z","metadata":{"spec_kitty":{"work_id":"work-blocker","criteria":[],"project_id":"project-1","content_digest":"digest-blocker","design_context":"","last_operation":"operation-create-blocker","schema_version":1,"created_by_operation":"operation-create-blocker"}},"dependency_count":0,"dependent_count":1,"comment_count":0}]`
+
+func assertCapturedFields(t *testing.T, payload json.RawMessage, want ...string) {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(fields))
+	for field := range fields {
+		got = append(got, field)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("captured fields=%v want=%v", got, want)
+	}
+}
 
 func TestRealV122DependencyAndReadyPayloadShapes(t *testing.T) {
 	var dependencies []json.RawMessage
 	if err := json.Unmarshal([]byte(realV122DependencyList), &dependencies); err != nil || len(dependencies) != 1 {
 		t.Fatalf("dependency fixture records=%d error=%v", len(dependencies), err)
 	}
-	edge, err := decodeProviderDependency(dependencies[0], "bd-asymmetric-blocked")
-	if err != nil || edge.Blocked != "bd-asymmetric-blocked" || edge.Blocking != "bd-distinct-prerequisite" || edge.Kind != "blocks" {
+	assertCapturedFields(t, dependencies[0], "id", "title", "status", "priority", "issue_type", "owner", "created_at", "created_by", "updated_at", "metadata", "dependency_type")
+	edge, err := decodeProviderDependency(dependencies[0], "skt-68d")
+	if err != nil || edge.Blocked != "skt-68d" || edge.Blocking != "skt-mm3" || edge.Kind != "blocks" {
 		t.Fatalf("edge=%#v error=%v", edge, err)
 	}
 	for name, fixture := range map[string]struct {
@@ -199,8 +220,9 @@ func TestRealV122DependencyAndReadyPayloadShapes(t *testing.T) {
 	if err := json.Unmarshal([]byte(realV122ReadyList), &ready); err != nil || len(ready) != 1 {
 		t.Fatalf("ready fixture records=%d error=%v", len(ready), err)
 	}
+	assertCapturedFields(t, ready[0], "id", "title", "status", "priority", "issue_type", "owner", "created_at", "created_by", "updated_at", "metadata", "dependency_count", "dependent_count", "comment_count")
 	issue, err := decodeProviderIssue(ready[0])
-	if err != nil || issue.externalID != "bd-ready" || issue.document.kitty.WorkID != "work-ready" {
+	if err != nil || issue.externalID != "skt-mm3" || issue.document.kitty.WorkID != "work-blocker" {
 		t.Fatalf("ready issue=%#v error=%v", issue, err)
 	}
 
@@ -213,7 +235,7 @@ func TestRealV122DependencyAndReadyPayloadShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeProviderDependency(dependencySkewPayload, "bd-asymmetric-blocked"); err != nil {
+	if _, err := decodeProviderDependency(dependencySkewPayload, "skt-68d"); err != nil {
 		t.Fatalf("dependency optional-field skew rejected: %v", err)
 	}
 	var readySkew map[string]json.RawMessage
