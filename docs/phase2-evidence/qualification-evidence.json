@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "source_commit": "315660fcabc0a72c538934a326748a09600afb36",
+  "source_tree": "b5368db98c0a2270fc53bcb741635d182bb10e20",
+  "provider_version": "1.2.2",
+  "provider_digest_sha256": "0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6",
+  "protocol_schema": 1,
+  "storage_mode": "server_multiwriter",
+  "host": {
+    "goos": "linux",
+    "goarch": "amd64",
+    "runner": "local"
+  },
+  "started_at": "2026-08-26T18:12:16.289887399Z",
+  "finished_at": "2026-08-26T18:19:09.579949867Z",
+  "scenarios": {
+    "expected": 11,
+    "started": 11,
+    "terminal": 11,
+    "passed": 11,
+    "failed": 0
+  },
+  "latency": [
+    {
+      "operation": "preflight",
+      "samples": 100,
+      "p50_ms": 268.298,
+      "p95_ms": 340.6,
+      "max_ms": 453.317
+    },
+    {
+      "operation": "warm_single_item_read",
+      "samples": 200,
+      "p50_ms": 156.714,
+      "p95_ms": 173.087,
+      "max_ms": 192.659
+    }
+  ],
+  "contention": {
+    "mode": "server_multiwriter",
+    "processes": 8,
+    "attempted": 1000,
+    "terminal": 1000,
+    "passed": 1000,
+    "collisions": 0,
+    "duplicates": 0,
+    "duration_ms": 155711.409
+  },
+  "assignment_preservation": {
+    "attempted": 20,
+    "terminal": 20,
+    "preserved": 20,
+    "failed": 0,
+    "attribution_lost": 10,
+    "safe_compensation_unsupported": 10
+  },
+  "authority_audits": 23,
+  "authority_invariant_failures": 0,
+  "verdict": "pass"
+}
