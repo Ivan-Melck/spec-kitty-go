@@ -29,7 +29,7 @@ func (issue wp06Issue) wire() map[string]any {
 	return map[string]any{
 		"id": issue.ID, "title": issue.Title, "description": "description", "acceptance_criteria": "",
 		"metadata": json.RawMessage(issue.Metadata), "updated_at": issue.UpdatedAt,
-		"dependency_count": 0, "comment_count": len(issue.Comments), "future_optional": map[string]any{"ignored": true},
+		"dependency_count": 0, "comment_count": len(issue.Comments),
 	}
 }
 
@@ -49,6 +49,7 @@ type wp06Runner struct {
 	malformedKind             CommandKind
 	providerFailureKind       CommandKind
 	providerFailureCode       string
+	dependencySkewFields      bool
 }
 
 func (runner *wp06Runner) run(_ context.Context, request command) commandResult {
@@ -93,16 +94,18 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 		edges := make([]map[string]any, 0)
 		for _, edge := range runner.edges {
 			if edge.Blocked == blocked {
-				edges = append(edges, map[string]any{
-					"id": edge.Blocking, "dependency_type": edge.Kind,
-					"edge_id": edge.EdgeID, "future_optional": true,
-				})
+				record := map[string]any{"id": edge.Blocking, "dependency_type": edge.Kind}
+				if runner.dependencySkewFields {
+					record["edge_id"] = edge.EdgeID
+					record["future_optional"] = true
+				}
+				edges = append(edges, record)
 			}
 		}
 		data = edges
 	case CommandDependencyAdd:
 		runner.edges = append(runner.edges, observationDependency{Blocked: request.argv[2], Blocking: request.argv[3], Kind: "blocks", EdgeID: "edge-1"})
-		data = map[string]any{"depends_on_id": request.argv[3], "dependency_type": "blocks", "future_optional": true}
+		data = map[string]any{"status": "added", "issue_id": request.argv[2], "depends_on_id": request.argv[3], "type": "blocks"}
 		result.mutationOutcome = mutationApplied
 	case CommandDependencyRemove:
 		blocked, blocker := request.argv[2], request.argv[3]
@@ -113,13 +116,13 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 			}
 		}
 		runner.edges = kept
-		data = map[string]any{"depends_on_id": blocker, "dependency_type": "blocks", "future_optional": true}
+		data = map[string]any{"status": "removed", "issue_id": blocked, "depends_on_id": blocker}
 		result.mutationOutcome = mutationApplied
 	case CommandCommentList:
 		issue := runner.issues[request.argv[1]]
 		comments := make([]map[string]any, 0, len(issue.Comments))
 		for _, comment := range issue.Comments {
-			comments = append(comments, map[string]any{"id": comment.ID, "author": comment.Author, "text": comment.Body, "created_at": comment.CreatedAt, "unknown": 1})
+			comments = append(comments, map[string]any{"id": comment.ID, "author": comment.Author, "text": comment.Body, "created_at": comment.CreatedAt})
 		}
 		data = comments
 	case CommandCommentAppend:
@@ -145,11 +148,13 @@ func (runner *wp06Runner) run(_ context.Context, request command) commandResult 
 	return result
 }
 
-const realV122DependencyList = `[{"id":"bd-distinct-prerequisite","dependency_type":"blocks","title":"Blocker","status":"open","dependency_count":0,"future_optional":{"ignored":true}}]`
+const realV122DependencyList = `[{"id":"bd-distinct-prerequisite","dependency_type":"blocks"}]`
 
-const realV122DependencyReceipt = `{"depends_on_id":"bd-distinct-prerequisite","dependency_type":"blocks","future_optional":{"ignored":true}}`
+const realV122DependencyAddReceipt = `{"status":"added","issue_id":"bd-asymmetric-blocked","depends_on_id":"bd-distinct-prerequisite","type":"blocks"}`
 
-const realV122ReadyList = `[{"id":"bd-ready","title":"Ready work","description":"","acceptance_criteria":"","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-ready","created_by_operation":"operation-create-ready","last_operation":"operation-create-ready","criteria":[],"design_context":"","content_digest":"digest-ready"}},"updated_at":"2026-08-26T12:00:00Z","dependency_count":0,"dependent_count":0,"comment_count":0,"future_optional":{"ignored":true}}]`
+const realV122DependencyRemoveReceipt = `{"status":"removed","issue_id":"bd-asymmetric-blocked","depends_on_id":"bd-distinct-prerequisite"}`
+
+const realV122ReadyList = `[{"id":"bd-ready","title":"Ready work","description":"","acceptance_criteria":"","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-ready","created_by_operation":"operation-create-ready","last_operation":"operation-create-ready","criteria":[],"design_context":"","content_digest":"digest-ready"}},"updated_at":"2026-08-26T12:00:00Z","dependency_count":0,"dependent_count":0,"comment_count":0}]`
 
 func TestRealV122DependencyAndReadyPayloadShapes(t *testing.T) {
 	var dependencies []json.RawMessage
@@ -160,20 +165,28 @@ func TestRealV122DependencyAndReadyPayloadShapes(t *testing.T) {
 	if err != nil || edge.Blocked != "bd-asymmetric-blocked" || edge.Blocking != "bd-distinct-prerequisite" || edge.Kind != "blocks" {
 		t.Fatalf("edge=%#v error=%v", edge, err)
 	}
-	var receipt map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(realV122DependencyReceipt), &receipt); err != nil {
-		t.Fatal(err)
-	}
-	receiptBlocker, present, err := optionalString(receipt, "depends_on_id")
-	if err != nil || !present || receiptBlocker != "bd-distinct-prerequisite" {
-		t.Fatalf("receipt blocker=%q present=%t error=%v", receiptBlocker, present, err)
+	for name, fixture := range map[string]struct {
+		payload string
+		want    map[string]string
+	}{
+		"add":    {payload: realV122DependencyAddReceipt, want: map[string]string{"status": "added", "issue_id": "bd-asymmetric-blocked", "depends_on_id": "bd-distinct-prerequisite", "type": "blocks"}},
+		"remove": {payload: realV122DependencyRemoveReceipt, want: map[string]string{"status": "removed", "issue_id": "bd-asymmetric-blocked", "depends_on_id": "bd-distinct-prerequisite"}},
+	} {
+		t.Run(name+" receipt", func(t *testing.T) {
+			var receipt map[string]string
+			if err := json.Unmarshal([]byte(fixture.payload), &receipt); err != nil || !reflect.DeepEqual(receipt, fixture.want) {
+				t.Fatalf("receipt=%v error=%v", receipt, err)
+			}
+			if _, err := decodeProviderDependency([]byte(fixture.payload), "bd-asymmetric-blocked"); !tracker.IsKind(err, tracker.ErrorMalformedProtocol) {
+				t.Fatalf("mutation receipt became a dependency list record: %v", err)
+			}
+		})
 	}
 	for name, payload := range map[string]string{
-		"receipt cannot masquerade as list record": realV122DependencyReceipt,
-		"missing blocker":                          `{"dependency_type":"blocks"}`,
-		"non-string blocker":                       `{"id":7,"dependency_type":"blocks"}`,
-		"missing kind":                             `{"id":"bd-distinct-prerequisite"}`,
-		"non-object record":                        `[]`,
+		"missing blocker":    `{"dependency_type":"blocks"}`,
+		"non-string blocker": `{"id":7,"dependency_type":"blocks"}`,
+		"missing kind":       `{"id":"bd-distinct-prerequisite"}`,
+		"non-object record":  `[]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := decodeProviderDependency([]byte(payload), "bd-asymmetric-blocked"); !tracker.IsKind(err, tracker.ErrorMalformedProtocol) {
@@ -189,6 +202,31 @@ func TestRealV122DependencyAndReadyPayloadShapes(t *testing.T) {
 	issue, err := decodeProviderIssue(ready[0])
 	if err != nil || issue.externalID != "bd-ready" || issue.document.kitty.WorkID != "work-ready" {
 		t.Fatalf("ready issue=%#v error=%v", issue, err)
+	}
+
+	var dependencySkew map[string]json.RawMessage
+	if err := json.Unmarshal(dependencies[0], &dependencySkew); err != nil {
+		t.Fatal(err)
+	}
+	dependencySkew["future_optional"] = json.RawMessage(`{"ignored":true}`)
+	dependencySkewPayload, err := json.Marshal(dependencySkew)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeProviderDependency(dependencySkewPayload, "bd-asymmetric-blocked"); err != nil {
+		t.Fatalf("dependency optional-field skew rejected: %v", err)
+	}
+	var readySkew map[string]json.RawMessage
+	if err := json.Unmarshal(ready[0], &readySkew); err != nil {
+		t.Fatal(err)
+	}
+	readySkew["future_optional"] = json.RawMessage(`{"ignored":true}`)
+	readySkewPayload, err := json.Marshal(readySkew)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeProviderIssue(readySkewPayload); err != nil {
+		t.Fatalf("ready optional-field skew rejected: %v", err)
 	}
 }
 
@@ -359,6 +397,7 @@ func TestGraphUnknownRelationshipNeverBecomesBlocking(t *testing.T) {
 
 func TestGraphDuplicateBlockingFactsNormalizeDeterministically(t *testing.T) {
 	bound, runner := newWP06Adapter(t)
+	runner.dependencySkewFields = true
 	blocked := addWP06Issue(t, runner, "project-1", "work-a", "bd-a")
 	addWP06Issue(t, runner, "project-1", "work-b", "bd-b")
 	runner.edges = []observationDependency{

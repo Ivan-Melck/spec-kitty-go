@@ -560,8 +560,8 @@ dolt:status) printf '{"schema_version":1,"data":{"data_dir":"%s/embeddeddolt","d
 list:--json) printf '{"schema_version":1,"data":[%s,%s]}\n' "$issue_a" "$issue_b" ;;
 ready:--json) printf '{"schema_version":1,"data":[%s]}\n' "$issue_a" ;;
 show:bd-a) printf '{"schema_version":1,"data":[%s]}\n' "$issue_a" ;;
-dep:list) printf '%s\n' '{"schema_version":1,"data":[{"id":"bd-b","dependency_type":"blocks","edge_id":"edge-1","future_optional":true}]}' ;;
-comments:bd-a) printf '%s\n' '{"schema_version":1,"data":[{"id":"comment-human","author":"human","text":"human discussion","created_at":"2026-08-26T12:00:02Z","future_optional":true}]}' ;;
+dep:list) printf '%s\n' '{"schema_version":1,"data":[{"id":"bd-b","dependency_type":"blocks"}]}' ;;
+comments:bd-a) printf '%s\n' '{"schema_version":1,"data":[{"id":"comment-human","author":"human","text":"human discussion","created_at":"2026-08-26T12:00:02Z"}]}' ;;
 *) exit 64 ;;
 esac
 `
