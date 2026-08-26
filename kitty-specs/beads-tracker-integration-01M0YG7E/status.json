@@ -1,7 +1,7 @@
 {
-  "event_count": 177,
-  "last_event_id": "01M0ZMC07ESJ9W5VXH60NMFTEG",
-  "materialized_at": "2026-08-26T18:12:27.502520+00:00",
+  "event_count": 182,
+  "last_event_id": "01M0ZNC4P9ABADERQKRBT2N50A",
+  "materialized_at": "2026-08-26T18:30:00.641920+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
@@ -270,13 +270,13 @@
     },
     "WP08": {
       "actor": "codex",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 3,
-      "lane": "in_review",
-      "last_event_id": "01M0ZMC07ESJ9W5VXH60NMFTEG",
-      "last_transition_at": "2026-08-26T18:12:27.502520+00:00",
+      "force_count": 4,
+      "lane": "in_progress",
+      "last_event_id": "01M0ZNC4P9ABADERQKRBT2N50A",
+      "last_transition_at": "2026-08-26T18:30:00.641920+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass.",
@@ -286,34 +286,35 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP08-adversarial-portable-conformance/review-cycle-2.md",
-        "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP08-adversarial-portable-conformance/review-cycle-2.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP08-adversarial-portable-conformance/review-cycle-3.md",
+        "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP08-adversarial-portable-conformance/review-cycle-3.md",
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T038": "done",
-        "T039": "done",
-        "T040": "done",
-        "T041": "done",
-        "T042": "done"
+        "T038": "planned",
+        "T039": "planned",
+        "T040": "planned",
+        "T041": "planned",
+        "T042": "planned"
       }
     },
     "WP09": {
       "actor": "codex",
-      "agent": null,
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 2,
-      "lane": "in_progress",
-      "last_event_id": "01M0ZK53XBTYJSWJDKKW0VH0EQ",
-      "last_transition_at": "2026-08-26T17:51:13.315885+00:00",
+      "force_count": 3,
+      "lane": "in_review",
+      "last_event_id": "01M0ZN5CMD1DG9V0CRPJJ4S31K",
+      "last_transition_at": "2026-08-26T18:26:19.405537+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: pinned Beads v1.2.2 rebuilt at reviewed digest; 11/11 commit-bound real-provider scenarios pass across embedded and pinned shared-server modes, including native backup/restore and 1,000-create contention with zero collisions or duplicate mappings. Cross-WP corrections are explicitly evidence-driven: v1.2.2 comment --author propagation and external server identity without a fabricated local data_dir."
+        "Ready for review: pinned Beads v1.2.2 rebuilt at reviewed digest; 11/11 commit-bound real-provider scenarios pass across embedded and pinned shared-server modes, including native backup/restore and 1,000-create contention with zero collisions or duplicate mappings. Cross-WP corrections are explicitly evidence-driven: v1.2.2 comment --author propagation and external server identity without a fabricated local data_dir.",
+        "Correction cycle 2 commit 315660fcabc0a72c538934a326748a09600afb36; tree b5368db98c0a2270fc53bcb741635d182bb10e20. Fresh schema-valid real evidence /tmp/go-kitty3-wp09-cycle2-evidence.JAfdeq/qualification.json SHA256 7a7cf13a03885ef8a1f2099f4f704e2334305983a918dbf19151542918921103: 11/11; assignment 20/20 preserved (10 attribution_lost, 10 safe_compensation_unsupported); authority 23 audits/0 failures; contention 1000/1000, 0 collisions/duplicates; p95 340.600ms preflight and 173.087ms read. Embedded, external server, complete JSONL graph and fresh-adapter native restore passed. Full race, repeat, vet, staticcheck, dependency/vulnerability, preflight, architecture/scope passed. Honest limitation note: an export-shape probe was launched from the lane checkout, init aborted, then exactly two synthetic tracker records r6-9kj/r6-9ml were inadvertently created; exact dry-run and exact two-ID deletion removed 2 records, 1 dependency, and 2 events, and both IDs were verified not_found before work continued. Disposable server removed; lane clean. Force override is limited to the intentionally coordinated evidence-schema and WP09 reviewer-profile planning artifacts."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -323,16 +324,16 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
       "subtasks": {
-        "T043": "planned",
-        "T044": "planned",
-        "T045": "planned",
-        "T046": "planned",
-        "T047": "planned",
-        "T048": "planned"
+        "T043": "done",
+        "T044": "done",
+        "T045": "done",
+        "T046": "done",
+        "T047": "done",
+        "T048": "done"
       }
     },
     "WP10": {
