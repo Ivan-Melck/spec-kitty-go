@@ -72,7 +72,7 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 		data = map[string]any{"path": runner.workspace, "prefix": runner.databaseID, "database_path": filepath.Join(runner.workspace, "embeddeddolt")}
 	case CommandDoltShow:
 		if runner.mode == tracker.ConcurrencyServerMultiwriter {
-			data = map[string]any{"backend": "dolt", "data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "database": runner.databaseID, "embedded": false, "host": "127.0.0.1", "port": 3306, "user": "dolt", "shared_server": true, "connection_ok": true}
+			data = map[string]any{"backend": "dolt", "database": runner.databaseID, "embedded": false, "host": "127.0.0.1", "port": 3306, "user": "dolt", "shared_server": true, "connection_ok": true}
 		} else {
 			data = map[string]any{"backend": "dolt", "data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "database": runner.databaseID, "embedded": true}
 		}
@@ -82,6 +82,8 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 		} else {
 			data = map[string]any{"data_dir": filepath.Join(runner.workspace, "embeddeddolt"), "data_dir_exists": true, "mode": "embedded", "server_running": false}
 		}
+	case CommandDoltAutoStart:
+		data = map[string]any{"key": "dolt.auto-start", "value": "false", "location": "config.yaml"}
 	case CommandList:
 		ids := make([]string, 0, len(runner.issues))
 		for id := range runner.issues {

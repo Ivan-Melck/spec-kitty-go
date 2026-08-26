@@ -248,7 +248,7 @@ func implementedCapabilities(mode tracker.ConcurrencyMode) tracker.ProviderCapab
 	}
 	return tracker.ProviderCapabilities{
 		CatalogRead: tracker.SupportSupported, CatalogCreate: tracker.SupportSupported, CatalogUpdate: tracker.UpdateUnguarded,
-		BlockingGraph: tracker.SupportSupported, Discussion: tracker.DiscussionAppendOnly, Assignment: tracker.AssignmentUnsupported,
+		BlockingGraph: tracker.SupportSupported, Discussion: tracker.DiscussionAppendOnly, Assignment: tracker.AssignmentUnguarded,
 		ObservationRevision: tracker.ObservationRevisionContentDerived, SafeCompensation: tracker.CompensationUnsupported,
 		ConcurrentWriters: writers, PortableExport: tracker.SupportUnsupported, RestorableBackup: tracker.SupportUnsupported,
 	}

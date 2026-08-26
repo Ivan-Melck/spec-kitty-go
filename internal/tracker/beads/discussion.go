@@ -103,7 +103,7 @@ func (bound *BoundAdapter) AppendDiscussion(ctx context.Context, request tracker
 	if before.Revision != request.ExpectedObservation {
 		return tracker.DiscussionMutation{}, &tracker.Error{Kind: tracker.ErrorRevisionConflict, RecoveryCode: "reobserve_discussion", Message: "discussion observation changed before append"}
 	}
-	command, err := newCommentAppendCommand(bound.commandBinding(), request.ExternalRef.ExternalID, renderDiscussionBody(request.OperationID, request.Body))
+	command, err := newCommentAppendCommand(bound.commandBinding(), request.ExternalRef.ExternalID, request.Author, renderDiscussionBody(request.OperationID, request.Body))
 	if err != nil {
 		return tracker.DiscussionMutation{}, err
 	}

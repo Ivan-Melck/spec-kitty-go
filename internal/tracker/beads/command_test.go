@@ -120,6 +120,7 @@ func TestCommandArgvVocabulary(t *testing.T) {
 		{"where", func() (command, error) { return newWhereCommand(binding) }, []string{"where", "--json"}, expectedObject, false},
 		{"dolt-show", func() (command, error) { return newDoltShowCommand(binding) }, []string{"dolt", "show", "--json"}, expectedObject, false},
 		{"dolt-status", func() (command, error) { return newDoltStatusCommand(binding) }, []string{"dolt", "status", "--json"}, expectedObject, false},
+		{"dolt-auto-start", func() (command, error) { return newDoltAutoStartCommand(binding) }, []string{"config", "get", "dolt.auto-start", "--json"}, expectedObject, false},
 		{"show", func() (command, error) { return newShowCommand(binding, "x") }, []string{"show", "x", "--json"}, expectedArray, false},
 		{"list", func() (command, error) { return newListCommand(binding) }, []string{"list", "--json"}, expectedArray, false},
 		{"ready", func() (command, error) { return newReadyCommand(binding) }, []string{"ready", "--json"}, expectedArray, false},
@@ -129,11 +130,11 @@ func TestCommandArgvVocabulary(t *testing.T) {
 		{"update", func() (command, error) {
 			return newUpdateCommand(binding, updateValues{id: "x", title: presentUpdateValue("t"), description: presentUpdateValue("d"), acceptance: presentUpdateValue("a"), metadata: presentUpdateValue("{}"), assignee: presentUpdateValue("ivan")})
 		}, []string{"update", "x", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--assignee", "ivan", "--json"}, expectedArray, true},
-		{"claim", func() (command, error) { return newAtomicClaimCommand(binding, "x") }, []string{"update", "x", "--claim", "--json"}, expectedObject, true},
+		{"claim", func() (command, error) { return newAtomicClaimCommand(binding, "x") }, []string{"update", "x", "--claim", "--json"}, expectedArray, true},
 		{"dep-add", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, []string{"dep", "add", "blocked", "blocker", "--type", "blocks", "--json"}, expectedObject, true},
 		{"dep-remove", func() (command, error) { return newDependencyRemoveCommand(binding, "blocked", "blocker") }, []string{"dep", "remove", "blocked", "blocker", "--json"}, expectedObject, true},
 		{"dep-list", func() (command, error) { return newDependencyListCommand(binding, "x") }, []string{"dep", "list", "x", "--json"}, expectedArray, false},
-		{"comment-add", func() (command, error) { return newCommentAppendCommand(binding, "x", "body") }, []string{"comments", "add", "x", "body", "--json"}, expectedObject, true},
+		{"comment-add", func() (command, error) { return newCommentAppendCommand(binding, "x", "agent-a", "body") }, []string{"comments", "add", "x", "body", "--author", "agent-a", "--json"}, expectedObject, true},
 		{"comment-list", func() (command, error) { return newCommentListCommand(binding, "x") }, []string{"comments", "x", "--json"}, expectedArray, false},
 		{"export", func() (command, error) { return newExportCommand(binding) }, []string{"export", "--json"}, expectedJSONL, false},
 		{"backup-init", func() (command, error) { return newBackupInitCommand(binding, "/backup") }, []string{"backup", "init", "/backup"}, expectedEmpty, true},
@@ -242,8 +243,9 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 		{"removed blocked id", func() error { _, err := newDependencyRemoveCommand(binding, "--help", "blocker-1"); return err }},
 		{"removed blocker id", func() error { _, err := newDependencyRemoveCommand(binding, "blocked-1", "--help"); return err }},
 		{"dependency id", func() error { _, err := newDependencyListCommand(binding, "--help"); return err }},
-		{"comment id", func() error { _, err := newCommentAppendCommand(binding, "--help", "body"); return err }},
-		{"comment body", func() error { _, err := newCommentAppendCommand(binding, "work-1", "--help"); return err }},
+		{"comment id", func() error { _, err := newCommentAppendCommand(binding, "--help", "agent-a", "body"); return err }},
+		{"comment author", func() error { _, err := newCommentAppendCommand(binding, "work-1", "--help", "body"); return err }},
+		{"comment body", func() error { _, err := newCommentAppendCommand(binding, "work-1", "agent-a", "--help"); return err }},
 		{"comment list id", func() error { _, err := newCommentListCommand(binding, "--help"); return err }},
 		{"create title", func() error { _, err := newCreateCommand(binding, createValues{title: "--help"}); return err }},
 		{"update title", func() error {
@@ -382,7 +384,7 @@ func TestUncodedDataErrorEnvelopeIsConclusiveOnlyForShow(t *testing.T) {
 			return newUpdateCommand(binding, updateValues{id: "work", title: presentUpdateValue("changed")})
 		}, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
 		{"dependency", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
-		{"comment", func() (command, error) { return newCommentAppendCommand(binding, "work", "body") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"comment", func() (command, error) { return newCommentAppendCommand(binding, "work", "agent-a", "body") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
 		{"assignment", func() (command, error) { return newAtomicClaimCommand(binding, "work") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
 	}
 	for _, test := range tests {

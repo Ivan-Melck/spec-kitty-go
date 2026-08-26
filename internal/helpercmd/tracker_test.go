@@ -70,10 +70,12 @@ func TestTrackerInspectBeadsServerCredentialsAreNeverSerialized(t *testing.T) {
 	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
-	databasePath := helperDatabasePath(t, workspace)
+	// A server binding uses the provider's logical database name. The local
+	// path reported by `bd where` is observation evidence, not server identity.
+	helperDatabasePath(t, workspace)
 	executable := helperBeadsExecutable(t, root, tracker.ConcurrencyServerMultiwriter)
 	secret := "super-secret-password"
-	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", databasePath, "--protocol-schema", "1", "--mode", "server_multiwriter", "--read-only=false", "--server-identity", "server-1", "--server-endpoint", "127.0.0.1:3306", "--dolt-server-host", "127.0.0.1", "--dolt-server-port", "3306", "--dolt-remote-user", "operator", "--dolt-remote-password", secret}
+	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", "db-1", "--protocol-schema", "1", "--mode", "server_multiwriter", "--read-only=false", "--server-identity", "server-1", "--server-endpoint", "127.0.0.1:3306", "--dolt-server-host", "127.0.0.1", "--dolt-server-port", "3306", "--dolt-remote-user", "operator", "--dolt-remote-password", secret}
 	var stdout, stderr bytes.Buffer
 	if code := Run(context.Background(), args, &stdout, &stderr); code != 0 {
 		t.Fatalf("code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
@@ -87,6 +89,80 @@ func TestTrackerInspectBeadsServerCredentialsAreNeverSerialized(t *testing.T) {
 	}
 	if !response.OK || response.Inspection == nil || response.Inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersProviderNative {
 		t.Fatalf("response=%+v", response)
+	}
+}
+
+func TestTrackerInspectBeadsServerRejectsStaleLocalPathIdentity(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	staleLocalIdentity := helperDatabasePath(t, workspace)
+	executable := helperBeadsExecutable(t, root, tracker.ConcurrencyServerMultiwriter)
+	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", staleLocalIdentity, "--protocol-schema", "1", "--mode", "server_multiwriter", "--read-only=false", "--server-identity", "server-1", "--server-endpoint", "127.0.0.1:3306", "--dolt-server-host", "127.0.0.1", "--dolt-server-port", "3306"}
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), args, &stdout, &stderr); code != 1 {
+		t.Fatalf("code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var response BeadsInspectionResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.OK || response.Error == nil || response.Error.Kind != tracker.ErrorInvalidRequest || response.Error.RecoveryCode != "repair_provider_binding" {
+		t.Fatalf("stale local-path server identity was accepted: %+v", response)
+	}
+}
+
+func TestTrackerInspectBeadsCanonicalizesDatabaseAliasAndRefusesDivergence(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	databasePath := helperDatabasePath(t, workspace)
+	databaseAlias := filepath.Join(root, "database-alias")
+	if err := os.Symlink(databasePath, databaseAlias); err != nil {
+		t.Fatal(err)
+	}
+	executable := helperBeadsExecutable(t, root, tracker.ConcurrencyEmbeddedSerialized)
+	run := func(database string) BeadsInspectionResponse {
+		t.Helper()
+		args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", database, "--protocol-schema", "1", "--mode", "embedded_serialized", "--read-only=false"}
+		var stdout, stderr bytes.Buffer
+		if code := Run(context.Background(), args, &stdout, &stderr); code != 0 {
+			t.Fatalf("database=%q code=%d stderr=%q stdout=%q", database, code, stderr.String(), stdout.String())
+		}
+		var response BeadsInspectionResponse
+		if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	canonical := run(databasePath)
+	aliased := run(databaseAlias)
+	if canonical.Inspection == nil || aliased.Inspection == nil ||
+		canonical.Inspection.Binding.WorkspaceIdentity != aliased.Inspection.Binding.WorkspaceIdentity ||
+		canonical.Inspection.Health != tracker.HealthHealthy || aliased.Inspection.Health != tracker.HealthHealthy {
+		t.Fatalf("canonical=%+v aliased=%+v", canonical, aliased)
+	}
+	otherDatabase := filepath.Join(workspace, "other-database")
+	if err := os.Mkdir(otherDatabase, 0700); err != nil {
+		t.Fatal(err)
+	}
+	divergent := run(otherDatabase)
+	if divergent.Inspection == nil || divergent.Inspection.Health == tracker.HealthHealthy || len(divergent.Inspection.Diagnostics) != 1 || divergent.Inspection.Diagnostics[0].Kind != tracker.ErrorWorkspaceMismatch {
+		t.Fatalf("divergent=%+v", divergent)
+	}
+}
+
+func TestTrackerInspectBeadsHelpNamesDatabaseDirectoryContract(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := RunTracker(context.Background(), []string{"inspect-beads", "--help"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "absolute existing Beads database directory from where --json") {
+		t.Fatalf("help omitted database-directory contract: %q", stderr.String())
 	}
 }
 
@@ -486,6 +562,73 @@ func TestTrackerCatalogBeadsRejectsUnboundedOrUnknownRequestBeforeAdapter(t *tes
 	}
 }
 
+func TestTrackerAssignmentBeadsReachesLiveAdapterSaga(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	databasePath := helperDatabasePath(t, workspace)
+	executable := helperAssignmentBeadsExecutable(t, root)
+	readPath := filepath.Join(root, "read-request.json")
+	if err := os.WriteFile(readPath, []byte(`{"work_id":"work-1","external_id":"bd-live-1","metadata_schema":1,"created_by_operation":"operation-create"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bindingArgs := []string{"--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", databasePath, "--protocol-schema", "1", "--read-only=false"}
+	var stdout, stderr bytes.Buffer
+	readArgs := append([]string{"tracker", "catalog-beads", "read"}, bindingArgs...)
+	readArgs = append(readArgs, "--mode", "embedded_serialized", "--request-file", readPath)
+	if code := Run(context.Background(), readArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("catalog read code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var catalog BeadsCatalogResponse
+	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil || catalog.Record == nil || catalog.Record.Observation.Revision == 0 {
+		t.Fatalf("catalog observation=%+v err=%v", catalog, err)
+	}
+	requestPath := filepath.Join(root, "assignment-request.json")
+	request := fmt.Sprintf(`{"correlation_id":"correlation-live-assignment","operation_id":"operation-live-assignment","actor_id":"actor-live-assignment","process_id":"process-live-assignment","work_id":"work-1","external_id":"bd-live-1","metadata_schema":1,"created_by_operation":"operation-create","mapping_observation":%d,"expected_observation":%d,"assignee":"actor-live-assignment","required_guarantee":"unguarded"}`,
+		catalog.Record.Observation.Revision, catalog.Record.Observation.Revision)
+	if err := os.WriteFile(requestPath, []byte(request), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	assignArgs := append([]string{"tracker", "assignment-beads", "assign"}, bindingArgs...)
+	assignArgs = append(assignArgs, "--db", filepath.Join(root, "control.db"), "--request-file", requestPath)
+	if code := Run(context.Background(), assignArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("assignment code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var response TrackerResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil || !response.OK || response.Result == nil || response.Result.Kind != "tracker_effect_confirmed" || response.Result.Assignee != "actor-live-assignment" || response.Result.Revision == 0 {
+		t.Fatalf("live assignment response=%+v err=%v stdout=%s", response, err, stdout.String())
+	}
+	compensateRequest := fmt.Sprintf(`{"correlation_id":"correlation-live-assignment","operation_id":"operation-live-assignment","actor_id":"actor-live-assignment","process_id":"process-live-assignment","work_id":"work-1","external_id":"bd-live-1","metadata_schema":1,"created_by_operation":"operation-create","mapping_observation":%d,"expected_observation":%d,"required_guarantee":"unguarded"}`,
+		catalog.Record.Observation.Revision, response.Result.Revision)
+	if err := os.WriteFile(requestPath, []byte(compensateRequest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	compensateArgs := append([]string{"tracker", "assignment-beads", "compensate"}, bindingArgs...)
+	compensateArgs = append(compensateArgs, "--db", filepath.Join(root, "control.db"), "--request-file", requestPath)
+	if code := Run(context.Background(), compensateArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("compensation code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var refused TrackerResponse
+	if err := json.Unmarshal(stdout.Bytes(), &refused); err != nil || refused.OK || refused.Error == nil || refused.Error.Kind != execution.KindSafeCompensationUnsupported || refused.Error.RetrySafety != execution.RetryNever {
+		t.Fatalf("live compensation refusal=%+v err=%v stdout=%s", refused, err, stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), readArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("post-refusal read code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var preserved BeadsCatalogResponse
+	if err := json.Unmarshal(stdout.Bytes(), &preserved); err != nil || preserved.Record == nil || preserved.Record.VisibleAssignee != "actor-live-assignment" || preserved.Record.AssignmentMarker != "operation-live-assignment" || preserved.Record.Observation.Revision != response.Result.Revision {
+		t.Fatalf("unsafe Beads compensation mutated state=%+v err=%v", preserved, err)
+	}
+}
+
 func helperBeadsExecutable(t *testing.T, root string, mode tracker.ConcurrencyMode) string {
 	t.Helper()
 	path := filepath.Join(root, "bd-helper")
@@ -498,7 +641,7 @@ dolt)
   case "$2" in
   show)
     if [ "%s" = "server_multiwriter" ]; then
-      printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":false,"host":"127.0.0.1","port":3306,"user":"operator","shared_server":true,"connection_ok":true}}\n' "$BEADS_DIR"
+      printf '%%s\n' '{"schema_version":1,"data":{"backend":"dolt","database":"db-1","embedded":false,"host":"127.0.0.1","port":3306,"user":"operator","shared_server":true,"connection_ok":true}}'
     else
       printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":true}}\n' "$BEADS_DIR"
     fi ;;
@@ -510,6 +653,9 @@ dolt)
     fi ;;
   *) exit 64 ;;
   esac ;;
+config)
+  [ "$2" = "get" ] && [ "$3" = "dolt.auto-start" ] && [ "$4" = "--json" ] || exit 64
+  printf '%%s\n' '{"schema_version":1,"data":{"key":"dolt.auto-start","value":"false","location":"config.yaml"}}' ;;
 *) exit 64 ;;
 esac
 `, mode, mode)
@@ -562,6 +708,33 @@ ready:--json) printf '{"schema_version":1,"data":[%s]}\n' "$issue_a" ;;
 show:bd-a) printf '{"schema_version":1,"data":[%s]}\n' "$issue_a" ;;
 dep:list) printf '%s\n' '{"schema_version":1,"data":[{"id":"bd-b","dependency_type":"blocks"}]}' ;;
 comments:bd-a) printf '%s\n' '{"schema_version":1,"data":[{"id":"comment-human","author":"human","text":"human discussion","created_at":"2026-08-26T12:00:02Z"}]}' ;;
+*) exit 64 ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func helperAssignmentBeadsExecutable(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "bd-assignment-helper")
+	script := `#!/bin/sh
+set -eu
+original='{"schema_version":1,"data":[{"id":"bd-live-1","status":"in_progress","title":"Live work","description":"Production caller","acceptance_criteria":"criterion-1 — required — test — verified","metadata":{"foreign":{"number":9007199254740993,"preserved":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"assignee":"original","updated_at":"2026-08-26T12:00:00Z"}]}'
+assigned='{"schema_version":1,"data":[{"id":"bd-live-1","status":"in_progress","title":"Live work","description":"Production caller","acceptance_criteria":"criterion-1 — required — test — verified","metadata":{"foreign":{"number":9007199254740993,"preserved":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-live-assignment","assignment_marker":"operation-live-assignment","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"assignee":"actor-live-assignment","updated_at":"2026-08-26T12:01:00Z"}]}'
+case "$1" in
+version) printf '%s\n' '{"schema_version":1,"data":{"version":"1.2.2","build":"helper-assignment"}}' ;;
+where) printf '{"schema_version":1,"data":{"path":"%s","prefix":"db-1","database_path":"%s/embeddeddolt"}}\n' "$BEADS_DIR" "$BEADS_DIR" ;;
+dolt)
+  case "$2" in
+  show) printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%s/embeddeddolt","database":"db-1","embedded":true}}\n' "$BEADS_DIR" ;;
+  status) printf '{"schema_version":1,"data":{"data_dir":"%s/embeddeddolt","data_dir_exists":true,"mode":"embedded","server_running":false}}\n' "$BEADS_DIR" ;;
+  *) exit 64 ;;
+  esac ;;
+show) if [ -f "$BEADS_DIR/assigned" ]; then printf '%s\n' "$assigned"; else printf '%s\n' "$original"; fi ;;
+update) : > "$BEADS_DIR/assigned"; printf '%s\n' "$assigned" ;;
 *) exit 64 ;;
 esac
 `
