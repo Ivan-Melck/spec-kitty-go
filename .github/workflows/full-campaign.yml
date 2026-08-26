@@ -18,11 +18,6 @@ jobs:
     timeout-minutes: 90
     env:
       GOTOOLCHAIN: local
-      ARTIFACT_DIR: ${{ runner.temp }}/go-kitty3-full-${{ github.run_id }}-${{ github.run_attempt }}
-      BUILD_DIR: ${{ runner.temp }}/go-kitty3-build-${{ github.run_id }}-${{ github.run_attempt }}
-      GOCACHE: ${{ runner.temp }}/go-build-cache-${{ github.run_id }}-${{ github.run_attempt }}
-      GOTMPDIR: ${{ runner.temp }}/go-tmp-${{ github.run_id }}-${{ github.run_attempt }}
-      TMPDIR: ${{ runner.temp }}/process-tmp-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out committed source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -35,6 +30,14 @@ jobs:
         with:
           go-version: 1.26.4
           cache: true
+
+      - name: Configure isolated mutable paths
+        run: |
+          echo "ARTIFACT_DIR=$RUNNER_TEMP/go-kitty3-full-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "BUILD_DIR=$RUNNER_TEMP/go-kitty3-build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-build-cache-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$RUNNER_TEMP/go-tmp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "TMPDIR=$RUNNER_TEMP/process-tmp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
 
       - name: Prepare isolated mutable paths
         run: mkdir -p "$ARTIFACT_DIR" "$BUILD_DIR" "$GOCACHE" "$GOTMPDIR" "$TMPDIR"
