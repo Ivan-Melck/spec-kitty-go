@@ -1,0 +1,9 @@
+**Issue 1 — required exported accessors still have no production callers (anti-pattern: dead code)**
+
+Targeted non-test call-site searches find zero uses of `Entry.Kind`, `Entry.Ref`, `Entry.Revision`, `Entry.Commitment`, `Context.SchemaVersion`, `Context.CreatedAt`, and `Context.Entries` outside `internal/governancecontext/model.go`. These accessors are part of T012's required portable boundary, so do not remove the boundary merely to satisfy the check. Instead, make the production package consume its own public value surface where appropriate—for example, use entry accessors in aggregate framing and context accessors in JSON boundary construction—while preserving `Entries`' defensive copy. Re-run targeted `rg` call-site checks excluding tests and add/retain assertions that mutations of caller and returned slices cannot alter the validated context.
+
+**Issue 2 — the declared same-ID/different-content conflict lacks a production-path regression (T015 / FR-010 coverage)**
+
+`TestStartReplayAndReplacementKeepTheOriginallyBoundGovernanceContext` changes the context ID from `context-test` to `context-other` while retaining the same entries and aggregate. It therefore does not cover the locked contract that an existing context ID presented with different content is a conflict, never an update. Extend the stateful repository test with a second valid context that reuses `context-test` but changes an entry revision or commitment, then prove both same-operation replay and replacement admission return the typed idempotency/conflict diagnostic without rebinding the run.
+
+The prior live-helper and caller-supplied-digest defects are closed, and all WP-prescribed unit/race gates pass. `go test ./...` still fails only in WP04-owned SQLite recovery/workgraph fixtures that omit the newly required context; WP04 must update those after rebasing. Because WP01 and WP04 depend on WP03, both downstream lanes must rebase after this correction lands.

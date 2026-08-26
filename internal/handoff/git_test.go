@@ -3,6 +3,7 @@ package handoff
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +30,7 @@ func TestGitVerifierPinsCommitAncestryAndOwnedBranchHead(t *testing.T) {
 	git(t, repository, "commit", "-am", "candidate")
 	candidate := git(t, repository, "rev-parse", "HEAD")
 
-	evidence, err := (GitVerifier{}).Verify(context.Background(), AuthorityScope{RepositoryPath: repository, OwnedBranch: "runs/work-1", PinnedBase: base}, candidate)
+	evidence, err := testGitVerifier().Verify(context.Background(), AuthorityScope{RepositoryPath: repository, OwnedBranch: "runs/work-1", PinnedBase: base}, candidate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestGitVerifierPinsCommitAncestryAndOwnedBranchHead(t *testing.T) {
 	}
 
 	git(t, repository, "switch", "main")
-	if _, err := (GitVerifier{}).Verify(context.Background(), AuthorityScope{RepositoryPath: repository, OwnedBranch: "main", PinnedBase: base}, candidate); !IsKind(err, KindCandidateMismatch) {
+	if _, err := testGitVerifier().Verify(context.Background(), AuthorityScope{RepositoryPath: repository, OwnedBranch: "main", PinnedBase: base}, candidate); !IsKind(err, KindCandidateMismatch) {
 		t.Fatalf("candidate not at owned branch head error=%v", err)
 	}
 }
@@ -78,7 +79,7 @@ func TestGitVerifierPreservesMovedBranchFactsAcrossGCAndReplay(t *testing.T) {
 		PinnedBase: base, LaneID: "lane-1", OperationID: "operation-handoff-moved",
 		HandoffID: "handoff-moved", WorkRevisionID: "revision-1", WorkID: "work-1",
 	}
-	verifier := GitVerifier{}
+	verifier := testGitVerifier()
 	_, firstErr := verifier.Verify(context.Background(), scope, candidate)
 	var first *Error
 	if !errors.As(firstErr, &first) || first.Kind != KindCandidateMismatch {
@@ -128,7 +129,7 @@ func TestGitVerifierPreservesMovedBranchFactsAcrossGCAndReplay(t *testing.T) {
 
 func TestGitVerifierRevalidatesAndAtomicallyRepairsDeletedEvidenceRefs(t *testing.T) {
 	fixture := newBranchMovementGitFixture(t)
-	verifier := GitVerifier{}
+	verifier := testGitVerifier()
 	refusal := fixture.preserve(t, verifier)
 	root := refusal.Observed["evidence_ref_root"]
 
@@ -164,7 +165,7 @@ func TestGitVerifierRevalidatesAndAtomicallyRepairsDeletedEvidenceRefs(t *testin
 
 func TestGitVerifierNeverOverwritesMutatedEvidenceRef(t *testing.T) {
 	fixture := newBranchMovementGitFixture(t)
-	verifier := GitVerifier{}
+	verifier := testGitVerifier()
 	refusal := fixture.preserve(t, verifier)
 	ref := refusal.Observed["evidence_candidate_ref"]
 	git(t, fixture.repository, "update-ref", ref, fixture.base)
@@ -182,7 +183,7 @@ func TestGitVerifierNeverOverwritesMutatedEvidenceRef(t *testing.T) {
 func TestGitVerifierReplaySurvivesGCButMissingPrunedObjectRequiresDecision(t *testing.T) {
 	t.Run("intact refs", func(t *testing.T) {
 		fixture := newBranchMovementGitFixture(t)
-		verifier := GitVerifier{}
+		verifier := testGitVerifier()
 		refusal := fixture.preserve(t, verifier)
 		git(t, fixture.repository, "reflog", "expire", "--expire=now", "--all")
 		git(t, fixture.repository, "gc", "--prune=now")
@@ -193,7 +194,7 @@ func TestGitVerifierReplaySurvivesGCButMissingPrunedObjectRequiresDecision(t *te
 
 	t.Run("deleted ref and pruned object", func(t *testing.T) {
 		fixture := newBranchMovementGitFixture(t)
-		verifier := GitVerifier{}
+		verifier := testGitVerifier()
 		refusal := fixture.preserve(t, verifier)
 		git(t, fixture.repository, "update-ref", "-d", refusal.Observed["evidence_candidate_ref"])
 		git(t, fixture.repository, "reflog", "expire", "--expire=now", "--all")
@@ -285,4 +286,72 @@ func bytesTrimSpace(value []byte) []byte {
 		end--
 	}
 	return value[start:end]
+}
+
+func testGitVerifier() GitVerifier {
+	return GitVerifier{Repository: testCandidateRepository{runner: testGitRunner{}}}
+}
+
+type testCandidateRepository struct{ runner testGitRunner }
+
+func (r testCandidateRepository) ResolveCommit(ctx context.Context, repository, revision string) (string, error) {
+	return r.runner.Run(ctx, repository, "rev-parse", "--verify", revision+"^{commit}")
+}
+
+func (r testCandidateRepository) IsAncestor(ctx context.Context, repository, ancestor, descendant string) error {
+	_, err := r.runner.Run(ctx, repository, "merge-base", "--is-ancestor", ancestor, descendant)
+	return err
+}
+
+func (r testCandidateRepository) CreateEvidenceRefs(ctx context.Context, repository string, candidate, observed EvidenceRef) error {
+	input := fmt.Sprintf("start\ncreate %s %s\ncreate %s %s\nprepare\ncommit\n", candidate.Name, candidate.Expected, observed.Name, observed.Expected)
+	_, err := r.runner.RunInput(ctx, repository, input, "update-ref", "--stdin")
+	return err
+}
+
+func (r testCandidateRepository) ReadCommitRef(ctx context.Context, repository, ref string) (string, bool) {
+	value, err := r.runner.Run(ctx, repository, "show-ref", "--hash", "--verify", ref)
+	return value, err == nil
+}
+
+func (r testCandidateRepository) CommitExists(ctx context.Context, repository, commit string) error {
+	_, err := r.runner.Run(ctx, repository, "cat-file", "-e", commit+"^{commit}")
+	return err
+}
+
+func (r testCandidateRepository) RepairEvidenceRefs(ctx context.Context, repository string, refs []EvidenceRef) error {
+	var input strings.Builder
+	input.WriteString("start\n")
+	for _, ref := range refs {
+		if ref.Exists {
+			_, _ = fmt.Fprintf(&input, "verify %s %s\n", ref.Name, ref.Expected)
+		} else {
+			_, _ = fmt.Fprintf(&input, "create %s %s\n", ref.Name, ref.Expected)
+		}
+	}
+	input.WriteString("prepare\ncommit\n")
+	_, err := r.runner.RunInput(ctx, repository, input.String(), "update-ref", "--stdin")
+	return err
+}
+
+type testGitRunner struct{}
+
+func (testGitRunner) Run(ctx context.Context, directory string, args ...string) (string, error) {
+	return runTestGit(ctx, directory, nil, args...)
+}
+
+func (testGitRunner) RunInput(ctx context.Context, directory, input string, args ...string) (string, error) {
+	return runTestGit(ctx, directory, strings.NewReader(input), args...)
+}
+
+func runTestGit(ctx context.Context, directory string, input *strings.Reader, args ...string) (string, error) {
+	command := exec.CommandContext(ctx, "git", append([]string{"-C", directory}, args...)...)
+	if input != nil {
+		command.Stdin = input
+	}
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", errors.New(string(output))
+	}
+	return strings.TrimSpace(string(output)), nil
 }
