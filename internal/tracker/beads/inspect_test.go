@@ -243,7 +243,7 @@ func TestServerIdentitySpoofAndStaleReadinessRefuseBeforeMutation(t *testing.T) 
 	}
 }
 
-func TestUnqualifiedServerCheckedMutationRefusesBeforeSideEffects(t *testing.T) {
+func TestUnqualifiedServerPreflightAndReadinessRefuseBeforeSideEffects(t *testing.T) {
 	tests := []struct {
 		name string
 		edit func(*inspectionRunner)
@@ -258,9 +258,12 @@ func TestUnqualifiedServerCheckedMutationRefusesBeforeSideEffects(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = bound.executeCheckedMutation(context.Background(), request)
-			if !tracker.IsKind(err, tracker.ErrorUnavailable) {
-				t.Fatalf("error=%v", err)
+			if _, err = bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorUnavailable) {
+				t.Fatalf("preflight error=%v", err)
+			}
+			_, err = bound.executeMutation(context.Background(), Readiness{}, request)
+			if !tracker.IsKind(err, tracker.ErrorInvalidRequest) {
+				t.Fatalf("readiness error=%v", err)
 			}
 			for _, kind := range runner.calls {
 				if kind == CommandCreate {
@@ -292,7 +295,7 @@ func TestMutationRefusalPrecedesWriterLockAndSubprocess(t *testing.T) {
 	}
 }
 
-func TestIncompatibleCheckedMutationRefusesBeforeLockAndMutatingSideEffect(t *testing.T) {
+func TestIncompatiblePreflightAndReadinessRefuseBeforeLockAndMutatingSideEffect(t *testing.T) {
 	tests := []struct {
 		name string
 		edit func(*inspectionRunner)
@@ -315,9 +318,12 @@ func TestIncompatibleCheckedMutationRefusesBeforeLockAndMutatingSideEffect(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = bound.executeCheckedMutation(context.Background(), request)
-			if err == nil {
-				t.Fatal("incompatible mutation succeeded")
+			if _, err = bound.Preflight(context.Background()); err == nil {
+				t.Fatal("incompatible preflight succeeded")
+			}
+			_, err = bound.executeMutation(context.Background(), Readiness{}, request)
+			if !tracker.IsKind(err, tracker.ErrorInvalidRequest) {
+				t.Fatalf("readiness error=%v", err)
 			}
 			for _, kind := range runner.calls {
 				if kind == CommandCreate {
@@ -528,9 +534,13 @@ func TestWorktreeConvergenceAndDivergenceThroughProductionComposition(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = redirected.executeCheckedMutation(context.Background(), request)
+	_, err = redirected.Preflight(context.Background())
 	if !tracker.IsKind(err, tracker.ErrorWorkspaceMismatch) {
-		t.Fatalf("redirect error=%v", err)
+		t.Fatalf("redirect preflight error=%v", err)
+	}
+	_, err = redirected.executeMutation(context.Background(), Readiness{}, request)
+	if !tracker.IsKind(err, tracker.ErrorInvalidRequest) {
+		t.Fatalf("redirect readiness error=%v", err)
 	}
 	for _, kind := range redirectedRunner.calls {
 		if kind == CommandCreate {

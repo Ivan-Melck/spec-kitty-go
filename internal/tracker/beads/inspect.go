@@ -348,19 +348,5 @@ func (bound *BoundAdapter) executeMutation(ctx context.Context, readiness Readin
 	return bound.adapter.execute(ctx, request)
 }
 
-// executeCheckedMutation is the sole production mutation seam for later Beads
-// ports: compatibility completes before writer-lock acquisition and process
-// start, then the exact readiness proof is consumed immediately.
-func (bound *BoundAdapter) executeCheckedMutation(ctx context.Context, request command) (commandResponse, error) {
-	if !request.mutating {
-		return commandResponse{}, invalidBinding("checked mutation requires a mutating typed command", nil)
-	}
-	readiness, err := bound.Preflight(ctx)
-	if err != nil {
-		return commandResponse{result: commandResult{kind: request.kind, mutationOutcome: mutationNotStarted}}, err
-	}
-	return bound.executeMutation(ctx, readiness, request)
-}
-
 // Ensure interface conformance stays visible at the adapter boundary.
 var _ tracker.Inspector = (*BoundAdapter)(nil)
