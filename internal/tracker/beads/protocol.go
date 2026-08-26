@@ -125,40 +125,41 @@ func decodeDocumentedError(stderr []byte, truncated bool) (errorDecode, error) {
 	if !utf8.Valid(stderr) {
 		return errorDecode{}, &protocolError{cause: protocolMalformed}
 	}
-	candidates := make([]documentedError, 0, 1)
-	spans := make([][2]int, 0, 1)
-	for index := 0; index < len(stderr); index++ {
-		if stderr[index] != '{' {
+	var found *documentedError
+	warningCount := 0
+	for _, line := range bytes.Split(stderr, []byte{'\n'}) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
 			continue
 		}
-		decoder := json.NewDecoder(bytes.NewReader(stderr[index:]))
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
+		var fields map[string]json.RawMessage
+		if decodeOne(trimmed, &fields) != nil {
+			warningCount++
 			continue
+		}
+		_, hasSchema := fields["schema_version"]
+		_, hasMessage := fields["error"]
+		_, hasCode := fields["code"]
+		if !hasSchema && !hasMessage && !hasCode {
+			warningCount++
+			continue
+		}
+		if !hasSchema || !hasMessage || !hasCode || len(fields) != 3 || found != nil {
+			return errorDecode{}, &protocolError{cause: protocolMalformed}
 		}
 		var candidate documentedError
-		if err := json.Unmarshal(raw, &candidate); err != nil {
-			continue
+		if err := json.Unmarshal(trimmed, &candidate); err != nil || candidate.SchemaVersion == nil || candidate.Message == "" || candidate.Code == "" {
+			return errorDecode{}, &protocolError{cause: protocolMalformed, underlying: err}
 		}
-		if candidate.SchemaVersion == nil || candidate.Message == "" || candidate.Code == "" {
-			continue
-		}
-		candidates = append(candidates, candidate)
-		spans = append(spans, [2]int{index, index + int(decoder.InputOffset())})
-		index = spans[len(spans)-1][1] - 1
+		found = &candidate
 	}
-	if len(candidates) != 1 {
+	if found == nil {
 		return errorDecode{}, &protocolError{cause: protocolMalformed}
 	}
-	candidate := candidates[0]
-	result := errorDecode{providerCode: candidate.Code, schemaVersion: *candidate.SchemaVersion}
-	if *candidate.SchemaVersion != SupportedProtocolSchema {
-		return result, &protocolError{cause: protocolSchema, schema: *candidate.SchemaVersion}
+	result := errorDecode{providerCode: found.Code, schemaVersion: *found.SchemaVersion, warningCount: warningCount, warningsPresent: warningCount > 0}
+	if *found.SchemaVersion != SupportedProtocolSchema {
+		return result, &protocolError{cause: protocolSchema, schema: *found.SchemaVersion}
 	}
-	warnings := append([]byte(nil), stderr[:spans[0][0]]...)
-	warnings = append(warnings, stderr[spans[0][1]:]...)
-	result.warningCount = countNonEmptyLines(warnings)
-	result.warningsPresent = result.warningCount > 0
 	return result, nil
 }
 

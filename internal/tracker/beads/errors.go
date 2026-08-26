@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
@@ -133,7 +134,7 @@ type executableIdentity struct {
 
 func decodeExecutableIdentity(payload json.RawMessage) (executableIdentity, error) {
 	var identity executableIdentity
-	if err := json.Unmarshal(payload, &identity); err != nil || identity.Version == "" {
+	if err := json.Unmarshal(payload, &identity); err != nil || identity.Version == "" || strings.TrimSpace(identity.Build) == "" {
 		return executableIdentity{}, &commandFailure{class: failureProtocol, message: "executable identity payload is malformed", cause: err}
 	}
 	if identity.Version != SupportedBeadsVersion {

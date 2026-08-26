@@ -79,11 +79,14 @@ func TestExecutableIdentityCompatibility(t *testing.T) {
 	if identity.Version != SupportedBeadsVersion || SupportedProtocolSchema != 1 {
 		t.Fatalf("identity=%+v", identity)
 	}
-	for _, payload := range []string{`{}`, `{"version":"1.2.3"}`, `not-json`} {
+	for _, payload := range []string{`{}`, `{"version":"1.2.2"}`, `{"version":"1.2.2","build":""}`, `{"version":"1.2.3","build":"release"}`, `not-json`} {
 		_, err := decodeExecutableIdentity(json.RawMessage(payload))
 		if err == nil {
 			t.Fatalf("payload %s accepted", payload)
 		}
+	}
+	if SupportedBeadsVersion != "1.2.2" || SupportedProtocolSchema != 1 {
+		t.Fatalf("compatibility tuple=(%q,%d)", SupportedBeadsVersion, SupportedProtocolSchema)
 	}
 }
 
