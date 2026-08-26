@@ -15,6 +15,7 @@ type Revision uint64
 type Comment struct {
 	Body     string   `json:"body"`
 	Marker   string   `json:"marker"`
+	Author   string   `json:"author,omitempty"`
 	Revision Revision `json:"revision"`
 }
 
@@ -40,6 +41,7 @@ type AssignmentRequest struct {
 type CommentRequest struct {
 	WorkKey          string
 	ExpectedRevision Revision
+	Author           string
 	Body             string
 	Marker           string
 }

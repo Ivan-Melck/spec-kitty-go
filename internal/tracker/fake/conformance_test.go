@@ -39,12 +39,17 @@ func TestFakeCapabilityReportIsHonestAndValid(t *testing.T) {
 		}},
 		{tracker.CapabilityDiscussion, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
 			port := tracker.Discussion(provider)
-			if _, err := port.AppendDiscussion(ctx, tracker.AppendDiscussionRequest{ExternalRef: reference, OperationID: "operation-discussion", Body: "durable note", ExpectedObservation: 1}); err != nil {
+			appended, err := port.AppendDiscussion(ctx, tracker.AppendDiscussionRequest{ExternalRef: reference, OperationID: "operation-discussion", Author: "agent-a", Body: "durable note", ExpectedObservation: 1})
+			if err != nil {
 				return err
 			}
-			entries, err := port.ListDiscussion(ctx, reference)
-			if err == nil && len(entries) != 1 {
-				t.Fatalf("discussion entries = %+v", entries)
+			reopened, err := Open(provider.store.path)
+			if err != nil {
+				return err
+			}
+			entries, err := tracker.Discussion(NewProvider(reopened)).ListDiscussion(ctx, reference)
+			if err == nil && (len(entries) != 1 || entries[0].Author != appended.Entry.Author || entries[0].Body != appended.Entry.Body || entries[0].OperationMarker != appended.Entry.OperationMarker || entries[0].Observation != appended.Entry.Observation) {
+				t.Fatalf("persisted discussion entries = %+v, appended = %+v", entries, appended.Entry)
 			}
 			return err
 		}},
@@ -221,8 +226,12 @@ func TestFakeDiscussionReplayIsCoherentAcrossReopen(t *testing.T) {
 	t.Parallel()
 	provider, _, path := conformanceProvider(t)
 	ctx := context.Background()
-	request := tracker.CommentRequest{WorkKey: "external-1", ExpectedRevision: 1, Body: "durable observation", Marker: "operation-comment"}
-	applied, err := provider.CompareAndAddComment(ctx, request)
+	reference := portableReference()
+	request := tracker.AppendDiscussionRequest{
+		ExternalRef: reference, OperationID: "operation-comment", Author: "agent-a",
+		Body: "durable observation", ExpectedObservation: 1,
+	}
+	applied, err := tracker.Discussion(provider).AppendDiscussion(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,15 +239,52 @@ func TestFakeDiscussionReplayIsCoherentAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := NewProvider(reopened).CompareAndAddComment(ctx, request)
-	if err != nil || !replayed.Replayed || replayed.Revision != applied.Revision {
+	replayed, err := tracker.Discussion(NewProvider(reopened)).AppendDiscussion(ctx, request)
+	if err != nil || !replayed.Replayed || replayed.Entry != applied.Entry || replayed.Observation.Revision != applied.Observation.Revision {
 		t.Fatalf("discussion replay = %+v, %v", replayed, err)
 	}
 	changed := request
-	changed.ExpectedRevision = applied.Revision
+	changed.ExpectedObservation = applied.Observation.Revision
 	changed.Body = "different semantic input"
-	if _, err := NewProvider(reopened).CompareAndAddComment(ctx, changed); !tracker.IsKind(err, tracker.ErrorRevisionConflict) {
+	if _, err := tracker.Discussion(NewProvider(reopened)).AppendDiscussion(ctx, changed); !tracker.IsKind(err, tracker.ErrorRevisionConflict) {
 		t.Fatalf("discussion marker reuse = %v", err)
+	}
+}
+
+func TestFakeDiscussionRejectsAuthorChangeWithoutMutation(t *testing.T) {
+	t.Parallel()
+	provider, store, path := conformanceProvider(t)
+	ctx := context.Background()
+	reference := portableReference()
+	request := tracker.AppendDiscussionRequest{
+		ExternalRef: reference, OperationID: "operation-comment-author", Author: "agent-a",
+		Body: "durable observation", ExpectedObservation: 1,
+	}
+	applied, err := tracker.Discussion(provider).AppendDiscussion(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Inject(ctx, FailureUnavailable); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotStore(t, store, path)
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Author = "agent-b"
+	request.ExpectedObservation = applied.Observation.Revision
+	if _, err := tracker.Discussion(NewProvider(reopened)).AppendDiscussion(ctx, request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) {
+		t.Fatalf("same marker and body with different author = %v", err)
+	}
+	after := snapshotStore(t, reopened, path)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("author-conflict request mutated store:\nbefore=%+v\nafter=%+v", before, after)
+	}
+	entries, err := tracker.Discussion(NewProvider(reopened)).ListDiscussion(ctx, reference)
+	if err != nil || len(entries) != 1 || entries[0].Author != "agent-a" {
+		t.Fatalf("persisted author changed: entries=%+v error=%v", entries, err)
 	}
 }
 
