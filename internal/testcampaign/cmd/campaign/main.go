@@ -89,8 +89,8 @@ func runCampaign(name, artifactDir string, timeout time.Duration) error {
 		report.Profiles = append(report.Profiles, profileResult{
 			Name: profileName, ReportPath: filepath.Base(reportPath), Verdict: profileReport.Verdict, DurationMS: profileReport.DurationMS,
 		})
-		if report.SourceCommit == "" {
-			report.SourceCommit, report.SourceTree, report.SourceDirty = profileReport.SourceCommit, profileReport.SourceTree, profileReport.SourceDirty
+		if sourceErr := bindCampaignSource(&report, profileReport); sourceErr != nil {
+			report.Issues = append(report.Issues, fmt.Sprintf("profile %s: %v", profileName, sourceErr))
 		}
 		if profileErr != nil {
 			report.Issues = append(report.Issues, fmt.Sprintf("profile %s: %v", profileName, profileErr))
@@ -176,7 +176,16 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 	if closeErr := input.Close(); closeErr != nil && verifyErr == nil {
 		verifyErr = closeErr
 	}
-	report.SourceCommit, report.SourceTree, report.SourceDirty = sourceIdentity()
+	commit, tree, dirty, identityErr := sourceIdentity(".")
+	if identityErr != nil {
+		report.Verdict = "fail"
+		report.Issues = append(report.Issues, "source identity: "+identityErr.Error())
+		if verifyErr == nil {
+			verifyErr = fmt.Errorf("source identity: %w", identityErr)
+		}
+	} else {
+		report.SourceCommit, report.SourceTree, report.SourceDirty = commit, tree, dirty
+	}
 	if err := writeJSON(reportPath, report); err != nil {
 		return report, reportPath, err
 	}
@@ -203,19 +212,47 @@ func resolvePackage(ctx context.Context, selector string) (string, error) {
 	return packagePath, nil
 }
 
-func sourceIdentity() (commit, tree string, dirty bool) {
-	commit = gitOutput("rev-parse", "HEAD")
-	tree = gitOutput("rev-parse", "HEAD^{tree}")
-	status := gitOutput("status", "--porcelain", "--untracked-files=no")
-	return commit, tree, status != ""
+func bindCampaignSource(report *campaignReport, profile testcampaign.Report) error {
+	if profile.SourceCommit == "" || profile.SourceTree == "" {
+		return errors.New("profile source identity is incomplete")
+	}
+	if report.SourceCommit == "" {
+		report.SourceCommit, report.SourceTree, report.SourceDirty = profile.SourceCommit, profile.SourceTree, profile.SourceDirty
+		return nil
+	}
+	if report.SourceCommit != profile.SourceCommit || report.SourceTree != profile.SourceTree || report.SourceDirty != profile.SourceDirty {
+		return fmt.Errorf("profile source identity drifted: got %s/%s dirty=%t want %s/%s dirty=%t",
+			profile.SourceCommit, profile.SourceTree, profile.SourceDirty,
+			report.SourceCommit, report.SourceTree, report.SourceDirty)
+	}
+	return nil
 }
 
-func gitOutput(args ...string) string {
-	output, err := exec.Command("git", args...).Output()
-	if err != nil {
-		return ""
+func sourceIdentity(directory string) (commit, tree string, dirty bool, err error) {
+	if commit, err = gitOutput(directory, "rev-parse", "HEAD"); err != nil {
+		return "", "", false, err
 	}
-	return strings.TrimSpace(string(output))
+	if tree, err = gitOutput(directory, "rev-parse", "HEAD^{tree}"); err != nil {
+		return "", "", false, err
+	}
+	status, err := gitOutput(directory, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return "", "", false, err
+	}
+	if commit == "" || tree == "" {
+		return "", "", false, errors.New("git returned an empty commit or tree identity")
+	}
+	return commit, tree, status != "", nil
+}
+
+func gitOutput(directory string, args ...string) (string, error) {
+	command := exec.Command("git", args...)
+	command.Dir = directory
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func writeJSON(path string, value any) error {

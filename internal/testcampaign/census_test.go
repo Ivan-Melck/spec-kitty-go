@@ -39,12 +39,19 @@ func TestVerifyRejectsMalformedDuplicateMissingUnexpectedAndZeroMatchTranscripts
 		{name: "missing terminal", transcript: events("run"), expected: []string{"TestAlpha"}, want: "missing terminal event"},
 		{name: "terminal without start", transcript: events("pass"), expected: []string{"TestAlpha"}, want: "terminal event without start"},
 		{name: "unexpected", transcript: strings.ReplaceAll(events("run", "pass"), "TestAlpha", "TestOther"), expected: []string{"TestAlpha"}, want: "unexpected top-level test event"},
-		{name: "wrong package", transcript: strings.ReplaceAll(events("run", "pass"), "example.test/pkg", "other.test/pkg"), expected: []string{"TestAlpha"}, want: "test event package mismatch"},
-		{name: "mixed package", transcript: events("run") + "\n" + strings.ReplaceAll(events("pass"), "example.test/pkg", "other.test/pkg"), expected: []string{"TestAlpha"}, want: "test event package mismatch"},
+		{name: "wrong package", transcript: strings.ReplaceAll(events("run", "pass"), "example.test/pkg", "other.test/pkg"), expected: []string{"TestAlpha"}, want: "event package mismatch"},
+		{name: "mixed package", transcript: events("run") + "\n" + strings.ReplaceAll(events("pass"), "example.test/pkg", "other.test/pkg"), expected: []string{"TestAlpha"}, want: "event package mismatch"},
+		{name: "foreign package output", transcript: events("run", "pass") + "\n" + `{"Action":"output","Package":"other.test/pkg","Output":"foreign"}`, expected: []string{"TestAlpha"}, want: "event package mismatch"},
+		{name: "empty package output", transcript: events("run", "pass") + "\n" + `{"Action":"output","Output":"unbound"}`, expected: []string{"TestAlpha"}, want: "event package mismatch"},
+		{name: "empty requested package", transcript: events("run", "pass"), expected: []string{"TestAlpha"}, want: "requested package is empty"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			report, err := Verify(strings.NewReader(test.transcript), verifyFixture(test.expected, 0))
+			request := verifyFixture(test.expected, 0)
+			if test.name == "empty requested package" {
+				request.Package = ""
+			}
+			report, err := Verify(strings.NewReader(test.transcript), request)
 			if err == nil || report.Verdict != "fail" || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("report=%+v err=%v want=%q", report, err, test.want)
 			}

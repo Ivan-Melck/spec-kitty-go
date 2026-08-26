@@ -180,7 +180,7 @@
     "sha256": {
       "full_campaign.campaign.json": "72de1122791133e1f43478b3313d06bd51ae11790fecaded1400332b537e3477",
       "full-scenario.report.json": "09f91803dace2fff53099a139660659219f97f0f878767788ace2444e73e19e4",
-      "full-scenario.go-test.jsonl": "8e4aac276d7787f1b7329824bc9313002a534dd784120c5836c804eaacf528f0e"
+      "full-scenario.go-test.jsonl": "8e4aac276d7787f1b7329824bc9313002a534dd784120c5836c804eaacf528f0"
     },
     "verdict": "pass"
   },

@@ -64,6 +64,9 @@ func Verify(reader io.Reader, request VerifyRequest) (Report, error) {
 		report.DurationMS = request.FinishedAt.Sub(request.StartedAt).Milliseconds()
 	}
 	issues := make([]string, 0)
+	if strings.TrimSpace(request.Package) == "" {
+		issues = append(issues, "requested package is empty")
+	}
 	if len(request.Expected) == 0 {
 		issues = append(issues, "expected test census is empty")
 	}
@@ -91,16 +94,12 @@ func Verify(reader io.Reader, request VerifyRequest) (Report, error) {
 			issues = append(issues, fmt.Sprintf("malformed go test JSON at line %d: %v", line, err))
 			continue
 		}
-		if event.Test == "" {
-			if event.Package == request.Package {
-				packageFailed = packageFailed || event.Action == "fail"
-			} else if event.Package != "" && (event.Action == "start" || event.Action == "pass" || event.Action == "fail" || event.Action == "skip") {
-				issues = append(issues, fmt.Sprintf("unexpected package event %s for %s", event.Package, event.Action))
-			}
+		if event.Package != request.Package {
+			issues = append(issues, fmt.Sprintf("event package mismatch at line %d: got %q want %q", line, event.Package, request.Package))
 			continue
 		}
-		if event.Package != request.Package {
-			issues = append(issues, fmt.Sprintf("test event package mismatch for %s: got %q want %q", event.Test, event.Package, request.Package))
+		if event.Test == "" {
+			packageFailed = packageFailed || event.Action == "fail"
 			continue
 		}
 		if strings.Contains(event.Test, "/") {
