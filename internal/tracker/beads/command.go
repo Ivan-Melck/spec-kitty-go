@@ -29,25 +29,26 @@ const (
 type CommandKind string
 
 const (
-	CommandVersion        CommandKind = "version"
-	CommandWhere          CommandKind = "where"
-	CommandInfo           CommandKind = "info"
-	CommandDoctor         CommandKind = "doctor"
-	CommandShow           CommandKind = "show"
-	CommandList           CommandKind = "list"
-	CommandReady          CommandKind = "ready"
-	CommandCreate         CommandKind = "create"
-	CommandUpdate         CommandKind = "update"
-	CommandAtomicClaim    CommandKind = "atomic_claim"
-	CommandDependencyAdd  CommandKind = "dependency_add"
-	CommandDependencyList CommandKind = "dependency_list"
-	CommandCommentAppend  CommandKind = "comment_append"
-	CommandCommentList    CommandKind = "comment_list"
-	CommandExport         CommandKind = "export"
-	CommandBackupInit     CommandKind = "backup_init"
-	CommandBackupSync     CommandKind = "backup_sync"
-	CommandBackupStatus   CommandKind = "backup_status"
-	CommandBackupRestore  CommandKind = "backup_restore"
+	CommandVersion          CommandKind = "version"
+	CommandWhere            CommandKind = "where"
+	CommandInfo             CommandKind = "info"
+	CommandDoctor           CommandKind = "doctor"
+	CommandShow             CommandKind = "show"
+	CommandList             CommandKind = "list"
+	CommandReady            CommandKind = "ready"
+	CommandCreate           CommandKind = "create"
+	CommandUpdate           CommandKind = "update"
+	CommandAtomicClaim      CommandKind = "atomic_claim"
+	CommandDependencyAdd    CommandKind = "dependency_add"
+	CommandDependencyRemove CommandKind = "dependency_remove"
+	CommandDependencyList   CommandKind = "dependency_list"
+	CommandCommentAppend    CommandKind = "comment_append"
+	CommandCommentList      CommandKind = "comment_list"
+	CommandExport           CommandKind = "export"
+	CommandBackupInit       CommandKind = "backup_init"
+	CommandBackupSync       CommandKind = "backup_sync"
+	CommandBackupStatus     CommandKind = "backup_status"
+	CommandBackupRestore    CommandKind = "backup_restore"
 )
 
 type expectedShape uint8
@@ -137,27 +138,38 @@ func newCreateCommand(binding commandBinding, values createValues) (command, err
 	return buildCommand(CommandCreate, binding, argv, expectedObject, true, false)
 }
 
-type updateValues struct{ id, title, description, acceptance, metadata, assignee string }
+type updateValue struct {
+	value string
+	set   bool
+}
+
+func presentUpdateValue(value string) updateValue { return updateValue{value: value, set: true} }
+
+type updateValues struct {
+	id                                       string
+	title, description, acceptance, metadata updateValue
+	assignee                                 updateValue
+}
 
 func newUpdateCommand(binding commandBinding, values updateValues) (command, error) {
 	if err := requiredExternalID("work id", values.id); err != nil {
 		return command{}, err
 	}
 	argv := []string{"update", values.id}
-	if values.title != "" {
-		argv = append(argv, "--title", values.title)
+	if values.title.set {
+		argv = append(argv, "--title", values.title.value)
 	}
-	if values.description != "" {
-		argv = append(argv, "--description", values.description)
+	if values.description.set {
+		argv = append(argv, "--description", values.description.value)
 	}
-	if values.acceptance != "" {
-		argv = append(argv, "--acceptance", values.acceptance)
+	if values.acceptance.set {
+		argv = append(argv, "--acceptance", values.acceptance.value)
 	}
-	if values.metadata != "" {
-		argv = append(argv, "--metadata", values.metadata)
+	if values.metadata.set {
+		argv = append(argv, "--metadata", values.metadata.value)
 	}
-	if values.assignee != "" {
-		argv = append(argv, "--assignee", values.assignee)
+	if values.assignee.set {
+		argv = append(argv, "--assignee", values.assignee.value)
 	}
 	if len(argv) == 2 {
 		return command{}, validationError("update requires at least one changed field")
@@ -191,6 +203,19 @@ func newDependencyListCommand(binding commandBinding, id string) (command, error
 		return command{}, err
 	}
 	return buildCommand(CommandDependencyList, binding, []string{"dep", "list", id, "--json"}, expectedArray, false, false)
+}
+
+func newDependencyRemoveCommand(binding commandBinding, blocked, blocker string) (command, error) {
+	if err := requiredExternalID("blocked work id", blocked); err != nil {
+		return command{}, err
+	}
+	if err := requiredExternalID("blocking work id", blocker); err != nil {
+		return command{}, err
+	}
+	if blocked == blocker {
+		return command{}, validationError("dependency cannot reference the same work twice")
+	}
+	return buildCommand(CommandDependencyRemove, binding, []string{"dep", "remove", blocked, blocker, "--json"}, expectedObject, true, false)
 }
 
 func newCommentAppendCommand(binding commandBinding, id, body string) (command, error) {
@@ -412,6 +437,10 @@ func validateArgvShape(kind CommandKind, argv []string) error {
 		if len(argv) != 7 || argv[0] != "dep" || argv[1] != "add" || argv[4] != "--type" || argv[5] != "blocks" || argv[6] != "--json" {
 			return validationError("dependency arguments do not match the typed command shape")
 		}
+	case CommandDependencyRemove:
+		if len(argv) != 5 || argv[0] != "dep" || argv[1] != "remove" || argv[4] != "--json" {
+			return validationError("dependency removal arguments do not match the typed command shape")
+		}
 	case CommandDependencyList:
 		if len(argv) != 4 || argv[0] != "dep" || argv[1] != "list" || argv[3] != "--json" {
 			return validationError("dependency list arguments do not match the typed command shape")
@@ -462,8 +491,12 @@ func validateOptionCommand(argv []string, verb string, start int, orderedFlags [
 		if position+1 >= len(argv)-1 {
 			return validationError(verb + " option is missing its typed value")
 		}
-		if err := requiredValue(strings.TrimPrefix(flag, "--"), argv[position+1]); err != nil {
-			return err
+		value := argv[position+1]
+		explicitEmptyUpdate := verb == "update" && (flag == "--description" || flag == "--acceptance")
+		if !explicitEmptyUpdate {
+			if err := requiredValue(strings.TrimPrefix(flag, "--"), value); err != nil {
+				return err
+			}
 		}
 		position += 2
 		seen++
@@ -496,7 +529,7 @@ func commandContractFor(kind CommandKind) (commandContract, bool) {
 		return commandContract{shape: expectedObject, explicitDeadline: true, json: true}, true
 	case CommandList, CommandReady, CommandDependencyList, CommandCommentList:
 		return commandContract{shape: expectedArray, json: true}, true
-	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandCommentAppend:
+	case CommandCreate, CommandUpdate, CommandAtomicClaim, CommandDependencyAdd, CommandDependencyRemove, CommandCommentAppend:
 		return commandContract{shape: expectedObject, mutating: true, json: true}, true
 	case CommandExport:
 		return commandContract{shape: expectedJSONL, explicitDeadline: true, json: true}, true

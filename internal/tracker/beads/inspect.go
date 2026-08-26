@@ -267,7 +267,7 @@ func (bound *BoundAdapter) Inspect(ctx context.Context, request tracker.InspectR
 			diagnostics = append(diagnostics, tracker.Diagnostic{Kind: tracker.ErrorMalformedProtocol, RecoveryCode: "repair_provider_binding", Message: "provider inspection failed"})
 		}
 	}
-	capabilities := capabilitiesForCurrentPorts(bound.binding.ConcurrencyMode, err == nil, readiness.serverQualified)
+	capabilities := capabilitiesForCurrentPorts(bound, err == nil, readiness.serverQualified)
 	sort.Slice(diagnostics, func(i, j int) bool {
 		if diagnostics[i].Kind != diagnostics[j].Kind {
 			return diagnostics[i].Kind < diagnostics[j].Kind
@@ -277,24 +277,22 @@ func (bound *BoundAdapter) Inspect(ctx context.Context, request tracker.InspectR
 	return tracker.NewInspection(bound.binding, capabilities, health, diagnostics)
 }
 
-func capabilitiesForCurrentPorts(mode tracker.ConcurrencyMode, compatible, serverQualified bool) tracker.ProviderCapabilities {
-	writers := tracker.ConcurrentWritersNone
-	if compatible && mode == tracker.ConcurrencyEmbeddedSerialized {
-		writers = tracker.ConcurrentWritersAdapterSerialized
-	}
-	if compatible && mode == tracker.ConcurrencyServerMultiwriter && serverQualified {
-		writers = tracker.ConcurrentWritersProviderNative
-	}
-	// WP04 implements inspection and the writer boundary only. Future ports
-	// remain unsupported until their production implementations are qualified.
-	return tracker.ProviderCapabilities{
+func capabilitiesForCurrentPorts(bound *BoundAdapter, compatible, serverQualified bool) tracker.ProviderCapabilities {
+	unsupported := tracker.ProviderCapabilities{
 		CatalogRead: tracker.SupportUnsupported, CatalogCreate: tracker.SupportUnsupported,
 		CatalogUpdate: tracker.UpdateUnsupported, BlockingGraph: tracker.SupportUnsupported,
 		Discussion: tracker.DiscussionUnsupported, Assignment: tracker.AssignmentUnsupported,
 		ObservationRevision: tracker.ObservationRevisionUnsupported,
-		SafeCompensation:    tracker.CompensationUnsupported, ConcurrentWriters: writers,
+		SafeCompensation:    tracker.CompensationUnsupported, ConcurrentWriters: tracker.ConcurrentWritersNone,
 		PortableExport: tracker.SupportUnsupported, RestorableBackup: tracker.SupportUnsupported,
 	}
+	if !compatible || bound == nil || bound.binding.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter && !serverQualified {
+		return unsupported
+	}
+	// Healthy inspection and direct capability discovery are two projections of
+	// the same implemented-port declaration. This also carries future accepted
+	// graph/discussion ports without duplicating their ownership here.
+	return bound.catalogCapabilities()
 }
 
 func malformedInspection(message string, cause error) error {

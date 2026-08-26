@@ -115,10 +115,11 @@ func TestCommandArgvVocabulary(t *testing.T) {
 			return newCreateCommand(binding, createValues{title: "t", description: "d", acceptance: "a", metadata: "{}"})
 		}, []string{"create", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--json"}, expectedObject, true},
 		{"update", func() (command, error) {
-			return newUpdateCommand(binding, updateValues{id: "x", title: "t", description: "d", acceptance: "a", metadata: "{}", assignee: "ivan"})
+			return newUpdateCommand(binding, updateValues{id: "x", title: presentUpdateValue("t"), description: presentUpdateValue("d"), acceptance: presentUpdateValue("a"), metadata: presentUpdateValue("{}"), assignee: presentUpdateValue("ivan")})
 		}, []string{"update", "x", "--title", "t", "--description", "d", "--acceptance", "a", "--metadata", "{}", "--assignee", "ivan", "--json"}, expectedObject, true},
 		{"claim", func() (command, error) { return newAtomicClaimCommand(binding, "x") }, []string{"update", "x", "--claim", "--json"}, expectedObject, true},
 		{"dep-add", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, []string{"dep", "add", "blocked", "blocker", "--type", "blocks", "--json"}, expectedObject, true},
+		{"dep-remove", func() (command, error) { return newDependencyRemoveCommand(binding, "blocked", "blocker") }, []string{"dep", "remove", "blocked", "blocker", "--json"}, expectedObject, true},
 		{"dep-list", func() (command, error) { return newDependencyListCommand(binding, "x") }, []string{"dep", "list", "x", "--json"}, expectedArray, false},
 		{"comment-add", func() (command, error) { return newCommentAppendCommand(binding, "x", "body") }, []string{"comments", "add", "x", "body", "--json"}, expectedObject, true},
 		{"comment-list", func() (command, error) { return newCommentListCommand(binding, "x") }, []string{"comments", "x", "--json"}, expectedArray, false},
@@ -164,6 +165,7 @@ func TestCommandValidationBeforeSpawn(t *testing.T) {
 		{"nul id", func() error { _, err := newShowCommand(valid, "x\x00y"); return err }},
 		{"empty update", func() error { _, err := newUpdateCommand(valid, updateValues{id: "x"}); return err }},
 		{"self dependency", func() error { _, err := newDependencyAddCommand(valid, "x", "x"); return err }},
+		{"self dependency removal", func() error { _, err := newDependencyRemoveCommand(valid, "x", "x"); return err }},
 		{"relative backup", func() error { _, err := newBackupInitCommand(valid, "backup"); return err }},
 		{"credential", func() error {
 			b := valid
@@ -218,17 +220,22 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 		build func() error
 	}{
 		{"show id", func() error { _, err := newShowCommand(binding, "--help"); return err }},
-		{"update id", func() error { _, err := newUpdateCommand(binding, updateValues{id: "-h", title: "x"}); return err }},
+		{"update id", func() error {
+			_, err := newUpdateCommand(binding, updateValues{id: "-h", title: presentUpdateValue("x")})
+			return err
+		}},
 		{"claim id", func() error { _, err := newAtomicClaimCommand(binding, "--version"); return err }},
 		{"blocked id", func() error { _, err := newDependencyAddCommand(binding, "--help", "blocker-1"); return err }},
 		{"blocker id", func() error { _, err := newDependencyAddCommand(binding, "blocked-1", "--help"); return err }},
+		{"removed blocked id", func() error { _, err := newDependencyRemoveCommand(binding, "--help", "blocker-1"); return err }},
+		{"removed blocker id", func() error { _, err := newDependencyRemoveCommand(binding, "blocked-1", "--help"); return err }},
 		{"dependency id", func() error { _, err := newDependencyListCommand(binding, "--help"); return err }},
 		{"comment id", func() error { _, err := newCommentAppendCommand(binding, "--help", "body"); return err }},
 		{"comment body", func() error { _, err := newCommentAppendCommand(binding, "work-1", "--help"); return err }},
 		{"comment list id", func() error { _, err := newCommentListCommand(binding, "--help"); return err }},
 		{"create title", func() error { _, err := newCreateCommand(binding, createValues{title: "--help"}); return err }},
 		{"update title", func() error {
-			_, err := newUpdateCommand(binding, updateValues{id: "work-1", title: "--help"})
+			_, err := newUpdateCommand(binding, updateValues{id: "work-1", title: presentUpdateValue("--help")})
 			return err
 		}},
 	}
@@ -238,6 +245,28 @@ func TestCommandRejectsOptionLikeTypedValues(t *testing.T) {
 				t.Fatal("option-like value accepted")
 			}
 		})
+	}
+}
+
+func TestUpdateCommandDistinguishesExplicitEmptyFromOmitted(t *testing.T) {
+	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
+	command, err := newUpdateCommand(binding, updateValues{
+		id: "work-1", title: presentUpdateValue("title"),
+		description: presentUpdateValue(""), acceptance: presentUpdateValue(""),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"update", "work-1", "--title", "title", "--description", "", "--acceptance", "", "--json"}
+	if !reflect.DeepEqual(command.renderedArgv(), want) {
+		t.Fatalf("argv=%q want=%q", command.renderedArgv(), want)
+	}
+	omitted, err := newUpdateCommand(binding, updateValues{id: "work-1", title: presentUpdateValue("title")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := omitted.renderedArgv(); !reflect.DeepEqual(got, []string{"update", "work-1", "--title", "title", "--json"}) {
+		t.Fatalf("omitted argv=%q", got)
 	}
 }
 

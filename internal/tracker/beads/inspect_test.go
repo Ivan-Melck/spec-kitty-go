@@ -113,10 +113,10 @@ func TestPreflightAndInspectHealthyEmbeddedCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.Health != tracker.HealthHealthy || inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersAdapterSerialized || inspection.Capabilities.CatalogUpdate != tracker.UpdateUnsupported || inspection.Capabilities.SafeCompensation != tracker.CompensationUnsupported {
+	if inspection.Health != tracker.HealthHealthy || inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersAdapterSerialized || inspection.Capabilities.CatalogUpdate != tracker.UpdateUnguarded || inspection.Capabilities.SafeCompensation != tracker.CompensationUnsupported {
 		t.Fatalf("inspection=%#v", inspection)
 	}
-	assertOnlyWriterCapability(t, inspection.Capabilities)
+	assertInspectionMatchesCapabilityReporter(t, bound, inspection.Capabilities)
 	for _, kind := range runner.calls {
 		if kind == CommandCreate || kind == CommandUpdate || kind == CommandBackupInit {
 			t.Fatalf("inspection started mutation %s", kind)
@@ -133,7 +133,15 @@ func TestInspectQualifiedServerCapabilities(t *testing.T) {
 	if inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersProviderNative {
 		t.Fatalf("capabilities=%#v", inspection.Capabilities)
 	}
-	assertOnlyWriterCapability(t, inspection.Capabilities)
+	assertInspectionMatchesCapabilityReporter(t, bound, inspection.Capabilities)
+}
+
+func assertInspectionMatchesCapabilityReporter(t *testing.T, bound *BoundAdapter, capabilities tracker.ProviderCapabilities) {
+	t.Helper()
+	reported, err := bound.Capabilities(context.Background())
+	if err != nil || capabilities != reported {
+		t.Fatalf("healthy inspection disagrees with capability reporter: inspect=%#v report=%#v err=%v", capabilities, reported, err)
+	}
 }
 
 func assertOnlyWriterCapability(t *testing.T, capabilities tracker.ProviderCapabilities) {
