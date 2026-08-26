@@ -125,6 +125,9 @@
       "last_event_id": "01M0YVRVE5FY3780RT5XW55WQW",
       "last_transition_at": "2026-08-26T11:02:34.181080+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: canonical executable/workspace binding with SHA-256 identity, typed v1.2.2/schema-1 health and capability inspection, immutable pre-mutation readiness, refusal-before-lock ordering, qualified server mode, and OS-process embedded writer serialization. Commit e859e15. Gates: focused count=10; tracker count=10; tracker race; vet; staticcheck; architecture guard; go test -short ./...; diff check all pass. Runtime defects: lane-d did not materialize approved WP01-WP03 code, so only authorized code commits were cherry-picked; lane auto-rebase also carried committed coordination artifacts and the transition required --force rather than rewriting dependency/status history."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
