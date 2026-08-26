@@ -2,8 +2,12 @@ package fake
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
@@ -13,6 +17,12 @@ func NewProvider(store *Store) *Provider { return &Provider{store: store} }
 
 var _ tracker.Provider = (*Provider)(nil)
 var _ tracker.CapabilityReporter = (*Provider)(nil)
+var _ tracker.Catalog = (*Provider)(nil)
+var _ tracker.Graph = (*Provider)(nil)
+var _ tracker.Discussion = (*Provider)(nil)
+var _ tracker.AssignmentProjection = (*Provider)(nil)
+var _ tracker.Inspector = (*Provider)(nil)
+var _ tracker.Exporter = (*Provider)(nil)
 
 func (p *Provider) Capabilities(context.Context) (tracker.ProviderCapabilities, error) {
 	capabilities := tracker.ProviderCapabilities{
@@ -47,6 +57,183 @@ func (p *Provider) RequireCatalogUpdate(required tracker.UpdateLevel) error {
 		return err
 	}
 	return capabilities.RequireCatalogUpdate(required)
+}
+
+func (p *Provider) CreateWork(context.Context, tracker.CreateWorkRequest) (tracker.WorkMutation, error) {
+	return tracker.WorkMutation{}, p.RequireCapability(tracker.CapabilityCatalogCreate)
+}
+
+func (p *Provider) ReadWork(ctx context.Context, reference tracker.ExternalWorkRef) (tracker.WorkRecord, error) {
+	if err := reference.Validate(); err != nil {
+		return tracker.WorkRecord{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "external work reference is invalid", Cause: err}
+	}
+	work, err := p.Read(ctx, reference.ExternalID)
+	if err != nil {
+		return tracker.WorkRecord{}, err
+	}
+	observation, err := portableObservation(reference.ExternalID, work.Revision, work.Assignee, work.AssignmentMarker)
+	if err != nil {
+		return tracker.WorkRecord{}, err
+	}
+	reference.LastObservation = work.Revision
+	criteria := make([]tracker.Criterion, len(work.Criteria))
+	for index, text := range work.Criteria {
+		criteria[index] = tracker.Criterion{ID: fmt.Sprintf("criterion-%04d", index+1), Text: text, Verifier: tracker.VerifierReview, Required: true}
+	}
+	discussion := make([]tracker.DiscussionEntry, len(work.Comments))
+	for index, comment := range work.Comments {
+		discussion[index] = tracker.DiscussionEntry{Body: comment.Body, OperationMarker: comment.Marker, Observation: comment.Revision}
+	}
+	return tracker.NewWorkRecord(reference, work.Title, work.Description, "", criteria, nil, work.Assignee, work.AssignmentMarker, discussion, observation)
+}
+
+func (p *Provider) UpdateWork(_ context.Context, request tracker.UpdateWorkRequest) (tracker.WorkMutation, error) {
+	if request.RequiredGuard == tracker.UpdateGuarded {
+		return tracker.WorkMutation{}, p.RequireCatalogUpdate(request.RequiredGuard)
+	}
+	return tracker.WorkMutation{}, p.RequireCapability(tracker.CapabilityCatalogUpdate)
+}
+
+func (p *Provider) PutBlockingDependency(context.Context, tracker.DependencyRequest) (tracker.DependencyMutation, error) {
+	return tracker.DependencyMutation{}, p.RequireCapability(tracker.CapabilityBlockingGraph)
+}
+
+func (p *Provider) RemoveBlockingDependency(context.Context, tracker.DependencyRequest) (tracker.DependencyMutation, error) {
+	return tracker.DependencyMutation{}, p.RequireCapability(tracker.CapabilityBlockingGraph)
+}
+
+func (p *Provider) ListDependencies(context.Context, tracker.ExternalWorkRef) ([]tracker.DependencyRef, error) {
+	return nil, p.RequireCapability(tracker.CapabilityBlockingGraph)
+}
+
+func (p *Provider) ReadyProjection(context.Context, tracker.ReadyRequest) (tracker.ReadyProjection, error) {
+	return tracker.ReadyProjection{}, p.RequireCapability(tracker.CapabilityBlockingGraph)
+}
+
+func (p *Provider) AppendDiscussion(ctx context.Context, request tracker.AppendDiscussionRequest) (tracker.DiscussionMutation, error) {
+	if err := request.ExternalRef.Validate(); err != nil || request.OperationID == "" {
+		return tracker.DiscussionMutation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "discussion reference and operation are required", Cause: err}
+	}
+	mutation, mutationErr := p.CompareAndAddComment(ctx, tracker.CommentRequest{
+		WorkKey: request.ExternalRef.ExternalID, ExpectedRevision: request.ExpectedObservation,
+		Body: request.Body, Marker: request.OperationID.String(),
+	})
+	if mutation.Revision == 0 {
+		return tracker.DiscussionMutation{}, mutationErr
+	}
+	observation, err := portableObservation(request.ExternalRef.ExternalID, mutation.Revision, mutation.Assignee, mutation.Marker)
+	if err != nil {
+		return tracker.DiscussionMutation{}, err
+	}
+	result := tracker.DiscussionMutation{
+		Entry:       tracker.DiscussionEntry{Author: request.Author, Body: request.Body, OperationMarker: request.OperationID.String(), Observation: mutation.Revision},
+		Observation: observation, Replayed: mutation.Replayed, Noop: mutation.Noop,
+	}
+	return result, mutationErr
+}
+
+func (p *Provider) ListDiscussion(ctx context.Context, reference tracker.ExternalWorkRef) ([]tracker.DiscussionEntry, error) {
+	record, err := p.ReadWork(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+	return record.Discussion(), nil
+}
+
+func (p *Provider) ObserveAssignment(ctx context.Context, reference tracker.ExternalWorkRef) (tracker.AssignmentObservation, error) {
+	record, err := p.ReadWork(ctx, reference)
+	if err != nil {
+		return tracker.AssignmentObservation{}, err
+	}
+	return tracker.AssignmentObservation{ExternalRef: record.ExternalRef, Assignee: record.VisibleAssignee, OperationMarker: record.AssignmentMarker, Observation: record.Observation}, nil
+}
+
+func (p *Provider) ProjectAssignment(ctx context.Context, request tracker.ProjectAssignmentRequest) (tracker.AssignmentMutation, error) {
+	if err := request.ExternalRef.Validate(); err != nil || request.OperationID == "" {
+		return tracker.AssignmentMutation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "assignment reference and operation are required", Cause: err}
+	}
+	capabilities, err := p.Capabilities(ctx)
+	if err != nil {
+		return tracker.AssignmentMutation{}, err
+	}
+	if request.RequiredGuarantee != tracker.AssignmentUnguarded && request.RequiredGuarantee != tracker.AssignmentAtomicClaim {
+		return tracker.AssignmentMutation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "assignment guarantee is invalid"}
+	}
+	if request.RequiredGuarantee == tracker.AssignmentAtomicClaim && capabilities.Assignment != tracker.AssignmentAtomicClaim {
+		return tracker.AssignmentMutation{}, &tracker.Error{Kind: tracker.ErrorGuardedUpdateUnsupported, Message: "provider cannot enforce atomic assignment", Capability: tracker.CapabilityAssignment}
+	}
+	mutation, mutationErr := p.CompareAndSetAssignment(ctx, tracker.AssignmentRequest{
+		WorkKey: request.ExternalRef.ExternalID, ExpectedRevision: request.ExpectedObservation,
+		Assignee: request.Assignee, Marker: request.OperationID.String(),
+	})
+	return portableAssignmentMutation(request.ExternalRef, mutation, capabilities.Assignment, mutationErr)
+}
+
+func (p *Provider) CompensateAssignment(ctx context.Context, request tracker.CompensateAssignmentRequest) (tracker.AssignmentMutation, error) {
+	if err := request.ExternalRef.Validate(); err != nil || request.OperationID == "" {
+		return tracker.AssignmentMutation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "compensation reference and operation are required", Cause: err}
+	}
+	mutation, mutationErr := p.CompareBeforeCompensate(ctx, tracker.CompensationRequest{
+		WorkKey: request.ExternalRef.ExternalID, ExpectedRevision: request.ExpectedObservation,
+		ExpectedAssignee: request.ExpectedAssignee, Marker: request.ExpectedMarker, RestoreAssignee: request.RestoreAssignee,
+	})
+	return portableAssignmentMutation(request.ExternalRef, mutation, tracker.AssignmentAtomicClaim, mutationErr)
+}
+
+func (p *Provider) Inspect(ctx context.Context, request tracker.InspectRequest) (tracker.Inspection, error) {
+	if _, err := ids.ParseProjectID(request.ProjectID.String()); err != nil {
+		return tracker.Inspection{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "inspection project is invalid", Cause: err}
+	}
+	capabilities, err := p.Capabilities(ctx)
+	if err != nil {
+		return tracker.Inspection{}, err
+	}
+	identity := sha256.Sum256([]byte(p.store.path))
+	binding := tracker.TrackerBinding{
+		ProjectID: request.ProjectID, Provider: "durable_fake", ExecutablePath: "/in-process/tracker-provider",
+		ExecutableVersion: "1", ProtocolSchema: 1, WorkspacePath: p.store.path,
+		WorkspaceIdentity: fmt.Sprintf("%x", identity), ConcurrencyMode: tracker.ConcurrencyServerMultiwriter,
+		ObservedAt: time.Now().UTC(),
+	}
+	return tracker.NewInspection(binding, capabilities, tracker.HealthHealthy, nil)
+}
+
+func (p *Provider) ExportPortable(context.Context, tracker.ExportRequest, io.Writer) (tracker.ExportResult, error) {
+	return tracker.ExportResult{}, p.RequireCapability(tracker.CapabilityPortableExport)
+}
+
+func (p *Provider) Backup(context.Context, tracker.BackupRequest) (tracker.BackupResult, error) {
+	return tracker.BackupResult{}, p.RequireCapability(tracker.CapabilityRestorableBackup)
+}
+
+func (p *Provider) InspectBackup(context.Context, tracker.BackupInspectRequest) (tracker.BackupInspection, error) {
+	return tracker.BackupInspection{}, p.RequireCapability(tracker.CapabilityRestorableBackup)
+}
+
+func portableObservation(externalID string, revision tracker.Revision, assignee, marker string) (tracker.ProviderObservation, error) {
+	observation, err := tracker.NewProviderObservation(externalID, []byte(fmt.Sprintf("%s\x00%d", externalID, revision)), revision, "", fmt.Sprintf("revision-%d", revision), time.Now().UTC())
+	if err != nil {
+		return tracker.ProviderObservation{}, err
+	}
+	observation.Assignee = assignee
+	observation.OperationMarker = marker
+	return observation, nil
+}
+
+func portableAssignmentMutation(reference tracker.ExternalWorkRef, mutation tracker.Mutation, guarantee tracker.AssignmentLevel, mutationErr error) (tracker.AssignmentMutation, error) {
+	if mutation.Revision == 0 {
+		return tracker.AssignmentMutation{}, mutationErr
+	}
+	observation, err := portableObservation(reference.ExternalID, mutation.Revision, mutation.Assignee, mutation.Marker)
+	if err != nil {
+		return tracker.AssignmentMutation{}, err
+	}
+	reference.LastObservation = mutation.Revision
+	result := tracker.AssignmentMutation{
+		Observation: tracker.AssignmentObservation{ExternalRef: reference, Assignee: mutation.Assignee, OperationMarker: mutation.Marker, Observation: observation},
+		Guarantee:   guarantee, Replayed: mutation.Replayed, Noop: mutation.Noop,
+	}
+	return result, mutationErr
 }
 
 func (p *Provider) Read(ctx context.Context, workKey string) (tracker.Work, error) {
