@@ -193,6 +193,182 @@ func TestTrackerCoordinateBeadsReachesProviderNeutralGraphAndDiscussionPorts(t *
 	}
 }
 
+func TestTrackerCoordinateBeadsMutationBranchesCallProviderNeutralPorts(t *testing.T) {
+	ctx := context.Background()
+	projectID := ids.ProjectID("project-1")
+	dependencyRequest := tracker.DependencyRequest{
+		ProjectID: projectID, OperationID: "operation-edge",
+		Dependency: tracker.DependencyRef{BlockedWorkID: "work-blocked", BlockingWorkID: "work-blocking", Kind: tracker.DependencyBlocks},
+	}
+	dependencyInput := beadsCoordinationInput{
+		OperationID: dependencyRequest.OperationID.String(), BlockedWorkID: dependencyRequest.Dependency.BlockedWorkID.String(),
+		BlockingWorkID: dependencyRequest.Dependency.BlockingWorkID.String(),
+	}
+
+	t.Run("dependency-put", func(t *testing.T) {
+		want := tracker.DependencyMutation{Dependency: dependencyRequest.Dependency, Replayed: true}
+		graph := &recordingCoordinationGraph{putResult: want}
+		response, err := executeBeadsCoordination(ctx, "dependency-put", projectID, graph, &recordingCoordinationDiscussion{}, dependencyInput)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(graph.putRequests) != 1 || !reflect.DeepEqual(graph.putRequests[0], dependencyRequest) || len(graph.removeRequests) != 0 {
+			t.Fatalf("put calls=%#v remove calls=%#v", graph.putRequests, graph.removeRequests)
+		}
+		wantResponse := BeadsCoordinationResponse{SchemaVersion: 1, OK: true, Action: "dependency-put", DependencyMutation: &want}
+		if !reflect.DeepEqual(response, wantResponse) {
+			t.Fatalf("response=%#v want=%#v", response, wantResponse)
+		}
+	})
+
+	t.Run("dependency-remove", func(t *testing.T) {
+		want := tracker.DependencyMutation{Dependency: dependencyRequest.Dependency, Noop: true}
+		graph := &recordingCoordinationGraph{removeResult: want}
+		response, err := executeBeadsCoordination(ctx, "dependency-remove", projectID, graph, &recordingCoordinationDiscussion{}, dependencyInput)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(graph.removeRequests) != 1 || !reflect.DeepEqual(graph.removeRequests[0], dependencyRequest) || len(graph.putRequests) != 0 {
+			t.Fatalf("remove calls=%#v put calls=%#v", graph.removeRequests, graph.putRequests)
+		}
+		wantResponse := BeadsCoordinationResponse{SchemaVersion: 1, OK: true, Action: "dependency-remove", DependencyMutation: &want}
+		if !reflect.DeepEqual(response, wantResponse) {
+			t.Fatalf("response=%#v want=%#v", response, wantResponse)
+		}
+	})
+
+	t.Run("discussion-append", func(t *testing.T) {
+		input := beadsCoordinationInput{
+			WorkID: "work-a", ExternalID: "bd-a", MetadataSchema: 1, CreatedByOperation: "operation-create-a",
+			OperationID: "operation-comment", Author: "agent-a", Body: "durable note", ExpectedObservation: 41,
+		}
+		wantRequest := tracker.AppendDiscussionRequest{
+			ExternalRef: tracker.ExternalWorkRef{
+				ProjectID: projectID, WorkID: "work-a", Provider: "beads", ExternalID: "bd-a", MetadataSchema: 1,
+				CreatedByOperation: "operation-create-a", LastObservation: 41,
+			},
+			OperationID: "operation-comment", Author: "agent-a", Body: "durable note", ExpectedObservation: 41,
+		}
+		want := tracker.DiscussionMutation{Entry: tracker.DiscussionEntry{ExternalCommentID: "comment-1", Author: "agent-a", Body: "durable note"}, Replayed: true}
+		discussion := &recordingCoordinationDiscussion{appendResult: want}
+		response, err := executeBeadsCoordination(ctx, "discussion-append", projectID, &recordingCoordinationGraph{}, discussion, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(discussion.appendRequests) != 1 || !reflect.DeepEqual(discussion.appendRequests[0], wantRequest) || discussion.listCalls != 0 {
+			t.Fatalf("append calls=%#v list calls=%d", discussion.appendRequests, discussion.listCalls)
+		}
+		wantResponse := BeadsCoordinationResponse{SchemaVersion: 1, OK: true, Action: "discussion-append", DiscussionMutation: &want}
+		if !reflect.DeepEqual(response, wantResponse) {
+			t.Fatalf("response=%#v want=%#v", response, wantResponse)
+		}
+	})
+}
+
+func TestTrackerCoordinateBeadsMutationBranchesPropagatePortErrors(t *testing.T) {
+	sentinel := errors.New("recorded port failure")
+	projectID := ids.ProjectID("project-1")
+	dependencyRequest := tracker.DependencyRequest{
+		ProjectID: projectID, OperationID: "operation-edge",
+		Dependency: tracker.DependencyRef{BlockedWorkID: "work-blocked", BlockingWorkID: "work-blocking", Kind: tracker.DependencyBlocks},
+	}
+	dependencyInput := beadsCoordinationInput{OperationID: "operation-edge", BlockedWorkID: "work-blocked", BlockingWorkID: "work-blocking"}
+	discussionInput := beadsCoordinationInput{
+		WorkID: "work-a", ExternalID: "bd-a", MetadataSchema: 1, CreatedByOperation: "operation-create-a",
+		OperationID: "operation-comment", Author: "agent-a", Body: "durable note", ExpectedObservation: 41,
+	}
+	discussionRequest := tracker.AppendDiscussionRequest{
+		ExternalRef: tracker.ExternalWorkRef{
+			ProjectID: projectID, WorkID: "work-a", Provider: "beads", ExternalID: "bd-a", MetadataSchema: 1,
+			CreatedByOperation: "operation-create-a", LastObservation: 41,
+		},
+		OperationID: "operation-comment", Author: "agent-a", Body: "durable note", ExpectedObservation: 41,
+	}
+	tests := []struct {
+		name       string
+		action     string
+		graph      *recordingCoordinationGraph
+		discussion *recordingCoordinationDiscussion
+		input      beadsCoordinationInput
+	}{
+		{
+			name: "dependency-put", action: "dependency-put", graph: &recordingCoordinationGraph{putErr: sentinel}, discussion: &recordingCoordinationDiscussion{}, input: dependencyInput,
+		},
+		{
+			name: "dependency-remove", action: "dependency-remove", graph: &recordingCoordinationGraph{removeErr: sentinel}, discussion: &recordingCoordinationDiscussion{}, input: dependencyInput,
+		},
+		{
+			name: "discussion-append", action: "discussion-append", graph: &recordingCoordinationGraph{}, discussion: &recordingCoordinationDiscussion{appendErr: sentinel}, input: discussionInput,
+		},
+	}
+	for index := range tests {
+		test := &tests[index]
+		t.Run(test.name, func(t *testing.T) {
+			response, err := executeBeadsCoordination(context.Background(), test.action, projectID, test.graph, test.discussion, test.input)
+			calls := 0
+			requestMatches := false
+			switch test.action {
+			case "dependency-put":
+				calls = len(test.graph.putRequests)
+				requestMatches = calls == 1 && reflect.DeepEqual(test.graph.putRequests[0], dependencyRequest)
+			case "dependency-remove":
+				calls = len(test.graph.removeRequests)
+				requestMatches = calls == 1 && reflect.DeepEqual(test.graph.removeRequests[0], dependencyRequest)
+			case "discussion-append":
+				calls = len(test.discussion.appendRequests)
+				requestMatches = calls == 1 && reflect.DeepEqual(test.discussion.appendRequests[0], discussionRequest)
+			}
+			if err != sentinel || !reflect.DeepEqual(response, BeadsCoordinationResponse{}) || calls != 1 || !requestMatches {
+				t.Fatalf("response=%#v error=%v calls=%d request_matches=%t", response, err, calls, requestMatches)
+			}
+		})
+	}
+}
+
+type recordingCoordinationGraph struct {
+	putRequests    []tracker.DependencyRequest
+	removeRequests []tracker.DependencyRequest
+	putResult      tracker.DependencyMutation
+	removeResult   tracker.DependencyMutation
+	putErr         error
+	removeErr      error
+}
+
+func (graph *recordingCoordinationGraph) PutBlockingDependency(_ context.Context, request tracker.DependencyRequest) (tracker.DependencyMutation, error) {
+	graph.putRequests = append(graph.putRequests, request)
+	return graph.putResult, graph.putErr
+}
+
+func (graph *recordingCoordinationGraph) RemoveBlockingDependency(_ context.Context, request tracker.DependencyRequest) (tracker.DependencyMutation, error) {
+	graph.removeRequests = append(graph.removeRequests, request)
+	return graph.removeResult, graph.removeErr
+}
+
+func (*recordingCoordinationGraph) ListDependencies(context.Context, tracker.ExternalWorkRef) ([]tracker.DependencyRef, error) {
+	panic("unexpected ListDependencies call")
+}
+
+func (*recordingCoordinationGraph) ReadyProjection(context.Context, tracker.ReadyRequest) (tracker.ReadyProjection, error) {
+	panic("unexpected ReadyProjection call")
+}
+
+type recordingCoordinationDiscussion struct {
+	appendRequests []tracker.AppendDiscussionRequest
+	appendResult   tracker.DiscussionMutation
+	appendErr      error
+	listCalls      int
+}
+
+func (discussion *recordingCoordinationDiscussion) AppendDiscussion(_ context.Context, request tracker.AppendDiscussionRequest) (tracker.DiscussionMutation, error) {
+	discussion.appendRequests = append(discussion.appendRequests, request)
+	return discussion.appendResult, discussion.appendErr
+}
+
+func (discussion *recordingCoordinationDiscussion) ListDiscussion(context.Context, tracker.ExternalWorkRef) ([]tracker.DiscussionEntry, error) {
+	discussion.listCalls++
+	panic("unexpected ListDiscussion call")
+}
+
 func TestTrackerCatalogBeadsReadReachesProductionAdapter(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
