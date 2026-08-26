@@ -559,7 +559,7 @@ dolt:show) printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%s/e
 dolt:status) printf '{"schema_version":1,"data":{"data_dir":"%s/embeddeddolt","data_dir_exists":true,"mode":"embedded","server_running":false}}\n' "$BEADS_DIR" ;;
 list:--json) printf '{"schema_version":1,"data":[%s,%s]}\n' "$issue_a" "$issue_b" ;;
 ready:--json) printf '{"schema_version":1,"data":[%s]}\n' "$issue_a" ;;
-show:bd-a) printf '{"schema_version":1,"data":%s}\n' "$issue_a" ;;
+show:bd-a) printf '{"schema_version":1,"data":[%s]}\n' "$issue_a" ;;
 dep:list) printf '%s\n' '{"schema_version":1,"data":[{"blocked":"bd-a","blocking":"bd-b","kind":"blocks","edge_id":"edge-1"}]}' ;;
 comments:bd-a) printf '%s\n' '{"schema_version":1,"data":[{"id":"comment-human","author":"human","body":"human discussion","created_at":"2026-08-26T12:00:02Z"}]}' ;;
 *) exit 64 ;;
