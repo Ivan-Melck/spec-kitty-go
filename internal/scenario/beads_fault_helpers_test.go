@@ -401,6 +401,31 @@ func quickStaleFaultAuthority(t *testing.T, fixture workspaceScenario, stale pha
 	return state
 }
 
+// provisionWP08StaleAuthority provisions the expired run whose exact work,
+// lease, and workspace are audited by one WP08 fault or campaign repetition.
+// expected may contain prior, isolated subdivisions in the same control store.
+func provisionWP08StaleAuthority(t *testing.T, fixture workspaceScenario, expected phase1ExpectedState, work ids.WorkID, lane ids.LaneID, trackerKey, suffix string) phase1StaleAuthority {
+	t.Helper()
+	input := workspaceStart{
+		operation: "operation-wp08-" + suffix, work: work.String(), lane: lane.String(),
+		actor: "actor-wp08-" + suffix, process: "process-wp08-" + suffix,
+		workspace: "workspace-wp08-" + suffix, branch: "runs/wp08-" + suffix,
+		trackerWork: trackerKey, editFile: "wp08-" + suffix + ".txt", editContent: "wp08\n",
+	}
+	response := waitWorkspaceProcess(t, fixture.start(context.Background(), t, input))
+	if !response.OK || response.Capsule == nil || response.Work == nil {
+		t.Fatalf("provision exact WP08 authority work=%s response=%+v", work, response)
+	}
+	handoffID := "handoff-wp08-" + suffix
+	if handoffResponse := runHandoffHelper(t, fixture, response.Capsule, response.Work.Commit, handoffID, "operation-handoff-wp08-"+suffix, ""); !handoffResponse.OK {
+		t.Fatalf("provision exact WP08 handoff work=%s response=%+v", work, handoffResponse)
+	}
+	expireAuthorityProcess(t, context.Background(), fixture.database, *response.Capsule, input, response.Capsule.Deadline)
+	caseExpected := expected.clone()
+	caseExpected.addCapsule(response.Capsule, false)
+	return phase1StaleAuthority{capsule: *response.Capsule, candidate: response.Work.Commit, handoffID: handoffID, expected: caseExpected}
+}
+
 func stableID(prefix string, repetition int) string {
 	return fmt.Sprintf("%s-%03d", prefix, repetition)
 }

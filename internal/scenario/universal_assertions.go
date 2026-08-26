@@ -301,20 +301,24 @@ func assertAttributionFacts(ctx context.Context, db *sql.DB, trackerPath string)
 		if err := rows.Scan(&operation, &workKey, &marker, &prior, &priorValue, &applied, &appliedValue, &status, &compensation, &conflict, &conflictValue, &conflictMarker); err != nil {
 			return err
 		}
-		allowed := allowedByWork[workKey]
+		// Several intent-qualified effects may project to one physical provider
+		// work item. Attribution is therefore audited over that canonical
+		// provider lineage, not one synthetic intent key at a time.
+		providerKey, _, _ := strings.Cut(workKey, "#spec-kitty-intent=")
+		allowed := allowedByWork[providerKey]
 		if allowed == nil {
 			allowed = map[string]bool{}
-			allowedByWork[workKey] = allowed
+			allowedByWork[providerKey] = allowed
 		}
-		operationsByWork[workKey] = append(operationsByWork[workKey], operation)
+		operationsByWork[providerKey] = append(operationsByWork[providerKey], operation)
 		allowed[providerFactKey(prior, priorValue, "")] = true
 		if applied > 0 {
 			allowed[providerFactKey(applied, appliedValue, marker)] = true
 		} else if status == string(execution.CompensationPending) && compensation == 0 && conflict == 0 {
-			pending := pendingByWork[workKey]
+			pending := pendingByWork[providerKey]
 			if pending == nil {
 				pending = map[string]pendingAttributionFact{}
-				pendingByWork[workKey] = pending
+				pendingByWork[providerKey] = pending
 			}
 			pending[marker] = pendingAttributionFact{PriorRevision: prior, Assignee: appliedValue}
 		}
@@ -354,17 +358,16 @@ func assertAttributionFacts(ctx context.Context, db *sql.DB, trackerPath string)
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	for workKey, allowed := range allowedByWork {
-		providerKey, _, _ := strings.Cut(workKey, "#spec-kitty-intent=")
+	for providerKey, allowed := range allowedByWork {
 		work, err := provider.Read(ctx, providerKey)
 		if err != nil {
-			return fmt.Errorf("work=%s provider_read=%v", workKey, err)
+			return fmt.Errorf("work=%s provider_read=%v", providerKey, err)
 		}
 		current := providerFactKey(int64(work.Revision), work.Assignee, work.AssignmentMarker)
-		pending, pendingOK := pendingByWork[workKey][work.AssignmentMarker]
+		pending, pendingOK := pendingByWork[providerKey][work.AssignmentMarker]
 		inFlight := pendingOK && work.AssignmentMarker != "" && work.Assignee == pending.Assignee && int64(work.Revision) > pending.PriorRevision
 		if !allowed[current] && !inFlight {
-			return fmt.Errorf("operations=%v work=%s provider_current=%s attributable_facts=%v", operationsByWork[workKey], workKey, current, allowed)
+			return fmt.Errorf("operations=%v work=%s provider_current=%s attributable_facts=%v", operationsByWork[providerKey], providerKey, current, allowed)
 		}
 	}
 	return nil
