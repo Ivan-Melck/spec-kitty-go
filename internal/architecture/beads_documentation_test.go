@@ -136,6 +136,20 @@ func TestBeadsDocumentationDeliveryClaims(t *testing.T) {
 
 func TestBeadsDocumentationLinksMermaidAndCommands(t *testing.T) {
 	root := phase2RepositoryRoot(t)
+	readme := phase2Read(t, root, "README.md")
+	evidenceIndex := phase2Read(t, root, "docs/phase2-evidence/README.md")
+	const checksumCommand = "(cd docs/phase2-evidence && sha256sum --check SHA256SUMS)"
+	for path, document := range map[string]string{
+		"README.md":                      readme,
+		"docs/phase2-evidence/README.md": evidenceIndex,
+	} {
+		if !strings.Contains(document, checksumCommand) {
+			t.Errorf("%s lacks the repository-root-safe checksum command", path)
+		}
+		if strings.Contains(document, "sha256sum --check docs/phase2-evidence/SHA256SUMS") {
+			t.Errorf("%s contains a checksum command whose manifest paths resolve from the wrong directory", path)
+		}
+	}
 	paths := []string{
 		"README.md",
 		"docs/TECHNICAL_PROJECT_PLAN.md",

@@ -28,7 +28,7 @@ the commit that will contain itself.
 Verify the payload bytes:
 
 ```bash
-sha256sum --check docs/phase2-evidence/SHA256SUMS
+(cd docs/phase2-evidence && sha256sum --check SHA256SUMS)
 git show --stat 106c7a2016bfade66d7b4e93592da8b7b81259a6
 ```
 
@@ -64,6 +64,36 @@ flowchart LR
 A later commit does not inherit any of those verdicts merely because it carries
 these files. Changes to product, provider, protocol, qualification, or authority
 code require a newly frozen candidate and new evidence.
+
+## WP11 closeout attestation
+
+The documentation payload was subsequently exercised as part of the repository's
+source-bound quality campaign. The first clean attempt at docs attestation commit
+`6985cec1f139504f067f439b4ddc709482ded5ee` correctly failed the architecture
+census: all four new documentation tests passed, but the exact campaign manifest
+had not registered them. That failure was not relabeled as a pass.
+
+Commit `8fbb9d9f1b9277b7f2ad1b93d8dce901c8cdac4e`, tree
+`3611d0bc8e51aa9ee3c6f2c977b9b15eb417d6b9`, added exactly those four census
+entries and a removal mutant for each. A clean `make quality` run bound to that
+identity then recorded:
+
+| Campaign/profile | Verdict | Duration |
+|---|---:|---:|
+| provider portable | pass | 169 ms |
+| provider adversarial | pass | 263,850 ms |
+| provider bounded | pass | 264,080 ms |
+| acceptance | pass | 21,150 ms |
+| architecture, including the WP11 documentation gate | pass | 9,727 ms |
+| scope | pass | 1,494 ms |
+| quality | pass | 32,466 ms |
+
+That clean run also passed build, race, vet, static analysis, module
+verification, and vulnerability scanning. It qualifies the repository-level
+composition at `8fbb9d9`; it does not replace or broaden the earlier
+real-provider tuple recorded in `qualification-evidence.json`. This section is a
+following docs-only attestation and is intentionally outside `SHA256SUMS`; the
+four immutable payload files and payload commit remain unchanged.
 
 ## Qualified tuple
 

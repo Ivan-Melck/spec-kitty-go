@@ -457,7 +457,7 @@ staticcheck ./...
 go mod verify
 govulncheck ./...
 go test ./internal/architecture -run 'BeadsDocumentation|Phase2Evidence' -count=10
-sha256sum --check docs/phase2-evidence/SHA256SUMS
+(cd docs/phase2-evidence && sha256sum --check SHA256SUMS)
 git diff --check
 ```
 
