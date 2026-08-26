@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.dev/schemas/beads-qualification-evidence-v1.json",
+  "title": "Beads Qualification Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_commit",
+    "source_tree",
+    "provider_version",
+    "provider_digest_sha256",
+    "protocol_schema",
+    "storage_mode",
+    "host",
+    "started_at",
+    "finished_at",
+    "scenarios",
+    "authority_invariant_failures",
+    "verdict"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "source_tree": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "provider_version": {
+      "const": "1.2.2"
+    },
+    "provider_digest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "protocol_schema": {
+      "const": 1
+    },
+    "storage_mode": {
+      "enum": [
+        "embedded_serialized",
+        "server_multiwriter"
+      ]
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goos",
+        "goarch"
+      ],
+      "properties": {
+        "goos": {
+          "type": "string",
+          "minLength": 1
+        },
+        "goarch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runner": {
+          "type": "string"
+        }
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scenarios": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected",
+        "started",
+        "terminal",
+        "passed",
+        "failed"
+      ],
+      "properties": {
+        "expected": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "started": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "terminal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "latency": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "samples",
+          "p50_ms",
+          "p95_ms",
+          "max_ms"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "p50_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "p95_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "max_ms": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "authority_invariant_failures": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "non_admissible"
+      ]
+    }
+  }
+}
