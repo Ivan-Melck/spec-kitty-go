@@ -1,7 +1,7 @@
 {
-  "event_count": 160,
-  "last_event_id": "01M0ZES5B3CC1XPSZ7V9X1CE83",
-  "materialized_at": "2026-08-26T16:34:47.260091+00:00",
+  "event_count": 162,
+  "last_event_id": "01M0ZF3K8YX10MTE8Y5SJJT6SZ",
+  "materialized_at": "2026-08-26T16:40:29.214289+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 2,
-    "in_review": 0,
+    "in_progress": 1,
+    "in_review": 1,
     "planned": 3
   },
   "work_packages": {
@@ -194,13 +194,13 @@
     },
     "WP06": {
       "actor": "codex",
-      "agent": null,
-      "agent_profile": "implementer-ivan",
+      "agent": "codex",
+      "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 10,
-      "lane": "in_progress",
-      "last_event_id": "01M0ZES5B3CC1XPSZ7V9X1CE83",
-      "last_transition_at": "2026-08-26T16:34:47.260091+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M0ZF3K8YX10MTE8Y5SJJT6SZ",
+      "last_transition_at": "2026-08-26T16:40:29.214289+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: exact dependency direction/remove, diagnostic readiness, durable marked discussion, and ambiguity refusal are implemented; focused/race/repeat/vet/static/architecture/scope gates pass",
@@ -209,7 +209,8 @@
         "Correction cycle 4: every mutation helper test now asserts a complete six-method Graph/Discussion call census on success and sentinel-error paths, with an explicit extra cross-interface-call mutant control. Forced only past the known inherited planning-artifact lane guard.",
         "Review passed: full helper call census, mutant control, and prior closures verified",
         "Ready for review: exact v1.2.2 dependency-list id/dependency_type and comment text mappings; object depends_on_id mutation receipts and ready count fields retained; malformed legacy shapes rejected; asymmetric graph, full-catalog readiness, append/replay ambiguity, call census, and authority boundaries preserved. Focused, full, count=20, race, helper, tracker-wide, vet, staticcheck, architecture, scope, and diff-scoped ruff gates pass.",
-        "Cycle 7 ready for review: evidence-only correction with distinct exact v1.2.2 add/remove receipts and dep-list capture; exact ready/comment captures separated from derived optional-field skew fixtures; fake/helper shapes corrected; both mutation receipts proven unable to masquerade as list records. Production semantics unchanged. Focused x20, focused race, full Beads, helper, vet, staticcheck, architecture, scope, diff-check, and ruff gates pass."
+        "Cycle 7 ready for review: evidence-only correction with distinct exact v1.2.2 add/remove receipts and dep-list capture; exact ready/comment captures separated from derived optional-field skew fixtures; fake/helper shapes corrected; both mutation receipts proven unable to masquerade as list records. Production semantics unchanged. Focused x20, focused race, full Beads, helper, vet, staticcheck, architecture, scope, diff-check, and ruff gates pass.",
+        "Cycle 8 ready for review: dependency-list and ready fixtures replaced with complete unprojected data payloads freshly captured from pinned v1.2.2 binary SHA-256 0c999069...c7bb6, including title/status/priority/type/owner/created provenance/timestamps/metadata and all relationship counts. Exact-key assertions prevent future fixture reduction; skew remains derived from the captures. Production unchanged. Focused, x20 repeat, helper, full Beads, vet, staticcheck, architecture, diff-check, and ruff gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -219,15 +220,15 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
       "subtasks": {
-        "T027": "planned",
-        "T028": "planned",
-        "T029": "planned",
-        "T030": "planned",
-        "T031": "planned"
+        "T027": "done",
+        "T028": "done",
+        "T029": "done",
+        "T030": "done",
+        "T031": "done"
       }
     },
     "WP07": {
