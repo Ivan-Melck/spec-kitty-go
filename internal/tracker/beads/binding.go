@@ -1,6 +1,7 @@
 package beads
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -30,6 +31,40 @@ type BindingConfig struct {
 	ConcurrencyMode          tracker.ConcurrencyMode
 	ReadOnly                 bool
 	ExpectedExecutableDigest string
+	ServerIdentity           string
+	ServerEndpoint           string
+	Credentials              map[string]string
+}
+
+type providerConnection struct {
+	serverIdentity string
+	serverEndpoint string
+	credentials    map[string]string
+}
+
+// Open is the production composition seam for the Beads adapter. It resolves
+// an explicit binding and connects it to WP03's bounded process runner.
+func Open(config BindingConfig) (*BoundAdapter, error) {
+	binding, err := ResolveBinding(config)
+	if err != nil {
+		return nil, err
+	}
+	connection, err := connectionFromConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	return newConfiguredBoundAdapter(binding, newAdapter(nil), nil, connection)
+}
+
+// InspectProvider is the complete one-shot production entry for provider
+// preflight and inspection. It ensures callers cannot accidentally construct a
+// protocol runner without the canonical binding boundary.
+func InspectProvider(ctx context.Context, config BindingConfig) (tracker.Inspection, error) {
+	bound, err := Open(config)
+	if err != nil {
+		return tracker.Inspection{}, err
+	}
+	return bound.Inspect(ctx, tracker.InspectRequest{ProjectID: config.ProjectID})
 }
 
 // ResolveBinding canonicalizes an existing executable and provider workspace,
@@ -43,6 +78,9 @@ func ResolveBinding(config BindingConfig) (tracker.TrackerBinding, error) {
 	}
 	if config.ConcurrencyMode != tracker.ConcurrencyEmbeddedSerialized && config.ConcurrencyMode != tracker.ConcurrencyServerMultiwriter {
 		return tracker.TrackerBinding{}, invalidBinding("concurrency mode is unknown", nil)
+	}
+	if _, err := connectionFromConfig(config); err != nil {
+		return tracker.TrackerBinding{}, err
 	}
 	executable, executableInfo, err := canonicalExisting(config.ExecutablePath, false)
 	if err != nil {
@@ -86,6 +124,33 @@ func ResolveBinding(config BindingConfig) (tracker.TrackerBinding, error) {
 		return tracker.TrackerBinding{}, invalidBinding("resolved binding is invalid", err)
 	}
 	return binding, nil
+}
+
+func connectionFromConfig(config BindingConfig) (providerConnection, error) {
+	connection := providerConnection{
+		serverIdentity: config.ServerIdentity,
+		serverEndpoint: config.ServerEndpoint,
+		credentials:    make(map[string]string, len(config.Credentials)),
+	}
+	for key, value := range config.Credentials {
+		if !allowedCredential(key) || strings.IndexByte(key, 0) >= 0 || strings.IndexByte(value, 0) >= 0 {
+			return providerConnection{}, invalidBinding("server credential binding is invalid", nil)
+		}
+		connection.credentials[key] = value
+	}
+	if config.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter {
+		if strings.TrimSpace(connection.serverIdentity) == "" || strings.TrimSpace(connection.serverEndpoint) == "" {
+			return providerConnection{}, invalidBinding("server mode requires pinned server identity and endpoint", nil)
+		}
+		host, hostPresent := connection.credentials["DOLT_SERVER_HOST"]
+		port, portPresent := connection.credentials["DOLT_SERVER_PORT"]
+		if !hostPresent || !portPresent || host == "" || port == "" || host+":"+port != connection.serverEndpoint {
+			return providerConnection{}, invalidBinding("server endpoint must match allowlisted host and port binding", nil)
+		}
+	} else if connection.serverIdentity != "" || connection.serverEndpoint != "" || len(connection.credentials) != 0 {
+		return providerConnection{}, invalidBinding("embedded mode cannot carry server connection facts", nil)
+	}
+	return connection, nil
 }
 
 func canonicalExisting(path string, directory bool) (string, os.FileInfo, error) {
