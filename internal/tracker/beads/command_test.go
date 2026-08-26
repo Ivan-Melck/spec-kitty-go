@@ -331,6 +331,53 @@ func TestRealV122MissingShowMapsNotFoundFromStdoutEnvelope(t *testing.T) {
 	}
 }
 
+func TestUncodedDataErrorEnvelopeIsConclusiveOnlyForShow(t *testing.T) {
+	binding := defaultBinding("/opt/bd", "/srv/beads", "/repo")
+	binding.timeout = time.Second
+	tests := []struct {
+		name     string
+		build    func() (command, error)
+		wantKind tracker.ErrorKind
+		outcome  mutationOutcome
+		recovery string
+	}{
+		{"show", func() (command, error) { return newShowCommand(binding, "missing") }, tracker.ErrorNotFound, mutationUnknown, "repair_provider_state"},
+		{"mutating show mutant", func() (command, error) {
+			request, err := newShowCommand(binding, "missing")
+			request.mutating = true
+			return request, err
+		}, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"list read", func() (command, error) { return newListCommand(binding) }, tracker.ErrorMalformedProtocol, mutationUnknown, "repair_provider_binding"},
+		{"create", func() (command, error) { return newCreateCommand(binding, createValues{title: "work"}) }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"update", func() (command, error) { return newUpdateCommand(binding, updateValues{id: "work", title: "changed"}) }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"dependency", func() (command, error) { return newDependencyAddCommand(binding, "blocked", "blocker") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"comment", func() (command, error) { return newCommentAppendCommand(binding, "work", "body") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+		{"assignment", func() (command, error) { return newAtomicClaimCommand(binding, "work") }, tracker.ErrorAmbiguous, mutationAmbiguous, "observe_then_reconcile"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request, err := test.build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			exit := 1
+			runner := &fakeRunner{result: commandResult{
+				kind: request.kind, started: true, exitCode: &exit,
+				stdout: []byte(realV122MissingShowStdout), stderr: []byte(realV122MissingShowStderr),
+				mutationOutcome: mutationUnknown,
+			}}
+			response, err := newAdapter(runner).execute(context.Background(), request)
+			if !tracker.IsKind(err, test.wantKind) || response.result.mutationOutcome != test.outcome {
+				t.Fatalf("kind=%v outcome=%s response=%+v", err, response.result.mutationOutcome, response.result)
+			}
+			var portable *tracker.Error
+			if !errors.As(err, &portable) || portable.RecoveryAction() != test.recovery {
+				t.Fatalf("portable=%+v", portable)
+			}
+		})
+	}
+}
+
 func TestNonzeroStderrJSONMutantNeverSelectsProviderState(t *testing.T) {
 	adapter := newAdapter(newProcessRunner())
 	mutant := helperCommand(t, "stderr-error-mutant", false, 5*time.Second, 1024, 1024)
