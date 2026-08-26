@@ -1,0 +1,139 @@
+{
+  "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
+  "mission_number": "",
+  "mission_type": "software-dev",
+  "overall_verdict": "pass",
+  "criteria": [
+    {
+      "criterion_id": "FR-001",
+      "description": "Verify FR-001 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:28:40.434367+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-002",
+      "description": "Verify FR-002 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:28:44.303931+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-003",
+      "description": "Verify FR-003 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:28:48.398309+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-004",
+      "description": "Verify FR-004 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:28:52.582428+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-005",
+      "description": "Verify FR-005 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:28:56.304908+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-006",
+      "description": "Verify FR-006 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:00.387466+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-007",
+      "description": "Verify FR-007 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:04.347822+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-008",
+      "description": "Verify FR-008 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:08.299596+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-009",
+      "description": "Verify FR-009 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:12.467507+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-010",
+      "description": "Verify FR-010 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:16.304106+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-011",
+      "description": "Verify FR-011 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:20.287832+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-012",
+      "description": "Verify FR-012 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:24.263852+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    },
+    {
+      "criterion_id": "FR-013",
+      "description": "Verify FR-013 is satisfied",
+      "proof_type": "approved-work-package-plus-frozen-closeout-campaign",
+      "evidence": "docs/phase1-evidence/closeout-results.json@94bb4db; canonical WP review_result events",
+      "pass_fail": "pass",
+      "verified_by": "reviewer-renata",
+      "verified_at": "2026-08-26T05:29:34.986551+00:00",
+      "notes": "TODO: replace with a real acceptance criterion"
+    }
+  ],
+  "negative_invariants": []
+}
