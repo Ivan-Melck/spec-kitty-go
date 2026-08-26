@@ -1,7 +1,9 @@
 package beads
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -9,9 +11,34 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
+const realV122AssignmentRecord = `{"id":"skt-a1b2","status":"in_progress","assignee":"actor-a","metadata":{"foreign":{"number":9007199254740993,"preserved":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-assign","assignment_marker":"operation-assign","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"assignment fixture","content_digest":"diagnostic-only"}},"updated_at":"2026-08-26T12:01:00Z"}`
+
+func TestRealV122AssignmentMutationRequiresOneArrayRecord(t *testing.T) {
+	record, err := decodeSingularAssignmentMutation([]byte(`[` + realV122AssignmentRecord + `]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.issue.externalID != "skt-a1b2" || pointerValue(record.issue.assignee) != "actor-a" || pointerValue(record.status) != "in_progress" || record.issue.document.kitty.AssignmentMarker != "operation-assign" {
+		t.Fatalf("assignment record lost visible state: %#v", record)
+	}
+	if !bytes.Contains(record.issue.metadata, []byte(`9007199254740993`)) || !bytes.Contains(record.issue.metadata, []byte(`"preserved":true`)) {
+		t.Fatalf("assignment record lost foreign metadata: %s", record.issue.metadata)
+	}
+	for _, payload := range []string{
+		realV122AssignmentRecord,
+		`[]`,
+		`[` + realV122AssignmentRecord + `,` + realV122AssignmentRecord + `]`,
+	} {
+		if _, err := decodeSingularAssignmentMutation([]byte(payload)); !tracker.IsKind(err, tracker.ErrorMalformedProtocol) {
+			t.Fatalf("singular assignment mutant %s error=%v", payload, err)
+		}
+	}
+}
+
 func TestAssignmentObservationProjectionReplayAndSafeRefusal(t *testing.T) {
 	ctx := context.Background()
 	bound, runner, reference := assignmentFixture(t, "original")
+	preserveAssignmentForeignMetadata(t, runner, reference.ExternalID)
 	before, err := bound.ObserveAssignment(ctx, reference)
 	if err != nil {
 		t.Fatal(err)
@@ -34,6 +61,12 @@ func TestAssignmentObservationProjectionReplayAndSafeRefusal(t *testing.T) {
 	if got := runner.mutationCount(); got != mutations+1 {
 		t.Fatalf("assignment mutation count = %d, want %d", got, mutations+1)
 	}
+	runner.mu.Lock()
+	preservedMetadata := append([]byte(nil), runner.issues[reference.ExternalID].Metadata...)
+	runner.mu.Unlock()
+	if !bytes.Contains(preservedMetadata, []byte(`9007199254740993`)) || !bytes.Contains(preservedMetadata, []byte(`"preserved":true`)) {
+		t.Fatalf("assignment update lost foreign metadata: %s", preservedMetadata)
+	}
 	replayed, err := bound.ProjectAssignment(ctx, request)
 	if err != nil || !replayed.Replayed || !replayed.Noop || runner.mutationCount() != mutations+1 {
 		t.Fatalf("same-operation replay duplicated mutation: result=%+v err=%v mutations=%d", replayed, err, runner.mutationCount())
@@ -49,6 +82,34 @@ func TestAssignmentObservationProjectionReplayAndSafeRefusal(t *testing.T) {
 	}
 	if runner.mutationCount() != mutations+1 {
 		t.Fatalf("safe compensation refusal wrote provider state: %d", runner.mutationCount())
+	}
+}
+
+func TestAssignmentRejectsNonSingularMutationResponsesAsAmbiguous(t *testing.T) {
+	for _, shape := range []string{"object", "empty", "multiple"} {
+		t.Run(shape, func(t *testing.T) {
+			ctx := context.Background()
+			bound, runner, reference := assignmentFixture(t, "original")
+			before, err := bound.ObserveAssignment(ctx, reference)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bound.adapter = newAdapter(&assignmentResponseShapeRunner{delegate: runner, shape: shape})
+			request := tracker.ProjectAssignmentRequest{
+				ExternalRef: reference, OperationID: "operation-shape", Assignee: "actor-a",
+				ExpectedObservation: before.Observation.Revision, RequiredGuarantee: tracker.AssignmentUnguarded,
+			}
+			result, err := bound.ProjectAssignment(ctx, request)
+			if !tracker.IsKind(err, tracker.ErrorAmbiguous) {
+				t.Fatalf("%s response was not rejected as ambiguous: result=%+v err=%v", shape, result, err)
+			}
+			if !exactAssignment(result.Observation, request.Assignee, request.OperationID.String()) {
+				t.Fatalf("%s response lost independently observed conflict evidence: %+v", shape, result)
+			}
+			if runner.mutationCount() != 2 { // fixture create plus exactly one assignment update
+				t.Fatalf("%s response duplicated mutation: %d", shape, runner.mutationCount())
+			}
+		})
 	}
 }
 
@@ -242,6 +303,57 @@ func assignmentFixture(t *testing.T, assignee string) (*BoundAdapter, *catalogRu
 		runner.mu.Unlock()
 	}
 	return bound, runner, reference
+}
+
+func preserveAssignmentForeignMetadata(t *testing.T, runner *catalogRunner, externalID string) {
+	t.Helper()
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	issue := runner.issues[externalID]
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(issue.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata["foreign"] = json.RawMessage(`{"number":9007199254740993,"preserved":true}`)
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue.Metadata = encoded
+	issue.UpdatedAt = runner.tick()
+	runner.issues[externalID] = issue
+}
+
+type assignmentResponseShapeRunner struct {
+	delegate commandRunner
+	shape    string
+}
+
+func (runner *assignmentResponseShapeRunner) run(ctx context.Context, request command) commandResult {
+	result := runner.delegate.run(ctx, request)
+	if request.kind != CommandUpdate || result.exitCode == nil || *result.exitCode != 0 {
+		return result
+	}
+	var response struct {
+		SchemaVersion uint16            `json:"schema_version"`
+		Data          []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(result.stdout, &response); err != nil || len(response.Data) != 1 {
+		return result
+	}
+	var data any
+	switch runner.shape {
+	case "object":
+		data = response.Data[0]
+	case "empty":
+		data = []json.RawMessage{}
+	case "multiple":
+		data = []json.RawMessage{response.Data[0], response.Data[0]}
+	default:
+		return result
+	}
+	result.stdout, _ = json.Marshal(map[string]any{"schema_version": response.SchemaVersion, "data": data})
+	return result
 }
 
 type countingAssignmentLocker struct {

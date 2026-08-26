@@ -182,7 +182,7 @@ func newAtomicClaimCommand(binding commandBinding, id string) (command, error) {
 	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
-	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedObject, true, false)
+	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedArray, true, false)
 }
 
 func newDependencyAddCommand(binding commandBinding, blocked, blocker string) (command, error) {
