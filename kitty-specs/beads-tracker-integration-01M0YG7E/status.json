@@ -207,7 +207,8 @@
         "Correction cycle 2: complete-catalog readiness validation, consistent fail-closed capabilities, and bounded provider-neutral graph/discussion caller; approved command/catalog/inspect/helpercmd ownership expansion retained. Forced only past the known inherited planning-artifact lane guard.",
         "Correction cycle 3: recording Graph/Discussion doubles prove exact helper mutation dispatch, request translation, result forwarding, error propagation, and deletion sensitivity. Forced only past the known inherited planning-artifact lane guard.",
         "Correction cycle 4: every mutation helper test now asserts a complete six-method Graph/Discussion call census on success and sentinel-error paths, with an explicit extra cross-interface-call mutant control. Forced only past the known inherited planning-artifact lane guard.",
-        "Review passed: full helper call census, mutant control, and prior closures verified"
+        "Review passed: full helper call census, mutant control, and prior closures verified",
+        "Ready for review: exact v1.2.2 dependency-list id/dependency_type and comment text mappings; object depends_on_id mutation receipts and ready count fields retained; malformed legacy shapes rejected; asymmetric graph, full-catalog readiness, append/replay ambiguity, call census, and authority boundaries preserved. Focused, full, count=20, race, helper, tracker-wide, vet, staticcheck, architecture, scope, and diff-scoped ruff gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
