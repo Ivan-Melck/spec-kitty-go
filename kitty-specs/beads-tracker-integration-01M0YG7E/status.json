@@ -1,7 +1,7 @@
 {
-  "event_count": 165,
-  "last_event_id": "01M0ZFD46NPB18V0TFV1QYKC2M",
-  "materialized_at": "2026-08-26T16:45:41.453687+00:00",
+  "event_count": 172,
+  "last_event_id": "01M0ZJDJMTS7GBBH3TQ4GHH8MA",
+  "materialized_at": "2026-08-26T17:38:21.978181+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 2,
-    "in_review": 0,
+    "in_progress": 1,
+    "in_review": 1,
     "planned": 2
   },
   "work_packages": {
@@ -273,19 +273,20 @@
       "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 1,
+      "force_count": 2,
       "lane": "in_progress",
-      "last_event_id": "01M0ZFD46NPB18V0TFV1QYKC2M",
-      "last_transition_at": "2026-08-26T16:45:41.453687+00:00",
+      "last_event_id": "01M0ZHYYKAMEMY0E21W0GR4V1E",
+      "last_transition_at": "2026-08-26T17:30:22.685590+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass."
+        "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass.",
+        "Cycle 2 candidate ba6a6d4. Shared 12-case registry passes durable fake and scripted dishonest provider; exact 25-case typed fault census includes real create/update/dependency/comment/assignment apply-before-loss, universal audit and real stale probe; TrackerSaga plus reopened SQLite preserves 100/100 human assignments. Gates: conformance count=10, adversarial repetition count=10 (457.983s), human 100/100 (113.048s), race full Beads/Conformance (198.930s) plus final focused race (31.903s), architecture, vet, staticcheck, compile-all, diff-check all pass. Ruff diff-scoped: no Python files, not applicable."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP08-adversarial-portable-conformance/review-cycle-1.md",
-        "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP08-adversarial-portable-conformance/review-cycle-1.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP08-adversarial-portable-conformance/review-cycle-2.md",
+        "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP08-adversarial-portable-conformance/review-cycle-2.md",
         "reviewer": "user",
         "verdict": "changes_requested"
       },
@@ -305,15 +306,26 @@
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 0,
-      "lane": "in_progress",
-      "last_event_id": "01M0Z5WB29PFG29AKX97G6QNR6",
-      "last_transition_at": "2026-08-26T13:59:14.241774+00:00",
+      "force_count": 1,
+      "lane": "in_review",
+      "last_event_id": "01M0ZJDJMTS7GBBH3TQ4GHH8MA",
+      "last_transition_at": "2026-08-26T17:38:21.978181+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: pinned Beads v1.2.2 rebuilt at reviewed digest; 11/11 commit-bound real-provider scenarios pass across embedded and pinned shared-server modes, including native backup/restore and 1,000-create contention with zero collisions or duplicate mappings. Cross-WP corrections are explicitly evidence-driven: v1.2.2 comment --author propagation and external server identity without a fabricated local data_dir."
+      ],
       "provider": "__resolved_provider_absent__",
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6"
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T043": "done",
+        "T044": "done",
+        "T045": "done",
+        "T046": "done",
+        "T047": "done",
+        "T048": "done"
+      }
     },
     "WP10": {
       "actor": "finalize-tasks",
