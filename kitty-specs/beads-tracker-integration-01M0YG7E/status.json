@@ -83,7 +83,7 @@
     },
     "WP03": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -95,6 +95,7 @@
         "Ready for review: closed typed bd command vocabulary, bounded POSIX process-group runner, schema-1 envelope/error and JSONL decoders, stable redacted diagnostics, ambiguity monotonicity, and adversarial tests; protocol.go 100% statement coverage; focused race/repeat/vet/staticcheck plus contract/scope campaigns pass."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP03-bounded-beads-json-command-protocol/review-cycle-1.md",
         "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP03-bounded-beads-json-command-protocol/review-cycle-1.md",
@@ -102,15 +103,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T010": "done",
-        "T011": "done",
-        "T012": "done",
-        "T013": "done",
-        "T014": "done",
-        "T015": "done"
+        "T010": "planned",
+        "T011": "planned",
+        "T012": "planned",
+        "T013": "planned",
+        "T014": "planned",
+        "T015": "planned"
       }
     },
     "WP04": {
