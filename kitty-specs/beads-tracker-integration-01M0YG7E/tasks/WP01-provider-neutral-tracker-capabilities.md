@@ -15,10 +15,7 @@ requirement_refs:
 - NFR-014
 planning_base_branch: feat/beads-tracker-integration
 merge_target_branch: feat/beads-tracker-integration
-branch_strategy: Planning artifacts for this mission were generated on feat/beads-tracker-integration. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/beads-tracker-integration unless the human explicitly redirects the landing branch.
-base_branch: kitty/mission-beads-tracker-integration-01M0YG7E
-base_commit: 785e49262ab809e85804d64052093eab482dd8d9
-created_at: '2026-08-26T09:02:02.948003+00:00'
+branch_strategy: explicit
 subtasks:
 - T001
 - T002

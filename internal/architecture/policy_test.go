@@ -256,6 +256,36 @@ func TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority(t *t
 	}
 }
 
+// WP08 coordination guard: conformance is deliberately test-only quality
+// tooling. It may exercise the provider-neutral contract and adapters, but no
+// authority package may acquire it as a production dependency.
+func TestDefaultPolicyPinsTrackerConformanceAsOneWayQualityTooling(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conformance := module + "/internal/tracker/conformance"
+	tier, err := policy.Classify(conformance)
+	if err != nil || tier.Name != TierQuality || tier.Production {
+		t.Fatalf("conformance classification=%+v err=%v", tier, err)
+	}
+
+	for _, source := range []string{module + "/internal/execution", module + "/internal/workspace", module + "/internal/review", module + "/internal/integration"} {
+		graph := fixtureGraph([]string{source, conformance}, ImportEdge{SourcePackage: source, TargetPackage: conformance, Kind: ImportModuleLocal})
+		graph.ModulePath = module
+		assertExactViolation(t, policy, graph, RuleLocalDirection, source, TierAuthority, conformance, TierQuality)
+	}
+
+	for _, target := range []string{module + "/internal/tracker", module + "/internal/tracker/fake", module + "/internal/tracker/beads"} {
+		graph := fixtureGraph([]string{conformance, target}, ImportEdge{SourcePackage: conformance, TargetPackage: target, Kind: ImportModuleLocal})
+		graph.ModulePath = module
+		if err := policy.Check(graph); err != nil {
+			t.Fatalf("quality-to-test-dependency control rejected target=%s: %v", target, err)
+		}
+	}
+}
+
 func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T) {
 	policy := fixturePolicy(t)
 	for index := range policy.Tiers {
