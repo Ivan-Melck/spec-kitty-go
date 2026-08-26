@@ -1,0 +1,525 @@
+package beads
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"reflect"
+	"runtime"
+	"sort"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/tracker"
+)
+
+type storedCatalogIssue struct {
+	ID          string
+	Title       string
+	Description string
+	Acceptance  string
+	Metadata    json.RawMessage
+	Assignee    string
+	UpdatedAt   string
+}
+
+func (issue storedCatalogIssue) wire() map[string]any {
+	return map[string]any{
+		"id": issue.ID, "title": issue.Title, "description": issue.Description,
+		"acceptance": issue.Acceptance, "metadata": issue.Metadata, "assignee": issue.Assignee,
+		"updated_at": issue.UpdatedAt, "future_optional": map[string]any{"ignored": true},
+	}
+}
+
+type catalogRunner struct {
+	mu                   sync.Mutex
+	workspace            string
+	databaseID           string
+	issues               map[string]storedCatalogIssue
+	calls                []CommandKind
+	argvs                [][]string
+	nextID               uint64
+	clock                uint64
+	ambiguousKind        CommandKind
+	applyBeforeAmbiguous bool
+}
+
+func (runner *catalogRunner) run(_ context.Context, request command) commandResult {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	runner.calls = append(runner.calls, request.kind)
+	runner.argvs = append(runner.argvs, request.renderedArgv())
+	result := commandResult{kind: request.kind, started: true, mutationOutcome: mutationUnknown}
+	zero := 0
+	result.exitCode = &zero
+	var data any
+	switch request.kind {
+	case CommandVersion:
+		data = map[string]any{"version": SupportedBeadsVersion, "build": "catalog-test"}
+	case CommandWhere:
+		data = map[string]any{"workspace_path": runner.workspace, "database_id": runner.databaseID}
+	case CommandInfo:
+		data = map[string]any{"protocol_schema": 1, "storage_mode": tracker.ConcurrencyEmbeddedSerialized, "read_only": false}
+	case CommandList:
+		ids := make([]string, 0, len(runner.issues))
+		for id := range runner.issues {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		items := make([]map[string]any, 0, len(ids))
+		for _, id := range ids {
+			items = append(items, runner.issues[id].wire())
+		}
+		data = items
+	case CommandShow:
+		id := request.argv[1]
+		issue, ok := runner.issues[id]
+		if !ok {
+			return providerFailureResult(request.kind, "not_found")
+		}
+		data = issue.wire()
+	case CommandCreate:
+		if runner.ambiguousKind == CommandCreate && !runner.applyBeforeAmbiguous {
+			runner.ambiguousKind = ""
+			return ambiguousResult(request.kind)
+		}
+		issue := runner.createIssue(request.argv)
+		data = issue.wire()
+		result.mutationOutcome = mutationApplied
+		if runner.ambiguousKind == CommandCreate {
+			runner.ambiguousKind = ""
+			return ambiguousResult(request.kind)
+		}
+	case CommandUpdate:
+		if runner.ambiguousKind == CommandUpdate && !runner.applyBeforeAmbiguous {
+			runner.ambiguousKind = ""
+			return ambiguousResult(request.kind)
+		}
+		id := request.argv[1]
+		issue, ok := runner.issues[id]
+		if !ok {
+			return providerFailureResult(request.kind, "not_found")
+		}
+		applyUpdateArgv(&issue, request.argv)
+		issue.UpdatedAt = runner.tick()
+		runner.issues[id] = issue
+		data = issue.wire()
+		result.mutationOutcome = mutationApplied
+		if runner.ambiguousKind == CommandUpdate {
+			runner.ambiguousKind = ""
+			return ambiguousResult(request.kind)
+		}
+	default:
+		data = map[string]any{"ok": true}
+	}
+	payload, _ := json.Marshal(map[string]any{"schema_version": 1, "data": data})
+	result.stdout = payload
+	return result
+}
+
+func (runner *catalogRunner) createIssue(argv []string) storedCatalogIssue {
+	runner.nextID++
+	id := fmt.Sprintf("bd-%016x", runner.nextID*0x9e3779b97f4a7c15)
+	issue := storedCatalogIssue{ID: id, UpdatedAt: runner.tick()}
+	applyUpdateArgv(&issue, argv)
+	runner.issues[id] = issue
+	return issue
+}
+
+func (runner *catalogRunner) tick() string {
+	runner.clock++
+	return time.Unix(1_800_000_000, int64(runner.clock)).UTC().Format(time.RFC3339Nano)
+}
+
+func applyUpdateArgv(issue *storedCatalogIssue, argv []string) {
+	for index := 0; index+1 < len(argv); index++ {
+		switch argv[index] {
+		case "--title":
+			issue.Title = argv[index+1]
+		case "--description":
+			issue.Description = argv[index+1]
+		case "--acceptance":
+			issue.Acceptance = argv[index+1]
+		case "--metadata":
+			issue.Metadata = append(json.RawMessage(nil), argv[index+1]...)
+		case "--assignee":
+			issue.Assignee = argv[index+1]
+		}
+	}
+}
+
+func ambiguousResult(kind CommandKind) commandResult {
+	return commandResult{kind: kind, started: true, cancelCause: context.DeadlineExceeded, mutationOutcome: mutationAmbiguous}
+}
+
+func providerFailureResult(kind CommandKind, code string) commandResult {
+	exit := 7
+	return commandResult{
+		kind: kind, started: true, exitCode: &exit, mutationOutcome: mutationNotApplied,
+		stderr: []byte(fmt.Sprintf(`{"schema_version":1,"error":"provider refusal","code":%q}`, code)),
+	}
+}
+
+func (runner *catalogRunner) snapshotCalls() []CommandKind {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return append([]CommandKind(nil), runner.calls...)
+}
+
+func (runner *catalogRunner) mutationCount() int {
+	count := 0
+	for _, kind := range runner.snapshotCalls() {
+		if kind == CommandCreate || kind == CommandUpdate {
+			count++
+		}
+	}
+	return count
+}
+
+func (runner *catalogRunner) issueCount() int {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return len(runner.issues)
+}
+
+type serialCatalogLocker struct{ mutex sync.Mutex }
+type serialCatalogLock struct{ mutex *sync.Mutex }
+
+func (locker *serialCatalogLocker) acquire(context.Context, tracker.TrackerBinding) (acquiredWriterLock, error) {
+	locker.mutex.Lock()
+	return &serialCatalogLock{mutex: &locker.mutex}, nil
+}
+func (lock *serialCatalogLock) release() { lock.mutex.Unlock() }
+
+func newCatalogTestAdapter(t *testing.T) (*BoundAdapter, *catalogRunner) {
+	t.Helper()
+	bound, inspection := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "catalog-db")
+	runner := &catalogRunner{workspace: inspection.workspace, databaseID: "catalog-db", issues: make(map[string]storedCatalogIssue)}
+	bound.adapter = newAdapter(runner)
+	bound.locker = &serialCatalogLocker{}
+	return bound, runner
+}
+
+func catalogCriterion() []tracker.Criterion {
+	return []tracker.Criterion{{ID: "criterion-1", Text: "the behavior is verified", Verifier: tracker.VerifierTest, Required: true, EvidenceHint: "focused test"}}
+}
+
+func createRequest(index int) tracker.CreateWorkRequest {
+	return tracker.CreateWorkRequest{
+		ProjectID: "project-1", WorkID: ids.WorkID(fmt.Sprintf("work-%d", index)), OperationID: ids.OperationID(fmt.Sprintf("operation-create-%d", index)),
+		Title: fmt.Sprintf("Work %d", index), Description: "description", DesignContext: "design", Criteria: catalogCriterion(), MetadataSchema: 1,
+	}
+}
+
+func updateRequest(record tracker.WorkRecord, operation string) tracker.UpdateWorkRequest {
+	return tracker.UpdateWorkRequest{
+		ExternalRef: record.ExternalRef, OperationID: ids.OperationID(operation), ExpectedObservation: record.Observation.Revision,
+		RequiredGuard: tracker.UpdateUnguarded, Title: record.Title + " updated", Description: record.Description + " updated",
+		DesignContext: record.DesignContext + " updated", Criteria: catalogCriterion(),
+	}
+}
+
+func TestCatalogCreateReadReplayAndChangedReplay(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	request := createRequest(1)
+	created, err := bound.CreateWork(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Replayed || created.Record.ExternalRef.WorkID != request.WorkID || created.Record.ExternalRef.ExternalID == "" || created.Record.Observation.Revision == 0 || len(created.Record.Observation.Digest) != 64 {
+		t.Fatalf("created=%#v", created)
+	}
+	if got, want := runner.snapshotCalls(), []CommandKind{CommandVersion, CommandWhere, CommandInfo, CommandList, CommandCreate, CommandShow}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("create command order=%v want=%v", got, want)
+	}
+	read, err := bound.ReadWork(context.Background(), created.Record.ExternalRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Title != request.Title || read.Description != request.Description || read.DesignContext != request.DesignContext || len(read.Criteria()) != 1 || read.Observation.Revision != created.Record.Observation.Revision {
+		t.Fatalf("read=%#v criteria=%#v", read, read.Criteria())
+	}
+	replayed, err := bound.CreateWork(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.Replayed || !replayed.Noop || replayed.Record.ExternalRef.ExternalID != created.Record.ExternalRef.ExternalID || runner.issueCount() != 1 {
+		t.Fatalf("replay=%#v count=%d", replayed, runner.issueCount())
+	}
+	request.Title = "changed replay"
+	if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorInvalidRequest) || runner.issueCount() != 1 {
+		t.Fatalf("changed replay error=%v count=%d", err, runner.issueCount())
+	}
+	if got := countKind(runner.snapshotCalls(), CommandCreate); got != 1 {
+		t.Fatalf("create commands=%d calls=%v", got, runner.snapshotCalls())
+	}
+}
+
+func TestCatalogCapabilitiesDescribeImplementedGuarantees(t *testing.T) {
+	bound, _ := newCatalogTestAdapter(t)
+	capabilities, err := bound.Capabilities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capabilities.CatalogRead != tracker.SupportSupported || capabilities.CatalogCreate != tracker.SupportSupported ||
+		capabilities.CatalogUpdate != tracker.UpdateUnguarded || capabilities.ObservationRevision != tracker.ObservationRevisionContentDerived ||
+		capabilities.ConcurrentWriters != tracker.ConcurrentWritersAdapterSerialized || capabilities.SafeCompensation != tracker.CompensationUnsupported {
+		t.Fatalf("capabilities=%#v", capabilities)
+	}
+}
+
+func TestCatalogDuplicateMappingIsAConflictWithoutSecondMutation(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	request := createRequest(1)
+	created, err := bound.CreateWork(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	duplicate := runner.issues[created.Record.ExternalRef.ExternalID]
+	duplicate.ID = "bd-duplicate"
+	runner.issues[duplicate.ID] = duplicate
+	runner.mu.Unlock()
+	before := runner.mutationCount()
+	if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
+		t.Fatalf("error=%v mutations=%d", err, runner.mutationCount())
+	}
+}
+
+func TestCatalogAmbiguousCreateRecoveryAndAbsenceProof(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	runner.ambiguousKind, runner.applyBeforeAmbiguous = CommandCreate, true
+	mutation, err := bound.CreateWork(context.Background(), createRequest(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mutation.Replayed || mutation.Noop || runner.issueCount() != 1 || runner.mutationCount() != 1 {
+		t.Fatalf("recovered=%#v count=%d mutations=%d", mutation, runner.issueCount(), runner.mutationCount())
+	}
+
+	bound, runner = newCatalogTestAdapter(t)
+	runner.ambiguousKind, runner.applyBeforeAmbiguous = CommandCreate, false
+	_, err = bound.CreateWork(context.Background(), createRequest(2))
+	var portable *tracker.Error
+	if !tracker.IsKind(err, tracker.ErrorAmbiguous) || !errors.As(err, &portable) || portable.RecoveryAction() != "retry_create_after_complete_absence" || runner.issueCount() != 0 || runner.mutationCount() != 1 {
+		t.Fatalf("error=%v portable=%#v count=%d mutations=%d", err, portable, runner.issueCount(), runner.mutationCount())
+	}
+}
+
+func TestCatalogReadDetectsEqualTimestampContentDriftAndMappingConflict(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	created, err := bound.CreateWork(context.Background(), createRequest(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := created.Record.Observation.Revision
+	runner.mu.Lock()
+	issue := runner.issues[created.Record.ExternalRef.ExternalID]
+	issue.Title = "human changed at same timestamp"
+	runner.issues[issue.ID] = issue
+	runner.mu.Unlock()
+	after, err := bound.ReadWork(context.Background(), created.Record.ExternalRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after.Observation.Revision || created.Record.Observation.ProviderUpdatedAt != after.Observation.ProviderUpdatedAt {
+		t.Fatalf("before=%d after=%d timestamps=%s/%s", before, after.Observation.Revision, created.Record.Observation.ProviderUpdatedAt, after.Observation.ProviderUpdatedAt)
+	}
+	conflicting := created.Record.ExternalRef
+	conflicting.WorkID = "other-work"
+	if _, err := bound.ReadWork(context.Background(), conflicting); !tracker.IsKind(err, tracker.ErrorRevisionConflict) {
+		t.Fatalf("mapping conflict=%v", err)
+	}
+}
+
+func TestCatalogGuardedUpdateRefusesBeforePreflightLockOrMutation(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	request := tracker.UpdateWorkRequest{
+		ExternalRef: tracker.ExternalWorkRef{ProjectID: "project-1", WorkID: "work-1", Provider: beadsProvider, ExternalID: "bd-1", MetadataSchema: 1, CreatedByOperation: "operation-create"},
+		OperationID: "operation-update", ExpectedObservation: 1, RequiredGuard: tracker.UpdateGuarded,
+		Title: "title", Criteria: catalogCriterion(),
+	}
+	before := len(runner.snapshotCalls())
+	if _, err := bound.UpdateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorGuardedUpdateUnsupported) {
+		t.Fatalf("error=%v", err)
+	}
+	if calls := runner.snapshotCalls()[before:]; len(calls) != 0 {
+		t.Fatalf("guarded refusal executed commands: %v", calls)
+	}
+}
+
+func TestCatalogUnguardedUpdatePreservesMetadataAndHonestGuarantee(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	created, err := bound.CreateWork(context.Background(), createRequest(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.Record.ExternalRef.ExternalID
+	runner.mu.Lock()
+	issue := runner.issues[id]
+	var root map[string]json.RawMessage
+	_ = json.Unmarshal(issue.Metadata, &root)
+	root["human"] = json.RawMessage(`{"keep":true}`)
+	var namespace map[string]json.RawMessage
+	_ = json.Unmarshal(root[metadataNamespace], &namespace)
+	namespace["future"] = json.RawMessage(`{"keep":true}`)
+	root[metadataNamespace], _ = json.Marshal(namespace)
+	issue.Metadata, _ = json.Marshal(root)
+	runner.issues[id] = issue
+	runner.mu.Unlock()
+	fresh, err := bound.ReadWork(context.Background(), created.Record.ExternalRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := updateRequest(fresh, "operation-update")
+	mutation, err := bound.UpdateWork(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutation.Guarantee != tracker.UpdateUnguarded || mutation.Replayed || mutation.Record.Title != request.Title || mutation.Record.ExternalRef.CreatedByOperation != created.Record.ExternalRef.CreatedByOperation {
+		t.Fatalf("mutation=%#v", mutation)
+	}
+	runner.mu.Lock()
+	updated := runner.issues[id]
+	runner.mu.Unlock()
+	_ = json.Unmarshal(updated.Metadata, &root)
+	_ = json.Unmarshal(root[metadataNamespace], &namespace)
+	if string(root["human"]) != `{"keep":true}` || string(namespace["future"]) != `{"keep":true}` {
+		t.Fatalf("metadata=%s", updated.Metadata)
+	}
+	document, err := decodeMetadata(updated.Metadata)
+	if err != nil || document.kitty.CreatedByOperation != "operation-create-1" || document.kitty.LastOperation != "operation-update" {
+		t.Fatalf("document=%#v error=%v", document.kitty, err)
+	}
+}
+
+func TestCatalogStaleAndAmbiguousUpdateClassification(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	created, err := bound.CreateWork(context.Background(), createRequest(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := updateRequest(created.Record, "operation-stale")
+	stale.ExpectedObservation++
+	beforeMutations := runner.mutationCount()
+	if _, err := bound.UpdateWork(context.Background(), stale); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != beforeMutations {
+		t.Fatalf("stale error=%v mutations=%d", err, runner.mutationCount())
+	}
+
+	fresh, err := bound.ReadWork(context.Background(), created.Record.ExternalRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.ambiguousKind, runner.applyBeforeAmbiguous = CommandUpdate, true
+	runner.mu.Unlock()
+	request := updateRequest(fresh, "operation-ambiguous")
+	mutation, err := bound.UpdateWork(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mutation.Replayed || mutation.Guarantee != tracker.UpdateUnguarded || mutation.Record.Title != request.Title {
+		t.Fatalf("mutation=%#v", mutation)
+	}
+}
+
+func TestCatalogReadLatency100Items(t *testing.T) {
+	bound, _ := newCatalogTestAdapter(t)
+	references := make([]tracker.ExternalWorkRef, 100)
+	for index := range references {
+		created, err := bound.CreateWork(context.Background(), createRequest(index+1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		references[index] = created.Record.ExternalRef
+	}
+	durations := make([]time.Duration, 200)
+	for index := range durations {
+		started := time.Now()
+		if _, err := bound.ReadWork(context.Background(), references[(index*37)%len(references)]); err != nil {
+			t.Fatal(err)
+		}
+		durations[index] = time.Since(started)
+	}
+	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+	p50, p95, maximum := durations[len(durations)/2], durations[(len(durations)*95)/100], durations[len(durations)-1]
+	t.Logf("catalog latency samples=%d p50=%s p95=%s max=%s runtime=%s/%s provider=portable-memory", len(durations), p50, p95, maximum, runtime.GOOS, runtime.GOARCH)
+	if os.Getenv("SPEC_KITTY_QUALIFICATION") == "1" && p95 > 500*time.Millisecond {
+		t.Fatalf("qualification p95=%s exceeds 500ms", p95)
+	}
+}
+
+func TestConcurrentCreateIdentity1000(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	const count = 1000
+	const workers = 20
+	requests := make(chan int)
+	results := make(chan tracker.WorkMutation, count)
+	errors := make(chan error, count)
+	barrier := make(chan struct{})
+	var group sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-barrier
+			for index := range requests {
+				mutation, err := bound.CreateWork(context.Background(), createRequest(index))
+				if err != nil {
+					errors <- err
+					continue
+				}
+				results <- mutation
+			}
+		}()
+	}
+	close(barrier)
+	go func() {
+		for index := 1; index <= count; index++ {
+			requests <- index
+		}
+		close(requests)
+		group.Wait()
+		close(results)
+		close(errors)
+	}()
+	seenExternal := make(map[string]struct{}, count)
+	seenWork := make(map[ids.WorkID]struct{}, count)
+	for mutation := range results {
+		seenExternal[mutation.Record.ExternalRef.ExternalID] = struct{}{}
+		seenWork[mutation.Record.ExternalRef.WorkID] = struct{}{}
+		if _, err := bound.ReadWork(context.Background(), mutation.Record.ExternalRef); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for err := range errors {
+		t.Errorf("create: %v", err)
+	}
+	if len(seenExternal) != count || len(seenWork) != count || runner.issueCount() != count {
+		t.Fatalf("external=%d work=%d issues=%d", len(seenExternal), len(seenWork), runner.issueCount())
+	}
+	for index := 1; index <= 25; index++ {
+		mutation, err := bound.CreateWork(context.Background(), createRequest(index*37))
+		if err != nil || !mutation.Replayed {
+			t.Fatalf("replay index=%d mutation=%#v error=%v", index, mutation, err)
+		}
+	}
+	if runner.issueCount() != count {
+		t.Fatalf("replay created duplicates: %d", runner.issueCount())
+	}
+	t.Logf("identity creates=%d workers=%d unique_external=%d topology=%s provider=portable-memory", count, workers, len(seenExternal), tracker.ConcurrentWritersAdapterSerialized)
+}
+
+func countKind(calls []CommandKind, want CommandKind) int {
+	count := 0
+	for _, kind := range calls {
+		if kind == want {
+			count++
+		}
+	}
+	return count
+}
