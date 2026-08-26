@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "mission": "phase-one-architecture-closeout-01M0WZQ9",
+  "work_package": "WP06",
+  "recorded_at_utc": "2026-08-26T05:08:04Z",
+  "source_freeze": {
+    "commit": "6b1db11d0fce9677c32c1d344798efced5fb3f13",
+    "tree": "96e148a5c90badcd3713d09c1b09a23bab46a13b",
+    "dirty": false,
+    "qualification_scope": "integrated Phase 1 kernel, corrected closeout documentation, and executable documentation-contract guards, before this evidence-only update",
+    "supersedes_local_qualification_for_commit": "d5a9ba88e93bad73fad1b741f5addb9a17483ab4"
+  },
+  "reference_host": {
+    "name": "bosslady2",
+    "authority_boundary": "one local machine and filesystem authority",
+    "os": "Linux 7.0.0-28-generic x86_64 GNU/Linux",
+    "filesystem": "ext4",
+    "logical_cpus": 12,
+    "memory_gib_rounded": 63,
+    "go": "go1.26.4 linux/amd64",
+    "git": "2.43.0",
+    "staticcheck": "2026.1 (v0.7.0)",
+    "govulncheck": "v1.6.0",
+    "vulnerability_database_updated_at": "2026-08-25T19:43:14Z",
+    "sqlite_driver": "modernc.org/sqlite v1.57.0",
+    "gapdb_in_module_graph": false
+  },
+  "bounded_quality_qualification": {
+    "command": "make quality",
+    "sample_count": 10,
+    "execution": "serial, same host, same clean commit and tree, no reruns",
+    "started_at_utc": "2026-08-26T04:40:18Z",
+    "finished_at_utc": "2026-08-26T04:53:18Z",
+    "wall_duration_ms_samples": [78078, 77735, 78120, 78140, 77837, 77996, 78009, 77821, 78074, 78097],
+    "runner_duration_ms_samples": [32575, 32606, 32611, 32572, 32630, 32647, 32700, 32644, 32601, 32684],
+    "p95": {
+      "method": "nearest-rank over complete make-quality wall durations",
+      "rank": 10,
+      "duration_ms": 78140,
+      "budget_ms": 480000,
+      "within_budget": true
+    },
+    "verdicts": {"pass": 10, "fail": 0, "aborted": 0, "rerun": 0},
+    "census_per_sample": {
+      "acceptance": {"expected": 3, "started": 3, "terminal": 3, "all_passed": true},
+      "architecture": {"expected": 33, "started": 33, "terminal": 33, "all_passed": true},
+      "scope": {"expected": 2, "started": 2, "terminal": 2, "all_passed": true}
+    },
+    "quality_campaign_sha256": [
+      "43fc57824fff8e04471e67446516bf01d28f54cd7fe44073cc9a399f29c0c7d3",
+      "f4a2b893c5546b728372031887abecc724a76863ac9054b1351a2ed4e9f0c976",
+      "4554be4d976b0f9b2a9cb64c7f497716dd087af69046eff9efaaaf0f54823049",
+      "60712d165d35edacccc03e82fc35b139e92d8dace15755166eecef11d89d7108",
+      "cea62e4bfa5a5465058b3f23735f7f3a1423dcb4c1e663ba812df8c593fc8dc3",
+      "29e9ca07db5ef8d5327a613c9ecc253ef1c5e6f005f62bba1341c0304f3525b8",
+      "cbb68b961a9c1057a499e8ed6e0de2fd3aa83ecda0cf319b899a393e084c9469",
+      "1f7b0c5220c7e5e1ebf18c5069a82fbc67fcab22c642e288880a1777a1e3b623",
+      "67429e37eb246f8b035857c11d0b9353c7b0a4a0732f279aa0c9b28615193519",
+      "8aadb3ebed03d559d8fc0b879ebcfc915ac8b739aa814b5916eb0b95a127248e"
+    ],
+    "raw_log_sha256": [
+      "57f59a6823a6aadf6c690b09836af54450f7dd2707d2cca7ef40e0cc4d78d82b",
+      "d1bb2cbf49552976b004483f002676ab2e39086dcd6959c2292adc19bea0fbb5",
+      "73b5e4e5f92bf577c45adbaaf286f52762e1db0abe8de37bfa6ef084b67a055a",
+      "ce3e98ab6763b6bb1a3760f46e73e1cf6567a5881f0afc355df76d0bed3af0e0",
+      "3fc059f82d4bea8221a733be600b345beda938caa3e2b5b98aa3a42ed597c526",
+      "a665c81f072ecba97c9ad52f01dcba172884c3f64ca986adfc8b117a23442141",
+      "fc46823ab689131344084d83e2c896a75c53989c6a6a71a2092ebb5ee3f24964",
+      "1f56731c47c50ef67e7e2a04b08cd08e98543914a553e53e92f607f2773b0007",
+      "5d7afd3b15a69584453bf91fffe5b0fcb29c90b3f343c03f4c95b5a96066896f",
+      "d2a3ffd26c1356846a8b30f46f3771e817121bc8e8e609da85facb12cd212b68"
+    ],
+    "relative_path_and_content_manifest_sha256": "dd3b785bac20a2fd233ed3d67ddd65993e41180afeb4796fcf47ef72281fb5d7",
+    "retained_local_path": "/tmp/go-kitty3-wp06-r2-quality.FoDLiw"
+  },
+  "full_campaign": {
+    "command": "make full-campaign",
+    "attempt_count": 1,
+    "started_at_utc": "2026-08-26T04:53:30Z",
+    "finished_at_utc": "2026-08-26T05:07:15Z",
+    "wall_duration_ms": 825148,
+    "runner_started_at_utc": "2026-08-26T04:54:48.549378878Z",
+    "runner_finished_at_utc": "2026-08-26T05:07:15.706875004Z",
+    "runner_duration_ms": 747157,
+    "process_exit": 0,
+    "verdict": "pass",
+    "source_commit": "6b1db11d0fce9677c32c1d344798efced5fb3f13",
+    "source_tree": "96e148a5c90badcd3713d09c1b09a23bab46a13b",
+    "source_dirty": false,
+    "profiles": {
+      "quality_prelude": {
+        "verdict": "pass",
+        "runner_duration_ms": 32581,
+        "acceptance": "3 expected, 3 started, 3 terminal, all passed",
+        "architecture": "33 expected, 33 started, 33 terminal, all passed",
+        "scope": "2 expected, 2 started, 2 terminal, all passed"
+      },
+      "full_scenario": {
+        "verdict": "pass",
+        "runner_duration_ms": 747124,
+        "expected": 71,
+        "started": 71,
+        "terminal": 71,
+        "passed": 71,
+        "failed": 0
+      }
+    },
+    "artifact_sha256": {
+      "raw_log": "a11b81a9290b5436e30313f331683840077571f368ad0c9cf1d7f550b7305d11",
+      "quality_campaign": "367dbcd3b86338744acd7e9e934168edac5a0354c6517adeaaa383779f43a675",
+      "full_campaign": "77542690db05b355ae4631398aaa90861f35f180fa4b3439323956f54dd4b855",
+      "acceptance_report": "59fa0ab93d48282aa190b81362cf18e3068e731a78866eb10d8f4c8c8478e046",
+      "architecture_report": "d41315ed2b7551ba21d8dc8b58e65751626b82a437bd5fb25a5362ba878eacad",
+      "scope_report": "99c6112b5f42dadfd2a209997147f211366f3283717c4b46d97247c99cfaddc5",
+      "full_scenario_report": "eaa185ddc1a16e29ed58b537283bf0076fbece2168ee2aec625009e0d0ab6e26",
+      "full_scenario_jsonl": "1af2b05f4a33752f025df479dfdce94ca92c29f7d4db31abf28ae5f5e281b4e8",
+      "relative_path_and_content_manifest": "9f1c222aca1c1577c312e34011b9fe3432994c28a23f835c42cdab2624941ec6"
+    },
+    "retained_local_path": "/tmp/go-kitty3-wp06-r2-full.4VtG9u"
+  },
+  "aggregate_gate_outcomes": {
+    "formatting": "pass",
+    "binary_builds": "pass",
+    "portable_contract_tests": "pass",
+    "race_detector": "pass",
+    "go_vet": "pass",
+    "staticcheck": "pass",
+    "module_verification": "pass",
+    "module_diff_check": "pass",
+    "govulncheck": "pass",
+    "acceptance_profile": "pass",
+    "architecture_and_mutant_profile": "pass",
+    "scope_and_mutant_profile": "pass",
+    "full_scenario_fault_soak_profile": "pass"
+  },
+  "hosted_ci_baseline": {
+    "status": "pending_ten_comparable_samples",
+    "comparable_sample_count": 0,
+    "p95_ms": null,
+    "reason": "the feature commit had not been pushed when this local qualification was recorded; reference-host timing is not presented as hosted-runner timing"
+  },
+  "limitations": [
+    "Evidence is bound to the recorded commit, tree, host, commands, and tool versions.",
+    "The temporary artifact paths are local retention locations and are not repository-portable; their content hashes are the durable references.",
+    "The campaign does not qualify shared-filesystem control-store ownership or remote actors opening the control database.",
+    "SQLite is the active qualified adapter. Gapdb adoption remains a separate migration and human-approval decision.",
+    "Orchestrator API 1.3 is documented as a projection target and was not implemented by this work package."
+  ],
+  "verdict": "pass"
+}

@@ -390,9 +390,8 @@ new run.
 **Setup:** candidate C was implemented by `ActorID=agent-a`. Review is claimed
 by `ActorID=agent-a`, `ProcessID=proc-a-review`.
 
-**Expected:** an independent-review gate rejects the claim/verdict. A mission
-policy may create a visible waiver, but the result is labelled non-independent
-and cannot satisfy a gate requiring independence.
+**Expected:** the independent-review gate rejects the claim/verdict. Phase 1
+defines no waiver or bypass; a distinct reviewing actor is required.
 
 ### P1-21: distinct reviewer succeeds
 

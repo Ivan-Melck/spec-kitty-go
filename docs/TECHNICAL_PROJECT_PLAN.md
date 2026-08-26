@@ -205,12 +205,11 @@ An implementation run cannot approve its own output. Review is a separate
 authority boundary with a separately recorded actor, process, verdict, and
 evidence set.
 
-By default, the reviewer `ActorID` must differ from every implementation
-`ActorID` contributing to the candidate. A different `ProcessID` belonging to
-the same actor is not independent review. A mission policy may explicitly
-permit same-actor review for a constrained workflow, but the result records a
-visible independence waiver and cannot satisfy a gate requiring independent
-review.
+The reviewer `ActorID` must differ from every implementation `ActorID`
+contributing to the candidate. A different `ProcessID` belonging to the same
+actor is not independent review. Phase 1 has no waiver or bypass. Any future
+exception would be a separately specified and ratified feature, not an
+interpretation of this law.
 
 ### 5.7 Durable coordination law
 
@@ -503,7 +502,7 @@ structured representation into the immutable `WorkRevision`.
 
 Agents do not toggle criteria manually. Tests, review verdicts, policy gates, or
 explicit human decisions attach evidence to the criterion in Spec Kitty's
-review state. A projection can show open/passed/waived results in Beads without
+review state. A projection can show open/passed/failed results in Beads without
 making that projection authoritative.
 
 ### 9.4 Concurrency mode
@@ -1339,8 +1338,8 @@ Work packages:
 
 1. Dependency-aware implementer selection and run creation.
 2. Handoff contract and evidence capture.
-3. Independent reviewer runs with a different ActorID by default and explicit
-   waiver policy where allowed.
+3. Independent reviewer runs with a different ActorID; Phase 1 admits no
+   same-actor exception.
 4. Structured approve/reject verdicts and rejection cycles.
 5. Criterion evidence and mission-wide coverage projection.
 6. Accept preflight and final readiness gate.
@@ -1575,7 +1574,8 @@ these decisions before their corresponding implementation phase:
 5. Run leases, control-plane fencing, expiry, and workspace quarantine policy.
 6. WorkRevision generations, reconciliation dispositions, and drift behavior.
 7. Lease-scoped worktree ownership, replacement, reconciliation, and cleanup.
-8. Actor-level review independence, waivers, and rejection-cycle semantics.
+8. Actor-level review independence and rejection-cycle semantics; evaluate any
+   future exception only as a separately ratified feature.
 9. Serialized integration queue and conflict repair.
 10. Static composition and external plugin boundary.
 11. Versioned command/query/event schemas.
@@ -1623,7 +1623,7 @@ software-development path when:
 - a zombie writer cannot submit or integrate output through its expired
   authority even if it can still write its old directory;
 - independent reviewers with different ActorIDs approve or reject with durable
-  evidence, unless an explicit visible mission waiver applies;
+  evidence; Phase 1 has no same-actor waiver;
 - work-graph edits create a new generation with explicit disposition for
   affected work;
 - accepted work integrates deterministically and conflicts create recoverable
