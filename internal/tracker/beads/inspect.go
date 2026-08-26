@@ -108,6 +108,12 @@ type doltStatusPayload struct {
 	Error         string `json:"error"`
 }
 
+type doltAutoStartPayload struct {
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+	Location string `json:"location"`
+}
+
 func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
 	if bound == nil || bound.adapter == nil {
 		return Readiness{}, invalidBinding("bound adapter is missing", nil)
@@ -156,7 +162,7 @@ func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
 		return Readiness{}, err
 	}
 	var where wherePayload
-	if json.Unmarshal(whereResponse.payload, &where) != nil || where.Path == "" || where.Prefix == "" || where.DatabasePath == "" {
+	if json.Unmarshal(whereResponse.payload, &where) != nil || where.Path == "" {
 		return Readiness{}, malformedInspection("workspace observation is malformed", nil)
 	}
 	observedWorkspace, _, err := canonicalExisting(where.Path, true)
@@ -164,15 +170,23 @@ func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
 		return Readiness{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider workspace is unavailable", Cause: err}
 	}
 	if observedWorkspace != bound.binding.WorkspacePath {
-		return Readiness{}, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(observedWorkspace, where.DatabasePath))
+		return Readiness{}, workspaceMismatch(bound.binding.WorkspaceIdentity, "")
 	}
-	observedDatabase, _, err := canonicalExisting(where.DatabasePath, true)
-	if err != nil {
-		return Readiness{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider database is unavailable", Cause: err}
-	}
-	observedIdentity := deriveWorkspaceIdentity(observedWorkspace, observedDatabase)
-	if observedIdentity != bound.binding.WorkspaceIdentity {
-		return Readiness{}, workspaceMismatch(bound.binding.WorkspaceIdentity, observedIdentity)
+	var observedDatabase string
+	if bound.binding.ConcurrencyMode == tracker.ConcurrencyEmbeddedSerialized {
+		if where.Prefix == "" || where.DatabasePath == "" {
+			return Readiness{}, malformedInspection("embedded workspace observation is malformed", nil)
+		}
+		observedDatabase, _, err = canonicalExisting(where.DatabasePath, true)
+		if err != nil {
+			return Readiness{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider database is unavailable", Cause: err}
+		}
+		observedIdentity := deriveWorkspaceIdentity(observedWorkspace, observedDatabase)
+		if observedIdentity != bound.binding.WorkspaceIdentity {
+			return Readiness{}, workspaceMismatch(bound.binding.WorkspaceIdentity, observedIdentity)
+		}
+	} else if where.DatabasePath == "" {
+		return Readiness{}, malformedInspection("server workspace observation is malformed", nil)
 	}
 	showRequest, err := newDoltShowCommand(binding)
 	if err != nil {
@@ -204,7 +218,24 @@ func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
 	if json.Unmarshal(statusResponse.payload, &status) != nil {
 		return Readiness{}, malformedInspection("provider health observation is malformed", nil)
 	}
-	serverQualified, err := bound.qualifyStorageObservation(observedDatabase, where.Prefix, show, status)
+	var autoStart doltAutoStartPayload
+	if bound.binding.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter {
+		autoStartRequest, commandErr := newDoltAutoStartCommand(binding)
+		if commandErr != nil {
+			return Readiness{}, commandErr
+		}
+		autoStartResponse, executeErr := bound.adapter.execute(ctx, autoStartRequest)
+		if executeErr != nil {
+			return Readiness{}, executeErr
+		}
+		if schemaErr := requireInspectionSchema(autoStartResponse); schemaErr != nil {
+			return Readiness{}, schemaErr
+		}
+		if json.Unmarshal(autoStartResponse.payload, &autoStart) != nil {
+			return Readiness{}, malformedInspection("provider server lifecycle observation is malformed", nil)
+		}
+	}
+	serverQualified, err := bound.qualifyStorageObservation(observedDatabase, where.Prefix, show, status, autoStart)
 	if err != nil {
 		return Readiness{}, err
 	}
@@ -232,19 +263,19 @@ func requireInspectionSchema(response commandResponse) error {
 	return nil
 }
 
-func (bound *BoundAdapter) qualifyStorageObservation(databasePath, databaseName string, show doltShowPayload, status doltStatusPayload) (bool, error) {
-	if show.Database != databaseName || show.DataDir == "" {
-		return false, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(bound.binding.WorkspacePath, show.DataDir))
-	}
-	showDataDir, _, err := canonicalExisting(show.DataDir, true)
-	if err != nil {
-		return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider data directory is unavailable", Cause: err}
-	}
-	if showDataDir != databasePath {
-		return false, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(bound.binding.WorkspacePath, showDataDir))
-	}
+func (bound *BoundAdapter) qualifyStorageObservation(databasePath, databaseName string, show doltShowPayload, status doltStatusPayload, autoStart doltAutoStartPayload) (bool, error) {
 	if bound.binding.ConcurrencyMode == tracker.ConcurrencyEmbeddedSerialized {
-		if !*show.Embedded || show.DataDir == "" || status.Mode != "embedded" || status.DataDir == "" ||
+		if show.Database != databaseName || show.DataDir == "" {
+			return false, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(bound.binding.WorkspacePath, show.DataDir))
+		}
+		showDataDir, _, err := canonicalExisting(show.DataDir, true)
+		if err != nil {
+			return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_binding", Message: "observed provider data directory is unavailable", Cause: err}
+		}
+		if showDataDir != databasePath {
+			return false, workspaceMismatch(bound.binding.WorkspaceIdentity, deriveWorkspaceIdentity(bound.binding.WorkspacePath, showDataDir))
+		}
+		if show.Embedded == nil || !*show.Embedded || status.Mode != "embedded" || status.DataDir == "" ||
 			status.DataDirExists == nil || !*status.DataDirExists || status.ServerRunning == nil || *status.ServerRunning {
 			return false, invalidBinding("observed provider storage mode differs from embedded binding", nil)
 		}
@@ -257,15 +288,24 @@ func (bound *BoundAdapter) qualifyStorageObservation(databasePath, databaseName 
 		}
 		return false, nil
 	}
-	if *show.Embedded || show.Host == "" || show.Port <= 0 || show.SharedServer == nil || !*show.SharedServer || show.ConnectionOK == nil || !*show.ConnectionOK ||
+	if show.Embedded == nil || *show.Embedded || show.DataDir != "" || show.Host == "" || show.Port <= 0 || show.Database == "" || show.SharedServer == nil || !*show.SharedServer || show.ConnectionOK == nil || !*show.ConnectionOK ||
 		status.Mode != "external" || status.Running == nil || !*status.Running || status.Error != "" {
 		return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_server", Message: "provider server is not qualified healthy"}
+	}
+	if autoStart.Key != "dolt.auto-start" || autoStart.Value != "false" || autoStart.Location != "config.yaml" {
+		return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_server", Message: "provider server lifecycle is not explicitly external"}
 	}
 	showEndpoint := show.Host + ":" + strconv.Itoa(show.Port)
 	statusEndpoint := status.Host + ":" + strconv.Itoa(status.Port)
 	if showEndpoint != bound.connection.serverEndpoint || statusEndpoint != bound.connection.serverEndpoint ||
 		status.Database == "" || status.Database != show.Database {
 		return false, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_server", Message: "provider server endpoint or database differs from binding"}
+	}
+	host := bound.connection.credentials["DOLT_SERVER_HOST"]
+	port := bound.connection.credentials["DOLT_SERVER_PORT"]
+	observedIdentity := deriveServerWorkspaceIdentity(host, port, show.Database)
+	if observedIdentity != bound.binding.WorkspaceIdentity {
+		return false, workspaceMismatch(bound.binding.WorkspaceIdentity, observedIdentity)
 	}
 	return true, nil
 }

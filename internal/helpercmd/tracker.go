@@ -23,7 +23,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/tracker/fake"
 )
 
-const trackerUsage = "usage: tracker assign|compensate|inspect-beads|catalog-beads|assignment-beads [options]"
+const trackerUsage = "usage: tracker assign|compensate|inspect-beads|catalog-beads|coordinate-beads|assignment-beads [options]"
 
 type TrackerResponse struct {
 	OK      bool                           `json:"ok"`
@@ -64,6 +64,9 @@ func RunTracker(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	}
 	if action == "catalog-beads" {
 		return runCatalogBeads(ctx, args[1:], stdout, stderr)
+	}
+	if action == "coordinate-beads" {
+		return runCoordinateBeads(ctx, args[1:], stdout, stderr)
 	}
 	if action == "assignment-beads" {
 		return runAssignmentBeads(ctx, args[1:], stdout, stderr)
@@ -311,6 +314,239 @@ type BeadsCatalogResponse struct {
 	Record        *BeadsCatalogRecord   `json:"record,omitempty"`
 	Mutation      *BeadsCatalogMutation `json:"mutation,omitempty"`
 	Error         *BeadsInspectionError `json:"error,omitempty"`
+}
+
+type beadsCoordinationInput struct {
+	WorkID              string           `json:"work_id,omitempty"`
+	ExternalID          string           `json:"external_id,omitempty"`
+	MetadataSchema      uint16           `json:"metadata_schema,omitempty"`
+	CreatedByOperation  string           `json:"created_by_operation,omitempty"`
+	OperationID         string           `json:"operation_id,omitempty"`
+	BlockedWorkID       string           `json:"blocked_work_id,omitempty"`
+	BlockingWorkID      string           `json:"blocking_work_id,omitempty"`
+	PinnedReadyIDs      []string         `json:"pinned_ready_ids,omitempty"`
+	Author              string           `json:"author,omitempty"`
+	Body                string           `json:"body,omitempty"`
+	ExpectedObservation tracker.Revision `json:"expected_observation,omitempty"`
+}
+
+type BeadsCoordinationResponse struct {
+	SchemaVersion      uint16                      `json:"schema_version"`
+	OK                 bool                        `json:"ok"`
+	Action             string                      `json:"action"`
+	DependencyMutation *tracker.DependencyMutation `json:"dependency_mutation,omitempty"`
+	Dependencies       []tracker.DependencyRef     `json:"dependencies,omitempty"`
+	Ready              *tracker.ReadyProjection    `json:"ready,omitempty"`
+	DiscussionMutation *tracker.DiscussionMutation `json:"discussion_mutation,omitempty"`
+	Discussion         []tracker.DiscussionEntry   `json:"discussion,omitempty"`
+	Error              *BeadsInspectionError       `json:"error,omitempty"`
+}
+
+func runCoordinateBeads(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || !validBeadsCoordinationAction(args[0]) {
+		fmt.Fprintln(stderr, trackerUsage)
+		return 2
+	}
+	action := args[0]
+	flags := flag.NewFlagSet("tracker coordinate-beads "+action, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var project, executable, workspace, databaseIdentity, expectedDigest, mode, requestFile string
+	var protocolSchema uint64
+	var readOnly explicitBool
+	flags.StringVar(&project, "project", "", "project ID")
+	flags.StringVar(&executable, "executable", "", "absolute Beads executable path")
+	flags.StringVar(&workspace, "workspace", "", "absolute canonical Beads workspace path")
+	flags.StringVar(&databaseIdentity, "database-identity", "", "absolute existing Beads database directory from where --json")
+	flags.Uint64Var(&protocolSchema, "protocol-schema", 0, "pinned JSON protocol schema")
+	flags.StringVar(&mode, "mode", "", "embedded_serialized")
+	flags.Var(&readOnly, "read-only", "explicit binding read-only state")
+	flags.StringVar(&expectedDigest, "expected-digest", "", "optional pinned executable SHA-256")
+	flags.StringVar(&requestFile, "request-file", "", "absolute path to bounded typed JSON request")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if len(flags.Args()) != 0 {
+		return encodeBeadsCoordinationFailure(stdout, action, invalidInspectRequest("unexpected positional arguments"))
+	}
+	projectID, err := ids.ParseProjectID(project)
+	if err != nil || strings.TrimSpace(databaseIdentity) == "" || protocolSchema == 0 || protocolSchema > uint64(^uint16(0)) {
+		return encodeBeadsCoordinationFailure(stdout, action, invalidInspectRequest("coordination binding is invalid"))
+	}
+	if tracker.ConcurrencyMode(mode) != tracker.ConcurrencyEmbeddedSerialized {
+		return encodeBeadsCoordinationFailure(stdout, action, invalidInspectRequest("credential-free coordination command requires embedded_serialized mode"))
+	}
+	if !readOnly.set {
+		return encodeBeadsCoordinationFailure(stdout, action, invalidInspectRequest("read-only state must be explicit"))
+	}
+	input, err := readBeadsCoordinationInput(requestFile)
+	if err != nil {
+		return encodeBeadsCoordinationFailure(stdout, action, err)
+	}
+	bound, err := beads.Open(beads.BindingConfig{
+		ProjectID: projectID, ExecutablePath: executable, WorkspacePath: workspace,
+		ProviderDatabaseIdentity: databaseIdentity, ProtocolSchema: uint16(protocolSchema),
+		ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized, ReadOnly: readOnly.value,
+		ExpectedExecutableDigest: expectedDigest,
+	})
+	if err != nil {
+		return encodeBeadsCoordinationFailure(stdout, action, err)
+	}
+	response, err := executeBeadsCoordination(ctx, action, projectID, bound, bound, input)
+	if err != nil {
+		return encodeBeadsCoordinationFailure(stdout, action, err)
+	}
+	_ = json.NewEncoder(stdout).Encode(response)
+	return 0
+}
+
+func validBeadsCoordinationAction(action string) bool {
+	switch action {
+	case "dependency-put", "dependency-remove", "dependency-list", "ready", "discussion-append", "discussion-list":
+		return true
+	default:
+		return false
+	}
+}
+
+// executeBeadsCoordination is the production composition seam. It consumes
+// only provider-neutral ports; provider selection and binding stay in the CLI
+// composition root above, and neither port can confer execution authority.
+func executeBeadsCoordination(ctx context.Context, action string, projectID ids.ProjectID, graph tracker.Graph, discussion tracker.Discussion, input beadsCoordinationInput) (BeadsCoordinationResponse, error) {
+	response := BeadsCoordinationResponse{SchemaVersion: 1, OK: true, Action: action}
+	switch action {
+	case "dependency-put", "dependency-remove":
+		operationID, err := ids.ParseOperationID(input.OperationID)
+		if err != nil {
+			return BeadsCoordinationResponse{}, invalidInspectRequest("operation ID is invalid")
+		}
+		blocked, err := ids.ParseWorkID(input.BlockedWorkID)
+		if err != nil {
+			return BeadsCoordinationResponse{}, invalidInspectRequest("blocked work ID is invalid")
+		}
+		blocking, err := ids.ParseWorkID(input.BlockingWorkID)
+		if err != nil {
+			return BeadsCoordinationResponse{}, invalidInspectRequest("blocking work ID is invalid")
+		}
+		request := tracker.DependencyRequest{ProjectID: projectID, OperationID: operationID, Dependency: tracker.DependencyRef{BlockedWorkID: blocked, BlockingWorkID: blocking, Kind: tracker.DependencyBlocks}}
+		var mutation tracker.DependencyMutation
+		if action == "dependency-put" {
+			mutation, err = graph.PutBlockingDependency(ctx, request)
+		} else {
+			mutation, err = graph.RemoveBlockingDependency(ctx, request)
+		}
+		if err != nil {
+			return BeadsCoordinationResponse{}, err
+		}
+		response.DependencyMutation = &mutation
+	case "dependency-list":
+		reference, err := coordinationExternalReference(projectID, input)
+		if err != nil {
+			return BeadsCoordinationResponse{}, err
+		}
+		dependencies, err := graph.ListDependencies(ctx, reference)
+		if err != nil {
+			return BeadsCoordinationResponse{}, err
+		}
+		response.Dependencies = dependencies
+	case "ready":
+		pinned := make([]ids.WorkID, len(input.PinnedReadyIDs))
+		for index, raw := range input.PinnedReadyIDs {
+			workID, err := ids.ParseWorkID(raw)
+			if err != nil {
+				return BeadsCoordinationResponse{}, invalidInspectRequest("pinned ready work ID is invalid")
+			}
+			pinned[index] = workID
+		}
+		projection, err := graph.ReadyProjection(ctx, tracker.ReadyRequest{ProjectID: projectID, PinnedReadyIDs: pinned})
+		if err != nil {
+			return BeadsCoordinationResponse{}, err
+		}
+		response.Ready = &projection
+	case "discussion-append":
+		reference, err := coordinationExternalReference(projectID, input)
+		if err != nil {
+			return BeadsCoordinationResponse{}, err
+		}
+		operationID, err := ids.ParseOperationID(input.OperationID)
+		if err != nil {
+			return BeadsCoordinationResponse{}, invalidInspectRequest("operation ID is invalid")
+		}
+		mutation, err := discussion.AppendDiscussion(ctx, tracker.AppendDiscussionRequest{
+			ExternalRef: reference, OperationID: operationID, Author: input.Author, Body: input.Body,
+			ExpectedObservation: input.ExpectedObservation,
+		})
+		if err != nil {
+			return BeadsCoordinationResponse{}, err
+		}
+		response.DiscussionMutation = &mutation
+	case "discussion-list":
+		reference, err := coordinationExternalReference(projectID, input)
+		if err != nil {
+			return BeadsCoordinationResponse{}, err
+		}
+		entries, err := discussion.ListDiscussion(ctx, reference)
+		if err != nil {
+			return BeadsCoordinationResponse{}, err
+		}
+		response.Discussion = entries
+	default:
+		return BeadsCoordinationResponse{}, invalidInspectRequest("coordination action is invalid")
+	}
+	return response, nil
+}
+
+func coordinationExternalReference(projectID ids.ProjectID, input beadsCoordinationInput) (tracker.ExternalWorkRef, error) {
+	workID, err := ids.ParseWorkID(input.WorkID)
+	if err != nil {
+		return tracker.ExternalWorkRef{}, invalidInspectRequest("work ID is invalid")
+	}
+	created, err := ids.ParseOperationID(input.CreatedByOperation)
+	if err != nil {
+		return tracker.ExternalWorkRef{}, invalidInspectRequest("creation operation ID is invalid")
+	}
+	reference := tracker.ExternalWorkRef{
+		ProjectID: projectID, WorkID: workID, Provider: "beads", ExternalID: input.ExternalID,
+		MetadataSchema: input.MetadataSchema, CreatedByOperation: created, LastObservation: input.ExpectedObservation,
+	}
+	if err := reference.Validate(); err != nil {
+		return tracker.ExternalWorkRef{}, invalidInspectRequest("external work reference is invalid")
+	}
+	return reference, nil
+}
+
+func readBeadsCoordinationInput(path string) (beadsCoordinationInput, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return beadsCoordinationInput{}, invalidInspectRequest("request file path must be absolute and clean")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxCatalogRequestBytes {
+		return beadsCoordinationInput{}, invalidInspectRequest("request file must be a bounded regular file")
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return beadsCoordinationInput{}, invalidInspectRequest("request file cannot be read")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var input beadsCoordinationInput
+	if err := decoder.Decode(&input); err != nil {
+		return beadsCoordinationInput{}, invalidInspectRequest("coordination request JSON is invalid")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return beadsCoordinationInput{}, invalidInspectRequest("coordination request must contain one JSON object")
+	}
+	return input, nil
+}
+
+func encodeBeadsCoordinationFailure(stdout io.Writer, action string, err error) int {
+	result := BeadsInspectionError{Kind: tracker.ErrorUnavailable, RecoveryCode: "operator_decision", Message: "coordination operation failed"}
+	var portable *tracker.Error
+	if errors.As(err, &portable) {
+		result.Kind, result.RecoveryCode, result.Message = portable.Kind, portable.RecoveryAction(), portable.Message
+	}
+	_ = json.NewEncoder(stdout).Encode(BeadsCoordinationResponse{SchemaVersion: 1, OK: false, Action: action, Error: &result})
+	return 1
 }
 
 func runCatalogBeads(ctx context.Context, args []string, stdout, stderr io.Writer) int {

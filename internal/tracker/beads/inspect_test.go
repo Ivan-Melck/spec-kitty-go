@@ -35,6 +35,8 @@ type inspectionRunner struct {
 	statusEndpoint string
 	healthy        bool
 	showEmbedded   *bool
+	autoStartValue string
+	autoStartPlace string
 	malformed      CommandKind
 	calls          []CommandKind
 	argvs          [][]string
@@ -62,7 +64,10 @@ func (runner *inspectionRunner) run(_ context.Context, request command) commandR
 		data = map[string]any{"backend": "dolt", "data_dir": dataDir, "database": database, "embedded": embedded, "future_optional": true}
 		if !embedded {
 			host, port := splitTestEndpoint(firstNonEmpty(runner.showEndpoint, runner.serverEndpoint))
-			data = map[string]any{"backend": "dolt", "data_dir": dataDir, "database": database, "embedded": false, "host": host, "port": port, "user": "dolt", "shared_server": true, "connection_ok": runner.healthy, "future_optional": true}
+			data = map[string]any{"backend": "dolt", "database": database, "embedded": false, "host": host, "port": port, "user": "dolt", "shared_server": true, "connection_ok": runner.healthy, "future_optional": true}
+			if runner.showDataDir != "" {
+				data.(map[string]any)["data_dir"] = runner.showDataDir
+			}
 		}
 	case CommandDoltStatus:
 		dataDir := firstNonEmpty(runner.statusDataDir, runner.databasePath)
@@ -76,6 +81,8 @@ func (runner *inspectionRunner) run(_ context.Context, request command) commandR
 				data.(map[string]any)["error"] = "unavailable"
 			}
 		}
+	case CommandDoltAutoStart:
+		data = map[string]any{"key": "dolt.auto-start", "value": firstNonEmpty(runner.autoStartValue, "false"), "location": firstNonEmpty(runner.autoStartPlace, "config.yaml")}
 	default:
 		data = map[string]any{"ok": true}
 	}
@@ -136,6 +143,7 @@ func testBoundAdapter(t *testing.T, mode tracker.ConcurrencyMode, databaseID str
 	config := BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databasePath, ProtocolSchema: 1, ConcurrencyMode: mode}
 	connection := providerConnection{}
 	if mode == tracker.ConcurrencyServerMultiwriter {
+		config.ProviderDatabaseIdentity = databaseID
 		config.ServerIdentity, config.ServerEndpoint = "server-1", "127.0.0.1:3306"
 		config.Credentials = map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306"}
 		connection = providerConnection{serverIdentity: config.ServerIdentity, serverEndpoint: config.ServerEndpoint, credentials: cloneCredentials(config.Credentials)}
@@ -252,7 +260,23 @@ func TestPreflightChecksSchemaOnEveryV122Observation(t *testing.T) {
 	}
 }
 
+func TestServerPreflightChecksAutoStartSchema(t *testing.T) {
+	bound, runner := testBoundAdapter(t, tracker.ConcurrencyServerMultiwriter, "db-1")
+	runner.schemaByKind = map[CommandKind]uint16{CommandDoltAutoStart: 2}
+	if _, err := bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorSchemaSkew) {
+		t.Fatalf("error=%v calls=%v", err, runner.calls)
+	}
+}
+
 func TestPreflightCrossChecksIndependentDatabaseAndServerObservations(t *testing.T) {
+	t.Run("embedded binding refuses server shape", func(t *testing.T) {
+		bound, runner := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "db-1")
+		value := false
+		runner.showEmbedded = &value
+		if _, err := bound.Preflight(context.Background()); !tracker.IsKind(err, tracker.ErrorWorkspaceMismatch) {
+			t.Fatalf("error=%v", err)
+		}
+	})
 	t.Run("embedded show directory", func(t *testing.T) {
 		bound, runner := testBoundAdapter(t, tracker.ConcurrencyEmbeddedSerialized, "db-1")
 		runner.showDataDir = filepath.Join(runner.workspace, "other-show")
@@ -302,6 +326,46 @@ func TestV122InspectionFixturesUseDocumentedSchemaOneEnvelopes(t *testing.T) {
 				t.Fatalf("metadata=%#v payload=%s err=%v", metadata, payload, err)
 			}
 		})
+	}
+}
+
+func TestV122ExternalServerInspectionUsesQualifiedByteRealShapes(t *testing.T) {
+	const whereCapture = "{\n  \"data\": {\n    \"path\": \"/tmp/go-kitty3-wp09-server-probe.CjcYcz/repository/.beads\",\n    \"database_path\": \"/tmp/go-kitty3-wp09-server-probe.CjcYcz/repository/.beads/dolt\"\n  },\n  \"schema_version\": 1\n}\n"
+	const showCapture = "{\n  \"data\": {\n    \"backend\": \"dolt\",\n    \"connection_ok\": true,\n    \"database\": \"skt\",\n    \"embedded\": false,\n    \"host\": \"127.0.0.1\",\n    \"port\": 32772,\n    \"shared_server\": true,\n    \"user\": \"root\"\n  },\n  \"schema_version\": 1\n}\n"
+	const statusCapture = "{\n  \"data\": {\n    \"database\": \"skt\",\n    \"host\": \"127.0.0.1\",\n    \"mode\": \"external\",\n    \"port\": 32772,\n    \"running\": true,\n    \"tls\": false,\n    \"user\": \"root\",\n    \"version\": \"8.0.31\"\n  },\n  \"schema_version\": 1\n}\n"
+	const autoStartCapture = "{\n  \"data\": {\n    \"key\": \"dolt.auto-start\",\n    \"location\": \"config.yaml\",\n    \"value\": \"false\"\n  },\n  \"schema_version\": 1\n}\n"
+
+	encodedWhere, whereMetadata, err := decodeEnvelope([]byte(whereCapture), expectedObject)
+	if err != nil || whereMetadata.schemaVersion != 1 {
+		t.Fatalf("where metadata=%#v err=%v", whereMetadata, err)
+	}
+	var where wherePayload
+	if json.Unmarshal(encodedWhere, &where) != nil || where.Path == "" || where.DatabasePath == "" || where.Prefix != "" {
+		t.Fatalf("external where shape=%+v", where)
+	}
+	encodedShow, _, err := decodeEnvelope([]byte(showCapture), expectedObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var show doltShowPayload
+	if json.Unmarshal(encodedShow, &show) != nil || show.DataDir != "" || show.Embedded == nil || *show.Embedded || show.SharedServer == nil || !*show.SharedServer || show.ConnectionOK == nil || !*show.ConnectionOK {
+		t.Fatalf("external show shape=%+v", show)
+	}
+	encodedStatus, _, err := decodeEnvelope([]byte(statusCapture), expectedObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status doltStatusPayload
+	if json.Unmarshal(encodedStatus, &status) != nil || status.Mode != "external" || status.Running == nil || !*status.Running {
+		t.Fatalf("external status shape=%+v", status)
+	}
+	encodedAutoStart, _, err := decodeEnvelope([]byte(autoStartCapture), expectedObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var autoStart doltAutoStartPayload
+	if json.Unmarshal(encodedAutoStart, &autoStart) != nil || autoStart.Key != "dolt.auto-start" || autoStart.Value != "false" || autoStart.Location != "config.yaml" {
+		t.Fatalf("external lifecycle shape=%+v", autoStart)
 	}
 }
 
@@ -375,7 +439,14 @@ func TestUnqualifiedServerPreflightAndReadinessRefuseBeforeSideEffects(t *testin
 	tests := []struct {
 		name string
 		edit func(*inspectionRunner)
-	}{{"mode", func(r *inspectionRunner) { value := true; r.showEmbedded = &value }}, {"endpoint", func(r *inspectionRunner) { r.serverEndpoint = "attacker:3306" }}, {"unhealthy", func(r *inspectionRunner) { r.healthy = false }}}
+	}{
+		{"embedded shape", func(r *inspectionRunner) { value := true; r.showEmbedded = &value }},
+		{"fabricated local data directory", func(r *inspectionRunner) { r.showDataDir = r.databasePath }},
+		{"endpoint", func(r *inspectionRunner) { r.serverEndpoint = "attacker:3306" }},
+		{"unhealthy", func(r *inspectionRunner) { r.healthy = false }},
+		{"auto start enabled", func(r *inspectionRunner) { r.autoStartValue = "true" }},
+		{"auto start not explicit", func(r *inspectionRunner) { r.autoStartPlace = "environment" }},
+	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			bound, runner := testBoundAdapter(t, tracker.ConcurrencyServerMultiwriter, "db-1")
@@ -597,7 +668,7 @@ func TestInspectionArgvHasNoInitializationRepairOrRepositorySetup(t *testing.T) 
 			}
 		}
 	}
-	want := []CommandKind{CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus}
+	want := []CommandKind{CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus, CommandDoltAutoStart}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("inspection calls=%v want=%v", runner.calls, want)
 	}
@@ -784,7 +855,7 @@ case "$1" in
     case "$2" in
       show)
         if [ "%s" = "server_multiwriter" ]; then
-          printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":false,"host":"127.0.0.1","port":3306,"user":"dolt","shared_server":true,"connection_ok":true}}\n' "$BEADS_DIR"
+          printf '%%s\n' '{"schema_version":1,"data":{"backend":"dolt","database":"db-1","embedded":false,"host":"127.0.0.1","port":3306,"user":"dolt","shared_server":true,"connection_ok":true}}'
         else
           printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":true}}\n' "$BEADS_DIR"
         fi ;;
@@ -796,6 +867,7 @@ case "$1" in
         fi ;;
       *) exit 64 ;;
     esac ;;
+  config) printf '%%s\n' '{"schema_version":1,"data":{"key":"dolt.auto-start","value":"false","location":"config.yaml"}}' ;;
   create)
     if [ -n "${DOLT_CREDENTIALS_PATH:-}" ]; then
       printf 'ready\n' > "${DOLT_CREDENTIALS_PATH}.$$.ready"
