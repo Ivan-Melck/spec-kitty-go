@@ -1,7 +1,7 @@
 {
-  "event_count": 194,
-  "last_event_id": "01M0ZS1CXNF3VD2BX38F8CH03C",
-  "materialized_at": "2026-08-26T19:34:02.934024+00:00",
+  "event_count": 195,
+  "last_event_id": "01M0ZS28T072RGJVB8TV81KHCN",
+  "materialized_at": "2026-08-26T19:34:31.488737+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
@@ -11,9 +11,9 @@
     "canceled": 0,
     "claimed": 0,
     "done": 0,
-    "for_review": 1,
+    "for_review": 0,
     "in_progress": 0,
-    "in_review": 0,
+    "in_review": 1,
     "planned": 2
   },
   "work_packages": {
@@ -269,14 +269,14 @@
       }
     },
     "WP08": {
-      "actor": "user",
-      "agent": null,
+      "actor": "codex",
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 7,
-      "lane": "for_review",
-      "last_event_id": "01M0ZS1CXNF3VD2BX38F8CH03C",
-      "last_transition_at": "2026-08-26T19:34:02.934024+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M0ZS28T072RGJVB8TV81KHCN",
+      "last_transition_at": "2026-08-26T19:34:31.488737+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass.",
@@ -293,9 +293,9 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
       "subtasks": {
         "T038": "done",
         "T039": "done",
