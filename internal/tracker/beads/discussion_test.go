@@ -2,6 +2,7 @@ package beads
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +11,31 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
+
+const realV122CommentList = `[{"id":"comment-1","issue_id":"bd-discussion","author":"human","text":"human discussion","created_at":"2026-08-26T12:00:02Z","future_optional":{"ignored":true}}]`
+
+func TestRealV122CommentPayloadShape(t *testing.T) {
+	var comments []json.RawMessage
+	if err := json.Unmarshal([]byte(realV122CommentList), &comments); err != nil || len(comments) != 1 {
+		t.Fatalf("comment fixture records=%d error=%v", len(comments), err)
+	}
+	entry, observation, err := decodeProviderComment(comments[0])
+	if err != nil || entry.ExternalCommentID != "comment-1" || entry.Author != "human" || entry.Body != "human discussion" || observation.Body != "human discussion" {
+		t.Fatalf("entry=%#v observation=%#v error=%v", entry, observation, err)
+	}
+	for name, payload := range map[string]string{
+		"legacy body":       `{"id":"comment-1","author":"human","body":"human discussion"}`,
+		"missing text":      `{"id":"comment-1","author":"human"}`,
+		"non-string text":   `{"id":"comment-1","author":"human","text":7}`,
+		"non-object record": `[]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := decodeProviderComment([]byte(payload)); !tracker.IsKind(err, tracker.ErrorMalformedProtocol) {
+				t.Fatalf("payload=%s error=%v", payload, err)
+			}
+		})
+	}
+}
 
 func TestDiscussionMarkerRoundTripAndForgeryBoundaries(t *testing.T) {
 	operationID := ids.OperationID("operation.comment:v1")
