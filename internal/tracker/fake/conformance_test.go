@@ -2,6 +2,7 @@ package fake
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,22 +13,116 @@ import (
 
 func TestFakeCapabilityReportIsHonestAndValid(t *testing.T) {
 	t.Parallel()
-	provider, _, _ := conformanceProvider(t)
-	caps, err := provider.Capabilities(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	ctx := context.Background()
+	tests := []struct {
+		capability tracker.CapabilityName
+		exercise   func(context.Context, *Provider, tracker.ExternalWorkRef) error
+	}{
+		{tracker.CapabilityCatalogRead, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			record, err := tracker.CatalogReader(provider).ReadWork(ctx, reference)
+			if err == nil && (len(record.Criteria()) != 1 || record.ExternalRef.WorkID != reference.WorkID) {
+				t.Fatalf("catalog record = %+v criteria=%+v", record, record.Criteria())
+			}
+			return err
+		}},
+		{tracker.CapabilityCatalogCreate, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			_, err := tracker.CatalogCreator(provider).CreateWork(ctx, tracker.CreateWorkRequest{ProjectID: reference.ProjectID, WorkID: "work-new", OperationID: "operation-create", Title: "new work", MetadataSchema: 1})
+			return err
+		}},
+		{tracker.CapabilityCatalogUpdate, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			_, err := tracker.CatalogUpdater(provider).UpdateWork(ctx, tracker.UpdateWorkRequest{ExternalRef: reference, OperationID: "operation-update", RequiredGuard: tracker.UpdateUnguarded})
+			return err
+		}},
+		{tracker.CapabilityBlockingGraph, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			_, err := tracker.Graph(provider).ListDependencies(ctx, reference)
+			return err
+		}},
+		{tracker.CapabilityDiscussion, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			port := tracker.Discussion(provider)
+			if _, err := port.AppendDiscussion(ctx, tracker.AppendDiscussionRequest{ExternalRef: reference, OperationID: "operation-discussion", Body: "durable note", ExpectedObservation: 1}); err != nil {
+				return err
+			}
+			entries, err := port.ListDiscussion(ctx, reference)
+			if err == nil && len(entries) != 1 {
+				t.Fatalf("discussion entries = %+v", entries)
+			}
+			return err
+		}},
+		{tracker.CapabilityAssignment, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			port := tracker.AssignmentProjection(provider)
+			if _, err := port.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: reference, OperationID: "operation-assignment", Assignee: "agent-a", ExpectedObservation: 1, RequiredGuarantee: tracker.AssignmentAtomicClaim}); err != nil {
+				return err
+			}
+			observed, err := port.ObserveAssignment(ctx, reference)
+			if err == nil && observed.Assignee != "agent-a" {
+				t.Fatalf("assignment observation = %+v", observed)
+			}
+			return err
+		}},
+		{tracker.CapabilityObservationRevision, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			record, err := tracker.CatalogReader(provider).ReadWork(ctx, reference)
+			if err == nil && (record.Observation.Revision == 0 || record.Observation.ProviderToken == "") {
+				t.Fatalf("observation identity = %+v", record.Observation)
+			}
+			return err
+		}},
+		{tracker.CapabilitySafeCompensation, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			port := tracker.AssignmentProjection(provider)
+			assigned, err := port.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: reference, OperationID: "operation-compensate", Assignee: "agent-a", ExpectedObservation: 1, RequiredGuarantee: tracker.AssignmentAtomicClaim})
+			if err != nil {
+				return err
+			}
+			_, err = port.CompensateAssignment(ctx, tracker.CompensateAssignmentRequest{ExternalRef: reference, OperationID: "operation-recovery", ExpectedObservation: assigned.Observation.Observation.Revision, ExpectedAssignee: "agent-a", ExpectedMarker: "operation-compensate", RestoreAssignee: "original"})
+			return err
+		}},
+		{tracker.CapabilityConcurrentWriters, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			inspection, err := tracker.Inspector(provider).Inspect(ctx, tracker.InspectRequest{ProjectID: reference.ProjectID})
+			if err == nil && (inspection.Binding.WorkspaceIdentity == "" || inspection.Binding.ConcurrencyMode != tracker.ConcurrencyServerMultiwriter || inspection.Health != tracker.HealthHealthy || inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersProviderNative || len(inspection.Diagnostics()) != 0) {
+				t.Fatalf("inspection binding = %+v", inspection)
+			}
+			return err
+		}},
+		{tracker.CapabilityPortableExport, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			_, err := tracker.Exporter(provider).ExportPortable(ctx, tracker.ExportRequest{ProjectID: reference.ProjectID}, io.Discard)
+			return err
+		}},
+		{tracker.CapabilityRestorableBackup, func(ctx context.Context, provider *Provider, reference tracker.ExternalWorkRef) error {
+			_, err := tracker.Exporter(provider).Backup(ctx, tracker.BackupRequest{ProjectID: reference.ProjectID, DestinationPath: "/backup"})
+			return err
+		}},
 	}
-	if err := caps.Validate(); err != nil {
-		t.Fatal(err)
+	if len(tests) != 11 {
+		t.Fatalf("capability conformance table has %d entries, want complete 11-field report", len(tests))
 	}
-	if caps.CatalogRead != tracker.SupportSupported || caps.CatalogCreate != tracker.SupportUnsupported || caps.CatalogUpdate != tracker.UpdateUnsupported {
-		t.Fatalf("catalog capabilities = %+v", caps)
-	}
-	if caps.Assignment != tracker.AssignmentAtomicClaim || caps.Discussion != tracker.DiscussionIdempotent || caps.SafeCompensation != tracker.CompensationConditional {
-		t.Fatalf("mutation capabilities = %+v", caps)
-	}
-	if caps.PortableExport != tracker.SupportUnsupported || caps.RestorableBackup != tracker.SupportUnsupported {
-		t.Fatalf("test controls promoted to production capabilities: %+v", caps)
+	seen := make(map[tracker.CapabilityName]struct{}, len(tests))
+	for _, test := range tests {
+		test := test
+		if _, duplicate := seen[test.capability]; duplicate {
+			t.Fatalf("capability conformance table repeats %s", test.capability)
+		}
+		seen[test.capability] = struct{}{}
+		t.Run(test.capability.String(), func(t *testing.T) {
+			provider, _, _ := conformanceProvider(t)
+			caps, err := provider.Capabilities(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := caps.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			declaredErr := caps.Require(test.capability)
+			declaredSupported := declaredErr == nil
+			if !declaredSupported && !tracker.IsKind(declaredErr, tracker.ErrorCapabilityUnsupported) {
+				t.Fatalf("declared support mismatch: %v", declaredErr)
+			}
+			exerciseErr := test.exercise(ctx, provider, portableReference())
+			if declaredSupported && exerciseErr != nil {
+				t.Fatalf("supported operation failed: %v", exerciseErr)
+			}
+			if !declaredSupported && !tracker.IsKind(exerciseErr, tracker.ErrorCapabilityUnsupported) {
+				t.Fatalf("unsupported operation = %v", exerciseErr)
+			}
+		})
 	}
 }
 
@@ -39,11 +134,34 @@ func TestFakeUnsupportedCapabilityRefusesBeforeAnyStoreEffect(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := snapshotStore(t, store, path)
-	if err := provider.RequireCapability(tracker.CapabilityCatalogCreate); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+	reference := portableReference()
+	if _, err := tracker.CatalogCreator(provider).CreateWork(ctx, tracker.CreateWorkRequest{ProjectID: reference.ProjectID, WorkID: "work-new", OperationID: "operation-create", Title: "new work", MetadataSchema: 1}); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
 		t.Fatalf("unsupported create = %v", err)
 	}
-	if err := provider.RequireCatalogUpdate(tracker.UpdateGuarded); !tracker.IsKind(err, tracker.ErrorGuardedUpdateUnsupported) {
+	if _, err := tracker.CatalogUpdater(provider).UpdateWork(ctx, tracker.UpdateWorkRequest{ExternalRef: reference, OperationID: "operation-update", RequiredGuard: tracker.UpdateGuarded}); !tracker.IsKind(err, tracker.ErrorGuardedUpdateUnsupported) {
 		t.Fatalf("unsupported guarded update = %v", err)
+	}
+	if _, err := tracker.Graph(provider).ListDependencies(ctx, reference); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("unsupported graph = %v", err)
+	}
+	edge := tracker.DependencyRequest{ProjectID: reference.ProjectID, OperationID: "operation-edge", Dependency: tracker.DependencyRef{BlockedWorkID: reference.WorkID, BlockingWorkID: "work-0", Kind: tracker.DependencyBlocks}}
+	if _, err := tracker.Graph(provider).PutBlockingDependency(ctx, edge); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("unsupported graph add = %v", err)
+	}
+	if _, err := tracker.Graph(provider).RemoveBlockingDependency(ctx, edge); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("unsupported graph remove = %v", err)
+	}
+	if _, err := tracker.Graph(provider).ReadyProjection(ctx, tracker.ReadyRequest{ProjectID: reference.ProjectID}); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("unsupported readiness = %v", err)
+	}
+	if _, err := tracker.Exporter(provider).ExportPortable(ctx, tracker.ExportRequest{ProjectID: reference.ProjectID}, io.Discard); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("unsupported export = %v", err)
+	}
+	if _, err := tracker.Exporter(provider).Backup(ctx, tracker.BackupRequest{ProjectID: reference.ProjectID, DestinationPath: "/backup"}); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("unsupported backup = %v", err)
+	}
+	if _, err := tracker.Exporter(provider).InspectBackup(ctx, tracker.BackupInspectRequest{ProjectID: reference.ProjectID, BackupID: "backup-1", Path: "/backup"}); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("unsupported backup inspection = %v", err)
 	}
 	after := snapshotStore(t, store, path)
 	if !reflect.DeepEqual(before, after) {
@@ -193,8 +311,12 @@ func conformanceProvider(t *testing.T) (*Provider, *Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Seed(context.Background(), WorkSeed{Key: "external-1", Title: "portable contract", Assignee: "original"}); err != nil {
+	if err := store.Seed(context.Background(), WorkSeed{Key: "external-1", Title: "portable contract", Criteria: []string{"observable result"}, Assignee: "original"}); err != nil {
 		t.Fatal(err)
 	}
 	return NewProvider(store), store, path
+}
+
+func portableReference() tracker.ExternalWorkRef {
+	return tracker.ExternalWorkRef{ProjectID: "project-1", WorkID: "work-1", Provider: "durable_fake", ExternalID: "external-1", MetadataSchema: 1}
 }

@@ -2,8 +2,10 @@ package tracker
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -412,26 +414,6 @@ type Diagnostic struct {
 	ObservedRevision Revision
 }
 
-type HealthReport struct {
-	Status       HealthStatus
-	Capabilities ProviderCapabilities
-	diagnostics  []Diagnostic
-}
-
-func NewHealthReport(status HealthStatus, capabilities ProviderCapabilities, diagnostics []Diagnostic) (HealthReport, error) {
-	if !status.valid() {
-		return HealthReport{}, fmt.Errorf("tracker health: unknown status %q", status)
-	}
-	if err := capabilities.Validate(); err != nil {
-		return HealthReport{}, err
-	}
-	return HealthReport{Status: status, Capabilities: capabilities, diagnostics: append([]Diagnostic(nil), diagnostics...)}, nil
-}
-
-func (report HealthReport) Diagnostics() []Diagnostic {
-	return append([]Diagnostic(nil), report.diagnostics...)
-}
-
 // WorkRecord is the complete provider-neutral catalog observation. Callers use
 // the accessors for ordered collections so a received record cannot be changed
 // by mutating provider-owned backing arrays.
@@ -521,9 +503,21 @@ type WorkMutation struct {
 // apply the declared guard semantics rather than manufacturing stronger ones
 // through read-then-write.
 type Catalog interface {
-	Create(context.Context, CreateWorkRequest) (WorkMutation, error)
-	Read(context.Context, ExternalWorkRef) (WorkRecord, error)
-	Update(context.Context, UpdateWorkRequest) (WorkMutation, error)
+	CatalogCreator
+	CatalogReader
+	CatalogUpdater
+}
+
+type CatalogCreator interface {
+	CreateWork(context.Context, CreateWorkRequest) (WorkMutation, error)
+}
+
+type CatalogReader interface {
+	ReadWork(context.Context, ExternalWorkRef) (WorkRecord, error)
+}
+
+type CatalogUpdater interface {
+	UpdateWork(context.Context, UpdateWorkRequest) (WorkMutation, error)
 }
 
 type DependencyKind string
@@ -605,8 +599,8 @@ type DiscussionMutation struct {
 }
 
 type Discussion interface {
-	Append(context.Context, AppendDiscussionRequest) (DiscussionMutation, error)
-	List(context.Context, ExternalWorkRef) ([]DiscussionEntry, error)
+	AppendDiscussion(context.Context, AppendDiscussionRequest) (DiscussionMutation, error)
+	ListDiscussion(context.Context, ExternalWorkRef) ([]DiscussionEntry, error)
 }
 
 type AssignmentObservation struct {
@@ -650,10 +644,85 @@ type InspectRequest struct {
 	ProjectID ids.ProjectID
 }
 
+type ConcurrencyMode string
+
+const (
+	ConcurrencyEmbeddedSerialized ConcurrencyMode = "embedded_serialized"
+	ConcurrencyServerMultiwriter  ConcurrencyMode = "server_multiwriter"
+)
+
+func (mode ConcurrencyMode) valid() bool {
+	return mode == ConcurrencyEmbeddedSerialized || mode == ConcurrencyServerMultiwriter
+}
+
+// TrackerBinding pins inspection and mutation to one executable and canonical
+// provider workspace. It is project-scoped and distinct from lease-scoped
+// execution workspaces.
+type TrackerBinding struct {
+	ProjectID         ids.ProjectID
+	Provider          string
+	ExecutablePath    string
+	ExecutableVersion string
+	ExecutableDigest  string
+	ProtocolSchema    uint16
+	WorkspacePath     string
+	WorkspaceIdentity string
+	ConcurrencyMode   ConcurrencyMode
+	ReadOnly          bool
+	ObservedAt        time.Time
+}
+
+func (binding TrackerBinding) Validate() error {
+	if _, err := ids.ParseProjectID(binding.ProjectID.String()); err != nil {
+		return fmt.Errorf("tracker binding: %w", err)
+	}
+	if binding.Provider == "" || binding.ExecutableVersion == "" || binding.ProtocolSchema == 0 || binding.WorkspaceIdentity == "" || binding.ObservedAt.IsZero() {
+		return fmt.Errorf("tracker binding: provider, version, protocol, workspace identity, and observed time are required")
+	}
+	if !filepath.IsAbs(binding.ExecutablePath) || filepath.Clean(binding.ExecutablePath) != binding.ExecutablePath {
+		return fmt.Errorf("tracker binding: executable path must be absolute and clean")
+	}
+	if !filepath.IsAbs(binding.WorkspacePath) || filepath.Clean(binding.WorkspacePath) != binding.WorkspacePath {
+		return fmt.Errorf("tracker binding: workspace path must be absolute and clean")
+	}
+	if !binding.ConcurrencyMode.valid() {
+		return fmt.Errorf("tracker binding: unknown concurrency mode %q", binding.ConcurrencyMode)
+	}
+	if binding.ExecutableDigest != "" {
+		digest, err := hex.DecodeString(binding.ExecutableDigest)
+		if err != nil || len(digest) != 32 {
+			return fmt.Errorf("tracker binding: executable digest must be lowercase SHA-256")
+		}
+		if hex.EncodeToString(digest) != binding.ExecutableDigest {
+			return fmt.Errorf("tracker binding: executable digest must use lowercase hexadecimal")
+		}
+	}
+	return nil
+}
+
 type Inspection struct {
+	Binding      TrackerBinding
 	Capabilities ProviderCapabilities
 	Health       HealthStatus
-	Diagnostics  []Diagnostic
+	diagnostics  []Diagnostic
+}
+
+func NewInspection(binding TrackerBinding, capabilities ProviderCapabilities, health HealthStatus, diagnostics []Diagnostic) (Inspection, error) {
+	if err := binding.Validate(); err != nil {
+		return Inspection{}, err
+	}
+	if err := capabilities.Validate(); err != nil {
+		return Inspection{}, err
+	}
+	if !health.valid() {
+		return Inspection{}, fmt.Errorf("tracker inspection: unknown health %q", health)
+	}
+	binding.ObservedAt = binding.ObservedAt.UTC()
+	return Inspection{Binding: binding, Capabilities: capabilities, Health: health, diagnostics: append([]Diagnostic(nil), diagnostics...)}, nil
+}
+
+func (inspection Inspection) Diagnostics() []Diagnostic {
+	return append([]Diagnostic(nil), inspection.diagnostics...)
 }
 
 type Inspector interface {
