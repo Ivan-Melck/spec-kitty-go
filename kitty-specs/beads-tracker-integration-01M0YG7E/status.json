@@ -382,6 +382,9 @@
       "last_event_id": "01M10284XWQJ0HS5B8QZCPABR8",
       "last_transition_at": "2026-08-26T22:15:01.308414+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "WP11 documentation and immutable evidence complete. Payload commits cd378bd and 106c7a2; documentation attestation 6985cec; exact-census correction 8fbb9d9; final docs-only closeout 3a9fe38. Clean make quality passed at 8fbb9d9/tree 3611d0b; final docs gate x10, full architecture, race, vet, staticcheck, hashes, and diff checks passed. Real-provider evidence remains source-bound to 315660f; hosted baseline remains pending 0/10."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
