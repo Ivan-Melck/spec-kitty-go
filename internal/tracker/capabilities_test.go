@@ -119,7 +119,7 @@ func TestCriterionAndExternalWorkRefValidation(t *testing.T) {
 	}
 }
 
-func TestProviderObservationAndHealthReportDefensivelyCopyCollections(t *testing.T) {
+func TestProviderObservationAndInspectionDefensivelyCopyCollections(t *testing.T) {
 	t.Parallel()
 	canonical := []byte("canonical-known-fields")
 	observation, err := tracker.NewProviderObservation("external-1", canonical, 7, "full-digest", "native-token", time.Unix(10, 0).UTC())
@@ -137,9 +137,18 @@ func TestProviderObservationAndHealthReportDefensivelyCopyCollections(t *testing
 	}
 
 	diagnostics := []tracker.Diagnostic{{Kind: tracker.ErrorUnavailable, RecoveryCode: "retry_later", Message: "provider unavailable"}}
-	report, err := tracker.NewHealthReport(tracker.HealthHealthy, readOnlyCapabilities(), diagnostics)
+	binding := tracker.TrackerBinding{
+		ProjectID: "project-1", Provider: "portable-provider", ExecutablePath: "/opt/provider/bin/provider",
+		ExecutableVersion: "1.2.3", ExecutableDigest: strings.Repeat("ab", 32), ProtocolSchema: 1,
+		WorkspacePath: "/srv/provider/workspace", WorkspaceIdentity: "workspace-digest",
+		ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized, ObservedAt: time.Unix(10, 0).UTC(),
+	}
+	report, err := tracker.NewInspection(binding, readOnlyCapabilities(), tracker.HealthHealthy, diagnostics)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if report.Binding.WorkspaceIdentity != binding.WorkspaceIdentity || report.Capabilities.CatalogRead != tracker.SupportSupported || report.Health != tracker.HealthHealthy {
+		t.Fatalf("inspection lost contracted identity or report fields: %+v", report)
 	}
 	diagnostics[0].Message = "mutated"
 	got := report.Diagnostics()
@@ -149,6 +158,36 @@ func TestProviderObservationAndHealthReportDefensivelyCopyCollections(t *testing
 	got[0].Message = "mutated again"
 	if report.Diagnostics()[0].Message != "provider unavailable" {
 		t.Fatal("report changed through accessor")
+	}
+}
+
+func TestTrackerBindingValidationRejectsNonCanonicalIdentity(t *testing.T) {
+	t.Parallel()
+	valid := tracker.TrackerBinding{
+		ProjectID: "project-1", Provider: "portable-provider", ExecutablePath: "/opt/provider/bin/provider",
+		ExecutableVersion: "1.2.3", ProtocolSchema: 1, WorkspacePath: "/srv/provider/workspace",
+		WorkspaceIdentity: "workspace-digest", ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized,
+		ObservedAt: time.Unix(10, 0).In(time.FixedZone("offset", 3600)),
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	mutants := []tracker.TrackerBinding{valid, valid, valid, valid}
+	mutants[0].ExecutablePath = "relative/provider"
+	mutants[1].WorkspacePath = "/srv/provider/../other"
+	mutants[2].ConcurrencyMode = "optimistic"
+	mutants[3].ExecutableDigest = "not-a-digest"
+	for index, mutant := range mutants {
+		if err := mutant.Validate(); err == nil {
+			t.Errorf("binding mutant %d unexpectedly validated", index)
+		}
+	}
+	inspection, err := tracker.NewInspection(valid, readOnlyCapabilities(), tracker.HealthHealthy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Binding.ObservedAt.Location() != time.UTC {
+		t.Fatalf("inspection did not normalize binding time: %v", inspection.Binding.ObservedAt)
 	}
 }
 
