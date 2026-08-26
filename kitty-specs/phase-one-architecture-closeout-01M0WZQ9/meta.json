@@ -25,7 +25,6 @@
   "purpose_context": "Maintainers need the Phase 1 concurrency kernel to remain enforceably independent as the project adds Gapdb, Beads, and external surfaces. This mission converts the temporary scope guard into permanent layered architecture enforcement, establishes durable CI and focused regression gates, introduces a minimal governance-context provenance seam, and documents Orchestrator API 1.3 projectability without implementing Phase 2 integrations.",
   "purpose_tldr": "Harden the proven authority kernel so provider integration can begin without weakening its boundaries.",
   "slug": "phase-one-architecture-closeout-01M0WZQ9",
-  "status_phase": "1",
   "target_branch": "feat/phase-one-architecture-closeout",
   "topology": "coord",
   "vcs": "git",

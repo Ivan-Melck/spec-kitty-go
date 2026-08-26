@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
@@ -107,17 +108,18 @@ func IsKind(err error, kind ErrorKind) bool {
 }
 
 type StartRequest struct {
-	CorrelationID  string             `json:"correlation_id"`
-	OperationID    ids.OperationID    `json:"operation_id"`
-	ProjectID      ids.ProjectID      `json:"project_id"`
-	MissionID      ids.MissionID      `json:"mission_id"`
-	WorkRevisionID ids.WorkRevisionID `json:"work_revision_id"`
-	WorkID         ids.WorkID         `json:"work_id"`
-	ActorID        ids.ActorID        `json:"actor_id"`
-	ProcessID      ids.ProcessID      `json:"process_id"`
-	Now            time.Time          `json:"now"`
-	LeaseTTL       time.Duration      `json:"lease_ttl"`
-	CommandDigest  string             `json:"command_digest,omitempty"`
+	CorrelationID     string                    `json:"correlation_id"`
+	OperationID       ids.OperationID           `json:"operation_id"`
+	ProjectID         ids.ProjectID             `json:"project_id"`
+	MissionID         ids.MissionID             `json:"mission_id"`
+	WorkRevisionID    ids.WorkRevisionID        `json:"work_revision_id"`
+	WorkID            ids.WorkID                `json:"work_id"`
+	ActorID           ids.ActorID               `json:"actor_id"`
+	ProcessID         ids.ProcessID             `json:"process_id"`
+	Now               time.Time                 `json:"now"`
+	LeaseTTL          time.Duration             `json:"lease_ttl"`
+	CommandDigest     string                    `json:"command_digest,omitempty"`
+	GovernanceContext governancecontext.Context `json:"governance_context"`
 }
 
 func (r StartRequest) Validate() error {
@@ -144,36 +146,44 @@ func (r StartRequest) Validate() error {
 	if r.LeaseTTL <= 0 {
 		return NewDiagnostic(KindInvalidCommand, "lease_ttl must be positive", RetryNever, r.CorrelationID, r.OperationID, nil, map[string]string{"lease_ttl": r.LeaseTTL.String()}, map[string]string{"lease_ttl": "> 0"}, r.Now)
 	}
+	if err := r.GovernanceContext.Validate(); err != nil {
+		diagnostic := NewDiagnostic(KindInvalidCommand, "governance_context is invalid", RetryNever, r.CorrelationID, r.OperationID, nil,
+			map[string]string{"governance_context_id": r.GovernanceContext.ID().String()}, map[string]string{"governance_context": "validated immutable context"}, r.Now)
+		diagnostic.Cause = err
+		return diagnostic
+	}
 	return nil
 }
 
 type RunCapsule struct {
-	SchemaVersion   uint16             `json:"schema_version"`
-	Kind            string             `json:"kind"`
-	CorrelationID   string             `json:"correlation_id"`
-	OperationID     ids.OperationID    `json:"operation_id"`
-	AggregateIDs    map[string]string  `json:"aggregate_ids"`
-	ObservedState   map[string]string  `json:"observed_state"`
-	ExpectedState   map[string]string  `json:"expected_state"`
-	RetrySafety     RetrySafety        `json:"retry_safety"`
-	RecoveryActions []string           `json:"recovery_actions"`
-	WorkID          ids.WorkID         `json:"work_id"`
-	WorkRevisionID  ids.WorkRevisionID `json:"work_revision_id"`
-	RunID           ids.RunID          `json:"run_id"`
-	LeaseID         ids.LeaseID        `json:"lease_id"`
-	Generation      int64              `json:"generation"`
-	Token           string             `json:"token,omitempty"`
-	Deadline        time.Time          `json:"deadline"`
-	Replayed        bool               `json:"replayed"`
-	RepositoryID    ids.RepositoryID   `json:"repository_id,omitempty"`
-	LaneID          ids.LaneID         `json:"lane_id,omitempty"`
-	WorkspaceID     ids.WorkspaceID    `json:"workspace_id,omitempty"`
-	WorkspacePath   string             `json:"workspace_path,omitempty"`
-	OwnedBranch     string             `json:"owned_branch,omitempty"`
-	VerifiedBase    string             `json:"verified_base,omitempty"`
-	GitDir          string             `json:"git_dir,omitempty"`
-	IndexPath       string             `json:"index_path,omitempty"`
-	WorkspaceStage  workspace.Stage    `json:"workspace_stage,omitempty"`
+	SchemaVersion              uint16                       `json:"schema_version"`
+	Kind                       string                       `json:"kind"`
+	CorrelationID              string                       `json:"correlation_id"`
+	OperationID                ids.OperationID              `json:"operation_id"`
+	AggregateIDs               map[string]string            `json:"aggregate_ids"`
+	ObservedState              map[string]string            `json:"observed_state"`
+	ExpectedState              map[string]string            `json:"expected_state"`
+	RetrySafety                RetrySafety                  `json:"retry_safety"`
+	RecoveryActions            []string                     `json:"recovery_actions"`
+	WorkID                     ids.WorkID                   `json:"work_id"`
+	WorkRevisionID             ids.WorkRevisionID           `json:"work_revision_id"`
+	RunID                      ids.RunID                    `json:"run_id"`
+	GovernanceContextID        ids.GovernanceContextID      `json:"governance_context_id"`
+	GovernanceContextAggregate governancecontext.Commitment `json:"governance_context_aggregate"`
+	LeaseID                    ids.LeaseID                  `json:"lease_id"`
+	Generation                 int64                        `json:"generation"`
+	Token                      string                       `json:"token,omitempty"`
+	Deadline                   time.Time                    `json:"deadline"`
+	Replayed                   bool                         `json:"replayed"`
+	RepositoryID               ids.RepositoryID             `json:"repository_id,omitempty"`
+	LaneID                     ids.LaneID                   `json:"lane_id,omitempty"`
+	WorkspaceID                ids.WorkspaceID              `json:"workspace_id,omitempty"`
+	WorkspacePath              string                       `json:"workspace_path,omitempty"`
+	OwnedBranch                string                       `json:"owned_branch,omitempty"`
+	VerifiedBase               string                       `json:"verified_base,omitempty"`
+	GitDir                     string                       `json:"git_dir,omitempty"`
+	IndexPath                  string                       `json:"index_path,omitempty"`
+	WorkspaceStage             workspace.Stage              `json:"workspace_stage,omitempty"`
 }
 
 type HeartbeatRequest struct {
