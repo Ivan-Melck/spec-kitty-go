@@ -178,7 +178,8 @@
         "Administrative identity correction: generated review capsule resolved implementer-ivan despite requested reviewer-renata; no review performed. Releasing claim for independent Reviewer Renata.",
         "Cycle 2 resolves all four review blockers; clean quality and full campaigns passed with source-bound evidence. Administrative override clears the stale reviewer assignee retained after cycle-1 rejection.",
         "Cycle 2 rejected: universal package binding, fail-closed source identity, and transcript digest correction required.",
-        "Cycle 3 resolves universal package binding, fail-closed source identity with profile drift checks, and the malformed digest; clean quality passed at 8d539b8. Administrative override clears stale reviewer assignment retained after rejection."
+        "Cycle 3 resolves universal package binding, fail-closed source identity with profile drift checks, and the malformed digest; clean quality passed at 8d539b8. Administrative override clears stale reviewer assignment retained after rejection.",
+        "Review passed cycle 3: universal package binding, fail-closed source identity/drift, hashes, quality, p95, full 71-test evidence, workflows, race, and mutants independently verified."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -187,7 +188,7 @@
         "reviewer": "reviewer-renata",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 3760839,
       "shell_pid_created_at": "1787619279.6",
       "subtasks": {
