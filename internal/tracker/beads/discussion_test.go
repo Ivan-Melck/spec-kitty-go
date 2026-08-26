@@ -12,7 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
-const realV122CommentList = `[{"id":"comment-1","issue_id":"bd-discussion","author":"human","text":"human discussion","created_at":"2026-08-26T12:00:02Z","future_optional":{"ignored":true}}]`
+const realV122CommentList = `[{"id":"comment-1","issue_id":"bd-discussion","author":"human","text":"human discussion","created_at":"2026-08-26T12:00:02Z"}]`
 
 func TestRealV122CommentPayloadShape(t *testing.T) {
 	var comments []json.RawMessage
@@ -22,6 +22,18 @@ func TestRealV122CommentPayloadShape(t *testing.T) {
 	entry, observation, err := decodeProviderComment(comments[0])
 	if err != nil || entry.ExternalCommentID != "comment-1" || entry.Author != "human" || entry.Body != "human discussion" || observation.Body != "human discussion" {
 		t.Fatalf("entry=%#v observation=%#v error=%v", entry, observation, err)
+	}
+	var skew map[string]json.RawMessage
+	if err := json.Unmarshal(comments[0], &skew); err != nil {
+		t.Fatal(err)
+	}
+	skew["future_optional"] = json.RawMessage(`{"ignored":true}`)
+	skewPayload, err := json.Marshal(skew)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := decodeProviderComment(skewPayload); err != nil {
+		t.Fatalf("comment optional-field skew rejected: %v", err)
 	}
 	for name, payload := range map[string]string{
 		"legacy body":       `{"id":"comment-1","author":"human","body":"human discussion"}`,
