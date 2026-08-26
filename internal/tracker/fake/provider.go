@@ -82,7 +82,7 @@ func (p *Provider) ReadWork(ctx context.Context, reference tracker.ExternalWorkR
 	}
 	discussion := make([]tracker.DiscussionEntry, len(work.Comments))
 	for index, comment := range work.Comments {
-		discussion[index] = tracker.DiscussionEntry{Body: comment.Body, OperationMarker: comment.Marker, Observation: comment.Revision}
+		discussion[index] = portableDiscussionEntry(comment)
 	}
 	return tracker.NewWorkRecord(reference, work.Title, work.Description, "", criteria, nil, work.Assignee, work.AssignmentMarker, discussion, observation)
 }
@@ -116,17 +116,21 @@ func (p *Provider) AppendDiscussion(ctx context.Context, request tracker.AppendD
 	}
 	mutation, mutationErr := p.CompareAndAddComment(ctx, tracker.CommentRequest{
 		WorkKey: request.ExternalRef.ExternalID, ExpectedRevision: request.ExpectedObservation,
-		Body: request.Body, Marker: request.OperationID.String(),
+		Author: request.Author, Body: request.Body, Marker: request.OperationID.String(),
 	})
 	if mutation.Revision == 0 {
 		return tracker.DiscussionMutation{}, mutationErr
+	}
+	persisted, err := p.persistedComment(ctx, request.ExternalRef.ExternalID, request.OperationID.String())
+	if err != nil {
+		return tracker.DiscussionMutation{}, err
 	}
 	observation, err := portableObservation(request.ExternalRef.ExternalID, mutation.Revision, mutation.Assignee, mutation.Marker)
 	if err != nil {
 		return tracker.DiscussionMutation{}, err
 	}
 	result := tracker.DiscussionMutation{
-		Entry:       tracker.DiscussionEntry{Author: request.Author, Body: request.Body, OperationMarker: request.OperationID.String(), Observation: mutation.Revision},
+		Entry:       portableDiscussionEntry(persisted),
 		Observation: observation, Replayed: mutation.Replayed, Noop: mutation.Noop,
 	}
 	return result, mutationErr
@@ -306,11 +310,15 @@ func (p *Provider) CompareAndAddComment(ctx context.Context, request tracker.Com
 			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work does not exist"}
 		}
 		for _, comment := range work.Comments {
-			if comment.Marker == request.Marker && comment.Body == request.Body {
+			if comment.Marker != request.Marker {
+				continue
+			}
+			if comment.Body == request.Body && comment.Author == request.Author {
 				result = mutation(work, true, false)
 				result.Marker = request.Marker
 				return nil
 			}
+			return &tracker.Error{Kind: tracker.ErrorRevisionConflict, Message: "operation marker was reused for a different mutation"}
 		}
 		if markerAlreadyUsed(state.History, request.WorkKey, request.Marker) {
 			return &tracker.Error{Kind: tracker.ErrorRevisionConflict, Message: "operation marker was reused for a different mutation"}
@@ -324,7 +332,7 @@ func (p *Provider) CompareAndAddComment(ctx context.Context, request tracker.Com
 			return &tracker.Error{Kind: tracker.ErrorRevisionConflict, Message: fmt.Sprintf("expected revision %d, observed %d", request.ExpectedRevision, work.Revision)}
 		}
 		work.Revision++
-		work.Comments = append(work.Comments, tracker.Comment{Body: request.Body, Marker: request.Marker, Revision: work.Revision})
+		work.Comments = append(work.Comments, tracker.Comment{Author: request.Author, Body: request.Body, Marker: request.Marker, Revision: work.Revision})
 		state.History = append(state.History, HistoryEntry{Kind: "comment", WorkKey: work.Key, Value: request.Body, Marker: request.Marker, Revision: work.Revision})
 		result = mutation(work, false, false)
 		result.Marker = request.Marker
@@ -340,6 +348,26 @@ func (p *Provider) CompareAndAddComment(ctx context.Context, request tracker.Com
 		return tracker.Mutation{}, outcome
 	}
 	return result, outcome
+}
+
+func (p *Provider) persistedComment(ctx context.Context, workKey, marker string) (tracker.Comment, error) {
+	work, err := p.Read(ctx, workKey)
+	if err != nil {
+		return tracker.Comment{}, err
+	}
+	for _, comment := range work.Comments {
+		if comment.Marker == marker {
+			return comment, nil
+		}
+	}
+	return tracker.Comment{}, &tracker.Error{Kind: tracker.ErrorAmbiguous, Message: "applied discussion entry could not be observed"}
+}
+
+func portableDiscussionEntry(comment tracker.Comment) tracker.DiscussionEntry {
+	return tracker.DiscussionEntry{
+		Author: comment.Author, Body: comment.Body,
+		OperationMarker: comment.Marker, Observation: comment.Revision,
+	}
 }
 
 func (p *Provider) CompareBeforeCompensate(ctx context.Context, request tracker.CompensationRequest) (tracker.Mutation, error) {
