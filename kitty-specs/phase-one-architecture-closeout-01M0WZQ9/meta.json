@@ -1,4 +1,16 @@
 {
+  "acceptance_history": [
+    {
+      "acceptance_mode": "pr",
+      "accepted_at": "2026-08-26T05:30:03.913157+00:00",
+      "accepted_by": "codex",
+      "accepted_from_commit": "c497bdb2c2c38c94d1639e5225f3625b76c19a43"
+    }
+  ],
+  "acceptance_mode": "pr",
+  "accepted_at": "2026-08-26T05:30:03.913157+00:00",
+  "accepted_by": "codex",
+  "accepted_from_commit": "c497bdb2c2c38c94d1639e5225f3625b76c19a43",
   "coordination_branch": "kitty/mission-phase-one-architecture-closeout-01M0WZQ9",
   "created_at": "2026-08-25T17:33:08.279269+00:00",
   "flattened": false,
