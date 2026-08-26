@@ -42,6 +42,9 @@
       "last_event_id": "01M0YNCZVXJYH5WFRX27BCN55G",
       "last_transition_at": "2026-08-26T09:11:14.045427+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: permanent layered Beads adapter boundary; architecture tests and race checks pass"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
