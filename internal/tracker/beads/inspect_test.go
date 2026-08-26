@@ -654,7 +654,13 @@ func TestWorktreeConvergenceAndDivergenceThroughProductionComposition(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Open(config)
+	databaseAlias := filepath.Join(root, "database-alias")
+	if err := os.Symlink(config.ProviderDatabaseIdentity, databaseAlias); err != nil {
+		t.Fatal(err)
+	}
+	aliasConfig := config
+	aliasConfig.ProviderDatabaseIdentity = databaseAlias
+	second, err := Open(aliasConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -721,6 +727,29 @@ func TestWorktreeConvergenceAndDivergenceThroughProductionComposition(t *testing
 	}
 	if locker.calls != 0 {
 		t.Fatalf("redirected lane acquired lock %d times", locker.calls)
+	}
+}
+
+func TestInvalidDatabasePathRefusesBeforeProviderProcess(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	mustMkdir(t, workspace)
+	marker := filepath.Join(root, "provider-started")
+	executable := filepath.Join(root, "bd")
+	script := "#!/bin/sh\nprintf started > \"" + marker + "\"\n"
+	if err := os.WriteFile(executable, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := InspectProvider(context.Background(), BindingConfig{
+		ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace,
+		ProviderDatabaseIdentity: "relative-database", ProtocolSchema: 1,
+		ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized,
+	})
+	if !tracker.IsKind(err, tracker.ErrorInvalidRequest) {
+		t.Fatalf("error=%v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("provider process started before database-path refusal: %v", err)
 	}
 }
 
