@@ -70,10 +70,12 @@ func TestTrackerInspectBeadsServerCredentialsAreNeverSerialized(t *testing.T) {
 	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
-	databasePath := helperDatabasePath(t, workspace)
+	// A server binding uses the provider's logical database name. The local
+	// path reported by `bd where` is observation evidence, not server identity.
+	helperDatabasePath(t, workspace)
 	executable := helperBeadsExecutable(t, root, tracker.ConcurrencyServerMultiwriter)
 	secret := "super-secret-password"
-	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", databasePath, "--protocol-schema", "1", "--mode", "server_multiwriter", "--read-only=false", "--server-identity", "server-1", "--server-endpoint", "127.0.0.1:3306", "--dolt-server-host", "127.0.0.1", "--dolt-server-port", "3306", "--dolt-remote-user", "operator", "--dolt-remote-password", secret}
+	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", "db-1", "--protocol-schema", "1", "--mode", "server_multiwriter", "--read-only=false", "--server-identity", "server-1", "--server-endpoint", "127.0.0.1:3306", "--dolt-server-host", "127.0.0.1", "--dolt-server-port", "3306", "--dolt-remote-user", "operator", "--dolt-remote-password", secret}
 	var stdout, stderr bytes.Buffer
 	if code := Run(context.Background(), args, &stdout, &stderr); code != 0 {
 		t.Fatalf("code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
@@ -87,6 +89,28 @@ func TestTrackerInspectBeadsServerCredentialsAreNeverSerialized(t *testing.T) {
 	}
 	if !response.OK || response.Inspection == nil || response.Inspection.Capabilities.ConcurrentWriters != tracker.ConcurrentWritersProviderNative {
 		t.Fatalf("response=%+v", response)
+	}
+}
+
+func TestTrackerInspectBeadsServerRejectsStaleLocalPathIdentity(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	staleLocalIdentity := helperDatabasePath(t, workspace)
+	executable := helperBeadsExecutable(t, root, tracker.ConcurrencyServerMultiwriter)
+	args := []string{"tracker", "inspect-beads", "--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", staleLocalIdentity, "--protocol-schema", "1", "--mode", "server_multiwriter", "--read-only=false", "--server-identity", "server-1", "--server-endpoint", "127.0.0.1:3306", "--dolt-server-host", "127.0.0.1", "--dolt-server-port", "3306"}
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), args, &stdout, &stderr); code != 1 {
+		t.Fatalf("code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var response BeadsInspectionResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.OK || response.Error == nil || response.Error.Kind != tracker.ErrorInvalidRequest || response.Error.RecoveryCode != "repair_provider_binding" {
+		t.Fatalf("stale local-path server identity was accepted: %+v", response)
 	}
 }
 
@@ -617,7 +641,7 @@ dolt)
   case "$2" in
   show)
     if [ "%s" = "server_multiwriter" ]; then
-      printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":false,"host":"127.0.0.1","port":3306,"user":"operator","shared_server":true,"connection_ok":true}}\n' "$BEADS_DIR"
+      printf '%%s\n' '{"schema_version":1,"data":{"backend":"dolt","database":"db-1","embedded":false,"host":"127.0.0.1","port":3306,"user":"operator","shared_server":true,"connection_ok":true}}'
     else
       printf '{"schema_version":1,"data":{"backend":"dolt","data_dir":"%%s/embeddeddolt","database":"db-1","embedded":true}}\n' "$BEADS_DIR"
     fi ;;
@@ -629,6 +653,9 @@ dolt)
     fi ;;
   *) exit 64 ;;
   esac ;;
+config)
+  [ "$2" = "get" ] && [ "$3" = "dolt.auto-start" ] && [ "$4" = "--json" ] || exit 64
+  printf '%%s\n' '{"schema_version":1,"data":{"key":"dolt.auto-start","value":"false","location":"config.yaml"}}' ;;
 *) exit 64 ;;
 esac
 `, mode, mode)
