@@ -175,7 +175,7 @@ func dishonestConformancePlan(t *testing.T, root, caseID string) ([]dishonestSte
 			steps = append(steps, preflight(prefix)...)
 			steps = append(steps, show(prefix+".show", base), dishonestStep{ID: prefix + ".comments", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(comments)}, dishonestStep{ID: prefix + ".scope", Argv: []string{"list", "--json"}, Stdout: envelope("[" + issueJSON("", "", "project-fault", "work-fault", "r1") + "]")})
 			if mutate {
-				steps = append(steps, dishonestStep{ID: prefix + ".mutate", Argv: []string{"comments", "add", "bd-fault", providerBody, "--json"}, Stdout: envelope(`{}`)}, show(prefix+".after-show", base), dishonestStep{ID: prefix + ".after-comments", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(comment)})
+				steps = append(steps, dishonestStep{ID: prefix + ".mutate", Argv: []string{"comments", "add", "bd-fault", providerBody, "--author", "actor-conformance", "--json"}, Stdout: envelope(`{}`)}, show(prefix+".after-show", base), dishonestStep{ID: prefix + ".after-comments", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(comment)})
 			}
 		}
 		appendAttempt("discussion.first", `[]`, true)
@@ -1033,7 +1033,7 @@ func runCommentApplyTimeout(t *testing.T, executable string, routes ...faultProv
 		showStep("comment.observe-before", issue, "", 0),
 		dishonestStep{ID: "comment.list-before", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(`[]`)},
 		dishonestStep{ID: "comment.scope-list", Argv: []string{"list", "--json"}, Stdout: envelope("[" + issueJSON("", "", "project-fault", "work-fault", "r-before") + "]")},
-		dishonestStep{ID: "comment.apply-timeout", Argv: []string{"comments", "add", "bd-fault", providerBody, "--json"}, TransitionTiming: "before_response", Transition: map[string]string{"comment": operation.String()}, NextObservation: map[string]string{"comment": operation.String()}, WaitFor: "never.release"},
+		dishonestStep{ID: "comment.apply-timeout", Argv: []string{"comments", "add", "bd-fault", providerBody, "--author", "actor-timeout", "--json"}, TransitionTiming: "before_response", Transition: map[string]string{"comment": operation.String()}, NextObservation: map[string]string{"comment": operation.String()}, WaitFor: "never.release"},
 		showStep("comment.observe-after", issueEnvelope("", "", "project-fault", "work-fault", "r-after"), "", 0),
 		dishonestStep{ID: "comment.list-after", Argv: []string{"comments", "bd-fault", "--json"}, Stdout: envelope(comment)},
 	)
@@ -1265,6 +1265,38 @@ func validateMutationCount(count int) error {
 	return nil
 }
 
+type humanTopologyFact struct {
+	CaseID, WorkID, RunID, LeaseID, WorkspaceID, WorkspacePath string
+	RepositoryPath, DatabasePath, TrackerPath                  string
+}
+
+func validateHumanTopologyFacts(facts []humanTopologyFact, expected int) error {
+	if len(facts) != expected {
+		return fmt.Errorf("human topology count=%d want=%d", len(facts), expected)
+	}
+	seen := map[string]map[string]string{}
+	for _, field := range []string{"case", "work", "run", "lease", "workspace", "workspace_path", "repository", "database", "tracker"} {
+		seen[field] = map[string]string{}
+	}
+	for _, fact := range facts {
+		values := map[string]string{
+			"case": fact.CaseID, "work": fact.WorkID, "run": fact.RunID, "lease": fact.LeaseID,
+			"workspace": fact.WorkspaceID, "workspace_path": fact.WorkspacePath,
+			"repository": fact.RepositoryPath, "database": fact.DatabasePath, "tracker": fact.TrackerPath,
+		}
+		for field, value := range values {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("case=%s human topology field=%s is empty", fact.CaseID, field)
+			}
+			if prior := seen[field][value]; prior != "" {
+				return fmt.Errorf("case=%s human topology field=%s value=%s shared_with=%s", fact.CaseID, field, value, prior)
+			}
+			seen[field][value] = fact.CaseID
+		}
+	}
+	return nil
+}
+
 // execCommandContext is a test seam that keeps process creation visible to
 // static analysis without importing a shell.
 var execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -1273,143 +1305,176 @@ var execCommandContext = func(ctx context.Context, name string, args ...string) 
 
 func TestBeadsHumanAssignmentPreservation100(t *testing.T) {
 	const repetitions = 100
+	const batchSize = 8
 	const seed = int64(0x5EC0A11)
 	_ = seed // fixed and recorded; case order is lexical for reproducibility.
 	idsExpected := make([]string, 0, repetitions)
+	started := make([]bool, repetitions)
+	terminal := make([]bool, repetitions)
+	passed := make([]bool, repetitions)
+	results := make([]map[string]any, repetitions)
+	topologies := make([]humanTopologyFact, repetitions)
+	for repetition := 1; repetition <= repetitions; repetition++ {
+		idsExpected = append(idsExpected, stableID("human-assignment-preservation", repetition))
+	}
+
+	for batchStart := 1; batchStart <= repetitions; batchStart += batchSize {
+		batchStart := batchStart
+		batchEnd := min(batchStart+batchSize-1, repetitions)
+		t.Run(fmt.Sprintf("bounded-batch-%02d", (batchStart-1)/batchSize+1), func(t *testing.T) {
+			for repetition := batchStart; repetition <= batchEnd; repetition++ {
+				repetition := repetition
+				index := repetition - 1
+				caseID := idsExpected[index]
+				t.Run(caseID, func(t *testing.T) {
+					t.Parallel()
+					started[index] = true
+					workID := ids.WorkID(stableID("work-human", repetition))
+					laneID := ids.LaneID(stableID("lane-human", repetition))
+					workKey := stableID("external-human", repetition)
+					authorityFixture := newWorkspaceScenario(t, []workspaceItem{{work: workID, lane: laneID, tracker: workKey}})
+					stale := provisionWP08StaleAuthority(t, authorityFixture, newPhase1ExpectedState(), workID, laneID, workKey, "human-"+fmt.Sprintf("%03d", repetition))
+					authorityAudit := newFaultAuthorityAudit(t, authorityFixture, stale, caseID, true)
+					if err := authorityAudit.run("before"); err != nil {
+						t.Fatal(err)
+					}
+					// Provider, saga, and authority audit all share this scenario's
+					// tracker/control-store pair; no evidence is borrowed from a
+					// disconnected fixture.
+					store, err := fake.Open(authorityFixture.tracker)
+					if err != nil {
+						t.Fatal(err)
+					}
+					provider := conflictObservingProjection{Provider: fake.NewProvider(store)}
+					reference := tracker.ExternalWorkRef{ProjectID: ids.ProjectID(stableID("project-human", repetition)), WorkID: workID, Provider: "durable_fake", ExternalID: workKey, MetadataSchema: 1}
+					before, err := provider.ObserveAssignment(context.Background(), reference)
+					if err != nil {
+						t.Fatal(err)
+					}
+					operation := humanOperation(repetition)
+					// The saga and the authority audit deliberately share one durable
+					// control store; this is causal evidence, not a co-located fixture.
+					controlPath := authorityFixture.database
+					control, err := sqlite.Open(context.Background(), controlPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					request := execution.TrackerAssignRequest{
+						SchemaVersion: execution.ResultSchemaVersion, CorrelationID: stableID("correlation-human", repetition),
+						OperationID: operation, ActorID: ids.ActorID(stableID("actor-automated", repetition)), ProcessID: ids.ProcessID(stableID("process-automated", repetition)),
+						Now: time.Date(2026, 8, 26, 19, 0, repetition, 0, time.UTC), Provider: reference.Provider, WorkKey: reference.ExternalID,
+						ExpectedRevision: before.Observation.Revision, Assignee: stableID("actor-automated", repetition), ExternalRef: reference,
+						RequiredGuarantee: tracker.AssignmentAtomicClaim,
+					}
+					saga := execution.NewTrackerSaga(control, provider, execution.SystemClock{})
+					applied, err := saga.Assign(context.Background(), request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					human := stableID("actor-human", repetition)
+					projected := make(chan struct{})
+					humanApplied := make(chan struct{})
+					type compensationResult struct{ err error }
+					compensated := make(chan compensationResult, 1)
+					go func() {
+						close(projected)
+						<-humanApplied
+						_, compensateErr := saga.Compensate(context.Background(), execution.TrackerCompensateRequest{
+							SchemaVersion: request.SchemaVersion, CorrelationID: request.CorrelationID, OperationID: request.OperationID,
+							ActorID: request.ActorID, ProcessID: request.ProcessID, Now: request.Now.Add(time.Second), Provider: request.Provider,
+							WorkKey: request.WorkKey, ExpectedRevision: applied.AppliedRevision, ExternalRef: reference, RequiredGuarantee: request.RequiredGuarantee,
+						})
+						compensated <- compensationResult{err: compensateErr}
+					}()
+					<-projected
+					if err := store.HumanAssign(context.Background(), workKey, human); err != nil {
+						t.Fatal(err)
+					}
+					historyBefore, _ := store.History(context.Background())
+					close(humanApplied)
+					compensateErr := (<-compensated).err
+					var compensationDiagnostic *execution.DiagnosticError
+					if !errors.As(compensateErr, &compensationDiagnostic) || compensationDiagnostic.RetrySafety == execution.RetrySafeSameOperation {
+						t.Fatalf("compensation error=%v", compensateErr)
+					}
+					after, err := provider.ObserveAssignment(context.Background(), reference)
+					if err != nil || after.Assignee != human || after.OperationMarker != "" {
+						t.Fatalf("human state overwritten: %+v err=%v", after, err)
+					}
+					historyAfter, _ := store.History(context.Background())
+					if len(historyAfter) != len(historyBefore) {
+						t.Fatalf("automatic compensation mutated provider: before=%d after=%d", len(historyBefore), len(historyAfter))
+					}
+					if err := control.Close(); err != nil {
+						t.Fatal(err)
+					}
+					control, err = sqlite.Open(context.Background(), controlPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					effect, err := control.ExternalEffect(context.Background(), operation)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if effect.CompensationStatus != execution.CompensationAttributionLost || effect.AppliedValue != request.Assignee || effect.Marker != operation.String() || effect.ConflictValue != human || effect.ConflictMarker != "" || effect.ConflictRevision != after.Observation.Revision || effect.ObservationValue != human || effect.ObservationRevision != after.Observation.Revision {
+						t.Fatalf("durable conflict evidence incomplete: %+v", effect)
+					}
+					if err := control.Close(); err != nil {
+						t.Fatal(err)
+					}
+					authorityAudit.attributionProbe = func(ctx context.Context) error {
+						observed, observeErr := provider.ObserveAssignment(ctx, reference)
+						if observeErr != nil {
+							return observeErr
+						}
+						if observed.Assignee != human || observed.OperationMarker != "" {
+							return fmt.Errorf("work=%s human attribution changed: %+v", workID, observed)
+						}
+						return nil
+					}
+					if err := authorityAudit.run("after"); err != nil {
+						t.Fatal(err)
+					}
+					authorityResult := conformance.Result{}
+					authorityAudit.populate(&authorityResult)
+					terminal[index], passed[index] = true, true
+					topologies[index] = humanTopologyFact{
+						CaseID: caseID, WorkID: stale.capsule.WorkID.String(), RunID: stale.capsule.RunID.String(), LeaseID: stale.capsule.LeaseID.String(),
+						WorkspaceID: stale.capsule.WorkspaceID.String(), WorkspacePath: stale.capsule.WorkspacePath,
+						RepositoryPath: authorityFixture.repository, DatabasePath: authorityFixture.database, TrackerPath: authorityFixture.tracker,
+					}
+					results[index] = map[string]any{"id": caseID, "outcome": string(effect.CompensationStatus), "expected_revision": effect.AppliedRevision, "actual_revision": effect.ConflictRevision, "expected_assignee": effect.AppliedValue, "actual_assignee": effect.ConflictValue, "expected_marker": effect.Marker, "actual_marker": effect.ConflictMarker, "compensation_mutations": len(historyAfter) - len(historyBefore), "human_preserved": after.Assignee == human, "universal_required": authorityResult.UniversalRequired, "universal_started": authorityResult.UniversalStarted, "universal_passed": authorityResult.UniversalPassed, "stale_probe_required": authorityResult.StaleProbeRequired, "stale_probe_started": authorityResult.StaleProbeStarted, "stale_probe_passed": authorityResult.StaleProbePassed}
+				})
+			}
+		})
+	}
 	idsStarted := make([]string, 0, repetitions)
 	idsTerminal := make([]string, 0, repetitions)
 	idsPassed := make([]string, 0, repetitions)
-	results := make([]map[string]any, 0, repetitions)
-	items := make([]workspaceItem, 0, repetitions)
-	for repetition := 1; repetition <= repetitions; repetition++ {
-		items = append(items, workspaceItem{work: ids.WorkID(stableID("work-human", repetition)), lane: ids.LaneID(stableID("lane-human", repetition)), tracker: stableID("external-human", repetition)})
-	}
-	authorityFixture := newWorkspaceScenario(t, items)
-	authorityExpected := newPhase1ExpectedState()
-
-	for repetition := 1; repetition <= repetitions; repetition++ {
-		caseID := stableID("human-assignment-preservation", repetition)
-		idsExpected = append(idsExpected, caseID)
-		t.Run(caseID, func(t *testing.T) {
+	for index, caseID := range idsExpected {
+		if started[index] {
 			idsStarted = append(idsStarted, caseID)
-			workID := ids.WorkID(stableID("work-human", repetition))
-			laneID := ids.LaneID(stableID("lane-human", repetition))
-			workKey := stableID("external-human", repetition)
-			stale := provisionWP08StaleAuthority(t, authorityFixture, authorityExpected, workID, laneID, workKey, "human-"+fmt.Sprintf("%03d", repetition))
-			authorityExpected = stale.expected.clone()
-			authorityAudit := newFaultAuthorityAudit(t, authorityFixture, stale, caseID, true)
-			if err := authorityAudit.run("before"); err != nil {
-				t.Fatal(err)
-			}
-			// Provider, saga, and authority audit all share this scenario's
-			// tracker/control-store pair; no evidence is borrowed from a
-			// disconnected fixture.
-			store, err := fake.Open(authorityFixture.tracker)
-			if err != nil {
-				t.Fatal(err)
-			}
-			provider := conflictObservingProjection{Provider: fake.NewProvider(store)}
-			reference := tracker.ExternalWorkRef{ProjectID: ids.ProjectID(stableID("project-human", repetition)), WorkID: workID, Provider: "durable_fake", ExternalID: workKey, MetadataSchema: 1}
-			before, err := provider.ObserveAssignment(context.Background(), reference)
-			if err != nil {
-				t.Fatal(err)
-			}
-			operation := humanOperation(repetition)
-			// The saga and the authority audit deliberately share one durable
-			// control store; this is causal evidence, not a co-located fixture.
-			controlPath := authorityFixture.database
-			control, err := sqlite.Open(context.Background(), controlPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			request := execution.TrackerAssignRequest{
-				SchemaVersion: execution.ResultSchemaVersion, CorrelationID: stableID("correlation-human", repetition),
-				OperationID: operation, ActorID: ids.ActorID(stableID("actor-automated", repetition)), ProcessID: ids.ProcessID(stableID("process-automated", repetition)),
-				Now: time.Date(2026, 8, 26, 19, 0, repetition, 0, time.UTC), Provider: reference.Provider, WorkKey: reference.ExternalID,
-				ExpectedRevision: before.Observation.Revision, Assignee: stableID("actor-automated", repetition), ExternalRef: reference,
-				RequiredGuarantee: tracker.AssignmentAtomicClaim,
-			}
-			saga := execution.NewTrackerSaga(control, provider, execution.SystemClock{})
-			applied, err := saga.Assign(context.Background(), request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			human := stableID("actor-human", repetition)
-			projected := make(chan struct{})
-			humanApplied := make(chan struct{})
-			type compensationResult struct{ err error }
-			compensated := make(chan compensationResult, 1)
-			go func() {
-				close(projected)
-				<-humanApplied
-				_, compensateErr := saga.Compensate(context.Background(), execution.TrackerCompensateRequest{
-					SchemaVersion: request.SchemaVersion, CorrelationID: request.CorrelationID, OperationID: request.OperationID,
-					ActorID: request.ActorID, ProcessID: request.ProcessID, Now: request.Now.Add(time.Second), Provider: request.Provider,
-					WorkKey: request.WorkKey, ExpectedRevision: applied.AppliedRevision, ExternalRef: reference, RequiredGuarantee: request.RequiredGuarantee,
-				})
-				compensated <- compensationResult{err: compensateErr}
-			}()
-			<-projected
-			if err := store.HumanAssign(context.Background(), workKey, human); err != nil {
-				t.Fatal(err)
-			}
-			historyBefore, _ := store.History(context.Background())
-			close(humanApplied)
-			compensateErr := (<-compensated).err
-			var compensationDiagnostic *execution.DiagnosticError
-			if !errors.As(compensateErr, &compensationDiagnostic) || compensationDiagnostic.RetrySafety == execution.RetrySafeSameOperation {
-				t.Fatalf("compensation error=%v", compensateErr)
-			}
-			after, err := provider.ObserveAssignment(context.Background(), reference)
-			if err != nil || after.Assignee != human || after.OperationMarker != "" {
-				t.Fatalf("human state overwritten: %+v err=%v", after, err)
-			}
-			historyAfter, _ := store.History(context.Background())
-			if len(historyAfter) != len(historyBefore) {
-				t.Fatalf("automatic compensation mutated provider: before=%d after=%d", len(historyBefore), len(historyAfter))
-			}
-			if err := control.Close(); err != nil {
-				t.Fatal(err)
-			}
-			control, err = sqlite.Open(context.Background(), controlPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			effect, err := control.ExternalEffect(context.Background(), operation)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if effect.CompensationStatus != execution.CompensationAttributionLost || effect.AppliedValue != request.Assignee || effect.Marker != operation.String() || effect.ConflictValue != human || effect.ConflictMarker != "" || effect.ConflictRevision != after.Observation.Revision || effect.ObservationValue != human || effect.ObservationRevision != after.Observation.Revision {
-				t.Fatalf("durable conflict evidence incomplete: %+v", effect)
-			}
-			if err := control.Close(); err != nil {
-				t.Fatal(err)
-			}
-			authorityAudit.attributionProbe = func(ctx context.Context) error {
-				observed, observeErr := provider.ObserveAssignment(ctx, reference)
-				if observeErr != nil {
-					return observeErr
-				}
-				if observed.Assignee != human || observed.OperationMarker != "" {
-					return fmt.Errorf("work=%s human attribution changed: %+v", workID, observed)
-				}
-				return nil
-			}
-			if err := authorityAudit.run("after"); err != nil {
-				t.Fatal(err)
-			}
-			authorityResult := conformance.Result{}
-			authorityAudit.populate(&authorityResult)
+		}
+		if terminal[index] {
 			idsTerminal = append(idsTerminal, caseID)
+		}
+		if passed[index] {
 			idsPassed = append(idsPassed, caseID)
-			results = append(results, map[string]any{"id": caseID, "outcome": string(effect.CompensationStatus), "expected_revision": effect.AppliedRevision, "actual_revision": effect.ConflictRevision, "expected_assignee": effect.AppliedValue, "actual_assignee": effect.ConflictValue, "expected_marker": effect.Marker, "actual_marker": effect.ConflictMarker, "compensation_mutations": len(historyAfter) - len(historyBefore), "human_preserved": after.Assignee == human, "universal_required": authorityResult.UniversalRequired, "universal_started": authorityResult.UniversalStarted, "universal_passed": authorityResult.UniversalPassed, "stale_probe_required": authorityResult.StaleProbeRequired, "stale_probe_started": authorityResult.StaleProbeStarted, "stale_probe_passed": authorityResult.StaleProbePassed})
-		})
+		}
 	}
 	for _, values := range [][]string{idsExpected, idsStarted, idsTerminal, idsPassed} {
 		sort.Strings(values)
 	}
 	if !sameIDs(idsExpected, idsStarted) || !sameIDs(idsExpected, idsTerminal) || !sameIDs(idsExpected, idsPassed) {
 		t.Fatalf("human census mismatch expected=%d started=%d terminal=%d passed=%d", len(idsExpected), len(idsStarted), len(idsTerminal), len(idsPassed))
+	}
+	if err := validateHumanTopologyFacts(topologies, repetitions); err != nil {
+		t.Fatal(err)
+	}
+	sharedTopologyMutant := append([]humanTopologyFact(nil), topologies...)
+	sharedTopologyMutant[len(sharedTopologyMutant)-1] = sharedTopologyMutant[0]
+	if err := validateHumanTopologyFacts(sharedTopologyMutant, repetitions); err == nil {
+		t.Fatal("shared human authority/provider topology mutant escaped exact census")
 	}
 	artifact := map[string]any{"seed": seed, "expected": idsExpected, "started": idsStarted, "terminal": idsTerminal, "passed": idsPassed, "failed": []string{}, "non_applicable": []string{}, "results": results}
 	encoded, err := json.MarshalIndent(artifact, "", "  ")

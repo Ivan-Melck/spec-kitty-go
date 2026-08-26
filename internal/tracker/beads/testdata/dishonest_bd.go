@@ -260,7 +260,7 @@ func knownAction(argv []string) bool {
 			(len(argv) == 4 && argv[1] == "list" && argv[2] != "" && argv[3] == "--json")
 	case "comments":
 		return (len(argv) == 3 && argv[1] != "" && argv[2] == "--json") ||
-			(len(argv) == 5 && argv[1] == "add" && argv[2] != "" && argv[3] != "" && argv[4] == "--json")
+			(len(argv) == 7 && argv[1] == "add" && argv[2] != "" && argv[3] != "" && argv[4] == "--author" && argv[5] != "" && argv[6] == "--json")
 	case "backup":
 		return (len(argv) == 2 && (argv[1] == "sync" || argv[1] == "status")) ||
 			(len(argv) == 3 && (argv[1] == "init" || argv[1] == "restore") && filepath.IsAbs(argv[2]))
