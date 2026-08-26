@@ -4,7 +4,7 @@
   "flattened": false,
   "friendly_name": "Phase One Architecture Closeout",
   "mission_id": "01M0WZQ99NY46D61XSJA6BYSGV",
-  "mission_number": null,
+  "mission_number": 2,
   "mission_slug": "phase-one-architecture-closeout-01M0WZQ9",
   "mission_type": "software-dev",
   "pr_bound": true,
