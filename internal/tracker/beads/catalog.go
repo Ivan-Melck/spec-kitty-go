@@ -238,13 +238,17 @@ func (bound *BoundAdapter) withCatalogMutation(ctx context.Context, readiness Re
 }
 
 func (bound *BoundAdapter) catalogCapabilities() tracker.ProviderCapabilities {
+	return implementedCapabilities(bound.binding.ConcurrencyMode)
+}
+
+func implementedCapabilities(mode tracker.ConcurrencyMode) tracker.ProviderCapabilities {
 	writers := tracker.ConcurrentWritersAdapterSerialized
-	if bound.binding.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter {
+	if mode == tracker.ConcurrencyServerMultiwriter {
 		writers = tracker.ConcurrentWritersProviderNative
 	}
 	return tracker.ProviderCapabilities{
 		CatalogRead: tracker.SupportSupported, CatalogCreate: tracker.SupportSupported, CatalogUpdate: tracker.UpdateUnguarded,
-		BlockingGraph: tracker.SupportUnsupported, Discussion: tracker.DiscussionUnsupported, Assignment: tracker.AssignmentUnsupported,
+		BlockingGraph: tracker.SupportSupported, Discussion: tracker.DiscussionAppendOnly, Assignment: tracker.AssignmentUnguarded,
 		ObservationRevision: tracker.ObservationRevisionContentDerived, SafeCompensation: tracker.CompensationUnsupported,
 		ConcurrentWriters: writers, PortableExport: tracker.SupportUnsupported, RestorableBackup: tracker.SupportUnsupported,
 	}
@@ -253,18 +257,18 @@ func (bound *BoundAdapter) catalogCapabilities() tracker.ProviderCapabilities {
 // Capabilities reports the guarantees of the ports actually implemented by
 // this bound adapter. Provider health remains the Inspector's concern; this
 // declaration never promotes an unhealthy binding into a usable one.
-func (bound *BoundAdapter) Capabilities(context.Context) (tracker.ProviderCapabilities, error) {
+func (bound *BoundAdapter) Capabilities(ctx context.Context) (tracker.ProviderCapabilities, error) {
 	if bound == nil {
 		return tracker.ProviderCapabilities{}, invalidCatalogRequest("catalog binding is missing", nil)
 	}
-	if err := validatePinnedBinding(bound.binding); err != nil {
+	inspection, err := bound.Inspect(ctx, tracker.InspectRequest{ProjectID: bound.binding.ProjectID})
+	if err != nil {
 		return tracker.ProviderCapabilities{}, err
 	}
-	capabilities := bound.catalogCapabilities()
-	if err := capabilities.Validate(); err != nil {
+	if err := inspection.Capabilities.Validate(); err != nil {
 		return tracker.ProviderCapabilities{}, invalidCatalogRequest("catalog capability declaration is invalid", err)
 	}
-	return capabilities, nil
+	return inspection.Capabilities, nil
 }
 
 func validateCreateRequest(bound *BoundAdapter, request tracker.CreateWorkRequest) error {

@@ -33,6 +33,7 @@ const (
 	CommandWhere            CommandKind = "where"
 	CommandDoltShow         CommandKind = "dolt_show"
 	CommandDoltStatus       CommandKind = "dolt_status"
+	CommandDoltAutoStart    CommandKind = "dolt_auto_start"
 	CommandShow             CommandKind = "show"
 	CommandList             CommandKind = "list"
 	CommandReady            CommandKind = "ready"
@@ -101,6 +102,10 @@ func newDoltShowCommand(binding commandBinding) (command, error) {
 
 func newDoltStatusCommand(binding commandBinding) (command, error) {
 	return buildCommand(CommandDoltStatus, binding, []string{"dolt", "status", "--json"}, expectedObject, false, false)
+}
+
+func newDoltAutoStartCommand(binding commandBinding) (command, error) {
+	return buildCommand(CommandDoltAutoStart, binding, []string{"config", "get", "dolt.auto-start", "--json"}, expectedObject, false, false)
 }
 
 func newShowCommand(binding commandBinding, id string) (command, error) {
@@ -182,7 +187,7 @@ func newAtomicClaimCommand(binding commandBinding, id string) (command, error) {
 	if err := requiredExternalID("work id", id); err != nil {
 		return command{}, err
 	}
-	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedObject, true, false)
+	return buildCommand(CommandAtomicClaim, binding, []string{"update", id, "--claim", "--json"}, expectedArray, true, false)
 }
 
 func newDependencyAddCommand(binding commandBinding, blocked, blocker string) (command, error) {
@@ -205,14 +210,30 @@ func newDependencyListCommand(binding commandBinding, id string) (command, error
 	return buildCommand(CommandDependencyList, binding, []string{"dep", "list", id, "--json"}, expectedArray, false, false)
 }
 
-func newCommentAppendCommand(binding commandBinding, id, body string) (command, error) {
+func newDependencyRemoveCommand(binding commandBinding, blocked, blocker string) (command, error) {
+	if err := requiredExternalID("blocked work id", blocked); err != nil {
+		return command{}, err
+	}
+	if err := requiredExternalID("blocking work id", blocker); err != nil {
+		return command{}, err
+	}
+	if blocked == blocker {
+		return command{}, validationError("dependency cannot reference the same work twice")
+	}
+	return buildCommand(CommandDependencyRemove, binding, []string{"dep", "remove", blocked, blocker, "--json"}, expectedObject, true, false)
+}
+
+func newCommentAppendCommand(binding commandBinding, id, author, body string) (command, error) {
 	if err := requiredExternalID("work id", id); err != nil {
+		return command{}, err
+	}
+	if err := requiredValue("comment author", author); err != nil {
 		return command{}, err
 	}
 	if err := requiredValue("comment body", body); err != nil {
 		return command{}, err
 	}
-	return buildCommand(CommandCommentAppend, binding, []string{"comments", "add", id, body, "--json"}, expectedObject, true, false)
+	return buildCommand(CommandCommentAppend, binding, []string{"comments", "add", id, body, "--author", author, "--json"}, expectedObject, true, false)
 }
 
 func newCommentListCommand(binding commandBinding, id string) (command, error) {
@@ -396,6 +417,8 @@ func validateArgvShape(kind CommandKind, argv []string) error {
 		return fixed("dolt", "show", "--json")
 	case CommandDoltStatus:
 		return fixed("dolt", "status", "--json")
+	case CommandDoltAutoStart:
+		return fixed("config", "get", "dolt.auto-start", "--json")
 	case CommandList:
 		return fixed("list", "--json")
 	case CommandReady:
@@ -424,19 +447,26 @@ func validateArgvShape(kind CommandKind, argv []string) error {
 		if len(argv) != 7 || argv[0] != "dep" || argv[1] != "add" || argv[4] != "--type" || argv[5] != "blocks" || argv[6] != "--json" {
 			return validationError("dependency arguments do not match the typed command shape")
 		}
+	case CommandDependencyRemove:
+		if len(argv) != 5 || argv[0] != "dep" || argv[1] != "remove" || argv[4] != "--json" {
+			return validationError("dependency removal arguments do not match the typed command shape")
+		}
 	case CommandDependencyList:
 		if len(argv) != 4 || argv[0] != "dep" || argv[1] != "list" || argv[3] != "--json" {
 			return validationError("dependency list arguments do not match the typed command shape")
 		}
 		return requiredExternalID("work id", argv[2])
 	case CommandCommentAppend:
-		if len(argv) != 5 || argv[0] != "comments" || argv[1] != "add" || argv[4] != "--json" {
+		if len(argv) != 7 || argv[0] != "comments" || argv[1] != "add" || argv[4] != "--author" || argv[6] != "--json" {
 			return validationError("comment arguments do not match the typed command shape")
 		}
 		if err := requiredExternalID("work id", argv[2]); err != nil {
 			return err
 		}
-		return requiredValue("comment body", argv[3])
+		if err := requiredValue("comment body", argv[3]); err != nil {
+			return err
+		}
+		return requiredValue("comment author", argv[5])
 	case CommandCommentList:
 		if len(argv) != 3 || argv[0] != "comments" || argv[2] != "--json" {
 			return validationError("comment list arguments do not match the typed command shape")
@@ -506,13 +536,13 @@ type commandContract struct {
 
 func commandContractFor(kind CommandKind) (commandContract, bool) {
 	switch kind {
-	case CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus:
+	case CommandVersion, CommandWhere, CommandDoltShow, CommandDoltStatus, CommandDoltAutoStart:
 		return commandContract{shape: expectedObject, json: true}, true
 	case CommandShow, CommandList, CommandReady, CommandDependencyList, CommandCommentList:
 		return commandContract{shape: expectedArray, json: true}, true
-	case CommandCreate, CommandAtomicClaim, CommandDependencyAdd, CommandCommentAppend:
+	case CommandCreate, CommandDependencyAdd, CommandDependencyRemove, CommandCommentAppend:
 		return commandContract{shape: expectedObject, mutating: true, json: true}, true
-	case CommandUpdate:
+	case CommandUpdate, CommandAtomicClaim:
 		return commandContract{shape: expectedArray, mutating: true, json: true}, true
 	case CommandExport:
 		return commandContract{shape: expectedJSONL, explicitDeadline: true, json: true}, true
