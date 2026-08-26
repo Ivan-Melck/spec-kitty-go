@@ -37,6 +37,8 @@ func TestEvidenceIsCreateOnlyRedactedAndSchemaShaped(t *testing.T) {
 		t.Fatalf("path=%q err=%v", validated, err)
 	}
 	evidence := validQualificationEvidence()
+	repository := qualificationRepositoryRoot(t)
+	schemaPath := filepath.Join(repository, qualificationEvidenceSchemaPath)
 	if err := writeEvidence(path, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -48,46 +50,167 @@ func TestEvidenceIsCreateOnlyRedactedAndSchemaShaped(t *testing.T) {
 	if err := json.Unmarshal(payload, &instance); err != nil {
 		t.Fatal(err)
 	}
-	repository := qualificationRepositoryRoot(t)
-	schemaPath := filepath.Join(repository, "kitty-specs", "beads-tracker-integration-01M0YG7E", "contracts", "qualification-evidence.schema.json")
-	schemaPayload, err := os.ReadFile(schemaPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var schemaDocument any
-	if err := json.Unmarshal(schemaPayload, &schemaDocument); err != nil {
-		t.Fatal(err)
-	}
-	compiler := jsonschema.NewCompiler()
-	compiler.AssertFormat()
-	if err := compiler.AddResource(schemaPath, schemaDocument); err != nil {
-		t.Fatal(err)
-	}
-	compiled, err := compiler.Compile(schemaPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := compiled.Validate(instance); err != nil {
+	if err := validateSerializedEvidence(schemaPath, payload); err != nil {
 		t.Fatalf("emitted evidence violates the checked-in contract: %v", err)
+	}
+	unknownField := append([]byte(`{"unexpected":true,`), payload[1:]...)
+	if err := validateSerializedRoundTrip(unknownField, evidence); err == nil {
+		t.Fatal("strict serialized evidence decoder accepted an unknown field")
+	}
+	if err := writeEvidence(path, validQualificationEvidence()); err == nil {
+		t.Fatal("atomic evidence publication overwrote an existing record")
+	}
+	unchanged, err := os.ReadFile(path)
+	if err != nil || string(unchanged) != string(payload) {
+		t.Fatalf("failed overwrite changed published evidence: err=%v", err)
 	}
 	object := instance.(map[string]any)
 	contention := object["contention"].(map[string]any)
 	contention["processes"] = float64(7)
-	if err := compiled.Validate(instance); err == nil {
+	mutant, err := json.Marshal(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSerializedEvidence(schemaPath, mutant); err == nil {
 		t.Fatal("checked-in schema accepted a contention-shape mutant")
 	}
 	contention["processes"] = float64(8)
 	delete(object, "contention")
-	if err := compiled.Validate(instance); err == nil {
+	mutant, err = json.Marshal(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSerializedEvidence(schemaPath, mutant); err == nil {
 		t.Fatal("checked-in schema accepted missing contention evidence")
+	}
+	invalidPath := filepath.Join(directory, "invalid.json")
+	evidence.Contention.Processes = 7
+	if err := writeEvidence(invalidPath, evidence); err == nil {
+		t.Fatal("writer published passing evidence rejected by the checked-in schema")
+	}
+	if _, err := os.Stat(invalidPath); !os.IsNotExist(err) {
+		t.Fatalf("schema-invalid evidence reached the destination: %v", err)
 	}
 	if _, err := validateEvidencePath(path); err == nil {
 		t.Fatal("existing evidence path was accepted for overwrite")
 	}
+	evidence = validQualificationEvidence()
 	evidence.Issues = []issueEvidence{{Kind: "raw_stderr", Message: "do not persist"}}
 	if err := writeEvidence(filepath.Join(directory, "leaky.json"), evidence); err == nil {
 		t.Fatal("sensitive evidence field was accepted")
 	}
+}
+
+func TestEvidenceSchemaRepresentsHonestNonPassObservations(t *testing.T) {
+	directory := t.TempDir()
+	schemaPath := filepath.Join(qualificationRepositoryRoot(t), qualificationEvidenceSchemaPath)
+
+	nonAdmissible := validQualificationEvidence()
+	nonAdmissible.StorageMode = "embedded_serialized"
+	nonAdmissible.Scenarios = scenarioCensus{Expected: 11, Started: 11, Terminal: 11, Passed: 10}
+	nonAdmissible.Latency = nil
+	nonAdmissible.Contention = nil
+	nonAdmissible.AssignmentPreservation = nil
+	nonAdmissible.AuthorityAudits = 0
+	nonAdmissible.AuthorityInvariantFailures = 1
+	nonAdmissible.Issues = []issueEvidence{{Kind: "scenario_skipped", Message: "server qualification was not configured"}}
+	nonAdmissible.Verdict = "non_admissible"
+	embeddedPath := filepath.Join(directory, "embedded.json")
+	if err := writeEvidence(embeddedPath, nonAdmissible); err != nil {
+		t.Fatalf("truthful embedded non-admissibility was not representable: %v", err)
+	}
+	assertEvidenceFileMatchesSchema(t, schemaPath, embeddedPath)
+
+	failed := validQualificationEvidence()
+	failed.Scenarios = scenarioCensus{Expected: 11, Started: 9, Terminal: 8, Passed: 7, Failed: 1}
+	failed.Latency = []latencyEvidence{{Operation: "unexpected_bounded_operation", Samples: 37, P50MS: 100, P95MS: 250, MaxMS: 300}}
+	failed.Contention = &contentionEvidence{Mode: "unexpected_bounded_mode", Processes: 8, Attempted: 1000, Terminal: 413, Passed: 412, Collisions: 1, DurationMS: 250}
+	failed.AssignmentPreservation = &assignmentPreservationEvidence{Attempted: 20, Terminal: 12, Preserved: 12, Failed: 8, AttributionLost: 6, SafeCompensationUnsupported: 6}
+	failed.AuthorityAudits = 5
+	failed.AuthorityInvariantFailures = 1
+	failed.Issues = []issueEvidence{{Kind: "scenario_failed", Message: "bounded provider scenario failed"}}
+	failed.Verdict = "fail"
+	failedPath := filepath.Join(directory, "partial-failure.json")
+	if err := writeEvidence(failedPath, failed); err != nil {
+		t.Fatalf("truthful partial failure census was not representable: %v", err)
+	}
+	assertEvidenceFileMatchesSchema(t, schemaPath, failedPath)
+}
+
+func TestPassingEvidenceSchemaRejectsIncompleteClaims(t *testing.T) {
+	schemaPath := filepath.Join(qualificationRepositoryRoot(t), qualificationEvidenceSchemaPath)
+	tests := []struct {
+		name   string
+		mutate func(*qualificationEvidence)
+	}{
+		{"embedded storage", func(e *qualificationEvidence) { e.StorageMode = "embedded_serialized" }},
+		{"incomplete scenario census", func(e *qualificationEvidence) { e.Scenarios.Passed = 10 }},
+		{"missing latency operation", func(e *qualificationEvidence) { e.Latency = e.Latency[:1] }},
+		{"latency threshold exceeded", func(e *qualificationEvidence) { e.Latency[0].P95MS = 1001 }},
+		{"missing contention", func(e *qualificationEvidence) { e.Contention = nil }},
+		{"partial assignment census", func(e *qualificationEvidence) { e.AssignmentPreservation.Preserved = 19 }},
+		{"missing authority audit", func(e *qualificationEvidence) { e.AuthorityAudits = 0 }},
+		{"authority invariant failure", func(e *qualificationEvidence) { e.AuthorityInvariantFailures = 1 }},
+		{"reported issue", func(e *qualificationEvidence) {
+			e.Issues = []issueEvidence{{Kind: "scenario_failed", Message: "bounded failure"}}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evidence := validQualificationEvidence()
+			test.mutate(&evidence)
+			payload, err := json.Marshal(evidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateSerializedEvidence(schemaPath, payload); err == nil {
+				t.Fatal("checked-in schema accepted an incomplete passing claim")
+			}
+			path := filepath.Join(t.TempDir(), "invalid-pass.json")
+			if err := writeEvidence(path, evidence); err == nil {
+				t.Fatal("writer published an incomplete passing claim")
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("invalid passing claim reached the destination: %v", err)
+			}
+		})
+	}
+}
+
+func assertEvidenceFileMatchesSchema(t *testing.T, schemaPath, evidencePath string) {
+	t.Helper()
+	payload, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSerializedEvidence(schemaPath, payload); err != nil {
+		t.Fatalf("serialized evidence violates checked-in schema: %v", err)
+	}
+}
+
+func validateSerializedEvidence(schemaPath string, payload []byte) error {
+	schemaPayload, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return err
+	}
+	var schemaDocument any
+	if err := json.Unmarshal(schemaPayload, &schemaDocument); err != nil {
+		return err
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource(schemaPath, schemaDocument); err != nil {
+		return err
+	}
+	compiled, err := compiler.Compile(schemaPath)
+	if err != nil {
+		return err
+	}
+	var instance any
+	if err := json.Unmarshal(payload, &instance); err != nil {
+		return err
+	}
+	return compiled.Validate(instance)
 }
 
 func TestProviderEvidenceValidationIsMandatoryAndExact(t *testing.T) {

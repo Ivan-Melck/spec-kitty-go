@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"time"
 )
+
+const qualificationEvidenceSchemaPath = "kitty-specs/beads-tracker-integration-01M0YG7E/contracts/qualification-evidence.schema.json"
 
 var requiredProviderScenarios = []string{
 	"TestRealBeadsQualification/inspection",
@@ -426,7 +429,110 @@ func validateEvidencePath(path string) (string, error) {
 	return filepath.Join(parent, filepath.Base(path)), nil
 }
 
+func validateQualificationEvidence(evidence qualificationEvidence) error {
+	if evidence.SchemaVersion != 1 || evidence.ProviderVersion != qualifiedVersion || evidence.ProtocolSchema != qualifiedSchema {
+		return errors.New("schema or provider compatibility tuple is invalid")
+	}
+	if !isLowerHex(evidence.SourceCommit, 40) || !isLowerHex(evidence.SourceTree, 40) || !isLowerHex(evidence.ProviderDigestSHA256, 64) {
+		return errors.New("source or provider identity is invalid")
+	}
+	if evidence.StorageMode != "embedded_serialized" && evidence.StorageMode != "server_multiwriter" {
+		return errors.New("storage mode is invalid")
+	}
+	if !boundedText(evidence.Host.GOOS, 1, 64) || !boundedText(evidence.Host.GOARCH, 1, 64) || (evidence.Host.Runner != "" && !boundedText(evidence.Host.Runner, 1, 64)) {
+		return errors.New("host evidence is invalid")
+	}
+	if evidence.StartedAt.IsZero() || evidence.FinishedAt.IsZero() || evidence.FinishedAt.Before(evidence.StartedAt) {
+		return errors.New("evidence time interval is invalid")
+	}
+	if evidence.Scenarios.Expected != len(requiredProviderScenarios) || !boundedInt(evidence.Scenarios.Started, 0, 11) || !boundedInt(evidence.Scenarios.Terminal, 0, 11) || !boundedInt(evidence.Scenarios.Passed, 0, 11) || !boundedInt(evidence.Scenarios.Failed, 0, 11) {
+		return errors.New("scenario census is outside its bounded contract")
+	}
+	if evidence.Scenarios.Terminal > evidence.Scenarios.Started || evidence.Scenarios.Passed+evidence.Scenarios.Failed > evidence.Scenarios.Terminal {
+		return errors.New("scenario census is internally inconsistent")
+	}
+	if len(evidence.Latency) > 2 {
+		return errors.New("latency observation count exceeds its bound")
+	}
+	for _, observation := range evidence.Latency {
+		if !boundedText(observation.Operation, 1, 64) || !boundedInt(observation.Samples, 0, 1000000) || !boundedFloat(observation.P50MS, 0, 1800000) || !boundedFloat(observation.P95MS, 0, 1800000) || !boundedFloat(observation.MaxMS, 0, 1800000) {
+			return errors.New("latency observation is outside its bounded contract")
+		}
+	}
+	if evidence.Contention != nil {
+		observation := evidence.Contention
+		if !boundedText(observation.Mode, 1, 64) || !boundedInt(observation.Processes, 0, 1024) || !boundedInt(observation.Attempted, 0, 10000000) || !boundedInt(observation.Terminal, 0, 10000000) || !boundedInt(observation.Passed, 0, 10000000) || !boundedInt(observation.Collisions, 0, 10000000) || !boundedInt(observation.Duplicates, 0, 10000000) || !boundedFloat(observation.DurationMS, 0, 1800000) {
+			return errors.New("contention observation is outside its bounded contract")
+		}
+	}
+	if evidence.AssignmentPreservation != nil {
+		observation := evidence.AssignmentPreservation
+		for _, count := range []int{observation.Attempted, observation.Terminal, observation.Preserved, observation.Failed, observation.AttributionLost, observation.SafeCompensationUnsupported} {
+			if !boundedInt(count, 0, 1000000) {
+				return errors.New("assignment preservation observation is outside its bounded contract")
+			}
+		}
+	}
+	if !boundedInt(evidence.AuthorityAudits, 0, 1000000) || !boundedInt(evidence.AuthorityInvariantFailures, 0, 1000000) {
+		return errors.New("authority observation is outside its bounded contract")
+	}
+	if len(evidence.Issues) > 128 {
+		return errors.New("issue count exceeds its bound")
+	}
+	for _, issue := range evidence.Issues {
+		if !boundedText(issue.Kind, 1, 128) || !boundedText(issue.Message, 1, 1024) {
+			return errors.New("issue evidence is outside its bounded contract")
+		}
+	}
+	switch evidence.Verdict {
+	case "pass":
+		if evidence.StorageMode != "server_multiwriter" || evidence.Scenarios.Started != evidence.Scenarios.Expected || evidence.Scenarios.Terminal != evidence.Scenarios.Expected || evidence.Scenarios.Passed != evidence.Scenarios.Expected || evidence.Scenarios.Failed != 0 || len(evidence.Issues) != 0 {
+			return errors.New("passing verdict has an incomplete scenario or issue census")
+		}
+		authority := &authorityAuditEvidence{Audits: evidence.AuthorityAudits, Failures: evidence.AuthorityInvariantFailures}
+		if issues := validateProviderEvidence(evidence.StorageMode, evidence.Latency, evidence.Contention, evidence.AssignmentPreservation, authority); len(issues) != 0 {
+			return errors.New("passing verdict has incomplete provider evidence")
+		}
+	case "fail":
+		if evidence.Scenarios.Failed == 0 {
+			return errors.New("failed verdict has no failed scenario")
+		}
+	case "non_admissible":
+	default:
+		return errors.New("verdict is invalid")
+	}
+	return nil
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func boundedText(value string, minimum, maximum int) bool {
+	length := len([]rune(value))
+	return length >= minimum && length <= maximum
+}
+
+func boundedInt(value, minimum, maximum int) bool {
+	return value >= minimum && value <= maximum
+}
+
+func boundedFloat(value, minimum, maximum float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= minimum && value <= maximum
+}
+
 func writeEvidence(path string, evidence qualificationEvidence) error {
+	if err := validateQualificationEvidence(evidence); err != nil {
+		return fmt.Errorf("evidence violates typed contract: %w", err)
+	}
 	payload, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		return err
@@ -435,7 +541,63 @@ func writeEvidence(path string, evidence qualificationEvidence) error {
 	if containsSensitiveEvidence(payload) {
 		return errors.New("evidence contains a prohibited body, transcript, environment, or credential field")
 	}
-	return os.WriteFile(path, payload, 0o600)
+	if err := validateSerializedRoundTrip(payload, evidence); err != nil {
+		return err
+	}
+	return publishEvidence(path, payload)
+}
+
+func validateSerializedRoundTrip(payload []byte, evidence qualificationEvidence) error {
+	var roundTrip qualificationEvidence
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&roundTrip); err != nil {
+		return fmt.Errorf("strictly decode serialized evidence: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("serialized evidence contains trailing JSON data")
+	}
+	roundTripPayload, err := json.MarshalIndent(roundTrip, "", "  ")
+	if err != nil {
+		return fmt.Errorf("re-encode serialized evidence: %w", err)
+	}
+	roundTripPayload = append(roundTripPayload, '\n')
+	if !bytes.Equal(roundTripPayload, payload) {
+		return errors.New("serialized evidence does not round-trip through its typed contract")
+	}
+	return nil
+}
+
+func publishEvidence(path string, payload []byte) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".qualification-evidence-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = temporary.Close()
+		}
+		_ = os.Remove(temporaryPath)
+	}()
+	if err := temporary.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := temporary.Write(payload); err != nil {
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	closed = true
+	if err := os.Link(temporaryPath, path); err != nil {
+		return err
+	}
+	return nil
 }
 
 func containsSensitiveEvidence(payload []byte) bool {
