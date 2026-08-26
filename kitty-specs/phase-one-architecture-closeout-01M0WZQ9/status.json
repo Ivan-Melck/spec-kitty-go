@@ -176,7 +176,8 @@
       "notes": [
         "Ready for independent review: product commit 4d2a6f1 adds censused quality/full campaigns, layered quality-tier guard, pinned CI, ten-run local p95 80.500s, and clean 825.95s full campaign. Cross-WP qualification repair explicitly updated three adversarial fixtures to preserve mandatory governance provenance.",
         "Administrative identity correction: generated review capsule resolved implementer-ivan despite requested reviewer-renata; no review performed. Releasing claim for independent Reviewer Renata.",
-        "Cycle 2 resolves all four review blockers; clean quality and full campaigns passed with source-bound evidence. Administrative override clears the stale reviewer assignee retained after cycle-1 rejection."
+        "Cycle 2 resolves all four review blockers; clean quality and full campaigns passed with source-bound evidence. Administrative override clears the stale reviewer assignee retained after cycle-1 rejection.",
+        "Cycle 2 rejected: universal package binding, fail-closed source identity, and transcript digest correction required."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -186,16 +187,16 @@
         "reviewer": "reviewer-renata",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T021": "done",
-        "T022": "done",
-        "T023": "done",
-        "T024": "done",
-        "T025": "done",
-        "T026": "done"
+        "T021": "planned",
+        "T022": "planned",
+        "T023": "planned",
+        "T024": "planned",
+        "T025": "planned",
+        "T026": "planned"
       }
     },
     "WP06": {
