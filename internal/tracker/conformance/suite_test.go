@@ -3,6 +3,7 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,7 +20,7 @@ func TestDurableFakePortableConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(census.Expected) != 8 || len(census.Passed) != len(census.Expected) || len(census.Failed) != 0 || len(census.NotApplicable) != 0 {
+	if len(census.Expected) != 12 || len(census.Passed) != len(census.Expected) || len(census.Failed) != 0 || len(census.NotApplicable) != 0 {
 		t.Fatalf("unexpected census: %+v", census)
 	}
 	path := filepath.Join(t.TempDir(), "census.json")
@@ -66,9 +67,21 @@ func TestRegistryAndCapabilityMutantsFailClosed(t *testing.T) {
 			t.Fatalf("terminal omission error=%v", err)
 		}
 	})
+	t.Run("unexpected-result-id", func(t *testing.T) {
+		census := Census{Expected: []string{"case-a"}, Started: []string{"case-a"}, Terminal: []string{"case-a"}, Passed: []string{"case-a"}, Results: []Result{{ID: "case-b", Disposition: Passed}}}
+		if err := ValidateCensus(census); err == nil || (!strings.Contains(err.Error(), "result ids") && !strings.Contains(err.Error(), "disposition disagrees")) {
+			t.Fatalf("unexpected result mutant error=%v", err)
+		}
+	})
+	t.Run("missing-required-authority", func(t *testing.T) {
+		census := Census{Expected: []string{"case-a"}, Started: []string{"case-a"}, Terminal: []string{"case-a"}, Passed: []string{"case-a"}, Results: []Result{{ID: "case-a", Disposition: Passed, UniversalRequired: true, StaleProbeRequired: true}}}
+		if err := ValidateCensus(census); err == nil || !strings.Contains(err.Error(), "authority evidence") {
+			t.Fatalf("missing authority mutant error=%v", err)
+		}
+	})
 }
 
-func fakeFactory(ctx context.Context, root string) (Fixture, error) {
+func fakeFactory(ctx context.Context, root, _ string) (Fixture, error) {
 	path := filepath.Join(root, "fake-tracker.json")
 	store, err := fake.Open(path)
 	if err != nil {
@@ -89,6 +102,49 @@ func fakeFactory(ctx context.Context, root string) (Fixture, error) {
 		MutationCount: func(ctx context.Context) (int, error) {
 			history, err := store.History(ctx)
 			return len(history), err
+		},
+		Fault: func(ctx context.Context, id string) error {
+			switch id {
+			case "unavailable":
+				if err := store.Inject(ctx, fake.FailureUnavailable); err != nil {
+					return err
+				}
+				before, readErr := provider.ReadWork(ctx, reference)
+				if readErr != nil {
+					return readErr
+				}
+				_, err := provider.AppendDiscussion(ctx, tracker.AppendDiscussionRequest{ExternalRef: reference, OperationID: "operation-unavailable-probe", Author: "actor-probe", Body: "probe", ExpectedObservation: before.Observation.Revision})
+				if !tracker.IsKind(err, tracker.ErrorUnavailable) {
+					return fmt.Errorf("unavailable diagnostic=%v", err)
+				}
+				return nil
+			case "stale":
+				old, err := provider.ReadWork(ctx, reference)
+				if err != nil {
+					return err
+				}
+				if err := store.HumanAssign(ctx, reference.ExternalID, "human-new"); err != nil {
+					return err
+				}
+				current, err := provider.ReadWork(ctx, reference)
+				if err != nil {
+					return err
+				}
+				if old.Observation.Revision == current.Observation.Revision || old.VisibleAssignee == current.VisibleAssignee {
+					return fmt.Errorf("stale observation was normalized")
+				}
+				return nil
+			case "wrong":
+				wrong := reference
+				wrong.ExternalID = "missing-wrong-state"
+				_, err := provider.ReadWork(ctx, wrong)
+				if !tracker.IsKind(err, tracker.ErrorNotFound) {
+					return fmt.Errorf("wrong state diagnostic=%v", err)
+				}
+				return nil
+			default:
+				return fmt.Errorf("unknown portable fault %q", id)
+			}
 		},
 	}, nil
 }

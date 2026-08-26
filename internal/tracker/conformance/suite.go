@@ -16,7 +16,10 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
-type Factory func(context.Context, string) (Fixture, error)
+// Factory creates one isolated provider fixture for one stable case ID. The
+// case ID lets deterministic subprocess fixtures predeclare an exact command
+// script without sharing mutable provider state across cases.
+type Factory func(context.Context, string, string) (Fixture, error)
 
 // Fixture exposes only portable ports and observations. MutationCount must
 // include every durable provider mutation and is used to prove refusal before
@@ -28,6 +31,7 @@ type Fixture struct {
 	Graph         tracker.Graph
 	Discussion    tracker.Discussion
 	Assignment    tracker.AssignmentProjection
+	Fault         func(context.Context, string) error
 	MutationCount func(context.Context) (int, error)
 	Close         func() error
 }
@@ -46,6 +50,9 @@ type Result struct {
 	CapabilityDisposition string      `json:"capability_disposition"`
 	DiagnosticKind        string      `json:"diagnostic_kind,omitempty"`
 	RecoveryCode          string      `json:"recovery_code,omitempty"`
+	Operation             string      `json:"operation,omitempty"`
+	MutationOutcome       string      `json:"mutation_outcome,omitempty"`
+	RetrySafety           string      `json:"retry_safety,omitempty"`
 	UniversalRequired     bool        `json:"universal_required"`
 	UniversalStarted      bool        `json:"universal_started"`
 	UniversalPassed       bool        `json:"universal_passed"`
@@ -73,13 +80,53 @@ type Case struct {
 // DefaultCases is the closed portable registry used by fake, dishonest, and
 // real-provider qualification. Callers may copy but cannot mutate the source.
 func DefaultCases() []Case {
-	var cases []Case
+	cases := []Case{
+		{ID: "validation.capabilities.complete", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exerciseCapabilities},
+		{ID: "diagnostic.unavailable.typed", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exercisePortableFault("unavailable")},
+		{ID: "observation.stale.not-normalized", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exercisePortableFault("stale")},
+		{ID: "safety.wrong-state.refused", Supported: func(tracker.ProviderCapabilities) bool { return true }, Exercise: exercisePortableFault("wrong")},
+	}
 	cases = append(cases, catalogCases()...)
 	cases = append(cases, graphCases()...)
 	cases = append(cases, discussionCases()...)
 	cases = append(cases, assignmentCases()...)
 	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
 	return append([]Case(nil), cases...)
+}
+
+func exercisePortableFault(id string) func(context.Context, Fixture, bool) error {
+	return func(ctx context.Context, fixture Fixture, _ bool) error {
+		if fixture.Fault == nil {
+			return fmt.Errorf("portable fault port is absent for %s", id)
+		}
+		return fixture.Fault(ctx, id)
+	}
+}
+
+func exerciseCapabilities(ctx context.Context, fixture Fixture, _ bool) error {
+	if err := fixture.Capabilities.Validate(); err != nil {
+		return err
+	}
+	for _, capability := range []tracker.CapabilityName{
+		tracker.CapabilityCatalogRead, tracker.CapabilityCatalogCreate, tracker.CapabilityCatalogUpdate,
+		tracker.CapabilityBlockingGraph, tracker.CapabilityDiscussion, tracker.CapabilityAssignment,
+		tracker.CapabilityObservationRevision, tracker.CapabilitySafeCompensation,
+	} {
+		err := fixture.Capabilities.Require(capability)
+		if err == nil {
+			continue
+		}
+		if !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) && !tracker.IsKind(err, tracker.ErrorSafeCompensationUnsupported) {
+			return fmt.Errorf("capability=%s diagnostic=%v", capability, err)
+		}
+	}
+	if fixture.Catalog == nil {
+		return fmt.Errorf("catalog port is absent")
+	}
+	if _, err := fixture.Catalog.ReadWork(ctx, fixture.Reference); err != nil {
+		return fmt.Errorf("declared catalog read failed: %w", err)
+	}
+	return nil
 }
 
 func Run(ctx context.Context, root string, factory Factory, cases []Case) (Census, error) {
@@ -102,24 +149,27 @@ func Run(ctx context.Context, root string, factory Factory, cases []Case) (Censu
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return Census{}, fmt.Errorf("conformance: create fixture root: %w", err)
 	}
-	fixture, err := factory(ctx, root)
-	if err != nil {
-		return Census{}, fmt.Errorf("conformance: create fixture: %w", err)
-	}
-	if fixture.Close != nil {
-		defer fixture.Close()
-	}
-	if err := fixture.Capabilities.Validate(); err != nil {
-		return Census{}, fmt.Errorf("conformance: invalid capability report: %w", err)
-	}
-	if fixture.MutationCount == nil {
-		return Census{}, fmt.Errorf("conformance: mutation census is required")
-	}
-
 	census := Census{}
 	for _, test := range cases {
 		census.Expected = append(census.Expected, test.ID)
 		census.Started = append(census.Started, test.ID)
+		caseRoot := filepath.Join(root, test.ID)
+		fixture, err := factory(ctx, caseRoot, test.ID)
+		if err != nil {
+			return census, fmt.Errorf("conformance: create fixture case=%s: %w", test.ID, err)
+		}
+		if err := fixture.Capabilities.Validate(); err != nil {
+			if fixture.Close != nil {
+				_ = fixture.Close()
+			}
+			return census, fmt.Errorf("conformance: invalid capability report case=%s: %w", test.ID, err)
+		}
+		if fixture.MutationCount == nil {
+			if fixture.Close != nil {
+				_ = fixture.Close()
+			}
+			return census, fmt.Errorf("conformance: mutation census is required case=%s", test.ID)
+		}
 		before, err := fixture.MutationCount(ctx)
 		if err != nil {
 			return census, fmt.Errorf("conformance: %s mutation pre-observation: %w", test.ID, err)
@@ -136,6 +186,11 @@ func Run(ctx context.Context, root string, factory Factory, cases []Case) (Censu
 		}
 		if !supported && after != before && err == nil {
 			err = fmt.Errorf("unsupported guarantee mutated provider: before=%d after=%d", before, after)
+		}
+		if fixture.Close != nil {
+			if closeErr := fixture.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("fixture cleanup: %w", closeErr)
+			}
 		}
 		if err != nil {
 			result.Disposition = Failed
@@ -178,6 +233,42 @@ func ValidateCensus(census Census) error {
 	}
 	if len(census.Results) != len(census.Expected) {
 		return fmt.Errorf("conformance census: result count=%d expected=%d", len(census.Results), len(census.Expected))
+	}
+	resultIDs := make([]string, 0, len(census.Results))
+	dispositions := make(map[string]Disposition, len(census.Expected))
+	for _, id := range census.Passed {
+		dispositions[id] = Passed
+	}
+	for _, id := range census.Failed {
+		dispositions[id] = Failed
+	}
+	for _, id := range census.NotApplicable {
+		dispositions[id] = NotApplicable
+	}
+	for _, result := range census.Results {
+		if result.ID == "" {
+			return fmt.Errorf("conformance census: result id is absent")
+		}
+		resultIDs = append(resultIDs, result.ID)
+		if result.Disposition != Passed && result.Disposition != Failed && result.Disposition != NotApplicable {
+			return fmt.Errorf("conformance census: result=%s has no terminal disposition", result.ID)
+		}
+		if dispositions[result.ID] != result.Disposition {
+			return fmt.Errorf("conformance census: result=%s disposition disagrees with terminal census", result.ID)
+		}
+		if result.UniversalRequired != result.StaleProbeRequired {
+			return fmt.Errorf("conformance census: result=%s authority and stale applicability differ", result.ID)
+		}
+		if result.UniversalRequired && (!result.UniversalStarted || !result.UniversalPassed || !result.StaleProbeStarted || !result.StaleProbePassed) {
+			return fmt.Errorf("conformance census: result=%s required authority evidence is incomplete", result.ID)
+		}
+		if !result.UniversalRequired && (result.UniversalStarted || result.UniversalPassed || result.StaleProbeStarted || result.StaleProbePassed) {
+			return fmt.Errorf("conformance census: result=%s records an inapplicable authority pass", result.ID)
+		}
+	}
+	sort.Strings(resultIDs)
+	if duplicate(resultIDs) != "" || !equalStrings(census.Expected, resultIDs) {
+		return fmt.Errorf("conformance census: result ids are duplicate, missing, or unexpected")
 	}
 	return nil
 }
