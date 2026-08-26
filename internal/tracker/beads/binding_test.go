@@ -134,6 +134,41 @@ func TestBindingPinsExecutableDigest(t *testing.T) {
 	}
 }
 
+func TestServerBindingRequiresPinnedConnectionAndCopiesCredentials(t *testing.T) {
+	root := t.TempDir()
+	executable := testExecutable(t, root)
+	workspace := filepath.Join(root, "workspace")
+	mustMkdir(t, workspace)
+	base := BindingConfig{ProjectID: "project-1", ExecutablePath: executable, WorkspacePath: workspace, ProtocolSchema: 1, ConcurrencyMode: tracker.ConcurrencyServerMultiwriter, ServerIdentity: "server-1", ServerEndpoint: "127.0.0.1:3306", Credentials: map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306"}}
+	tests := []struct {
+		name string
+		edit func(*BindingConfig)
+	}{{"identity", func(c *BindingConfig) { c.ServerIdentity = "" }}, {"endpoint", func(c *BindingConfig) { c.ServerEndpoint = "" }}, {"endpoint mismatch", func(c *BindingConfig) { c.ServerEndpoint = "other:3306" }}, {"unknown credential", func(c *BindingConfig) { c.Credentials["SECRET"] = "value" }}}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := base
+			candidate.Credentials = map[string]string{"DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3306"}
+			test.edit(&candidate)
+			if _, err := ResolveBinding(candidate); !tracker.IsKind(err, tracker.ErrorInvalidRequest) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+	bound, err := Open(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Credentials["DOLT_SERVER_HOST"] = "attacker"
+	command := bound.commandBinding()
+	if command.credentials["DOLT_SERVER_HOST"] != "127.0.0.1" {
+		t.Fatal("bound credentials changed through caller map")
+	}
+	command.credentials["DOLT_SERVER_HOST"] = "changed"
+	if bound.commandBinding().credentials["DOLT_SERVER_HOST"] != "127.0.0.1" {
+		t.Fatal("command received shared credential map")
+	}
+}
+
 func TestWorkspaceMismatchDiagnosticIsPayloadFree(t *testing.T) {
 	err := workspaceMismatch("secret-expected", "secret-observed")
 	var portable *tracker.Error

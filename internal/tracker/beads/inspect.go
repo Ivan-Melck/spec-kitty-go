@@ -12,6 +12,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
+const serverReadinessLifetime = 5 * time.Second
+
 // Readiness is an immutable proof that one exact binding was compatible and
 // healthy at preflight. It grants no Spec Kitty execution authority.
 type Readiness struct {
@@ -19,24 +21,22 @@ type Readiness struct {
 	executableSize  int64
 	executableMTime time.Time
 	serverIdentity  string
+	serverEndpoint  string
 	serverQualified bool
+	qualifiedAt     time.Time
+	expiresAt       time.Time
 }
-
-func (readiness Readiness) Binding() tracker.TrackerBinding { return readiness.binding }
-func (readiness Readiness) ServerQualified() bool           { return readiness.serverQualified }
 
 // BoundAdapter pins all commands to one validated project binding.
 type BoundAdapter struct {
-	adapter *Adapter
-	binding tracker.TrackerBinding
-	locker  writerLocker
+	adapter    *Adapter
+	binding    tracker.TrackerBinding
+	locker     writerLocker
+	connection providerConnection
+	now        func() time.Time
 }
 
-func NewBoundAdapter(binding tracker.TrackerBinding) (*BoundAdapter, error) {
-	return newBoundAdapter(binding, newAdapter(nil), nil)
-}
-
-func newBoundAdapter(binding tracker.TrackerBinding, adapter *Adapter, locker writerLocker) (*BoundAdapter, error) {
+func newConfiguredBoundAdapter(binding tracker.TrackerBinding, adapter *Adapter, locker writerLocker, connection providerConnection) (*BoundAdapter, error) {
 	if err := validatePinnedBinding(binding); err != nil {
 		return nil, err
 	}
@@ -46,11 +46,32 @@ func newBoundAdapter(binding tracker.TrackerBinding, adapter *Adapter, locker wr
 	if locker == nil {
 		locker = filesystemWriterLocker{}
 	}
-	return &BoundAdapter{adapter: adapter, binding: binding, locker: locker}, nil
+	if binding.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter {
+		if connection.serverIdentity == "" || connection.serverEndpoint == "" {
+			return nil, invalidBinding("server identity and endpoint are not pinned", nil)
+		}
+	} else if connection.serverIdentity != "" || connection.serverEndpoint != "" || len(connection.credentials) != 0 {
+		return nil, invalidBinding("embedded binding contains server connection facts", nil)
+	}
+	connection.credentials = cloneCredentials(connection.credentials)
+	return &BoundAdapter{adapter: adapter, binding: binding, locker: locker, connection: connection, now: time.Now}, nil
 }
 
 func (bound *BoundAdapter) commandBinding() commandBinding {
-	return defaultBinding(bound.binding.ExecutablePath, bound.binding.WorkspacePath, bound.binding.WorkspacePath)
+	result := defaultBinding(bound.binding.ExecutablePath, bound.binding.WorkspacePath, bound.binding.WorkspacePath)
+	result.credentials = cloneCredentials(bound.connection.credentials)
+	return result
+}
+
+func cloneCredentials(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 type wherePayload struct {
@@ -84,6 +105,7 @@ type infoPayload struct {
 	Mode           string `json:"mode"`
 	ReadOnly       bool   `json:"read_only"`
 	ServerID       string `json:"server_id"`
+	ServerEndpoint string `json:"server_endpoint"`
 	ServerHealthy  *bool  `json:"server_healthy"`
 }
 
@@ -102,9 +124,10 @@ func (payload infoPayload) mode() string {
 }
 
 type doctorPayload struct {
-	Healthy  *bool  `json:"healthy"`
-	Status   string `json:"status"`
-	ServerID string `json:"server_id"`
+	Healthy        *bool  `json:"healthy"`
+	Status         string `json:"status"`
+	ServerID       string `json:"server_id"`
+	ServerEndpoint string `json:"server_endpoint"`
 }
 
 func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
@@ -208,10 +231,17 @@ func (bound *BoundAdapter) Preflight(ctx context.Context) (Readiness, error) {
 		if serverID == "" {
 			serverID = providerInfo.ServerID
 		}
-		if !healthy || serverID == "" || providerInfo.ServerID != "" && serverID != providerInfo.ServerID {
+		serverEndpoint := doctor.ServerEndpoint
+		if serverEndpoint == "" {
+			serverEndpoint = providerInfo.ServerEndpoint
+		}
+		if !healthy || serverID != bound.connection.serverIdentity || serverEndpoint != bound.connection.serverEndpoint ||
+			providerInfo.ServerID != bound.connection.serverIdentity || providerInfo.ServerEndpoint != bound.connection.serverEndpoint {
 			return Readiness{}, &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_server", Message: "provider server is not qualified healthy"}
 		}
-		readiness.serverIdentity, readiness.serverQualified = serverID, true
+		now := bound.now().UTC()
+		readiness.serverIdentity, readiness.serverEndpoint, readiness.serverQualified = serverID, serverEndpoint, true
+		readiness.qualifiedAt, readiness.expiresAt = now, now.Add(serverReadinessLifetime)
 	}
 	return readiness, nil
 }
@@ -229,7 +259,7 @@ func (bound *BoundAdapter) Inspect(ctx context.Context, request tracker.InspectR
 		health = tracker.HealthDegraded
 		var portable *tracker.Error
 		if errors.As(err, &portable) {
-			if portable.Kind == tracker.ErrorUnavailable || portable.Kind == tracker.ErrorTimeout {
+			if (portable.Kind == tracker.ErrorUnavailable && portable.RecoveryAction() != "use_writable_provider") || portable.Kind == tracker.ErrorTimeout {
 				health = tracker.HealthUnavailable
 			}
 			diagnostics = append(diagnostics, tracker.Diagnostic{Kind: portable.Kind, RecoveryCode: portable.RecoveryAction(), Message: portable.Message, Capability: portable.Capability})
@@ -237,7 +267,7 @@ func (bound *BoundAdapter) Inspect(ctx context.Context, request tracker.InspectR
 			diagnostics = append(diagnostics, tracker.Diagnostic{Kind: tracker.ErrorMalformedProtocol, RecoveryCode: "repair_provider_binding", Message: "provider inspection failed"})
 		}
 	}
-	capabilities := capabilitiesFor(bound.binding.ConcurrencyMode, readiness.serverQualified)
+	capabilities := capabilitiesForCurrentPorts(bound.binding.ConcurrencyMode, err == nil, readiness.serverQualified)
 	sort.Slice(diagnostics, func(i, j int) bool {
 		if diagnostics[i].Kind != diagnostics[j].Kind {
 			return diagnostics[i].Kind < diagnostics[j].Kind
@@ -247,21 +277,23 @@ func (bound *BoundAdapter) Inspect(ctx context.Context, request tracker.InspectR
 	return tracker.NewInspection(bound.binding, capabilities, health, diagnostics)
 }
 
-func capabilitiesFor(mode tracker.ConcurrencyMode, serverQualified bool) tracker.ProviderCapabilities {
-	writers := tracker.ConcurrentWritersAdapterSerialized
-	if mode == tracker.ConcurrencyServerMultiwriter && serverQualified {
+func capabilitiesForCurrentPorts(mode tracker.ConcurrencyMode, compatible, serverQualified bool) tracker.ProviderCapabilities {
+	writers := tracker.ConcurrentWritersNone
+	if compatible && mode == tracker.ConcurrencyEmbeddedSerialized {
+		writers = tracker.ConcurrentWritersAdapterSerialized
+	}
+	if compatible && mode == tracker.ConcurrencyServerMultiwriter && serverQualified {
 		writers = tracker.ConcurrentWritersProviderNative
 	}
-	if mode == tracker.ConcurrencyServerMultiwriter && !serverQualified {
-		writers = tracker.ConcurrentWritersNone
-	}
+	// WP04 implements inspection and the writer boundary only. Future ports
+	// remain unsupported until their production implementations are qualified.
 	return tracker.ProviderCapabilities{
-		CatalogRead: tracker.SupportSupported, CatalogCreate: tracker.SupportSupported,
-		CatalogUpdate: tracker.UpdateUnguarded, BlockingGraph: tracker.SupportSupported,
-		Discussion: tracker.DiscussionAppendOnly, Assignment: tracker.AssignmentAtomicClaim,
-		ObservationRevision: tracker.ObservationRevisionContentDerived,
+		CatalogRead: tracker.SupportUnsupported, CatalogCreate: tracker.SupportUnsupported,
+		CatalogUpdate: tracker.UpdateUnsupported, BlockingGraph: tracker.SupportUnsupported,
+		Discussion: tracker.DiscussionUnsupported, Assignment: tracker.AssignmentUnsupported,
+		ObservationRevision: tracker.ObservationRevisionUnsupported,
 		SafeCompensation:    tracker.CompensationUnsupported, ConcurrentWriters: writers,
-		PortableExport: tracker.SupportSupported, RestorableBackup: tracker.SupportSupported,
+		PortableExport: tracker.SupportUnsupported, RestorableBackup: tracker.SupportUnsupported,
 	}
 }
 
@@ -287,6 +319,13 @@ func (bound *BoundAdapter) validateReadiness(readiness Readiness) error {
 	if bound.binding.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter && (!readiness.serverQualified || readiness.serverIdentity == "") {
 		return &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "repair_provider_server", Message: "server-mode provider is not qualified"}
 	}
+	if bound.binding.ConcurrencyMode == tracker.ConcurrencyServerMultiwriter {
+		now := bound.now().UTC()
+		if readiness.serverIdentity != bound.connection.serverIdentity || readiness.serverEndpoint != bound.connection.serverEndpoint ||
+			readiness.qualifiedAt.IsZero() || !readiness.expiresAt.After(now) {
+			return &tracker.Error{Kind: tracker.ErrorUnavailable, RecoveryCode: "rerun_provider_preflight", Message: "server-mode readiness is stale or belongs to another server"}
+		}
+	}
 	return nil
 }
 
@@ -307,6 +346,20 @@ func (bound *BoundAdapter) executeMutation(ctx context.Context, readiness Readin
 	}
 	defer lock.release()
 	return bound.adapter.execute(ctx, request)
+}
+
+// executeCheckedMutation is the sole production mutation seam for later Beads
+// ports: compatibility completes before writer-lock acquisition and process
+// start, then the exact readiness proof is consumed immediately.
+func (bound *BoundAdapter) executeCheckedMutation(ctx context.Context, request command) (commandResponse, error) {
+	if !request.mutating {
+		return commandResponse{}, invalidBinding("checked mutation requires a mutating typed command", nil)
+	}
+	readiness, err := bound.Preflight(ctx)
+	if err != nil {
+		return commandResponse{result: commandResult{kind: request.kind, mutationOutcome: mutationNotStarted}}, err
+	}
+	return bound.executeMutation(ctx, readiness, request)
 }
 
 // Ensure interface conformance stays visible at the adapter boundary.
