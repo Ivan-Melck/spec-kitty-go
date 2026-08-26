@@ -38,7 +38,11 @@
     "failed": 0,
     "started_at": "2026-08-26T21:17:20.275597693Z",
     "finished_at": "2026-08-26T21:17:20.444153578Z",
-    "duration_ms": 168
+    "duration_ms": 168,
+    "scenario_ids": [
+      "TestDurableFakePortableConformance",
+      "TestRegistryAndCapabilityMutantsFailClosed"
+    ]
   },
   "adversarial": {
     "expected": 20,
@@ -51,7 +55,29 @@
     "duration_ms": 263824,
     "human_preservation_runs": 100,
     "universal_invariant_probe": "pass",
-    "stale_authority_probe": "pass"
+    "stale_authority_probe": "pass",
+    "scenario_ids": [
+      "TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry",
+      "TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry",
+      "TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry",
+      "TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry",
+      "TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry",
+      "TestBeadsDishonestExplicitBarrierSurvivesSchedulerLoad",
+      "TestBeadsDishonestProtocolFaultMatrix",
+      "TestBeadsDishonestRunsSharedPortableConformance",
+      "TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions",
+      "TestBeadsDishonestSharedConformanceKillsDeletedPublicMethods",
+      "TestBeadsDishonestSlowCancellationKillsChild",
+      "TestBeadsDishonestTruthfulWarningStaleAndWrongState",
+      "TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant",
+      "TestBeadsFaultAuthorityAuditKillsUnrelatedProviderRoutingMutant",
+      "TestBeadsFaultDiagnosticsNeverTreatProseAsAuthority",
+      "TestBeadsFaultRegistryExactCensus",
+      "TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe",
+      "TestBeadsHumanAssignmentCampaignKillsPostAttributionOverwriteMutant",
+      "TestBeadsHumanAssignmentPreservation100",
+      "TestBeadsUnsafeDecisionMutantsAreKilled"
+    ]
   },
   "real_provider": {
     "expected": 11,
@@ -69,7 +95,20 @@
       "encoding": "ws1:sha256",
       "published_digest": null,
       "disposition": "not retained by the schema-1 qualification artifact; convergence was asserted without publishing the randomized fixture identity"
-    }
+    },
+    "scenario_ids": [
+      "TestRealBeadsQualification/inspection",
+      "TestRealBeadsQualification/catalog_round_trip",
+      "TestRealBeadsQualification/content_drift",
+      "TestRealBeadsQualification/graph_and_discussion",
+      "TestRealBeadsQualification/assignment_safe_refusal",
+      "TestRealBeadsQualification/latency",
+      "TestRealBeadsWorktreeQualification/shared_identity",
+      "TestRealBeadsWorktreeQualification/embedded_serialization",
+      "TestRealBeadsWorktreeQualification/server_multiwriter_contention",
+      "TestRealBeadsBackupQualification/jsonl_interchange",
+      "TestRealBeadsBackupQualification/native_backup_restore"
+    ]
   },
   "acceptance": {
     "expected": 3,
