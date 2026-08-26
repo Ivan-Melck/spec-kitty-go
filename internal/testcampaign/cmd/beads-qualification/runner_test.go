@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign"
 )
 
 func TestRequiredScenarioRegistryIsExactAndUnique(t *testing.T) {
@@ -54,7 +56,7 @@ func TestEvidenceIsCreateOnlyRedactedAndSchemaShaped(t *testing.T) {
 		t.Fatalf("emitted evidence violates the checked-in contract: %v", err)
 	}
 	unknownField := append([]byte(`{"unexpected":true,`), payload[1:]...)
-	if err := validateSerializedRoundTrip(unknownField, evidence); err == nil {
+	if err := strictDecodeQualificationEvidence(unknownField); err == nil {
 		t.Fatal("strict serialized evidence decoder accepted an unknown field")
 	}
 	if err := writeEvidence(path, validQualificationEvidence()); err == nil {
@@ -112,9 +114,13 @@ func TestEvidenceSchemaRepresentsHonestNonPassObservations(t *testing.T) {
 	nonAdmissible.Contention = nil
 	nonAdmissible.AssignmentPreservation = nil
 	nonAdmissible.AuthorityAudits = 0
-	nonAdmissible.AuthorityInvariantFailures = 1
+	nonAdmissible.AuthorityInvariantFailures = 0
 	nonAdmissible.Issues = []issueEvidence{{Kind: "scenario_skipped", Message: "server qualification was not configured"}}
 	nonAdmissible.Verdict = "non_admissible"
+	nonAdmissible.Proof.PassedIDs = nonAdmissible.Proof.PassedIDs[:10]
+	nonAdmissible.Proof.SkippedIDs = []string{nonAdmissible.Proof.TerminalIDs[10]}
+	nonAdmissible.Proof.OfflineVerified = false
+	nonAdmissible.Proof.PrerequisiteMissing = true
 	embeddedPath := filepath.Join(directory, "embedded.json")
 	if err := writeEvidence(embeddedPath, nonAdmissible); err != nil {
 		t.Fatalf("truthful embedded non-admissibility was not representable: %v", err)
@@ -125,11 +131,16 @@ func TestEvidenceSchemaRepresentsHonestNonPassObservations(t *testing.T) {
 	failed.Scenarios = scenarioCensus{Expected: 11, Started: 9, Terminal: 8, Passed: 7, Failed: 1}
 	failed.Latency = []latencyEvidence{{Operation: "unexpected_bounded_operation", Samples: 37, P50MS: 100, P95MS: 250, MaxMS: 300}}
 	failed.Contention = &contentionEvidence{Mode: "unexpected_bounded_mode", Processes: 8, Attempted: 1000, Terminal: 413, Passed: 412, Collisions: 1, DurationMS: 250}
-	failed.AssignmentPreservation = &assignmentPreservationEvidence{Attempted: 20, Terminal: 12, Preserved: 12, Failed: 8, AttributionLost: 6, SafeCompensationUnsupported: 6}
+	failed.AssignmentPreservation = &assignmentPreservationEvidence{Attempted: 20, Terminal: 12, Preserved: 11, Failed: 1, AttributionLost: 6, SafeCompensationUnsupported: 6}
 	failed.AuthorityAudits = 5
 	failed.AuthorityInvariantFailures = 1
 	failed.Issues = []issueEvidence{{Kind: "scenario_failed", Message: "bounded provider scenario failed"}}
 	failed.Verdict = "fail"
+	failed.Proof.StartedIDs = failed.Proof.StartedIDs[:9]
+	failed.Proof.TerminalIDs = failed.Proof.TerminalIDs[:8]
+	failed.Proof.PassedIDs = failed.Proof.PassedIDs[:7]
+	failed.Proof.FailedIDs = []string{failed.Proof.TerminalIDs[7]}
+	failed.Proof.AssertionFailed = true
 	failedPath := filepath.Join(directory, "partial-failure.json")
 	if err := writeEvidence(failedPath, failed); err != nil {
 		t.Fatalf("truthful partial failure census was not representable: %v", err)
@@ -296,8 +307,142 @@ func TestSourceIdentityIsBoundToCommitAndTree(t *testing.T) {
 	}
 }
 
+type inertQualificationFixture struct{}
+
+func (inertQualificationFixture) initialize(context.Context) error { return nil }
+func (inertQualificationFixture) cleanup() error                   { return nil }
+
+func TestRunQualificationPublishesOnlyCanonicalCommandEvidence(t *testing.T) {
+	restore := installQualificationSeams(t)
+	defer restore()
+	repository := t.TempDir()
+	path := filepath.Join(t.TempDir(), "qualification.json")
+	result, err := runQualification(context.Background(), options{BinaryPath: "/qualified/bd", Digest: strings.Repeat("c", 64), Evidence: path, Repository: repository, Timeout: time.Minute})
+	if err != nil || result.Verdict != "pass" {
+		t.Fatalf("command result=%+v err=%v", result, err)
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSerializedEvidence(filepath.Join(qualificationRepositoryRoot(t), qualificationEvidenceSchemaPath), payload); err != nil {
+		t.Fatalf("actual command artifact violates schema: %v", err)
+	}
+	var encoded qualificationEvidence
+	if err := json.Unmarshal(payload, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	if encoded.Verdict != "pass" || encoded.Scenarios.Passed != 11 || encoded.AuthorityAudits < 1 {
+		t.Fatalf("unexpected command artifact=%+v", encoded)
+	}
+}
+
+func TestRunQualificationDisconnectingStaleAuthorityCannotPublishPass(t *testing.T) {
+	restore := installQualificationSeams(t)
+	defer restore()
+	executeQualificationProviderTests = func(context.Context, string, binaryIdentity, time.Duration) providerTestResult {
+		result := validProviderTestResult()
+		result.StaleAuthority = nil
+		result.Issues = []issueEvidence{{Kind: "stale_authority_missing", Message: "real stale lease, fence, and workspace probe was not emitted"}}
+		return result
+	}
+	path := filepath.Join(t.TempDir(), "qualification.json")
+	result, err := runQualification(context.Background(), options{BinaryPath: "/qualified/bd", Digest: strings.Repeat("c", 64), Evidence: path, Repository: t.TempDir(), Timeout: time.Minute})
+	if err == nil || result.Verdict == "pass" {
+		t.Fatalf("disconnected stale probe result=%+v err=%v", result, err)
+	}
+	payload, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(payload), `"verdict": "pass"`) {
+		t.Fatal("disconnected stale probe published pass")
+	}
+}
+
+func TestRunQualificationRebindMutantCannotPublishPass(t *testing.T) {
+	restore := installQualificationSeams(t)
+	defer restore()
+	calls := 0
+	readQualificationSourceIdentity = func(context.Context, string) (string, string, bool, error) {
+		calls++
+		if calls == 1 {
+			return strings.Repeat("a", 40), strings.Repeat("b", 40), false, nil
+		}
+		return strings.Repeat("a", 40), strings.Repeat("d", 40), false, nil
+	}
+	path := filepath.Join(t.TempDir(), "qualification.json")
+	result, err := runQualification(context.Background(), options{BinaryPath: "/qualified/bd", Digest: strings.Repeat("c", 64), Evidence: path, Repository: t.TempDir(), Timeout: time.Minute})
+	if err == nil || result.Verdict == "pass" || !strings.Contains(result.Issues[0].Kind, "source_drift") {
+		t.Fatalf("source-rebind mutant result=%+v err=%v", result, err)
+	}
+}
+
+func TestRunQualificationRefusesDirtySourceBeforeFixtureOrProvider(t *testing.T) {
+	restore := installQualificationSeams(t)
+	defer restore()
+	fixtureCalled, providerCalled := false, false
+	readQualificationSourceIdentity = func(context.Context, string) (string, string, bool, error) {
+		return strings.Repeat("a", 40), strings.Repeat("b", 40), true, nil
+	}
+	makeQualificationFixture = func(binaryIdentity, bool) (qualificationFixture, error) {
+		fixtureCalled = true
+		return inertQualificationFixture{}, nil
+	}
+	executeQualificationProviderTests = func(context.Context, string, binaryIdentity, time.Duration) providerTestResult {
+		providerCalled = true
+		return validProviderTestResult()
+	}
+	path := filepath.Join(t.TempDir(), "qualification.json")
+	_, err := runQualification(context.Background(), options{BinaryPath: "/qualified/bd", Digest: strings.Repeat("c", 64), Evidence: path, Repository: t.TempDir(), Timeout: time.Minute})
+	if err == nil || !strings.Contains(err.Error(), "dirty") || fixtureCalled || providerCalled {
+		t.Fatalf("dirty preflight err=%v fixture=%t provider=%t", err, fixtureCalled, providerCalled)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("dirty preflight published evidence: %v", statErr)
+	}
+}
+
+func installQualificationSeams(t *testing.T) func() {
+	t.Helper()
+	for key, value := range map[string]string{"BEADS_SERVER_ID": "wp10-server", "BEADS_SERVER_ENDPOINT": "127.0.0.1:3307/wp10", "DOLT_SERVER_HOST": "127.0.0.1", "DOLT_SERVER_PORT": "3307"} {
+		t.Setenv(key, value)
+	}
+	originalVerify, originalFixture, originalExecute := verifyQualificationBinary, makeQualificationFixture, executeQualificationProviderTests
+	originalSource, originalOffline := readQualificationSourceIdentity, verifyQualificationOffline
+	verifyQualificationBinary = func(context.Context, string, string) (binaryIdentity, error) {
+		return binaryIdentity{Path: "/qualified/bd", Version: qualifiedVersion, Digest: strings.Repeat("c", 64), Schema: qualifiedSchema}, nil
+	}
+	makeQualificationFixture = func(binaryIdentity, bool) (qualificationFixture, error) { return inertQualificationFixture{}, nil }
+	executeQualificationProviderTests = func(context.Context, string, binaryIdentity, time.Duration) providerTestResult {
+		return validProviderTestResult()
+	}
+	readQualificationSourceIdentity = func(context.Context, string) (string, string, bool, error) {
+		return strings.Repeat("a", 40), strings.Repeat("b", 40), false, nil
+	}
+	verifyQualificationOffline = func() bool { return true }
+	return func() {
+		verifyQualificationBinary, makeQualificationFixture, executeQualificationProviderTests = originalVerify, originalFixture, originalExecute
+		readQualificationSourceIdentity, verifyQualificationOffline = originalSource, originalOffline
+	}
+}
+
+func validProviderTestResult() providerTestResult {
+	ids := requiredProviderScenariosSorted()
+	return providerTestResult{
+		Census:         scenarioCensus{Expected: 11, Started: 11, Terminal: 11, Passed: 11},
+		Latencies:      []latencyEvidence{{Operation: "preflight", Samples: 100, P50MS: 1, P95MS: 2, MaxMS: 3}, {Operation: "warm_single_item_read", Samples: 200, P50MS: 1, P95MS: 2, MaxMS: 3}},
+		Contention:     &contentionEvidence{Mode: "server_multiwriter", Processes: 8, Attempted: 1000, Terminal: 1000, Passed: 1000, DurationMS: 1},
+		Assignment:     &assignmentPreservationEvidence{Attempted: 20, Terminal: 20, Preserved: 20, AttributionLost: 10, SafeCompensationUnsupported: 10},
+		Authority:      &authorityAuditEvidence{Audits: 6},
+		StaleAuthority: &staleAuthorityEvidence{Attempted: 1, Refused: 1, ReplacementWorkspacePreserved: 1},
+		Proof:          testcampaign.BeadsEvidenceProof{ExpectedIDs: ids, StartedIDs: append([]string(nil), ids...), TerminalIDs: append([]string(nil), ids...), PassedIDs: append([]string(nil), ids...)},
+	}
+}
+
 func validQualificationEvidence() qualificationEvidence {
 	now := time.Now().UTC()
+	ids := requiredProviderScenariosSorted()
 	return qualificationEvidence{
 		SchemaVersion: 1,
 		SourceCommit:  strings.Repeat("a", 40), SourceTree: strings.Repeat("b", 40),
@@ -312,7 +457,28 @@ func validQualificationEvidence() qualificationEvidence {
 		Contention:             &contentionEvidence{Mode: "server_multiwriter", Processes: 8, Attempted: 1000, Terminal: 1000, Passed: 1000, DurationMS: 1},
 		AssignmentPreservation: &assignmentPreservationEvidence{Attempted: 20, Terminal: 20, Preserved: 20, AttributionLost: 10, SafeCompensationUnsupported: 10},
 		AuthorityAudits:        6, Verdict: "pass",
+		Proof: testcampaign.BeadsEvidenceProof{
+			ExpectedIDs: ids, StartedIDs: append([]string(nil), ids...), TerminalIDs: append([]string(nil), ids...), PassedIDs: append([]string(nil), ids...),
+			SourceBindings: []testcampaign.BeadsSourceBinding{
+				{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40)},
+				{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40)},
+			},
+			ProviderVerified: true, OfflineVerified: true, StaleAuthorityVerified: true, SourceClean: true,
+		},
 	}
+}
+
+func strictDecodeQualificationEvidence(payload []byte) error {
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.DisallowUnknownFields()
+	var evidence qualificationEvidence
+	if err := decoder.Decode(&evidence); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err == nil {
+		return errors.New("trailing JSON")
+	}
+	return nil
 }
 
 func qualificationRepositoryRoot(t *testing.T) string {

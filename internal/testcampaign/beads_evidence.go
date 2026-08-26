@@ -71,18 +71,19 @@ type BeadsSourceBinding struct {
 // BeadsEvidenceProof carries validation inputs that are required to justify a
 // verdict but are deliberately excluded from the public schema-1 document.
 type BeadsEvidenceProof struct {
-	ExpectedIDs         []string
-	StartedIDs          []string
-	TerminalIDs         []string
-	PassedIDs           []string
-	FailedIDs           []string
-	SkippedIDs          []string
-	SourceBindings      []BeadsSourceBinding
-	ProviderVerified    bool
-	OfflineVerified     bool
-	SourceClean         bool
-	AssertionFailed     bool
-	PrerequisiteMissing bool
+	ExpectedIDs            []string
+	StartedIDs             []string
+	TerminalIDs            []string
+	PassedIDs              []string
+	FailedIDs              []string
+	SkippedIDs             []string
+	SourceBindings         []BeadsSourceBinding
+	ProviderVerified       bool
+	OfflineVerified        bool
+	StaleAuthorityVerified bool
+	SourceClean            bool
+	AssertionFailed        bool
+	PrerequisiteMissing    bool
 }
 
 // BeadsQualificationEvidence is the permanent schema-1 adoption record. Proof
@@ -145,11 +146,6 @@ func (e BeadsQualificationEvidence) Validate() error {
 			return fmt.Errorf("beads evidence issue %q is unsafe", issue.Kind)
 		}
 	}
-	for _, binding := range e.Proof.SourceBindings {
-		if binding.Commit != e.SourceCommit || binding.Tree != e.SourceTree || binding.Dirty {
-			return errors.New("beads evidence contains mixed or dirty source binding")
-		}
-	}
 	return e.validateVerdict()
 }
 
@@ -160,8 +156,11 @@ func (e BeadsQualificationEvidence) validateVerdict() error {
 		if !complete || len(e.Proof.SkippedIDs) != 0 || len(e.Proof.FailedIDs) != 0 || e.AuthorityInvariantFailures != 0 || len(e.Issues) != 0 {
 			return errors.New("pass requires the complete successful scenario census with zero skips, failures, invariant failures, or issues")
 		}
-		if !e.Proof.ProviderVerified || !e.Proof.OfflineVerified || !e.Proof.SourceClean || len(e.Proof.SourceBindings) == 0 {
-			return errors.New("pass requires verified provider, offline boundary, and clean source binding")
+		if !exactSourceBinding(e) {
+			return errors.New("pass contains mixed or dirty source binding")
+		}
+		if !e.Proof.ProviderVerified || !e.Proof.OfflineVerified || !e.Proof.StaleAuthorityVerified || !e.Proof.SourceClean {
+			return errors.New("pass requires verified provider, offline boundary, stale-authority probe, and exact clean source binding")
 		}
 		if e.StorageMode != "server_multiwriter" || !exactPassingLatency(e.Latency) || !exactPassingContention(e.Contention) || !exactPassingAssignment(e.AssignmentPreservation) || e.AuthorityAudits < 1 {
 			return errors.New("pass requires exact server, latency, contention, assignment, and authority evidence")
@@ -182,6 +181,18 @@ func (e BeadsQualificationEvidence) validateVerdict() error {
 		return fmt.Errorf("beads evidence verdict %q is invalid", e.Verdict)
 	}
 	return nil
+}
+
+func exactSourceBinding(e BeadsQualificationEvidence) bool {
+	if len(e.Proof.SourceBindings) < 2 {
+		return false
+	}
+	for _, binding := range e.Proof.SourceBindings {
+		if binding.Commit != e.SourceCommit || binding.Tree != e.SourceTree || binding.Dirty {
+			return false
+		}
+	}
+	return true
 }
 
 func validateBeadsScenarioCensus(c BeadsScenarioCensus, proof BeadsEvidenceProof) error {

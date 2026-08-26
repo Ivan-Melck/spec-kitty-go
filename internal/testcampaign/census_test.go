@@ -332,6 +332,10 @@ func TestBeadsQualificationWorkflowControlsAndMutants(t *testing.T) {
 		{"missing installer schema", `(keys | length == 9) and .schema_version == 1`, `.schema_version == 1`},
 		{"PATH fallback", `case "$beads_bin" in "$RUNNER_TEMP"/*)`, `command -v bd; case "$beads_bin" in *)`},
 		{"network-enabled qualification", "unshare --net --mount-proc", "sh"},
+		{"unpinned dolt server", "github.com/dolthub/dolt/go/cmd/dolt@v0.40.5-0.20260605230755-1bf533220ab0", "github.com/dolthub/dolt/go/cmd/dolt@latest"},
+		{"missing shared server", `"$DOLT_BIN" sql-server --host 127.0.0.1 --port 3307`, `test -x "$DOLT_BIN"`},
+		{"missing exact server tuple", "export BEADS_SERVER_ID=dolt-v0.40.5-1bf533220ab0", "export BEADS_SERVER_ID="},
+		{"missing server cleanup", "trap cleanup EXIT INT TERM", "true # cleanup omitted"},
 		{"omitted artifact on failure", "if: always()\n        uses: actions/upload-artifact", "if: success()\n        uses: actions/upload-artifact"},
 		{"accepted skip", `test "$(jq -r .verdict "$evidence")" = pass`, `test "$(jq -r .verdict "$evidence")" != fail`},
 		{"raised PR budget", `"budget_ms":600000`, `"budget_ms":700000`},
@@ -365,6 +369,14 @@ func validateBeadsWorkflow(workflow string) error {
 		{"missing installer schema", `(keys | length == 9) and .schema_version == 1`},
 		{"PATH fallback", `case "$beads_bin" in "$RUNNER_TEMP"/*)`},
 		{"network-enabled qualification", "unshare --net --mount-proc"},
+		{"unpinned dolt server", "github.com/dolthub/dolt/go/cmd/dolt@v0.40.5-0.20260605230755-1bf533220ab0"},
+		{"missing shared server", `"$DOLT_BIN" sql-server --host 127.0.0.1 --port 3307`},
+		{"missing exact server tuple", "export BEADS_SERVER_ID=dolt-v0.40.5-1bf533220ab0"},
+		{"missing server endpoint", "export BEADS_SERVER_ENDPOINT=127.0.0.1:3307"},
+		{"missing server host", "export DOLT_SERVER_HOST=127.0.0.1"},
+		{"missing server port", "export DOLT_SERVER_PORT=3307"},
+		{"missing server cleanup", "trap cleanup EXIT INT TERM"},
+		{"missing server termination", `kill "$server_pid" 2>/dev/null || true`},
 		{"offline modules", "GOPROXY: \"off\""},
 		{"setup evidence", "setup.non-admissible.json"},
 		{"isolated runner paths", "$RUNNER_TEMP/beads-provider-"},
@@ -381,6 +393,13 @@ func validateBeadsWorkflow(workflow string) error {
 		if !strings.Contains(workflow, control.text) {
 			return fmt.Errorf("%s control is missing", control.name)
 		}
+	}
+	install := strings.Index(workflow, `go install "$QUALIFIED_DOLT_MODULE"`)
+	offline := strings.Index(workflow, "unshare --net --mount-proc")
+	server := strings.Index(workflow, `"$DOLT_BIN" sql-server`)
+	qualification := strings.Index(workflow, "make beads-qualification")
+	if install < 0 || offline < 0 || server < 0 || qualification < 0 || !(install < offline && offline < server && server < qualification) {
+		return errors.New("offline pinned shared-server lifecycle ordering is invalid")
 	}
 	if strings.Count(workflow, `GOPROXY: "off"`) < 2 || strings.Count(workflow, `GOSUMDB: "off"`) < 2 {
 		return errors.New("offline modules control is missing")

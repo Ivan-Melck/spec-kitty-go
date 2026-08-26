@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign"
 )
 
 const qualificationEvidenceSchemaPath = "kitty-specs/beads-tracker-integration-01M0YG7E/contracts/qualification-evidence.schema.json"
@@ -44,78 +45,52 @@ type options struct {
 	Keep       bool
 }
 
-type scenarioCensus struct {
-	Expected int `json:"expected"`
-	Started  int `json:"started"`
-	Terminal int `json:"terminal"`
-	Passed   int `json:"passed"`
-	Failed   int `json:"failed"`
-}
-
-type hostEvidence struct {
-	GOOS   string `json:"goos"`
-	GOARCH string `json:"goarch"`
-	Runner string `json:"runner,omitempty"`
-}
-
-type latencyEvidence struct {
-	Operation string  `json:"operation"`
-	Samples   int     `json:"samples"`
-	P50MS     float64 `json:"p50_ms"`
-	P95MS     float64 `json:"p95_ms"`
-	MaxMS     float64 `json:"max_ms"`
-}
-
-type contentionEvidence struct {
-	Mode       string  `json:"mode"`
-	Processes  int     `json:"processes"`
-	Attempted  int     `json:"attempted"`
-	Terminal   int     `json:"terminal"`
-	Passed     int     `json:"passed"`
-	Collisions int     `json:"collisions"`
-	Duplicates int     `json:"duplicates"`
-	DurationMS float64 `json:"duration_ms"`
-}
-
-type assignmentPreservationEvidence struct {
-	Attempted                   int `json:"attempted"`
-	Terminal                    int `json:"terminal"`
-	Preserved                   int `json:"preserved"`
-	Failed                      int `json:"failed"`
-	AttributionLost             int `json:"attribution_lost"`
-	SafeCompensationUnsupported int `json:"safe_compensation_unsupported"`
-}
+type scenarioCensus = testcampaign.BeadsScenarioCensus
+type hostEvidence = testcampaign.BeadsHostEvidence
+type latencyEvidence = testcampaign.BeadsLatencyEvidence
+type contentionEvidence = testcampaign.BeadsContentionEvidence
+type assignmentPreservationEvidence = testcampaign.BeadsAssignmentEvidence
 
 type authorityAuditEvidence struct {
 	Audits   int `json:"audits"`
 	Failures int `json:"failures"`
 }
 
-type issueEvidence struct {
-	Kind    string `json:"kind"`
-	Message string `json:"message"`
+type issueEvidence = testcampaign.BeadsIssueEvidence
+type qualificationEvidence = testcampaign.BeadsQualificationEvidence
+
+type staleAuthorityEvidence struct {
+	Attempted                     int `json:"attempted"`
+	Refused                       int `json:"refused"`
+	ReplacementWorkspacePreserved int `json:"replacement_workspace_preserved"`
 }
 
-type qualificationEvidence struct {
-	SchemaVersion              int                             `json:"schema_version"`
-	SourceCommit               string                          `json:"source_commit"`
-	SourceTree                 string                          `json:"source_tree"`
-	ProviderVersion            string                          `json:"provider_version"`
-	ProviderDigestSHA256       string                          `json:"provider_digest_sha256"`
-	ProtocolSchema             int                             `json:"protocol_schema"`
-	StorageMode                string                          `json:"storage_mode"`
-	Host                       hostEvidence                    `json:"host"`
-	StartedAt                  time.Time                       `json:"started_at"`
-	FinishedAt                 time.Time                       `json:"finished_at"`
-	Scenarios                  scenarioCensus                  `json:"scenarios"`
-	Latency                    []latencyEvidence               `json:"latency,omitempty"`
-	Contention                 *contentionEvidence             `json:"contention,omitempty"`
-	AssignmentPreservation     *assignmentPreservationEvidence `json:"assignment_preservation,omitempty"`
-	AuthorityAudits            int                             `json:"authority_audits"`
-	AuthorityInvariantFailures int                             `json:"authority_invariant_failures"`
-	Issues                     []issueEvidence                 `json:"issues,omitempty"`
-	Verdict                    string                          `json:"verdict"`
+type providerTestResult struct {
+	Census         scenarioCensus
+	Latencies      []latencyEvidence
+	Contention     *contentionEvidence
+	Assignment     *assignmentPreservationEvidence
+	Authority      *authorityAuditEvidence
+	StaleAuthority *staleAuthorityEvidence
+	Issues         []issueEvidence
+	Proof          testcampaign.BeadsEvidenceProof
+	Err            error
 }
+
+type qualificationFixture interface {
+	initialize(context.Context) error
+	cleanup() error
+}
+
+var (
+	verifyQualificationBinary = verifyBinary
+	makeQualificationFixture  = func(identity binaryIdentity, keep bool) (qualificationFixture, error) {
+		return newFixture(identity, keep)
+	}
+	executeQualificationProviderTests = runProviderTests
+	readQualificationSourceIdentity   = sourceIdentity
+	verifyQualificationOffline        = offlineQualificationVerified
+)
 
 type testEvent struct {
 	Action  string  `json:"Action"`
@@ -129,7 +104,7 @@ func runQualification(ctx context.Context, input options) (qualificationEvidence
 	if input.Timeout <= 0 || input.Timeout > 30*time.Minute {
 		return qualificationEvidence{}, errors.New("qualification timeout must be positive and no greater than 30 minutes")
 	}
-	identity, err := verifyBinary(ctx, input.BinaryPath, input.Digest)
+	identity, err := verifyQualificationBinary(ctx, input.BinaryPath, input.Digest)
 	if err != nil {
 		return qualificationEvidence{}, err
 	}
@@ -137,7 +112,7 @@ func runQualification(ctx context.Context, input options) (qualificationEvidence
 	if err != nil {
 		return qualificationEvidence{}, err
 	}
-	commit, tree, dirty, err := sourceIdentity(ctx, repository)
+	commit, tree, dirty, err := readQualificationSourceIdentity(ctx, repository)
 	if err != nil {
 		return qualificationEvidence{}, err
 	}
@@ -149,7 +124,7 @@ func runQualification(ctx context.Context, input options) (qualificationEvidence
 		return qualificationEvidence{}, err
 	}
 
-	fixture, err := newFixture(identity, input.Keep)
+	fixture, err := makeQualificationFixture(identity, input.Keep)
 	if err != nil {
 		return qualificationEvidence{}, err
 	}
@@ -158,23 +133,41 @@ func runQualification(ctx context.Context, input options) (qualificationEvidence
 		return qualificationEvidence{}, err
 	}
 
-	census, latencies, contention, assignment, authority, issues, runErr := runProviderTests(ctx, repository, identity, input.Timeout)
-	authorityAudits, authorityFailures := 0, 1
-	if authority != nil {
-		authorityAudits, authorityFailures = authority.Audits, authority.Failures
+	observed := executeQualificationProviderTests(ctx, repository, identity, input.Timeout)
+	authorityAudits, authorityFailures := 0, 0
+	if observed.Authority != nil {
+		authorityAudits, authorityFailures = observed.Authority.Audits, observed.Authority.Failures
 	}
+	postCommit, postTree, postDirty, postErr := readQualificationSourceIdentity(ctx, repository)
+	if postErr != nil {
+		observed.Issues = append(observed.Issues, issueEvidence{Kind: "source_rebind_failed", Message: "qualification source could not be rebound after execution"})
+	} else if postCommit != commit || postTree != tree || postDirty {
+		observed.Issues = append(observed.Issues, issueEvidence{Kind: "source_drift", Message: "qualification source changed or became dirty during execution"})
+	}
+	sourceClean := postErr == nil && postCommit == commit && postTree == tree && !postDirty
+	offline := verifyQualificationOffline()
+	observed.Proof.SourceBindings = []testcampaign.BeadsSourceBinding{{Commit: commit, Tree: tree, Dirty: false}}
+	if postErr == nil {
+		observed.Proof.SourceBindings = append(observed.Proof.SourceBindings, testcampaign.BeadsSourceBinding{Commit: postCommit, Tree: postTree, Dirty: postDirty})
+	}
+	observed.Proof.ProviderVerified = true
+	observed.Proof.OfflineVerified = offline
+	observed.Proof.StaleAuthorityVerified = observed.StaleAuthority != nil && observed.StaleAuthority.Attempted == 1 && observed.StaleAuthority.Refused == 1 && observed.StaleAuthority.ReplacementWorkspacePreserved == 1
+	observed.Proof.SourceClean = sourceClean
+	observed.Proof.AssertionFailed = observed.Census.Failed > 0 || authorityFailures > 0
+	observed.Proof.PrerequisiteMissing = !offline || !sourceClean || !observed.Proof.StaleAuthorityVerified || len(observed.Proof.SkippedIDs) != 0 || (len(observed.Issues) != 0 && !observed.Proof.AssertionFailed)
 	result := qualificationEvidence{
 		SchemaVersion: 1, SourceCommit: commit, SourceTree: tree,
 		ProviderVersion: identity.Version, ProviderDigestSHA256: identity.Digest,
 		ProtocolSchema: identity.Schema, StorageMode: qualificationStorageMode(),
 		Host:      hostEvidence{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Runner: safeRunnerName()},
-		StartedAt: started, FinishedAt: time.Now().UTC(), Scenarios: census, Latency: latencies, Contention: contention,
-		AssignmentPreservation: assignment, AuthorityAudits: authorityAudits,
-		AuthorityInvariantFailures: authorityFailures, Issues: issues, Verdict: "non_admissible",
+		StartedAt: started, FinishedAt: time.Now().UTC(), Scenarios: observed.Census, Latency: observed.Latencies, Contention: observed.Contention,
+		AssignmentPreservation: observed.Assignment, AuthorityAudits: authorityAudits,
+		AuthorityInvariantFailures: authorityFailures, Issues: observed.Issues, Verdict: "non_admissible", Proof: observed.Proof,
 	}
-	if census.Started == census.Expected && census.Terminal == census.Expected && census.Passed == census.Expected && census.Failed == 0 && authorityFailures == 0 && len(issues) == 0 && runErr == nil {
+	if observed.Census.Started == observed.Census.Expected && observed.Census.Terminal == observed.Census.Expected && observed.Census.Passed == observed.Census.Expected && observed.Census.Failed == 0 && authorityFailures == 0 && len(observed.Issues) == 0 && observed.Err == nil && offline && sourceClean && observed.Proof.StaleAuthorityVerified {
 		result.Verdict = "pass"
-	} else if census.Failed > 0 {
+	} else if observed.Proof.AssertionFailed {
 		result.Verdict = "fail"
 	}
 	result.FinishedAt = time.Now().UTC()
@@ -182,16 +175,17 @@ func runQualification(ctx context.Context, input options) (qualificationEvidence
 		return result, err
 	}
 	if result.Verdict != "pass" {
-		if runErr != nil {
-			return result, fmt.Errorf("qualification %s: %w", result.Verdict, runErr)
+		if observed.Err != nil {
+			return result, fmt.Errorf("qualification %s: %w", result.Verdict, observed.Err)
 		}
 		return result, fmt.Errorf("qualification %s: required scenario census is incomplete", result.Verdict)
 	}
 	return result, nil
 }
 
-func runProviderTests(ctx context.Context, repository string, identity binaryIdentity, timeout time.Duration) (scenarioCensus, []latencyEvidence, *contentionEvidence, *assignmentPreservationEvidence, *authorityAuditEvidence, []issueEvidence, error) {
+func runProviderTests(ctx context.Context, repository string, identity binaryIdentity, timeout time.Duration) providerTestResult {
 	census := scenarioCensus{Expected: len(requiredProviderScenarios)}
+	result := providerTestResult{Census: census, Proof: testcampaign.BeadsEvidenceProof{ExpectedIDs: requiredProviderScenariosSorted()}}
 	pattern := `^(TestRealBeadsQualification|TestRealBeadsWorktreeQualification|TestRealBeadsBackupQualification)$`
 	testCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -208,18 +202,21 @@ func runProviderTests(ctx context.Context, repository string, identity binaryIde
 	)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
-		return census, nil, nil, nil, nil, nil, err
+		result.Err = err
+		return result
 	}
 	var stderr limitedBuffer
 	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
-		return census, nil, nil, nil, nil, nil, err
+		result.Err = err
+		return result
 	}
 	states := make(map[string]string, len(requiredProviderScenarios))
 	latencyByOperation := make(map[string]latencyEvidence, 2)
 	var contention *contentionEvidence
 	var assignment *assignmentPreservationEvidence
 	var authority *authorityAuditEvidence
+	var staleAuthority *staleAuthorityEvidence
 	issues := make([]issueEvidence, 0)
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), 2<<20)
@@ -285,6 +282,14 @@ func runProviderTests(ctx context.Context, repository string, identity binaryIde
 				issues = append(issues, issueEvidence{Kind: "authority_audit_malformed", Message: "authority audit evidence was malformed or duplicated"})
 			}
 		}
+		if marker := strings.Index(event.Output, "WP10_STALE_AUTHORITY "); marker >= 0 {
+			var sample staleAuthorityEvidence
+			if decodeEvidenceMarker(event.Output[marker+len("WP10_STALE_AUTHORITY "):], &sample) == nil && staleAuthority == nil {
+				staleAuthority = &sample
+			} else {
+				issues = append(issues, issueEvidence{Kind: "stale_authority_malformed", Message: "stale authority evidence was malformed or duplicated"})
+			}
+		}
 	}
 	scanErr := scanner.Err()
 	waitErr := command.Wait()
@@ -301,14 +306,41 @@ func runProviderTests(ctx context.Context, repository string, identity binaryIde
 		latencies = append(latencies, sample)
 	}
 	issues = append(issues, validateProviderEvidence(qualificationStorageMode(), latencies, contention, assignment, authority)...)
+	if staleAuthority == nil {
+		issues = append(issues, issueEvidence{Kind: "stale_authority_missing", Message: "real stale lease, fence, and workspace probe was not emitted"})
+	} else if staleAuthority.Attempted != 1 || staleAuthority.Refused != 1 || staleAuthority.ReplacementWorkspacePreserved != 1 {
+		issues = append(issues, issueEvidence{Kind: "stale_authority_invalid", Message: "real stale authority probe failed its exact census"})
+	}
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i].Operation < latencies[j].Operation })
+	for name, state := range states {
+		result.Proof.StartedIDs = append(result.Proof.StartedIDs, name)
+		if state == "pass" || state == "fail" || state == "skip" {
+			result.Proof.TerminalIDs = append(result.Proof.TerminalIDs, name)
+		}
+		switch state {
+		case "pass":
+			result.Proof.PassedIDs = append(result.Proof.PassedIDs, name)
+		case "fail":
+			result.Proof.FailedIDs = append(result.Proof.FailedIDs, name)
+		case "skip":
+			result.Proof.SkippedIDs = append(result.Proof.SkippedIDs, name)
+		}
+	}
+	sort.Strings(result.Proof.StartedIDs)
+	sort.Strings(result.Proof.TerminalIDs)
+	sort.Strings(result.Proof.PassedIDs)
+	sort.Strings(result.Proof.FailedIDs)
+	sort.Strings(result.Proof.SkippedIDs)
+	result.Census, result.Latencies, result.Contention, result.Assignment, result.Authority, result.StaleAuthority, result.Issues = census, latencies, contention, assignment, authority, staleAuthority, issues
 	if scanErr != nil {
-		return census, latencies, contention, assignment, authority, issues, scanErr
+		result.Err = scanErr
+		return result
 	}
 	if waitErr != nil {
-		return census, latencies, contention, assignment, authority, issues, errors.New("real-provider test process failed; inspect redacted test output locally")
+		result.Err = errors.New("real-provider test process failed; inspect redacted test output locally")
+		return result
 	}
-	return census, latencies, contention, assignment, authority, issues, nil
+	return result
 }
 
 func decodeEvidenceMarker(encoded string, target any) error {
@@ -429,185 +461,22 @@ func validateEvidencePath(path string) (string, error) {
 	return filepath.Join(parent, filepath.Base(path)), nil
 }
 
-func validateQualificationEvidence(evidence qualificationEvidence) error {
-	if evidence.SchemaVersion != 1 || evidence.ProviderVersion != qualifiedVersion || evidence.ProtocolSchema != qualifiedSchema {
-		return errors.New("schema or provider compatibility tuple is invalid")
+func writeEvidence(path string, evidence qualificationEvidence) error {
+	if _, err := os.Lstat(path); err == nil {
+		return errors.New("evidence path must not overwrite an existing file")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	if !isLowerHex(evidence.SourceCommit, 40) || !isLowerHex(evidence.SourceTree, 40) || !isLowerHex(evidence.ProviderDigestSHA256, 64) {
-		return errors.New("source or provider identity is invalid")
-	}
-	if evidence.StorageMode != "embedded_serialized" && evidence.StorageMode != "server_multiwriter" {
-		return errors.New("storage mode is invalid")
-	}
-	if !boundedText(evidence.Host.GOOS, 1, 64) || !boundedText(evidence.Host.GOARCH, 1, 64) || (evidence.Host.Runner != "" && !boundedText(evidence.Host.Runner, 1, 64)) {
-		return errors.New("host evidence is invalid")
-	}
-	if evidence.StartedAt.IsZero() || evidence.FinishedAt.IsZero() || evidence.FinishedAt.Before(evidence.StartedAt) {
-		return errors.New("evidence time interval is invalid")
-	}
-	if evidence.Scenarios.Expected != len(requiredProviderScenarios) || !boundedInt(evidence.Scenarios.Started, 0, 11) || !boundedInt(evidence.Scenarios.Terminal, 0, 11) || !boundedInt(evidence.Scenarios.Passed, 0, 11) || !boundedInt(evidence.Scenarios.Failed, 0, 11) {
-		return errors.New("scenario census is outside its bounded contract")
-	}
-	if evidence.Scenarios.Terminal > evidence.Scenarios.Started || evidence.Scenarios.Passed+evidence.Scenarios.Failed > evidence.Scenarios.Terminal {
-		return errors.New("scenario census is internally inconsistent")
-	}
-	if len(evidence.Latency) > 2 {
-		return errors.New("latency observation count exceeds its bound")
-	}
-	for _, observation := range evidence.Latency {
-		if !boundedText(observation.Operation, 1, 64) || !boundedInt(observation.Samples, 0, 1000000) || !boundedFloat(observation.P50MS, 0, 1800000) || !boundedFloat(observation.P95MS, 0, 1800000) || !boundedFloat(observation.MaxMS, 0, 1800000) {
-			return errors.New("latency observation is outside its bounded contract")
-		}
-	}
-	if evidence.Contention != nil {
-		observation := evidence.Contention
-		if !boundedText(observation.Mode, 1, 64) || !boundedInt(observation.Processes, 0, 1024) || !boundedInt(observation.Attempted, 0, 10000000) || !boundedInt(observation.Terminal, 0, 10000000) || !boundedInt(observation.Passed, 0, 10000000) || !boundedInt(observation.Collisions, 0, 10000000) || !boundedInt(observation.Duplicates, 0, 10000000) || !boundedFloat(observation.DurationMS, 0, 1800000) {
-			return errors.New("contention observation is outside its bounded contract")
-		}
-	}
-	if evidence.AssignmentPreservation != nil {
-		observation := evidence.AssignmentPreservation
-		for _, count := range []int{observation.Attempted, observation.Terminal, observation.Preserved, observation.Failed, observation.AttributionLost, observation.SafeCompensationUnsupported} {
-			if !boundedInt(count, 0, 1000000) {
-				return errors.New("assignment preservation observation is outside its bounded contract")
-			}
-		}
-	}
-	if !boundedInt(evidence.AuthorityAudits, 0, 1000000) || !boundedInt(evidence.AuthorityInvariantFailures, 0, 1000000) {
-		return errors.New("authority observation is outside its bounded contract")
-	}
-	if len(evidence.Issues) > 128 {
-		return errors.New("issue count exceeds its bound")
-	}
-	for _, issue := range evidence.Issues {
-		if !boundedText(issue.Kind, 1, 128) || !boundedText(issue.Message, 1, 1024) {
-			return errors.New("issue evidence is outside its bounded contract")
-		}
-	}
-	switch evidence.Verdict {
-	case "pass":
-		if evidence.StorageMode != "server_multiwriter" || evidence.Scenarios.Started != evidence.Scenarios.Expected || evidence.Scenarios.Terminal != evidence.Scenarios.Expected || evidence.Scenarios.Passed != evidence.Scenarios.Expected || evidence.Scenarios.Failed != 0 || len(evidence.Issues) != 0 {
-			return errors.New("passing verdict has an incomplete scenario or issue census")
-		}
-		authority := &authorityAuditEvidence{Audits: evidence.AuthorityAudits, Failures: evidence.AuthorityInvariantFailures}
-		if issues := validateProviderEvidence(evidence.StorageMode, evidence.Latency, evidence.Contention, evidence.AssignmentPreservation, authority); len(issues) != 0 {
-			return errors.New("passing verdict has incomplete provider evidence")
-		}
-	case "fail":
-		if evidence.Scenarios.Failed == 0 {
-			return errors.New("failed verdict has no failed scenario")
-		}
-	case "non_admissible":
-	default:
-		return errors.New("verdict is invalid")
-	}
-	return nil
+	return testcampaign.WriteBeadsEvidence(path, evidence)
 }
 
-func isLowerHex(value string, length int) bool {
-	if len(value) != length {
+func offlineQualificationVerified() bool {
+	if runtime.GOOS != "linux" || os.Getenv("OFFLINE_ENFORCED") != "linux-network-namespace" {
 		return false
 	}
-	for _, character := range value {
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-func boundedText(value string, minimum, maximum int) bool {
-	length := len([]rune(value))
-	return length >= minimum && length <= maximum
-}
-
-func boundedInt(value, minimum, maximum int) bool {
-	return value >= minimum && value <= maximum
-}
-
-func boundedFloat(value, minimum, maximum float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= minimum && value <= maximum
-}
-
-func writeEvidence(path string, evidence qualificationEvidence) error {
-	if err := validateQualificationEvidence(evidence); err != nil {
-		return fmt.Errorf("evidence violates typed contract: %w", err)
-	}
-	payload, err := json.MarshalIndent(evidence, "", "  ")
-	if err != nil {
-		return err
-	}
-	payload = append(payload, '\n')
-	if containsSensitiveEvidence(payload) {
-		return errors.New("evidence contains a prohibited body, transcript, environment, or credential field")
-	}
-	if err := validateSerializedRoundTrip(payload, evidence); err != nil {
-		return err
-	}
-	return publishEvidence(path, payload)
-}
-
-func validateSerializedRoundTrip(payload []byte, evidence qualificationEvidence) error {
-	var roundTrip qualificationEvidence
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&roundTrip); err != nil {
-		return fmt.Errorf("strictly decode serialized evidence: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return errors.New("serialized evidence contains trailing JSON data")
-	}
-	roundTripPayload, err := json.MarshalIndent(roundTrip, "", "  ")
-	if err != nil {
-		return fmt.Errorf("re-encode serialized evidence: %w", err)
-	}
-	roundTripPayload = append(roundTripPayload, '\n')
-	if !bytes.Equal(roundTripPayload, payload) {
-		return errors.New("serialized evidence does not round-trip through its typed contract")
-	}
-	return nil
-}
-
-func publishEvidence(path string, payload []byte) error {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".qualification-evidence-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	closed := false
-	defer func() {
-		if !closed {
-			_ = temporary.Close()
-		}
-		_ = os.Remove(temporaryPath)
-	}()
-	if err := temporary.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := temporary.Write(payload); err != nil {
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	closed = true
-	if err := os.Link(temporaryPath, path); err != nil {
-		return err
-	}
-	return nil
-}
-
-func containsSensitiveEvidence(payload []byte) bool {
-	lower := strings.ToLower(string(payload))
-	for _, sentinel := range []string{"comment_body", "description_body", "raw_stderr", "raw_stdout", "environment", "credential", "secret", "token="} {
-		if strings.Contains(lower, sentinel) {
-			return true
-		}
-	}
-	return false
+	self, selfErr := os.Readlink("/proc/self/ns/net")
+	init, initErr := os.Readlink("/proc/1/ns/net")
+	return selfErr == nil && initErr == nil && self != init
 }
 
 func safeRunnerName() string {

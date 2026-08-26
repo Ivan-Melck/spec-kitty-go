@@ -20,6 +20,8 @@ import (
 
 var safeLabel = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+var readCampaignSourceIdentity = sourceIdentity
+
 type profileResult struct {
 	Name       string `json:"name"`
 	ReportPath string `json:"report_path"`
@@ -124,6 +126,13 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 	if !safeLabel.MatchString(label) {
 		return testcampaign.Report{}, "", fmt.Errorf("artifact label %q is unsafe", label)
 	}
+	preCommit, preTree, preDirty, err := readCampaignSourceIdentity(".")
+	if err != nil {
+		return testcampaign.Report{}, "", fmt.Errorf("bind source before profile execution: %w", err)
+	}
+	if preDirty {
+		return testcampaign.Report{}, "", errors.New("profile source is dirty before execution")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -176,7 +185,7 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 	if closeErr := input.Close(); closeErr != nil && verifyErr == nil {
 		verifyErr = closeErr
 	}
-	commit, tree, dirty, identityErr := sourceIdentity(".")
+	commit, tree, dirty, identityErr := readCampaignSourceIdentity(".")
 	if identityErr != nil {
 		report.Verdict = "fail"
 		report.Issues = append(report.Issues, "source identity: "+identityErr.Error())
@@ -185,6 +194,13 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 		}
 	} else {
 		report.SourceCommit, report.SourceTree, report.SourceDirty = commit, tree, dirty
+		if commit != preCommit || tree != preTree || dirty {
+			report.Verdict = "fail"
+			report.Issues = append(report.Issues, "source identity drifted or became dirty during profile execution")
+			if verifyErr == nil {
+				verifyErr = errors.New("source identity drifted or became dirty during profile execution")
+			}
+		}
 	}
 	if err := writeJSON(reportPath, report); err != nil {
 		return report, reportPath, err
@@ -235,7 +251,7 @@ func sourceIdentity(directory string) (commit, tree string, dirty bool, err erro
 	if tree, err = gitOutput(directory, "rev-parse", "HEAD^{tree}"); err != nil {
 		return "", "", false, err
 	}
-	status, err := gitOutput(directory, "status", "--porcelain", "--untracked-files=no")
+	status, err := gitOutput(directory, "status", "--porcelain", "--untracked-files=normal")
 	if err != nil {
 		return "", "", false, err
 	}

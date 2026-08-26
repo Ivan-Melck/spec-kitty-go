@@ -65,6 +65,7 @@ func TestBeadsEvidenceLawMutantsFailForImplicatedControl(t *testing.T) {
 		}},
 		{"mixed source", "mixed or dirty source", func(e *BeadsQualificationEvidence) { e.Proof.SourceBindings[0].Tree = strings.Repeat("e", 40) }},
 		{"dirty source", "mixed or dirty source", func(e *BeadsQualificationEvidence) { e.Proof.SourceBindings[0].Dirty = true }},
+		{"missing stale authority proof", "stale-authority probe", func(e *BeadsQualificationEvidence) { e.Proof.StaleAuthorityVerified = false }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -176,8 +177,11 @@ func validBeadsPassEvidence() BeadsQualificationEvidence {
 		AuthorityAudits:        23, Verdict: "pass",
 		Proof: BeadsEvidenceProof{
 			ExpectedIDs: ids, StartedIDs: append([]string(nil), ids...), TerminalIDs: append([]string(nil), ids...), PassedIDs: append([]string(nil), ids...),
-			SourceBindings:   []BeadsSourceBinding{{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40)}},
-			ProviderVerified: true, OfflineVerified: true, SourceClean: true,
+			SourceBindings: []BeadsSourceBinding{
+				{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40)},
+				{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40)},
+			},
+			ProviderVerified: true, OfflineVerified: true, StaleAuthorityVerified: true, SourceClean: true,
 		},
 	}
 }

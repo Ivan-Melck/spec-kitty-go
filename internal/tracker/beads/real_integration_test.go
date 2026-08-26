@@ -19,8 +19,13 @@ import (
 	"testing"
 	"time"
 
+	controlsqlite "github.com/spec-kitty/go-kitty3/internal/controlstore/sqlite"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 type realBeadsFixture struct {
@@ -640,6 +645,9 @@ func TestRealBeadsQualification(t *testing.T) {
 		if failures != 0 {
 			t.Fatalf("production-relevant authority audit failures=%d", failures)
 		}
+		stale := runRealStaleAuthorityProbe(t)
+		stalePayload, _ := json.Marshal(stale)
+		t.Logf("WP10_STALE_AUTHORITY %s", stalePayload)
 	})
 
 	t.Run("latency", func(t *testing.T) {
@@ -663,6 +671,102 @@ func TestRealBeadsQualification(t *testing.T) {
 		}
 		emitLatency(t, "warm_single_item_read", reads, 500*time.Millisecond)
 	})
+}
+
+type realStaleAuthorityEvidence struct {
+	Attempted                     int `json:"attempted"`
+	Refused                       int `json:"refused"`
+	ReplacementWorkspacePreserved int `json:"replacement_workspace_preserved"`
+}
+
+func TestRealStaleAuthorityProbeRejectsExpiredWorkspaceWriter(t *testing.T) {
+	if got := runRealStaleAuthorityProbe(t); got != (realStaleAuthorityEvidence{Attempted: 1, Refused: 1, ReplacementWorkspacePreserved: 1}) {
+		t.Fatalf("stale authority census=%+v", got)
+	}
+}
+
+func runRealStaleAuthorityProbe(t *testing.T) realStaleAuthorityEvidence {
+	t.Helper()
+	ctx := context.Background()
+	store, err := controlsqlite.Open(ctx, filepath.Join(t.TempDir(), "authority.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 8, 26, 18, 0, 0, 0, time.UTC)
+	draft := workgraph.NewDraft("project-wp10", "mission-wp10")
+	if err := draft.AddLane(workgraph.Lane{ID: "lane-wp10"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := draft.AddWork(workgraph.WorkItem{ID: "work-wp10", Title: "stale authority probe", LaneID: "lane-wp10", Criteria: []workgraph.Criterion{{ID: "criterion-wp10", Text: "stale writer refused"}}, SourceRevisions: []workgraph.SourceRevision{{Provider: "beads", Revision: "1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := draft.Finalize(workgraph.FinalizeMetadata{ID: "revision-wp10", Number: 1, ActorID: "actor-owner", FinalizedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FinalizeWorkRevision(ctx, controlsqlite.FinalizeWorkRevisionRequest{SchemaVersion: 1, CorrelationID: "finalize-wp10", OperationID: "operation-finalize-wp10", ActorID: "actor-owner", ProcessID: "process-owner", OccurredAt: now, Revision: revision}); err != nil {
+		t.Fatal(err)
+	}
+	governance := realQualificationGovernance(t, now)
+	claim := func(operation ids.OperationID, process ids.ProcessID, at time.Time) execution.RunCapsule {
+		request := execution.StartRequest{CorrelationID: operation.String(), OperationID: operation, ProjectID: "project-wp10", MissionID: "mission-wp10", WorkRevisionID: "revision-wp10", WorkID: "work-wp10", ActorID: "actor-worker", ProcessID: process, Now: at, LeaseTTL: time.Second, GovernanceContext: governance}
+		capsule, claimErr := store.Claim(ctx, request, ids.RunID("run-"+operation.String()), ids.LeaseID("lease-"+operation.String()))
+		if claimErr != nil {
+			t.Fatal(claimErr)
+		}
+		return capsule
+	}
+	first := claim("operation-first", "process-first", now)
+	binding := workspace.RepositoryBinding{RepositoryID: "repository-wp10", ProjectID: "project-wp10", CommonDir: "/repo/.git", PrimaryPath: "/repo", ManagedRoot: "/runtime/workspaces", TargetRef: "refs/heads/main", Primary: workspace.PrimarySnapshot{Head: strings.Repeat("a", 40), IndexDigest: "index", TreeDigest: "tree"}, CreatedAt: now, VerifiedAt: now}
+	if err := store.BindRepository(ctx, binding); err != nil {
+		t.Fatal(err)
+	}
+	reserve := func(capsule execution.RunCapsule, workspaceID ids.WorkspaceID, operation ids.OperationID, at time.Time) workspace.Record {
+		reservation := workspace.Reservation{OperationID: operation, ProjectID: "project-wp10", MissionID: "mission-wp10", WorkRevisionID: "revision-wp10", WorkID: "work-wp10", RunID: capsule.RunID, WorkspaceID: workspaceID, RepositoryID: "repository-wp10", LaneID: "lane-wp10", Authority: workspace.Authority{LeaseID: capsule.LeaseID, Generation: capsule.Generation, Token: capsule.Token}, OwnedBranch: "runs/" + workspaceID.String(), PinnedBase: strings.Repeat("a", 40), Now: at}
+		record, reserveErr := store.ReserveWorkspace(ctx, reservation, filepath.Join("/runtime/workspaces", workspaceID.String()))
+		if reserveErr != nil {
+			t.Fatal(reserveErr)
+		}
+		return record
+	}
+	oldWorkspace := reserve(first, "workspace-first", "operation-first", now)
+	expiredAt := now.Add(2 * time.Second)
+	if err := store.Expire(ctx, execution.ExpireRequest{SchemaVersion: 1, CorrelationID: "expire-first", OperationID: "operation-expire-first", ActorID: "actor-worker", ProcessID: "process-first", LeaseID: first.LeaseID, Generation: first.Generation, Token: first.Token, Now: expiredAt}); err != nil {
+		t.Fatal(err)
+	}
+	second := claim("operation-second", "process-second", expiredAt.Add(time.Second))
+	replacementBefore := reserve(second, "workspace-second", "operation-second", expiredAt.Add(time.Second))
+	_, staleErr := store.AdvanceWorkspace(ctx, oldWorkspace.WorkspaceID, oldWorkspace.Authority, workspace.StageReserved, workspace.StageWorktreeCreated, workspace.Probe{}, "", expiredAt.Add(2*time.Second))
+	if !workspace.IsKind(staleErr, workspace.KindStaleAuthority) {
+		t.Fatalf("expired writer mutation error=%v", staleErr)
+	}
+	replacementAfter, err := store.Workspace(ctx, replacementBefore.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preserved := replacementAfter.Status == replacementBefore.Status && replacementAfter.Stage == replacementBefore.Stage && replacementAfter.Authority == replacementBefore.Authority && replacementAfter.CanonicalPath == replacementBefore.CanonicalPath
+	if !preserved {
+		t.Fatalf("stale writer changed replacement workspace: before=%+v after=%+v", replacementBefore, replacementAfter)
+	}
+	return realStaleAuthorityEvidence{Attempted: 1, Refused: 1, ReplacementWorkspacePreserved: 1}
+}
+
+func realQualificationGovernance(t *testing.T, now time.Time) governancecontext.Context {
+	t.Helper()
+	commitment, err := governancecontext.CommitSHA256([]byte("wp10-real-authority-profile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := governancecontext.NewEntry(governancecontext.KindProfile, "implementer-ivan", "revision-wp10", commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := governancecontext.NewContext("context-wp10", governancecontext.SchemaVersion, []governancecontext.Entry{entry}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 type realCommandCensusRunner struct {
