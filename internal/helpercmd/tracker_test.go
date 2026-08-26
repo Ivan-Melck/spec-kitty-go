@@ -179,6 +179,72 @@ func TestTrackerCatalogBeadsRejectsUnboundedOrUnknownRequestBeforeAdapter(t *tes
 	}
 }
 
+func TestTrackerAssignmentBeadsReachesLiveAdapterSaga(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	executable := helperAssignmentBeadsExecutable(t, root)
+	readPath := filepath.Join(root, "read-request.json")
+	if err := os.WriteFile(readPath, []byte(`{"work_id":"work-1","external_id":"bd-live-1","metadata_schema":1,"created_by_operation":"operation-create"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bindingArgs := []string{"--project", "project-1", "--executable", executable, "--workspace", workspace, "--database-identity", "db-1", "--protocol-schema", "1", "--read-only=false"}
+	var stdout, stderr bytes.Buffer
+	readArgs := append([]string{"tracker", "catalog-beads", "read"}, bindingArgs...)
+	readArgs = append(readArgs, "--mode", "embedded_serialized", "--request-file", readPath)
+	if code := Run(context.Background(), readArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("catalog read code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var catalog BeadsCatalogResponse
+	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil || catalog.Record == nil || catalog.Record.Observation.Revision == 0 {
+		t.Fatalf("catalog observation=%+v err=%v", catalog, err)
+	}
+	requestPath := filepath.Join(root, "assignment-request.json")
+	request := fmt.Sprintf(`{"correlation_id":"correlation-live-assignment","operation_id":"operation-live-assignment","actor_id":"actor-live-assignment","process_id":"process-live-assignment","work_id":"work-1","external_id":"bd-live-1","metadata_schema":1,"created_by_operation":"operation-create","mapping_observation":%d,"expected_observation":%d,"assignee":"actor-live-assignment","required_guarantee":"unguarded"}`,
+		catalog.Record.Observation.Revision, catalog.Record.Observation.Revision)
+	if err := os.WriteFile(requestPath, []byte(request), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	assignArgs := append([]string{"tracker", "assignment-beads", "assign"}, bindingArgs...)
+	assignArgs = append(assignArgs, "--db", filepath.Join(root, "control.db"), "--request-file", requestPath)
+	if code := Run(context.Background(), assignArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("assignment code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var response TrackerResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil || !response.OK || response.Result == nil || response.Result.Kind != "tracker_effect_confirmed" || response.Result.Assignee != "actor-live-assignment" || response.Result.Revision == 0 {
+		t.Fatalf("live assignment response=%+v err=%v stdout=%s", response, err, stdout.String())
+	}
+	compensateRequest := fmt.Sprintf(`{"correlation_id":"correlation-live-assignment","operation_id":"operation-live-assignment","actor_id":"actor-live-assignment","process_id":"process-live-assignment","work_id":"work-1","external_id":"bd-live-1","metadata_schema":1,"created_by_operation":"operation-create","mapping_observation":%d,"expected_observation":%d,"required_guarantee":"unguarded"}`,
+		catalog.Record.Observation.Revision, response.Result.Revision)
+	if err := os.WriteFile(requestPath, []byte(compensateRequest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	compensateArgs := append([]string{"tracker", "assignment-beads", "compensate"}, bindingArgs...)
+	compensateArgs = append(compensateArgs, "--db", filepath.Join(root, "control.db"), "--request-file", requestPath)
+	if code := Run(context.Background(), compensateArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("compensation code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var refused TrackerResponse
+	if err := json.Unmarshal(stdout.Bytes(), &refused); err != nil || refused.OK || refused.Error == nil || refused.Error.Kind != execution.KindSafeCompensationUnsupported || refused.Error.RetrySafety != execution.RetryNever {
+		t.Fatalf("live compensation refusal=%+v err=%v stdout=%s", refused, err, stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), readArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("post-refusal read code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	var preserved BeadsCatalogResponse
+	if err := json.Unmarshal(stdout.Bytes(), &preserved); err != nil || preserved.Record == nil || preserved.Record.VisibleAssignee != "actor-live-assignment" || preserved.Record.AssignmentMarker != "operation-live-assignment" || preserved.Record.Observation.Revision != response.Result.Revision {
+		t.Fatalf("unsafe Beads compensation mutated state=%+v err=%v", preserved, err)
+	}
+}
+
 func helperBeadsExecutable(t *testing.T, root string, mode tracker.ConcurrencyMode) string {
 	t.Helper()
 	path := filepath.Join(root, "bd-helper")
@@ -207,6 +273,28 @@ case "$1" in
 show)
   printf '%s\n' '{"schema_version":1,"data":{"id":"bd-live-1","title":"Live work","description":"Production caller","acceptance":"criterion-1 — required — test — verified","metadata":{"foreign":{"preserved":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"updated_at":"2026-08-26T12:00:00Z"}}'
   ;;
+*) exit 64 ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func helperAssignmentBeadsExecutable(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "bd-assignment-helper")
+	script := `#!/bin/sh
+set -eu
+original='{"schema_version":1,"data":{"id":"bd-live-1","title":"Live work","description":"Production caller","acceptance":"criterion-1 — required — test — verified","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"assignee":"original","updated_at":"2026-08-26T12:00:00Z"}}'
+assigned='{"schema_version":1,"data":{"id":"bd-live-1","title":"Live work","description":"Production caller","acceptance":"criterion-1 — required — test — verified","metadata":{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-live-assignment","assignment_marker":"operation-live-assignment","criteria":[{"id":"criterion-1","text":"verified","verifier":"test","required":true}],"design_context":"helper boundary","content_digest":"diagnostic-only"}},"assignee":"actor-live-assignment","updated_at":"2026-08-26T12:01:00Z"}}'
+case "$1" in
+version) printf '%s\n' '{"schema_version":1,"data":{"version":"1.2.2","build":"helper-assignment"}}' ;;
+where) printf '{"schema_version":1,"data":{"workspace_path":"%s","database_id":"db-1"}}\n' "$BEADS_DIR" ;;
+info) printf '%s\n' '{"schema_version":1,"data":{"protocol_schema":1,"storage_mode":"embedded_serialized","read_only":false}}' ;;
+show) if [ -f "$BEADS_DIR/assigned" ]; then printf '%s\n' "$assigned"; else printf '%s\n' "$original"; fi ;;
+update) : > "$BEADS_DIR/assigned"; printf '%s\n' "$assigned" ;;
 *) exit 64 ;;
 esac
 `

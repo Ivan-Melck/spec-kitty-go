@@ -43,9 +43,9 @@ WHERE external_effects.schema_version=excluded.schema_version AND external_effec
   AND external_effects.provider=excluded.provider AND external_effects.work_key=excluded.work_key
   AND external_effects.marker=excluded.marker AND external_effects.prior_revision=excluded.prior_revision
   AND external_effects.prior_value=excluded.prior_value AND external_effects.applied_value=excluded.applied_value`,
-		effect.OperationID, effect.SchemaVersion, effect.CorrelationID, effect.ActorID, effect.ProcessID, effect.Provider, effect.WorkKey, effect.Marker, effect.PriorRevision, effect.PriorValue,
-		effect.AppliedRevision, effect.AppliedValue, effect.ResponseStatus, effect.CompensationStatus, effect.CompensationRevision,
-		effect.ConflictRevision, effect.ConflictValue, effect.ConflictMarker, effect.ObservedAt.UTC().Format(time.RFC3339Nano))
+		effect.OperationID, effect.SchemaVersion, effect.CorrelationID, effect.ActorID, effect.ProcessID, effect.Provider, effect.WorkKey, effect.Marker, encodeTrackerRevision(effect.PriorRevision), effect.PriorValue,
+		encodeTrackerRevision(effect.AppliedRevision), effect.AppliedValue, effect.ResponseStatus, effect.CompensationStatus, encodeTrackerRevision(effect.CompensationRevision),
+		encodeTrackerRevision(effect.ConflictRevision), effect.ConflictValue, effect.ConflictMarker, effect.ObservedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return externalEffectStoreError(effect.OperationID, effect.CorrelationID, effect.ActorID, effect.ProcessID, effect.ObservedAt, "save external effect", err)
 	}
@@ -64,6 +64,8 @@ WHERE external_effects.schema_version=excluded.schema_version AND external_effec
 		providerRevision, providerValue, providerMarker = 0, "", ""
 	case effect.CompensationStatus == execution.CompensationAmbiguous || effect.CompensationStatus == execution.CompensationUnavailable:
 		providerRevision, providerValue, providerMarker = 0, "", ""
+	case (effect.CompensationStatus == execution.CompensationUnsupported || effect.CompensationStatus == execution.CompensationAttributionLost || effect.CompensationStatus == execution.CompensationReconciliation) && effect.ObservationRevision == 0:
+		providerRevision, providerValue, providerMarker = 0, "", ""
 	case effect.ObservationRevision != 0:
 		providerRevision, providerValue, providerMarker = effect.ObservationRevision, effect.ObservationValue, effect.ObservationMarker
 	case effect.CompensationStatus == execution.CompensationDone:
@@ -74,7 +76,7 @@ WHERE external_effects.schema_version=excluded.schema_version AND external_effec
 		providerRevision, providerValue, providerMarker = effect.PriorRevision, effect.PriorValue, ""
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO external_effect_observations(operation_id,response_status,compensation_status,provider_revision,provider_value,provider_marker,observed_at) VALUES(?,?,?,?,?,?,?)`,
-		effect.OperationID, effect.ResponseStatus, effect.CompensationStatus, providerRevision, providerValue, providerMarker, effect.ObservedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+		effect.OperationID, effect.ResponseStatus, effect.CompensationStatus, encodeTrackerRevision(providerRevision), providerValue, providerMarker, effect.ObservedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 		return externalEffectStoreError(effect.OperationID, effect.CorrelationID, effect.ActorID, effect.ProcessID, effect.ObservedAt, "append external-effect observation", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -86,7 +88,7 @@ WHERE external_effects.schema_version=excluded.schema_version AND external_effec
 func (s *Store) ExternalEffect(ctx context.Context, operationID ids.OperationID) (execution.ExternalEffect, error) {
 	var effect execution.ExternalEffect
 	var observedAt string
-	var priorRevision, appliedRevision, compensationRevision, conflictRevision uint64
+	var priorRevision, appliedRevision, compensationRevision, conflictRevision int64
 	err := s.db.QueryRowContext(ctx, `SELECT operation_id,schema_version,correlation_id,actor_id,process_id,provider,work_key,marker,prior_revision,prior_value,applied_revision,applied_value,response_status,compensation_status,compensation_revision,conflict_revision,conflict_value,conflict_marker,observed_at FROM external_effects WHERE operation_id=?`, operationID).Scan(
 		&effect.OperationID, &effect.SchemaVersion, &effect.CorrelationID, &effect.ActorID, &effect.ProcessID, &effect.Provider, &effect.WorkKey, &effect.Marker, &priorRevision, &effect.PriorValue,
 		&appliedRevision, &effect.AppliedValue, &effect.ResponseStatus, &effect.CompensationStatus, &compensationRevision,
@@ -98,15 +100,15 @@ func (s *Store) ExternalEffect(ctx context.Context, operationID ids.OperationID)
 	if err != nil {
 		return execution.ExternalEffect{}, externalEffectStoreError(operationID, operationID.String(), "", "", time.Now().UTC(), "read external effect", err)
 	}
-	effect.PriorRevision = tracker.Revision(priorRevision)
-	effect.AppliedRevision = tracker.Revision(appliedRevision)
-	effect.CompensationRevision = tracker.Revision(compensationRevision)
-	effect.ConflictRevision = tracker.Revision(conflictRevision)
+	effect.PriorRevision = decodeTrackerRevision(priorRevision)
+	effect.AppliedRevision = decodeTrackerRevision(appliedRevision)
+	effect.CompensationRevision = decodeTrackerRevision(compensationRevision)
+	effect.ConflictRevision = decodeTrackerRevision(conflictRevision)
 	effect.ObservedAt, err = time.Parse(time.RFC3339Nano, observedAt)
 	if err != nil {
 		return execution.ExternalEffect{}, fmt.Errorf("parse external-effect observed time: %w", err)
 	}
-	var observationRevision uint64
+	var observationRevision int64
 	var observationValue, observationMarker, observationTime string
 	err = s.db.QueryRowContext(ctx, `SELECT provider_revision,provider_value,provider_marker,observed_at
 FROM external_effect_observations
@@ -121,7 +123,7 @@ ORDER BY sequence DESC LIMIT 1`, operationID, effect.ResponseStatus, effect.Comp
 		if parseErr != nil {
 			return execution.ExternalEffect{}, fmt.Errorf("parse external-effect observation time: %w", parseErr)
 		}
-		effect.ObservationRevision = tracker.Revision(observationRevision)
+		effect.ObservationRevision = decodeTrackerRevision(observationRevision)
 		effect.ObservationValue = observationValue
 		effect.ObservationMarker = observationMarker
 		effect.ObservedAt = parsed
@@ -147,4 +149,9 @@ func externalEffectStoreError(operationID ids.OperationID, correlationID string,
 		}
 	}
 	return translated
+}
+
+func encodeTrackerRevision(revision tracker.Revision) int64 { return int64(uint64(revision)) }
+func decodeTrackerRevision(revision int64) tracker.Revision {
+	return tracker.Revision(uint64(revision))
 }

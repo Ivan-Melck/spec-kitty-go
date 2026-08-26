@@ -23,7 +23,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/tracker/fake"
 )
 
-const trackerUsage = "usage: tracker assign|compensate|inspect-beads|catalog-beads [options]"
+const trackerUsage = "usage: tracker assign|compensate|inspect-beads|catalog-beads|assignment-beads [options]"
 
 type TrackerResponse struct {
 	OK      bool                           `json:"ok"`
@@ -64,6 +64,9 @@ func RunTracker(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	}
 	if action == "catalog-beads" {
 		return runCatalogBeads(ctx, args[1:], stdout, stderr)
+	}
+	if action == "assignment-beads" {
+		return runAssignmentBeads(ctx, args[1:], stdout, stderr)
 	}
 	if action != "assign" && action != "compensate" {
 		fmt.Fprintln(stderr, trackerUsage)
@@ -136,6 +139,129 @@ func RunTracker(ctx context.Context, args []string, stdout, stderr io.Writer) in
 }
 
 const maxCatalogRequestBytes = 2 << 20
+
+type beadsAssignmentInput struct {
+	CorrelationID       string                  `json:"correlation_id"`
+	OperationID         string                  `json:"operation_id"`
+	ActorID             string                  `json:"actor_id"`
+	ProcessID           string                  `json:"process_id"`
+	WorkID              string                  `json:"work_id"`
+	ExternalID          string                  `json:"external_id"`
+	MetadataSchema      uint16                  `json:"metadata_schema"`
+	CreatedByOperation  string                  `json:"created_by_operation"`
+	MappingObservation  tracker.Revision        `json:"mapping_observation"`
+	ExpectedObservation tracker.Revision        `json:"expected_observation"`
+	Assignee            string                  `json:"assignee,omitempty"`
+	RequiredGuarantee   tracker.AssignmentLevel `json:"required_guarantee"`
+}
+
+func runAssignmentBeads(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "assign" && args[0] != "compensate" {
+		fmt.Fprintln(stderr, trackerUsage)
+		return 2
+	}
+	action := args[0]
+	flags := flag.NewFlagSet("tracker assignment-beads "+action, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var database, project, executable, workspace, databaseIdentity, requestFile string
+	var protocolSchema uint64
+	var readOnly explicitBool
+	flags.StringVar(&database, "db", "", "control database path")
+	flags.StringVar(&project, "project", "", "project ID")
+	flags.StringVar(&executable, "executable", "", "absolute Beads executable path")
+	flags.StringVar(&workspace, "workspace", "", "absolute canonical Beads workspace path")
+	flags.StringVar(&databaseIdentity, "database-identity", "", "provider database identity")
+	flags.Uint64Var(&protocolSchema, "protocol-schema", 0, "pinned JSON protocol schema")
+	flags.Var(&readOnly, "read-only", "explicit binding read-only state")
+	flags.StringVar(&requestFile, "request-file", "", "absolute path to bounded typed JSON request")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if len(flags.Args()) != 0 || !readOnly.set || readOnly.value || protocolSchema == 0 || protocolSchema > uint64(^uint16(0)) || strings.TrimSpace(databaseIdentity) == "" {
+		return encodeTrackerFailure(stdout, invalidInspectRequest("assignment binding is invalid"))
+	}
+	projectID, err := ids.ParseProjectID(project)
+	if err != nil {
+		return encodeTrackerFailure(stdout, invalidInspectRequest("project ID is invalid"))
+	}
+	input, err := readBeadsAssignmentInput(requestFile)
+	if err != nil {
+		return encodeTrackerFailure(stdout, err)
+	}
+	operationID, operationErr := ids.ParseOperationID(input.OperationID)
+	actorID, actorErr := ids.ParseActorID(input.ActorID)
+	processID, processErr := ids.ParseProcessID(input.ProcessID)
+	workID, workErr := ids.ParseWorkID(input.WorkID)
+	created, createdErr := ids.ParseOperationID(input.CreatedByOperation)
+	if operationErr != nil || actorErr != nil || processErr != nil || workErr != nil || createdErr != nil || input.CorrelationID == "" {
+		return encodeTrackerFailure(stdout, invalidInspectRequest("assignment request identity is invalid"))
+	}
+	reference := tracker.ExternalWorkRef{
+		ProjectID: projectID, WorkID: workID, Provider: "beads", ExternalID: input.ExternalID,
+		MetadataSchema: input.MetadataSchema, CreatedByOperation: created, LastObservation: input.MappingObservation,
+	}
+	if err := reference.Validate(); err != nil {
+		return encodeTrackerFailure(stdout, invalidInspectRequest("assignment work mapping is invalid"))
+	}
+	bound, err := beads.Open(beads.BindingConfig{
+		ProjectID: projectID, ExecutablePath: executable, WorkspacePath: workspace, ProviderDatabaseIdentity: databaseIdentity,
+		ProtocolSchema: uint16(protocolSchema), ConcurrencyMode: tracker.ConcurrencyEmbeddedSerialized, ReadOnly: false,
+	})
+	if err != nil {
+		return encodeTrackerFailure(stdout, err)
+	}
+	control, err := sqlite.Open(ctx, database)
+	if err != nil {
+		return encodeTrackerFailure(stdout, err)
+	}
+	defer control.Close()
+	saga := execution.NewTrackerSaga(control, bound, execution.SystemClock{})
+	now := time.Now().UTC()
+	var result execution.TrackerEffectResult
+	if action == "assign" {
+		result, err = saga.Assign(ctx, execution.TrackerAssignRequest{
+			SchemaVersion: execution.ResultSchemaVersion, CorrelationID: input.CorrelationID, OperationID: operationID,
+			ActorID: actorID, ProcessID: processID, Now: now, ExpectedRevision: input.ExpectedObservation,
+			Assignee: input.Assignee, ExternalRef: reference, RequiredGuarantee: input.RequiredGuarantee,
+		})
+	} else {
+		result, err = saga.Compensate(ctx, execution.TrackerCompensateRequest{
+			SchemaVersion: execution.ResultSchemaVersion, CorrelationID: input.CorrelationID, OperationID: operationID,
+			ActorID: actorID, ProcessID: processID, Now: now, ExpectedRevision: input.ExpectedObservation,
+			ExternalRef: reference, RequiredGuarantee: input.RequiredGuarantee,
+		})
+	}
+	if err != nil {
+		return encodeTrackerFailure(stdout, err)
+	}
+	_ = json.NewEncoder(stdout).Encode(TrackerResponse{OK: true, Result: &result})
+	return 0
+}
+
+func readBeadsAssignmentInput(path string) (beadsAssignmentInput, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return beadsAssignmentInput{}, invalidInspectRequest("request file path must be absolute and clean")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxCatalogRequestBytes {
+		return beadsAssignmentInput{}, invalidInspectRequest("request file must be a bounded regular file")
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return beadsAssignmentInput{}, invalidInspectRequest("request file cannot be read")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var input beadsAssignmentInput
+	if err := decoder.Decode(&input); err != nil {
+		return beadsAssignmentInput{}, invalidInspectRequest("assignment request JSON is invalid")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return beadsAssignmentInput{}, invalidInspectRequest("assignment request must contain one JSON object")
+	}
+	return input, nil
+}
 
 type beadsCatalogCriterion struct {
 	ID           string               `json:"id"`
