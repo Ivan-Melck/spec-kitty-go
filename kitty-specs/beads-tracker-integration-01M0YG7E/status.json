@@ -1,7 +1,7 @@
 {
-  "event_count": 216,
-  "last_event_id": "01M103JHHM2HM3NFSGXA35N0T6",
-  "materialized_at": "2026-08-26T22:38:10.484641+00:00",
+  "event_count": 218,
+  "last_event_id": "01M103K7FW4V0VQ4V61S9D59FF",
+  "materialized_at": "2026-08-26T22:38:32.948008+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
@@ -12,9 +12,9 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
-    "planned": 1
+    "planned": 0
   },
   "work_packages": {
     "WP01": {
@@ -373,14 +373,14 @@
       }
     },
     "WP11": {
-      "actor": "user",
+      "actor": "codex",
       "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
-      "lane": "planned",
-      "last_event_id": "01M103JHHM2HM3NFSGXA35N0T6",
-      "last_transition_at": "2026-08-26T22:38:10.484641+00:00",
+      "lane": "in_progress",
+      "last_event_id": "01M103K7FW4V0VQ4V61S9D59FF",
+      "last_transition_at": "2026-08-26T22:38:32.948008+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "WP11 documentation and immutable evidence complete. Payload commits cd378bd and 106c7a2; documentation attestation 6985cec; exact-census correction 8fbb9d9; final docs-only closeout 3a9fe38. Clean make quality passed at 8fbb9d9/tree 3611d0b; final docs gate x10, full architecture, race, vet, staticcheck, hashes, and diff checks passed. Real-provider evidence remains source-bound to 315660f; hosted baseline remains pending 0/10.",
@@ -394,7 +394,7 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
