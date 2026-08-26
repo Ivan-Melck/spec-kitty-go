@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "kind": "phase1_local_qualification_reference",
-  "recorded_at": "2026-08-26T02:03:00Z",
+  "recorded_at": "2026-08-26T03:09:04Z",
   "environment": {
     "hostname": "bosslady2",
     "os": "Ubuntu 24.04.1",
@@ -13,28 +13,182 @@
     "staticcheck": "2026.1 (v0.7.0)",
     "govulncheck": "v1.6.0"
   },
+  "source": {
+    "commit": "8f285d3bdc0ab52fe2e71ce6cdde26caa7a93d09",
+    "tree": "dd732720864d77fd736e72e1ea871ed792eb47a8",
+    "tracked_tree_clean_for_every_sample": true
+  },
   "quality_campaign": {
     "target": "make quality",
     "sample_count": 10,
-    "elapsed_ms": [80500, 78094, 78272, 77997, 78349, 77828, 77681, 77970, 78002, 78211],
-    "minimum_ms": 77681,
-    "maximum_ms": 80500,
+    "minimum_ms": 77726,
+    "maximum_ms": 78587,
     "p95_method": "nearest-rank",
-    "p95_ms": 80500,
+    "p95_ms": 78587,
     "budget_ms": 480000,
-    "verdict": "pass"
+    "verdict": "pass",
+    "profile_contract": {
+      "acceptance": {"expected": 3, "started": 3, "terminal": 3},
+      "architecture": {"expected": 31, "started": 31, "terminal": 31},
+      "scope": {"expected": 2, "started": 2, "terminal": 2}
+    },
+    "mutant_controls": [
+      "TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority",
+      "TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture",
+      "TestRemovingRealAuthorityToContractRuleNamesRealEdge"
+    ],
+    "samples": [
+      {
+        "sample": 1,
+        "elapsed_ms": 78296,
+        "runner_ms": 32640,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "5397e5cc47e5ed94c5448d78decef01f652371238b52ff11d6427af55ce69f5e",
+          "architecture.report.json": "ce3dd24bc950260014a1f4a1a3e68f71bc03eb1bf2321d433d2e851c82504d9b",
+          "architecture.go-test.jsonl": "7d0aaa60702d6e71a2e1ef93b4e1bd1df313649bda3ba338231899e04d34f638"
+        }
+      },
+      {
+        "sample": 2,
+        "elapsed_ms": 78154,
+        "runner_ms": 32628,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "a9f390534c523a5e0d612e98bd998e2fa3528ca542aea63c39fd4b46b4a8da4b",
+          "architecture.report.json": "aa0c5021cdccb038d5fef45ac988370678db5b436d2ecadbedda3a6e2275c51f",
+          "architecture.go-test.jsonl": "43a37aeddb563105f1dd335fa1186f90bfcac4675097e2e228ded0b6097536ce"
+        }
+      },
+      {
+        "sample": 3,
+        "elapsed_ms": 78064,
+        "runner_ms": 32653,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "d10a59b2df04d316fbd71d4bda99951db135a46d9fd37d86aeac1623e05f3103",
+          "architecture.report.json": "30af4aa72f7f149fdb333221831b5eb0d1f1084019e513400006d569d59e6ae0",
+          "architecture.go-test.jsonl": "f389633b18c4a3976f2eb0f6e5e1a1771d957f51c107af3edd08613d47b05907"
+        }
+      },
+      {
+        "sample": 4,
+        "elapsed_ms": 78327,
+        "runner_ms": 32671,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "5c8bfb48183fd3d1a80d02f2e69f05d785fa0d35395e81ac8814936efc194ba1",
+          "architecture.report.json": "a5d192498a5009b02cb27f0df74042a0992f0ab6f60b3933681bab9281e307a8",
+          "architecture.go-test.jsonl": "acf082c12d15a7589c0dbb286a0a45837ff7bc9841d817a1c9f1c894bdef5596"
+        }
+      },
+      {
+        "sample": 5,
+        "elapsed_ms": 78270,
+        "runner_ms": 32619,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "5a7c8963f34031cfce3718889d523ea46b716d477c67b2aef48625f047d56284",
+          "architecture.report.json": "26d58168cd4e31467f6a754eb9120d863867cf6ece960803429b9c78f16e36ea",
+          "architecture.go-test.jsonl": "61d4650abc228b94aef466ae6136b190318e4891245e516b4ef619eb5c7a7e59"
+        }
+      },
+      {
+        "sample": 6,
+        "elapsed_ms": 78587,
+        "runner_ms": 32641,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "e240a9990fd5a19c669216edf7fbf90c96688420f9b32f07551cf9587d346a48",
+          "architecture.report.json": "9aa836f4bed7174f646081899f94c154e026c197c702206d41debffa8e380f76",
+          "architecture.go-test.jsonl": "8c7507b7773f451f5d20c3015bfc5cf89111325737dfae2600b637bcc8993184"
+        }
+      },
+      {
+        "sample": 7,
+        "elapsed_ms": 78007,
+        "runner_ms": 32684,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "5afe64984286b823c2fc7130085b9c45b829765cb88fe71a82a5f5aa86852709",
+          "architecture.report.json": "3964a6c7ca57183b4cba86f2379d86414dbe88e842a64f758e5b7789df043941",
+          "architecture.go-test.jsonl": "34895f48c4515bc7d760963555c52d45b5923844972235ef21cb19e4d17f5cae"
+        }
+      },
+      {
+        "sample": 8,
+        "elapsed_ms": 77726,
+        "runner_ms": 32636,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "2a095595cfde63e88c9143d3e5253fbd8e05fa2504bdbdb61a0b68c823a6ae3e",
+          "architecture.report.json": "90d000097694c8432dce31c7f879987d722841e0bba93fbb1b7548e0c339f1dc",
+          "architecture.go-test.jsonl": "d7e331bba6c5d60d81c33bb5e5f4619941ac93fa2f82e78a03e622f3d8f362e6"
+        }
+      },
+      {
+        "sample": 9,
+        "elapsed_ms": 78001,
+        "runner_ms": 32643,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "7491634c6f6ad8b3c4ed88f8656c2d738720af8ee6223390ff19b313c391cbcb",
+          "architecture.report.json": "afec99a8e747e073022ca5877f56b91b076514dbcb94054f99d6ae82d0c4cb4d",
+          "architecture.go-test.jsonl": "e49634e9c78a1410d20f47f93f2edacdb2aadff379148c79163ec7583c4a4785"
+        }
+      },
+      {
+        "sample": 10,
+        "elapsed_ms": 78060,
+        "runner_ms": 32601,
+        "source_dirty": false,
+        "census": {"acceptance": "3/3/3 pass", "architecture": "31/31/31 pass", "scope": "2/2/2 pass"},
+        "mutant_results": ["pass", "pass", "pass"],
+        "sha256": {
+          "quality.campaign.json": "31e0e6d8bfeb116d7c5c9982a056bfeafaa3010680d83e846e3b0ee245cda650",
+          "architecture.report.json": "328a02f3f65363a868f9a8ed1aaec60f2a1b7d753ec377c94c169ac3d5c8d1ae",
+          "architecture.go-test.jsonl": "e6deb9015d063c912d96f444106487f948bff6038d9b44f6696cd112b674aa73"
+        }
+      }
+    ]
   },
   "full_campaign": {
     "target": "make full-campaign",
-    "elapsed_ms": 825950,
-    "full_scenario_elapsed_ms": 746710,
-    "census_verdict": "pass",
+    "elapsed_ms": 825460,
+    "runner_ms": 747355,
+    "full_scenario_ms": 747324,
+    "source_dirty": false,
+    "census": {"expected": 71, "started": 71, "terminal": 71, "verdict": "pass"},
+    "sha256": {
+      "full_campaign.campaign.json": "72de1122791133e1f43478b3313d06bd51ae11790fecaded1400332b537e3477",
+      "full-scenario.report.json": "09f91803dace2fff53099a139660659219f97f0f878767788ace2444e73e19e4",
+      "full-scenario.go-test.jsonl": "8e4aac276d7787f1b7329824bc9313002a534dd784120c5836c804eaacf528f0e"
+    },
     "verdict": "pass"
   },
   "quality_gates": [
     "preflight",
     "contract",
     "acceptance",
+    "architecture",
     "scope",
     "race",
     "static",
@@ -45,6 +199,6 @@
     "hosted_runner_baseline": "pending ten successful hosted samples",
     "frozen_candidate_qualification": "owned by WP06",
     "external_credentials_or_services": false,
-    "note": "The quality samples preceded a full-campaign-only repair that added required governance contexts to three adversarial fixtures outside the bounded quality selectors. The repaired tree then passed one complete full campaign. WP06 must qualify the frozen candidate and publish the final aggregate evidence."
+    "note": "All ten quality samples and the complete full campaign exercised the corrected authoritative campaign graph at the recorded clean source commit. WP06 owns frozen-candidate qualification and publication of final aggregate evidence."
   }
 }
