@@ -1,6 +1,7 @@
 package tracker_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -116,6 +117,36 @@ func TestCriterionAndExternalWorkRefValidation(t *testing.T) {
 	invalid.Verifier = tracker.VerifierKind("checkbox")
 	if err := invalid.Validate(); err == nil {
 		t.Fatal("unknown verifier accepted")
+	}
+}
+
+func TestOpaqueMetadataIsBoundedObjectAndDefensivelyCopied(t *testing.T) {
+	source := []byte(`{"z":{"nested":true},"a":1}`)
+	metadata, err := tracker.NewOpaqueMetadata(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source[2] = 'x'
+	if got := string(metadata.Bytes()); got != `{"a":1,"z":{"nested":true}}` {
+		t.Fatalf("canonical metadata=%s", got)
+	}
+	copy := metadata.Bytes()
+	copy[2] = 'x'
+	if got := string(metadata.Bytes()); got != `{"a":1,"z":{"nested":true}}` {
+		t.Fatalf("mutable access changed metadata=%s", got)
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded tracker.OpaqueMetadata
+	if err := json.Unmarshal(encoded, &decoded); err != nil || !reflect.DeepEqual(decoded.Bytes(), metadata.Bytes()) {
+		t.Fatalf("decoded=%s error=%v", decoded.Bytes(), err)
+	}
+	for _, invalid := range [][]byte{[]byte(`[]`), []byte(`null`), []byte(`{"broken"`), bytes.Repeat([]byte{'x'}, tracker.MaxOpaqueMetadataBytes+1)} {
+		if _, err := tracker.NewOpaqueMetadata(invalid); err == nil {
+			t.Fatalf("accepted invalid metadata prefix=%q bytes=%d", invalid[:min(len(invalid), 8)], len(invalid))
+		}
 	}
 }
 
