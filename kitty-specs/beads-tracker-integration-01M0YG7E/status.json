@@ -160,7 +160,8 @@
       "last_transition_at": "2026-08-26T12:29:48.647184+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: commit 301ab53 implements mapped catalog metadata/revisions, replay and ambiguity recovery, honest unguarded updates, latency and 1,000-create identity evidence; focused repeat/race/tracker-wide/vet/staticcheck/architecture/scope green"
+        "Ready for review: commit 301ab53 implements mapped catalog metadata/revisions, replay and ambiguity recovery, honest unguarded updates, latency and 1,000-create identity evidence; focused repeat/race/tracker-wide/vet/staticcheck/architecture/scope green",
+        "Ready for re-review: fixed partial clearing, drift-aware replay, live catalog caller, opaque metadata preservation, and same-mapping server serialization"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
