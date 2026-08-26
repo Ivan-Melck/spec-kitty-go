@@ -1,0 +1,13 @@
+{
+  "wp_id": "WP04",
+  "captured_at": "2026-08-26T10:52:34Z",
+  "base_branch": "feat/beads-tracker-integration",
+  "base_commit": "182f33c45182943555aa463aa525fe6ed127b5c3",
+  "test_runner": "pytest",
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "failures": [],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}

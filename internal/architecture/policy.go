@@ -167,7 +167,10 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			},
 			{
 				Name: TierAdapter, Production: true, ProviderAdapter: true,
-				Packages:                []PackagePattern{pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake")},
+				Packages: []PackagePattern{
+					pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
+					PackagePrefix(modulePath + "/internal/tracker/beads"),
+				},
 				AllowedLocalTargets:     []TierName{TierFoundation, TierAuthority, TierProviderContract, TierAdapter},
 				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
 			},
@@ -179,7 +182,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			{
 				Name: TierQuality, Production: false,
 				Packages: []PackagePattern{
-					pkg("internal/architecture"), pkg("internal/scenario"), PackagePrefix(modulePath + "/internal/testcampaign"),
+					pkg("internal/architecture"), pkg("internal/scenario"), pkg("internal/tracker/conformance"), PackagePrefix(modulePath + "/internal/testcampaign"),
 				},
 				AllowedLocalTargets:     append(append([]TierName(nil), allRuntime...), TierQuality),
 				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
@@ -202,12 +205,21 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			PackagePrefix(modulePath + "/internal/python"),
 			PackagePrefix(modulePath + "/internal/team-kitty"),
 			PackagePrefix(modulePath + "/internal/teamkitty"),
+			PackagePrefix(modulePath + "/internal/tracker/beads/agent-identity"),
+			PackagePrefix(modulePath + "/internal/tracker/beads/compaction"),
+			PackagePrefix(modulePath + "/internal/tracker/beads/custom-mission-status"),
+			PackagePrefix(modulePath + "/internal/tracker/beads/formulas"),
+			PackagePrefix(modulePath + "/internal/tracker/beads/git-hooks"),
+			PackagePrefix(modulePath + "/internal/tracker/beads/merge-slots"),
+			PackagePrefix(modulePath + "/internal/tracker/beads/molecules"),
 		},
 		ForbiddenImportPrefixes: []string{
 			"net/http",
+			"github.com/gastownhall/beads",
 			"github.com/yuin/goldmark",
 			"github.com/russross/blackfriday",
 			"github.com/gomarkdown/markdown",
+			"github.com/steveyegge/beads",
 		},
 		AllowedNeutralExternalPrefixes: []string{"golang.org/x/sys"},
 	}

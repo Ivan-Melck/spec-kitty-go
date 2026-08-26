@@ -19,19 +19,20 @@ import (
 // universalAssertionState is the evidence visible at one named fault. The
 // optional probes must be read-only or expected-to-refuse public operations.
 type universalAssertionState struct {
-	ScenarioID         string
-	FaultID            string
-	Database           string
-	TrackerPath        string
-	RepositoryPath     string
-	Repository         gitrepo.Repository
-	ExpectedPrimary    workspace.PrimarySnapshot
-	ExpectedWorkspaces map[ids.WorkspaceID]workspaceBindingFact
-	ExpectedAuthority  map[string]activeLeaseFact
-	CandidateCommits   []string
-	StaleProbe         func(context.Context) error
-	RequireStaleProbe  bool
-	AttributionProbe   func(context.Context) error
+	ScenarioID            string
+	FaultID               string
+	Database              string
+	TrackerPath           string
+	RepositoryPath        string
+	Repository            gitrepo.Repository
+	ExpectedPrimary       workspace.PrimarySnapshot
+	ExpectedWorkspaces    map[ids.WorkspaceID]workspaceBindingFact
+	ExpectedAuthority     map[string]activeLeaseFact
+	CandidateCommits      []string
+	StaleProbe            func(context.Context) error
+	RequireStaleProbe     bool
+	AttributionProbe      func(context.Context) error
+	ProviderTopologyProbe func(context.Context) error
 }
 
 type workspaceBindingFact struct {
@@ -94,6 +95,11 @@ func assertUniversalInvariants(ctx context.Context, state universalAssertionStat
 	}
 	if err := assertAttributionFacts(ctx, db, state.TrackerPath); err != nil {
 		return invariantFailure(state, "attribution_safe_compensation", err, "preserve provider state and require compare-before-compensate evidence")
+	}
+	if state.ProviderTopologyProbe != nil {
+		if err := state.ProviderTopologyProbe(ctx); err != nil {
+			return invariantFailure(state, "provider_topology", err, "bind the provider operation and observation to this lease-scoped workspace")
+		}
 	}
 	if state.RequireStaleProbe && state.StaleProbe == nil {
 		return invariantFailure(state, "stale_token_refusal", errors.New("required stale probe is absent"), "provision expired authority in this scenario fixture")
@@ -301,20 +307,24 @@ func assertAttributionFacts(ctx context.Context, db *sql.DB, trackerPath string)
 		if err := rows.Scan(&operation, &workKey, &marker, &prior, &priorValue, &applied, &appliedValue, &status, &compensation, &conflict, &conflictValue, &conflictMarker); err != nil {
 			return err
 		}
-		allowed := allowedByWork[workKey]
+		// Several intent-qualified effects may project to one physical provider
+		// work item. Attribution is therefore audited over that canonical
+		// provider lineage, not one synthetic intent key at a time.
+		providerKey, _, _ := strings.Cut(workKey, "#spec-kitty-intent=")
+		allowed := allowedByWork[providerKey]
 		if allowed == nil {
 			allowed = map[string]bool{}
-			allowedByWork[workKey] = allowed
+			allowedByWork[providerKey] = allowed
 		}
-		operationsByWork[workKey] = append(operationsByWork[workKey], operation)
+		operationsByWork[providerKey] = append(operationsByWork[providerKey], operation)
 		allowed[providerFactKey(prior, priorValue, "")] = true
 		if applied > 0 {
 			allowed[providerFactKey(applied, appliedValue, marker)] = true
 		} else if status == string(execution.CompensationPending) && compensation == 0 && conflict == 0 {
-			pending := pendingByWork[workKey]
+			pending := pendingByWork[providerKey]
 			if pending == nil {
 				pending = map[string]pendingAttributionFact{}
-				pendingByWork[workKey] = pending
+				pendingByWork[providerKey] = pending
 			}
 			pending[marker] = pendingAttributionFact{PriorRevision: prior, Assignee: appliedValue}
 		}
@@ -354,16 +364,16 @@ func assertAttributionFacts(ctx context.Context, db *sql.DB, trackerPath string)
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	for workKey, allowed := range allowedByWork {
-		work, err := provider.Read(ctx, workKey)
+	for providerKey, allowed := range allowedByWork {
+		work, err := provider.Read(ctx, providerKey)
 		if err != nil {
-			return fmt.Errorf("work=%s provider_read=%v", workKey, err)
+			return fmt.Errorf("work=%s provider_read=%v", providerKey, err)
 		}
 		current := providerFactKey(int64(work.Revision), work.Assignee, work.AssignmentMarker)
-		pending, pendingOK := pendingByWork[workKey][work.AssignmentMarker]
+		pending, pendingOK := pendingByWork[providerKey][work.AssignmentMarker]
 		inFlight := pendingOK && work.AssignmentMarker != "" && work.Assignee == pending.Assignee && int64(work.Revision) > pending.PriorRevision
 		if !allowed[current] && !inFlight {
-			return fmt.Errorf("operations=%v work=%s provider_current=%s attributable_facts=%v", operationsByWork[workKey], workKey, current, allowed)
+			return fmt.Errorf("operations=%v work=%s provider_current=%s attributable_facts=%v", operationsByWork[providerKey], providerKey, current, allowed)
 		}
 	}
 	return nil
