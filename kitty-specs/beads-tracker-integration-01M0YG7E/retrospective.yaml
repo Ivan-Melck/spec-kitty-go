@@ -1,0 +1,460 @@
+schema_version: 1
+mission_id: 01M0YG7E8DJ3P3EFR13DN39P8Z
+mission_slug: beads-tracker-integration-01M0YG7E
+mission_number:
+friendly_name: Beads Tracker Integration
+mission_type: software-dev
+target_branch: feat/beads-tracker-integration
+created_at: '2026-08-26T23:13:12.843281+00:00'
+created_by:
+  kind: human
+  id: cli
+  display: spec-kitty retrospect
+provenance:
+  kind: explicit_create
+  invoked_at: '2026-08-26T23:13:12.843281+00:00'
+  policy_resolved_from:
+    enabled: <default>
+    timing: <default>
+    failure_policy: <default>
+    write_record: <default>
+    generate_proposals: <default>
+    apply_proposals: <default>
+    permissions.write_record: <default>
+    permissions.inspect_mission_artifacts: <default>
+    permissions.propose_glossary_changes: <default>
+    permissions.propose_drg_changes: <default>
+    permissions.propose_doctrine_changes: <default>
+    permissions.apply_low_risk_changes: <default>
+    permissions.apply_structural_changes: <default>
+    precedence: <default>
+    generator: <default>
+  command: spec-kitty retrospect create
+policy_source:
+  enabled: <default>
+  timing: <default>
+  failure_policy: <default>
+  write_record: <default>
+  generate_proposals: <default>
+  apply_proposals: <default>
+  permissions.write_record: <default>
+  permissions.inspect_mission_artifacts: <default>
+  permissions.propose_glossary_changes: <default>
+  permissions.propose_drg_changes: <default>
+  permissions.propose_doctrine_changes: <default>
+  permissions.apply_low_risk_changes: <default>
+  permissions.apply_structural_changes: <default>
+  precedence: <default>
+  generator: <default>
+findings_status: has_findings
+helped:
+- id: h-001
+  category: implementation
+  summary: WP02 completed without rejection cycles
+  evidence_refs:
+  - e-016
+not_helpful:
+- id: n-032
+  category: doc
+  summary: analysis-report.md present with findings
+  evidence_refs:
+  - e-048
+  details: An analysis-report.md artifact is present for this mission. Review its findings to understand documented
+    issues and decisions.
+- id: n-022
+  category: implementation
+  summary: WP01 needed 3 implementation cycles
+  evidence_refs:
+  - e-038
+  details: WP WP01 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-023
+  category: implementation
+  summary: WP03 needed 4 implementation cycles
+  evidence_refs:
+  - e-039
+  details: WP WP03 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-024
+  category: implementation
+  summary: WP04 needed 5 implementation cycles
+  evidence_refs:
+  - e-040
+  details: WP WP04 entered in_progress 5 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-025
+  category: implementation
+  summary: WP05 needed 4 implementation cycles
+  evidence_refs:
+  - e-041
+  details: WP WP05 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-026
+  category: implementation
+  summary: WP06 needed 7 implementation cycles
+  evidence_refs:
+  - e-042
+  details: WP WP06 entered in_progress 7 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-027
+  category: implementation
+  summary: WP07 needed 4 implementation cycles
+  evidence_refs:
+  - e-043
+  details: WP WP07 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-028
+  category: implementation
+  summary: WP08 needed 5 implementation cycles
+  evidence_refs:
+  - e-044
+  details: WP WP08 entered in_progress 5 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-029
+  category: implementation
+  summary: WP09 needed 3 implementation cycles
+  evidence_refs:
+  - e-045
+  details: WP WP09 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-030
+  category: implementation
+  summary: WP10 needed 2 implementation cycles
+  evidence_refs:
+  - e-046
+  details: WP WP10 entered in_progress 2 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-031
+  category: implementation
+  summary: WP11 needed 3 implementation cycles
+  evidence_refs:
+  - e-047
+  details: WP WP11 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-011
+  category: process
+  summary: WP01 required 2 --force override(s) during workflow
+  evidence_refs:
+  - e-027
+  details: WP WP01 required 2 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-012
+  category: process
+  summary: WP02 required 1 --force override(s) during workflow
+  evidence_refs:
+  - e-028
+  details: WP WP02 required 1 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-013
+  category: process
+  summary: WP03 required 3 --force override(s) during workflow
+  evidence_refs:
+  - e-029
+  details: WP WP03 required 3 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-014
+  category: process
+  summary: WP04 required 7 --force override(s) during workflow
+  evidence_refs:
+  - e-030
+  details: WP WP04 required 7 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-015
+  category: process
+  summary: WP05 required 6 --force override(s) during workflow
+  evidence_refs:
+  - e-031
+  details: WP WP05 required 6 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-016
+  category: process
+  summary: WP06 required 10 --force override(s) during workflow
+  evidence_refs:
+  - e-032
+  details: WP WP06 required 10 operator-driven --force lane transition(s). Force overrides typically indicate the
+    runtime guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-017
+  category: process
+  summary: WP07 required 7 --force override(s) during workflow
+  evidence_refs:
+  - e-033
+  details: WP WP07 required 7 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-018
+  category: process
+  summary: WP08 required 8 --force override(s) during workflow
+  evidence_refs:
+  - e-034
+  details: WP WP08 required 8 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-019
+  category: process
+  summary: WP09 required 5 --force override(s) during workflow
+  evidence_refs:
+  - e-035
+  details: WP WP09 required 5 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-020
+  category: process
+  summary: WP10 required 4 --force override(s) during workflow
+  evidence_refs:
+  - e-036
+  details: WP WP10 required 4 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-021
+  category: process
+  summary: WP11 required 2 --force override(s) during workflow
+  evidence_refs:
+  - e-037
+  details: WP WP11 required 2 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-001
+  category: review_loop
+  summary: WP01 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-017
+  details: WP WP01 was sent back from review to planning 2 time(s).
+- id: n-002
+  category: review_loop
+  summary: WP03 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-018
+  details: WP WP03 was sent back from review to planning 2 time(s).
+- id: n-003
+  category: review_loop
+  summary: WP04 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-019
+  details: WP WP04 was sent back from review to planning 3 time(s).
+- id: n-004
+  category: review_loop
+  summary: WP05 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-020
+  details: WP WP05 was sent back from review to planning 2 time(s).
+- id: n-005
+  category: review_loop
+  summary: WP06 required 5 rejection cycle(s) before approval
+  evidence_refs:
+  - e-021
+  details: WP WP06 was sent back from review to planning 5 time(s).
+- id: n-006
+  category: review_loop
+  summary: WP07 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-022
+  details: WP WP07 was sent back from review to planning 2 time(s).
+- id: n-007
+  category: review_loop
+  summary: WP08 required 4 rejection cycle(s) before approval
+  evidence_refs:
+  - e-023
+  details: WP WP08 was sent back from review to planning 4 time(s).
+- id: n-008
+  category: review_loop
+  summary: WP09 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-024
+  details: WP WP09 was sent back from review to planning 2 time(s).
+- id: n-009
+  category: review_loop
+  summary: WP10 required 1 rejection cycle(s) before approval
+  evidence_refs:
+  - e-025
+  details: WP WP10 was sent back from review to planning 1 time(s).
+- id: n-010
+  category: review_loop
+  summary: WP11 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-026
+  details: WP WP11 was sent back from review to planning 2 time(s).
+- id: n-033
+  category: review_loop
+  summary: mission-review-report.md present with findings
+  evidence_refs:
+  - e-049
+  details: A mission-review-report.md artifact is present for this mission. Review its findings to understand documented
+    review outcomes.
+gaps: []
+proposals: []
+evidence_refs:
+- id: e-001
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/meta.json
+- id: e-002
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/spec.md
+- id: e-003
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/plan.md
+- id: e-004
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks.md
+- id: e-005
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP01-provider-neutral-tracker-capabilities.md
+- id: e-006
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP02-permanent-beads-adapter-architecture-guard.md
+- id: e-007
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP03-bounded-beads-json-command-protocol.md
+- id: e-008
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP04-canonical-binding-and-provider-health.md
+- id: e-009
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP05-mapped-work-catalog-and-observation-revisions.md
+- id: e-010
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP06-dependency-graph-and-durable-discussion.md
+- id: e-011
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP07-assignment-projection-and-safe-reconciliation.md
+- id: e-012
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP08-adversarial-portable-conformance.md
+- id: e-013
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP09-real-beads-qualification-and-backup.md
+- id: e-014
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP10-provider-campaign-and-ci-evidence.md
+- id: e-015
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP11-operations-documentation-and-phase-two-evidence.md
+- id: e-016
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+- id: e-017
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0YQ2Z0HXH593APJ4NE2CE8Q..01M0YQZWT4NR1EQZJ5VF42HM79
+- id: e-018
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0YTCV562T34AJRME5FQ9AHJ..01M0Z8TPV9XKJN4F62EAK2YVYQ
+- id: e-019
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0YWJDTYQNXXRYKTADVS9Z65..01M0Z8HC92V5DB56ZQTCB8BMSS
+- id: e-020
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0Z01KACKDPQ8KP7Z0A4QEZY..01M0Z10SV4PJWGM009FTYEMVG5
+- id: e-021
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0Z3NQ66PZFWN2ZR9618SEY9..01M0ZER6Q11KK8Q9YXQP01YJXZ
+- id: e-022
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0Z3T5Z4J5CSEPDH875WDNEV..01M0Z574GA2MSAABPEA9B9RBT4
+- id: e-023
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0Z8S0DHXDST6AHAK1T90932..01M0ZRBK8YFV9RKKK529HBTB7P
+- id: e-024
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0ZK2WGWHD20X8RNJ4V893SN..01M0ZNT7P8495QG25BMFPQV5HV
+- id: e-025
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0ZXCC9YGJ1GFN7HZ3NHPX05
+- id: e-026
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M102QBTJ98X2PM991M783T2N..01M103JHHM2HM3NFSGXA35N0T6
+- id: e-027
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0YQ2Z0HXH593APJ4NE2CE8Q..01M0YQZWT4NR1EQZJ5VF42HM79
+- id: e-028
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0YNR81EN1RJX0CMJ7KAQK4H
+- id: e-029
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0YTCV562T34AJRME5FQ9AHJ..01M0Z8TPV9XKJN4F62EAK2YVYQ
+- id: e-030
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0YVRVE5FY3780RT5XW55WQW..01M0Z8HC92V5DB56ZQTCB8BMSS
+- id: e-031
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0Z01KACKDPQ8KP7Z0A4QEZY..01M0Z80XNH563BH64MPJ4V5PAZ
+- id: e-032
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0Z31VD12X45DC9MDTG9DNJN..01M0ZER6Q11KK8Q9YXQP01YJXZ
+- id: e-033
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0Z392BTMRF4W465JKJH1MSK..01M0Z81PZ0RJ0YG6R65GX2CRCC
+- id: e-034
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0Z8S0DHXDST6AHAK1T90932..01M0ZSDF61JBPBB085M6BPKWAW
+- id: e-035
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0ZJ9NENC6QKPK3EDX5V0RKV..01M0ZQ36K58R2D7F0Z1EZCG7AX
+- id: e-036
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M0ZWV4JNAYBENXFCA9S5HMMF..01M0ZZRV0Z38YFP5ZP1X7NPVS1
+- id: e-037
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: 01M102QBTJ98X2PM991M783T2N..01M103JHHM2HM3NFSGXA35N0T6
+- id: e-038
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-039
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-040
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-041
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-042
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-043
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-044
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-045
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-046
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-047
+  kind: event_range
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/status.events.jsonl
+  range: implementation_cycles
+- id: e-048
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/analysis-report.md
+- id: e-049
+  kind: file
+  path: kitty-specs/beads-tracker-integration-01M0YG7E/mission-review-report.md
+generator_version: '1.0'
+provenance_history: []
