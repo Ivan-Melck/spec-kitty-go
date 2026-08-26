@@ -25,7 +25,7 @@ requirement_refs:
 - NFR-013
 planning_base_branch: feat/beads-tracker-integration
 merge_target_branch: feat/beads-tracker-integration
-branch_strategy: Planning artifacts for this mission were generated on feat/beads-tracker-integration. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/beads-tracker-integration unless the human explicitly redirects the landing branch.
+branch_strategy: Implement in the Spec Kitty lane allocated from accepted WP06 and WP07 dependency candidates; merge the reviewed result into feat/beads-tracker-integration. Do not choose or reconstruct the dependency base manually.
 subtasks:
 - T043
 - T044
@@ -40,12 +40,7 @@ create_intent:
 - internal/tracker/beads/real_integration_test.go
 - internal/tracker/beads/worktree_integration_test.go
 - internal/tracker/beads/backup_integration_test.go
-- internal/testcampaign/cmd/beads-qualification/main.go
-- internal/testcampaign/cmd/beads-qualification/main_test.go
-- internal/testcampaign/cmd/beads-qualification/fixture.go
-- internal/testcampaign/cmd/beads-qualification/fixture_test.go
-- internal/testcampaign/cmd/beads-qualification/runner.go
-- internal/testcampaign/cmd/beads-qualification/runner_test.go
+- internal/testcampaign/cmd/beads-qualification/**
 - scripts/install-qualified-beads.sh
 execution_mode: code_change
 model: ''
@@ -53,12 +48,7 @@ owned_files:
 - internal/tracker/beads/real_integration_test.go
 - internal/tracker/beads/worktree_integration_test.go
 - internal/tracker/beads/backup_integration_test.go
-- internal/testcampaign/cmd/beads-qualification/main.go
-- internal/testcampaign/cmd/beads-qualification/main_test.go
-- internal/testcampaign/cmd/beads-qualification/fixture.go
-- internal/testcampaign/cmd/beads-qualification/fixture_test.go
-- internal/testcampaign/cmd/beads-qualification/runner.go
-- internal/testcampaign/cmd/beads-qualification/runner_test.go
+- internal/testcampaign/cmd/beads-qualification/**
 - scripts/install-qualified-beads.sh
 role: implementer
 tags: []
@@ -517,7 +507,3 @@ inspect through the adapter. Confirm JSONL is called interchange, not backup.
 Validate exact scenario census, latency samples, source/provider identity,
 redaction, and verdict rules; any skipped required scenario, invariant failure,
 or restore mismatch must prevent a passing record.
-
-## Activity Log
-
-- 2026-08-26T14:29:24Z – codex – shell_pid=3760839 – Blocked after real pinned v1.2.2 qualification: adapter preflight requires JSON from info --schema --json and doctor --agent --json, but embedded v1.2.2 emits human prose for both; the 11/11 terminal campaign therefore recorded 0 pass, 10 fail, and 1 server-prerequisite skip. WP04 was reopened for governed correction. WP09 implementation evidence commit 7e1566b.
