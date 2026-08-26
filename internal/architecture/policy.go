@@ -178,7 +178,9 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			},
 			{
 				Name: TierQuality, Production: false,
-				Packages:                []PackagePattern{pkg("internal/architecture"), pkg("internal/scenario")},
+				Packages: []PackagePattern{
+					pkg("internal/architecture"), pkg("internal/scenario"), PackagePrefix(modulePath + "/internal/testcampaign"),
+				},
 				AllowedLocalTargets:     append(append([]TierName(nil), allRuntime...), TierQuality),
 				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
 			},

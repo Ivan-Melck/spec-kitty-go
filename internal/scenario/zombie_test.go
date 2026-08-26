@@ -175,7 +175,7 @@ func seedExpiredGenerations(t *testing.T, ctx context.Context, database string, 
 	base := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 	for generation := 1; generation <= count; generation++ {
 		operation := ids.OperationID(fmt.Sprintf("operation-prior-%02d", generation))
-		request := execution.StartRequest{CorrelationID: operation.String(), OperationID: operation, ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-zombie", ActorID: "actor-prior", ProcessID: "process-prior", Now: base, LeaseTTL: time.Minute}
+		request := execution.StartRequest{CorrelationID: operation.String(), OperationID: operation, ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-zombie", ActorID: "actor-prior", ProcessID: "process-prior", Now: base, LeaseTTL: time.Minute, GovernanceContext: scenarioGovernanceContext(t, ids.GovernanceContextID("context-"+operation.String()), base)}
 		capsule, err := control.Claim(ctx, request, ids.RunID(fmt.Sprintf("run-prior-%02d", generation)), ids.LeaseID(fmt.Sprintf("lease-prior-%02d", generation)))
 		if err != nil || capsule.Generation != int64(generation) {
 			t.Fatalf("seed generation %d capsule=%+v err=%v", generation, capsule, err)

@@ -1,0 +1,73 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "feat/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GOTOOLCHAIN: local
+      ARTIFACT_DIR: ${{ runner.temp }}/go-kitty3-quality-${{ github.run_id }}-${{ github.run_attempt }}
+      GOCACHE: ${{ runner.temp }}/go-build-cache-${{ github.run_id }}-${{ github.run_attempt }}
+      GOTMPDIR: ${{ runner.temp }}/go-tmp-${{ github.run_id }}-${{ github.run_attempt }}
+      TMPDIR: ${{ runner.temp }}/process-tmp-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out committed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.4
+          cache: true
+
+      - name: Prepare isolated mutable paths
+        run: mkdir -p "$ARTIFACT_DIR" "$GOCACHE" "$GOTMPDIR" "$TMPDIR"
+
+      - name: Install pinned analysis tools
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+      - name: Run bounded quality campaign
+        shell: bash
+        run: |
+          set -uo pipefail
+          started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          started_seconds=$(date +%s)
+          set +e
+          make quality ARTIFACT_DIR="$ARTIFACT_DIR"
+          status=$?
+          set -e
+          finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          finished_seconds=$(date +%s)
+          duration_seconds=$((finished_seconds - started_seconds))
+          verdict=pass
+          if [ "$status" -ne 0 ]; then verdict=fail; fi
+          printf '{"schema_version":1,"campaign":"quality","commit":"%s","started_at":"%s","finished_at":"%s","duration_seconds":%d,"process_exit":%d,"verdict":"%s","hosted_baseline":"pending_ten_comparable_samples"}\n' \
+            "$GITHUB_SHA" "$started_at" "$finished_at" "$duration_seconds" "$status" "$verdict" > "$ARTIFACT_DIR/campaign-summary.json"
+          exit "$status"
+
+      - name: Upload timing, census, and mutant evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: error
+          retention-days: 14

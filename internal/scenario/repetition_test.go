@@ -21,6 +21,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/architecture"
 	"github.com/spec-kitty/go-kitty3/internal/controlstore/sqlite"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/helpercmd"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -650,8 +651,9 @@ func TestPhase1DurableWorkRevisionConsumerScenarios(t *testing.T) {
 			t.Fatalf("fork evidence=%+v err=%v", evidence, err)
 		}
 		service := execution.NewService(store, execution.RandomIdentities{}, execution.SystemClock{})
-		left, leftErr := service.Start(context.Background(), execution.StartRequest{OperationID: "operation-phase1-wr04-left", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr04-left", ActorID: "actor-phase1-wr04", ProcessID: "process-phase1-wr04-left", Now: time.Now().UTC(), LeaseTTL: time.Minute})
-		right, rightErr := service.Start(context.Background(), execution.StartRequest{OperationID: "operation-phase1-wr04-right", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr04-right", ActorID: "actor-phase1-wr04", ProcessID: "process-phase1-wr04-right", Now: time.Now().UTC(), LeaseTTL: time.Minute})
+		now := time.Now().UTC()
+		left, leftErr := service.Start(context.Background(), execution.StartRequest{OperationID: "operation-phase1-wr04-left", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr04-left", ActorID: "actor-phase1-wr04", ProcessID: "process-phase1-wr04-left", Now: now, LeaseTTL: time.Minute, GovernanceContext: scenarioGovernanceContext(t, "context-phase1-wr04-left", now)})
+		right, rightErr := service.Start(context.Background(), execution.StartRequest{OperationID: "operation-phase1-wr04-right", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr04-right", ActorID: "actor-phase1-wr04", ProcessID: "process-phase1-wr04-right", Now: now, LeaseTTL: time.Minute, GovernanceContext: scenarioGovernanceContext(t, "context-phase1-wr04-right", now)})
 		_ = store.Close()
 		if leftErr != nil || rightErr != nil || left.RunID == right.RunID || left.WorkID == right.WorkID {
 			t.Fatalf("fork consumers left=%+v/%v right=%+v/%v", left, leftErr, right, rightErr)
@@ -721,9 +723,11 @@ func TestPhase1DurableWorkRevisionConsumerScenarios(t *testing.T) {
 			_ = store.Close()
 			t.Fatalf("integrated lineage=%+v err=%v", evidence, err)
 		}
+		followUpNow := time.Now().UTC()
 		followUp, followUpErr := execution.NewService(store, execution.RandomIdentities{}, execution.SystemClock{}).Start(context.Background(), execution.StartRequest{
 			CorrelationID: "correlation-start-phase1-wr06-follow-up", OperationID: "operation-start-phase1-wr06-follow-up", ProjectID: "project-1", MissionID: "mission-1",
-			WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr06-follow-up", ActorID: "actor-phase1-wr06-follow-up", ProcessID: "process-phase1-wr06-follow-up", Now: time.Now().UTC(), LeaseTTL: time.Minute,
+			WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr06-follow-up", ActorID: "actor-phase1-wr06-follow-up", ProcessID: "process-phase1-wr06-follow-up", Now: followUpNow, LeaseTTL: time.Minute,
+			GovernanceContext: scenarioGovernanceContext(t, "context-phase1-wr06-follow-up", followUpNow),
 		})
 		_ = store.Close()
 		if followUpErr != nil || followUp.RunID == "" || followUp.LeaseID == "" || followUp.WorkRevisionID != newRevision.ID() || followUp.WorkID != "work-phase1-wr06-follow-up" {
@@ -747,6 +751,23 @@ func TestPhase1DurableWorkRevisionConsumerScenarios(t *testing.T) {
 			t.Fatalf("integrated history changed primary_before=%+v primary_after=%+v target=%s done=%d/%s/%s/%s err=%v", primaryBefore, primaryAfter, targetBefore, doneCount, doneCandidate, doneResult, doneTarget, err)
 		}
 	})
+}
+
+func scenarioGovernanceContext(t *testing.T, contextID ids.GovernanceContextID, createdAt time.Time) governancecontext.Context {
+	t.Helper()
+	commitment, err := governancecontext.CommitSHA256([]byte("go-kitty3/phase1-scenario/governance/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := governancecontext.NewEntry(governancecontext.KindConfig, "phase1-scenario", "v1", commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := governancecontext.NewContext(contextID, governancecontext.SchemaVersion, []governancecontext.Entry{entry}, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func startPhase1RevisionCandidate(t *testing.T, suffix string) (workspaceScenario, *execution.RunCapsule, string) {

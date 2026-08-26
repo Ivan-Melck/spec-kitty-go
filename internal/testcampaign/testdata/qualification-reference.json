@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "kind": "phase1_local_qualification_reference",
+  "recorded_at": "2026-08-26T02:03:00Z",
+  "environment": {
+    "hostname": "bosslady2",
+    "os": "Ubuntu 24.04.1",
+    "kernel": "7.0.0-28-generic",
+    "architecture": "linux/amd64",
+    "cpu": "AMD Ryzen 5 5600X 6-Core Processor",
+    "logical_cpus": 12,
+    "go": "go1.26.4",
+    "staticcheck": "2026.1 (v0.7.0)",
+    "govulncheck": "v1.6.0"
+  },
+  "quality_campaign": {
+    "target": "make quality",
+    "sample_count": 10,
+    "elapsed_ms": [80500, 78094, 78272, 77997, 78349, 77828, 77681, 77970, 78002, 78211],
+    "minimum_ms": 77681,
+    "maximum_ms": 80500,
+    "p95_method": "nearest-rank",
+    "p95_ms": 80500,
+    "budget_ms": 480000,
+    "verdict": "pass"
+  },
+  "full_campaign": {
+    "target": "make full-campaign",
+    "elapsed_ms": 825950,
+    "full_scenario_elapsed_ms": 746710,
+    "census_verdict": "pass",
+    "verdict": "pass"
+  },
+  "quality_gates": [
+    "preflight",
+    "contract",
+    "acceptance",
+    "scope",
+    "race",
+    "static",
+    "dependencies"
+  ],
+  "qualification_boundary": {
+    "authority": "local reference host only",
+    "hosted_runner_baseline": "pending ten successful hosted samples",
+    "frozen_candidate_qualification": "owned by WP06",
+    "external_credentials_or_services": false,
+    "note": "The quality samples preceded a full-campaign-only repair that added required governance contexts to three adversarial fixtures outside the bounded quality selectors. The repaired tree then passed one complete full campaign. WP06 must qualify the frozen candidate and publish the final aggregate evidence."
+  }
+}

@@ -103,6 +103,30 @@ func TestDefaultPolicyRejectsAuthorityImportOfGitAdapter(t *testing.T) {
 	}
 }
 
+func TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := module + "/internal/testcampaign/cmd/campaign"
+	tier, err := policy.Classify(tool)
+	if err != nil || tier.Name != TierQuality || tier.Production {
+		t.Fatalf("campaign tool classification=%+v err=%v", tier, err)
+	}
+	authority := module + "/internal/execution"
+	graph := fixtureGraph([]string{authority, tool}, ImportEdge{
+		SourcePackage: authority,
+		TargetPackage: tool,
+		Kind:          ImportModuleLocal,
+	})
+	graph.ModulePath = module
+	violations := policy.Evaluate(graph)
+	if len(violations) != 1 || violations[0].Rule != RuleLocalDirection || violations[0].SourcePackage != authority || violations[0].TargetPackage != tool {
+		t.Fatalf("authority-to-quality edge was not rejected exactly: %+v", violations)
+	}
+}
+
 func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T) {
 	policy := fixturePolicy(t)
 	for index := range policy.Tiers {
