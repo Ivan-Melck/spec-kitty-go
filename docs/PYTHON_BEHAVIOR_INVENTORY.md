@@ -1,6 +1,6 @@
 # Python Spec Kitty Behavioral Inventory
 
-Status: architecture-ratification input
+Status: ratified behavioral baseline, amended by Phase 1 closeout
 
 Characterized: 2026-08-23
 
@@ -8,6 +8,13 @@ Python source: `Priivacy-ai/spec-kitty` at
 `d060cff9a5c9f8cf369c8786e5bf9b4f89931d0a`
 
 Scope: behavior and product semantics, not Python package parity
+
+Closeout correction: Phase 1 implements no review-independence waiver or
+general acceptance bypass. The completed proving-ground mission's contrary
+acceptance wording is preserved as history and corrected by
+[`PHASE1_ACCEPTANCE_ERRATA.md`](PHASE1_ACCEPTANCE_ERRATA.md). References below
+to policy exceptions describe a possible future governed capability, not a
+shipped Phase 1 path.
 
 ## 1. Decision
 
@@ -176,7 +183,7 @@ merging runtime state through Git.
 | R-04 | An implementation must not satisfy a gate through self-approval. | **Strengthen** | Reviewer `ActorID` differs from all candidate contributor actors by default; same actor/different process is not independent. | Current intent, open issue #3445, Mini review. |
 | R-05 | Review evidence must not vanish during concurrent writers or Git index races. | **Strengthen** | Store evidence transactionally in the control DB; if large artifacts use content-addressed blobs referenced by the transaction. | Open issue #3235. |
 | R-06 | A verdict applies only to the candidate commit, criteria, and WorkRevision it reviewed. | **Strengthen** | Candidate movement or graph drift makes a verdict stale and ineligible for acceptance. | Current artifact consistency gates; WorkRevision requirement. |
-| R-07 | Review-policy exceptions are visible evidence, not invisible fallbacks. | **Strengthen** | Record independence waiver and policy authority; a waived verdict cannot satisfy an explicitly independent gate. | Current warning/override behavior and architecture law. |
+| R-07 | Phase 1 review independence fails closed and has no waiver mechanism. | **Strengthen** | Reject every same-actor review regardless of ProcessID. A future exception would require a separately approved policy, typed authority, visible evidence, and new acceptance criteria; no bypass exists today. | Current gate behavior and `PHASE1_ACCEPTANCE_ERRATA.md`. |
 
 Python currently performs role-aware, best-effort review collision checks. In
 some incomplete historical states, a missing runtime role degrades to allowing

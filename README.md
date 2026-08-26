@@ -4,9 +4,9 @@
 
 | Project property | Current value |
 |---|---|
-| Maturity | Architectural proving ground / Phase 1 reference implementation |
+| Maturity | Qualified Phase 1 authority kernel |
 | Language | Go 1.26+ |
-| Control store | SQLite, owned by one machine and filesystem authority |
+| Control store | SQLite today; Gapdb adoption requires a separate qualified decision |
 | Execution model | Lease-scoped Git worktrees with independent review and serialized integration |
 | License | MIT |
 
@@ -28,11 +28,11 @@ worktrees, independent review, and serialized integration while deliberately
 leaving behind Python package structure, Markdown task-list mechanics, implicit
 global state, and provider-specific orchestration semantics.
 
-This repository is not yet a complete replacement for production Spec Kitty. It
-is the tested Phase 1 implementation of the most difficult architectural claim:
-two agents can work concurrently, a process can die or become stale at any
-boundary, and the system can recover without transferring stale filesystem
-authority or corrupting Git history.
+This repository ships the qualified Phase 1 implementation of the hardest
+architectural claim: two agents can work concurrently, a process can die or
+become stale at any boundary, and the system can recover without transferring
+stale filesystem authority or corrupting Git history. Later product surfaces
+compose this kernel; they do not redefine its authority laws.
 
 ## Contents
 
@@ -43,6 +43,7 @@ authority or corrupting Git history.
 - [Concurrent execution protocol](#concurrent-execution-protocol)
 - [Persistence and recovery](#persistence-and-recovery)
 - [Tracker boundary](#tracker-boundary)
+- [External compatibility boundary](#external-compatibility-boundary)
 - [Repository guide](#repository-guide)
 - [Build and installation](#build-and-installation)
 - [Verification](#verification)
@@ -472,34 +473,43 @@ Python runtime is required to compile and exercise Phase 1.
 
 ## Verification
 
-### Standard checks
+### Canonical validation ladder
 
-The full suite contains real Git repositories, multiple helper processes, crash
-injection, and recovery. Allow sufficient time:
-
-```bash
-go test ./... -timeout=30m
-go test -race ./... -timeout=60m
-go vet ./...
-go mod verify
-go build ./...
-```
-
-If installed, the additional release checks used by the project are:
+The Makefile is the canonical local and CI entry point. Use the bounded quality
+campaign for pull requests:
 
 ```bash
-staticcheck ./...
-govulncheck ./...
+make quality
 ```
 
-For a quicker change-local loop, test the capability packages you touched, then
-run the complete suite before claiming repository-wide correctness. To exercise
-the central end-to-end experiment directly:
+`make quality` performs formatting and build preflight, portable contract tests,
+authority-critical race tests, vet, staticcheck, module verification,
+govulncheck, and exact-census acceptance, architecture, and scope profiles. It
+requires the pinned analysis tools used by CI:
 
 ```bash
-go test ./internal/scenario -run '^TestPhase1TwoAgentTortureChamber$' \
-  -count=1 -timeout=30m -v
+go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
 ```
+
+Run the exhaustive scenario, crash, recovery, fault, and soak campaign before a
+release or architecture qualification:
+
+```bash
+make full-campaign
+```
+
+The two commands are deliberately distinct. `quality` is bounded for change
+feedback; `full-campaign` is scheduled nightly, manually dispatchable, and
+retains a complete machine-readable artifact directory. A passing command is
+evidence only for its exact commit, source tree, environment, test census, and
+captured result. Empty or mismatched selectors fail rather than producing a
+misleading green check.
+
+Focused targets remain available through `make help`: `contract`, `acceptance`,
+`scope`, `race`, `static`, `dependencies`, `fault`, `soak`, and
+`scenario-full`. Use them while developing, then run the appropriate aggregate
+campaign before making a repository-wide claim.
 
 ### What the torture chamber attacks
 
@@ -509,15 +519,14 @@ after lease acquisition, workspace creation, tracker operations, handoff,
 review, and integration. It also exercises stale writers, manual branch
 movement, tracker outages, simultaneous integration, and merge conflicts.
 
-The final adversarial campaign executed 65 disjoint test shards for 100
-iterations each. All 65 shards passed without reruns. The campaign covered all
-17 discovered top-level Phase 1 tests and 28 named fault boundaries. Those are
-historical evidence for the recorded commit, not a substitute for running tests
-against new changes.
+The original adversarial campaign executed 65 disjoint test shards for 100
+iterations each and passed without reruns. The closeout qualification exercises
+the expanded 71-test integrated census through the canonical campaign runner.
+Both are commit-bound evidence, not a substitute for testing a changed tree.
 
 See the [evidence guide](docs/phase1-evidence/README.md) and
-[final campaign manifest](docs/phase1-evidence/final-campaign-manifest.json)
-for the reproducible record.
+[closeout result](docs/phase1-evidence/closeout-results.json) for the
+reproducible records.
 
 ### Diagnostics as protocol output
 
@@ -530,10 +539,24 @@ Callers should branch on the structured kind and retry-safety value, never on
 English error text. That rule is important for future CLI, MCP, Team Kitty, and
 Orchestrator API adapters.
 
-## Current scope and limitations
+## External compatibility boundary
 
-Phase 1 proves the local authority and concurrency model. It does **not** yet
-provide:
+Orchestrator API 1.3 is a compatibility target, not an implemented transport.
+Every canonical command, envelope field, policy input, identity translation,
+typed failure, and host-only authority rule has been mapped to the kernel in the
+[Orchestrator API 1.3 projection record](docs/ORCHESTRATOR_API_1_3_PROJECTION.md).
+That record demonstrates that the kernel is projectable without making the
+external API, MCP, Team Kitty, or hosted sync part of Phase 1.
+
+The completed Phase 1 mission contains historical acceptance wording about an
+“explicit visible waiver.” No such waiver or bypass exists in the shipped
+gate. The [Phase 1 acceptance erratum](docs/PHASE1_ACCEPTANCE_ERRATA.md) records
+the correction while preserving the immutable mission artifact.
+
+## Delivered boundary and next milestones
+
+Phase 1's product is the local authority and concurrency kernel. The following
+surfaces are deliberately assigned to later milestones:
 
 - the complete production Spec Kitty command-line experience;
 - a Beads, GitHub Issues, Jira, or Team Kitty tracker adapter;
@@ -549,9 +572,34 @@ rejection-to-rework-run creation, and the complete acceptance/queue surfaces.
 They are preserved as explicit future work rather than silently claimed as
 implemented.
 
-The next production milestone should remain scenario-led: introduce one real
+The next product milestone should remain scenario-led: introduce one real
 tracker adapter and one thin product workflow without weakening the fake-tracker
 contract or the authority laws. Package scaffolding alone is not progress.
+
+### Storage adoption boundary
+
+SQLite remains the active control-store adapter in this commit. Gapdb has passed
+its own native portable-adapter scenarios and is the planned candidate for this
+repository, but it is not in this module graph and has not been qualified
+against this kernel's external-adapter, migration, crash-recovery, and authority
+suite. Replacing SQLite requires equivalent evidence plus an explicit human
+adoption record. That is a migration decision, not an inference from Gapdb's
+implementation completeness.
+
+### Design-source and donor boundary
+
+The separate Go port at `spec-kitty-projects/spec-kitty-go` was reviewed for
+context at commit `733f4daef7660c9d372d35c3ba00aac1bb3a41f7`. Its repository
+explicitly says it has no repository-level license grant. No source, test body,
+or prose was copied from it; this implementation was independently written from
+Spec Kitty behavior, local canonical contracts, and this project's tests.
+
+Its useful contextual lesson is the value of a strict external machine seam.
+The redesign did not adopt its in-memory ownership of worktree lifecycle,
+SQLite-canonical work tracker, universal ledger/protobuf core, or Orchestrator
+API 1.1 adapter. Those choices conflict respectively with durable recovery,
+tracker portability, capability-oriented authority ownership, and the current
+1.3 compatibility target.
 
 ## Design record and evidence
 
@@ -573,6 +621,10 @@ The repository keeps design claims close to their supporting evidence:
   — ratified Phase 1 architecture within the single-machine boundary.
 - [`phase1-evidence/`](docs/phase1-evidence/) — final repeated-run campaign
   manifest, results, scenario catalog, and hashes.
+- [`ORCHESTRATOR_API_1_3_PROJECTION.md`](docs/ORCHESTRATOR_API_1_3_PROJECTION.md)
+  — command-by-command compatibility and host-authority mapping.
+- [`PHASE1_ACCEPTANCE_ERRATA.md`](docs/PHASE1_ACCEPTANCE_ERRATA.md) — visible
+  correction of the historical waiver promise without inventing a bypass.
 
 Terminology in these documents is intentional:
 
