@@ -1,20 +1,20 @@
 {
-  "event_count": 195,
-  "last_event_id": "01M0ZS28T072RGJVB8TV81KHCN",
-  "materialized_at": "2026-08-26T19:34:31.488737+00:00",
+  "event_count": 221,
+  "last_event_id": "01M1045A4M2X3A41Z4CBP6VSFQ",
+  "materialized_at": "2026-08-26T22:48:25.492334+00:00",
   "mission_number": "",
   "mission_slug": "beads-tracker-integration-01M0YG7E",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 8,
+    "approved": 11,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 2
+    "in_review": 0,
+    "planned": 0
   },
   "work_packages": {
     "WP01": {
@@ -269,29 +269,29 @@
       }
     },
     "WP08": {
-      "actor": "codex",
+      "actor": "user",
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 7,
-      "lane": "in_review",
-      "last_event_id": "01M0ZS28T072RGJVB8TV81KHCN",
-      "last_transition_at": "2026-08-26T19:34:31.488737+00:00",
+      "force_count": 8,
+      "lane": "approved",
+      "last_event_id": "01M0ZSDF61JBPBB085M6BPKWAW",
+      "last_transition_at": "2026-08-26T19:40:38.465662+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: portable capability-aware conformance, strict dishonest subprocess faults, universal authority/stale probes, and 100-run human-assignment preservation; exact conformance/fault/human censuses; race, vet, staticcheck, architecture, and scope pass.",
         "Cycle 2 candidate ba6a6d4. Shared 12-case registry passes durable fake and scripted dishonest provider; exact 25-case typed fault census includes real create/update/dependency/comment/assignment apply-before-loss, universal audit and real stale probe; TrackerSaga plus reopened SQLite preserves 100/100 human assignments. Gates: conformance count=10, adversarial repetition count=10 (457.983s), human 100/100 (113.048s), race full Beads/Conformance (198.930s) plus final focused race (31.903s), architecture, vet, staticcheck, compile-all, diff-check all pass. Ruff diff-scoped: no Python files, not applicable.",
         "Cycle-3 candidate f3a4c11; preserving consolidated WP09 planning artifact already committed by another lane; all WP08 regression and race gates pass.",
         "Cycle-4 correction ready at e7995c7: every applicable provider fault and each of 100 human repetitions now owns the exact repo/control/provider/work/run/expired-lease/workspace topology audited before and after; disconnected-canary topology, stale-trust, and warning-prose mutants fail through load-bearing validators. Shared-file coordination: internal/scenario/universal_assertions.go was intentionally updated to aggregate intent-qualified effects by canonical physical provider key, required for exact attribution audits. Evidence: exact census pass 101s; human 100/100 pass 559s; formerly flaky combined suite count=3 pass 312s; focused race pass 121s; conformance count=10, vet, staticcheck, architecture, gofmt, and diff checks pass.",
-        "Cycle-5 correction ready at caff7f9: actual dishonest fixture/typed operations now return provider binding root, database identity, target work, invocation/runtime consumption, and mutation/applied state into exact before/after universal provider_topology probes; no parallel audit root remains. New unrelated-provider routing mutant executes the real stale fault outside the lease while declared workspace and separate canary remain healthy, then fails with case ID/provider_topology. Local DB-corruption mutant retained. Coordinated shared-file ownership: internal/scenario/universal_assertions.go intentionally gains ProviderTopologyProbe/invariant; canonical human attribution logic unchanged. Evidence: exact census pass 101s; both topology mutants count=5 pass 95s and race pass 22s; vet, staticcheck, architecture, gofmt, diff pass. Human code unchanged; retained cycle-4 100/100 559s evidence."
+        "Cycle-5 correction ready at caff7f9: actual dishonest fixture/typed operations now return provider binding root, database identity, target work, invocation/runtime consumption, and mutation/applied state into exact before/after universal provider_topology probes; no parallel audit root remains. New unrelated-provider routing mutant executes the real stale fault outside the lease while declared workspace and separate canary remain healthy, then fails with case ID/provider_topology. Local DB-corruption mutant retained. Coordinated shared-file ownership: internal/scenario/universal_assertions.go intentionally gains ProviderTopologyProbe/invariant; canonical human attribution logic unchanged. Evidence: exact census pass 101s; both topology mutants count=5 pass 95s and race pass 22s; vet, staticcheck, architecture, gofmt, diff pass. Human code unchanged; retained cycle-4 100/100 559s evidence.",
+        "Review passed cycle 5 at caff7f9c7e10211999499559a69dd53eabc6829e: provider topology is derived from the executed dishonest fixture and consumed before/after; unrelated-provider and local-DB mutants are load-bearing; exact census, repeated/race topology, vet, architecture, and diff gates pass; prior unchanged human 100/100 evidence retained."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/beads-tracker-integration-01M0YG7E/tasks/WP08-adversarial-portable-conformance/review-cycle-4.md",
-        "reference": "review-cycle://beads-tracker-integration-01M0YG7E/WP08-adversarial-portable-conformance/review-cycle-4.md",
-        "reviewer": "user",
-        "verdict": "changes_requested"
+        "reference": "Review passed cycle 5 at caff7f9c7e10211999499559a69dd53eabc6829e: provider topology is derived from the executed dishonest fixture and consumed before/after; unrelated-provider and local-DB mutants are load-bearing; exact census, repeated/race topology, vet, architecture, and diff gates pass; prior unchanged human 100/100 evidence retained.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
       },
       "role": "reviewer",
       "shell_pid": 3760839,
@@ -340,18 +340,71 @@
       }
     },
     "WP10": {
-      "actor": "finalize-tasks",
-      "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M0YJBGSCAQ508RVR1075ZE9H",
-      "last_transition_at": "2026-08-26T08:18:00.108049+00:00"
+      "actor": "user",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 4,
+      "lane": "approved",
+      "last_event_id": "01M0ZZRV0Z38YFP5ZP1X7NPVS1",
+      "last_transition_at": "2026-08-26T21:31:42.495431+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Implemented at e3eb9af on final clean lineage e7f114a. Exact provider census is 2 portable plus 20 adversarial plus 3 real top-level parents; two final clean bounded runs passed in 264202ms and 264137ms with identical semantic hash 6b9afb918190bf649aec27e2bf0c28942f96a3a588975c5b87a48b5dbf3f2cae, source tree 7a7a3e614bcf9cc22027293bc37e8a9b80e408f4. make quality passed in 375s; race, vet, staticcheck, govulncheck, architecture, scope, schema/mutant gates passed. Invalid real prerequisite emitted mode-0600 schema-1 non_admissible. Hosted baseline remains honestly baseline_pending at 0/10; scheduled server qualification requires a hosted Dolt topology inside the offline namespace. Force used only for inherited committed kitty-spec lane guard.",
+        "Correction cycle 2 ready at a2401c2. Canonical evidence model directly owns the shipped producer; source preflight/rebind and actual stale lease/fence/workspace proof are load-bearing. CI provisions pinned Dolt v0.40.5-0.20260605230755-1bf533220ab0 inside the offline namespace with exact tuple and unconditional cleanup. Ownership expansion: beads-qualification runner/tests, campaign runner/tests, and real_integration_test.go. Clean-tree make quality passed: provider-adversarial 263.824s, provider_bounded 264.055s, quality 32.628s; repeat/race/vet/static/govuln/schema/YAML/architecture/scope green. Local pinned Dolt build/server lifecycle smoke passed; privileged hosted unshare remains workflow-only. Forced only for known inherited committed kitty-spec lane-history guard; no inherited artifacts were modified.",
+        "Review passed at 47afd5ada9fb6c621fc5b64f82fccd1f68a4465d tree 0af3f1ad5d67ebdb759f37a0907aebd3a0682ca2: canonical evidence writer is load-bearing; pre/post clean source, pinned disposable shared Dolt, and executable stale-authority linkage verified. Full clean quality evidence binds a2401c2; final serialization delta passed focused x10, race, vet, staticcheck, architecture, schema, and invalid-prerequisite checks. Force acknowledges inherited kitty-spec-only lane history; no production drift was waived."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "reference": "Review passed at 47afd5ada9fb6c621fc5b64f82fccd1f68a4465d tree 0af3f1ad5d67ebdb759f37a0907aebd3a0682ca2: canonical evidence writer is load-bearing; pre/post clean source, pinned disposable shared Dolt, and executable stale-authority linkage verified. Full clean quality evidence binds a2401c2; final serialization delta passed focused x10, race, vet, staticcheck, architecture, schema, and invalid-prerequisite checks. Force acknowledges inherited kitty-spec-only lane history; no production drift was waived.",
+        "reviewer": "codex",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T049": "done",
+        "T050": "done",
+        "T051": "done",
+        "T052": "done",
+        "T053": "done"
+      }
     },
     "WP11": {
-      "actor": "finalize-tasks",
-      "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M0YJBMF665JD0Q6E74A4BDRF",
-      "last_transition_at": "2026-08-26T08:18:03.878126+00:00"
+      "actor": "user",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 2,
+      "lane": "approved",
+      "last_event_id": "01M1045A4M2X3A41Z4CBP6VSFQ",
+      "last_transition_at": "2026-08-26T22:48:25.492334+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "WP11 documentation and immutable evidence complete. Payload commits cd378bd and 106c7a2; documentation attestation 6985cec; exact-census correction 8fbb9d9; final docs-only closeout 3a9fe38. Clean make quality passed at 8fbb9d9/tree 3611d0b; final docs gate x10, full architecture, race, vet, staticcheck, hashes, and diff checks passed. Real-provider evidence remains source-bound to 315660f; hosted baseline remains pending 0/10.",
+        "Cycle 2 correction commit 9537496c8c1861480834be5626b3619a8db93bac, tree 5070d57d0416f76412ae6aa952fe4b352d522c5f. README now supplies the complete server_multiwriter tuple and exact endpoint equality; executable command smoke dry-runs Make targets, builds/queries helper parser, exercises installer parser refusals, and executes the typed provider argv builder test with deletion/typo mutants; plan records Phase 0/1 and SQLite as qualified; source identity has distinct commit/tree mutants. Docs selector x10, full architecture, architecture race, vet, staticcheck, hashes, diff, and clean exact-census architecture campaign passed. No product/evidence payload changes.",
+        "Correction cycle 3: semantic documentation smoke now derives qualificationStorageMode's exact four-key server tuple from its AST, validates helper values through the real safe parser, derives accepted disposable init argv and typed provider backup argv, and kills reason-specific tuple/read-only/mode/backup/init-safety mutants. Exact clean architecture census: 38/38 pass at commit 337e895d5ad50cc8c3c6b253a1695772f8830af1, tree 2dfdbf7acb3143753067ffccfc0eff52d44cdfb2, source_dirty=false; artifact /tmp/go-kitty3-wp11-cycle3-architecture.hP6YN6.",
+        "Review passed cycle 3 at 337e895/tree 2dfdbf7: exact external tuple/read-only/mode/backup mutants now red for semantic reasons; storage-mode AST binds the real qualificationStorageMode four-key decision, helper smoke executes the compiled parser and refuses before provider invocation, typed backup/init argv bind production command/fixture paths, and cycle-1 documentation/evidence fixes remain intact. Docs x10, full 38-test architecture, exact census artifact, focused race, vet, staticcheck, checksums, formatting, and diff checks pass. Anti-patterns: dead code N/A; synthetic fixture PASS; silent empty PASS; FR coverage PASS; frozen surface PASS; locked decision PASS; shared ownership PASS; production fragility N/A."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "reference": "Review passed cycle 3 at 337e895/tree 2dfdbf7: exact external tuple/read-only/mode/backup mutants now red for semantic reasons; storage-mode AST binds the real qualificationStorageMode four-key decision, helper smoke executes the compiled parser and refuses before provider invocation, typed backup/init argv bind production command/fixture paths, and cycle-1 documentation/evidence fixes remain intact. Docs x10, full 38-test architecture, exact census artifact, focused race, vet, staticcheck, checksums, formatting, and diff checks pass. Anti-patterns: dead code N/A; synthetic fixture PASS; silent empty PASS; FR coverage PASS; frozen surface PASS; locked decision PASS; shared ownership PASS; production fragility N/A.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
+      "subtasks": {
+        "T054": "done",
+        "T055": "done",
+        "T056": "done",
+        "T057": "done",
+        "T058": "done"
+      }
     }
   }
 }
