@@ -354,7 +354,7 @@ func TestClaimEnforcesReconciliationDisposition(t *testing.T) {
 				}
 			}
 
-			_, err = startWork(ctx, store, "operation-after-"+string(disposition), "work-old", "revision-1")
+			_, err = startWork(t, ctx, store, "operation-after-"+string(disposition), "work-old", "revision-1")
 			if disposition == workgraph.Supersede || disposition == workgraph.Invalidate {
 				if !execution.IsKind(err, execution.KindAuthorityConflict) {
 					t.Fatalf("%s old generation Start error = %v", disposition, err)
@@ -382,6 +382,7 @@ func TestInvalidateExpiresExistingAuthorityAndPublishesQuarantineIntent(t *testi
 	startRequest := execution.StartRequest{
 		OperationID: "operation-before-invalidate", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-old",
 		ActorID: "actor-worker", ProcessID: "process-before-invalidate", Now: time.Unix(1, 0), LeaseTTL: time.Minute,
+		GovernanceContext: testGovernanceContext(t, "context-before-invalidate", time.Unix(1, 0)),
 	}
 	capsule, err := service.Start(ctx, startRequest)
 	if err != nil {
@@ -435,6 +436,7 @@ func TestSupersedePreservesExistingAuthorityButBlocksNewStarts(t *testing.T) {
 	request := execution.StartRequest{
 		OperationID: "operation-before-supersede", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-old",
 		ActorID: "actor-worker", ProcessID: "process-before-supersede", Now: time.Unix(1, 0), LeaseTTL: time.Minute,
+		GovernanceContext: testGovernanceContext(t, "context-before-supersede", time.Unix(1, 0)),
 	}
 	original, err := service.Start(ctx, request)
 	if err != nil {
@@ -454,7 +456,7 @@ func TestSupersedePreservesExistingAuthorityButBlocksNewStarts(t *testing.T) {
 	if err != nil || replay.LeaseID != original.LeaseID || !replay.Replayed {
 		t.Fatalf("existing superseded run replay=%+v error=%v", replay, err)
 	}
-	if _, err := startWork(ctx, store, "operation-new-after-supersede", "work-old", "revision-1"); !execution.IsKind(err, execution.KindAuthorityConflict) {
+	if _, err := startWork(t, ctx, store, "operation-new-after-supersede", "work-old", "revision-1"); !execution.IsKind(err, execution.KindAuthorityConflict) {
 		t.Fatalf("new Start after supersede error=%v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE leases SET status='expired' WHERE lease_id=?`, original.LeaseID); err != nil {
@@ -488,7 +490,7 @@ func TestCanonicalWorkStateCannotMoveFromTerminalToRunnable(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE work_items SET state='ready' WHERE work_revision_id='revision-state' AND work_id='work-state'`); err == nil {
 		t.Fatal("terminal canonical work moved from done to ready")
 	}
-	if _, err := startWork(ctx, store, "operation-after-done", "work-state", "revision-state"); !execution.IsKind(err, execution.KindAuthorityConflict) {
+	if _, err := startWork(t, ctx, store, "operation-after-done", "work-state", "revision-state"); !execution.IsKind(err, execution.KindAuthorityConflict) {
 		t.Fatalf("Start after terminal work error=%v", err)
 	}
 }
@@ -515,6 +517,7 @@ func TestSeedAndClaimFailClosedForBareNonFinalizedRevision(t *testing.T) {
 	_, err := service.Start(ctx, execution.StartRequest{
 		OperationID: "operation-bare", ProjectID: seed.ProjectID, MissionID: seed.MissionID,
 		WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID, ActorID: "actor-bare", ProcessID: "process-bare", LeaseTTL: time.Minute,
+		GovernanceContext: testGovernanceContext(t, "context-bare", time.Now().UTC()),
 	})
 	if !execution.IsKind(err, execution.KindNotFound) {
 		t.Fatalf("bare Claim error=%v", err)
@@ -564,7 +567,7 @@ func TestTerminalReconciliationCannotBeRevivedByLaterContinue(t *testing.T) {
 	if reconciliationID != invalidated.ID() || eligibility.HandoffEligible || !eligibility.ExpireAuthority {
 		t.Fatalf("terminal invalidation was revived: reconciliation=%q eligibility=%+v", reconciliationID, eligibility)
 	}
-	if _, err := startWork(ctx, store, "operation-after-attempted-revival", "work-old", "revision-1"); !execution.IsKind(err, execution.KindAuthorityConflict) {
+	if _, err := startWork(t, ctx, store, "operation-after-attempted-revival", "work-old", "revision-1"); !execution.IsKind(err, execution.KindAuthorityConflict) {
 		t.Fatalf("Start after attempted revival error = %v", err)
 	}
 }
@@ -603,7 +606,7 @@ func TestFinalizedGraphClosesSeedAndDirectSQLMutationPaths(t *testing.T) {
 	if err := store.SeedAuthority(ctx, Seed{ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-2", WorkID: "work-a"}); !execution.IsKind(err, execution.KindInvalidCommand) {
 		t.Fatalf("cross-generation seed error = %v", err)
 	}
-	if _, err := startWork(ctx, store, "operation-invented", "work-invented", "revision-1"); !execution.IsKind(err, execution.KindNotFound) {
+	if _, err := startWork(t, ctx, store, "operation-invented", "work-invented", "revision-1"); !execution.IsKind(err, execution.KindNotFound) {
 		t.Fatalf("invented WorkID Start error = %v", err)
 	}
 }
@@ -762,11 +765,14 @@ func storeRevisionMany(t *testing.T, revisionID ids.WorkRevisionID, number int64
 	return revision
 }
 
-func startWork(ctx context.Context, store *Store, operation, work, revision string) (execution.RunCapsule, error) {
+func startWork(t *testing.T, ctx context.Context, store *Store, operation, work, revision string) (execution.RunCapsule, error) {
+	t.Helper()
+	now := time.Now().UTC()
 	service := execution.NewService(store, execution.RandomIdentities{}, execution.SystemClock{})
 	return service.Start(ctx, execution.StartRequest{
 		OperationID: ids.OperationID(operation), ProjectID: "project-1", MissionID: "mission-1",
-		WorkRevisionID: ids.WorkRevisionID(revision), WorkID: ids.WorkID(work), ActorID: "actor-worker", ProcessID: ids.ProcessID("process-" + operation), LeaseTTL: time.Minute,
+		WorkRevisionID: ids.WorkRevisionID(revision), WorkID: ids.WorkID(work), ActorID: "actor-worker", ProcessID: ids.ProcessID("process-" + operation), Now: now, LeaseTTL: time.Minute,
+		GovernanceContext: testGovernanceContext(t, ids.GovernanceContextID("context-"+operation), now),
 	})
 }
 

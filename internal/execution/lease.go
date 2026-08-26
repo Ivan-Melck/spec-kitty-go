@@ -3,6 +3,8 @@ package execution
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"time"
@@ -11,6 +13,11 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
 
+// AuthorityRepository owns atomic run admission. Claim receives the complete
+// validated governance context and must persist it with a new run. Replays and
+// replacement lease generations must return the context originally bound to
+// that run. Reusing a context ID with different content is an idempotency
+// conflict; implementations must never overwrite the original context.
 type AuthorityRepository interface {
 	LookupStartOperation(context.Context, StartRequest) (bool, error)
 	Claim(context.Context, StartRequest, ids.RunID, ids.LeaseID) (RunCapsule, error)
@@ -22,6 +29,7 @@ func (s *Service) LookupStartOperation(ctx context.Context, request StartRequest
 	if err := request.Validate(); err != nil {
 		return false, err
 	}
+	request = withGovernanceCommandDigest(request)
 	return s.repository.LookupStartOperation(ctx, request)
 }
 
@@ -81,6 +89,7 @@ func (s *Service) Start(ctx context.Context, request StartRequest) (RunCapsule, 
 	if err := request.Validate(); err != nil {
 		return RunCapsule{}, err
 	}
+	request = withGovernanceCommandDigest(request)
 	if err := s.faults.Reach(ctx, "SR-00"); err != nil {
 		return RunCapsule{}, err
 	}
@@ -93,6 +102,10 @@ func (s *Service) Start(ctx context.Context, request StartRequest) (RunCapsule, 
 		return RunCapsule{}, identityError(request, "lease_id", err)
 	}
 	capsule, err := s.repository.Claim(ctx, request, runID, leaseID)
+	if err != nil {
+		return RunCapsule{}, err
+	}
+	capsule, err = bindRunGovernanceContext(request, capsule)
 	if err != nil {
 		return RunCapsule{}, err
 	}
@@ -111,6 +124,7 @@ func (s *Service) StartPrepared(ctx context.Context, request StartRequest) (RunC
 	if err := request.Validate(); err != nil {
 		return RunCapsule{}, err
 	}
+	request = withGovernanceCommandDigest(request)
 	runID, err := s.identities.RunID()
 	if err != nil {
 		return RunCapsule{}, identityError(request, "run_id", err)
@@ -120,6 +134,10 @@ func (s *Service) StartPrepared(ctx context.Context, request StartRequest) (RunC
 		return RunCapsule{}, identityError(request, "lease_id", err)
 	}
 	capsule, err := s.repository.Claim(ctx, request, runID, leaseID)
+	if err != nil {
+		return RunCapsule{}, err
+	}
+	capsule, err = bindRunGovernanceContext(request, capsule)
 	if err != nil {
 		return RunCapsule{}, err
 	}
@@ -166,4 +184,45 @@ func identityError(request StartRequest, field string, cause error) error {
 	diagnostic.RecoveryActions = []string{"retry with a healthy cryptographic random source"}
 	diagnostic.Cause = cause
 	return diagnostic
+}
+
+func bindRunGovernanceContext(request StartRequest, capsule RunCapsule) (RunCapsule, error) {
+	wantID := request.GovernanceContext.ID()
+	wantAggregate := request.GovernanceContext.Aggregate()
+	hasID := capsule.GovernanceContextID != ""
+	hasAggregate := capsule.GovernanceContextAggregate.Algorithm() != "" || capsule.GovernanceContextAggregate.Digest() != ""
+	if hasID != hasAggregate || ((capsule.Replayed || capsule.Generation > 1) && !hasID) ||
+		(hasID && (capsule.GovernanceContextID != wantID || capsule.GovernanceContextAggregate != wantAggregate)) {
+		return RunCapsule{}, NewDiagnostic(KindIdempotencyConflict, "repository returned a run bound to different governance context", RetryNever,
+			request.CorrelationID, request.OperationID,
+			map[string]string{"operation_id": request.OperationID.String(), "run_id": capsule.RunID.String()},
+			map[string]string{"governance_context_id": capsule.GovernanceContextID.String(), "governance_context_aggregate": capsule.GovernanceContextAggregate.Algorithm() + ":" + capsule.GovernanceContextAggregate.Digest()},
+			map[string]string{"governance_context_id": wantID.String(), "governance_context_aggregate": wantAggregate.Algorithm() + ":" + wantAggregate.Digest()}, request.Now)
+	}
+	capsule.GovernanceContextID = wantID
+	capsule.GovernanceContextAggregate = wantAggregate
+	if capsule.AggregateIDs == nil {
+		capsule.AggregateIDs = map[string]string{}
+	}
+	capsule.AggregateIDs["governance_context_id"] = wantID.String()
+	return capsule, nil
+}
+
+func withGovernanceCommandDigest(request StartRequest) StartRequest {
+	aggregate := request.GovernanceContext.Aggregate()
+	hasher := sha256.New()
+	for _, field := range []string{
+		"go-kitty3/start-claim/governance-context/v1",
+		request.CommandDigest,
+		request.GovernanceContext.ID().String(),
+		aggregate.Algorithm(),
+		aggregate.Digest(),
+	} {
+		var length [8]byte
+		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
+		_, _ = hasher.Write(length[:])
+		_, _ = hasher.Write([]byte(field))
+	}
+	request.CommandDigest = hex.EncodeToString(hasher.Sum(nil))
+	return request
 }

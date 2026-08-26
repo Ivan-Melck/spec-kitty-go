@@ -9,21 +9,19 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/architecture"
 	"github.com/spec-kitty/go-kitty3/internal/controlstore/sqlite"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/helpercmd"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -653,8 +651,9 @@ func TestPhase1DurableWorkRevisionConsumerScenarios(t *testing.T) {
 			t.Fatalf("fork evidence=%+v err=%v", evidence, err)
 		}
 		service := execution.NewService(store, execution.RandomIdentities{}, execution.SystemClock{})
-		left, leftErr := service.Start(context.Background(), execution.StartRequest{OperationID: "operation-phase1-wr04-left", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr04-left", ActorID: "actor-phase1-wr04", ProcessID: "process-phase1-wr04-left", Now: time.Now().UTC(), LeaseTTL: time.Minute})
-		right, rightErr := service.Start(context.Background(), execution.StartRequest{OperationID: "operation-phase1-wr04-right", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr04-right", ActorID: "actor-phase1-wr04", ProcessID: "process-phase1-wr04-right", Now: time.Now().UTC(), LeaseTTL: time.Minute})
+		now := time.Now().UTC()
+		left, leftErr := service.Start(context.Background(), execution.StartRequest{OperationID: "operation-phase1-wr04-left", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr04-left", ActorID: "actor-phase1-wr04", ProcessID: "process-phase1-wr04-left", Now: now, LeaseTTL: time.Minute, GovernanceContext: scenarioGovernanceContext(t, "context-phase1-wr04-left", now)})
+		right, rightErr := service.Start(context.Background(), execution.StartRequest{OperationID: "operation-phase1-wr04-right", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr04-right", ActorID: "actor-phase1-wr04", ProcessID: "process-phase1-wr04-right", Now: now, LeaseTTL: time.Minute, GovernanceContext: scenarioGovernanceContext(t, "context-phase1-wr04-right", now)})
 		_ = store.Close()
 		if leftErr != nil || rightErr != nil || left.RunID == right.RunID || left.WorkID == right.WorkID {
 			t.Fatalf("fork consumers left=%+v/%v right=%+v/%v", left, leftErr, right, rightErr)
@@ -724,9 +723,11 @@ func TestPhase1DurableWorkRevisionConsumerScenarios(t *testing.T) {
 			_ = store.Close()
 			t.Fatalf("integrated lineage=%+v err=%v", evidence, err)
 		}
+		followUpNow := time.Now().UTC()
 		followUp, followUpErr := execution.NewService(store, execution.RandomIdentities{}, execution.SystemClock{}).Start(context.Background(), execution.StartRequest{
 			CorrelationID: "correlation-start-phase1-wr06-follow-up", OperationID: "operation-start-phase1-wr06-follow-up", ProjectID: "project-1", MissionID: "mission-1",
-			WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr06-follow-up", ActorID: "actor-phase1-wr06-follow-up", ProcessID: "process-phase1-wr06-follow-up", Now: time.Now().UTC(), LeaseTTL: time.Minute,
+			WorkRevisionID: newRevision.ID(), WorkID: "work-phase1-wr06-follow-up", ActorID: "actor-phase1-wr06-follow-up", ProcessID: "process-phase1-wr06-follow-up", Now: followUpNow, LeaseTTL: time.Minute,
+			GovernanceContext: scenarioGovernanceContext(t, "context-phase1-wr06-follow-up", followUpNow),
 		})
 		_ = store.Close()
 		if followUpErr != nil || followUp.RunID == "" || followUp.LeaseID == "" || followUp.WorkRevisionID != newRevision.ID() || followUp.WorkID != "work-phase1-wr06-follow-up" {
@@ -750,6 +751,23 @@ func TestPhase1DurableWorkRevisionConsumerScenarios(t *testing.T) {
 			t.Fatalf("integrated history changed primary_before=%+v primary_after=%+v target=%s done=%d/%s/%s/%s err=%v", primaryBefore, primaryAfter, targetBefore, doneCount, doneCandidate, doneResult, doneTarget, err)
 		}
 	})
+}
+
+func scenarioGovernanceContext(t *testing.T, contextID ids.GovernanceContextID, createdAt time.Time) governancecontext.Context {
+	t.Helper()
+	commitment, err := governancecontext.CommitSHA256([]byte("go-kitty3/phase1-scenario/governance/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := governancecontext.NewEntry(governancecontext.KindConfig, "phase1-scenario", "v1", commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := governancecontext.NewContext(contextID, governancecontext.SchemaVersion, []governancecontext.Entry{entry}, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func startPhase1RevisionCandidate(t *testing.T, suffix string) (workspaceScenario, *execution.RunCapsule, string) {
@@ -844,16 +862,17 @@ func assertFaultFamily(t *testing.T, family string, faults []string, prefix stri
 	}
 }
 
-func TestPhase1ProductionDependencyAndSourceScope(t *testing.T) {
+func TestPhase1ProductionDependencyAndArchitectureScope(t *testing.T) {
 	root, err := phase1RepositoryRoot()
-	if err == nil {
-		err = assertPhase1DependencyGraph(root)
-	}
-	if err == nil {
-		err = assertPhase1SourceGraph(root)
-	}
 	if err != nil {
-		t.Fatalf("scenario=phase1-scope invariant=portable-kernel state=%v recovery=remove the integration from the production dependency/source graph", err)
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := helpercmd.Run(context.Background(), []string{"architecture-check", "--root", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("scenario=phase1-architecture code=%d state=%s recovery=repair the exact architecture diagnostic", code, strings.TrimSpace(stderr.String()))
+	}
+	if !strings.Contains(stdout.String(), "architecture check passed") {
+		t.Fatalf("scenario=phase1-architecture missing_success_evidence=%q", stdout.String())
 	}
 }
 
@@ -865,214 +884,49 @@ func phase1RepositoryRoot() (string, error) {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..")), nil
 }
 
-type listedPackage struct {
-	ImportPath string
-	Standard   bool
-	Module     *struct {
-		Path string
-	}
-}
-
-func assertPhase1DependencyGraph(root string) error {
-	command := exec.Command("go", "list", "-deps", "-json", "./cmd/spk-phase1-helper")
-	command.Dir = root
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("go list: %v: %s", err, stderr.String())
-	}
-	decoder := json.NewDecoder(&stdout)
-	var imports []string
-	for decoder.More() {
-		var item listedPackage
-		if err := decoder.Decode(&item); err != nil {
-			return fmt.Errorf("decode go list: %w", err)
-		}
-		imports = append(imports, item.ImportPath)
-		if err := rejectPhase1Dependency(item.ImportPath); err != nil {
-			return err
-		}
-		if item.Module != nil {
-			if err := rejectPhase1Dependency(item.Module.Path); err != nil {
-				return err
-			}
-		}
-		if strings.HasPrefix(item.ImportPath, "github.com/spec-kitty/go-kitty3/") && !phase1AllowedProductionPackages[item.ImportPath] {
-			return fmt.Errorf("production package is outside the reviewed allowlist=%s", item.ImportPath)
-		}
-	}
-	sort.Strings(imports)
-	if len(imports) == 0 {
-		return fmt.Errorf("production helper dependency graph is empty")
-	}
-	return nil
-}
-
-func assertPhase1SourceGraph(root string) error {
-	for _, relative := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, relative), func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() {
-				return rejectPhase1SourcePath(root, path)
-			}
-			if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			relativeDir, err := filepath.Rel(root, filepath.Dir(path))
-			if err != nil {
-				return err
-			}
-			if !phase1AllowedSourceDirectories[filepath.ToSlash(relativeDir)] {
-				return fmt.Errorf("production source directory is outside the reviewed allowlist=%s", filepath.ToSlash(relativeDir))
-			}
-			contents, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			for _, pattern := range phase1ForbiddenSourcePatterns {
-				if pattern.Match(contents) {
-					return fmt.Errorf("source=%s forbidden_kernel_marker=%s", filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator))), pattern.String())
-				}
-			}
-			parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
-			if err != nil {
-				return err
-			}
-			for _, declaration := range parsed.Decls {
-				group, ok := declaration.(*ast.GenDecl)
-				if !ok || group.Tok != token.IMPORT {
-					continue
-				}
-				for _, specification := range group.Specs {
-					importSpec := specification.(*ast.ImportSpec)
-					value, err := strconv.Unquote(importSpec.Path.Value)
-					if err != nil {
-						return err
-					}
-					if err := rejectPhase1Dependency(value); err != nil {
-						return fmt.Errorf("source=%s: %w", filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator))), err)
-					}
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-var phase1AllowedProductionPackages = map[string]bool{
-	"github.com/spec-kitty/go-kitty3/cmd/spk-phase1-helper":        true,
-	"github.com/spec-kitty/go-kitty3/internal/controlstore":        true,
-	"github.com/spec-kitty/go-kitty3/internal/controlstore/sqlite": true,
-	"github.com/spec-kitty/go-kitty3/internal/execution":           true,
-	"github.com/spec-kitty/go-kitty3/internal/faults":              true,
-	"github.com/spec-kitty/go-kitty3/internal/gitrepo":             true,
-	"github.com/spec-kitty/go-kitty3/internal/handoff":             true,
-	"github.com/spec-kitty/go-kitty3/internal/helpercmd":           true,
-	"github.com/spec-kitty/go-kitty3/internal/ids":                 true,
-	"github.com/spec-kitty/go-kitty3/internal/integration":         true,
-	"github.com/spec-kitty/go-kitty3/internal/review":              true,
-	"github.com/spec-kitty/go-kitty3/internal/tracker":             true,
-	"github.com/spec-kitty/go-kitty3/internal/tracker/fake":        true,
-	"github.com/spec-kitty/go-kitty3/internal/workgraph":           true,
-	"github.com/spec-kitty/go-kitty3/internal/workspace":           true,
-}
-
-var phase1AllowedSourceDirectories = map[string]bool{
-	"cmd/spk-phase1-helper": true,
-	"internal/controlstore": true, "internal/controlstore/sqlite": true,
-	"internal/execution": true, "internal/faults": true, "internal/gitrepo": true,
-	"internal/handoff": true, "internal/helpercmd": true, "internal/ids": true,
-	"internal/integration": true, "internal/review": true, "internal/scenario": true,
-	"internal/tracker": true, "internal/tracker/fake": true,
-	"internal/workgraph": true, "internal/workspace": true,
-}
-
-var phase1ForbiddenSourcePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\bbeads?\b`),
-	regexp.MustCompile(`(?i)\bteam[ -]?kitty\b`),
-	regexp.MustCompile(`(?i)\bmcp\b`),
-	regexp.MustCompile(`(?i)\bpython\b`),
-	regexp.MustCompile(`(?i)\bmarkdown\b`),
-	regexp.MustCompile(`(?i)\bapi\b`),
-	regexp.MustCompile(`(?i)\.md\b`),
-}
-
-func rejectPhase1SourcePath(root, path string) error {
-	relative := strings.ToLower(filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator))))
-	for _, segment := range []string{"/beads", "/team-kitty", "/teamkitty", "/orchestrator-api", "/orchestratorapi", "/api", "/mcp", "/python", "/markdown", "/compat"} {
-		if strings.Contains("/"+relative, segment) {
-			return fmt.Errorf("forbidden production source surface=%s", relative)
-		}
-	}
-	return nil
-}
-
 func TestPhase1SourceScopeMutantControl(t *testing.T) {
-	sourceMutants := []struct {
-		name   string
-		source string
-	}{
-		{"beads", "package scenario\nconst backend = \"beads\"\n"},
-		{"team-kitty", "package scenario\nconst backend = \"team kitty\"\n"},
-		{"mcp", "package scenario\nconst transport = \"mcp\"\n"},
-		{"python", "package scenario\nconst runtime = \"python\"\n"},
-		{"markdown", "package scenario\nconst format = \"markdown\"\n"},
-		{"api", "package scenario\nconst surface = \"api\"\n"},
-		{"http", "package scenario\nimport _ \"net/http\"\n"},
-		{"orchestrator-import", "package scenario\nimport _ \"example.invalid/orchestratorapi\"\n"},
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := architecture.DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, mutant := range sourceMutants {
-		t.Run("source/"+mutant.name, func(t *testing.T) {
-			root := phase1MutantRoot(t)
-			path := filepath.Join(root, "internal", "scenario", "forbidden.go")
-			if err := os.WriteFile(path, []byte(mutant.source), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := assertPhase1SourceGraph(root); err == nil || !strings.Contains(err.Error(), "forbidden") {
-				t.Fatalf("scenario=phase1-scope-mutant family=%s observed=%v expected=forbidden rejection", mutant.name, err)
-			}
-		})
-	}
-	for _, dependency := range []string{"github.com/acme/beads", "github.com/acme/team-kitty", "github.com/acme/mcp", "github.com/acme/python", "github.com/acme/gomarkdown", "github.com/acme/orchestrator-api", "net/http"} {
-		t.Run("dependency/"+strings.ReplaceAll(dependency, "/", "-"), func(t *testing.T) {
-			if err := rejectPhase1Dependency(dependency); err == nil {
-				t.Fatalf("scenario=phase1-dependency-mutant dependency=%s accepted", dependency)
-			}
-		})
-	}
-	for _, path := range []string{"internal/beads", "internal/team-kitty", "internal/orchestrator-api", "internal/api", "internal/mcp", "internal/python", "internal/markdown", "internal/compat"} {
-		t.Run("path/"+strings.ReplaceAll(path, "/", "-"), func(t *testing.T) {
-			root := t.TempDir()
-			if err := rejectPhase1SourcePath(root, filepath.Join(root, filepath.FromSlash(path))); err == nil {
-				t.Fatalf("scenario=phase1-path-mutant path=%s accepted", path)
-			}
-		})
-	}
-}
-
-func phase1MutantRoot(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	for _, relative := range []string{"cmd", "internal/scenario"} {
-		if err := os.MkdirAll(filepath.Join(root, relative), 0o700); err != nil {
-			t.Fatal(err)
+	beadsAdapter := module + "/internal/tracker/beads"
+	for index := range policy.Tiers {
+		if policy.Tiers[index].Name == architecture.TierAdapter {
+			policy.Tiers[index].Packages = append(policy.Tiers[index].Packages, architecture.ExactPackage(beadsAdapter))
+			policy.Tiers[index].AllowedExternalPrefixes = append(policy.Tiers[index].AllowedExternalPrefixes, "example.invalid/beads")
 		}
 	}
-	return root
-}
+	adapterGraph := architecture.Graph{
+		ModulePath: module,
+		Packages:   []architecture.Package{{ImportPath: module + "/internal/tracker"}, {ImportPath: beadsAdapter}},
+		Edges: []architecture.ImportEdge{
+			{SourcePackage: beadsAdapter, TargetPackage: module + "/internal/tracker", Kind: architecture.ImportModuleLocal},
+			{SourcePackage: beadsAdapter, TargetPackage: "example.invalid/beads", Kind: architecture.ImportExternal},
+		},
+	}
+	if err := policy.Check(adapterGraph); err != nil {
+		t.Fatalf("scenario=phase1-adapter-shape rejected=%v", err)
+	}
 
-func rejectPhase1Dependency(value string) error {
-	normalized := strings.ToLower(value)
-	for _, forbidden := range []string{"beads", "team-kitty", "teamkitty", "orchestrator-api", "orchestratorapi", "/api/", "/api", "/mcp", "mcp/", "python", "goldmark", "blackfriday", "gomarkdown", "net/http"} {
-		if strings.Contains(normalized, forbidden) {
-			return fmt.Errorf("forbidden dependency=%s matched=%s", value, forbidden)
+	kernelGraph := adapterGraph
+	kernelGraph.Packages = append(kernelGraph.Packages, architecture.Package{ImportPath: module + "/internal/execution"})
+	kernelGraph.Edges = append(kernelGraph.Edges, architecture.ImportEdge{SourcePackage: module + "/internal/execution", TargetPackage: beadsAdapter, Kind: architecture.ImportModuleLocal})
+	if err := policy.Check(kernelGraph); err == nil || !strings.Contains(err.Error(), string(architecture.RuleLocalDirection)) || !strings.Contains(err.Error(), beadsAdapter) {
+		t.Fatalf("scenario=phase1-kernel-adapter-mutant observed=%v", err)
+	}
+
+	deferred := []architecture.Graph{
+		{ModulePath: module, Packages: []architecture.Package{{ImportPath: module + "/internal/api"}}},
+		{ModulePath: module, Packages: []architecture.Package{{ImportPath: module + "/internal/python"}}},
+		{ModulePath: module, Packages: []architecture.Package{{ImportPath: module + "/internal/markdown"}}},
+		{ModulePath: module, Packages: []architecture.Package{{ImportPath: module + "/internal/mcp"}}},
+		{ModulePath: module, Packages: []architecture.Package{{ImportPath: module + "/internal/team-kitty"}}},
+		{ModulePath: module, Packages: []architecture.Package{{ImportPath: module + "/internal/execution"}}, Edges: []architecture.ImportEdge{{SourcePackage: module + "/internal/execution", TargetPackage: "net/http", Kind: architecture.ImportStandardLibrary}}},
+	}
+	for _, mutant := range deferred {
+		if violations := policy.Evaluate(mutant); len(violations) != 1 || violations[0].Rule != architecture.RuleDeferredSurface {
+			t.Fatalf("scenario=phase1-deferred-surface-mutant graph=%+v violations=%+v", mutant, violations)
 		}
 	}
-	return nil
 }

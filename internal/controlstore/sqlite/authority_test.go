@@ -53,7 +53,7 @@ func TestClaimIsIdempotentAndFenced(t *testing.T) {
 		OperationID: ids.OperationID("operation-1"), ProjectID: seed.ProjectID,
 		MissionID: seed.MissionID, WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID,
 		ActorID: ids.ActorID("actor-1"), ProcessID: ids.ProcessID("process-1"),
-		Now: now, LeaseTTL: time.Minute,
+		Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, "context-1", now),
 	}
 	first, err := store.Claim(ctx, req, ids.RunID("run-1"), ids.LeaseID("lease-1"))
 	if err != nil {
@@ -136,14 +136,18 @@ func TestWriterContentionReturnsTypedBusyAfterBoundedWait(t *testing.T) {
 	started := time.Now()
 	_, err = second.Claim(ctx, execution.StartRequest{
 		OperationID: "operation-busy", ProjectID: seed.ProjectID, MissionID: seed.MissionID, WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID,
-		ActorID: "actor-busy", ProcessID: "process-busy", Now: time.Now().UTC(), LeaseTTL: time.Minute,
+		ActorID: "actor-busy", ProcessID: "process-busy", Now: time.Now().UTC(), LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, "context-busy", time.Now().UTC()),
 	}, "run-busy", "lease-busy")
 	elapsed := time.Since(started)
-	if !execution.IsKind(err, execution.KindControlStoreBusy) {
-		t.Fatalf("busy error = %v", err)
+	var diagnostic *execution.DiagnosticError
+	if !errors.As(err, &diagnostic) || diagnostic.Kind != execution.KindControlStoreBusy {
+		t.Fatalf("busy diagnostic = %#v", err)
 	}
-	if elapsed < 3500*time.Millisecond || elapsed > 7*time.Second {
-		t.Fatalf("busy wait = %s, want bounded near 5s", elapsed)
+	if diagnostic.RetrySafety != execution.RetrySafeSameOperation || len(diagnostic.RecoveryActions) == 0 || diagnostic.ObservedState["control_store"] != "busy" || diagnostic.ExpectedState["control_store"] != "writable" {
+		t.Fatalf("busy retry diagnostic = %+v", diagnostic)
+	}
+	if elapsed > 7*time.Second {
+		t.Fatalf("busy wait = %s, want no more than 7s", elapsed)
 	}
 }
 
@@ -158,7 +162,7 @@ func TestHeartbeatAndExpiryRequireCurrentGenerationAndToken(t *testing.T) {
 	seed := Seed{ProjectID: ids.ProjectID("project-fence"), MissionID: ids.MissionID("mission-fence"), WorkRevisionID: ids.WorkRevisionID("revision-fence"), WorkID: ids.WorkID("work-fence")}
 	seedCanonicalAuthority(t, ctx, store, seed)
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
-	req := execution.StartRequest{OperationID: ids.OperationID("operation-fence"), ProjectID: seed.ProjectID, MissionID: seed.MissionID, WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID, ActorID: ids.ActorID("actor-fence"), ProcessID: ids.ProcessID("process-fence"), Now: now, LeaseTTL: time.Minute}
+	req := execution.StartRequest{OperationID: ids.OperationID("operation-fence"), ProjectID: seed.ProjectID, MissionID: seed.MissionID, WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID, ActorID: ids.ActorID("actor-fence"), ProcessID: ids.ProcessID("process-fence"), Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, "context-fence", now)}
 	capsule, err := store.Claim(ctx, req, ids.RunID("run-fence"), ids.LeaseID("lease-fence"))
 	if err != nil {
 		t.Fatalf("claim: %v", err)
@@ -217,7 +221,7 @@ func TestProcessIdentityCannotMoveBetweenActors(t *testing.T) {
 	secondSeed.WorkID = ids.WorkID("work-process-2")
 	seedCanonicalAuthority(t, ctx, store, firstSeed, secondSeed)
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
-	first := execution.StartRequest{OperationID: ids.OperationID("operation-process-1"), ProjectID: firstSeed.ProjectID, MissionID: firstSeed.MissionID, WorkRevisionID: firstSeed.WorkRevisionID, WorkID: firstSeed.WorkID, ActorID: ids.ActorID("actor-process-1"), ProcessID: ids.ProcessID("process-stable"), Now: now, LeaseTTL: time.Minute}
+	first := execution.StartRequest{OperationID: ids.OperationID("operation-process-1"), ProjectID: firstSeed.ProjectID, MissionID: firstSeed.MissionID, WorkRevisionID: firstSeed.WorkRevisionID, WorkID: firstSeed.WorkID, ActorID: ids.ActorID("actor-process-1"), ProcessID: ids.ProcessID("process-stable"), Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, "context-process", now)}
 	if _, err := store.Claim(ctx, first, ids.RunID("run-process-1"), ids.LeaseID("lease-process-1")); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
@@ -240,7 +244,8 @@ func TestClaimRejectsWorkRevisionFromAnotherScope(t *testing.T) {
 	defer store.Close()
 	seed := Seed{ProjectID: ids.ProjectID("project-owner"), MissionID: ids.MissionID("mission-owner"), WorkRevisionID: ids.WorkRevisionID("revision-owner"), WorkID: ids.WorkID("work-owner")}
 	seedCanonicalAuthority(t, ctx, store, seed)
-	request := execution.StartRequest{OperationID: ids.OperationID("operation-scope"), ProjectID: ids.ProjectID("project-other"), MissionID: ids.MissionID("mission-other"), WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID, ActorID: ids.ActorID("actor-scope"), ProcessID: ids.ProcessID("process-scope"), Now: time.Now().UTC(), LeaseTTL: time.Minute}
+	now := time.Now().UTC()
+	request := execution.StartRequest{OperationID: ids.OperationID("operation-scope"), ProjectID: ids.ProjectID("project-other"), MissionID: ids.MissionID("mission-other"), WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID, ActorID: ids.ActorID("actor-scope"), ProcessID: ids.ProcessID("process-scope"), Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, "context-scope", now)}
 	_, err = store.Claim(ctx, request, ids.RunID("run-scope"), ids.LeaseID("lease-scope"))
 	var diagnostic *execution.DiagnosticError
 	if !errors.As(err, &diagnostic) || diagnostic.Kind != execution.KindInvalidCommand || diagnostic.ObservedState["project_id"] != seed.ProjectID.String() || diagnostic.ExpectedState["project_id"] != request.ProjectID.String() {
@@ -278,7 +283,8 @@ func TestBearerTokenIsNeverPersisted(t *testing.T) {
 	}
 	seed := Seed{ProjectID: ids.ProjectID("project-token"), MissionID: ids.MissionID("mission-token"), WorkRevisionID: ids.WorkRevisionID("revision-token"), WorkID: ids.WorkID("work-token")}
 	seedCanonicalAuthority(t, ctx, store, seed)
-	request := execution.StartRequest{OperationID: ids.OperationID("operation-token"), ProjectID: seed.ProjectID, MissionID: seed.MissionID, WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID, ActorID: ids.ActorID("actor-token"), ProcessID: ids.ProcessID("process-token"), Now: time.Now().UTC(), LeaseTTL: time.Minute}
+	now := time.Now().UTC()
+	request := execution.StartRequest{OperationID: ids.OperationID("operation-token"), ProjectID: seed.ProjectID, MissionID: seed.MissionID, WorkRevisionID: seed.WorkRevisionID, WorkID: seed.WorkID, ActorID: ids.ActorID("actor-token"), ProcessID: ids.ProcessID("process-token"), Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, "context-token", now)}
 	capsule, err := store.Claim(ctx, request, ids.RunID("run-token"), ids.LeaseID("lease-token"))
 	if err != nil {
 		t.Fatal(err)
