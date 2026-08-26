@@ -12,8 +12,8 @@ Scope: behavior and product semantics, not Python package parity
 Closeout correction: Phase 1 implements no review-independence waiver or
 general acceptance bypass. The completed proving-ground mission's contrary
 acceptance wording is preserved as history and corrected by
-[`PHASE1_ACCEPTANCE_ERRATA.md`](PHASE1_ACCEPTANCE_ERRATA.md). References below
-to policy exceptions describe a possible future governed capability, not a
+[`PHASE1_ACCEPTANCE_ERRATA.md`](PHASE1_ACCEPTANCE_ERRATA.md). Any future
+exception would be a separately specified and ratified capability, not a
 shipped Phase 1 path.
 
 ## 1. Decision
@@ -180,7 +180,7 @@ merging runtime state through Git.
 | R-01 | Review operates on a submitted implementation candidate, not a live mutable directory. | **Strengthen** | A handoff pins candidate commit, run, revision, criteria, and evidence. | Current review artifacts plus known shared-write races. |
 | R-02 | Review is a separately recorded lifecycle with approve/reject evidence. | **Exact** | First-class `ReviewID`, actor, process, candidate, verdict, rationale, and criterion results. | WP FSM structured `ReviewResult`. |
 | R-03 | Rejection returns work through an explicit rework attempt and retains prior evidence. | **Exact** | Append a new attempt/review cycle; never overwrite the rejected verdict. | Review transition guards and cycle tests. |
-| R-04 | An implementation must not satisfy a gate through self-approval. | **Strengthen** | Reviewer `ActorID` differs from all candidate contributor actors by default; same actor/different process is not independent. | Current intent, open issue #3445, Mini review. |
+| R-04 | An implementation must not satisfy a gate through self-approval. | **Strengthen** | Reviewer `ActorID` differs from all candidate contributor actors; same actor/different process is not independent, and Phase 1 has no waiver. | Current intent, open issue #3445, Mini review. |
 | R-05 | Review evidence must not vanish during concurrent writers or Git index races. | **Strengthen** | Store evidence transactionally in the control DB; if large artifacts use content-addressed blobs referenced by the transaction. | Open issue #3235. |
 | R-06 | A verdict applies only to the candidate commit, criteria, and WorkRevision it reviewed. | **Strengthen** | Candidate movement or graph drift makes a verdict stale and ineligible for acceptance. | Current artifact consistency gates; WorkRevision requirement. |
 | R-07 | Phase 1 review independence fails closed and has no waiver mechanism. | **Strengthen** | Reject every same-actor review regardless of ProcessID. A future exception would require a separately approved policy, typed authority, visible evidence, and new acceptance criteria; no bypass exists today. | Current gate behavior and `PHASE1_ACCEPTANCE_ERRATA.md`. |

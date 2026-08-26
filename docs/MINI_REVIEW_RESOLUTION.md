@@ -65,9 +65,10 @@ does not authorize the action.
 Accepted.
 
 A different process belonging to the same actor is not independent review.
-Default policy requires the review ActorID to differ from implementation
-ActorIDs. Explicit same-actor waivers are visible and cannot satisfy a gate that
-requires independent review.
+Phase 1 requires the review ActorID to differ from every candidate contributor
+ActorID and implements no waiver or bypass. The earlier review discussion's
+possible exception is therefore not current policy; any future exception would
+need a separately specified and ratified feature.
 
 ### Medium-high: compensation must compare before undoing
 

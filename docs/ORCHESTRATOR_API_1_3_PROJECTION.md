@@ -1,7 +1,9 @@
 # Orchestrator API 1.3 projection
 
-Status: compatibility design record; transport implementation deferred  
-Target: `CONTRACT_VERSION = "1.3.0"`  
+Status: compatibility design record; transport implementation deferred
+
+Target: `CONTRACT_VERSION = "1.3.0"`
+
 Revalidated: 2026-08-25
 
 ## Purpose and evidence basis
@@ -81,12 +83,12 @@ change. No canonical command is blocked.
 
 | API 1.3 command | Kernel source | Class | Projection and remaining gap |
 |---|---|---|---|
-| `contract-version` | adapter composition metadata | Direct | Return 1.3 compatibility, runtime version, and supported actions. It owns no domain authority. |
+| `contract-version` | adapter composition metadata | Direct | Return exactly `api_version` and `min_supported_provider_version`. Runtime version and required/supported actions are consumer-local negotiation inputs, not fields in this strict wire payload. It owns no domain authority. |
 | `mission-state` | `WorkRevision`, work consequences, run/handoff/review/integration records | Deferred | The facts are projectable, but the Phase 1 kernel intentionally has no mission aggregate or canonical lane-state projection. |
 | `list-ready` | finalized `workgraph` dependencies and revision identity | Translated | Compute readiness only from the pinned graph plus authoritative outcomes. Mission-level response assembly remains adapter/application work. |
 | `resolve-workspace` | `workspace.Record` and inspection | Translated | Resolve an existing lease-owned workspace by authoritative IDs. Absence is read-only and must not allocate or reuse a directory. |
 | `start-implementation` | `execution.StartSaga`, `RunCapsule`, fresh workspace preparation, tracker saga | Translated | Map actor/policy/request identity to a start operation and return the lease-scoped capsule. Legacy lane wording is presentation only. |
-| `start-review` | handoff lookup plus `review.Service` policy checks | Translated | Bind review to the immutable candidate and enforce actor-level independence before returning review context. A full mission lane projection is deferred. |
+| `start-review` | future review-claim application capability plus current `review.Service` verdict checks | Partial / deferred | Candidate-bound verdict validation and actor-level independence exist, but Phase 1 has no review claim/start lifecycle that can return canonical review context. That lifecycle and the mission lane projection remain deferred. |
 | `transition` | typed handoff, review, reconciliation, expiration, and integration commands | Partial | Expose only named, legal application commands. Never implement a generic arbitrary lane mutation. Structured review results map to candidate-bound verdict input. |
 | `append-history` | future event/projection journal | Deferred | Phase 1 records typed authority events but has no canonical human activity-log append capability. Markdown must not become authority. |
 | `accept-mission` | approved candidate records plus future mission acceptance aggregate | Deferred | Candidate approval exists; mission-wide criteria evaluation and acceptance record are later application capabilities. |
@@ -195,6 +197,7 @@ idempotency identity. They may not:
 | human history projection | event/projection capability | None if kept non-authoritative. |
 | mission-wide acceptance | acceptance capability | Must consume pinned graph and candidate evidence. |
 | mission-wide integration ordering | integration application layer | Must retain repository/target-ref serialization. |
+| review claim/start lifecycle | review application capability | Must bind a reviewer to an immutable candidate before projecting canonical review context. |
 | transport and bounded process invocation | external adapter | Must remain outside kernel packages. |
 
 Verdict: every API 1.3 command has an explicit projection classification, and

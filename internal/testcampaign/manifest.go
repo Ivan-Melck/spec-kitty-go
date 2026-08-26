@@ -31,6 +31,8 @@ var profiles = map[string]Profile{
 		Name:    "architecture",
 		Package: "./internal/architecture",
 		ExpectedTests: []string{
+			"TestCloseoutBinaryAndReviewPolicyDocumentation",
+			"TestCloseoutOrchestratorAPI13ProjectionContract",
 			"TestCurrentProductionGraphPassesClosedPolicy",
 			"TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority",
 			"TestDefaultPolicyRejectsAuthorityImportOfGitAdapter",

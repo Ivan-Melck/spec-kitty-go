@@ -1,7 +1,9 @@
 # Phase 1 acceptance erratum: no waiver exists
 
-Status: living correction  
-Applies to: Phase 1 authority proving-ground acceptance language  
+Status: living correction
+
+Applies to: Phase 1 authority proving-ground acceptance language
+
 Correction date: 2026-08-25
 
 ## Correction
@@ -25,21 +27,19 @@ record of the mission as accepted, so this closeout does not rewrite it.
 The final phrase was aspirational and is superseded for current-product claims
 by this erratum. It must not be interpreted as evidence that a waiver exists.
 
-Other architecture-era references to a possible visible waiver in
-`TECHNICAL_PROJECT_PLAN.md`, `CONCURRENCY_SCENARIOS.md`, and
-`MINI_REVIEW_RESOLUTION.md` likewise describe a future policy design. They do
-not describe an implemented Phase 1 behavior. The behavioral inventory and
-README are the living product-status surfaces and point here so that the
-historical design discussion remains readable without becoming false runtime
-documentation.
+The living architecture references in `TECHNICAL_PROJECT_PLAN.md`,
+`CONCURRENCY_SCENARIOS.md`, `MINI_REVIEW_RESOLUTION.md`, the behavioral
+inventory, and README now state the unconditional Phase 1 rule. This erratum
+keeps the immutable mission wording readable without allowing it to become a
+false runtime promise.
 
 ## Operational consequence
 
 - Operators cannot override actor-level review independence in Phase 1.
 - Agents and integrations must treat a same-actor refusal as final for that
   reviewer and use a distinct reviewing actor.
-- Documentation that discusses visible waivers describes a future policy
-  design only; it does not authorize a current exception.
+- A future exception can be discussed only as a separately specified and
+  ratified feature; such discussion does not authorize a current exception.
 - No general `force`, hidden configuration, or undocumented recovery path may
   be used to evade this gate.
 
