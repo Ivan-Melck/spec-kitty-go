@@ -27,6 +27,9 @@
       "last_event_id": "01M11XHZVJ13PN3EWMF6HSVNCV",
       "last_transition_at": "2026-08-27T15:31:29.778804+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: permanent Phase 3 tier, direction, deferred-surface, Markdown-authority, reachability, and mutant guards; focused, repeated, race, compile, vet, staticcheck, module, formatting, and hygiene checks pass."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
