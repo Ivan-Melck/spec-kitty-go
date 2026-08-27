@@ -131,7 +131,8 @@
       "last_transition_at": "2026-08-27T22:48:49.018986+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: provider-neutral work definitions, durable fake saga semantics, exact approved-plan decomposition gate, typed quality/coverage/ownership/dependency validation, provider-free workgraph observation, and post-lane graph seam; focused, repeated, race, compatibility, static, and clean architecture campaign pass."
+        "Ready for review: provider-neutral work definitions, durable fake saga semantics, exact approved-plan decomposition gate, typed quality/coverage/ownership/dependency validation, provider-free workgraph observation, and post-lane graph seam; focused, repeated, race, compatibility, static, and clean architecture campaign pass.",
+        "Ready for cycle-2 review: closed FR-010 findings, canonical bounded lane diagnostics, provider attribution and zero-call mapping preflight, and load-bearing exact workgraph-to-tracker architecture denial; full WP04 gates pass"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
