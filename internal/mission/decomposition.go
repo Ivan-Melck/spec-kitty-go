@@ -1,6 +1,7 @@
 package mission
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -61,6 +62,7 @@ type WorkProposal struct {
 type DecompositionCommand struct {
 	MissionID           ids.MissionID
 	ProjectID           ids.ProjectID
+	Provider            string
 	ExpectedMission     MissionSnapshot
 	PlanRevisionID      string
 	PlanContentDigest   string
@@ -165,7 +167,14 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 		} else {
 			mutation, err = service.provider.UpdateDefinition(ctx, tracker.UpdateWorkDefinitionRequest{OperationID: operationID, ExternalRef: *proposal.Existing, ExpectedObservation: proposal.ExpectedObservation, Definition: proposal.Definition})
 		}
-		if mutation.Observation.ProviderObservation().Revision != 0 {
+		hasObservation := mutation.Observation.ProviderObservation().Revision != 0
+		if hasObservation {
+			if attributionErr := validateMutationAttribution(command.Provider, proposal, operationID, mutation.Observation); attributionErr != nil {
+				result.FailedWorkID = proposal.Definition.WorkID()
+				result.Status = DecompositionAmbiguous
+				result.Recovery = DecompositionObserveThenReconcile
+				return result, decompositionError(DecompositionProviderFailure, result.Recovery, "provider_attribution", "provider result cannot be attributed to the requested work mutation", attributionErr)
+			}
 			result.Observations = append(result.Observations, mutation.Observation)
 		}
 		result.Replayed = result.Replayed && mutation.Replayed
@@ -174,12 +183,24 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 			result.Status, result.Recovery = classifyProviderOutcome(err, len(result.Observations))
 			return result, decompositionError(DecompositionProviderFailure, result.Recovery, "provider_mutation", "provider mutation did not produce an unambiguous complete decomposition", err)
 		}
+		if !hasObservation {
+			result.FailedWorkID = proposal.Definition.WorkID()
+			result.Status = DecompositionAmbiguous
+			result.Recovery = DecompositionObserveThenReconcile
+			return result, decompositionError(DecompositionProviderFailure, result.Recovery, "provider_attribution", "provider reported success without an attributable observation", nil)
+		}
 		observed, observeErr := service.provider.ObserveDefinition(ctx, mutation.Observation.ExternalRef())
 		if observeErr != nil {
 			result.FailedWorkID = proposal.Definition.WorkID()
 			result.Status = DecompositionAmbiguous
 			result.Recovery = DecompositionObserveThenReconcile
 			return result, decompositionError(DecompositionProviderFailure, result.Recovery, "provider_observation", "applied work definition cannot be re-observed", observeErr)
+		}
+		if attributionErr := validateReobservationAttribution(command.Provider, proposal, operationID, mutation.Observation, observed); attributionErr != nil {
+			result.FailedWorkID = proposal.Definition.WorkID()
+			result.Status = DecompositionAmbiguous
+			result.Recovery = DecompositionObserveThenReconcile
+			return result, decompositionError(DecompositionProviderFailure, result.Recovery, "provider_attribution", "provider re-observation does not match the requested work mutation", attributionErr)
 		}
 		result.Observations[len(result.Observations)-1] = observed
 	}
@@ -212,6 +233,9 @@ func validateDecompositionCommand(command DecompositionCommand) error {
 	if _, err := ids.ParseProjectID(command.ProjectID.String()); err != nil {
 		return decompositionError(DecompositionInvalidRequest, DecompositionCorrectInput, "project_id", "project identity is invalid", err)
 	}
+	if !stableProviderIdentity(command.Provider) {
+		return decompositionError(DecompositionInvalidRequest, DecompositionCorrectInput, "provider", "provider identity must be bounded and stable", nil)
+	}
 	if command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID {
 		return decompositionError(DecompositionInvalidRequest, DecompositionCorrectInput, "expected_mission", "expected mission snapshot is invalid", nil)
 	}
@@ -237,8 +261,16 @@ func validateDecompositionCommand(command DecompositionCommand) error {
 			return decompositionError(DecompositionInvalidRequest, DecompositionCorrectInput, "work", "work identities must be unique and scoped to the project", nil)
 		}
 		seen[definition.WorkID()] = true
-		if proposal.Existing != nil && (proposal.Existing.Validate() != nil || proposal.ExpectedObservation == 0) {
-			return decompositionError(DecompositionInvalidRequest, DecompositionCorrectInput, "existing_work", "updates require a valid mapping and expected observation", nil)
+		if proposal.Existing == nil {
+			if proposal.ExpectedObservation != 0 {
+				return decompositionError(DecompositionInvalidRequest, DecompositionCorrectInput, "existing_work", "creates cannot carry an update observation", nil)
+			}
+			continue
+		}
+		existing := *proposal.Existing
+		_, operationErr := ids.ParseOperationID(existing.CreatedByOperation.String())
+		if existing.Validate() != nil || operationErr != nil || proposal.ExpectedObservation == 0 || existing.LastObservation != proposal.ExpectedObservation || existing.ProjectID != command.ProjectID || existing.ProjectID != definition.ProjectID() || existing.WorkID != definition.WorkID() || existing.Provider != command.Provider || existing.MetadataSchema != definition.MetadataSchema() {
+			return decompositionError(DecompositionInvalidRequest, DecompositionCorrectInput, "existing_work", "update mapping, definition, provider, and expected observation must agree", nil)
 		}
 	}
 	return nil
@@ -265,7 +297,11 @@ func semanticWorkObservations(definitions []tracker.WorkDefinition) ([]workgraph
 	for _, definition := range definitions {
 		criteria := make([]workgraph.CriterionObservation, len(definition.Criteria()))
 		for index, criterion := range definition.Criteria() {
-			criteria[index] = workgraph.CriterionObservation{ID: criterion.ID, Text: criterion.Text, Outcome: criterion.Outcome, Verifier: criterion.Verifier.String(), Required: criterion.Required}
+			requirement := workgraph.CriterionOptional
+			if criterion.Required {
+				requirement = workgraph.CriterionRequired
+			}
+			criteria[index] = workgraph.CriterionObservation{ID: criterion.ID, Text: criterion.Text, Outcome: criterion.Outcome, Verifier: criterion.Verifier.String(), Requirement: requirement}
 		}
 		scopes := make([]workgraph.WriteScopeObservation, len(definition.WriteScopes()))
 		for index, scope := range definition.WriteScopes() {
@@ -283,6 +319,61 @@ func semanticWorkObservations(definitions []tracker.WorkDefinition) ([]workgraph
 	}
 	return result, nil
 }
+
+func validateMutationAttribution(provider string, proposal WorkProposal, operationID ids.OperationID, observation tracker.WorkDefinitionObservation) error {
+	definition := observation.Definition()
+	reference := observation.ExternalRef()
+	providerObservation := observation.ProviderObservation()
+	if providerObservation.Revision == 0 || observation.ObservedAt().IsZero() || reference.Validate() != nil {
+		return fmt.Errorf("incomplete provider observation")
+	}
+	if reference.ProjectID != proposal.Definition.ProjectID() || reference.WorkID != proposal.Definition.WorkID() || reference.Provider != provider || reference.MetadataSchema != proposal.Definition.MetadataSchema() {
+		return fmt.Errorf("provider mapping disagrees with requested identity")
+	}
+	if !bytes.Equal(definition.CanonicalData(), proposal.Definition.CanonicalData()) {
+		return fmt.Errorf("provider content disagrees with requested definition")
+	}
+	if proposal.Existing == nil {
+		if reference.CreatedByOperation != operationID {
+			return fmt.Errorf("provider creation operation attribution disagrees")
+		}
+		return nil
+	}
+	existing := *proposal.Existing
+	if reference.ProjectID != existing.ProjectID || reference.WorkID != existing.WorkID || reference.Provider != existing.Provider || reference.ExternalID != existing.ExternalID || reference.MetadataSchema != existing.MetadataSchema || reference.CreatedByOperation != existing.CreatedByOperation {
+		return fmt.Errorf("provider update mapping attribution changed")
+	}
+	return nil
+}
+
+func validateReobservationAttribution(provider string, proposal WorkProposal, operationID ids.OperationID, mutation, observed tracker.WorkDefinitionObservation) error {
+	if err := validateMutationAttribution(provider, proposal, operationID, observed); err != nil {
+		return err
+	}
+	mutationReference := mutation.ExternalRef()
+	observedReference := observed.ExternalRef()
+	if mutationReference != observedReference {
+		return fmt.Errorf("provider re-observation mapping changed")
+	}
+	if !bytes.Equal(mutation.Definition().CanonicalData(), observed.Definition().CanonicalData()) {
+		return fmt.Errorf("provider re-observation content changed")
+	}
+	return nil
+}
+
+func stableProviderIdentity(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_' || character == '.' || character == ':' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func decompositionRequestDigest(command DecompositionCommand) string {
 	type semanticProposal struct {
 		Definition json.RawMessage          `json:"definition"`
@@ -299,6 +390,7 @@ func decompositionRequestDigest(command DecompositionCommand) string {
 	encoded, _ := json.Marshal(struct {
 		MissionID            ids.MissionID             `json:"mission_id"`
 		ProjectID            ids.ProjectID             `json:"project_id"`
+		Provider             string                    `json:"provider"`
 		DefinitionID         ids.MissionDefinitionID   `json:"definition_id"`
 		DefinitionVersion    DefinitionVersion         `json:"definition_version"`
 		DefinitionCommitment DefinitionCommitment      `json:"definition_commitment"`
@@ -311,7 +403,7 @@ func decompositionRequestDigest(command DecompositionCommand) string {
 		Scope                []workgraph.ApprovedScope `json:"scope"`
 		Work                 []semanticProposal        `json:"work"`
 	}{
-		MissionID: command.MissionID, ProjectID: command.ProjectID,
+		MissionID: command.MissionID, ProjectID: command.ProjectID, Provider: command.Provider,
 		DefinitionID: command.ExpectedMission.DefinitionID, DefinitionVersion: command.ExpectedMission.DefinitionVersion,
 		DefinitionCommitment: command.ExpectedMission.DefinitionCommitment, CurrentStep: command.ExpectedMission.CurrentStep,
 		StateVersion: command.ExpectedMission.StateVersion, PlanRevisionID: command.PlanRevisionID, PlanDigest: command.PlanContentDigest,
