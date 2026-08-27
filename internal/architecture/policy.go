@@ -102,6 +102,7 @@ type Tier struct {
 type ForbiddenLocalDirection struct {
 	Sources     []PackagePattern
 	TargetTiers []TierName
+	Targets     []PackagePattern
 }
 
 // Policy is a closed classification and dependency-direction policy.
@@ -261,6 +262,10 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				},
 				TargetTiers: []TierName{TierArtifactAuthority, TierMissionAuthority},
 			},
+			{
+				Sources: []PackagePattern{pkg("internal/workgraph")},
+				Targets: []PackagePattern{pkg("internal/tracker")},
+			},
 		},
 		ForbiddenPackages: []PackagePattern{
 			PackagePrefix(modulePath + "/cmd/api"),
@@ -335,8 +340,8 @@ func (p Policy) Validate() error {
 		}
 	}
 	for _, direction := range p.ForbiddenLocalDirections {
-		if len(direction.Sources) == 0 || len(direction.TargetTiers) == 0 {
-			return fmt.Errorf("forbidden local direction requires sources and target tiers")
+		if len(direction.Sources) == 0 || (len(direction.TargetTiers) == 0 && len(direction.Targets) == 0) {
+			return fmt.Errorf("forbidden local direction requires sources and targets")
 		}
 		for _, source := range direction.Sources {
 			if err := source.validate(); err != nil {
@@ -349,6 +354,14 @@ func (p Policy) Validate() error {
 		for _, target := range direction.TargetTiers {
 			if !names[target] {
 				return fmt.Errorf("forbidden local direction names unknown target tier %q", target)
+			}
+		}
+		for _, target := range direction.Targets {
+			if err := target.validate(); err != nil {
+				return fmt.Errorf("forbidden local direction target: %w", err)
+			}
+			if !withinModule(p.ModulePath, target.Path) {
+				return fmt.Errorf("forbidden local direction target %q is outside module %q", target.Path, p.ModulePath)
 			}
 		}
 	}
@@ -439,7 +452,7 @@ func (p Policy) Evaluate(graph Graph) Violations {
 			if !targetOK {
 				continue
 			}
-			if p.forbidsLocalDirection(edge.SourcePackage, target.Name) || !containsTier(source.AllowedLocalTargets, target.Name) {
+			if p.forbidsLocalDirection(edge.SourcePackage, edge.TargetPackage, target.Name) || !containsTier(source.AllowedLocalTargets, target.Name) {
 				violations = append(violations, violationForEdge(RuleLocalDirection, edge, source.Name, target.Name))
 			}
 		}
@@ -457,9 +470,9 @@ func (p Policy) Evaluate(graph Graph) Violations {
 	return violations
 }
 
-func (p Policy) forbidsLocalDirection(sourcePackage string, targetTier TierName) bool {
+func (p Policy) forbidsLocalDirection(sourcePackage, targetPackage string, targetTier TierName) bool {
 	for _, direction := range p.ForbiddenLocalDirections {
-		if !containsTier(direction.TargetTiers, targetTier) {
+		if !containsTier(direction.TargetTiers, targetTier) && !forbidden(targetPackage, direction.Targets) {
 			continue
 		}
 		for _, source := range direction.Sources {
