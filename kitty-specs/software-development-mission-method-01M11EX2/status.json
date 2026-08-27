@@ -61,7 +61,8 @@
       "last_transition_at": "2026-08-27T17:13:25.070476+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: static exact-version mission definition, typed lifecycle authority, pure gated CAS transitions, idempotent atomic store port, and exhaustive deterministic/race-safe tests"
+        "Ready for review: static exact-version mission definition, typed lifecycle authority, pure gated CAS transitions, idempotent atomic store port, and exhaustive deterministic/race-safe tests",
+        "Cycle 2 ready: exact mission-store semantic postconditions and replay re-evaluation, bounded canonical diagnostics, exhaustive static-law/FR-028 audit census, canonical reconciliation naming; focused repeat/race, contract/static, scope/architecture, compile, vet/staticcheck, module, formatting, and diff gates pass. Product commits e1c71e1 and 20c0eff are confined to the seven WP02-owned paths; inherited dependency/runtime history is separately attributable."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
