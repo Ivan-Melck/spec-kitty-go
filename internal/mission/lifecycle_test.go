@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/artifact"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
@@ -582,7 +583,10 @@ func TestServiceCreateReplayConflictTransitionRaceAndStoreFailure(t *testing.T) 
 		t.Fatalf("altered transition replay err=%v", err)
 	}
 	laterRequest := requestFor(t, definition, storedBeforeFailure, mission.StepSpecificationApproved, "later-transition")
-	later, err := service.Transition(context.Background(), laterRequest)
+	laterRequest.Evidence = withoutApprovalEvidence(laterRequest.Evidence)
+	approvalSource := freshArtifactApprovalSource(t, laterRequest.MissionID, artifact.KindSpecification, "later-transition")
+	laterService := mission.NewServiceWithArtifactApprovals(registry, store, approvalSource)
+	later, err := laterService.Transition(context.Background(), laterRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,6 +608,121 @@ func TestServiceCreateReplayConflictTransitionRaceAndStoreFailure(t *testing.T) 
 	store.mu.Unlock()
 	if !reflect.DeepEqual(later.Instance, storedAfterFailure) {
 		t.Fatal("failed commit changed authoritative state")
+	}
+}
+
+func TestServiceDerivesOnlyExactArtifactApprovalEvidence(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name         string
+		current      mission.StepKey
+		successor    mission.StepKey
+		artifactKind artifact.Kind
+	}{
+		{name: "specification", current: mission.StepSpecifying, successor: mission.StepSpecificationApproved, artifactKind: artifact.KindSpecification},
+		{name: "plan", current: mission.StepPlanning, successor: mission.StepPlanApproved, artifactKind: artifact.KindPlan},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			current := snapshotAt(t, definition, test.current, 7)
+			store := newMemoryStore()
+			store.snapshot = current
+			source := freshArtifactApprovalSource(t, current.MissionID, test.artifactKind, "exact-"+test.name)
+			service := mission.NewServiceWithArtifactApprovals(registry, store, source)
+			request := requestFor(t, definition, current, test.successor, "exact-"+test.name)
+			request.Evidence = withoutApprovalEvidence(request.Evidence)
+
+			result, err := service.Transition(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Instance.CurrentStep != test.successor || result.Audit.ApprovalEvidenceID.String() != source.approvals[0].ID() {
+				t.Fatalf("transition=%+v approval=%q", result, source.approvals[0].ID())
+			}
+			if source.currentCalls != 1 || source.approvalCalls != 1 {
+				t.Fatalf("artifact source calls current=%d approvals=%d", source.currentCalls, source.approvalCalls)
+			}
+			if source.currentMissionID != current.MissionID.String() || source.approvalMissionID != current.MissionID.String() ||
+				source.currentKind != test.artifactKind || source.approvalKind != test.artifactKind {
+				t.Fatalf("artifact source scope current=(%s,%s) approvals=(%s,%s)", source.currentMissionID, source.currentKind, source.approvalMissionID, source.approvalKind)
+			}
+			replay, err := service.Transition(context.Background(), request)
+			if err != nil || !replay.Replayed || replay.Audit != result.Audit {
+				t.Fatalf("replay=%+v err=%v", replay, err)
+			}
+			if source.currentCalls != 1 || source.approvalCalls != 1 {
+				t.Fatal("durable replay re-read mutable artifact authority")
+			}
+		})
+	}
+}
+
+func TestServiceRefusesMissingRejectedStaleAndForgedArtifactApprovals(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := snapshotAt(t, definition, mission.StepSpecifying, 9)
+	baseRequest := requestFor(t, definition, current, mission.StepSpecificationApproved, "artifact-refusal")
+	callerApproval := baseRequest.Evidence[len(baseRequest.Evidence)-1]
+	baseRequest.Evidence = withoutApprovalEvidence(baseRequest.Evidence)
+	fresh := freshArtifactApprovalSource(t, current.MissionID, artifact.KindSpecification, "refusal")
+	rejected := *fresh
+	rejected.approvals = []artifact.ArtifactApproval{mustArtifactApproval(t, "approval.rejected", rejected.revision.ID(), artifact.VerdictRejected)}
+	stale := *fresh
+	stale.approvals = []artifact.ArtifactApproval{mustArtifactApproval(t, "approval.stale", "artifact.historical", artifact.VerdictApproved)}
+	missingRevision := *fresh
+	missingRevision.currentError = &artifact.Error{Kind: artifact.ErrorNotFound, Field: "artifact_revision_id", Recovery: artifact.RecoveryProvideEvidence, Message: "artifact revision was not found"}
+	missingApproval := *fresh
+	missingApproval.approvals = nil
+	mismatched := *fresh
+	mismatched.revision = mustArtifactRevision(t, mustMissionID(t, "mission.another"), artifact.KindSpecification, "mismatched")
+
+	tests := []struct {
+		name      string
+		source    mission.ArtifactApprovalSource
+		mutate    func(*mission.TransitionRequest)
+		wantKind  mission.ErrorKind
+		wantField string
+	}{
+		{name: "source-absent", wantKind: mission.KindMissingEvidence, wantField: "artifact_approval"},
+		{name: "revision-missing", source: &missingRevision, wantKind: mission.KindMissingEvidence, wantField: "artifact_approval"},
+		{name: "approval-missing", source: &missingApproval, wantKind: mission.KindMissingEvidence, wantField: "artifact_approval"},
+		{name: "rejected", source: &rejected, wantKind: mission.KindApprovalStale, wantField: "artifact_approval"},
+		{name: "stale", source: &stale, wantKind: mission.KindApprovalStale, wantField: "artifact_approval"},
+		{name: "source-scope-mismatch", source: &mismatched, wantKind: mission.KindPersistenceContract, wantField: "artifact_approval"},
+		{name: "forged-caller-evidence", source: fresh, mutate: func(request *mission.TransitionRequest) {
+			request.Evidence = append(request.Evidence, callerApproval)
+		}, wantKind: mission.KindInvalidRequest, wantField: "evidence"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newMemoryStore()
+			store.snapshot = current
+			request := cloneRequest(baseRequest)
+			if test.mutate != nil {
+				test.mutate(&request)
+			}
+			service := mission.NewServiceWithArtifactApprovals(registry, store, test.source)
+			_, err := service.Transition(context.Background(), request)
+			var diagnostic *mission.Error
+			if !errors.As(err, &diagnostic) || diagnostic.Kind != test.wantKind || diagnostic.Field != test.wantField {
+				t.Fatalf("diagnostic=%+v rendered=%v", diagnostic, err)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if store.commitCalls != 0 {
+				t.Fatalf("refusal reached commit port %d times", store.commitCalls)
+			}
+		})
+	}
+	if fresh.currentCalls != 0 || fresh.approvalCalls != 0 {
+		t.Fatal("forged caller evidence reached artifact authority")
 	}
 }
 
@@ -825,6 +944,77 @@ func TestTransitionAuditExactCensusAndReplayPreservation(t *testing.T) {
 	if err != nil || !replay.Replayed || replay.Audit != want || !reflect.DeepEqual(replay.Instance, result.Instance) {
 		t.Fatalf("replay=%+v err=%v", replay, err)
 	}
+}
+
+type artifactApprovalSource struct {
+	revision          artifact.ArtifactRevision
+	approvals         []artifact.ArtifactApproval
+	currentError      error
+	approvalError     error
+	currentCalls      int
+	approvalCalls     int
+	currentMissionID  string
+	approvalMissionID string
+	currentKind       artifact.Kind
+	approvalKind      artifact.Kind
+}
+
+func (s *artifactApprovalSource) CurrentRevision(_ context.Context, missionID string, kind artifact.Kind) (artifact.ArtifactRevision, error) {
+	s.currentCalls++
+	s.currentMissionID = missionID
+	s.currentKind = kind
+	return s.revision, s.currentError
+}
+
+func (s *artifactApprovalSource) Approvals(_ context.Context, missionID string, kind artifact.Kind) ([]artifact.ArtifactApproval, error) {
+	s.approvalCalls++
+	s.approvalMissionID = missionID
+	s.approvalKind = kind
+	return append([]artifact.ArtifactApproval(nil), s.approvals...), s.approvalError
+}
+
+func freshArtifactApprovalSource(t *testing.T, missionID ids.MissionID, kind artifact.Kind, suffix string) *artifactApprovalSource {
+	t.Helper()
+	revision := mustArtifactRevision(t, missionID, kind, suffix)
+	return &artifactApprovalSource{
+		revision:  revision,
+		approvals: []artifact.ArtifactApproval{mustArtifactApproval(t, "approval."+suffix, revision.ID(), artifact.VerdictApproved)},
+	}
+}
+
+func mustArtifactRevision(t *testing.T, missionID ids.MissionID, kind artifact.Kind, suffix string) artifact.ArtifactRevision {
+	t.Helper()
+	revision, err := artifact.NewArtifactRevision(artifact.ArtifactRevisionParams{
+		ID: "artifact." + suffix, MissionID: missionID.String(), Kind: kind, RevisionNumber: 2,
+		ContentDigest: artifact.ContentCommitment([]byte("content-" + suffix)), SourceRef: "kitty-specs/" + suffix + ".md",
+		SourceRevision: "source." + suffix, CreatedBy: "actor.artifact", CreatedAt: fixtureTime(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision
+}
+
+func mustArtifactApproval(t *testing.T, id, revisionID string, verdict artifact.ApprovalVerdict) artifact.ArtifactApproval {
+	t.Helper()
+	approval, err := artifact.NewArtifactApproval(artifact.ArtifactApprovalParams{
+		ID: id, ArtifactRevisionID: revisionID, Verdict: verdict, ActorID: "actor.reviewer",
+		EvidenceDigest: strings.Repeat("a", 64), GovernanceContextID: "governance.review", SubmittedAt: fixtureTime(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return approval
+}
+
+func withoutApprovalEvidence(evidence []mission.EvidenceRef) []mission.EvidenceRef {
+	result := make([]mission.EvidenceRef, 0, len(evidence))
+	for _, item := range evidence {
+		if item.Kind != mission.EvidenceSpecificationOK && item.Kind != mission.EvidencePlanOK {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 type mutatingStore struct {

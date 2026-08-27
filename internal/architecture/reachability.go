@@ -54,6 +54,10 @@ func DefaultReachabilityTargets(modulePath string) []ReachabilityTarget {
 			RequiredCallerClass: CallerExternalPackage,
 		},
 		{
+			Package: modulePath + "/internal/artifact", Symbol: "EvaluateFreshness",
+			RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
+		},
+		{
 			Package: modulePath + "/internal/mission", Symbol: "NewDefinition",
 			RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
 		},
