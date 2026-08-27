@@ -7,6 +7,7 @@
   "mission_number": null,
   "mission_slug": "software-development-mission-method-01M11EX2",
   "mission_type": "software-dev",
+  "pr_bound": true,
   "purpose_context": "Phase 3 preserves Spec Kitty's larger mission methodology while replacing hand-maintained Markdown tasks with Beads-backed structured work. A human or agent must be able to specify, plan, decompose, finalize an immutable WorkRevision, detect later tracker drift, reconcile it explicitly, and advance through a typed next protocol without allowing tracker status to acquire mission or execution authority.",
   "purpose_tldr": "Run governed software-development missions from intent to finalized tracker work without a canonical Markdown task ledger.",
   "slug": "software-development-mission-method-01M11EX2",
