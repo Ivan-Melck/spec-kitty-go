@@ -62,7 +62,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: static exact-version mission definition, typed lifecycle authority, pure gated CAS transitions, idempotent atomic store port, and exhaustive deterministic/race-safe tests",
-        "Cycle 2 ready: exact mission-store semantic postconditions and replay re-evaluation, bounded canonical diagnostics, exhaustive static-law/FR-028 audit census, canonical reconciliation naming; focused repeat/race, contract/static, scope/architecture, compile, vet/staticcheck, module, formatting, and diff gates pass. Product commits e1c71e1 and 20c0eff are confined to the seven WP02-owned paths; inherited dependency/runtime history is separately attributable."
+        "Cycle 2 ready: exact mission-store semantic postconditions and replay re-evaluation, bounded canonical diagnostics, exhaustive static-law/FR-028 audit census, canonical reconciliation naming; focused repeat/race, contract/static, scope/architecture, compile, vet/staticcheck, module, formatting, and diff gates pass. Product commits e1c71e1 and 20c0eff are confined to the seven WP02-owned paths; inherited dependency/runtime history is separately attributable.",
+        "Cycle 3 ready at adb5229: graph diagnostics now bind exact closed step/rule and edge endpoints while invalid keys expose only bounded step indices; exported EvaluateTransition enforces exact ExpectedSnapshot CAS with direct one-sided mutants. Focused count=10, race, contract, architecture/scope, vet, staticcheck, compile-only, module, formatting, and diff gates pass. Diff-scoped ruff: no changed Python files, exit 0."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
