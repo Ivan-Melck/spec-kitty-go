@@ -1,7 +1,9 @@
 package workgraph_test
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -58,6 +60,42 @@ func TestValidationQualityCoverageOwnershipAndDependencyMutants(t *testing.T) {
 	}
 }
 
+func TestValidationEmitsClosedTypedFR010FindingsForRawProviderMutants(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*workgraph.WorkObservationParams)
+		kind   workgraph.FindingKind
+		field  string
+	}{
+		{"missing objective", func(p *workgraph.WorkObservationParams) { p.Title = "" }, workgraph.FindingMissingContext, "objective"},
+		{"missing description", func(p *workgraph.WorkObservationParams) { p.Description = "" }, workgraph.FindingMissingContext, "description"},
+		{"missing design context", func(p *workgraph.WorkObservationParams) { p.DesignContext = "" }, workgraph.FindingMissingContext, "design_context"},
+		{"missing criterion id", func(p *workgraph.WorkObservationParams) { p.Criteria[0].ID = "" }, workgraph.FindingMalformedCriterion, "criteria.id"},
+		{"missing criterion text", func(p *workgraph.WorkObservationParams) { p.Criteria[0].Text = "" }, workgraph.FindingMalformedCriterion, "criteria.text"},
+		{"missing criterion outcome", func(p *workgraph.WorkObservationParams) { p.Criteria[0].Outcome = "" }, workgraph.FindingMalformedCriterion, "criteria.outcome"},
+		{"invalid criterion verifier", func(p *workgraph.WorkObservationParams) { p.Criteria[0].Verifier = "shell_transcript" }, workgraph.FindingMalformedCriterion, "criteria.verifier"},
+		{"missing required meaning", func(p *workgraph.WorkObservationParams) { p.Criteria[0].Requirement = "" }, workgraph.FindingMalformedCriterion, "criteria.requirement"},
+		{"duplicate criterion", func(p *workgraph.WorkObservationParams) { p.Criteria = append(p.Criteria, p.Criteria[0]) }, workgraph.FindingMalformedCriterion, "criteria.id"},
+		{"absent write scope", func(p *workgraph.WorkObservationParams) { p.WriteScopes = nil }, workgraph.FindingInvalidBoundary, "write_scopes"},
+		{"invalid write scope", func(p *workgraph.WorkObservationParams) { p.WriteScopes[0].Path = "../outside" }, workgraph.FindingInvalidBoundary, "write_scopes.path"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			params := validRawObservationParams()
+			test.mutate(&params)
+			item, err := workgraph.NewWorkObservation(params)
+			if err != nil {
+				t.Fatalf("raw provider observation was rejected before typed validation: %v", err)
+			}
+			draft := rawDraft(t, item)
+			findings := workgraph.ValidateDraft(draft, workgraph.DefaultQualityPolicy())
+			if !hasExactFinding(findings, test.kind, test.field) {
+				t.Fatalf("findings=%+v want kind=%s field=%s", findings, test.kind, test.field)
+			}
+		})
+	}
+}
+
 func TestPostLaneValidationRejectsMembershipConstraintAndCycleMutants(t *testing.T) {
 	draft := validDraft(t, false)
 	tests := []struct {
@@ -78,6 +116,65 @@ func TestPostLaneValidationRejectsMembershipConstraintAndCycleMutants(t *testing
 				t.Fatalf("findings=%+v want=%s", findings, test.want)
 			}
 		})
+	}
+}
+
+func TestLaneDiagnosticsAreCanonicalAndBoundedAcrossPermutations(t *testing.T) {
+	draft := validDraft(t, false)
+	left := workgraph.LaneProjection{
+		Lanes: []workgraph.ProjectedLane{
+			{ID: "lane-a", Members: []ids.WorkID{"work-feature", "work-foundation"}},
+			{ID: "lane-b", Members: []ids.WorkID{"work-feature"}},
+		},
+		Edges: []workgraph.ProjectedLaneEdge{{BlockingLaneID: "lane-a", BlockedLaneID: "lane-b"}},
+	}
+	right := workgraph.LaneProjection{
+		Lanes: []workgraph.ProjectedLane{
+			{ID: "lane-b", Members: []ids.WorkID{"work-feature"}},
+			{ID: "lane-a", Members: []ids.WorkID{"work-foundation", "work-feature"}},
+		},
+		Edges: []workgraph.ProjectedLaneEdge{{BlockingLaneID: "lane-a", BlockedLaneID: "lane-b"}},
+	}
+	leftFindings := workgraph.ValidateLaneProjection(draft, left)
+	rightFindings := workgraph.ValidateLaneProjection(draft, right)
+	leftJSON, _ := json.Marshal(leftFindings)
+	rightJSON, _ := json.Marshal(rightFindings)
+	if !reflect.DeepEqual(leftJSON, rightJSON) {
+		t.Fatalf("equivalent projections changed diagnostics:\n%s\n%s", leftJSON, rightJSON)
+	}
+	if !hasFinding(leftFindings, workgraph.FindingDuplicateLaneMembership) {
+		t.Fatalf("duplicate membership finding missing: %+v", leftFindings)
+	}
+
+	secret := "foreign-provider-output-" + strings.Repeat("x", 6000)
+	malformed := workgraph.LaneProjection{
+		Lanes: []workgraph.ProjectedLane{{ID: secret, Members: []ids.WorkID{"work-foundation", "work-feature"}}},
+		Edges: []workgraph.ProjectedLaneEdge{{BlockingLaneID: secret, BlockedLaneID: "missing-lane"}},
+	}
+	findings := workgraph.ValidateLaneProjection(draft, malformed)
+	encoded, _ := json.Marshal(findings)
+	if strings.Contains(string(encoded), secret) {
+		t.Fatalf("untrusted lane/provider text leaked into findings")
+	}
+	for _, finding := range findings {
+		if len(finding.Field) > 160 || len(finding.Message) > 256 {
+			t.Fatalf("unbounded finding: %+v", finding)
+		}
+	}
+}
+
+func TestRawDependencyDiagnosticsDoNotEchoUnboundedProviderText(t *testing.T) {
+	secret := "foreign-provider-output-" + strings.Repeat("x", 6000)
+	params := validRawObservationParams()
+	params.Dependencies = []ids.WorkID{ids.WorkID(secret)}
+	item, err := workgraph.NewWorkObservation(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings := workgraph.ValidateDraft(rawDraft(t, item), workgraph.DefaultQualityPolicy())
+	encoded, _ := json.Marshal(findings)
+	if !hasFinding(findings, workgraph.FindingUnknownDependency) || strings.Contains(string(encoded), secret) {
+		t.Fatalf("dependency findings are missing or leaked provider text: %s", encoded)
 	}
 }
 
@@ -166,7 +263,11 @@ func observed(t *testing.T, f definitionFixture) workgraph.WorkObservation {
 	t.Helper()
 	criteria := make([]workgraph.CriterionObservation, len(f.Criteria))
 	for index, criterion := range f.Criteria {
-		criteria[index] = workgraph.CriterionObservation{ID: criterion.ID, Text: criterion.Text, Outcome: criterion.Outcome, Verifier: criterion.Verifier.String(), Required: criterion.Required}
+		requirement := workgraph.CriterionOptional
+		if criterion.Required {
+			requirement = workgraph.CriterionRequired
+		}
+		criteria[index] = workgraph.CriterionObservation{ID: criterion.ID, Text: criterion.Text, Outcome: criterion.Outcome, Verifier: criterion.Verifier.String(), Requirement: requirement}
 	}
 	scopes := make([]workgraph.WriteScopeObservation, len(f.WriteScopes))
 	for index, scope := range f.WriteScopes {
@@ -182,6 +283,24 @@ func observed(t *testing.T, f definitionFixture) workgraph.WorkObservation {
 	}
 	return result
 }
+
+func validRawObservationParams() workgraph.WorkObservationParams {
+	return workgraph.WorkObservationParams{
+		ProjectID: "project-kitty", WorkID: "work-raw", Title: "Deliver raw work", Description: "Deliver an independently understandable outcome.", DesignContext: "Provider data is validated before finalization.",
+		Criteria:    []workgraph.CriterionObservation{{ID: "criterion-result", Text: "Verify the result", Outcome: "the result is observable", Verifier: "test", Requirement: workgraph.CriterionRequired}},
+		WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/raw", Domain: "raw", Access: workgraph.ScopeWriteExclusive}},
+		Provenance:  []workgraph.ScopeReference{{ID: "plan-raw", Kind: workgraph.ScopePlanConcern}},
+	}
+}
+
+func rawDraft(t *testing.T, item workgraph.WorkObservation) workgraph.DraftObservation {
+	t.Helper()
+	draft, err := workgraph.NewDraftObservation("project-kitty", "mission-kitty", "plan-revision-1", strings.Repeat("a", 64), []workgraph.ApprovedScope{{ID: "plan-raw", Kind: workgraph.ScopePlanConcern, MissionID: "mission-kitty"}}, []workgraph.WorkObservation{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
+}
 func withoutScope(values []tracker.ScopeRef, id string) []tracker.ScopeRef {
 	result := []tracker.ScopeRef{}
 	for _, value := range values {
@@ -194,6 +313,15 @@ func withoutScope(values []tracker.ScopeRef, id string) []tracker.ScopeRef {
 func hasFinding(findings []workgraph.Finding, kind workgraph.FindingKind) bool {
 	for _, finding := range findings {
 		if finding.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func hasExactFinding(findings []workgraph.Finding, kind workgraph.FindingKind, field string) bool {
+	for _, finding := range findings {
+		if finding.Kind == kind && finding.Field == field {
 			return true
 		}
 	}

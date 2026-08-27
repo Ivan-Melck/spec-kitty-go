@@ -13,6 +13,9 @@ type FindingSeverity string
 type FindingRecovery string
 
 const (
+	FindingMissingContext          FindingKind = "missing_context"
+	FindingMalformedCriterion      FindingKind = "malformed_criterion"
+	FindingInvalidBoundary         FindingKind = "invalid_boundary"
 	FindingCriterionNotObservable  FindingKind = "criterion_not_observable"
 	FindingWorkOverBroad           FindingKind = "work_over_broad"
 	FindingUnrelatedOwnership      FindingKind = "unrelated_ownership"
@@ -79,17 +82,76 @@ func ValidateDraft(observation DraftObservation, policy QualityPolicy) []Finding
 		definition := item
 		workByID[definition.WorkID()] = definition
 		criteria, dependencies, scopes, provenance := definition.Criteria(), definition.Dependencies(), definition.WriteScopes(), definition.Provenance()
+		if !boundedText(definition.Title(), 160) {
+			findings = append(findings, finding(FindingMissingContext, definition.WorkID(), "objective", "work requires a bounded specific objective", RecoveryReviseWork))
+		}
+		if !boundedText(definition.Description(), 4096) {
+			findings = append(findings, finding(FindingMissingContext, definition.WorkID(), "description", "work requires a bounded standalone description", RecoveryReviseWork))
+		}
+		if !boundedText(definition.DesignContext(), 4096) {
+			findings = append(findings, finding(FindingMissingContext, definition.WorkID(), "design_context", "work requires bounded design context", RecoveryReviseWork))
+		}
+		criterionIDs := make(map[string]bool, len(criteria))
+		if len(criteria) == 0 {
+			findings = append(findings, finding(FindingMalformedCriterion, definition.WorkID(), "criteria", "work requires at least one structured criterion", RecoveryReviseWork))
+		}
 		for _, criterion := range criteria {
-			if strings.EqualFold(strings.TrimSpace(criterion.Text), strings.TrimSpace(criterion.Outcome)) {
-				findings = append(findings, finding(FindingCriterionNotObservable, definition.WorkID(), "criteria."+criterion.ID, "criterion activity and observable outcome must be distinct", RecoveryReviseWork))
+			validID := stableToken(criterion.ID)
+			if !validID || criterionIDs[criterion.ID] {
+				findings = append(findings, finding(FindingMalformedCriterion, definition.WorkID(), "criteria.id", "criterion identity must be unique and bounded", RecoveryReviseWork))
+			} else {
+				criterionIDs[criterion.ID] = true
+			}
+			validText := boundedText(criterion.Text, 1024)
+			if !validText {
+				findings = append(findings, finding(FindingMalformedCriterion, definition.WorkID(), "criteria.text", "criterion activity must be explicit and bounded", RecoveryReviseWork))
+			}
+			validOutcome := boundedText(criterion.Outcome, 1024)
+			if !validOutcome {
+				findings = append(findings, finding(FindingMalformedCriterion, definition.WorkID(), "criteria.outcome", "criterion outcome must be explicit and bounded", RecoveryReviseWork))
+			}
+			if !validVerifier(criterion.Verifier) {
+				findings = append(findings, finding(FindingMalformedCriterion, definition.WorkID(), "criteria.verifier", "criterion verifier must use a supported kind", RecoveryReviseWork))
+			}
+			if criterion.Requirement != CriterionRequired && criterion.Requirement != CriterionOptional {
+				findings = append(findings, finding(FindingMalformedCriterion, definition.WorkID(), "criteria.requirement", "criterion must explicitly be required or optional", RecoveryReviseWork))
+			}
+			if validText && validOutcome && strings.EqualFold(strings.TrimSpace(criterion.Text), strings.TrimSpace(criterion.Outcome)) {
+				findings = append(findings, finding(FindingCriterionNotObservable, definition.WorkID(), "criteria.outcome", "criterion activity and observable outcome must be distinct", RecoveryReviseWork))
 			}
 		}
 		if len(criteria) > policy.MaxCriteria || len(dependencies) > policy.MaxDependencies || len(scopes) > policy.MaxWriteScopes || len(provenance) > policy.MaxProvenance {
 			findings = append(findings, finding(FindingWorkOverBroad, definition.WorkID(), "work", "work exceeds an explicit structural decomposition limit", RecoveryReviseWork))
 		}
 		domains := map[string]bool{}
+		scopeKeys := make(map[string]bool, len(scopes))
+		if len(scopes) == 0 {
+			findings = append(findings, finding(FindingInvalidBoundary, definition.WorkID(), "write_scopes", "work requires at least one explicit ownership boundary", RecoveryReviseWork))
+		}
 		for _, scope := range scopes {
-			if scope.Access == ScopeWriteExclusive {
+			validPath := validRepositoryPath(scope.Path)
+			if !validPath {
+				findings = append(findings, finding(FindingInvalidBoundary, definition.WorkID(), "write_scopes.path", "write scope path must be bounded and repository relative", RecoveryReviseWork))
+			}
+			validDomain := stableToken(scope.Domain)
+			if !validDomain {
+				findings = append(findings, finding(FindingInvalidBoundary, definition.WorkID(), "write_scopes.domain", "write scope domain must be a bounded stable identity", RecoveryReviseWork))
+			}
+			validAccess := scope.Access == ScopeReadOnly || scope.Access == ScopeWriteExclusive
+			if !validAccess {
+				findings = append(findings, finding(FindingInvalidBoundary, definition.WorkID(), "write_scopes.access", "write scope access must be explicit", RecoveryReviseWork))
+			}
+			if scope.SerializationKey != "" && !stableToken(scope.SerializationKey) {
+				findings = append(findings, finding(FindingInvalidBoundary, definition.WorkID(), "write_scopes.serialization_key", "serialization identity must be bounded and stable", RecoveryReviseWork))
+			}
+			if validPath && validAccess {
+				key := scope.Path + "\x00" + string(scope.Access)
+				if scopeKeys[key] {
+					findings = append(findings, finding(FindingInvalidBoundary, definition.WorkID(), "write_scopes", "write scope boundary occurs more than once", RecoveryReviseWork))
+				}
+				scopeKeys[key] = true
+			}
+			if validDomain && scope.Access == ScopeWriteExclusive {
 				domains[scope.Domain] = true
 			}
 		}
@@ -98,13 +160,17 @@ func ValidateDraft(observation DraftObservation, policy QualityPolicy) []Finding
 		}
 		hasPlanConcern := false
 		for _, reference := range provenance {
+			if !stableToken(reference.ID) || !validScopeKind(reference.Kind) {
+				findings = append(findings, finding(FindingUnknownScope, definition.WorkID(), "provenance", "work contains an invalid approved-scope reference", RecoveryReviseWork))
+				continue
+			}
 			kind, exists := approved[reference.ID]
 			if !exists {
-				findings = append(findings, finding(FindingUnknownScope, definition.WorkID(), "provenance."+reference.ID, "work references scope absent from the approved plan", RecoveryReviseWork))
+				findings = append(findings, finding(FindingUnknownScope, definition.WorkID(), "provenance", "work references scope absent from the approved plan", RecoveryReviseWork))
 				continue
 			}
 			if kind != reference.Kind {
-				findings = append(findings, finding(FindingScopeKindMismatch, definition.WorkID(), "provenance."+reference.ID, "work changes the approved scope classification", RecoveryReviseWork))
+				findings = append(findings, finding(FindingScopeKindMismatch, definition.WorkID(), "provenance.kind", "work changes the approved scope classification", RecoveryReviseWork))
 				continue
 			}
 			covered[reference.ID] = true
@@ -123,8 +189,7 @@ func ValidateDraft(observation DraftObservation, policy QualityPolicy) []Finding
 	}
 	findings = append(findings, validateOwnership(workByID)...)
 	findings = append(findings, validateDependencies(workByID)...)
-	sortFindings(findings)
-	return findings
+	return canonicalFindings(findings)
 }
 
 func ValidateLaneProjection(observation DraftObservation, projection LaneProjection) []Finding {
@@ -133,53 +198,101 @@ func ValidateLaneProjection(observation DraftObservation, projection LaneProject
 		workByID[item.WorkID()] = item
 	}
 	findings := make([]Finding, 0)
-	laneByID := make(map[string]ProjectedLane)
-	membership := make(map[ids.WorkID]string)
+	laneOccurrences := make(map[string][]ProjectedLane)
 	for _, lane := range projection.Lanes {
-		if lane.ID == "" {
-			findings = append(findings, finding(FindingUnknownLane, "", "lanes", "lane identity is required", RecoveryReviseProjection))
+		if _, err := ids.ParseLaneID(lane.ID); err != nil {
+			findings = append(findings, finding(FindingUnknownLane, "", "lanes.identity", "lane identity must be bounded and stable", RecoveryReviseProjection))
 			continue
 		}
-		if _, exists := laneByID[lane.ID]; exists {
-			findings = append(findings, finding(FindingUnknownLane, "", "lane."+lane.ID, "lane identity occurs more than once", RecoveryReviseProjection))
+		laneOccurrences[lane.ID] = append(laneOccurrences[lane.ID], lane)
+	}
+	laneByID := make(map[string]ProjectedLane)
+	laneIDs := make([]string, 0, len(laneOccurrences))
+	for laneID, occurrences := range laneOccurrences {
+		laneIDs = append(laneIDs, laneID)
+		if len(occurrences) != 1 {
+			findings = append(findings, finding(FindingUnknownLane, "", "lanes.identity", "lane identity occurs more than once", RecoveryReviseProjection))
 			continue
 		}
-		laneByID[lane.ID] = lane
-		for _, workID := range lane.Members {
+		laneByID[laneID] = occurrences[0]
+	}
+	sort.Strings(laneIDs)
+	membershipCounts := make(map[ids.WorkID]map[string]int)
+	for _, laneID := range laneIDs {
+		lane, usable := laneByID[laneID]
+		if !usable {
+			continue
+		}
+		members := append([]ids.WorkID(nil), lane.Members...)
+		sort.Slice(members, func(i, j int) bool { return members[i] < members[j] })
+		for _, workID := range members {
+			if _, err := ids.ParseWorkID(workID.String()); err != nil {
+				findings = append(findings, finding(FindingUnknownLane, "", "lanes.members", "lane contains an invalid work identity", RecoveryReviseProjection))
+				continue
+			}
 			if _, exists := workByID[workID]; !exists {
-				findings = append(findings, finding(FindingUnknownLane, workID, "lane."+lane.ID, "lane contains an unknown work identity", RecoveryReviseProjection))
+				findings = append(findings, finding(FindingUnknownLane, workID, "lanes.members", "lane contains an unknown work identity", RecoveryReviseProjection))
 				continue
 			}
-			if previous, exists := membership[workID]; exists {
-				item := finding(FindingDuplicateLaneMembership, workID, "lane."+lane.ID, "work occurs in more than one lane", RecoveryReviseProjection)
-				item.Message += "; first=" + previous
-				findings = append(findings, item)
-				continue
+			if membershipCounts[workID] == nil {
+				membershipCounts[workID] = make(map[string]int)
 			}
-			membership[workID] = lane.ID
+			membershipCounts[workID][laneID]++
 		}
 	}
+	membership := make(map[ids.WorkID]string)
 	for workID := range workByID {
-		if _, exists := membership[workID]; !exists {
+		lanes := membershipCounts[workID]
+		if len(lanes) == 0 {
 			findings = append(findings, finding(FindingMissingLaneMembership, workID, "lanes", "work is absent from the lane projection", RecoveryReviseProjection))
+			continue
 		}
+		total := 0
+		oneLane := ""
+		for laneID, count := range lanes {
+			total += count
+			oneLane = laneID
+		}
+		if len(lanes) != 1 || total != 1 {
+			findings = append(findings, finding(FindingDuplicateLaneMembership, workID, "lanes.membership", "work occurs more than once in the lane projection", RecoveryReviseProjection))
+			continue
+		}
+		membership[workID] = oneLane
 	}
 	edges := make(map[string]bool)
 	adjacency := make(map[string][]string)
-	for _, edge := range projection.Edges {
+	edgeInput := append([]ProjectedLaneEdge(nil), projection.Edges...)
+	sort.Slice(edgeInput, func(i, j int) bool {
+		if edgeInput[i].BlockingLaneID == edgeInput[j].BlockingLaneID {
+			return edgeInput[i].BlockedLaneID < edgeInput[j].BlockedLaneID
+		}
+		return edgeInput[i].BlockingLaneID < edgeInput[j].BlockingLaneID
+	})
+	for _, edge := range edgeInput {
+		if _, err := ids.ParseLaneID(edge.BlockingLaneID); err != nil {
+			findings = append(findings, finding(FindingUnknownLane, "", "edges.blocking_lane", "edge contains an invalid blocking lane identity", RecoveryReviseProjection))
+			continue
+		}
+		if _, err := ids.ParseLaneID(edge.BlockedLaneID); err != nil {
+			findings = append(findings, finding(FindingUnknownLane, "", "edges.blocked_lane", "edge contains an invalid blocked lane identity", RecoveryReviseProjection))
+			continue
+		}
 		if _, exists := laneByID[edge.BlockingLaneID]; !exists {
-			findings = append(findings, finding(FindingUnknownLane, "", "edges."+edge.BlockingLaneID, "edge references an unknown blocking lane", RecoveryReviseProjection))
+			findings = append(findings, finding(FindingUnknownLane, "", "edges.blocking_lane", "edge references an unknown blocking lane", RecoveryReviseProjection))
 			continue
 		}
 		if _, exists := laneByID[edge.BlockedLaneID]; !exists {
-			findings = append(findings, finding(FindingUnknownLane, "", "edges."+edge.BlockedLaneID, "edge references an unknown blocked lane", RecoveryReviseProjection))
+			findings = append(findings, finding(FindingUnknownLane, "", "edges.blocked_lane", "edge references an unknown blocked lane", RecoveryReviseProjection))
 			continue
 		}
 		if edge.BlockingLaneID == edge.BlockedLaneID {
-			findings = append(findings, finding(FindingLaneSelfEdge, "", "edges."+edge.BlockingLaneID, "lane cannot depend on itself", RecoveryReviseProjection))
+			findings = append(findings, finding(FindingLaneSelfEdge, "", "edges", "lane cannot depend on itself", RecoveryReviseProjection))
 			continue
 		}
 		key := edge.BlockingLaneID + "\x00" + edge.BlockedLaneID
+		if edges[key] {
+			continue
+		}
 		edges[key] = true
 		adjacency[edge.BlockingLaneID] = append(adjacency[edge.BlockingLaneID], edge.BlockedLaneID)
 	}
@@ -188,15 +301,14 @@ func ValidateLaneProjection(observation DraftObservation, projection LaneProject
 		for _, dependency := range definition.Dependencies() {
 			blockingLane := membership[dependency]
 			if blockingLane != "" && blockedLane != "" && blockingLane != blockedLane && !edges[blockingLane+"\x00"+blockedLane] {
-				findings = append(findings, finding(FindingOrderingConstraintLost, workID, "dependencies."+dependency.String(), "lane projection omits a work dependency ordering constraint", RecoveryReviseProjection))
+				findings = append(findings, finding(FindingOrderingConstraintLost, workID, "dependencies", "lane projection omits a work dependency ordering constraint", RecoveryReviseProjection))
 			}
 		}
 	}
-	if node, cyclic := firstCycleNode(adjacency); cyclic {
-		findings = append(findings, finding(FindingLaneCycle, "", "edges."+node, "lane projection contains a cycle", RecoveryReviseProjection))
+	if _, cyclic := firstCycleNode(adjacency); cyclic {
+		findings = append(findings, finding(FindingLaneCycle, "", "edges", "lane projection contains a cycle", RecoveryReviseProjection))
 	}
-	sortFindings(findings)
-	return findings
+	return canonicalFindings(findings)
 }
 
 func validateOwnership(work map[ids.WorkID]WorkObservation) []Finding {
@@ -216,7 +328,7 @@ func validateOwnership(work map[ids.WorkID]WorkObservation) []Finding {
 					if left.SerializationKey != "" && left.SerializationKey == right.SerializationKey {
 						continue
 					}
-					item := finding(FindingOwnershipConflict, leftID, "write_scopes."+left.Path, "exclusive write scope overlaps independent work", RecoveryReviseWork)
+					item := finding(FindingOwnershipConflict, leftID, "write_scopes.overlap", "exclusive write scope overlaps independent work", RecoveryReviseWork)
 					item.RelatedWorkID = rightID
 					findings = append(findings, item)
 				}
@@ -249,7 +361,11 @@ func ValidateDependencyGraph(nodes []ids.WorkID, edges []DependencyEdge) []Findi
 	known := make(map[ids.WorkID]bool, len(nodes))
 	findings := make([]Finding, 0)
 	for _, node := range nodes {
-		if _, err := ids.ParseWorkID(node.String()); err != nil || known[node] {
+		if _, err := ids.ParseWorkID(node.String()); err != nil {
+			findings = append(findings, finding(FindingUnknownDependency, "", "nodes", "node identity is invalid or duplicated", RecoveryReviseWork))
+			continue
+		}
+		if known[node] {
 			findings = append(findings, finding(FindingUnknownDependency, node, "nodes", "node identity is invalid or duplicated", RecoveryReviseWork))
 			continue
 		}
@@ -258,7 +374,20 @@ func ValidateDependencyGraph(nodes []ids.WorkID, edges []DependencyEdge) []Findi
 	seen := make(map[string]bool, len(edges))
 	adjacency := make(map[string][]string)
 	for _, edge := range edges {
-		field := "dependencies." + edge.BlockingWorkID.String()
+		field := "dependencies"
+		_, blockedErr := ids.ParseWorkID(edge.BlockedWorkID.String())
+		_, blockingErr := ids.ParseWorkID(edge.BlockingWorkID.String())
+		if blockedErr != nil || blockingErr != nil {
+			item := finding(FindingUnknownDependency, "", field, "dependency endpoint identity is invalid", RecoveryReviseWork)
+			if blockedErr == nil {
+				item.WorkID = edge.BlockedWorkID
+			}
+			if blockingErr == nil {
+				item.RelatedWorkID = edge.BlockingWorkID
+			}
+			findings = append(findings, item)
+			continue
+		}
 		key := edge.BlockingWorkID.String() + "\x00" + edge.BlockedWorkID.String()
 		if seen[key] {
 			item := finding(FindingDuplicateDependency, edge.BlockedWorkID, field, "dependency edge occurs more than once", RecoveryReviseWork)
@@ -282,10 +411,9 @@ func ValidateDependencyGraph(nodes []ids.WorkID, edges []DependencyEdge) []Findi
 		adjacency[edge.BlockingWorkID.String()] = append(adjacency[edge.BlockingWorkID.String()], edge.BlockedWorkID.String())
 	}
 	if node, cyclic := firstCycleNode(adjacency); cyclic {
-		findings = append(findings, finding(FindingDependencyCycle, ids.WorkID(node), "dependencies."+node, "work dependency graph contains a cycle", RecoveryReviseWork))
+		findings = append(findings, finding(FindingDependencyCycle, ids.WorkID(node), "dependencies", "work dependency graph contains a cycle", RecoveryReviseWork))
 	}
-	sortFindings(findings)
-	return findings
+	return canonicalFindings(findings)
 }
 
 func pathsOverlap(left, right string) bool {
@@ -337,7 +465,7 @@ func firstCycleNode(adjacency map[string][]string) (string, bool) {
 func finding(kind FindingKind, workID ids.WorkID, field, message string, recovery FindingRecovery) Finding {
 	return Finding{Kind: kind, Severity: SeverityError, WorkID: workID, Field: field, Message: message, Recovery: recovery}
 }
-func sortFindings(findings []Finding) {
+func canonicalFindings(findings []Finding) []Finding {
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].WorkID != findings[j].WorkID {
 			return findings[i].WorkID < findings[j].WorkID
@@ -348,6 +476,43 @@ func sortFindings(findings []Finding) {
 		if findings[i].Field != findings[j].Field {
 			return findings[i].Field < findings[j].Field
 		}
-		return findings[i].RelatedWorkID < findings[j].RelatedWorkID
+		if findings[i].RelatedWorkID != findings[j].RelatedWorkID {
+			return findings[i].RelatedWorkID < findings[j].RelatedWorkID
+		}
+		if findings[i].Message != findings[j].Message {
+			return findings[i].Message < findings[j].Message
+		}
+		return findings[i].Recovery < findings[j].Recovery
 	})
+	result := findings[:0]
+	for _, item := range findings {
+		if len(result) == 0 || result[len(result)-1] != item {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func boundedText(value string, limit int) bool {
+	if value == "" || len(value) > limit || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 && character != '\n' && character != '\t' {
+			return false
+		}
+	}
+	return true
+}
+
+func validVerifier(value string) bool {
+	return value == "test" || value == "review" || value == "policy" || value == "human_decision"
+}
+
+func validScopeKind(kind ScopeKind) bool {
+	return kind == ScopePlanConcern || kind == ScopeRequiredOutcome || kind == ScopeOptionalOutcome
+}
+
+func validRepositoryPath(value string) bool {
+	return value != "" && len(value) <= 512 && !path.IsAbs(value) && path.Clean(value) == value && value != "." && !strings.HasPrefix(value, "../") && !strings.Contains(value, "\\")
 }

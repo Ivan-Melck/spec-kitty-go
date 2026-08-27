@@ -106,8 +106,13 @@ func TestWorkDefinitionObservationRejectsLookAlikeProviderIdentity(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reference := tracker.ExternalWorkRef{ProjectID: "project-kitty", WorkID: "work-provider", Provider: "lookalike", ExternalID: "external-provider", MetadataSchema: 1, LastObservation: 1}
+	reference := tracker.ExternalWorkRef{ProjectID: "project-kitty", WorkID: "work-provider", Provider: "lookalike", ExternalID: "external-provider", MetadataSchema: 1, CreatedByOperation: "operation-create", LastObservation: 1}
 	if _, err := tracker.NewWorkDefinitionObservation(definition, reference, providerObservation, now); err == nil {
 		t.Fatal("mismatched provider observation accepted")
+	}
+	reference.ExternalID = providerObservation.ExternalID
+	reference.CreatedByOperation = ""
+	if _, err := tracker.NewWorkDefinitionObservation(definition, reference, providerObservation, now); err == nil {
+		t.Fatal("missing creation-operation attribution accepted")
 	}
 }

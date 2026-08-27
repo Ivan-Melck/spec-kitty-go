@@ -147,6 +147,32 @@ func TestWorkDefinitionGuardRefusesConcurrentHumanEdit(t *testing.T) {
 	}
 }
 
+func TestWorkDefinitionBoundaryRejectsForeignProviderReferences(t *testing.T) {
+	ctx := context.Background()
+	store, err := fake.Open(filepath.Join(t.TempDir(), "tracker.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := fake.NewProvider(store)
+	definition := completeDefinition(t, "work-boundary", nil)
+	created, err := provider.CreateDefinition(ctx, tracker.CreateWorkDefinitionRequest{OperationID: "operation-create-boundary", Definition: definition})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := created.Observation.ExternalRef()
+	foreign.Provider = "foreign-provider"
+	if _, err := provider.ObserveDefinition(ctx, foreign); !tracker.IsKind(err, tracker.ErrorInvalidRequest) {
+		t.Fatalf("foreign-provider observation error = %v", err)
+	}
+	if _, err := provider.UpdateDefinition(ctx, tracker.UpdateWorkDefinitionRequest{OperationID: "operation-update-boundary", ExternalRef: foreign, ExpectedObservation: foreign.LastObservation, Definition: definition}); !tracker.IsKind(err, tracker.ErrorInvalidRequest) {
+		t.Fatalf("foreign-provider update error = %v", err)
+	}
+	observed, err := provider.ObserveDefinition(ctx, created.Observation.ExternalRef())
+	if err != nil || observed.ProviderObservation().Revision != created.Observation.ProviderObservation().Revision {
+		t.Fatalf("foreign-provider request mutated local state: observation=%+v error=%v", observed, err)
+	}
+}
+
 func completeDefinition(t *testing.T, workID ids.WorkID, dependencies []ids.WorkID) tracker.WorkDefinition {
 	t.Helper()
 	definition, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{

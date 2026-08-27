@@ -3,6 +3,7 @@ package workgraph
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
@@ -22,7 +23,7 @@ type ApprovedScope struct {
 }
 
 func (scope ApprovedScope) Validate() error {
-	if scope.ID == "" || scope.Kind == "" {
+	if !stableToken(scope.ID) || scope.Kind == "" {
 		return fmt.Errorf("workgraph approved scope: identity and kind are required")
 	}
 	if _, err := ids.ParseMissionID(scope.MissionID.String()); err != nil {
@@ -37,12 +38,19 @@ func (scope ApprovedScope) Validate() error {
 }
 
 type CriterionObservation struct {
-	ID       string
-	Text     string
-	Outcome  string
-	Verifier string
-	Required bool
+	ID          string
+	Text        string
+	Outcome     string
+	Verifier    string
+	Requirement CriterionRequirement
 }
+
+type CriterionRequirement string
+
+const (
+	CriterionRequired CriterionRequirement = "required"
+	CriterionOptional CriterionRequirement = "optional"
+)
 
 type ScopeAccess string
 
@@ -98,9 +106,9 @@ func NewWorkObservation(params WorkObservationParams) (WorkObservation, error) {
 	if _, err := ids.ParseWorkID(params.WorkID.String()); err != nil {
 		return WorkObservation{}, err
 	}
-	if params.Title == "" || params.Description == "" || params.DesignContext == "" || len(params.Criteria) == 0 || len(params.WriteScopes) == 0 || len(params.Provenance) == 0 {
-		return WorkObservation{}, fmt.Errorf("workgraph work observation: complete context, criteria, scopes, and provenance are required")
-	}
+	// Provider observations deliberately admit malformed semantic content. The
+	// closed finding surface in ValidateDraft, rather than a generic constructor
+	// error, is the authority that explains why work cannot be finalized.
 	return WorkObservation{
 		projectID: params.ProjectID, workID: params.WorkID, title: params.Title,
 		description: params.Description, designContext: params.DesignContext,
@@ -110,6 +118,19 @@ func NewWorkObservation(params WorkObservationParams) (WorkObservation, error) {
 		writeScopes:       append([]WriteScopeObservation(nil), params.WriteScopes...),
 		provenance:        append([]ScopeReference(nil), params.Provenance...),
 	}, nil
+}
+
+func stableToken(value string) bool {
+	if value == "" || len(value) > 128 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || strings.ContainsRune("_.:-", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (work WorkObservation) ProjectID() ids.ProjectID  { return work.projectID }

@@ -15,6 +15,8 @@ type Provider struct{ store *Store }
 
 func NewProvider(store *Store) *Provider { return &Provider{store: store} }
 
+const providerIdentity = "durable_fake"
+
 var _ tracker.Provider = (*Provider)(nil)
 var _ tracker.CapabilityReporter = (*Provider)(nil)
 var _ tracker.Catalog = (*Provider)(nil)
@@ -106,7 +108,7 @@ func (p *Provider) CreateDefinition(ctx context.Context, request tracker.CreateW
 }
 
 func (p *Provider) UpdateDefinition(ctx context.Context, request tracker.UpdateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
-	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil || request.ExternalRef.Validate() != nil || request.ExpectedObservation == 0 || len(request.Definition.CanonicalData()) == 0 {
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil || validateDefinitionReference(request.ExternalRef) != nil || request.ExpectedObservation == 0 || len(request.Definition.CanonicalData()) == 0 {
 		return tracker.WorkDefinitionMutation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "operation, mapping, expected observation, and complete definition are required", Cause: err}
 	}
 	if request.Definition.ProjectID() != request.ExternalRef.ProjectID || request.Definition.WorkID() != request.ExternalRef.WorkID {
@@ -173,7 +175,7 @@ func (p *Provider) UpdateDefinition(ctx context.Context, request tracker.UpdateW
 }
 
 func (p *Provider) ObserveDefinition(ctx context.Context, reference tracker.ExternalWorkRef) (tracker.WorkDefinitionObservation, error) {
-	if err := reference.Validate(); err != nil {
+	if err := validateDefinitionReference(reference); err != nil {
 		return tracker.WorkDefinitionObservation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "external work reference is invalid", Cause: err}
 	}
 	var observed tracker.WorkDefinitionObservation
@@ -213,7 +215,7 @@ func (p *Provider) definitionObservation(work *diskWork) (tracker.WorkDefinition
 		return tracker.WorkDefinitionObservation{}, &tracker.Error{Kind: tracker.ErrorSchemaSkew, Message: "stored work definition is invalid", Cause: err}
 	}
 	reference := tracker.ExternalWorkRef{
-		ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Provider: "durable_fake", ExternalID: work.Key,
+		ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Provider: providerIdentity, ExternalID: work.Key,
 		MetadataSchema: definition.MetadataSchema(), CreatedByOperation: work.Definition.CreatedByOperation, LastObservation: work.Revision,
 	}
 	providerObservation, err := tracker.NewProviderObservation(work.Key, definition.CanonicalData(), work.Revision, definitionRequestDigest(definition), fmt.Sprintf("revision-%d", work.Revision), work.Definition.ObservedAt)
@@ -221,6 +223,16 @@ func (p *Provider) definitionObservation(work *diskWork) (tracker.WorkDefinition
 		return tracker.WorkDefinitionObservation{}, err
 	}
 	return tracker.NewWorkDefinitionObservation(definition, reference, providerObservation, work.Definition.ObservedAt)
+}
+
+func validateDefinitionReference(reference tracker.ExternalWorkRef) error {
+	if err := reference.Validate(); err != nil {
+		return err
+	}
+	if reference.Provider != providerIdentity {
+		return fmt.Errorf("fake work definition: foreign provider reference")
+	}
+	return nil
 }
 
 func definitionFromDisk(stored *diskDefinition) (tracker.WorkDefinition, error) {
@@ -406,7 +418,7 @@ func (p *Provider) Inspect(ctx context.Context, request tracker.InspectRequest) 
 	}
 	identity := sha256.Sum256([]byte(p.store.path))
 	binding := tracker.TrackerBinding{
-		ProjectID: request.ProjectID, Provider: "durable_fake", ExecutablePath: "/in-process/tracker-provider",
+		ProjectID: request.ProjectID, Provider: providerIdentity, ExecutablePath: "/in-process/tracker-provider",
 		ExecutableVersion: "1", ProtocolSchema: 1, WorkspacePath: p.store.path,
 		WorkspaceIdentity: fmt.Sprintf("%x", identity), ConcurrencyMode: tracker.ConcurrencyServerMultiwriter,
 		ObservedAt: time.Now().UTC(),

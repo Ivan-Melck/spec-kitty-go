@@ -265,6 +265,9 @@ func NewWorkDefinitionObservation(definition WorkDefinition, reference ExternalW
 	if len(definition.CanonicalData()) == 0 || reference.Validate() != nil || observation.Revision == 0 || observedAt.IsZero() {
 		return WorkDefinitionObservation{}, fmt.Errorf("tracker work definition observation: complete definition, mapping, provider observation, and time are required")
 	}
+	if _, err := ids.ParseOperationID(reference.CreatedByOperation.String()); err != nil {
+		return WorkDefinitionObservation{}, fmt.Errorf("tracker work definition observation: creation operation attribution is required")
+	}
 	if definition.ProjectID() != reference.ProjectID || definition.WorkID() != reference.WorkID || reference.ExternalID != observation.ExternalID || reference.LastObservation != observation.Revision || reference.MetadataSchema != definition.MetadataSchema() {
 		return WorkDefinitionObservation{}, fmt.Errorf("tracker work definition observation: definition, mapping, and provider identities disagree")
 	}

@@ -119,6 +119,130 @@ func TestDecompositionValidatesCompleteGraphBeforeFirstProviderWrite(t *testing.
 	}
 }
 
+func TestDecompositionRejectsLocallyDetectableUpdateMappingMismatchesBeforeProviderCalls(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*mission.WorkProposal)
+	}{
+		{"project identity", func(p *mission.WorkProposal) { p.Existing.ProjectID = "project-other" }},
+		{"work identity", func(p *mission.WorkProposal) { p.Existing.WorkID = "work-other" }},
+		{"provider identity", func(p *mission.WorkProposal) { p.Existing.Provider = "foreign-provider" }},
+		{"metadata schema", func(p *mission.WorkProposal) { p.Existing.MetadataSchema++ }},
+		{"expected observation", func(p *mission.WorkProposal) { p.ExpectedObservation++ }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, missions, plans, provider := decompositionFixture(t)
+			created, err := provider.port.CreateDefinition(context.Background(), tracker.CreateWorkDefinitionRequest{OperationID: "operation-seed-update", Definition: command.Work[0].Definition})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reference := created.Observation.ExternalRef()
+			command.Work[0].Existing = &reference
+			command.Work[0].ExpectedObservation = created.Observation.ProviderObservation().Revision
+			test.mutate(&command.Work[0])
+			_, err = mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+			var typed *mission.DecompositionError
+			if !errors.As(err, &typed) || typed.Kind != mission.DecompositionInvalidRequest {
+				t.Fatalf("mapping mismatch error = %T %v", err, err)
+			}
+			if provider.capabilityCalls != 0 || provider.prepareCalls != 0 || provider.createCalls != 0 || provider.updateCalls != 0 || provider.observeCalls != 0 {
+				t.Fatalf("mapping mismatch crossed provider boundary: %+v", provider)
+			}
+		})
+	}
+}
+
+func TestDecompositionAcceptsAnExactlyAttributedGuardedUpdate(t *testing.T) {
+	command, missions, plans, provider := decompositionFixture(t)
+	created, err := provider.port.CreateDefinition(context.Background(), tracker.CreateWorkDefinitionRequest{OperationID: "operation-seed-exact-update", Definition: command.Work[0].Definition})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := created.Observation.ExternalRef()
+	command.Work[0].Existing = &reference
+	command.Work[0].ExpectedObservation = created.Observation.ProviderObservation().Revision
+	result, err := mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+	if err != nil || result.Status != mission.DecompositionComplete || len(result.Observations) != 2 || provider.updateCalls != 1 || provider.createCalls != 1 {
+		t.Fatalf("exact update result=%+v error=%v provider=%+v", result, err, provider)
+	}
+	for _, observed := range result.Observations {
+		if observed.Definition().WorkID() == command.Work[0].Definition.WorkID() && observed.ExternalRef().ExternalID != reference.ExternalID {
+			t.Fatalf("guarded update changed external attribution: %+v", observed.ExternalRef())
+		}
+	}
+}
+
+func TestDecompositionRejectsUnattributedProviderResultsWithoutAdoptingState(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, *countingDefinitionProvider)
+	}{
+		{"wrong provider", func(t *testing.T, p *countingDefinitionProvider) {
+			p.createHook = func(_ tracker.CreateWorkDefinitionRequest, mutation tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation {
+				mutation.Observation = rewriteDefinitionObservation(t, mutation.Observation, mutation.Observation.Definition(), func(ref *tracker.ExternalWorkRef) { ref.Provider = "foreign-provider" })
+				return mutation
+			}
+		}},
+		{"swapped observation", func(_ *testing.T, p *countingDefinitionProvider) {
+			var first tracker.WorkDefinitionObservation
+			p.createHook = func(_ tracker.CreateWorkDefinitionRequest, mutation tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation {
+				if first.ProviderObservation().Revision == 0 {
+					first = mutation.Observation
+					return mutation
+				}
+				mutation.Observation = first
+				return mutation
+			}
+		}},
+		{"zero observation success", func(_ *testing.T, p *countingDefinitionProvider) {
+			p.createHook = func(_ tracker.CreateWorkDefinitionRequest, mutation tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation {
+				mutation.Observation = tracker.WorkDefinitionObservation{}
+				return mutation
+			}
+		}},
+		{"request content mismatch", func(t *testing.T, p *countingDefinitionProvider) {
+			p.createHook = func(_ tracker.CreateWorkDefinitionRequest, mutation tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation {
+				definition := mutation.Observation.Definition()
+				changed, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Title: "Provider changed title", Description: definition.Description(), DesignContext: definition.DesignContext(), Criteria: definition.Criteria(), Dependencies: definition.Dependencies(), WriteScopes: definition.WriteScopes(), Provenance: definition.Provenance(), MetadataSchema: definition.MetadataSchema(), ProviderMetadata: definition.ProviderMetadata()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				mutation.Observation = rewriteDefinitionObservation(t, mutation.Observation, changed, nil)
+				return mutation
+			}
+		}},
+		{"operation attribution mismatch", func(t *testing.T, p *countingDefinitionProvider) {
+			p.createHook = func(_ tracker.CreateWorkDefinitionRequest, mutation tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation {
+				mutation.Observation = rewriteDefinitionObservation(t, mutation.Observation, mutation.Observation.Definition(), func(ref *tracker.ExternalWorkRef) { ref.CreatedByOperation = "operation-foreign" })
+				return mutation
+			}
+		}},
+		{"re-observation provider mismatch", func(t *testing.T, p *countingDefinitionProvider) {
+			p.observeHook = func(_ tracker.ExternalWorkRef, observation tracker.WorkDefinitionObservation) tracker.WorkDefinitionObservation {
+				return rewriteDefinitionObservation(t, observation, observation.Definition(), func(ref *tracker.ExternalWorkRef) { ref.Provider = "foreign-provider" })
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, missions, plans, provider := decompositionFixture(t)
+			test.setup(t, provider)
+			result, err := mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+			var typed *mission.DecompositionError
+			if !errors.As(err, &typed) || typed.Kind != mission.DecompositionProviderFailure || typed.Recovery != mission.DecompositionObserveThenReconcile || typed.Field != "provider_attribution" {
+				t.Fatalf("attribution error = %T %+v result=%+v", err, typed, result)
+			}
+			if result.Status != mission.DecompositionAmbiguous || result.Recovery != mission.DecompositionObserveThenReconcile || result.Draft.Work() != nil {
+				t.Fatalf("unattributed state was accepted: %+v", result)
+			}
+			if len(typed.Field) > 160 || len(typed.Message) > 256 {
+				t.Fatalf("unbounded attribution diagnostic: %+v", typed)
+			}
+		})
+	}
+}
+
 func TestDecompositionSurfacesTimeoutAfterApplyAsAmbiguous(t *testing.T) {
 	command, missions, plans, provider := decompositionFixture(t)
 	if err := provider.store.Inject(context.Background(), fake.FailureTimeoutAfterApply); err != nil {
@@ -165,6 +289,8 @@ type countingDefinitionProvider struct {
 	store                                                                 *fake.Store
 	capabilityCalls, prepareCalls, createCalls, updateCalls, observeCalls int
 	failCreateAt                                                          int
+	createHook                                                            func(tracker.CreateWorkDefinitionRequest, tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation
+	observeHook                                                           func(tracker.ExternalWorkRef, tracker.WorkDefinitionObservation) tracker.WorkDefinitionObservation
 }
 
 func (p *countingDefinitionProvider) DefinitionCapabilities(ctx context.Context) (tracker.WorkDefinitionCapabilities, error) {
@@ -180,7 +306,11 @@ func (p *countingDefinitionProvider) CreateDefinition(ctx context.Context, r tra
 	if p.failCreateAt != 0 && p.createCalls == p.failCreateAt {
 		return tracker.WorkDefinitionMutation{}, &tracker.Error{Kind: tracker.ErrorUnavailable, Message: "injected provider outage"}
 	}
-	return p.port.CreateDefinition(ctx, r)
+	mutation, err := p.port.CreateDefinition(ctx, r)
+	if err == nil && p.createHook != nil {
+		mutation = p.createHook(r, mutation)
+	}
+	return mutation, err
 }
 func (p *countingDefinitionProvider) UpdateDefinition(ctx context.Context, r tracker.UpdateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
 	p.updateCalls++
@@ -188,7 +318,11 @@ func (p *countingDefinitionProvider) UpdateDefinition(ctx context.Context, r tra
 }
 func (p *countingDefinitionProvider) ObserveDefinition(ctx context.Context, r tracker.ExternalWorkRef) (tracker.WorkDefinitionObservation, error) {
 	p.observeCalls++
-	return p.port.ObserveDefinition(ctx, r)
+	observation, err := p.port.ObserveDefinition(ctx, r)
+	if err == nil && p.observeHook != nil {
+		observation = p.observeHook(r, observation)
+	}
+	return observation, err
 }
 
 func decompositionFixture(t *testing.T) (mission.DecompositionCommand, *missionSource, *planSource, *countingDefinitionProvider) {
@@ -196,7 +330,7 @@ func decompositionFixture(t *testing.T) (mission.DecompositionCommand, *missionS
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 	snapshot := mission.MissionSnapshot{MissionID: "mission-kitty", ProjectID: "project-kitty", DefinitionID: "software-dev", DefinitionVersion: 1, DefinitionCommitment: mission.DefinitionCommitment(strings.Repeat("c", 64)), Lifecycle: mission.LifecycleOpen, CurrentStep: mission.StepPlanApproved, StateVersion: 5, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Minute)}
 	planDigest := strings.Repeat("a", 64)
-	command := mission.DecompositionCommand{MissionID: snapshot.MissionID, ProjectID: snapshot.ProjectID, ExpectedMission: snapshot, PlanRevisionID: "plan-revision-1", PlanContentDigest: planDigest, ApprovedScope: []workgraph.ApprovedScope{{ID: "plan-foundation", Kind: workgraph.ScopePlanConcern, MissionID: snapshot.MissionID}, {ID: "plan-feature", Kind: workgraph.ScopePlanConcern, MissionID: snapshot.MissionID}, {ID: "requirement-portable", Kind: workgraph.ScopeRequiredOutcome, MissionID: snapshot.MissionID}}, Work: []mission.WorkProposal{{Definition: missionDefinition(t, "work-foundation", nil, "plan-foundation", false)}, {Definition: missionDefinition(t, "work-feature", []ids.WorkID{"work-foundation"}, "plan-feature", true)}}, ActorID: "actor-implementer", OperationID: "operation-decompose", GovernanceContextID: "governance-implement", OccurredAt: now}
+	command := mission.DecompositionCommand{MissionID: snapshot.MissionID, ProjectID: snapshot.ProjectID, Provider: "durable_fake", ExpectedMission: snapshot, PlanRevisionID: "plan-revision-1", PlanContentDigest: planDigest, ApprovedScope: []workgraph.ApprovedScope{{ID: "plan-foundation", Kind: workgraph.ScopePlanConcern, MissionID: snapshot.MissionID}, {ID: "plan-feature", Kind: workgraph.ScopePlanConcern, MissionID: snapshot.MissionID}, {ID: "requirement-portable", Kind: workgraph.ScopeRequiredOutcome, MissionID: snapshot.MissionID}}, Work: []mission.WorkProposal{{Definition: missionDefinition(t, "work-foundation", nil, "plan-foundation", false)}, {Definition: missionDefinition(t, "work-feature", []ids.WorkID{"work-foundation"}, "plan-feature", true)}}, ActorID: "actor-implementer", OperationID: "operation-decompose", GovernanceContextID: "governance-implement", OccurredAt: now}
 	store, err := fake.Open(filepath.Join(t.TempDir(), "tracker.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -204,6 +338,19 @@ func decompositionFixture(t *testing.T) (mission.DecompositionCommand, *missionS
 	provider := &countingDefinitionProvider{port: fake.NewProvider(store), store: store}
 	plans := &planSource{observation: approvalObservation(t, snapshot.MissionID, artifact.KindPlan, command.PlanRevisionID, planDigest, artifact.VerdictApproved)}
 	return command, &missionSource{snapshot: snapshot}, plans, provider
+}
+
+func rewriteDefinitionObservation(t *testing.T, source tracker.WorkDefinitionObservation, definition tracker.WorkDefinition, mutate func(*tracker.ExternalWorkRef)) tracker.WorkDefinitionObservation {
+	t.Helper()
+	reference := source.ExternalRef()
+	if mutate != nil {
+		mutate(&reference)
+	}
+	rewritten, err := tracker.NewWorkDefinitionObservation(definition, reference, source.ProviderObservation(), source.ObservedAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rewritten
 }
 func missionDefinition(t *testing.T, workID ids.WorkID, deps []ids.WorkID, concern string, requirement bool) tracker.WorkDefinition {
 	t.Helper()
