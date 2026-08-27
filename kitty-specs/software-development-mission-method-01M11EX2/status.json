@@ -85,7 +85,7 @@
     },
     "WP03": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -97,6 +97,7 @@
         "Ready for review: immutable typed artifact revisions, canonical validation, atomic idempotent publication and exact-revision approval freshness; package/race/schema/static/architecture gates pass. Full internal scenario census failure reproduced unchanged on coordination baseline."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP03-typed-artifact-revisions-and-fresh-approvals/review-cycle-1.md",
         "reference": "review-cycle://software-development-mission-method-01M11EX2/WP03-typed-artifact-revisions-and-fresh-approvals/review-cycle-1.md",
@@ -104,14 +105,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T012": "done",
-        "T013": "done",
-        "T014": "done",
-        "T015": "done",
-        "T016": "done"
+        "T012": "planned",
+        "T013": "planned",
+        "T014": "planned",
+        "T015": "planned",
+        "T016": "planned"
       }
     },
     "WP04": {
