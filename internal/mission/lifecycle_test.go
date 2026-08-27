@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/artifact"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
@@ -142,47 +143,173 @@ func TestDefinitionGraphMutantsFailClosedWithExactRuleContext(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		mutate func(*mission.DefinitionSpec)
-		want   string
+		name        string
+		mutate      func(*mission.DefinitionSpec)
+		wantField   string
+		wantMessage string
+		secret      string
 	}{
-		{name: "duplicate-step", mutate: func(s *mission.DefinitionSpec) { s.Steps = append(s.Steps, s.Steps[0]) }, want: "duplicate step"},
-		{name: "missing-initial", mutate: func(s *mission.DefinitionSpec) { s.InitialStep = mission.StepReviewReserved }, want: "initial step"},
-		{name: "missing-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = nil }, want: "terminal"},
+		{name: "duplicate-step", mutate: func(s *mission.DefinitionSpec) { s.Steps = append(s.Steps, s.Steps[0]) },
+			wantField: "definition.duplicate_step", wantMessage: "step decomposing violates duplicate_step"},
+		{name: "invalid-initial", mutate: func(s *mission.DefinitionSpec) { s.InitialStep = mission.StepKey("seeded-initial-secret/value") },
+			wantField: "definition.invalid_initial_step", wantMessage: "field initial_step violates invalid_initial_step", secret: "seeded-initial-secret"},
+		{name: "reserved-initial", mutate: func(s *mission.DefinitionSpec) { s.InitialStep = mission.StepReviewReserved },
+			wantField: "definition.invalid_initial_step", wantMessage: "step review_reserved violates invalid_initial_step"},
+		{name: "absent-initial", mutate: func(s *mission.DefinitionSpec) {
+			s.InitialStep = mission.StepPlanning
+			removeStep(s, mission.StepPlanning)
+		}, wantField: "definition.unknown_initial_step", wantMessage: "step planning violates unknown_initial_step"},
+		{name: "missing-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = nil },
+			wantField: "definition.missing_terminal_step", wantMessage: "field terminal_steps violates missing_terminal_step"},
+		{name: "invalid-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = []mission.StepKey{"seeded-terminal-secret/value"} },
+			wantField: "definition.invalid_terminal_step", wantMessage: "terminal_steps index 0 violates invalid_terminal_step", secret: "seeded-terminal-secret"},
+		{name: "reserved-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = []mission.StepKey{mission.StepReviewReserved} },
+			wantField: "definition.invalid_terminal_step", wantMessage: "step review_reserved violates invalid_terminal_step"},
+		{name: "duplicate-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = append(s.TerminalSteps, mission.StepWorkFinalized) },
+			wantField: "definition.duplicate_terminal_step", wantMessage: "step work_finalized violates duplicate_terminal_step"},
+		{name: "absent-terminal", mutate: func(s *mission.DefinitionSpec) {
+			s.TerminalSteps = []mission.StepKey{mission.StepPlanning}
+			removeStep(s, mission.StepPlanning)
+		}, wantField: "definition.unknown_terminal_step", wantMessage: "step planning violates unknown_terminal_step"},
 		{name: "unknown-successor", mutate: func(s *mission.DefinitionSpec) {
+			removeStep(s, mission.StepPlanning)
+			step(s, mission.StepPlanApproved).Predecessors = nil
+		}, wantField: "definition.unknown_successor", wantMessage: "edge specification_approved -> planning violates unknown_successor"},
+		{name: "unknown-predecessor", mutate: func(s *mission.DefinitionSpec) {
+			removeStep(s, mission.StepPlanning)
+			step(s, mission.StepSpecificationApproved).Successors = nil
+		}, wantField: "definition.unknown_predecessor", wantMessage: "edge planning -> plan_approved violates unknown_predecessor"},
+		{name: "unsupported-successor", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepInitialized).Successors = append(step(s, mission.StepInitialized).Successors, "seeded-successor-secret/value")
+		}, wantField: "step_contract.unsupported_adjacent_step", wantMessage: "step initialized successor index 1 violates unsupported_adjacent_step", secret: "seeded-successor-secret"},
+		{name: "unsupported-predecessor", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepSpecifying).Predecessors = []mission.StepKey{"seeded-predecessor-secret/value"}
+		}, wantField: "step_contract.unsupported_adjacent_step", wantMessage: "step specifying predecessor index 0 violates unsupported_adjacent_step", secret: "seeded-predecessor-secret"},
+		{name: "reserved-successor", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepInitialized).Successors = []mission.StepKey{mission.StepReviewReserved}
-		}, want: "adjacent"},
-		{name: "asymmetric-edge", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepSpecifying).Predecessors = nil }, want: "asymmetric"},
+		}, wantField: "step_contract.unsupported_adjacent_step", wantMessage: "edge initialized -> review_reserved violates unsupported_adjacent_step"},
+		{name: "reserved-predecessor", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepSpecifying).Predecessors = []mission.StepKey{mission.StepReviewReserved}
+		}, wantField: "step_contract.unsupported_adjacent_step", wantMessage: "edge review_reserved -> specifying violates unsupported_adjacent_step"},
+		{name: "asymmetric-edge", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepSpecifying).Predecessors = nil },
+			wantField: "definition.asymmetric_edge", wantMessage: "edge initialized -> specifying violates asymmetric_edge"},
 		{name: "self-edge", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepSpecifying).Successors = []mission.StepKey{mission.StepSpecifying}
-		}, want: "self_edge"},
+		}, wantField: "step_contract.self_edge", wantMessage: "edge specifying -> specifying violates self_edge"},
 		{name: "duplicate-edge", mutate: func(s *mission.DefinitionSpec) {
 			p := step(s, mission.StepInitialized)
 			p.Successors = append(p.Successors, p.Successors[0])
-		}, want: "duplicate_successor"},
+		}, wantField: "step_contract.duplicate_successor", wantMessage: "step initialized violates duplicate_successor"},
+		{name: "duplicate-predecessor", mutate: func(s *mission.DefinitionSpec) {
+			p := step(s, mission.StepSpecifying)
+			p.Predecessors = append(p.Predecessors, p.Predecessors[0])
+		}, wantField: "step_contract.duplicate_predecessor", wantMessage: "step specifying violates duplicate_predecessor"},
 		{name: "disconnected", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepInitialized).Successors = nil
 			step(s, mission.StepSpecifying).Predecessors = nil
-		}, want: "unreachable"},
+		}, wantField: "definition.unreachable_step", wantMessage: "step decomposing violates unreachable_step"},
 		{name: "cycle", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepWorkDraftReady).Successors = append(step(s, mission.StepWorkDraftReady).Successors, mission.StepSpecifying)
 			step(s, mission.StepSpecifying).Predecessors = append(step(s, mission.StepSpecifying).Predecessors, mission.StepWorkDraftReady)
-		}, want: "cycle"},
+		}, wantField: "definition.cycle", wantMessage: "edge work_draft_ready -> specifying violates cycle"},
 		{name: "terminal-successor", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepWorkFinalized).Successors = []mission.StepKey{mission.StepSpecifying}
 			step(s, mission.StepSpecifying).Predecessors = append(step(s, mission.StepSpecifying).Predecessors, mission.StepWorkFinalized)
-		}, want: "terminal step"},
-		{name: "mutating-without-governance", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepPlanning).GovernanceAction = "" }, want: "governance"},
+		}, wantField: "definition.terminal_has_successors", wantMessage: "step work_finalized violates terminal_has_successors"},
+		{name: "invalid-terminal-outcome", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepWorkFinalized).TerminalOutcome = mission.TerminalOutcome("seeded-outcome-secret")
+		}, wantField: "definition.invalid_terminal_outcome", wantMessage: "step work_finalized violates invalid_terminal_outcome", secret: "seeded-outcome-secret"},
+		{name: "nonterminal-outcome", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepPlanning).TerminalOutcome = mission.OutcomeWorkFinalized
+		}, wantField: "definition.nonterminal_outcome", wantMessage: "step planning violates nonterminal_outcome"},
+		{name: "mutating-without-governance", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepPlanning).GovernanceAction = "" },
+			wantField: "step_contract.invalid_governance_action", wantMessage: "step planning violates invalid_governance_action"},
+		{name: "invalid-caller-key", mutate: func(s *mission.DefinitionSpec) { s.Steps[0].Key = mission.StepKey("seeded-step-secret/value") },
+			wantField: "step_contract.unsupported_key", wantMessage: "step index 0 violates unsupported_key", secret: "seeded-step-secret"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			spec := definitionSpec(mustDefinition(t))
 			test.mutate(&spec)
 			_, err := mission.NewDefinition(spec)
-			if !mission.IsKind(err, mission.KindDefinitionMalformed) || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("mutant=%s err=%v want context %q", test.name, err, test.want)
+			if !mission.IsKind(err, mission.KindDefinitionMalformed) {
+				t.Fatalf("mutant=%s err=%v", test.name, err)
+			}
+			var diagnostic *mission.Error
+			if !errors.As(err, &diagnostic) || diagnostic.Field != test.wantField || diagnostic.Message != test.wantMessage {
+				t.Fatalf("mutant=%s diagnostic=%+v want field=%q message=%q", test.name, diagnostic, test.wantField, test.wantMessage)
+			}
+			if diagnostic.Validate() != nil || len(err.Error()) > 256 || test.secret != "" && strings.Contains(err.Error(), test.secret) {
+				t.Fatalf("mutant=%s unbounded or disclosed diagnostic=%v", test.name, err)
 			}
 		})
+	}
+}
+
+func TestEvaluateTransitionRequiresExactExpectedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	definition := mustDefinition(t)
+	base := snapshotAt(t, definition, mission.StepInitialized, 5)
+	tests := []struct {
+		name    string
+		current mission.MissionSnapshot
+		mutate  func(*mission.TransitionRequest)
+	}{
+		{name: "project", current: func() mission.MissionSnapshot {
+			current := cloneSnapshot(base)
+			current.ProjectID = mustProjectID(t, "project.instance-only")
+			return current
+		}()},
+		{name: "created-at", current: base, mutate: func(request *mission.TransitionRequest) {
+			request.ExpectedSnapshot.CreatedAt = request.ExpectedSnapshot.CreatedAt.Add(-time.Hour)
+		}},
+		{name: "updated-at", current: func() mission.MissionSnapshot {
+			current := cloneSnapshot(base)
+			current.UpdatedAt = current.UpdatedAt.Add(time.Millisecond)
+			return current
+		}()},
+		{name: "active-blockers", current: func() mission.MissionSnapshot {
+			current := cloneSnapshot(base)
+			current.ActiveBlockers = []ids.BlockerID{mustBlockerID(t, "blocker.instance-only")}
+			return current
+		}()},
+		{name: "unresolved-decisions", current: base, mutate: func(request *mission.TransitionRequest) {
+			request.ExpectedSnapshot.UnresolvedDecisions = []ids.DecisionID{mustDecisionID(t, "decision.expected-only")}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := requestFor(t, definition, base, mission.StepSpecifying, "snapshot-cas-"+test.name)
+			if test.mutate != nil {
+				test.mutate(&request)
+			}
+			_, err := mission.EvaluateTransition(mustInstance(t, test.current), definition, request)
+			assertSnapshotConflict(t, err)
+		})
+	}
+
+	reconciliation := snapshotAt(t, definition, mission.StepReconciliationRequired, 8)
+	request := requestFor(t, definition, reconciliation, mission.StepWorkFinalized, "snapshot-cas-work-revision")
+	reconciliation.CurrentWorkRevisionID = mustWorkRevisionID(t, "revision.instance-only")
+	_, err := mission.EvaluateTransition(mustInstance(t, reconciliation), definition, request)
+	assertSnapshotConflict(t, err)
+
+	invalidLifecycle := requestFor(t, definition, base, mission.StepSpecifying, "snapshot-cas-lifecycle")
+	invalidLifecycle.ExpectedSnapshot.Lifecycle = mission.LifecycleTerminal
+	invalidLifecycle.ExpectedSnapshot.TerminalOutcome = mission.OutcomeWorkFinalized
+	if _, err := mission.EvaluateTransition(mustInstance(t, base), definition, invalidLifecycle); !mission.IsKind(err, mission.KindInvalidRequest) {
+		t.Fatalf("invalid lifecycle expectation err=%v", err)
+	}
+}
+
+func assertSnapshotConflict(t *testing.T, err error) {
+	t.Helper()
+	var diagnostic *mission.Error
+	if !errors.As(err, &diagnostic) || diagnostic.Kind != mission.KindStateVersionConflict ||
+		diagnostic.Recovery != mission.RecoveryRefreshState || diagnostic.Field != "expected_snapshot" ||
+		diagnostic.Message != "mission state changed" {
+		t.Fatalf("snapshot mismatch diagnostic=%+v rendered=%v", diagnostic, err)
 	}
 }
 
@@ -291,6 +418,7 @@ func TestTransitionRefusalsAreTypedDeterministicAndNonMutating(t *testing.T) {
 			candidateRequest := cloneRequest(request)
 			if test.mutateSnapshot != nil {
 				test.mutateSnapshot(&current)
+				candidateRequest.ExpectedSnapshot = cloneSnapshot(current)
 			}
 			if test.mutateRequest != nil {
 				test.mutateRequest(&candidateRequest)
@@ -455,7 +583,11 @@ func TestServiceCreateReplayConflictTransitionRaceAndStoreFailure(t *testing.T) 
 		t.Fatalf("altered transition replay err=%v", err)
 	}
 	laterRequest := requestFor(t, definition, storedBeforeFailure, mission.StepSpecificationApproved, "later-transition")
-	later, err := service.Transition(context.Background(), laterRequest)
+	laterRequest.Evidence = withoutApprovalEvidence(laterRequest.Evidence)
+	approvalSource := freshArtifactApprovalSource(t, laterRequest.MissionID, artifact.KindSpecification, "later-transition")
+	store.artifactSource = approvalSource
+	laterService := mission.NewServiceWithArtifactApprovals(registry, store, approvalSource)
+	later, err := laterService.Transition(context.Background(), laterRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,6 +609,241 @@ func TestServiceCreateReplayConflictTransitionRaceAndStoreFailure(t *testing.T) 
 	store.mu.Unlock()
 	if !reflect.DeepEqual(later.Instance, storedAfterFailure) {
 		t.Fatal("failed commit changed authoritative state")
+	}
+}
+
+func TestServiceDerivesOnlyExactArtifactApprovalEvidence(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name         string
+		current      mission.StepKey
+		successor    mission.StepKey
+		artifactKind artifact.Kind
+	}{
+		{name: "specification", current: mission.StepSpecifying, successor: mission.StepSpecificationApproved, artifactKind: artifact.KindSpecification},
+		{name: "plan", current: mission.StepPlanning, successor: mission.StepPlanApproved, artifactKind: artifact.KindPlan},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			current := snapshotAt(t, definition, test.current, 7)
+			store := newMemoryStore()
+			store.snapshot = current
+			source := freshArtifactApprovalSource(t, current.MissionID, test.artifactKind, "exact-"+test.name)
+			store.artifactSource = source
+			service := mission.NewServiceWithArtifactApprovals(registry, store, source)
+			request := requestFor(t, definition, current, test.successor, "exact-"+test.name)
+			request.Evidence = withoutApprovalEvidence(request.Evidence)
+
+			result, err := service.Transition(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Instance.CurrentStep != test.successor || result.Audit.ApprovalEvidenceID.String() != source.approvals[0].ID() {
+				t.Fatalf("transition=%+v approval=%q", result, source.approvals[0].ID())
+			}
+			if source.observationCalls != 1 {
+				t.Fatalf("artifact source observations=%d", source.observationCalls)
+			}
+			if source.observedMissionID != current.MissionID.String() || source.observedKind != test.artifactKind {
+				t.Fatalf("artifact source scope=(%s,%s)", source.observedMissionID, source.observedKind)
+			}
+			replay, err := service.Transition(context.Background(), request)
+			if err != nil || !replay.Replayed || replay.Audit != result.Audit {
+				t.Fatalf("replay=%+v err=%v", replay, err)
+			}
+			if source.observationCalls != 1 {
+				t.Fatal("durable replay re-read mutable artifact authority")
+			}
+		})
+	}
+}
+
+func TestServiceRefusesMissingRejectedStaleAndForgedArtifactApprovals(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := snapshotAt(t, definition, mission.StepSpecifying, 9)
+	baseRequest := requestFor(t, definition, current, mission.StepSpecificationApproved, "artifact-refusal")
+	callerApproval := baseRequest.Evidence[len(baseRequest.Evidence)-1]
+	baseRequest.Evidence = withoutApprovalEvidence(baseRequest.Evidence)
+	fresh := freshArtifactApprovalSource(t, current.MissionID, artifact.KindSpecification, "refusal")
+	rejected := *fresh
+	rejected.approvals = []artifact.ArtifactApproval{mustArtifactApproval(t, "approval.rejected", rejected.revision.ID(), artifact.VerdictRejected)}
+	stale := *fresh
+	stale.approvals = []artifact.ArtifactApproval{mustArtifactApproval(t, "approval.stale", "artifact.historical", artifact.VerdictApproved)}
+	missingRevision := *fresh
+	missingRevision.currentError = &artifact.Error{Kind: artifact.ErrorNotFound, Field: "artifact_revision_id", Recovery: artifact.RecoveryProvideEvidence, Message: "artifact revision was not found"}
+	missingApproval := *fresh
+	missingApproval.approvals = nil
+	mismatched := *fresh
+	mismatched.revision = mustArtifactRevision(t, mustMissionID(t, "mission.another"), artifact.KindSpecification, "mismatched")
+
+	tests := []struct {
+		name      string
+		source    mission.ArtifactApprovalSource
+		mutate    func(*mission.TransitionRequest)
+		wantKind  mission.ErrorKind
+		wantField string
+	}{
+		{name: "source-absent", wantKind: mission.KindMissingEvidence, wantField: "artifact_approval"},
+		{name: "revision-missing", source: &missingRevision, wantKind: mission.KindMissingEvidence, wantField: "artifact_approval"},
+		{name: "approval-missing", source: &missingApproval, wantKind: mission.KindMissingEvidence, wantField: "artifact_approval"},
+		{name: "rejected", source: &rejected, wantKind: mission.KindApprovalStale, wantField: "artifact_approval"},
+		{name: "stale", source: &stale, wantKind: mission.KindApprovalStale, wantField: "artifact_approval"},
+		{name: "source-scope-mismatch", source: &mismatched, wantKind: mission.KindPersistenceContract, wantField: "artifact_approval"},
+		{name: "forged-caller-evidence", source: fresh, mutate: func(request *mission.TransitionRequest) {
+			request.Evidence = append(request.Evidence, callerApproval)
+		}, wantKind: mission.KindInvalidRequest, wantField: "evidence"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newMemoryStore()
+			store.snapshot = current
+			request := cloneRequest(baseRequest)
+			if test.mutate != nil {
+				test.mutate(&request)
+			}
+			service := mission.NewServiceWithArtifactApprovals(registry, store, test.source)
+			_, err := service.Transition(context.Background(), request)
+			var diagnostic *mission.Error
+			if !errors.As(err, &diagnostic) || diagnostic.Kind != test.wantKind || diagnostic.Field != test.wantField {
+				t.Fatalf("diagnostic=%+v rendered=%v", diagnostic, err)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if store.commitCalls != 0 {
+				t.Fatalf("refusal reached commit port %d times", store.commitCalls)
+			}
+		})
+	}
+	if fresh.observationCalls != 0 {
+		t.Fatal("forged caller evidence reached artifact authority")
+	}
+}
+
+func TestServiceRejectsSuccessorPublicationAtEveryApprovalCommitBoundary(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, boundary := range []string{"before-aggregate-observation", "after-observation-before-commit", "inside-commit-boundary"} {
+		t.Run(boundary, func(t *testing.T) {
+			current := snapshotAt(t, definition, mission.StepSpecifying, 12)
+			store := newMemoryStore()
+			store.snapshot = current
+			source := freshArtifactApprovalSource(t, current.MissionID, artifact.KindSpecification, "toctou-r1-"+boundary)
+			store.artifactSource = source
+			publishSuccessor := func(source *artifactApprovalSource) {
+				source.revision = mustArtifactRevision(t, current.MissionID, artifact.KindSpecification, "toctou-r2-"+boundary)
+			}
+			switch boundary {
+			case "before-aggregate-observation":
+				source.beforeObserve = publishSuccessor
+			case "after-observation-before-commit":
+				source.afterObserve = publishSuccessor
+			case "inside-commit-boundary":
+				store.beforeAuthorityCheck = func() { publishSuccessor(source) }
+			}
+			request := requestFor(t, definition, current, mission.StepSpecificationApproved, "toctou-"+boundary)
+			request.Evidence = withoutApprovalEvidence(request.Evidence)
+			service := mission.NewServiceWithArtifactApprovals(registry, store, source)
+
+			_, err := service.Transition(context.Background(), request)
+			if !mission.IsKind(err, mission.KindApprovalStale) {
+				t.Fatalf("publication boundary advanced with err=%v", err)
+			}
+			if source.observationCalls != 1 {
+				t.Fatalf("boundary used non-aggregate or best-effort rereads observations=%d", source.observationCalls)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if !reflect.DeepEqual(store.snapshot, current) || len(store.transitions) != 0 {
+				t.Fatalf("stale approval changed mission state snapshot=%+v transitions=%d", store.snapshot, len(store.transitions))
+			}
+		})
+	}
+}
+
+func TestApprovalReplayRejectsMissingAndSubstitutedImmutableAuthority(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := snapshotAt(t, definition, mission.StepSpecifying, 15)
+	base := newMemoryStore()
+	base.snapshot = current
+	source := freshArtifactApprovalSource(t, current.MissionID, artifact.KindSpecification, "replay-authority")
+	base.artifactSource = source
+	service := mission.NewServiceWithArtifactApprovals(registry, base, source)
+	request := requestFor(t, definition, current, mission.StepSpecificationApproved, "replay-authority")
+	request.Evidence = withoutApprovalEvidence(request.Evidence)
+	committed, err := service.Transition(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !committed.Authority.Required() || committed.Audit.AuthorityCommitment != committed.Authority.Commitment() {
+		t.Fatalf("commit omitted immutable authority: %+v", committed)
+	}
+
+	alteredRevisionEvidence, err := artifact.NewCurrentApprovalEvidence(
+		current.MissionID.String(), artifact.KindSpecification, "artifact.substituted", committed.Authority.ArtifactApproval().ApprovalID(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alteredRevisionAuthority, err := mission.NewTransitionAuthority(committed.Authority.RequestCommitment(), alteredRevisionEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alteredApprovalEvidence, err := artifact.NewCurrentApprovalEvidence(
+		current.MissionID.String(), artifact.KindSpecification, committed.Authority.ArtifactApproval().ArtifactRevisionID(), "approval.substituted",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alteredApprovalAuthority, err := mission.NewTransitionAuthority(committed.Authority.RequestCommitment(), alteredApprovalEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mutants := []struct {
+		name   string
+		mutate func(*mission.TransitionResult)
+	}{
+		{name: "missing-authority", mutate: func(result *mission.TransitionResult) { result.Authority = mission.TransitionAuthority{} }},
+		{name: "altered-authority-revision", mutate: func(result *mission.TransitionResult) { result.Authority = alteredRevisionAuthority }},
+		{name: "altered-authority-approval", mutate: func(result *mission.TransitionResult) { result.Authority = alteredApprovalAuthority }},
+		{name: "altered-audit-revision", mutate: func(result *mission.TransitionResult) { result.Audit.ArtifactRevisionID = "artifact.substituted" }},
+		{name: "altered-audit-approval", mutate: func(result *mission.TransitionResult) {
+			result.Audit.ApprovalEvidenceID = mustEvidenceID(t, "approval.substituted")
+		}},
+		{name: "altered-audit-commitment", mutate: func(result *mission.TransitionResult) {
+			result.Audit.AuthorityCommitment = mission.TransitionAuthorityCommitment(strings.Repeat("a", 64))
+		}},
+	}
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			wrong := &mutatingStore{memoryStore: base, replayMutator: mutant.mutate}
+			_, err := mission.NewServiceWithArtifactApprovals(registry, wrong, source).Transition(context.Background(), request)
+			if !mission.IsKind(err, mission.KindPersistenceContract) {
+				t.Fatalf("substituted replay authority accepted: %v", err)
+			}
+		})
+	}
+	replay, err := service.Transition(context.Background(), request)
+	if err != nil || !replay.Replayed || replay.Authority != committed.Authority || replay.Audit != committed.Audit {
+		t.Fatalf("exact durable replay=%+v err=%v", replay, err)
+	}
+	if source.observationCalls != 1 {
+		t.Fatal("replay consulted mutable artifact state")
 	}
 }
 
@@ -668,6 +1035,20 @@ func TestStoreErrorsAndDefinitionDiagnosticsAreCanonicalAndBounded(t *testing.T)
 }
 
 func TestTransitionAuditExactCensusAndReplayPreservation(t *testing.T) {
+	t.Run("authority-commitment-vector", func(t *testing.T) {
+		evidence, err := artifact.NewCurrentApprovalEvidence("mission-vector", artifact.KindSpecification, "artifact-vector", "approval-vector")
+		if err != nil {
+			t.Fatal(err)
+		}
+		authority, err := mission.NewTransitionAuthority(mission.RequestCommitment(strings.Repeat("a", 64)), evidence)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mission.TransitionAuthorityCommitmentAlgorithm != "sha256:spec-kitty-transition-authority-v1" || authority.Commitment() != "47596e62ab6f042aefec0ecc929c11c51ba2b7970f31924b02944e140a7f49a3" {
+			t.Fatalf("transition authority vector drifted: algorithm=%q commitment=%s", mission.TransitionAuthorityCommitmentAlgorithm, authority.Commitment())
+		}
+	})
+
 	definition := mustDefinition(t)
 	registry, err := mission.NewRegistry(definition)
 	if err != nil {
@@ -698,6 +1079,78 @@ func TestTransitionAuditExactCensusAndReplayPreservation(t *testing.T) {
 	if err != nil || !replay.Replayed || replay.Audit != want || !reflect.DeepEqual(replay.Instance, result.Instance) {
 		t.Fatalf("replay=%+v err=%v", replay, err)
 	}
+}
+
+type artifactApprovalSource struct {
+	revision          artifact.ArtifactRevision
+	approvals         []artifact.ArtifactApproval
+	currentError      error
+	observationCalls  int
+	observedMissionID string
+	observedKind      artifact.Kind
+	beforeObserve     func(*artifactApprovalSource)
+	afterObserve      func(*artifactApprovalSource)
+}
+
+func (s *artifactApprovalSource) ObserveCurrentApproval(_ context.Context, missionID string, kind artifact.Kind) (artifact.CurrentApprovalObservation, error) {
+	if s.beforeObserve != nil {
+		s.beforeObserve(s)
+	}
+	s.observationCalls++
+	s.observedMissionID = missionID
+	s.observedKind = kind
+	if s.currentError != nil {
+		return artifact.CurrentApprovalObservation{}, s.currentError
+	}
+	observation, err := artifact.NewCurrentApprovalObservation(s.revision, s.approvals)
+	if s.afterObserve != nil {
+		s.afterObserve(s)
+	}
+	return observation, err
+}
+
+func freshArtifactApprovalSource(t *testing.T, missionID ids.MissionID, kind artifact.Kind, suffix string) *artifactApprovalSource {
+	t.Helper()
+	revision := mustArtifactRevision(t, missionID, kind, suffix)
+	return &artifactApprovalSource{
+		revision:  revision,
+		approvals: []artifact.ArtifactApproval{mustArtifactApproval(t, "approval."+suffix, revision.ID(), artifact.VerdictApproved)},
+	}
+}
+
+func mustArtifactRevision(t *testing.T, missionID ids.MissionID, kind artifact.Kind, suffix string) artifact.ArtifactRevision {
+	t.Helper()
+	revision, err := artifact.NewArtifactRevision(artifact.ArtifactRevisionParams{
+		ID: "artifact." + suffix, MissionID: missionID.String(), Kind: kind, RevisionNumber: 2,
+		ContentDigest: artifact.ContentCommitment([]byte("content-" + suffix)), SourceRef: "kitty-specs/" + suffix + ".md",
+		SourceRevision: "source." + suffix, CreatedBy: "actor.artifact", CreatedAt: fixtureTime(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision
+}
+
+func mustArtifactApproval(t *testing.T, id, revisionID string, verdict artifact.ApprovalVerdict) artifact.ArtifactApproval {
+	t.Helper()
+	approval, err := artifact.NewArtifactApproval(artifact.ArtifactApprovalParams{
+		ID: id, ArtifactRevisionID: revisionID, Verdict: verdict, ActorID: "actor.reviewer",
+		EvidenceDigest: strings.Repeat("a", 64), GovernanceContextID: "governance.review", SubmittedAt: fixtureTime(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return approval
+}
+
+func withoutApprovalEvidence(evidence []mission.EvidenceRef) []mission.EvidenceRef {
+	result := make([]mission.EvidenceRef, 0, len(evidence))
+	for _, item := range evidence {
+		if item.Kind != mission.EvidenceSpecificationOK && item.Kind != mission.EvidencePlanOK {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 type mutatingStore struct {
@@ -736,12 +1189,14 @@ func (s *mutatingStore) CommitTransition(ctx context.Context, commit mission.Tra
 }
 
 type memoryStore struct {
-	mu          sync.Mutex
-	snapshot    mission.MissionSnapshot
-	createOps   map[ids.OperationID]storedCreate
-	transitions map[ids.OperationID]storedTransition
-	failCommit  error
-	commitCalls int
+	mu                   sync.Mutex
+	snapshot             mission.MissionSnapshot
+	createOps            map[ids.OperationID]storedCreate
+	transitions          map[ids.OperationID]storedTransition
+	failCommit           error
+	commitCalls          int
+	artifactSource       *artifactApprovalSource
+	beforeAuthorityCheck func()
 }
 
 type storedCreate struct {
@@ -820,6 +1275,30 @@ func (s *memoryStore) CommitTransition(_ context.Context, commit mission.Transit
 	if s.failCommit != nil {
 		return mission.TransitionResult{}, s.failCommit
 	}
+	if commit.Authority.Required() {
+		if s.beforeAuthorityCheck != nil {
+			s.beforeAuthorityCheck()
+		}
+		if s.artifactSource == nil || commit.Authority.Validate() != nil || commit.Authority.RequestCommitment() != commit.RequestCommitment {
+			return mission.TransitionResult{}, domainError(mission.KindPersistenceContract)
+		}
+		evidence := commit.Authority.ArtifactApproval()
+		if s.artifactSource.revision.ID() != evidence.ArtifactRevisionID() || s.artifactSource.revision.MissionID() != evidence.MissionID() || s.artifactSource.revision.Kind() != evidence.Kind() {
+			return mission.TransitionResult{}, domainError(mission.KindApprovalStale)
+		}
+		matched := false
+		for _, approval := range s.artifactSource.approvals {
+			if approval.ID() == evidence.ApprovalID() && approval.ArtifactRevisionID() == evidence.ArtifactRevisionID() && approval.Verdict() == artifact.VerdictApproved {
+				matched = true
+				break
+			}
+		}
+		if !matched || commit.Candidate.Audit.ArtifactRevisionID != evidence.ArtifactRevisionID() ||
+			commit.Candidate.Audit.ApprovalEvidenceID.String() != evidence.ApprovalID() ||
+			commit.Candidate.Audit.AuthorityCommitment != commit.Authority.Commitment() {
+			return mission.TransitionResult{}, domainError(mission.KindApprovalStale)
+		}
+	}
 	previous := commit.Candidate.Previous
 	if s.snapshot.MissionID != previous.MissionID || s.snapshot.DefinitionCommitment != previous.DefinitionCommitment || s.snapshot.CurrentStep != previous.CurrentStep || s.snapshot.StateVersion != previous.StateVersion {
 		return mission.TransitionResult{}, domainError(mission.KindStateVersionConflict)
@@ -831,7 +1310,7 @@ func (s *memoryStore) CommitTransition(_ context.Context, commit mission.Transit
 		return mission.TransitionResult{}, domainError(mission.KindUnresolvedDecision)
 	}
 	s.snapshot = cloneSnapshot(commit.Candidate.Successor)
-	result := mission.TransitionResult{Instance: cloneSnapshot(s.snapshot), Audit: commit.Candidate.Audit}
+	result := mission.TransitionResult{Instance: cloneSnapshot(s.snapshot), Audit: commit.Candidate.Audit, Authority: commit.Authority}
 	s.transitions[commit.OperationID] = storedTransition{commit.RequestCommitment, result}
 	return result, nil
 }
@@ -868,6 +1347,16 @@ func step(spec *mission.DefinitionSpec, key mission.StepKey) *mission.StepContra
 	for i := range spec.Steps {
 		if spec.Steps[i].Key == key {
 			return &spec.Steps[i]
+		}
+	}
+	panic("step fixture missing: " + key.String())
+}
+
+func removeStep(spec *mission.DefinitionSpec, key mission.StepKey) {
+	for index := range spec.Steps {
+		if spec.Steps[index].Key == key {
+			spec.Steps = append(spec.Steps[:index], spec.Steps[index+1:]...)
+			return
 		}
 	}
 	panic("step fixture missing: " + key.String())

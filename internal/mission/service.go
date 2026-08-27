@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/artifact"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
 
@@ -19,6 +20,77 @@ type RequestCommitment string
 func (c RequestCommitment) String() string { return string(c) }
 
 func (c RequestCommitment) Validate() error { return DefinitionCommitment(c).Validate() }
+
+const (
+	TransitionAuthorityCommitmentAlgorithm = "sha256:spec-kitty-transition-authority-v1"
+	transitionAuthorityDomain              = "spec-kitty/transition-authority/v1\x00"
+)
+
+type TransitionAuthorityCommitment string
+
+func (c TransitionAuthorityCommitment) String() string { return string(c) }
+func (c TransitionAuthorityCommitment) Validate() error {
+	return DefinitionCommitment(c).Validate()
+}
+
+// TransitionAuthority immutably binds the caller's semantic request to the
+// exact current artifact revision and approval observed for its gate.
+type TransitionAuthority struct {
+	requestCommitment RequestCommitment
+	artifactApproval  artifact.CurrentApprovalEvidence
+	commitment        TransitionAuthorityCommitment
+}
+
+func NewTransitionAuthority(requestCommitment RequestCommitment, evidence artifact.CurrentApprovalEvidence) (TransitionAuthority, error) {
+	if requestCommitment.Validate() != nil || evidence.Validate() != nil {
+		return TransitionAuthority{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "transition_authority", "transition authority input is invalid")
+	}
+	commitment, err := transitionAuthorityCommitment(requestCommitment, evidence)
+	if err != nil {
+		return TransitionAuthority{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "transition_authority", "transition authority cannot be committed")
+	}
+	return TransitionAuthority{requestCommitment: requestCommitment, artifactApproval: evidence, commitment: commitment}, nil
+}
+
+func (a TransitionAuthority) RequestCommitment() RequestCommitment {
+	return a.requestCommitment
+}
+func (a TransitionAuthority) ArtifactApproval() artifact.CurrentApprovalEvidence {
+	return a.artifactApproval
+}
+func (a TransitionAuthority) Commitment() TransitionAuthorityCommitment { return a.commitment }
+func (a TransitionAuthority) Required() bool                            { return a.commitment != "" }
+
+func (a TransitionAuthority) Validate() error {
+	if !a.Required() {
+		if a.requestCommitment != "" || a.artifactApproval.Commitment() != "" {
+			return refusal(KindPersistenceContract, RecoveryRepairStoredState, "transition_authority", "empty transition authority contains partial evidence")
+		}
+		return nil
+	}
+	if a.requestCommitment.Validate() != nil || a.artifactApproval.Validate() != nil || a.commitment.Validate() != nil {
+		return refusal(KindPersistenceContract, RecoveryRepairStoredState, "transition_authority", "transition authority is invalid")
+	}
+	expected, err := transitionAuthorityCommitment(a.requestCommitment, a.artifactApproval)
+	if err != nil || expected != a.commitment {
+		return refusal(KindPersistenceContract, RecoveryRepairStoredState, "transition_authority", "transition authority commitment does not match its evidence")
+	}
+	return nil
+}
+
+func transitionAuthorityCommitment(requestCommitment RequestCommitment, evidence artifact.CurrentApprovalEvidence) (TransitionAuthorityCommitment, error) {
+	payload, err := json.Marshal(struct {
+		RequestCommitment          RequestCommitment `json:"request_commitment"`
+		ArtifactEvidenceCommitment string            `json:"artifact_evidence_commitment"`
+	}{requestCommitment, evidence.Commitment()})
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(transitionAuthorityDomain))
+	_, _ = hash.Write(payload)
+	return TransitionAuthorityCommitment(fmt.Sprintf("%x", hash.Sum(nil))), nil
+}
 
 // TransitionRequest is an explicit compare-and-set request against one exact
 // mission-definition commitment.
@@ -109,6 +181,9 @@ type TransitionAudit struct {
 	ActorID              ids.ActorID
 	DefinitionCommitment DefinitionCommitment
 	GovernanceContextID  ids.GovernanceContextID
+	ArtifactRevisionID   string
+	ApprovalEvidenceID   ids.EvidenceID
+	AuthorityCommitment  TransitionAuthorityCommitment
 	OccurredAt           time.Time
 }
 
@@ -149,6 +224,9 @@ func EvaluateTransition(instance MissionInstance, definition MissionDefinition, 
 	if current.CurrentStep != request.ExpectedCurrentStep {
 		return TransitionCandidate{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_current_step", "mission current step changed")
 	}
+	if !sameMissionSnapshot(current, request.ExpectedSnapshot) {
+		return TransitionCandidate{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_snapshot", "mission state changed")
+	}
 	if request.OccurredAt.Before(current.UpdatedAt) {
 		return TransitionCandidate{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "occurrence time precedes current mission state")
 	}
@@ -182,6 +260,7 @@ func EvaluateTransition(instance MissionInstance, definition MissionDefinition, 
 		}
 		evidence[item.Kind] = item
 	}
+	var approvalEvidenceID ids.EvidenceID
 	for _, required := range destination.spec.RequiredEvidence {
 		item, exists := evidence[required]
 		if !exists {
@@ -192,6 +271,9 @@ func EvaluateTransition(instance MissionInstance, definition MissionDefinition, 
 				return TransitionCandidate{}, refusal(KindApprovalStale, RecoveryRefreshApproval, "evidence", fmt.Sprintf("required approval %s is not current", required))
 			}
 			return TransitionCandidate{}, refusal(KindMissingEvidence, RecoverySupplyEvidence, "evidence", fmt.Sprintf("required evidence %s is not accepted", required))
+		}
+		if required == EvidenceSpecificationOK || required == EvidencePlanOK {
+			approvalEvidenceID = item.ID
 		}
 	}
 	if request.Successor == StepWorkFinalized && request.WorkRevisionID == "" {
@@ -220,7 +302,8 @@ func EvaluateTransition(instance MissionInstance, definition MissionDefinition, 
 			OldStateVersion: current.StateVersion, NewStateVersion: successor.StateVersion,
 			OperationID: request.OperationID, EventID: request.EventID, ActorID: request.ActorID,
 			DefinitionCommitment: current.DefinitionCommitment,
-			GovernanceContextID:  request.GovernanceContextID, OccurredAt: request.OccurredAt,
+			GovernanceContextID:  request.GovernanceContextID, ApprovalEvidenceID: approvalEvidenceID,
+			OccurredAt: request.OccurredAt,
 		},
 	}, nil
 }
@@ -252,17 +335,22 @@ type TransitionCommit struct {
 	Candidate         TransitionCandidate
 	OperationID       ids.OperationID
 	RequestCommitment RequestCommitment
+	Authority         TransitionAuthority
 }
 
 type TransitionResult struct {
-	Instance MissionSnapshot
-	Audit    TransitionAudit
-	Replayed bool
+	Instance  MissionSnapshot
+	Audit     TransitionAudit
+	Authority TransitionAuthority
+	Replayed  bool
 }
 
 // Store is the aggregate-shaped atomic persistence port. Implementations must
 // compare mission scope, definition commitment, current step, expected state
-// version, operation identity, and request commitment in one durable boundary.
+// version, operation identity, request commitment, and—when Authority is
+// present—the exact still-current artifact revision/approval binding in one
+// durable boundary. Artifact drift must return KindApprovalStale without
+// advancing the mission.
 type Store interface {
 	CreateMission(context.Context, CreateCommit) (CreateResult, error)
 	LoadMission(context.Context, ids.MissionID) (MissionSnapshot, error)
@@ -270,13 +358,27 @@ type Store interface {
 	CommitTransition(context.Context, TransitionCommit) (TransitionResult, error)
 }
 
+// ArtifactApprovalSource returns one repository-atomic observation of the
+// current revision and approvals. It deliberately excludes publication,
+// approval writes, persistence transactions, and adapter construction.
+type ArtifactApprovalSource interface {
+	ObserveCurrentApproval(context.Context, string, artifact.Kind) (artifact.CurrentApprovalObservation, error)
+}
+
 type Service struct {
-	registry Registry
-	store    Store
+	registry          Registry
+	store             Store
+	artifactApprovals ArtifactApprovalSource
 }
 
 func NewService(registry Registry, store Store) *Service {
 	return &Service{registry: registry, store: store}
+}
+
+// NewServiceWithArtifactApprovals composes the same mission service with the
+// read-only source required for specification and plan approval gates.
+func NewServiceWithArtifactApprovals(registry Registry, store Store, source ArtifactApprovalSource) *Service {
+	return &Service{registry: registry, store: store, artifactApprovals: source}
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResult, error) {
@@ -343,6 +445,9 @@ func (s *Service) Transition(ctx context.Context, request TransitionRequest) (Tr
 	if err := request.Validate(); err != nil {
 		return TransitionResult{}, err
 	}
+	if containsCallerApprovalEvidence(request.Evidence) {
+		return TransitionResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "evidence", "artifact approval evidence must be derived from artifact authority")
+	}
 	commitment, err := transitionRequestCommitment(request)
 	if err != nil {
 		return TransitionResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "request", "transition request cannot be committed")
@@ -359,7 +464,7 @@ func (s *Service) Transition(ctx context.Context, request TransitionRequest) (Tr
 		return TransitionResult{}, normalizeStoreError(err)
 	}
 	if found {
-		if err := validateReplayPostcondition(definition, request, prior); err != nil {
+		if err := validateReplayPostcondition(definition, request, commitment, prior); err != nil {
 			return TransitionResult{}, err
 		}
 		prior.Instance = prior.Instance.clone()
@@ -381,21 +486,112 @@ func (s *Service) Transition(ctx context.Context, request TransitionRequest) (Tr
 	if err != nil {
 		return TransitionResult{}, err
 	}
-	candidate, err := EvaluateTransition(instance, definition, request)
+	evaluatedRequest, artifactEvidence, err := s.withArtifactApprovalEvidence(ctx, definition, request)
 	if err != nil {
 		return TransitionResult{}, err
 	}
-	result, err := s.store.CommitTransition(ctx, TransitionCommit{Candidate: candidate, OperationID: request.OperationID, RequestCommitment: commitment})
+	candidate, err := EvaluateTransition(instance, definition, evaluatedRequest)
+	if err != nil {
+		return TransitionResult{}, err
+	}
+	var authority TransitionAuthority
+	if artifactEvidence.Commitment() != "" {
+		authority, err = NewTransitionAuthority(commitment, artifactEvidence)
+		if err != nil {
+			return TransitionResult{}, err
+		}
+		candidate.Audit.ArtifactRevisionID = artifactEvidence.ArtifactRevisionID()
+		candidate.Audit.ApprovalEvidenceID = ids.EvidenceID(artifactEvidence.ApprovalID())
+		candidate.Audit.AuthorityCommitment = authority.Commitment()
+	}
+	result, err := s.store.CommitTransition(ctx, TransitionCommit{
+		Candidate: candidate, OperationID: request.OperationID,
+		RequestCommitment: commitment, Authority: authority,
+	})
 	if err != nil {
 		return TransitionResult{}, normalizeStoreError(err)
 	}
 	if err := result.Instance.Validate(); err != nil {
 		return TransitionResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid transition state")
 	}
-	if !sameMissionSnapshot(candidate.Successor, result.Instance) || candidate.Audit != result.Audit {
+	if !sameMissionSnapshot(candidate.Successor, result.Instance) || candidate.Audit != result.Audit || result.Authority != authority {
 		return TransitionResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.commit", "mission store violated transition postconditions")
 	}
-	return TransitionResult{Instance: result.Instance.clone(), Audit: result.Audit, Replayed: result.Replayed}, nil
+	return TransitionResult{Instance: result.Instance.clone(), Audit: result.Audit, Authority: result.Authority, Replayed: result.Replayed}, nil
+}
+
+func containsCallerApprovalEvidence(evidence []EvidenceRef) bool {
+	for _, item := range evidence {
+		if item.Kind == EvidenceSpecificationOK || item.Kind == EvidencePlanOK {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) withArtifactApprovalEvidence(ctx context.Context, definition MissionDefinition, request TransitionRequest) (TransitionRequest, artifact.CurrentApprovalEvidence, error) {
+	destination, found := definition.Step(request.Successor)
+	if !found {
+		return request, artifact.CurrentApprovalEvidence{}, nil
+	}
+	approvalKind, artifactKind, required := approvalRequirement(destination.spec.RequiredEvidence)
+	if !required {
+		return request, artifact.CurrentApprovalEvidence{}, nil
+	}
+	if s.artifactApprovals == nil {
+		return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindMissingEvidence, RecoverySupplyEvidence, "artifact_approval", "current artifact approval evidence is absent")
+	}
+	observation, err := s.artifactApprovals.ObserveCurrentApproval(ctx, request.MissionID.String(), artifactKind)
+	if err != nil {
+		if artifact.IsKind(err, artifact.ErrorNotFound) {
+			return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindMissingEvidence, RecoverySupplyEvidence, "artifact_approval", "current artifact approval evidence is absent")
+		}
+		return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindPersistenceUnavailable, RecoveryRetryPersistence, "artifact_approval", "artifact approval evidence could not be loaded")
+	}
+	revision := observation.CurrentRevision()
+	if revision.MissionID() != request.MissionID.String() || revision.Kind() != artifactKind {
+		return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "artifact_approval", "artifact source returned a revision outside the requested scope")
+	}
+	freshness, err := artifact.EvaluateFreshness(revision.ID(), observation.Approvals())
+	if err != nil {
+		return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "artifact_approval", "artifact source returned invalid approval evidence")
+	}
+	switch freshness.Status {
+	case artifact.FreshnessFresh:
+		approvalID, err := ids.ParseEvidenceID(freshness.ApprovalID)
+		if err != nil {
+			return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "artifact_approval", "artifact source returned an invalid approval identity")
+		}
+		evidence, err := artifact.NewCurrentApprovalEvidence(request.MissionID.String(), artifactKind, revision.ID(), freshness.ApprovalID)
+		if err != nil {
+			return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "artifact_approval", "artifact source returned invalid current approval evidence")
+		}
+		result := request
+		result.Evidence = append(append([]EvidenceRef(nil), request.Evidence...), EvidenceRef{
+			ID: approvalID, Kind: approvalKind, Status: EvidenceAccepted,
+			MissionID: request.MissionID, ForStep: request.ExpectedCurrentStep,
+			StateVersion: request.ExpectedStateVersion,
+		})
+		return result, evidence, nil
+	case artifact.FreshnessRejected, artifact.FreshnessStale:
+		return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindApprovalStale, RecoveryRefreshApproval, "artifact_approval", "current artifact revision lacks a fresh approval")
+	case artifact.FreshnessMissing:
+		return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindMissingEvidence, RecoverySupplyEvidence, "artifact_approval", "current artifact approval evidence is absent")
+	default:
+		return TransitionRequest{}, artifact.CurrentApprovalEvidence{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "artifact_approval", "artifact source returned an unsupported freshness result")
+	}
+}
+
+func approvalRequirement(required []EvidenceKind) (EvidenceKind, artifact.Kind, bool) {
+	for _, kind := range required {
+		switch kind {
+		case EvidenceSpecificationOK:
+			return kind, artifact.KindSpecification, true
+		case EvidencePlanOK:
+			return kind, artifact.KindPlan, true
+		}
+	}
+	return "", "", false
 }
 
 func transitionRequestCommitment(request TransitionRequest) (RequestCommitment, error) {
@@ -426,7 +622,7 @@ func transitionRequestCommitment(request TransitionRequest) (RequestCommitment, 
 		request.GovernanceContextID, request.OccurredAt.Format(time.RFC3339Nano), evidence, request.WorkRevisionID})
 }
 
-func validateReplayPostcondition(definition MissionDefinition, request TransitionRequest, result TransitionResult) error {
+func validateReplayPostcondition(definition MissionDefinition, request TransitionRequest, requestCommitment RequestCommitment, result TransitionResult) error {
 	if err := result.Instance.Validate(); err != nil {
 		return refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid replay state")
 	}
@@ -434,8 +630,42 @@ func validateReplayPostcondition(definition MissionDefinition, request Transitio
 	if err != nil {
 		return refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_snapshot", "expected mission snapshot is invalid")
 	}
-	candidate, err := EvaluateTransition(expected, definition, request)
-	if err != nil || !sameMissionSnapshot(candidate.Successor, result.Instance) || candidate.Audit != result.Audit {
+	replayRequest := request
+	destination, found := definition.Step(request.Successor)
+	if found {
+		approvalKind, artifactKind, required := approvalRequirement(destination.spec.RequiredEvidence)
+		if required {
+			if err := result.Authority.Validate(); err != nil || !result.Authority.Required() || result.Authority.RequestCommitment() != requestCommitment {
+				return refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.replay", "mission store omitted immutable transition authority")
+			}
+			evidence := result.Authority.ArtifactApproval()
+			if evidence.MissionID() != request.MissionID.String() || evidence.Kind() != artifactKind {
+				return refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.replay", "mission store returned transition authority outside the request scope")
+			}
+			approvalID, err := ids.ParseEvidenceID(evidence.ApprovalID())
+			if err != nil {
+				return refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.replay", "mission store returned an invalid approval identity")
+			}
+			replayRequest.Evidence = append(append([]EvidenceRef(nil), request.Evidence...), EvidenceRef{
+				ID: approvalID, Kind: approvalKind, Status: EvidenceAccepted,
+				MissionID: request.MissionID, ForStep: request.ExpectedCurrentStep,
+				StateVersion: request.ExpectedStateVersion,
+			})
+		} else if result.Authority.Required() {
+			return refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.replay", "mission store attached unexpected transition authority")
+		}
+	}
+	candidate, err := EvaluateTransition(expected, definition, replayRequest)
+	if err != nil {
+		return refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.replay", "mission store returned a transition that no longer satisfies mission law")
+	}
+	if result.Authority.Required() {
+		evidence := result.Authority.ArtifactApproval()
+		candidate.Audit.ArtifactRevisionID = evidence.ArtifactRevisionID()
+		candidate.Audit.ApprovalEvidenceID = ids.EvidenceID(evidence.ApprovalID())
+		candidate.Audit.AuthorityCommitment = result.Authority.Commitment()
+	}
+	if !sameMissionSnapshot(candidate.Successor, result.Instance) || candidate.Audit != result.Audit {
 		return refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.replay", "mission store violated replay postconditions")
 	}
 	return nil
@@ -496,6 +726,8 @@ func canonicalStoreDiagnostic(kind ErrorKind) (RecoveryCategory, string, bool) {
 		return RecoverySelectDefinition, "stored definition does not match", true
 	case KindStateVersionConflict:
 		return RecoveryRefreshState, "mission state version changed", true
+	case KindApprovalStale:
+		return RecoveryRefreshApproval, "current artifact approval changed before mission commit", true
 	case KindIdempotencyConflict:
 		return RecoveryCorrectInput, "operation identity was reused with different input", true
 	case KindInvalidStoredState, KindPersistenceContract:
