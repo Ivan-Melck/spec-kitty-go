@@ -1,7 +1,7 @@
 {
   "event_count": 30,
-  "last_event_id": "01M1210YEV05NT6J8JWJ6RKK98",
-  "materialized_at": "2026-08-27T16:32:05.595167+00:00",
+  "last_event_id": "01M12124K9EP9F6G4Q9ZFSV1XV",
+  "materialized_at": "2026-08-27T16:32:44.649455+00:00",
   "mission_number": "",
   "mission_slug": "software-development-mission-method-01M11EX2",
   "mission_type": "software-dev",
@@ -83,8 +83,8 @@
       "agent_profile_version": "1.0",
       "force_count": 0,
       "lane": "in_review",
-      "last_event_id": "01M1210YEV05NT6J8JWJ6RKK98",
-      "last_transition_at": "2026-08-27T16:32:05.595167+00:00",
+      "last_event_id": "01M12124K9EP9F6G4Q9ZFSV1XV",
+      "last_transition_at": "2026-08-27T16:32:44.649455+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: immutable typed artifact revisions, canonical validation, atomic idempotent publication and exact-revision approval freshness; package/race/schema/static/architecture gates pass. Full internal scenario census failure reproduced unchanged on coordination baseline."
