@@ -24,7 +24,7 @@ func TestArtifactServiceCompleteFreshnessProgression(t *testing.T) {
 	assertFreshness(t, ctx, service, revision1.ID(), FreshnessFresh, approval1.ID())
 
 	revision2 := publishArtifact(t, ctx, service, repository, publishFixture(t, "2", KindSpecification, []byte("changed invalid specification v2"), false, now.Add(2*time.Minute)))
-	assertFreshness(t, ctx, service, revision2.ID(), FreshnessStale, approval1.ID())
+	assertFreshness(t, ctx, service, revision2.ID(), FreshnessStale, "")
 	assertFreshness(t, ctx, service, revision1.ID(), FreshnessFresh, approval1.ID())
 	_, err = service.Approve(ctx, approveFixture("invalid-approval", revision2.ID(), VerdictApproved, now.Add(3*time.Minute)))
 	assertErrorKind(t, err, ErrorApprovalNotAllowed)
@@ -212,14 +212,14 @@ func TestFreshnessIsPureAndExactIdentityOnly(t *testing.T) {
 	service, _ := NewService(repository)
 	now := time.Date(2026, 8, 27, 23, 0, 0, 0, time.UTC)
 	revision1 := publishArtifact(t, ctx, service, repository, publishFixture(t, "1", KindIntent, []byte("same"), true, now))
-	approval1 := approveArtifact(t, ctx, service, approveFixture("1", revision1.ID(), VerdictApproved, now.Add(time.Second)))
+	approveArtifact(t, ctx, service, approveFixture("1", revision1.ID(), VerdictApproved, now.Add(time.Second)))
 	revision2Command := publishFixture(t, "2", KindIntent, []byte("same"), true, now.Add(2*time.Second))
 	revision2Command.SourceRef = revision1.SourceRef()
 	revision2 := publishArtifact(t, ctx, service, repository, revision2Command)
 	beforePublish, beforeApproval := repository.publishWrites, repository.approvalWrites
 	for iteration := 0; iteration < 100; iteration++ {
 		result, err := service.CurrentFreshness(ctx, revision2.MissionID(), revision2.Kind())
-		if err != nil || result.Status != FreshnessStale || result.ApprovalID != approval1.ID() {
+		if err != nil || result.Status != FreshnessStale || result.ApprovalID != "" {
 			t.Fatalf("iteration=%d result=%#v err=%v", iteration, result, err)
 		}
 	}
@@ -228,6 +228,67 @@ func TestFreshnessIsPureAndExactIdentityOnly(t *testing.T) {
 	}
 	if repository.reads == 0 {
 		t.Fatal("freshness did not use repository reads")
+	}
+}
+
+func TestStaleFreshnessIsCanonicalAcrossApprovalOrder(t *testing.T) {
+	now := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	approvalA := mustApproval(t, ArtifactApprovalParams{
+		ID: "approval-a", ArtifactRevisionID: "artifact-a", Verdict: VerdictApproved,
+		ActorID: "reviewer-1", EvidenceDigest: ContentCommitment([]byte("a")),
+		GovernanceContextID: "context-1", SubmittedAt: now,
+	})
+	approvalB := mustApproval(t, ArtifactApprovalParams{
+		ID: "approval-b", ArtifactRevisionID: "artifact-b", Verdict: VerdictApproved,
+		ActorID: "reviewer-2", EvidenceDigest: ContentCommitment([]byte("b")),
+		GovernanceContextID: "context-2", SubmittedAt: now.Add(time.Second),
+	})
+	left, err := EvaluateFreshness("artifact-required", []ArtifactApproval{approvalA, approvalB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := EvaluateFreshness("artifact-required", []ArtifactApproval{approvalB, approvalA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left != right || left.Status != FreshnessStale || left.ApprovalID != "" {
+		t.Fatalf("stale result depends on unrelated approval order: left=%#v right=%#v", left, right)
+	}
+	exactApproved, err := EvaluateFreshness("artifact-a", []ArtifactApproval{approvalB, approvalA})
+	if err != nil || exactApproved.Status != FreshnessFresh || exactApproved.ApprovalID != approvalA.ID() {
+		t.Fatalf("exact approval rule changed: result=%#v err=%v", exactApproved, err)
+	}
+	rejection := mustApproval(t, ArtifactApprovalParams{
+		ID: "approval-required", ArtifactRevisionID: "artifact-required", Verdict: VerdictRejected,
+		ActorID: "reviewer-3", EvidenceDigest: ContentCommitment([]byte("rejected")),
+		GovernanceContextID: "context-3", SubmittedAt: now.Add(2 * time.Second),
+	})
+	exactRejected, err := EvaluateFreshness("artifact-required", []ArtifactApproval{approvalA, approvalB, rejection})
+	if err != nil || exactRejected.Status != FreshnessRejected || exactRejected.ApprovalID != rejection.ID() {
+		t.Fatalf("exact rejection rule changed: result=%#v err=%v", exactRejected, err)
+	}
+}
+
+func TestRequestCommitmentKnownVectors(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 34, 56, 0, time.UTC)
+	command := publishFixture(t, "vector", KindIntent, []byte("abc"), true, now)
+	request, err := preparePublish(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if PublishRequestCommitmentAlgorithm != "sha256:spec-kitty-artifact-publish-request-v1" || request.RequestDigest != "cf221af475d7678fbd5e39cf6d7c2c72851632c0c8b7cc879ebecc94d6a499ec" {
+		t.Fatalf("publish request vector drifted: algorithm=%q digest=%s", PublishRequestCommitmentAlgorithm, request.RequestDigest)
+	}
+	approval, err := prepareApproval(ApproveCommand{
+		OperationID: "approve-vector", ApprovalID: "approval-vector", ArtifactRevisionID: "artifact-vector",
+		Verdict: VerdictApproved, ActorID: "reviewer-1", EvidenceDigest: ContentCommitment([]byte("abc")),
+		GovernanceContextID: "context-1", SubmittedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ApprovalRequestCommitmentAlgorithm != "sha256:spec-kitty-artifact-approval-request-v1" || approval.RequestDigest != "3647a4ce4e5326688ca71329ce240358c600ee34b2803afd40f7917f79b91e1d" {
+		t.Fatalf("approval request vector drifted: algorithm=%q digest=%s", ApprovalRequestCommitmentAlgorithm, approval.RequestDigest)
 	}
 }
 

@@ -390,7 +390,6 @@ func EvaluateFreshness(requiredRevisionID string, approvals []ArtifactApproval) 
 		return FreshnessResult{}, err
 	}
 	result := FreshnessResult{Status: FreshnessMissing, RequiredRevisionID: requiredRevisionID}
-	var staleApproval string
 	exactVerdicts := 0
 	for _, approval := range approvals {
 		if approval.ID() == "" {
@@ -417,12 +416,9 @@ func EvaluateFreshness(requiredRevisionID string, approvals []ArtifactApproval) 
 			}
 			continue
 		}
-		if approval.Verdict() == VerdictApproved && staleApproval == "" {
-			staleApproval = approval.ID()
+		if approval.Verdict() == VerdictApproved && result.Status == FreshnessMissing {
+			result.Status = FreshnessStale
 		}
-	}
-	if result.Status == FreshnessMissing && staleApproval != "" {
-		result.Status, result.ApprovalID = FreshnessStale, staleApproval
 	}
 	return result, nil
 }

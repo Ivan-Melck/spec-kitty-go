@@ -2,6 +2,8 @@ package artifact
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -27,6 +29,14 @@ func TestArtifactRevisionCommitmentAndImmutableValues(t *testing.T) {
 	}
 	if changed := ContentCommitment([]byte("exact specification byteS")); changed == want {
 		t.Fatal("one-byte mutation retained commitment")
+	}
+	const vector = "6aa7c92d7b2732a90b731ec5fb29e7577e4e51c58aecba020e2c5ceae77bcccd"
+	if ContentCommitmentAlgorithm != "sha256:spec-kitty-artifact-content-v1" || ContentCommitment([]byte("abc")) != vector {
+		t.Fatalf("domain-qualified content vector drifted: algorithm=%q digest=%s", ContentCommitmentAlgorithm, ContentCommitment([]byte("abc")))
+	}
+	raw := sha256.Sum256([]byte("abc"))
+	if vector == hex.EncodeToString(raw[:]) {
+		t.Fatal("domain-qualified commitment collapsed to raw SHA-256")
 	}
 
 	local := time.Date(2026, 8, 27, 10, 0, 0, 0, time.FixedZone("local", -5*60*60))
@@ -144,6 +154,55 @@ func TestValidationCanonicalizationPoliciesAndBounds(t *testing.T) {
 		if strings.Contains(strings.ToLower(err.Error()), strings.ToLower(private)) {
 			t.Fatal("sensitive value leaked into diagnostic")
 		}
+	}
+	privacyCases := []struct {
+		name    string
+		kind    string
+		field   string
+		message string
+	}{
+		{name: "kind lowercase credential", kind: "secret=credential", field: "scope", message: "bounded"},
+		{name: "kind case variant", kind: "Authorization_Bearer_Credential", field: "scope", message: "bounded"},
+		{name: "field lowercase credential", kind: "missing_concern", field: "access_token=credential", message: "bounded"},
+		{name: "field case variant", kind: "missing_concern", field: "Private_Transcript", message: "bounded"},
+		{name: "canonical-looking password field", kind: "missing_concern", field: "password.hunter2", message: "bounded"},
+		{name: "canonical-looking token field", kind: "missing_concern", field: "access_token.credential", message: "bounded"},
+		{name: "canonical-looking secret kind", kind: "secret_missing", field: "scope", message: "bounded"},
+		{name: "canonical-looking private key field", kind: "missing_concern", field: "private_key.pem", message: "bounded"},
+		{name: "canonical-looking API key kind", kind: "api_key_exposed", field: "scope", message: "bounded"},
+		{name: "message case variant", kind: "missing_concern", field: "scope", message: "SeCrEt: credential"},
+		{name: "kind prose", kind: "Missing concern", field: "scope", message: "bounded"},
+		{name: "field path", kind: "missing_concern", field: "scope/path", message: "bounded"},
+	}
+	for _, test := range privacyCases {
+		t.Run(test.name, func(t *testing.T) {
+			_, findingErr := NewFinding(test.kind, test.field, test.message, RecoveryCorrectInput)
+			assertErrorKind(t, findingErr, ErrorInvalidFinding)
+			for _, supplied := range []string{test.kind, test.field, test.message} {
+				if strings.Contains(findingErr.Error(), supplied) {
+					t.Fatalf("diagnostic retained supplied finding component %q", supplied)
+				}
+			}
+		})
+	}
+	if _, err := NewFinding("missing_concern", "validation.scope", "bounded explanation", RecoveryCorrectInput); err != nil {
+		t.Fatalf("canonical dotted logical field rejected: %v", err)
+	}
+
+	vectorPolicy, err := PolicyFor(KindIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorValidation := mustValidation(t, ValidationResultParams{
+		ArtifactRevisionID: "artifact-vector", Verdict: ValidationPass, Policy: vectorPolicy,
+		ValidatedAt: time.Date(2026, 8, 27, 12, 34, 56, 0, time.UTC),
+	})
+	vectorDigest, err := vectorValidation.Commitment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ValidationCommitmentAlgorithm != "sha256:spec-kitty-artifact-validation-v1" || vectorDigest != "f589a32145174a9f26e75269a42f754dbf12f764c2cf86817b70de562efd5f26" {
+		t.Fatalf("validation commitment vector drifted: algorithm=%q digest=%s", ValidationCommitmentAlgorithm, vectorDigest)
 	}
 }
 
