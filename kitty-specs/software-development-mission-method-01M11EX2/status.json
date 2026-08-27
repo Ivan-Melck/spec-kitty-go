@@ -52,7 +52,7 @@
     },
     "WP02": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -64,6 +64,7 @@
         "Ready for review: static exact-version mission definition, typed lifecycle authority, pure gated CAS transitions, idempotent atomic store port, and exhaustive deterministic/race-safe tests"
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP02-static-mission-definition-and-lifecycle-authority/review-cycle-1.md",
         "reference": "review-cycle://software-development-mission-method-01M11EX2/WP02-static-mission-definition-and-lifecycle-authority/review-cycle-1.md",
@@ -71,15 +72,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T006": "done",
-        "T007": "done",
-        "T008": "done",
-        "T009": "done",
-        "T010": "done",
-        "T011": "done"
+        "T006": "planned",
+        "T007": "planned",
+        "T008": "planned",
+        "T009": "planned",
+        "T010": "planned",
+        "T011": "planned"
       }
     },
     "WP03": {
