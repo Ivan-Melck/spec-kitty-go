@@ -2,7 +2,7 @@
 work_package_id: WP03
 title: Typed Artifact Revisions and Fresh Approvals
 dependencies:
-- WP01
+- WP02
 requirement_refs:
 - FR-004
 - FR-005
@@ -26,12 +26,15 @@ subtasks:
 history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/artifact/
+scope: codebase-wide
 create_intent:
 - internal/artifact/model.go
 - internal/artifact/validation.go
 - internal/artifact/service.go
 - internal/artifact/model_test.go
 - internal/artifact/service_test.go
+- internal/mission/service.go
+- internal/mission/lifecycle_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -40,6 +43,10 @@ owned_files:
 - internal/artifact/service.go
 - internal/artifact/model_test.go
 - internal/artifact/service_test.go
+- internal/mission/service.go
+- internal/mission/lifecycle_test.go
+- internal/architecture/reachability.go
+- internal/architecture/reachability_test.go
 role: implementer
 tags: []
 tracker_refs: []
@@ -105,11 +112,14 @@ Apply these design laws throughout:
 ## Branch Strategy
 
 Use only the Spec Kitty lane worktree allocated for WP03 after task
-finalization. Its dependency base is the accepted WP01 candidate, and its merge
+finalization. Its dependency base is the accepted WP02 candidate (and therefore
+the accepted WP01 candidate transitively), and its merge
 target is `feat/software-development-mission-method`. Do not create a worktree,
-branch from `main`, reuse another package's lane, or merge directly. WP03 is
-independent of WP02 in the executable DAG, so stay strictly within the five
-owned files and avoid lifecycle-package edits that would serialize the lanes.
+branch from `main`, reuse another package's lane, or merge directly. WP03 follows
+WP02 because artifact freshness becomes mission authority only when the real
+mission transition path consumes it. Stay strictly within the nine owned files.
+The narrowly overlapping mission and architecture files make this a
+linearized cross-cutting boundary WP; they do not authorize broader edits.
 
 Start implementation with:
 
@@ -308,8 +318,17 @@ history.
    but makes that approval stale for a transition requiring revision 2. A later
    approval of revision 2 becomes fresh without modifying revision 1 evidence.
 6. Keep mission advancement outside this package. Return typed evidence that
-   WP02/WP07 can consume; do not call a mission transition, infer current step,
-   or grant execution authority from inside the artifact service.
+   the mission service consumes; do not call a mission transition, infer current
+   step, or grant execution authority from inside the artifact service.
+7. In `internal/mission/service.go`, add a narrow read-only artifact-approval
+   source and make specification/plan approval transitions load the exact
+   current revision and call `artifact.EvaluateFreshness`. Only a fresh exact
+   approval may synthesize the corresponding accepted mission evidence.
+8. Refuse missing, rejected, and stale freshness results with stable mission
+   diagnostics. Reject caller-manufactured specification/plan approval evidence
+   so a transition requester cannot attest its own approval.
+9. Keep direction one-way: mission may consume artifact freshness, while
+   artifact must not import mission or advance lifecycle state.
 
 **Files**:
 
@@ -317,6 +336,10 @@ history.
   exact-revision freshness query, and typed results.
 - `internal/artifact/service_test.go` — approval, rejection, stale-successor,
   replay, conflict, and failure-path tests.
+- `internal/mission/service.go` — legitimate artifact-freshness consumer in the
+  lifecycle transition path.
+- `internal/mission/lifecycle_test.go` — fresh acceptance; missing, rejected,
+  stale, and forged-evidence refusal controls.
 
 **Validation**:
 
@@ -328,6 +351,8 @@ history.
   approval to pass a later gate.
 - Freshness queries are pure: repeated calls issue reads only and do not create
   events, operation rows, approvals, or revisions.
+- `go list` exposes a real production `mission -> artifact` edge, and removal of
+  the mission freshness call makes the permanent reachability campaign fail.
 
 ### Subtask T016: Lock the artifact contract with unit and adversarial tests
 
@@ -362,6 +387,10 @@ regression proof before SQLite and mission-lifecycle composition are added.
 7. Record T012 through T016 complete only after all targeted tests and the
    repository-wide compile check pass, using the event-sourced status commands
    in the Definition of Done.
+8. Extend the permanent reachability registry with the stable
+   `internal/artifact.EvaluateFreshness` seam using package-present activation.
+   Add source-loaded mutants for missing registration, missing declaration,
+   test-only or shadowed callers, and removal of the sole mission caller.
 
 **Files**:
 
@@ -369,12 +398,20 @@ regression proof before SQLite and mission-lifecycle composition are added.
   decoding, validator, and mutation-control coverage.
 - `internal/artifact/service_test.go` — end-to-end service, replay, freshness,
   privacy, concurrency-contract, and repository-collaborator coverage.
+- `internal/architecture/reachability.go` — stable artifact authority target.
+- `internal/architecture/reachability_test.go` — registry census and real
+  source-loaded reachability mutants.
+- `internal/mission/lifecycle_test.go` — mission/artifact authority integration
+  and forged-evidence mutants.
 
 **Validation**:
 
 ```bash
 go test ./internal/artifact
+go test ./internal/mission
+go test ./internal/architecture
 go test -race ./internal/artifact
+go test -race ./internal/mission
 go test ./internal/...
 go vet ./internal/artifact
 gofmt -d internal/artifact
@@ -386,6 +423,8 @@ gofmt -d internal/artifact
   prose to decide behavior.
 - `go test -race` reports no races, and callers cannot mutate published values
   through retained slices, maps, or byte buffers.
+- The exact architecture campaign proves the registered artifact seam has a
+  legitimate non-test mission caller and rejects missing/test-only callers.
 
 ## Definition of Done
 
@@ -401,11 +440,14 @@ gofmt -d internal/artifact
   changed content conflicts without mutation.
 - Approval freshness requires the exact currently required revision identity;
   successor publication preserves old evidence while making it stale.
+- Specification and plan transitions derive approval evidence only through the
+  registered artifact freshness seam; forged caller evidence is refused.
 - Files remain adapters, not authority. No production code parses Markdown,
   treats path existence as approval, or imports a persistence/transport/provider
   adapter into `internal/artifact`.
-- All five owned files are present, formatted, and covered by package unit and
-  race tests; the repository-wide internal package compile check passes.
+- All nine owned files are present, formatted, and covered by artifact,
+  mission, architecture, and race tests; the repository-wide internal package
+  compile check passes.
 - Record completion evidence for each subtask only after its validation passes:
 
 ```bash

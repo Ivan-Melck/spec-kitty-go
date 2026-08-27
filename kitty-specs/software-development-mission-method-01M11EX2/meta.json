@@ -12,5 +12,7 @@
   "purpose_tldr": "Run governed software-development missions from intent to finalized tracker work without a canonical Markdown task ledger.",
   "slug": "software-development-mission-method-01M11EX2",
   "target_branch": "feat/software-development-mission-method",
-  "topology": "coord"
+  "topology": "coord",
+  "vcs": "git",
+  "vcs_locked_at": "2026-08-27T15:17:04.917673+00:00"
 }
