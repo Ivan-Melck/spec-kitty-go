@@ -585,6 +585,7 @@ func TestServiceCreateReplayConflictTransitionRaceAndStoreFailure(t *testing.T) 
 	laterRequest := requestFor(t, definition, storedBeforeFailure, mission.StepSpecificationApproved, "later-transition")
 	laterRequest.Evidence = withoutApprovalEvidence(laterRequest.Evidence)
 	approvalSource := freshArtifactApprovalSource(t, laterRequest.MissionID, artifact.KindSpecification, "later-transition")
+	store.artifactSource = approvalSource
 	laterService := mission.NewServiceWithArtifactApprovals(registry, store, approvalSource)
 	later, err := laterService.Transition(context.Background(), laterRequest)
 	if err != nil {
@@ -632,6 +633,7 @@ func TestServiceDerivesOnlyExactArtifactApprovalEvidence(t *testing.T) {
 			store := newMemoryStore()
 			store.snapshot = current
 			source := freshArtifactApprovalSource(t, current.MissionID, test.artifactKind, "exact-"+test.name)
+			store.artifactSource = source
 			service := mission.NewServiceWithArtifactApprovals(registry, store, source)
 			request := requestFor(t, definition, current, test.successor, "exact-"+test.name)
 			request.Evidence = withoutApprovalEvidence(request.Evidence)
@@ -643,18 +645,17 @@ func TestServiceDerivesOnlyExactArtifactApprovalEvidence(t *testing.T) {
 			if result.Instance.CurrentStep != test.successor || result.Audit.ApprovalEvidenceID.String() != source.approvals[0].ID() {
 				t.Fatalf("transition=%+v approval=%q", result, source.approvals[0].ID())
 			}
-			if source.currentCalls != 1 || source.approvalCalls != 1 {
-				t.Fatalf("artifact source calls current=%d approvals=%d", source.currentCalls, source.approvalCalls)
+			if source.observationCalls != 1 {
+				t.Fatalf("artifact source observations=%d", source.observationCalls)
 			}
-			if source.currentMissionID != current.MissionID.String() || source.approvalMissionID != current.MissionID.String() ||
-				source.currentKind != test.artifactKind || source.approvalKind != test.artifactKind {
-				t.Fatalf("artifact source scope current=(%s,%s) approvals=(%s,%s)", source.currentMissionID, source.currentKind, source.approvalMissionID, source.approvalKind)
+			if source.observedMissionID != current.MissionID.String() || source.observedKind != test.artifactKind {
+				t.Fatalf("artifact source scope=(%s,%s)", source.observedMissionID, source.observedKind)
 			}
 			replay, err := service.Transition(context.Background(), request)
 			if err != nil || !replay.Replayed || replay.Audit != result.Audit {
 				t.Fatalf("replay=%+v err=%v", replay, err)
 			}
-			if source.currentCalls != 1 || source.approvalCalls != 1 {
+			if source.observationCalls != 1 {
 				t.Fatal("durable replay re-read mutable artifact authority")
 			}
 		})
@@ -721,8 +722,128 @@ func TestServiceRefusesMissingRejectedStaleAndForgedArtifactApprovals(t *testing
 			}
 		})
 	}
-	if fresh.currentCalls != 0 || fresh.approvalCalls != 0 {
+	if fresh.observationCalls != 0 {
 		t.Fatal("forged caller evidence reached artifact authority")
+	}
+}
+
+func TestServiceRejectsSuccessorPublicationAtEveryApprovalCommitBoundary(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, boundary := range []string{"before-aggregate-observation", "after-observation-before-commit", "inside-commit-boundary"} {
+		t.Run(boundary, func(t *testing.T) {
+			current := snapshotAt(t, definition, mission.StepSpecifying, 12)
+			store := newMemoryStore()
+			store.snapshot = current
+			source := freshArtifactApprovalSource(t, current.MissionID, artifact.KindSpecification, "toctou-r1-"+boundary)
+			store.artifactSource = source
+			publishSuccessor := func(source *artifactApprovalSource) {
+				source.revision = mustArtifactRevision(t, current.MissionID, artifact.KindSpecification, "toctou-r2-"+boundary)
+			}
+			switch boundary {
+			case "before-aggregate-observation":
+				source.beforeObserve = publishSuccessor
+			case "after-observation-before-commit":
+				source.afterObserve = publishSuccessor
+			case "inside-commit-boundary":
+				store.beforeAuthorityCheck = func() { publishSuccessor(source) }
+			}
+			request := requestFor(t, definition, current, mission.StepSpecificationApproved, "toctou-"+boundary)
+			request.Evidence = withoutApprovalEvidence(request.Evidence)
+			service := mission.NewServiceWithArtifactApprovals(registry, store, source)
+
+			_, err := service.Transition(context.Background(), request)
+			if !mission.IsKind(err, mission.KindApprovalStale) {
+				t.Fatalf("publication boundary advanced with err=%v", err)
+			}
+			if source.observationCalls != 1 {
+				t.Fatalf("boundary used non-aggregate or best-effort rereads observations=%d", source.observationCalls)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if !reflect.DeepEqual(store.snapshot, current) || len(store.transitions) != 0 {
+				t.Fatalf("stale approval changed mission state snapshot=%+v transitions=%d", store.snapshot, len(store.transitions))
+			}
+		})
+	}
+}
+
+func TestApprovalReplayRejectsMissingAndSubstitutedImmutableAuthority(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := snapshotAt(t, definition, mission.StepSpecifying, 15)
+	base := newMemoryStore()
+	base.snapshot = current
+	source := freshArtifactApprovalSource(t, current.MissionID, artifact.KindSpecification, "replay-authority")
+	base.artifactSource = source
+	service := mission.NewServiceWithArtifactApprovals(registry, base, source)
+	request := requestFor(t, definition, current, mission.StepSpecificationApproved, "replay-authority")
+	request.Evidence = withoutApprovalEvidence(request.Evidence)
+	committed, err := service.Transition(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !committed.Authority.Required() || committed.Audit.AuthorityCommitment != committed.Authority.Commitment() {
+		t.Fatalf("commit omitted immutable authority: %+v", committed)
+	}
+
+	alteredRevisionEvidence, err := artifact.NewCurrentApprovalEvidence(
+		current.MissionID.String(), artifact.KindSpecification, "artifact.substituted", committed.Authority.ArtifactApproval().ApprovalID(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alteredRevisionAuthority, err := mission.NewTransitionAuthority(committed.Authority.RequestCommitment(), alteredRevisionEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alteredApprovalEvidence, err := artifact.NewCurrentApprovalEvidence(
+		current.MissionID.String(), artifact.KindSpecification, committed.Authority.ArtifactApproval().ArtifactRevisionID(), "approval.substituted",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alteredApprovalAuthority, err := mission.NewTransitionAuthority(committed.Authority.RequestCommitment(), alteredApprovalEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mutants := []struct {
+		name   string
+		mutate func(*mission.TransitionResult)
+	}{
+		{name: "missing-authority", mutate: func(result *mission.TransitionResult) { result.Authority = mission.TransitionAuthority{} }},
+		{name: "altered-authority-revision", mutate: func(result *mission.TransitionResult) { result.Authority = alteredRevisionAuthority }},
+		{name: "altered-authority-approval", mutate: func(result *mission.TransitionResult) { result.Authority = alteredApprovalAuthority }},
+		{name: "altered-audit-revision", mutate: func(result *mission.TransitionResult) { result.Audit.ArtifactRevisionID = "artifact.substituted" }},
+		{name: "altered-audit-approval", mutate: func(result *mission.TransitionResult) {
+			result.Audit.ApprovalEvidenceID = mustEvidenceID(t, "approval.substituted")
+		}},
+		{name: "altered-audit-commitment", mutate: func(result *mission.TransitionResult) {
+			result.Audit.AuthorityCommitment = mission.TransitionAuthorityCommitment(strings.Repeat("a", 64))
+		}},
+	}
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			wrong := &mutatingStore{memoryStore: base, replayMutator: mutant.mutate}
+			_, err := mission.NewServiceWithArtifactApprovals(registry, wrong, source).Transition(context.Background(), request)
+			if !mission.IsKind(err, mission.KindPersistenceContract) {
+				t.Fatalf("substituted replay authority accepted: %v", err)
+			}
+		})
+	}
+	replay, err := service.Transition(context.Background(), request)
+	if err != nil || !replay.Replayed || replay.Authority != committed.Authority || replay.Audit != committed.Audit {
+		t.Fatalf("exact durable replay=%+v err=%v", replay, err)
+	}
+	if source.observationCalls != 1 {
+		t.Fatal("replay consulted mutable artifact state")
 	}
 }
 
@@ -914,6 +1035,20 @@ func TestStoreErrorsAndDefinitionDiagnosticsAreCanonicalAndBounded(t *testing.T)
 }
 
 func TestTransitionAuditExactCensusAndReplayPreservation(t *testing.T) {
+	t.Run("authority-commitment-vector", func(t *testing.T) {
+		evidence, err := artifact.NewCurrentApprovalEvidence("mission-vector", artifact.KindSpecification, "artifact-vector", "approval-vector")
+		if err != nil {
+			t.Fatal(err)
+		}
+		authority, err := mission.NewTransitionAuthority(mission.RequestCommitment(strings.Repeat("a", 64)), evidence)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mission.TransitionAuthorityCommitmentAlgorithm != "sha256:spec-kitty-transition-authority-v1" || authority.Commitment() != "47596e62ab6f042aefec0ecc929c11c51ba2b7970f31924b02944e140a7f49a3" {
+			t.Fatalf("transition authority vector drifted: algorithm=%q commitment=%s", mission.TransitionAuthorityCommitmentAlgorithm, authority.Commitment())
+		}
+	})
+
 	definition := mustDefinition(t)
 	registry, err := mission.NewRegistry(definition)
 	if err != nil {
@@ -950,27 +1085,28 @@ type artifactApprovalSource struct {
 	revision          artifact.ArtifactRevision
 	approvals         []artifact.ArtifactApproval
 	currentError      error
-	approvalError     error
-	currentCalls      int
-	approvalCalls     int
-	currentMissionID  string
-	approvalMissionID string
-	currentKind       artifact.Kind
-	approvalKind      artifact.Kind
+	observationCalls  int
+	observedMissionID string
+	observedKind      artifact.Kind
+	beforeObserve     func(*artifactApprovalSource)
+	afterObserve      func(*artifactApprovalSource)
 }
 
-func (s *artifactApprovalSource) CurrentRevision(_ context.Context, missionID string, kind artifact.Kind) (artifact.ArtifactRevision, error) {
-	s.currentCalls++
-	s.currentMissionID = missionID
-	s.currentKind = kind
-	return s.revision, s.currentError
-}
-
-func (s *artifactApprovalSource) Approvals(_ context.Context, missionID string, kind artifact.Kind) ([]artifact.ArtifactApproval, error) {
-	s.approvalCalls++
-	s.approvalMissionID = missionID
-	s.approvalKind = kind
-	return append([]artifact.ArtifactApproval(nil), s.approvals...), s.approvalError
+func (s *artifactApprovalSource) ObserveCurrentApproval(_ context.Context, missionID string, kind artifact.Kind) (artifact.CurrentApprovalObservation, error) {
+	if s.beforeObserve != nil {
+		s.beforeObserve(s)
+	}
+	s.observationCalls++
+	s.observedMissionID = missionID
+	s.observedKind = kind
+	if s.currentError != nil {
+		return artifact.CurrentApprovalObservation{}, s.currentError
+	}
+	observation, err := artifact.NewCurrentApprovalObservation(s.revision, s.approvals)
+	if s.afterObserve != nil {
+		s.afterObserve(s)
+	}
+	return observation, err
 }
 
 func freshArtifactApprovalSource(t *testing.T, missionID ids.MissionID, kind artifact.Kind, suffix string) *artifactApprovalSource {
@@ -1053,12 +1189,14 @@ func (s *mutatingStore) CommitTransition(ctx context.Context, commit mission.Tra
 }
 
 type memoryStore struct {
-	mu          sync.Mutex
-	snapshot    mission.MissionSnapshot
-	createOps   map[ids.OperationID]storedCreate
-	transitions map[ids.OperationID]storedTransition
-	failCommit  error
-	commitCalls int
+	mu                   sync.Mutex
+	snapshot             mission.MissionSnapshot
+	createOps            map[ids.OperationID]storedCreate
+	transitions          map[ids.OperationID]storedTransition
+	failCommit           error
+	commitCalls          int
+	artifactSource       *artifactApprovalSource
+	beforeAuthorityCheck func()
 }
 
 type storedCreate struct {
@@ -1137,6 +1275,30 @@ func (s *memoryStore) CommitTransition(_ context.Context, commit mission.Transit
 	if s.failCommit != nil {
 		return mission.TransitionResult{}, s.failCommit
 	}
+	if commit.Authority.Required() {
+		if s.beforeAuthorityCheck != nil {
+			s.beforeAuthorityCheck()
+		}
+		if s.artifactSource == nil || commit.Authority.Validate() != nil || commit.Authority.RequestCommitment() != commit.RequestCommitment {
+			return mission.TransitionResult{}, domainError(mission.KindPersistenceContract)
+		}
+		evidence := commit.Authority.ArtifactApproval()
+		if s.artifactSource.revision.ID() != evidence.ArtifactRevisionID() || s.artifactSource.revision.MissionID() != evidence.MissionID() || s.artifactSource.revision.Kind() != evidence.Kind() {
+			return mission.TransitionResult{}, domainError(mission.KindApprovalStale)
+		}
+		matched := false
+		for _, approval := range s.artifactSource.approvals {
+			if approval.ID() == evidence.ApprovalID() && approval.ArtifactRevisionID() == evidence.ArtifactRevisionID() && approval.Verdict() == artifact.VerdictApproved {
+				matched = true
+				break
+			}
+		}
+		if !matched || commit.Candidate.Audit.ArtifactRevisionID != evidence.ArtifactRevisionID() ||
+			commit.Candidate.Audit.ApprovalEvidenceID.String() != evidence.ApprovalID() ||
+			commit.Candidate.Audit.AuthorityCommitment != commit.Authority.Commitment() {
+			return mission.TransitionResult{}, domainError(mission.KindApprovalStale)
+		}
+	}
 	previous := commit.Candidate.Previous
 	if s.snapshot.MissionID != previous.MissionID || s.snapshot.DefinitionCommitment != previous.DefinitionCommitment || s.snapshot.CurrentStep != previous.CurrentStep || s.snapshot.StateVersion != previous.StateVersion {
 		return mission.TransitionResult{}, domainError(mission.KindStateVersionConflict)
@@ -1148,7 +1310,7 @@ func (s *memoryStore) CommitTransition(_ context.Context, commit mission.Transit
 		return mission.TransitionResult{}, domainError(mission.KindUnresolvedDecision)
 	}
 	s.snapshot = cloneSnapshot(commit.Candidate.Successor)
-	result := mission.TransitionResult{Instance: cloneSnapshot(s.snapshot), Audit: commit.Candidate.Audit}
+	result := mission.TransitionResult{Instance: cloneSnapshot(s.snapshot), Audit: commit.Candidate.Audit, Authority: commit.Authority}
 	s.transitions[commit.OperationID] = storedTransition{commit.RequestCommitment, result}
 	return result, nil
 }
