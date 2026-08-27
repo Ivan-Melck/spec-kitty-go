@@ -4,9 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+)
+
+var (
+	findingKindIdentifier  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	findingFieldIdentifier = regexp.MustCompile(`^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$`)
 )
 
 const (
@@ -46,10 +52,10 @@ type Finding struct {
 }
 
 func NewFinding(kind, field, message string, recovery RecoveryCategory) (Finding, error) {
-	if err := validateBoundedText("finding.kind", kind, maxFindingKindLength); err != nil {
+	if err := validateFindingIdentifier("finding.kind", kind, maxFindingKindLength, findingKindIdentifier); err != nil {
 		return Finding{}, err
 	}
-	if err := validateBoundedText("finding.field", field, maxFindingFieldLength); err != nil {
+	if err := validateFindingIdentifier("finding.field", field, maxFindingFieldLength, findingFieldIdentifier); err != nil {
 		return Finding{}, err
 	}
 	if err := validateBoundedText("finding.message", message, maxFindingMessageLength); err != nil {
@@ -307,6 +313,33 @@ func validateBoundedText(field, value string, limit int) error {
 		return diagnostic(ErrorInvalidFinding, field, RecoveryCorrectInput, "finding field is blank, malformed, or above its bound", nil)
 	}
 	return nil
+}
+
+func validateFindingIdentifier(field, value string, limit int, pattern *regexp.Regexp) error {
+	if containsSensitiveEvidence(value) || containsSensitiveIdentifier(value) || value == "" || len(value) > limit || !pattern.MatchString(value) {
+		return diagnostic(ErrorInvalidFinding, field, RecoveryCorrectInput, "finding identifier is not canonical or contains prohibited private evidence", nil)
+	}
+	return nil
+}
+
+func containsSensitiveIdentifier(value string) bool {
+	components := strings.FieldsFunc(strings.ToLower(value), func(character rune) bool {
+		return character == '_' || character == '.' || character == '-'
+	})
+	var private, api, key bool
+	for _, component := range components {
+		switch component {
+		case "authorization", "bearer", "credential", "password", "secret", "token", "transcript", "privatekey":
+			return true
+		case "private":
+			private = true
+		case "api":
+			api = true
+		case "key":
+			key = true
+		}
+	}
+	return key && (private || api)
 }
 
 func containsSensitiveEvidence(value string) bool {
