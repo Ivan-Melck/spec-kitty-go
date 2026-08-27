@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 1
-mission_slug: software-development-mission-method-01M11EX2
-reproduction_command:
-reviewed_at: '2026-08-27T15:43:09Z'
-reviewer_agent: user
-wp_id: WP01
----
-
 # WP01 Review Feedback — Round 1
 
 Verdict: changes requested.
