@@ -28,7 +28,8 @@
       "last_transition_at": "2026-08-27T15:55:33.323207+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: permanent Phase 3 tier, direction, deferred-surface, Markdown-authority, reachability, and mutant guards; focused, repeated, race, compile, vet, staticcheck, module, formatting, and hygiene checks pass."
+        "Ready for review: permanent Phase 3 tier, direction, deferred-surface, Markdown-authority, reachability, and mutant guards; focused, repeated, race, compile, vet, staticcheck, module, formatting, and hygiene checks pass.",
+        "Ready for review cycle 2: projection dependencies are structurally limited to typed read-model packages; a production-shaped unregistered mutation mutant is rejected; seven new evidence groups are folded into the exact architecture census; architecture campaign passes; focused, repeated, race, compile, vet, staticcheck, module, formatting, and hygiene checks pass. Forced only past stale planning-branch artifact detection; net coordination diff is four owned architecture files."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
