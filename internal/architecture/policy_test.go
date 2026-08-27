@@ -210,6 +210,9 @@ func TestPolicyRejectingFixturesNameExactRuleAndEdge(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("phase3-direction-and-mutant-controls", checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants)
+	t.Run("phase3-deferred-surface-controls", checkDefaultPolicyPreservesDeferredPhase4Through6Surfaces)
 }
 
 func TestDefaultPolicyRejectsAuthorityImportOfGitAdapter(t *testing.T) {
@@ -355,6 +358,274 @@ func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T)
 			}
 		}
 	})
+
+	t.Run("phase3-capability-classification", checkDefaultPolicyClassifiesPhase3CapabilitiesExactly)
+}
+
+func checkDefaultPolicyClassifiesPhase3CapabilitiesExactly(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		path string
+		tier TierName
+	}{
+		{module + "/internal/mission", TierMissionAuthority},
+		{module + "/internal/mission/readmodel", TierReadModel},
+		{module + "/internal/mission/readmodel/status", TierReadModel},
+		{module + "/internal/artifact", TierArtifactAuthority},
+		{module + "/internal/artifact/readmodel", TierReadModel},
+		{module + "/internal/artifact/readmodel/contract", TierReadModel},
+		{module + "/internal/workgraph/readmodel", TierReadModel},
+		{module + "/internal/missiontype/softwaredev", TierMissionDefinition},
+		{module + "/internal/missiontype/softwaredev/schema", TierMissionDefinition},
+		{module + "/internal/projection", TierProjection},
+		{module + "/internal/projection/tasks", TierProjection},
+	}
+	for _, test := range tests {
+		t.Run(strings.TrimPrefix(test.path, module+"/"), func(t *testing.T) {
+			assertTier(t, policy, test.path, test.tier)
+			first, second := classifyDiagnostic(policy, test.path), classifyDiagnostic(policy, test.path)
+			if first != second {
+				t.Fatalf("classification changed: first=%q second=%q", first, second)
+			}
+		})
+	}
+
+	for _, path := range []string{
+		module + "/internal/missionary",
+		module + "/internal/artifacts",
+		module + "/internal/missiontype/softwaredeveloper",
+		module + "/internal/projections",
+	} {
+		_, err := policy.Classify(path)
+		violation, ok := err.(Violation)
+		if !ok || violation.Rule != RuleUnknownPackage || violation.SourcePackage != path || violation.TargetPackage != path {
+			t.Fatalf("look-alike classification path=%s err=%v", path, err)
+		}
+	}
+
+	// Existing Phase 1 and Phase 2 classifications are pinned while the new
+	// capability roots use additional, narrower tiers.
+	for _, test := range []struct {
+		path string
+		tier TierName
+	}{
+		{module + "/internal/execution", TierAuthority},
+		{module + "/internal/workgraph", TierAuthority},
+		{module + "/internal/tracker", TierProviderContract},
+		{module + "/internal/tracker/fake", TierAdapter},
+		{module + "/internal/tracker/beads/protocol", TierAdapter},
+		{module + "/internal/controlstore/sqlite", TierAdapter},
+		{module + "/internal/gitrepo", TierAdapter},
+	} {
+		assertTier(t, policy, test.path, test.tier)
+	}
+}
+
+func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mission := module + "/internal/mission"
+	artifact := module + "/internal/artifact"
+	definition := module + "/internal/missiontype/softwaredev"
+	projection := module + "/internal/projection"
+	missionReadModel := module + "/internal/mission/readmodel"
+	artifactReadModel := module + "/internal/artifact/readmodel"
+	workgraphReadModel := module + "/internal/workgraph/readmodel"
+	workgraph := module + "/internal/workgraph"
+	tracker := module + "/internal/tracker"
+	beads := module + "/internal/tracker/beads"
+	fake := module + "/internal/tracker/fake"
+	sqlite := module + "/internal/controlstore/sqlite"
+	git := module + "/internal/gitrepo"
+	ids := module + "/internal/ids"
+
+	accepted := []struct {
+		name   string
+		source string
+		target string
+	}{
+		{"mission-to-foundation", mission, ids},
+		{"mission-to-artifact", mission, artifact},
+		{"mission-to-workgraph", mission, workgraph},
+		{"mission-to-tracker-contract", mission, tracker},
+		{"definition-to-mission-contract", definition, mission},
+		{"projection-to-mission-read-model", projection, missionReadModel},
+		{"projection-to-artifact-read-model", projection, artifactReadModel},
+		{"projection-to-workgraph-read-model", projection, workgraphReadModel},
+		{"control-store-to-mission-port", sqlite, mission},
+	}
+	for _, test := range accepted {
+		t.Run("accept-"+test.name, func(t *testing.T) {
+			graph := fixtureGraph([]string{test.source, test.target}, ImportEdge{SourcePackage: test.source, TargetPackage: test.target, Kind: ImportModuleLocal})
+			graph.ModulePath = module
+			if err := policy.Check(graph); err != nil {
+				t.Fatalf("legitimate Phase 3 edge rejected: %v", err)
+			}
+		})
+	}
+
+	rejected := []struct {
+		name       string
+		source     string
+		sourceTier TierName
+		target     string
+		targetTier TierName
+	}{
+		{"mission-to-beads", mission, TierMissionAuthority, beads, TierAdapter},
+		{"mission-to-fake-tracker", mission, TierMissionAuthority, fake, TierAdapter},
+		{"mission-to-sqlite", mission, TierMissionAuthority, sqlite, TierAdapter},
+		{"mission-to-git", mission, TierMissionAuthority, git, TierAdapter},
+		{"mission-to-projection", mission, TierMissionAuthority, projection, TierProjection},
+		{"artifact-to-adapter", artifact, TierArtifactAuthority, sqlite, TierAdapter},
+		{"artifact-to-projection", artifact, TierArtifactAuthority, projection, TierProjection},
+		{"projection-to-mission-authority", projection, TierProjection, mission, TierMissionAuthority},
+		{"projection-to-artifact-authority", projection, TierProjection, artifact, TierArtifactAuthority},
+		{"projection-to-workgraph-authority", projection, TierProjection, workgraph, TierAuthority},
+		{"beads-to-mission", beads, TierAdapter, mission, TierMissionAuthority},
+		{"fake-to-artifact", fake, TierAdapter, artifact, TierArtifactAuthority},
+		{"authority-to-concrete-definition", workgraph, TierAuthority, definition, TierMissionDefinition},
+		{"mission-to-concrete-definition", mission, TierMissionAuthority, definition, TierMissionDefinition},
+		{"definition-to-adapter", definition, TierMissionDefinition, beads, TierAdapter},
+		{"definition-to-projection", definition, TierMissionDefinition, projection, TierProjection},
+	}
+	for _, test := range rejected {
+		t.Run("reject-"+test.name, func(t *testing.T) {
+			graph := fixtureGraph([]string{test.source, test.target}, ImportEdge{SourcePackage: test.source, TargetPackage: test.target, Kind: ImportModuleLocal})
+			graph.ModulePath = module
+			for repeat := 0; repeat < 10; repeat++ {
+				assertExactViolation(t, policy, graph, RuleLocalDirection, test.source, test.sourceTier, test.target, test.targetTier)
+			}
+		})
+	}
+
+	t.Run("widened-mission-target-mutant", func(t *testing.T) {
+		mutant := policy
+		mutant.Tiers = append([]Tier(nil), policy.Tiers...)
+		for index := range mutant.Tiers {
+			if mutant.Tiers[index].Name == TierMissionAuthority {
+				mutant.Tiers[index].AllowedLocalTargets = append(append([]TierName(nil), mutant.Tiers[index].AllowedLocalTargets...), TierAdapter)
+			}
+		}
+		graph := fixtureGraph([]string{mission, beads}, ImportEdge{SourcePackage: mission, TargetPackage: beads, Kind: ImportModuleLocal})
+		graph.ModulePath = module
+		if err := mutant.Check(graph); err != nil {
+			t.Fatalf("mutant did not remove the intended mission-to-adapter boundary: %v", err)
+		}
+	})
+
+	t.Run("removed-tracker-denial-mutant", func(t *testing.T) {
+		mutant := policy
+		mutant.ForbiddenLocalDirections = nil
+		graph := fixtureGraph([]string{beads, mission}, ImportEdge{SourcePackage: beads, TargetPackage: mission, Kind: ImportModuleLocal})
+		graph.ModulePath = module
+		if err := mutant.Check(graph); err != nil {
+			t.Fatalf("mutant did not remove the intended tracker-to-mission boundary: %v", err)
+		}
+	})
+
+	t.Run("removed-mission-classification-mutant", func(t *testing.T) {
+		mutant := policy
+		mutant.Tiers = append([]Tier(nil), policy.Tiers...)
+		for index := range mutant.Tiers {
+			if mutant.Tiers[index].Name == TierMissionAuthority {
+				mutant.Tiers[index].Packages = []PackagePattern{ExactPackage(module + "/internal/not-mission")}
+			}
+		}
+		graph := fixtureGraph([]string{mission})
+		graph.ModulePath = module
+		assertExactViolation(t, mutant, graph, RuleUnknownPackage, mission, "", mission, "")
+	})
+
+	t.Run("production-shaped-projection-read-model-boundary", func(t *testing.T) {
+		const fixture = "example.test/phase3-projection-boundary"
+		root := t.TempDir()
+		writeGoFixture(t, root, "go.mod", "module "+fixture+"\n\ngo 1.26\n")
+		writeGoFixture(t, root, "internal/ids/ids.go", "package ids\ntype MissionID string\n")
+		writeGoFixture(t, root, "internal/mission/mission.go", "package mission\nfunc MintAuthority() {}\n")
+		writeGoFixture(t, root, "internal/mission/readmodel/status.go", "package readmodel\nimport \"example.test/phase3-projection-boundary/internal/ids\"\ntype Status struct { Mission ids.MissionID }\n")
+		writeGoFixture(t, root, "internal/projection/tasks.go", "package projection\nimport \"example.test/phase3-projection-boundary/internal/mission/readmodel\"\nfunc Render(status readmodel.Status) string { return string(status.Mission) }\n")
+		setIsolatedGoPaths(t)
+		t.Setenv("GOPROXY", "off")
+
+		graph, err := LoadGraph(context.Background(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixturePolicy, err := DefaultPolicy(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := fixturePolicy.Check(graph); err != nil {
+			t.Fatalf("typed read-model rendering control rejected: %v", err)
+		}
+
+		// MintAuthority is intentionally not one of the registered reachability
+		// symbols. The package-tier boundary must reject it without relying on a
+		// finite constructor census.
+		writeGoFixture(t, root, "internal/projection/tasks.go", "package projection\nimport \"example.test/phase3-projection-boundary/internal/mission\"\nfunc Mutate() { mission.MintAuthority() }\n")
+		graph, err = LoadGraph(context.Background(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertExactViolation(
+			t, fixturePolicy, graph, RuleLocalDirection,
+			fixture+"/internal/projection", TierProjection,
+			fixture+"/internal/mission", TierMissionAuthority,
+		)
+	})
+}
+
+func checkDefaultPolicyPreservesDeferredPhase4Through6Surfaces(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range []string{
+		"cmd/api", "cmd/markdown", "cmd/mcp", "cmd/orchestrator-api", "cmd/python", "cmd/team-kitty",
+		"internal/api", "internal/markdown", "internal/mcp", "internal/orchestrator-api", "internal/python", "internal/team-kitty",
+	} {
+		path := module + "/" + relative
+		t.Run(strings.ReplaceAll(relative, "/", "-"), func(t *testing.T) {
+			graph := fixtureGraph([]string{path})
+			graph.ModulePath = module
+			for repeat := 0; repeat < 10; repeat++ {
+				assertExactViolation(t, policy, graph, RuleDeferredSurface, path, "", path, "")
+			}
+		})
+	}
+
+	mission := module + "/internal/mission"
+	for _, target := range []string{
+		"net/http", "github.com/gastownhall/beads", "github.com/yuin/goldmark",
+		"github.com/russross/blackfriday", "github.com/gomarkdown/markdown", "github.com/steveyegge/beads",
+	} {
+		graph := fixtureGraph([]string{mission}, ImportEdge{SourcePackage: mission, TargetPackage: target, Kind: ImportExternal})
+		graph.ModulePath = module
+		assertExactViolation(t, policy, graph, RuleDeferredSurface, mission, TierMissionAuthority, target, "")
+	}
+
+	t.Run("removed-forbidden-prefix-mutant-changes-the-stable-rule", func(t *testing.T) {
+		const target = "github.com/gastownhall/beads/internal/storage"
+		mutant := policy
+		mutant.ForbiddenImportPrefixes = make([]string, 0, len(policy.ForbiddenImportPrefixes)-1)
+		for _, prefix := range policy.ForbiddenImportPrefixes {
+			if prefix != "github.com/gastownhall/beads" {
+				mutant.ForbiddenImportPrefixes = append(mutant.ForbiddenImportPrefixes, prefix)
+			}
+		}
+		graph := fixtureGraph([]string{mission}, ImportEdge{SourcePackage: mission, TargetPackage: target, Kind: ImportExternal})
+		graph.ModulePath = module
+		assertExactViolation(t, mutant, graph, RuleExternalDirection, mission, TierMissionAuthority, target, "")
+	})
 }
 
 func TestPolicyValidationConfinesProviderAllowancesToAdapters(t *testing.T) {
@@ -366,6 +637,53 @@ func TestPolicyValidationConfinesProviderAllowancesToAdapters(t *testing.T) {
 	}
 	if err := policy.Validate(); err == nil || !strings.Contains(err.Error(), "without provider-adapter") {
 		t.Fatalf("kernel provider allowance was not rejected: %v", err)
+	}
+
+	t.Run("specific-direction-validation", checkPolicyValidationRejectsMalformedSpecificDirections)
+}
+
+func checkPolicyValidationRejectsMalformedSpecificDirections(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(Policy) Policy
+		want   string
+	}{
+		{
+			name: "empty-source-set",
+			mutate: func(policy Policy) Policy {
+				policy.ForbiddenLocalDirections = []ForbiddenLocalDirection{{TargetTiers: []TierName{TierAuthority}}}
+				return policy
+			},
+			want: "requires sources and target tiers",
+		},
+		{
+			name: "outside-module-source",
+			mutate: func(policy Policy) Policy {
+				policy.ForbiddenLocalDirections = []ForbiddenLocalDirection{{
+					Sources: []PackagePattern{PackagePrefix("elsewhere.invalid/adapter")}, TargetTiers: []TierName{TierAuthority},
+				}}
+				return policy
+			},
+			want: "outside module",
+		},
+		{
+			name: "unknown-target-tier",
+			mutate: func(policy Policy) Policy {
+				policy.ForbiddenLocalDirections = []ForbiddenLocalDirection{{
+					Sources: []PackagePattern{PackagePrefix(fixtureModule + "/internal/tracker/example")}, TargetTiers: []TierName{"made-up"},
+				}}
+				return policy
+			},
+			want: "unknown target tier",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := test.mutate(fixturePolicy(t))
+			if err := policy.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("malformed direction accepted or wrong error: %v", err)
+			}
+		})
 	}
 }
 
