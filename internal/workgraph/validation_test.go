@@ -3,7 +3,6 @@ package workgraph_test
 import (
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
@@ -152,31 +151,32 @@ func validDraft(t *testing.T, reversed bool) workgraph.DraftObservation {
 }
 func (f workFixture) draft(t *testing.T, reversed bool) workgraph.DraftObservation {
 	t.Helper()
-	items := []tracker.WorkDefinitionObservation{observed(t, f.foundation, 1), observed(t, f.feature, 2)}
+	items := []workgraph.WorkObservation{observed(t, f.foundation), observed(t, f.feature)}
 	if reversed {
 		items[0], items[1] = items[1], items[0]
 	}
-	approved := []workgraph.ApprovedScope{{ID: "plan-foundation", Kind: tracker.ScopePlanConcern, MissionID: "mission-kitty"}, {ID: "plan-feature", Kind: tracker.ScopePlanConcern, MissionID: "mission-kitty"}, {ID: "requirement-portable", Kind: tracker.ScopeRequiredOutcome, MissionID: "mission-kitty"}}
+	approved := []workgraph.ApprovedScope{{ID: "plan-foundation", Kind: workgraph.ScopePlanConcern, MissionID: "mission-kitty"}, {ID: "plan-feature", Kind: workgraph.ScopePlanConcern, MissionID: "mission-kitty"}, {ID: "requirement-portable", Kind: workgraph.ScopeRequiredOutcome, MissionID: "mission-kitty"}}
 	draft, err := workgraph.NewDraftObservation("project-kitty", "mission-kitty", "plan-revision-1", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", approved, items)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return draft
 }
-func observed(t *testing.T, f definitionFixture, revision tracker.Revision) tracker.WorkDefinitionObservation {
+func observed(t *testing.T, f definitionFixture) workgraph.WorkObservation {
 	t.Helper()
-	definition, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{ProjectID: "project-kitty", WorkID: f.WorkID, Title: f.Title, Description: f.Description, DesignContext: f.DesignContext, Criteria: f.Criteria, Dependencies: f.Dependencies, WriteScopes: f.WriteScopes, Provenance: f.Provenance, MetadataSchema: 1})
-	if err != nil {
-		t.Fatal(err)
+	criteria := make([]workgraph.CriterionObservation, len(f.Criteria))
+	for index, criterion := range f.Criteria {
+		criteria[index] = workgraph.CriterionObservation{ID: criterion.ID, Text: criterion.Text, Outcome: criterion.Outcome, Verifier: criterion.Verifier.String(), Required: criterion.Required}
 	}
-	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	external := "external-" + f.WorkID.String()
-	provider, err := tracker.NewProviderObservation(external, definition.CanonicalData(), revision, "", "token", now)
-	if err != nil {
-		t.Fatal(err)
+	scopes := make([]workgraph.WriteScopeObservation, len(f.WriteScopes))
+	for index, scope := range f.WriteScopes {
+		scopes[index] = workgraph.WriteScopeObservation{Path: scope.Path, Domain: scope.Domain, Access: workgraph.ScopeAccess(scope.Access), SerializationKey: scope.SerializationKey}
 	}
-	reference := tracker.ExternalWorkRef{ProjectID: "project-kitty", WorkID: f.WorkID, Provider: "fake", ExternalID: external, MetadataSchema: 1, CreatedByOperation: ids.OperationID("operation-" + f.WorkID.String()), LastObservation: revision}
-	result, err := tracker.NewWorkDefinitionObservation(definition, reference, provider, now)
+	provenance := make([]workgraph.ScopeReference, len(f.Provenance))
+	for index, reference := range f.Provenance {
+		provenance[index] = workgraph.ScopeReference{ID: reference.ID, Kind: workgraph.ScopeKind(reference.Kind)}
+	}
+	result, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{ProjectID: "project-kitty", WorkID: f.WorkID, Title: f.Title, Description: f.Description, DesignContext: f.DesignContext, Criteria: criteria, Dependencies: f.Dependencies, WriteScopes: scopes, Provenance: provenance})
 	if err != nil {
 		t.Fatal(err)
 	}

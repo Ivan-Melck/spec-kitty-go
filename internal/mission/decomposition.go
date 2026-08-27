@@ -183,7 +183,13 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 		}
 		result.Observations[len(result.Observations)-1] = observed
 	}
-	draft, err := workgraph.NewDraftObservation(command.ProjectID, command.MissionID, command.PlanRevisionID, command.PlanContentDigest, command.ApprovedScope, result.Observations)
+	semanticWork, err := semanticWorkObservations(observationDefinitions(result.Observations))
+	if err != nil {
+		result.Status = DecompositionAmbiguous
+		result.Recovery = DecompositionObserveThenReconcile
+		return result, decompositionError(DecompositionProviderFailure, result.Recovery, "observation", "provider results cannot be projected into semantic work", err)
+	}
+	draft, err := workgraph.NewDraftObservation(command.ProjectID, command.MissionID, command.PlanRevisionID, command.PlanContentDigest, command.ApprovedScope, semanticWork)
 	if err != nil {
 		result.Status = DecompositionAmbiguous
 		result.Recovery = DecompositionObserveThenReconcile
@@ -239,21 +245,43 @@ func validateDecompositionCommand(command DecompositionCommand) error {
 }
 
 func provisionalDraft(command DecompositionCommand, definitions []tracker.WorkDefinition) (workgraph.DraftObservation, error) {
-	observations := make([]tracker.WorkDefinitionObservation, 0, len(definitions))
-	for _, definition := range definitions {
-		externalID := "preflight-" + definition.WorkID().String()
-		provider, err := tracker.NewProviderObservation(externalID, definition.CanonicalData(), 1, "", "preflight", command.OccurredAt)
-		if err != nil {
-			return workgraph.DraftObservation{}, err
-		}
-		reference := tracker.ExternalWorkRef{ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Provider: "preflight", ExternalID: externalID, MetadataSchema: definition.MetadataSchema(), CreatedByOperation: derivedWorkOperation(command.OperationID, definition.WorkID()), LastObservation: 1}
-		observed, err := tracker.NewWorkDefinitionObservation(definition, reference, provider, command.OccurredAt)
-		if err != nil {
-			return workgraph.DraftObservation{}, err
-		}
-		observations = append(observations, observed)
+	observations, err := semanticWorkObservations(definitions)
+	if err != nil {
+		return workgraph.DraftObservation{}, err
 	}
 	return workgraph.NewDraftObservation(command.ProjectID, command.MissionID, command.PlanRevisionID, command.PlanContentDigest, command.ApprovedScope, observations)
+}
+
+func observationDefinitions(observations []tracker.WorkDefinitionObservation) []tracker.WorkDefinition {
+	definitions := make([]tracker.WorkDefinition, len(observations))
+	for index := range observations {
+		definitions[index] = observations[index].Definition()
+	}
+	return definitions
+}
+
+func semanticWorkObservations(definitions []tracker.WorkDefinition) ([]workgraph.WorkObservation, error) {
+	result := make([]workgraph.WorkObservation, 0, len(definitions))
+	for _, definition := range definitions {
+		criteria := make([]workgraph.CriterionObservation, len(definition.Criteria()))
+		for index, criterion := range definition.Criteria() {
+			criteria[index] = workgraph.CriterionObservation{ID: criterion.ID, Text: criterion.Text, Outcome: criterion.Outcome, Verifier: criterion.Verifier.String(), Required: criterion.Required}
+		}
+		scopes := make([]workgraph.WriteScopeObservation, len(definition.WriteScopes()))
+		for index, scope := range definition.WriteScopes() {
+			scopes[index] = workgraph.WriteScopeObservation{Path: scope.Path, Domain: scope.Domain, Access: workgraph.ScopeAccess(scope.Access), SerializationKey: scope.SerializationKey}
+		}
+		provenance := make([]workgraph.ScopeReference, len(definition.Provenance()))
+		for index, reference := range definition.Provenance() {
+			provenance[index] = workgraph.ScopeReference{ID: reference.ID, Kind: workgraph.ScopeKind(reference.Kind)}
+		}
+		observed, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Title: definition.Title(), Description: definition.Description(), DesignContext: definition.DesignContext(), CrossDomainReason: definition.CrossDomainReason(), Criteria: criteria, Dependencies: definition.Dependencies(), WriteScopes: scopes, Provenance: provenance})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, observed)
+	}
+	return result, nil
 }
 func decompositionRequestDigest(command DecompositionCommand) string {
 	type semanticProposal struct {
