@@ -158,7 +158,7 @@
     },
     "WP05": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -167,9 +167,11 @@
       "last_transition_at": "2026-08-27T23:58:06.088716+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review. Product 16b938a; focused x10, race, vet, staticcheck, module, formatting pass. Full internal: all non-scenario packages pass; known out-of-scope scenario census drift and IG-02 10m timeout remain baseline-reproduced."
+        "Ready for independent review. Product 16b938a; focused x10, race, vet, staticcheck, module, formatting pass. Full internal: all non-scenario packages pass; known out-of-scope scenario census drift and IG-02 10m timeout remain baseline-reproduced.",
+        "Review cycle 1 rejected: corrupt replay bypasses postconditions; v2 scalar null/required schema shape and nested v1 shape are not strict; unsupported definition version crosses ports; duplicate provider mapping identity is accepted. Focused/race/static/architecture gates otherwise pass; scenario baseline is unchanged and independently attributable."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP05-workrevision-v2-and-deterministic-finalization/review-cycle-1.md",
         "reference": "review-cycle://software-development-mission-method-01M11EX2/WP05-workrevision-v2-and-deterministic-finalization/review-cycle-1.md",
@@ -177,15 +179,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T023": "done",
-        "T024": "done",
-        "T025": "done",
-        "T026": "done",
-        "T027": "done",
-        "T028": "done"
+        "T023": "planned",
+        "T024": "planned",
+        "T025": "planned",
+        "T026": "planned",
+        "T027": "planned",
+        "T028": "planned"
       }
     },
     "WP06": {
