@@ -133,7 +133,8 @@
       "notes": [
         "Ready for review: provider-neutral work definitions, durable fake saga semantics, exact approved-plan decomposition gate, typed quality/coverage/ownership/dependency validation, provider-free workgraph observation, and post-lane graph seam; focused, repeated, race, compatibility, static, and clean architecture campaign pass.",
         "Ready for cycle-2 review: closed FR-010 findings, canonical bounded lane diagnostics, provider attribution and zero-call mapping preflight, and load-bearing exact workgraph-to-tracker architecture denial; full WP04 gates pass",
-        "Review cycle 2 rejected: T020 raw-provider validation accepts whitespace-only or oversized cross-domain justification because ValidateDraft checks only reason == empty. All five cycle-1 blockers and all focused/race/static/compatibility/architecture gates otherwise pass."
+        "Review cycle 2 rejected: T020 raw-provider validation accepts whitespace-only or oversized cross-domain justification because ValidateDraft checks only reason == empty. All five cycle-1 blockers and all focused/race/static/compatibility/architecture gates otherwise pass.",
+        "Ready for cycle-3 review: cross-domain justification now uses bounded 512-byte text semantics with absent, whitespace, 513-byte, non-leaking, valid prose, and exact 512-byte controls; all WP04 gates pass"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
