@@ -122,7 +122,7 @@
     },
     "WP04": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -134,6 +134,7 @@
         "Ready for review: provider-neutral work definitions, durable fake saga semantics, exact approved-plan decomposition gate, typed quality/coverage/ownership/dependency validation, provider-free workgraph observation, and post-lane graph seam; focused, repeated, race, compatibility, static, and clean architecture campaign pass."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP04-provider-neutral-decomposition-and-work-quality/review-cycle-1.md",
         "reference": "review-cycle://software-development-mission-method-01M11EX2/WP04-provider-neutral-decomposition-and-work-quality/review-cycle-1.md",
@@ -141,15 +142,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T017": "done",
-        "T018": "done",
-        "T019": "done",
-        "T020": "done",
-        "T021": "done",
-        "T022": "done"
+        "T017": "planned",
+        "T018": "planned",
+        "T019": "planned",
+        "T020": "planned",
+        "T021": "planned",
+        "T022": "planned"
       }
     },
     "WP05": {
