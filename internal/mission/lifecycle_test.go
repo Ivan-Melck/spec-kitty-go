@@ -142,47 +142,131 @@ func TestDefinitionGraphMutantsFailClosedWithExactRuleContext(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		mutate func(*mission.DefinitionSpec)
-		want   string
+		name        string
+		mutate      func(*mission.DefinitionSpec)
+		want        string
+		wantField   string
+		wantMessage string
 	}{
-		{name: "duplicate-step", mutate: func(s *mission.DefinitionSpec) { s.Steps = append(s.Steps, s.Steps[0]) }, want: "duplicate step"},
+		{name: "duplicate-step", mutate: func(s *mission.DefinitionSpec) { s.Steps = append(s.Steps, s.Steps[0]) },
+			wantField: "definition.duplicate_step", wantMessage: "step decomposing violates duplicate_step"},
 		{name: "missing-initial", mutate: func(s *mission.DefinitionSpec) { s.InitialStep = mission.StepReviewReserved }, want: "initial step"},
 		{name: "missing-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = nil }, want: "terminal"},
 		{name: "unknown-successor", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepInitialized).Successors = []mission.StepKey{mission.StepReviewReserved}
 		}, want: "adjacent"},
-		{name: "asymmetric-edge", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepSpecifying).Predecessors = nil }, want: "asymmetric"},
+		{name: "asymmetric-edge", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepSpecifying).Predecessors = nil },
+			wantField: "definition.asymmetric_edge", wantMessage: "edge initialized -> specifying violates asymmetric_edge"},
 		{name: "self-edge", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepSpecifying).Successors = []mission.StepKey{mission.StepSpecifying}
 		}, want: "self_edge"},
 		{name: "duplicate-edge", mutate: func(s *mission.DefinitionSpec) {
 			p := step(s, mission.StepInitialized)
 			p.Successors = append(p.Successors, p.Successors[0])
-		}, want: "duplicate_successor"},
+		}, wantField: "step_contract.duplicate_successor", wantMessage: "step initialized violates duplicate_successor"},
 		{name: "disconnected", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepInitialized).Successors = nil
 			step(s, mission.StepSpecifying).Predecessors = nil
-		}, want: "unreachable"},
+		}, wantField: "definition.unreachable_step", wantMessage: "step decomposing violates unreachable_step"},
 		{name: "cycle", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepWorkDraftReady).Successors = append(step(s, mission.StepWorkDraftReady).Successors, mission.StepSpecifying)
 			step(s, mission.StepSpecifying).Predecessors = append(step(s, mission.StepSpecifying).Predecessors, mission.StepWorkDraftReady)
-		}, want: "cycle"},
+		}, wantField: "definition.cycle", wantMessage: "edge work_draft_ready -> specifying violates cycle"},
 		{name: "terminal-successor", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepWorkFinalized).Successors = []mission.StepKey{mission.StepSpecifying}
 			step(s, mission.StepSpecifying).Predecessors = append(step(s, mission.StepSpecifying).Predecessors, mission.StepWorkFinalized)
 		}, want: "terminal step"},
 		{name: "mutating-without-governance", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepPlanning).GovernanceAction = "" }, want: "governance"},
+		{name: "invalid-caller-key", mutate: func(s *mission.DefinitionSpec) { s.Steps[0].Key = mission.StepKey("seeded-step-secret/value") },
+			wantField: "step_contract.unsupported_key", wantMessage: "step index 0 violates unsupported_key"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			spec := definitionSpec(mustDefinition(t))
 			test.mutate(&spec)
 			_, err := mission.NewDefinition(spec)
-			if !mission.IsKind(err, mission.KindDefinitionMalformed) || !strings.Contains(err.Error(), test.want) {
+			if !mission.IsKind(err, mission.KindDefinitionMalformed) {
+				t.Fatalf("mutant=%s err=%v want context %q", test.name, err, test.want)
+			}
+			if test.wantField != "" {
+				var diagnostic *mission.Error
+				if !errors.As(err, &diagnostic) || diagnostic.Field != test.wantField || diagnostic.Message != test.wantMessage {
+					t.Fatalf("mutant=%s diagnostic=%+v want field=%q message=%q", test.name, diagnostic, test.wantField, test.wantMessage)
+				}
+				if strings.Contains(err.Error(), "seeded-step-secret") {
+					t.Fatalf("mutant=%s leaked invalid caller key: %v", test.name, err)
+				}
+			} else if !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("mutant=%s err=%v want context %q", test.name, err, test.want)
 			}
 		})
+	}
+}
+
+func TestEvaluateTransitionRequiresExactExpectedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	definition := mustDefinition(t)
+	base := snapshotAt(t, definition, mission.StepInitialized, 5)
+	tests := []struct {
+		name    string
+		current mission.MissionSnapshot
+		mutate  func(*mission.TransitionRequest)
+	}{
+		{name: "project", current: func() mission.MissionSnapshot {
+			current := cloneSnapshot(base)
+			current.ProjectID = mustProjectID(t, "project.instance-only")
+			return current
+		}()},
+		{name: "created-at", current: base, mutate: func(request *mission.TransitionRequest) {
+			request.ExpectedSnapshot.CreatedAt = request.ExpectedSnapshot.CreatedAt.Add(-time.Hour)
+		}},
+		{name: "updated-at", current: func() mission.MissionSnapshot {
+			current := cloneSnapshot(base)
+			current.UpdatedAt = current.UpdatedAt.Add(time.Millisecond)
+			return current
+		}()},
+		{name: "active-blockers", current: func() mission.MissionSnapshot {
+			current := cloneSnapshot(base)
+			current.ActiveBlockers = []ids.BlockerID{mustBlockerID(t, "blocker.instance-only")}
+			return current
+		}()},
+		{name: "unresolved-decisions", current: base, mutate: func(request *mission.TransitionRequest) {
+			request.ExpectedSnapshot.UnresolvedDecisions = []ids.DecisionID{mustDecisionID(t, "decision.expected-only")}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := requestFor(t, definition, base, mission.StepSpecifying, "snapshot-cas-"+test.name)
+			if test.mutate != nil {
+				test.mutate(&request)
+			}
+			_, err := mission.EvaluateTransition(mustInstance(t, test.current), definition, request)
+			assertSnapshotConflict(t, err)
+		})
+	}
+
+	reconciliation := snapshotAt(t, definition, mission.StepReconciliationRequired, 8)
+	request := requestFor(t, definition, reconciliation, mission.StepWorkFinalized, "snapshot-cas-work-revision")
+	reconciliation.CurrentWorkRevisionID = mustWorkRevisionID(t, "revision.instance-only")
+	_, err := mission.EvaluateTransition(mustInstance(t, reconciliation), definition, request)
+	assertSnapshotConflict(t, err)
+
+	invalidLifecycle := requestFor(t, definition, base, mission.StepSpecifying, "snapshot-cas-lifecycle")
+	invalidLifecycle.ExpectedSnapshot.Lifecycle = mission.LifecycleTerminal
+	invalidLifecycle.ExpectedSnapshot.TerminalOutcome = mission.OutcomeWorkFinalized
+	if _, err := mission.EvaluateTransition(mustInstance(t, base), definition, invalidLifecycle); !mission.IsKind(err, mission.KindInvalidRequest) {
+		t.Fatalf("invalid lifecycle expectation err=%v", err)
+	}
+}
+
+func assertSnapshotConflict(t *testing.T, err error) {
+	t.Helper()
+	var diagnostic *mission.Error
+	if !errors.As(err, &diagnostic) || diagnostic.Kind != mission.KindStateVersionConflict ||
+		diagnostic.Recovery != mission.RecoveryRefreshState || diagnostic.Field != "expected_snapshot" ||
+		diagnostic.Message != "mission state changed" {
+		t.Fatalf("snapshot mismatch diagnostic=%+v rendered=%v", diagnostic, err)
 	}
 }
 
@@ -291,6 +375,7 @@ func TestTransitionRefusalsAreTypedDeterministicAndNonMutating(t *testing.T) {
 			candidateRequest := cloneRequest(request)
 			if test.mutateSnapshot != nil {
 				test.mutateSnapshot(&current)
+				candidateRequest.ExpectedSnapshot = cloneSnapshot(current)
 			}
 			if test.mutateRequest != nil {
 				test.mutateRequest(&candidateRequest)

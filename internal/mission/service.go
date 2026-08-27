@@ -149,6 +149,9 @@ func EvaluateTransition(instance MissionInstance, definition MissionDefinition, 
 	if current.CurrentStep != request.ExpectedCurrentStep {
 		return TransitionCandidate{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_current_step", "mission current step changed")
 	}
+	if !sameMissionSnapshot(current, request.ExpectedSnapshot) {
+		return TransitionCandidate{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_snapshot", "mission state changed")
+	}
 	if request.OccurredAt.Before(current.UpdatedAt) {
 		return TransitionCandidate{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "occurrence time precedes current mission state")
 	}
