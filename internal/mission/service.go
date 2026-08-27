@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -26,6 +27,8 @@ type TransitionRequest struct {
 	DefinitionID         ids.MissionDefinitionID
 	DefinitionVersion    DefinitionVersion
 	DefinitionCommitment DefinitionCommitment
+	ExpectedSnapshot     MissionSnapshot
+	ExpectedCurrentStep  StepKey
 	ExpectedStateVersion uint64
 	Successor            StepKey
 	OperationID          ids.OperationID
@@ -44,8 +47,20 @@ func (r TransitionRequest) Validate() error {
 	if _, err := ids.ParseMissionDefinitionID(r.DefinitionID.String()); err != nil || r.DefinitionVersion.Validate() != nil || r.DefinitionCommitment.Validate() != nil {
 		return refusal(KindInvalidRequest, RecoveryCorrectInput, "definition", "definition selection is invalid")
 	}
+	if err := r.ExpectedSnapshot.Validate(); err != nil ||
+		r.ExpectedSnapshot.MissionID != r.MissionID ||
+		r.ExpectedSnapshot.DefinitionID != r.DefinitionID ||
+		r.ExpectedSnapshot.DefinitionVersion != r.DefinitionVersion ||
+		r.ExpectedSnapshot.DefinitionCommitment != r.DefinitionCommitment ||
+		r.ExpectedSnapshot.CurrentStep != r.ExpectedCurrentStep ||
+		r.ExpectedSnapshot.StateVersion != r.ExpectedStateVersion {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_snapshot", "expected mission snapshot is invalid")
+	}
 	if r.ExpectedStateVersion == 0 {
 		return refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_state_version", "expected state version must be positive")
+	}
+	if err := r.ExpectedCurrentStep.Validate(); err != nil || r.ExpectedCurrentStep.Reserved() {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_current_step", "expected current step is invalid")
 	}
 	if err := r.Successor.Validate(); err != nil {
 		return refusal(KindInvalidRequest, RecoveryCorrectInput, "successor", "successor step is invalid")
@@ -130,6 +145,9 @@ func EvaluateTransition(instance MissionInstance, definition MissionDefinition, 
 	}
 	if current.StateVersion != request.ExpectedStateVersion {
 		return TransitionCandidate{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_state_version", "mission state version changed")
+	}
+	if current.CurrentStep != request.ExpectedCurrentStep {
+		return TransitionCandidate{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_current_step", "mission current step changed")
 	}
 	if request.OccurredAt.Before(current.UpdatedAt) {
 		return TransitionCandidate{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "occurrence time precedes current mission state")
@@ -312,6 +330,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if err := result.Instance.Validate(); err != nil {
 		return CreateResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid created mission state")
 	}
+	if !sameMissionSnapshot(snapshot, result.Instance) {
+		return CreateResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.create", "mission store violated create postconditions")
+	}
 	return CreateResult{Instance: result.Instance.clone(), Replayed: result.Replayed}, nil
 }
 
@@ -326,13 +347,20 @@ func (s *Service) Transition(ctx context.Context, request TransitionRequest) (Tr
 	if err != nil {
 		return TransitionResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "request", "transition request cannot be committed")
 	}
+	definition, err := s.registry.Resolve(request.DefinitionID, request.DefinitionVersion)
+	if err != nil {
+		return TransitionResult{}, err
+	}
+	if definition.Commitment() != request.DefinitionCommitment {
+		return TransitionResult{}, refusal(KindDefinitionMismatch, RecoverySelectDefinition, "definition_commitment", "request definition commitment does not match registered law")
+	}
 	prior, found, err := s.store.ReplayTransition(ctx, request.MissionID, request.OperationID, commitment)
 	if err != nil {
 		return TransitionResult{}, normalizeStoreError(err)
 	}
 	if found {
-		if err := prior.Instance.Validate(); err != nil {
-			return TransitionResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid replay state")
+		if err := validateReplayPostcondition(definition, request, prior); err != nil {
+			return TransitionResult{}, err
 		}
 		prior.Instance = prior.Instance.clone()
 		prior.Replayed = true
@@ -346,7 +374,10 @@ func (s *Service) Transition(ctx context.Context, request TransitionRequest) (Tr
 	if err != nil {
 		return TransitionResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid mission state")
 	}
-	definition, err := s.registry.Resolve(snapshot.DefinitionID, snapshot.DefinitionVersion)
+	if !sameMissionSnapshot(request.ExpectedSnapshot, snapshot) {
+		return TransitionResult{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_snapshot", "mission state changed")
+	}
+	definition, err = s.registry.Resolve(snapshot.DefinitionID, snapshot.DefinitionVersion)
 	if err != nil {
 		return TransitionResult{}, err
 	}
@@ -360,6 +391,9 @@ func (s *Service) Transition(ctx context.Context, request TransitionRequest) (Tr
 	}
 	if err := result.Instance.Validate(); err != nil {
 		return TransitionResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid transition state")
+	}
+	if !sameMissionSnapshot(candidate.Successor, result.Instance) || candidate.Audit != result.Audit {
+		return TransitionResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.commit", "mission store violated transition postconditions")
 	}
 	return TransitionResult{Instance: result.Instance.clone(), Audit: result.Audit, Replayed: result.Replayed}, nil
 }
@@ -377,6 +411,8 @@ func transitionRequestCommitment(request TransitionRequest) (RequestCommitment, 
 		DefinitionID         ids.MissionDefinitionID
 		DefinitionVersion    DefinitionVersion
 		DefinitionCommitment DefinitionCommitment
+		ExpectedSnapshot     MissionSnapshot
+		ExpectedCurrentStep  StepKey
 		ExpectedStateVersion uint64
 		Successor            StepKey
 		EventID              ids.MissionEventID
@@ -385,9 +421,47 @@ func transitionRequestCommitment(request TransitionRequest) (RequestCommitment, 
 		OccurredAt           string
 		Evidence             []EvidenceRef
 		WorkRevisionID       ids.WorkRevisionID
-	}{request.MissionID, request.DefinitionID, request.DefinitionVersion, request.DefinitionCommitment,
-		request.ExpectedStateVersion, request.Successor, request.EventID, request.ActorID,
+	}{request.MissionID, request.DefinitionID, request.DefinitionVersion, request.DefinitionCommitment, request.ExpectedSnapshot.clone(),
+		request.ExpectedCurrentStep, request.ExpectedStateVersion, request.Successor, request.EventID, request.ActorID,
 		request.GovernanceContextID, request.OccurredAt.Format(time.RFC3339Nano), evidence, request.WorkRevisionID})
+}
+
+func validateReplayPostcondition(definition MissionDefinition, request TransitionRequest, result TransitionResult) error {
+	if err := result.Instance.Validate(); err != nil {
+		return refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid replay state")
+	}
+	expected, err := NewMissionInstance(request.ExpectedSnapshot)
+	if err != nil {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_snapshot", "expected mission snapshot is invalid")
+	}
+	candidate, err := EvaluateTransition(expected, definition, request)
+	if err != nil || !sameMissionSnapshot(candidate.Successor, result.Instance) || candidate.Audit != result.Audit {
+		return refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.replay", "mission store violated replay postconditions")
+	}
+	return nil
+}
+
+func sameMissionSnapshot(left, right MissionSnapshot) bool {
+	if left.MissionID != right.MissionID || left.ProjectID != right.ProjectID ||
+		left.DefinitionID != right.DefinitionID || left.DefinitionVersion != right.DefinitionVersion ||
+		left.DefinitionCommitment != right.DefinitionCommitment || left.Lifecycle != right.Lifecycle ||
+		left.CurrentStep != right.CurrentStep || left.CurrentWorkRevisionID != right.CurrentWorkRevisionID ||
+		left.StateVersion != right.StateVersion || !left.CreatedAt.Equal(right.CreatedAt) ||
+		!left.UpdatedAt.Equal(right.UpdatedAt) || left.TerminalOutcome != right.TerminalOutcome ||
+		len(left.ActiveBlockers) != len(right.ActiveBlockers) || len(left.UnresolvedDecisions) != len(right.UnresolvedDecisions) {
+		return false
+	}
+	for index := range left.ActiveBlockers {
+		if left.ActiveBlockers[index] != right.ActiveBlockers[index] {
+			return false
+		}
+	}
+	for index := range left.UnresolvedDecisions {
+		if left.UnresolvedDecisions[index] != right.UnresolvedDecisions[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func digestRequest(value any) (RequestCommitment, error) {
@@ -403,11 +477,36 @@ func normalizeStoreError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if IsKind(err, KindNotFound) || IsKind(err, KindAlreadyExists) || IsKind(err, KindDefinitionMismatch) ||
-		IsKind(err, KindStateVersionConflict) || IsKind(err, KindIdempotencyConflict) ||
-		IsKind(err, KindInvalidStoredState) || IsKind(err, KindPersistenceUnavailable) ||
-		IsKind(err, KindActiveBlocker) || IsKind(err, KindUnresolvedDecision) {
-		return err
+	var domain *Error
+	if errors.As(err, &domain) {
+		if recovery, message, ok := canonicalStoreDiagnostic(domain.Kind); ok {
+			return refusal(domain.Kind, recovery, "store", message)
+		}
 	}
-	return &Error{Kind: KindPersistenceUnavailable, Recovery: RecoveryRetryPersistence, Field: "store", Message: "mission persistence operation failed", Cause: err}
+	return refusal(KindPersistenceUnavailable, RecoveryRetryPersistence, "store", "mission persistence operation failed")
+}
+
+func canonicalStoreDiagnostic(kind ErrorKind) (RecoveryCategory, string, bool) {
+	switch kind {
+	case KindNotFound:
+		return RecoveryCorrectInput, "mission was not found", true
+	case KindAlreadyExists:
+		return RecoveryCorrectInput, "mission already exists", true
+	case KindDefinitionMismatch:
+		return RecoverySelectDefinition, "stored definition does not match", true
+	case KindStateVersionConflict:
+		return RecoveryRefreshState, "mission state version changed", true
+	case KindIdempotencyConflict:
+		return RecoveryCorrectInput, "operation identity was reused with different input", true
+	case KindInvalidStoredState, KindPersistenceContract:
+		return RecoveryRepairStoredState, "mission persistence state requires repair", true
+	case KindPersistenceUnavailable:
+		return RecoveryRetryPersistence, "mission persistence operation failed", true
+	case KindActiveBlocker:
+		return RecoveryClearBlocker, "mission has an active blocker", true
+	case KindUnresolvedDecision:
+		return RecoveryResolveDecision, "mission has an unresolved decision", true
+	default:
+		return "", "", false
+	}
 }

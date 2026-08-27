@@ -155,11 +155,11 @@ func TestDefinitionGraphMutantsFailClosedWithExactRuleContext(t *testing.T) {
 		{name: "asymmetric-edge", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepSpecifying).Predecessors = nil }, want: "asymmetric"},
 		{name: "self-edge", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepSpecifying).Successors = []mission.StepKey{mission.StepSpecifying}
-		}, want: "self-edge"},
+		}, want: "self_edge"},
 		{name: "duplicate-edge", mutate: func(s *mission.DefinitionSpec) {
 			p := step(s, mission.StepInitialized)
 			p.Successors = append(p.Successors, p.Successors[0])
-		}, want: "duplicate successor"},
+		}, want: "duplicate_successor"},
 		{name: "disconnected", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepInitialized).Successors = nil
 			step(s, mission.StepSpecifying).Predecessors = nil
@@ -273,8 +273,12 @@ func TestTransitionRefusalsAreTypedDeterministicAndNonMutating(t *testing.T) {
 		{name: "wrong-mission", kind: mission.KindInvalidRequest, mutateRequest: func(r *mission.TransitionRequest) { r.MissionID = mustMissionID(t, "mission.other") }},
 		{name: "definition-mismatch", kind: mission.KindDefinitionMismatch, mutateRequest: func(r *mission.TransitionRequest) {
 			r.DefinitionCommitment = mission.DefinitionCommitment(strings.Repeat("a", 64))
+			r.ExpectedSnapshot.DefinitionCommitment = r.DefinitionCommitment
 		}},
-		{name: "stale-version", kind: mission.KindStateVersionConflict, mutateRequest: func(r *mission.TransitionRequest) { r.ExpectedStateVersion-- }},
+		{name: "stale-version", kind: mission.KindStateVersionConflict, mutateRequest: func(r *mission.TransitionRequest) {
+			r.ExpectedStateVersion--
+			r.ExpectedSnapshot.StateVersion = r.ExpectedStateVersion
+		}},
 		{name: "active-blocker", kind: mission.KindActiveBlocker, mutateSnapshot: func(s *mission.MissionSnapshot) { s.ActiveBlockers = []ids.BlockerID{mustBlockerID(t, "blocker.1")} }},
 		{name: "open-decision", kind: mission.KindUnresolvedDecision, mutateSnapshot: func(s *mission.MissionSnapshot) {
 			s.UnresolvedDecisions = []ids.DecisionID{mustDecisionID(t, "decision.1")}
@@ -450,11 +454,20 @@ func TestServiceCreateReplayConflictTransitionRaceAndStoreFailure(t *testing.T) 
 	if _, err := service.Transition(context.Background(), alteredReplay); !mission.IsKind(err, mission.KindIdempotencyConflict) {
 		t.Fatalf("altered transition replay err=%v", err)
 	}
+	laterRequest := requestFor(t, definition, storedBeforeFailure, mission.StepSpecificationApproved, "later-transition")
+	later, err := service.Transition(context.Background(), laterRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historicalReplay, err := service.Transition(context.Background(), winningRequest)
+	if err != nil || !historicalReplay.Replayed || !reflect.DeepEqual(historicalReplay, exactReplay) {
+		t.Fatalf("historical replay=%+v err=%v", historicalReplay, err)
+	}
 
 	store.mu.Lock()
 	store.failCommit = errors.New("seeded secret must not escape")
 	store.mu.Unlock()
-	next := requestFor(t, definition, storedBeforeFailure, mission.StepSpecificationApproved, "store-failure")
+	next := requestFor(t, definition, later.Instance, mission.StepPlanning, "store-failure")
 	_, err = service.Transition(context.Background(), next)
 	if !mission.IsKind(err, mission.KindPersistenceUnavailable) || strings.Contains(err.Error(), "seeded secret") {
 		t.Fatalf("store failure disclosure err=%v", err)
@@ -462,7 +475,7 @@ func TestServiceCreateReplayConflictTransitionRaceAndStoreFailure(t *testing.T) 
 	store.mu.Lock()
 	storedAfterFailure := store.snapshot
 	store.mu.Unlock()
-	if !reflect.DeepEqual(storedBeforeFailure, storedAfterFailure) {
+	if !reflect.DeepEqual(later.Instance, storedAfterFailure) {
 		t.Fatal("failed commit changed authoritative state")
 	}
 }
@@ -496,6 +509,230 @@ func TestServiceRefusalDoesNotCallCommitPort(t *testing.T) {
 			}
 		})
 	}
+
+}
+
+func TestServiceRejectsStoreResultAuthorityMutants(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*mission.CreateResult)
+	}{
+		{name: "another-mission", mutate: func(result *mission.CreateResult) {
+			result.Instance.MissionID = mustMissionID(t, "mission.store-mutant")
+		}},
+		{name: "another-definition", mutate: func(result *mission.CreateResult) {
+			result.Instance.DefinitionID = mustDefinitionID(t, "definition.store-mutant")
+		}},
+	} {
+		t.Run("create-"+test.name, func(t *testing.T) {
+			store := &mutatingStore{memoryStore: newMemoryStore(), createMutator: test.mutate}
+			service := mission.NewService(registry, store)
+			_, err := service.Create(context.Background(), createRequest(t, definition, "create-"+test.name))
+			if !mission.IsKind(err, mission.KindPersistenceContract) {
+				t.Fatalf("wrong create result err=%v", err)
+			}
+		})
+	}
+
+	commitMutants := []struct {
+		name   string
+		mutate func(*mission.TransitionResult)
+	}{
+		{name: "another-successor", mutate: func(result *mission.TransitionResult) {
+			result.Instance.CurrentStep = mission.StepPlanning
+		}},
+		{name: "another-state-version", mutate: func(result *mission.TransitionResult) {
+			result.Instance.StateVersion++
+		}},
+		{name: "another-operation", mutate: func(result *mission.TransitionResult) {
+			result.Audit.OperationID = mustOperationID(t, "operation.store-mutant")
+		}},
+		{name: "another-actor", mutate: func(result *mission.TransitionResult) {
+			result.Audit.ActorID = mustActorID(t, "actor.store-mutant")
+		}},
+		{name: "another-event", mutate: func(result *mission.TransitionResult) {
+			result.Audit.EventID = mustEventID(t, "event.store-mutant")
+		}},
+		{name: "another-governance", mutate: func(result *mission.TransitionResult) {
+			result.Audit.GovernanceContextID = mustGovernanceID(t, "governance.store-mutant")
+		}},
+		{name: "another-definition-commitment", mutate: func(result *mission.TransitionResult) {
+			result.Audit.DefinitionCommitment = mission.DefinitionCommitment(strings.Repeat("a", 64))
+		}},
+	}
+	for _, test := range commitMutants {
+		t.Run("commit-"+test.name, func(t *testing.T) {
+			store := &mutatingStore{memoryStore: newMemoryStore(), commitMutator: test.mutate}
+			service := mission.NewService(registry, store)
+			created, err := service.Create(context.Background(), createRequest(t, definition, "commit-"+test.name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := requestFor(t, definition, created.Instance, mission.StepSpecifying, "commit-"+test.name)
+			if _, err := service.Transition(context.Background(), request); !mission.IsKind(err, mission.KindPersistenceContract) {
+				t.Fatalf("wrong commit result err=%v", err)
+			}
+		})
+	}
+
+	t.Run("replay-from-another-operation", func(t *testing.T) {
+		base := newMemoryStore()
+		service := mission.NewService(registry, base)
+		created, err := service.Create(context.Background(), createRequest(t, definition, "replay-mutant"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := requestFor(t, definition, created.Instance, mission.StepSpecifying, "replay-mutant")
+		if _, err := service.Transition(context.Background(), request); err != nil {
+			t.Fatal(err)
+		}
+		wrong := &mutatingStore{memoryStore: base, replayMutator: func(result *mission.TransitionResult) {
+			result.Audit.OperationID = mustOperationID(t, "operation.another")
+		}}
+		if _, err := mission.NewService(registry, wrong).Transition(context.Background(), request); !mission.IsKind(err, mission.KindPersistenceContract) {
+			t.Fatalf("wrong replay result err=%v", err)
+		}
+	})
+
+	t.Run("replay-with-rewritten-snapshot", func(t *testing.T) {
+		base := newMemoryStore()
+		service := mission.NewService(registry, base)
+		created, err := service.Create(context.Background(), createRequest(t, definition, "replay-snapshot-mutant"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := requestFor(t, definition, created.Instance, mission.StepSpecifying, "replay-snapshot-mutant")
+		if _, err := service.Transition(context.Background(), request); err != nil {
+			t.Fatal(err)
+		}
+		wrong := &mutatingStore{memoryStore: base, replayMutator: func(result *mission.TransitionResult) {
+			result.Instance.ProjectID = mustProjectID(t, "project.rewritten")
+		}}
+		if _, err := mission.NewService(registry, wrong).Transition(context.Background(), request); !mission.IsKind(err, mission.KindPersistenceContract) {
+			t.Fatalf("rewritten replay snapshot err=%v", err)
+		}
+	})
+}
+
+func TestStoreErrorsAndDefinitionDiagnosticsAreCanonicalAndBounded(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &mutatingStore{
+		memoryStore: newMemoryStore(),
+		replayError: &mission.Error{
+			Kind: mission.KindStateVersionConflict, Recovery: mission.RecoveryNoFurtherAction,
+			Field: strings.Repeat("field", 100), Message: "seeded-store-secret-7e3d" + strings.Repeat("x", 500),
+		},
+	}
+	store.snapshot = snapshotAt(t, definition, mission.StepInitialized, 1)
+	request := requestFor(t, definition, store.snapshot, mission.StepSpecifying, "malicious-store-error")
+	_, err = mission.NewService(registry, store).Transition(context.Background(), request)
+	var diagnostic *mission.Error
+	if !errors.As(err, &diagnostic) || diagnostic.Kind != mission.KindStateVersionConflict {
+		t.Fatalf("normalized error=%v", err)
+	}
+	if diagnostic.Recovery != mission.RecoveryRefreshState || diagnostic.Field != "store" || strings.Contains(err.Error(), "seeded-store-secret") || len(err.Error()) > 256 {
+		t.Fatalf("unbounded or noncanonical error=%+v rendered=%q", diagnostic, err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		spec   mission.StepContractSpec
+		secret string
+	}{
+		{name: "step-key", spec: mission.StepContractSpec{Key: mission.StepKey("seeded-definition-secret"), ApprovalPolicy: mission.ApprovalNone}, secret: "seeded-definition-secret"},
+		{name: "governance-action", spec: mission.StepContractSpec{Key: mission.StepPlanning, ApprovalPolicy: mission.ApprovalNone, Mutating: true, GovernanceAction: "seeded-governance-secret/value"}, secret: "seeded-governance-secret"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := mission.NewStepContract(test.spec)
+			if err == nil || strings.Contains(err.Error(), test.secret) || len(err.Error()) > 256 {
+				t.Fatalf("definition diagnostic=%q", err)
+			}
+		})
+	}
+
+	maliciousDefinition := definitionSpec(definition)
+	maliciousDefinition.TerminalSteps = []mission.StepKey{mission.StepKey("seeded-terminal-secret")}
+	if _, err := mission.NewDefinition(maliciousDefinition); err == nil || strings.Contains(err.Error(), "seeded-terminal-secret") || len(err.Error()) > 256 {
+		t.Fatalf("terminal definition diagnostic=%q", err)
+	}
+}
+
+func TestTransitionAuditExactCensusAndReplayPreservation(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newMemoryStore()
+	service := mission.NewService(registry, store)
+	created, err := service.Create(context.Background(), createRequest(t, definition, "audit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := requestFor(t, definition, created.Instance, mission.StepSpecifying, "audit")
+	result, err := service.Transition(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := mission.TransitionAudit{
+		MissionID: request.MissionID, OldStep: request.ExpectedCurrentStep, NewStep: request.Successor,
+		OldStateVersion: request.ExpectedStateVersion, NewStateVersion: request.ExpectedStateVersion + 1,
+		OperationID: request.OperationID, EventID: request.EventID, ActorID: request.ActorID,
+		DefinitionCommitment: request.DefinitionCommitment,
+		GovernanceContextID:  request.GovernanceContextID, OccurredAt: request.OccurredAt,
+	}
+	if result.Audit != want {
+		t.Fatalf("audit=%+v want=%+v", result.Audit, want)
+	}
+	replay, err := service.Transition(context.Background(), request)
+	if err != nil || !replay.Replayed || replay.Audit != want || !reflect.DeepEqual(replay.Instance, result.Instance) {
+		t.Fatalf("replay=%+v err=%v", replay, err)
+	}
+}
+
+type mutatingStore struct {
+	*memoryStore
+	createMutator func(*mission.CreateResult)
+	commitMutator func(*mission.TransitionResult)
+	replayMutator func(*mission.TransitionResult)
+	replayError   error
+}
+
+func (s *mutatingStore) CreateMission(ctx context.Context, commit mission.CreateCommit) (mission.CreateResult, error) {
+	result, err := s.memoryStore.CreateMission(ctx, commit)
+	if err == nil && s.createMutator != nil {
+		s.createMutator(&result)
+	}
+	return result, err
+}
+
+func (s *mutatingStore) ReplayTransition(ctx context.Context, id ids.MissionID, operation ids.OperationID, commitment mission.RequestCommitment) (mission.TransitionResult, bool, error) {
+	if s.replayError != nil {
+		return mission.TransitionResult{}, false, s.replayError
+	}
+	result, found, err := s.memoryStore.ReplayTransition(ctx, id, operation, commitment)
+	if err == nil && found && s.replayMutator != nil {
+		s.replayMutator(&result)
+	}
+	return result, found, err
+}
+
+func (s *mutatingStore) CommitTransition(ctx context.Context, commit mission.TransitionCommit) (mission.TransitionResult, error) {
+	result, err := s.memoryStore.CommitTransition(ctx, commit)
+	if err == nil && s.commitMutator != nil {
+		s.commitMutator(&result)
+	}
+	return result, err
 }
 
 type memoryStore struct {
@@ -644,6 +881,16 @@ func reverse[T any](values []T) {
 
 func fixtureTime() time.Time { return time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC) }
 
+func createRequest(t *testing.T, definition mission.MissionDefinition, suffix string) mission.CreateRequest {
+	t.Helper()
+	return mission.CreateRequest{
+		MissionID: mustMissionID(t, "mission."+suffix), ProjectID: mustProjectID(t, "project."+suffix),
+		DefinitionID: definition.ID(), DefinitionVersion: definition.Version(),
+		OperationID: mustOperationID(t, "operation.create."+suffix), ActorID: mustActorID(t, "actor.create."+suffix),
+		OccurredAt: fixtureTime(),
+	}
+}
+
 func snapshotAt(t *testing.T, definition mission.MissionDefinition, key mission.StepKey, version uint64) mission.MissionSnapshot {
 	t.Helper()
 	snapshot := mission.MissionSnapshot{
@@ -665,7 +912,8 @@ func requestFor(t *testing.T, definition mission.MissionDefinition, current miss
 	destination, _ := definition.Step(successor)
 	request := mission.TransitionRequest{
 		MissionID: current.MissionID, DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), DefinitionCommitment: definition.Commitment(),
-		ExpectedStateVersion: current.StateVersion, Successor: successor,
+		ExpectedSnapshot:    current,
+		ExpectedCurrentStep: current.CurrentStep, ExpectedStateVersion: current.StateVersion, Successor: successor,
 		OperationID: mustOperationID(t, "operation."+suffix), EventID: mustEventID(t, "event."+suffix),
 		ActorID: mustActorID(t, "actor.fixture"), GovernanceContextID: mustGovernanceID(t, "governance.fixture"),
 		OccurredAt: current.UpdatedAt.Add(time.Second),
@@ -684,6 +932,7 @@ func requestFor(t *testing.T, definition mission.MissionDefinition, current miss
 
 func cloneRequest(r mission.TransitionRequest) mission.TransitionRequest {
 	r.Evidence = append([]mission.EvidenceRef(nil), r.Evidence...)
+	r.ExpectedSnapshot = cloneSnapshot(r.ExpectedSnapshot)
 	return r
 }
 

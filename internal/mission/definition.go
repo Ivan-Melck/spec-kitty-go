@@ -30,10 +30,25 @@ type StepContract struct{ spec StepContractSpec }
 func NewStepContract(spec StepContractSpec) (StepContract, error) {
 	spec = normalizeStepSpec(spec)
 	if err := validateStepSpec(spec); err != nil {
-		return StepContract{}, err
+		violation, ok := err.(*stepSpecViolation)
+		if !ok {
+			violation = &stepSpecViolation{rule: "invalid"}
+		}
+		return StepContract{}, refusal(
+			KindDefinitionMalformed,
+			RecoveryCorrectInput,
+			"step_contract."+violation.rule,
+			"step contract violates "+violation.rule,
+		)
 	}
 	return StepContract{spec: spec}, nil
 }
+
+type stepSpecViolation struct{ rule string }
+
+func (e *stepSpecViolation) Error() string { return "step contract rule=" + e.rule }
+
+func stepViolation(rule string) error { return &stepSpecViolation{rule: rule} }
 
 func (s StepContract) Spec() StepContractSpec { return cloneStepSpec(s.spec) }
 func (s StepContract) Key() StepKey           { return s.spec.Key }
@@ -61,60 +76,60 @@ func cloneStepSpec(spec StepContractSpec) StepContractSpec {
 
 func validateStepSpec(spec StepContractSpec) error {
 	if err := spec.Key.Validate(); err != nil || spec.Key.Reserved() {
-		return fmt.Errorf("step %q has unsupported Phase 3 key", spec.Key)
+		return stepViolation("unsupported_key")
 	}
 	for _, values := range []struct {
-		name  string
+		rule  string
 		items []string
 	}{
-		{name: "required input", items: artifactStrings(spec.RequiredInputs)},
-		{name: "produced output", items: artifactStrings(spec.ProducedOutputs)},
-		{name: "required evidence", items: evidenceStrings(spec.RequiredEvidence)},
-		{name: "validation", items: validationStrings(spec.ValidationPolicy)},
-		{name: "predecessor", items: stepStrings(spec.Predecessors)},
-		{name: "successor", items: stepStrings(spec.Successors)},
+		{rule: "duplicate_required_input", items: artifactStrings(spec.RequiredInputs)},
+		{rule: "duplicate_produced_output", items: artifactStrings(spec.ProducedOutputs)},
+		{rule: "duplicate_required_evidence", items: evidenceStrings(spec.RequiredEvidence)},
+		{rule: "duplicate_validation", items: validationStrings(spec.ValidationPolicy)},
+		{rule: "duplicate_predecessor", items: stepStrings(spec.Predecessors)},
+		{rule: "duplicate_successor", items: stepStrings(spec.Successors)},
 	} {
 		if duplicate := firstDuplicate(values.items); duplicate != "" {
-			return fmt.Errorf("step %q has duplicate %s %q", spec.Key, values.name, duplicate)
+			return stepViolation(values.rule)
 		}
 	}
 	for _, value := range spec.RequiredInputs {
 		if err := value.Validate(); err != nil {
-			return fmt.Errorf("step %q required input: %w", spec.Key, err)
+			return stepViolation("invalid_required_input")
 		}
 	}
 	for _, value := range spec.ProducedOutputs {
 		if err := value.Validate(); err != nil {
-			return fmt.Errorf("step %q produced output: %w", spec.Key, err)
+			return stepViolation("invalid_produced_output")
 		}
 	}
 	for _, value := range spec.RequiredEvidence {
 		if err := value.Validate(); err != nil {
-			return fmt.Errorf("step %q required evidence: %w", spec.Key, err)
+			return stepViolation("invalid_required_evidence")
 		}
 	}
 	for _, value := range spec.ValidationPolicy {
 		if err := value.Validate(); err != nil {
-			return fmt.Errorf("step %q validation policy: %w", spec.Key, err)
+			return stepViolation("invalid_validation")
 		}
 	}
 	for _, adjacent := range append(append([]StepKey(nil), spec.Predecessors...), spec.Successors...) {
 		if err := adjacent.Validate(); err != nil || adjacent.Reserved() {
-			return fmt.Errorf("step %q names unsupported adjacent step %q", spec.Key, adjacent)
+			return stepViolation("unsupported_adjacent_step")
 		}
 		if adjacent == spec.Key {
-			return fmt.Errorf("step %q declares a self-edge", spec.Key)
+			return stepViolation("self_edge")
 		}
 	}
 	if err := spec.ApprovalPolicy.Validate(); err != nil {
-		return fmt.Errorf("step %q: %w", spec.Key, err)
+		return stepViolation("invalid_approval_policy")
 	}
 	if spec.Mutating {
 		if _, err := ids.ParseOperationID(spec.GovernanceAction); err != nil {
-			return fmt.Errorf("step %q mutating action must name stable governance: %w", spec.Key, err)
+			return stepViolation("invalid_governance_action")
 		}
 	} else if spec.GovernanceAction != "" {
-		return fmt.Errorf("step %q non-mutating contract cannot claim a governance action", spec.Key)
+		return stepViolation("unexpected_governance_action")
 	}
 	wants := EvidenceKind("")
 	switch spec.ApprovalPolicy {
@@ -124,7 +139,7 @@ func validateStepSpec(spec StepContractSpec) error {
 		wants = EvidencePlanOK
 	}
 	if wants != "" && !containsEvidence(spec.RequiredEvidence, wants) {
-		return fmt.Errorf("step %q approval policy %q lacks required evidence %q", spec.Key, spec.ApprovalPolicy, wants)
+		return stepViolation("missing_approval_evidence")
 	}
 	return nil
 }
@@ -172,57 +187,57 @@ func NewDefinition(spec DefinitionSpec) (MissionDefinition, error) {
 	for _, input := range spec.Steps {
 		step, err := NewStepContract(input)
 		if err != nil {
-			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", err.Error())
+			return MissionDefinition{}, err
 		}
 		if _, exists := byKey[step.Key()]; exists {
-			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", fmt.Sprintf("duplicate step %q", step.Key()))
+			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", "definition has a duplicate step")
 		}
 		steps = append(steps, step)
 		byKey[step.Key()] = step
 	}
 	if _, exists := byKey[spec.InitialStep]; !exists {
-		return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "initial_step", fmt.Sprintf("unknown initial step %q", spec.InitialStep))
+		return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "initial_step", "definition names an unknown initial step")
 	}
 
 	terminals := append([]StepKey(nil), spec.TerminalSteps...)
 	sort.Slice(terminals, func(i, j int) bool { return terminals[i] < terminals[j] })
 	if duplicate := firstDuplicate(stepStrings(terminals)); duplicate != "" {
-		return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "terminal_steps", fmt.Sprintf("duplicate terminal step %q", duplicate))
+		return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "terminal_steps", "definition has a duplicate terminal step")
 	}
 	terminalSet := make(map[StepKey]bool, len(terminals))
 	for _, terminal := range terminals {
 		contract, exists := byKey[terminal]
 		if !exists {
-			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "terminal_steps", fmt.Sprintf("unknown terminal step %q", terminal))
+			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "terminal_steps", "definition names an unknown terminal step")
 		}
 		if len(contract.spec.Successors) != 0 {
-			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "terminal_steps", fmt.Sprintf("terminal step %q exposes successors", terminal))
+			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "terminal_steps", "terminal step exposes successors")
 		}
 		if err := contract.spec.TerminalOutcome.Validate(); err != nil {
-			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "terminal_steps", fmt.Sprintf("terminal step %q lacks a valid outcome", terminal))
+			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "terminal_steps", "terminal step lacks a valid outcome")
 		}
 		terminalSet[terminal] = true
 	}
 	for _, step := range steps {
 		if !terminalSet[step.Key()] && step.spec.TerminalOutcome != "" {
-			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", fmt.Sprintf("nonterminal step %q declares terminal outcome", step.Key()))
+			return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", "nonterminal step declares a terminal outcome")
 		}
 		for _, successor := range step.spec.Successors {
 			target, exists := byKey[successor]
 			if !exists {
-				return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", fmt.Sprintf("step %q names unknown successor %q", step.Key(), successor))
+				return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", "definition names an unknown successor")
 			}
 			if !containsStep(target.spec.Predecessors, step.Key()) {
-				return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", fmt.Sprintf("edge %q -> %q is asymmetric", step.Key(), successor))
+				return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", "definition contains an asymmetric edge")
 			}
 		}
 		for _, predecessor := range step.spec.Predecessors {
 			source, exists := byKey[predecessor]
 			if !exists {
-				return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", fmt.Sprintf("step %q names unknown predecessor %q", step.Key(), predecessor))
+				return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", "definition names an unknown predecessor")
 			}
 			if !containsStep(source.spec.Successors, step.Key()) {
-				return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", fmt.Sprintf("edge %q -> %q is asymmetric", predecessor, step.Key()))
+				return MissionDefinition{}, refusal(KindDefinitionMalformed, RecoveryCorrectInput, "steps", "definition contains an asymmetric edge")
 			}
 		}
 	}
@@ -245,7 +260,7 @@ func validateAcyclicReachable(initial StepKey, steps map[StepKey]StepContract) e
 	var visit func(StepKey) error
 	visit = func(key StepKey) error {
 		if state[key] == 1 {
-			return fmt.Errorf("definition cycle reaches step %q", key)
+			return fmt.Errorf("definition contains a cycle")
 		}
 		if state[key] == 2 {
 			return nil
@@ -263,14 +278,7 @@ func validateAcyclicReachable(initial StepKey, steps map[StepKey]StepContract) e
 		return err
 	}
 	if len(state) != len(steps) {
-		unreachable := make([]string, 0, len(steps)-len(state))
-		for key := range steps {
-			if state[key] == 0 {
-				unreachable = append(unreachable, key.String())
-			}
-		}
-		sort.Strings(unreachable)
-		return fmt.Errorf("definition has unreachable step %q", unreachable[0])
+		return fmt.Errorf("definition contains an unreachable step")
 	}
 	return nil
 }
