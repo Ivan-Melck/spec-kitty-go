@@ -31,6 +31,7 @@ subtasks:
 history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/tracker/
+scope: codebase-wide
 create_intent:
 - internal/tracker/work_definition.go
 - internal/tracker/work_definition_test.go
@@ -43,6 +44,8 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- internal/architecture/policy.go
+- internal/architecture/policy_test.go
 - internal/tracker/provider.go
 - internal/tracker/work_definition.go
 - internal/tracker/work_definition_test.go
@@ -99,7 +102,7 @@ The decomposition boundary is a saga, not a cross-store transaction. Provider mu
 
 Work only in the Spec Kitty lane worktree allocated to WP04. This package depends on WP02 and WP03, so use the dependency-resolved base selected by Spec Kitty and verify both accepted lineages are present. Land only into `feat/software-development-mission-method` after review.
 
-Do not edit the primary checkout, create another worktree manually, merge another lane yourself, push to `main`, or change files outside the eleven owned paths. WP05 and later packages depend on the types produced here; keep their future files untouched.
+Do not edit the primary checkout, create another worktree manually, merge another lane yourself, push to `main`, or change files outside the thirteen owned paths. WP05 and later packages depend on the types produced here; keep their future files untouched. The two architecture files are a narrowly governed review-driven overlap with accepted WP01, serialized through WP04's dependency chain; they authorize only the workgraph-to-tracker denial and its mutant.
 
 ## Locked Boundaries
 
@@ -278,18 +281,29 @@ Do not edit the primary checkout, create another worktree manually, merge anothe
 8. Add table-driven two-node, long-cycle, disconnected-valid, unknown-node, and lane-collapse-cycle cases.
 9. Add a load-bearing mutant where pre-collapse work dependencies are acyclic but a deliberately bad lane projection is cyclic.
 10. Prove findings remain deterministic across map and provider-order permutations.
+11. Extend the permanent architecture policy with a package-specific denial for
+    `internal/workgraph -> internal/tracker`, evaluated before the broader
+    authority-to-contract tier allowance. Preserve the legitimate
+    `internal/mission -> internal/tracker` projection edge.
+12. Add a production-shaped policy mutant that injects the forbidden
+    workgraph-to-tracker edge and is killed by the exact stable architecture
+    rule. Keep it under an existing censused top-level test.
 
 **Files**:
 
 - `internal/workgraph/observation.go`
 - `internal/workgraph/validation.go`
 - `internal/workgraph/validation_test.go`
+- `internal/architecture/policy.go`
+- `internal/architecture/policy_test.go`
 
 **Validation**:
 
 - The two-item dependency graph passes before and after a valid lane projection.
 - Every invalid endpoint or cycle fails with the intended stable kind and exact identities.
 - Removing post-lane validation makes the lane-collapse mutant survive and red the test.
+- A workgraph-to-tracker import fails the permanent policy, while the mission
+  projection control remains accepted.
 
 ## Implementation Discipline
 
@@ -312,6 +326,7 @@ Run quality and graph mutants repeatedly:
 
 ```bash
 go test ./internal/workgraph -run 'Observation|Validation|Coverage|Ownership|Dependency|Lane' -count=10
+go test ./internal/architecture -count=3
 ```
 
 Run the approved-plan and saga cases:
@@ -348,7 +363,7 @@ Use deterministic clocks and explicit failure injection. Do not use sleeps, netw
 - No tracker status, Markdown file, provider external ID, or private transcript becomes authority.
 - No Beads-specific semantic field enters tracker, workgraph, or mission contracts.
 - All focused, repeated, race, compilation, vet, formatting, module, and hygiene checks pass.
-- Only the eleven frontmatter-owned files are modified by implementation.
+- Only the thirteen frontmatter-owned files are modified by implementation.
 - T017 through T022 are recorded through the event-sourced status command:
 
   ```bash
