@@ -35,6 +35,14 @@ type ReachabilityTarget struct {
 	Package             string
 	Symbol              string
 	RequiredCallerClass CallerClass
+	// ActivateWhenPackagePresent permits a forward registration before its
+	// owning package lands. Once the package is in the production graph, a
+	// missing declaration is still a hard RuleReachabilityTarget failure.
+	ActivateWhenPackagePresent bool
+	// ForbiddenCaller narrows a read-facing package dependency: the package
+	// may import authority read types, but it may not invoke this constructor or
+	// guard. Patterns remain exact or slash-bounded, never textual substrings.
+	ForbiddenCaller PackagePattern
 }
 
 // DefaultReachabilityTargets returns the curated production registry. It
@@ -49,6 +57,16 @@ func DefaultReachabilityTargets(modulePath string) []ReachabilityTarget {
 			Package: modulePath + "/internal/gitrepo", Symbol: "NewHandoffVerifier",
 			RequiredCallerClass: CallerExternalPackage,
 		},
+		{
+			Package: modulePath + "/internal/mission", Symbol: "NewDefinition",
+			RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
+			ForbiddenCaller: PackagePrefix(modulePath + "/internal/projection"),
+		},
+		{
+			Package: modulePath + "/internal/mission", Symbol: "EvaluateTransition",
+			RequiredCallerClass: CallerSamePackageProduction, ActivateWhenPackagePresent: true,
+			ForbiddenCaller: PackagePrefix(modulePath + "/internal/projection"),
+		},
 	}
 }
 
@@ -58,10 +76,15 @@ type ReachabilityViolation struct {
 	Package             string
 	Symbol              string
 	RequiredCallerClass CallerClass
+	CallerPackage       string
 }
 
 func (v ReachabilityViolation) Error() string {
-	return fmt.Sprintf("rule=%s package=%s symbol=%s required_caller=%s", v.Rule, v.Package, v.Symbol, v.RequiredCallerClass)
+	diagnostic := fmt.Sprintf("rule=%s package=%s symbol=%s required_caller=%s", v.Rule, v.Package, v.Symbol, v.RequiredCallerClass)
+	if v.CallerPackage != "" {
+		diagnostic += " caller=" + v.CallerPackage
+	}
+	return diagnostic
 }
 
 type reachabilityViolations []ReachabilityViolation
@@ -75,9 +98,11 @@ func (v reachabilityViolations) Error() string {
 }
 
 type reachabilityObservation struct {
-	declared bool
-	same     bool
-	external bool
+	packagePresent   bool
+	declared         bool
+	same             bool
+	external         bool
+	forbiddenCallers []string
 }
 
 type productionSourcePackage struct {
@@ -751,6 +776,11 @@ func CheckReachability(ctx context.Context, root, modulePath string, targets []R
 		default:
 			return fmt.Errorf("invalid reachability caller class %q", target.RequiredCallerClass)
 		}
+		if target.ForbiddenCaller.Path != "" {
+			if err := target.ForbiddenCaller.validate(); err != nil || !withinModule(modulePath, target.ForbiddenCaller.Path) {
+				return fmt.Errorf("invalid reachability forbidden caller package=%q symbol=%q pattern=%q", target.Package, target.Symbol, target.ForbiddenCaller.Path)
+			}
+		}
 		observations[target] = &reachabilityObservation{}
 	}
 	packages, err := loadTypedProductionSources(ctx, root, modulePath, runGraphCommand)
@@ -763,6 +793,7 @@ func CheckReachability(ctx context.Context, root, modulePath string, targets []R
 			if source.importPath != target.Package {
 				continue
 			}
+			observations[target].packagePresent = true
 			function, ok := source.typed.Scope().Lookup(target.Symbol).(*types.Func)
 			if !ok {
 				continue
@@ -798,6 +829,9 @@ func CheckReachability(ctx context.Context, root, modulePath string, targets []R
 				}
 				if source.importPath != target.Package {
 					observations[target].external = true
+					if target.ForbiddenCaller.Path != "" && target.ForbiddenCaller.matches(source.importPath) {
+						observations[target].forbiddenCallers = append(observations[target].forbiddenCallers, source.importPath)
+					}
 				}
 				return true
 			})
@@ -807,6 +841,9 @@ func CheckReachability(ctx context.Context, root, modulePath string, targets []R
 	violations := make(reachabilityViolations, 0)
 	for _, target := range ordered {
 		observation := observations[target]
+		if target.ActivateWhenPackagePresent && !observation.packagePresent {
+			continue
+		}
 		if !observation.declared {
 			violations = append(violations, ReachabilityViolation{Rule: RuleReachabilityTarget, Package: target.Package, Symbol: target.Symbol, RequiredCallerClass: target.RequiredCallerClass})
 			continue
@@ -817,11 +854,31 @@ func CheckReachability(ctx context.Context, root, modulePath string, targets []R
 		if !reachable {
 			violations = append(violations, ReachabilityViolation{Rule: RuleReachability, Package: target.Package, Symbol: target.Symbol, RequiredCallerClass: target.RequiredCallerClass})
 		}
+		sort.Strings(observation.forbiddenCallers)
+		for _, caller := range compactStrings(observation.forbiddenCallers) {
+			violations = append(violations, ReachabilityViolation{
+				Rule: RuleReachability, Package: target.Package, Symbol: target.Symbol,
+				RequiredCallerClass: target.RequiredCallerClass, CallerPackage: caller,
+			})
+		}
 	}
 	if len(violations) > 0 {
 		return violations
 	}
 	return nil
+}
+
+func compactStrings(values []string) []string {
+	if len(values) < 2 {
+		return values
+	}
+	result := values[:1]
+	for _, value := range values[1:] {
+		if value != result[len(result)-1] {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 // CheckDeferredRuntimeSurfaces rejects production code that launches a Python
