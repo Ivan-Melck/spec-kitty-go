@@ -1,7 +1,7 @@
 {
   "event_count": 16,
-  "last_event_id": "01M11XK1VANNKHY7GVJFTDKDC0",
-  "materialized_at": "2026-08-27T15:32:04.586980+00:00",
+  "last_event_id": "01M11XN48Y7SQ0DVVDND6CHG76",
+  "materialized_at": "2026-08-27T15:33:12.606969+00:00",
   "mission_number": "",
   "mission_slug": "software-development-mission-method-01M11EX2",
   "mission_type": "software-dev",
@@ -24,8 +24,8 @@
       "agent_profile_version": "1.0",
       "force_count": 0,
       "lane": "in_review",
-      "last_event_id": "01M11XK1VANNKHY7GVJFTDKDC0",
-      "last_transition_at": "2026-08-27T15:32:04.586980+00:00",
+      "last_event_id": "01M11XN48Y7SQ0DVVDND6CHG76",
+      "last_transition_at": "2026-08-27T15:33:12.606969+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: permanent Phase 3 tier, direction, deferred-surface, Markdown-authority, reachability, and mutant guards; focused, repeated, race, compile, vet, staticcheck, module, formatting, and hygiene checks pass."
