@@ -67,7 +67,10 @@ work_packages:
   - id: WP04
     title: "Provider-Neutral Decomposition and Work Quality"
     dependencies: [WP02, WP03]
+    scope: codebase-wide
     owned_files:
+      - "internal/architecture/policy.go"
+      - "internal/architecture/policy_test.go"
       - "internal/tracker/provider.go"
       - "internal/tracker/work_definition.go"
       - "internal/tracker/work_definition_test.go"
