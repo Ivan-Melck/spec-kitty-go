@@ -60,6 +60,9 @@
       "last_event_id": "01M120T51P7X9BMFEMYT1867MH",
       "last_transition_at": "2026-08-27T16:28:22.966415+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: static exact-version mission definition, typed lifecycle authority, pure gated CAS transitions, idempotent atomic store port, and exhaustive deterministic/race-safe tests"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3760839,
