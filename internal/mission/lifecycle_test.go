@@ -144,26 +144,65 @@ func TestDefinitionGraphMutantsFailClosedWithExactRuleContext(t *testing.T) {
 	tests := []struct {
 		name        string
 		mutate      func(*mission.DefinitionSpec)
-		want        string
 		wantField   string
 		wantMessage string
+		secret      string
 	}{
 		{name: "duplicate-step", mutate: func(s *mission.DefinitionSpec) { s.Steps = append(s.Steps, s.Steps[0]) },
 			wantField: "definition.duplicate_step", wantMessage: "step decomposing violates duplicate_step"},
-		{name: "missing-initial", mutate: func(s *mission.DefinitionSpec) { s.InitialStep = mission.StepReviewReserved }, want: "initial step"},
-		{name: "missing-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = nil }, want: "terminal"},
+		{name: "invalid-initial", mutate: func(s *mission.DefinitionSpec) { s.InitialStep = mission.StepKey("seeded-initial-secret/value") },
+			wantField: "definition.invalid_initial_step", wantMessage: "field initial_step violates invalid_initial_step", secret: "seeded-initial-secret"},
+		{name: "reserved-initial", mutate: func(s *mission.DefinitionSpec) { s.InitialStep = mission.StepReviewReserved },
+			wantField: "definition.invalid_initial_step", wantMessage: "step review_reserved violates invalid_initial_step"},
+		{name: "absent-initial", mutate: func(s *mission.DefinitionSpec) {
+			s.InitialStep = mission.StepPlanning
+			removeStep(s, mission.StepPlanning)
+		}, wantField: "definition.unknown_initial_step", wantMessage: "step planning violates unknown_initial_step"},
+		{name: "missing-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = nil },
+			wantField: "definition.missing_terminal_step", wantMessage: "field terminal_steps violates missing_terminal_step"},
+		{name: "invalid-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = []mission.StepKey{"seeded-terminal-secret/value"} },
+			wantField: "definition.invalid_terminal_step", wantMessage: "terminal_steps index 0 violates invalid_terminal_step", secret: "seeded-terminal-secret"},
+		{name: "reserved-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = []mission.StepKey{mission.StepReviewReserved} },
+			wantField: "definition.invalid_terminal_step", wantMessage: "step review_reserved violates invalid_terminal_step"},
+		{name: "duplicate-terminal", mutate: func(s *mission.DefinitionSpec) { s.TerminalSteps = append(s.TerminalSteps, mission.StepWorkFinalized) },
+			wantField: "definition.duplicate_terminal_step", wantMessage: "step work_finalized violates duplicate_terminal_step"},
+		{name: "absent-terminal", mutate: func(s *mission.DefinitionSpec) {
+			s.TerminalSteps = []mission.StepKey{mission.StepPlanning}
+			removeStep(s, mission.StepPlanning)
+		}, wantField: "definition.unknown_terminal_step", wantMessage: "step planning violates unknown_terminal_step"},
 		{name: "unknown-successor", mutate: func(s *mission.DefinitionSpec) {
+			removeStep(s, mission.StepPlanning)
+			step(s, mission.StepPlanApproved).Predecessors = nil
+		}, wantField: "definition.unknown_successor", wantMessage: "edge specification_approved -> planning violates unknown_successor"},
+		{name: "unknown-predecessor", mutate: func(s *mission.DefinitionSpec) {
+			removeStep(s, mission.StepPlanning)
+			step(s, mission.StepSpecificationApproved).Successors = nil
+		}, wantField: "definition.unknown_predecessor", wantMessage: "edge planning -> plan_approved violates unknown_predecessor"},
+		{name: "unsupported-successor", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepInitialized).Successors = append(step(s, mission.StepInitialized).Successors, "seeded-successor-secret/value")
+		}, wantField: "step_contract.unsupported_adjacent_step", wantMessage: "step initialized successor index 1 violates unsupported_adjacent_step", secret: "seeded-successor-secret"},
+		{name: "unsupported-predecessor", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepSpecifying).Predecessors = []mission.StepKey{"seeded-predecessor-secret/value"}
+		}, wantField: "step_contract.unsupported_adjacent_step", wantMessage: "step specifying predecessor index 0 violates unsupported_adjacent_step", secret: "seeded-predecessor-secret"},
+		{name: "reserved-successor", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepInitialized).Successors = []mission.StepKey{mission.StepReviewReserved}
-		}, want: "adjacent"},
+		}, wantField: "step_contract.unsupported_adjacent_step", wantMessage: "edge initialized -> review_reserved violates unsupported_adjacent_step"},
+		{name: "reserved-predecessor", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepSpecifying).Predecessors = []mission.StepKey{mission.StepReviewReserved}
+		}, wantField: "step_contract.unsupported_adjacent_step", wantMessage: "edge review_reserved -> specifying violates unsupported_adjacent_step"},
 		{name: "asymmetric-edge", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepSpecifying).Predecessors = nil },
 			wantField: "definition.asymmetric_edge", wantMessage: "edge initialized -> specifying violates asymmetric_edge"},
 		{name: "self-edge", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepSpecifying).Successors = []mission.StepKey{mission.StepSpecifying}
-		}, want: "self_edge"},
+		}, wantField: "step_contract.self_edge", wantMessage: "edge specifying -> specifying violates self_edge"},
 		{name: "duplicate-edge", mutate: func(s *mission.DefinitionSpec) {
 			p := step(s, mission.StepInitialized)
 			p.Successors = append(p.Successors, p.Successors[0])
 		}, wantField: "step_contract.duplicate_successor", wantMessage: "step initialized violates duplicate_successor"},
+		{name: "duplicate-predecessor", mutate: func(s *mission.DefinitionSpec) {
+			p := step(s, mission.StepSpecifying)
+			p.Predecessors = append(p.Predecessors, p.Predecessors[0])
+		}, wantField: "step_contract.duplicate_predecessor", wantMessage: "step specifying violates duplicate_predecessor"},
 		{name: "disconnected", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepInitialized).Successors = nil
 			step(s, mission.StepSpecifying).Predecessors = nil
@@ -175,10 +214,17 @@ func TestDefinitionGraphMutantsFailClosedWithExactRuleContext(t *testing.T) {
 		{name: "terminal-successor", mutate: func(s *mission.DefinitionSpec) {
 			step(s, mission.StepWorkFinalized).Successors = []mission.StepKey{mission.StepSpecifying}
 			step(s, mission.StepSpecifying).Predecessors = append(step(s, mission.StepSpecifying).Predecessors, mission.StepWorkFinalized)
-		}, want: "terminal step"},
-		{name: "mutating-without-governance", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepPlanning).GovernanceAction = "" }, want: "governance"},
+		}, wantField: "definition.terminal_has_successors", wantMessage: "step work_finalized violates terminal_has_successors"},
+		{name: "invalid-terminal-outcome", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepWorkFinalized).TerminalOutcome = mission.TerminalOutcome("seeded-outcome-secret")
+		}, wantField: "definition.invalid_terminal_outcome", wantMessage: "step work_finalized violates invalid_terminal_outcome", secret: "seeded-outcome-secret"},
+		{name: "nonterminal-outcome", mutate: func(s *mission.DefinitionSpec) {
+			step(s, mission.StepPlanning).TerminalOutcome = mission.OutcomeWorkFinalized
+		}, wantField: "definition.nonterminal_outcome", wantMessage: "step planning violates nonterminal_outcome"},
+		{name: "mutating-without-governance", mutate: func(s *mission.DefinitionSpec) { step(s, mission.StepPlanning).GovernanceAction = "" },
+			wantField: "step_contract.invalid_governance_action", wantMessage: "step planning violates invalid_governance_action"},
 		{name: "invalid-caller-key", mutate: func(s *mission.DefinitionSpec) { s.Steps[0].Key = mission.StepKey("seeded-step-secret/value") },
-			wantField: "step_contract.unsupported_key", wantMessage: "step index 0 violates unsupported_key"},
+			wantField: "step_contract.unsupported_key", wantMessage: "step index 0 violates unsupported_key", secret: "seeded-step-secret"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -186,18 +232,14 @@ func TestDefinitionGraphMutantsFailClosedWithExactRuleContext(t *testing.T) {
 			test.mutate(&spec)
 			_, err := mission.NewDefinition(spec)
 			if !mission.IsKind(err, mission.KindDefinitionMalformed) {
-				t.Fatalf("mutant=%s err=%v want context %q", test.name, err, test.want)
+				t.Fatalf("mutant=%s err=%v", test.name, err)
 			}
-			if test.wantField != "" {
-				var diagnostic *mission.Error
-				if !errors.As(err, &diagnostic) || diagnostic.Field != test.wantField || diagnostic.Message != test.wantMessage {
-					t.Fatalf("mutant=%s diagnostic=%+v want field=%q message=%q", test.name, diagnostic, test.wantField, test.wantMessage)
-				}
-				if strings.Contains(err.Error(), "seeded-step-secret") {
-					t.Fatalf("mutant=%s leaked invalid caller key: %v", test.name, err)
-				}
-			} else if !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("mutant=%s err=%v want context %q", test.name, err, test.want)
+			var diagnostic *mission.Error
+			if !errors.As(err, &diagnostic) || diagnostic.Field != test.wantField || diagnostic.Message != test.wantMessage {
+				t.Fatalf("mutant=%s diagnostic=%+v want field=%q message=%q", test.name, diagnostic, test.wantField, test.wantMessage)
+			}
+			if diagnostic.Validate() != nil || len(err.Error()) > 256 || test.secret != "" && strings.Contains(err.Error(), test.secret) {
+				t.Fatalf("mutant=%s unbounded or disclosed diagnostic=%v", test.name, err)
 			}
 		})
 	}
@@ -953,6 +995,16 @@ func step(spec *mission.DefinitionSpec, key mission.StepKey) *mission.StepContra
 	for i := range spec.Steps {
 		if spec.Steps[i].Key == key {
 			return &spec.Steps[i]
+		}
+	}
+	panic("step fixture missing: " + key.String())
+}
+
+func removeStep(spec *mission.DefinitionSpec, key mission.StepKey) {
+	for index := range spec.Steps {
+		if spec.Steps[index].Key == key {
+			spec.Steps = append(spec.Steps[:index], spec.Steps[index+1:]...)
+			return
 		}
 	}
 	panic("step fixture missing: " + key.String())
