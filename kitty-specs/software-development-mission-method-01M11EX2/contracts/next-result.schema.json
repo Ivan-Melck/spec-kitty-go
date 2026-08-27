@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.dev/contracts/next-result.schema.json",
+  "title": "Mission Next Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "mission_id", "mission_state_version", "step_key"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"enum": ["query", "action", "work_ready", "review_ready", "decision_required", "blocked", "terminal"]},
+    "mission_id": {"type": "string", "minLength": 1},
+    "mission_state_version": {"type": "integer", "minimum": 1},
+    "step_key": {"type": "string", "minLength": 1},
+    "work_revision_id": {"type": "string", "minLength": 1},
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_key", "mutating", "governance_action"],
+      "properties": {
+        "action_key": {"type": "string", "minLength": 1},
+        "mutating": {"type": "boolean"},
+        "governance_action": {"type": "string", "minLength": 1}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_id", "question"],
+      "properties": {
+        "decision_id": {"type": "string", "minLength": 1},
+        "question": {"type": "string", "minLength": 1},
+        "options": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocker_id", "kind", "summary", "recovery_actions"],
+      "properties": {
+        "blocker_id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "recovery_actions": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    },
+    "ready_work_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "terminal_outcome": {"type": "string", "minLength": 1},
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["kind", "retry_safety"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "retry_safety": {"enum": ["safe", "unsafe", "observe_then_reconcile", "not_applicable"]}
+      }
+    }
+  }
+}
