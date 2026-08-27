@@ -5,12 +5,19 @@ import (
 	"sort"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
-	"github.com/spec-kitty/go-kitty3/internal/tracker"
+)
+
+type ScopeKind string
+
+const (
+	ScopePlanConcern     ScopeKind = "plan_concern"
+	ScopeRequiredOutcome ScopeKind = "required_outcome"
+	ScopeOptionalOutcome ScopeKind = "optional_outcome"
 )
 
 type ApprovedScope struct {
 	ID        string
-	Kind      tracker.ScopeKind
+	Kind      ScopeKind
 	MissionID ids.MissionID
 }
 
@@ -21,12 +28,107 @@ func (scope ApprovedScope) Validate() error {
 	if _, err := ids.ParseMissionID(scope.MissionID.String()); err != nil {
 		return fmt.Errorf("workgraph approved scope: %w", err)
 	}
-	for _, allowed := range []tracker.ScopeKind{tracker.ScopePlanConcern, tracker.ScopeRequiredOutcome, tracker.ScopeOptionalOutcome} {
+	for _, allowed := range []ScopeKind{ScopePlanConcern, ScopeRequiredOutcome, ScopeOptionalOutcome} {
 		if scope.Kind == allowed {
 			return nil
 		}
 	}
 	return fmt.Errorf("workgraph approved scope: unsupported kind %q", scope.Kind)
+}
+
+type CriterionObservation struct {
+	ID       string
+	Text     string
+	Outcome  string
+	Verifier string
+	Required bool
+}
+
+type ScopeAccess string
+
+const (
+	ScopeReadOnly       ScopeAccess = "read_only"
+	ScopeWriteExclusive ScopeAccess = "write_exclusive"
+)
+
+type WriteScopeObservation struct {
+	Path             string
+	Domain           string
+	Access           ScopeAccess
+	SerializationKey string
+}
+
+type ScopeReference struct {
+	ID   string
+	Kind ScopeKind
+}
+
+type WorkObservationParams struct {
+	ProjectID         ids.ProjectID
+	WorkID            ids.WorkID
+	Title             string
+	Description       string
+	DesignContext     string
+	CrossDomainReason string
+	Criteria          []CriterionObservation
+	Dependencies      []ids.WorkID
+	WriteScopes       []WriteScopeObservation
+	Provenance        []ScopeReference
+}
+
+// WorkObservation is the provider-free semantic projection consumed by graph
+// validation. Provider mapping/revision evidence remains at the mission seam.
+type WorkObservation struct {
+	projectID         ids.ProjectID
+	workID            ids.WorkID
+	title             string
+	description       string
+	designContext     string
+	crossDomainReason string
+	criteria          []CriterionObservation
+	dependencies      []ids.WorkID
+	writeScopes       []WriteScopeObservation
+	provenance        []ScopeReference
+}
+
+func NewWorkObservation(params WorkObservationParams) (WorkObservation, error) {
+	if _, err := ids.ParseProjectID(params.ProjectID.String()); err != nil {
+		return WorkObservation{}, err
+	}
+	if _, err := ids.ParseWorkID(params.WorkID.String()); err != nil {
+		return WorkObservation{}, err
+	}
+	if params.Title == "" || params.Description == "" || params.DesignContext == "" || len(params.Criteria) == 0 || len(params.WriteScopes) == 0 || len(params.Provenance) == 0 {
+		return WorkObservation{}, fmt.Errorf("workgraph work observation: complete context, criteria, scopes, and provenance are required")
+	}
+	return WorkObservation{
+		projectID: params.ProjectID, workID: params.WorkID, title: params.Title,
+		description: params.Description, designContext: params.DesignContext,
+		crossDomainReason: params.CrossDomainReason,
+		criteria:          append([]CriterionObservation(nil), params.Criteria...),
+		dependencies:      append([]ids.WorkID(nil), params.Dependencies...),
+		writeScopes:       append([]WriteScopeObservation(nil), params.WriteScopes...),
+		provenance:        append([]ScopeReference(nil), params.Provenance...),
+	}, nil
+}
+
+func (work WorkObservation) ProjectID() ids.ProjectID  { return work.projectID }
+func (work WorkObservation) WorkID() ids.WorkID        { return work.workID }
+func (work WorkObservation) Title() string             { return work.title }
+func (work WorkObservation) Description() string       { return work.description }
+func (work WorkObservation) DesignContext() string     { return work.designContext }
+func (work WorkObservation) CrossDomainReason() string { return work.crossDomainReason }
+func (work WorkObservation) Criteria() []CriterionObservation {
+	return append([]CriterionObservation(nil), work.criteria...)
+}
+func (work WorkObservation) Dependencies() []ids.WorkID {
+	return append([]ids.WorkID(nil), work.dependencies...)
+}
+func (work WorkObservation) WriteScopes() []WriteScopeObservation {
+	return append([]WriteScopeObservation(nil), work.writeScopes...)
+}
+func (work WorkObservation) Provenance() []ScopeReference {
+	return append([]ScopeReference(nil), work.provenance...)
 }
 
 type DraftObservation struct {
@@ -35,10 +137,10 @@ type DraftObservation struct {
 	planRevisionID string
 	planDigest     string
 	approvedScope  []ApprovedScope
-	work           []tracker.WorkDefinitionObservation
+	work           []WorkObservation
 }
 
-func NewDraftObservation(projectID ids.ProjectID, missionID ids.MissionID, planRevisionID, planDigest string, approved []ApprovedScope, work []tracker.WorkDefinitionObservation) (DraftObservation, error) {
+func NewDraftObservation(projectID ids.ProjectID, missionID ids.MissionID, planRevisionID, planDigest string, approved []ApprovedScope, work []WorkObservation) (DraftObservation, error) {
 	if _, err := ids.ParseProjectID(projectID.String()); err != nil {
 		return DraftObservation{}, err
 	}
@@ -54,23 +156,21 @@ func NewDraftObservation(projectID ids.ProjectID, missionID ids.MissionID, planR
 		if err := scope.Validate(); err != nil || scope.MissionID != missionID {
 			return DraftObservation{}, fmt.Errorf("workgraph observation: approved scope is invalid or belongs to another mission")
 		}
-		key := scope.ID
-		if _, duplicate := scopeKeys[key]; duplicate {
+		if _, duplicate := scopeKeys[scope.ID]; duplicate {
 			return DraftObservation{}, fmt.Errorf("workgraph observation: approved scope occurs more than once")
 		}
-		scopeKeys[key] = struct{}{}
+		scopeKeys[scope.ID] = struct{}{}
 	}
-	workCopy := append([]tracker.WorkDefinitionObservation(nil), work...)
+	workCopy := append([]WorkObservation(nil), work...)
 	workIDs := make(map[ids.WorkID]struct{}, len(workCopy))
 	for _, item := range workCopy {
-		definition := item.Definition()
-		if definition.ProjectID() != projectID || item.ProviderObservation().Revision == 0 {
-			return DraftObservation{}, fmt.Errorf("workgraph observation: work is outside the project or incomplete")
+		if item.ProjectID() != projectID {
+			return DraftObservation{}, fmt.Errorf("workgraph observation: work is outside the project")
 		}
-		if _, duplicate := workIDs[definition.WorkID()]; duplicate {
+		if _, duplicate := workIDs[item.WorkID()]; duplicate {
 			return DraftObservation{}, fmt.Errorf("workgraph observation: WorkID occurs more than once")
 		}
-		workIDs[definition.WorkID()] = struct{}{}
+		workIDs[item.WorkID()] = struct{}{}
 	}
 	sort.Slice(approvedCopy, func(i, j int) bool {
 		if approvedCopy[i].ID == approvedCopy[j].ID {
@@ -78,7 +178,7 @@ func NewDraftObservation(projectID ids.ProjectID, missionID ids.MissionID, planR
 		}
 		return approvedCopy[i].ID < approvedCopy[j].ID
 	})
-	sort.Slice(workCopy, func(i, j int) bool { return workCopy[i].Definition().WorkID() < workCopy[j].Definition().WorkID() })
+	sort.Slice(workCopy, func(i, j int) bool { return workCopy[i].WorkID() < workCopy[j].WorkID() })
 	return DraftObservation{projectID: projectID, missionID: missionID, planRevisionID: planRevisionID, planDigest: planDigest, approvedScope: approvedCopy, work: workCopy}, nil
 }
 
@@ -89,20 +189,18 @@ func (observation DraftObservation) PlanDigest() string       { return observati
 func (observation DraftObservation) ApprovedScope() []ApprovedScope {
 	return append([]ApprovedScope(nil), observation.approvedScope...)
 }
-func (observation DraftObservation) Work() []tracker.WorkDefinitionObservation {
-	return append([]tracker.WorkDefinitionObservation(nil), observation.work...)
+func (observation DraftObservation) Work() []WorkObservation {
+	return append([]WorkObservation(nil), observation.work...)
 }
 
 type ProjectedLane struct {
 	ID      string
 	Members []ids.WorkID
 }
-
 type ProjectedLaneEdge struct {
 	BlockingLaneID string
 	BlockedLaneID  string
 }
-
 type LaneProjection struct {
 	Lanes []ProjectedLane
 	Edges []ProjectedLaneEdge

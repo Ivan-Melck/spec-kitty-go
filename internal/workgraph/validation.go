@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
-	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
 type FindingKind string
@@ -65,19 +64,19 @@ func ValidateDraft(observation DraftObservation, policy QualityPolicy) []Finding
 		policy = DefaultQualityPolicy()
 	}
 	work := observation.Work()
-	workByID := make(map[ids.WorkID]tracker.WorkDefinition, len(work))
-	approved := make(map[string]tracker.ScopeKind, len(observation.ApprovedScope()))
+	workByID := make(map[ids.WorkID]WorkObservation, len(work))
+	approved := make(map[string]ScopeKind, len(observation.ApprovedScope()))
 	required := make(map[string]bool)
 	covered := make(map[string]bool)
 	for _, scope := range observation.ApprovedScope() {
 		approved[scope.ID] = scope.Kind
-		if scope.Kind == tracker.ScopeRequiredOutcome {
+		if scope.Kind == ScopeRequiredOutcome {
 			required[scope.ID] = true
 		}
 	}
 	findings := make([]Finding, 0)
 	for _, item := range work {
-		definition := item.Definition()
+		definition := item
 		workByID[definition.WorkID()] = definition
 		criteria, dependencies, scopes, provenance := definition.Criteria(), definition.Dependencies(), definition.WriteScopes(), definition.Provenance()
 		for _, criterion := range criteria {
@@ -90,7 +89,7 @@ func ValidateDraft(observation DraftObservation, policy QualityPolicy) []Finding
 		}
 		domains := map[string]bool{}
 		for _, scope := range scopes {
-			if scope.Access == tracker.ScopeWriteExclusive {
+			if scope.Access == ScopeWriteExclusive {
 				domains[scope.Domain] = true
 			}
 		}
@@ -109,7 +108,7 @@ func ValidateDraft(observation DraftObservation, policy QualityPolicy) []Finding
 				continue
 			}
 			covered[reference.ID] = true
-			if kind == tracker.ScopePlanConcern {
+			if kind == ScopePlanConcern {
 				hasPlanConcern = true
 			}
 		}
@@ -129,9 +128,9 @@ func ValidateDraft(observation DraftObservation, policy QualityPolicy) []Finding
 }
 
 func ValidateLaneProjection(observation DraftObservation, projection LaneProjection) []Finding {
-	workByID := make(map[ids.WorkID]tracker.WorkDefinition)
+	workByID := make(map[ids.WorkID]WorkObservation)
 	for _, item := range observation.Work() {
-		workByID[item.Definition().WorkID()] = item.Definition()
+		workByID[item.WorkID()] = item
 	}
 	findings := make([]Finding, 0)
 	laneByID := make(map[string]ProjectedLane)
@@ -200,7 +199,7 @@ func ValidateLaneProjection(observation DraftObservation, projection LaneProject
 	return findings
 }
 
-func validateOwnership(work map[ids.WorkID]tracker.WorkDefinition) []Finding {
+func validateOwnership(work map[ids.WorkID]WorkObservation) []Finding {
 	idsSorted := make([]ids.WorkID, 0, len(work))
 	for id := range work {
 		idsSorted = append(idsSorted, id)
@@ -211,7 +210,7 @@ func validateOwnership(work map[ids.WorkID]tracker.WorkDefinition) []Finding {
 		for _, rightID := range idsSorted[i+1:] {
 			for _, left := range work[leftID].WriteScopes() {
 				for _, right := range work[rightID].WriteScopes() {
-					if left.Access != tracker.ScopeWriteExclusive || right.Access != tracker.ScopeWriteExclusive || !pathsOverlap(left.Path, right.Path) {
+					if left.Access != ScopeWriteExclusive || right.Access != ScopeWriteExclusive || !pathsOverlap(left.Path, right.Path) {
 						continue
 					}
 					if left.SerializationKey != "" && left.SerializationKey == right.SerializationKey {
@@ -227,7 +226,7 @@ func validateOwnership(work map[ids.WorkID]tracker.WorkDefinition) []Finding {
 	return findings
 }
 
-func validateDependencies(work map[ids.WorkID]tracker.WorkDefinition) []Finding {
+func validateDependencies(work map[ids.WorkID]WorkObservation) []Finding {
 	nodes := make([]ids.WorkID, 0, len(work))
 	edges := make([]DependencyEdge, 0)
 	for workID, definition := range work {

@@ -77,8 +77,8 @@ func TestDecompositionCreatesTwoItemGraphAndReplaysExactly(t *testing.T) {
 	}
 	featureFound := false
 	for _, item := range got {
-		if item.Definition().WorkID() == "work-feature" {
-			dependencies := item.Definition().Dependencies()
+		if item.WorkID() == "work-feature" {
+			dependencies := item.Dependencies()
 			featureFound = len(dependencies) == 1 && dependencies[0] == "work-foundation"
 		}
 	}
@@ -196,7 +196,7 @@ func decompositionFixture(t *testing.T) (mission.DecompositionCommand, *missionS
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 	snapshot := mission.MissionSnapshot{MissionID: "mission-kitty", ProjectID: "project-kitty", DefinitionID: "software-dev", DefinitionVersion: 1, DefinitionCommitment: mission.DefinitionCommitment(strings.Repeat("c", 64)), Lifecycle: mission.LifecycleOpen, CurrentStep: mission.StepPlanApproved, StateVersion: 5, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Minute)}
 	planDigest := strings.Repeat("a", 64)
-	command := mission.DecompositionCommand{MissionID: snapshot.MissionID, ProjectID: snapshot.ProjectID, ExpectedMission: snapshot, PlanRevisionID: "plan-revision-1", PlanContentDigest: planDigest, ApprovedScope: []workgraph.ApprovedScope{{ID: "plan-foundation", Kind: tracker.ScopePlanConcern, MissionID: snapshot.MissionID}, {ID: "plan-feature", Kind: tracker.ScopePlanConcern, MissionID: snapshot.MissionID}, {ID: "requirement-portable", Kind: tracker.ScopeRequiredOutcome, MissionID: snapshot.MissionID}}, Work: []mission.WorkProposal{{Definition: missionDefinition(t, "work-foundation", nil, "plan-foundation", false)}, {Definition: missionDefinition(t, "work-feature", []ids.WorkID{"work-foundation"}, "plan-feature", true)}}, ActorID: "actor-implementer", OperationID: "operation-decompose", GovernanceContextID: "governance-implement", OccurredAt: now}
+	command := mission.DecompositionCommand{MissionID: snapshot.MissionID, ProjectID: snapshot.ProjectID, ExpectedMission: snapshot, PlanRevisionID: "plan-revision-1", PlanContentDigest: planDigest, ApprovedScope: []workgraph.ApprovedScope{{ID: "plan-foundation", Kind: workgraph.ScopePlanConcern, MissionID: snapshot.MissionID}, {ID: "plan-feature", Kind: workgraph.ScopePlanConcern, MissionID: snapshot.MissionID}, {ID: "requirement-portable", Kind: workgraph.ScopeRequiredOutcome, MissionID: snapshot.MissionID}}, Work: []mission.WorkProposal{{Definition: missionDefinition(t, "work-foundation", nil, "plan-foundation", false)}, {Definition: missionDefinition(t, "work-feature", []ids.WorkID{"work-foundation"}, "plan-feature", true)}}, ActorID: "actor-implementer", OperationID: "operation-decompose", GovernanceContextID: "governance-implement", OccurredAt: now}
 	store, err := fake.Open(filepath.Join(t.TempDir(), "tracker.json"))
 	if err != nil {
 		t.Fatal(err)
