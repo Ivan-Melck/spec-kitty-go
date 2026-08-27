@@ -1,0 +1,15 @@
+{
+  "coordination_branch": "kitty/mission-software-development-mission-method-01M11EX2",
+  "created_at": "2026-08-27T11:15:24.655883+00:00",
+  "flattened": false,
+  "friendly_name": "Software Development Mission Method",
+  "mission_id": "01M11EX2VFHERE58SQVCBFG6JN",
+  "mission_number": null,
+  "mission_slug": "software-development-mission-method-01M11EX2",
+  "mission_type": "software-dev",
+  "purpose_context": "Phase 3 preserves Spec Kitty's larger mission methodology while replacing hand-maintained Markdown tasks with Beads-backed structured work. A human or agent must be able to specify, plan, decompose, finalize an immutable WorkRevision, detect later tracker drift, reconcile it explicitly, and advance through a typed next protocol without allowing tracker status to acquire mission or execution authority.",
+  "purpose_tldr": "Run governed software-development missions from intent to finalized tracker work without a canonical Markdown task ledger.",
+  "slug": "software-development-mission-method-01M11EX2",
+  "target_branch": "feat/software-development-mission-method",
+  "topology": "coord"
+}
