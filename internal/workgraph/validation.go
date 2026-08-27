@@ -155,8 +155,8 @@ func ValidateDraft(observation DraftObservation, policy QualityPolicy) []Finding
 				domains[scope.Domain] = true
 			}
 		}
-		if len(domains) > policy.MaxOwnershipDomains && definition.CrossDomainReason() == "" {
-			findings = append(findings, finding(FindingUnrelatedOwnership, definition.WorkID(), "write_scopes", "multiple ownership domains require an explicit reason", RecoveryReviseWork))
+		if len(domains) > policy.MaxOwnershipDomains && !boundedText(definition.CrossDomainReason(), 512) {
+			findings = append(findings, finding(FindingUnrelatedOwnership, definition.WorkID(), "cross_domain_reason", "multiple ownership domains require a bounded explicit reason", RecoveryReviseWork))
 		}
 		hasPlanConcern := false
 		for _, reference := range provenance {
