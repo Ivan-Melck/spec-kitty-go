@@ -23,6 +23,218 @@ var _ tracker.Discussion = (*Provider)(nil)
 var _ tracker.AssignmentProjection = (*Provider)(nil)
 var _ tracker.Inspector = (*Provider)(nil)
 var _ tracker.Exporter = (*Provider)(nil)
+var _ tracker.WorkDefinitionPort = (*Provider)(nil)
+
+func (p *Provider) DefinitionCapabilities(context.Context) (tracker.WorkDefinitionCapabilities, error) {
+	return tracker.WorkDefinitionCapabilities{Create: true, GuardedUpdate: true, BlockingGraph: true}, nil
+}
+
+func (p *Provider) PrepareDefinitionOperation(ctx context.Context, operationID ids.OperationID, requestDigest string) error {
+	if _, err := ids.ParseOperationID(operationID.String()); err != nil || len(requestDigest) != 64 {
+		return &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "operation and lowercase SHA-256 request digest are required", Cause: err}
+	}
+	return p.store.update(ctx, func(state *diskState) error {
+		if previous, exists := state.DefinitionRequests[operationID.String()]; exists {
+			if previous != requestDigest {
+				return &tracker.Error{Kind: tracker.ErrorRevisionConflict, Message: "decomposition operation was reused for a different request"}
+			}
+			return nil
+		}
+		state.DefinitionRequests[operationID.String()] = requestDigest
+		return nil
+	})
+}
+
+func (p *Provider) CreateDefinition(ctx context.Context, request tracker.CreateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil || len(request.Definition.CanonicalData()) == 0 {
+		return tracker.WorkDefinitionMutation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "operation and complete work definition are required", Cause: err}
+	}
+	digest := definitionRequestDigest(request.Definition)
+	workKey := "fake-" + request.Definition.WorkID().String()
+	var result tracker.WorkDefinitionMutation
+	var outcome error
+	err := p.store.update(ctx, func(state *diskState) error {
+		if prior, exists := state.DefinitionOperations[request.OperationID.String()]; exists {
+			if prior.Digest != digest || prior.WorkKey != workKey {
+				return &tracker.Error{Kind: tracker.ErrorRevisionConflict, Message: "operation identity was reused for different work definition content"}
+			}
+			work, found := state.Works[prior.WorkKey]
+			if !found || work.Definition == nil {
+				return &tracker.Error{Kind: tracker.ErrorAttributionLost, Message: "replayed operation no longer has attributable provider state"}
+			}
+			current, err := definitionFromDisk(work.Definition)
+			if err != nil || definitionRequestDigest(current) != prior.Digest {
+				return &tracker.Error{Kind: tracker.ErrorAttributionLost, Message: "replayed operation no longer matches current provider content", Cause: err}
+			}
+			observed, err := p.definitionObservation(work)
+			if err != nil {
+				return err
+			}
+			result = tracker.WorkDefinitionMutation{Observation: observed, Replayed: true, Noop: true}
+			return nil
+		}
+		failure := consumeFailure(state)
+		if failure != "" && failure != FailureTimeoutAfterApply {
+			outcome = failureError(failure)
+			return nil
+		}
+		if _, exists := state.Works[workKey]; exists {
+			return &tracker.Error{Kind: tracker.ErrorRevisionConflict, Message: "stable work identity is already mapped"}
+		}
+		now := time.Now().UTC()
+		disk, err := diskDefinitionFrom(request.Definition, request.OperationID, now)
+		if err != nil {
+			return err
+		}
+		state.Works[workKey] = &diskWork{Key: workKey, Title: disk.Title, Description: disk.Description, Revision: 1, Definition: disk}
+		state.DefinitionOperations[request.OperationID.String()] = definitionOperation{Digest: digest, WorkKey: workKey}
+		state.History = append(state.History, HistoryEntry{Kind: "definition_create", WorkKey: workKey, Marker: request.OperationID.String(), Revision: 1})
+		observed, err := p.definitionObservation(state.Works[workKey])
+		if err != nil {
+			return err
+		}
+		result = tracker.WorkDefinitionMutation{Observation: observed}
+		if failure == FailureTimeoutAfterApply {
+			outcome = failureError(failure)
+		}
+		return nil
+	})
+	if err != nil {
+		return tracker.WorkDefinitionMutation{}, err
+	}
+	return result, outcome
+}
+
+func (p *Provider) UpdateDefinition(ctx context.Context, request tracker.UpdateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil || request.ExternalRef.Validate() != nil || request.ExpectedObservation == 0 || len(request.Definition.CanonicalData()) == 0 {
+		return tracker.WorkDefinitionMutation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "operation, mapping, expected observation, and complete definition are required", Cause: err}
+	}
+	if request.Definition.ProjectID() != request.ExternalRef.ProjectID || request.Definition.WorkID() != request.ExternalRef.WorkID {
+		return tracker.WorkDefinitionMutation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "work definition disagrees with stable mapping"}
+	}
+	digest := definitionRequestDigest(request.Definition)
+	var result tracker.WorkDefinitionMutation
+	var outcome error
+	err := p.store.update(ctx, func(state *diskState) error {
+		if prior, exists := state.DefinitionOperations[request.OperationID.String()]; exists {
+			if prior.Digest != digest || prior.WorkKey != request.ExternalRef.ExternalID {
+				return &tracker.Error{Kind: tracker.ErrorRevisionConflict, Message: "operation identity was reused for different work definition content"}
+			}
+			work, found := state.Works[prior.WorkKey]
+			if !found || work.Definition == nil {
+				return &tracker.Error{Kind: tracker.ErrorAttributionLost, Message: "replayed update lost provider attribution"}
+			}
+			current, err := definitionFromDisk(work.Definition)
+			if err != nil || definitionRequestDigest(current) != prior.Digest {
+				return &tracker.Error{Kind: tracker.ErrorAttributionLost, Message: "replayed update no longer matches current provider content", Cause: err}
+			}
+			observed, err := p.definitionObservation(work)
+			if err != nil {
+				return err
+			}
+			result = tracker.WorkDefinitionMutation{Observation: observed, Replayed: true, Noop: true}
+			return nil
+		}
+		work, exists := state.Works[request.ExternalRef.ExternalID]
+		if !exists || work.Definition == nil {
+			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work definition does not exist"}
+		}
+		failure := consumeFailure(state)
+		if failure != "" && failure != FailureTimeoutAfterApply {
+			outcome = failureError(failure)
+			return nil
+		}
+		if work.Revision != request.ExpectedObservation {
+			return &tracker.Error{Kind: tracker.ErrorRevisionConflict, Message: "provider observation changed before guarded update"}
+		}
+		now := time.Now().UTC()
+		disk, err := diskDefinitionFrom(request.Definition, work.Definition.CreatedByOperation, now)
+		if err != nil {
+			return err
+		}
+		work.Revision++
+		work.Title, work.Description, work.Definition = disk.Title, disk.Description, disk
+		state.DefinitionOperations[request.OperationID.String()] = definitionOperation{Digest: digest, WorkKey: work.Key}
+		state.History = append(state.History, HistoryEntry{Kind: "definition_update", WorkKey: work.Key, Marker: request.OperationID.String(), Revision: work.Revision})
+		observed, err := p.definitionObservation(work)
+		if err != nil {
+			return err
+		}
+		result = tracker.WorkDefinitionMutation{Observation: observed}
+		if failure == FailureTimeoutAfterApply {
+			outcome = failureError(failure)
+		}
+		return nil
+	})
+	if err != nil {
+		return tracker.WorkDefinitionMutation{}, err
+	}
+	return result, outcome
+}
+
+func (p *Provider) ObserveDefinition(ctx context.Context, reference tracker.ExternalWorkRef) (tracker.WorkDefinitionObservation, error) {
+	if err := reference.Validate(); err != nil {
+		return tracker.WorkDefinitionObservation{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "external work reference is invalid", Cause: err}
+	}
+	var observed tracker.WorkDefinitionObservation
+	err := p.store.read(ctx, func(state diskState) error {
+		work, exists := state.Works[reference.ExternalID]
+		if !exists || work.Definition == nil {
+			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work definition does not exist"}
+		}
+		if work.Definition.ProjectID != reference.ProjectID || work.Definition.WorkID != reference.WorkID {
+			return &tracker.Error{Kind: tracker.ErrorAttributionLost, Message: "stored work mapping disagrees with requested stable identity"}
+		}
+		var err error
+		observed, err = p.definitionObservation(work)
+		return err
+	})
+	return observed, err
+}
+
+func definitionRequestDigest(definition tracker.WorkDefinition) string {
+	digest := sha256.Sum256(append([]byte("spec-kitty/fake-work-definition/v1\x00"), definition.CanonicalData()...))
+	return fmt.Sprintf("%x", digest)
+}
+
+func diskDefinitionFrom(definition tracker.WorkDefinition, createdBy ids.OperationID, observedAt time.Time) (*diskDefinition, error) {
+	metadata := definition.ProviderMetadata().Bytes()
+	return &diskDefinition{
+		ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Title: definition.Title(), Description: definition.Description(),
+		DesignContext: definition.DesignContext(), CrossDomainReason: definition.CrossDomainReason(), Criteria: definition.Criteria(),
+		Dependencies: definition.Dependencies(), WriteScopes: definition.WriteScopes(), Provenance: definition.Provenance(),
+		MetadataSchema: definition.MetadataSchema(), ProviderMetadata: append([]byte(nil), metadata...), CreatedByOperation: createdBy, ObservedAt: observedAt,
+	}, nil
+}
+
+func (p *Provider) definitionObservation(work *diskWork) (tracker.WorkDefinitionObservation, error) {
+	definition, err := definitionFromDisk(work.Definition)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, &tracker.Error{Kind: tracker.ErrorSchemaSkew, Message: "stored work definition is invalid", Cause: err}
+	}
+	reference := tracker.ExternalWorkRef{
+		ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Provider: "durable_fake", ExternalID: work.Key,
+		MetadataSchema: definition.MetadataSchema(), CreatedByOperation: work.Definition.CreatedByOperation, LastObservation: work.Revision,
+	}
+	providerObservation, err := tracker.NewProviderObservation(work.Key, definition.CanonicalData(), work.Revision, definitionRequestDigest(definition), fmt.Sprintf("revision-%d", work.Revision), work.Definition.ObservedAt)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	return tracker.NewWorkDefinitionObservation(definition, reference, providerObservation, work.Definition.ObservedAt)
+}
+
+func definitionFromDisk(stored *diskDefinition) (tracker.WorkDefinition, error) {
+	metadata, err := tracker.NewOpaqueMetadata(stored.ProviderMetadata)
+	if err != nil {
+		return tracker.WorkDefinition{}, err
+	}
+	return tracker.NewWorkDefinition(tracker.WorkDefinitionParams{
+		ProjectID: stored.ProjectID, WorkID: stored.WorkID, Title: stored.Title, Description: stored.Description,
+		DesignContext: stored.DesignContext, CrossDomainReason: stored.CrossDomainReason, Criteria: stored.Criteria,
+		Dependencies: stored.Dependencies, WriteScopes: stored.WriteScopes, Provenance: stored.Provenance,
+		MetadataSchema: stored.MetadataSchema, ProviderMetadata: metadata,
+	})
+}
 
 func (p *Provider) Capabilities(context.Context) (tracker.ProviderCapabilities, error) {
 	capabilities := tracker.ProviderCapabilities{
