@@ -210,6 +210,9 @@ func TestPolicyRejectingFixturesNameExactRuleAndEdge(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("phase3-direction-and-mutant-controls", checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants)
+	t.Run("phase3-deferred-surface-controls", checkDefaultPolicyPreservesDeferredPhase4Through6Surfaces)
 }
 
 func TestDefaultPolicyRejectsAuthorityImportOfGitAdapter(t *testing.T) {
@@ -355,9 +358,11 @@ func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T)
 			}
 		}
 	})
+
+	t.Run("phase3-capability-classification", checkDefaultPolicyClassifiesPhase3CapabilitiesExactly)
 }
 
-func TestDefaultPolicyClassifiesPhase3CapabilitiesExactly(t *testing.T) {
+func checkDefaultPolicyClassifiesPhase3CapabilitiesExactly(t *testing.T) {
 	const module = "github.com/spec-kitty/go-kitty3"
 	policy, err := DefaultPolicy(module)
 	if err != nil {
@@ -369,9 +374,12 @@ func TestDefaultPolicyClassifiesPhase3CapabilitiesExactly(t *testing.T) {
 		tier TierName
 	}{
 		{module + "/internal/mission", TierMissionAuthority},
-		{module + "/internal/mission/readmodel", TierMissionAuthority},
+		{module + "/internal/mission/readmodel", TierReadModel},
+		{module + "/internal/mission/readmodel/status", TierReadModel},
 		{module + "/internal/artifact", TierArtifactAuthority},
-		{module + "/internal/artifact/contract", TierArtifactAuthority},
+		{module + "/internal/artifact/readmodel", TierReadModel},
+		{module + "/internal/artifact/readmodel/contract", TierReadModel},
+		{module + "/internal/workgraph/readmodel", TierReadModel},
 		{module + "/internal/missiontype/softwaredev", TierMissionDefinition},
 		{module + "/internal/missiontype/softwaredev/schema", TierMissionDefinition},
 		{module + "/internal/projection", TierProjection},
@@ -418,7 +426,7 @@ func TestDefaultPolicyClassifiesPhase3CapabilitiesExactly(t *testing.T) {
 	}
 }
 
-func TestDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
+func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 	const module = "github.com/spec-kitty/go-kitty3"
 	policy, err := DefaultPolicy(module)
 	if err != nil {
@@ -428,6 +436,9 @@ func TestDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 	artifact := module + "/internal/artifact"
 	definition := module + "/internal/missiontype/softwaredev"
 	projection := module + "/internal/projection"
+	missionReadModel := module + "/internal/mission/readmodel"
+	artifactReadModel := module + "/internal/artifact/readmodel"
+	workgraphReadModel := module + "/internal/workgraph/readmodel"
 	workgraph := module + "/internal/workgraph"
 	tracker := module + "/internal/tracker"
 	beads := module + "/internal/tracker/beads"
@@ -446,9 +457,9 @@ func TestDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 		{"mission-to-workgraph", mission, workgraph},
 		{"mission-to-tracker-contract", mission, tracker},
 		{"definition-to-mission-contract", definition, mission},
-		{"projection-to-mission-read-model", projection, mission},
-		{"projection-to-artifact-read-model", projection, artifact},
-		{"projection-to-workgraph-read-model", projection, workgraph},
+		{"projection-to-mission-read-model", projection, missionReadModel},
+		{"projection-to-artifact-read-model", projection, artifactReadModel},
+		{"projection-to-workgraph-read-model", projection, workgraphReadModel},
 		{"control-store-to-mission-port", sqlite, mission},
 	}
 	for _, test := range accepted {
@@ -475,6 +486,9 @@ func TestDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 		{"mission-to-projection", mission, TierMissionAuthority, projection, TierProjection},
 		{"artifact-to-adapter", artifact, TierArtifactAuthority, sqlite, TierAdapter},
 		{"artifact-to-projection", artifact, TierArtifactAuthority, projection, TierProjection},
+		{"projection-to-mission-authority", projection, TierProjection, mission, TierMissionAuthority},
+		{"projection-to-artifact-authority", projection, TierProjection, artifact, TierArtifactAuthority},
+		{"projection-to-workgraph-authority", projection, TierProjection, workgraph, TierAuthority},
 		{"beads-to-mission", beads, TierAdapter, mission, TierMissionAuthority},
 		{"fake-to-artifact", fake, TierAdapter, artifact, TierArtifactAuthority},
 		{"authority-to-concrete-definition", workgraph, TierAuthority, definition, TierMissionDefinition},
@@ -529,9 +543,47 @@ func TestDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 		graph.ModulePath = module
 		assertExactViolation(t, mutant, graph, RuleUnknownPackage, mission, "", mission, "")
 	})
+
+	t.Run("production-shaped-projection-read-model-boundary", func(t *testing.T) {
+		const fixture = "example.test/phase3-projection-boundary"
+		root := t.TempDir()
+		writeGoFixture(t, root, "go.mod", "module "+fixture+"\n\ngo 1.26\n")
+		writeGoFixture(t, root, "internal/ids/ids.go", "package ids\ntype MissionID string\n")
+		writeGoFixture(t, root, "internal/mission/mission.go", "package mission\nfunc MintAuthority() {}\n")
+		writeGoFixture(t, root, "internal/mission/readmodel/status.go", "package readmodel\nimport \"example.test/phase3-projection-boundary/internal/ids\"\ntype Status struct { Mission ids.MissionID }\n")
+		writeGoFixture(t, root, "internal/projection/tasks.go", "package projection\nimport \"example.test/phase3-projection-boundary/internal/mission/readmodel\"\nfunc Render(status readmodel.Status) string { return string(status.Mission) }\n")
+		setIsolatedGoPaths(t)
+		t.Setenv("GOPROXY", "off")
+
+		graph, err := LoadGraph(context.Background(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixturePolicy, err := DefaultPolicy(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := fixturePolicy.Check(graph); err != nil {
+			t.Fatalf("typed read-model rendering control rejected: %v", err)
+		}
+
+		// MintAuthority is intentionally not one of the registered reachability
+		// symbols. The package-tier boundary must reject it without relying on a
+		// finite constructor census.
+		writeGoFixture(t, root, "internal/projection/tasks.go", "package projection\nimport \"example.test/phase3-projection-boundary/internal/mission\"\nfunc Mutate() { mission.MintAuthority() }\n")
+		graph, err = LoadGraph(context.Background(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertExactViolation(
+			t, fixturePolicy, graph, RuleLocalDirection,
+			fixture+"/internal/projection", TierProjection,
+			fixture+"/internal/mission", TierMissionAuthority,
+		)
+	})
 }
 
-func TestDefaultPolicyPreservesDeferredPhase4Through6Surfaces(t *testing.T) {
+func checkDefaultPolicyPreservesDeferredPhase4Through6Surfaces(t *testing.T) {
 	const module = "github.com/spec-kitty/go-kitty3"
 	policy, err := DefaultPolicy(module)
 	if err != nil {
@@ -586,9 +638,11 @@ func TestPolicyValidationConfinesProviderAllowancesToAdapters(t *testing.T) {
 	if err := policy.Validate(); err == nil || !strings.Contains(err.Error(), "without provider-adapter") {
 		t.Fatalf("kernel provider allowance was not rejected: %v", err)
 	}
+
+	t.Run("specific-direction-validation", checkPolicyValidationRejectsMalformedSpecificDirections)
 }
 
-func TestPolicyValidationRejectsMalformedSpecificDirections(t *testing.T) {
+func checkPolicyValidationRejectsMalformedSpecificDirections(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(Policy) Policy

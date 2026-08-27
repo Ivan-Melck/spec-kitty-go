@@ -13,6 +13,7 @@ type TierName string
 
 const (
 	TierFoundation        TierName = "typed-foundation"
+	TierReadModel         TierName = "typed-read-model"
 	TierAuthority         TierName = "authority-capability"
 	TierArtifactAuthority TierName = "artifact-authority"
 	TierMissionAuthority  TierName = "mission-authority"
@@ -159,7 +160,7 @@ func (v Violations) Error() string {
 func DefaultPolicy(modulePath string) (Policy, error) {
 	pkg := func(relative string) PackagePattern { return ExactPackage(modulePath + "/" + relative) }
 	allRuntime := []TierName{
-		TierFoundation, TierAuthority, TierArtifactAuthority, TierMissionAuthority,
+		TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority, TierMissionAuthority,
 		TierMissionDefinition, TierProviderContract, TierAdapter, TierProjection,
 		TierComposition,
 	}
@@ -172,6 +173,15 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				AllowedLocalTargets: []TierName{TierFoundation},
 			},
 			{
+				Name: TierReadModel, Production: true,
+				Packages: []PackagePattern{
+					PackagePrefix(modulePath + "/internal/artifact/readmodel"),
+					PackagePrefix(modulePath + "/internal/mission/readmodel"),
+					PackagePrefix(modulePath + "/internal/workgraph/readmodel"),
+				},
+				AllowedLocalTargets: []TierName{TierFoundation, TierReadModel},
+			},
+			{
 				Name: TierAuthority, Production: true,
 				Packages: []PackagePattern{
 					pkg("internal/execution"), pkg("internal/handoff"), pkg("internal/integration"),
@@ -182,17 +192,17 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			{
 				Name: TierArtifactAuthority, Production: true,
 				Packages: []PackagePattern{
-					PackagePrefix(modulePath + "/internal/artifact"),
+					pkg("internal/artifact"),
 				},
-				AllowedLocalTargets: []TierName{TierFoundation, TierArtifactAuthority},
+				AllowedLocalTargets: []TierName{TierFoundation, TierReadModel, TierArtifactAuthority},
 			},
 			{
 				Name: TierMissionAuthority, Production: true,
 				Packages: []PackagePattern{
-					PackagePrefix(modulePath + "/internal/mission"),
+					pkg("internal/mission"),
 				},
 				AllowedLocalTargets: []TierName{
-					TierFoundation, TierAuthority, TierArtifactAuthority,
+					TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority,
 					TierMissionAuthority, TierProviderContract,
 				},
 			},
@@ -215,7 +225,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
 				},
 				AllowedLocalTargets: []TierName{
-					TierFoundation, TierAuthority, TierArtifactAuthority,
+					TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority,
 					TierMissionAuthority, TierProviderContract, TierAdapter,
 				},
 				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
@@ -226,8 +236,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 					PackagePrefix(modulePath + "/internal/projection"),
 				},
 				AllowedLocalTargets: []TierName{
-					TierFoundation, TierAuthority, TierArtifactAuthority,
-					TierMissionAuthority, TierProjection,
+					TierFoundation, TierReadModel, TierProjection,
 				},
 			},
 			{

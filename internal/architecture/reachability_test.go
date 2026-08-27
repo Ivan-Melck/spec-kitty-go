@@ -266,6 +266,8 @@ func TestDefaultReachabilityRegistryPassesCurrentRepository(t *testing.T) {
 	if err := CheckReachability(context.Background(), root, module, DefaultReachabilityTargets(module)); err != nil {
 		t.Fatalf("current production reachability rejected: %v", err)
 	}
+
+	t.Run("phase3-forward-registration", checkPhase3ReachabilityRegistrationActivatesWithoutPrematureFailure)
 }
 
 func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *testing.T) {
@@ -293,7 +295,6 @@ func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *test
 			target: ReachabilityTarget{
 				Package: module + "/internal/mission", Symbol: "NewDefinition",
 				RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
-				ForbiddenCaller: PackagePrefix(module + "/internal/projection"),
 			},
 		},
 		{
@@ -302,7 +303,6 @@ func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *test
 			target: ReachabilityTarget{
 				Package: module + "/internal/mission", Symbol: "EvaluateTransition",
 				RequiredCallerClass: CallerSamePackageProduction, ActivateWhenPackagePresent: true,
-				ForbiddenCaller: PackagePrefix(module + "/internal/projection"),
 			},
 		},
 	}
@@ -329,12 +329,11 @@ func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *test
 	}
 }
 
-func TestPhase3ReachabilityRegistrationActivatesWithoutPrematureFailure(t *testing.T) {
+func checkPhase3ReachabilityRegistrationActivatesWithoutPrematureFailure(t *testing.T) {
 	const module = "example.test/phase3-reachability"
 	target := ReachabilityTarget{
 		Package: module + "/internal/mission", Symbol: "NewDefinition",
 		RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
-		ForbiddenCaller: PackagePrefix(module + "/internal/projection"),
 	}
 
 	t.Run("absent-package-is-a-forward-registration", func(t *testing.T) {
@@ -363,18 +362,6 @@ func TestPhase3ReachabilityRegistrationActivatesWithoutPrematureFailure(t *testi
 		}
 	})
 
-	t.Run("projection-cannot-call-authority-constructor", func(t *testing.T) {
-		root := newReachabilityFixture(t, module)
-		writeGoFixture(t, root, "internal/mission/definition.go", "package mission\nfunc NewDefinition() {}\n")
-		writeGoFixture(t, root, "internal/missiontype/softwaredev/definition.go", "package softwaredev\nimport \"example.test/phase3-reachability/internal/mission\"\nfunc Definition() { mission.NewDefinition() }\n")
-		writeGoFixture(t, root, "internal/projection/tasks.go", "package projection\nimport \"example.test/phase3-reachability/internal/mission\"\nfunc MintAuthority() { mission.NewDefinition() }\n")
-		err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
-		if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) ||
-			!strings.Contains(err.Error(), "caller="+module+"/internal/projection") {
-			t.Fatalf("projection authority-constructor mutant survived: %v", err)
-		}
-	})
-
 	t.Run("test-only-and-shadowed-callers-remain-ineligible", func(t *testing.T) {
 		root := newReachabilityFixture(t, module)
 		writeGoFixture(t, root, "internal/mission/definition.go", "package mission\nfunc NewDefinition() {}\n")
@@ -385,23 +372,6 @@ func TestPhase3ReachabilityRegistrationActivatesWithoutPrematureFailure(t *testi
 			t.Fatalf("test-only or shadowed caller satisfied Phase 3 registration: %v", err)
 		}
 	})
-}
-
-func TestPhase3TransitionGuardRejectsProjectionCaller(t *testing.T) {
-	const module = "example.test/phase3-transition-reachability"
-	target := ReachabilityTarget{
-		Package: module + "/internal/mission", Symbol: "EvaluateTransition",
-		RequiredCallerClass: CallerSamePackageProduction, ActivateWhenPackagePresent: true,
-		ForbiddenCaller: PackagePrefix(module + "/internal/projection"),
-	}
-	root := newReachabilityFixture(t, module)
-	writeGoFixture(t, root, "internal/mission/service.go", "package mission\nfunc EvaluateTransition() {}\nfunc transition() { EvaluateTransition() }\n")
-	writeGoFixture(t, root, "internal/projection/tasks.go", "package projection\nimport \"example.test/phase3-transition-reachability/internal/mission\"\nfunc Advance() { mission.EvaluateTransition() }\n")
-	err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
-	if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) ||
-		!strings.Contains(err.Error(), "caller="+module+"/internal/projection") {
-		t.Fatalf("projection transition-guard mutant survived: %v", err)
-	}
 }
 
 func TestReachabilityRejectsMissingRegisteredTarget(t *testing.T) {
@@ -607,9 +577,11 @@ func TestDeferredRuntimeSurfaceRejectsMarkdownAuthorityParsing(t *testing.T) {
 			t.Logf("mutant=markdown-authority-%s killed_in=%s", test.name, time.Since(started))
 		})
 	}
+
+	t.Run("phase3-tasks-authority-and-projection-output", checkDeferredRuntimeSurfaceRejectsPhase3TasksAuthorityButAllowsProjectionWrites)
 }
 
-func TestDeferredRuntimeSurfaceRejectsPhase3TasksAuthorityButAllowsProjectionWrites(t *testing.T) {
+func checkDeferredRuntimeSurfaceRejectsPhase3TasksAuthorityButAllowsProjectionWrites(t *testing.T) {
 	const module = "example.test/phase3-markdown"
 	mutants := []struct {
 		name   string
