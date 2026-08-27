@@ -441,6 +441,7 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 	workgraphReadModel := module + "/internal/workgraph/readmodel"
 	workgraph := module + "/internal/workgraph"
 	tracker := module + "/internal/tracker"
+	controlstore := module + "/internal/controlstore"
 	beads := module + "/internal/tracker/beads"
 	fake := module + "/internal/tracker/fake"
 	sqlite := module + "/internal/controlstore/sqlite"
@@ -456,6 +457,7 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 		{"mission-to-artifact", mission, artifact},
 		{"mission-to-workgraph", mission, workgraph},
 		{"mission-to-tracker-contract", mission, tracker},
+		{"workgraph-to-non-tracker-provider-contract", workgraph, controlstore},
 		{"definition-to-mission-contract", definition, mission},
 		{"projection-to-mission-read-model", projection, missionReadModel},
 		{"projection-to-artifact-read-model", projection, artifactReadModel},
@@ -489,6 +491,7 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 		{"projection-to-mission-authority", projection, TierProjection, mission, TierMissionAuthority},
 		{"projection-to-artifact-authority", projection, TierProjection, artifact, TierArtifactAuthority},
 		{"projection-to-workgraph-authority", projection, TierProjection, workgraph, TierAuthority},
+		{"workgraph-to-tracker", workgraph, TierAuthority, tracker, TierProviderContract},
 		{"beads-to-mission", beads, TierAdapter, mission, TierMissionAuthority},
 		{"fake-to-artifact", fake, TierAdapter, artifact, TierArtifactAuthority},
 		{"authority-to-concrete-definition", workgraph, TierAuthority, definition, TierMissionDefinition},
@@ -528,6 +531,43 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 		graph.ModulePath = module
 		if err := mutant.Check(graph); err != nil {
 			t.Fatalf("mutant did not remove the intended tracker-to-mission boundary: %v", err)
+		}
+	})
+
+	t.Run("removed-workgraph-tracker-denial-mutant", func(t *testing.T) {
+		mutant := policy
+		mutant.ForbiddenLocalDirections = append([]ForbiddenLocalDirection(nil), policy.ForbiddenLocalDirections[:len(policy.ForbiddenLocalDirections)-1]...)
+		graph := fixtureGraph([]string{workgraph, tracker}, ImportEdge{SourcePackage: workgraph, TargetPackage: tracker, Kind: ImportModuleLocal})
+		graph.ModulePath = module
+		if err := mutant.Check(graph); err != nil {
+			t.Fatalf("mutant did not remove the exact workgraph-to-tracker boundary: %v", err)
+		}
+	})
+
+	t.Run("production-shaped-workgraph-tracker-mutant-with-mission-control", func(t *testing.T) {
+		const fixture = "example.test/phase3-workgraph-tracker-boundary"
+		root := t.TempDir()
+		writeGoFixture(t, root, "go.mod", "module "+fixture+"\n\ngo 1.26\n")
+		writeGoFixture(t, root, "internal/tracker/tracker.go", "package tracker\ntype Work struct{}\n")
+		writeGoFixture(t, root, "internal/workgraph/validation.go", "package workgraph\nimport \""+fixture+"/internal/tracker\"\nvar _ tracker.Work\n")
+		writeGoFixture(t, root, "internal/mission/decomposition.go", "package mission\nimport \""+fixture+"/internal/tracker\"\nvar _ tracker.Work\n")
+		setIsolatedGoPaths(t)
+		t.Setenv("GOPROXY", "off")
+
+		graph, err := LoadGraph(context.Background(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixturePolicy, err := DefaultPolicy(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertExactViolation(t, fixturePolicy, graph, RuleLocalDirection, fixture+"/internal/workgraph", TierAuthority, fixture+"/internal/tracker", TierProviderContract)
+
+		mutant := fixturePolicy
+		mutant.ForbiddenLocalDirections = append([]ForbiddenLocalDirection(nil), fixturePolicy.ForbiddenLocalDirections[:len(fixturePolicy.ForbiddenLocalDirections)-1]...)
+		if err := mutant.Check(graph); err != nil {
+			t.Fatalf("deleting the exact denial did not admit both production-shaped edges: %v", err)
 		}
 	})
 
@@ -654,7 +694,15 @@ func checkPolicyValidationRejectsMalformedSpecificDirections(t *testing.T) {
 				policy.ForbiddenLocalDirections = []ForbiddenLocalDirection{{TargetTiers: []TierName{TierAuthority}}}
 				return policy
 			},
-			want: "requires sources and target tiers",
+			want: "requires sources and targets",
+		},
+		{
+			name: "empty-target-set",
+			mutate: func(policy Policy) Policy {
+				policy.ForbiddenLocalDirections = []ForbiddenLocalDirection{{Sources: []PackagePattern{ExactPackage(fixtureModule + "/internal/kernel")}}}
+				return policy
+			},
+			want: "requires sources and targets",
 		},
 		{
 			name: "outside-module-source",
@@ -675,6 +723,16 @@ func checkPolicyValidationRejectsMalformedSpecificDirections(t *testing.T) {
 				return policy
 			},
 			want: "unknown target tier",
+		},
+		{
+			name: "outside-module-target",
+			mutate: func(policy Policy) Policy {
+				policy.ForbiddenLocalDirections = []ForbiddenLocalDirection{{
+					Sources: []PackagePattern{ExactPackage(fixtureModule + "/internal/kernel")}, Targets: []PackagePattern{ExactPackage("elsewhere.invalid/tracker")},
+				}}
+				return policy
+			},
+			want: "target \"elsewhere.invalid/tracker\" is outside module",
 		},
 	}
 	for _, test := range tests {
