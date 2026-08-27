@@ -239,6 +239,7 @@ func (d *Draft) Finalize(metadata FinalizeMetadata) (Revision, error) {
 }
 
 func (r Revision) ID() ids.WorkRevisionID   { return r.id }
+func (r Revision) SchemaVersion() uint16    { return 1 }
 func (r Revision) ProjectID() ids.ProjectID { return r.projectID }
 func (r Revision) MissionID() ids.MissionID { return r.missionID }
 func (r Revision) Number() int64            { return r.number }
@@ -275,7 +276,10 @@ func (r Revision) Encode() ([]byte, error) {
 
 func DecodeRevision(encoded []byte) (Revision, error) {
 	var envelope revisionEnvelope
-	if err := json.Unmarshal(encoded, &envelope); err != nil {
+	if err := decodeStrictJSON(encoded, &envelope); err != nil {
+		return Revision{}, &Error{Kind: KindInvalidRevision, Message: "decode persisted WorkRevision", Cause: err}
+	}
+	if err := requireLegacyEnvelopeShape(encoded); err != nil {
 		return Revision{}, &Error{Kind: KindInvalidRevision, Message: "decode persisted WorkRevision", Cause: err}
 	}
 	draft := NewDraft(envelope.Graph.ProjectID, envelope.Graph.MissionID)
@@ -297,6 +301,23 @@ func DecodeRevision(encoded []byte) (Revision, error) {
 		return Revision{}, newError(KindInvalidRevision, "persisted WorkRevision digest does not match canonical content", map[string]string{"work_revision_id": envelope.ID.String()})
 	}
 	return revision, nil
+}
+
+func requireLegacyEnvelopeShape(encoded []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return err
+	}
+	required := []string{"id", "number", "actor_id", "finalized_at", "graph_digest", "criteria_digest", "graph"}
+	if len(fields) != len(required) {
+		return fmt.Errorf("legacy WorkRevision has an incomplete top-level shape")
+	}
+	for _, field := range required {
+		if _, exists := fields[field]; !exists {
+			return fmt.Errorf("legacy WorkRevision is missing %s", field)
+		}
+	}
+	return nil
 }
 
 type canonicalGraph struct {

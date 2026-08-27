@@ -2,11 +2,69 @@ package workgraph
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
+
+func TestLegacyRevisionGoldenBytesAndStrictVersionDispatch(t *testing.T) {
+	revision, err := testDraft(t, false).Finalize(testMetadata("revision-1", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := revision.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const golden = `{"id":"revision-1","number":1,"actor_id":"actor-owner","finalized_at":"2026-08-23T12:00:00Z","graph_digest":"sha256:85a50672ca5dd666adc1ab4aa9c961a3096658704a529dc6c660c56424ca3911","criteria_digest":"sha256:3d25dd8b313d8a70d91b8c21d35c9f5323f3859dae64f8040d4c437f703ec057","graph":{"project_id":"project-1","mission_id":"mission-1","lanes":[{"id":"lane-a"},{"id":"lane-b","parent_id":"lane-a"}],"work_items":[{"id":"work-a","title":"A","lane_id":"lane-a","criteria":[{"id":"criterion-a","text":"test A"}],"dependencies":[],"source_revisions":[{"provider":"tracker","revision":"7"}]},{"id":"work-b","title":"B","lane_id":"lane-b","criteria":[{"id":"criterion-b","text":"test B"}],"dependencies":["work-a"],"source_revisions":[{"provider":"tracker","revision":"8"}]}]}}`
+	if string(encoded) != golden {
+		t.Fatalf("legacy golden mismatch:\n%s", encoded)
+	}
+	stored, err := DecodeStoredRevision(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, ok := stored.Legacy()
+	if !ok || stored.SchemaVersion() != 1 || legacy.GraphDigest() != revision.GraphDigest() {
+		t.Fatalf("legacy dispatch = %#v", stored)
+	}
+	reencoded, _ := legacy.Encode()
+	if !bytes.Equal(encoded, reencoded) {
+		t.Fatal("legacy decode/re-encode changed historical bytes")
+	}
+
+	v2, err := NewRevisionV2(revisionV2Fixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2Bytes, _ := v2.Encode()
+	stored, err = DecodeStoredRevision(v2Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := stored.V2(); !ok || stored.SchemaVersion() != 2 {
+		t.Fatalf("v2 dispatch = %#v", stored)
+	}
+
+	mutants := map[string][]byte{
+		"unknown legacy field":      append(append([]byte(nil), encoded[:len(encoded)-1]...), []byte(`,"unknown":true}`)...),
+		"duplicate legacy field":    bytes.Replace(encoded, []byte(`"number":1`), []byte(`"number":1,"number":1`), 1),
+		"trailing legacy value":     append(append([]byte(nil), encoded...), []byte(` {}`)...),
+		"missing-version malformed": []byte(`{"id":"revision-1","number":1}`),
+		"schema zero":               []byte(`{"schema_version":0}`),
+		"future schema":             []byte(`{"schema_version":3}`),
+		"legacy digest mismatch":    bytes.Replace(encoded, []byte(revision.GraphDigest()), []byte("sha256:"+strings.Repeat("0", 64)), 1),
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if _, err := DecodeStoredRevision(mutant); !IsKind(err, KindInvalidRevision) {
+				t.Fatalf("error = %v, want %s", err, KindInvalidRevision)
+			}
+		})
+	}
+}
 
 func TestFinalizeCanonicalizesEquivalentGraphsAndDefendsImmutability(t *testing.T) {
 	t.Parallel()
