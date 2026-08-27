@@ -78,6 +78,12 @@ func TestValidationEmitsClosedTypedFR010FindingsForRawProviderMutants(t *testing
 		{"duplicate criterion", func(p *workgraph.WorkObservationParams) { p.Criteria = append(p.Criteria, p.Criteria[0]) }, workgraph.FindingMalformedCriterion, "criteria.id"},
 		{"absent write scope", func(p *workgraph.WorkObservationParams) { p.WriteScopes = nil }, workgraph.FindingInvalidBoundary, "write_scopes"},
 		{"invalid write scope", func(p *workgraph.WorkObservationParams) { p.WriteScopes[0].Path = "../outside" }, workgraph.FindingInvalidBoundary, "write_scopes.path"},
+		{"absent cross-domain reason", func(p *workgraph.WorkObservationParams) { addSecondOwnershipDomain(p) }, workgraph.FindingUnrelatedOwnership, "cross_domain_reason"},
+		{"whitespace cross-domain reason", func(p *workgraph.WorkObservationParams) { addSecondOwnershipDomain(p); p.CrossDomainReason = "   " }, workgraph.FindingUnrelatedOwnership, "cross_domain_reason"},
+		{"oversized cross-domain reason", func(p *workgraph.WorkObservationParams) {
+			addSecondOwnershipDomain(p)
+			p.CrossDomainReason = strings.Repeat("x", 513)
+		}, workgraph.FindingUnrelatedOwnership, "cross_domain_reason"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -92,7 +98,30 @@ func TestValidationEmitsClosedTypedFR010FindingsForRawProviderMutants(t *testing
 			if !hasExactFinding(findings, test.kind, test.field) {
 				t.Fatalf("findings=%+v want kind=%s field=%s", findings, test.kind, test.field)
 			}
+			if test.kind == workgraph.FindingUnrelatedOwnership {
+				for _, finding := range findings {
+					if finding.Kind == test.kind && (len(finding.Message) > 256 || (params.CrossDomainReason != "" && strings.Contains(finding.Message, params.CrossDomainReason))) {
+						t.Fatalf("cross-domain finding leaked untrusted reason: %+v", finding)
+					}
+				}
+			}
 		})
+	}
+}
+
+func TestValidationAcceptsBoundedCrossDomainReasonControls(t *testing.T) {
+	for _, reason := range []string{"Coordinates the two ownership domains.", strings.Repeat("x", 512)} {
+		params := validRawObservationParams()
+		addSecondOwnershipDomain(&params)
+		params.CrossDomainReason = reason
+		item, err := workgraph.NewWorkObservation(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		findings := workgraph.ValidateDraft(rawDraft(t, item), workgraph.DefaultQualityPolicy())
+		if hasFinding(findings, workgraph.FindingUnrelatedOwnership) {
+			t.Fatalf("valid %d-byte cross-domain reason rejected: %+v", len(reason), findings)
+		}
 	}
 }
 
@@ -291,6 +320,10 @@ func validRawObservationParams() workgraph.WorkObservationParams {
 		WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/raw", Domain: "raw", Access: workgraph.ScopeWriteExclusive}},
 		Provenance:  []workgraph.ScopeReference{{ID: "plan-raw", Kind: workgraph.ScopePlanConcern}},
 	}
+}
+
+func addSecondOwnershipDomain(params *workgraph.WorkObservationParams) {
+	params.WriteScopes = append(params.WriteScopes, workgraph.WriteScopeObservation{Path: "internal/second", Domain: "second", Access: workgraph.ScopeWriteExclusive})
 }
 
 func rawDraft(t *testing.T, item workgraph.WorkObservation) workgraph.DraftObservation {
