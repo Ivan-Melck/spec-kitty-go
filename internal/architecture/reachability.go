@@ -35,6 +35,10 @@ type ReachabilityTarget struct {
 	Package             string
 	Symbol              string
 	RequiredCallerClass CallerClass
+	// ActivateWhenPackagePresent permits a forward registration before its
+	// owning package lands. Once the package is in the production graph, a
+	// missing declaration is still a hard RuleReachabilityTarget failure.
+	ActivateWhenPackagePresent bool
 }
 
 // DefaultReachabilityTargets returns the curated production registry. It
@@ -48,6 +52,14 @@ func DefaultReachabilityTargets(modulePath string) []ReachabilityTarget {
 		{
 			Package: modulePath + "/internal/gitrepo", Symbol: "NewHandoffVerifier",
 			RequiredCallerClass: CallerExternalPackage,
+		},
+		{
+			Package: modulePath + "/internal/mission", Symbol: "NewDefinition",
+			RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
+		},
+		{
+			Package: modulePath + "/internal/mission", Symbol: "EvaluateTransition",
+			RequiredCallerClass: CallerSamePackageProduction, ActivateWhenPackagePresent: true,
 		},
 	}
 }
@@ -75,9 +87,10 @@ func (v reachabilityViolations) Error() string {
 }
 
 type reachabilityObservation struct {
-	declared bool
-	same     bool
-	external bool
+	packagePresent bool
+	declared       bool
+	same           bool
+	external       bool
 }
 
 type productionSourcePackage struct {
@@ -763,6 +776,7 @@ func CheckReachability(ctx context.Context, root, modulePath string, targets []R
 			if source.importPath != target.Package {
 				continue
 			}
+			observations[target].packagePresent = true
 			function, ok := source.typed.Scope().Lookup(target.Symbol).(*types.Func)
 			if !ok {
 				continue
@@ -807,6 +821,9 @@ func CheckReachability(ctx context.Context, root, modulePath string, targets []R
 	violations := make(reachabilityViolations, 0)
 	for _, target := range ordered {
 		observation := observations[target]
+		if target.ActivateWhenPackagePresent && !observation.packagePresent {
+			continue
+		}
 		if !observation.declared {
 			violations = append(violations, ReachabilityViolation{Rule: RuleReachabilityTarget, Package: target.Package, Symbol: target.Symbol, RequiredCallerClass: target.RequiredCallerClass})
 			continue
