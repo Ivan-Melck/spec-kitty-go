@@ -1,0 +1,413 @@
+package mission
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+)
+
+// RequestCommitment is the deterministic digest of one semantic mutation
+// request. It excludes correlation and presentation data.
+type RequestCommitment string
+
+func (c RequestCommitment) String() string { return string(c) }
+
+func (c RequestCommitment) Validate() error { return DefinitionCommitment(c).Validate() }
+
+// TransitionRequest is an explicit compare-and-set request against one exact
+// mission-definition commitment.
+type TransitionRequest struct {
+	MissionID            ids.MissionID
+	DefinitionID         ids.MissionDefinitionID
+	DefinitionVersion    DefinitionVersion
+	DefinitionCommitment DefinitionCommitment
+	ExpectedStateVersion uint64
+	Successor            StepKey
+	OperationID          ids.OperationID
+	EventID              ids.MissionEventID
+	ActorID              ids.ActorID
+	GovernanceContextID  ids.GovernanceContextID
+	OccurredAt           time.Time
+	Evidence             []EvidenceRef
+	WorkRevisionID       ids.WorkRevisionID
+}
+
+func (r TransitionRequest) Validate() error {
+	if _, err := ids.ParseMissionID(r.MissionID.String()); err != nil {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "mission_id", "mission identity is invalid")
+	}
+	if _, err := ids.ParseMissionDefinitionID(r.DefinitionID.String()); err != nil || r.DefinitionVersion.Validate() != nil || r.DefinitionCommitment.Validate() != nil {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "definition", "definition selection is invalid")
+	}
+	if r.ExpectedStateVersion == 0 {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_state_version", "expected state version must be positive")
+	}
+	if err := r.Successor.Validate(); err != nil {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "successor", "successor step is invalid")
+	}
+	if _, err := ids.ParseOperationID(r.OperationID.String()); err != nil {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "operation_id", "operation identity is invalid")
+	}
+	if _, err := ids.ParseMissionEventID(r.EventID.String()); err != nil {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "event_id", "event identity is invalid")
+	}
+	if _, err := ids.ParseActorID(r.ActorID.String()); err != nil {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "actor_id", "actor identity is invalid")
+	}
+	if r.OccurredAt.IsZero() || r.OccurredAt.Location() != time.UTC {
+		return refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "occurrence time must be non-zero UTC")
+	}
+	seenIDs := make(map[ids.EvidenceID]bool, len(r.Evidence))
+	seenKinds := make(map[EvidenceKind]bool, len(r.Evidence))
+	for _, evidence := range r.Evidence {
+		if err := evidence.Validate(); err != nil {
+			return refusal(KindInvalidRequest, RecoveryCorrectInput, "evidence", "evidence reference is invalid")
+		}
+		if seenIDs[evidence.ID] || seenKinds[evidence.Kind] {
+			return refusal(KindInvalidRequest, RecoveryCorrectInput, "evidence", "evidence references must be unique by identity and kind")
+		}
+		seenIDs[evidence.ID] = true
+		seenKinds[evidence.Kind] = true
+	}
+	if r.WorkRevisionID != "" {
+		if _, err := ids.ParseWorkRevisionID(r.WorkRevisionID.String()); err != nil {
+			return refusal(KindInvalidRequest, RecoveryCorrectInput, "work_revision_id", "work revision identity is invalid")
+		}
+	}
+	return nil
+}
+
+// TransitionAudit is bounded evidence returned only after durable commit.
+type TransitionAudit struct {
+	MissionID            ids.MissionID
+	OldStep              StepKey
+	NewStep              StepKey
+	OldStateVersion      uint64
+	NewStateVersion      uint64
+	OperationID          ids.OperationID
+	EventID              ids.MissionEventID
+	ActorID              ids.ActorID
+	DefinitionCommitment DefinitionCommitment
+	GovernanceContextID  ids.GovernanceContextID
+	OccurredAt           time.Time
+}
+
+type TransitionCandidate struct {
+	Previous  MissionSnapshot
+	Successor MissionSnapshot
+	Audit     TransitionAudit
+}
+
+// EvaluateTransition is pure: it reads no ambient state and changes neither
+// the supplied mission value nor definition.
+func EvaluateTransition(instance MissionInstance, definition MissionDefinition, request TransitionRequest) (TransitionCandidate, error) {
+	if err := instance.Validate(); err != nil {
+		return TransitionCandidate{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "stored mission state is invalid")
+	}
+	if err := request.Validate(); err != nil {
+		return TransitionCandidate{}, err
+	}
+	current := instance.Snapshot()
+	if request.Successor.Reserved() {
+		return TransitionCandidate{}, refusal(KindUnsupportedAction, RecoveryNoFurtherAction, "successor", "requested action is reserved for a later phase")
+	}
+	if current.MissionID != request.MissionID {
+		return TransitionCandidate{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "mission_id", "request is scoped to another mission")
+	}
+	if current.DefinitionID != request.DefinitionID || current.DefinitionVersion != request.DefinitionVersion || current.DefinitionCommitment != request.DefinitionCommitment {
+		return TransitionCandidate{}, refusal(KindDefinitionMismatch, RecoverySelectDefinition, "definition", "request does not name the mission's exact definition")
+	}
+	if definition.ID() != current.DefinitionID || definition.Version() != current.DefinitionVersion || definition.Commitment() != current.DefinitionCommitment {
+		return TransitionCandidate{}, refusal(KindDefinitionMismatch, RecoverySelectDefinition, "definition", "resolved definition does not match stored mission law")
+	}
+	if current.Lifecycle == LifecycleTerminal || definition.IsTerminal(current.CurrentStep) {
+		return TransitionCandidate{}, refusal(KindTerminalMission, RecoveryNoFurtherAction, "current_step", "mission is terminal")
+	}
+	if current.StateVersion != request.ExpectedStateVersion {
+		return TransitionCandidate{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_state_version", "mission state version changed")
+	}
+	if request.OccurredAt.Before(current.UpdatedAt) {
+		return TransitionCandidate{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "occurrence time precedes current mission state")
+	}
+	if len(current.ActiveBlockers) != 0 {
+		return TransitionCandidate{}, refusal(KindActiveBlocker, RecoveryClearBlocker, "active_blockers", "mission has an active blocker")
+	}
+	if len(current.UnresolvedDecisions) != 0 {
+		return TransitionCandidate{}, refusal(KindUnresolvedDecision, RecoveryResolveDecision, "unresolved_decisions", "mission has an unresolved required decision")
+	}
+	contract, found := definition.Step(current.CurrentStep)
+	if !found {
+		return TransitionCandidate{}, refusal(KindDefinitionMismatch, RecoveryRepairStoredState, "current_step", "stored current step is absent from the selected definition")
+	}
+	if !containsStep(contract.spec.Successors, request.Successor) {
+		return TransitionCandidate{}, refusal(KindIllegalTransition, RecoveryCorrectInput, "successor", "requested successor is not a declared edge")
+	}
+	destination, found := definition.Step(request.Successor)
+	if !found {
+		return TransitionCandidate{}, refusal(KindDefinitionMismatch, RecoverySelectDefinition, "successor", "declared successor is absent from the selected definition")
+	}
+	if destination.spec.Mutating {
+		if _, err := ids.ParseGovernanceContextID(request.GovernanceContextID.String()); err != nil {
+			return TransitionCandidate{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "governance_context_id", "mutating transition requires governance context")
+		}
+	}
+
+	evidence := make(map[EvidenceKind]EvidenceRef, len(request.Evidence))
+	for _, item := range request.Evidence {
+		if item.MissionID != current.MissionID || item.ForStep != current.CurrentStep || item.StateVersion != current.StateVersion {
+			return TransitionCandidate{}, refusal(KindMissingEvidence, RecoverySupplyEvidence, "evidence", "evidence is not scoped to the current mission state")
+		}
+		evidence[item.Kind] = item
+	}
+	for _, required := range destination.spec.RequiredEvidence {
+		item, exists := evidence[required]
+		if !exists {
+			return TransitionCandidate{}, refusal(KindMissingEvidence, RecoverySupplyEvidence, "evidence", fmt.Sprintf("required evidence %s is absent", required))
+		}
+		if item.Status != EvidenceAccepted {
+			if required == EvidenceSpecificationOK || required == EvidencePlanOK {
+				return TransitionCandidate{}, refusal(KindApprovalStale, RecoveryRefreshApproval, "evidence", fmt.Sprintf("required approval %s is not current", required))
+			}
+			return TransitionCandidate{}, refusal(KindMissingEvidence, RecoverySupplyEvidence, "evidence", fmt.Sprintf("required evidence %s is not accepted", required))
+		}
+	}
+	if request.Successor == StepWorkFinalized && request.WorkRevisionID == "" {
+		return TransitionCandidate{}, refusal(KindMissingEvidence, RecoverySupplyEvidence, "work_revision_id", "finalization requires an immutable work revision")
+	}
+
+	successor := current.clone()
+	successor.CurrentStep = request.Successor
+	successor.StateVersion++
+	successor.UpdatedAt = request.OccurredAt
+	if request.WorkRevisionID != "" {
+		successor.CurrentWorkRevisionID = request.WorkRevisionID
+	}
+	if definition.IsTerminal(request.Successor) {
+		successor.Lifecycle = LifecycleTerminal
+		successor.TerminalOutcome = destination.spec.TerminalOutcome
+	}
+	if err := successor.Validate(); err != nil {
+		return TransitionCandidate{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "successor", "transition would construct invalid mission state")
+	}
+	return TransitionCandidate{
+		Previous:  current,
+		Successor: successor,
+		Audit: TransitionAudit{
+			MissionID: current.MissionID, OldStep: current.CurrentStep, NewStep: successor.CurrentStep,
+			OldStateVersion: current.StateVersion, NewStateVersion: successor.StateVersion,
+			OperationID: request.OperationID, EventID: request.EventID, ActorID: request.ActorID,
+			DefinitionCommitment: current.DefinitionCommitment,
+			GovernanceContextID:  request.GovernanceContextID, OccurredAt: request.OccurredAt,
+		},
+	}, nil
+}
+
+type CreateRequest struct {
+	MissionID         ids.MissionID
+	ProjectID         ids.ProjectID
+	DefinitionID      ids.MissionDefinitionID
+	DefinitionVersion DefinitionVersion
+	OperationID       ids.OperationID
+	ActorID           ids.ActorID
+	OccurredAt        time.Time
+}
+
+type CreateCommit struct {
+	Instance          MissionSnapshot
+	OperationID       ids.OperationID
+	RequestCommitment RequestCommitment
+	ActorID           ids.ActorID
+	OccurredAt        time.Time
+}
+
+type CreateResult struct {
+	Instance MissionSnapshot
+	Replayed bool
+}
+
+type TransitionCommit struct {
+	Candidate         TransitionCandidate
+	OperationID       ids.OperationID
+	RequestCommitment RequestCommitment
+}
+
+type TransitionResult struct {
+	Instance MissionSnapshot
+	Audit    TransitionAudit
+	Replayed bool
+}
+
+// Store is the aggregate-shaped atomic persistence port. Implementations must
+// compare mission scope, definition commitment, current step, expected state
+// version, operation identity, and request commitment in one durable boundary.
+type Store interface {
+	CreateMission(context.Context, CreateCommit) (CreateResult, error)
+	LoadMission(context.Context, ids.MissionID) (MissionSnapshot, error)
+	ReplayTransition(context.Context, ids.MissionID, ids.OperationID, RequestCommitment) (TransitionResult, bool, error)
+	CommitTransition(context.Context, TransitionCommit) (TransitionResult, error)
+}
+
+type Service struct {
+	registry Registry
+	store    Store
+}
+
+func NewService(registry Registry, store Store) *Service {
+	return &Service{registry: registry, store: store}
+}
+
+func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResult, error) {
+	if s == nil || s.store == nil {
+		return CreateResult{}, refusal(KindPersistenceUnavailable, RecoveryRetryPersistence, "store", "mission persistence is unavailable")
+	}
+	if _, err := ids.ParseMissionID(request.MissionID.String()); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "mission_id", "mission identity is invalid")
+	}
+	if _, err := ids.ParseProjectID(request.ProjectID.String()); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "project_id", "project identity is invalid")
+	}
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "operation_id", "operation identity is invalid")
+	}
+	if _, err := ids.ParseActorID(request.ActorID.String()); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "actor_id", "actor identity is invalid")
+	}
+	if request.OccurredAt.IsZero() || request.OccurredAt.Location() != time.UTC {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "creation time must be non-zero UTC")
+	}
+	definition, err := s.registry.Resolve(request.DefinitionID, request.DefinitionVersion)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	snapshot := MissionSnapshot{
+		MissionID: request.MissionID, ProjectID: request.ProjectID,
+		DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), DefinitionCommitment: definition.Commitment(),
+		Lifecycle: LifecycleOpen, CurrentStep: definition.InitialStep(), StateVersion: 1,
+		CreatedAt: request.OccurredAt, UpdatedAt: request.OccurredAt,
+	}
+	if _, err := NewMissionInstance(snapshot); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "mission", "creation would construct invalid mission state")
+	}
+	commitment, err := digestRequest(struct {
+		MissionID            ids.MissionID
+		ProjectID            ids.ProjectID
+		DefinitionID         ids.MissionDefinitionID
+		DefinitionVersion    DefinitionVersion
+		DefinitionCommitment DefinitionCommitment
+		ActorID              ids.ActorID
+		OccurredAt           string
+	}{request.MissionID, request.ProjectID, definition.ID(), definition.Version(), definition.Commitment(), request.ActorID, request.OccurredAt.Format(time.RFC3339Nano)})
+	if err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "request", "creation request cannot be committed")
+	}
+	result, err := s.store.CreateMission(ctx, CreateCommit{Instance: snapshot.clone(), OperationID: request.OperationID, RequestCommitment: commitment, ActorID: request.ActorID, OccurredAt: request.OccurredAt})
+	if err != nil {
+		return CreateResult{}, normalizeStoreError(err)
+	}
+	if err := result.Instance.Validate(); err != nil {
+		return CreateResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid created mission state")
+	}
+	return CreateResult{Instance: result.Instance.clone(), Replayed: result.Replayed}, nil
+}
+
+func (s *Service) Transition(ctx context.Context, request TransitionRequest) (TransitionResult, error) {
+	if s == nil || s.store == nil {
+		return TransitionResult{}, refusal(KindPersistenceUnavailable, RecoveryRetryPersistence, "store", "mission persistence is unavailable")
+	}
+	if err := request.Validate(); err != nil {
+		return TransitionResult{}, err
+	}
+	commitment, err := transitionRequestCommitment(request)
+	if err != nil {
+		return TransitionResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "request", "transition request cannot be committed")
+	}
+	prior, found, err := s.store.ReplayTransition(ctx, request.MissionID, request.OperationID, commitment)
+	if err != nil {
+		return TransitionResult{}, normalizeStoreError(err)
+	}
+	if found {
+		if err := prior.Instance.Validate(); err != nil {
+			return TransitionResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid replay state")
+		}
+		prior.Instance = prior.Instance.clone()
+		prior.Replayed = true
+		return prior, nil
+	}
+	snapshot, err := s.store.LoadMission(ctx, request.MissionID)
+	if err != nil {
+		return TransitionResult{}, normalizeStoreError(err)
+	}
+	instance, err := NewMissionInstance(snapshot)
+	if err != nil {
+		return TransitionResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid mission state")
+	}
+	definition, err := s.registry.Resolve(snapshot.DefinitionID, snapshot.DefinitionVersion)
+	if err != nil {
+		return TransitionResult{}, err
+	}
+	candidate, err := EvaluateTransition(instance, definition, request)
+	if err != nil {
+		return TransitionResult{}, err
+	}
+	result, err := s.store.CommitTransition(ctx, TransitionCommit{Candidate: candidate, OperationID: request.OperationID, RequestCommitment: commitment})
+	if err != nil {
+		return TransitionResult{}, normalizeStoreError(err)
+	}
+	if err := result.Instance.Validate(); err != nil {
+		return TransitionResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "mission", "store returned invalid transition state")
+	}
+	return TransitionResult{Instance: result.Instance.clone(), Audit: result.Audit, Replayed: result.Replayed}, nil
+}
+
+func transitionRequestCommitment(request TransitionRequest) (RequestCommitment, error) {
+	evidence := append([]EvidenceRef(nil), request.Evidence...)
+	sort.Slice(evidence, func(i, j int) bool {
+		if evidence[i].Kind != evidence[j].Kind {
+			return evidence[i].Kind < evidence[j].Kind
+		}
+		return evidence[i].ID.String() < evidence[j].ID.String()
+	})
+	return digestRequest(struct {
+		MissionID            ids.MissionID
+		DefinitionID         ids.MissionDefinitionID
+		DefinitionVersion    DefinitionVersion
+		DefinitionCommitment DefinitionCommitment
+		ExpectedStateVersion uint64
+		Successor            StepKey
+		EventID              ids.MissionEventID
+		ActorID              ids.ActorID
+		GovernanceContextID  ids.GovernanceContextID
+		OccurredAt           string
+		Evidence             []EvidenceRef
+		WorkRevisionID       ids.WorkRevisionID
+	}{request.MissionID, request.DefinitionID, request.DefinitionVersion, request.DefinitionCommitment,
+		request.ExpectedStateVersion, request.Successor, request.EventID, request.ActorID,
+		request.GovernanceContextID, request.OccurredAt.Format(time.RFC3339Nano), evidence, request.WorkRevisionID})
+}
+
+func digestRequest(value any) (RequestCommitment, error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return RequestCommitment(fmt.Sprintf("%x", digest)), nil
+}
+
+func normalizeStoreError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if IsKind(err, KindNotFound) || IsKind(err, KindAlreadyExists) || IsKind(err, KindDefinitionMismatch) ||
+		IsKind(err, KindStateVersionConflict) || IsKind(err, KindIdempotencyConflict) ||
+		IsKind(err, KindInvalidStoredState) || IsKind(err, KindPersistenceUnavailable) ||
+		IsKind(err, KindActiveBlocker) || IsKind(err, KindUnresolvedDecision) {
+		return err
+	}
+	return &Error{Kind: KindPersistenceUnavailable, Recovery: RecoveryRetryPersistence, Field: "store", Message: "mission persistence operation failed", Cause: err}
+}
