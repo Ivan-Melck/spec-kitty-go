@@ -10,7 +10,8 @@
       "wp_ids": [
         "WP01",
         "WP02",
-        "WP03"
+        "WP03",
+        "WP04"
       ],
       "write_scope": [
         "internal/architecture/graph.go",
@@ -25,31 +26,14 @@
         "internal/artifact/service_test.go",
         "internal/artifact/validation.go",
         "internal/ids/mission.go",
+        "internal/mission/decomposition.go",
+        "internal/mission/decomposition_test.go",
         "internal/mission/definition.go",
         "internal/mission/lifecycle_test.go",
         "internal/mission/model.go",
         "internal/mission/service.go",
         "internal/missiontype/softwaredev/definition.go",
-        "internal/missiontype/softwaredev/definition_test.go"
-      ],
-      "predicted_surfaces": [
-        "api",
-        "artifact-rendering",
-        "legacy-cleanup",
-        "tracker-integration",
-        "workspace"
-      ],
-      "depends_on_lanes": [],
-      "parallel_group": 0
-    },
-    {
-      "lane_id": "lane-b",
-      "wp_ids": [
-        "WP04"
-      ],
-      "write_scope": [
-        "internal/mission/decomposition.go",
-        "internal/mission/decomposition_test.go",
+        "internal/missiontype/softwaredev/definition_test.go",
         "internal/tracker/fake/provider.go",
         "internal/tracker/fake/store.go",
         "internal/tracker/fake/work_definition_test.go",
@@ -64,15 +48,14 @@
         "api",
         "artifact-rendering",
         "legacy-cleanup",
-        "tracker-integration"
+        "tracker-integration",
+        "workspace"
       ],
-      "depends_on_lanes": [
-        "lane-a"
-      ],
-      "parallel_group": 1
+      "depends_on_lanes": [],
+      "parallel_group": 0
     },
     {
-      "lane_id": "lane-c",
+      "lane_id": "lane-b",
       "wp_ids": [
         "WP05"
       ],
@@ -95,12 +78,12 @@
         "workspace"
       ],
       "depends_on_lanes": [
-        "lane-b"
+        "lane-a"
       ],
-      "parallel_group": 2
+      "parallel_group": 1
     },
     {
-      "lane_id": "lane-d",
+      "lane_id": "lane-c",
       "wp_ids": [
         "WP06"
       ],
@@ -123,12 +106,12 @@
         "workspace"
       ],
       "depends_on_lanes": [
-        "lane-c"
+        "lane-b"
       ],
-      "parallel_group": 3
+      "parallel_group": 2
     },
     {
-      "lane_id": "lane-e",
+      "lane_id": "lane-d",
       "wp_ids": [
         "WP07"
       ],
@@ -149,12 +132,12 @@
       ],
       "depends_on_lanes": [
         "lane-a",
-        "lane-c"
+        "lane-b"
       ],
-      "parallel_group": 3
+      "parallel_group": 2
     },
     {
-      "lane_id": "lane-f",
+      "lane_id": "lane-e",
       "wp_ids": [
         "WP08"
       ],
@@ -181,14 +164,14 @@
       ],
       "depends_on_lanes": [
         "lane-a",
+        "lane-b",
         "lane-c",
-        "lane-d",
-        "lane-e"
+        "lane-d"
       ],
-      "parallel_group": 4
+      "parallel_group": 3
     },
     {
-      "lane_id": "lane-g",
+      "lane_id": "lane-f",
       "wp_ids": [
         "WP09"
       ],
@@ -206,14 +189,14 @@
         "tracker-integration"
       ],
       "depends_on_lanes": [
+        "lane-b",
         "lane-c",
-        "lane-d",
-        "lane-e"
+        "lane-d"
       ],
-      "parallel_group": 4
+      "parallel_group": 3
     },
     {
-      "lane_id": "lane-h",
+      "lane_id": "lane-g",
       "wp_ids": [
         "WP10"
       ],
@@ -236,14 +219,14 @@
         "workspace"
       ],
       "depends_on_lanes": [
-        "lane-b",
-        "lane-f",
-        "lane-g"
+        "lane-a",
+        "lane-e",
+        "lane-f"
       ],
-      "parallel_group": 5
+      "parallel_group": 4
     },
     {
-      "lane_id": "lane-i",
+      "lane_id": "lane-h",
       "wp_ids": [
         "WP11"
       ],
@@ -265,12 +248,12 @@
         "workspace"
       ],
       "depends_on_lanes": [
-        "lane-h"
+        "lane-g"
       ],
-      "parallel_group": 6
+      "parallel_group": 5
     },
     {
-      "lane_id": "lane-j",
+      "lane_id": "lane-i",
       "wp_ids": [
         "WP12"
       ],
@@ -300,13 +283,13 @@
       ],
       "depends_on_lanes": [
         "lane-a",
-        "lane-h",
-        "lane-i"
+        "lane-g",
+        "lane-h"
       ],
-      "parallel_group": 7
+      "parallel_group": 6
     }
   ],
-  "computed_at": "2026-08-27T17:09:16.343843+00:00",
+  "computed_at": "2026-08-27T22:35:11.520090+00:00",
   "computed_from": "dependency_graph+ownership",
   "planning_artifact_wps": [],
   "planning_commit_sha": "475b2964a757585a88b0ac60946edd9dd6a00fbd",
@@ -319,16 +302,22 @@
         "evidence": "overlapping globs: 'internal/architecture/reachability.go' vs 'internal/architecture/reachability.go', 'internal/architecture/reachability_test.go' vs 'internal/architecture/reachability_test.go'"
       },
       {
+        "wp_a": "WP01",
+        "wp_b": "WP04",
+        "rule": "write_scope_overlap",
+        "evidence": "overlapping globs: 'internal/architecture/policy.go' vs 'internal/architecture/policy.go', 'internal/architecture/policy_test.go' vs 'internal/architecture/policy_test.go'"
+      },
+      {
         "wp_a": "WP02",
         "wp_b": "WP03",
         "rule": "write_scope_overlap",
         "evidence": "overlapping globs: 'internal/mission/service.go' vs 'internal/mission/service.go', 'internal/mission/lifecycle_test.go' vs 'internal/mission/lifecycle_test.go'; WP03 depends on WP02"
       }
     ],
-    "total_merges": 2,
+    "total_merges": 3,
     "independent_wps_collapsed": 0,
     "by_rule": {
-      "write_scope_overlap": 2
+      "write_scope_overlap": 3
     }
   }
 }
