@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -45,15 +46,15 @@ func (c DefinitionCommitment) Validate() error {
 type StepKey string
 
 const (
-	StepInitialized           StepKey = "initialized"
-	StepSpecifying            StepKey = "specifying"
-	StepSpecificationApproved StepKey = "specification_approved"
-	StepPlanning              StepKey = "planning"
-	StepPlanApproved          StepKey = "plan_approved"
-	StepDecomposing           StepKey = "decomposing"
-	StepWorkDraftReady        StepKey = "work_draft_ready"
-	StepReconciliationNeeded  StepKey = "reconciliation_required"
-	StepWorkFinalized         StepKey = "work_finalized"
+	StepInitialized            StepKey = "initialized"
+	StepSpecifying             StepKey = "specifying"
+	StepSpecificationApproved  StepKey = "specification_approved"
+	StepPlanning               StepKey = "planning"
+	StepPlanApproved           StepKey = "plan_approved"
+	StepDecomposing            StepKey = "decomposing"
+	StepWorkDraftReady         StepKey = "work_draft_ready"
+	StepReconciliationRequired StepKey = "reconciliation_required"
+	StepWorkFinalized          StepKey = "work_finalized"
 
 	StepExecuteReserved   StepKey = "execute_reserved"
 	StepReviewReserved    StepKey = "review_reserved"
@@ -70,7 +71,7 @@ func Phase3StepKeys() []StepKey {
 		StepPlanApproved,
 		StepDecomposing,
 		StepWorkDraftReady,
-		StepReconciliationNeeded,
+		StepReconciliationRequired,
 		StepWorkFinalized,
 	}
 }
@@ -81,7 +82,7 @@ func (s StepKey) Validate() error {
 	switch s {
 	case StepInitialized, StepSpecifying, StepSpecificationApproved, StepPlanning,
 		StepPlanApproved, StepDecomposing, StepWorkDraftReady,
-		StepReconciliationNeeded, StepWorkFinalized,
+		StepReconciliationRequired, StepWorkFinalized,
 		StepExecuteReserved, StepReviewReserved, StepIntegrateReserved:
 		return nil
 	default:
@@ -299,7 +300,24 @@ const (
 	KindIdempotencyConflict          ErrorKind = "idempotency_conflict"
 	KindInvalidStoredState           ErrorKind = "invalid_stored_state"
 	KindPersistenceUnavailable       ErrorKind = "persistence_unavailable"
+	KindPersistenceContract          ErrorKind = "persistence_contract_violation"
 )
+
+func (k ErrorKind) Validate() error {
+	switch k {
+	case KindInvalidRequest, KindDefinitionMalformed, KindDefinitionNotFound,
+		KindDefinitionVersionUnsupported, KindDuplicateDefinition,
+		KindDefinitionConflict, KindDefinitionMismatch, KindIllegalTransition,
+		KindStateVersionConflict, KindMissingEvidence, KindApprovalStale,
+		KindActiveBlocker, KindUnresolvedDecision, KindTerminalMission,
+		KindUnsupportedAction, KindNotFound, KindAlreadyExists,
+		KindIdempotencyConflict, KindInvalidStoredState,
+		KindPersistenceUnavailable, KindPersistenceContract:
+		return nil
+	default:
+		return fmt.Errorf("unsupported mission error kind %q", k)
+	}
+}
 
 type RecoveryCategory string
 
@@ -316,6 +334,18 @@ const (
 	RecoveryRepairStoredState RecoveryCategory = "repair_stored_state"
 )
 
+func (r RecoveryCategory) Validate() error {
+	switch r {
+	case RecoveryCorrectInput, RecoverySelectDefinition, RecoveryRefreshState,
+		RecoverySupplyEvidence, RecoveryRefreshApproval, RecoveryClearBlocker,
+		RecoveryResolveDecision, RecoveryNoFurtherAction,
+		RecoveryRetryPersistence, RecoveryRepairStoredState:
+		return nil
+	default:
+		return fmt.Errorf("unsupported mission recovery category %q", r)
+	}
+}
+
 // Error contains only bounded categorical diagnostics. Cause is retained for
 // errors.Is/errors.As but is deliberately excluded from Error output.
 type Error struct {
@@ -330,6 +360,9 @@ func (e *Error) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
+	if err := e.Validate(); err != nil {
+		return "kind=persistence_unavailable recovery=retry_persistence field=diagnostic message=invalid bounded diagnostic"
+	}
 	return fmt.Sprintf("kind=%s recovery=%s field=%s message=%s", e.Kind, e.Recovery, e.Field, e.Message)
 }
 
@@ -340,8 +373,47 @@ func IsKind(err error, kind ErrorKind) bool {
 	return errors.As(err, &target) && target.Kind == kind
 }
 
+// Validate ensures a branchable diagnostic itself remains within the bounded
+// mission contract. It does not accept arbitrary adapter prose.
+func (e *Error) Validate() error {
+	if e == nil {
+		return errors.New("nil mission error")
+	}
+	if err := e.Kind.Validate(); err != nil {
+		return err
+	}
+	if err := e.Recovery.Validate(); err != nil {
+		return err
+	}
+	if !boundedDiagnosticText(e.Field, 64) || !boundedDiagnosticText(e.Message, 160) {
+		return errors.New("mission diagnostic is not bounded")
+	}
+	return nil
+}
+
 func refusal(kind ErrorKind, recovery RecoveryCategory, field, message string) *Error {
+	if err := recovery.Validate(); err != nil {
+		recovery = RecoveryCorrectInput
+	}
+	if !boundedDiagnosticText(field, 64) {
+		field = "diagnostic"
+	}
+	if !boundedDiagnosticText(message, 160) {
+		message = "mission operation refused"
+	}
 	return &Error{Kind: kind, Recovery: recovery, Field: field, Message: message}
+}
+
+func boundedDiagnosticText(value string, limit int) bool {
+	if value == "" || len(value) > limit || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // MissionSnapshot is the reconstruction boundary for one mission aggregate.
@@ -404,7 +476,7 @@ func (s MissionSnapshot) Validate() error {
 		if _, err := ids.ParseWorkRevisionID(s.CurrentWorkRevisionID.String()); err != nil {
 			return err
 		}
-		if s.CurrentStep != StepWorkFinalized && s.CurrentStep != StepReconciliationNeeded {
+		if s.CurrentStep != StepWorkFinalized && s.CurrentStep != StepReconciliationRequired {
 			return errors.New("current work revision is not legal before finalization")
 		}
 	}
