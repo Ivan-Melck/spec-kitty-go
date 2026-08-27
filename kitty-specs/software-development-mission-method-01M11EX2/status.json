@@ -1,7 +1,7 @@
 {
   "event_count": 28,
-  "last_event_id": "01M120VAM1H6DR32P48R81R188",
-  "materialized_at": "2026-08-27T16:29:01.441493+00:00",
+  "last_event_id": "01M120XTW755Z2DZFJT6QVTM3F",
+  "materialized_at": "2026-08-27T16:30:23.623194+00:00",
   "mission_number": "",
   "mission_slug": "software-development-mission-method-01M11EX2",
   "mission_type": "software-dev",
@@ -57,8 +57,8 @@
       "agent_profile_version": "1.0",
       "force_count": 0,
       "lane": "in_review",
-      "last_event_id": "01M120VAM1H6DR32P48R81R188",
-      "last_transition_at": "2026-08-27T16:29:01.441493+00:00",
+      "last_event_id": "01M120XTW755Z2DZFJT6QVTM3F",
+      "last_transition_at": "2026-08-27T16:30:23.623194+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: static exact-version mission definition, typed lifecycle authority, pure gated CAS transitions, idempotent atomic store port, and exhaustive deterministic/race-safe tests"
