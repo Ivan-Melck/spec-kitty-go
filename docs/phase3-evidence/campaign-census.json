@@ -250,7 +250,8 @@
     {"id": "20", "source": "b03200f", "verdict": "non_admissible", "reason": "application qualification resolved Go 1.26.4 instead of the required Go 1.26.5 toolchain"},
     {"id": "21", "source": "b03200f", "verdict": "fail", "reason": "offline child attempted toolchain module verification after a valid Go 1.26.5 preflight"},
     {"id": "real-23", "source": "b03200f", "verdict": "non_admissible", "reason": "tail-exec made the network-unshared process namespace PID 1, so containment proof refused before scenarios"},
-    {"id": "review-cycle-2", "source": "b03200f", "verdict": "fail", "reason": "publication validator omitted exact checkout identity, duplicate-key, bounded-size, Mermaid-body, command, and complete failure-ledger laws"}
+    {"id": "review-cycle-2", "source": "b03200f", "verdict": "fail", "reason": "publication validator omitted exact checkout identity, duplicate-key, bounded-size, Mermaid-body, command, and complete failure-ledger laws"},
+    {"id": "25", "source": "ce64e64", "verdict": "fail", "reason": "committed-candidate qualification exposed a synthetic payload fixture that incorrectly required changed bytes"}
   ],
   "hosted_baseline": {"required_samples": 10, "observed_samples": 0, "duration_ms": null, "verdict": "pending"}
 }

@@ -165,7 +165,7 @@ func TestPhase3PublicationEveryRequiredFailureIdentityIsLoadBearing(t *testing.T
 	for _, id := range []string{
 		"01", "02", "03", "04", "05", "06", "07", "08", "09",
 		"real-11", "real-12", "real-13", "real-14", "real-15", "real-16", "real-17",
-		"review-cycle-1", "20", "21", "real-23", "review-cycle-2",
+		"review-cycle-1", "20", "21", "real-23", "review-cycle-2", "25",
 	} {
 		t.Run(id, func(t *testing.T) {
 			candidate := phase3PublicationFixture(t, fixture)
@@ -243,7 +243,7 @@ func TestPhase3PublicationCheckoutRequiresCleanDocsOnlyAttestation(t *testing.T)
 		t.Fatal(err)
 	}
 	phase3GitIn(t, clone, "add", "docs/phase3-evidence", "Makefile")
-	phase3GitIn(t, clone, "commit", "-m", "payload")
+	phase3GitIn(t, clone, "commit", "--allow-empty", "-m", "payload")
 	payload := phase3GitIn(t, clone, "rev-parse", "HEAD")
 	index := filepath.Join(clone, "docs/phase3-evidence/README.md")
 	contents, err := os.ReadFile(index)

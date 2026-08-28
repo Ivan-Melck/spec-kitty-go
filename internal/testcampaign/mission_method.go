@@ -769,7 +769,7 @@ func validatePhase3History(attempts []struct {
 	required := []string{
 		"01", "02", "03", "04", "05", "06", "07", "08", "09",
 		"real-11", "real-12", "real-13", "real-14", "real-15", "real-16", "real-17",
-		"review-cycle-1", "20", "21", "real-23", "review-cycle-2",
+		"review-cycle-1", "20", "21", "real-23", "review-cycle-2", "25",
 	}
 	seen := make(map[string]bool, len(attempts))
 	allowed := map[string]bool{"fail": true, "non_admissible": true, "superseded_pass": true, "diagnostic_fail": true, "diagnostic_pass": true}
