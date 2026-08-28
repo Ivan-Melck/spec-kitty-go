@@ -12,12 +12,17 @@ import (
 type TierName string
 
 const (
-	TierFoundation       TierName = "typed-foundation"
-	TierAuthority        TierName = "authority-capability"
-	TierProviderContract TierName = "provider-contract"
-	TierAdapter          TierName = "provider-adapter"
-	TierComposition      TierName = "composition-root"
-	TierQuality          TierName = "quality-tooling"
+	TierFoundation        TierName = "typed-foundation"
+	TierReadModel         TierName = "typed-read-model"
+	TierAuthority         TierName = "authority-capability"
+	TierArtifactAuthority TierName = "artifact-authority"
+	TierMissionAuthority  TierName = "mission-authority"
+	TierMissionDefinition TierName = "mission-definition"
+	TierProviderContract  TierName = "provider-contract"
+	TierAdapter           TierName = "provider-adapter"
+	TierProjection        TierName = "read-only-projection"
+	TierComposition       TierName = "composition-root"
+	TierQuality           TierName = "quality-tooling"
 )
 
 // Validate rejects unstable or empty tier identities.
@@ -89,10 +94,22 @@ type Tier struct {
 	Production              bool
 }
 
+// ForbiddenLocalDirection records a package-specific denial that is narrower
+// than a tier edge. These denials are used only when one adapter tier contains
+// implementations with different consumer-owned ports (for example, the
+// control-store adapter may implement mission persistence while tracker
+// adapters must remain ignorant of mission authority).
+type ForbiddenLocalDirection struct {
+	Sources     []PackagePattern
+	TargetTiers []TierName
+	Targets     []PackagePattern
+}
+
 // Policy is a closed classification and dependency-direction policy.
 type Policy struct {
 	ModulePath                     string
 	Tiers                          []Tier
+	ForbiddenLocalDirections       []ForbiddenLocalDirection
 	ForbiddenPackages              []PackagePattern
 	ForbiddenImportPrefixes        []string
 	AllowedNeutralExternalPrefixes []string
@@ -143,7 +160,11 @@ func (v Violations) Error() string {
 // policy diff.
 func DefaultPolicy(modulePath string) (Policy, error) {
 	pkg := func(relative string) PackagePattern { return ExactPackage(modulePath + "/" + relative) }
-	allRuntime := []TierName{TierFoundation, TierAuthority, TierProviderContract, TierAdapter, TierComposition}
+	allRuntime := []TierName{
+		TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority, TierMissionAuthority,
+		TierMissionDefinition, TierProviderContract, TierAdapter, TierProjection,
+		TierComposition,
+	}
 	policy := Policy{
 		ModulePath: modulePath,
 		Tiers: []Tier{
@@ -153,12 +174,45 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				AllowedLocalTargets: []TierName{TierFoundation},
 			},
 			{
+				Name: TierReadModel, Production: true,
+				Packages: []PackagePattern{
+					PackagePrefix(modulePath + "/internal/artifact/readmodel"),
+					PackagePrefix(modulePath + "/internal/mission/readmodel"),
+					PackagePrefix(modulePath + "/internal/workgraph/readmodel"),
+				},
+				AllowedLocalTargets: []TierName{TierFoundation, TierReadModel},
+			},
+			{
 				Name: TierAuthority, Production: true,
 				Packages: []PackagePattern{
 					pkg("internal/execution"), pkg("internal/handoff"), pkg("internal/integration"),
 					pkg("internal/review"), pkg("internal/workgraph"), pkg("internal/workspace"),
 				},
 				AllowedLocalTargets: []TierName{TierFoundation, TierAuthority, TierProviderContract},
+			},
+			{
+				Name: TierArtifactAuthority, Production: true,
+				Packages: []PackagePattern{
+					pkg("internal/artifact"),
+				},
+				AllowedLocalTargets: []TierName{TierFoundation, TierReadModel, TierArtifactAuthority},
+			},
+			{
+				Name: TierMissionAuthority, Production: true,
+				Packages: []PackagePattern{
+					pkg("internal/mission"),
+				},
+				AllowedLocalTargets: []TierName{
+					TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority,
+					TierMissionAuthority, TierProviderContract,
+				},
+			},
+			{
+				Name: TierMissionDefinition, Production: true,
+				Packages: []PackagePattern{
+					PackagePrefix(modulePath + "/internal/missiontype/softwaredev"),
+				},
+				AllowedLocalTargets: []TierName{TierFoundation, TierMissionAuthority, TierMissionDefinition},
 			},
 			{
 				Name: TierProviderContract, Production: true,
@@ -171,8 +225,20 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 					pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
 				},
-				AllowedLocalTargets:     []TierName{TierFoundation, TierAuthority, TierProviderContract, TierAdapter},
+				AllowedLocalTargets: []TierName{
+					TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority,
+					TierMissionAuthority, TierProviderContract, TierAdapter,
+				},
 				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
+			},
+			{
+				Name: TierProjection, Production: true,
+				Packages: []PackagePattern{
+					PackagePrefix(modulePath + "/internal/projection"),
+				},
+				AllowedLocalTargets: []TierName{
+					TierFoundation, TierReadModel, TierProjection,
+				},
 			},
 			{
 				Name: TierComposition, Production: true,
@@ -186,6 +252,19 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				},
 				AllowedLocalTargets:     append(append([]TierName(nil), allRuntime...), TierQuality),
 				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
+			},
+		},
+		ForbiddenLocalDirections: []ForbiddenLocalDirection{
+			{
+				Sources: []PackagePattern{
+					PackagePrefix(modulePath + "/internal/tracker/fake"),
+					PackagePrefix(modulePath + "/internal/tracker/beads"),
+				},
+				TargetTiers: []TierName{TierArtifactAuthority, TierMissionAuthority},
+			},
+			{
+				Sources: []PackagePattern{pkg("internal/workgraph")},
+				Targets: []PackagePattern{pkg("internal/tracker")},
 			},
 		},
 		ForbiddenPackages: []PackagePattern{
@@ -257,6 +336,32 @@ func (p Policy) Validate() error {
 		for _, prefix := range tier.AllowedExternalPrefixes {
 			if prefix == "" || strings.TrimSpace(prefix) != prefix || strings.HasSuffix(prefix, "/") {
 				return fmt.Errorf("tier %q has invalid external prefix %q", tier.Name, prefix)
+			}
+		}
+	}
+	for _, direction := range p.ForbiddenLocalDirections {
+		if len(direction.Sources) == 0 || (len(direction.TargetTiers) == 0 && len(direction.Targets) == 0) {
+			return fmt.Errorf("forbidden local direction requires sources and targets")
+		}
+		for _, source := range direction.Sources {
+			if err := source.validate(); err != nil {
+				return fmt.Errorf("forbidden local direction source: %w", err)
+			}
+			if !withinModule(p.ModulePath, source.Path) {
+				return fmt.Errorf("forbidden local direction source %q is outside module %q", source.Path, p.ModulePath)
+			}
+		}
+		for _, target := range direction.TargetTiers {
+			if !names[target] {
+				return fmt.Errorf("forbidden local direction names unknown target tier %q", target)
+			}
+		}
+		for _, target := range direction.Targets {
+			if err := target.validate(); err != nil {
+				return fmt.Errorf("forbidden local direction target: %w", err)
+			}
+			if !withinModule(p.ModulePath, target.Path) {
+				return fmt.Errorf("forbidden local direction target %q is outside module %q", target.Path, p.ModulePath)
 			}
 		}
 	}
@@ -347,7 +452,7 @@ func (p Policy) Evaluate(graph Graph) Violations {
 			if !targetOK {
 				continue
 			}
-			if !containsTier(source.AllowedLocalTargets, target.Name) {
+			if p.forbidsLocalDirection(edge.SourcePackage, edge.TargetPackage, target.Name) || !containsTier(source.AllowedLocalTargets, target.Name) {
 				violations = append(violations, violationForEdge(RuleLocalDirection, edge, source.Name, target.Name))
 			}
 		}
@@ -363,6 +468,20 @@ func (p Policy) Evaluate(graph Graph) Violations {
 		return left.TargetPackage < right.TargetPackage
 	})
 	return violations
+}
+
+func (p Policy) forbidsLocalDirection(sourcePackage, targetPackage string, targetTier TierName) bool {
+	for _, direction := range p.ForbiddenLocalDirections {
+		if !containsTier(direction.TargetTiers, targetTier) && !forbidden(targetPackage, direction.Targets) {
+			continue
+		}
+		for _, source := range direction.Sources {
+			if source.matches(sourcePackage) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Check returns all deterministic policy violations as one error.
