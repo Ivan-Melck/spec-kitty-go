@@ -17,8 +17,9 @@ const (
 var missionProfiles = map[string]Profile{
 	MissionContractProfile: {
 		Name: MissionContractProfile, Package: "./internal/scenario",
-		Pattern: "^(TestMissionMethodQualificationContract|TestQualityCampaignUniversalInvariants|TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries)$",
+		Pattern: "^(TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation|TestMissionMethodQualificationContract|TestQualityCampaignUniversalInvariants|TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries)$",
 		ExpectedTests: []string{
+			"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
 			"TestMissionMethodQualificationContract",
 			"TestQualityCampaignUniversalInvariants",
 			"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
@@ -71,6 +72,7 @@ func init() {
 		UniversalTest:    "TestQualityCampaignUniversalInvariants",
 		RequiredTests: []string{
 			"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
+			"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
 			"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
 			"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
 			"TestMissionMethodCrashBoundaryCensus",
@@ -99,6 +101,7 @@ func ValidateMissionCampaign(campaign Campaign) error {
 	wantProfiles := []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile}
 	wantTests := []string{
 		"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
+		"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
 		"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
 		"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
 		"TestMissionMethodCrashBoundaryCensus",

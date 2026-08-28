@@ -94,7 +94,7 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 		}
 	}
 	contract, _ := ProfileByName(MissionContractProfile)
-	for _, identity := range []string{"TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"} {
+	for _, identity := range []string{"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation", "TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"} {
 		if !slices.Contains(contract.ExpectedTests, identity) {
 			t.Fatalf("mission contract profile omitted %s", identity)
 		}
