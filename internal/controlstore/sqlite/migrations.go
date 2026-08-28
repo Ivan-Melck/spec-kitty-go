@@ -268,6 +268,18 @@ CREATE TABLE phase3_blockers (
   version INTEGER NOT NULL CHECK(version > 0),
   blocker_json BLOB NOT NULL
 );
+CREATE TABLE phase3_mission_actions (
+  operation_id TEXT PRIMARY KEY REFERENCES phase3_operations(operation_id) ON DELETE RESTRICT,
+  mission_id TEXT NOT NULL REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT,
+  action_key TEXT NOT NULL,
+  successor TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
+  governance_context_id TEXT NOT NULL REFERENCES governance_contexts(context_id) ON DELETE RESTRICT,
+  governance_commitment TEXT NOT NULL,
+  receipt TEXT NOT NULL,
+  occurred_at TEXT NOT NULL
+);
 CREATE TABLE phase3_events (
   event_id TEXT PRIMARY KEY,
   operation_id TEXT NOT NULL REFERENCES phase3_operations(operation_id) ON DELETE RESTRICT,
@@ -296,10 +308,17 @@ CREATE TRIGGER immutable_phase3_artifact_approval_delete BEFORE DELETE ON phase3
 CREATE TRIGGER immutable_phase3_work_revision_update BEFORE UPDATE ON phase3_work_revisions_v2 BEGIN SELECT RAISE(ABORT,'work revision v2 is immutable'); END;
 CREATE TRIGGER immutable_phase3_work_revision_delete BEFORE DELETE ON phase3_work_revisions_v2 BEGIN SELECT RAISE(ABORT,'work revision v2 is immutable'); END;
 CREATE TRIGGER immutable_phase3_drift_update BEFORE UPDATE ON phase3_drift_reports BEGIN SELECT RAISE(ABORT,'drift report is immutable'); END;
+CREATE TRIGGER immutable_phase3_drift_delete BEFORE DELETE ON phase3_drift_reports BEGIN SELECT RAISE(ABORT,'drift report is immutable'); END;
 CREATE TRIGGER immutable_phase3_reconciliation_update BEFORE UPDATE ON phase3_mixed_reconciliations BEGIN SELECT RAISE(ABORT,'mixed reconciliation is immutable'); END;
+CREATE TRIGGER immutable_phase3_reconciliation_delete BEFORE DELETE ON phase3_mixed_reconciliations BEGIN SELECT RAISE(ABORT,'mixed reconciliation is immutable'); END;
 CREATE TRIGGER immutable_phase3_eligibility_update BEFORE UPDATE ON phase3_eligibility_facts BEGIN SELECT RAISE(ABORT,'eligibility fact is immutable'); END;
+CREATE TRIGGER immutable_phase3_eligibility_delete BEFORE DELETE ON phase3_eligibility_facts BEGIN SELECT RAISE(ABORT,'eligibility fact is immutable'); END;
+CREATE TRIGGER immutable_phase3_mission_action_update BEFORE UPDATE ON phase3_mission_actions BEGIN SELECT RAISE(ABORT,'mission action is immutable'); END;
+CREATE TRIGGER immutable_phase3_mission_action_delete BEFORE DELETE ON phase3_mission_actions BEGIN SELECT RAISE(ABORT,'mission action is immutable'); END;
 CREATE TRIGGER immutable_phase3_event_update BEFORE UPDATE ON phase3_events BEGIN SELECT RAISE(ABORT,'phase3 event is immutable'); END;
+CREATE TRIGGER immutable_phase3_event_delete BEFORE DELETE ON phase3_events BEGIN SELECT RAISE(ABORT,'phase3 event is immutable'); END;
 CREATE TRIGGER immutable_phase3_outbox_update BEFORE UPDATE ON phase3_outbox BEGIN SELECT RAISE(ABORT,'phase3 outbox is immutable'); END;
+CREATE TRIGGER immutable_phase3_outbox_delete BEFORE DELETE ON phase3_outbox BEGIN SELECT RAISE(ABORT,'phase3 outbox is immutable'); END;
 `
 
 const governanceContextMigrationV12 = `

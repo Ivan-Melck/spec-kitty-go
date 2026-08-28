@@ -177,8 +177,17 @@ func decodeActionResult(raw []byte) (mission.ActionResult, error) {
 }
 
 func (s *Store) CommitAction(ctx context.Context, c mission.ActionCommit) (mission.ActionResult, error) {
-	if c.Expected.Validate() != nil || c.Outcome.Mission.Validate() != nil || c.Governance.Validate() != nil || c.Receipt.Validate() != nil {
+	if c.Expected.Validate() != nil || c.Outcome.Mission.Validate() != nil || c.Governance.Validate() != nil || c.Receipt.Validate() != nil ||
+		c.MissionID != c.Expected.MissionID || c.Outcome.Mission.MissionID != c.MissionID ||
+		c.Outcome.Mission.ProjectID != c.Expected.ProjectID || c.Outcome.Mission.StateVersion != c.Expected.StateVersion+1 ||
+		c.Outcome.Mission.CreatedAt != c.Expected.CreatedAt || c.OccurredAt.IsZero() || c.OccurredAt.Location() != time.UTC {
 		return mission.ActionResult{}, missionError(mission.KindInvalidRequest, "action.commit", "action commit is invalid", nil)
+	}
+	if c.Outcome.Decision != nil && (c.Outcome.Decision.Validate() != nil || c.Outcome.Decision.MissionID() != c.MissionID) {
+		return mission.ActionResult{}, missionError(mission.KindInvalidRequest, "action.decision", "action decision is invalid", nil)
+	}
+	if c.Outcome.Blocker != nil && (c.Outcome.Blocker.Validate() != nil || c.Outcome.Blocker.MissionID() != c.MissionID) {
+		return mission.ActionResult{}, missionError(mission.KindInvalidRequest, "action.blocker", "action blocker is invalid", nil)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -223,6 +232,9 @@ func (s *Store) CommitAction(ctx context.Context, c mission.ActionCommit) (missi
 	resultJSON, _ := json.Marshal(wire)
 	if err = insertPhase3Operation(ctx, tx, c.OperationID.String(), "mission_action", c.MissionID.String(), c.RequestDigest, resultJSON, c.OccurredAt); err != nil {
 		return mission.ActionResult{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO phase3_mission_actions(operation_id,mission_id,action_key,successor,actor_id,process_id,governance_context_id,governance_commitment,receipt,occurred_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, c.OperationID, c.MissionID, c.ActionKey, c.Successor, c.ActorID, c.ProcessID, c.Governance.ContextID(), c.Governance.Commitment().Digest(), c.Receipt, formatTime(c.OccurredAt)); err != nil {
+		return mission.ActionResult{}, missionError(mission.KindPersistenceUnavailable, "action.store", "action persistence is unavailable", err)
 	}
 	if err = insertPhase3Event(ctx, tx, "mission-action:"+c.OperationID.String(), c.OperationID.String(), c.MissionID.String(), "mission_action_committed", c.RequestDigest, c.OccurredAt); err != nil {
 		return mission.ActionResult{}, err
@@ -354,10 +366,22 @@ func loadArtifactObservationsTx(ctx context.Context, tx *sql.Tx, missionID strin
 		return nil, err
 	}
 	defer rows.Close()
-	var out []artifact.CurrentApprovalObservation
+	var revisionRows [][]byte
 	for rows.Next() {
 		var raw []byte
-		_ = rows.Scan(&raw)
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		revisionRows = append(revisionRows, append([]byte(nil), raw...))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var out []artifact.CurrentApprovalObservation
+	for _, raw := range revisionRows {
 		var rw artifactRevisionWire
 		if strictJSON(raw, &rw) != nil {
 			return nil, errors.New("stored artifact revision is invalid")
@@ -393,7 +417,7 @@ func loadArtifactObservationsTx(ctx context.Context, tx *sql.Tx, missionID strin
 		}
 		out = append(out, observation)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Store) ReplayMissionFact(ctx context.Context, id ids.MissionID, op ids.OperationID, digest string) (mission.MissionFactResult, bool, error) {
@@ -413,6 +437,15 @@ func (s *Store) ReplayMissionFact(ctx context.Context, id ids.MissionID, op ids.
 	return r, e == nil, e
 }
 func (s *Store) CommitMissionFact(ctx context.Context, c mission.MissionFactCommit) (mission.MissionFactResult, error) {
+	if c.Expected.Validate() != nil || c.Successor.Validate() != nil || c.Successor.MissionID != c.Expected.MissionID || c.Successor.ProjectID != c.Expected.ProjectID || c.Successor.StateVersion != c.Expected.StateVersion+1 || c.RequestDigest == "" {
+		return mission.MissionFactResult{}, missionError(mission.KindInvalidRequest, "mission_fact", "mission fact commit is invalid", nil)
+	}
+	if c.Decision != nil && (c.Decision.Validate() != nil || c.Decision.MissionID() != c.Expected.MissionID) {
+		return mission.MissionFactResult{}, missionError(mission.KindInvalidRequest, "decision", "mission decision is invalid", nil)
+	}
+	if c.Blocker != nil && (c.Blocker.Validate() != nil || c.Blocker.MissionID() != c.Expected.MissionID) {
+		return mission.MissionFactResult{}, missionError(mission.KindInvalidRequest, "blocker", "mission blocker is invalid", nil)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return mission.MissionFactResult{}, err

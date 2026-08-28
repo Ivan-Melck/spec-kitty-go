@@ -262,12 +262,14 @@ func persistEligibilityFacts(ctx context.Context, tx *sql.Tx, r workgraph.MixedR
 
 func (s *Store) WorkEligibilityFact(ctx context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {
 	var reconciliation, newRevision, disposition string
-	err := s.db.QueryRowContext(ctx, `SELECT reconciliation_id,new_work_revision_id,disposition FROM phase3_eligibility_facts WHERE old_work_revision_id=? AND work_id=? AND work_status=? AND operation=? ORDER BY reconciliation_id DESC LIMIT 1`, oldRevision, workID, status, operation).Scan(&reconciliation, &newRevision, &disposition)
+	var allowed bool
+	var reason string
+	err := s.db.QueryRowContext(ctx, `SELECT reconciliation_id,new_work_revision_id,disposition,allowed,reason FROM phase3_eligibility_facts WHERE old_work_revision_id=? AND work_id=? AND work_status=? AND operation=? ORDER BY reconciliation_id DESC LIMIT 1`, oldRevision, workID, status, operation).Scan(&reconciliation, &newRevision, &disposition, &allowed, &reason)
 	if err != nil {
 		return workgraph.EligibilityFact{}, err
 	}
 	fact, err := workgraph.NewEligibilityFact(reconciliation, oldRevision, ids.WorkRevisionID(newRevision), workID, status, workgraph.Disposition(disposition), operation)
-	if err != nil || !fact.Complete() {
+	if err != nil || !fact.Complete() || fact.Permitted() != allowed || fact.Reason() != reason {
 		return workgraph.EligibilityFact{}, errors.New("stored eligibility fact is invalid")
 	}
 	return fact, nil
