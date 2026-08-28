@@ -304,8 +304,8 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
       "subtasks": {
         "T048": "planned",
         "T049": "planned",
