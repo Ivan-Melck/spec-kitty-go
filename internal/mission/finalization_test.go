@@ -41,6 +41,206 @@ func TestFinalizationSagaObservesTwiceThenPublishesGenerationOne(t *testing.T) {
 	}
 }
 
+func TestFinalizationReplayBindsEveryValidExpectedMissionField(t *testing.T) {
+	mutants := map[string]func(*FinalizationCommand){
+		"mission identity": func(command *FinalizationCommand) {
+			command.MissionID = "mission-other"
+			command.ExpectedMission.MissionID = command.MissionID
+		},
+		"project identity": func(command *FinalizationCommand) {
+			command.ProjectID = "project-other"
+			command.ExpectedMission.ProjectID = command.ProjectID
+		},
+		"definition commitment": func(command *FinalizationCommand) {
+			command.ExpectedMission.DefinitionCommitment = DefinitionCommitment(strings.Repeat("d", 64))
+		},
+		"state version": func(command *FinalizationCommand) { command.ExpectedMission.StateVersion++ },
+		"created at": func(command *FinalizationCommand) {
+			command.ExpectedMission.CreatedAt = command.ExpectedMission.CreatedAt.Add(time.Second)
+		},
+		"updated at plus one second": func(command *FinalizationCommand) {
+			command.ExpectedMission.UpdatedAt = command.ExpectedMission.UpdatedAt.Add(time.Second)
+		},
+		"active blocker membership": func(command *FinalizationCommand) {
+			command.ExpectedMission.ActiveBlockers = []ids.BlockerID{"blocker-new"}
+		},
+		"unresolved decision membership": func(command *FinalizationCommand) {
+			command.ExpectedMission.UnresolvedDecisions = []ids.DecisionID{"decision-new"}
+		},
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			store := newFinalizationStore()
+			source := &finalizationSource{fallback: missionFinalizationObservation(t, "revision-1")}
+			service := NewFinalizationService(source, store)
+			command := finalizationCommandFixture("operation-mission-identity")
+			if _, err := service.Finalize(context.Background(), command); err != nil {
+				t.Fatal(err)
+			}
+			providerCalls := source.calls.Load()
+			publishCalls := store.publishCalls.Load()
+			mutate(&command)
+			_, err := service.Finalize(context.Background(), command)
+			typed, ok := err.(*FinalizationError)
+			if !ok || typed.Kind != FinalizationOperationConflict || typed.Recovery != FinalizationCorrectInput || source.calls.Load() != providerCalls || store.publishCalls.Load() != publishCalls {
+				t.Fatalf("mission identity mutation crossed replay boundary: err=%v provider=%d/%d publish=%d/%d", err, source.calls.Load(), providerCalls, store.publishCalls.Load(), publishCalls)
+			}
+		})
+	}
+}
+
+func TestFinalizationCommandDigestBindsCompleteExpectedMissionSnapshot(t *testing.T) {
+	mutants := map[string]func(*MissionSnapshot){
+		"mission ID":         func(snapshot *MissionSnapshot) { snapshot.MissionID = "mission-other" },
+		"project ID":         func(snapshot *MissionSnapshot) { snapshot.ProjectID = "project-other" },
+		"definition ID":      func(snapshot *MissionSnapshot) { snapshot.DefinitionID = "other-definition" },
+		"definition version": func(snapshot *MissionSnapshot) { snapshot.DefinitionVersion++ },
+		"definition commitment": func(snapshot *MissionSnapshot) {
+			snapshot.DefinitionCommitment = DefinitionCommitment(strings.Repeat("d", 64))
+		},
+		"lifecycle":            func(snapshot *MissionSnapshot) { snapshot.Lifecycle = LifecycleTerminal },
+		"current step":         func(snapshot *MissionSnapshot) { snapshot.CurrentStep = StepReconciliationRequired },
+		"current revision":     func(snapshot *MissionSnapshot) { snapshot.CurrentWorkRevisionID = "revision-other" },
+		"state version":        func(snapshot *MissionSnapshot) { snapshot.StateVersion++ },
+		"created at":           func(snapshot *MissionSnapshot) { snapshot.CreatedAt = snapshot.CreatedAt.Add(time.Second) },
+		"updated at":           func(snapshot *MissionSnapshot) { snapshot.UpdatedAt = snapshot.UpdatedAt.Add(time.Second) },
+		"terminal outcome":     func(snapshot *MissionSnapshot) { snapshot.TerminalOutcome = OutcomeWorkFinalized },
+		"active blockers":      func(snapshot *MissionSnapshot) { snapshot.ActiveBlockers = []ids.BlockerID{"blocker-new"} },
+		"unresolved decisions": func(snapshot *MissionSnapshot) { snapshot.UnresolvedDecisions = []ids.DecisionID{"decision-new"} },
+	}
+	command := finalizationCommandFixture("operation-complete-mission-digest")
+	baseline, err := finalizationCommandDigest(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			changed := command
+			changed.ExpectedMission = command.ExpectedMission.clone()
+			mutate(&changed.ExpectedMission)
+			digest, err := finalizationCommandDigest(changed)
+			if err != nil || digest == baseline {
+				t.Fatalf("expected mission field is absent from request identity: digest=%q baseline=%q err=%v", digest, baseline, err)
+			}
+		})
+	}
+}
+
+func TestFinalizationExpectedMissionSetIdentityIsCanonical(t *testing.T) {
+	tests := map[string]struct {
+		initial func(*FinalizationCommand)
+		replay  func(*FinalizationCommand)
+	}{
+		"reordering unique sets": {
+			initial: func(command *FinalizationCommand) {
+				command.ExpectedMission.ActiveBlockers = []ids.BlockerID{"blocker-b", "blocker-a"}
+				command.ExpectedMission.UnresolvedDecisions = []ids.DecisionID{"decision-b", "decision-a"}
+			},
+			replay: func(command *FinalizationCommand) {
+				command.ExpectedMission.ActiveBlockers = []ids.BlockerID{"blocker-a", "blocker-b"}
+				command.ExpectedMission.UnresolvedDecisions = []ids.DecisionID{"decision-a", "decision-b"}
+			},
+		},
+		"nil and empty sets": {
+			replay: func(command *FinalizationCommand) {
+				command.ExpectedMission.ActiveBlockers = []ids.BlockerID{}
+				command.ExpectedMission.UnresolvedDecisions = []ids.DecisionID{}
+			},
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			store := newFinalizationStore()
+			source := &finalizationSource{fallback: missionFinalizationObservation(t, "revision-1")}
+			service := NewFinalizationService(source, store)
+			command := finalizationCommandFixture("operation-set-identity")
+			if test.initial != nil {
+				test.initial(&command)
+			}
+			originalBlockers := append([]ids.BlockerID(nil), command.ExpectedMission.ActiveBlockers...)
+			originalDecisions := append([]ids.DecisionID(nil), command.ExpectedMission.UnresolvedDecisions...)
+			if _, err := service.Finalize(context.Background(), command); err != nil {
+				t.Fatal(err)
+			}
+			if !sameBlockerOrder(originalBlockers, command.ExpectedMission.ActiveBlockers) || !sameDecisionOrder(originalDecisions, command.ExpectedMission.UnresolvedDecisions) {
+				t.Fatal("canonical identity mutated the caller snapshot")
+			}
+			providerCalls := source.calls.Load()
+			publishCalls := store.publishCalls.Load()
+			test.replay(&command)
+			replayBlockers := append([]ids.BlockerID(nil), command.ExpectedMission.ActiveBlockers...)
+			replayDecisions := append([]ids.DecisionID(nil), command.ExpectedMission.UnresolvedDecisions...)
+			result, err := service.Finalize(context.Background(), command)
+			if err != nil || !result.Replayed || source.calls.Load() != providerCalls || store.publishCalls.Load() != publishCalls {
+				t.Fatalf("equivalent set identity did not replay: result=%#v err=%v provider=%d/%d publish=%d/%d", result, err, source.calls.Load(), providerCalls, store.publishCalls.Load(), publishCalls)
+			}
+			if !sameBlockerOrder(replayBlockers, command.ExpectedMission.ActiveBlockers) || !sameDecisionOrder(replayDecisions, command.ExpectedMission.UnresolvedDecisions) {
+				t.Fatal("canonical replay identity mutated the caller snapshot")
+			}
+		})
+	}
+}
+
+func TestFinalizationRejectsInvalidExpectedMissionIdentityBeforePorts(t *testing.T) {
+	mutants := map[string]func(*FinalizationCommand){
+		"definition ID":      func(command *FinalizationCommand) { command.ExpectedMission.DefinitionID = "other-definition" },
+		"definition version": func(command *FinalizationCommand) { command.ExpectedMission.DefinitionVersion = 2 },
+		"lifecycle": func(command *FinalizationCommand) {
+			command.ExpectedMission.Lifecycle = LifecycleTerminal
+			command.ExpectedMission.TerminalOutcome = OutcomeWorkFinalized
+		},
+		"current step": func(command *FinalizationCommand) { command.ExpectedMission.CurrentStep = StepReconciliationRequired },
+		"current pointer": func(command *FinalizationCommand) {
+			command.ExpectedMission.CurrentWorkRevisionID = "revision-other"
+		},
+		"terminal outcome": func(command *FinalizationCommand) { command.ExpectedMission.TerminalOutcome = OutcomeWorkFinalized },
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			store := newFinalizationStore()
+			source := &finalizationSource{fallback: missionFinalizationObservation(t, "revision-1")}
+			service := NewFinalizationService(source, store)
+			command := finalizationCommandFixture("operation-invalid-mission-identity")
+			if _, err := service.Finalize(context.Background(), command); err != nil {
+				t.Fatal(err)
+			}
+			providerCalls := source.calls.Load()
+			publishCalls := store.publishCalls.Load()
+			replayCalls := store.replayCalls.Load()
+			mutate(&command)
+			_, err := service.Finalize(context.Background(), command)
+			typed, ok := err.(*FinalizationError)
+			if !ok || typed.Kind != FinalizationInvalidRequest || source.calls.Load() != providerCalls || store.publishCalls.Load() != publishCalls || store.replayCalls.Load() != replayCalls {
+				t.Fatalf("invalid mission identity reached a port: err=%v replay=%d/%d provider=%d/%d publish=%d/%d", err, store.replayCalls.Load(), replayCalls, source.calls.Load(), providerCalls, store.publishCalls.Load(), publishCalls)
+			}
+		})
+	}
+}
+
+func sameBlockerOrder(left, right []ids.BlockerID) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameDecisionOrder(left, right []ids.DecisionID) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestFinalizationReplayValidatesCompletePersistencePostconditionsBeforeSuccess(t *testing.T) {
 	mutants := map[string]func(t *testing.T, result *FinalizationResult){
 		"zero revision": func(_ *testing.T, result *FinalizationResult) { result.Revision = workgraph.RevisionV2{} },

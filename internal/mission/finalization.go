@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -231,6 +230,7 @@ func finalizationCommandDigest(command FinalizationCommand) (string, error) {
 		DefinitionCommitment      DefinitionCommitment    `json:"definition_commitment"`
 		Step                      StepKey                 `json:"step"`
 		StateVersion              uint64                  `json:"state_version"`
+		ExpectedMission           missionSnapshotIdentity `json:"expected_mission"`
 		ExpectedCurrentGeneration uint64                  `json:"expected_current_generation"`
 		ProposedRevisionID        ids.WorkRevisionID      `json:"proposed_revision_id"`
 		RequestedGeneration       uint64                  `json:"requested_generation"`
@@ -239,7 +239,7 @@ func finalizationCommandDigest(command FinalizationCommand) (string, error) {
 		ActorID                   ids.ActorID             `json:"actor_id"`
 		GovernanceContextID       ids.GovernanceContextID `json:"governance_context_id"`
 		OccurredAt                string                  `json:"occurred_at"`
-	}{command.MissionID, command.ProjectID, command.ExpectedMission.DefinitionID, command.ExpectedMission.DefinitionVersion, command.ExpectedMission.DefinitionCommitment, command.ExpectedMission.CurrentStep, command.ExpectedMission.StateVersion, command.ExpectedCurrentGeneration, command.ProposedRevisionID, command.RequestedGeneration, command.PredecessorID, command.PlanningSourceCommit, command.ActorID, command.GovernanceContextID, command.OccurredAt.Format(time.RFC3339Nano)})
+	}{command.MissionID, command.ProjectID, command.ExpectedMission.DefinitionID, command.ExpectedMission.DefinitionVersion, command.ExpectedMission.DefinitionCommitment, command.ExpectedMission.CurrentStep, command.ExpectedMission.StateVersion, canonicalMissionSnapshotIdentity(command.ExpectedMission), command.ExpectedCurrentGeneration, command.ProposedRevisionID, command.RequestedGeneration, command.PredecessorID, command.PlanningSourceCommit, command.ActorID, command.GovernanceContextID, command.OccurredAt.Format(time.RFC3339Nano)})
 }
 
 func validateFinalizationPostconditions(command FinalizationCommand, candidate workgraph.RevisionV2, result FinalizationResult, requestDigest string, expectedReceipt FinalizationReceipt) error {
@@ -276,33 +276,13 @@ func finalizationOutcomeReceipt(revision workgraph.RevisionV2, mission MissionSn
 	if err != nil {
 		return "", err
 	}
-	blockers := append([]ids.BlockerID{}, mission.ActiveBlockers...)
-	sort.Slice(blockers, func(i, j int) bool { return blockers[i] < blockers[j] })
-	decisions := append([]ids.DecisionID{}, mission.UnresolvedDecisions...)
-	sort.Slice(decisions, func(i, j int) bool { return decisions[i] < decisions[j] })
-	type missionOutcome struct {
-		MissionID             ids.MissionID           `json:"mission_id"`
-		ProjectID             ids.ProjectID           `json:"project_id"`
-		DefinitionID          ids.MissionDefinitionID `json:"definition_id"`
-		DefinitionVersion     DefinitionVersion       `json:"definition_version"`
-		DefinitionCommitment  DefinitionCommitment    `json:"definition_commitment"`
-		Lifecycle             LifecycleStatus         `json:"lifecycle"`
-		CurrentStep           StepKey                 `json:"current_step"`
-		CurrentWorkRevisionID ids.WorkRevisionID      `json:"current_work_revision_id"`
-		StateVersion          uint64                  `json:"state_version"`
-		CreatedAt             string                  `json:"created_at"`
-		UpdatedAt             string                  `json:"updated_at"`
-		TerminalOutcome       TerminalOutcome         `json:"terminal_outcome"`
-		ActiveBlockers        []ids.BlockerID         `json:"active_blockers"`
-		UnresolvedDecisions   []ids.DecisionID        `json:"unresolved_decisions"`
-	}
 	material, err := json.Marshal(struct {
-		RevisionBytes []byte          `json:"revision_bytes"`
-		Mission       missionOutcome  `json:"mission"`
-		MissionID     ids.MissionID   `json:"mission_id"`
-		OperationID   ids.OperationID `json:"operation_id"`
-		RequestDigest string          `json:"request_digest"`
-	}{revisionBytes, missionOutcome{mission.MissionID, mission.ProjectID, mission.DefinitionID, mission.DefinitionVersion, mission.DefinitionCommitment, mission.Lifecycle, mission.CurrentStep, mission.CurrentWorkRevisionID, mission.StateVersion, mission.CreatedAt.Format(time.RFC3339Nano), mission.UpdatedAt.Format(time.RFC3339Nano), mission.TerminalOutcome, blockers, decisions}, missionID, operationID, requestDigest})
+		RevisionBytes []byte                  `json:"revision_bytes"`
+		Mission       missionSnapshotIdentity `json:"mission"`
+		MissionID     ids.MissionID           `json:"mission_id"`
+		OperationID   ids.OperationID         `json:"operation_id"`
+		RequestDigest string                  `json:"request_digest"`
+	}{revisionBytes, canonicalMissionSnapshotIdentity(mission), missionID, operationID, requestDigest})
 	if err != nil {
 		return "", err
 	}
