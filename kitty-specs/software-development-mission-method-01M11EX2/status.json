@@ -267,6 +267,9 @@
       "last_event_id": "01M13RKZ3GKSN90F966FTMPPT2",
       "last_transition_at": "2026-08-28T08:43:40.528757+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Cycle 2 ready: all five rejection findings repaired; full focused, race, migration, architecture, compile, vet, staticcheck, module, formatting, and diff gates pass."
+      ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
