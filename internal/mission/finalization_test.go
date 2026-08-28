@@ -28,6 +28,10 @@ func TestFinalizationSagaObservesTwiceThenPublishesGenerationOne(t *testing.T) {
 	if source.calls.Load() != 2 || store.publishCalls.Load() != 1 || result.Replayed || result.Revision.Generation() != 1 || result.Mission.CurrentWorkRevisionID != command.ProposedRevisionID {
 		t.Fatalf("unexpected saga result: calls=%d publish=%d result=%#v", source.calls.Load(), store.publishCalls.Load(), result)
 	}
+	expectedReceipt, err := finalizationOutcomeReceipt(result.Revision, result.Mission, command.MissionID, command.OperationID, result.RequestDigest)
+	if err != nil || result.Receipt.Validate() != nil || result.Receipt != expectedReceipt {
+		t.Fatalf("initial publication receipt is not bound to its complete outcome: receipt=%q expected=%q err=%v", result.Receipt, expectedReceipt, err)
+	}
 	replay, err := service.Finalize(context.Background(), command)
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +83,106 @@ func TestFinalizationReplayValidatesCompletePersistencePostconditionsBeforeSucce
 			typed, ok := err.(*FinalizationError)
 			if !ok || typed.Kind != FinalizationContractFailure || typed.Recovery != FinalizationRepairPersistence || source.calls.Load() != calls || store.publishCalls.Load() != 1 {
 				t.Fatalf("corrupt replay crossed boundary: err=%v provider=%d/%d publish=%d", err, source.calls.Load(), calls, store.publishCalls.Load())
+			}
+		})
+	}
+}
+
+func TestFinalizationReceiptRejectsSameIDCompleteOutcomeSubstitution(t *testing.T) {
+	mutants := map[string]func(t *testing.T, command FinalizationCommand, result *FinalizationResult){
+		"pinned provider revision": func(t *testing.T, _ FinalizationCommand, result *FinalizationResult) {
+			encoded, err := result.Revision.Encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded = bytes.Replace(encoded, []byte(`"revision":"revision-1"`), []byte(`"revision":"revision-substituted"`), 1)
+			changed, err := workgraph.DecodeRevisionV2(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed.ID() != result.Revision.ID() || changed.GraphDigest() != result.Revision.GraphDigest() || changed.CriteriaDigest() != result.Revision.CriteriaDigest() {
+				t.Fatal("opaque substitution changed semantic identity")
+			}
+			result.Revision = changed
+		},
+		"same ID semantic revision": func(t *testing.T, command FinalizationCommand, result *FinalizationResult) {
+			alternateStore := newFinalizationStore()
+			alternateSource := &finalizationSource{fallback: missionFinalizationObservationWithTitle(t, "revision-1", "Changed bounded title")}
+			alternate, err := NewFinalizationService(alternateSource, alternateStore).Finalize(context.Background(), command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if alternate.Revision.ID() != result.Revision.ID() || alternate.Revision.GraphDigest() == result.Revision.GraphDigest() {
+				t.Fatal("semantic alternate fixture is invalid")
+			}
+			result.Revision = alternate.Revision
+		},
+		"mission outcome": func(_ *testing.T, _ FinalizationCommand, result *FinalizationResult) {
+			result.Mission.UpdatedAt = result.Mission.UpdatedAt.Add(time.Second)
+		},
+		"missing receipt": func(_ *testing.T, _ FinalizationCommand, result *FinalizationResult) { result.Receipt = "" },
+		"malformed receipt": func(_ *testing.T, _ FinalizationCommand, result *FinalizationResult) {
+			result.Receipt = "not-a-receipt"
+		},
+		"altered receipt": func(_ *testing.T, _ FinalizationCommand, result *FinalizationResult) {
+			result.Receipt = FinalizationReceipt(strings.Repeat("0", 64))
+		},
+		"request binding": func(t *testing.T, command FinalizationCommand, result *FinalizationResult) {
+			receipt, err := finalizationOutcomeReceipt(result.Revision, result.Mission, command.MissionID, command.OperationID, strings.Repeat("f", 64))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.Receipt = receipt
+		},
+		"operation binding": func(t *testing.T, command FinalizationCommand, result *FinalizationResult) {
+			receipt, err := finalizationOutcomeReceipt(result.Revision, result.Mission, command.MissionID, "operation-other", result.RequestDigest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.Receipt = receipt
+		},
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			store := newFinalizationStore()
+			source := &finalizationSource{fallback: missionFinalizationObservation(t, "revision-1")}
+			service := NewFinalizationService(source, store)
+			command := finalizationCommandFixture("operation-receipt-mutant")
+			initial, err := service.Finalize(context.Background(), command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if initial.Receipt == "" || store.operations[command.OperationID].result.Receipt != initial.Receipt {
+				t.Fatal("initial publication did not return atomically bound receipt")
+			}
+			calls := source.calls.Load()
+			record := store.operations[command.OperationID]
+			mutate(t, command, &record.result)
+			store.operations[command.OperationID] = record
+			_, err = service.Finalize(context.Background(), command)
+			typed, ok := err.(*FinalizationError)
+			if !ok || typed.Kind != FinalizationContractFailure || typed.Recovery != FinalizationRepairPersistence || source.calls.Load() != calls || store.publishCalls.Load() != 1 {
+				t.Fatalf("receipt mutant crossed boundary: err=%v provider=%d/%d publish=%d", err, source.calls.Load(), calls, store.publishCalls.Load())
+			}
+		})
+	}
+}
+
+func TestFinalizationInitialPublicationRejectsReceiptContractViolation(t *testing.T) {
+	mutants := map[string]func(*FinalizationResult){
+		"missing receipt":   func(result *FinalizationResult) { result.Receipt = "" },
+		"malformed receipt": func(result *FinalizationResult) { result.Receipt = "not-a-receipt" },
+		"wrong receipt":     func(result *FinalizationResult) { result.Receipt = FinalizationReceipt(strings.Repeat("0", 64)) },
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			store := newFinalizationStore()
+			store.mutateResponse = mutate
+			source := &finalizationSource{fallback: missionFinalizationObservation(t, "revision-1")}
+			_, err := NewFinalizationService(source, store).Finalize(context.Background(), finalizationCommandFixture("operation-initial-receipt-mutant"))
+			typed, ok := err.(*FinalizationError)
+			if !ok || typed.Kind != FinalizationContractFailure || typed.Recovery != FinalizationRepairPersistence || source.calls.Load() != 2 || store.publishCalls.Load() != 1 {
+				t.Fatalf("initial receipt mutant was accepted: err=%v provider=%d publish=%d", err, source.calls.Load(), store.publishCalls.Load())
 			}
 		})
 	}
@@ -168,6 +272,8 @@ func TestFinalizationConcurrentDistinctOperationsHaveOneCASWinner(t *testing.T) 
 	const workers = 100
 	var successes atomic.Int64
 	var conflicts atomic.Int64
+	var receiptMu sync.Mutex
+	var winnerReceipt FinalizationReceipt
 	var wait sync.WaitGroup
 	wait.Add(workers)
 	for i := 0; i < workers; i++ {
@@ -175,9 +281,12 @@ func TestFinalizationConcurrentDistinctOperationsHaveOneCASWinner(t *testing.T) 
 			defer wait.Done()
 			command := finalizationCommandFixture(ids.OperationID(fmt.Sprintf("operation-race-%03d", index)))
 			command.ProposedRevisionID = ids.WorkRevisionID(fmt.Sprintf("revision-race-%03d", index))
-			_, err := service.Finalize(context.Background(), command)
+			result, err := service.Finalize(context.Background(), command)
 			if err == nil {
 				successes.Add(1)
+				receiptMu.Lock()
+				winnerReceipt = result.Receipt
+				receiptMu.Unlock()
 				return
 			}
 			if typed, ok := err.(*FinalizationError); ok && typed.Kind == FinalizationCurrentConflict {
@@ -189,6 +298,9 @@ func TestFinalizationConcurrentDistinctOperationsHaveOneCASWinner(t *testing.T) 
 	if successes.Load() != 1 || conflicts.Load() != workers-1 || store.publishCalls.Load() != workers {
 		t.Fatalf("success=%d conflicts=%d publish=%d", successes.Load(), conflicts.Load(), store.publishCalls.Load())
 	}
+	if store.current == nil || winnerReceipt == "" || winnerReceipt != store.current.Receipt || winnerReceipt.Validate() != nil {
+		t.Fatalf("winning publication did not preserve its exact receipt: winner=%q current=%v", winnerReceipt, store.current != nil)
+	}
 }
 
 func TestFinalizationConcurrentSameOperationConvergesOnOneGeneration(t *testing.T) {
@@ -198,6 +310,8 @@ func TestFinalizationConcurrentSameOperationConvergesOnOneGeneration(t *testing.
 	command := finalizationCommandFixture("operation-same-race")
 	const workers = 100
 	var successes atomic.Int64
+	var receiptMu sync.Mutex
+	receipts := map[FinalizationReceipt]bool{}
 	var wait sync.WaitGroup
 	wait.Add(workers)
 	for range workers {
@@ -206,11 +320,14 @@ func TestFinalizationConcurrentSameOperationConvergesOnOneGeneration(t *testing.
 			result, err := service.Finalize(context.Background(), command)
 			if err == nil && result.Revision.ID() == command.ProposedRevisionID {
 				successes.Add(1)
+				receiptMu.Lock()
+				receipts[result.Receipt] = true
+				receiptMu.Unlock()
 			}
 		}()
 	}
 	wait.Wait()
-	if successes.Load() != workers || store.current == nil || len(store.operations) != 1 {
+	if successes.Load() != workers || store.current == nil || len(store.operations) != 1 || len(receipts) != 1 || receipts[""] {
 		t.Fatalf("same-operation convergence: successes=%d current=%v operations=%d", successes.Load(), store.current != nil, len(store.operations))
 	}
 }
@@ -225,9 +342,13 @@ func TestFinalizationAmbiguousCommittedResponseReplaysWithoutProvider(t *testing
 		t.Fatal("lost response was not surfaced")
 	}
 	calls := source.calls.Load()
+	persistedReceipt := store.operations[command.OperationID].result.Receipt
 	result, err := service.Finalize(context.Background(), command)
 	if err != nil || !result.Replayed || source.calls.Load() != calls {
 		t.Fatalf("ambiguous replay=%#v err=%v calls=%d/%d", result, err, calls, source.calls.Load())
+	}
+	if result.Receipt == "" || result.Receipt != persistedReceipt {
+		t.Fatal("lost-response replay did not return original receipt")
 	}
 }
 
@@ -263,6 +384,7 @@ type memoryFinalizationStore struct {
 	loseFirstResponse    bool
 	failBeforeCommit     bool
 	violatePostcondition bool
+	mutateResponse       func(*FinalizationResult)
 }
 type storedFinalization struct {
 	digest string
@@ -310,7 +432,7 @@ func (store *memoryFinalizationStore) PublishGenerationOne(_ context.Context, co
 	snapshot.Lifecycle = LifecycleTerminal
 	snapshot.TerminalOutcome = OutcomeWorkFinalized
 	snapshot.UpdatedAt = commit.OccurredAt
-	result := FinalizationResult{Revision: commit.Candidate, Mission: snapshot, RequestDigest: commit.RequestDigest}
+	result := FinalizationResult{Revision: commit.Candidate, Mission: snapshot, RequestDigest: commit.RequestDigest, Receipt: commit.ExpectedReceipt}
 	if store.violatePostcondition {
 		result.Mission.StateVersion++
 	}
@@ -320,7 +442,11 @@ func (store *memoryFinalizationStore) PublishGenerationOne(_ context.Context, co
 		store.loseFirstResponse = false
 		return FinalizationResult{}, fmt.Errorf("response lost")
 	}
-	return result, nil
+	response := result
+	if store.mutateResponse != nil {
+		store.mutateResponse(&response)
+	}
+	return response, nil
 }
 
 func finalizationCommandFixture(operation ids.OperationID) FinalizationCommand {
@@ -329,6 +455,10 @@ func finalizationCommandFixture(operation ids.OperationID) FinalizationCommand {
 }
 
 func missionFinalizationObservation(t *testing.T, revision string) workgraph.FinalizationObservation {
+	return missionFinalizationObservationWithTitle(t, revision, "")
+}
+
+func missionFinalizationObservationWithTitle(t *testing.T, revision, title string) workgraph.FinalizationObservation {
 	t.Helper()
 	work := make([]workgraph.WorkObservation, 0, 2)
 	approved := make([]workgraph.ApprovedScope, 0, 2)
@@ -338,7 +468,11 @@ func missionFinalizationObservation(t *testing.T, revision string) workgraph.Fin
 		if index == 1 {
 			dependencies = []ids.WorkID{"work-a"}
 		}
-		item, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{ProjectID: "project-final", WorkID: id, Title: "Implement " + id.String(), Description: "Complete the bounded work item.", DesignContext: "Use the approved design.", Criteria: []workgraph.CriterionObservation{{ID: "criterion-" + id.String(), Text: "Run the test.", Outcome: "The test passes.", Verifier: "test", Requirement: workgraph.CriterionRequired}}, Dependencies: dependencies, WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/" + string('a'+rune(index)), Domain: "domain", Access: workgraph.ScopeWriteExclusive}}, Provenance: []workgraph.ScopeReference{{ID: scopeID, Kind: workgraph.ScopePlanConcern}}})
+		workTitle := "Implement " + id.String()
+		if title != "" && index == 0 {
+			workTitle = title
+		}
+		item, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{ProjectID: "project-final", WorkID: id, Title: workTitle, Description: "Complete the bounded work item.", DesignContext: "Use the approved design.", Criteria: []workgraph.CriterionObservation{{ID: "criterion-" + id.String(), Text: "Run the test.", Outcome: "The test passes.", Verifier: "test", Requirement: workgraph.CriterionRequired}}, Dependencies: dependencies, WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/" + string('a'+rune(index)), Domain: "domain", Access: workgraph.ScopeWriteExclusive}}, Provenance: []workgraph.ScopeReference{{ID: scopeID, Kind: workgraph.ScopePlanConcern}}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -3,8 +3,11 @@ package mission
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,7 +66,24 @@ type FinalizationResult struct {
 	Revision      workgraph.RevisionV2
 	Mission       MissionSnapshot
 	RequestDigest string
+	Receipt       FinalizationReceipt
 	Replayed      bool
+}
+
+// FinalizationReceipt binds an operation to its exact complete outcome,
+// including provider evidence intentionally excluded from semantic digests.
+type FinalizationReceipt string
+
+func (receipt FinalizationReceipt) Validate() error {
+	value := string(receipt)
+	if len(value) != 64 {
+		return fmt.Errorf("finalization receipt must be a lowercase SHA-256 commitment")
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || value != fmt.Sprintf("%x", decoded) {
+		return fmt.Errorf("finalization receipt must be a lowercase SHA-256 commitment")
+	}
+	return nil
 }
 
 // FinalizationObservationSource is a provider-neutral read seam. An adapter
@@ -78,14 +98,16 @@ type FinalizationCommit struct {
 	ExpectedCurrentGeneration uint64
 	OperationID               ids.OperationID
 	RequestDigest             string
+	ExpectedReceipt           FinalizationReceipt
 	Candidate                 workgraph.RevisionV2
 	ActorID                   ids.ActorID
 	GovernanceContextID       ids.GovernanceContextID
 	OccurredAt                time.Time
 }
 
-// FinalizationStore must bind replay and expected-current CAS to the mission
-// state transition in one local atomic boundary. WP08 supplies durability.
+// FinalizationStore must atomically persist operation/request identity, the
+// exact outcome, and ExpectedReceipt. Replay returns that persisted receipt
+// and must never regenerate it from later state. WP08 supplies durability.
 type FinalizationStore interface {
 	ReplayFinalization(context.Context, ids.MissionID, ids.OperationID, string) (FinalizationResult, bool, error)
 	PublishGenerationOne(context.Context, FinalizationCommit) (FinalizationResult, error)
@@ -114,7 +136,7 @@ func (service *FinalizationService) Finalize(ctx context.Context, command Finali
 	if replay, found, replayErr := service.store.ReplayFinalization(ctx, command.MissionID, command.OperationID, requestDigest); replayErr != nil {
 		return FinalizationResult{}, normalizeFinalizationStoreError(replayErr)
 	} else if found {
-		if err := validateFinalizationPostconditions(command, replay.Revision, replay, requestDigest); err != nil {
+		if err := validateFinalizationPostconditions(command, replay.Revision, replay, requestDigest, replay.Receipt); err != nil {
 			return FinalizationResult{}, err
 		}
 		replay.RequestDigest = requestDigest
@@ -139,11 +161,16 @@ func (service *FinalizationService) Finalize(ctx context.Context, command Finali
 	if err := workgraph.CompareFinalizationObservations(first, second); err != nil {
 		return FinalizationResult{}, finalizationError(FinalizationProviderChanged, FinalizationObserveAgain, "provider_recheck", "provider work changed during finalization", err)
 	}
-	result, err := service.store.PublishGenerationOne(ctx, FinalizationCommit{ExpectedMission: command.ExpectedMission.clone(), ExpectedCurrentGeneration: command.ExpectedCurrentGeneration, OperationID: command.OperationID, RequestDigest: requestDigest, Candidate: candidate, ActorID: command.ActorID, GovernanceContextID: command.GovernanceContextID, OccurredAt: command.OccurredAt})
+	expectedMission := expectedFinalizationMission(command, candidate.ID())
+	expectedReceipt, err := finalizationOutcomeReceipt(candidate, expectedMission, command.MissionID, command.OperationID, requestDigest)
+	if err != nil {
+		return FinalizationResult{}, finalizationError(FinalizationInvalidRequest, FinalizationCorrectInput, "receipt", "finalization outcome cannot be committed", nil)
+	}
+	result, err := service.store.PublishGenerationOne(ctx, FinalizationCommit{ExpectedMission: command.ExpectedMission.clone(), ExpectedCurrentGeneration: command.ExpectedCurrentGeneration, OperationID: command.OperationID, RequestDigest: requestDigest, ExpectedReceipt: expectedReceipt, Candidate: candidate, ActorID: command.ActorID, GovernanceContextID: command.GovernanceContextID, OccurredAt: command.OccurredAt})
 	if err != nil {
 		return FinalizationResult{}, normalizeFinalizationStoreError(err)
 	}
-	if err := validateFinalizationPostconditions(command, candidate, result, requestDigest); err != nil {
+	if err := validateFinalizationPostconditions(command, candidate, result, requestDigest, expectedReceipt); err != nil {
 		return FinalizationResult{}, err
 	}
 	result.RequestDigest = requestDigest
@@ -215,24 +242,72 @@ func finalizationCommandDigest(command FinalizationCommand) (string, error) {
 	}{command.MissionID, command.ProjectID, command.ExpectedMission.DefinitionID, command.ExpectedMission.DefinitionVersion, command.ExpectedMission.DefinitionCommitment, command.ExpectedMission.CurrentStep, command.ExpectedMission.StateVersion, command.ExpectedCurrentGeneration, command.ProposedRevisionID, command.RequestedGeneration, command.PredecessorID, command.PlanningSourceCommit, command.ActorID, command.GovernanceContextID, command.OccurredAt.Format(time.RFC3339Nano)})
 }
 
-func validateFinalizationPostconditions(command FinalizationCommand, candidate workgraph.RevisionV2, result FinalizationResult, requestDigest string) error {
+func validateFinalizationPostconditions(command FinalizationCommand, candidate workgraph.RevisionV2, result FinalizationResult, requestDigest string, expectedReceipt FinalizationReceipt) error {
 	definition := candidate.MissionDefinition()
 	if candidate.ID() != command.ProposedRevisionID || candidate.ProjectID() != command.ProjectID || candidate.MissionID() != command.MissionID || candidate.Generation() != 1 || candidate.PredecessorID() != "" || candidate.PlanningSourceCommit() != command.PlanningSourceCommit || definition.Key != command.ExpectedMission.DefinitionID.String() || definition.Version != uint64(command.ExpectedMission.DefinitionVersion) || definition.Digest != command.ExpectedMission.DefinitionCommitment.String() || candidate.FinalizedBy() != command.ActorID || !candidate.FinalizedAt().Equal(command.OccurredAt) || candidate.GovernanceContextID() != command.GovernanceContextID {
 		return finalizationError(FinalizationContractFailure, FinalizationRepairPersistence, "store.revision", "finalization store returned a revision outside the requested authority", nil)
 	}
 	candidateBytes, _ := candidate.Encode()
 	resultBytes, _ := result.Revision.Encode()
-	expectedMission := command.ExpectedMission.clone()
-	expectedMission.CurrentStep = StepWorkFinalized
-	expectedMission.CurrentWorkRevisionID = candidate.ID()
-	expectedMission.StateVersion++
-	expectedMission.Lifecycle = LifecycleTerminal
-	expectedMission.TerminalOutcome = OutcomeWorkFinalized
-	expectedMission.UpdatedAt = command.OccurredAt
-	if !bytes.Equal(candidateBytes, resultBytes) || result.Mission.Validate() != nil || !sameMissionSnapshot(expectedMission, result.Mission) || result.RequestDigest != requestDigest {
+	expectedMission := expectedFinalizationMission(command, candidate.ID())
+	recomputedReceipt, receiptErr := finalizationOutcomeReceipt(result.Revision, result.Mission, command.MissionID, command.OperationID, requestDigest)
+	if !bytes.Equal(candidateBytes, resultBytes) || result.Mission.Validate() != nil || !sameMissionSnapshot(expectedMission, result.Mission) || result.RequestDigest != requestDigest || expectedReceipt.Validate() != nil || result.Receipt.Validate() != nil || result.Receipt != expectedReceipt || receiptErr != nil || recomputedReceipt != result.Receipt {
 		return finalizationError(FinalizationContractFailure, FinalizationRepairPersistence, "store.publish", "finalization store violated publication postconditions", nil)
 	}
 	return nil
+}
+
+func expectedFinalizationMission(command FinalizationCommand, revisionID ids.WorkRevisionID) MissionSnapshot {
+	result := command.ExpectedMission.clone()
+	result.CurrentStep = StepWorkFinalized
+	result.CurrentWorkRevisionID = revisionID
+	result.StateVersion++
+	result.Lifecycle = LifecycleTerminal
+	result.TerminalOutcome = OutcomeWorkFinalized
+	result.UpdatedAt = command.OccurredAt
+	return result
+}
+
+// finalizationOutcomeReceipt assumes the durable store preserves this receipt
+// independently. Simultaneous replacement of both a complete outcome and its
+// correctly recomputed receipt is outside the trusted-store model.
+func finalizationOutcomeReceipt(revision workgraph.RevisionV2, mission MissionSnapshot, missionID ids.MissionID, operationID ids.OperationID, requestDigest string) (FinalizationReceipt, error) {
+	revisionBytes, err := revision.Encode()
+	if err != nil {
+		return "", err
+	}
+	blockers := append([]ids.BlockerID{}, mission.ActiveBlockers...)
+	sort.Slice(blockers, func(i, j int) bool { return blockers[i] < blockers[j] })
+	decisions := append([]ids.DecisionID{}, mission.UnresolvedDecisions...)
+	sort.Slice(decisions, func(i, j int) bool { return decisions[i] < decisions[j] })
+	type missionOutcome struct {
+		MissionID             ids.MissionID           `json:"mission_id"`
+		ProjectID             ids.ProjectID           `json:"project_id"`
+		DefinitionID          ids.MissionDefinitionID `json:"definition_id"`
+		DefinitionVersion     DefinitionVersion       `json:"definition_version"`
+		DefinitionCommitment  DefinitionCommitment    `json:"definition_commitment"`
+		Lifecycle             LifecycleStatus         `json:"lifecycle"`
+		CurrentStep           StepKey                 `json:"current_step"`
+		CurrentWorkRevisionID ids.WorkRevisionID      `json:"current_work_revision_id"`
+		StateVersion          uint64                  `json:"state_version"`
+		CreatedAt             string                  `json:"created_at"`
+		UpdatedAt             string                  `json:"updated_at"`
+		TerminalOutcome       TerminalOutcome         `json:"terminal_outcome"`
+		ActiveBlockers        []ids.BlockerID         `json:"active_blockers"`
+		UnresolvedDecisions   []ids.DecisionID        `json:"unresolved_decisions"`
+	}
+	material, err := json.Marshal(struct {
+		RevisionBytes []byte          `json:"revision_bytes"`
+		Mission       missionOutcome  `json:"mission"`
+		MissionID     ids.MissionID   `json:"mission_id"`
+		OperationID   ids.OperationID `json:"operation_id"`
+		RequestDigest string          `json:"request_digest"`
+	}{revisionBytes, missionOutcome{mission.MissionID, mission.ProjectID, mission.DefinitionID, mission.DefinitionVersion, mission.DefinitionCommitment, mission.Lifecycle, mission.CurrentStep, mission.CurrentWorkRevisionID, mission.StateVersion, mission.CreatedAt.Format(time.RFC3339Nano), mission.UpdatedAt.Format(time.RFC3339Nano), mission.TerminalOutcome, blockers, decisions}, missionID, operationID, requestDigest})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append([]byte("spec-kitty/finalization-outcome-receipt/v1\x00"), material...))
+	return FinalizationReceipt(fmt.Sprintf("%x", sum)), nil
 }
 func normalizeFinalizationStoreError(err error) error {
 	if typed, ok := err.(*FinalizationError); ok {
