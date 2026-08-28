@@ -311,6 +311,12 @@ method as the fake through finalization, drift, reconciliation, and projection.
    and redacted result. WP12 owns the frozen aggregate evidence files.
 6. Keep the scenario offline after the pinned binary is present and ensure the
    normal fake-provider test suite still runs when Beads is absent.
+7. Preserve the accepted Phase 2 qualification runner and its exact 11-scenario
+   evidence schema. WP11 exposes one exact, explicitly enabled real-provider
+   mission-method test selector and qualifies that selector inside the same
+   pinned offline containment boundary. WP12 owns registering it in the new
+   Phase 3 campaign and publishing aggregate Phase 3 evidence; do not silently
+   widen or relabel the historical Phase 2 campaign.
 
 **Files**:
 
@@ -329,6 +335,9 @@ method as the fake through finalization, drift, reconciliation, and projection.
   leaves a workspace/branch/process behind.
 - Evidence identifies exact source and provider inputs without credentials,
   raw environment, full command streams, or private work prose.
+- The direct WP11 real-provider selector covers both generations, drift,
+  reconciliation, and projection. A passing historical Phase 2 campaign alone
+  is not evidence for T059.
 
 ### Subtask T060: Prove fake parity and adversarial provider honesty
 
