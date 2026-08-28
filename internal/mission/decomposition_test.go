@@ -2,7 +2,9 @@ package mission_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,7 +52,7 @@ func TestDecompositionRefusesIneligiblePlanBeforeProviderAuthority(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			command, missionState, plans, provider := decompositionFixture(t)
 			test.mutate(&command, missionState, plans)
-			service := mission.NewDecompositionService(missionState, plans, provider)
+			service := mission.NewDecompositionService(missionState, plans, provider, provider.authority)
 			if _, err := service.Decompose(context.Background(), command); err == nil {
 				t.Fatal("ineligible decomposition accepted")
 			}
@@ -63,7 +65,7 @@ func TestDecompositionRefusesIneligiblePlanBeforeProviderAuthority(t *testing.T)
 
 func TestDecompositionCreatesTwoItemGraphAndReplaysExactly(t *testing.T) {
 	command, missions, plans, provider := decompositionFixture(t)
-	service := mission.NewDecompositionService(missions, plans, provider)
+	service := mission.NewDecompositionService(missions, plans, provider, provider.authority)
 	first, err := service.Decompose(context.Background(), command)
 	if err != nil {
 		t.Fatal(err)
@@ -105,6 +107,85 @@ func TestDecompositionCreatesTwoItemGraphAndReplaysExactly(t *testing.T) {
 	}
 }
 
+func TestDecompositionRootAuthorityBindsCompleteRequestBeforeProvider(t *testing.T) {
+	mutations := []struct {
+		name   string
+		mutate func(*mission.DecompositionCommand, *missionSource)
+	}{
+		{"state version", func(c *mission.DecompositionCommand, s *missionSource) {
+			c.ExpectedMission.StateVersion++
+			s.snapshot = c.ExpectedMission
+		}},
+		{"created at", func(c *mission.DecompositionCommand, s *missionSource) {
+			c.ExpectedMission.CreatedAt = c.ExpectedMission.CreatedAt.Add(-time.Second)
+			s.snapshot = c.ExpectedMission
+		}},
+		{"updated at", func(c *mission.DecompositionCommand, s *missionSource) {
+			c.ExpectedMission.UpdatedAt = c.ExpectedMission.UpdatedAt.Add(time.Second)
+			s.snapshot = c.ExpectedMission
+		}},
+		{"blocker membership", func(c *mission.DecompositionCommand, s *missionSource) {
+			c.ExpectedMission.ActiveBlockers = []ids.BlockerID{"blocker-one"}
+			s.snapshot = c.ExpectedMission
+		}},
+		{"decision membership", func(c *mission.DecompositionCommand, s *missionSource) {
+			c.ExpectedMission.UnresolvedDecisions = []ids.DecisionID{"decision-one"}
+			s.snapshot = c.ExpectedMission
+		}},
+		{"actor", func(c *mission.DecompositionCommand, _ *missionSource) { c.ActorID = "actor-other" }},
+		{"governance", func(c *mission.DecompositionCommand, _ *missionSource) { c.GovernanceContextID = "governance-other" }},
+		{"occurred at", func(c *mission.DecompositionCommand, _ *missionSource) { c.OccurredAt = c.OccurredAt.Add(time.Second) }},
+	}
+	for _, test := range mutations {
+		t.Run(test.name, func(t *testing.T) {
+			command, missions, plans, provider := decompositionFixture(t)
+			service := mission.NewDecompositionService(missions, plans, provider, provider.authority)
+			if _, err := service.Decompose(context.Background(), command); err != nil {
+				t.Fatal(err)
+			}
+			provider.createCalls, provider.observeCalls, provider.capabilityCalls = 0, 0, 0
+			test.mutate(&command, missions)
+			_, err := service.Decompose(context.Background(), command)
+			var typed *mission.DecompositionError
+			if !errors.As(err, &typed) || typed.Kind != mission.DecompositionOperationConflict {
+				t.Fatalf("error=%T %v", err, err)
+			}
+			if provider.capabilityCalls != 0 || provider.createCalls != 0 || provider.observeCalls != 0 {
+				t.Fatalf("operation conflict crossed provider boundary: %+v", provider)
+			}
+		})
+	}
+}
+
+func TestDecompositionFreshRootRejectsPreexistingChildMutation(t *testing.T) {
+	command, missions, plans, provider := decompositionFixture(t)
+	definition := command.Work[0].Definition
+	digest := sha256.Sum256([]byte(command.OperationID.String() + "\x00" + definition.WorkID().String()))
+	child := ids.OperationID(fmt.Sprintf("decompose-%x", digest[:16]))
+	if _, err := provider.port.CreateDefinition(context.Background(), tracker.CreateWorkDefinitionRequest{OperationID: child, Definition: definition}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+	var typed *mission.DecompositionError
+	if !errors.As(err, &typed) || typed.Kind != mission.DecompositionProviderFailure || result.Status != mission.DecompositionAmbiguous {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestDecompositionFreshRootRejectsPartiallyRepairedChildMutation(t *testing.T) {
+	command, missions, plans, provider := decompositionFixture(t)
+	provider.createHook = func(_ tracker.CreateWorkDefinitionRequest, mutation tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation {
+		mutation.Replayed = false
+		mutation.PriorMutation = true
+		return mutation
+	}
+	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+	var typed *mission.DecompositionError
+	if !errors.As(err, &typed) || typed.Kind != mission.DecompositionProviderFailure || result.Status != mission.DecompositionAmbiguous {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
 func TestDecompositionValidatesCompleteGraphBeforeFirstProviderWrite(t *testing.T) {
 	command, missions, plans, provider := decompositionFixture(t)
 	feature := command.Work[1].Definition
@@ -113,7 +194,7 @@ func TestDecompositionValidatesCompleteGraphBeforeFirstProviderWrite(t *testing.
 		t.Fatal(err)
 	}
 	command.Work[1].Definition = invalid
-	result, err := mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
 	if err == nil || len(result.Findings) == 0 || provider.prepareCalls != 0 || provider.createCalls != 0 {
 		t.Fatalf("invalid graph result=%+v error=%v provider=%+v", result, err, provider)
 	}
@@ -141,7 +222,7 @@ func TestDecompositionRejectsLocallyDetectableUpdateMappingMismatchesBeforeProvi
 			command.Work[0].Existing = &reference
 			command.Work[0].ExpectedObservation = created.Observation.ProviderObservation().Revision
 			test.mutate(&command.Work[0])
-			_, err = mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+			_, err = mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
 			var typed *mission.DecompositionError
 			if !errors.As(err, &typed) || typed.Kind != mission.DecompositionInvalidRequest {
 				t.Fatalf("mapping mismatch error = %T %v", err, err)
@@ -162,7 +243,7 @@ func TestDecompositionAcceptsAnExactlyAttributedGuardedUpdate(t *testing.T) {
 	reference := created.Observation.ExternalRef()
 	command.Work[0].Existing = &reference
 	command.Work[0].ExpectedObservation = created.Observation.ProviderObservation().Revision
-	result, err := mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
 	if err != nil || result.Status != mission.DecompositionComplete || len(result.Observations) != 2 || provider.updateCalls != 1 || provider.createCalls != 1 {
 		t.Fatalf("exact update result=%+v error=%v provider=%+v", result, err, provider)
 	}
@@ -228,7 +309,7 @@ func TestDecompositionRejectsUnattributedProviderResultsWithoutAdoptingState(t *
 		t.Run(test.name, func(t *testing.T) {
 			command, missions, plans, provider := decompositionFixture(t)
 			test.setup(t, provider)
-			result, err := mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+			result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
 			var typed *mission.DecompositionError
 			if !errors.As(err, &typed) || typed.Kind != mission.DecompositionProviderFailure || typed.Recovery != mission.DecompositionObserveThenReconcile || typed.Field != "provider_attribution" {
 				t.Fatalf("attribution error = %T %+v result=%+v", err, typed, result)
@@ -248,7 +329,7 @@ func TestDecompositionSurfacesTimeoutAfterApplyAsAmbiguous(t *testing.T) {
 	if err := provider.store.Inject(context.Background(), fake.FailureTimeoutAfterApply); err != nil {
 		t.Fatal(err)
 	}
-	result, err := mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
 	if err == nil || result.Status != mission.DecompositionAmbiguous || result.Recovery != mission.DecompositionObserveThenReconcile || len(result.Observations) != 1 || result.FailedWorkID == "" {
 		t.Fatalf("ambiguous result=%+v error=%v", result, err)
 	}
@@ -260,7 +341,7 @@ func TestDecompositionSurfacesTimeoutAfterApplyAsAmbiguous(t *testing.T) {
 func TestDecompositionSurfacesPartialProviderFailureWithoutClaimingRollback(t *testing.T) {
 	command, missions, plans, provider := decompositionFixture(t)
 	provider.failCreateAt = 2
-	result, err := mission.NewDecompositionService(missions, plans, provider).Decompose(context.Background(), command)
+	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
 	if err == nil || result.Status != mission.DecompositionPartial || result.Recovery != mission.DecompositionObserveThenReconcile || len(result.Observations) != 1 || result.Observations[0].Definition().WorkID() != "work-foundation" || result.FailedWorkID != "work-feature" {
 		t.Fatalf("partial result=%+v error=%v", result, err)
 	}
@@ -287,6 +368,7 @@ func (s *planSource) ObserveCurrentApproval(context.Context, string, artifact.Ki
 type countingDefinitionProvider struct {
 	port                                                                  *fake.Provider
 	store                                                                 *fake.Store
+	authority                                                             *countingDecompositionAuthority
 	capabilityCalls, prepareCalls, createCalls, updateCalls, observeCalls int
 	failCreateAt                                                          int
 	createHook                                                            func(tracker.CreateWorkDefinitionRequest, tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation
@@ -296,10 +378,6 @@ type countingDefinitionProvider struct {
 func (p *countingDefinitionProvider) DefinitionCapabilities(ctx context.Context) (tracker.WorkDefinitionCapabilities, error) {
 	p.capabilityCalls++
 	return p.port.DefinitionCapabilities(ctx)
-}
-func (p *countingDefinitionProvider) PrepareDefinitionOperation(ctx context.Context, id ids.OperationID, digest string) error {
-	p.prepareCalls++
-	return p.port.PrepareDefinitionOperation(ctx, id, digest)
 }
 func (p *countingDefinitionProvider) CreateDefinition(ctx context.Context, r tracker.CreateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
 	p.createCalls++
@@ -335,9 +413,26 @@ func decompositionFixture(t *testing.T) (mission.DecompositionCommand, *missionS
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &countingDefinitionProvider{port: fake.NewProvider(store), store: store}
+	provider := &countingDefinitionProvider{port: fake.NewProvider(store), store: store, authority: &countingDecompositionAuthority{seen: map[ids.OperationID]string{}}}
 	plans := &planSource{observation: approvalObservation(t, snapshot.MissionID, artifact.KindPlan, command.PlanRevisionID, planDigest, artifact.VerdictApproved)}
 	return command, &missionSource{snapshot: snapshot}, plans, provider
+}
+
+type countingDecompositionAuthority struct {
+	seen  map[ids.OperationID]string
+	calls int
+}
+
+func (a *countingDecompositionAuthority) ReserveDecompositionOperation(_ context.Context, request mission.DecompositionOperationRequest) (mission.DecompositionOperationReservation, error) {
+	a.calls++
+	if prior, exists := a.seen[request.OperationID]; exists {
+		if prior != request.RequestDigest {
+			return mission.DecompositionOperationReservation{}, &mission.DecompositionError{Kind: mission.DecompositionOperationConflict, Recovery: mission.DecompositionCorrectInput, Field: "operation_id", Message: "operation identity was reused"}
+		}
+		return mission.DecompositionOperationReservation{Replayed: true}, nil
+	}
+	a.seen[request.OperationID] = request.RequestDigest
+	return mission.DecompositionOperationReservation{}, nil
 }
 
 func rewriteDefinitionObservation(t *testing.T, source tracker.WorkDefinitionObservation, definition tracker.WorkDefinition, mutate func(*tracker.ExternalWorkRef)) tracker.WorkDefinitionObservation {

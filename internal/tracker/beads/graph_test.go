@@ -1,6 +1,7 @@
 package beads
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,15 +22,120 @@ type wp06Comment struct {
 }
 
 type wp06Issue struct {
-	ID, Title, Metadata, UpdatedAt string
-	Comments                       []wp06Comment
+	ID, Title, Description, Metadata, UpdatedAt string
+	Comments                                    []wp06Comment
 }
 
 func (issue wp06Issue) wire() map[string]any {
+	description := issue.Description
+	if description == "" {
+		description = "description"
+	}
 	return map[string]any{
-		"id": issue.ID, "title": issue.Title, "description": "description", "acceptance_criteria": "",
+		"id": issue.ID, "title": issue.Title, "description": description, "acceptance_criteria": "",
 		"metadata": json.RawMessage(issue.Metadata), "updated_at": issue.UpdatedAt,
 		"dependency_count": 0, "comment_count": len(issue.Comments),
+	}
+}
+
+func addDefinitionIssue(t *testing.T, runner *wp06Runner, definition tracker.WorkDefinition, external string) tracker.ExternalWorkRef {
+	t.Helper()
+	created := ids.OperationID("operation-create-" + definition.WorkID().String())
+	metadata, err := mergeMetadata(definition.ProviderMetadata().Bytes(), metadataFromDefinition(definition, created, created))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	updated := runner.tickLocked()
+	runner.issues[external] = wp06Issue{ID: external, Title: definition.Title(), Description: definition.Description(), Metadata: string(metadata), UpdatedAt: updated}
+	runner.mu.Unlock()
+	return tracker.ExternalWorkRef{ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Provider: beadsProvider, ExternalID: external, MetadataSchema: 1, CreatedByOperation: created}
+}
+
+func graphDefinition(t *testing.T, workID ids.WorkID, dependencies ...ids.WorkID) tracker.WorkDefinition {
+	t.Helper()
+	metadata, err := tracker.NewOpaqueMetadata([]byte(`{"foreign":{"stable":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{
+		ProjectID: "project-1", WorkID: workID, Title: "Graph " + workID.String(), Description: "Complete graph definition.",
+		DesignContext: "Canonical provider graph projection.", Criteria: []tracker.WorkCriterion{{ID: "criterion-1", Text: "graph is exact", Outcome: "graph tests pass", Verifier: tracker.VerifierTest, Required: true}},
+		Dependencies: dependencies, WriteScopes: []tracker.WriteScope{{Path: "internal/" + workID.String(), Domain: "graph", Access: tracker.ScopeWriteExclusive}},
+		Provenance: []tracker.ScopeRef{{ID: "plan-graph", Kind: tracker.ScopePlanConcern}}, MetadataSchema: 1, ProviderMetadata: metadata,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return definition
+}
+
+func TestDefinitionCatalogJoinsBlockingGraphCanonically(t *testing.T) {
+	bound, runner := newWP06Adapter(t)
+	workA := graphDefinition(t, "work-a")
+	workB := graphDefinition(t, "work-b", "work-a")
+	addDefinitionIssue(t, runner, workB, "bd-b")
+	addDefinitionIssue(t, runner, workA, "bd-a")
+	runner.edges = []observationDependency{{Blocked: "bd-b", Blocking: "bd-a", Kind: "blocks", EdgeID: "edge-z"}, {Blocked: "bd-b", Blocking: "bd-a", Kind: "blocks", EdgeID: "edge-a"}}
+
+	var wantCanonical [][]byte
+	var wantRevisions []tracker.Revision
+	for iteration := 0; iteration < 100; iteration++ {
+		runner.mu.Lock()
+		if iteration%2 == 1 {
+			runner.edges[0], runner.edges[1] = runner.edges[1], runner.edges[0]
+		}
+		runner.mu.Unlock()
+		observations, err := bound.ObserveDefinitionCatalog(context.Background(), "project-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(observations) != 2 || observations[0].Definition().WorkID() != "work-a" || observations[1].Definition().WorkID() != "work-b" || !reflect.DeepEqual(observations[1].Definition().Dependencies(), []ids.WorkID{"work-a"}) {
+			t.Fatalf("observations=%#v", observations)
+		}
+		canonical := [][]byte{observations[0].Definition().CanonicalData(), observations[1].Definition().CanonicalData()}
+		revisions := []tracker.Revision{observations[0].ProviderObservation().Revision, observations[1].ProviderObservation().Revision}
+		if iteration == 0 {
+			wantCanonical, wantRevisions = canonical, revisions
+			continue
+		}
+		if !bytes.Equal(canonical[0], wantCanonical[0]) || !bytes.Equal(canonical[1], wantCanonical[1]) || !reflect.DeepEqual(revisions, wantRevisions) {
+			t.Fatalf("iteration=%d canonical or evidence changed", iteration)
+		}
+	}
+}
+
+func TestDefinitionCatalogRejectsGraphMismatchAndCrossProjectMapping(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		prepare func(*testing.T, *wp06Runner)
+	}{
+		{"missing blocking edge", func(t *testing.T, runner *wp06Runner) {
+			addDefinitionIssue(t, runner, graphDefinition(t, "work-a"), "bd-a")
+			addDefinitionIssue(t, runner, graphDefinition(t, "work-b", "work-a"), "bd-b")
+		}},
+		{"cross project mapping", func(t *testing.T, runner *wp06Runner) {
+			addDefinitionIssue(t, runner, graphDefinition(t, "work-a"), "bd-a")
+			foreign := graphDefinition(t, "work-b")
+			created := ids.OperationID("operation-create-work-b")
+			metadata := metadataFromDefinition(foreign, created, created)
+			metadata.ProjectID = "project-foreign"
+			encoded, err := mergeMetadata(nil, metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner.mu.Lock()
+			runner.issues["bd-b"] = wp06Issue{ID: "bd-b", Title: foreign.Title(), Description: foreign.Description(), Metadata: string(encoded), UpdatedAt: runner.tickLocked()}
+			runner.mu.Unlock()
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bound, runner := newWP06Adapter(t)
+			test.prepare(t, runner)
+			if _, err := bound.ObserveDefinitionCatalog(context.Background(), "project-1"); !tracker.IsKind(err, tracker.ErrorRevisionConflict) {
+				t.Fatalf("error=%v", err)
+			}
+		})
 	}
 }
 

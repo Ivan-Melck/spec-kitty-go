@@ -92,19 +92,38 @@ type PlanApprovalSource interface {
 	ObserveCurrentApproval(context.Context, string, artifact.Kind) (artifact.CurrentApprovalObservation, error)
 }
 
-type DecompositionService struct {
-	missions MissionSnapshotSource
-	plans    PlanApprovalSource
-	provider tracker.WorkDefinitionPort
-	quality  workgraph.QualityPolicy
+// DecompositionOperationReservation is durable local authority for one
+// decomposition saga. Provider operations are children of this authority; a
+// tracker is never the authority for the mission-scoped operation identity.
+type DecompositionOperationReservation struct {
+	Replayed bool
 }
 
-func NewDecompositionService(missions MissionSnapshotSource, plans PlanApprovalSource, provider tracker.WorkDefinitionPort) *DecompositionService {
-	return &DecompositionService{missions: missions, plans: plans, provider: provider, quality: workgraph.DefaultQualityPolicy()}
+type DecompositionOperationRequest struct {
+	MissionID     ids.MissionID
+	OperationID   ids.OperationID
+	RequestDigest string
+	OccurredAt    time.Time
+}
+
+type DecompositionOperationAuthority interface {
+	ReserveDecompositionOperation(context.Context, DecompositionOperationRequest) (DecompositionOperationReservation, error)
+}
+
+type DecompositionService struct {
+	missions   MissionSnapshotSource
+	plans      PlanApprovalSource
+	provider   tracker.WorkDefinitionPort
+	operations DecompositionOperationAuthority
+	quality    workgraph.QualityPolicy
+}
+
+func NewDecompositionService(missions MissionSnapshotSource, plans PlanApprovalSource, provider tracker.WorkDefinitionPort, operations DecompositionOperationAuthority) *DecompositionService {
+	return &DecompositionService{missions: missions, plans: plans, provider: provider, operations: operations, quality: workgraph.DefaultQualityPolicy()}
 }
 
 func (service *DecompositionService) Decompose(ctx context.Context, command DecompositionCommand) (DecompositionResult, error) {
-	if service == nil || service.missions == nil || service.plans == nil || service.provider == nil {
+	if service == nil || service.missions == nil || service.plans == nil || service.provider == nil || service.operations == nil {
 		return DecompositionResult{}, decompositionError(DecompositionInvalidRequest, DecompositionCorrectInput, "service", "decomposition dependencies are required", nil)
 	}
 	if err := validateDecompositionCommand(command); err != nil {
@@ -143,22 +162,27 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 		return DecompositionResult{Findings: findings}, decompositionError(DecompositionInvalidWork, DecompositionReviseWork, "work", "proposed work has validation findings", nil)
 	}
 
-	capabilities, err := service.provider.DefinitionCapabilities(ctx)
-	if err != nil || capabilities.Validate() != nil {
-		return DecompositionResult{}, decompositionError(DecompositionProviderCapability, DecompositionRepairProvider, "provider_capabilities", "provider cannot safely persist complete work definitions", err)
-	}
 	requestDigest := decompositionRequestDigest(command)
-	if err := service.provider.PrepareDefinitionOperation(ctx, command.OperationID, requestDigest); err != nil {
+	reservation, err := service.operations.ReserveDecompositionOperation(ctx, DecompositionOperationRequest{MissionID: command.MissionID, OperationID: command.OperationID, RequestDigest: requestDigest, OccurredAt: command.OccurredAt})
+	if err != nil {
 		kind := DecompositionProviderFailure
 		recovery := DecompositionRetrySameOperation
-		if tracker.IsKind(err, tracker.ErrorRevisionConflict) {
+		if typed, ok := err.(*DecompositionError); ok && typed.Kind == DecompositionOperationConflict {
 			kind, recovery = DecompositionOperationConflict, DecompositionCorrectInput
 		}
-		return DecompositionResult{RequestDigest: requestDigest}, decompositionError(kind, recovery, "operation_id", "provider refused decomposition operation preparation", err)
+		return DecompositionResult{RequestDigest: requestDigest}, decompositionError(kind, recovery, "operation_id", "local decomposition authority refused the operation", err)
+	}
+	capabilities, err := service.provider.DefinitionCapabilities(ctx)
+	requirements := decompositionRequirements(command.Work)
+	if err == nil {
+		err = capabilities.Require(requirements)
+	}
+	if err != nil {
+		return DecompositionResult{}, decompositionError(DecompositionProviderCapability, DecompositionRepairProvider, "provider_capabilities", "provider cannot safely persist complete work definitions", err)
 	}
 
 	ordered := orderWorkProposals(command.Work)
-	result := DecompositionResult{Status: DecompositionComplete, RequestDigest: requestDigest, Replayed: true}
+	result := DecompositionResult{Status: DecompositionComplete, RequestDigest: requestDigest, Replayed: reservation.Replayed}
 	for _, proposal := range ordered {
 		operationID := derivedWorkOperation(command.OperationID, proposal.Definition.WorkID())
 		var mutation tracker.WorkDefinitionMutation
@@ -168,6 +192,12 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 			mutation, err = service.provider.UpdateDefinition(ctx, tracker.UpdateWorkDefinitionRequest{OperationID: operationID, ExternalRef: *proposal.Existing, ExpectedObservation: proposal.ExpectedObservation, Definition: proposal.Definition})
 		}
 		hasObservation := mutation.Observation.ProviderObservation().Revision != 0
+		if !reservation.Replayed && (mutation.Replayed || mutation.PriorMutation) {
+			result.FailedWorkID = proposal.Definition.WorkID()
+			result.Status = DecompositionAmbiguous
+			result.Recovery = DecompositionObserveThenReconcile
+			return result, decompositionError(DecompositionProviderFailure, result.Recovery, "provider_replay", "fresh local authority encountered an existing provider mutation", nil)
+		}
 		if hasObservation {
 			if attributionErr := validateMutationAttribution(command.Provider, proposal, operationID, mutation.Observation); attributionErr != nil {
 				result.FailedWorkID = proposal.Definition.WorkID()
@@ -204,6 +234,9 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 		}
 		result.Observations[len(result.Observations)-1] = observed
 	}
+	sort.Slice(result.Observations, func(i, j int) bool {
+		return result.Observations[i].Definition().WorkID() < result.Observations[j].Definition().WorkID()
+	})
 	semanticWork, err := semanticWorkObservations(observationDefinitions(result.Observations))
 	if err != nil {
 		result.Status = DecompositionAmbiguous
@@ -224,6 +257,21 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 	}
 	result.Draft = draft
 	return result, nil
+}
+
+func decompositionRequirements(proposals []WorkProposal) tracker.WorkDefinitionRequirements {
+	requirements := tracker.WorkDefinitionRequirements{}
+	for _, proposal := range proposals {
+		if proposal.Existing == nil {
+			requirements.Create = true
+		} else {
+			requirements.GuardedUpdate = true
+		}
+		if len(proposal.Definition.Dependencies()) != 0 {
+			requirements.BlockingGraph = true
+		}
+	}
+	return requirements
 }
 
 func validateDecompositionCommand(command DecompositionCommand) error {
@@ -388,28 +436,24 @@ func decompositionRequestDigest(command DecompositionCommand) string {
 	scope := append([]workgraph.ApprovedScope(nil), command.ApprovedScope...)
 	sort.Slice(scope, func(i, j int) bool { return scope[i].ID < scope[j].ID })
 	encoded, _ := json.Marshal(struct {
-		MissionID            ids.MissionID             `json:"mission_id"`
-		ProjectID            ids.ProjectID             `json:"project_id"`
-		Provider             string                    `json:"provider"`
-		DefinitionID         ids.MissionDefinitionID   `json:"definition_id"`
-		DefinitionVersion    DefinitionVersion         `json:"definition_version"`
-		DefinitionCommitment DefinitionCommitment      `json:"definition_commitment"`
-		CurrentStep          StepKey                   `json:"current_step"`
-		StateVersion         uint64                    `json:"state_version"`
-		PlanRevisionID       string                    `json:"plan_revision_id"`
-		PlanDigest           string                    `json:"plan_digest"`
-		ActorID              ids.ActorID               `json:"actor_id"`
-		GovernanceContextID  ids.GovernanceContextID   `json:"governance_context_id"`
-		Scope                []workgraph.ApprovedScope `json:"scope"`
-		Work                 []semanticProposal        `json:"work"`
+		MissionID           ids.MissionID             `json:"mission_id"`
+		ProjectID           ids.ProjectID             `json:"project_id"`
+		Provider            string                    `json:"provider"`
+		ExpectedMission     missionSnapshotIdentity   `json:"expected_mission"`
+		PlanRevisionID      string                    `json:"plan_revision_id"`
+		PlanDigest          string                    `json:"plan_digest"`
+		ActorID             ids.ActorID               `json:"actor_id"`
+		OperationID         ids.OperationID           `json:"operation_id"`
+		GovernanceContextID ids.GovernanceContextID   `json:"governance_context_id"`
+		OccurredAt          string                    `json:"occurred_at"`
+		Scope               []workgraph.ApprovedScope `json:"scope"`
+		Work                []semanticProposal        `json:"work"`
 	}{
 		MissionID: command.MissionID, ProjectID: command.ProjectID, Provider: command.Provider,
-		DefinitionID: command.ExpectedMission.DefinitionID, DefinitionVersion: command.ExpectedMission.DefinitionVersion,
-		DefinitionCommitment: command.ExpectedMission.DefinitionCommitment, CurrentStep: command.ExpectedMission.CurrentStep,
-		StateVersion: command.ExpectedMission.StateVersion, PlanRevisionID: command.PlanRevisionID, PlanDigest: command.PlanContentDigest,
-		ActorID: command.ActorID, GovernanceContextID: command.GovernanceContextID, Scope: scope, Work: proposals,
+		ExpectedMission: canonicalMissionSnapshotIdentity(command.ExpectedMission), PlanRevisionID: command.PlanRevisionID, PlanDigest: command.PlanContentDigest,
+		ActorID: command.ActorID, OperationID: command.OperationID, GovernanceContextID: command.GovernanceContextID, OccurredAt: command.OccurredAt.Format(time.RFC3339Nano), Scope: scope, Work: proposals,
 	})
-	digest := sha256.Sum256(append([]byte("spec-kitty/decomposition-request/v1\x00"), encoded...))
+	digest := sha256.Sum256(append([]byte("spec-kitty/decomposition-request/v2\x00"), encoded...))
 	return fmt.Sprintf("%x", digest)
 }
 func derivedWorkOperation(parent ids.OperationID, workID ids.WorkID) ids.OperationID {
