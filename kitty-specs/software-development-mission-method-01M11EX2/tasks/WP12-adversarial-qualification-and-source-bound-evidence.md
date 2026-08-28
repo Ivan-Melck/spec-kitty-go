@@ -86,6 +86,8 @@ owned_files:
 - internal/testcampaign/mission_method_test.go
 - internal/testcampaign/census.go
 - internal/testcampaign/census_test.go
+- internal/testcampaign/cmd/campaign/main.go
+- internal/testcampaign/cmd/campaign/main_test.go
 - Makefile
 - .github/workflows/quality.yml
 - .github/workflows/full-campaign.yml
@@ -133,7 +135,7 @@ WP01 supplies the permanent architecture, deferred-surface, and reachability gua
 
 The repository already has a mature campaign runner with exact top-level test censuses, universal invariant requirements, stale-authority probes, bounded artifact serialization, and separate quality versus full-campaign workflows. Extend those mechanisms. Do not add a second shell-only test registry or replace exact census checks with a broad `go test ./...` claim.
 
-The WP12 preflight identified one ownership omission: the existing shared census verifier treats a required skip as a successful terminal result and does not expose the distinct counts required by T065. The governed scope therefore includes `internal/testcampaign/census.go` and `internal/testcampaign/census_test.go`. This is the complete amendment; the campaign command runner remains out of scope because strengthening `Verify` is sufficient for every existing caller.
+The WP12 preflight identified two ownership omissions. First, the existing shared census verifier treats a required skip as a successful terminal result and does not expose the distinct counts required by T065, so the governed scope includes `internal/testcampaign/census.go` and `internal/testcampaign/census_test.go`. Second, configured timeout and deadline-exhaustion state exist only in the campaign command, so `internal/testcampaign/cmd/campaign/main.go` and its test are included to serialize that distinction through the authoritative runner. These four files are the complete governed amendment.
 
 Evidence attaches to the exact tested source commit and tree, not to a branch name, nearby documentation, or a later commit. The evidence payload and any following docs-only attestation must distinguish:
 
@@ -314,6 +316,8 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 - `internal/testcampaign/mission_method_test.go`
 - `internal/testcampaign/census.go`
 - `internal/testcampaign/census_test.go`
+- `internal/testcampaign/cmd/campaign/main.go`
+- `internal/testcampaign/cmd/campaign/main_test.go`
 - `Makefile`
 - `.github/workflows/quality.yml`
 - `.github/workflows/full-campaign.yml`
@@ -473,7 +477,7 @@ git status --short
 - Failed, superseded, dirty, interrupted, and non-admissible attempts remain visible and cannot satisfy pass.
 - Results and limitations make no Phase 4/5/6, distributed control-store, Gapdb adoption, or unmeasured performance claim.
 - Every source-bound evidence file passes schema/checksum/documentation mutant controls.
-- Only the eighteen frontmatter-owned paths are modified by implementation.
+- Only the twenty frontmatter-owned paths are modified by implementation.
 - T061 through T067 are recorded through the event-sourced status command:
 
   ```bash
@@ -518,6 +522,6 @@ Verify explicitly:
 15. Documentation explains source, payload, publication, and attestation commits without implying transitive qualification.
 16. Every claim maps to executable proof or a candid limitation.
 17. Gapdb, distributed authority, production CLI/API/MCP/Team Kitty, Phase 4 execution, and Phase 5 review/integration remain explicit non-claims.
-18. The diff is confined to the exact eighteen owned paths.
+18. The diff is confined to the exact twenty owned paths.
 
 Reject a solution that reports only the final pass, runs races through one in-memory handle, uses sleeps as synchronization, silently skips fault points, omits field comparators from drift generation, treats projection edits as harmless without comparing canonical state, resolves governance from mutable paths, broadens the PR gate beyond its measured budget, publishes secrets/raw logs, fabricates future commit IDs, or lets dirty/source-drifted results become admissible.
