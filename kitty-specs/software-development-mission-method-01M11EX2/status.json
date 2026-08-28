@@ -293,10 +293,20 @@
     },
     "WP09": {
       "actor": "user",
+      "agent": null,
       "force_count": 1,
       "lane": "planned",
       "last_event_id": "01M13RS3F7MV9HXEC4Q4QYWGAZ",
-      "last_transition_at": "2026-08-28T08:46:28.839862+00:00"
+      "last_transition_at": "2026-08-28T08:46:28.839862+00:00",
+      "review": null,
+      "shell_pid": null,
+      "shell_pid_created_at": null,
+      "subtasks": {
+        "T048": "planned",
+        "T049": "planned",
+        "T050": "planned",
+        "T051": "planned"
+      }
     },
     "WP10": {
       "actor": "finalize-tasks",
