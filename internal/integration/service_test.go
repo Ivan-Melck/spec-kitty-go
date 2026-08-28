@@ -9,6 +9,8 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/faults"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 const (
@@ -71,6 +73,33 @@ func TestRequestRejectsGitRevisionSyntaxAsTargetRef(t *testing.T) {
 	}
 }
 
+func TestIntegrationRefusesReconciledWorkBeforeFaultGitAndFence(t *testing.T) {
+	store := &memoryStore{eligibility: workgraph.Consequence{Reason: "superseded approval cannot integrate"}, eligibilityID: "reconciliation-integration"}
+	git := &memoryGit{target: testBase, workspaceHead: testBase}
+	hookCalls := 0
+	_, err := NewService(store, git).WithFaults(hookFunc(func(string) error { hookCalls++; return nil })).Integrate(context.Background(), validRequest("operation-ineligible"))
+	if !IsKind(err, KindRevisionIneligible) || !store.reviewRead || !store.eligibilityRead || hookCalls != 0 || git.establishCalls != 0 || git.updates != 0 {
+		t.Fatalf("error=%v review=%v eligibility=%v hook=%d establish=%d updates=%d", err, store.reviewRead, store.eligibilityRead, hookCalls, git.establishCalls, git.updates)
+	}
+}
+
+func TestCompletedIntegrationReplayBypassesLaterIneligibility(t *testing.T) {
+	store := &memoryStore{}
+	git := &memoryGit{target: testBase, workspaceHead: testBase}
+	request := validRequest("operation-eligible-then-reconciled")
+	record, err := NewService(store, git).Integrate(context.Background(), request)
+	if err != nil || record.Status != StatusDone {
+		t.Fatalf("initial=%+v err=%v", record, err)
+	}
+	store.eligibility = workgraph.Consequence{Reason: "later invalidation"}
+	store.eligibilityID = "reconciliation-later"
+	store.eligibilityRead = false
+	replay, err := NewService(store, git).Integrate(context.Background(), request)
+	if err != nil || replay.Status != StatusDone || store.eligibilityRead {
+		t.Fatalf("completed replay=%+v err=%v eligibility=%v", replay, err, store.eligibilityRead)
+	}
+}
+
 func TestUnrecordedExactWorkspaceResultIsRecovered(t *testing.T) {
 	store := &memoryStore{}
 	request := validRequest("operation-unrecorded-result")
@@ -111,10 +140,27 @@ type hookFunc func(string) error
 func (h hookFunc) Reach(_ context.Context, boundary string) error { return h(boundary) }
 
 type memoryStore struct {
-	mu         sync.Mutex
-	record     Record
-	found      bool
-	doneWrites int
+	mu              sync.Mutex
+	record          Record
+	found           bool
+	doneWrites      int
+	eligibility     workgraph.Consequence
+	eligibilityID   string
+	eligibilityRead bool
+	reviewRead      bool
+}
+
+func (s *memoryStore) Review(_ context.Context, reviewID ids.ReviewID) (review.Record, error) {
+	s.reviewRead = true
+	return review.Record{ReviewID: reviewID, HandoffID: "handoff-1", WorkRevisionID: "revision-1", WorkID: "work-1", Candidate: testCandidate, Verdict: review.Approved}, nil
+}
+
+func (s *memoryStore) WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error) {
+	s.eligibilityRead = true
+	if s.eligibility.Reason == "" {
+		return workgraph.Consequence{HandoffEligible: true, IntegrationEligible: true, RunMayContinue: true, Reason: "no reconciliation restricts this WorkRevision generation"}, "", nil
+	}
+	return s.eligibility, s.eligibilityID, nil
 }
 
 func (s *memoryStore) LookupIntegrationOperation(_ context.Context, _ Request) (Record, bool, error) {
@@ -212,15 +258,17 @@ func (s *memoryStore) CompleteIntegrationCleanup(_ context.Context, _ Record) (R
 }
 
 type memoryGit struct {
-	target        string
-	workspaceHead string
-	updates       int
-	fence         FenceFacts
+	target         string
+	workspaceHead  string
+	updates        int
+	fence          FenceFacts
+	establishCalls int
 }
 
 func (g *memoryGit) TargetHead(context.Context) (string, error) { return g.target, nil }
 
 func (g *memoryGit) EstablishIntegrationAuthority(_ context.Context, prepare func(FenceFacts) (Record, error), activate func(Record, FenceFacts) (Record, error)) (Record, error) {
+	g.establishCalls++
 	record, err := prepare(g.fence)
 	if err != nil {
 		return Record{}, err

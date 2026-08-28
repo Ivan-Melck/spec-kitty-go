@@ -5,11 +5,14 @@ import (
 	"errors"
 
 	"github.com/spec-kitty/go-kitty3/internal/faults"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 type Store interface {
 	LookupHandoffOperation(context.Context, Request) (Record, bool, error)
 	LookupHandoffRefusal(context.Context, Request) (Refusal, bool, error)
+	WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error)
 	InspectHandoffAuthority(context.Context, Request) (AuthorityScope, error)
 	CommitHandoffRefusal(context.Context, Request, *Error) (Refusal, error)
 	CommitHandoff(context.Context, Request, CandidateEvidence) (Record, error)
@@ -50,6 +53,9 @@ func (s *Service) Submit(ctx context.Context, request Request) (Record, error) {
 		}
 		return Record{}, refusal.Error()
 	}
+	if err := s.requireEligibility(ctx, request); err != nil {
+		return Record{}, err
+	}
 	if err := s.faults.Reach(ctx, "HR-00"); err != nil {
 		return Record{}, err
 	}
@@ -83,4 +89,19 @@ func (s *Service) Submit(ctx context.Context, request Request) (Record, error) {
 		return Record{}, err
 	}
 	return record, nil
+}
+
+func (s *Service) requireEligibility(ctx context.Context, request Request) error {
+	consequence, reconciliationID, err := s.store.WorkEligibility(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusActive)
+	if err != nil {
+		return &Error{Kind: KindConflict, Message: "read WorkRevision handoff eligibility", Cause: err}
+	}
+	fact, err := workgraph.NewLegacyEligibilityFact(reconciliationID, request.WorkRevisionID, request.WorkID, workgraph.StatusActive, workgraph.EligibilityHandoff, consequence)
+	if err != nil || !fact.MatchesLegacy(request.WorkRevisionID, request.WorkID, workgraph.StatusActive, workgraph.EligibilityHandoff) {
+		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision handoff eligibility is malformed"}
+	}
+	if !fact.Permitted() {
+		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids handoff", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityHandoff)}}
+	}
+	return nil
 }

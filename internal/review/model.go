@@ -9,7 +9,10 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
+
+type EligibilityFact = workgraph.EligibilityFact
 
 type ErrorKind string
 

@@ -5,10 +5,15 @@ import (
 	"errors"
 
 	"github.com/spec-kitty/go-kitty3/internal/faults"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 type Store interface {
 	LookupIntegrationOperation(context.Context, Request) (Record, bool, error)
+	Review(context.Context, ids.ReviewID) (review.Record, error)
+	WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error)
 	PrepareIntegrationAuthority(context.Context, Request, string, FenceFacts) (Record, error)
 	ActivateIntegrationAuthority(context.Context, Record, FenceFacts) (Record, error)
 	RecordIntegrationWorkspace(context.Context, Record, WorkspaceFacts) (Record, error)
@@ -52,9 +57,6 @@ func (s *Service) Integrate(ctx context.Context, request Request) (Record, error
 	if err := request.Validate(); err != nil {
 		return Record{}, err
 	}
-	if err := s.faults.Reach(ctx, "IG-00"); err != nil {
-		return Record{}, err
-	}
 	record, found, err := s.store.LookupIntegrationOperation(ctx, request)
 	if err != nil {
 		return Record{}, err
@@ -64,6 +66,16 @@ func (s *Service) Integrate(ctx context.Context, request Request) (Record, error
 	}
 	if found && record.Status == StatusRepairRequired {
 		return record, repairError(record)
+	}
+	revisionID, workID, err := s.eligibilityScope(ctx, request, record, found)
+	if err != nil {
+		return Record{}, err
+	}
+	if err := s.requireEligibility(ctx, revisionID, workID); err != nil {
+		return Record{}, err
+	}
+	if err := s.faults.Reach(ctx, "IG-00"); err != nil {
+		return Record{}, err
 	}
 	if !found {
 		record, err = s.git.EstablishIntegrationAuthority(ctx,
@@ -236,6 +248,38 @@ func (s *Service) Integrate(ctx context.Context, request Request) (Record, error
 		return Record{}, &Error{Kind: KindRepairRequired, Message: "target does not contain the intended result after ref update", Observed: map[string]string{"target": observed}, Expected: map[string]string{"contains": resultCommit}}
 	}
 	return s.recordResultDoneAndCleanup(ctx, record, resultCommit, observed)
+}
+
+func (s *Service) eligibilityScope(ctx context.Context, request Request, record Record, found bool) (ids.WorkRevisionID, ids.WorkID, error) {
+	if found {
+		if record.ReviewID != request.ReviewID || record.Candidate != request.Candidate {
+			return "", "", &Error{Kind: KindNotApproved, Message: "integration operation differs from its immutable approved review"}
+		}
+		return record.WorkRevisionID, record.WorkID, nil
+	}
+	approved, err := s.store.Review(ctx, request.ReviewID)
+	if err != nil {
+		return "", "", &Error{Kind: KindNotApproved, Message: "read immutable approved review", Cause: err}
+	}
+	if approved.ReviewID != request.ReviewID || approved.Verdict != review.Approved || approved.WorkRevisionID == "" || approved.WorkID == "" || approved.Candidate != request.Candidate {
+		return "", "", &Error{Kind: KindNotApproved, Message: "integration requires the exact immutable approved review"}
+	}
+	return approved.WorkRevisionID, approved.WorkID, nil
+}
+
+func (s *Service) requireEligibility(ctx context.Context, revisionID ids.WorkRevisionID, workID ids.WorkID) error {
+	consequence, reconciliationID, err := s.store.WorkEligibility(ctx, revisionID, workID, workgraph.StatusApproved)
+	if err != nil {
+		return &Error{Kind: KindStoreFailure, Message: "read WorkRevision integration eligibility", Cause: err}
+	}
+	fact, err := workgraph.NewLegacyEligibilityFact(reconciliationID, revisionID, workID, workgraph.StatusApproved, workgraph.EligibilityIntegration, consequence)
+	if err != nil || !fact.MatchesLegacy(revisionID, workID, workgraph.StatusApproved, workgraph.EligibilityIntegration) {
+		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision integration eligibility is malformed"}
+	}
+	if !fact.Permitted() {
+		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids integration", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityIntegration)}}
+	}
+	return nil
 }
 
 func (s *Service) recordResultDoneAndCleanup(ctx context.Context, record Record, resultCommit, observed string) (Record, error) {

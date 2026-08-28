@@ -4,10 +4,13 @@ import (
 	"context"
 
 	"github.com/spec-kitty/go-kitty3/internal/faults"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 type Store interface {
 	LookupReviewOperation(context.Context, Request) (Record, bool, error)
+	WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error)
 	InspectReview(context.Context, Request) (Scope, error)
 	CommitReview(context.Context, Request) (Record, error)
 }
@@ -31,6 +34,9 @@ func (s *Service) Submit(ctx context.Context, request Request) (Record, error) {
 		return Record{}, err
 	} else if found {
 		return record, nil
+	}
+	if err := s.requireEligibility(ctx, request); err != nil {
+		return Record{}, err
 	}
 	if err := s.faults.Reach(ctx, "HR-03"); err != nil {
 		return Record{}, err
@@ -62,4 +68,19 @@ func (s *Service) Submit(ctx context.Context, request Request) (Record, error) {
 		return Record{}, err
 	}
 	return record, nil
+}
+
+func (s *Service) requireEligibility(ctx context.Context, request Request) error {
+	consequence, reconciliationID, err := s.store.WorkEligibility(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff)
+	if err != nil {
+		return &Error{Kind: KindConflict, Message: "read WorkRevision review eligibility", Cause: err}
+	}
+	fact, err := workgraph.NewLegacyEligibilityFact(reconciliationID, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff, workgraph.EligibilityReview, consequence)
+	if err != nil || !fact.MatchesLegacy(request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff, workgraph.EligibilityReview) {
+		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision review eligibility is malformed"}
+	}
+	if !fact.Permitted() {
+		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids review", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityReview)}}
+	}
+	return nil
 }

@@ -29,6 +29,89 @@ const (
 
 var allStatuses = []WorkStatus{StatusActive, StatusHandedOff, StatusApproved, StatusIntegrated}
 
+type EligibilityOperation string
+
+const (
+	EligibilityHandoff     EligibilityOperation = "handoff"
+	EligibilityReview      EligibilityOperation = "review"
+	EligibilityIntegration EligibilityOperation = "integration"
+)
+
+// EligibilityFact is an immutable projection of reconciliation authority for
+// one exact old-generation consumer operation. Permission is derived from the
+// stored Consequence; callers cannot author it independently.
+type EligibilityFact struct {
+	reconciliationID string
+	oldRevisionID    ids.WorkRevisionID
+	newRevisionID    ids.WorkRevisionID
+	workID           ids.WorkID
+	status           WorkStatus
+	disposition      Disposition
+	operation        EligibilityOperation
+	permitted        bool
+	reason           string
+	legacyV1         bool
+}
+
+// NewLegacyEligibilityFact projects the frozen v1 WorkEligibility query. It is
+// explicitly incomplete: v1 rows do not expose a successor ID or disposition.
+func NewLegacyEligibilityFact(reconciliationID string, oldRevisionID ids.WorkRevisionID, workID ids.WorkID, status WorkStatus, operation EligibilityOperation, consequence Consequence) (EligibilityFact, error) {
+	if reconciliationID != "" {
+		if _, err := ids.ParseOperationID(reconciliationID); err != nil {
+			return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility reconciliation identity is invalid", nil)
+		}
+	}
+	if _, err := ids.ParseWorkRevisionID(oldRevisionID.String()); err != nil {
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility revision identity is invalid", nil)
+	}
+	if _, err := ids.ParseWorkID(workID.String()); err != nil {
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility work identity is invalid", nil)
+	}
+	if !knownWorkStatus(status) || !boundedText(consequence.Reason, 256) {
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility status or reason is invalid", nil)
+	}
+	permitted := false
+	switch operation {
+	case EligibilityHandoff:
+		if status != StatusActive {
+			return EligibilityFact{}, newError(KindInvalidReconciliation, "handoff eligibility requires active work", nil)
+		}
+		permitted = consequence.HandoffEligible
+	case EligibilityReview:
+		if status != StatusHandedOff {
+			return EligibilityFact{}, newError(KindInvalidReconciliation, "review eligibility requires handed-off work", nil)
+		}
+		permitted = consequence.HandoffEligible
+	case EligibilityIntegration:
+		if status != StatusApproved {
+			return EligibilityFact{}, newError(KindInvalidReconciliation, "integration eligibility requires approved work", nil)
+		}
+		permitted = consequence.IntegrationEligible
+	default:
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility operation is unknown", nil)
+	}
+	return EligibilityFact{reconciliationID: reconciliationID, oldRevisionID: oldRevisionID, workID: workID, status: status, operation: operation, permitted: permitted, reason: consequence.Reason, legacyV1: true}, nil
+}
+
+func (fact EligibilityFact) ReconciliationID() string          { return fact.reconciliationID }
+func (fact EligibilityFact) OldRevisionID() ids.WorkRevisionID { return fact.oldRevisionID }
+func (fact EligibilityFact) NewRevisionID() ids.WorkRevisionID { return fact.newRevisionID }
+func (fact EligibilityFact) WorkID() ids.WorkID                { return fact.workID }
+func (fact EligibilityFact) Status() WorkStatus                { return fact.status }
+func (fact EligibilityFact) Disposition() Disposition          { return fact.disposition }
+func (fact EligibilityFact) Operation() EligibilityOperation   { return fact.operation }
+func (fact EligibilityFact) Permitted() bool                   { return fact.permitted }
+func (fact EligibilityFact) Reason() string                    { return fact.reason }
+func (fact EligibilityFact) LegacyV1() bool                    { return fact.legacyV1 }
+
+func (fact EligibilityFact) MatchesLegacy(oldRevisionID ids.WorkRevisionID, workID ids.WorkID, status WorkStatus, operation EligibilityOperation) bool {
+	return fact.legacyV1 && fact.newRevisionID == "" && fact.disposition == "" && fact.oldRevisionID == oldRevisionID && fact.workID == workID && fact.status == status && fact.operation == operation
+}
+
+func (fact EligibilityFact) MatchesComplete(reconciliationID string, oldRevisionID, newRevisionID ids.WorkRevisionID, workID ids.WorkID, status WorkStatus, disposition Disposition, operation EligibilityOperation) bool {
+	return !fact.legacyV1 && fact.reconciliationID == reconciliationID && fact.oldRevisionID == oldRevisionID && fact.newRevisionID == newRevisionID && fact.workID == workID && fact.status == status && fact.disposition == disposition && fact.operation == operation
+}
+
 type ForkEdge struct {
 	FromOldWorkID ids.WorkID `json:"from_old_work_id"`
 	ToNewWorkID   ids.WorkID `json:"to_new_work_id"`
@@ -543,6 +626,25 @@ func (r MixedReconciliation) AssignedStatus(workID ids.WorkID) (WorkStatus, bool
 func (r MixedReconciliation) Consequence(workID ids.WorkID, status WorkStatus) (Consequence, bool) {
 	consequence, ok := r.consequences[consequenceKey{workID, status}]
 	return consequence, ok
+}
+
+func (r MixedReconciliation) EligibilityFact(workID ids.WorkID, status WorkStatus, operation EligibilityOperation) (EligibilityFact, error) {
+	decision, found := r.Decision(workID)
+	if !found {
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility work is absent from the mixed reconciliation", nil)
+	}
+	consequence, found := r.Consequence(workID, status)
+	if !found {
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility consequence is absent from the mixed reconciliation", nil)
+	}
+	fact, err := NewLegacyEligibilityFact(r.ID(), r.OldRevisionID(), workID, status, operation, consequence)
+	if err != nil {
+		return EligibilityFact{}, err
+	}
+	fact.disposition = decision.Disposition()
+	fact.newRevisionID = r.NewRevisionID()
+	fact.legacyV1 = false
+	return fact, nil
 }
 
 func (r Reconciliation) semanticDigest() string {

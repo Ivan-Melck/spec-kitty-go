@@ -277,6 +277,57 @@ func TestMixedReconciliationDerivesEveryAssignedStatusDispositionPair(t *testing
 	}
 }
 
+func TestEligibilityFactsDistinguishCompleteMixedAuthorityFromLegacyProjection(t *testing.T) {
+	request := mixedReconcileFixture(t)
+	plan, err := ReconcileMixed(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact, err := plan.EligibilityFact("work-invalid", StatusActive, EligibilityHandoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fact.LegacyV1() || fact.Permitted() || fact.ReconciliationID() != plan.ID() || fact.OldRevisionID() != plan.OldRevisionID() || fact.NewRevisionID() != plan.NewRevisionID() || fact.WorkID() != "work-invalid" || fact.Status() != StatusActive || fact.Disposition() != Invalidate || fact.Operation() != EligibilityHandoff || fact.Reason() == "" {
+		t.Fatalf("incomplete mixed eligibility fact: %#v", fact)
+	}
+	if !fact.MatchesComplete(plan.ID(), plan.OldRevisionID(), plan.NewRevisionID(), "work-invalid", StatusActive, Invalidate, EligibilityHandoff) || fact.MatchesComplete(plan.ID(), plan.OldRevisionID(), "revision-substituted", "work-invalid", StatusActive, Invalidate, EligibilityHandoff) {
+		t.Fatal("complete fact matching did not bind every authority field")
+	}
+	legacy, err := NewLegacyEligibilityFact("", plan.OldRevisionID(), "work-invalid", StatusActive, EligibilityHandoff, Consequence{HandoffEligible: true, Reason: "no reconciliation restricts this WorkRevision generation"})
+	if err != nil || !legacy.LegacyV1() || !legacy.MatchesLegacy(plan.OldRevisionID(), "work-invalid", StatusActive, EligibilityHandoff) || legacy.NewRevisionID() != "" || legacy.Disposition() != "" {
+		t.Fatalf("legacy eligibility projection is not explicit: %#v err=%v", legacy, err)
+	}
+}
+
+func TestMixedEligibilityPermitsOnlyDispositionOperationConsequences(t *testing.T) {
+	plan, err := ReconcileMixed(mixedReconcileFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		workID    ids.WorkID
+		status    WorkStatus
+		operation EligibilityOperation
+		permitted bool
+	}{
+		{"work-continue", StatusActive, EligibilityHandoff, true},
+		{"work-fork", StatusHandedOff, EligibilityReview, true},
+		{"work-fork", StatusApproved, EligibilityIntegration, true},
+		{"work-super", StatusActive, EligibilityHandoff, false},
+		{"work-super", StatusApproved, EligibilityIntegration, false},
+		{"work-invalid", StatusActive, EligibilityHandoff, false},
+	}
+	for _, test := range tests {
+		fact, buildErr := plan.EligibilityFact(test.workID, test.status, test.operation)
+		if buildErr != nil || fact.Permitted() != test.permitted {
+			t.Fatalf("%s/%s/%s permitted=%v want=%v err=%v", test.workID, test.status, test.operation, fact.Permitted(), test.permitted, buildErr)
+		}
+	}
+	if _, err := plan.EligibilityFact("work-fork", StatusActive, EligibilityIntegration); !IsKind(err, KindInvalidReconciliation) {
+		t.Fatalf("operation/status mismatch accepted: %v", err)
+	}
+}
+
 func TestLegacyReconcileSurfaceRemainsBehaviorCompatible(t *testing.T) {
 	oldRevision := finalizedSingle(t, "revision-legacy-old", 1, "work-legacy")
 	newRevision := finalizedSingle(t, "revision-legacy-new", 2, "work-legacy")

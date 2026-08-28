@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 func TestSubmitEvaluatesCanonicalCriteriaBeforeAtomicCommit(t *testing.T) {
@@ -51,8 +53,18 @@ func TestSubmitReturnsDurableReplayBeforeReviewEligibility(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("replay=%+v err=%v", got, err)
 	}
-	if store.inspected || store.committed || len(hook.boundaries) != 0 {
-		t.Fatalf("inspect=%v commit=%v boundaries=%v", store.inspected, store.committed, hook.boundaries)
+	if store.eligibilityRead || store.inspected || store.committed || len(hook.boundaries) != 0 {
+		t.Fatalf("eligibility=%v inspect=%v commit=%v boundaries=%v", store.eligibilityRead, store.inspected, store.committed, hook.boundaries)
+	}
+}
+
+func TestSubmitRefusesReconciledWorkBeforeFaultInspectAndMutation(t *testing.T) {
+	request := validRequest(time.Now().UTC())
+	store := &recordingStore{eligibility: workgraph.Consequence{Reason: "invalidated handoff cannot be reviewed"}, eligibilityID: "reconciliation-review"}
+	hook := &recordingHook{}
+	_, err := NewService(store).WithFaults(hook).Submit(context.Background(), request)
+	if !IsKind(err, KindRevisionIneligible) || !store.eligibilityRead || store.inspected || store.committed || len(hook.boundaries) != 0 {
+		t.Fatalf("error=%v eligibility=%v inspect=%v commit=%v boundaries=%v", err, store.eligibilityRead, store.inspected, store.committed, hook.boundaries)
 	}
 }
 
@@ -79,10 +91,21 @@ func makeBytes(character byte, count int) []byte {
 }
 
 type recordingStore struct {
-	scope     Scope
-	committed bool
-	replay    *Record
-	inspected bool
+	scope           Scope
+	committed       bool
+	replay          *Record
+	inspected       bool
+	eligibility     workgraph.Consequence
+	eligibilityID   string
+	eligibilityRead bool
+}
+
+func (s *recordingStore) WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error) {
+	s.eligibilityRead = true
+	if s.eligibility.Reason == "" {
+		return workgraph.Consequence{HandoffEligible: true, IntegrationEligible: true, RunMayContinue: true, Reason: "no reconciliation restricts this WorkRevision generation"}, "", nil
+	}
+	return s.eligibility, s.eligibilityID, nil
 }
 
 func (s *recordingStore) LookupReviewOperation(context.Context, Request) (Record, bool, error) {
