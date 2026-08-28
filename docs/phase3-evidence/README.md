@@ -18,8 +18,8 @@ non-claims.
 The immutable payload commit is:
 
 ```text
-commit: e3f061660535446b5595b1943d9976c909f8d6cd
-tree:   8a44d4a39fc22b2fdd043e3ae2638df967ce8ef5
+commit: f52698bb110824fb4d22a81c9c4b3f6d2708cdc0
+tree:   293cb11c91c4bd328e3043910c832eedcd851881
 ```
 
 This index and the repository README are a following documentation-only
@@ -30,18 +30,18 @@ Verify the payload:
 
 ```bash
 (cd docs/phase3-evidence && sha256sum --check SHA256SUMS)
-git show --stat e3f061660535446b5595b1943d9976c909f8d6cd
+git show --stat f52698bb110824fb4d22a81c9c4b3f6d2708cdc0
 ```
 
 ## Provenance layers
 
 ```mermaid
 flowchart LR
-    Source["qualified source<br/>4a96edd / bc4ed9b"]
-    Portable["portable attempt 10<br/>full campaign pass"]
-    Provider["real attempt 18<br/>11 of 11 pass"]
-    Mission["real attempt 19<br/>two-item mission pass"]
-    Payload["payload<br/>e3f0616 / 8a44d4a"]
+    Source["qualified source<br/>b03200f / 700e73e"]
+    Portable["portable attempt 22<br/>full campaign pass"]
+    Provider["real attempt 24<br/>11 of 11 pass"]
+    Mission["real attempt 24<br/>two-item mission pass"]
+    Payload["payload<br/>f52698b / 293cb11"]
     Attest["docs-only attestation<br/>index and repository README"]
 
     Source --> Portable
@@ -54,11 +54,12 @@ flowchart LR
 ```
 
 The tested source is commit
-`4a96edd13d135497ef0662e25e78d5394cdb32ca`, tree
-`bc4ed9bbf7d3255fc7afc0e249672fb8a6020047`. Attempt 10 ran the full portable
-ladder against that clean identity. Attempt 18 ran the frozen eleven-scenario
-Beads qualification in an offline network namespace. Attempt 19 independently
-ran the durable two-item Phase 3 Beads selector. All three passed.
+`b03200f5430e233d001e96ded74b8d4cd88d7158`, tree
+`700e73ee278ecf3223269eab5e7b7c7854f83673`. Attempt 22 ran the full portable
+ladder against that clean identity. Attempt 24 ran both the frozen
+eleven-scenario Beads qualification and the independently selected durable
+two-item Phase 3 Beads mission inside the qualified offline containment. All
+three evidence contracts passed.
 
 A later commit does not inherit those verdicts. Any product, authority,
 provider, protocol, campaign, or evidence-serializer change requires another
@@ -90,8 +91,9 @@ Attempts 01–09 were not erased: the ledger retains toolchain/prerequisite
 failures, exact-census failures, load-sensitive claimant observations, and the
 stale-authority ordering defect. Containment attempts 11–16 remain
 non-admissible or diagnostic; attempt 17 is explicitly diagnostic rather than
-canonical evidence. Only attempts 10, 18, and 19 satisfy their stated pass
-contracts.
+canonical evidence. The rejected cycle-1 publication and attempts 20, 21, and
+23 are also retained with their original failed or non-admissible verdicts.
+Only attempts 22 and 24 support this publication.
 
 Raw test streams, provider databases, Dolt logs, temporary SQLite files,
 environment state, and authored provider bodies remain outside the repository.
