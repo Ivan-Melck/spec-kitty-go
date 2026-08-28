@@ -84,6 +84,7 @@ owned_files:
 - internal/scenario/mission_method_projection_test.go
 - internal/scenario/review_test.go
 - internal/scenario/integration_test.go
+- internal/scenario/campaign_test.go
 - internal/testcampaign/mission_method.go
 - internal/testcampaign/mission_method_test.go
 - internal/testcampaign/census.go
@@ -143,7 +144,9 @@ The repository already has a mature campaign runner with exact top-level test ce
 
 The WP12 preflight identified two ownership omissions. First, the existing shared census verifier treats a required skip as a successful terminal result and does not expose the distinct counts required by T065, so the governed scope includes `internal/testcampaign/census.go` and `internal/testcampaign/census_test.go`. Second, configured timeout and deadline-exhaustion state exist only in the campaign command, so `internal/testcampaign/cmd/campaign/main.go` and its test are included to serialize that distinction through the authoritative runner.
 
-The first clean qualification attempt then exposed a shared helper-composition defect rather than a Beads-specific fixture defect. Handoff, review, and integration helpers auto-select Phase 3 complete eligibility when backed by SQLite, but their command formats did not bind the expected eligibility fact; frozen v1 scenarios therefore refused before reaching their intended stale-authority assertions. The governed scope includes the three helper command implementations and tests plus their two shared scenario argument builders. Complete mode remains the default. Explicit `legacy-v1` mode is accepted only after the helper proves the v2 revision is typed-absent and the exact frozen v1 revision exists; a present v2 revision can never downgrade. Historical evidence artifacts and kernel authority code remain unchanged. These ten supporting test/campaign/helper paths are the complete governed amendment.
+The first clean qualification attempt then exposed a shared helper-composition defect rather than a Beads-specific fixture defect. Handoff, review, and integration helpers auto-select Phase 3 complete eligibility when backed by SQLite, but their command formats did not bind the expected eligibility fact; frozen v1 scenarios therefore refused before reaching their intended stale-authority assertions. The governed scope includes the three helper command implementations and tests plus their two shared scenario argument builders. Complete mode remains the default. Explicit `legacy-v1` mode is accepted only after the helper proves the v2 revision is typed-absent and the exact frozen v1 revision exists; a present v2 revision can never downgrade. Historical evidence artifacts and kernel authority code remain unchanged.
+
+The first exact full-campaign attempt then exposed a repository-wide census contract that still equated the frozen historical `full-scenario` profile with every top-level scenario test and hard-coded the superseded 12-minute workflow timeout. The governed scope therefore includes `internal/scenario/campaign_test.go`. Its census must compare the complete scenario inventory against the canonical union of the frozen historical profile, the provider-adversarial profile, and the Phase 3 mission profiles, with explicit missing/extra mutant controls; it must not inflate or semantically rewrite the historical profile. Its workflow assertion must match the ratified 15-minute bounded timeout. These eleven supporting test/campaign/helper paths are the complete governed amendment.
 
 Evidence attaches to the exact tested source commit and tree, not to a branch name, nearby documentation, or a later commit. The evidence payload and any following docs-only attestation must distinguish:
 
@@ -326,6 +329,7 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 - `internal/testcampaign/census_test.go`
 - `internal/testcampaign/cmd/campaign/main.go`
 - `internal/testcampaign/cmd/campaign/main_test.go`
+- `internal/scenario/campaign_test.go`
 - `Makefile`
 - `.github/workflows/quality.yml`
 - `.github/workflows/full-campaign.yml`
@@ -491,7 +495,7 @@ git status --short
 - Failed, superseded, dirty, interrupted, and non-admissible attempts remain visible and cannot satisfy pass.
 - Results and limitations make no Phase 4/5/6, distributed control-store, Gapdb adoption, or unmeasured performance claim.
 - Every source-bound evidence file passes schema/checksum/documentation mutant controls.
-- Only the twenty-six frontmatter-owned paths are modified by implementation.
+- Only the twenty-seven frontmatter-owned paths are modified by implementation.
 - T061 through T067 are recorded through the event-sourced status command:
 
   ```bash
@@ -536,6 +540,6 @@ Verify explicitly:
 15. Documentation explains source, payload, publication, and attestation commits without implying transitive qualification.
 16. Every claim maps to executable proof or a candid limitation.
 17. Gapdb, distributed authority, production CLI/API/MCP/Team Kitty, Phase 4 execution, and Phase 5 review/integration remain explicit non-claims.
-18. The diff is confined to the exact twenty-six owned paths.
+18. The diff is confined to the exact twenty-seven owned paths.
 
 Reject a solution that reports only the final pass, runs races through one in-memory handle, uses sleeps as synchronization, silently skips fault points, omits field comparators from drift generation, treats projection edits as harmless without comparing canonical state, resolves governance from mutable paths, broadens the PR gate beyond its measured budget, publishes secrets/raw logs, fabricates future commit IDs, or lets dirty/source-drifted results become admissible.
