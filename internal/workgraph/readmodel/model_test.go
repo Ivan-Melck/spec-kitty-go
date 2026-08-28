@@ -55,6 +55,48 @@ func TestDriftStatusClosedAndNotCheckedDistinct(t *testing.T) {
 	}
 }
 
+func TestReconciliationDispositionShapesMatchAuthority(t *testing.T) {
+	tests := map[string]ReconciliationParams{
+		"continue same identity":       {PreviousWorkID: "WP01", Disposition: ReconciliationContinue, CurrentWorkIDs: []ids.WorkID{"WP01"}},
+		"supersede distinct identity":  {PreviousWorkID: "old-1", Disposition: ReconciliationSupersede, CurrentWorkIDs: []ids.WorkID{"WP01"}},
+		"invalidate without successor": {PreviousWorkID: "old-1", Disposition: ReconciliationInvalidate},
+		"invalidate with repair":       {PreviousWorkID: "old-1", Disposition: ReconciliationInvalidate, CurrentWorkIDs: []ids.WorkID{"WP01"}},
+		"fork distinct identities":     {PreviousWorkID: "old-1", Disposition: ReconciliationFork, CurrentWorkIDs: []ids.WorkID{"WP02", "WP01"}},
+	}
+	for name, reconciliation := range tests {
+		t.Run(name, func(t *testing.T) {
+			params := fixtureParams()
+			params.Reconciliations = []ReconciliationParams{reconciliation}
+			if _, err := NewSnapshot(params); err != nil {
+				t.Fatalf("authority-valid disposition rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestReconciliationDispositionShapesKillImpossibleMutants(t *testing.T) {
+	tests := map[string]ReconciliationParams{
+		"continue remapped":         {PreviousWorkID: "WP01", Disposition: ReconciliationContinue, CurrentWorkIDs: []ids.WorkID{"WP02"}},
+		"continue multiple targets": {PreviousWorkID: "WP01", Disposition: ReconciliationContinue, CurrentWorkIDs: []ids.WorkID{"WP01", "WP02"}},
+		"continue missing target":   {PreviousWorkID: "WP01", Disposition: ReconciliationContinue},
+		"supersede reused old":      {PreviousWorkID: "WP01", Disposition: ReconciliationSupersede, CurrentWorkIDs: []ids.WorkID{"WP01"}},
+		"supersede missing target":  {PreviousWorkID: "WP01", Disposition: ReconciliationSupersede},
+		"invalidate reused old":     {PreviousWorkID: "WP01", Disposition: ReconciliationInvalidate, CurrentWorkIDs: []ids.WorkID{"WP01"}},
+		"fork one target":           {PreviousWorkID: "old-1", Disposition: ReconciliationFork, CurrentWorkIDs: []ids.WorkID{"WP01"}},
+		"fork reused old":           {PreviousWorkID: "WP01", Disposition: ReconciliationFork, CurrentWorkIDs: []ids.WorkID{"WP01", "WP02"}},
+		"fork duplicate successors": {PreviousWorkID: "old-1", Disposition: ReconciliationFork, CurrentWorkIDs: []ids.WorkID{"WP01", "WP01"}},
+	}
+	for name, reconciliation := range tests {
+		t.Run(name, func(t *testing.T) {
+			params := fixtureParams()
+			params.Reconciliations = []ReconciliationParams{reconciliation}
+			if _, err := NewSnapshot(params); err == nil {
+				t.Fatal("authority-impossible disposition accepted")
+			}
+		})
+	}
+}
+
 func TestSnapshotRejectsBrokenTopology(t *testing.T) {
 	for name, mutate := range map[string]func(*SnapshotParams){
 		"digest":               func(v *SnapshotParams) { v.GraphDigest = "ABC" },

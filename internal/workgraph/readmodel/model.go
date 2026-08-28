@@ -470,8 +470,28 @@ func newReconciliation(input ReconciliationParams, current map[ids.WorkID]struct
 		seen[id] = struct{}{}
 		value.currentWorkIDs = append(value.currentWorkIDs, id)
 	}
-	if (input.Disposition == ReconciliationContinue || input.Disposition == ReconciliationSupersede || input.Disposition == ReconciliationFork) && len(value.currentWorkIDs) == 0 {
-		return Reconciliation{}, invalid("reconciliation target is required")
+	// Mirror the identity/cardinality subset of workgraph's
+	// validateMixedDecisionShape that this status-free read model can prove.
+	// Integrated-invalidation repair and fork-edge coverage remain authority
+	// concerns because neither status nor edges cross this projection seam.
+	_, reusesPreviousIdentity := seen[input.PreviousWorkID]
+	switch input.Disposition {
+	case ReconciliationContinue:
+		if len(value.currentWorkIDs) != 1 || value.currentWorkIDs[0] != input.PreviousWorkID {
+			return Reconciliation{}, invalid("continue reconciliation shape")
+		}
+	case ReconciliationSupersede:
+		if len(value.currentWorkIDs) == 0 || reusesPreviousIdentity {
+			return Reconciliation{}, invalid("supersede reconciliation shape")
+		}
+	case ReconciliationInvalidate:
+		if reusesPreviousIdentity {
+			return Reconciliation{}, invalid("invalidate reconciliation shape")
+		}
+	case ReconciliationFork:
+		if len(value.currentWorkIDs) < 2 || reusesPreviousIdentity {
+			return Reconciliation{}, invalid("fork reconciliation shape")
+		}
 	}
 	sort.Slice(value.currentWorkIDs, func(i, j int) bool { return value.currentWorkIDs[i] < value.currentWorkIDs[j] })
 	return value, nil
