@@ -302,6 +302,10 @@ method as the fake through finalization, drift, reconciliation, and projection.
    observe/validate, finalize generation 1, mutate one semantic field directly
    through supported provider tooling, detect drift, explicitly reconcile to
    generation 2, and regenerate the tasks projection.
+   Drive finalization and reconciliation through the accepted mission services
+   and a real SQLite control store, then query the persisted generation pointer
+   and render from the read model. Calling pure candidate constructors or
+   manually seeding database rows does not qualify this end-to-end path.
 4. Assert every local transition uses Spec Kitty state and exact revisions.
    Changing Beads status, readiness, assignee, label, or comment must not
    advance a step, approve work, choose a disposition, or create a generation.
