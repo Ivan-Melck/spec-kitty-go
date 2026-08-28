@@ -1,7 +1,7 @@
 {
-  "event_count": 144,
-  "last_event_id": "01M13T1BBQR3PZFBD46198ABEB",
-  "materialized_at": "2026-08-28T09:08:27.639573+00:00",
+  "event_count": 145,
+  "last_event_id": "01M13TB9H7M8G7GB8KR6D31D3X",
+  "materialized_at": "2026-08-28T09:13:53.447195+00:00",
   "mission_number": "",
   "mission_slug": "software-development-mission-method-01M11EX2",
   "mission_type": "software-dev",
@@ -13,8 +13,8 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 1,
-    "in_review": 1,
-    "planned": 3
+    "in_review": 0,
+    "planned": 4
   },
   "work_packages": {
     "WP01": {
@@ -258,14 +258,14 @@
       }
     },
     "WP08": {
-      "actor": "codex",
+      "actor": "user",
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 3,
-      "lane": "in_review",
-      "last_event_id": "01M13T1BBQR3PZFBD46198ABEB",
-      "last_transition_at": "2026-08-28T09:08:27.639573+00:00",
+      "force_count": 4,
+      "lane": "planned",
+      "last_event_id": "01M13TB9H7M8G7GB8KR6D31D3X",
+      "last_transition_at": "2026-08-28T09:13:53.447195+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Cycle 2 ready: all five rejection findings repaired; full focused, race, migration, architecture, compile, vet, staticcheck, module, formatting, and diff gates pass.",
@@ -274,8 +274,8 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP08-transactional-mission-control-persistence/review-cycle-2.md",
-        "reference": "review-cycle://software-development-mission-method-01M11EX2/WP08-transactional-mission-control-persistence/review-cycle-2.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP08-transactional-mission-control-persistence/review-cycle-3.md",
+        "reference": "review-cycle://software-development-mission-method-01M11EX2/WP08-transactional-mission-control-persistence/review-cycle-3.md",
         "reviewer": "user",
         "verdict": "changes_requested"
       },
