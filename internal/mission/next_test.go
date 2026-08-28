@@ -27,7 +27,7 @@ func TestNextResultSevenKindStrictRoundTrip(t *testing.T) {
 	}
 	values := []NextResult{
 		must(NewQueryResult(base, NextDiagnostic{Kind: "required_input", RetrySafety: RetrySafe, Recovery: RecoverySupplyEvidence, Message: "Input is required."})),
-		must(NewActionResult(base, ActionDescriptor{ActionKey: StepPlanApproved.String(), Mutating: true, GovernanceAction: "mission.approve-plan", Successor: StepPlanApproved})),
+		must(NewActionResult(base, ActionDescriptor{ActionKey: StepPlanApproved.String(), Mutating: true, GovernanceAction: "mission.approve-plan"})),
 		must(NewWorkReadyResult(base, "revision-next", []ids.WorkID{"work-b", "work-a"})),
 		must(NewReviewReadyResult(base, "revision-next", []ids.WorkID{"work-a"})),
 		must(NewDecisionRequiredResult(base, decision)),
@@ -45,6 +45,9 @@ func TestNextResultSevenKindStrictRoundTrip(t *testing.T) {
 		var restored NextResult
 		if err := json.Unmarshal(encoded, &restored); err != nil {
 			t.Fatalf("unmarshal %s: %v", value.Kind, err)
+		}
+		if !reflect.DeepEqual(value, restored) {
+			t.Fatalf("%s changed semantic identity across round trip: before=%+v after=%+v", value.Kind, value, restored)
 		}
 		reencoded, _ := json.Marshal(restored)
 		if !bytes.Equal(encoded, reencoded) {
@@ -66,7 +69,7 @@ func TestNextResultRejectsIllegalFieldsUnknownDuplicateAndMutation(t *testing.T)
 	}
 	mutants := []NextResult{
 		{SchemaVersion: 1, Kind: "unknown", MissionID: base.MissionID, MissionStateVersion: 1, StepKey: base.Step},
-		{SchemaVersion: 1, Kind: NextAction, MissionID: base.MissionID, MissionStateVersion: 1, StepKey: base.Step, Action: &ActionDescriptor{ActionKey: StepPlanning.String(), Mutating: true, GovernanceAction: "mission.plan", Successor: StepPlanning}, TerminalOutcome: OutcomeWorkFinalized},
+		{SchemaVersion: 1, Kind: NextAction, MissionID: base.MissionID, MissionStateVersion: 1, StepKey: base.Step, Action: &ActionDescriptor{ActionKey: StepPlanning.String(), Mutating: true, GovernanceAction: "mission.plan"}, TerminalOutcome: OutcomeWorkFinalized},
 		{SchemaVersion: 1, Kind: NextWorkReady, MissionID: base.MissionID, MissionStateVersion: 1, StepKey: base.Step, WorkRevisionID: "revision", ReadyWorkIDs: []ids.WorkID{"work-a", "work-a"}},
 		{SchemaVersion: 1, Kind: NextReviewReady, MissionID: base.MissionID, MissionStateVersion: 1, StepKey: base.Step},
 	}
@@ -79,11 +82,42 @@ func TestNextResultRejectsIllegalFieldsUnknownDuplicateAndMutation(t *testing.T)
 		`{"schema_version":1,"schema_version":1,"kind":"terminal","mission_id":"mission","mission_state_version":1,"step_key":"work_finalized","terminal_outcome":"work_finalized"}`,
 		`{"schema_version":1,"kind":"terminal","mission_id":"mission","mission_state_version":1,"step_key":"work_finalized","terminal_outcome":"work_finalized","unknown":true}`,
 		`{"schema_version":1,"kind":"work_ready","mission_id":"mission","mission_state_version":1,"step_key":"work_finalized","work_revision_id":"revision","ready_work_ids":null}`,
+		`{"schema_version":1,"kind":"action","mission_id":"mission","mission_state_version":1,"step_key":"initialized","action":{"mutating":true,"governance_action":"mission.plan"}}`,
+		`{"schema_version":1,"kind":"action","mission_id":"mission","mission_state_version":1,"step_key":"initialized","action":{"action_key":"planning","mutating":true,"governance_action":"mission.specify"}}`,
+		`{"schema_version":1,"kind":"action","mission_id":"mission","mission_state_version":1,"step_key":"initialized","action":{"action_key":"planning","mutating":true,"governance_action":"mission.plan","successor":"specifying"}}`,
+		`{"schema_version":1,"kind":"action","mission_id":"mission","mission_state_version":1,"step_key":"initialized","action":{"action_key":"planning","action_key":"specifying","mutating":true,"governance_action":"mission.plan"}}`,
 	}
 	for i, encoded := range badJSON {
 		var value NextResult
 		if json.Unmarshal([]byte(encoded), &value) == nil {
 			t.Fatalf("wire mutant %d accepted", i)
+		}
+	}
+}
+
+func TestActionDescriptorHasOneCanonicalDestinationIdentity(t *testing.T) {
+	base := NextBase{"mission-next", 1, StepInitialized}
+	if _, err := NewActionDescriptor(StepPlanning, "mission.specify"); err == nil {
+		t.Fatal("descriptor constructor accepted planning/specifying mismatch")
+	}
+	if _, err := NewActionResult(base, ActionDescriptor{ActionKey: StepPlanning.String(), Mutating: true, GovernanceAction: "mission.specify"}); err == nil {
+		t.Fatal("planning/specifying destination mismatch accepted")
+	}
+	want, err := NewActionResult(base, ActionDescriptor{ActionKey: StepPlanning.String(), Mutating: true, GovernanceAction: "mission.plan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		encoded, err := json.Marshal(want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got NextResult
+		if err := json.Unmarshal(encoded, &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(want, got) || got.Action.Destination() != StepPlanning {
+			t.Fatalf("roundtrip %d changed destination: %+v", i, got)
 		}
 	}
 }
@@ -98,7 +132,7 @@ func TestNextIsOneReadPureDeterministicAndUsesDestinationLaw(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Kind != NextAction || got.Action.ActionKey != StepPlanning.String() || got.Action.GovernanceAction != "mission.plan" || got.Action.Successor != StepPlanning {
+		if got.Kind != NextAction || got.Action.ActionKey != StepPlanning.String() || got.Action.GovernanceAction != "mission.plan" || got.Action.Destination() != StepPlanning {
 			t.Fatalf("unexpected action: %+v", got)
 		}
 		if i == 0 {
@@ -142,12 +176,12 @@ func TestNextPrecedenceCensusAndWorkDraftRouting(t *testing.T) {
 	draftDefinition := nextDraftDefinition(t)
 	draft := nextSnapshotAt(t, draftDefinition, StepWorkDraftReady, 3)
 	finalize, _ := Next(context.Background(), &nextSourceSpy{snapshot: draft}, draft.Mission.MissionID)
-	if finalize.Action.Successor != StepWorkFinalized || finalize.Action.GovernanceAction != "mission.finalize-work" {
+	if finalize.Action.Destination() != StepWorkFinalized || finalize.Action.GovernanceAction != "mission.finalize-work" {
 		t.Fatalf("finalize route: %+v", finalize)
 	}
 	draft.WorkDraftFindings = []workgraph.Finding{{Kind: workgraph.FindingMissingContext, Severity: workgraph.SeverityError, Field: "description", Message: "bounded", Recovery: workgraph.RecoveryReviseWork}}
 	reconcile, _ := Next(context.Background(), &nextSourceSpy{snapshot: draft}, draft.Mission.MissionID)
-	if reconcile.Action.Successor != StepReconciliationRequired || reconcile.Action.GovernanceAction != "mission.reconcile" {
+	if reconcile.Action.Destination() != StepReconciliationRequired || reconcile.Action.GovernanceAction != "mission.reconcile" {
 		t.Fatalf("reconcile route: %+v", reconcile)
 	}
 }

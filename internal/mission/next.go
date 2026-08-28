@@ -69,17 +69,53 @@ func (d NextDiagnostic) validate() error {
 }
 
 type ActionDescriptor struct {
-	ActionKey        string  `json:"action_key"`
-	Mutating         bool    `json:"mutating"`
-	GovernanceAction string  `json:"governance_action"`
-	Successor        StepKey `json:"-"`
+	ActionKey        string `json:"action_key"`
+	Mutating         bool   `json:"mutating"`
+	GovernanceAction string `json:"governance_action"`
 }
 
-func (a ActionDescriptor) validate() error {
-	if !boundedFactText(a.ActionKey, 128) || !a.Mutating || !boundedFactText(a.GovernanceAction, 128) || a.Successor.Validate() != nil || a.Successor.Reserved() {
+func NewActionDescriptor(destination StepKey, governanceAction string) (ActionDescriptor, error) {
+	value := ActionDescriptor{ActionKey: destination.String(), Mutating: true, GovernanceAction: governanceAction}
+	if err := value.Validate(); err != nil {
+		return ActionDescriptor{}, err
+	}
+	return value, nil
+}
+
+func (a ActionDescriptor) Validate() error {
+	destination, governanceAction, ok := actionDestinationLaw(a.ActionKey)
+	if !ok || destination.Reserved() || !a.Mutating || a.GovernanceAction != governanceAction {
 		return errors.New("invalid action descriptor")
 	}
 	return nil
+}
+
+func (a ActionDescriptor) Destination() StepKey { return StepKey(a.ActionKey) }
+
+func actionDestinationLaw(actionKey string) (StepKey, string, bool) {
+	destination := StepKey(actionKey)
+	var governanceAction string
+	switch destination {
+	case StepSpecifying:
+		governanceAction = "mission.specify"
+	case StepSpecificationApproved:
+		governanceAction = "mission.approve-specification"
+	case StepPlanning:
+		governanceAction = "mission.plan"
+	case StepPlanApproved:
+		governanceAction = "mission.approve-plan"
+	case StepDecomposing:
+		governanceAction = "mission.decompose"
+	case StepWorkDraftReady:
+		governanceAction = "mission.validate-work"
+	case StepReconciliationRequired:
+		governanceAction = "mission.reconcile"
+	case StepWorkFinalized:
+		governanceAction = "mission.finalize-work"
+	default:
+		return "", "", false
+	}
+	return destination, governanceAction, true
 }
 
 type DecisionDescriptor struct {
@@ -124,9 +160,6 @@ func NewQueryResult(base NextBase, d NextDiagnostic) (NextResult, error) {
 }
 func NewActionResult(base NextBase, a ActionDescriptor) (NextResult, error) {
 	v := nextBase(base, NextAction)
-	if a.Successor == "" {
-		a.Successor = StepKey(a.ActionKey)
-	}
 	v.Action = &a
 	return validatedNext(v)
 }
@@ -201,7 +234,7 @@ func (v NextResult) Validate() error {
 			return nextAlgebraRefusal()
 		}
 	case NextAction:
-		if fields != 1 || v.Action == nil || v.Action.validate() != nil {
+		if fields != 1 || v.Action == nil || v.Action.Validate() != nil {
 			return nextAlgebraRefusal()
 		}
 	case NextWorkReady, NextReviewReady:
@@ -295,9 +328,6 @@ func (v *NextResult) UnmarshalJSON(data []byte) error {
 		return errors.New("invalid trailing next result")
 	}
 	value := NextResult(decoded)
-	if value.Action != nil {
-		value.Action.Successor = StepKey(value.Action.ActionKey)
-	}
 	if err := value.Validate(); err != nil {
 		return err
 	}
@@ -460,7 +490,11 @@ func evaluateNext(s NextSnapshot, requested ids.MissionID) (NextResult, error) {
 	if !spec.Mutating || spec.GovernanceAction == "" {
 		return queryNext(base, "required_input", "mission step requires structured input")
 	}
-	return NewActionResult(base, ActionDescriptor{ActionKey: successor.String(), Mutating: true, GovernanceAction: spec.GovernanceAction, Successor: successor})
+	descriptor, err := NewActionDescriptor(successor, spec.GovernanceAction)
+	if err != nil {
+		return NextResult{}, refusal(KindInvalidStoredState, RecoveryRepairStoredState, "next.action", "destination action law is inconsistent")
+	}
+	return NewActionResult(base, descriptor)
 }
 
 func validateNextSnapshotMembers(s NextSnapshot) error {

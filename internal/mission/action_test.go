@@ -51,6 +51,46 @@ func TestActionCommandIsSeparateGovernedAndReplaySafe(t *testing.T) {
 	}
 }
 
+func TestActionCommandCanonicalDestinationConflictsAndReResolvesCurrentLaw(t *testing.T) {
+	snapshot := nextSnapshotAt(t, nextActionDefinition(t), StepInitialized, 7)
+	store := newActionMemoryStore(snapshot)
+	service := NewActionService(store, map[string]ActionHandler{"mission.plan": AdvanceActionHandler{}, "mission.specify": AdvanceActionHandler{}})
+	command := actionCommandFixture(t, snapshot)
+	if _, err := service.Execute(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	mismatch := command
+	mismatch.OperationID = "operation-mismatch"
+	mismatch.Successor = StepSpecifying
+	if _, err := service.Execute(context.Background(), mismatch); !IsKind(err, KindInvalidRequest) {
+		t.Fatalf("duplicated destination mismatch accepted: %v", err)
+	}
+	if store.observes != 1 || store.commits != 1 {
+		t.Fatal("local mismatch reached replay or live authority")
+	}
+
+	substitution := command
+	substitution.ActionKey = StepSpecifying.String()
+	substitution.Successor = StepSpecifying
+	substitution.GovernanceAction = "mission.specify"
+	substitution.Governance = actionGovernance(t, snapshot.Mission, "mission.specify")
+	if _, err := service.Execute(context.Background(), substitution); !IsKind(err, KindIdempotencyConflict) {
+		t.Fatalf("same operation destination substitution did not conflict: %v", err)
+	}
+	if store.observes != 1 || store.commits != 1 {
+		t.Fatal("operation conflict reached live authority")
+	}
+	substitution.OperationID = "operation-substitution"
+	liveStore := newActionMemoryStore(snapshot)
+	liveService := NewActionService(liveStore, map[string]ActionHandler{"mission.specify": AdvanceActionHandler{}})
+	if _, err := liveService.Execute(context.Background(), substitution); !IsKind(err, KindUnsupportedAction) {
+		t.Fatalf("different operation bypassed current destination law: %v", err)
+	}
+	if liveStore.commits != 0 {
+		t.Fatal("current-law refusal mutated state")
+	}
+}
+
 func TestActionCommandDigestBindsAuthorityAndCompleteExpectedStateButNotCorrelation(t *testing.T) {
 	snapshot := nextSnapshotAt(t, nextActionDefinition(t), StepInitialized, 7)
 	base := actionCommandFixture(t, snapshot)

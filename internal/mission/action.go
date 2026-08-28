@@ -187,6 +187,12 @@ func validateActionCommand(c ActionCommand) (string, error) {
 	if !boundedFactText(c.ActionKey, 128) || c.Successor.Validate() != nil || c.Successor.Reserved() || !boundedFactText(c.GovernanceAction, 128) {
 		return "", refusal(KindInvalidRequest, RecoveryCorrectInput, "action", "action identity is invalid")
 	}
+	if !factGovernanceAction(c.GovernanceAction) {
+		destination, governanceAction, ok := actionDestinationLaw(c.ActionKey)
+		if !ok || destination != c.Successor || governanceAction != c.GovernanceAction {
+			return "", refusal(KindInvalidRequest, RecoveryCorrectInput, "action.destination", "action destination identity is inconsistent")
+		}
+	}
 	if _, err := ids.ParseActorID(c.ActorID.String()); err != nil {
 		return "", refusal(KindInvalidRequest, RecoveryCorrectInput, "actor_id", "actor identity is invalid")
 	}
@@ -217,6 +223,9 @@ func validateActionCommand(c ActionCommand) (string, error) {
 		OccurredAt       string
 	}{c.SchemaVersion, c.OperationID, c.MissionID, canonicalMissionSnapshotIdentity(c.ExpectedMission), c.ActionKey, c.Successor, c.GovernanceAction, c.ActorID, c.ProcessID, c.Governance, c.PayloadDigest, c.OccurredAt.Format(time.RFC3339Nano)}
 	return domainDigest(actionRequestDomain, canonical)
+}
+func factGovernanceAction(action string) bool {
+	return action == "mission.resolve-decision" || action == "mission.defer-decision" || action == "mission.cancel-decision" || action == "mission.clear-blocker"
 }
 func validateCommandGovernance(c ActionCommand, s NextSnapshot) error {
 	g := c.Governance
@@ -273,7 +282,7 @@ func validateRequestedAction(snapshot NextSnapshot, c ActionCommand) error {
 	if next.Kind == NextDecisionRequired {
 		return refusal(KindUnresolvedDecision, RecoveryResolveDecision, "decision", "open decision prevents action")
 	}
-	if next.Kind != NextAction || next.Action.ActionKey != c.ActionKey || next.Action.Successor != c.Successor || next.Action.GovernanceAction != c.GovernanceAction {
+	if next.Kind != NextAction || next.Action.ActionKey != c.ActionKey || next.Action.Destination() != c.Successor || next.Action.GovernanceAction != c.GovernanceAction {
 		return refusal(KindUnsupportedAction, RecoveryRefreshState, "action", "action is not legal in current mission state")
 	}
 	return nil
