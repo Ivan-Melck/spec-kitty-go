@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
@@ -44,11 +46,18 @@ type Store struct {
 }
 
 type diskState struct {
-	Version     uint16                      `json:"version"`
-	Works       map[string]*diskWork        `json:"works"`
-	Failures    []FailureMode               `json:"failures,omitempty"`
-	Compensated map[string]tracker.Revision `json:"compensated,omitempty"`
-	History     []HistoryEntry              `json:"history,omitempty"`
+	Version              uint16                         `json:"version"`
+	Works                map[string]*diskWork           `json:"works"`
+	Failures             []FailureMode                  `json:"failures,omitempty"`
+	Compensated          map[string]tracker.Revision    `json:"compensated,omitempty"`
+	History              []HistoryEntry                 `json:"history,omitempty"`
+	DefinitionOperations map[string]definitionOperation `json:"definition_operations,omitempty"`
+	DefinitionRequests   map[string]string              `json:"definition_requests,omitempty"`
+}
+
+type definitionOperation struct {
+	Digest  string `json:"digest"`
+	WorkKey string `json:"work_key"`
 }
 
 type diskWork struct {
@@ -61,6 +70,24 @@ type diskWork struct {
 	AssignmentMarker string            `json:"assignment_marker,omitempty"`
 	Comments         []tracker.Comment `json:"comments,omitempty"`
 	Revision         tracker.Revision  `json:"revision"`
+	Definition       *diskDefinition   `json:"definition,omitempty"`
+}
+
+type diskDefinition struct {
+	ProjectID          ids.ProjectID           `json:"project_id"`
+	WorkID             ids.WorkID              `json:"work_id"`
+	Title              string                  `json:"title"`
+	Description        string                  `json:"description"`
+	DesignContext      string                  `json:"design_context"`
+	CrossDomainReason  string                  `json:"cross_domain_reason,omitempty"`
+	Criteria           []tracker.WorkCriterion `json:"criteria"`
+	Dependencies       []ids.WorkID            `json:"dependencies,omitempty"`
+	WriteScopes        []tracker.WriteScope    `json:"write_scopes"`
+	Provenance         []tracker.ScopeRef      `json:"provenance"`
+	MetadataSchema     uint16                  `json:"metadata_schema"`
+	ProviderMetadata   json.RawMessage         `json:"provider_metadata,omitempty"`
+	CreatedByOperation ids.OperationID         `json:"created_by_operation"`
+	ObservedAt         time.Time               `json:"observed_at"`
 }
 
 func Open(path string) (*Store, error) {
@@ -114,6 +141,26 @@ func (s *Store) HumanAssign(ctx context.Context, workKey, assignee string) error
 		work.Assignee = assignee
 		work.AssignmentMarker = ""
 		state.History = append(state.History, HistoryEntry{Kind: "human_assignment", WorkKey: workKey, Value: assignee, Revision: work.Revision})
+		return nil
+	})
+}
+
+// HumanEditTitle simulates an unattributed concurrent provider writer. It is
+// intentionally explicit so guarded-update tests never rely on timing.
+func (s *Store) HumanEditTitle(ctx context.Context, workKey, title string) error {
+	if title == "" {
+		return &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "title is required"}
+	}
+	return s.update(ctx, func(state *diskState) error {
+		work, ok := state.Works[workKey]
+		if !ok || work.Definition == nil {
+			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work definition does not exist"}
+		}
+		work.Revision++
+		work.Title = title
+		work.Definition.Title = title
+		work.Definition.ObservedAt = time.Now().UTC()
+		state.History = append(state.History, HistoryEntry{Kind: "human_definition_edit", WorkKey: workKey, Value: title, Revision: work.Revision})
 		return nil
 	})
 }
@@ -184,7 +231,7 @@ func unlock(file *os.File) {
 }
 
 func (s *Store) load() (diskState, error) {
-	state := diskState{Version: 1, Works: map[string]*diskWork{}, Compensated: map[string]tracker.Revision{}}
+	state := diskState{Version: 1, Works: map[string]*diskWork{}, Compensated: map[string]tracker.Revision{}, DefinitionOperations: map[string]definitionOperation{}, DefinitionRequests: map[string]string{}}
 	file, err := os.Open(s.path)
 	if os.IsNotExist(err) {
 		return state, nil
@@ -204,6 +251,12 @@ func (s *Store) load() (diskState, error) {
 	}
 	if state.Compensated == nil {
 		state.Compensated = map[string]tracker.Revision{}
+	}
+	if state.DefinitionOperations == nil {
+		state.DefinitionOperations = map[string]definitionOperation{}
+	}
+	if state.DefinitionRequests == nil {
+		state.DefinitionRequests = map[string]string{}
 	}
 	return state, nil
 }
