@@ -121,3 +121,16 @@ func TestBindCampaignSourceRejectsIncompleteAndDriftingProfiles(t *testing.T) {
 		})
 	}
 }
+
+func TestNewVerifyRequestBindsConfiguredTimeoutAndDeadlineOutcome(t *testing.T) {
+	started := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	profile := testcampaign.Profile{Name: "mission-contract", Package: "./internal/scenario", Pattern: "^TestMissionMethodQualificationContract$", ExpectedTests: []string{"TestMissionMethodQualificationContract"}}
+	request := newVerifyRequest(profile, "github.com/spec-kitty/go-kitty3/internal/scenario", 124, started, started.Add(time.Minute), 4*time.Minute, true)
+	if request.Campaign != profile.Name || request.Package == "" || request.Pattern != profile.Pattern || len(request.Expected) != 1 || request.ProcessExit != 124 || request.StartedAt != started || request.FinishedAt != started.Add(time.Minute) || request.Timeout != 4*time.Minute || !request.TimedOut {
+		t.Fatalf("verify request lost timeout or source fields: %+v", request)
+	}
+	request.Expected[0] = "mutated"
+	if profile.ExpectedTests[0] == "mutated" {
+		t.Fatal("verify request leaked expected-test mutation into profile")
+	}
+}

@@ -163,6 +163,7 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 	startedAt := time.Now().UTC()
 	runErr := command.Run()
 	finishedAt := time.Now().UTC()
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 	processExit := exitCode(runErr)
 	if closeErr := transcript.Close(); closeErr != nil && runErr == nil {
 		runErr = closeErr
@@ -177,11 +178,7 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 	if err != nil {
 		return testcampaign.Report{}, reportPath, fmt.Errorf("open transcript: %w", err)
 	}
-	report, verifyErr := testcampaign.Verify(input, testcampaign.VerifyRequest{
-		Campaign: profile.Name, Package: packagePath, Pattern: profile.Pattern,
-		Expected: profile.ExpectedTests, ProcessExit: processExit,
-		StartedAt: startedAt, FinishedAt: finishedAt,
-	})
+	report, verifyErr := testcampaign.Verify(input, newVerifyRequest(profile, packagePath, processExit, startedAt, finishedAt, timeout, timedOut))
 	if closeErr := input.Close(); closeErr != nil && verifyErr == nil {
 		verifyErr = closeErr
 	}
@@ -213,6 +210,15 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 		return report, reportPath, fmt.Errorf("go test failed: %w", runErr)
 	}
 	return report, reportPath, nil
+}
+
+func newVerifyRequest(profile testcampaign.Profile, packagePath string, processExit int, startedAt, finishedAt time.Time, timeout time.Duration, timedOut bool) testcampaign.VerifyRequest {
+	return testcampaign.VerifyRequest{
+		Campaign: profile.Name, Package: packagePath, Pattern: profile.Pattern,
+		Expected: append([]string(nil), profile.ExpectedTests...), ProcessExit: processExit,
+		StartedAt: startedAt, FinishedAt: finishedAt,
+		Timeout: timeout, TimedOut: timedOut,
+	}
 }
 
 func resolvePackage(ctx context.Context, selector string) (string, error) {

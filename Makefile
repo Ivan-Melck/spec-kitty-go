@@ -16,7 +16,7 @@ OFFLINE_ENFORCED ?=
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract acceptance scope race static dependencies quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all
+.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial scope race static dependencies quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -48,12 +48,21 @@ contract: ## Run unit and portable contract packages, excluding expensive scenar
 acceptance: ## Run the bounded acceptance selector with an exact JSON census.
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile acceptance -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 
+mission-contract: ## Run the bounded Phase 3 contract and universal-invariant census.
+	$(GO) run ./internal/testcampaign/cmd/campaign -profile mission-contract -artifact-dir "$(ARTIFACT_DIR)" -timeout 4m
+
+mission-acceptance: ## Run bounded Phase 3 normalization, projection, governance, and pure-query trials.
+	$(GO) run ./internal/testcampaign/cmd/campaign -profile mission-acceptance -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
+
+mission-adversarial: ## Run the slow Phase 3 drift, process-race, and crash census.
+	$(GO) run ./internal/testcampaign/cmd/campaign -profile mission-adversarial -artifact-dir "$(ARTIFACT_DIR)" -timeout 20m
+
 scope: ## Run architecture, reachability, and rejecting-mutant guards.
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile architecture -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile scope -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 
 race: ## Run the authority-critical packages under the race detector.
-	$(GO) test -race -p=1 -count=1 ./internal/controlstore/sqlite ./internal/execution ./internal/testcampaign
+	$(GO) test -race -p=1 -count=1 ./internal/mission ./internal/artifact ./internal/workgraph ./internal/governancecontext ./internal/tracker/fake ./internal/controlstore/sqlite ./internal/execution ./internal/helpercmd ./internal/testcampaign
 
 static: ## Run vet and staticcheck over all packages.
 	@command -v $(STATICCHECK) >/dev/null 2>&1 || { echo "required tool missing: $(STATICCHECK) (install honnef.co/go/tools/cmd/staticcheck@v0.7.0)"; exit 1; }
@@ -70,7 +79,7 @@ beads-contract: ## Run the exact portable and adversarial provider campaign with
 	@mkdir -p "$(ARTIFACT_DIR)"
 	env -u BEADS_BIN -u BEADS_SERVER_ID -u BEADS_SERVER_ENDPOINT -u DOLT_SERVER_HOST -u DOLT_SERVER_PORT -u DOLT_CREDENTIALS_PATH GOPROXY=off GOSUMDB=off $(GO) run ./internal/testcampaign/cmd/campaign -campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 5m
 
-quality: preflight contract beads-contract race static dependencies ## Run the bounded pull-request campaign.
+quality: preflight contract beads-contract mission-contract mission-acceptance race static dependencies ## Run the bounded pull-request campaign.
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign quality -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 	@printf 'quality campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
 
@@ -111,4 +120,5 @@ scenario-full: ## Run every scenario with an exact top-level JSON census.
 
 full-campaign: quality ## Run quality plus the exhaustive scenario/fault/soak campaign.
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign full_campaign -artifact-dir "$(ARTIFACT_DIR)" -timeout 60m
+	$(GO) run ./internal/testcampaign/cmd/campaign -campaign mission_full -artifact-dir "$(ARTIFACT_DIR)" -timeout 20m
 	@printf 'full campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
