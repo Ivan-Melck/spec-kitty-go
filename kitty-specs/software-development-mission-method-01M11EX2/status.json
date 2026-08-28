@@ -417,7 +417,8 @@
       "last_transition_at": "2026-08-28T21:00:33.481832+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Cycle 2 strict publication validator and requalification complete"
+        "Cycle 2 strict publication validator and requalification complete",
+        "Cycle 3 publication closure and exact attestation gate complete"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
