@@ -76,7 +76,7 @@ Tracker statuses and projection files are never inputs.
 ## `mission decompose`
 
 **Kind**: saga command  
-**Authority**: current decompose step plus approved plan  
+**Authority**: exact `plan_approved` mission snapshot plus approved plan
 **Input**: mission, exact plan artifact, provider binding, proposed stable work
 definitions, operation identity  
 **Output**: mapped tracker work observations and validation report  
@@ -84,8 +84,11 @@ definitions, operation identity
 failure, mapping conflict
 
 Provider effects use the existing tracker operation marker and observation
-rules. A partial external result remains a recoverable saga; it never advances
-the mission automatically.
+rules. The command performs no mission transition. After a complete successful
+result, the caller submits two ordinary `mission transition` commands with
+distinct operation IDs and exact snapshots: `plan_approved` to `decomposing`,
+then `decomposing` to `work_draft_ready`. A partial, failed, or ambiguous result
+submits neither transition and remains a recoverable saga.
 
 ## `work finalize`
 

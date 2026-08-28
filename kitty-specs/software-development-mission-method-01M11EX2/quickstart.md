@@ -83,9 +83,30 @@ work-b depends on work-a
 Each item has standalone context, one or more structured criteria, a bounded
 write scope, stable WorkID, and traceability to the approved specification and
 plan. Invoke `mission decompose` against the fake provider while the exact
-expected snapshot is version 5. The command records the decomposition start as
-version 6; validation of the returned provider-neutral draft advances to
-`work_draft_ready` at version 7. WP10 proves the contract with the durable fake;
+mission snapshot is `plan_approved` version 5:
+
+```bash
+go run ./cmd/spk-phase1-helper mission decompose \
+  --database "$CONTROL_DB" --mission mission-demo \
+  --expected-snapshot "$MISSION_V5_JSON" \
+  --operation operation-decompose ...
+```
+
+The saga command performs provider work and returns normalized observations; it
+does not mutate the mission. Only after a complete successful result, advance
+with two explicit commands carrying distinct operation IDs:
+
+```bash
+go run ./cmd/spk-phase1-helper mission transition \
+  --to decomposing --expected-snapshot "$MISSION_V5_JSON" \
+  --operation operation-transition-decomposing ...
+go run ./cmd/spk-phase1-helper mission transition \
+  --to work_draft_ready --expected-snapshot "$MISSION_V6_JSON" \
+  --operation operation-transition-work-draft-ready ...
+```
+
+The two transitions produce versions 6 and 7. A partial, failed, or ambiguous
+decomposition performs neither. WP10 proves the contract with the durable fake;
 WP11 applies the same provider-neutral contract to Beads.
 
 Expected: both yield equivalent provider-neutral observations. Unknown
