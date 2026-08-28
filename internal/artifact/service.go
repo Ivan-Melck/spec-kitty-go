@@ -13,8 +13,10 @@ import (
 const (
 	PublishRequestCommitmentAlgorithm  = "sha256:spec-kitty-artifact-publish-request-v1"
 	ApprovalRequestCommitmentAlgorithm = "sha256:spec-kitty-artifact-approval-request-v1"
+	CurrentApprovalCommitmentAlgorithm = "sha256:spec-kitty-current-artifact-approval-v1"
 	publishRequestDomain               = "spec-kitty/artifact-publish-request/v1\x00"
 	approvalRequestDomain              = "spec-kitty/artifact-approval-request/v1\x00"
+	currentApprovalDomain              = "spec-kitty/current-artifact-approval/v1\x00"
 )
 
 // Repository is a consumer-owned aggregate port. PublishAtomic must allocate
@@ -32,9 +34,91 @@ type Repository interface {
 	PublishAtomic(context.Context, AtomicPublishRequest) (PublishResult, error)
 	Revision(context.Context, string) (ArtifactRevision, error)
 	CurrentRevision(context.Context, string, Kind) (ArtifactRevision, error)
+	// ObserveCurrentApproval returns the current revision and its approval
+	// history from one atomic repository observation.
+	ObserveCurrentApproval(context.Context, string, Kind) (CurrentApprovalObservation, error)
 	Validation(context.Context, string) (ValidationResult, error)
 	ApproveAtomic(context.Context, AtomicApprovalRequest) (ApprovalResult, error)
 	Approvals(context.Context, string, Kind) ([]ArtifactApproval, error)
+}
+
+// CurrentApprovalObservation is one immutable aggregate read of the current
+// revision and the approval history in the same repository snapshot.
+type CurrentApprovalObservation struct {
+	revision  ArtifactRevision
+	approvals []ArtifactApproval
+}
+
+func NewCurrentApprovalObservation(revision ArtifactRevision, approvals []ArtifactApproval) (CurrentApprovalObservation, error) {
+	if revision.ID() == "" || revision.MissionID() == "" || revision.Kind().Validate() != nil {
+		return CurrentApprovalObservation{}, diagnostic(ErrorRepositoryFailure, "current_approval", RecoveryInspectState, "current approval observation contains an invalid revision", nil)
+	}
+	for _, approval := range approvals {
+		if approval.ID() == "" || approval.ArtifactRevisionID() == "" || approval.Verdict().Validate() != nil {
+			return CurrentApprovalObservation{}, diagnostic(ErrorRepositoryFailure, "current_approval", RecoveryInspectState, "current approval observation contains an invalid approval", nil)
+		}
+	}
+	return CurrentApprovalObservation{revision: revision, approvals: append([]ArtifactApproval(nil), approvals...)}, nil
+}
+
+func (o CurrentApprovalObservation) CurrentRevision() ArtifactRevision {
+	return o.revision
+}
+
+func (o CurrentApprovalObservation) Approvals() []ArtifactApproval {
+	return append([]ArtifactApproval(nil), o.approvals...)
+}
+
+// CurrentApprovalEvidence is the immutable current-revision/approval binding
+// carried into a mission transition's atomic commit precondition.
+type CurrentApprovalEvidence struct {
+	missionID          string
+	kind               Kind
+	artifactRevisionID string
+	approvalID         string
+	commitment         string
+}
+
+func NewCurrentApprovalEvidence(missionID string, kind Kind, artifactRevisionID, approvalID string) (CurrentApprovalEvidence, error) {
+	if err := validateIdentity("mission_id", missionID); err != nil {
+		return CurrentApprovalEvidence{}, err
+	}
+	if err := kind.Validate(); err != nil {
+		return CurrentApprovalEvidence{}, err
+	}
+	if err := validateIdentity("artifact_revision_id", artifactRevisionID); err != nil {
+		return CurrentApprovalEvidence{}, err
+	}
+	if err := validateIdentity("approval_id", approvalID); err != nil {
+		return CurrentApprovalEvidence{}, err
+	}
+	commitment, err := canonicalDigest(currentApprovalDomain, struct {
+		MissionID          string `json:"mission_id"`
+		Kind               Kind   `json:"kind"`
+		ArtifactRevisionID string `json:"artifact_revision_id"`
+		ApprovalID         string `json:"approval_id"`
+	}{missionID, kind, artifactRevisionID, approvalID})
+	if err != nil {
+		return CurrentApprovalEvidence{}, err
+	}
+	return CurrentApprovalEvidence{
+		missionID: missionID, kind: kind, artifactRevisionID: artifactRevisionID,
+		approvalID: approvalID, commitment: commitment,
+	}, nil
+}
+
+func (e CurrentApprovalEvidence) MissionID() string          { return e.missionID }
+func (e CurrentApprovalEvidence) Kind() Kind                 { return e.kind }
+func (e CurrentApprovalEvidence) ArtifactRevisionID() string { return e.artifactRevisionID }
+func (e CurrentApprovalEvidence) ApprovalID() string         { return e.approvalID }
+func (e CurrentApprovalEvidence) Commitment() string         { return e.commitment }
+
+func (e CurrentApprovalEvidence) Validate() error {
+	restored, err := NewCurrentApprovalEvidence(e.missionID, e.kind, e.artifactRevisionID, e.approvalID)
+	if err != nil || restored.commitment != e.commitment {
+		return diagnostic(ErrorInvalidValidation, "current_approval", RecoveryInspectState, "current approval evidence commitment is invalid", err)
+	}
+	return nil
 }
 
 type Service struct {
@@ -369,20 +453,39 @@ func (s *Service) Freshness(ctx context.Context, requiredRevisionID string) (Fre
 	return EvaluateFreshness(requiredRevisionID, approvals)
 }
 
-// CurrentFreshness resolves the current revision then applies exact freshness.
-// It remains read-only.
-func (s *Service) CurrentFreshness(ctx context.Context, missionID string, kind Kind) (FreshnessResult, error) {
+// ObserveCurrentApproval returns one repository-atomic current-revision and
+// approval observation suitable for a later commit precondition.
+func (s *Service) ObserveCurrentApproval(ctx context.Context, missionID string, kind Kind) (CurrentApprovalObservation, error) {
 	if err := validateIdentity("mission_id", missionID); err != nil {
-		return FreshnessResult{}, err
+		return CurrentApprovalObservation{}, err
 	}
 	if err := kind.Validate(); err != nil {
+		return CurrentApprovalObservation{}, err
+	}
+	observation, err := s.repository.ObserveCurrentApproval(ctx, missionID, kind)
+	if err != nil {
+		return CurrentApprovalObservation{}, repositoryError("observe current approval", err)
+	}
+	revision := observation.CurrentRevision()
+	if revision.MissionID() != missionID || revision.Kind() != kind {
+		return CurrentApprovalObservation{}, diagnostic(ErrorRepositoryFailure, "current_approval", RecoveryInspectState, "current approval observation is outside the requested scope", nil)
+	}
+	if _, err := NewCurrentApprovalObservation(revision, observation.Approvals()); err != nil {
+		return CurrentApprovalObservation{}, err
+	}
+	return observation, nil
+}
+
+// CurrentFreshness applies exact freshness to one aggregate observation. It
+// remains read-only and cannot mix a revision with approvals from another
+// repository snapshot.
+func (s *Service) CurrentFreshness(ctx context.Context, missionID string, kind Kind) (FreshnessResult, error) {
+	observation, err := s.ObserveCurrentApproval(ctx, missionID, kind)
+	if err != nil {
 		return FreshnessResult{}, err
 	}
-	revision, err := s.repository.CurrentRevision(ctx, missionID, kind)
-	if err != nil {
-		return FreshnessResult{}, repositoryError("load current revision", err)
-	}
-	return s.Freshness(ctx, revision.ID())
+	revision := observation.CurrentRevision()
+	return EvaluateFreshness(revision.ID(), observation.Approvals())
 }
 
 func EvaluateFreshness(requiredRevisionID string, approvals []ArtifactApproval) (FreshnessResult, error) {

@@ -213,6 +213,15 @@ func TestFreshnessIsPureAndExactIdentityOnly(t *testing.T) {
 	now := time.Date(2026, 8, 27, 23, 0, 0, 0, time.UTC)
 	revision1 := publishArtifact(t, ctx, service, repository, publishFixture(t, "1", KindIntent, []byte("same"), true, now))
 	approveArtifact(t, ctx, service, approveFixture("1", revision1.ID(), VerdictApproved, now.Add(time.Second)))
+	observation, err := service.ObserveCurrentApproval(ctx, revision1.MissionID(), revision1.Kind())
+	if err != nil || observation.CurrentRevision().ID() != revision1.ID() || len(observation.Approvals()) != 1 {
+		t.Fatalf("aggregate current approval observation=%+v err=%v", observation, err)
+	}
+	callerApprovals := observation.Approvals()
+	callerApprovals[0] = ArtifactApproval{}
+	if observation.Approvals()[0].ID() == "" {
+		t.Fatal("current approval observation exposed caller-mutable approval storage")
+	}
 	revision2Command := publishFixture(t, "2", KindIntent, []byte("same"), true, now.Add(2*time.Second))
 	revision2Command.SourceRef = revision1.SourceRef()
 	revision2 := publishArtifact(t, ctx, service, repository, revision2Command)
@@ -290,6 +299,32 @@ func TestRequestCommitmentKnownVectors(t *testing.T) {
 	if ApprovalRequestCommitmentAlgorithm != "sha256:spec-kitty-artifact-approval-request-v1" || approval.RequestDigest != "3647a4ce4e5326688ca71329ce240358c600ee34b2803afd40f7917f79b91e1d" {
 		t.Fatalf("approval request vector drifted: algorithm=%q digest=%s", ApprovalRequestCommitmentAlgorithm, approval.RequestDigest)
 	}
+	current, err := NewCurrentApprovalEvidence("mission-vector", KindSpecification, "artifact-vector", "approval-vector")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if CurrentApprovalCommitmentAlgorithm != "sha256:spec-kitty-current-artifact-approval-v1" || current.Commitment() != "2e1b7051323e1ae805942bc62fc2457d1c46dd6fad6cbb521a82c2d1c2346d17" {
+		t.Fatalf("current approval vector drifted: algorithm=%q digest=%s", CurrentApprovalCommitmentAlgorithm, current.Commitment())
+	}
+	for _, mutant := range []CurrentApprovalEvidence{
+		mustCurrentApprovalEvidence(t, "mission-other", KindSpecification, "artifact-vector", "approval-vector"),
+		mustCurrentApprovalEvidence(t, "mission-vector", KindPlan, "artifact-vector", "approval-vector"),
+		mustCurrentApprovalEvidence(t, "mission-vector", KindSpecification, "artifact-other", "approval-vector"),
+		mustCurrentApprovalEvidence(t, "mission-vector", KindSpecification, "artifact-vector", "approval-other"),
+	} {
+		if mutant.Commitment() == current.Commitment() {
+			t.Fatalf("semantic current approval mutation retained commitment: %+v", mutant)
+		}
+	}
+}
+
+func mustCurrentApprovalEvidence(t *testing.T, missionID string, kind Kind, revisionID, approvalID string) CurrentApprovalEvidence {
+	t.Helper()
+	evidence, err := NewCurrentApprovalEvidence(missionID, kind, revisionID, approvalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evidence
 }
 
 type memoryRepository struct {
@@ -377,6 +412,17 @@ func (r *memoryRepository) CurrentRevision(_ context.Context, missionID string, 
 		return ArtifactRevision{}, diagnostic(ErrorNotFound, "artifact_revision_id", RecoveryInspectState, "current artifact revision was not found", nil)
 	}
 	return r.revisions[revisionID], nil
+}
+
+func (r *memoryRepository) ObserveCurrentApproval(_ context.Context, missionID string, kind Kind) (CurrentApprovalObservation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reads++
+	revisionID := r.current[artifactKey(missionID, kind)]
+	if revisionID == "" {
+		return CurrentApprovalObservation{}, diagnostic(ErrorNotFound, "artifact_revision_id", RecoveryInspectState, "current artifact revision was not found", nil)
+	}
+	return NewCurrentApprovalObservation(r.revisions[revisionID], r.approvals[artifactKey(missionID, kind)])
 }
 
 func (r *memoryRepository) Validation(_ context.Context, revisionID string) (ValidationResult, error) {

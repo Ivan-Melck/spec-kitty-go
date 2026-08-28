@@ -249,6 +249,7 @@ func TestDefaultReachabilityRegistryPassesCurrentRepository(t *testing.T) {
 	want := map[string]bool{
 		module + "/internal/handoff.VerifyCandidateAuthority": false,
 		module + "/internal/gitrepo.NewHandoffVerifier":       false,
+		module + "/internal/artifact.EvaluateFreshness":       false,
 		module + "/internal/mission.NewDefinition":            false,
 		module + "/internal/mission.EvaluateTransition":       false,
 	}
@@ -288,6 +289,14 @@ func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *test
 			name: "git-adapter", declaration: "package gitrepo\nfunc NewHandoffVerifier() {}\n",
 			callerPath: "internal/helpercmd/review.go", caller: "package helpercmd\nimport \"github.com/spec-kitty/go-kitty3/internal/gitrepo\"\nfunc compose() { gitrepo.NewHandoffVerifier() }\n",
 			target: ReachabilityTarget{Package: module + "/internal/gitrepo", Symbol: "NewHandoffVerifier", RequiredCallerClass: CallerExternalPackage},
+		},
+		{
+			name: "phase3-artifact-freshness", declaration: "package artifact\nfunc EvaluateFreshness() {}\n",
+			callerPath: "internal/mission/service.go", caller: "package mission\nimport \"github.com/spec-kitty/go-kitty3/internal/artifact\"\nfunc transition() { artifact.EvaluateFreshness() }\n",
+			target: ReachabilityTarget{
+				Package: module + "/internal/artifact", Symbol: "EvaluateFreshness",
+				RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
+			},
 		},
 		{
 			name: "phase3-mission-definition", declaration: "package mission\nfunc NewDefinition() {}\n",
@@ -331,23 +340,27 @@ func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *test
 
 func checkPhase3ReachabilityRegistrationActivatesWithoutPrematureFailure(t *testing.T) {
 	const module = "example.test/phase3-reachability"
-	target := ReachabilityTarget{
+	missionTarget := ReachabilityTarget{
 		Package: module + "/internal/mission", Symbol: "NewDefinition",
 		RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
 	}
+	artifactTarget := ReachabilityTarget{
+		Package: module + "/internal/artifact", Symbol: "EvaluateFreshness",
+		RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true,
+	}
 
-	t.Run("absent-package-is-a-forward-registration", func(t *testing.T) {
+	t.Run("mission-absent-package-is-a-forward-registration", func(t *testing.T) {
 		root := newReachabilityFixture(t, module)
 		writeGoFixture(t, root, "internal/ids/ids.go", "package ids\nconst Present = true\n")
-		if err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target}); err != nil {
+		if err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{missionTarget}); err != nil {
 			t.Fatalf("forward registration rejected before package exists: %v", err)
 		}
 	})
 
-	t.Run("present-package-requires-declaration", func(t *testing.T) {
+	t.Run("mission-present-package-requires-declaration", func(t *testing.T) {
 		root := newReachabilityFixture(t, module)
 		writeGoFixture(t, root, "internal/mission/model.go", "package mission\nconst Present = true\n")
-		err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
+		err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{missionTarget})
 		if err == nil || !strings.Contains(err.Error(), string(RuleReachabilityTarget)) || !strings.Contains(err.Error(), "symbol=NewDefinition") {
 			t.Fatalf("present package hid missing target: %v", err)
 		}
@@ -357,7 +370,7 @@ func checkPhase3ReachabilityRegistrationActivatesWithoutPrematureFailure(t *test
 		root := newReachabilityFixture(t, module)
 		writeGoFixture(t, root, "internal/mission/definition.go", "package mission\nfunc NewDefinition() {}\n")
 		writeGoFixture(t, root, "internal/missiontype/softwaredev/definition.go", "package softwaredev\nimport \"example.test/phase3-reachability/internal/mission\"\nfunc Definition() { mission.NewDefinition() }\n")
-		if err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target}); err != nil {
+		if err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{missionTarget}); err != nil {
 			t.Fatalf("real definition caller rejected: %v", err)
 		}
 	})
@@ -367,9 +380,46 @@ func checkPhase3ReachabilityRegistrationActivatesWithoutPrematureFailure(t *test
 		writeGoFixture(t, root, "internal/mission/definition.go", "package mission\nfunc NewDefinition() {}\n")
 		writeGoFixture(t, root, "internal/mission/definition_test.go", "package mission\nfunc testOnly() { NewDefinition() }\n")
 		writeGoFixture(t, root, "internal/missiontype/softwaredev/definition.go", "package softwaredev\ntype missionShadow struct{}\nfunc (missionShadow) NewDefinition() {}\nfunc Definition() { mission := missionShadow{}; mission.NewDefinition() }\n")
-		err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{target})
+		err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{missionTarget})
 		if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) || !strings.Contains(err.Error(), "symbol=NewDefinition") {
 			t.Fatalf("test-only or shadowed caller satisfied Phase 3 registration: %v", err)
+		}
+	})
+
+	t.Run("artifact-absent-package-is-a-forward-registration", func(t *testing.T) {
+		root := newReachabilityFixture(t, module)
+		writeGoFixture(t, root, "internal/mission/model.go", "package mission\nconst Present = true\n")
+		if err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{artifactTarget}); err != nil {
+			t.Fatalf("artifact forward registration rejected before package exists: %v", err)
+		}
+	})
+
+	t.Run("artifact-present-package-requires-declaration", func(t *testing.T) {
+		root := newReachabilityFixture(t, module)
+		writeGoFixture(t, root, "internal/artifact/model.go", "package artifact\nconst Present = true\n")
+		err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{artifactTarget})
+		if err == nil || !strings.Contains(err.Error(), string(RuleReachabilityTarget)) || !strings.Contains(err.Error(), "symbol=EvaluateFreshness") {
+			t.Fatalf("present artifact package hid missing target: %v", err)
+		}
+	})
+
+	t.Run("production-mission-caller-satisfies-artifact-registration", func(t *testing.T) {
+		root := newReachabilityFixture(t, module)
+		writeGoFixture(t, root, "internal/artifact/service.go", "package artifact\nfunc EvaluateFreshness() {}\n")
+		writeGoFixture(t, root, "internal/mission/service.go", "package mission\nimport \"example.test/phase3-reachability/internal/artifact\"\nfunc transition() { artifact.EvaluateFreshness() }\n")
+		if err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{artifactTarget}); err != nil {
+			t.Fatalf("real mission freshness caller rejected: %v", err)
+		}
+	})
+
+	t.Run("artifact-test-only-and-shadowed-callers-remain-ineligible", func(t *testing.T) {
+		root := newReachabilityFixture(t, module)
+		writeGoFixture(t, root, "internal/artifact/service.go", "package artifact\nconst Marker = true\nfunc EvaluateFreshness() {}\n")
+		writeGoFixture(t, root, "internal/artifact/service_test.go", "package artifact\nfunc testOnly() { EvaluateFreshness() }\n")
+		writeGoFixture(t, root, "internal/mission/service.go", "package mission\nimport artifactpkg \"example.test/phase3-reachability/internal/artifact\"\nvar _ = artifactpkg.Marker\ntype artifactShadow struct{}\nfunc (artifactShadow) EvaluateFreshness() {}\nfunc transition() { artifact := artifactShadow{}; artifact.EvaluateFreshness() }\n")
+		err := CheckReachability(context.Background(), root, module, []ReachabilityTarget{artifactTarget})
+		if err == nil || !strings.Contains(err.Error(), string(RuleReachability)) || !strings.Contains(err.Error(), "symbol=EvaluateFreshness") {
+			t.Fatalf("artifact test-only or shadowed caller satisfied registration: %v", err)
 		}
 	})
 }
