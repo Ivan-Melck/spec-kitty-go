@@ -41,6 +41,7 @@ type OutboxEnvelope struct {
 	AvailableAt    time.Time
 	ClaimID        string
 	ClaimedAt      time.Time
+	ClaimExpiresAt time.Time
 	LastAttemptAt  time.Time
 	DeliveredAt    time.Time
 }
@@ -48,7 +49,7 @@ type OutboxEnvelope struct {
 // OutboxStore is the narrow local delivery port. Claim, Retry, and Deliver are
 // compare-and-set operations over one durable envelope.
 type OutboxStore interface {
-	ClaimOutbox(context.Context, string, time.Time) (OutboxEnvelope, bool, error)
+	ClaimOutbox(context.Context, string, time.Time, time.Time) (OutboxEnvelope, bool, error)
 	RetryOutbox(context.Context, int64, string, time.Time, time.Time) (OutboxEnvelope, error)
 	DeliverOutbox(context.Context, int64, string, time.Time) (OutboxEnvelope, error)
 }

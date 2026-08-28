@@ -152,11 +152,13 @@ CREATE TABLE phase3_missions (
   definition_commitment TEXT NOT NULL,
   lifecycle TEXT NOT NULL CHECK(lifecycle IN ('open','terminal')),
   current_step TEXT NOT NULL,
-  current_work_revision_id TEXT,
   state_version INTEGER NOT NULL CHECK(state_version > 0),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   snapshot_json BLOB NOT NULL,
+  current_work_revision_id TEXT GENERATED ALWAYS AS (NULLIF(json_extract(snapshot_json,'$.CurrentWorkRevisionID'),'')) STORED,
+  UNIQUE(mission_id,current_work_revision_id),
+  CHECK(json_valid(snapshot_json)),
   FOREIGN KEY(mission_id,current_work_revision_id)
     REFERENCES phase3_current_work_revisions(mission_id,work_revision_id)
     ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
@@ -227,10 +229,13 @@ CREATE TABLE phase3_work_revisions_v2 (
   FOREIGN KEY(predecessor_id) REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT
 );
 CREATE TABLE phase3_current_work_revisions (
-  mission_id TEXT PRIMARY KEY REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  mission_id TEXT PRIMARY KEY,
   work_revision_id TEXT NOT NULL UNIQUE,
   generation INTEGER NOT NULL CHECK(generation > 0),
   UNIQUE(mission_id, work_revision_id),
+  FOREIGN KEY(mission_id,work_revision_id)
+    REFERENCES phase3_missions(mission_id,current_work_revision_id)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(work_revision_id, mission_id, generation)
     REFERENCES phase3_work_revisions_v2(work_revision_id, mission_id, generation)
     ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
@@ -314,14 +319,15 @@ CREATE TABLE phase3_outbox (
   available_at TEXT NOT NULL,
   claim_id TEXT,
   claimed_at TEXT,
+  claim_expires_at TEXT,
   last_attempt_at TEXT,
   delivered_at TEXT,
   CHECK(julianday(created_at) IS NOT NULL AND julianday(available_at) IS NOT NULL),
   CHECK(
-    (delivery_status='pending' AND attempt_count=0 AND claim_id IS NULL AND claimed_at IS NULL AND last_attempt_at IS NULL AND delivered_at IS NULL AND julianday(available_at)>=julianday(created_at))
-    OR (delivery_status='claimed' AND attempt_count>0 AND claim_id IS NOT NULL AND claimed_at IS NOT NULL AND julianday(claimed_at) IS NOT NULL AND delivered_at IS NULL AND (last_attempt_at IS NULL OR (julianday(last_attempt_at) IS NOT NULL AND julianday(claimed_at)>=julianday(last_attempt_at))))
-    OR (delivery_status='retryable' AND attempt_count>0 AND claim_id IS NULL AND claimed_at IS NULL AND last_attempt_at IS NOT NULL AND julianday(last_attempt_at) IS NOT NULL AND delivered_at IS NULL AND julianday(available_at)>=julianday(last_attempt_at))
-    OR (delivery_status='delivered' AND attempt_count>0 AND claim_id IS NULL AND claimed_at IS NULL AND last_attempt_at IS NOT NULL AND delivered_at IS NOT NULL AND julianday(last_attempt_at) IS NOT NULL AND julianday(delivered_at) IS NOT NULL AND julianday(delivered_at)>=julianday(last_attempt_at))
+    (delivery_status='pending' AND attempt_count=0 AND claim_id IS NULL AND claimed_at IS NULL AND claim_expires_at IS NULL AND last_attempt_at IS NULL AND delivered_at IS NULL AND julianday(available_at)>=julianday(created_at))
+    OR (delivery_status='claimed' AND attempt_count>0 AND claim_id IS NOT NULL AND length(claim_id) BETWEEN 1 AND 128 AND claim_id NOT GLOB '*[^!-~]*' AND claimed_at IS NOT NULL AND claim_expires_at IS NOT NULL AND julianday(claimed_at) IS NOT NULL AND julianday(claim_expires_at)>julianday(claimed_at) AND julianday(claim_expires_at)<=julianday(claimed_at)+(5.0/1440.0) AND julianday(claimed_at)>=julianday(available_at) AND julianday(available_at)>=julianday(created_at) AND delivered_at IS NULL AND (last_attempt_at IS NULL OR (julianday(last_attempt_at) IS NOT NULL AND julianday(claimed_at)>=julianday(last_attempt_at))))
+    OR (delivery_status='retryable' AND attempt_count>0 AND claim_id IS NULL AND claimed_at IS NOT NULL AND claim_expires_at IS NOT NULL AND last_attempt_at IS NOT NULL AND julianday(claimed_at) IS NOT NULL AND julianday(claim_expires_at)>julianday(claimed_at) AND julianday(claim_expires_at)<=julianday(claimed_at)+(5.0/1440.0) AND julianday(last_attempt_at)>=julianday(claimed_at) AND julianday(last_attempt_at)<=julianday(claim_expires_at) AND delivered_at IS NULL AND julianday(available_at)>=julianday(last_attempt_at) AND julianday(available_at)>=julianday(created_at))
+    OR (delivery_status='delivered' AND attempt_count>0 AND claim_id IS NULL AND claimed_at IS NOT NULL AND claim_expires_at IS NOT NULL AND last_attempt_at IS NOT NULL AND delivered_at IS NOT NULL AND julianday(claimed_at) IS NOT NULL AND julianday(claim_expires_at)>julianday(claimed_at) AND julianday(claim_expires_at)<=julianday(claimed_at)+(5.0/1440.0) AND julianday(last_attempt_at)>=julianday(claimed_at) AND julianday(last_attempt_at)<=julianday(claim_expires_at) AND julianday(delivered_at)>=julianday(last_attempt_at) AND julianday(delivered_at)<=julianday(claim_expires_at) AND julianday(available_at)>=julianday(created_at))
   )
 );
 CREATE TRIGGER immutable_phase3_operation_update BEFORE UPDATE ON phase3_operations BEGIN SELECT RAISE(ABORT,'phase3 operation is immutable'); END;
@@ -336,6 +342,12 @@ BEGIN SELECT RAISE(ABORT,'OperationID is already bound in phase3'); END;
 CREATE TRIGGER work_graph_operation_excludes_phase3 BEFORE INSERT ON work_graph_operations
 WHEN EXISTS(SELECT 1 FROM phase3_operations WHERE operation_id=NEW.operation_id)
 BEGIN SELECT RAISE(ABORT,'OperationID is already bound in phase3'); END;
+CREATE TRIGGER legacy_operation_excludes_work_graph BEFORE INSERT ON operations
+WHEN EXISTS(SELECT 1 FROM work_graph_operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in work graph'); END;
+CREATE TRIGGER work_graph_operation_excludes_legacy BEFORE INSERT ON work_graph_operations
+WHEN EXISTS(SELECT 1 FROM operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in legacy operations'); END;
 CREATE TRIGGER immutable_phase3_transition_update BEFORE UPDATE ON phase3_mission_transitions BEGIN SELECT RAISE(ABORT,'mission transition is immutable'); END;
 CREATE TRIGGER immutable_phase3_transition_delete BEFORE DELETE ON phase3_mission_transitions BEGIN SELECT RAISE(ABORT,'mission transition is immutable'); END;
 CREATE TRIGGER immutable_phase3_artifact_revision_update BEFORE UPDATE ON phase3_artifact_revisions BEGIN SELECT RAISE(ABORT,'artifact revision is immutable'); END;
@@ -363,6 +375,7 @@ CREATE TRIGGER phase3_outbox_delivery_transition
 BEFORE UPDATE ON phase3_outbox
 WHEN NOT (
   (OLD.delivery_status IN ('pending','retryable') AND NEW.delivery_status='claimed' AND NEW.attempt_count=OLD.attempt_count+1)
+  OR (OLD.delivery_status='claimed' AND NEW.delivery_status='claimed' AND julianday(OLD.claim_expires_at)<=julianday(NEW.claimed_at) AND NEW.attempt_count=OLD.attempt_count+1 AND NEW.claim_id<>OLD.claim_id)
   OR (OLD.delivery_status='claimed' AND NEW.delivery_status IN ('retryable','delivered') AND NEW.attempt_count=OLD.attempt_count)
 )
 BEGIN SELECT RAISE(ABORT,'phase3 outbox delivery transition is invalid'); END;

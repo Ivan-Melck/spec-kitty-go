@@ -92,7 +92,7 @@ func (s *Store) CreateMission(ctx context.Context, commit mission.CreateCommit) 
 		prior.Replayed = true
 		return prior, nil
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO phase3_missions(mission_id,project_id,definition_id,definition_version,definition_commitment,lifecycle,current_step,current_work_revision_id,state_version,created_at,updated_at,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, commit.Instance.MissionID, commit.Instance.ProjectID, commit.Instance.DefinitionID, commit.Instance.DefinitionVersion, commit.Instance.DefinitionCommitment, commit.Instance.Lifecycle, commit.Instance.CurrentStep, nullString(commit.Instance.CurrentWorkRevisionID.String()), commit.Instance.StateVersion, formatTime(commit.Instance.CreatedAt), formatTime(commit.Instance.UpdatedAt), encoded)
+	_, err = tx.ExecContext(ctx, `INSERT INTO phase3_missions(mission_id,project_id,definition_id,definition_version,definition_commitment,lifecycle,current_step,state_version,created_at,updated_at,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, commit.Instance.MissionID, commit.Instance.ProjectID, commit.Instance.DefinitionID, commit.Instance.DefinitionVersion, commit.Instance.DefinitionCommitment, commit.Instance.Lifecycle, commit.Instance.CurrentStep, commit.Instance.StateVersion, formatTime(commit.Instance.CreatedAt), formatTime(commit.Instance.UpdatedAt), encoded)
 	if err != nil {
 		if isUnique(err) {
 			return mission.CreateResult{}, missionError(mission.KindAlreadyExists, "mission", "mission already exists", nil)
@@ -206,7 +206,7 @@ func (s *Store) CommitTransition(ctx context.Context, commit mission.TransitionC
 		}
 	}
 	successorJSON, _ := encodeSnapshot(commit.Candidate.Successor)
-	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET lifecycle=?,current_step=?,current_work_revision_id=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, commit.Candidate.Successor.Lifecycle, commit.Candidate.Successor.CurrentStep, nullString(commit.Candidate.Successor.CurrentWorkRevisionID.String()), commit.Candidate.Successor.StateVersion, formatTime(commit.Candidate.Successor.UpdatedAt), successorJSON, commit.Candidate.Successor.MissionID, commit.Candidate.Previous.StateVersion)
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET lifecycle=?,current_step=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, commit.Candidate.Successor.Lifecycle, commit.Candidate.Successor.CurrentStep, commit.Candidate.Successor.StateVersion, formatTime(commit.Candidate.Successor.UpdatedAt), successorJSON, commit.Candidate.Successor.MissionID, commit.Candidate.Previous.StateVersion)
 	if err != nil {
 		return mission.TransitionResult{}, missionError(mission.KindPersistenceUnavailable, "store", "mission persistence operation failed", err)
 	}
@@ -299,8 +299,8 @@ func insertPhase3Event(ctx context.Context, tx *sql.Tx, eventID, op, missionID, 
 func scanOutbox(row *sql.Row) (controlstore.OutboxEnvelope, error) {
 	var value controlstore.OutboxEnvelope
 	var created, available string
-	var claimed, last, delivered sql.NullString
-	err := row.Scan(&value.Sequence, &value.EventID, &value.EventKind, &value.PayloadDigest, &created, &value.DeliveryStatus, &value.AttemptCount, &available, &value.ClaimID, &claimed, &last, &delivered)
+	var claimed, expires, last, delivered sql.NullString
+	err := row.Scan(&value.Sequence, &value.EventID, &value.EventKind, &value.PayloadDigest, &created, &value.DeliveryStatus, &value.AttemptCount, &available, &value.ClaimID, &claimed, &expires, &last, &delivered)
 	if err != nil {
 		return value, err
 	}
@@ -313,6 +313,11 @@ func scanOutbox(row *sql.Row) (controlstore.OutboxEnvelope, error) {
 	if claimed.Valid {
 		if value.ClaimedAt, err = parseTime(claimed.String); err != nil {
 			return value, fmt.Errorf("stored outbox claim time is invalid")
+		}
+	}
+	if expires.Valid {
+		if value.ClaimExpiresAt, err = parseTime(expires.String); err != nil {
+			return value, fmt.Errorf("stored outbox claim expiry is invalid")
 		}
 	}
 	if last.Valid {
@@ -330,19 +335,19 @@ func scanOutbox(row *sql.Row) (controlstore.OutboxEnvelope, error) {
 	}
 	switch value.DeliveryStatus {
 	case controlstore.OutboxPending:
-		if value.AttemptCount != 0 || value.ClaimID != "" || !value.ClaimedAt.IsZero() || !value.LastAttemptAt.IsZero() || !value.DeliveredAt.IsZero() {
+		if value.AttemptCount != 0 || value.ClaimID != "" || !value.ClaimedAt.IsZero() || !value.ClaimExpiresAt.IsZero() || !value.LastAttemptAt.IsZero() || !value.DeliveredAt.IsZero() || value.AvailableAt.Before(value.CreatedAt) {
 			return value, fmt.Errorf("stored pending outbox evidence is invalid")
 		}
 	case controlstore.OutboxClaimed:
-		if value.AttemptCount == 0 || !boundedStoreText(value.ClaimID, 128) || value.ClaimedAt.IsZero() || !value.DeliveredAt.IsZero() {
+		if value.AttemptCount == 0 || !boundedStoreText(value.ClaimID, 128) || value.ClaimedAt.IsZero() || !value.ClaimExpiresAt.After(value.ClaimedAt) || value.ClaimedAt.Before(value.AvailableAt) || value.AvailableAt.Before(value.CreatedAt) || (!value.LastAttemptAt.IsZero() && value.ClaimedAt.Before(value.LastAttemptAt)) || !value.DeliveredAt.IsZero() {
 			return value, fmt.Errorf("stored claimed outbox evidence is invalid")
 		}
 	case controlstore.OutboxRetryable:
-		if value.AttemptCount == 0 || value.ClaimID != "" || !value.ClaimedAt.IsZero() || value.LastAttemptAt.IsZero() || !value.DeliveredAt.IsZero() {
+		if value.AttemptCount == 0 || value.ClaimID != "" || value.ClaimedAt.IsZero() || !value.ClaimExpiresAt.After(value.ClaimedAt) || value.LastAttemptAt.Before(value.ClaimedAt) || value.LastAttemptAt.After(value.ClaimExpiresAt) || value.AvailableAt.Before(value.LastAttemptAt) || !value.DeliveredAt.IsZero() {
 			return value, fmt.Errorf("stored retryable outbox evidence is invalid")
 		}
 	case controlstore.OutboxDelivered:
-		if value.AttemptCount == 0 || value.ClaimID != "" || !value.ClaimedAt.IsZero() || value.LastAttemptAt.IsZero() || value.DeliveredAt.IsZero() {
+		if value.AttemptCount == 0 || value.ClaimID != "" || value.ClaimedAt.IsZero() || !value.ClaimExpiresAt.After(value.ClaimedAt) || value.LastAttemptAt.Before(value.ClaimedAt) || value.LastAttemptAt.After(value.ClaimExpiresAt) || value.DeliveredAt.Before(value.LastAttemptAt) || value.DeliveredAt.After(value.ClaimExpiresAt) {
 			return value, fmt.Errorf("stored delivered outbox evidence is invalid")
 		}
 	default:
@@ -351,10 +356,12 @@ func scanOutbox(row *sql.Row) (controlstore.OutboxEnvelope, error) {
 	return value, nil
 }
 
-const outboxColumns = `sequence,event_id,event_kind,payload_digest,created_at,delivery_status,attempt_count,available_at,COALESCE(claim_id,''),claimed_at,last_attempt_at,delivered_at`
+const outboxColumns = `sequence,event_id,event_kind,payload_digest,created_at,delivery_status,attempt_count,available_at,COALESCE(claim_id,''),claimed_at,claim_expires_at,last_attempt_at,delivered_at`
 
-func (s *Store) ClaimOutbox(ctx context.Context, claimID string, now time.Time) (controlstore.OutboxEnvelope, bool, error) {
-	if !boundedStoreText(claimID, 128) || now.IsZero() || now.Location() != time.UTC {
+const maxOutboxClaimLease = 5 * time.Minute
+
+func (s *Store) ClaimOutbox(ctx context.Context, claimID string, now, expires time.Time) (controlstore.OutboxEnvelope, bool, error) {
+	if !boundedStoreText(claimID, 128) || now.IsZero() || now.Location() != time.UTC || expires.Location() != time.UTC || !expires.After(now) || expires.Sub(now) > maxOutboxClaimLease {
 		return controlstore.OutboxEnvelope{}, false, fmt.Errorf("outbox claim is invalid")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -363,14 +370,27 @@ func (s *Store) ClaimOutbox(ctx context.Context, claimID string, now time.Time) 
 	}
 	defer tx.Rollback()
 	var sequence int64
-	err = tx.QueryRowContext(ctx, `SELECT sequence FROM phase3_outbox WHERE delivery_status IN ('pending','retryable') AND julianday(available_at)<=julianday(?) ORDER BY sequence LIMIT 1`, formatTime(now)).Scan(&sequence)
+	var status, priorClaimID string
+	var attempts uint64
+	var priorExpiry sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT sequence,delivery_status,attempt_count,COALESCE(claim_id,''),claim_expires_at FROM phase3_outbox
+		WHERE (delivery_status IN ('pending','retryable') AND julianday(available_at)<=julianday(?))
+		   OR (delivery_status='claimed' AND julianday(claim_expires_at)<=julianday(?))
+		ORDER BY sequence LIMIT 1`, formatTime(now), formatTime(now)).Scan(&sequence, &status, &attempts, &priorClaimID, &priorExpiry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return controlstore.OutboxEnvelope{}, false, nil
 	}
 	if err != nil {
 		return controlstore.OutboxEnvelope{}, false, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='claimed',attempt_count=attempt_count+1,claim_id=?,claimed_at=? WHERE sequence=? AND delivery_status IN ('pending','retryable') AND julianday(available_at)<=julianday(?)`, claimID, formatTime(now), sequence, formatTime(now))
+	if status == string(controlstore.OutboxClaimed) && claimID == priorClaimID {
+		return controlstore.OutboxEnvelope{}, false, fmt.Errorf("replacement outbox claim identity must differ")
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='claimed',attempt_count=?,claim_id=?,claimed_at=?,claim_expires_at=?
+		WHERE sequence=? AND delivery_status=? AND attempt_count=? AND (
+		  (delivery_status IN ('pending','retryable') AND claim_id IS NULL AND julianday(available_at)<=julianday(?))
+		  OR (delivery_status='claimed' AND claim_id=? AND claim_expires_at=? AND julianday(claim_expires_at)<=julianday(?))
+		)`, attempts+1, claimID, formatTime(now), formatTime(expires), sequence, status, attempts, formatTime(now), priorClaimID, priorExpiry.String, formatTime(now))
 	if err != nil {
 		return controlstore.OutboxEnvelope{}, false, err
 	}
@@ -395,7 +415,7 @@ func (s *Store) RetryOutbox(ctx context.Context, sequence int64, claimID string,
 		return controlstore.OutboxEnvelope{}, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='retryable',claim_id=NULL,claimed_at=NULL,last_attempt_at=?,available_at=? WHERE sequence=? AND delivery_status='claimed' AND claim_id=? AND julianday(?)>=julianday(claimed_at)`, formatTime(attempted), formatTime(available), sequence, claimID, formatTime(attempted))
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='retryable',claim_id=NULL,last_attempt_at=?,available_at=? WHERE sequence=? AND delivery_status='claimed' AND claim_id=? AND julianday(?)>=julianday(claimed_at) AND julianday(?)<=julianday(claim_expires_at)`, formatTime(attempted), formatTime(available), sequence, claimID, formatTime(attempted), formatTime(attempted))
 	if err != nil {
 		return controlstore.OutboxEnvelope{}, err
 	}
@@ -420,7 +440,7 @@ func (s *Store) DeliverOutbox(ctx context.Context, sequence int64, claimID strin
 		return controlstore.OutboxEnvelope{}, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='delivered',claim_id=NULL,claimed_at=NULL,last_attempt_at=?,delivered_at=? WHERE sequence=? AND delivery_status='claimed' AND claim_id=? AND julianday(?)>=julianday(claimed_at)`, formatTime(at), formatTime(at), sequence, claimID, formatTime(at))
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='delivered',claim_id=NULL,last_attempt_at=?,delivered_at=? WHERE sequence=? AND delivery_status='claimed' AND claim_id=? AND julianday(?)>=julianday(claimed_at) AND julianday(?)<=julianday(claim_expires_at)`, formatTime(at), formatTime(at), sequence, claimID, formatTime(at), formatTime(at))
 	if err != nil {
 		return controlstore.OutboxEnvelope{}, err
 	}

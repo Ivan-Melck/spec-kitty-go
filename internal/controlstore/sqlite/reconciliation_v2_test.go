@@ -23,18 +23,9 @@ func TestSuccessorPublicationPersistsCompleteEligibility(t *testing.T) {
 	snapshot.CurrentWorkRevisionID = "revision-v2-01"
 	snapshot.Lifecycle = mission.LifecycleTerminal
 	snapshot.TerminalOutcome = mission.OutcomeWorkFinalized
-	seedPhase3Mission(t, store, snapshot)
 	old := testRevisionV2(t, "revision-v2-01", 1, "", "old title", at)
 	newRevision := testRevisionV2(t, "revision-v2-02", 2, old.ID(), "new title", at.Add(time.Second))
-	oldBytes, _ := old.Encode()
-	_, err = store.db.Exec(`INSERT INTO phase3_work_revisions_v2(work_revision_id,mission_id,project_id,generation,predecessor_id,graph_digest,criteria_digest,encoded_revision) VALUES(?,?,?,?,?,?,?,?)`, old.ID(), old.MissionID(), old.ProjectID(), old.Generation(), nil, old.GraphDigest(), old.CriteriaDigest(), oldBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = store.db.Exec(`INSERT INTO phase3_current_work_revisions(mission_id,work_revision_id,generation) VALUES(?,?,1)`, snapshot.MissionID, old.ID())
-	if err != nil {
-		t.Fatal(err)
-	}
+	seedPhase3MissionWithCurrent(t, store, snapshot, old)
 	drift, err := workgraph.DetectDrift(old, newRevision, at.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)

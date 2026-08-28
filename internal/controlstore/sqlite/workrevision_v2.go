@@ -129,16 +129,16 @@ func (s *Store) PublishGenerationOne(ctx context.Context, c mission.Finalization
 	if _, err = tx.ExecContext(ctx, `INSERT INTO phase3_work_revisions_v2(work_revision_id,mission_id,project_id,generation,predecessor_id,graph_digest,criteria_digest,encoded_revision) VALUES(?,?,?,?,?,?,?,?)`, c.Candidate.ID(), c.Candidate.MissionID(), c.Candidate.ProjectID(), c.Candidate.Generation(), nullString(c.Candidate.PredecessorID().String()), c.Candidate.GraphDigest(), c.Candidate.CriteriaDigest(), encoded); err != nil {
 		return mission.FinalizationResult{}, finalizationStoreError(mission.FinalizationCurrentConflict, "generation", "generation publication lost its compare-and-set", err)
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO phase3_current_work_revisions(mission_id,work_revision_id,generation) VALUES(?,?,?)`, c.ExpectedMission.MissionID, c.Candidate.ID(), 1); err != nil {
-		return mission.FinalizationResult{}, finalizationStoreError(mission.FinalizationCurrentConflict, "generation", "generation publication lost its compare-and-set", err)
-	}
 	missionJSON, _ := encodeSnapshot(missionAfter)
-	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET lifecycle=?,current_step=?,current_work_revision_id=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, missionAfter.Lifecycle, missionAfter.CurrentStep, missionAfter.CurrentWorkRevisionID, missionAfter.StateVersion, formatTime(missionAfter.UpdatedAt), missionJSON, missionAfter.MissionID, c.ExpectedMission.StateVersion)
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET lifecycle=?,current_step=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, missionAfter.Lifecycle, missionAfter.CurrentStep, missionAfter.StateVersion, formatTime(missionAfter.UpdatedAt), missionJSON, missionAfter.MissionID, c.ExpectedMission.StateVersion)
 	if err != nil {
 		return mission.FinalizationResult{}, finalizationStoreError(mission.FinalizationPersistenceFailure, "store", "finalization persistence is unavailable", err)
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return mission.FinalizationResult{}, finalizationStoreError(mission.FinalizationCurrentConflict, "mission", "mission state changed", nil)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO phase3_current_work_revisions(mission_id,work_revision_id,generation) VALUES(?,?,?)`, c.ExpectedMission.MissionID, c.Candidate.ID(), 1); err != nil {
+		return mission.FinalizationResult{}, finalizationStoreError(mission.FinalizationCurrentConflict, "generation", "generation publication lost its compare-and-set", err)
 	}
 	result := mission.FinalizationResult{Revision: c.Candidate, Mission: missionAfter, RequestDigest: c.RequestDigest, Receipt: c.ExpectedReceipt}
 	resultJSON, err := encodeFinalizationResult(result)

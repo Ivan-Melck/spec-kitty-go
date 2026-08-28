@@ -191,24 +191,24 @@ func (s *Store) PublishSuccessorAtomically(ctx context.Context, c mission.Succes
 	if err = persistEligibilityFacts(ctx, tx, c.Reconciliation); err != nil {
 		return mission.SuccessorPublicationResult{}, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE phase3_current_work_revisions SET work_revision_id=?,generation=? WHERE mission_id=? AND work_revision_id=? AND generation=?`, c.Candidate.ID(), c.Candidate.Generation(), c.MissionID, c.ExpectedOld.ID(), c.ExpectedCurrentGeneration)
-	if err != nil {
-		return mission.SuccessorPublicationResult{}, missionError(mission.KindPersistenceUnavailable, "store", "successor publication is unavailable", err)
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		return mission.SuccessorPublicationResult{}, missionError(mission.KindStateVersionConflict, "generation", "current generation changed", nil)
-	}
 	missionAfter := c.ExpectedMission
 	missionAfter.CurrentWorkRevisionID = c.Candidate.ID()
 	missionAfter.StateVersion++
 	missionAfter.UpdatedAt = c.OccurredAt
 	missionJSON, _ := encodeSnapshot(missionAfter)
-	res, err = tx.ExecContext(ctx, `UPDATE phase3_missions SET current_work_revision_id=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, missionAfter.CurrentWorkRevisionID, missionAfter.StateVersion, formatTime(missionAfter.UpdatedAt), missionJSON, c.MissionID, c.ExpectedMission.StateVersion)
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, missionAfter.StateVersion, formatTime(missionAfter.UpdatedAt), missionJSON, c.MissionID, c.ExpectedMission.StateVersion)
 	if err != nil {
 		return mission.SuccessorPublicationResult{}, missionError(mission.KindPersistenceUnavailable, "store", "successor publication is unavailable", err)
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return mission.SuccessorPublicationResult{}, missionError(mission.KindStateVersionConflict, "mission", "mission state changed", nil)
+	}
+	res, err = tx.ExecContext(ctx, `UPDATE phase3_current_work_revisions SET work_revision_id=?,generation=? WHERE mission_id=? AND work_revision_id=? AND generation=?`, c.Candidate.ID(), c.Candidate.Generation(), c.MissionID, c.ExpectedOld.ID(), c.ExpectedCurrentGeneration)
+	if err != nil {
+		return mission.SuccessorPublicationResult{}, missionError(mission.KindPersistenceUnavailable, "store", "successor publication is unavailable", err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return mission.SuccessorPublicationResult{}, missionError(mission.KindStateVersionConflict, "generation", "current generation changed", nil)
 	}
 	result := mission.SuccessorPublicationResult{Revision: c.Candidate, Drift: c.Drift, Reconciliation: c.Reconciliation, Mission: missionAfter, Actions: append([]mission.AuthorityAction(nil), c.Actions...), RequestDigest: c.RequestDigest}
 	wire := successorResultWire{newBytes, driftBytes, mw, missionAfter, result.Actions, c.RequestDigest}

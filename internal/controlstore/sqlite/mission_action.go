@@ -220,7 +220,7 @@ func (s *Store) CommitAction(ctx context.Context, c mission.ActionCommit) (missi
 		return mission.ActionResult{}, err
 	}
 	missionJSON, _ := encodeSnapshot(c.Outcome.Mission)
-	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET lifecycle=?,current_step=?,current_work_revision_id=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, c.Outcome.Mission.Lifecycle, c.Outcome.Mission.CurrentStep, nullString(c.Outcome.Mission.CurrentWorkRevisionID.String()), c.Outcome.Mission.StateVersion, formatTime(c.Outcome.Mission.UpdatedAt), missionJSON, c.MissionID, c.Expected.StateVersion)
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET lifecycle=?,current_step=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, c.Outcome.Mission.Lifecycle, c.Outcome.Mission.CurrentStep, c.Outcome.Mission.StateVersion, formatTime(c.Outcome.Mission.UpdatedAt), missionJSON, c.MissionID, c.Expected.StateVersion)
 	if err != nil {
 		return mission.ActionResult{}, missionError(mission.KindPersistenceUnavailable, "action.store", "action persistence is unavailable", err)
 	}
@@ -469,7 +469,7 @@ func (s *Store) CommitMissionFact(ctx context.Context, c mission.MissionFactComm
 		return mission.MissionFactResult{}, err
 	}
 	nextJSON, _ := encodeSnapshot(c.Successor)
-	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET lifecycle=?,current_step=?,current_work_revision_id=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, c.Successor.Lifecycle, c.Successor.CurrentStep, nullString(c.Successor.CurrentWorkRevisionID.String()), c.Successor.StateVersion, formatTime(c.Successor.UpdatedAt), nextJSON, c.Expected.MissionID, c.Expected.StateVersion)
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_missions SET lifecycle=?,current_step=?,state_version=?,updated_at=?,snapshot_json=? WHERE mission_id=? AND state_version=?`, c.Successor.Lifecycle, c.Successor.CurrentStep, c.Successor.StateVersion, formatTime(c.Successor.UpdatedAt), nextJSON, c.Expected.MissionID, c.Expected.StateVersion)
 	if err != nil {
 		return mission.MissionFactResult{}, err
 	}
