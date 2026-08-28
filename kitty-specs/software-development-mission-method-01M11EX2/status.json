@@ -408,7 +408,7 @@
     },
     "WP12": {
       "actor": "user",
-      "agent": "reviewer-renata",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
@@ -417,6 +417,7 @@
       "last_transition_at": "2026-08-28T18:54:58.478782+00:00",
       "model": "__resolved_model_absent__",
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP12-adversarial-qualification-and-source-bound-evidence/review-cycle-1.md",
         "reference": "review-cycle://software-development-mission-method-01M11EX2/WP12-adversarial-qualification-and-source-bound-evidence/review-cycle-1.md",
@@ -424,16 +425,16 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T061": "done",
-        "T062": "done",
-        "T063": "done",
-        "T064": "done",
-        "T065": "done",
-        "T066": "done",
-        "T067": "done"
+        "T061": "planned",
+        "T062": "planned",
+        "T063": "planned",
+        "T064": "planned",
+        "T065": "planned",
+        "T066": "planned",
+        "T067": "planned"
       }
     }
   }
