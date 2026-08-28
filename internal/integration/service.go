@@ -24,6 +24,9 @@ type Store interface {
 	PublishIntegrationCleanupEligibility(context.Context, Record, func() error) (Record, error)
 	CompleteIntegrationCleanup(context.Context, Record) (Record, error)
 }
+type EligibilityFactStore interface {
+	WorkEligibilityFact(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus, workgraph.EligibilityOperation) (workgraph.EligibilityFact, error)
+}
 
 type Git interface {
 	TargetHead(context.Context) (string, error)
@@ -37,13 +40,23 @@ type Git interface {
 }
 
 type Service struct {
-	store  Store
-	git    Git
-	faults faults.Hook
+	store       Store
+	eligibility EligibilityFactStore
+	git         Git
+	faults      faults.Hook
 }
 
 func NewService(store Store, git Git) *Service {
-	return &Service{store: store, git: git, faults: faults.Noop{}}
+	service := &Service{store: store, git: git, faults: faults.Noop{}}
+	if eligibility, ok := any(store).(EligibilityFactStore); ok {
+		service.eligibility = eligibility
+	}
+	return service
+}
+
+func (s *Service) WithEligibilityFacts(reader EligibilityFactStore) *Service {
+	s.eligibility = reader
+	return s
 }
 
 func (s *Service) WithFaults(hook faults.Hook) *Service {
@@ -71,7 +84,7 @@ func (s *Service) Integrate(ctx context.Context, request Request) (Record, error
 	if err != nil {
 		return Record{}, err
 	}
-	if err := s.requireEligibility(ctx, revisionID, workID); err != nil {
+	if err := s.requireEligibility(ctx, request, revisionID, workID); err != nil {
 		return Record{}, err
 	}
 	if err := s.faults.Reach(ctx, "IG-00"); err != nil {
@@ -267,7 +280,27 @@ func (s *Service) eligibilityScope(ctx context.Context, request Request, record 
 	return approved.WorkRevisionID, approved.WorkID, nil
 }
 
-func (s *Service) requireEligibility(ctx context.Context, revisionID ids.WorkRevisionID, workID ids.WorkID) error {
+func (s *Service) requireEligibility(ctx context.Context, request Request, revisionID ids.WorkRevisionID, workID ids.WorkID) error {
+	if s.eligibility != nil {
+		expected := request.ExpectedEligibility
+		if !expected.Complete() || !expected.MatchesComplete(expected.ReconciliationID(), revisionID, expected.NewRevisionID(), workID, workgraph.StatusApproved, expected.Disposition(), workgraph.EligibilityIntegration) {
+			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision integration eligibility is required"}
+		}
+		fact, err := s.eligibility.WorkEligibilityFact(ctx, revisionID, workID, workgraph.StatusApproved, workgraph.EligibilityIntegration)
+		if err != nil {
+			return &Error{Kind: KindStoreFailure, Message: "read complete WorkRevision integration eligibility", Cause: err}
+		}
+		if !fact.SameComplete(expected) {
+			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision integration eligibility does not match the approved review"}
+		}
+		if !fact.Permitted() {
+			return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids integration", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityIntegration)}}
+		}
+		return nil
+	}
+	if !request.ExpectedEligibility.IsZero() {
+		return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision integration eligibility reader is unavailable"}
+	}
 	consequence, reconciliationID, err := s.store.WorkEligibility(ctx, revisionID, workID, workgraph.StatusApproved)
 	if err != nil {
 		return &Error{Kind: KindStoreFailure, Message: "read WorkRevision integration eligibility", Cause: err}

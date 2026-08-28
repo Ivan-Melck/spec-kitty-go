@@ -68,6 +68,79 @@ func TestSubmitRefusesReconciledWorkBeforeFaultInspectAndMutation(t *testing.T) 
 	}
 }
 
+func TestSubmitConsumesCompleteMixedEligibilityBeforeReviewInspection(t *testing.T) {
+	now := time.Date(2026, 8, 28, 19, 0, 0, 0, time.UTC)
+	expected := completeReviewFact(t, "reconciliation-review-complete", "revision-2", "work-1", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview)
+	tests := map[string]struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{
+		"successor substitution":        {expected, completeReviewFact(t, "reconciliation-review-complete", "revision-other", "work-1", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"disposition substitution":      {expected, completeReviewFact(t, "reconciliation-review-complete", "revision-2", "work-1", workgraph.Continue, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"reconciliation substitution":   {expected, completeReviewFact(t, "reconciliation-other", "revision-2", "work-1", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"work substitution":             {expected, completeReviewFact(t, "reconciliation-review-complete", "revision-2", "work-other", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"status operation substitution": {expected, completeReviewFact(t, "reconciliation-review-complete", "revision-2", "work-1", workgraph.Fork, workgraph.StatusApproved, workgraph.EligibilityIntegration), true},
+		"omitted expectation":           {EligibilityFact{}, expected, true},
+		"reader unavailable":            {expected, EligibilityFact{}, false},
+	}
+	legacy, err := workgraph.NewLegacyEligibilityFact("reconciliation-review-complete", "revision-1", "work-1", workgraph.StatusHandedOff, workgraph.EligibilityReview, workgraph.Consequence{HandoffEligible: true, Reason: "legacy permissive consequence"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests["legacy fact returned for mixed request"] = struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{expected, legacy, true}
+	oldSubstitution, err := workgraph.NewEligibilityFact("reconciliation-review-complete", "revision-other", "revision-2", "work-1", workgraph.StatusHandedOff, workgraph.Fork, workgraph.EligibilityReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests["predecessor substitution"] = struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{expected, oldSubstitution, true}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			request := validRequest(now)
+			request.ExpectedEligibility = test.expected
+			store := &recordingStore{eligibility: workgraph.Consequence{HandoffEligible: true, Reason: "permissive legacy stub"}}
+			reader := &recordingEligibilityReader{fact: test.actual}
+			hook := &recordingHook{}
+			service := NewService(store).WithFaults(hook)
+			if test.reader {
+				service.WithEligibilityFacts(reader)
+			}
+			_, submitErr := service.Submit(context.Background(), request)
+			if !IsKind(submitErr, KindRevisionIneligible) || store.eligibilityRead || store.inspected || store.committed || len(hook.boundaries) != 0 {
+				t.Fatalf("error=%v full_reads=%d legacy=%v inspect=%v commit=%v boundaries=%v", submitErr, reader.calls, store.eligibilityRead, store.inspected, store.committed, hook.boundaries)
+			}
+		})
+	}
+
+	t.Run("exact complete fact proceeds", func(t *testing.T) {
+		request := validRequest(now)
+		request.ExpectedEligibility = expected
+		store := &recordingStore{scope: Scope{Handoff: handoff.Record{HandoffID: request.HandoffID, Candidate: request.Candidate}, CriterionIDs: []string{"criterion-a", "criterion-b"}}}
+		reader := &recordingEligibilityReader{fact: expected}
+		if _, err := NewService(store).WithEligibilityFacts(reader).Submit(context.Background(), request); err != nil || reader.calls != 1 || reader.oldRevision != request.WorkRevisionID || reader.workID != request.WorkID || reader.status != workgraph.StatusHandedOff || reader.operation != workgraph.EligibilityReview || store.eligibilityRead || !store.inspected || !store.committed {
+			t.Fatalf("error=%v reader=%+v legacy=%v inspect=%v commit=%v", err, reader, store.eligibilityRead, store.inspected, store.committed)
+		}
+	})
+}
+
+func TestSubmitReplaysBeforeCompleteReviewEligibilityInspection(t *testing.T) {
+	request := validRequest(time.Date(2026, 8, 28, 19, 0, 0, 0, time.UTC))
+	store := &recordingStore{replay: &Record{ReviewID: request.ReviewID, Candidate: request.Candidate}}
+	reader := &recordingEligibilityReader{}
+	if _, err := NewService(store).WithEligibilityFacts(reader).Submit(context.Background(), request); err != nil || reader.calls != 0 || store.eligibilityRead {
+		t.Fatalf("replay inspected eligibility: err=%v complete=%d legacy=%v", err, reader.calls, store.eligibilityRead)
+	}
+}
+
 func validRequest(now time.Time) Request {
 	return Request{
 		SchemaVersion: 1, CorrelationID: "correlation-review-1", OperationID: "operation-review-1",
@@ -98,6 +171,31 @@ type recordingStore struct {
 	eligibility     workgraph.Consequence
 	eligibilityID   string
 	eligibilityRead bool
+}
+
+type recordingEligibilityReader struct {
+	fact        EligibilityFact
+	err         error
+	calls       int
+	oldRevision ids.WorkRevisionID
+	workID      ids.WorkID
+	status      workgraph.WorkStatus
+	operation   workgraph.EligibilityOperation
+}
+
+func (r *recordingEligibilityReader) WorkEligibilityFact(_ context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {
+	r.calls++
+	r.oldRevision, r.workID, r.status, r.operation = oldRevision, workID, status, operation
+	return r.fact, r.err
+}
+
+func completeReviewFact(t *testing.T, reconciliation string, newRevision ids.WorkRevisionID, workID ids.WorkID, disposition workgraph.Disposition, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) EligibilityFact {
+	t.Helper()
+	fact, err := workgraph.NewEligibilityFact(reconciliation, "revision-1", newRevision, workID, status, disposition, operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fact
 }
 
 func (s *recordingStore) WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error) {

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -169,7 +170,7 @@ func validateSuccessorPublication(command SuccessorPublicationCommand) ([]Author
 		return nil, "", refusal(KindInvalidRequest, RecoveryCorrectInput, "drift", "changed drift evidence must bind the exact revision pair")
 	}
 	plan := command.Reconciliation
-	if plan.ID() != command.ReconciliationID.String() || plan.DriftReportID() != command.Drift.ID() || plan.OldRevisionID() != command.ExpectedOld.ID() || plan.NewRevisionID() != command.Candidate.ID() || plan.OldGraphDigest() != command.ExpectedOld.GraphDigest() || plan.NewGraphDigest() != command.Candidate.GraphDigest() || plan.OldCriteriaDigest() != command.ExpectedOld.CriteriaDigest() || plan.NewCriteriaDigest() != command.Candidate.CriteriaDigest() || plan.ActorID() != command.ActorID || plan.Rationale() != command.Rationale || !plan.OccurredAt().Equal(command.OccurredAt) || plan.RequestDigest() == "" || len(plan.Decisions()) == 0 {
+	if plan.ID() != command.ReconciliationID.String() || plan.DriftReportID() != command.Drift.ID() || plan.OldRevisionID() != command.ExpectedOld.ID() || plan.NewRevisionID() != command.Candidate.ID() || plan.OldGraphDigest() != command.ExpectedOld.GraphDigest() || plan.NewGraphDigest() != command.Candidate.GraphDigest() || plan.OldCriteriaDigest() != command.ExpectedOld.CriteriaDigest() || plan.NewCriteriaDigest() != command.Candidate.CriteriaDigest() || plan.ActorID() != command.ActorID || plan.Rationale() != command.Rationale || !plan.OccurredAt().Equal(command.OccurredAt) || plan.RequestDigest() == "" || !slices.Equal(plan.OldWorkIDs(), command.Drift.AffectedOldWorkIDs()) || !slices.Equal(plan.NewWorkIDs(), command.Drift.AffectedNewWorkIDs()) || len(plan.Decisions()) != len(command.Drift.AffectedOldWorkIDs()) {
 		return nil, "", refusal(KindInvalidRequest, RecoveryCorrectInput, "reconciliation", "mixed reconciliation does not bind complete successor authority")
 	}
 	actions, actionErr := deriveAuthorityActions(command.ReconciliationID, command.ExpectedOld.ID(), command.Candidate.ID(), plan)

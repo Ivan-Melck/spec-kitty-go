@@ -328,6 +328,61 @@ func TestMixedEligibilityPermitsOnlyDispositionOperationConsequences(t *testing.
 	}
 }
 
+func TestMixedReconciliationAcceptsIndependentAdditionWithExactEmptyOldAuthority(t *testing.T) {
+	request := additionOnlyReconcileFixture(t)
+	plan, err := ReconcileMixed(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.OldWorkIDs()) != 0 || len(plan.Decisions()) != 0 || len(plan.NewWorkIDs()) != 1 || plan.NewWorkIDs()[0] != "work-added" || plan.OldRevisionID() != request.Old.ID() || plan.NewRevisionID() != request.New.ID() {
+		t.Fatalf("addition-only reconciliation lost exact authority: old=%v new=%v decisions=%v", plan.OldWorkIDs(), plan.NewWorkIDs(), plan.Decisions())
+	}
+
+	mutants := map[string]func(*MixedReconcileRequest){
+		"invented status": func(value *MixedReconcileRequest) {
+			value.Statuses = []WorkStatusAssignment{{WorkID: "work-existing", Status: StatusActive}}
+		},
+		"invented decision": func(value *MixedReconcileRequest) {
+			value.Decisions = []WorkDispositionDecisionParams{{OldWorkID: "work-existing", Disposition: Continue, NewWorkIDs: []ids.WorkID{"work-existing"}, Rationale: "invented old authority"}}
+		},
+		"unknown affected new identity": func(value *MixedReconcileRequest) {
+			value.Drift.affectedNew = []ids.WorkID{"work-unknown"}
+		},
+		"clean report": func(value *MixedReconcileRequest) {
+			value.Drift.status = SemanticClean
+			value.Drift.affectedNew = nil
+		},
+		"observation only report": func(value *MixedReconcileRequest) {
+			value.Drift.status = SemanticObservationOnly
+			value.Drift.affectedNew = nil
+		},
+		"changed without affected work": func(value *MixedReconcileRequest) {
+			value.Drift.affectedNew = nil
+		},
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			candidate := additionOnlyReconcileFixture(t)
+			mutate(&candidate)
+			if _, err := ReconcileMixed(candidate); !IsKind(err, KindInvalidReconciliation) {
+				t.Fatalf("mutant survived: %v", err)
+			}
+		})
+	}
+}
+
+func TestCompleteEligibilityFactDerivesAndValidatesEveryAuthorityField(t *testing.T) {
+	fact, err := NewEligibilityFact("reconciliation-complete", "revision-old", "revision-new", "work-a", StatusActive, Continue, EligibilityHandoff)
+	if err != nil || !fact.Complete() || fact.LegacyV1() || !fact.Permitted() {
+		t.Fatalf("complete fact=%#v err=%v", fact, err)
+	}
+	mutants := []EligibilityFact{fact}
+	mutants[0].newRevisionID = "revision-other"
+	if fact.SameComplete(mutants[0]) || !fact.SameComplete(fact) {
+		t.Fatal("complete fact equality did not bind exact successor authority")
+	}
+}
+
 func TestLegacyReconcileSurfaceRemainsBehaviorCompatible(t *testing.T) {
 	oldRevision := finalizedSingle(t, "revision-legacy-old", 1, "work-legacy")
 	newRevision := finalizedSingle(t, "revision-legacy-new", 2, "work-legacy")
@@ -350,6 +405,41 @@ func TestLegacyReconcileSurfaceRemainsBehaviorCompatible(t *testing.T) {
 func mixedReconcileFixture(t *testing.T) MixedReconcileRequest {
 	t.Helper()
 	return mixedReconcileFixtureWith(t, nil)
+}
+
+func additionOnlyReconcileFixture(t *testing.T) MixedReconcileRequest {
+	t.Helper()
+	build := func(id ids.WorkRevisionID, generation uint64, predecessor ids.WorkRevisionID, items []WorkItemV2Params) RevisionV2 {
+		lanes := make([]LaneV2, 0, len(items))
+		observations := make([]ProviderObservationV2, 0, len(items))
+		for _, item := range items {
+			lanes = append(lanes, LaneV2{id: stableLaneID([]ids.WorkID{item.WorkID}), workIDs: []ids.WorkID{item.WorkID}})
+			observations = append(observations, ProviderObservationV2{WorkID: item.WorkID, Provider: "durable_fake", ExternalID: "external-" + item.WorkID.String(), Revision: "provider-" + item.WorkID.String()})
+		}
+		revision, err := NewRevisionV2(RevisionV2Params{
+			ID: id, ProjectID: "project-addition", MissionID: "mission-addition", Generation: generation, PredecessorID: predecessor,
+			PlanningSourceCommit: strings.Repeat("a", 40), MissionDefinition: MissionDefinitionIdentity{Key: "software-development", Version: 1, Digest: strings.Repeat("b", 64)},
+			DependencyPolicy: DependencyApprovedOrDone, WorkItems: items, Lanes: lanes, ProviderObservations: observations,
+			FinalizedBy: "actor-addition", FinalizedAt: time.Date(2026, 8, 28, 11, 0, 0, 0, time.UTC), GovernanceContextID: "governance-addition",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return revision
+	}
+	existing := mixedWorkItem("work-existing")
+	added := mixedWorkItem("work-added")
+	oldRevision := build("revision-addition-old", 1, "", []WorkItemV2Params{existing})
+	newRevision := build("revision-addition-new", 2, oldRevision.ID(), []WorkItemV2Params{existing, added})
+	observedAt := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	report, err := DetectDrift(oldRevision, newRevision, observedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.AffectedOldWorkIDs()) != 0 || len(report.AffectedNewWorkIDs()) != 1 || report.AffectedNewWorkIDs()[0] != "work-added" {
+		t.Fatalf("fixture is not independent addition-only drift: old=%v new=%v", report.AffectedOldWorkIDs(), report.AffectedNewWorkIDs())
+	}
+	return MixedReconcileRequest{ID: "reconciliation-addition", Old: oldRevision, New: newRevision, Drift: report, ActorID: "actor-addition", Rationale: "publish independent added work", OccurredAt: observedAt}
 }
 
 func mixedReconcileFixtureWith(t *testing.T, mutateNew func(*RevisionV2Params)) MixedReconcileRequest {

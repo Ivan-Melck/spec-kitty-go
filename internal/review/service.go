@@ -14,12 +14,26 @@ type Store interface {
 	InspectReview(context.Context, Request) (Scope, error)
 	CommitReview(context.Context, Request) (Record, error)
 }
+type EligibilityFactStore interface {
+	WorkEligibilityFact(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus, workgraph.EligibilityOperation) (workgraph.EligibilityFact, error)
+}
 type Service struct {
-	store  Store
-	faults faults.Hook
+	store       Store
+	eligibility EligibilityFactStore
+	faults      faults.Hook
 }
 
-func NewService(store Store) *Service { return &Service{store: store, faults: faults.Noop{}} }
+func NewService(store Store) *Service {
+	service := &Service{store: store, faults: faults.Noop{}}
+	if eligibility, ok := any(store).(EligibilityFactStore); ok {
+		service.eligibility = eligibility
+	}
+	return service
+}
+func (s *Service) WithEligibilityFacts(reader EligibilityFactStore) *Service {
+	s.eligibility = reader
+	return s
+}
 func (s *Service) WithFaults(hook faults.Hook) *Service {
 	if hook != nil {
 		s.faults = hook
@@ -71,6 +85,26 @@ func (s *Service) Submit(ctx context.Context, request Request) (Record, error) {
 }
 
 func (s *Service) requireEligibility(ctx context.Context, request Request) error {
+	if s.eligibility != nil {
+		expected := request.ExpectedEligibility
+		if !expected.Complete() || !expected.MatchesComplete(expected.ReconciliationID(), request.WorkRevisionID, expected.NewRevisionID(), request.WorkID, workgraph.StatusHandedOff, expected.Disposition(), workgraph.EligibilityReview) {
+			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility is required"}
+		}
+		fact, err := s.eligibility.WorkEligibilityFact(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff, workgraph.EligibilityReview)
+		if err != nil {
+			return &Error{Kind: KindConflict, Message: "read complete WorkRevision review eligibility", Cause: err}
+		}
+		if !fact.SameComplete(expected) {
+			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility does not match the request"}
+		}
+		if !fact.Permitted() {
+			return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids review", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityReview)}}
+		}
+		return nil
+	}
+	if !request.ExpectedEligibility.IsZero() {
+		return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility reader is unavailable"}
+	}
 	consequence, reconciliationID, err := s.store.WorkEligibility(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff)
 	if err != nil {
 		return &Error{Kind: KindConflict, Message: "read WorkRevision review eligibility", Cause: err}

@@ -81,6 +81,9 @@ type Request struct {
 	Criteria        []CriterionResult
 	EvidenceDigest  string
 	SubmittedAt     time.Time
+	// ExpectedEligibility binds this review to complete mixed-reconciliation
+	// authority. The zero value selects only the frozen legacy-v1 store path.
+	ExpectedEligibility EligibilityFact
 }
 
 func (r Request) Validate() error {

@@ -38,6 +38,23 @@ func TestSuccessorPublicationAtomicallyAdvancesPointerAndReplays(t *testing.T) {
 	}
 }
 
+func TestSuccessorPublicationAcceptsAdditionOnlyReconciliationAndReplays(t *testing.T) {
+	command := additionOnlySuccessorPublicationFixture(t, "operation-publish-addition")
+	if len(command.Drift.AffectedOldWorkIDs()) != 0 || len(command.Reconciliation.Decisions()) != 0 || len(command.Drift.AffectedNewWorkIDs()) != 1 {
+		t.Fatalf("fixture is not exact addition-only authority: old=%v new=%v decisions=%v", command.Drift.AffectedOldWorkIDs(), command.Drift.AffectedNewWorkIDs(), command.Reconciliation.Decisions())
+	}
+	store := newSuccessorStore(command)
+	service := NewSuccessorPublicationService(store)
+	result, err := service.Publish(context.Background(), command)
+	if err != nil || result.Replayed || len(result.Actions) != 0 || result.Mission.CurrentWorkRevisionID != command.Candidate.ID() || store.publishCalls.Load() != 1 {
+		t.Fatalf("addition publication=%#v err=%v calls=%d", result, err, store.publishCalls.Load())
+	}
+	replay, err := service.Publish(context.Background(), command)
+	if err != nil || !replay.Replayed || len(replay.Actions) != 0 || replay.RequestDigest != result.RequestDigest || store.publishCalls.Load() != 1 {
+		t.Fatalf("addition replay=%#v err=%v calls=%d", replay, err, store.publishCalls.Load())
+	}
+}
+
 func TestSuccessorPublicationRefusesInvalidAuthorityBeforeStore(t *testing.T) {
 	tests := map[string]func(*SuccessorPublicationCommand){
 		"stale generation": func(command *SuccessorPublicationCommand) { command.ExpectedCurrentGeneration-- },
@@ -385,6 +402,54 @@ func successorPublicationFixture(t *testing.T, operation ids.OperationID) Succes
 	mission.TerminalOutcome = OutcomeWorkFinalized
 	mission.UpdatedAt = oldCommand.OccurredAt
 	return SuccessorPublicationCommand{MissionID: old.MissionID(), ProjectID: old.ProjectID(), ExpectedMission: mission, ExpectedCurrentGeneration: 1, ExpectedOld: old, Candidate: candidate, Drift: drift, ReconciliationID: "reconciliation-successor", Reconciliation: plan, OperationID: operation, ActorID: "actor-reconciler", GovernanceContextID: "governance-reconcile", Rationale: rationale, OccurredAt: when}
+}
+
+func additionOnlySuccessorPublicationFixture(t *testing.T, operation ids.OperationID) SuccessorPublicationCommand {
+	t.Helper()
+	command := successorPublicationFixture(t, operation)
+	baseDraft := missionFinalizationObservation(t, "provider-old").Draft()
+	addedObservation, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{
+		ProjectID: "project-final", WorkID: "work-added", Title: "Implement independent addition", Description: "Complete the independent added work item.", DesignContext: "Use the approved design.",
+		Criteria:    []workgraph.CriterionObservation{{ID: "criterion-work-added", Text: "Run the added test.", Outcome: "The added test passes.", Verifier: "test", Requirement: workgraph.CriterionRequired}},
+		WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/added", Domain: "added", Access: workgraph.ScopeWriteExclusive}},
+		Provenance:  []workgraph.ScopeReference{{ID: "scope-work-added", Kind: workgraph.ScopePlanConcern}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved := append(baseDraft.ApprovedScope(), workgraph.ApprovedScope{ID: "scope-work-added", Kind: workgraph.ScopePlanConcern, MissionID: command.MissionID})
+	work := append(baseDraft.Work(), addedObservation)
+	draft, err := workgraph.NewDraftObservation(command.ProjectID, command.MissionID, baseDraft.PlanRevisionID(), baseDraft.PlanDigest(), approved, work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lanes, err := workgraph.CollapseLanes(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := append(revisionWorkParams(command.ExpectedOld), workgraph.WorkItemV2Params{
+		WorkID: "work-added", Title: "Implement independent addition", Description: "Complete the independent added work item.", DesignContext: "Use the approved design.",
+		Criteria:    []workgraph.CriterionV2Params{{ID: "criterion-work-added", Text: "Run the added test.", Outcome: "The added test passes.", VerifierKind: "test", Required: true}},
+		WriteScopes: []workgraph.NormalizedWriteScope{{Path: "internal/added", Domain: "added", Access: workgraph.ScopeWriteExclusive}},
+	})
+	observations := append(command.ExpectedOld.ProviderObservations(), workgraph.ProviderObservationV2{WorkID: "work-added", Provider: "durable_fake", ExternalID: "external-added", Revision: "provider-added"})
+	command.Candidate, err = workgraph.NewRevisionV2(workgraph.RevisionV2Params{
+		ID: "revision-successor-addition", ProjectID: command.ProjectID, MissionID: command.MissionID, Generation: command.ExpectedOld.Generation() + 1, PredecessorID: command.ExpectedOld.ID(),
+		PlanningSourceCommit: command.ExpectedOld.PlanningSourceCommit(), MissionDefinition: command.ExpectedOld.MissionDefinition(), DependencyPolicy: command.ExpectedOld.DependencyPolicy(),
+		WorkItems: items, Lanes: lanes, ProviderObservations: observations, FinalizedBy: command.ActorID, FinalizedAt: command.OccurredAt, GovernanceContextID: command.GovernanceContextID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command.Drift, err = workgraph.DetectDrift(command.ExpectedOld, command.Candidate, command.OccurredAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command.Reconciliation, err = workgraph.ReconcileMixed(workgraph.MixedReconcileRequest{ID: command.ReconciliationID.String(), Old: command.ExpectedOld, New: command.Candidate, Drift: command.Drift, ActorID: command.ActorID, Rationale: command.Rationale, OccurredAt: command.OccurredAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return command
 }
 
 func revisionWorkParams(revision workgraph.RevisionV2) []workgraph.WorkItemV2Params {

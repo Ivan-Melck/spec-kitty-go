@@ -93,6 +93,27 @@ func NewLegacyEligibilityFact(reconciliationID string, oldRevisionID ids.WorkRev
 	return EligibilityFact{reconciliationID: reconciliationID, oldRevisionID: oldRevisionID, workID: workID, status: status, operation: operation, permitted: permitted, reason: consequence.Reason, legacyV1: true}, nil
 }
 
+// NewEligibilityFact reconstructs a complete mixed-reconciliation fact from
+// durable typed authority. Permission and reason are always derived from the
+// disposition/status law; callers cannot provide either value.
+func NewEligibilityFact(reconciliationID string, oldRevisionID, newRevisionID ids.WorkRevisionID, workID ids.WorkID, status WorkStatus, disposition Disposition, operation EligibilityOperation) (EligibilityFact, error) {
+	if reconciliationID == "" || !knownDisposition(disposition) {
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "complete eligibility authority is invalid", nil)
+	}
+	if _, err := ids.ParseWorkRevisionID(newRevisionID.String()); err != nil {
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility successor identity is invalid", nil)
+	}
+	consequence := consequenceFor(disposition, status)
+	fact, err := NewLegacyEligibilityFact(reconciliationID, oldRevisionID, workID, status, operation, consequence)
+	if err != nil {
+		return EligibilityFact{}, err
+	}
+	fact.newRevisionID = newRevisionID
+	fact.disposition = disposition
+	fact.legacyV1 = false
+	return fact, nil
+}
+
 func (fact EligibilityFact) ReconciliationID() string          { return fact.reconciliationID }
 func (fact EligibilityFact) OldRevisionID() ids.WorkRevisionID { return fact.oldRevisionID }
 func (fact EligibilityFact) NewRevisionID() ids.WorkRevisionID { return fact.newRevisionID }
@@ -103,6 +124,19 @@ func (fact EligibilityFact) Operation() EligibilityOperation   { return fact.ope
 func (fact EligibilityFact) Permitted() bool                   { return fact.permitted }
 func (fact EligibilityFact) Reason() string                    { return fact.reason }
 func (fact EligibilityFact) LegacyV1() bool                    { return fact.legacyV1 }
+
+func (fact EligibilityFact) IsZero() bool { return fact == (EligibilityFact{}) }
+
+// Complete reports whether every field is a valid, internally consistent
+// mixed-reconciliation authority fact, including derived permission/reason.
+func (fact EligibilityFact) Complete() bool {
+	want, err := NewEligibilityFact(fact.reconciliationID, fact.oldRevisionID, fact.newRevisionID, fact.workID, fact.status, fact.disposition, fact.operation)
+	return err == nil && fact == want
+}
+
+func (fact EligibilityFact) SameComplete(other EligibilityFact) bool {
+	return fact.Complete() && other.Complete() && fact == other
+}
 
 func (fact EligibilityFact) MatchesLegacy(oldRevisionID ids.WorkRevisionID, workID ids.WorkID, status WorkStatus, operation EligibilityOperation) bool {
 	return fact.legacyV1 && fact.newRevisionID == "" && fact.disposition == "" && fact.oldRevisionID == oldRevisionID && fact.workID == workID && fact.status == status && fact.operation == operation
@@ -305,8 +339,12 @@ func ReconcileMixed(request MixedReconcileRequest) (MixedReconciliation, error) 
 		return MixedReconciliation{}, err
 	}
 	affectedOld := request.Drift.AffectedOldWorkIDs()
-	if request.Drift.SemanticStatus() != SemanticChanged || len(affectedOld) == 0 {
-		return MixedReconciliation{}, newError(KindInvalidReconciliation, "mixed reconciliation requires semantic drift affecting prior work", nil)
+	affectedNew := request.Drift.AffectedNewWorkIDs()
+	if request.Drift.SemanticStatus() != SemanticChanged || (len(affectedOld) == 0 && len(affectedNew) == 0) {
+		return MixedReconciliation{}, newError(KindInvalidReconciliation, "mixed reconciliation requires executable semantic drift", nil)
+	}
+	if !exactAffectedWorkSet(affectedOld, request.Old) || !exactAffectedWorkSet(affectedNew, request.New) {
+		return MixedReconciliation{}, newError(KindInvalidReconciliation, "drift affected work is outside the bound revision pair", nil)
 	}
 	statuses, err := canonicalMixedStatuses(request.Statuses, affectedOld)
 	if err != nil {
@@ -321,7 +359,7 @@ func ReconcileMixed(request MixedReconcileRequest) (MixedReconciliation, error) 
 		oldGraphDigest: request.Old.GraphDigest(), newGraphDigest: request.New.GraphDigest(),
 		oldCriteriaDigest: request.Old.CriteriaDigest(), newCriteriaDigest: request.New.CriteriaDigest(),
 		actorID: request.ActorID, rationale: request.Rationale, oldWorkIDs: affectedOld,
-		newWorkIDs: request.Drift.AffectedNewWorkIDs(), occurredAt: request.OccurredAt,
+		newWorkIDs: affectedNew, occurredAt: request.OccurredAt,
 		decisions: decisions, assignedStatuses: statuses, driftReportID: request.Drift.ID(),
 		consequences: make(map[consequenceKey]Consequence, len(decisions)*len(allStatuses)),
 	}
@@ -339,6 +377,17 @@ func ReconcileMixed(request MixedReconcileRequest) (MixedReconciliation, error) 
 	})
 	reconciliation.requestDigest = reconciliation.mixedSemanticDigest()
 	return reconciliation, nil
+}
+
+func exactAffectedWorkSet(values []ids.WorkID, revision RevisionV2) bool {
+	seen := make(map[ids.WorkID]struct{}, len(values))
+	for _, workID := range values {
+		if _, duplicate := seen[workID]; duplicate || !containsV2Work(revision, workID) {
+			return false
+		}
+		seen[workID] = struct{}{}
+	}
+	return true
 }
 
 func validateMixedRevisionPair(oldRevision, newRevision RevisionV2, report DriftReport) error {
@@ -637,13 +686,13 @@ func (r MixedReconciliation) EligibilityFact(workID ids.WorkID, status WorkStatu
 	if !found {
 		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility consequence is absent from the mixed reconciliation", nil)
 	}
-	fact, err := NewLegacyEligibilityFact(r.ID(), r.OldRevisionID(), workID, status, operation, consequence)
+	fact, err := NewEligibilityFact(r.ID(), r.OldRevisionID(), r.NewRevisionID(), workID, status, decision.Disposition(), operation)
 	if err != nil {
 		return EligibilityFact{}, err
 	}
-	fact.disposition = decision.Disposition()
-	fact.newRevisionID = r.NewRevisionID()
-	fact.legacyV1 = false
+	if fact.reason != consequence.Reason {
+		return EligibilityFact{}, newError(KindInvalidReconciliation, "eligibility consequence differs from the mixed reconciliation", nil)
+	}
 	return fact, nil
 }
 

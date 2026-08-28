@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +84,88 @@ func TestIntegrationRefusesReconciledWorkBeforeFaultGitAndFence(t *testing.T) {
 	}
 }
 
+func TestIntegrationConsumesCompleteMixedEligibilityBeforeGitAndFence(t *testing.T) {
+	expected := completeIntegrationFact(t, "reconciliation-integration-complete", "revision-2", "work-1", workgraph.Fork, workgraph.StatusApproved, workgraph.EligibilityIntegration)
+	tests := map[string]struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{
+		"successor substitution":        {expected, completeIntegrationFact(t, "reconciliation-integration-complete", "revision-other", "work-1", workgraph.Fork, workgraph.StatusApproved, workgraph.EligibilityIntegration), true},
+		"disposition substitution":      {expected, completeIntegrationFact(t, "reconciliation-integration-complete", "revision-2", "work-1", workgraph.Continue, workgraph.StatusApproved, workgraph.EligibilityIntegration), true},
+		"reconciliation substitution":   {expected, completeIntegrationFact(t, "reconciliation-other", "revision-2", "work-1", workgraph.Fork, workgraph.StatusApproved, workgraph.EligibilityIntegration), true},
+		"work substitution":             {expected, completeIntegrationFact(t, "reconciliation-integration-complete", "revision-2", "work-other", workgraph.Fork, workgraph.StatusApproved, workgraph.EligibilityIntegration), true},
+		"status operation substitution": {expected, completeIntegrationFact(t, "reconciliation-integration-complete", "revision-2", "work-1", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"omitted expectation":           {EligibilityFact{}, expected, true},
+		"reader unavailable":            {expected, EligibilityFact{}, false},
+	}
+	legacy, err := workgraph.NewLegacyEligibilityFact("reconciliation-integration-complete", "revision-1", "work-1", workgraph.StatusApproved, workgraph.EligibilityIntegration, workgraph.Consequence{IntegrationEligible: true, Reason: "legacy permissive consequence"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests["legacy fact returned for mixed request"] = struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{expected, legacy, true}
+	oldSubstitution, err := workgraph.NewEligibilityFact("reconciliation-integration-complete", "revision-other", "revision-2", "work-1", workgraph.StatusApproved, workgraph.Fork, workgraph.EligibilityIntegration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests["predecessor substitution"] = struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{expected, oldSubstitution, true}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			request := validRequest("operation-complete-" + strings.ReplaceAll(name, " ", "-"))
+			request.ExpectedEligibility = test.expected
+			store := &memoryStore{eligibility: workgraph.Consequence{IntegrationEligible: true, Reason: "permissive legacy stub"}}
+			reader := &recordingEligibilityReader{fact: test.actual}
+			git := &memoryGit{target: testBase, workspaceHead: testBase}
+			hookCalls := 0
+			service := NewService(store, git).WithFaults(hookFunc(func(string) error { hookCalls++; return nil }))
+			if test.reader {
+				service.WithEligibilityFacts(reader)
+			}
+			_, integrateErr := service.Integrate(context.Background(), request)
+			if !IsKind(integrateErr, KindRevisionIneligible) || !store.reviewRead || store.eligibilityRead || hookCalls != 0 || git.establishCalls != 0 || git.updates != 0 {
+				t.Fatalf("error=%v review=%v full_reads=%d legacy=%v hook=%d establish=%d updates=%d", integrateErr, store.reviewRead, reader.calls, store.eligibilityRead, hookCalls, git.establishCalls, git.updates)
+			}
+		})
+	}
+
+	t.Run("exact complete fact proceeds", func(t *testing.T) {
+		request := validRequest("operation-complete-success")
+		request.ExpectedEligibility = expected
+		store := &memoryStore{}
+		reader := &recordingEligibilityReader{fact: expected}
+		git := &memoryGit{target: testBase, workspaceHead: testBase}
+		record, err := NewService(store, git).WithEligibilityFacts(reader).Integrate(context.Background(), request)
+		if err != nil || record.Status != StatusDone || reader.calls != 1 || reader.oldRevision != "revision-1" || reader.workID != "work-1" || reader.status != workgraph.StatusApproved || reader.operation != workgraph.EligibilityIntegration || store.eligibilityRead || git.establishCalls != 1 {
+			t.Fatalf("record=%+v error=%v reader=%+v legacy=%v establish=%d", record, err, reader, store.eligibilityRead, git.establishCalls)
+		}
+	})
+}
+
+func TestCompletedIntegrationReplayPrecedesCompleteEligibilityInspection(t *testing.T) {
+	store := &memoryStore{}
+	git := &memoryGit{target: testBase, workspaceHead: testBase}
+	request := validRequest("operation-complete-replay")
+	if _, err := NewService(store, git).Integrate(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	store.eligibilityRead = false
+	reader := &recordingEligibilityReader{}
+	request.ExpectedEligibility = completeIntegrationFact(t, "reconciliation-later", "revision-2", "work-1", workgraph.Invalidate, workgraph.StatusApproved, workgraph.EligibilityIntegration)
+	replay, err := NewService(store, git).WithEligibilityFacts(reader).Integrate(context.Background(), request)
+	if err != nil || replay.Status != StatusDone || reader.calls != 0 || store.eligibilityRead {
+		t.Fatalf("replay=%+v err=%v complete=%d legacy=%v", replay, err, reader.calls, store.eligibilityRead)
+	}
+}
+
 func TestCompletedIntegrationReplayBypassesLaterIneligibility(t *testing.T) {
 	store := &memoryStore{}
 	git := &memoryGit{target: testBase, workspaceHead: testBase}
@@ -148,6 +231,31 @@ type memoryStore struct {
 	eligibilityID   string
 	eligibilityRead bool
 	reviewRead      bool
+}
+
+type recordingEligibilityReader struct {
+	fact        EligibilityFact
+	err         error
+	calls       int
+	oldRevision ids.WorkRevisionID
+	workID      ids.WorkID
+	status      workgraph.WorkStatus
+	operation   workgraph.EligibilityOperation
+}
+
+func (r *recordingEligibilityReader) WorkEligibilityFact(_ context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {
+	r.calls++
+	r.oldRevision, r.workID, r.status, r.operation = oldRevision, workID, status, operation
+	return r.fact, r.err
+}
+
+func completeIntegrationFact(t *testing.T, reconciliation string, newRevision ids.WorkRevisionID, workID ids.WorkID, disposition workgraph.Disposition, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) EligibilityFact {
+	t.Helper()
+	fact, err := workgraph.NewEligibilityFact(reconciliation, "revision-1", newRevision, workID, status, disposition, operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fact
 }
 
 func (s *memoryStore) Review(_ context.Context, reviewID ids.ReviewID) (review.Record, error) {

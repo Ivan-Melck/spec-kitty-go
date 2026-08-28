@@ -72,6 +72,10 @@ type Request struct {
 	Contributors    []ids.ActorID
 	EvidenceDigest  string
 	SubmittedAt     time.Time
+	// ExpectedEligibility is required when the service is configured with the
+	// complete mixed-reconciliation reader. It is intentionally absent for the
+	// frozen legacy-v1 store path.
+	ExpectedEligibility EligibilityFact
 }
 
 func (r Request) Validate() error {
