@@ -168,7 +168,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review. Product 16b938a; focused x10, race, vet, staticcheck, module, formatting pass. Full internal: all non-scenario packages pass; known out-of-scope scenario census drift and IG-02 10m timeout remain baseline-reproduced.",
-        "Review cycle 1 rejected: corrupt replay bypasses postconditions; v2 scalar null/required schema shape and nested v1 shape are not strict; unsupported definition version crosses ports; duplicate provider mapping identity is accepted. Focused/race/static/architecture gates otherwise pass; scenario baseline is unchanged and independently attributable."
+        "Review cycle 1 rejected: corrupt replay bypasses postconditions; v2 scalar null/required schema shape and nested v1 shape are not strict; unsupported definition version crosses ports; duplicate provider mapping identity is accepted. Focused/race/static/architecture gates otherwise pass; scenario baseline is unchanged and independently attributable.",
+        "Cycle 2 ready for independent review. Product a9e9760 fixes all five cycle-1 findings; focused x10, race, architecture, compile, vet, staticcheck, module, formatting pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
