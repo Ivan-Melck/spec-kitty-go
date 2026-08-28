@@ -671,23 +671,67 @@ func validateReplayPostcondition(definition MissionDefinition, request Transitio
 	return nil
 }
 
+type missionSnapshotIdentity struct {
+	MissionID             ids.MissionID           `json:"mission_id"`
+	ProjectID             ids.ProjectID           `json:"project_id"`
+	DefinitionID          ids.MissionDefinitionID `json:"definition_id"`
+	DefinitionVersion     DefinitionVersion       `json:"definition_version"`
+	DefinitionCommitment  DefinitionCommitment    `json:"definition_commitment"`
+	Lifecycle             LifecycleStatus         `json:"lifecycle"`
+	CurrentStep           StepKey                 `json:"current_step"`
+	CurrentWorkRevisionID ids.WorkRevisionID      `json:"current_work_revision_id"`
+	StateVersion          uint64                  `json:"state_version"`
+	CreatedAt             string                  `json:"created_at"`
+	UpdatedAt             string                  `json:"updated_at"`
+	TerminalOutcome       TerminalOutcome         `json:"terminal_outcome"`
+	ActiveBlockers        []ids.BlockerID         `json:"active_blockers"`
+	UnresolvedDecisions   []ids.DecisionID        `json:"unresolved_decisions"`
+}
+
+func canonicalMissionSnapshotIdentity(snapshot MissionSnapshot) missionSnapshotIdentity {
+	blockers := make([]ids.BlockerID, len(snapshot.ActiveBlockers))
+	copy(blockers, snapshot.ActiveBlockers)
+	sort.Slice(blockers, func(i, j int) bool { return blockers[i] < blockers[j] })
+	decisions := make([]ids.DecisionID, len(snapshot.UnresolvedDecisions))
+	copy(decisions, snapshot.UnresolvedDecisions)
+	sort.Slice(decisions, func(i, j int) bool { return decisions[i] < decisions[j] })
+	return missionSnapshotIdentity{
+		MissionID:             snapshot.MissionID,
+		ProjectID:             snapshot.ProjectID,
+		DefinitionID:          snapshot.DefinitionID,
+		DefinitionVersion:     snapshot.DefinitionVersion,
+		DefinitionCommitment:  snapshot.DefinitionCommitment,
+		Lifecycle:             snapshot.Lifecycle,
+		CurrentStep:           snapshot.CurrentStep,
+		CurrentWorkRevisionID: snapshot.CurrentWorkRevisionID,
+		StateVersion:          snapshot.StateVersion,
+		CreatedAt:             snapshot.CreatedAt.Format(time.RFC3339Nano),
+		UpdatedAt:             snapshot.UpdatedAt.Format(time.RFC3339Nano),
+		TerminalOutcome:       snapshot.TerminalOutcome,
+		ActiveBlockers:        blockers,
+		UnresolvedDecisions:   decisions,
+	}
+}
+
 func sameMissionSnapshot(left, right MissionSnapshot) bool {
-	if left.MissionID != right.MissionID || left.ProjectID != right.ProjectID ||
-		left.DefinitionID != right.DefinitionID || left.DefinitionVersion != right.DefinitionVersion ||
-		left.DefinitionCommitment != right.DefinitionCommitment || left.Lifecycle != right.Lifecycle ||
-		left.CurrentStep != right.CurrentStep || left.CurrentWorkRevisionID != right.CurrentWorkRevisionID ||
-		left.StateVersion != right.StateVersion || !left.CreatedAt.Equal(right.CreatedAt) ||
-		!left.UpdatedAt.Equal(right.UpdatedAt) || left.TerminalOutcome != right.TerminalOutcome ||
-		len(left.ActiveBlockers) != len(right.ActiveBlockers) || len(left.UnresolvedDecisions) != len(right.UnresolvedDecisions) {
+	canonicalLeft := canonicalMissionSnapshotIdentity(left)
+	canonicalRight := canonicalMissionSnapshotIdentity(right)
+	if canonicalLeft.MissionID != canonicalRight.MissionID || canonicalLeft.ProjectID != canonicalRight.ProjectID ||
+		canonicalLeft.DefinitionID != canonicalRight.DefinitionID || canonicalLeft.DefinitionVersion != canonicalRight.DefinitionVersion ||
+		canonicalLeft.DefinitionCommitment != canonicalRight.DefinitionCommitment || canonicalLeft.Lifecycle != canonicalRight.Lifecycle ||
+		canonicalLeft.CurrentStep != canonicalRight.CurrentStep || canonicalLeft.CurrentWorkRevisionID != canonicalRight.CurrentWorkRevisionID ||
+		canonicalLeft.StateVersion != canonicalRight.StateVersion || canonicalLeft.CreatedAt != canonicalRight.CreatedAt ||
+		canonicalLeft.UpdatedAt != canonicalRight.UpdatedAt || canonicalLeft.TerminalOutcome != canonicalRight.TerminalOutcome ||
+		len(canonicalLeft.ActiveBlockers) != len(canonicalRight.ActiveBlockers) || len(canonicalLeft.UnresolvedDecisions) != len(canonicalRight.UnresolvedDecisions) {
 		return false
 	}
-	for index := range left.ActiveBlockers {
-		if left.ActiveBlockers[index] != right.ActiveBlockers[index] {
+	for index := range canonicalLeft.ActiveBlockers {
+		if canonicalLeft.ActiveBlockers[index] != canonicalRight.ActiveBlockers[index] {
 			return false
 		}
 	}
-	for index := range left.UnresolvedDecisions {
-		if left.UnresolvedDecisions[index] != right.UnresolvedDecisions[index] {
+	for index := range canonicalLeft.UnresolvedDecisions {
+		if canonicalLeft.UnresolvedDecisions[index] != canonicalRight.UnresolvedDecisions[index] {
 			return false
 		}
 	}
