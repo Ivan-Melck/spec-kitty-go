@@ -54,6 +54,8 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- internal/artifact/service.go
+- internal/artifact/service_test.go
 - internal/controlstore/store.go
 - internal/controlstore/sqlite/migrations.go
 - internal/controlstore/sqlite/governance_context_test.go
@@ -311,6 +313,8 @@ file path or newer revision cannot inherit authority.
 
 **Files**:
 
+- `internal/artifact/service.go`
+- `internal/artifact/service_test.go`
 - `internal/controlstore/sqlite/artifact.go`
 - `internal/controlstore/sqlite/artifact_test.go`
 
