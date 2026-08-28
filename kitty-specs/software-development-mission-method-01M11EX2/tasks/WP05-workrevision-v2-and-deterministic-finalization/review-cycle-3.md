@@ -1,4 +1,14 @@
 ---
+affected_files: []
+cycle_number: 3
+mission_slug: software-development-mission-method-01M11EX2
+reproduction_command:
+reviewed_at: '2026-08-28T00:31:02Z'
+reviewer_agent: codex
+wp_id: WP05
+---
+
+---
 affected_files:
 - internal/mission/finalization.go
 - internal/mission/finalization_test.go
