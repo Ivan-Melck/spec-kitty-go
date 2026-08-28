@@ -220,6 +220,7 @@
         "internal/helpercmd/root.go",
         "internal/mission/service.go",
         "internal/mission/service_test.go",
+        "internal/mission/lifecycle_test.go",
         "internal/scenario/mission_method_fake_test.go",
         "internal/scenario/mission_method_helpers_test.go",
         "internal/testcampaign/manifest.go"

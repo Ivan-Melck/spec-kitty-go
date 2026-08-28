@@ -206,6 +206,7 @@ work_packages:
     owned_files:
       - "internal/mission/service.go"
       - "internal/mission/service_test.go"
+      - "internal/mission/lifecycle_test.go"
       - "internal/controlstore/sqlite/migrations.go"
       - "internal/controlstore/sqlite/mission.go"
       - "internal/controlstore/sqlite/mission_test.go"

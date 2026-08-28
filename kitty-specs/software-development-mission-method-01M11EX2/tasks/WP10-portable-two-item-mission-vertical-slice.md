@@ -59,6 +59,7 @@ model: ''
 owned_files:
 - internal/mission/service.go
 - internal/mission/service_test.go
+- internal/mission/lifecycle_test.go
 - internal/controlstore/sqlite/migrations.go
 - internal/controlstore/sqlite/mission.go
 - internal/controlstore/sqlite/mission_test.go
@@ -134,7 +135,7 @@ by WP06; do not hard-code an outcome that its validator rejects.
 Use only the Spec Kitty lane worktree allocated to WP10. Verify accepted WP04, WP08, and WP09 lineages exist on the dependency-resolved base. The accepted result merges back into `feat/software-development-mission-method`.
 
 Do not edit the primary checkout, create worktrees manually, merge another
-lane, push to `main`, or modify files outside the eighteen owned paths. WP11
+lane, push to `main`, or modify files outside the nineteen owned paths. WP11
 owns Beads parity. WP12 owns campaign execution and evidence documents; WP10
 may add only its exact new top-level test names to the existing frozen census
 in `internal/testcampaign/manifest.go`.
@@ -222,6 +223,7 @@ in `internal/testcampaign/manifest.go`.
 
 - `internal/mission/service.go`
 - `internal/mission/service_test.go`
+- `internal/mission/lifecycle_test.go` — legacy creation fixtures only.
 - `internal/controlstore/sqlite/migrations.go`
 - `internal/controlstore/sqlite/mission.go`
 - `internal/controlstore/sqlite/mission_test.go`
@@ -408,7 +410,7 @@ All portable tests must run offline with isolated temporary state. Do not add sl
 - Standalone comprehension succeeds using only public typed results for every fixture.
 - No test parses human-formatted CLI output or relies on private transcript/setup context.
 - Focused, repeated, race, compilation, vet, build, formatting, module, and hygiene checks pass.
-- Only the eighteen frontmatter-owned files are modified by implementation.
+- Only the nineteen frontmatter-owned files are modified by implementation.
 - T052 through T056 are recorded through the event-sourced status command:
 
   ```bash
@@ -448,6 +450,6 @@ Verify explicitly:
 12. Refusal assertions name typed reasons and verify no partial mutation.
 13. Standalone-comprehension checks use only public outputs and have omission mutants.
 14. No Beads, HTTP/API, MCP, Team Kitty, Gapdb, execution, review, or integration surface enters the implementation.
-15. The diff is confined to the exact eighteen owned paths.
+15. The diff is confined to the exact nineteen owned paths.
 
 Reject a solution that directly seeds final database rows instead of driving commands, parses output prose, defaults the mission type, treats tracker status as workflow state, mutates during `next`, persists drift implicitly during a query, imports generated tasks, recreates domain rules in helper handlers, or builds Phase 6 transport polish into the qualification binary.
