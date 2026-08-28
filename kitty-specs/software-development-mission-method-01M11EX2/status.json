@@ -235,6 +235,9 @@
       "last_event_id": "01M13MW6WNWR0H9391C9MV8D39",
       "last_transition_at": "2026-08-28T07:38:16.341593+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Review passed: canonical action destination is single-source and stable across strict JSON; command digest, replay conflict, and current-law re-resolution bind the same identity; focused x20/x100, race, architecture, compile, vet, staticcheck, module, format, scope and hygiene gates passed."
+      ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
