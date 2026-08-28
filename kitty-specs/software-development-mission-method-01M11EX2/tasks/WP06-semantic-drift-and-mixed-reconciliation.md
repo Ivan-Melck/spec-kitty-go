@@ -46,14 +46,8 @@ owned_files:
 - internal/mission/reconciliation.go
 - internal/mission/reconciliation_test.go
 - internal/handoff/model.go
-- internal/handoff/service.go
-- internal/handoff/handoff_test.go
 - internal/review/model.go
-- internal/review/service.go
-- internal/review/review_test.go
 - internal/integration/model.go
-- internal/integration/service.go
-- internal/integration/service_test.go
 role: investigator
 tags: []
 tracker_refs: []
@@ -86,9 +80,8 @@ dispositions and status-sensitive consequences remain the policy base, but the
 current one-disposition-per-graph request must evolve into exactly one decision
 for every affected active or accepted old work item. Integrated history remains
 immutable. Consumers must reject ineligible old-generation handoff, review, and
-integration attempts through typed model contracts enforced by the live service
-entry points, without implementing the Phase 4/5 execution machinery those
-consumers will eventually drive.
+integration attempts through typed model contracts, without implementing the
+Phase 4/5 execution machinery those consumers will eventually drive.
 
 ## Context
 
@@ -135,7 +128,7 @@ and merge target are `feat/software-development-mission-method`. Begin from the
 accepted WP05 lane because WorkRevision v2 is the required comparison contract.
 
 Do not edit the primary checkout, create another worktree, merge to `main`, or
-push to a protected branch. Modify only the fifteen owned files. If implementation
+push to a protected branch. Modify only the nine owned files. If implementation
 requires a store adapter, service file, or schema outside this list, report the
 ownership boundary for WP08 instead of expanding this WP.
 
@@ -324,14 +317,10 @@ handoff, review, and integration cannot accept work forbidden by reconciliation.
 
 1. Extend the existing model seams in handoff, review, and integration with a
    common-shaped immutable eligibility fact: reconciliation ID, old/new revision,
-   WorkID, status, disposition, permitted operation, and bounded reason. Add the
-   fact to each live service request/authority inspection path rather than leaving
-   it as a detached validator that production calls can bypass.
+   WorkID, status, disposition, permitted operation, and bounded reason.
 2. Reuse each package's existing `KindRevisionIneligible` refusal. Validate that
-   eligibility matches the request's exact WorkRevision and WorkID after exact
-   immutable-operation replay has been checked, but before a new attempt performs
-   authority inspection, candidate verification, repository-fence acquisition,
-   Git work, or any store mutation.
+   eligibility matches the request's exact WorkRevision and WorkID before any
+   consumer authority is accepted.
 3. Map derived consequences precisely: superseded/invalidated work cannot create
    an acceptable new handoff or integration; review cannot approve ineligible
    old-contract evidence; invalidated active work emits later expiry/quarantine
@@ -342,31 +331,21 @@ handoff, review, and integration cannot accept work forbidden by reconciliation.
 5. Preserve integrated records for every disposition. A successor generation
    may create follow-up work, but these model changes never amend a Git candidate,
    approval verdict, result commit, or historical evidence digest.
-6. Keep this change at the typed model and service pre-mutation validation seam.
-   Prove the refusal ordering in each consumer's focused service tests as well as
-   the mission reconciliation tests. Do not add lease expiry, workspace mutation,
-   review dispatch, new Git commands, or Phase 4/5 orchestration.
+6. Keep this change at the typed model/validation seam and prove it through
+   mission reconciliation tests. Do not add lease expiry, workspace mutation,
+   review dispatch, Git commands, or Phase 4/5 orchestration.
 
 **Files**:
 
 - `internal/handoff/model.go`
-- `internal/handoff/service.go`
-- `internal/handoff/handoff_test.go`
 - `internal/review/model.go`
-- `internal/review/service.go`
-- `internal/review/review_test.go`
 - `internal/integration/model.go`
-- `internal/integration/service.go`
-- `internal/integration/service_test.go`
 - `internal/mission/reconciliation_test.go`
 
 **Validation**:
 
 - Each consumer accepts eligible matching facts and rejects mismatch/ineligibility
   with `revision_ineligible` before downstream mutation.
-- Existing immutable operation replay remains available without consulting later
-  eligibility, while every new or changed attempt demonstrably checks eligibility
-  before verifier calls, authority/fence acquisition, Git work, or store mutation.
 - Supersede and invalidate block new acceptance/integration as defined.
 - Invalidate produces typed future authority actions but no direct side effect.
 - Integrated evidence remains byte-identical after every disposition.
@@ -443,7 +422,7 @@ to accommodate these packages.
 - Integrated candidates, reviews, result commits, and evidence remain unchanged;
   changed needs are represented by explicit new work.
 - Focused, repeated, race, vet, architecture, and bounded contract gates pass,
-  with all edits confined to the fifteen owned files.
+  with all edits confined to the nine owned files.
 - Mark all six subtasks complete only after evidence is green:
 
 ```bash
@@ -484,5 +463,4 @@ predecessor/generation CAS, with replay decided by request digest. Consumer
 changes must use typed `revision_ineligible` failures and emit only future action
 facts—no leases, workspaces, Git history, or dispatch behavior. Reject raw
 provider comparison, permissive missing decisions, caller-authored consequences,
-partial publication, detached eligibility validators, or changes beyond the
-fifteen owned files.
+partial publication, or changes beyond the nine owned files.
