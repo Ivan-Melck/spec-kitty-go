@@ -159,8 +159,8 @@
     "WP05": {
       "actor": "codex",
       "agent": "codex",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "force_count": 3,
       "lane": "approved",
       "last_event_id": "01M13A0M0KV1DAJ5Z2T1JD6GXH",
@@ -171,7 +171,8 @@
         "Review cycle 1 rejected: corrupt replay bypasses postconditions; v2 scalar null/required schema shape and nested v1 shape are not strict; unsupported definition version crosses ports; duplicate provider mapping identity is accepted. Focused/race/static/architecture gates otherwise pass; scenario baseline is unchanged and independently attributable.",
         "Cycle 2 ready for independent review. Product a9e9760 fixes all five cycle-1 findings; focused x10, race, architecture, compile, vet, staticcheck, module, formatting pass.",
         "Review cycle 2 rejected: same-ID substitution of pinned RevisionV2 provider evidence survives replay postconditions. Add an atomically persisted domain-separated full-outcome receipt over exact revision bytes, complete mission outcome, operation, and request; recompute on replay before provider calls. Other four cycle-1 fixes and focused/race/architecture/static gates pass.",
-        "Cycle 3 ready for independent review. Product ddc0100 binds exact outcome receipt; focused x20, race, architecture, compile, vet, staticcheck, module, formatting pass."
+        "Cycle 3 ready for independent review. Product ddc0100 binds exact outcome receipt; focused x20, race, architecture, compile, vet, staticcheck, module, formatting pass.",
+        "Arbiter review passed: complete ExpectedMission identity mutations return operation_conflict before provider/publish; blocker/decision reorder and nil/empty are canonical-equivalent without caller mutation; exact-outcome receipt, v1/v2 compatibility, deterministic lanes, saga faults, replay, concurrency, race, architecture mutants, vet, staticcheck, module, and formatting gates pass. Anti-patterns 1-8 PASS. The surgical internal/mission/service.go crossing centralizes canonical MissionSnapshot identity and is explicitly authorized by the human Arbiter activity log; all mission lifecycle regressions pass. Known scenario census drift is non-attributable (unchanged tree cf52671e); isolated IG-02 passes."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -180,7 +181,7 @@
         "reviewer": "codex",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 3760839,
       "shell_pid_created_at": "1787619279.6",
       "subtasks": {
