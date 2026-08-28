@@ -30,6 +30,10 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/projection/
 create_intent:
+- internal/mission/readmodel/model.go
+- internal/mission/readmodel/model_test.go
+- internal/workgraph/readmodel/model.go
+- internal/workgraph/readmodel/model_test.go
 - internal/projection/model.go
 - internal/projection/tasks.go
 - internal/projection/tasks_test.go
@@ -38,6 +42,10 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- internal/mission/readmodel/model.go
+- internal/mission/readmodel/model_test.go
+- internal/workgraph/readmodel/model.go
+- internal/workgraph/readmodel/model_test.go
 - internal/projection/model.go
 - internal/projection/tasks.go
 - internal/projection/tasks_test.go
@@ -113,7 +121,11 @@ Use only the Spec Kitty lane worktree allocated for WP09 after WP05, WP06, and
 WP07 are accepted. The merge target is
 `feat/software-development-mission-method`. Do not branch from `main`, create a
 manual worktree, reuse another package's lane, or edit dependency-owned source.
-All implementation and tests must remain inside the exact five owned files.
+All implementation and tests must remain inside the exact nine owned files.
+The four `readmodel` files are the architecture-policy-approved boundary for
+projecting mission and work-graph facts. Do not weaken the projection tier,
+import authority packages from `internal/projection`, or replace these typed
+read models with projection-local primitive DTOs.
 
 Start implementation with:
 
@@ -133,33 +145,49 @@ service.
 
 **Steps**:
 
-1. In `internal/projection/model.go`, define a package-local `TasksView` (or
+1. In `internal/mission/readmodel/model.go` and
+   `internal/workgraph/readmodel/model.go`, define the minimal immutable typed
+   snapshots needed by this projection. These packages are the already-ratified
+   `TierReadModel` seam: they may depend only on foundation/read-model packages,
+   must defensively copy collections, and must not import mission/workgraph
+   authority or provider adapters. Their tests must freeze validation, copying,
+   and closed drift-state behavior.
+2. In `internal/projection/model.go`, define a package-local `TasksView` (or
    equivalently named value) containing mission identity and state version,
    current step, WorkRevision ID/generation/graph digest, typed drift status,
    supplied render time, and canonically ordered projected work and lane values.
-2. Each projected work item must contain stable WorkID, title/objective,
+3. Each projected work item must contain stable WorkID, title/objective,
    description or bounded design context needed for standalone comprehension,
    dependency WorkIDs, structured criteria, write scopes, lane identity, and
    any typed reconciliation status needed to explain current applicability.
    Do not include provider status as readiness or authority.
-3. Reuse or translate public read-only mission/workgraph types without exposing
+4. Reuse the typed mission/workgraph read-model snapshots without exposing
    their mutable backing collections. The model constructor must defensively
    copy slices/maps and validate all identities, positive versions/generation,
    digest shape, UTC render time, unique work/lane membership, and dependency
    references.
-4. Accept only the closed drift states defined upstream (`clean`,
+5. Accept only the closed drift states defined by the workgraph read model
+   (`clean`,
    `observation_only`, `changed`, plus an explicit not-checked value only if the
    upstream contract has one). Do not infer drift from provider revision or
    free-form text.
-5. Canonically sort work by WorkID; dependencies, criteria, and scopes by their
+6. Canonically sort work by WorkID; dependencies, criteria, and scopes by their
    stable keys; and lanes/members/edges by ID. Normalize nil and empty
    collections so equivalent views produce equal output.
-6. Define stable projection error kinds and bounded recovery categories for no
+7. Define stable projection error kinds and bounded recovery categories for no
    finalized revision, corrupt read model, unsupported drift state, unsafe
    output path, and write/replace failure. Human messages are explanatory only.
 
 **Files**:
 
+- `internal/mission/readmodel/model.go` — minimal immutable mission projection
+  facts: mission identity, state version, and current step.
+- `internal/mission/readmodel/model_test.go` — validation and defensive-copy
+  tests for the mission read model.
+- `internal/workgraph/readmodel/model.go` — minimal immutable WorkRevision,
+  work/lane/criterion/scope, and closed drift projection facts.
+- `internal/workgraph/readmodel/model_test.go` — validation, canonical-copy,
+  and closed-vocabulary tests for the workgraph read model.
 - `internal/projection/model.go` — immutable view values, constructors,
   canonical ordering, validation, and projection diagnostics (approximately
   180–260 lines).
