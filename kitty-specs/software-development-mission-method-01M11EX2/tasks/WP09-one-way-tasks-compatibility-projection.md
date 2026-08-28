@@ -150,8 +150,13 @@ service.
    snapshots needed by this projection. These packages are the already-ratified
    `TierReadModel` seam: they may depend only on foundation/read-model packages,
    must defensively copy collections, and must not import mission/workgraph
-   authority or provider adapters. Their tests must freeze validation, copying,
-   and closed drift-state behavior.
+   authority or provider adapters. The workgraph read model must define
+   `not_checked` as an explicit projection-availability state for a finalized
+   generation with no drift observation; it is distinct from authoritative
+   semantic `clean` and must never be inferred as `clean`. Its remaining values
+   map exactly to the upstream semantic statuses `clean`, `observation_only`,
+   and `changed`. Tests must freeze validation, copying, and this closed
+   drift-state behavior.
 2. In `internal/projection/model.go`, define a package-local `TasksView` (or
    equivalently named value) containing mission identity and state version,
    current step, WorkRevision ID/generation/graph digest, typed drift status,
