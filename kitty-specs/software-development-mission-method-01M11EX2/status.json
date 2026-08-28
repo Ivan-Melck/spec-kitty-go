@@ -260,8 +260,8 @@
     "WP08": {
       "actor": "codex",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
       "lane": "in_review",
       "last_event_id": "01M13RMGA14ANRCEE7AGQMMY0N",
