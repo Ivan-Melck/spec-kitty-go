@@ -90,3 +90,11 @@ not yet bind the checkout's exact HEAD, reject duplicate or oversized JSON,
 fully validate Mermaid bodies and non-Make commands, or make every published
 failure identity load-bearing. That cycle remains a failed review record rather
 than evidence for a pass.
+
+The first committed-validator qualification at source `ce64e64` failed because
+its synthetic payload fixture required a changed commit even when the staged
+payload bytes were already identical. Source `f049baaa` repaired that test law;
+portable attempt 26 then passed. Real-provider attempts 27–30 remain explicitly
+non-admissible setup evidence for namespace identity, Git safe-directory,
+installer-variable, and sanitized-environment preconditions. Canonical offline
+attempt 31 passed the frozen provider runner and durable two-item selector.
