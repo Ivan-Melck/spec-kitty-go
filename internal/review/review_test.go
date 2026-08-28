@@ -2,11 +2,14 @@ package review
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 func TestSubmitEvaluatesCanonicalCriteriaBeforeAtomicCommit(t *testing.T) {
@@ -51,9 +54,128 @@ func TestSubmitReturnsDurableReplayBeforeReviewEligibility(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("replay=%+v err=%v", got, err)
 	}
-	if store.inspected || store.committed || len(hook.boundaries) != 0 {
-		t.Fatalf("inspect=%v commit=%v boundaries=%v", store.inspected, store.committed, hook.boundaries)
+	if store.eligibilityRead || store.inspected || store.committed || len(hook.boundaries) != 0 {
+		t.Fatalf("eligibility=%v inspect=%v commit=%v boundaries=%v", store.eligibilityRead, store.inspected, store.committed, hook.boundaries)
 	}
+}
+
+func TestSubmitRefusesReconciledWorkBeforeFaultInspectAndMutation(t *testing.T) {
+	request := validRequest(time.Now().UTC())
+	store := &recordingStore{eligibility: workgraph.Consequence{Reason: "invalidated handoff cannot be reviewed"}, eligibilityID: "reconciliation-review"}
+	hook := &recordingHook{}
+	_, err := NewService(store).WithFaults(hook).Submit(context.Background(), request)
+	if !IsKind(err, KindRevisionIneligible) || !store.eligibilityRead || store.inspected || store.committed || len(hook.boundaries) != 0 {
+		t.Fatalf("error=%v eligibility=%v inspect=%v commit=%v boundaries=%v", err, store.eligibilityRead, store.inspected, store.committed, hook.boundaries)
+	}
+}
+
+func TestSubmitConsumesCompleteMixedEligibilityBeforeReviewInspection(t *testing.T) {
+	now := time.Date(2026, 8, 28, 19, 0, 0, 0, time.UTC)
+	expected := completeReviewFact(t, "reconciliation-review-complete", "revision-2", "work-1", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview)
+	tests := map[string]struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{
+		"successor substitution":        {expected, completeReviewFact(t, "reconciliation-review-complete", "revision-other", "work-1", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"disposition substitution":      {expected, completeReviewFact(t, "reconciliation-review-complete", "revision-2", "work-1", workgraph.Continue, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"reconciliation substitution":   {expected, completeReviewFact(t, "reconciliation-other", "revision-2", "work-1", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"work substitution":             {expected, completeReviewFact(t, "reconciliation-review-complete", "revision-2", "work-other", workgraph.Fork, workgraph.StatusHandedOff, workgraph.EligibilityReview), true},
+		"status operation substitution": {expected, completeReviewFact(t, "reconciliation-review-complete", "revision-2", "work-1", workgraph.Fork, workgraph.StatusApproved, workgraph.EligibilityIntegration), true},
+		"omitted expectation":           {EligibilityFact{}, expected, true},
+		"reader unavailable":            {expected, EligibilityFact{}, false},
+	}
+	legacy, err := workgraph.NewLegacyEligibilityFact("reconciliation-review-complete", "revision-1", "work-1", workgraph.StatusHandedOff, workgraph.EligibilityReview, workgraph.Consequence{HandoffEligible: true, Reason: "legacy permissive consequence"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests["legacy fact returned for mixed request"] = struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{expected, legacy, true}
+	oldSubstitution, err := workgraph.NewEligibilityFact("reconciliation-review-complete", "revision-other", "revision-2", "work-1", workgraph.StatusHandedOff, workgraph.Fork, workgraph.EligibilityReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests["predecessor substitution"] = struct {
+		expected EligibilityFact
+		actual   EligibilityFact
+		reader   bool
+	}{expected, oldSubstitution, true}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			request := validRequest(now)
+			request.ExpectedEligibility = test.expected
+			store := &recordingStore{eligibility: workgraph.Consequence{HandoffEligible: true, Reason: "permissive legacy stub"}}
+			reader := &recordingEligibilityReader{fact: test.actual}
+			hook := &recordingHook{}
+			service := NewService(store).WithFaults(hook)
+			if test.reader {
+				service.WithEligibilityFacts(reader)
+			}
+			_, submitErr := service.Submit(context.Background(), request)
+			if !IsKind(submitErr, KindRevisionIneligible) || store.eligibilityRead || store.inspected || store.committed || len(hook.boundaries) != 0 {
+				t.Fatalf("error=%v full_reads=%d legacy=%v inspect=%v commit=%v boundaries=%v", submitErr, reader.calls, store.eligibilityRead, store.inspected, store.committed, hook.boundaries)
+			}
+		})
+	}
+
+	t.Run("exact complete fact proceeds", func(t *testing.T) {
+		request := validRequest(now)
+		request.ExpectedEligibility = expected
+		store := &recordingStore{scope: Scope{Handoff: handoff.Record{HandoffID: request.HandoffID, Candidate: request.Candidate}, CriterionIDs: []string{"criterion-a", "criterion-b"}}}
+		reader := &recordingEligibilityReader{fact: expected}
+		if _, err := NewService(store).WithEligibilityFacts(reader).Submit(context.Background(), request); err != nil || reader.calls != 1 || reader.oldRevision != request.WorkRevisionID || reader.workID != request.WorkID || reader.status != workgraph.StatusHandedOff || reader.operation != workgraph.EligibilityReview || store.eligibilityRead || !store.inspected || !store.committed {
+			t.Fatalf("error=%v reader=%+v legacy=%v inspect=%v commit=%v", err, reader, store.eligibilityRead, store.inspected, store.committed)
+		}
+	})
+}
+
+func TestSubmitReplaysBeforeCompleteReviewEligibilityInspection(t *testing.T) {
+	request := validRequest(time.Date(2026, 8, 28, 19, 0, 0, 0, time.UTC))
+	store := &recordingStore{replay: &Record{ReviewID: request.ReviewID, Candidate: request.Candidate}}
+	reader := &recordingEligibilityReader{}
+	if _, err := NewService(store).WithEligibilityFacts(reader).Submit(context.Background(), request); err != nil || reader.calls != 0 || store.eligibilityRead {
+		t.Fatalf("replay inspected eligibility: err=%v complete=%d legacy=%v", err, reader.calls, store.eligibilityRead)
+	}
+}
+
+func TestCompleteReviewEligibilityConfigurationCannotBeDowngraded(t *testing.T) {
+	denied := completeReviewFact(t, "reconciliation-review-denied", "revision-2", "work-1", workgraph.Invalidate, workgraph.StatusHandedOff, workgraph.EligibilityReview)
+	newLegacy := func() *recordingStore {
+		return &recordingStore{eligibility: workgraph.Consequence{HandoffEligible: true, RunMayContinue: true, Reason: "permissive legacy tuple"}}
+	}
+	assertRefused := func(t *testing.T, service *Service, legacy *recordingStore, reader *recordingEligibilityReader) {
+		t.Helper()
+		_, err := service.WithEligibilityFacts(nil).Submit(context.Background(), validRequest(time.Date(2026, 8, 28, 21, 0, 0, 0, time.UTC)))
+		if !IsKind(err, KindRevisionIneligible) || service.mode != eligibilityComplete || service.eligibility == nil || legacy.eligibilityRead || legacy.inspected || legacy.committed || reader.calls != 0 {
+			t.Fatalf("error=%v mode=%v full=%v full_reads=%d legacy=%v inspect=%v commit=%v", err, service.mode, service.eligibility != nil, reader.calls, legacy.eligibilityRead, legacy.inspected, legacy.committed)
+		}
+	}
+	t.Run("auto-detected reader survives nil", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied}
+		full := &fullRecordingStore{recordingStore: legacy, recordingEligibilityReader: reader}
+		var configured Store = full
+		assertRefused(t, NewService(configured), legacy, reader)
+	})
+	t.Run("explicit reader survives nil", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied}
+		assertRefused(t, NewService(legacy).WithEligibilityFacts(reader), legacy, reader)
+	})
+	t.Run("full read failure never falls back", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied, err: errors.New("full authority unavailable")}
+		request := validRequest(time.Date(2026, 8, 28, 21, 0, 0, 0, time.UTC))
+		request.ExpectedEligibility = denied
+		_, err := NewService(legacy).WithEligibilityFacts(reader).Submit(context.Background(), request)
+		if !IsKind(err, KindConflict) || reader.calls != 1 || legacy.eligibilityRead || legacy.inspected || legacy.committed {
+			t.Fatalf("error=%v full_reads=%d legacy=%v inspect=%v commit=%v", err, reader.calls, legacy.eligibilityRead, legacy.inspected, legacy.committed)
+		}
+	})
 }
 
 func validRequest(now time.Time) Request {
@@ -79,10 +201,51 @@ func makeBytes(character byte, count int) []byte {
 }
 
 type recordingStore struct {
-	scope     Scope
-	committed bool
-	replay    *Record
-	inspected bool
+	scope           Scope
+	committed       bool
+	replay          *Record
+	inspected       bool
+	eligibility     workgraph.Consequence
+	eligibilityID   string
+	eligibilityRead bool
+}
+
+type recordingEligibilityReader struct {
+	fact        EligibilityFact
+	err         error
+	calls       int
+	oldRevision ids.WorkRevisionID
+	workID      ids.WorkID
+	status      workgraph.WorkStatus
+	operation   workgraph.EligibilityOperation
+}
+
+type fullRecordingStore struct {
+	*recordingStore
+	*recordingEligibilityReader
+}
+
+func (r *recordingEligibilityReader) WorkEligibilityFact(_ context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {
+	r.calls++
+	r.oldRevision, r.workID, r.status, r.operation = oldRevision, workID, status, operation
+	return r.fact, r.err
+}
+
+func completeReviewFact(t *testing.T, reconciliation string, newRevision ids.WorkRevisionID, workID ids.WorkID, disposition workgraph.Disposition, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) EligibilityFact {
+	t.Helper()
+	fact, err := workgraph.NewEligibilityFact(reconciliation, "revision-1", newRevision, workID, status, disposition, operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fact
+}
+
+func (s *recordingStore) WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error) {
+	s.eligibilityRead = true
+	if s.eligibility.Reason == "" {
+		return workgraph.Consequence{HandoffEligible: true, IntegrationEligible: true, RunMayContinue: true, Reason: "no reconciliation restricts this WorkRevision generation"}, "", nil
+	}
+	return s.eligibility, s.eligibilityID, nil
 }
 
 func (s *recordingStore) LookupReviewOperation(context.Context, Request) (Record, bool, error) {

@@ -204,6 +204,16 @@ work_packages:
     title: "Portable Two-Item Mission Vertical Slice"
     dependencies: [WP04, WP08, WP09]
     owned_files:
+      - "internal/mission/service.go"
+      - "internal/mission/service_test.go"
+      - "internal/mission/lifecycle_test.go"
+      - "internal/controlstore/sqlite/migrations.go"
+      - "internal/controlstore/sqlite/mission.go"
+      - "internal/controlstore/sqlite/mission_test.go"
+      - "internal/controlstore/sqlite/mission_method_query.go"
+      - "internal/controlstore/sqlite/mission_method_query_test.go"
+      - "internal/testcampaign/manifest.go"
+      - "internal/tracker/fake/store.go"
       - "internal/helpercmd/root.go"
       - "internal/helpercmd/mission_method.go"
       - "internal/helpercmd/mission_method_test.go"
