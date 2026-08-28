@@ -170,7 +170,8 @@
         "Ready for independent review. Product 16b938a; focused x10, race, vet, staticcheck, module, formatting pass. Full internal: all non-scenario packages pass; known out-of-scope scenario census drift and IG-02 10m timeout remain baseline-reproduced.",
         "Review cycle 1 rejected: corrupt replay bypasses postconditions; v2 scalar null/required schema shape and nested v1 shape are not strict; unsupported definition version crosses ports; duplicate provider mapping identity is accepted. Focused/race/static/architecture gates otherwise pass; scenario baseline is unchanged and independently attributable.",
         "Cycle 2 ready for independent review. Product a9e9760 fixes all five cycle-1 findings; focused x10, race, architecture, compile, vet, staticcheck, module, formatting pass.",
-        "Review cycle 2 rejected: same-ID substitution of pinned RevisionV2 provider evidence survives replay postconditions. Add an atomically persisted domain-separated full-outcome receipt over exact revision bytes, complete mission outcome, operation, and request; recompute on replay before provider calls. Other four cycle-1 fixes and focused/race/architecture/static gates pass."
+        "Review cycle 2 rejected: same-ID substitution of pinned RevisionV2 provider evidence survives replay postconditions. Add an atomically persisted domain-separated full-outcome receipt over exact revision bytes, complete mission outcome, operation, and request; recompute on replay before provider calls. Other four cycle-1 fixes and focused/race/architecture/static gates pass.",
+        "Cycle 3 ready for independent review. Product ddc0100 binds exact outcome receipt; focused x20, race, architecture, compile, vet, staticcheck, module, formatting pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
