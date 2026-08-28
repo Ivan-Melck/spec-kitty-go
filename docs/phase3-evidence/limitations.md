@@ -78,3 +78,9 @@ Qualification is non-transitive. A later product, authority, provider,
 protocol, campaign, or evidence-serializer change requires a new frozen source
 candidate and new evidence. Documentation-only commits may attest to an earlier
 payload but do not inherit or extend its verdict.
+
+The earlier Phase 3 publication at source `4a96edd` was rejected because its
+evidence format had no reusable closed-schema validator. It remains historical
+evidence rather than an accepted publication. Candidate attempts 20 and 21 and
+provider-containment attempt 23 are likewise retained as failed or
+non-admissible; none is upgraded by the later passing attempts.

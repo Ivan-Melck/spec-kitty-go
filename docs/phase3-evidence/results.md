@@ -10,18 +10,19 @@ grant qualification to the later payload or documentation commits.
 |---|---|---:|
 | Drift is complete and cannot silently mutate current authority | `TestMissionMethodSemanticDriftMutations1000` | 1,000/1,000 changed; zero silent mutations |
 | Canonical normalization is order-independent | `TestMissionMethodNormalizationAndPureQueries100` | 100/100 byte and digest equivalence |
-| Finalization is race-safe across processes and connections | `TestMissionMethodFinalizationProcessRaces100` | 100/100 one-current-generation restart audits |
-| Declared publication faults recover to complete aggregates | `TestMissionMethodCrashBoundaryCensus` | 9/9 named boundaries reached and passed |
-| Projected Markdown has no authority | `TestMissionMethodProjectionAndGovernanceIndependence100` | 100/100 mutations; zero authority changes |
+| Finalization is race-safe across processes and connections | `TestMissionMethodFinalizationProcessRaces100` | 100 winners, 50 exact replays, 50 changed-operation conflicts; 100/100 restart audits |
+| Declared publication faults recover to complete aggregates | `TestMissionMethodCrashBoundaryCensus` | 9/9 exact named boundaries started, terminated, and passed |
+| Projected Markdown has no authority | `TestMissionMethodProjectionAndGovernanceIndependence100` | 100/100 trials across eight attack kinds; zero authority changes; four fixed mutants killed |
 | Governance history retains its original interpretation | `TestMissionMethodProjectionAndGovernanceIndependence100` | 100/100 restart reconstructions |
 | `next` is a pure typed query | `TestMissionMethodNormalizationAndPureQueries100` | 100/100; zero writes |
 | Durable fake and Beads preserve provider-neutral mission behavior | portable parity plus `TestMissionMethodRealBeadsTwoItemQualification` | pass against both providers |
 | Stale authority is checked before eligibility without defeating replay | `TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation` | pass; no downstream mutation |
 | Existing Phase 1/2 behavior remains intact | historical `full-scenario` census | 73/73 pass |
 | Architecture and scope laws remain executable | architecture and scope profiles with mutants | 40/40 pass |
-| The bounded local PR path remains usable | `make quality` | pass in 37.559 s |
-| Full portable qualification is complete | `make full-campaign` | pass; 15m 15.297s aggregate observed runtime |
+| The bounded local PR path remains usable | `make quality` | pass in 36.684 s |
+| Full portable qualification is complete | `make full-campaign` | pass; 15m 11.607s aggregate observed runtime |
 | Pinned real provider works under isolated multiwriter load | frozen real-provider runner | 11/11; 1,000/1,000 contention operations |
+| Evidence publication is closed and falsifiable | Phase 3 publication validator and permanent documentation/machine/checkout mutants | strict schema v2; broken links, Mermaid, commands, claims, limitations, checksums, history, verdicts, evidence facts, and ancestry are rejected |
 
 ## Requirements and constraints
 
@@ -43,7 +44,7 @@ grant qualification to the later payload or documentation commits.
 | NFR-004 | Nine transaction-abort, provider-lost-response, prewrite, and postcommit/pre-response boundaries recover without partial aggregates. The mid-transaction process-kill limit is explicit. |
 | NFR-005 | Local bounded queries meet executable thresholds. This package publishes no general production SLO or hosted measurement. |
 | NFR-008 | Import/reachability/deferred-surface policies and production-shaped mutants prevent trackers, projections, or transports from minting authority. |
-| NFR-011 | The local PR-equivalent campaign passed in 37.559 seconds; exhaustive and real-provider work remain scheduled/manual. |
+| NFR-011 | The local PR-equivalent campaign passed in 36.684 seconds; exhaustive and real-provider work remain scheduled/manual. |
 | NFR-012, C-012 | Evidence scans reject credentials, environment dumps, private transcripts, raw provider bodies/databases, and unbounded output. |
 | NFR-013 | Typed read models preserve objective, dependencies, criteria, generation, and next legal action in qualification cases. |
 | NFR-014 | Negative matrices require typed stable kinds, bounded observed/expected evidence, and recovery categories without raw provider or SQL leakage. |
@@ -68,16 +69,16 @@ grant qualification to the later payload or documentation commits.
 ## Source and provider measurements
 
 Portable qualification binds commit
-`4a96edd13d135497ef0662e25e78d5394cdb32ca`, tree
-`bc4ed9bbf7d3255fc7afc0e249672fb8a6020047`, with a clean worktree before and
+`b03200f5430e233d001e96ded74b8d4cd88d7158`, tree
+`700e73ee278ecf3223269eab5e7b7c7854f83673`, with a clean worktree before and
 after execution. Go 1.26.5 on Linux/amd64 compiled and tested the application.
 `go vet`, staticcheck 2026.1, module verification, formatting, binary builds,
 and govulncheck 1.6.0 passed; the vulnerability scan reported zero reachable
 findings.
 
-The isolated Beads 1.2.2 run recorded p95 latency of 298.650 ms for 100
-preflight observations and 183.697 ms for 200 warm single-item reads. Eight
-processes completed 1,000 provider-native creates in 156,860.355 ms with no
+The isolated Beads 1.2.2 run recorded p95 latency of 319.412 ms for 100
+preflight observations and 185.630 ms for 200 warm single-item reads. Eight
+processes completed 1,000 provider-native creates in 149,935.861 ms with no
 collision or duplicate. These are local observations, not service-level
 objectives.
 
@@ -86,9 +87,12 @@ objectives.
 Attempts 01–09 remain enumerated in `campaign-census.json`. They include
 toolchain/prerequisite failures, two load-sensitive claimant attempts, exact
 census failures, and the genuine stale-authority ordering defect. None satisfies
-the pass record. Real-provider setup attempts 11–16 are also retained as
+the pass record. The rejected cycle-1 publication and candidate attempts 20 and
+21 are also retained: the first lacked a strict reusable publication validator,
+and the latter two failed toolchain qualification boundaries. Real-provider
+setup attempts 11–16 and 23 are retained as
 non-admissible or diagnostic: they established network, namespace, Git, and
-offline module-cache preconditions before canonical attempt 18 passed. Direct
-selector attempt 17 was diagnostic only; attempt 19 is the separate Phase 3
-mission-method proof. Raw bounded artifacts remain outside the repository;
+offline module-cache preconditions. Canonical attempt 24 passed both the frozen
+eleven-scenario provider runner and the separate durable two-item Phase 3
+selector. Attempt 17 remained diagnostic only. Raw bounded artifacts remain outside the repository;
 published records contain only safe digests and summaries.
