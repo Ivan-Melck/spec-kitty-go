@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,5 +76,66 @@ func TestPhase3MigrationIsAppendOnlyAndForeignKeysRemainEnabled(t *testing.T) {
 	settings, err := store.Settings(context.Background())
 	if err != nil || !settings.ForeignKeys || settings.JournalMode != "wal" {
 		t.Fatalf("settings=%+v err=%v", settings, err)
+	}
+}
+
+func TestMissionCreateHundredCallerTwoConnectionReplayRace(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	left, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer left.Close()
+	right, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer right.Close()
+	definition, err := softwaredev.Definition()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := mission.CreateRequest{MissionID: "mission-race-create", ProjectID: "project-race", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-race-create", ActorID: "actor-race", OccurredAt: time.Date(2026, 8, 28, 7, 0, 0, 0, time.UTC)}
+	const callers = 100
+	var wg sync.WaitGroup
+	failures := make(chan error, callers)
+	success := make(chan mission.CreateResult, callers)
+	for i := 0; i < callers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			store := left
+			if i%2 == 1 {
+				store = right
+			}
+			result, e := mission.NewService(registry, store).Create(ctx, request)
+			if e != nil {
+				failures <- e
+				return
+			}
+			success <- result
+		}()
+	}
+	wg.Wait()
+	close(failures)
+	close(success)
+	for e := range failures {
+		t.Errorf("create race: %v", e)
+	}
+	count, replays := 0, 0
+	for r := range success {
+		count++
+		if r.Replayed {
+			replays++
+		}
+	}
+	if count != callers || replays != callers-1 {
+		t.Fatalf("success=%d replay=%d", count, replays)
 	}
 }
