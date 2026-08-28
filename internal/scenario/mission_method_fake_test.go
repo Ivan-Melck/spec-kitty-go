@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -15,7 +16,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controlstore/sqlite"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
-	"github.com/spec-kitty/go-kitty3/internal/tracker"
 	"github.com/spec-kitty/go-kitty3/internal/tracker/fake"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
@@ -52,6 +52,15 @@ func TestMissionMethodHelperPureQueriesProjectionDamageAndStandaloneComprehensio
 	if err != nil {
 		t.Fatal(err)
 	}
+	trackerBefore, err := os.ReadFile(result.TrackerStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(result.OutputRoot, "tasks.md")
+	projectionBefore, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for index := 0; index < 100; index++ {
 		envelope := callMethod(t, context.Background(), "mission", "next", map[string]any{"database": result.Database, "correlation_id": "correlation-pure", "mission_id": result.MissionTwo.MissionID})
 		var next mission.NextResult
@@ -67,8 +76,12 @@ func TestMissionMethodHelperPureQueriesProjectionDamageAndStandaloneComprehensio
 	if string(before) != string(after) {
 		t.Fatal("100 pure next queries changed the authoritative database file")
 	}
+	trackerAfter, trackerErr := os.ReadFile(result.TrackerStore)
+	projectionAfter, projectionErr := os.ReadFile(path)
+	if trackerErr != nil || projectionErr != nil || !bytes.Equal(trackerBefore, trackerAfter) || !bytes.Equal(projectionBefore, projectionAfter) {
+		t.Fatalf("100 pure next queries changed provider/projection state: tracker_err=%v projection_err=%v tracker_equal=%v projection_equal=%v", trackerErr, projectionErr, bytes.Equal(trackerBefore, trackerAfter), bytes.Equal(projectionBefore, projectionAfter))
+	}
 
-	path := filepath.Join(result.OutputRoot, "tasks.md")
 	if err = os.WriteFile(path, []byte("corrupt derived output"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +169,7 @@ func assertMissionMethodNegativeMatrix(t *testing.T, result portableMissionResul
 		"database": staleGenerationInput["database"], "tracker_store": result.TrackerStore,
 		"correlation_id": "correlation-stale-generation", "mission_id": result.MissionTwo.MissionID,
 		"old_revision": staleGenerationInput["old_revision"], "candidate_revision": staleGenerationInput["candidate_revision"],
-		"provider_refs": []map[string]any{}, "observed_at": result.MissionTwo.UpdatedAt.Add(time.Second),
+		"provider_refs": []map[string]any{cloneRequestMap(t, result.GenerationTwoRef)}, "observed_at": result.MissionTwo.UpdatedAt.Add(time.Second),
 	})
 	if staleGeneration.OK || staleGeneration.Error == nil {
 		t.Fatalf("stale generation succeeded: %+v", staleGeneration)
@@ -230,25 +243,52 @@ func assertMissionMethodNegativeMatrix(t *testing.T, result portableMissionResul
 			t.Errorf("negative %s omitted affected aggregate identities", name)
 		}
 	}
-	for _, name := range []string{"stale-generation", "unknown-definition", "corrupt-snapshot"} {
-		if response := responses[name]; len(response.Error.Observed) == 0 || len(response.Error.Expected) == 0 {
+	for name, response := range responses {
+		if response.Error == nil || len(response.Error.Observed) == 0 || len(response.Error.Expected) == 0 {
 			t.Errorf("negative %s omitted safe observed/expected state: %+v", name, response.Error)
 		}
 	}
 
-	// Provider revision-only noise and tracker assignment are explicit controls:
-	// they may change provider observation identity but never semantic mission authority.
+	// Provider revision-only noise, human status, and assignment are explicit
+	// non-authority controls. They may change provider observation identity but
+	// cannot change the mission aggregate, its current revision, or Next.
+	control, err := sqlite.Open(ctx, result.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missionBefore, err := control.LoadMission(ctx, result.MissionTwo.MissionID)
+	if err != nil {
+		control.Close()
+		t.Fatal(err)
+	}
+	revisionBefore, err := control.WorkRevisionV2(ctx, result.GenerationTwo.ID())
+	_ = control.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisionBeforeBytes, _ := revisionBefore.Encode()
 	store, err := fake.Open(result.TrackerStore)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ref := cloneRequestMap(t, result.GenerationTwoRef)
+	if _, err = store.HumanSetStatus(ctx, ref["external_id"].(string), "in_progress"); err != nil {
+		t.Fatal(err)
+	}
 	if err = store.HumanAssign(ctx, ref["external_id"].(string), "human-owner"); err != nil {
 		t.Fatal(err)
 	}
+	reopenedProvider, err := fake.Open(result.TrackerStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerState, err := reopenedProvider.ObserveHumanState(ctx, ref["external_id"].(string))
+	if err != nil || providerState.Status != "in_progress" || providerState.Assignee != "human-owner" || providerState.Revision == 0 {
+		t.Fatalf("durable provider status/assignment state=%+v err=%v", providerState, err)
+	}
 	noisyCandidate := append(json.RawMessage(nil), result.GenerationTwoPublic...)
-	mutateRevisionNoise(t, &noisyCandidate, result.GenerationTwo.ID().String(), "revision-provider-noise", "2")
-	ref["last_observation"] = tracker.Revision(2)
+	mutateRevisionNoise(t, &noisyCandidate, result.GenerationTwo.ID().String(), "revision-provider-noise", fmt.Sprint(providerState.Revision))
+	ref["last_observation"] = providerState.Revision
 	noise := callMethodRaw(t, ctx, "work", "drift", map[string]any{"database": result.Database, "tracker_store": result.TrackerStore, "correlation_id": "correlation-provider-noise", "mission_id": result.MissionTwo.MissionID, "old_revision": result.GenerationTwoPublic, "candidate_revision": noisyCandidate, "provider_refs": []map[string]any{ref}, "observed_at": at})
 	var noiseResult struct {
 		Status workgraph.SemanticStatus `json:"semantic_status"`
@@ -259,6 +299,24 @@ func assertMissionMethodNegativeMatrix(t *testing.T, result portableMissionResul
 	decodeMethodResult(t, noise, &noiseResult)
 	if noiseResult.Status != workgraph.SemanticObservationOnly {
 		t.Fatalf("provider noise status=%s", noiseResult.Status)
+	}
+	control, err = sqlite.Open(ctx, result.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missionAfter, err := control.LoadMission(ctx, result.MissionTwo.MissionID)
+	if err != nil {
+		control.Close()
+		t.Fatal(err)
+	}
+	revisionAfter, err := control.WorkRevisionV2(ctx, result.GenerationTwo.ID())
+	_ = control.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisionAfterBytes, _ := revisionAfter.Encode()
+	if !reflect.DeepEqual(missionBefore, missionAfter) || missionAfter.StateVersion != missionBefore.StateVersion || missionAfter.CurrentWorkRevisionID != result.GenerationTwo.ID() || !bytes.Equal(revisionBeforeBytes, revisionAfterBytes) {
+		t.Fatalf("provider status/assignment changed authority: mission before=%+v after=%+v revision_equal=%v", missionBefore, missionAfter, bytes.Equal(revisionBeforeBytes, revisionAfterBytes))
 	}
 	afterAssignment := callMethod(t, ctx, "mission", "next", map[string]any{"database": result.Database, "correlation_id": "correlation-after-assignment", "mission_id": result.MissionTwo.MissionID})
 	if !jsonEqual(afterAssignment.Result, result.NextTwoPublic) {

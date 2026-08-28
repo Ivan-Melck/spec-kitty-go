@@ -78,13 +78,9 @@ func RunArtifact(ctx context.Context, args []string, stdout, stderr io.Writer) i
 }
 
 func runArtifactPublish(ctx context.Context, request artifactPublishRequest, stdout io.Writer) int {
-	policy, err := artifact.PolicyFor(request.Kind)
+	validation, err := validateArtifactPublishRequest(request)
 	if err != nil {
-		return encodeMethodFailure(stdout, "artifact_publish_refused", request.CorrelationID, request.OperationID, nil, err)
-	}
-	validation, err := artifact.ValidateConcerns(request.ArtifactRevisionID, policy, request.PresentConcerns, request.ValidatedAt.UTC())
-	if err != nil {
-		return encodeMethodFailure(stdout, "artifact_publish_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "artifact_publish_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String(), "artifact_revision_id": request.ArtifactRevisionID}, err)
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
@@ -106,11 +102,17 @@ func runArtifactPublish(ctx context.Context, request artifactPublishRequest, std
 }
 
 func runArtifactApprove(ctx context.Context, request artifactApproveRequest, stdout io.Writer) int {
+	if request.SubmittedAt.IsZero() || request.SubmittedAt.Location() != time.UTC {
+		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, map[string]string{"artifact_revision_id": request.ArtifactRevisionID}, invalidPreflight("submitted_at", "invalid", "nonzero_utc"))
+	}
 	if _, err := artifact.NewArtifactApproval(artifact.ArtifactApprovalParams{ID: request.ApprovalID, ArtifactRevisionID: request.ArtifactRevisionID, Verdict: request.Verdict, ActorID: request.ActorID.String(), EvidenceDigest: request.EvidenceDigest, GovernanceContextID: request.GovernanceContextID.String(), SubmittedAt: request.SubmittedAt}); err != nil {
 		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, nil, err)
 	}
 	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil {
-		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, map[string]string{"artifact_revision_id": request.ArtifactRevisionID}, invalidPreflight("operation_id", "invalid", "stable_operation_id"))
+	}
+	if err := validateAdapterPath(request.Database, "database"); err != nil {
+		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, map[string]string{"artifact_revision_id": request.ArtifactRevisionID}, err)
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
@@ -134,4 +136,40 @@ func runArtifactApprove(ctx context.Context, request artifactApproveRequest, std
 		RequestDigest       string                   `json:"request_digest"`
 		Replayed            bool                     `json:"replayed"`
 	}{approval.ID(), approval.ArtifactRevisionID(), approval.Verdict(), approval.ActorID(), approval.EvidenceDigest(), approval.GovernanceContextID(), approval.SubmittedAt(), result.RequestDigest, result.Replayed})
+}
+
+func validateArtifactPublishRequest(request artifactPublishRequest) (artifact.ValidationResult, error) {
+	if err := validateAdapterPath(request.Database, "database"); err != nil {
+		return artifact.ValidationResult{}, err
+	}
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil {
+		return artifact.ValidationResult{}, invalidPreflight("operation_id", "invalid", "stable_operation_id")
+	}
+	if _, err := ids.ParseMissionID(request.MissionID.String()); err != nil {
+		return artifact.ValidationResult{}, invalidPreflight("mission_id", "invalid", "stable_mission_id")
+	}
+	if _, err := ids.ParseActorID(request.CreatedBy.String()); err != nil {
+		return artifact.ValidationResult{}, invalidPreflight("created_by", "invalid", "stable_actor_id")
+	}
+	if request.CreatedAt.IsZero() || request.CreatedAt.Location() != time.UTC {
+		return artifact.ValidationResult{}, invalidPreflight("created_at", "invalid", "nonzero_utc")
+	}
+	if request.ValidatedAt.IsZero() || request.ValidatedAt.Location() != time.UTC {
+		return artifact.ValidationResult{}, invalidPreflight("validated_at", "invalid", "nonzero_utc")
+	}
+	policy, err := artifact.PolicyFor(request.Kind)
+	if err != nil {
+		return artifact.ValidationResult{}, err
+	}
+	validation, err := artifact.ValidateConcerns(request.ArtifactRevisionID, policy, request.PresentConcerns, request.ValidatedAt)
+	if err != nil {
+		return artifact.ValidationResult{}, err
+	}
+	if _, err = artifact.NewArtifactRevision(artifact.ArtifactRevisionParams{ID: request.ArtifactRevisionID, MissionID: request.MissionID.String(), Kind: request.Kind, RevisionNumber: 1, ContentDigest: artifact.ContentCommitment(request.Content), SourceRef: request.SourceRef, SourceRevision: request.SourceRevision, CreatedBy: request.CreatedBy.String(), CreatedAt: request.CreatedAt}); err != nil {
+		return artifact.ValidationResult{}, err
+	}
+	if request.ExpectedLatestRevisionID != "" && !boundedStableValue(request.ExpectedLatestRevisionID) {
+		return artifact.ValidationResult{}, invalidPreflight("expected_latest_revision_id", "invalid", "stable_artifact_revision_id")
+	}
+	return validation, nil
 }

@@ -227,6 +227,9 @@ func RunMission(ctx context.Context, args []string, stdout, stderr io.Writer) in
 }
 
 func runMissionInitialize(ctx context.Context, request initializeRequest, stdout io.Writer) int {
+	if err := validatePortableInitializeRequest(request); err != nil {
+		return encodeMethodFailure(stdout, "mission_initialize_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String(), "project_id": request.ProjectID.String()}, err)
+	}
 	if request.DefinitionID != softwaredev.DefinitionID || request.DefinitionVersion != softwaredev.DefinitionVersion {
 		return encodeMethodFailure(stdout, "mission_initialize_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, methodStateError("unsupported_definition", "correct_input", "definition", "the selected mission definition is unsupported", map[string]string{"definition_id": request.DefinitionID.String(), "definition_version": fmt.Sprint(request.DefinitionVersion)}, map[string]string{"definition_id": softwaredev.DefinitionID.String(), "definition_version": fmt.Sprint(softwaredev.DefinitionVersion)}, false))
 	}
@@ -269,6 +272,9 @@ func runMissionTransition(ctx context.Context, request transitionRequest, stdout
 	if err = command.Validate(); err != nil {
 		return encodeMethodFailure(stdout, "mission_transition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
 	}
+	if err = validateAdapterPath(request.Database, "database"); err != nil {
+		return encodeMethodFailure(stdout, "mission_transition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
+	}
 	registry, _ := mission.NewRegistry(definition)
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
@@ -290,21 +296,27 @@ func runMissionTransition(ctx context.Context, request transitionRequest, stdout
 func runMissionDecompose(ctx context.Context, request decomposeRequest, stdout io.Writer) int {
 	aggregates := map[string]string{"mission_id": request.MissionID.String(), "project_id": request.ProjectID.String()}
 	if request.Provider != "durable_fake" {
-		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, errors.New("unsupported portable provider"))
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, invalidPreflight("provider", "unsupported", "durable_fake"))
 	}
 	definitions, proposals, err := buildWorkDefinitions(request.ProjectID, request.Work)
 	if err != nil {
-		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, err)
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, invalidPreflight("work", "invalid_definition", "provider_neutral_work_definition"))
 	}
 	approved := make([]workgraph.ApprovedScope, len(request.ApprovedScope))
 	for index, scope := range request.ApprovedScope {
 		approved[index] = workgraph.ApprovedScope{ID: scope.ID, Kind: scope.Kind, MissionID: request.MissionID}
 		if err := approved[index].Validate(); err != nil {
-			return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, err)
+			return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, invalidPreflight("approved_scope", "invalid", "bounded_approved_scope"))
 		}
 	}
 	command := mission.DecompositionCommand{MissionID: request.MissionID, ProjectID: request.ProjectID, Provider: request.Provider, ExpectedMission: request.ExpectedMission, PlanRevisionID: request.PlanRevisionID, PlanContentDigest: request.PlanContentDigest, ApprovedScope: approved, Work: proposals, ActorID: request.ActorID, OperationID: request.OperationID, GovernanceContextID: request.GovernanceContextID, OccurredAt: request.OccurredAt}
 	if err = validatePortableDecompositionCommand(command); err != nil {
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, err)
+	}
+	if err = validateAdapterPath(request.Database, "database"); err != nil {
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, err)
+	}
+	if err = validateAdapterPath(request.TrackerStore, "tracker_store"); err != nil {
 		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, err)
 	}
 	store, err := sqlite.Open(ctx, request.Database)
@@ -511,7 +523,7 @@ func semanticWorkObservation(definition tracker.WorkDefinition) (workgraph.WorkO
 func runWorkFinalize(ctx context.Context, request finalizeRequest, stdout io.Writer) int {
 	definitions, _, err := buildWorkDefinitions(request.ProjectID, request.Work)
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, invalidPreflight("work", "invalid_definition", "provider_neutral_work_definition"))
 	}
 	definitionMap := make(map[ids.WorkID]tracker.WorkDefinition, len(definitions))
 	for _, definition := range definitions {
@@ -521,11 +533,17 @@ func runWorkFinalize(ctx context.Context, request finalizeRequest, stdout io.Wri
 	for index, item := range request.ApprovedScope {
 		approved[index] = workgraph.ApprovedScope{ID: item.ID, Kind: item.Kind, MissionID: request.MissionID}
 		if err := approved[index].Validate(); err != nil {
-			return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, nil, err)
+			return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, invalidPreflight("approved_scope", "invalid", "bounded_approved_scope"))
 		}
 	}
 	command := mission.FinalizationCommand{MissionID: request.MissionID, ProjectID: request.ProjectID, ExpectedMission: request.ExpectedMission, ExpectedCurrentGeneration: request.ExpectedCurrentGeneration, ProposedRevisionID: request.ProposedRevisionID, RequestedGeneration: 1, PlanningSourceCommit: request.PlanningSourceCommit, ActorID: request.ActorID, OperationID: request.OperationID, GovernanceContextID: request.GovernanceContextID, OccurredAt: request.OccurredAt}
-	if err = validatePortableFinalizationCommand(command, request.PlanRevisionID, request.PlanDigest, request.ProviderRefs); err != nil {
+	if err = validatePortableFinalizationCommand(command, request.PlanRevisionID, request.PlanDigest, request.ProviderRefs, definitionMap); err != nil {
+		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
+	}
+	if err = validateAdapterPath(request.Database, "database"); err != nil {
+		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
+	}
+	if err = validateAdapterPath(request.TrackerStore, "tracker_store"); err != nil {
 		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
 	}
 	providerStore, err := fake.Open(request.TrackerStore)
@@ -553,6 +571,9 @@ func runWorkFinalize(ctx context.Context, request finalizeRequest, stdout io.Wri
 }
 
 func runWorkDrift(ctx context.Context, request driftRequest, stdout io.Writer) int {
+	if err := validatePortableDriftRequest(request); err != nil {
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String()}, err)
+	}
 	oldRevision, err := workgraph.DecodeRevisionV2(request.OldRevision)
 	if err != nil {
 		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, err)
@@ -560,6 +581,12 @@ func runWorkDrift(ctx context.Context, request driftRequest, stdout io.Writer) i
 	candidate, err := workgraph.DecodeRevisionV2(request.CandidateRevision)
 	if err != nil {
 		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, err)
+	}
+	if oldRevision.MissionID() != request.MissionID || candidate.MissionID() != request.MissionID {
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String()}, invalidPreflight("mission_id", "revision_scope_mismatch", "exact_mission_scope"))
+	}
+	if err = validateProviderReferences(candidate, request.ProviderRefs); err != nil {
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String(), "candidate_work_revision_id": candidate.ID().String()}, err)
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
@@ -687,6 +714,9 @@ func workItemV2ParamsFromDefinition(definition tracker.WorkDefinition) workgraph
 
 func runWorkReconcile(ctx context.Context, request reconcileRequest, stdout io.Writer) int {
 	aggregates := map[string]string{"mission_id": request.MissionID.String(), "project_id": request.ProjectID.String()}
+	if err := validatePortableReconcileRequest(request); err != nil {
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, err)
+	}
 	oldRevision, err := workgraph.DecodeRevisionV2(request.OldRevision)
 	if err != nil {
 		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, err)
@@ -701,12 +731,12 @@ func runWorkReconcile(ctx context.Context, request reconcileRequest, stdout io.W
 		ObservedAt time.Time `json:"observed_at"`
 	}
 	if err = json.Unmarshal(request.DriftReport, &driftHeader); err != nil {
-		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, errors.New("drift report is invalid"))
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, invalidPreflight("drift_report", "invalid", "canonical_drift_evidence"))
 	}
 	drift, err := workgraph.DetectDrift(oldRevision, candidate, driftHeader.ObservedAt.UTC())
 	canonicalDrift, encodeErr := drift.Encode()
 	if err != nil || encodeErr != nil || !bytes.Equal(canonicalDrift, request.DriftReport) {
-		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, errors.New("drift report is not exact canonical evidence"))
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, invalidPreflight("drift_report", "mismatched", "exact_canonical_evidence"))
 	}
 	statuses := make([]workgraph.WorkStatusAssignment, len(request.Decisions))
 	decisions := make([]workgraph.WorkDispositionDecisionParams, len(request.Decisions))
@@ -744,6 +774,9 @@ func normalizeMissionSnapshot(snapshot mission.MissionSnapshot) mission.MissionS
 }
 
 func runMissionNext(ctx context.Context, request nextRequest, stdout io.Writer) int {
+	if err := validatePortableNextRequest(request); err != nil {
+		return encodeMethodFailure(stdout, "mission_next_refused", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String()}, err)
+	}
 	definition, err := softwaredev.Definition()
 	if err != nil {
 		return encodeMethodFailure(stdout, "mission_next_refused", request.CorrelationID, "", nil, err)
@@ -794,72 +827,192 @@ func buildWorkDefinitions(projectID ids.ProjectID, inputs []workDefinitionInput)
 // remain the sole owners of lifecycle, freshness, quality, and graph law.
 func validatePortableDecompositionCommand(command mission.DecompositionCommand) error {
 	if _, err := ids.ParseMissionID(command.MissionID.String()); err != nil {
-		return err
+		return invalidPreflight("mission_id", "invalid", "stable_mission_id")
 	}
 	if _, err := ids.ParseProjectID(command.ProjectID.String()); err != nil {
-		return err
+		return invalidPreflight("project_id", "invalid", "stable_project_id")
 	}
 	if command.Provider != "durable_fake" || command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID {
-		return errors.New("decomposition scope is invalid")
+		return invalidPreflight("expected_mission", "mismatched", "exact_plan_approved_mission")
 	}
 	if !boundedStableValue(command.PlanRevisionID) || !lowerSHA256Value(command.PlanContentDigest) || len(command.ApprovedScope) == 0 || len(command.Work) == 0 {
-		return errors.New("decomposition plan evidence is invalid")
+		return invalidPreflight("plan_evidence", "invalid_or_incomplete", "exact_approved_plan_and_work")
 	}
 	if _, err := ids.ParseActorID(command.ActorID.String()); err != nil {
-		return err
+		return invalidPreflight("actor_id", "invalid", "stable_actor_id")
 	}
 	if _, err := ids.ParseOperationID(command.OperationID.String()); err != nil {
-		return err
+		return invalidPreflight("operation_id", "invalid", "stable_operation_id")
 	}
 	if _, err := ids.ParseGovernanceContextID(command.GovernanceContextID.String()); err != nil {
-		return err
+		return invalidPreflight("governance_context_id", "invalid", "stable_governance_context_id")
 	}
 	if command.OccurredAt.IsZero() || command.OccurredAt.Location() != time.UTC {
-		return errors.New("decomposition time must be non-zero UTC")
+		return invalidPreflight("occurred_at", "invalid", "nonzero_utc")
 	}
 	return nil
 }
 
-func validatePortableFinalizationCommand(command mission.FinalizationCommand, planRevisionID, planDigest string, references []providerRefInput) error {
+func validatePortableFinalizationCommand(command mission.FinalizationCommand, planRevisionID, planDigest string, references []providerRefInput, definitions map[ids.WorkID]tracker.WorkDefinition) error {
 	if _, err := ids.ParseMissionID(command.MissionID.String()); err != nil {
-		return err
+		return invalidPreflight("mission_id", "invalid", "stable_mission_id")
 	}
 	if _, err := ids.ParseProjectID(command.ProjectID.String()); err != nil {
-		return err
+		return invalidPreflight("project_id", "invalid", "stable_project_id")
 	}
 	if command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID {
-		return errors.New("finalization mission scope is invalid")
+		return invalidPreflight("expected_mission", "mismatched", "exact_work_draft_ready_mission")
 	}
 	if command.ExpectedCurrentGeneration != 0 || command.RequestedGeneration != 1 {
-		return errors.New("finalization generation is invalid")
+		return invalidPreflight("generation", "invalid", "empty_slot_generation_1")
 	}
 	if _, err := ids.ParseWorkRevisionID(command.ProposedRevisionID.String()); err != nil {
-		return err
+		return invalidPreflight("work_revision_id", "invalid", "stable_work_revision_id")
 	}
 	if _, err := ids.ParseActorID(command.ActorID.String()); err != nil {
-		return err
+		return invalidPreflight("actor_id", "invalid", "stable_actor_id")
 	}
 	if _, err := ids.ParseOperationID(command.OperationID.String()); err != nil {
-		return err
+		return invalidPreflight("operation_id", "invalid", "stable_operation_id")
 	}
 	if _, err := ids.ParseGovernanceContextID(command.GovernanceContextID.String()); err != nil {
-		return err
+		return invalidPreflight("governance_context_id", "invalid", "stable_governance_context_id")
 	}
 	if command.OccurredAt.IsZero() || command.OccurredAt.Location() != time.UTC || !gitObjectIDValue(command.PlanningSourceCommit) || !boundedStableValue(planRevisionID) || !lowerSHA256Value(planDigest) || len(references) == 0 {
-		return errors.New("finalization evidence is invalid")
+		return invalidPreflight("finalization_evidence", "invalid_or_incomplete", "exact_plan_provider_and_utc_evidence")
+	}
+	if len(references) != len(definitions) {
+		return invalidPreflight("provider_refs", "incomplete_or_extra", "one_per_work_item")
 	}
 	seen := make(map[ids.WorkID]struct{}, len(references))
 	for _, input := range references {
 		if _, duplicate := seen[input.WorkID]; duplicate {
-			return errors.New("provider reference set is ambiguous")
+			return invalidPreflight("provider_refs", "ambiguous", "one_per_work_item")
 		}
 		seen[input.WorkID] = struct{}{}
+		if _, ok := definitions[input.WorkID]; !ok {
+			return invalidPreflight("provider_refs", "unknown_work_mapping", "one_per_defined_work_item")
+		}
 		reference := tracker.ExternalWorkRef{ProjectID: command.ProjectID, WorkID: input.WorkID, Provider: "durable_fake", ExternalID: input.ExternalID, MetadataSchema: input.MetadataSchema, CreatedByOperation: input.CreatedByOperation, LastObservation: input.LastObservation}
 		if reference.Validate() != nil || input.LastObservation == 0 {
-			return errors.New("provider reference is invalid")
+			return invalidPreflight("provider_refs", "invalid", "current_attributable_references")
 		}
 	}
 	return nil
+}
+
+func validatePortableInitializeRequest(request initializeRequest) error {
+	if err := validateAdapterPath(request.Database, "database"); err != nil {
+		return err
+	}
+	if _, err := ids.ParseMissionID(request.MissionID.String()); err != nil {
+		return invalidPreflight("mission_id", "invalid", "stable_mission_id")
+	}
+	if _, err := ids.ParseProjectID(request.ProjectID.String()); err != nil {
+		return invalidPreflight("project_id", "invalid", "stable_project_id")
+	}
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil {
+		return invalidPreflight("operation_id", "invalid", "stable_operation_id")
+	}
+	if _, err := ids.ParseActorID(request.ActorID.String()); err != nil {
+		return invalidPreflight("actor_id", "invalid", "stable_actor_id")
+	}
+	if _, err := ids.ParseProcessID(request.ProcessID.String()); err != nil {
+		return invalidPreflight("process_id", "invalid", "stable_process_id")
+	}
+	if request.Governance.Validate() != nil {
+		return invalidPreflight("governance_context", "invalid", "sealed_context")
+	}
+	if request.OccurredAt.IsZero() || request.OccurredAt.Location() != time.UTC {
+		return invalidPreflight("occurred_at", "invalid", "nonzero_utc")
+	}
+	return nil
+}
+
+func validatePortableNextRequest(request nextRequest) error {
+	if err := validateAdapterPath(request.Database, "database"); err != nil {
+		return err
+	}
+	if _, err := ids.ParseMissionID(request.MissionID.String()); err != nil {
+		return invalidPreflight("mission_id", "invalid", "stable_mission_id")
+	}
+	return nil
+}
+
+func validatePortableDriftRequest(request driftRequest) error {
+	if err := validateAdapterPath(request.Database, "database"); err != nil {
+		return err
+	}
+	if err := validateAdapterPath(request.TrackerStore, "tracker_store"); err != nil {
+		return err
+	}
+	if _, err := ids.ParseMissionID(request.MissionID.String()); err != nil {
+		return invalidPreflight("mission_id", "invalid", "stable_mission_id")
+	}
+	if request.ObservedAt.IsZero() || request.ObservedAt.Location() != time.UTC {
+		return invalidPreflight("observed_at", "invalid", "nonzero_utc")
+	}
+	if len(request.ProviderRefs) == 0 {
+		return methodStateError("provider_observation_conflict", "observe_again", "provider_refs", "candidate provider observation set is incomplete", map[string]string{"cardinality": "empty"}, map[string]string{"cardinality": "one_per_work_item"}, true)
+	}
+	return nil
+}
+
+func validateProviderReferences(candidate workgraph.RevisionV2, references []providerRefInput) error {
+	if len(references) != len(candidate.WorkItems()) || len(references) != len(candidate.ProviderObservations()) {
+		return methodStateError("provider_observation_conflict", "observe_again", "provider_refs", "candidate provider observation set is incomplete", map[string]string{"cardinality": "incomplete"}, map[string]string{"cardinality": "one_per_work_item"}, true)
+	}
+	seen := make(map[ids.WorkID]struct{}, len(references))
+	for _, input := range references {
+		if _, duplicate := seen[input.WorkID]; duplicate {
+			return methodStateError("provider_observation_conflict", "observe_again", "provider_refs", "candidate provider observation set is ambiguous", map[string]string{"cardinality": "ambiguous"}, map[string]string{"cardinality": "one_per_work_item"}, true)
+		}
+		seen[input.WorkID] = struct{}{}
+		reference := tracker.ExternalWorkRef{ProjectID: candidate.ProjectID(), WorkID: input.WorkID, Provider: "durable_fake", ExternalID: input.ExternalID, MetadataSchema: input.MetadataSchema, CreatedByOperation: input.CreatedByOperation, LastObservation: input.LastObservation}
+		if reference.Validate() != nil || input.LastObservation == 0 {
+			return invalidPreflight("provider_refs", "invalid", "current_attributable_references")
+		}
+	}
+	return nil
+}
+
+func validatePortableReconcileRequest(request reconcileRequest) error {
+	if err := validateAdapterPath(request.Database, "database"); err != nil {
+		return err
+	}
+	if _, err := ids.ParseMissionID(request.MissionID.String()); err != nil {
+		return invalidPreflight("mission_id", "invalid", "stable_mission_id")
+	}
+	if _, err := ids.ParseProjectID(request.ProjectID.String()); err != nil {
+		return invalidPreflight("project_id", "invalid", "stable_project_id")
+	}
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil {
+		return invalidPreflight("operation_id", "invalid", "stable_operation_id")
+	}
+	if _, err := ids.ParseOperationID(request.ReconciliationID.String()); err != nil {
+		return invalidPreflight("reconciliation_id", "invalid", "stable_reconciliation_id")
+	}
+	if _, err := ids.ParseActorID(request.ActorID.String()); err != nil {
+		return invalidPreflight("actor_id", "invalid", "stable_actor_id")
+	}
+	if _, err := ids.ParseGovernanceContextID(request.GovernanceContextID.String()); err != nil {
+		return invalidPreflight("governance_context_id", "invalid", "stable_governance_context_id")
+	}
+	if request.OccurredAt.IsZero() || request.OccurredAt.Location() != time.UTC {
+		return invalidPreflight("occurred_at", "invalid", "nonzero_utc")
+	}
+	return nil
+}
+
+func validateAdapterPath(value, field string) error {
+	if value == "" || len(value) > 4096 || strings.ContainsRune(value, 0) {
+		return invalidPreflight(field, "invalid", "nonempty_local_path")
+	}
+	return nil
+}
+
+func invalidPreflight(field, observed, expected string) error {
+	return methodStateError("invalid_request", "correct_input", field, "the typed request failed local transport preflight", map[string]string{"state": observed}, map[string]string{"state": expected}, false)
 }
 
 func boundedStableValue(value string) bool {
@@ -1042,18 +1195,25 @@ func boundedMethodDiagnostic(err error) MethodDiagnostic {
 		}
 	case errors.As(err, &missionError):
 		result.Kind, result.Recovery, result.Field, result.Message = string(missionError.Kind), string(missionError.Recovery), missionError.Field, missionError.Message
+		result.Observed, result.Expected = missionRefusalState(result.Kind)
 	case errors.As(err, &decompositionError):
 		result.Kind, result.Recovery, result.Field, result.Message = string(decompositionError.Kind), string(decompositionError.Recovery), decompositionError.Field, decompositionError.Message
+		result.Observed, result.Expected = decompositionRefusalState(result.Kind)
 	case errors.As(err, &finalizationError):
 		result.Kind, result.Recovery, result.Field, result.Message = string(finalizationError.Kind), string(finalizationError.Recovery), finalizationError.Field, finalizationError.Message
+		result.Observed, result.Expected = finalizationRefusalState(finalizationError.Kind)
 	case errors.As(err, &artifactError):
 		result.Kind, result.Recovery, result.Field, result.Message = string(artifactError.Kind), string(artifactError.Recovery), artifactError.Field, artifactError.Message
+		result.Observed, result.Expected = artifactRefusalState(artifactError.Kind)
 	case errors.As(err, &graphError):
 		result.Kind, result.Recovery, result.Message = string(graphError.Kind), "correct_input", graphError.Message
+		result.Observed, result.Expected = workgraphRefusalState(result.Kind)
 	case errors.As(err, &projectionError):
 		result.Kind, result.Recovery, result.Field, result.Message, result.RetrySafe = string(projectionError.Kind), string(projectionError.Recovery), projectionError.Field, projectionError.Message, projectionError.RetrySafe
+		result.Observed, result.Expected = projectionRefusalState(projectionError.Kind)
 	case errors.As(err, &trackerError):
 		result.Kind, result.Recovery, result.Message = string(trackerError.Kind), trackerError.RecoveryCode, "the provider request was refused"
+		result.Observed, result.Expected = providerRefusalState(trackerError.Kind)
 	}
 	if result.Recovery == "" {
 		result.Recovery = "inspect_state"
@@ -1066,6 +1226,140 @@ func boundedMethodDiagnostic(err error) MethodDiagnostic {
 		result.Field = "request"
 	}
 	return result
+}
+
+func missionRefusalState(kind string) (map[string]string, map[string]string) {
+	switch kind {
+	case "terminal_mission":
+		return staticRefusalState("lifecycle", "terminal", "open_legal_transition")
+	case "missing_evidence":
+		return staticRefusalState("artifact_approval", "absent_or_stale", "current_approved_revision")
+	case "state_version_conflict":
+		return staticRefusalState("mission_state", "stale", "exact_current_snapshot")
+	default:
+		return staticRefusalState("mission_authority", "refused", "valid_current_authority")
+	}
+}
+
+func decompositionRefusalState(kind string) (map[string]string, map[string]string) {
+	switch mission.DecompositionErrorKind(kind) {
+	case mission.DecompositionInvalidWork:
+		return staticRefusalState("work_graph", "validation_findings", "complete_covered_acyclic")
+	case mission.DecompositionMissionChanged:
+		return staticRefusalState("mission_state", "stale", "exact_current_snapshot")
+	case mission.DecompositionPlanIneligible:
+		return staticRefusalState("plan_evidence", "ineligible", "approved_current_plan")
+	case mission.DecompositionProviderCapability:
+		return staticRefusalState("provider_capability", "unsupported", "required_capability_available")
+	case mission.DecompositionProviderFailure:
+		return staticRefusalState("provider_observation", "unavailable", "complete_attributable_observation")
+	case mission.DecompositionOperationConflict:
+		return staticRefusalState("operation_identity", "changed_request", "same_request_digest")
+	default:
+		return staticRefusalState("decomposition_request", "invalid", "valid_exact_plan_authority")
+	}
+}
+
+func finalizationRefusalState(kind mission.FinalizationErrorKind) (map[string]string, map[string]string) {
+	switch kind {
+	case mission.FinalizationProviderFailure:
+		return staticRefusalState("provider_observation", "unavailable", "complete_attributable_observation")
+	case mission.FinalizationProviderChanged:
+		return staticRefusalState("provider_observation", "changed", "same_revision_twice")
+	case mission.FinalizationOperationConflict:
+		return staticRefusalState("operation_identity", "changed_request", "same_request_digest")
+	case mission.FinalizationCurrentConflict:
+		return staticRefusalState("work_generation", "stale", "exact_current_generation")
+	case mission.FinalizationPersistenceFailure:
+		return staticRefusalState("publication", "not_committed", "atomic_committed_outcome")
+	case mission.FinalizationContractFailure:
+		return staticRefusalState("stored_outcome", "invalid", "exact_bound_outcome")
+	default:
+		return staticRefusalState("finalization_request", "invalid", "valid_current_authority")
+	}
+}
+
+func artifactRefusalState(kind artifact.ErrorKind) (map[string]string, map[string]string) {
+	switch kind {
+	case artifact.ErrorMalformedDigest, artifact.ErrorInvalidRevision, artifact.ErrorInvalidProvenance,
+		artifact.ErrorInvalidValidation, artifact.ErrorInvalidFinding:
+		return staticRefusalState("artifact_evidence", "invalid_or_incomplete", "complete_verifiable_evidence")
+	case artifact.ErrorPolicyUnsatisfied, artifact.ErrorValidationRequired, artifact.ErrorApprovalNotAllowed:
+		return staticRefusalState("artifact_eligibility", "unsatisfied", "current_policy_satisfied")
+	case artifact.ErrorIdempotencyConflict:
+		return staticRefusalState("operation_identity", "changed_request", "same_request_digest")
+	case artifact.ErrorNotFound:
+		return staticRefusalState("artifact_revision", "absent", "existing_revision")
+	case artifact.ErrorRepositoryFailure:
+		return staticRefusalState("artifact_store", "unavailable", "atomic_available_store")
+	case artifact.ErrorUnexpectedAuthority:
+		return staticRefusalState("authority_payload", "unexpected", "absent")
+	default:
+		return staticRefusalState("artifact_request", "invalid", "valid_typed_revision")
+	}
+}
+
+func workgraphRefusalState(kind string) (map[string]string, map[string]string) {
+	switch workgraph.ErrorKind(kind) {
+	case workgraph.KindInvalidReconciliation:
+		return staticRefusalState("reconciliation", "invalid_or_incomplete", "one_decision_per_affected_work")
+	case workgraph.KindReconciliationConflict, workgraph.KindRevisionConflict:
+		return staticRefusalState("graph_identity", "changed_request", "same_canonical_digest")
+	case workgraph.KindAmbiguousID:
+		return staticRefusalState("work_identity", "ambiguous", "unique_work_identity")
+	case workgraph.KindMissingNode:
+		return staticRefusalState("dependency_graph", "missing_node", "all_dependencies_present")
+	case workgraph.KindCycle, workgraph.KindLaneCycle:
+		return staticRefusalState("dependency_graph", "cyclic", "acyclic_graph")
+	case workgraph.KindInvalidLane:
+		return staticRefusalState("lane_graph", "invalid", "complete_canonical_lanes")
+	case workgraph.KindNotFound:
+		return staticRefusalState("work_revision", "absent", "existing_revision")
+	default:
+		return staticRefusalState("work_graph", "invalid", "canonical_complete_graph")
+	}
+}
+
+func projectionRefusalState(kind projection.ErrorKind) (map[string]string, map[string]string) {
+	switch kind {
+	case projection.KindNoFinalizedRevision:
+		return staticRefusalState("work_revision", "not_finalized", "finalized_current_revision")
+	case projection.KindCorruptReadModel:
+		return staticRefusalState("read_model", "inconsistent", "complete_current_generation")
+	case projection.KindUnsupportedDrift:
+		return staticRefusalState("drift_state", "unsupported", "clean_or_observation_only")
+	case projection.KindUnsafeOutputPath:
+		return staticRefusalState("output_path", "unsafe", "trusted_relative_destination")
+	case projection.KindWriteFailure, projection.KindReplaceFailure:
+		return staticRefusalState("output_publication", "not_committed", "atomic_durable_replacement")
+	default:
+		return staticRefusalState("projection_request", "invalid", "safe_derived_output")
+	}
+}
+
+func providerRefusalState(kind tracker.ErrorKind) (map[string]string, map[string]string) {
+	switch kind {
+	case tracker.ErrorAmbiguous, tracker.ErrorTimeout:
+		return staticRefusalState("provider_observation", "ambiguous", "complete_current_observation")
+	case tracker.ErrorRevisionConflict, tracker.ErrorAttributionLost:
+		return staticRefusalState("provider_revision", "changed_or_unattributed", "current_attributable_revision")
+	case tracker.ErrorNotFound:
+		return staticRefusalState("provider_work", "absent", "existing_attributable_work")
+	case tracker.ErrorVersionSkew, tracker.ErrorSchemaSkew, tracker.ErrorMalformedProtocol:
+		return staticRefusalState("provider_protocol", "incompatible", "supported_typed_protocol")
+	case tracker.ErrorWorkspaceMismatch:
+		return staticRefusalState("provider_workspace", "mismatched", "configured_workspace")
+	case tracker.ErrorCapabilityUnsupported, tracker.ErrorSafeCompensationUnsupported, tracker.ErrorGuardedUpdateUnsupported:
+		return staticRefusalState("provider_capability", "unsupported", "required_capability_available")
+	case tracker.ErrorUnavailable, tracker.ErrorLockContended:
+		return staticRefusalState("provider_availability", "unavailable", "ready")
+	default:
+		return staticRefusalState("provider_request", "invalid", "valid_attributable_request")
+	}
+}
+
+func staticRefusalState(key, observed, expected string) (map[string]string, map[string]string) {
+	return map[string]string{key: observed}, map[string]string{key: expected}
 }
 
 func boundedDiagnosticState(values map[string]string) map[string]string {

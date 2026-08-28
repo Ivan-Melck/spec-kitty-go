@@ -12,10 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/artifact"
 	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
+	"github.com/spec-kitty/go-kitty3/internal/projection"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 	"github.com/spec-kitty/go-kitty3/internal/tracker/fake"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
@@ -50,6 +52,101 @@ func TestMissionInitializePersistsExactCreationAuthorityAndReplaysAfterReopen(t 
 	if conflict.OK || conflict.Error == nil || conflict.Error.Kind != "idempotency_conflict" {
 		t.Fatalf("changed replay=%+v", conflict)
 	}
+}
+
+func TestAllPhase3CommandsPreflightBeforeOpeningAnyPath(t *testing.T) {
+	definition, _ := softwaredev.Definition()
+	at := time.Date(2026, 8, 28, 18, 0, 0, 0, time.UTC)
+	missionAt := func(step mission.StepKey, version uint64) mission.MissionSnapshot {
+		return mission.MissionSnapshot{MissionID: "mission-preflight", ProjectID: "project-preflight", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), DefinitionCommitment: definition.Commitment(), Lifecycle: mission.LifecycleOpen, CurrentStep: step, StateVersion: version, CreatedAt: at, UpdatedAt: at}
+	}
+	work := []workDefinitionInput{{WorkID: "work-preflight", Title: "Preflight portable command", Description: "Reject malformed transport input before adapters are opened.", DesignContext: "The qualification helper owns transport preflight only.", Criteria: []tracker.WorkCriterion{{ID: "criterion-preflight", Text: "Observe absent adapter paths", Outcome: "all paths remain absent", Verifier: tracker.VerifierTest, Required: true}}, WriteScopes: []tracker.WriteScope{{Path: "internal/preflight", Domain: "preflight", Access: tracker.ScopeWriteExclusive}}, Provenance: []tracker.ScopeRef{{ID: "plan-preflight", Kind: tracker.ScopePlanConcern}}}}
+	approved := []approvedScopeInput{{ID: "plan-preflight", Kind: workgraph.ScopePlanConcern}}
+	providerRefs := []providerRefInput{{WorkID: "work-preflight", ExternalID: "external-preflight", MetadataSchema: tracker.WorkDefinitionMetadataSchemaV1, CreatedByOperation: "operation-provider-preflight", LastObservation: 1}}
+
+	tests := []struct {
+		name, field string
+		invoke      func(paths preflightPaths) MethodResponse
+	}{
+		{"mission-initialize", "operation_id", func(paths preflightPaths) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runMissionInitialize(ctx, initializeRequest{Database: paths.database, CorrelationID: "correlation-initialize-preflight", MissionID: "mission-preflight", ProjectID: "project-preflight", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), ActorID: "actor-preflight", ProcessID: "process-preflight", Governance: methodGovernance(t, "governance-initialize-preflight", at), OccurredAt: at}, stdout)
+			}, nil)
+		}},
+		{"mission-transition", "occurred_at", func(paths preflightPaths) MethodResponse {
+			current := missionAt(mission.StepInitialized, 1)
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runMissionTransition(ctx, transitionRequest{Database: paths.database, CorrelationID: "correlation-transition-preflight", MissionID: current.MissionID, DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), DefinitionCommitment: definition.Commitment(), ExpectedSnapshot: current, ExpectedCurrentStep: current.CurrentStep, ExpectedStateVersion: current.StateVersion, Successor: mission.StepSpecifying, EventID: "event-transition-preflight", OperationID: "operation-transition-preflight", ActorID: "actor-preflight", GovernanceContextID: "governance-preflight", OccurredAt: time.Time{}}, stdout)
+			}, nil)
+		}},
+		{"mission-decompose", "provider", func(paths preflightPaths) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runMissionDecompose(ctx, decomposeRequest{Database: paths.database, TrackerStore: paths.tracker, CorrelationID: "correlation-decompose-preflight", MissionID: "mission-preflight", ProjectID: "project-preflight", Provider: "unknown", ExpectedMission: missionAt(mission.StepPlanApproved, 2), PlanRevisionID: "plan-preflight", PlanContentDigest: strings.Repeat("a", 64), ApprovedScope: approved, Work: work, ActorID: "actor-preflight", OperationID: "operation-decompose-preflight", GovernanceContextID: "governance-preflight", OccurredAt: at}, stdout)
+			}, nil)
+		}},
+		{"mission-next", "mission_id", func(paths preflightPaths) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runMissionNext(ctx, nextRequest{Database: paths.database, CorrelationID: "correlation-next-preflight", MissionID: "bad/path"}, stdout)
+			}, nil)
+		}},
+		{"artifact-publish", "operation_id", func(paths preflightPaths) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runArtifactPublish(ctx, artifactPublishRequest{Database: paths.database, CorrelationID: "correlation-publish-preflight", ArtifactRevisionID: "artifact-preflight", MissionID: "mission-preflight", Kind: artifact.KindPlan, SourceRef: "specs/plan.md", SourceRevision: "commit-preflight", CreatedBy: "actor-preflight", CreatedAt: at, Content: []byte("plan"), PresentConcerns: requiredConcerns(t, artifact.KindPlan), ValidatedAt: at}, stdout)
+			}, nil)
+		}},
+		{"artifact-approve", "verdict", func(paths preflightPaths) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runArtifactApprove(ctx, artifactApproveRequest{Database: paths.database, CorrelationID: "correlation-approve-preflight", OperationID: "operation-approve-preflight", ApprovalID: "approval-preflight", ArtifactRevisionID: "artifact-preflight", Verdict: "unknown", ActorID: "actor-preflight", EvidenceDigest: strings.Repeat("a", 64), GovernanceContextID: "governance-preflight", SubmittedAt: at}, stdout)
+			}, nil)
+		}},
+		{"work-finalize", "provider_refs", func(paths preflightPaths) MethodResponse {
+			refs := append(append([]providerRefInput(nil), providerRefs...), providerRefs[0])
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runWorkFinalize(ctx, finalizeRequest{Database: paths.database, TrackerStore: paths.tracker, CorrelationID: "correlation-finalize-preflight", MissionID: "mission-preflight", ProjectID: "project-preflight", ExpectedMission: missionAt(mission.StepWorkDraftReady, 3), ProposedRevisionID: "revision-preflight", PlanningSourceCommit: strings.Repeat("b", 40), PlanRevisionID: "plan-preflight", PlanDigest: strings.Repeat("a", 64), ApprovedScope: approved, Work: work, ProviderRefs: refs, ActorID: "actor-preflight", OperationID: "operation-finalize-preflight", GovernanceContextID: "governance-preflight", OccurredAt: at}, stdout)
+			}, nil)
+		}},
+		{"work-finalize-foreign-mapping", "provider_refs", func(paths preflightPaths) MethodResponse {
+			refs := append([]providerRefInput(nil), providerRefs...)
+			refs[0].WorkID = "work-foreign"
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runWorkFinalize(ctx, finalizeRequest{Database: paths.database, TrackerStore: paths.tracker, CorrelationID: "correlation-finalize-mapping-preflight", MissionID: "mission-preflight", ProjectID: "project-preflight", ExpectedMission: missionAt(mission.StepWorkDraftReady, 3), ProposedRevisionID: "revision-mapping-preflight", PlanningSourceCommit: strings.Repeat("b", 40), PlanRevisionID: "plan-preflight", PlanDigest: strings.Repeat("a", 64), ApprovedScope: approved, Work: work, ProviderRefs: refs, ActorID: "actor-preflight", OperationID: "operation-finalize-mapping-preflight", GovernanceContextID: "governance-preflight", OccurredAt: at}, stdout)
+			}, nil)
+		}},
+		{"work-drift", "observed_at", func(paths preflightPaths) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runWorkDrift(ctx, driftRequest{Database: paths.database, TrackerStore: paths.tracker, CorrelationID: "correlation-drift-preflight", MissionID: "mission-preflight", ProviderRefs: providerRefs}, stdout)
+			}, nil)
+		}},
+		{"work-reconcile", "operation_id", func(paths preflightPaths) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runWorkReconcile(ctx, reconcileRequest{Database: paths.database, CorrelationID: "correlation-reconcile-preflight", MissionID: "mission-preflight", ProjectID: "project-preflight", ActorID: "actor-preflight", GovernanceContextID: "governance-preflight", ReconciliationID: "reconciliation-preflight", OccurredAt: at}, stdout)
+			}, nil)
+		}},
+		{"projection-tasks", "destination", func(paths preflightPaths) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runProjectionTasks(ctx, projectionTasksRequest{Database: paths.database, CorrelationID: "correlation-projection-preflight", MissionID: "mission-preflight", RenderedAt: at, TrustedRoot: paths.outputRoot}, stdout)
+			}, nil)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			paths := preflightPaths{database: filepath.Join(root, "database", "control.db"), tracker: filepath.Join(root, "tracker", "provider.json"), outputRoot: filepath.Join(root, "output"), output: filepath.Join(root, "output", "tasks.md")}
+			response := test.invoke(paths)
+			if response.OK || response.Error == nil || response.Error.Field != test.field || len(response.Error.Observed) == 0 || len(response.Error.Expected) == 0 {
+				t.Fatalf("response=%+v want field=%q", response, test.field)
+			}
+			for _, path := range []string{paths.database, paths.database + ".token-key", paths.tracker, paths.tracker + ".lock", paths.outputRoot, paths.output} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("%s opened path %q before refusing %s: %v", test.name, path, test.field, err)
+				}
+			}
+		})
+	}
+}
+
+type preflightPaths struct {
+	database, tracker, outputRoot, output string
 }
 
 func TestStrictMethodJSONRejectsUnknownDuplicateNullTrailingAndLeftover(t *testing.T) {
@@ -261,6 +358,34 @@ func TestMissionMethodRefusalsExposeBoundedStateAndStableAdapterClassification(t
 	encoded, _ = json.Marshal(diagnostic)
 	if strings.Contains(string(encoded), secret) || diagnostic.Observed != nil || diagnostic.Expected["state"] != "current" {
 		t.Fatalf("unbounded diagnostic=%s", encoded)
+	}
+
+	for _, test := range []struct {
+		name     string
+		err      error
+		stateKey string
+		observed string
+		expected string
+	}{
+		{"artifact evidence", &artifact.Error{Kind: artifact.ErrorInvalidProvenance, Field: "provenance", Message: "bounded"}, "artifact_evidence", "invalid_or_incomplete", "complete_verifiable_evidence"},
+		{"finalization provider change", &mission.FinalizationError{Kind: mission.FinalizationProviderChanged, Field: "provider", Message: "bounded"}, "provider_observation", "changed", "same_revision_twice"},
+		{"work graph dependency", &workgraph.Error{Kind: workgraph.KindMissingNode, Message: "bounded"}, "dependency_graph", "missing_node", "all_dependencies_present"},
+		{"projection unsafe path", &projection.Error{Kind: projection.KindUnsafeOutputPath, Field: "destination", Message: "bounded"}, "output_path", "unsafe", "trusted_relative_destination"},
+		{"provider ambiguity", &tracker.Error{Kind: tracker.ErrorAmbiguous, Message: "provider transcript must not escape"}, "provider_observation", "ambiguous", "complete_current_observation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diagnostic := boundedMethodDiagnostic(test.err)
+			encoded, err := json.Marshal(diagnostic)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diagnostic.Observed[test.stateKey] != test.observed || diagnostic.Expected[test.stateKey] != test.expected {
+				t.Fatalf("diagnostic=%s", encoded)
+			}
+			if strings.Contains(string(encoded), "provider transcript must not escape") {
+				t.Fatalf("provider detail leaked: %s", encoded)
+			}
+		})
 	}
 }
 
