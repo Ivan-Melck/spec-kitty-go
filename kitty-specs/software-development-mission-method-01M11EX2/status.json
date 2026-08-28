@@ -309,6 +309,9 @@
       "last_event_id": "01M13TTSAFVNEAQ8D1E781CDWB",
       "last_transition_at": "2026-08-28T09:22:21.135823+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready: typed read-model seam, deterministic disclosed tasks projection, atomic safe writer, one-way architecture guards, focused/race/atomic/architecture/vet/static gates pass; full non-scenario internal packages pass."
+      ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "role": "implementer",
