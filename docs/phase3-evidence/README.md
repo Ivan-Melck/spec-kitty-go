@@ -18,8 +18,8 @@ non-claims.
 The immutable payload commit is:
 
 ```text
-commit: f52698bb110824fb4d22a81c9c4b3f6d2708cdc0
-tree:   293cb11c91c4bd328e3043910c832eedcd851881
+commit: f0374a99df9b122b10b703f840eb6dd4977c7503
+tree:   92100ef7de7cc5f2b8466f68a90187c4a0e52c69
 ```
 
 This index and the repository README are a following documentation-only
@@ -30,27 +30,28 @@ Verify the payload:
 
 ```bash
 (cd docs/phase3-evidence && sha256sum --check SHA256SUMS)
-git show --stat f52698bb110824fb4d22a81c9c4b3f6d2708cdc0
+git show --stat f0374a99df9b122b10b703f840eb6dd4977c7503
 ```
 
-Verify the exact clean docs-only attestation checkout through the reusable gate:
+Verify the exact clean docs-only attestation checkout through the reusable gate.
+Set `ATTESTATION_COMMIT` to the reviewed 40-hex attestation identity before
+running the command; the gate refuses when it differs from the checkout's HEAD:
 
 ```bash
-git checkout fabfe499d6ca0b124a025dbefea7cbb006421097
 make phase3-publication \
-  PAYLOAD_COMMIT=f52698bb110824fb4d22a81c9c4b3f6d2708cdc0 \
-  ATTESTATION_COMMIT=fabfe499d6ca0b124a025dbefea7cbb006421097
+  PAYLOAD_COMMIT=f0374a99df9b122b10b703f840eb6dd4977c7503 \
+  ATTESTATION_COMMIT="$ATTESTATION_COMMIT"
 ```
 
 ## Provenance layers
 
 ```mermaid
 flowchart LR
-    Source["qualified source<br/>b03200f / 700e73e"]
-    Portable["portable attempt 22<br/>full campaign pass"]
-    Provider["real attempt 24<br/>11 of 11 pass"]
-    Mission["real attempt 24<br/>two-item mission pass"]
-    Payload["payload<br/>f52698b / 293cb11"]
+    Source["qualified source<br/>f049baa / 7ef44e9"]
+    Portable["portable attempt 26<br/>full campaign pass"]
+    Provider["real attempt 31<br/>11 of 11 pass"]
+    Mission["real attempt 31<br/>two-item mission pass"]
+    Payload["payload<br/>f0374a9 / 92100ef"]
     Attest["docs-only attestation<br/>index and repository README"]
 
     Source --> Portable
@@ -63,9 +64,9 @@ flowchart LR
 ```
 
 The tested source is commit
-`b03200f5430e233d001e96ded74b8d4cd88d7158`, tree
-`700e73ee278ecf3223269eab5e7b7c7854f83673`. Attempt 22 ran the full portable
-ladder against that clean identity. Attempt 24 ran both the frozen
+`f049baaa8751e0e2b48126ffe05823400f9f4881`, tree
+`7ef44e98b332628f0688d274fd4b07eaddc0a2d5`. Attempt 26 ran the full portable
+ladder against that clean identity. Attempt 31 ran both the frozen
 eleven-scenario Beads qualification and the independently selected durable
 two-item Phase 3 Beads mission inside the qualified offline containment. All
 three evidence contracts passed.
@@ -98,11 +99,12 @@ The complete numerical and test-identity record is in
 
 Attempts 01–09 were not erased: the ledger retains toolchain/prerequisite
 failures, exact-census failures, load-sensitive claimant observations, and the
-stale-authority ordering defect. Containment attempts 11–16 remain
+stale-authority ordering defect. Containment attempts 11–16 and 27–30 remain
 non-admissible or diagnostic; attempt 17 is explicitly diagnostic rather than
 canonical evidence. The rejected cycle-1 publication and attempts 20, 21, and
-23 are also retained with their original failed or non-admissible verdicts.
-Only attempts 22 and 24 support this publication.
+23 are also retained with their original failed or non-admissible verdicts. The
+rejected cycle-2 publication and failed attempt 25 remain explicit too. Only
+attempts 26 and 31 support this publication.
 
 Raw test streams, provider databases, Dolt logs, temporary SQLite files,
 environment state, and authored provider bodies remain outside the repository.
