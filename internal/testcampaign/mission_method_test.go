@@ -31,6 +31,7 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 	for _, required := range []string{
 		"mission-contract:", "-profile mission-contract", "mission-acceptance:", "-profile mission-acceptance",
 		"mission-adversarial:", "-profile mission-adversarial", "-campaign mission_full",
+		"phase3-publication:", "PHASE3_PUBLICATION_GATE=1", "TestPhase3PublicationCheckoutGateUsesTypedEnvironment",
 		"quality: preflight contract beads-contract mission-contract mission-acceptance race static dependencies",
 	} {
 		if !strings.Contains(makefile, required) {
@@ -77,8 +78,14 @@ func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
 		"malformed_mermaid": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/README.md"), "flowchart LR", "flowchar LR")
 		},
+		"dangling_mermaid_arrow": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/README.md"), "Source --> Portable", "Source -->")
+		},
 		"nonexistent_command": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/README.md"), "make mission-contract", "make mission-contract-missing")
+		},
+		"nonexistent_non_make_command": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/README.md"), "git show --stat", "phase3-command-that-does-not-exist --stat")
 		},
 		"claim_test_mismatch": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/results.md"), "`TestMissionMethodSemanticDriftMutations1000`", "`TestMissionMethodSemanticDriftMutations999`")
@@ -109,6 +116,37 @@ func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
 		"unknown_schema_field": func(t *testing.T, path string) {
 			phase3MutateQualification(t, path, func(record map[string]any) { record["unreviewed"] = true })
 		},
+		"duplicate_json_key": func(t *testing.T, path string) {
+			file := filepath.Join(path, "docs/phase3-evidence/qualification-evidence.json")
+			contents, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contents = []byte(strings.Replace(string(contents), "{\n", "{\n  \"schema_version\": 2,\n", 1))
+			if err = os.WriteFile(file, contents, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			phase3RewriteChecksums(t, path)
+		},
+		"oversized_json": func(t *testing.T, path string) {
+			file := filepath.Join(path, "docs/phase3-evidence/qualification-evidence.json")
+			output, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			padding := make([]byte, (2<<20)+1)
+			for index := range padding {
+				padding[index] = ' '
+			}
+			if _, err = output.Write(padding); err != nil {
+				output.Close()
+				t.Fatal(err)
+			}
+			if err = output.Close(); err != nil {
+				t.Fatal(err)
+			}
+			phase3RewriteChecksums(t, path)
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -116,6 +154,29 @@ func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
 			mutate(t, candidate)
 			if err := ValidatePhase3Publication(candidate); err == nil {
 				t.Fatal("publication mutant survived")
+			}
+		})
+	}
+}
+
+func TestPhase3PublicationEveryRequiredFailureIdentityIsLoadBearing(t *testing.T) {
+	fixture := phase3PublicationFixture(t, phase3RepositoryRoot(t))
+	phase3UpgradeFixtureSchema(t, fixture)
+	for _, id := range []string{
+		"01", "02", "03", "04", "05", "06", "07", "08", "09",
+		"real-11", "real-12", "real-13", "real-14", "real-15", "real-16", "real-17",
+		"review-cycle-1", "20", "21", "real-23", "review-cycle-2",
+	} {
+		t.Run(id, func(t *testing.T) {
+			candidate := phase3PublicationFixture(t, fixture)
+			phase3MutateCensus(t, candidate, func(record map[string]any) {
+				attempts := record["failed_or_non_admissible_attempts"].([]any)
+				record["failed_or_non_admissible_attempts"] = slices.DeleteFunc(attempts, func(value any) bool {
+					return value.(map[string]any)["id"] == id
+				})
+			})
+			if err := ValidatePhase3Publication(candidate); err == nil {
+				t.Fatalf("required failed-attempt identity %s deletion survived", id)
 			}
 		})
 	}
@@ -173,7 +234,16 @@ func TestPhase3PublicationCheckoutRequiresCleanDocsOnlyAttestation(t *testing.T)
 	phase3Git(t, "clone", "--quiet", "--shared", source, clone)
 	phase3GitIn(t, clone, "config", "user.name", "Phase3 Validator")
 	phase3GitIn(t, clone, "config", "user.email", "validator@example.invalid")
-	phase3GitIn(t, clone, "commit", "--allow-empty", "-m", "payload")
+	phase3CopyFixtureTree(t, filepath.Join(source, "docs", "phase3-evidence"), filepath.Join(clone, "docs", "phase3-evidence"))
+	makefile, err := os.ReadFile(filepath.Join(source, "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(clone, "Makefile"), makefile, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	phase3GitIn(t, clone, "add", "docs/phase3-evidence", "Makefile")
+	phase3GitIn(t, clone, "commit", "-m", "payload")
 	payload := phase3GitIn(t, clone, "rev-parse", "HEAD")
 	index := filepath.Join(clone, "docs/phase3-evidence/README.md")
 	contents, err := os.ReadFile(index)
@@ -207,6 +277,63 @@ func TestPhase3PublicationCheckoutRequiresCleanDocsOnlyAttestation(t *testing.T)
 	if err = ValidatePhase3PublicationCheckout(clone, payload, illegal); err == nil {
 		t.Fatal("non-documentation attestation mutant survived")
 	}
+
+	for _, mutant := range []struct {
+		name string
+		path string
+		data []byte
+	}{
+		{name: "later_product", path: "Makefile", data: []byte("\n# later product\n")},
+		{name: "later_docs", path: "README.md", data: []byte("\nLater documentation.\n")},
+	} {
+		t.Run(mutant.name, func(t *testing.T) {
+			candidate := filepath.Join(t.TempDir(), "checkout")
+			phase3Git(t, "clone", "--quiet", "--shared", clone, candidate)
+			phase3GitIn(t, candidate, "checkout", "--quiet", attestation)
+			phase3GitIn(t, candidate, "config", "user.name", "Phase3 Validator")
+			phase3GitIn(t, candidate, "config", "user.email", "validator@example.invalid")
+			file := filepath.Join(candidate, mutant.path)
+			output, openErr := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0)
+			if openErr != nil {
+				t.Fatal(openErr)
+			}
+			if _, writeErr := output.Write(mutant.data); writeErr != nil {
+				output.Close()
+				t.Fatal(writeErr)
+			}
+			if closeErr := output.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			phase3GitIn(t, candidate, "add", mutant.path)
+			phase3GitIn(t, candidate, "commit", "-m", mutant.name)
+			if validateErr := ValidatePhase3PublicationCheckout(candidate, payload, attestation); validateErr == nil {
+				t.Fatalf("%s commit after named attestation survived", mutant.name)
+			}
+		})
+	}
+	t.Run("later_empty", func(t *testing.T) {
+		candidate := filepath.Join(t.TempDir(), "checkout")
+		phase3Git(t, "clone", "--quiet", "--shared", clone, candidate)
+		phase3GitIn(t, candidate, "checkout", "--quiet", attestation)
+		phase3GitIn(t, candidate, "config", "user.name", "Phase3 Validator")
+		phase3GitIn(t, candidate, "config", "user.email", "validator@example.invalid")
+		phase3GitIn(t, candidate, "commit", "--allow-empty", "-m", "later empty")
+		if validateErr := ValidatePhase3PublicationCheckout(candidate, payload, attestation); validateErr == nil {
+			t.Fatal("empty commit after named attestation survived")
+		}
+	})
+}
+
+func TestPhase3PublicationCheckoutGateUsesTypedEnvironment(t *testing.T) {
+	if os.Getenv("PHASE3_PUBLICATION_GATE") != "1" {
+		t.Skip("executed by make phase3-publication with explicit immutable identities")
+	}
+	root := os.Getenv("PHASE3_PUBLICATION_ROOT")
+	payload := os.Getenv("PHASE3_PAYLOAD_COMMIT")
+	attestation := os.Getenv("PHASE3_ATTESTATION_COMMIT")
+	if err := ValidatePhase3PublicationCheckout(root, payload, attestation); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func phase3RepositoryRoot(t *testing.T) string {
@@ -236,6 +363,8 @@ func phase3PublicationFixture(t *testing.T, source string) string {
 	}
 	phase3CopyFixtureTree(t, filepath.Join(source, "docs"), filepath.Join(root, "docs"))
 	phase3CopyFixtureTree(t, filepath.Join(source, ".github"), filepath.Join(root, ".github"))
+	phase3CopyFixtureTree(t, filepath.Join(source, "cmd"), filepath.Join(root, "cmd"))
+	phase3CopyFixtureTree(t, filepath.Join(source, "scripts"), filepath.Join(root, "scripts"))
 	return root
 }
 

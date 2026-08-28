@@ -249,7 +249,8 @@
     {"id": "review-cycle-1", "source": "4a96edd", "verdict": "fail", "reason": "Phase 3 publication lacked a strict reusable schema and documentation mutant validator"},
     {"id": "20", "source": "b03200f", "verdict": "non_admissible", "reason": "application qualification resolved Go 1.26.4 instead of the required Go 1.26.5 toolchain"},
     {"id": "21", "source": "b03200f", "verdict": "fail", "reason": "offline child attempted toolchain module verification after a valid Go 1.26.5 preflight"},
-    {"id": "real-23", "source": "b03200f", "verdict": "non_admissible", "reason": "tail-exec made the network-unshared process namespace PID 1, so containment proof refused before scenarios"}
+    {"id": "real-23", "source": "b03200f", "verdict": "non_admissible", "reason": "tail-exec made the network-unshared process namespace PID 1, so containment proof refused before scenarios"},
+    {"id": "review-cycle-2", "source": "b03200f", "verdict": "fail", "reason": "publication validator omitted exact checkout identity, duplicate-key, bounded-size, Mermaid-body, command, and complete failure-ledger laws"}
   ],
   "hosted_baseline": {"required_samples": 10, "observed_samples": 0, "duration_ms": null, "verdict": "pending"}
 }

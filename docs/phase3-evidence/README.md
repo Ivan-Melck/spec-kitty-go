@@ -33,6 +33,15 @@ Verify the payload:
 git show --stat f52698bb110824fb4d22a81c9c4b3f6d2708cdc0
 ```
 
+Verify the exact clean docs-only attestation checkout through the reusable gate:
+
+```bash
+git checkout fabfe499d6ca0b124a025dbefea7cbb006421097
+make phase3-publication \
+  PAYLOAD_COMMIT=f52698bb110824fb4d22a81c9c4b3f6d2708cdc0 \
+  ATTESTATION_COMMIT=fabfe499d6ca0b124a025dbefea7cbb006421097
+```
+
 ## Provenance layers
 
 ```mermaid

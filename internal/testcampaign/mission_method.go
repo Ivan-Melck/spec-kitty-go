@@ -2,6 +2,7 @@ package testcampaign
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -163,11 +164,12 @@ func sortedCopy(values []string) []string {
 
 const phase3PublicationSchema = 2
 
+const phase3EvidenceFileLimit = 2 << 20
+
 var (
 	phase3CommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	phase3DigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	phase3LinkPattern   = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
-	phase3MakePattern   = regexp.MustCompile("(?m)(?:^[ \\t]*|`)make[ \\t]+([a-z][a-z0-9-]*)")
 	phase3TestPattern   = regexp.MustCompile("`(Test[A-Za-z0-9_]+)`")
 )
 
@@ -410,18 +412,83 @@ func ValidatePhase3Publication(root string) error {
 }
 
 func phase3DecodeClosed(path string, target any) error {
-	file, err := os.Open(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	decoder := json.NewDecoder(io.LimitReader(file, 2<<20))
+	if !info.Mode().IsRegular() || info.Size() > phase3EvidenceFileLimit {
+		return fmt.Errorf("evidence JSON exceeds %d-byte regular-file limit", phase3EvidenceFileLimit)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err = phase3RejectDuplicateJSONKeys(contents); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(target); err != nil {
 		return err
 	}
 	var trailing any
 	if err = decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func phase3RejectDuplicateJSONKeys(contents []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	var scan func() error
+	scan = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				keyToken, keyErr := decoder.Token()
+				if keyErr != nil {
+					return keyErr
+				}
+				key, keyOK := keyToken.(string)
+				if !keyOK || seen[key] {
+					return fmt.Errorf("duplicate or malformed JSON object key")
+				}
+				seen[key] = true
+				if err = scan(); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err = scan(); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("unexpected JSON delimiter")
+		}
+		closing, closeErr := decoder.Token()
+		if closeErr != nil || closing != json.Delim(map[json.Delim]rune{'{': '}', '[': ']'}[delim]) {
+			return fmt.Errorf("malformed JSON container")
+		}
+		return nil
+	}
+	if err := scan(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return fmt.Errorf("trailing JSON value")
 		}
@@ -699,7 +766,11 @@ func validatePhase3History(attempts []struct {
 	Verdict string `json:"verdict"`
 	Reason  string `json:"reason"`
 }) error {
-	required := []string{"01", "02", "03", "04", "05", "06", "07", "08", "09", "real-11", "real-12", "real-13", "real-14", "real-15", "real-16", "real-17"}
+	required := []string{
+		"01", "02", "03", "04", "05", "06", "07", "08", "09",
+		"real-11", "real-12", "real-13", "real-14", "real-15", "real-16", "real-17",
+		"review-cycle-1", "20", "21", "real-23", "review-cycle-2",
+	}
 	seen := make(map[string]bool, len(attempts))
 	allowed := map[string]bool{"fail": true, "non_admissible": true, "superseded_pass": true, "diagnostic_fail": true, "diagnostic_pass": true}
 	for _, attempt := range attempts {
@@ -812,10 +883,8 @@ func validatePhase3Documents(root, evidencePath string, census phase3Census) err
 	}
 	targets := phase3MakeTargets(string(makefileBytes))
 	for _, value := range contents {
-		for _, match := range phase3MakePattern.FindAllStringSubmatch(value, -1) {
-			if !targets[match[1]] {
-				return fmt.Errorf("phase3 documentation names nonexistent make target %s", match[1])
-			}
+		if err = validatePhase3DocumentedCommands(root, value, targets); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -839,6 +908,7 @@ func validatePhase3Mermaid(path, contents string) error {
 	inBlock := false
 	found := false
 	declaration := ""
+	body := []string{}
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if !inBlock && trimmed == "```mermaid" {
@@ -846,20 +916,187 @@ func validatePhase3Mermaid(path, contents string) error {
 			continue
 		}
 		if inBlock && strings.HasPrefix(trimmed, "```") {
-			if declaration == "" || !phase3MermaidDeclaration(declaration) {
+			if declaration == "" || !phase3MermaidDeclaration(declaration) || validatePhase3MermaidBody(declaration, body) != nil {
 				return fmt.Errorf("phase3 malformed Mermaid in %s", filepath.Base(path))
 			}
-			inBlock = false
+			inBlock, body = false, nil
 			continue
 		}
 		if inBlock && declaration == "" && trimmed != "" {
 			declaration = trimmed
+			continue
+		}
+		if inBlock && trimmed != "" {
+			body = append(body, trimmed)
 		}
 	}
 	if inBlock || (strings.Contains(contents, "mermaid") && !found) {
 		return fmt.Errorf("phase3 malformed Mermaid fence in %s", filepath.Base(path))
 	}
 	return nil
+}
+
+func validatePhase3MermaidBody(declaration string, lines []string) error {
+	if len(lines) == 0 {
+		return fmt.Errorf("empty Mermaid body")
+	}
+	if strings.HasPrefix(declaration, "flowchart ") {
+		node := `[A-Za-z][A-Za-z0-9_]*(?:\[[^\n]*\])?`
+		arrow := regexp.MustCompile(`^` + node + `\s+-->\s*(?:\|[^|]+\|\s*)?` + node + `$`)
+		nodeOnly := regexp.MustCompile(`^` + node + `$`)
+		subgraph := regexp.MustCompile(`^subgraph\s+` + node + `$`)
+		for _, line := range lines {
+			if line == "end" || nodeOnly.MatchString(line) || subgraph.MatchString(line) || arrow.MatchString(line) {
+				continue
+			}
+			return fmt.Errorf("invalid flowchart statement")
+		}
+		return nil
+	}
+	if declaration == "sequenceDiagram" {
+		participant := regexp.MustCompile(`^participant\s+[A-Za-z][A-Za-z0-9_]*\s+as\s+[^\n]+$`)
+		note := regexp.MustCompile(`^Note\s+(?:over|right of|left of)\s+[A-Za-z][A-Za-z0-9_]*(?:,[A-Za-z][A-Za-z0-9_]*)?:\s*\S.*$`)
+		arrow := regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(?:->>|-->>|->|-->)[A-Za-z][A-Za-z0-9_]*:\s*\S.*$`)
+		for _, line := range lines {
+			if participant.MatchString(line) || note.MatchString(line) || arrow.MatchString(line) {
+				continue
+			}
+			return fmt.Errorf("invalid sequence statement")
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported Mermaid body")
+}
+
+func validatePhase3DocumentedCommands(root, contents string, targets map[string]bool) error {
+	blocks, err := phase3ExecutableBlocks(contents)
+	if err != nil {
+		return err
+	}
+	allowed := map[string]bool{
+		"cd": true, "git": true, "go": true, "govulncheck": true, "jq": true,
+		"make": true, "mktemp": true, "pwd": true, "sha256sum": true, "staticcheck": true,
+	}
+	for _, block := range blocks {
+		for _, command := range phase3ShellCommands(block) {
+			name := command[0]
+			if name == "$beads_bin" || name == `"$beads_bin"` {
+				continue
+			}
+			if strings.HasPrefix(name, "scripts/") {
+				if filepath.Clean(name) != name || filepath.IsAbs(name) {
+					return fmt.Errorf("phase3 documentation names unsafe command %s", name)
+				}
+				info, statErr := os.Stat(filepath.Join(root, name))
+				if statErr != nil || !info.Mode().IsRegular() {
+					return fmt.Errorf("phase3 documentation names nonexistent command %s", name)
+				}
+				continue
+			}
+			if !allowed[name] {
+				return fmt.Errorf("phase3 documentation names unapproved command %s", name)
+			}
+			if err := validatePhase3CommandShape(command); err != nil {
+				return err
+			}
+			if name == "make" {
+				if len(command) < 2 || !targets[command[1]] {
+					return fmt.Errorf("phase3 documentation names nonexistent make target in %q", strings.Join(command, " "))
+				}
+			}
+			if name == "go" && len(command) >= 3 && (command[1] == "run" || command[1] == "install") && strings.HasPrefix(command[2], "./") {
+				if _, err := os.Stat(filepath.Join(root, strings.TrimPrefix(command[2], "./"))); err != nil {
+					return fmt.Errorf("phase3 documentation names nonexistent Go command %s", command[2])
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validatePhase3CommandShape(command []string) error {
+	if len(command) == 0 {
+		return fmt.Errorf("phase3 documentation contains empty command")
+	}
+	requireSecond := func(allowed ...string) error {
+		if len(command) < 2 || !slices.Contains(allowed, command[1]) {
+			return fmt.Errorf("phase3 documentation names unsupported command shape %q", strings.Join(command, " "))
+		}
+		return nil
+	}
+	switch command[0] {
+	case "git":
+		return requireSecond("-C", "checkout", "diff", "show")
+	case "go":
+		return requireSecond("install", "mod", "run", "test", "vet")
+	case "jq":
+		return requireSecond(".", "-e", "-r")
+	case "sha256sum":
+		return requireSecond("--", "--check")
+	case "staticcheck", "govulncheck":
+		return requireSecond("./...")
+	case "mktemp":
+		if len(command) < 2 || (command[1] != "-d" && !strings.HasPrefix(command[1], "/tmp/")) {
+			return fmt.Errorf("phase3 documentation names unsupported command shape %q", strings.Join(command, " "))
+		}
+	}
+	return nil
+}
+
+func phase3ExecutableBlocks(contents string) ([]string, error) {
+	lines := strings.Split(contents, "\n")
+	inBlock := false
+	var current []string
+	var blocks []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inBlock && (trimmed == "```bash" || trimmed == "```sh" || trimmed == "```shell") {
+			inBlock, current = true, nil
+			continue
+		}
+		if inBlock && strings.HasPrefix(trimmed, "```") {
+			blocks = append(blocks, strings.Join(current, "\n"))
+			inBlock = false
+			continue
+		}
+		if inBlock {
+			current = append(current, line)
+		}
+	}
+	if inBlock {
+		return nil, fmt.Errorf("phase3 documentation contains unterminated executable block")
+	}
+	return blocks, nil
+}
+
+func phase3ShellCommands(block string) [][]string {
+	block = strings.ReplaceAll(block, "\\\n", " ")
+	var result [][]string
+	substitutions := regexp.MustCompile(`\$\(([^)]+)\)`)
+	statements := strings.ReplaceAll(strings.ReplaceAll(block, "&&", "\n"), ";", "\n")
+	for _, line := range strings.Split(statements, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "(")
+		line = strings.TrimSuffix(line, ")")
+		if line == "" || line == "(" || line == ")" {
+			continue
+		}
+		for _, substitution := range substitutions.FindAllStringSubmatch(line, -1) {
+			if fields := strings.Fields(substitution[1]); len(fields) > 0 {
+				result = append(result, fields)
+			}
+		}
+		line = substitutions.ReplaceAllString(line, "VALUE")
+		fields := strings.Fields(line)
+		for len(fields) > 0 && strings.Contains(fields[0], "=") {
+			fields = fields[1:]
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		result = append(result, fields)
+	}
+	return result
 }
 
 func phase3MermaidDeclaration(value string) bool {
@@ -905,6 +1142,18 @@ func ValidatePhase3PublicationCheckout(root, payloadCommit, attestationCommit st
 	}
 	if _, err = git("merge-base", "--is-ancestor", payloadCommit, attestationCommit); err != nil {
 		return fmt.Errorf("phase3 attestation does not descend from payload")
+	}
+	head, err := git("rev-parse", "HEAD")
+	if err != nil || head != attestationCommit {
+		return fmt.Errorf("phase3 checkout HEAD is not the asserted attestation")
+	}
+	headTree, err := git("rev-parse", "HEAD^{tree}")
+	if err != nil || !phase3CommitPattern.MatchString(headTree) {
+		return fmt.Errorf("phase3 checkout tree identity unavailable")
+	}
+	attestationTree, err := git("rev-parse", attestationCommit+"^{tree}")
+	if err != nil || attestationTree != headTree {
+		return fmt.Errorf("phase3 checkout tree does not match asserted attestation")
 	}
 	var evidence phase3Qualification
 	if err = phase3DecodeClosed(filepath.Join(root, "docs", "phase3-evidence", "qualification-evidence.json"), &evidence); err != nil {

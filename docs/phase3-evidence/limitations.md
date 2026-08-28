@@ -84,3 +84,9 @@ evidence format had no reusable closed-schema validator. It remains historical
 evidence rather than an accepted publication. Candidate attempts 20 and 21 and
 provider-containment attempt 23 are likewise retained as failed or
 non-admissible; none is upgraded by the later passing attempts.
+
+The next publication at source `b03200f` was also rejected: its validator did
+not yet bind the checkout's exact HEAD, reject duplicate or oversized JSON,
+fully validate Mermaid bodies and non-Make commands, or make every published
+failure identity load-bearing. That cycle remains a failed review record rather
+than evidence for a pass.
