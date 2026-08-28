@@ -373,7 +373,7 @@
     },
     "WP11": {
       "actor": "codex",
-      "agent": "reviewer-renata",
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
@@ -383,7 +383,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Implementation complete at d52778c; normalized review topology 948e033; independent offline Beads qualification and source-bound architecture/scope campaigns passed.",
-        "Independent cycle-1 review rejected d52778c/948e033; four bounded repair invariants recorded."
+        "Independent cycle-1 review rejected d52778c/948e033; four bounded repair invariants recorded.",
+        "Cycle-2 repair ready at 02d5003; all four review invariants closed; independent offline Beads qualification passed at immutable candidate. Correcting stale reviewer assignment from prior rejection."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -394,8 +395,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6",
       "subtasks": {
         "T057": "planned",
         "T058": "planned",
