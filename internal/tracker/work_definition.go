@@ -302,6 +302,31 @@ type WorkDefinitionCapabilities struct {
 	BlockingGraph bool
 }
 
+// WorkDefinitionRequirements is derived from one already-validated proposal
+// set. It prevents create-only operations from demanding capabilities they do
+// not use while keeping full-port conformance strict.
+type WorkDefinitionRequirements struct {
+	Create        bool
+	GuardedUpdate bool
+	BlockingGraph bool
+}
+
+func (capabilities WorkDefinitionCapabilities) Require(requirements WorkDefinitionRequirements) error {
+	if !requirements.Create && !requirements.GuardedUpdate && !requirements.BlockingGraph {
+		return &Error{Kind: ErrorInvalidRequest, Message: "work-definition capability requirements are empty", RecoveryCode: "repair_request"}
+	}
+	if requirements.Create && !capabilities.Create {
+		return &Error{Kind: ErrorCapabilityUnsupported, Message: "provider cannot create complete work definitions", RecoveryCode: "use_supported_capability", Capability: CapabilityCatalogCreate}
+	}
+	if requirements.GuardedUpdate && !capabilities.GuardedUpdate {
+		return &Error{Kind: ErrorGuardedUpdateUnsupported, Message: "provider cannot guard work-definition updates", RecoveryCode: "reconcile_without_mutation", Capability: CapabilityCatalogUpdate}
+	}
+	if requirements.BlockingGraph && !capabilities.BlockingGraph {
+		return &Error{Kind: ErrorCapabilityUnsupported, Message: "provider cannot persist the required blocking graph", RecoveryCode: "use_supported_capability", Capability: CapabilityBlockingGraph}
+	}
+	return nil
+}
+
 func (capabilities WorkDefinitionCapabilities) Validate() error {
 	if !capabilities.Create || !capabilities.GuardedUpdate || !capabilities.BlockingGraph {
 		return &Error{Kind: ErrorCapabilityUnsupported, Message: "complete work-definition mutation capabilities are required", RecoveryCode: "use_supported_capability"}
@@ -324,14 +349,20 @@ type UpdateWorkDefinitionRequest struct {
 type WorkDefinitionMutation struct {
 	Observation WorkDefinitionObservation
 	Replayed    bool
-	Noop        bool
+	// PriorMutation reports that at least one child provider mutation existed
+	// before this call. It distinguishes partial-saga repair from a wholly
+	// fresh aggregate without making provider state the root authority.
+	PriorMutation bool
+	Noop          bool
 }
 
 // WorkDefinitionPort is the narrow mutable-planning port. It is deliberately
-// separate from the legacy Provider compatibility interface.
+// separate from the legacy Provider compatibility interface. Capabilities are
+// a static binding declaration: composition resolves them once and supplies a
+// value copy to mission services; request-time capability discovery is neither
+// tracker I/O nor decomposition authority.
 type WorkDefinitionPort interface {
 	DefinitionCapabilities(context.Context) (WorkDefinitionCapabilities, error)
-	PrepareDefinitionOperation(context.Context, ids.OperationID, string) error
 	CreateDefinition(context.Context, CreateWorkDefinitionRequest) (WorkDefinitionMutation, error)
 	UpdateDefinition(context.Context, UpdateWorkDefinitionRequest) (WorkDefinitionMutation, error)
 	ObserveDefinition(context.Context, ExternalWorkRef) (WorkDefinitionObservation, error)

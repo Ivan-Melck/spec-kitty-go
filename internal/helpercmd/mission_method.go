@@ -328,7 +328,12 @@ func runMissionDecompose(ctx context.Context, request decomposeRequest, stdout i
 	if err != nil {
 		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, nil, providerStoreError())
 	}
-	result, err := mission.NewDecompositionService(store, store, fake.NewProvider(providerStore)).Decompose(ctx, command)
+	provider := fake.NewProvider(providerStore)
+	capabilities, err := provider.DefinitionCapabilities(ctx)
+	if err != nil {
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, nil, providerStoreError())
+	}
+	result, err := mission.NewDecompositionService(store, store, provider, capabilities, store).Decompose(ctx, command)
 	if err != nil {
 		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
 	}

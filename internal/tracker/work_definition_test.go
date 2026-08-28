@@ -116,3 +116,23 @@ func TestWorkDefinitionObservationRejectsLookAlikeProviderIdentity(t *testing.T)
 		t.Fatal("missing creation-operation attribution accepted")
 	}
 }
+
+func TestWorkDefinitionCapabilitiesRequireOnlyValidatedProposalNeeds(t *testing.T) {
+	createOnly := tracker.WorkDefinitionCapabilities{Create: true, GuardedUpdate: false, BlockingGraph: true}
+	if err := createOnly.Require(tracker.WorkDefinitionRequirements{Create: true}); err != nil {
+		t.Fatalf("create-only requirement demanded unused guarded update: %v", err)
+	}
+	if err := createOnly.Validate(); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("strict full-port validation was weakened: %v", err)
+	}
+	if err := createOnly.Require(tracker.WorkDefinitionRequirements{GuardedUpdate: true}); !tracker.IsKind(err, tracker.ErrorGuardedUpdateUnsupported) {
+		t.Fatalf("guarded update requirement error=%v", err)
+	}
+	withoutGraph := tracker.WorkDefinitionCapabilities{Create: true, GuardedUpdate: true, BlockingGraph: false}
+	if err := withoutGraph.Require(tracker.WorkDefinitionRequirements{Create: true, BlockingGraph: true}); !tracker.IsKind(err, tracker.ErrorCapabilityUnsupported) {
+		t.Fatalf("blocking graph requirement error=%v", err)
+	}
+	if err := createOnly.Require(tracker.WorkDefinitionRequirements{}); !tracker.IsKind(err, tracker.ErrorInvalidRequest) {
+		t.Fatalf("empty requirements error=%v", err)
+	}
+}
