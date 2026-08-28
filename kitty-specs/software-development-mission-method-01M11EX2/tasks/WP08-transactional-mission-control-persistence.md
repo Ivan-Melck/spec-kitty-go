@@ -56,6 +56,7 @@ model: ''
 owned_files:
 - internal/controlstore/store.go
 - internal/controlstore/sqlite/migrations.go
+- internal/controlstore/sqlite/governance_context_test.go
 - internal/controlstore/sqlite/mission.go
 - internal/controlstore/sqlite/mission_test.go
 - internal/controlstore/sqlite/artifact.go
@@ -446,6 +447,7 @@ schema paths survive migration, fault injection, concurrency, and restart.
 - `internal/controlstore/sqlite/mission_action.go`
 - `internal/controlstore/sqlite/mission_action_test.go`
 - `internal/controlstore/sqlite/migrations.go`
+- `internal/controlstore/sqlite/governance_context_test.go`
 
 **Validation**:
 
