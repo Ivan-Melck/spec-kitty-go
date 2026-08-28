@@ -3,6 +3,7 @@ package scenario
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
+	"github.com/spec-kitty/go-kitty3/internal/projection"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 	"github.com/spec-kitty/go-kitty3/internal/tracker/beads"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
@@ -57,11 +59,13 @@ func TestMissionMethodBeadsDishonestProviderRefusesBeforePublication(t *testing.
 		{"malformed", dishonestFirstListMalformed, mission.FinalizationProviderFailure, false},
 		{"schema-skew", dishonestFirstListSchemaSkew, mission.FinalizationProviderFailure, false},
 		{"wrong-identity", dishonestFirstListWrongIdentity, mission.FinalizationProviderFailure, false},
+		{"wrong-work-id", dishonestFirstListWrongWorkID, mission.FinalizationProviderChanged, false},
 		{"omitted-work", dishonestSecondObservationOmitted, mission.FinalizationProviderChanged, false},
 		{"additional-work", dishonestSecondObservationAdditional, mission.FinalizationProviderChanged, false},
 		{"reversed-dependency", dishonestFirstObservationReversedDependency, mission.FinalizationProviderFailure, false},
 		{"stale-content", dishonestSecondObservationStale, mission.FinalizationProviderChanged, false},
 		{"between-observation-mutation", dishonestSecondObservationChanged, mission.FinalizationProviderChanged, false},
+		{"between-observation-external-mapping", dishonestSecondObservationExternalMapping, mission.FinalizationProviderChanged, false},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -107,6 +111,13 @@ func TestMissionMethodBeadsDishonestProviderRefusesBeforePublication(t *testing.
 			}
 			if source.observations < 2 {
 				t.Fatalf("clean retry did not observe afresh: observations=%d", source.observations)
+			}
+			published := observeDishonestLocalAuthority(t, database, expected.MissionID)
+			if published.Observation.State != "available" || published.Projection.State != "available" || published.Observation.Commitment == "" || published.Projection.Commitment == "" {
+				t.Fatalf("published read identities are incomplete: observation=%+v projection=%+v", published.Observation, published.Projection)
+			}
+			if published.Observation.Commitment == published.Projection.Commitment {
+				t.Fatal("observation tuple and rendered projection must have independent canonical identities")
 			}
 			if closeErr := serviceStore.Close(); closeErr != nil {
 				t.Fatal(closeErr)
@@ -159,9 +170,83 @@ func TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse(t *testing
 	}
 }
 
+func TestDishonestMissionAuthorityDetectsSameCountOutboxMutation(t *testing.T) {
+	database, expected, _ := prepareDishonestFinalizationMission(t, "authority-content")
+	before := observeDishonestLocalAuthority(t, database, expected.MissionID)
+	raw, err := sql.Open("sqlite", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var sequence int64
+	var availableAt string
+	if err = raw.QueryRow(`SELECT sequence,available_at FROM phase3_outbox WHERE delivery_status='pending' ORDER BY sequence LIMIT 1`).Scan(&sequence, &availableAt); err != nil {
+		t.Fatal(err)
+	}
+	claimedAt, err := time.Parse(time.RFC3339Nano, availableAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := raw.Exec(`UPDATE phase3_outbox
+		SET delivery_status='claimed',attempt_count=1,claim_id=?,claimed_at=?,claim_expires_at=?
+		WHERE sequence=? AND delivery_status='pending'`, "claim-authority-mutant", claimedAt.Format(time.RFC3339Nano), claimedAt.Add(time.Minute).Format(time.RFC3339Nano), sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed, rowsErr := result.RowsAffected(); rowsErr != nil || changed != 1 {
+		t.Fatalf("legal outbox mutation rows=%d error=%v", changed, rowsErr)
+	}
+	after := observeDishonestLocalAuthority(t, database, expected.MissionID)
+	if len(before.Tables) != len(after.Tables) {
+		t.Fatal("authority table census changed during same-count mutation")
+	}
+	for index := range before.Tables {
+		if before.Tables[index].RowCount != after.Tables[index].RowCount {
+			t.Fatalf("authority row count changed for %s", before.Tables[index].Name)
+		}
+	}
+	if reflect.DeepEqual(before, after) {
+		t.Fatal("authority snapshot failed to detect legal outbox content mutation")
+	}
+}
+
 type dishonestMissionAuthority struct {
-	Mission mission.MissionSnapshot
-	Rows    methodRowCounts
+	Mission     mission.MissionSnapshot
+	Tables      []dishonestAuthorityTable
+	Observation dishonestReadIdentity
+	Projection  dishonestReadIdentity
+}
+
+type dishonestAuthorityTable struct {
+	Name       string
+	RowCount   int
+	Commitment string
+}
+
+type dishonestReadIdentity struct {
+	State      string
+	Kind       string
+	Field      string
+	Observed   string
+	Expected   string
+	Commitment string
+}
+
+type dishonestAuthorityTableSpec struct {
+	name          string
+	columns       []string
+	types         []string
+	orderBy       string
+	digestColumns map[string]bool
+}
+
+var dishonestAuthorityTables = []dishonestAuthorityTableSpec{
+	{name: "phase3_operations", columns: []string{"operation_id", "operation_kind", "mission_id", "request_digest", "result_json", "occurred_at"}, types: []string{"TEXT", "TEXT", "TEXT", "TEXT", "BLOB", "TEXT"}, orderBy: "operation_id", digestColumns: map[string]bool{"result_json": true}},
+	{name: "phase3_work_revisions_v2", columns: []string{"work_revision_id", "mission_id", "project_id", "generation", "predecessor_id", "graph_digest", "criteria_digest", "encoded_revision"}, types: []string{"TEXT", "TEXT", "TEXT", "INTEGER", "TEXT", "TEXT", "TEXT", "BLOB"}, orderBy: "work_revision_id", digestColumns: map[string]bool{"encoded_revision": true}},
+	{name: "phase3_drift_reports", columns: []string{"drift_report_id", "mission_id", "old_work_revision_id", "new_work_revision_id", "semantic_status", "encoded_report"}, types: []string{"TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "BLOB"}, orderBy: "drift_report_id", digestColumns: map[string]bool{"encoded_report": true}},
+	{name: "phase3_mixed_reconciliations", columns: []string{"reconciliation_id", "drift_report_id", "old_work_revision_id", "new_work_revision_id", "request_digest", "encoded_reconciliation"}, types: []string{"TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "BLOB"}, orderBy: "reconciliation_id", digestColumns: map[string]bool{"encoded_reconciliation": true}},
+	{name: "phase3_events", columns: []string{"event_id", "operation_id", "mission_id", "event_kind", "payload_digest", "occurred_at"}, types: []string{"TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT"}, orderBy: "event_id"},
+	{name: "phase3_outbox", columns: []string{"sequence", "event_id", "event_kind", "payload_digest", "created_at", "delivery_status", "attempt_count", "available_at", "claim_id", "claimed_at", "claim_expires_at", "last_attempt_at", "delivered_at"}, types: []string{"INTEGER", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "INTEGER", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT"}, orderBy: "sequence"},
 }
 
 func observeDishonestLocalAuthority(t *testing.T, database string, missionID ids.MissionID) dishonestMissionAuthority {
@@ -175,7 +260,212 @@ func observeDishonestLocalAuthority(t *testing.T, database string, missionID ids
 	if err != nil {
 		t.Fatal(err)
 	}
-	return dishonestMissionAuthority{Mission: snapshot, Rows: missionMethodRowCounts(t, database)}
+	observation, observationErr := store.ObserveMissionMethod(context.Background(), missionID)
+	observationIdentity, projectionIdentity := dishonestReadIdentities(t, observation, observationErr)
+	return dishonestMissionAuthority{
+		Mission: snapshot, Tables: snapshotDishonestAuthorityTables(t, database),
+		Observation: observationIdentity, Projection: projectionIdentity,
+	}
+}
+
+func dishonestReadIdentities(t *testing.T, observation sqlite.MissionMethodObservation, err error) (dishonestReadIdentity, dishonestReadIdentity) {
+	t.Helper()
+	if err != nil {
+		var typed *sqlite.MissionMethodObservationError
+		if !errors.As(err, &typed) {
+			t.Fatalf("mission-method observation returned unbounded error type %T", err)
+		}
+		identity := dishonestReadIdentity{State: "unavailable", Kind: string(typed.Kind), Field: typed.Field, Observed: typed.Observed, Expected: typed.Expected}
+		return identity, identity
+	}
+	observationBytes, err := json.Marshal(canonicalDishonestObservation(observation))
+	if err != nil {
+		t.Fatalf("encode canonical observed mission method: %T", err)
+	}
+	view, err := projection.NewTasksView(observation.Mission, observation.Workgraph, time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("canonicalize observed mission method: %T", err)
+	}
+	rendered, err := projection.RenderTasks(view)
+	if err != nil {
+		t.Fatalf("render observed mission method: %T", err)
+	}
+	observationCommitment := sha256.Sum256(append([]byte("spec-kitty/dishonest-observation/v1\x00"), observationBytes...))
+	projectionCommitment := sha256.Sum256(append([]byte("spec-kitty/dishonest-projection/v1\x00"), rendered...))
+	return dishonestReadIdentity{State: "available", Commitment: fmt.Sprintf("%x", observationCommitment)}, dishonestReadIdentity{State: "available", Commitment: fmt.Sprintf("%x", projectionCommitment)}
+}
+
+func canonicalDishonestObservation(observation sqlite.MissionMethodObservation) map[string]any {
+	missionView := observation.Mission
+	graph := observation.Workgraph
+	workItems := make([]any, 0, len(graph.WorkItems()))
+	for _, work := range graph.WorkItems() {
+		criteria := make([]any, 0, len(work.Criteria()))
+		for _, criterion := range work.Criteria() {
+			criteria = append(criteria, map[string]any{
+				"id": criterion.ID(), "text": criterion.Text(), "verifier_kind": criterion.VerifierKind(),
+				"required": criterion.Required(), "metadata_json": string(criterion.MetadataJSON()),
+			})
+		}
+		dependencies := make([]string, 0, len(work.Dependencies()))
+		for _, dependency := range work.Dependencies() {
+			dependencies = append(dependencies, dependency.String())
+		}
+		scopes := make([]any, 0, len(work.WriteScopes()))
+		for _, scope := range work.WriteScopes() {
+			scopes = append(scopes, map[string]any{"path": scope.Path(), "domain": scope.Domain(), "access": scope.Access(), "serialization_key": scope.SerializationKey()})
+		}
+		workItems = append(workItems, map[string]any{
+			"work_id": work.WorkID().String(), "title": work.Title(), "description": work.Description(), "design_context": work.DesignContext(),
+			"criteria": criteria, "dependencies": dependencies, "write_scopes": scopes,
+		})
+	}
+	lanes := make([]any, 0, len(graph.Lanes()))
+	for _, lane := range graph.Lanes() {
+		workIDs := make([]string, 0, len(lane.WorkIDs()))
+		for _, workID := range lane.WorkIDs() {
+			workIDs = append(workIDs, workID.String())
+		}
+		dependencyLaneIDs := make([]string, 0, len(lane.DependencyLaneIDs()))
+		for _, laneID := range lane.DependencyLaneIDs() {
+			dependencyLaneIDs = append(dependencyLaneIDs, laneID.String())
+		}
+		lanes = append(lanes, map[string]any{"lane_id": lane.LaneID().String(), "work_ids": workIDs, "dependency_lane_ids": dependencyLaneIDs})
+	}
+	reconciliations := make([]any, 0, len(graph.Reconciliations()))
+	for _, reconciliation := range graph.Reconciliations() {
+		current := make([]string, 0, len(reconciliation.CurrentWorkIDs()))
+		for _, workID := range reconciliation.CurrentWorkIDs() {
+			current = append(current, workID.String())
+		}
+		reconciliations = append(reconciliations, map[string]any{
+			"previous_work_id": reconciliation.PreviousWorkID().String(), "disposition": string(reconciliation.Disposition()),
+			"current_work_ids": current, "rationale": reconciliation.Rationale(),
+		})
+	}
+	return map[string]any{
+		"mission": map[string]any{
+			"mission_id": missionView.MissionID().String(), "state_version": missionView.StateVersion(),
+			"current_step": missionView.CurrentStep(), "current_work_revision_id": missionView.CurrentWorkRevisionID().String(),
+		},
+		"workgraph": map[string]any{
+			"mission_id": graph.MissionID().String(), "revision_id": graph.RevisionID().String(), "generation": graph.Generation(),
+			"graph_digest": graph.GraphDigest(), "drift_status": string(graph.DriftStatus()), "work_items": workItems,
+			"lanes": lanes, "reconciliations": reconciliations,
+		},
+	}
+}
+
+func snapshotDishonestAuthorityTables(t *testing.T, database string) []dishonestAuthorityTable {
+	t.Helper()
+	db, err := sql.Open("sqlite", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	result := make([]dishonestAuthorityTable, 0, len(dishonestAuthorityTables))
+	for _, spec := range dishonestAuthorityTables {
+		assertDishonestAuthoritySchema(t, db, spec)
+		query := "SELECT " + strings.Join(spec.columns, ",") + " FROM " + spec.name + " ORDER BY " + spec.orderBy
+		rows, queryErr := db.QueryContext(context.Background(), query)
+		if queryErr != nil {
+			t.Fatalf("snapshot authority table %s: %T", spec.name, queryErr)
+		}
+		hash := sha256.New()
+		count := 0
+		for rows.Next() {
+			values := make([]any, len(spec.columns))
+			destinations := make([]any, len(values))
+			for index := range values {
+				destinations[index] = &values[index]
+			}
+			if scanErr := rows.Scan(destinations...); scanErr != nil {
+				rows.Close()
+				t.Fatalf("scan authority table %s: %T", spec.name, scanErr)
+			}
+			canonical := make([]string, len(values))
+			for index, value := range values {
+				var valueErr error
+				canonical[index], valueErr = canonicalDishonestAuthorityValue(value, spec.digestColumns[spec.columns[index]])
+				if valueErr != nil {
+					rows.Close()
+					t.Fatalf("canonicalize authority table %s: %v", spec.name, valueErr)
+				}
+			}
+			encoded, marshalErr := json.Marshal(canonical)
+			if marshalErr != nil {
+				rows.Close()
+				t.Fatal(marshalErr)
+			}
+			hash.Write(encoded)
+			hash.Write([]byte{'\n'})
+			count++
+		}
+		if rowsErr := rows.Err(); rowsErr != nil {
+			rows.Close()
+			t.Fatalf("iterate authority table %s: %T", spec.name, rowsErr)
+		}
+		if closeErr := rows.Close(); closeErr != nil {
+			t.Fatal(closeErr)
+		}
+		result = append(result, dishonestAuthorityTable{Name: spec.name, RowCount: count, Commitment: hex.EncodeToString(hash.Sum(nil))})
+	}
+	return result
+}
+
+func assertDishonestAuthoritySchema(t *testing.T, db *sql.DB, spec dishonestAuthorityTableSpec) {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), "PRAGMA table_info("+spec.name+")")
+	if err != nil {
+		t.Fatalf("inspect authority schema %s: %T", spec.name, err)
+	}
+	defer rows.Close()
+	var columns []string
+	var types []string
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatalf("scan authority schema %s: %T", spec.name, err)
+		}
+		if cid != len(columns) || name == "" || columnType == "" {
+			t.Fatalf("authority schema %s has non-canonical column metadata", spec.name)
+		}
+		columns = append(columns, name)
+		types = append(types, columnType)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("iterate authority schema %s: %T", spec.name, err)
+	}
+	if !reflect.DeepEqual(columns, spec.columns) || !reflect.DeepEqual(types, spec.types) {
+		t.Fatalf("authority schema drift for %s: observed_columns=%v expected_columns=%v observed_types=%v expected_types=%v", spec.name, columns, spec.columns, types, spec.types)
+	}
+}
+
+func canonicalDishonestAuthorityValue(value any, digest bool) (string, error) {
+	if value == nil {
+		return "null", nil
+	}
+	var canonical string
+	switch typed := value.(type) {
+	case int64:
+		canonical = fmt.Sprintf("integer:%d", typed)
+	case float64:
+		canonical = fmt.Sprintf("real:%g", typed)
+	case bool:
+		canonical = fmt.Sprintf("boolean:%t", typed)
+	case []byte:
+		canonical = "blob:" + hex.EncodeToString(typed)
+	case string:
+		canonical = "text:" + typed
+	default:
+		return "", fmt.Errorf("unsupported SQL value type %T", value)
+	}
+	if digest {
+		return "sha256:" + fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))), nil
+	}
+	return canonical, nil
 }
 
 type dishonestMissionFinalizationSource struct {
@@ -434,6 +724,34 @@ func dishonestFirstListWrongIdentity(t *testing.T, _ string, valid []dishonestSt
 	return withCleanDishonestRetry([]dishonestStep{{ID: "fault.wrong-identity", Argv: []string{"list", "--json"}, Stdout: envelope("[" + issue + "]")}}, valid)
 }
 
+func dishonestFirstListWrongWorkID(t *testing.T, _ string, valid []dishonestStep) []dishonestStep {
+	foundation := dishonestMissionDefinition(t, "work-foundation", nil, "Deliver the bounded foundation outcome.")
+	issue := dishonestMissionIssue(t, "bd-a", foundation, "operation-create-foundation", 1, "project-fault")
+	var wire map[string]any
+	if err := json.Unmarshal([]byte(issue), &wire); err != nil {
+		t.Fatal(err)
+	}
+	metadata, ok := wire["metadata"].(map[string]any)
+	if !ok {
+		t.Fatal("dishonest issue metadata shape changed")
+	}
+	specKitty, ok := metadata["spec_kitty"].(map[string]any)
+	if !ok {
+		t.Fatal("dishonest issue spec-kitty metadata shape changed")
+	}
+	// The provider substitutes only the claimed WorkID while retaining the
+	// original complete-definition commitment. The bound adapter must detect
+	// that exact identity/content contradiction before finalization authority.
+	specKitty["work_id"] = "work-substituted"
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fault := dishonestCatalogObservationSteps("fault.wrong-work-id", []string{string(encoded)}, nil)
+	steps := withCleanDishonestRetry(fault, valid)
+	return append(steps, dishonestStepsWithPrefix(valid, "retry-three")...)
+}
+
 func dishonestSecondObservationOmitted(t *testing.T, _ string, valid []dishonestStep) []dishonestStep {
 	foundation := dishonestMissionDefinition(t, "work-foundation", nil, "Deliver the bounded foundation outcome.")
 	issue := dishonestMissionIssue(t, "bd-a", foundation, "operation-create-foundation", 1, "project-fault")
@@ -472,6 +790,18 @@ func dishonestSecondObservationStale(t *testing.T, _ string, valid []dishonestSt
 func dishonestSecondObservationChanged(t *testing.T, _ string, valid []dishonestStep) []dishonestStep {
 	changed := dishonestMissionObservationSteps(t, "fault.changed", "foundation-description")
 	fault := append(append([]dishonestStep(nil), valid...), changed...)
+	return withCleanDishonestRetry(fault, valid)
+}
+
+func dishonestSecondObservationExternalMapping(t *testing.T, _ string, valid []dishonestStep) []dishonestStep {
+	foundation := dishonestMissionDefinition(t, "work-foundation", nil, "Deliver the bounded foundation outcome.")
+	feature := dishonestMissionDefinition(t, "work-feature", []ids.WorkID{"work-foundation"}, "Deliver the bounded feature outcome.")
+	issues := []string{
+		dishonestMissionIssue(t, "bd-a-substituted", foundation, "operation-create-foundation", 1, "project-fault"),
+		dishonestMissionIssue(t, "bd-b", feature, "operation-create-feature", 1, "project-fault"),
+	}
+	substituted := dishonestCatalogObservationSteps("fault.external-mapping", issues, map[string][]string{"bd-b": {"bd-a-substituted"}})
+	fault := append(append([]dishonestStep(nil), valid...), substituted...)
 	return withCleanDishonestRetry(fault, valid)
 }
 
