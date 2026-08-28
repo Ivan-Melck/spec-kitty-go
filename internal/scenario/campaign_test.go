@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -31,14 +32,28 @@ func TestCampaignProfilesPreserveUniversalInvariants(t *testing.T) {
 			t.Fatalf("campaign %s lost universal invariant policy: %+v err=%v", name, campaign, err)
 		}
 	}
-	full, err := testcampaign.ProfileByName("full-scenario")
-	if err != nil {
-		t.Fatal(err)
-	}
+	covered := scenarioCampaignTopLevelTests(t)
 	actual := scenarioTopLevelTests(t)
-	if !slices.Equal(full.ExpectedTests, actual) {
-		t.Fatalf("full scenario census drifted\nmanifest=%v\nactual=%v", full.ExpectedTests, actual)
+	if err := compareScenarioCampaignCensus(covered, actual); err != nil {
+		t.Fatalf("scenario campaign census drifted: %v", err)
 	}
+
+	t.Run("missing-registered-test-mutant", func(t *testing.T) {
+		missing := slices.DeleteFunc(append([]string(nil), covered...), func(name string) bool {
+			return name == "TestMissionMethodProviderParityPortableCampaign"
+		})
+		if err := compareScenarioCampaignCensus(missing, actual); err == nil || !strings.Contains(err.Error(), "TestMissionMethodProviderParityPortableCampaign") {
+			t.Fatalf("missing registered-test mutant survived: %v", err)
+		}
+	})
+
+	t.Run("uncatalogued-top-level-mutant", func(t *testing.T) {
+		extra := append(append([]string(nil), actual...), "TestUncataloguedScenarioMutant")
+		slices.Sort(extra)
+		if err := compareScenarioCampaignCensus(covered, extra); err == nil || !strings.Contains(err.Error(), "TestUncataloguedScenarioMutant") {
+			t.Fatalf("uncatalogued top-level mutant survived: %v", err)
+		}
+	})
 }
 
 func TestCampaignProfileMutantControls(t *testing.T) {
@@ -78,7 +93,7 @@ func TestCampaignWorkflowContracts(t *testing.T) {
 
 	workflows := map[string][]string{
 		"quality.yml": {
-			"pull_request:", "push:", "contents: read", "cancel-in-progress: true", "timeout-minutes: 12",
+			"pull_request:", "push:", "contents: read", "cancel-in-progress: true", "timeout-minutes: 15",
 			"make quality", "hosted_baseline", "if: always()", "retention-days: 14", "github.run_id", "github.run_attempt",
 		},
 		"full-campaign.yml": {
@@ -103,6 +118,55 @@ func TestCampaignWorkflowContracts(t *testing.T) {
 			}
 		}
 	}
+}
+
+func scenarioCampaignTopLevelTests(t *testing.T) []string {
+	t.Helper()
+	profiles := []string{
+		"full-scenario",
+		"provider-adversarial",
+		testcampaign.MissionContractProfile,
+		testcampaign.MissionAcceptanceProfile,
+		testcampaign.MissionAdversarialProfile,
+	}
+	seen := make(map[string]struct{})
+	for _, name := range profiles {
+		profile, err := testcampaign.ProfileByName(name)
+		if err != nil {
+			t.Fatalf("load scenario campaign profile %s: %v", name, err)
+		}
+		if profile.Package != "./internal/scenario" {
+			t.Fatalf("scenario campaign profile %s targets %s", name, profile.Package)
+		}
+		for _, test := range profile.ExpectedTests {
+			seen[test] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for name := range seen {
+		result = append(result, name)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func compareScenarioCampaignCensus(expected, actual []string) error {
+	missing := make([]string, 0)
+	extra := make([]string, 0)
+	for _, name := range expected {
+		if !slices.Contains(actual, name) {
+			missing = append(missing, name)
+		}
+	}
+	for _, name := range actual {
+		if !slices.Contains(expected, name) {
+			extra = append(extra, name)
+		}
+	}
+	if len(missing) != 0 || len(extra) != 0 {
+		return fmt.Errorf("missing=%v extra=%v", missing, extra)
+	}
+	return nil
 }
 
 func assertCampaignUniversalInvariants(t *testing.T, suffix string) {

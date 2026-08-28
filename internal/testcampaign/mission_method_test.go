@@ -76,9 +76,27 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 	}
 	fast, _ := ProfileByName(MissionAcceptanceProfile)
 	slow, _ := ProfileByName(MissionAdversarialProfile)
-	for _, expensive := range []string{"TestMissionMethodCrashBoundaryCensus", "TestMissionMethodFinalizationProcessRaces100", "TestMissionMethodSemanticDriftMutations1000"} {
+	for _, expensive := range []string{
+		"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
+		"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
+		"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
+		"TestMissionMethodCrashBoundaryCensus",
+		"TestMissionMethodFinalizationProcessRaces100",
+		"TestMissionMethodSemanticDriftMutations1000",
+	} {
 		if slices.Contains(fast.ExpectedTests, expensive) || !slices.Contains(slow.ExpectedTests, expensive) {
 			t.Fatalf("expensive test %s crossed fast/slow boundary", expensive)
+		}
+	}
+	for _, portable := range []string{"TestMissionMethodNormalizationAndPureQueries100", "TestMissionMethodProjectionAndGovernanceIndependence100", "TestMissionMethodProviderParityPortableCampaign"} {
+		if !slices.Contains(fast.ExpectedTests, portable) || slices.Contains(slow.ExpectedTests, portable) {
+			t.Fatalf("portable acceptance test %s crossed fast/slow boundary", portable)
+		}
+	}
+	contract, _ := ProfileByName(MissionContractProfile)
+	for _, identity := range []string{"TestMissionMethodBeadsQualificationProfileIdentity", "TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"} {
+		if !slices.Contains(contract.ExpectedTests, identity) {
+			t.Fatalf("mission contract profile omitted %s", identity)
 		}
 	}
 }

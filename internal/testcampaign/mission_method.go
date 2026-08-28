@@ -16,18 +16,34 @@ const (
 var missionProfiles = map[string]Profile{
 	MissionContractProfile: {
 		Name: MissionContractProfile, Package: "./internal/scenario",
-		Pattern:       "^(TestMissionMethodQualificationContract|TestQualityCampaignUniversalInvariants)$",
-		ExpectedTests: []string{"TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants"},
+		Pattern: "^(TestMissionMethodBeadsQualificationProfileIdentity|TestMissionMethodQualificationContract|TestQualityCampaignUniversalInvariants|TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries)$",
+		ExpectedTests: []string{
+			"TestMissionMethodBeadsQualificationProfileIdentity",
+			"TestMissionMethodQualificationContract",
+			"TestQualityCampaignUniversalInvariants",
+			"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
+		},
 	},
 	MissionAcceptanceProfile: {
 		Name: MissionAcceptanceProfile, Package: "./internal/scenario",
-		Pattern:       "^(TestMissionMethodNormalizationAndPureQueries100|TestMissionMethodProjectionAndGovernanceIndependence100)$",
-		ExpectedTests: []string{"TestMissionMethodNormalizationAndPureQueries100", "TestMissionMethodProjectionAndGovernanceIndependence100"},
+		Pattern: "^(TestMissionMethodNormalizationAndPureQueries100|TestMissionMethodProjectionAndGovernanceIndependence100|TestMissionMethodProviderParityPortableCampaign)$",
+		ExpectedTests: []string{
+			"TestMissionMethodNormalizationAndPureQueries100",
+			"TestMissionMethodProjectionAndGovernanceIndependence100",
+			"TestMissionMethodProviderParityPortableCampaign",
+		},
 	},
 	MissionAdversarialProfile: {
 		Name: MissionAdversarialProfile, Package: "./internal/scenario",
-		Pattern:       "^(TestMissionMethodCrashBoundaryCensus|TestMissionMethodFinalizationProcessRaces100|TestMissionMethodSemanticDriftMutations1000)$",
-		ExpectedTests: []string{"TestMissionMethodCrashBoundaryCensus", "TestMissionMethodFinalizationProcessRaces100", "TestMissionMethodSemanticDriftMutations1000"},
+		Pattern: "^(TestDishonestMissionAuthorityDetectsSameCountOutboxMutation|TestMissionMethodBeadsDishonestProviderRefusesBeforePublication|TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse|TestMissionMethodCrashBoundaryCensus|TestMissionMethodFinalizationProcessRaces100|TestMissionMethodSemanticDriftMutations1000)$",
+		ExpectedTests: []string{
+			"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
+			"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
+			"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
+			"TestMissionMethodCrashBoundaryCensus",
+			"TestMissionMethodFinalizationProcessRaces100",
+			"TestMissionMethodSemanticDriftMutations1000",
+		},
 	},
 }
 
@@ -49,13 +65,19 @@ func init() {
 		RequiredProfiles: []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile},
 		UniversalTest:    "TestQualityCampaignUniversalInvariants",
 		RequiredTests: []string{
+			"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
+			"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
+			"TestMissionMethodBeadsQualificationProfileIdentity",
+			"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
 			"TestMissionMethodCrashBoundaryCensus",
 			"TestMissionMethodFinalizationProcessRaces100",
 			"TestMissionMethodNormalizationAndPureQueries100",
 			"TestMissionMethodProjectionAndGovernanceIndependence100",
+			"TestMissionMethodProviderParityPortableCampaign",
 			"TestMissionMethodQualificationContract",
 			"TestMissionMethodSemanticDriftMutations1000",
 			"TestQualityCampaignUniversalInvariants",
+			"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
 		},
 		RequireUniversal: true, RequireStaleProbe: true,
 	}
@@ -72,13 +94,19 @@ func init() {
 func ValidateMissionCampaign(campaign Campaign) error {
 	wantProfiles := []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile}
 	wantTests := []string{
+		"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
+		"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
+		"TestMissionMethodBeadsQualificationProfileIdentity",
+		"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
 		"TestMissionMethodCrashBoundaryCensus",
 		"TestMissionMethodFinalizationProcessRaces100",
 		"TestMissionMethodNormalizationAndPureQueries100",
 		"TestMissionMethodProjectionAndGovernanceIndependence100",
+		"TestMissionMethodProviderParityPortableCampaign",
 		"TestMissionMethodQualificationContract",
 		"TestMissionMethodSemanticDriftMutations1000",
 		"TestQualityCampaignUniversalInvariants",
+		"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
 	}
 	if campaign.Name != MissionFullCampaign || !slices.Equal(campaign.Profiles, wantProfiles) || !slices.Equal(campaign.RequiredProfiles, wantProfiles) {
 		return fmt.Errorf("mission campaign profile census changed")
