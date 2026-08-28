@@ -33,6 +33,8 @@ authoritative_surface: internal/tracker/beads/
 create_intent:
 - internal/tracker/beads/mission_method_integration_test.go
 - internal/scenario/mission_method_beads_test.go
+- internal/controlstore/sqlite/decomposition.go
+- internal/controlstore/sqlite/decomposition_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -44,6 +46,14 @@ owned_files:
 - internal/tracker/beads/graph_test.go
 - internal/tracker/beads/mission_method_integration_test.go
 - internal/scenario/mission_method_beads_test.go
+- internal/tracker/work_definition.go
+- internal/tracker/work_definition_test.go
+- internal/mission/decomposition.go
+- internal/mission/decomposition_test.go
+- internal/controlstore/sqlite/decomposition.go
+- internal/controlstore/sqlite/decomposition_test.go
+- internal/helpercmd/mission_method.go
+- internal/helpercmd/mission_method_test.go
 role: implementer
 tags: []
 tracker_refs: []
@@ -89,6 +99,39 @@ external ID, opaque revision, timestamp, and protocol evidence are expected;
 differences in normalized WorkID, description, design context, criteria,
 dependencies, write scopes, planning provenance, or executable digest are not.
 
+### Ratified WP11 authority correction
+
+Pre-implementation review exposed two inherited seams that cannot represent
+Beads honestly. Correct them as part of this work package; do not disguise them
+inside the adapter:
+
+- Work-definition capabilities are operation-scoped. Derive whether this
+  validated proposal set requires create, guarded update, and blocking-graph
+  support. Create-only decomposition may use an honestly unguarded provider;
+  any update proposal requires real guarded-update capability, and any proposal
+  containing dependencies requires blocking-graph capability. Keep the strict
+  full-port conformance check, but do not require unused capabilities.
+- The root decomposition `OperationID` and complete canonical request digest
+  are consumer authority, not tracker state. Reserve them durably in the local
+  control store after all local mission/plan/work validation and before any
+  provider call. Reuse of the same root operation with a different mission,
+  plan, scope, work set, actor, governance context, or occurrence time conflicts
+  without touching the provider. Exact replay may resume a partial saga.
+- Use the existing immutable `phase3_operations` namespace with operation kind
+  `decomposition_saga`; do not add a migration or an adapter-owned root ledger.
+  A fresh root reservation paired with a replayed child mutation is impossible
+  and must fail closed. The result is replayed only when the root reservation
+  and every child mutation are replays.
+- The request digest must bind the complete expected mission snapshot, including
+  lifecycle, current WorkRevision, timestamps, terminal outcome, blockers, and
+  decisions, plus the complete command time and all existing request fields.
+
+This correction expands WP11 to exactly sixteen owned files: the original eight
+provider/scenario files plus the provider-neutral capability contract,
+decomposition service, SQLite operation reservation, and helper composition
+files and their paired tests. The fake provider's historical preparation method
+may remain for compatibility, but it is not decomposition authority.
+
 Preserve every Phase 2 boundary:
 
 - Execute only typed commands through the bounded process runner. Consume only
@@ -118,8 +161,8 @@ Preserve every Phase 2 boundary:
 Use only the Spec Kitty lane worktree allocated for WP11 after WP10 is accepted.
 The dependency base contains the complete fake-provider mission slice, and the
 merge target is `feat/software-development-mission-method`. Do not branch from
-`main`, create a worktree manually, or edit WP04/WP10/WP12-owned code. Keep all
-changes within the exact eight owned files and extend existing adapter
+`main`, create a worktree manually, or edit files outside the ratified WP11
+scope. Keep all changes within the exact sixteen owned files and extend existing adapter
 capabilities rather than creating a parallel mission-method adapter.
 
 Start implementation with:
@@ -320,6 +363,12 @@ contract, including when it is slow, unavailable, stale, or wrong.
 7. Run package/scenario race tests, the JSON-only source guard, and both fake and
    real provider selections. Record T057–T060 only after all applicable gates
    pass or a real-provider skip is explicitly reported as non-qualification.
+8. Prove operation-scoped capability selection and consumer-owned root replay:
+   create-only unguarded support succeeds; guarded updates or required blocking
+   graphs fail before reservation/provider effects when unsupported; exact
+   same-digest reservations converge across reopen and two store handles;
+   different-digest and cross-namespace collisions fail before provider calls;
+   store unavailability and fresh-root/child-replay contradictions fail closed.
 
 **Files**:
 
@@ -329,6 +378,16 @@ contract, including when it is slow, unavailable, stale, or wrong.
   recheck, drift, outage/recovery, and evidence assertions.
 - Existing owned catalog/metadata/graph tests — focused regression cases where
   the behavior is local to those files.
+- `internal/tracker/work_definition.go` and `_test.go` — operation-scoped
+  capability requirements with strict full-port conformance retained.
+- `internal/mission/decomposition.go` and `_test.go` — complete request identity,
+  consumer-owned reservation ordering, resume semantics, and impossible-state
+  refusal.
+- `internal/controlstore/sqlite/decomposition.go` and `_test.go` — immutable
+  global OperationID reservation and concurrent/restart collision proof using
+  the existing schema.
+- `internal/helpercmd/mission_method.go` and `_test.go` — compose SQLite as the
+  root operation authority while keeping tracker effects outside its transaction.
 
 **Validation**:
 
@@ -336,9 +395,11 @@ contract, including when it is slow, unavailable, stale, or wrong.
 go test ./internal/tracker/beads
 go test -race ./internal/tracker/beads
 go test ./internal/scenario -run 'MissionMethod(Beads|ProviderParity)'
+go test ./internal/tracker ./internal/mission ./internal/controlstore/sqlite ./internal/helpercmd
 go test ./internal/tracker/fake ./internal/tracker/conformance ./internal/...
-go vet ./internal/tracker/beads ./internal/scenario
-gofmt -d internal/tracker/beads internal/scenario
+go test -race ./internal/mission ./internal/controlstore/sqlite ./internal/helpercmd
+go vet ./internal/tracker/beads ./internal/scenario ./internal/mission ./internal/controlstore/sqlite ./internal/helpercmd
+gofmt -d internal/tracker/beads internal/scenario internal/tracker/work_definition.go internal/tracker/work_definition_test.go internal/mission/decomposition.go internal/mission/decomposition_test.go internal/controlstore/sqlite/decomposition.go internal/controlstore/sqlite/decomposition_test.go internal/helpercmd/mission_method.go internal/helpercmd/mission_method_test.go
 ```
 
 - Equivalent fake and Beads graphs yield one semantic WorkRevision digest while
@@ -372,6 +433,12 @@ gofmt -d internal/tracker/beads internal/scenario
   formula, hook, or merge slot gains mission/execution/review authority.
 - Portable fake tests do not require Beads; a skipped real profile is reported
   honestly and is not recorded as qualification evidence.
+- Create-only decomposition does not demand imaginary CAS. Update/dependency
+  capability requirements are derived from the validated proposal set and
+  refuse before effects when absent.
+- Root operation identity is reserved by the local SQLite authority before any
+  provider call. Exact replay can resume; changed semantics, cross-kind reuse,
+  store failure, and impossible fresh-root/child-replay states fail closed.
 - Record event-sourced completion after applicable validation succeeds:
 
 ```bash

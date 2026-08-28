@@ -250,9 +250,17 @@
         "internal/tracker/beads/catalog_test.go",
         "internal/tracker/beads/graph.go",
         "internal/tracker/beads/graph_test.go",
-        "internal/tracker/beads/metadata.go",
-        "internal/tracker/beads/metadata_test.go",
-        "internal/tracker/beads/mission_method_integration_test.go"
+      "internal/tracker/beads/metadata.go",
+      "internal/tracker/beads/metadata_test.go",
+      "internal/tracker/beads/mission_method_integration_test.go",
+      "internal/tracker/work_definition.go",
+      "internal/tracker/work_definition_test.go",
+      "internal/mission/decomposition.go",
+      "internal/mission/decomposition_test.go",
+      "internal/controlstore/sqlite/decomposition.go",
+      "internal/controlstore/sqlite/decomposition_test.go",
+      "internal/helpercmd/mission_method.go",
+      "internal/helpercmd/mission_method_test.go"
       ],
       "predicted_surfaces": [
         "api",

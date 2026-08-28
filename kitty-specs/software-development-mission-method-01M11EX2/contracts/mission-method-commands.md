@@ -83,8 +83,17 @@ definitions, operation identity
 **Refusals**: plan mismatch, provider unavailable/ambiguous, coverage/quality
 failure, mapping conflict
 
-Provider effects use the existing tracker operation marker and observation
-rules. The command performs no mission transition. After a complete successful
+After local validation, the consumer-owned control store durably reserves the
+root operation identity and complete canonical request digest before any
+provider call. The same identity and digest may resume a partial saga; any
+cross-kind, cross-mission, or changed-content reuse conflicts without touching
+the provider. Child effects then use the tracker operation marker and
+observation rules. Capability requirements are derived from the validated
+proposal set: create-only work does not require guarded update, while updates
+and dependency edges require their corresponding real provider capabilities.
+Local serialization never upgrades an unguarded provider into CAS.
+
+The command performs no mission transition. After a complete successful
 result, the caller submits two ordinary `mission transition` commands with
 distinct operation IDs and exact snapshots: `plan_approved` to `decomposing`,
 then `decomposing` to `work_draft_ready`. A partial, failed, or ambiguous result
