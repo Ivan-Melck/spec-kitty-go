@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "verdict": "pass",
+  "source_commit": "4a96edd13d135497ef0662e25e78d5394cdb32ca",
+  "source_tree": "bc4ed9bbf7d3255fc7afc0e249672fb8a6020047",
+  "source_clean": true,
+  "profiles": [
+    {
+      "name": "mission-contract",
+      "class": "portable_fast",
+      "expected": 4,
+      "started": 4,
+      "terminal": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 38152,
+      "artifact_sha256": "e3b8329c37352142bd2161fea5de2de785258597098687ce179c0aa09316a9e3",
+      "tests": ["TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation", "TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"]
+    },
+    {
+      "name": "mission-acceptance",
+      "class": "portable_fast",
+      "expected": 3,
+      "started": 3,
+      "terminal": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 25176,
+      "artifact_sha256": "8466e6d04006d136a2dc08dbcc22d900bbd983db203b37ff20ed19fcb330299d",
+      "tests": ["TestMissionMethodNormalizationAndPureQueries100", "TestMissionMethodProjectionAndGovernanceIndependence100", "TestMissionMethodProviderParityPortableCampaign"]
+    },
+    {
+      "name": "mission-adversarial",
+      "class": "portable_slow",
+      "expected": 6,
+      "started": 6,
+      "terminal": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 84119,
+      "artifact_sha256": "65fdcfd074c1a6e0ec328b133985a21b7d68b8ee0b0ced1d43a3803f2bafca6b",
+      "tests": ["TestDishonestMissionAuthorityDetectsSameCountOutboxMutation", "TestMissionMethodBeadsDishonestProviderRefusesBeforePublication", "TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse", "TestMissionMethodCrashBoundaryCensus", "TestMissionMethodFinalizationProcessRaces100", "TestMissionMethodSemanticDriftMutations1000"]
+    },
+    {
+      "name": "mission-real-identity",
+      "class": "real_provider_opt_in",
+      "expected": 1,
+      "started": 1,
+      "terminal": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 10640,
+      "tests": ["TestMissionMethodRealBeadsTwoItemQualification"]
+    }
+  ],
+  "supporting_profiles": [
+    {"name": "provider-portable", "expected": 2, "started": 2, "terminal": 2, "passed": 2, "failed": 0, "skipped": 0, "duration_ms": 585, "artifact_sha256": "355067319a1698934b76c91659e9e5abb394bc15abd367af4d1e9ebc0f528942"},
+    {"name": "provider-adversarial", "expected": 20, "started": 20, "terminal": 20, "passed": 20, "failed": 0, "skipped": 0, "duration_ms": 270353, "artifact_sha256": "0b39c0667ab5f1edbed8adc762a8c62a9251f1f7ef78551f6ed6b9f9066f26da"},
+    {"name": "architecture", "expected": 38, "started": 38, "terminal": 38, "passed": 38, "failed": 0, "skipped": 0, "duration_ms": 13729, "artifact_sha256": "f53e634dbbbf0aee883b75ec227208b0f88f1b28e1171c963f9392c7007c2269"},
+    {"name": "scope", "expected": 2, "started": 2, "terminal": 2, "passed": 2, "failed": 0, "skipped": 0, "duration_ms": 2016, "artifact_sha256": "0011640a5571378ff8d7ceb56b8c90af7cc3973e219f60a6a0f932e020950026"},
+    {"name": "historical-full-scenario", "expected": 73, "started": 73, "terminal": 73, "passed": 73, "failed": 0, "skipped": 0, "duration_ms": 767682, "artifact_sha256": "0d3af7e3ddc05d2c3de8e2f7a5d0027e98d9d0ecbbd0f553ef125e5111e5a48f"}
+  ],
+  "campaigns": [
+    {"name": "quality", "verdict": "pass", "duration_ms": 37559, "artifact_sha256": "c60aecf75e3d1c896dd9e776c0a9ba38421c05e2ccbd44f368ad7abab639f1de"},
+    {"name": "provider_bounded", "verdict": "pass", "duration_ms": 271012, "artifact_sha256": "60c2d9c6d15779192a5fa5d86ea2ee5151e210de54700071e452f182fabecde6"},
+    {"name": "full_campaign", "verdict": "pass", "duration_ms": 767732, "artifact_sha256": "8c90f6774dc47f02291baeee700c401957002f4665c452870159469603385dfe"},
+    {"name": "mission_full", "verdict": "pass", "duration_ms": 147565, "artifact_sha256": "ce4c5d98edc844712a1784d1eeb29ae1be744195bfd0e02f1980d61a0fad3c45"}
+  ],
+  "real_provider": {
+    "phase2_frozen_runner": {"expected": 11, "started": 11, "terminal": 11, "passed": 11, "failed": 0, "artifact_sha256": "655806b82d91843fb69cb572e40caadb0f180d170624078f6d11dcad08d8e336"},
+    "phase3_two_item_selector": {"expected": 1, "started": 1, "terminal": 1, "passed": 1, "failed": 0, "artifact_sha256": "86e207c22c85f863683350913360e8e826a9a79d44ad3a99ec9b2242957161f9"}
+  },
+  "failed_or_non_admissible_attempts": [
+    {"id": "01", "source": "6e1cc43", "verdict": "non_admissible", "reason": "qualification wrapper toolchain environment conflict"},
+    {"id": "02", "source": "6e1cc43", "verdict": "fail", "reason": "historical v1 helper could not satisfy complete eligibility composition"},
+    {"id": "03", "source": "37a09c5", "verdict": "non_admissible", "reason": "vulnerability scan resolved the wrong application toolchain"},
+    {"id": "04", "source": "37a09c5", "verdict": "superseded_pass", "reason": "bounded quality passed but the complete qualification set had not run"},
+    {"id": "05", "source": "37a09c5", "verdict": "fail", "reason": "exact scenario census and workflow-timeout contract failed"},
+    {"id": "06", "source": "e7aee6d", "verdict": "non_admissible", "reason": "load-sensitive IG-05 claimant attempt; isolated control passed"},
+    {"id": "07", "source": "e7aee6d", "verdict": "non_admissible", "reason": "load-sensitive two-agent claimant attempt; isolated control passed"},
+    {"id": "08", "source": "e7aee6d", "verdict": "fail", "reason": "stale authority was masked by revision ineligibility"},
+    {"id": "09", "source": "c43a0cd", "verdict": "fail", "reason": "new top-level authority-ordering proof was absent from the exact census"},
+    {"id": "real-11", "source": "4a96edd", "verdict": "non_admissible", "reason": "bubblewrap could not raise loopback"},
+    {"id": "real-12", "source": "4a96edd", "verdict": "non_admissible", "reason": "container namespace probe could not read the host namespace identity"},
+    {"id": "real-13", "source": "4a96edd", "verdict": "non_admissible", "reason": "traced confirmation of unreadable namespace identity"},
+    {"id": "real-14", "source": "4a96edd", "verdict": "non_admissible", "reason": "isolated runner could not resolve the safe Git worktree identity"},
+    {"id": "real-15", "source": "4a96edd", "verdict": "non_admissible", "reason": "offline child could not see the prewarmed module cache; zero scenarios started"},
+    {"id": "real-16", "source": "4a96edd", "verdict": "diagnostic_fail", "reason": "direct selector reproduced the missing offline module cache"},
+    {"id": "real-17", "source": "4a96edd", "verdict": "diagnostic_pass", "reason": "direct selector validated containment and cache correction; not the evidence runner"}
+  ],
+  "hosted_baseline": {"required_samples": 10, "observed_samples": 0, "duration_ms": null, "verdict": "pending"}
+}

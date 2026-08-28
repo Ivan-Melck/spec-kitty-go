@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "verdict": "pass",
+  "tested_source": {
+    "commit": "4a96edd13d135497ef0662e25e78d5394cdb32ca",
+    "tree": "bc4ed9bbf7d3255fc7afc0e249672fb8a6020047",
+    "clean": true
+  },
+  "publication": {
+    "payload_commit": null,
+    "disposition": "the containing payload commit is recorded by the following documentation-only attestation"
+  },
+  "host": {
+    "goos": "linux",
+    "goarch": "amd64",
+    "go_version": "go1.26.5",
+    "git_version": "2.43.0",
+    "staticcheck_version": "2026.1 (v0.7.0)",
+    "govulncheck_version": "1.6.0",
+    "hosted_baseline": null
+  },
+  "portable_campaign": {
+    "started_at": "2026-08-28T17:45:43.829676101Z",
+    "finished_at": "2026-08-28T18:00:59.187720078Z",
+    "quality": {"verdict": "pass", "duration_ms": 37559},
+    "historical_full_scenario": {"expected": 73, "started": 73, "terminal": 73, "passed": 73, "failed": 0, "skipped": 0, "duration_ms": 767682, "timeout_ms": 3600000, "timed_out": false},
+    "mission_full": {"expected": 13, "started": 13, "terminal": 13, "passed": 13, "failed": 0, "skipped": 0, "duration_ms": 147565}
+  },
+  "mission_profiles": {
+    "mission_contract": {"expected": 4, "started": 4, "terminal": 4, "passed": 4, "failed": 0, "skipped": 0, "duration_ms": 38152, "timeout_ms": 1200000, "timed_out": false},
+    "mission_acceptance": {"expected": 3, "started": 3, "terminal": 3, "passed": 3, "failed": 0, "skipped": 0, "duration_ms": 25176, "timeout_ms": 1200000, "timed_out": false},
+    "mission_adversarial": {"expected": 6, "started": 6, "terminal": 6, "passed": 6, "failed": 0, "skipped": 0, "duration_ms": 84119, "timeout_ms": 1200000, "timed_out": false}
+  },
+  "scale_proofs": {
+    "semantic_drift": {"seed": 99533022, "generator_schema": 1, "expected": 1000, "changed": 1000, "silent": 0, "normalization_repetitions": 100},
+    "two_process_finalization": {"attempts": 100, "current_generation_count_each": 1, "unexpected_errors": 0, "restart_audits": 100},
+    "crash_boundaries": {"expected": 9, "started": 9, "terminal": 9, "passed": 9, "failed": 0},
+    "projection_trials": {"expected": 100, "passed": 100, "authority_mutations": 0},
+    "governance_history_trials": {"expected": 100, "passed": 100, "history_mutations": 0},
+    "pure_next_queries": {"expected": 100, "passed": 100, "writes": 0}
+  },
+  "provider_qualification": {
+    "provider": "beads",
+    "version": "1.2.2",
+    "binary_sha256": "0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6",
+    "source_tag_commit": "6c124203e771433a3550c348771a5b5e27fd3c21",
+    "protocol_schema": 1,
+    "storage_mode": "server_multiwriter",
+    "offline_network_namespace": true,
+    "expected": 11,
+    "started": 11,
+    "terminal": 11,
+    "passed": 11,
+    "failed": 0,
+    "started_at": "2026-08-28T18:17:33.66600257Z",
+    "finished_at": "2026-08-28T18:25:02.718717441Z",
+    "artifact_sha256": "655806b82d91843fb69cb572e40caadb0f180d170624078f6d11dcad08d8e336",
+    "contention": {"processes": 8, "attempted": 1000, "terminal": 1000, "passed": 1000, "collisions": 0, "duplicates": 0, "duration_ms": 156860.355},
+    "authority_audits": 23,
+    "authority_invariant_failures": 0,
+    "mission_method_two_item": {"expected": 1, "started": 1, "terminal": 1, "passed": 1, "failed": 0, "duration_ms": 10640, "raw_artifact_retained_outside_repository": true, "raw_artifact_sha256": "86e207c22c85f863683350913360e8e826a9a79d44ad3a99ec9b2242957161f9"}
+  },
+  "quality_gates": [
+    {"name": "compile_all", "verdict": "pass", "duration_ms": null},
+    {"name": "race", "verdict": "pass", "duration_ms": null},
+    {"name": "go_vet", "verdict": "pass", "duration_ms": null},
+    {"name": "staticcheck", "verdict": "pass", "duration_ms": null},
+    {"name": "go_mod_verify", "verdict": "pass", "duration_ms": null},
+    {"name": "govulncheck", "verdict": "pass", "duration_ms": null, "reachable_findings": 0},
+    {"name": "format", "verdict": "pass", "duration_ms": null},
+    {"name": "build", "verdict": "pass", "duration_ms": null},
+    {"name": "architecture", "verdict": "pass", "duration_ms": 13729},
+    {"name": "scope", "verdict": "pass", "duration_ms": 2016}
+  ],
+  "privacy": {"absolute_home_paths": 0, "credentials": 0, "environment_dumps": 0, "private_transcripts": 0, "raw_provider_databases": 0, "unrestricted_tool_output": 0}
+}
