@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	PublishRequestCommitmentAlgorithm  = "sha256:spec-kitty-artifact-publish-request-v1"
+	PublishRequestCommitmentAlgorithm  = "sha256:spec-kitty-artifact-publish-request-v2"
 	ApprovalRequestCommitmentAlgorithm = "sha256:spec-kitty-artifact-approval-request-v1"
 	CurrentApprovalCommitmentAlgorithm = "sha256:spec-kitty-current-artifact-approval-v1"
-	publishRequestDomain               = "spec-kitty/artifact-publish-request/v1\x00"
+	publishRequestDomain               = "spec-kitty/artifact-publish-request/v2\x00"
 	approvalRequestDomain              = "spec-kitty/artifact-approval-request/v1\x00"
 	currentApprovalDomain              = "spec-kitty/current-artifact-approval/v1\x00"
 )
@@ -145,22 +145,26 @@ type PublishCommand struct {
 	CreatedAt          time.Time
 	Content            []byte
 	Validation         ValidationResult
+	// ExpectedLatestRevisionID is the exact current revision observed by the
+	// caller. Empty means the caller observed no prior revision.
+	ExpectedLatestRevisionID string
 }
 
 // AtomicPublishRequest is the complete persistence envelope and contains no
 // artifact bytes. The repository assigns RevisionNumber atomically.
 type AtomicPublishRequest struct {
-	OperationID        string
-	RequestDigest      string
-	ArtifactRevisionID string
-	MissionID          string
-	Kind               Kind
-	ContentDigest      string
-	SourceRef          string
-	SourceRevision     string
-	CreatedBy          string
-	CreatedAt          time.Time
-	Validation         ValidationResult
+	OperationID              string
+	RequestDigest            string
+	ArtifactRevisionID       string
+	MissionID                string
+	Kind                     Kind
+	ContentDigest            string
+	SourceRef                string
+	SourceRevision           string
+	CreatedBy                string
+	CreatedAt                time.Time
+	Validation               ValidationResult
+	ExpectedLatestRevisionID string
 }
 
 type PublishResult struct {
@@ -196,6 +200,11 @@ func preparePublish(command PublishCommand) (AtomicPublishRequest, error) {
 	if err := validateIdentity("mission_id", command.MissionID); err != nil {
 		return AtomicPublishRequest{}, err
 	}
+	if command.ExpectedLatestRevisionID != "" {
+		if err := validateIdentity("expected_latest_revision_id", command.ExpectedLatestRevisionID); err != nil {
+			return AtomicPublishRequest{}, err
+		}
+	}
 	if err := command.Kind.Validate(); err != nil {
 		return AtomicPublishRequest{}, err
 	}
@@ -228,6 +237,7 @@ func preparePublish(command PublishCommand) (AtomicPublishRequest, error) {
 		MissionID: command.MissionID, Kind: command.Kind, ContentDigest: contentDigest,
 		SourceRef: command.SourceRef, SourceRevision: command.SourceRevision,
 		CreatedBy: command.CreatedBy, CreatedAt: createdAt, Validation: command.Validation,
+		ExpectedLatestRevisionID: command.ExpectedLatestRevisionID,
 	}
 	request.RequestDigest, err = publishRequestDigest(request)
 	if err != nil {
@@ -242,20 +252,22 @@ func publishRequestDigest(request AtomicPublishRequest) (string, error) {
 		return "", err
 	}
 	identity := struct {
-		ArtifactRevisionID string    `json:"artifact_revision_id"`
-		MissionID          string    `json:"mission_id"`
-		Kind               Kind      `json:"kind"`
-		ContentDigest      string    `json:"content_digest"`
-		SourceRef          string    `json:"source_ref"`
-		SourceRevision     string    `json:"source_revision"`
-		CreatedBy          string    `json:"created_by"`
-		CreatedAt          time.Time `json:"created_at"`
-		ValidationDigest   string    `json:"validation_digest"`
+		ArtifactRevisionID       string    `json:"artifact_revision_id"`
+		MissionID                string    `json:"mission_id"`
+		Kind                     Kind      `json:"kind"`
+		ContentDigest            string    `json:"content_digest"`
+		SourceRef                string    `json:"source_ref"`
+		SourceRevision           string    `json:"source_revision"`
+		CreatedBy                string    `json:"created_by"`
+		CreatedAt                time.Time `json:"created_at"`
+		ValidationDigest         string    `json:"validation_digest"`
+		ExpectedLatestRevisionID string    `json:"expected_latest_revision_id"`
 	}{
 		ArtifactRevisionID: request.ArtifactRevisionID, MissionID: request.MissionID,
 		Kind: request.Kind, ContentDigest: request.ContentDigest, SourceRef: request.SourceRef,
 		SourceRevision: request.SourceRevision, CreatedBy: request.CreatedBy,
 		CreatedAt: request.CreatedAt.UTC(), ValidationDigest: validationDigest,
+		ExpectedLatestRevisionID: request.ExpectedLatestRevisionID,
 	}
 	return canonicalDigest(publishRequestDomain, identity)
 }
