@@ -1,0 +1,58 @@
+package sqlite
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
+)
+
+func TestSuccessorPublicationPersistsCompleteEligibility(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	at := time.Date(2026, 8, 28, 3, 0, 0, 0, time.UTC)
+	snapshot := phase3MissionSnapshot(at)
+	snapshot.CurrentStep = mission.StepWorkFinalized
+	snapshot.CurrentWorkRevisionID = "revision-v2-01"
+	snapshot.Lifecycle = mission.LifecycleTerminal
+	snapshot.TerminalOutcome = mission.OutcomeWorkFinalized
+	seedPhase3Mission(t, store, snapshot)
+	old := testRevisionV2(t, "revision-v2-01", 1, "", "old title", at)
+	newRevision := testRevisionV2(t, "revision-v2-02", 2, old.ID(), "new title", at.Add(time.Second))
+	oldBytes, _ := old.Encode()
+	_, err = store.db.Exec(`INSERT INTO phase3_work_revisions_v2(work_revision_id,mission_id,project_id,generation,predecessor_id,graph_digest,criteria_digest,encoded_revision) VALUES(?,?,?,?,?,?,?,?)`, old.ID(), old.MissionID(), old.ProjectID(), old.Generation(), nil, old.GraphDigest(), old.CriteriaDigest(), oldBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.db.Exec(`INSERT INTO phase3_current_work_revisions(mission_id,work_revision_id,generation) VALUES(?,?,1)`, snapshot.MissionID, old.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	drift, err := workgraph.DetectDrift(old, newRevision, at.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := workgraph.ReconcileMixed(workgraph.MixedReconcileRequest{ID: "reconciliation-01", Old: old, New: newRevision, Drift: drift, Statuses: []workgraph.WorkStatusAssignment{{WorkID: "work-01", Status: workgraph.StatusActive}}, Decisions: []workgraph.WorkDispositionDecisionParams{{OldWorkID: "work-01", Disposition: workgraph.Invalidate, Rationale: "replace changed work"}}, ActorID: "actor-01", Rationale: "semantic change", OccurredAt: at.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := mission.SuccessorPublicationCommit{MissionID: snapshot.MissionID, ProjectID: snapshot.ProjectID, ExpectedMission: snapshot, ExpectedCurrentGeneration: 1, ExpectedOld: old, Candidate: newRevision, Drift: drift, ReconciliationID: "reconciliation-01", Reconciliation: plan, OperationID: "operation-successor-01", ActorID: "actor-01", GovernanceContextID: "governance-01", Rationale: "semantic change", OccurredAt: at.Add(time.Second), RequestDigest: digest64("7")}
+	result, err := store.PublishSuccessorAtomically(ctx, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Revision.ID() != newRevision.ID() {
+		t.Fatal("successor missing")
+	}
+	fact, err := store.WorkEligibilityFact(ctx, old.ID(), "work-01", workgraph.StatusActive, workgraph.EligibilityHandoff)
+	if err != nil || !fact.Complete() || fact.NewRevisionID() != newRevision.ID() || fact.Permitted() {
+		t.Fatalf("fact=%#v err=%v", fact, err)
+	}
+}
