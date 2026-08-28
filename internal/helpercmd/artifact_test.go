@@ -1,7 +1,11 @@
 package helpercmd
 
 import (
+	"context"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +50,19 @@ func TestArtifactStrictJSONRejectsNullBeforeStoreOpen(t *testing.T) {
 	response := invokeMethodUsage(t, RunArtifact, []string{"publish", "--request-json", `{"database":"unused","correlation_id":"c","operation_id":"operation-artifact","artifact_revision_id":"artifact-1","mission_id":"mission-1","kind":"intent","source_ref":"intent.md","source_revision":"commit-1","created_by":"actor-1","created_at":"2026-08-28T00:00:00Z","content":null,"present_concerns":[],"validated_at":"2026-08-28T00:00:00Z","expected_latest_revision_id":""}`})
 	if response.OK || response.Kind != "invalid_invocation" {
 		t.Fatalf("response=%+v", response)
+	}
+}
+
+func TestArtifactApproveValidatesBeforeOpeningStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent", "control.db")
+	response := invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+		return runArtifactApprove(ctx, artifactApproveRequest{Database: path, CorrelationID: "correlation-approve-preopen", OperationID: "operation-approve-preopen", ApprovalID: "approval-preopen", ArtifactRevisionID: "artifact-preopen", Verdict: artifact.VerdictApproved, ActorID: "actor-preopen", EvidenceDigest: strings.Repeat("a", 64), GovernanceContextID: "governance-preopen", SubmittedAt: time.Time{}}, stdout)
+	}, nil)
+	if response.OK || response.Error == nil {
+		t.Fatalf("response=%+v", response)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("store opened for malformed approval: %v", err)
 	}
 }
 

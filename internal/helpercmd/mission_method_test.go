@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,7 +14,11 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
+	"github.com/spec-kitty/go-kitty3/internal/tracker"
+	"github.com/spec-kitty/go-kitty3/internal/tracker/fake"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 func TestMissionInitializePersistsExactCreationAuthorityAndReplaysAfterReopen(t *testing.T) {
@@ -90,6 +95,172 @@ func TestMissionInitializeMissingCreationProvenanceFailsBeforeStoreOpen(t *testi
 				t.Fatalf("store opened for missing provenance: %v", err)
 			}
 		})
+	}
+}
+
+func TestMutatingMissionMethodCommandsValidateBeforeOpeningAnyPath(t *testing.T) {
+	definition, _ := softwaredev.Definition()
+	at := time.Date(2026, 8, 28, 16, 0, 0, 0, time.UTC)
+	missionAt := func(step mission.StepKey, version uint64) mission.MissionSnapshot {
+		return mission.MissionSnapshot{MissionID: "mission-preopen", ProjectID: "project-preopen", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), DefinitionCommitment: definition.Commitment(), Lifecycle: mission.LifecycleOpen, CurrentStep: step, StateVersion: version, CreatedAt: at, UpdatedAt: at}
+	}
+	work := []workDefinitionInput{{WorkID: "work-preopen", Title: "Validate before opening", Description: "Reject malformed transport values before durable composition.", DesignContext: "The helper is a transport boundary.", Criteria: []tracker.WorkCriterion{{ID: "criterion-preopen", Text: "No path is created", Outcome: "invalid input leaves paths absent", Verifier: tracker.VerifierTest, Required: true}}, WriteScopes: []tracker.WriteScope{{Path: "internal/preopen", Domain: "preopen", Access: tracker.ScopeWriteExclusive}}, Provenance: []tracker.ScopeRef{{ID: "plan-preopen", Kind: tracker.ScopePlanConcern}}}}
+	approved := []approvedScopeInput{{ID: "plan-preopen", Kind: workgraph.ScopePlanConcern}}
+
+	for _, test := range []struct {
+		name    string
+		invoke  func(database, trackerPath string) MethodResponse
+		tracker bool
+	}{
+		{name: "transition", invoke: func(database, _ string) MethodResponse {
+			current := missionAt(mission.StepInitialized, 1)
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runMissionTransition(ctx, transitionRequest{Database: database, CorrelationID: "correlation-preopen-transition", MissionID: current.MissionID, DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), DefinitionCommitment: definition.Commitment(), ExpectedSnapshot: current, ExpectedCurrentStep: current.CurrentStep, ExpectedStateVersion: current.StateVersion, Successor: mission.StepSpecifying, EventID: "event-preopen", OperationID: "operation-preopen-transition", ActorID: "actor-preopen", GovernanceContextID: "governance-preopen", OccurredAt: time.Time{}}, stdout)
+			}, nil)
+		}},
+		{name: "decompose", tracker: true, invoke: func(database, trackerPath string) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runMissionDecompose(ctx, decomposeRequest{Database: database, TrackerStore: trackerPath, CorrelationID: "correlation-preopen-decompose", MissionID: "mission-preopen", ProjectID: "project-preopen", Provider: "durable_fake", ExpectedMission: missionAt(mission.StepPlanApproved, 2), PlanRevisionID: "plan-preopen", PlanContentDigest: strings.Repeat("a", 64), ApprovedScope: approved, Work: work, ActorID: "actor-preopen", OperationID: "operation-preopen-decompose", GovernanceContextID: "governance-preopen", OccurredAt: time.Time{}}, stdout)
+			}, nil)
+		}},
+		{name: "finalize", tracker: true, invoke: func(database, trackerPath string) MethodResponse {
+			return invokeMethod(t, func(ctx context.Context, _ []string, stdout, _ io.Writer) int {
+				return runWorkFinalize(ctx, finalizeRequest{Database: database, TrackerStore: trackerPath, CorrelationID: "correlation-preopen-finalize", MissionID: "mission-preopen", ProjectID: "project-preopen", ExpectedMission: missionAt(mission.StepWorkDraftReady, 3), ProposedRevisionID: "revision-preopen", PlanningSourceCommit: strings.Repeat("b", 40), PlanRevisionID: "plan-preopen", PlanDigest: strings.Repeat("a", 64), ApprovedScope: approved, Work: work, ProviderRefs: []providerRefInput{{WorkID: "work-preopen", ExternalID: "external-preopen", MetadataSchema: tracker.WorkDefinitionMetadataSchemaV1, CreatedByOperation: "operation-provider-preopen", LastObservation: 1}}, ActorID: "actor-preopen", OperationID: "operation-preopen-finalize", GovernanceContextID: "governance-preopen", OccurredAt: time.Time{}}, stdout)
+			}, nil)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			database, trackerPath := filepath.Join(root, "absent", "control.db"), filepath.Join(root, "absent-provider", "tracker.json")
+			response := test.invoke(database, trackerPath)
+			if response.OK || response.Error == nil {
+				t.Fatalf("response=%+v", response)
+			}
+			for _, path := range []string{database, trackerPath} {
+				if !test.tracker && path == trackerPath {
+					continue
+				}
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("path %q opened for malformed request: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestProviderVerifiedDriftRejectsSemanticSubstitutionAndAcceptsRevisionNoise(t *testing.T) {
+	ctx := context.Background()
+	at := time.Date(2026, 8, 28, 17, 0, 0, 0, time.UTC)
+	metadata, _ := tracker.NewOpaqueMetadata([]byte(`{}`))
+	criterion := tracker.WorkCriterion{ID: "criterion-provider", Text: "Observe provider truth", Outcome: "provider semantics are exact", Verifier: tracker.VerifierTest, Required: true, EvidenceHint: "run provider checks"}
+	definition, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{ProjectID: "project-provider", WorkID: "work-provider", Title: "Provider title", Description: "Provider-owned semantic description.", DesignContext: "The durable provider is observed directly.", Criteria: []tracker.WorkCriterion{criterion}, WriteScopes: []tracker.WriteScope{{Path: "internal/provider", Domain: "provider", Access: tracker.ScopeWriteExclusive}}, Provenance: []tracker.ScopeRef{{ID: "plan-provider", Kind: tracker.ScopePlanConcern}}, MetadataSchema: tracker.WorkDefinitionMetadataSchemaV1, ProviderMetadata: metadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerStore, err := fake.Open(filepath.Join(t.TempDir(), "tracker.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := fake.NewProvider(providerStore)
+	mutation, err := provider.CreateDefinition(ctx, tracker.CreateWorkDefinitionRequest{OperationID: "operation-provider-create", Definition: definition})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := mutation.Observation.ExternalRef()
+	observation := mutation.Observation.ProviderObservation()
+	semantic, _ := semanticWorkObservation(definition)
+	draft, err := workgraph.NewDraftObservation("project-provider", "mission-provider", "plan-provider", strings.Repeat("a", 64), []workgraph.ApprovedScope{{ID: "plan-provider", Kind: workgraph.ScopePlanConcern, MissionID: "mission-provider"}}, []workgraph.WorkObservation{semantic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lanes, err := workgraph.CollapseLanes(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseWork := workItemV2ParamsFromDefinition(definition)
+	newCandidate := func(id ids.WorkRevisionID, generation uint64, predecessor ids.WorkRevisionID, revision tracker.Revision, work workgraph.WorkItemV2Params) workgraph.RevisionV2 {
+		value, buildErr := workgraph.NewRevisionV2(workgraph.RevisionV2Params{ID: id, ProjectID: "project-provider", MissionID: "mission-provider", Generation: generation, PredecessorID: predecessor, PlanningSourceCommit: strings.Repeat("b", 40), MissionDefinition: workgraph.MissionDefinitionIdentity{Key: "software-development", Version: 1, Digest: strings.Repeat("c", 64)}, DependencyPolicy: workgraph.DependencyApprovedOrDone, WorkItems: []workgraph.WorkItemV2Params{work}, Lanes: lanes, ProviderObservations: []workgraph.ProviderObservationV2{{WorkID: "work-provider", Provider: "durable_fake", ExternalID: ref.ExternalID, Revision: fmt.Sprint(revision)}}, FinalizedBy: "actor-provider", FinalizedAt: at, GovernanceContextID: "governance-provider"})
+		if buildErr != nil {
+			t.Fatal(buildErr)
+		}
+		return value
+	}
+	old := newCandidate("revision-provider-1", 1, "", observation.Revision, baseWork)
+	if err = providerStore.HumanAssign(ctx, ref.ExternalID, "human-owner"); err != nil {
+		t.Fatal(err)
+	}
+	current := observation.Revision + 1
+	input := []providerRefInput{{WorkID: ref.WorkID, ExternalID: ref.ExternalID, MetadataSchema: ref.MetadataSchema, CreatedByOperation: ref.CreatedByOperation, LastObservation: current}}
+	noise := newCandidate("revision-provider-2", 2, old.ID(), current, baseWork)
+	if err = verifyProviderCandidate(ctx, noise, input, provider); err != nil {
+		t.Fatalf("revision-only provider noise refused: %v", err)
+	}
+	report, err := workgraph.DetectDrift(old, noise, at.Add(time.Second))
+	if err != nil || report.SemanticStatus() != workgraph.SemanticObservationOnly {
+		t.Fatalf("noise report=%+v err=%v", report, err)
+	}
+
+	mutations := map[string]func(*workgraph.WorkItemV2Params){
+		"title":          func(item *workgraph.WorkItemV2Params) { item.Title = "Caller substituted title" },
+		"description":    func(item *workgraph.WorkItemV2Params) { item.Description = "Caller substituted description." },
+		"design_context": func(item *workgraph.WorkItemV2Params) { item.DesignContext = "Caller substituted design context." },
+		"criterion_text": func(item *workgraph.WorkItemV2Params) { item.Criteria[0].Text = "Caller substituted criterion" },
+		"criterion_outcome": func(item *workgraph.WorkItemV2Params) {
+			item.Criteria[0].Outcome = "caller substituted outcome"
+		},
+		"criterion_required": func(item *workgraph.WorkItemV2Params) { item.Criteria[0].Required = false },
+		"criterion_verifier": func(item *workgraph.WorkItemV2Params) {
+			item.Criteria[0].VerifierKind = tracker.VerifierReview.String()
+		},
+		"criterion_evidence": func(item *workgraph.WorkItemV2Params) { item.Criteria[0].EvidenceHint = "caller hint" },
+		"criterion_metadata": func(item *workgraph.WorkItemV2Params) { item.Criteria[0].Metadata = map[string]any{"caller": "value"} },
+		"scope_path":         func(item *workgraph.WorkItemV2Params) { item.WriteScopes[0].Path = "internal/substituted" },
+		"scope_domain":       func(item *workgraph.WorkItemV2Params) { item.WriteScopes[0].Domain = "substituted" },
+		"scope_access":       func(item *workgraph.WorkItemV2Params) { item.WriteScopes[0].Access = workgraph.ScopeReadOnly },
+		"scope_serialization": func(item *workgraph.WorkItemV2Params) {
+			item.WriteScopes[0].SerializationKey = "substituted"
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			changed := baseWork
+			changed.Criteria = append([]workgraph.CriterionV2Params(nil), baseWork.Criteria...)
+			changed.WriteScopes = append([]workgraph.NormalizedWriteScope(nil), baseWork.WriteScopes...)
+			mutate(&changed)
+			candidate := newCandidate(ids.WorkRevisionID("revision-provider-mutant-"+name), 2, old.ID(), current, changed)
+			if err := verifyProviderCandidate(ctx, candidate, input, provider); err == nil {
+				t.Fatal("caller-authored semantic substitution was accepted")
+			}
+		})
+	}
+}
+
+func TestMissionMethodRefusalsExposeBoundedStateAndStableAdapterClassification(t *testing.T) {
+	definition, _ := softwaredev.Definition()
+	at := time.Date(2026, 8, 28, 18, 0, 0, 0, time.UTC)
+	unsupported := initializeRequest{Database: "unused", CorrelationID: "correlation-state", MissionID: "mission-state", ProjectID: "project-state", DefinitionID: "unknown-definition", DefinitionVersion: 9, OperationID: "operation-state", ActorID: "actor-state", ProcessID: "process-state", Governance: methodGovernance(t, "governance-state", at), OccurredAt: at}
+	response := invokeMethod(t, RunMission, []string{"initialize", "--request-json", marshalMethod(t, unsupported)})
+	if response.OK || response.Error == nil || response.Error.Kind != "unsupported_definition" || response.Error.Observed["definition_id"] != "unknown-definition" || response.Error.Expected["definition_id"] != definition.ID().String() {
+		t.Fatalf("unsupported response=%+v", response)
+	}
+
+	root := t.TempDir()
+	blockingPath := filepath.Join(root, "provider-secret-output")
+	if err := os.WriteFile(blockingPath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	database := filepath.Join(blockingPath, "credential-control.db")
+	response = invokeMethod(t, RunMission, []string{"next", "--request-json", marshalMethod(t, nextRequest{Database: database, CorrelationID: "correlation-adapter", MissionID: "mission-adapter"})})
+	encoded, _ := json.Marshal(response)
+	if response.OK || response.Error == nil || response.Error.Kind != "adapter_unavailable" || response.Error.Recovery != "retry_same_operation" || !response.Error.RetrySafe || strings.Contains(string(encoded), database) || strings.Contains(string(encoded), "credential-control") {
+		t.Fatalf("adapter response=%s", encoded)
+	}
+
+	secret := "provider transcript secret\nraw output"
+	diagnostic := boundedMethodDiagnostic(methodStateError("provider_failure", "observe_again", "provider", "bounded refusal", map[string]string{"state": secret}, map[string]string{"state": "current"}, true))
+	encoded, _ = json.Marshal(diagnostic)
+	if strings.Contains(string(encoded), secret) || diagnostic.Observed != nil || diagnostic.Expected["state"] != "current" {
+		t.Fatalf("unbounded diagnostic=%s", encoded)
 	}
 }
 

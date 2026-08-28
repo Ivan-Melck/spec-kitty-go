@@ -33,7 +33,7 @@ func TestPhase3MissionCreateReplayConflictAndReopen(t *testing.T) {
 	}
 	service := mission.NewService(registry, store)
 	at := time.Date(2026, 8, 28, 1, 2, 3, 0, time.UTC)
-	request := mission.CreateRequest{MissionID: ids.MissionID("mission-01"), ProjectID: ids.ProjectID("project-01"), DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: ids.OperationID("operation-create-01"), ActorID: ids.ActorID("actor-01"), OccurredAt: at}
+	request := authorizedCreateRequest(t, mission.CreateRequest{MissionID: ids.MissionID("mission-01"), ProjectID: ids.ProjectID("project-01"), DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: ids.OperationID("operation-create-01"), ActorID: ids.ActorID("actor-01"), OccurredAt: at})
 	first, err := service.Create(ctx, request)
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +129,27 @@ func TestMissionCreationProvenanceRejectsPartialInputBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestMissionStoreRejectsMissingCreationProvenanceBeforeWrite(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	definition, _ := softwaredev.Definition()
+	at := time.Date(2026, 8, 28, 8, 30, 0, 0, time.UTC)
+	snapshot := mission.MissionSnapshot{MissionID: "mission-store-missing-authority", ProjectID: "project-authority", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), DefinitionCommitment: definition.Commitment(), Lifecycle: mission.LifecycleOpen, CurrentStep: definition.InitialStep(), StateVersion: 1, CreatedAt: at, UpdatedAt: at}
+	commit := mission.CreateCommit{Instance: snapshot, OperationID: "operation-store-missing-authority", RequestCommitment: mission.RequestCommitment(strings.Repeat("c", 64)), ActorID: "actor-authority", OccurredAt: at}
+
+	if _, err = store.CreateMission(ctx, commit); !mission.IsKind(err, mission.KindInvalidRequest) {
+		t.Fatalf("missing store provenance err=%v", err)
+	}
+	var missions, operations int
+	if err = store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM phase3_missions),(SELECT COUNT(*) FROM phase3_operations)`).Scan(&missions, &operations); err != nil || missions != 0 || operations != 0 {
+		t.Fatalf("missing provenance wrote missions=%d operations=%d err=%v", missions, operations, err)
+	}
+}
+
 func TestPhase3OutboxDeliveryLifecycleSurvivesRestartAndRejectsMutants(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "control.db")
@@ -139,7 +160,7 @@ func TestPhase3OutboxDeliveryLifecycleSurvivesRestartAndRejectsMutants(t *testin
 	definition, _ := softwaredev.Definition()
 	registry, _ := mission.NewRegistry(definition)
 	at := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
-	request := mission.CreateRequest{MissionID: "mission-outbox", ProjectID: "project-outbox", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-outbox", ActorID: "actor-outbox", OccurredAt: at}
+	request := authorizedCreateRequest(t, mission.CreateRequest{MissionID: "mission-outbox", ProjectID: "project-outbox", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-outbox", ActorID: "actor-outbox", OccurredAt: at})
 	if _, err = mission.NewService(registry, store).Create(ctx, request); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +231,7 @@ func TestPhase3OutboxClaimBoundaryFaultRollsBackAndReopensPending(t *testing.T) 
 	definition, _ := softwaredev.Definition()
 	registry, _ := mission.NewRegistry(definition)
 	at := time.Date(2026, 8, 28, 3, 0, 0, 0, time.UTC)
-	request := mission.CreateRequest{MissionID: "mission-outbox-fault", ProjectID: "project-outbox", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-outbox-fault", ActorID: "actor-outbox", OccurredAt: at}
+	request := authorizedCreateRequest(t, mission.CreateRequest{MissionID: "mission-outbox-fault", ProjectID: "project-outbox", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-outbox-fault", ActorID: "actor-outbox", OccurredAt: at})
 	if _, err = mission.NewService(registry, store).Create(ctx, request); err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +266,7 @@ func TestPhase3OutboxExpiredClaimIsRecoveredByOneReplacement(t *testing.T) {
 	definition, _ := softwaredev.Definition()
 	registry, _ := mission.NewRegistry(definition)
 	at := time.Date(2026, 8, 28, 3, 30, 0, 0, time.UTC)
-	request := mission.CreateRequest{MissionID: "mission-outbox-recovery", ProjectID: "project-outbox", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-outbox-recovery", ActorID: "actor-outbox", OccurredAt: at}
+	request := authorizedCreateRequest(t, mission.CreateRequest{MissionID: "mission-outbox-recovery", ProjectID: "project-outbox", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-outbox-recovery", ActorID: "actor-outbox", OccurredAt: at})
 	if _, err = mission.NewService(registry, store).Create(ctx, request); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +349,7 @@ func TestPhase3OutboxTemporalAndTransitionMutantsFailClosed(t *testing.T) {
 	definition, _ := softwaredev.Definition()
 	registry, _ := mission.NewRegistry(definition)
 	at := time.Date(2026, 8, 28, 3, 45, 0, 0, time.UTC)
-	request := mission.CreateRequest{MissionID: "mission-outbox-time", ProjectID: "project-outbox", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-outbox-time", ActorID: "actor-outbox", OccurredAt: at}
+	request := authorizedCreateRequest(t, mission.CreateRequest{MissionID: "mission-outbox-time", ProjectID: "project-outbox", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-outbox-time", ActorID: "actor-outbox", OccurredAt: at})
 	if _, err = mission.NewService(registry, store).Create(ctx, request); err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +416,7 @@ func TestOperationIdentityCannotCrossPhase3AndLegacyNamespaces(t *testing.T) {
 		t.Helper()
 		definition, _ := softwaredev.Definition()
 		registry, _ := mission.NewRegistry(definition)
-		_, err := mission.NewService(registry, store).Create(ctx, mission.CreateRequest{MissionID: ids.MissionID(missionID), ProjectID: "project-global-op", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: ids.OperationID(operationID), ActorID: "actor-global-op", OccurredAt: time.Date(2026, 8, 28, 4, 0, 0, 0, time.UTC)})
+		_, err := mission.NewService(registry, store).Create(ctx, authorizedCreateRequest(t, mission.CreateRequest{MissionID: ids.MissionID(missionID), ProjectID: "project-global-op", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: ids.OperationID(operationID), ActorID: "actor-global-op", OccurredAt: time.Date(2026, 8, 28, 4, 0, 0, 0, time.UTC)}))
 		return err
 	}
 	t.Run("phase3 then legacy", func(t *testing.T) {
@@ -560,7 +581,7 @@ func TestLegacyOperationIdentityMutationIsRejectedWithoutBlockingLegalResults(t 
 	definition, _ := softwaredev.Definition()
 	registry, _ := mission.NewRegistry(definition)
 	phase3ID := "operation-global-mutation-phase3"
-	if _, err = mission.NewService(registry, store).Create(ctx, mission.CreateRequest{MissionID: "mission-global-mutation", ProjectID: "project-global-mutation", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: ids.OperationID(phase3ID), ActorID: "actor-global-mutation", OccurredAt: time.Date(2026, 8, 28, 5, 0, 0, 0, time.UTC)}); err != nil {
+	if _, err = mission.NewService(registry, store).Create(ctx, authorizedCreateRequest(t, mission.CreateRequest{MissionID: "mission-global-mutation", ProjectID: "project-global-mutation", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: ids.OperationID(phase3ID), ActorID: "actor-global-mutation", OccurredAt: time.Date(2026, 8, 28, 5, 0, 0, 0, time.UTC)})); err != nil {
 		t.Fatal(err)
 	}
 	revision := storeRevision(t, "revision-global-mutation", 1, "work-global-mutation")
@@ -681,6 +702,10 @@ func TestPopulatedPhase3V13UpgradesToV14WithoutChangingPriorEvidence(t *testing.
 	if err = store.db.QueryRow(`SELECT (SELECT user_version FROM pragma_user_version),(SELECT COUNT(*) FROM phase3_missions WHERE mission_id='mission-v13'),(SELECT COUNT(*) FROM phase3_mission_creation_authority)`).Scan(&version, &missions, &authorities); err != nil || version != 14 || missions != 1 || authorities != 0 {
 		t.Fatalf("version=%d missions=%d authorities=%d err=%v", version, missions, authorities, err)
 	}
+	loaded, err := store.LoadMission(ctx, "mission-v13")
+	if err != nil || loaded.MissionID != "mission-v13" || loaded.StateVersion != 1 {
+		t.Fatalf("historical v13 mission is unreadable: loaded=%+v err=%v", loaded, err)
+	}
 }
 
 func TestFailedPhase3V14MigrationPreservesV13VersionAndRows(t *testing.T) {
@@ -736,6 +761,13 @@ func creationGovernance(t *testing.T, id string, at time.Time) governancecontext
 	return value
 }
 
+func authorizedCreateRequest(t *testing.T, request mission.CreateRequest) mission.CreateRequest {
+	t.Helper()
+	request.ProcessID = ids.ProcessID("process-" + request.MissionID.String())
+	request.Governance = creationGovernance(t, "governance-"+request.MissionID.String(), request.OccurredAt)
+	return request
+}
+
 func TestMissionCreateHundredCallerTwoConnectionReplayRace(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "control.db")
@@ -757,7 +789,7 @@ func TestMissionCreateHundredCallerTwoConnectionReplayRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := mission.CreateRequest{MissionID: "mission-race-create", ProjectID: "project-race", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-race-create", ActorID: "actor-race", OccurredAt: time.Date(2026, 8, 28, 7, 0, 0, 0, time.UTC)}
+	request := authorizedCreateRequest(t, mission.CreateRequest{MissionID: "mission-race-create", ProjectID: "project-race", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-race-create", ActorID: "actor-race", OccurredAt: time.Date(2026, 8, 28, 7, 0, 0, 0, time.UTC)})
 	const callers = 100
 	var wg sync.WaitGroup
 	failures := make(chan error, callers)

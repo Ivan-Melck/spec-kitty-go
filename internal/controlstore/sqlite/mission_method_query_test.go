@@ -2,10 +2,12 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 	workgraphreadmodel "github.com/spec-kitty/go-kitty3/internal/workgraph/readmodel"
@@ -75,5 +77,33 @@ func TestMissionMethodObservationRejectsCrossGenerationCorruption(t *testing.T) 
 	}
 	if _, err = store.ObserveMissionMethod(ctx, snapshot.MissionID); err == nil {
 		t.Fatal("cross-generation observation succeeded")
+	} else {
+		var diagnostic *MissionMethodObservationError
+		if !errors.As(err, &diagnostic) || diagnostic.Kind != ObservationCorrupt || diagnostic.Field != "current_generation" || diagnostic.Observed != "inconsistent" || diagnostic.Expected != "mission_revision_pointer_agreement" {
+			t.Fatalf("diagnostic=%+v err=%v", diagnostic, err)
+		}
+	}
+}
+
+func TestMissionMethodObservationClassifiesNotReadyAndInvalidQueries(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, test := range []struct {
+		mission string
+		kind    MissionMethodObservationErrorKind
+		field   string
+	}{
+		{mission: "bad/path", kind: ObservationInvalidQuery, field: "mission_id"},
+		{mission: "mission-not-finalized", kind: ObservationNotReady, field: "current_generation"},
+	} {
+		_, observeErr := store.ObserveMissionMethod(ctx, ids.MissionID(test.mission))
+		var diagnostic *MissionMethodObservationError
+		if !errors.As(observeErr, &diagnostic) || diagnostic.Kind != test.kind || diagnostic.Field != test.field || diagnostic.Observed == "" || diagnostic.Expected == "" {
+			t.Fatalf("mission=%q diagnostic=%+v err=%v", test.mission, diagnostic, observeErr)
+		}
 	}
 }

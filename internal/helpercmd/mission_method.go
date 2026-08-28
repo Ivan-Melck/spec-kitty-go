@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -28,11 +29,33 @@ const missionMethodSchemaVersion uint16 = 1
 const maxMissionMethodRequest = 2 << 20
 
 type MethodDiagnostic struct {
-	Kind      string `json:"kind"`
-	Recovery  string `json:"recovery"`
-	Field     string `json:"field,omitempty"`
-	RetrySafe bool   `json:"retry_safe"`
-	Message   string `json:"message"`
+	Kind      string            `json:"kind"`
+	Recovery  string            `json:"recovery"`
+	Field     string            `json:"field,omitempty"`
+	Observed  map[string]string `json:"observed,omitempty"`
+	Expected  map[string]string `json:"expected,omitempty"`
+	RetrySafe bool              `json:"retry_safe"`
+	Message   string            `json:"message"`
+}
+
+type methodError struct {
+	kind, recovery, field, message string
+	observed, expected             map[string]string
+	retrySafe                      bool
+}
+
+func (e *methodError) Error() string { return e.message }
+
+func methodStateError(kind, recovery, field, message string, observed, expected map[string]string, retrySafe bool) error {
+	return &methodError{kind: kind, recovery: recovery, field: field, message: message, observed: observed, expected: expected, retrySafe: retrySafe}
+}
+
+func controlStoreError() error {
+	return methodStateError("adapter_unavailable", "retry_same_operation", "control_store", "the control store is unavailable", map[string]string{"availability": "unavailable"}, map[string]string{"availability": "ready"}, true)
+}
+
+func providerStoreError() error {
+	return methodStateError("provider_unavailable", "observe_again", "provider_store", "the portable provider is unavailable", map[string]string{"availability": "unavailable"}, map[string]string{"availability": "ready"}, true)
 }
 
 type MethodResponse struct {
@@ -205,10 +228,10 @@ func RunMission(ctx context.Context, args []string, stdout, stderr io.Writer) in
 
 func runMissionInitialize(ctx context.Context, request initializeRequest, stdout io.Writer) int {
 	if request.DefinitionID != softwaredev.DefinitionID || request.DefinitionVersion != softwaredev.DefinitionVersion {
-		return encodeMethodFailure(stdout, "mission_initialize_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, errors.New("unsupported mission definition"))
+		return encodeMethodFailure(stdout, "mission_initialize_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, methodStateError("unsupported_definition", "correct_input", "definition", "the selected mission definition is unsupported", map[string]string{"definition_id": request.DefinitionID.String(), "definition_version": fmt.Sprint(request.DefinitionVersion)}, map[string]string{"definition_id": softwaredev.DefinitionID.String(), "definition_version": fmt.Sprint(softwaredev.DefinitionVersion)}, false))
 	}
 	if _, err := ids.ParseProcessID(request.ProcessID.String()); err != nil || request.Governance.Validate() != nil {
-		return encodeMethodFailure(stdout, "mission_initialize_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, errors.New("complete creation provenance is required"))
+		return encodeMethodFailure(stdout, "mission_initialize_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, methodStateError("invalid_creation_authority", "correct_input", "creation_authority", "complete creation provenance is required", map[string]string{"authority": "incomplete"}, map[string]string{"authority": "process_and_sealed_governance"}, false))
 	}
 	definition, err := softwaredev.Definition()
 	if err != nil {
@@ -220,7 +243,7 @@ func runMissionInitialize(ctx context.Context, request initializeRequest, stdout
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "mission_initialize_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "mission_initialize_refused", request.CorrelationID, request.OperationID, nil, controlStoreError())
 	}
 	defer store.Close()
 	result, err := mission.NewService(registry, store).Create(ctx, mission.CreateRequest{MissionID: request.MissionID, ProjectID: request.ProjectID, DefinitionID: request.DefinitionID, DefinitionVersion: request.DefinitionVersion, OperationID: request.OperationID, ActorID: request.ActorID, ProcessID: request.ProcessID, Governance: request.Governance, OccurredAt: request.OccurredAt.UTC()})
@@ -240,15 +263,19 @@ func runMissionInitialize(ctx context.Context, request initializeRequest, stdout
 func runMissionTransition(ctx context.Context, request transitionRequest, stdout io.Writer) int {
 	definition, err := softwaredev.Definition()
 	if err != nil || request.DefinitionID != definition.ID() || request.DefinitionVersion != definition.Version() || request.DefinitionCommitment != definition.Commitment() {
-		return encodeMethodFailure(stdout, "mission_transition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, errors.New("definition mismatch"))
+		return encodeMethodFailure(stdout, "mission_transition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, methodStateError("definition_mismatch", "correct_input", "definition", "the transition definition does not match the supported mission law", map[string]string{"definition_id": request.DefinitionID.String(), "definition_version": fmt.Sprint(request.DefinitionVersion)}, map[string]string{"definition_id": definition.ID().String(), "definition_version": fmt.Sprint(definition.Version())}, false))
+	}
+	command := mission.TransitionRequest{MissionID: request.MissionID, DefinitionID: request.DefinitionID, DefinitionVersion: request.DefinitionVersion, DefinitionCommitment: request.DefinitionCommitment, ExpectedSnapshot: request.ExpectedSnapshot, ExpectedCurrentStep: request.ExpectedCurrentStep, ExpectedStateVersion: request.ExpectedStateVersion, Successor: request.Successor, EventID: request.EventID, OperationID: request.OperationID, ActorID: request.ActorID, GovernanceContextID: request.GovernanceContextID, OccurredAt: request.OccurredAt, Evidence: request.Evidence, WorkRevisionID: request.WorkRevisionID}
+	if err = command.Validate(); err != nil {
+		return encodeMethodFailure(stdout, "mission_transition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
 	}
 	registry, _ := mission.NewRegistry(definition)
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "mission_transition_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "mission_transition_refused", request.CorrelationID, request.OperationID, nil, controlStoreError())
 	}
 	defer store.Close()
-	result, err := mission.NewServiceWithArtifactApprovals(registry, store, store).Transition(ctx, mission.TransitionRequest{MissionID: request.MissionID, DefinitionID: request.DefinitionID, DefinitionVersion: request.DefinitionVersion, DefinitionCommitment: request.DefinitionCommitment, ExpectedSnapshot: request.ExpectedSnapshot, ExpectedCurrentStep: request.ExpectedCurrentStep, ExpectedStateVersion: request.ExpectedStateVersion, Successor: request.Successor, EventID: request.EventID, OperationID: request.OperationID, ActorID: request.ActorID, GovernanceContextID: request.GovernanceContextID, OccurredAt: request.OccurredAt.UTC(), Evidence: request.Evidence, WorkRevisionID: request.WorkRevisionID})
+	result, err := mission.NewServiceWithArtifactApprovals(registry, store, store).Transition(ctx, command)
 	if err != nil {
 		return encodeMethodFailure(stdout, "mission_transition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
 	}
@@ -261,27 +288,35 @@ func runMissionTransition(ctx context.Context, request transitionRequest, stdout
 }
 
 func runMissionDecompose(ctx context.Context, request decomposeRequest, stdout io.Writer) int {
+	aggregates := map[string]string{"mission_id": request.MissionID.String(), "project_id": request.ProjectID.String()}
 	if request.Provider != "durable_fake" {
-		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, errors.New("unsupported portable provider"))
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, errors.New("unsupported portable provider"))
 	}
 	definitions, proposals, err := buildWorkDefinitions(request.ProjectID, request.Work)
 	if err != nil {
-		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, err)
 	}
 	approved := make([]workgraph.ApprovedScope, len(request.ApprovedScope))
 	for index, scope := range request.ApprovedScope {
 		approved[index] = workgraph.ApprovedScope{ID: scope.ID, Kind: scope.Kind, MissionID: request.MissionID}
+		if err := approved[index].Validate(); err != nil {
+			return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, err)
+		}
+	}
+	command := mission.DecompositionCommand{MissionID: request.MissionID, ProjectID: request.ProjectID, Provider: request.Provider, ExpectedMission: request.ExpectedMission, PlanRevisionID: request.PlanRevisionID, PlanContentDigest: request.PlanContentDigest, ApprovedScope: approved, Work: proposals, ActorID: request.ActorID, OperationID: request.OperationID, GovernanceContextID: request.GovernanceContextID, OccurredAt: request.OccurredAt}
+	if err = validatePortableDecompositionCommand(command); err != nil {
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, aggregates, err)
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, nil, controlStoreError())
 	}
 	defer store.Close()
 	providerStore, err := fake.Open(request.TrackerStore)
 	if err != nil {
-		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, nil, providerStoreError())
 	}
-	result, err := mission.NewDecompositionService(store, store, fake.NewProvider(providerStore)).Decompose(ctx, mission.DecompositionCommand{MissionID: request.MissionID, ProjectID: request.ProjectID, Provider: request.Provider, ExpectedMission: request.ExpectedMission, PlanRevisionID: request.PlanRevisionID, PlanContentDigest: request.PlanContentDigest, ApprovedScope: approved, Work: proposals, ActorID: request.ActorID, OperationID: request.OperationID, GovernanceContextID: request.GovernanceContextID, OccurredAt: request.OccurredAt.UTC()})
+	result, err := mission.NewDecompositionService(store, store, fake.NewProvider(providerStore)).Decompose(ctx, command)
 	if err != nil {
 		return encodeMethodFailure(stdout, "mission_decomposition_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
 	}
@@ -485,18 +520,25 @@ func runWorkFinalize(ctx context.Context, request finalizeRequest, stdout io.Wri
 	approved := make([]workgraph.ApprovedScope, len(request.ApprovedScope))
 	for index, item := range request.ApprovedScope {
 		approved[index] = workgraph.ApprovedScope{ID: item.ID, Kind: item.Kind, MissionID: request.MissionID}
+		if err := approved[index].Validate(); err != nil {
+			return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, nil, err)
+		}
+	}
+	command := mission.FinalizationCommand{MissionID: request.MissionID, ProjectID: request.ProjectID, ExpectedMission: request.ExpectedMission, ExpectedCurrentGeneration: request.ExpectedCurrentGeneration, ProposedRevisionID: request.ProposedRevisionID, RequestedGeneration: 1, PlanningSourceCommit: request.PlanningSourceCommit, ActorID: request.ActorID, OperationID: request.OperationID, GovernanceContextID: request.GovernanceContextID, OccurredAt: request.OccurredAt}
+	if err = validatePortableFinalizationCommand(command, request.PlanRevisionID, request.PlanDigest, request.ProviderRefs); err != nil {
+		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
 	}
 	providerStore, err := fake.Open(request.TrackerStore)
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, nil, providerStoreError())
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, nil, controlStoreError())
 	}
 	defer store.Close()
 	source := fakeFinalizationSource{request.ProjectID, request.MissionID, request.PlanRevisionID, request.PlanDigest, approved, definitionMap, request.ProviderRefs, fake.NewProvider(providerStore)}
-	result, err := mission.NewFinalizationService(source, store).Finalize(ctx, mission.FinalizationCommand{MissionID: request.MissionID, ProjectID: request.ProjectID, ExpectedMission: request.ExpectedMission, ExpectedCurrentGeneration: request.ExpectedCurrentGeneration, ProposedRevisionID: request.ProposedRevisionID, RequestedGeneration: 1, PlanningSourceCommit: request.PlanningSourceCommit, ActorID: request.ActorID, OperationID: request.OperationID, GovernanceContextID: request.GovernanceContextID, OccurredAt: request.OccurredAt.UTC()})
+	result, err := mission.NewFinalizationService(source, store).Finalize(ctx, command)
 	if err != nil {
 		return encodeMethodFailure(stdout, "work_finalization_refused", request.CorrelationID, request.OperationID, map[string]string{"mission_id": request.MissionID.String()}, err)
 	}
@@ -521,7 +563,7 @@ func runWorkDrift(ctx context.Context, request driftRequest, stdout io.Writer) i
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, err)
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, controlStoreError())
 	}
 	persisted, err := store.WorkRevisionV2(ctx, oldRevision.ID())
 	if err != nil {
@@ -530,36 +572,23 @@ func runWorkDrift(ctx context.Context, request driftRequest, stdout io.Writer) i
 	}
 	current, currentErr := store.ObserveMissionMethod(ctx, request.MissionID)
 	_ = store.Close()
-	if currentErr != nil || current.Workgraph.RevisionID() != oldRevision.ID() {
-		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, errors.New("old revision is not the exact current generation"))
+	if currentErr != nil {
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String()}, currentErr)
+	}
+	if current.Workgraph.RevisionID() != oldRevision.ID() {
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String(), "old_work_revision_id": oldRevision.ID().String(), "current_work_revision_id": current.Workgraph.RevisionID().String()}, methodStateError("current_generation_conflict", "refresh_state", "old_work_revision_id", "the old revision is not the exact current generation", map[string]string{"current_work_revision_id": current.Workgraph.RevisionID().String()}, map[string]string{"current_work_revision_id": oldRevision.ID().String()}, true))
 	}
 	persistedBytes, _ := persisted.Encode()
 	if !bytes.Equal(persistedBytes, request.OldRevision) || oldRevision.MissionID() != request.MissionID {
-		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, errors.New("old revision is not exact current authority"))
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String(), "old_work_revision_id": oldRevision.ID().String()}, methodStateError("current_generation_conflict", "refresh_state", "old_revision", "the supplied old revision is not exact current authority", map[string]string{"authority": "mismatched"}, map[string]string{"authority": "exact_persisted_revision"}, true))
 	}
 	providerStore, err := fake.Open(request.TrackerStore)
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, err)
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, providerStoreError())
 	}
 	provider := fake.NewProvider(providerStore)
-	observations := make(map[ids.WorkID]workgraph.ProviderObservationV2)
-	for _, item := range candidate.ProviderObservations() {
-		observations[item.WorkID] = item
-	}
-	if len(request.ProviderRefs) != len(observations) {
-		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, errors.New("candidate provider observation set is incomplete"))
-	}
-	seenRefs := make(map[ids.WorkID]struct{}, len(request.ProviderRefs))
-	for _, input := range request.ProviderRefs {
-		if _, duplicate := seenRefs[input.WorkID]; duplicate {
-			return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, errors.New("candidate provider observation set is ambiguous"))
-		}
-		seenRefs[input.WorkID] = struct{}{}
-		observation, observeErr := provider.ObserveDefinition(ctx, tracker.ExternalWorkRef{ProjectID: candidate.ProjectID(), WorkID: input.WorkID, Provider: "durable_fake", ExternalID: input.ExternalID, MetadataSchema: input.MetadataSchema, CreatedByOperation: input.CreatedByOperation, LastObservation: input.LastObservation})
-		want, ok := observations[input.WorkID]
-		if observeErr != nil || !ok || want.ExternalID != input.ExternalID || want.Revision != fmt.Sprint(observation.ProviderObservation().Revision) {
-			return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", nil, errors.New("candidate provider observation is not current"))
-		}
+	if err := verifyProviderCandidate(ctx, candidate, request.ProviderRefs, provider); err != nil {
+		return encodeMethodFailure(stdout, "work_drift_refused", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String(), "candidate_work_revision_id": candidate.ID().String()}, err)
 	}
 	report, err := workgraph.DetectDrift(oldRevision, candidate, request.ObservedAt.UTC())
 	if err != nil {
@@ -569,25 +598,115 @@ func runWorkDrift(ctx context.Context, request driftRequest, stdout io.Writer) i
 	return encodeMethodSuccess(stdout, "work_drift_observed", request.CorrelationID, "", map[string]string{"mission_id": request.MissionID.String(), "old_work_revision_id": oldRevision.ID().String(), "candidate_work_revision_id": candidate.ID().String()}, json.RawMessage(encoded))
 }
 
+func verifyProviderCandidate(ctx context.Context, candidate workgraph.RevisionV2, inputs []providerRefInput, provider *fake.Provider) error {
+	verified, err := providerVerifiedCandidate(ctx, candidate, inputs, provider)
+	if err != nil {
+		return err
+	}
+	candidateBytes, _ := candidate.Encode()
+	verifiedBytes, _ := verified.Encode()
+	if !bytes.Equal(candidateBytes, verifiedBytes) {
+		return methodStateError("provider_semantic_conflict", "observe_again", "candidate_revision", "candidate semantics do not match current provider observations", map[string]string{"semantics": "mismatched"}, map[string]string{"semantics": "current_provider_definition"}, true)
+	}
+	return nil
+}
+
+func providerVerifiedCandidate(ctx context.Context, candidate workgraph.RevisionV2, inputs []providerRefInput, provider *fake.Provider) (workgraph.RevisionV2, error) {
+	if provider == nil || len(inputs) != len(candidate.ProviderObservations()) || len(inputs) != len(candidate.WorkItems()) {
+		return workgraph.RevisionV2{}, methodStateError("provider_observation_conflict", "observe_again", "provider_refs", "candidate provider observation set is incomplete", map[string]string{"cardinality": "incomplete"}, map[string]string{"cardinality": "one_per_work_item"}, true)
+	}
+	wantObservations := make(map[ids.WorkID]workgraph.ProviderObservationV2, len(inputs))
+	for _, item := range candidate.ProviderObservations() {
+		wantObservations[item.WorkID] = item
+	}
+	seen := make(map[ids.WorkID]struct{}, len(inputs))
+	work := make([]workgraph.WorkObservation, 0, len(inputs))
+	workItems := make([]workgraph.WorkItemV2Params, 0, len(inputs))
+	providerObservations := make([]workgraph.ProviderObservationV2, 0, len(inputs))
+	approvedByKey := make(map[string]workgraph.ApprovedScope)
+	for _, input := range inputs {
+		if _, duplicate := seen[input.WorkID]; duplicate {
+			return workgraph.RevisionV2{}, methodStateError("provider_observation_conflict", "observe_again", "provider_refs", "candidate provider observation set is ambiguous", map[string]string{"cardinality": "ambiguous"}, map[string]string{"cardinality": "one_per_work_item"}, true)
+		}
+		seen[input.WorkID] = struct{}{}
+		reference := tracker.ExternalWorkRef{ProjectID: candidate.ProjectID(), WorkID: input.WorkID, Provider: "durable_fake", ExternalID: input.ExternalID, MetadataSchema: input.MetadataSchema, CreatedByOperation: input.CreatedByOperation, LastObservation: input.LastObservation}
+		if reference.Validate() != nil || input.LastObservation == 0 {
+			return workgraph.RevisionV2{}, errors.New("candidate provider reference is invalid")
+		}
+		observed, err := provider.ObserveDefinition(ctx, reference)
+		if err != nil {
+			return workgraph.RevisionV2{}, err
+		}
+		observedRef, observedProvider := observed.ExternalRef(), observed.ProviderObservation()
+		want, ok := wantObservations[input.WorkID]
+		if !ok || observedRef.ProjectID != reference.ProjectID || observedRef.WorkID != reference.WorkID || observedRef.Provider != reference.Provider || observedRef.ExternalID != reference.ExternalID || observedRef.MetadataSchema != reference.MetadataSchema || observedRef.CreatedByOperation != reference.CreatedByOperation || observedProvider.ExternalID != reference.ExternalID || observedProvider.Revision != input.LastObservation || want.Provider != reference.Provider || want.ExternalID != reference.ExternalID || want.Revision != fmt.Sprint(observedProvider.Revision) {
+			return workgraph.RevisionV2{}, methodStateError("provider_observation_conflict", "observe_again", "provider_refs", "candidate provider observation is not current and attributable", map[string]string{"authority": "mismatched"}, map[string]string{"authority": "exact_current_observation"}, true)
+		}
+		definition := observed.Definition()
+		semantic, err := semanticWorkObservation(definition)
+		if err != nil {
+			return workgraph.RevisionV2{}, err
+		}
+		params := workItemV2ParamsFromDefinition(definition)
+		work = append(work, semantic)
+		workItems = append(workItems, params)
+		providerObservations = append(providerObservations, workgraph.ProviderObservationV2{WorkID: input.WorkID, Provider: reference.Provider, ExternalID: reference.ExternalID, Revision: fmt.Sprint(observedProvider.Revision)})
+		for _, item := range definition.Provenance() {
+			scope := workgraph.ApprovedScope{ID: item.ID, Kind: workgraph.ScopeKind(item.Kind), MissionID: candidate.MissionID()}
+			if err := scope.Validate(); err != nil {
+				return workgraph.RevisionV2{}, err
+			}
+			approvedByKey[string(scope.Kind)+"\x00"+scope.ID] = scope
+		}
+	}
+	approved := make([]workgraph.ApprovedScope, 0, len(approvedByKey))
+	for _, scope := range approvedByKey {
+		approved = append(approved, scope)
+	}
+	draft, err := workgraph.NewDraftObservation(candidate.ProjectID(), candidate.MissionID(), "provider-observation", strings.Repeat("0", 64), approved, work)
+	if err != nil {
+		return workgraph.RevisionV2{}, err
+	}
+	lanes, err := workgraph.CollapseLanes(draft)
+	if err != nil {
+		return workgraph.RevisionV2{}, err
+	}
+	return workgraph.NewRevisionV2(workgraph.RevisionV2Params{ID: candidate.ID(), ProjectID: candidate.ProjectID(), MissionID: candidate.MissionID(), Generation: candidate.Generation(), PredecessorID: candidate.PredecessorID(), PlanningSourceCommit: candidate.PlanningSourceCommit(), MissionDefinition: candidate.MissionDefinition(), DependencyPolicy: candidate.DependencyPolicy(), WorkItems: workItems, Lanes: lanes, ProviderObservations: providerObservations, FinalizedBy: candidate.FinalizedBy(), FinalizedAt: candidate.FinalizedAt(), GovernanceContextID: candidate.GovernanceContextID()})
+}
+
+func workItemV2ParamsFromDefinition(definition tracker.WorkDefinition) workgraph.WorkItemV2Params {
+	params := workgraph.WorkItemV2Params{WorkID: definition.WorkID(), Title: definition.Title(), Description: definition.Description(), DesignContext: definition.DesignContext(), Dependencies: definition.Dependencies()}
+	for _, item := range definition.Criteria() {
+		params.Criteria = append(params.Criteria, workgraph.CriterionV2Params{ID: item.ID, Text: item.Text, VerifierKind: item.Verifier.String(), Required: item.Required, Outcome: item.Outcome, EvidenceHint: item.EvidenceHint})
+	}
+	for _, item := range definition.WriteScopes() {
+		params.WriteScopes = append(params.WriteScopes, workgraph.NormalizedWriteScope{Path: item.Path, Domain: item.Domain, Access: workgraph.ScopeAccess(item.Access), SerializationKey: item.SerializationKey})
+	}
+	return params
+}
+
 func runWorkReconcile(ctx context.Context, request reconcileRequest, stdout io.Writer) int {
+	aggregates := map[string]string{"mission_id": request.MissionID.String(), "project_id": request.ProjectID.String()}
 	oldRevision, err := workgraph.DecodeRevisionV2(request.OldRevision)
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, err)
 	}
 	candidate, err := workgraph.DecodeRevisionV2(request.CandidateRevision)
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, err)
 	}
+	aggregates["old_work_revision_id"] = oldRevision.ID().String()
+	aggregates["candidate_work_revision_id"] = candidate.ID().String()
 	var driftHeader struct {
 		ObservedAt time.Time `json:"observed_at"`
 	}
 	if err = json.Unmarshal(request.DriftReport, &driftHeader); err != nil {
-		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, nil, errors.New("drift report is invalid"))
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, errors.New("drift report is invalid"))
 	}
 	drift, err := workgraph.DetectDrift(oldRevision, candidate, driftHeader.ObservedAt.UTC())
 	canonicalDrift, encodeErr := drift.Encode()
 	if err != nil || encodeErr != nil || !bytes.Equal(canonicalDrift, request.DriftReport) {
-		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, nil, errors.New("drift report is not exact canonical evidence"))
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, errors.New("drift report is not exact canonical evidence"))
 	}
 	statuses := make([]workgraph.WorkStatusAssignment, len(request.Decisions))
 	decisions := make([]workgraph.WorkDispositionDecisionParams, len(request.Decisions))
@@ -597,11 +716,11 @@ func runWorkReconcile(ctx context.Context, request reconcileRequest, stdout io.W
 	}
 	plan, err := workgraph.ReconcileMixed(workgraph.MixedReconcileRequest{ID: request.ReconciliationID.String(), Old: oldRevision, New: candidate, Drift: drift, Statuses: statuses, Decisions: decisions, ActorID: request.ActorID, Rationale: request.Rationale, OccurredAt: request.OccurredAt.UTC()})
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, aggregates, err)
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "work_reconciliation_refused", request.CorrelationID, request.OperationID, nil, controlStoreError())
 	}
 	defer store.Close()
 	result, err := mission.NewSuccessorPublicationService(store).Publish(ctx, mission.SuccessorPublicationCommand{MissionID: request.MissionID, ProjectID: request.ProjectID, ExpectedMission: request.ExpectedMission, ExpectedCurrentGeneration: request.ExpectedCurrentGeneration, ExpectedOld: oldRevision, Candidate: candidate, Drift: drift, ReconciliationID: request.ReconciliationID, Reconciliation: plan, OperationID: request.OperationID, ActorID: request.ActorID, GovernanceContextID: request.GovernanceContextID, Rationale: request.Rationale, OccurredAt: request.OccurredAt.UTC()})
@@ -632,7 +751,7 @@ func runMissionNext(ctx context.Context, request nextRequest, stdout io.Writer) 
 	registry, _ := mission.NewRegistry(definition)
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "mission_next_refused", request.CorrelationID, "", nil, err)
+		return encodeMethodFailure(stdout, "mission_next_refused", request.CorrelationID, "", nil, controlStoreError())
 	}
 	defer store.Close()
 	adapter, err := sqlite.NewMissionActionAdapter(store, registry)
@@ -668,6 +787,102 @@ func buildWorkDefinitions(projectID ids.ProjectID, inputs []workDefinitionInput)
 		proposals[index] = mission.WorkProposal{Definition: definition}
 	}
 	return definitions, proposals, nil
+}
+
+// These checks are transport-boundary validation only. They reject malformed
+// typed values before any durable adapter path is opened; domain services
+// remain the sole owners of lifecycle, freshness, quality, and graph law.
+func validatePortableDecompositionCommand(command mission.DecompositionCommand) error {
+	if _, err := ids.ParseMissionID(command.MissionID.String()); err != nil {
+		return err
+	}
+	if _, err := ids.ParseProjectID(command.ProjectID.String()); err != nil {
+		return err
+	}
+	if command.Provider != "durable_fake" || command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID {
+		return errors.New("decomposition scope is invalid")
+	}
+	if !boundedStableValue(command.PlanRevisionID) || !lowerSHA256Value(command.PlanContentDigest) || len(command.ApprovedScope) == 0 || len(command.Work) == 0 {
+		return errors.New("decomposition plan evidence is invalid")
+	}
+	if _, err := ids.ParseActorID(command.ActorID.String()); err != nil {
+		return err
+	}
+	if _, err := ids.ParseOperationID(command.OperationID.String()); err != nil {
+		return err
+	}
+	if _, err := ids.ParseGovernanceContextID(command.GovernanceContextID.String()); err != nil {
+		return err
+	}
+	if command.OccurredAt.IsZero() || command.OccurredAt.Location() != time.UTC {
+		return errors.New("decomposition time must be non-zero UTC")
+	}
+	return nil
+}
+
+func validatePortableFinalizationCommand(command mission.FinalizationCommand, planRevisionID, planDigest string, references []providerRefInput) error {
+	if _, err := ids.ParseMissionID(command.MissionID.String()); err != nil {
+		return err
+	}
+	if _, err := ids.ParseProjectID(command.ProjectID.String()); err != nil {
+		return err
+	}
+	if command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID {
+		return errors.New("finalization mission scope is invalid")
+	}
+	if command.ExpectedCurrentGeneration != 0 || command.RequestedGeneration != 1 {
+		return errors.New("finalization generation is invalid")
+	}
+	if _, err := ids.ParseWorkRevisionID(command.ProposedRevisionID.String()); err != nil {
+		return err
+	}
+	if _, err := ids.ParseActorID(command.ActorID.String()); err != nil {
+		return err
+	}
+	if _, err := ids.ParseOperationID(command.OperationID.String()); err != nil {
+		return err
+	}
+	if _, err := ids.ParseGovernanceContextID(command.GovernanceContextID.String()); err != nil {
+		return err
+	}
+	if command.OccurredAt.IsZero() || command.OccurredAt.Location() != time.UTC || !gitObjectIDValue(command.PlanningSourceCommit) || !boundedStableValue(planRevisionID) || !lowerSHA256Value(planDigest) || len(references) == 0 {
+		return errors.New("finalization evidence is invalid")
+	}
+	seen := make(map[ids.WorkID]struct{}, len(references))
+	for _, input := range references {
+		if _, duplicate := seen[input.WorkID]; duplicate {
+			return errors.New("provider reference set is ambiguous")
+		}
+		seen[input.WorkID] = struct{}{}
+		reference := tracker.ExternalWorkRef{ProjectID: command.ProjectID, WorkID: input.WorkID, Provider: "durable_fake", ExternalID: input.ExternalID, MetadataSchema: input.MetadataSchema, CreatedByOperation: input.CreatedByOperation, LastObservation: input.LastObservation}
+		if reference.Validate() != nil || input.LastObservation == 0 {
+			return errors.New("provider reference is invalid")
+		}
+	}
+	return nil
+}
+
+func boundedStableValue(value string) bool {
+	if value == "" || len(value) > 128 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || strings.ContainsRune("_.:-", character) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func lowerSHA256Value(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
+}
+
+func gitObjectIDValue(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) >= 20 && len(decoded) <= 32 && value == strings.ToLower(value)
 }
 
 func decodeMethodRequest(args []string, target any, stdout, stderr io.Writer) int {
@@ -805,7 +1020,26 @@ func boundedMethodDiagnostic(err error) MethodDiagnostic {
 	var graphError *workgraph.Error
 	var projectionError *projection.Error
 	var trackerError *tracker.Error
+	var localError *methodError
+	var observationError *sqlite.MissionMethodObservationError
 	switch {
+	case errors.As(err, &localError):
+		result.Kind, result.Recovery, result.Field, result.Message, result.RetrySafe = localError.kind, localError.recovery, localError.field, localError.message, localError.retrySafe
+		result.Observed, result.Expected = boundedDiagnosticState(localError.observed), boundedDiagnosticState(localError.expected)
+	case errors.As(err, &observationError):
+		result.Kind, result.Field = string(observationError.Kind), observationError.Field
+		result.Observed = boundedDiagnosticState(map[string]string{"state": observationError.Observed})
+		result.Expected = boundedDiagnosticState(map[string]string{"state": observationError.Expected})
+		switch observationError.Kind {
+		case sqlite.ObservationUnavailable:
+			result.Recovery, result.Message, result.RetrySafe = "retry_query", "the durable observation is temporarily unavailable", true
+		case sqlite.ObservationNotReady:
+			result.Recovery, result.Message, result.RetrySafe = "inspect_state", "the mission has no finalized current generation", false
+		case sqlite.ObservationCorrupt:
+			result.Recovery, result.Message, result.RetrySafe = "repair_stored_state", "the durable observation is inconsistent", false
+		default:
+			result.Recovery, result.Message, result.RetrySafe = "correct_input", "the observation query is invalid", false
+		}
 	case errors.As(err, &missionError):
 		result.Kind, result.Recovery, result.Field, result.Message = string(missionError.Kind), string(missionError.Recovery), missionError.Field, missionError.Message
 	case errors.As(err, &decompositionError):
@@ -830,6 +1064,27 @@ func boundedMethodDiagnostic(err error) MethodDiagnostic {
 	}
 	if len(result.Field) > 128 {
 		result.Field = "request"
+	}
+	return result
+}
+
+func boundedDiagnosticState(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		if !boundedStableValue(key) {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" || len(value) > 128 || strings.ContainsAny(value, "\r\n\x00") {
+			continue
+		}
+		result[key] = value
+	}
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }

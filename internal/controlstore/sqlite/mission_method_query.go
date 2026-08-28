@@ -4,13 +4,39 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	missionreadmodel "github.com/spec-kitty/go-kitty3/internal/mission/readmodel"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 	workgraphreadmodel "github.com/spec-kitty/go-kitty3/internal/workgraph/readmodel"
 )
+
+type MissionMethodObservationErrorKind string
+
+const (
+	ObservationInvalidQuery MissionMethodObservationErrorKind = "observation_invalid_query"
+	ObservationNotReady     MissionMethodObservationErrorKind = "observation_not_ready"
+	ObservationCorrupt      MissionMethodObservationErrorKind = "observation_corrupt"
+	ObservationUnavailable  MissionMethodObservationErrorKind = "adapter_unavailable"
+)
+
+// MissionMethodObservationError is a bounded adapter diagnostic. It carries
+// only stable classification and safe state labels, never SQL text, paths, or
+// underlying driver output.
+type MissionMethodObservationError struct {
+	Kind     MissionMethodObservationErrorKind
+	Field    string
+	Observed string
+	Expected string
+}
+
+func (e *MissionMethodObservationError) Error() string {
+	return "mission method observation was refused"
+}
+
+func observationError(kind MissionMethodObservationErrorKind, field, observed, expected string) error {
+	return &MissionMethodObservationError{Kind: kind, Field: field, Observed: observed, Expected: expected}
+}
 
 // MissionMethodObservation is one adapter-owned, transaction-consistent view
 // for presentation consumers. It contains no storage DTO or projection view.
@@ -23,11 +49,11 @@ type MissionMethodObservation struct {
 // generation in one read transaction. Cross-generation joins fail closed.
 func (s *Store) ObserveMissionMethod(ctx context.Context, missionID ids.MissionID) (MissionMethodObservation, error) {
 	if _, err := ids.ParseMissionID(missionID.String()); err != nil {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: invalid mission identity")
+		return MissionMethodObservation{}, observationError(ObservationInvalidQuery, "mission_id", "invalid", "stable_mission_id")
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: unavailable")
+		return MissionMethodObservation{}, observationError(ObservationUnavailable, "control_store", "unavailable", "readable")
 	}
 	defer tx.Rollback()
 	var missionBytes, revisionBytes []byte
@@ -37,18 +63,26 @@ func (s *Store) ObserveMissionMethod(ctx context.Context, missionID ids.MissionI
 		JOIN phase3_work_revisions_v2 r ON r.mission_id=c.mission_id AND r.work_revision_id=c.work_revision_id AND r.generation=c.generation
 		WHERE m.mission_id=?`, missionID).Scan(&missionBytes, &revisionBytes)
 	if errors.Is(err, sql.ErrNoRows) {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: no finalized current generation")
+		var pointer sql.NullString
+		pointerErr := tx.QueryRowContext(ctx, `SELECT current_work_revision_id FROM phase3_missions WHERE mission_id=?`, missionID).Scan(&pointer)
+		if pointerErr == nil && pointer.Valid && pointer.String != "" {
+			return MissionMethodObservation{}, observationError(ObservationCorrupt, "current_generation", "inconsistent", "mission_revision_pointer_agreement")
+		}
+		if pointerErr != nil && !errors.Is(pointerErr, sql.ErrNoRows) {
+			return MissionMethodObservation{}, observationError(ObservationUnavailable, "control_store", "unavailable", "readable")
+		}
+		return MissionMethodObservation{}, observationError(ObservationNotReady, "current_generation", "absent", "finalized")
 	}
 	if err != nil {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: unavailable")
+		return MissionMethodObservation{}, observationError(ObservationUnavailable, "control_store", "unavailable", "readable")
 	}
 	missionValue, err := decodeSnapshot(missionBytes)
 	if err != nil {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: stored mission is invalid")
+		return MissionMethodObservation{}, observationError(ObservationCorrupt, "mission", "invalid", "valid_snapshot")
 	}
 	revision, err := workgraph.DecodeRevisionV2(revisionBytes)
 	if err != nil || revision.MissionID() != missionValue.MissionID || revision.ProjectID() != missionValue.ProjectID || revision.ID() != missionValue.CurrentWorkRevisionID {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: current generation is inconsistent")
+		return MissionMethodObservation{}, observationError(ObservationCorrupt, "current_generation", "inconsistent", "mission_revision_pointer_agreement")
 	}
 
 	driftStatus := workgraphreadmodel.DriftNotChecked
@@ -62,11 +96,11 @@ func (s *Store) ObserveMissionMethod(ctx context.Context, missionID ids.MissionI
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: reconciliation is unavailable")
+		return MissionMethodObservation{}, observationError(ObservationUnavailable, "reconciliation", "unavailable", "readable")
 	default:
 		oldRevision, decodeErr := workgraph.DecodeRevisionV2(oldBytes)
 		if decodeErr != nil || revision.PredecessorID() != oldRevision.ID() {
-			return MissionMethodObservation{}, fmt.Errorf("mission method observation: reconciliation predecessor is invalid")
+			return MissionMethodObservation{}, observationError(ObservationCorrupt, "reconciliation.predecessor", "inconsistent", "exact_predecessor")
 		}
 		drift, driftErr := workgraph.DetectDrift(oldRevision, revision, mustDriftTime(driftBytes))
 		canonicalDrift, encodeErr := drift.Encode()
@@ -74,7 +108,7 @@ func (s *Store) ObserveMissionMethod(ctx context.Context, missionID ids.MissionI
 		wireErr := strictJSON(mixedBytes, &wire)
 		mixed, mixedErr := restoreMixed(wire, oldRevision, revision, drift)
 		if driftErr != nil || encodeErr != nil || string(canonicalDrift) != string(driftBytes) || wireErr != nil || mixedErr != nil {
-			return MissionMethodObservation{}, fmt.Errorf("mission method observation: reconciliation evidence is invalid")
+			return MissionMethodObservation{}, observationError(ObservationCorrupt, "reconciliation.evidence", "invalid", "canonical")
 		}
 		switch drift.SemanticStatus() {
 		case workgraph.SemanticClean:
@@ -84,7 +118,7 @@ func (s *Store) ObserveMissionMethod(ctx context.Context, missionID ids.MissionI
 		case workgraph.SemanticChanged:
 			driftStatus = workgraphreadmodel.DriftChanged
 		default:
-			return MissionMethodObservation{}, fmt.Errorf("mission method observation: drift state is invalid")
+			return MissionMethodObservation{}, observationError(ObservationCorrupt, "drift.status", "invalid", "closed_status")
 		}
 		for _, decision := range mixed.Decisions() {
 			reconciliations = append(reconciliations, workgraphreadmodel.ReconciliationParams{
@@ -96,7 +130,7 @@ func (s *Store) ObserveMissionMethod(ctx context.Context, missionID ids.MissionI
 
 	missionView, err := missionreadmodel.NewSnapshot(missionreadmodel.SnapshotParams{MissionID: missionValue.MissionID, StateVersion: missionValue.StateVersion, CurrentStep: missionValue.CurrentStep.String(), CurrentWorkRevisionID: revision.ID()})
 	if err != nil {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: mission projection is invalid")
+		return MissionMethodObservation{}, observationError(ObservationCorrupt, "mission_projection", "invalid", "projectable")
 	}
 	workParams := workgraphreadmodel.SnapshotParams{MissionID: missionID, RevisionID: revision.ID(), Generation: revision.Generation(), GraphDigest: revision.GraphDigest(), DriftStatus: driftStatus, Reconciliations: reconciliations}
 	for _, item := range revision.WorkItems() {
@@ -114,10 +148,10 @@ func (s *Store) ObserveMissionMethod(ctx context.Context, missionID ids.MissionI
 	}
 	workView, err := workgraphreadmodel.NewSnapshot(workParams)
 	if err != nil {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: work projection is invalid")
+		return MissionMethodObservation{}, observationError(ObservationCorrupt, "work_projection", "invalid", "projectable")
 	}
 	if err = tx.Commit(); err != nil {
-		return MissionMethodObservation{}, fmt.Errorf("mission method observation: unavailable")
+		return MissionMethodObservation{}, observationError(ObservationUnavailable, "control_store", "unavailable", "readable")
 	}
 	return MissionMethodObservation{Mission: missionView, Workgraph: workView}, nil
 }

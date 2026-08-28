@@ -37,15 +37,24 @@ type methodEnvelope struct {
 }
 
 type portableMissionResult struct {
-	Database      string
-	TrackerStore  string
-	OutputRoot    string
-	GenerationOne workgraph.RevisionV2
-	GenerationTwo workgraph.RevisionV2
-	MissionOne    mission.MissionSnapshot
-	MissionTwo    mission.MissionSnapshot
-	FirstTasks    string
-	SecondTasks   string
+	Database            string
+	TrackerStore        string
+	OutputRoot          string
+	GenerationOne       workgraph.RevisionV2
+	GenerationTwo       workgraph.RevisionV2
+	MissionOne          mission.MissionSnapshot
+	MissionTwo          mission.MissionSnapshot
+	FirstTasks          string
+	SecondTasks         string
+	PlanPublic          artifactRevisionView
+	GenerationOnePublic json.RawMessage
+	GenerationTwoPublic json.RawMessage
+	NextOnePublic       json.RawMessage
+	NextTwoPublic       json.RawMessage
+	GenerationTwoRef    map[string]any
+	DriftPublic         json.RawMessage
+	ReconciliationInput map[string]any
+	NegativeResponses   map[string]methodEnvelope
 }
 
 func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResult {
@@ -66,6 +75,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 	governance := portableGovernance(t, "governance-"+suffix, at)
 	missionID := ids.MissionID("mission-" + suffix)
 	projectID := ids.ProjectID("project-" + suffix)
+	negativeResponses := make(map[string]methodEnvelope)
 
 	initialized := callMethod(t, ctx, "mission", "initialize", map[string]any{
 		"database": database, "correlation_id": "correlation-initialize-" + suffix,
@@ -80,7 +90,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 	decodeMethodResult(t, initialized, &initializedResult)
 	current := initializedResult.Mission
 
-	publishArtifact := func(kind artifact.Kind, id, source string, content []byte, when time.Time) artifactRevisionView {
+	publishArtifact := func(kind artifact.Kind, id, source, expectedLatest string, content []byte, when time.Time) artifactRevisionView {
 		policy, policyErr := artifact.PolicyFor(kind)
 		if policyErr != nil {
 			t.Fatal(policyErr)
@@ -95,7 +105,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 			"mission_id": missionID, "kind": kind, "source_ref": source,
 			"source_revision": strings.Repeat("a", 40), "created_by": "actor-author", "created_at": when,
 			"content": content, "present_concerns": concerns, "validated_at": when,
-			"expected_latest_revision_id": "",
+			"expected_latest_revision_id": expectedLatest,
 		}
 		envelope := callMethod(t, ctx, "artifact", "publish", request)
 		var result struct {
@@ -129,15 +139,29 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 		}
 	}
 
-	_ = publishArtifact(artifact.KindIntent, "artifact-intent-"+suffix, "intent.md", []byte("mission intent"), at.Add(time.Second))
+	_ = publishArtifact(artifact.KindIntent, "artifact-intent-"+suffix, "intent.md", "", []byte("mission intent"), at.Add(time.Second))
 	current = transitionMission(t, ctx, database, definition, current, mission.StepSpecifying, governance.ID(), suffix+"-specifying", at.Add(2*time.Second))
-	specification := publishArtifact(artifact.KindSpecification, "artifact-spec-"+suffix, "spec.md", []byte("complete specification"), at.Add(3*time.Second))
+	specification := publishArtifact(artifact.KindSpecification, "artifact-spec-"+suffix, "spec.md", "", []byte("complete specification"), at.Add(3*time.Second))
 	approveArtifact(specification, at.Add(4*time.Second))
 	current = transitionMission(t, ctx, database, definition, current, mission.StepSpecificationApproved, governance.ID(), suffix+"-spec-approved", at.Add(5*time.Second))
 	current = transitionMission(t, ctx, database, definition, current, mission.StepPlanning, governance.ID(), suffix+"-planning", at.Add(6*time.Second))
-	plan := publishArtifact(artifact.KindPlan, "artifact-plan-"+suffix, "plan.md", []byte("complete implementation plan"), at.Add(7*time.Second))
+	plan := publishArtifact(artifact.KindPlan, "artifact-plan-"+suffix, "plan.md", "", []byte("complete implementation plan"), at.Add(7*time.Second))
 	approveArtifact(plan, at.Add(8*time.Second))
-	current = transitionMission(t, ctx, database, definition, current, mission.StepPlanApproved, governance.ID(), suffix+"-plan-approved", at.Add(9*time.Second))
+	changedPlan := publishArtifact(artifact.KindPlan, "artifact-plan-"+suffix+"-2", "plan.md", plan.ID, []byte("complete implementation plan revision two"), at.Add(9*time.Second))
+	staleApproval := callMethodRaw(t, ctx, "mission", "transition", map[string]any{
+		"database": database, "correlation_id": "correlation-stale-approval-" + suffix, "mission_id": current.MissionID,
+		"definition_id": definition.ID(), "definition_version": definition.Version(), "definition_commitment": definition.Commitment(),
+		"expected_snapshot": current, "expected_current_step": current.CurrentStep, "expected_state_version": current.StateVersion,
+		"successor": mission.StepPlanApproved, "event_id": "event-stale-approval-" + suffix, "operation_id": "operation-stale-approval-" + suffix,
+		"actor_id": "actor-author", "governance_context_id": governance.ID(), "occurred_at": at.Add(10 * time.Second), "evidence": []mission.EvidenceRef{}, "work_revision_id": "",
+	})
+	if staleApproval.OK || staleApproval.Error == nil || staleApproval.Error.Kind != "missing_evidence" {
+		t.Fatalf("stale approval was authoritative: %+v", staleApproval)
+	}
+	negativeResponses["stale-approval"] = staleApproval
+	plan = changedPlan
+	approveArtifact(plan, at.Add(11*time.Second))
+	current = transitionMission(t, ctx, database, definition, current, mission.StepPlanApproved, governance.ID(), suffix+"-plan-approved", at.Add(12*time.Second))
 
 	approvedScope := []map[string]any{{"id": "plan-core", "kind": workgraph.ScopePlanConcern}}
 	work := portableWorkInput()
@@ -146,7 +170,26 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 		"mission_id": missionID, "project_id": projectID, "provider": "durable_fake", "expected_mission": current,
 		"plan_revision_id": plan.ID, "plan_content_digest": plan.ContentDigest,
 		"approved_scope": approvedScope, "work": work, "actor_id": "actor-author",
-		"operation_id": "operation-decompose-" + suffix, "governance_context_id": governance.ID(), "occurred_at": at.Add(10 * time.Second),
+		"operation_id": "operation-decompose-" + suffix, "governance_context_id": governance.ID(), "occurred_at": at.Add(13 * time.Second),
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"missing-coverage": func(request map[string]any) {
+			items := request["work"].([]any)
+			items[0].(map[string]any)["provenance"] = []tracker.ScopeRef{{ID: "plan-unapproved", Kind: tracker.ScopePlanConcern}}
+		},
+		"bad-dependency": func(request map[string]any) {
+			items := request["work"].([]any)
+			items[1].(map[string]any)["dependencies"] = []ids.WorkID{"work-unknown"}
+		},
+	} {
+		invalid := cloneRequestMap(t, decompositionRequest)
+		invalid["correlation_id"], invalid["operation_id"] = "correlation-"+name+"-"+suffix, "operation-"+name+"-"+suffix
+		mutate(invalid)
+		refusal := callMethodRaw(t, ctx, "mission", "decompose", invalid)
+		if refusal.OK || refusal.Error == nil || refusal.Error.Kind != "invalid_work" {
+			t.Fatalf("%s decomposition=%+v", name, refusal)
+		}
+		negativeResponses[name] = refusal
 	}
 	decomposition := callMethod(t, ctx, "mission", "decompose", decompositionRequest)
 	var decomposed struct {
@@ -190,8 +233,8 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 	}
 	// Decomposition is intentionally provider work only; its caller submits
 	// two distinct, ordinary mission transitions after complete observation.
-	current = transitionMission(t, ctx, database, definition, current, mission.StepDecomposing, governance.ID(), suffix+"-decomposing", at.Add(11*time.Second))
-	current = transitionMission(t, ctx, database, definition, current, mission.StepWorkDraftReady, governance.ID(), suffix+"-draft-ready", at.Add(12*time.Second))
+	current = transitionMission(t, ctx, database, definition, current, mission.StepDecomposing, governance.ID(), suffix+"-decomposing", at.Add(14*time.Second))
+	current = transitionMission(t, ctx, database, definition, current, mission.StepWorkDraftReady, governance.ID(), suffix+"-draft-ready", at.Add(15*time.Second))
 
 	providerRefs := make([]map[string]any, 0, len(decomposed.Observations))
 	for _, observation := range decomposed.Observations {
@@ -208,7 +251,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 		"planning_source_commit": strings.Repeat("b", 40), "plan_revision_id": plan.ID, "plan_digest": plan.ContentDigest,
 		"approved_scope": approvedScope, "work": work, "provider_refs": providerRefs,
 		"actor_id": "actor-author", "operation_id": "operation-finalize-" + suffix,
-		"governance_context_id": governance.ID(), "occurred_at": at.Add(13 * time.Second),
+		"governance_context_id": governance.ID(), "occurred_at": at.Add(16 * time.Second),
 	}
 	finalized := callMethod(t, ctx, "work", "finalize", finalizationRequest)
 	var finalizedResult struct {
@@ -248,7 +291,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 	}
 	firstProjection := callMethod(t, ctx, "projection", "tasks", map[string]any{
 		"database": database, "correlation_id": "correlation-project-1-" + suffix, "mission_id": missionID,
-		"rendered_at": at.Add(14 * time.Second), "trusted_root": outputRoot, "destination": "tasks.md",
+		"rendered_at": at.Add(17 * time.Second), "trusted_root": outputRoot, "destination": "tasks.md",
 	})
 	var firstProjectionResult struct {
 		Content    string `json:"content"`
@@ -259,7 +302,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 		t.Fatalf("generation-one projection=%+v", firstProjectionResult)
 	}
 
-	candidate, candidateRef := createReplacementCandidate(t, ctx, trackerStore, generationOne, plan, governance.ID(), at.Add(17*time.Second), suffix)
+	candidate, candidateRef := createReplacementCandidate(t, ctx, trackerStore, generationOne, plan, governance.ID(), at.Add(20*time.Second), suffix)
 	oldEncoded, _ := generationOne.Encode()
 	candidateEncoded, _ := candidate.Encode()
 	databaseBeforeDrift, err := os.ReadFile(database)
@@ -270,7 +313,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 	drift := callMethod(t, ctx, "work", "drift", map[string]any{
 		"database": database, "tracker_store": trackerStore, "correlation_id": "correlation-drift-" + suffix,
 		"mission_id": missionID, "old_revision": json.RawMessage(oldEncoded), "candidate_revision": json.RawMessage(candidateEncoded),
-		"provider_refs": []map[string]any{candidateRef}, "observed_at": at.Add(16 * time.Second),
+		"provider_refs": []map[string]any{candidateRef}, "observed_at": at.Add(19 * time.Second),
 	})
 	if drift.OperationID != "" {
 		t.Fatalf("pure drift carried operation identity: %+v", drift)
@@ -297,11 +340,12 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 		"drift_report": json.RawMessage(drift.Result), "reconciliation_id": "reconciliation-incomplete-" + suffix,
 		"decisions":    []map[string]any{{"old_work_id": "work-a", "status": workgraph.StatusActive, "disposition": workgraph.Supersede, "new_work_ids": []ids.WorkID{"work-a-v2"}, "fork_edges": []workgraph.ForkEdge{}, "rationale": "replace changed contract"}},
 		"operation_id": "operation-reconcile-incomplete-" + suffix, "actor_id": "actor-author",
-		"governance_context_id": governance.ID(), "rationale": "incomplete mutant", "occurred_at": at.Add(17 * time.Second),
+		"governance_context_id": governance.ID(), "rationale": "incomplete mutant", "occurred_at": at.Add(20 * time.Second),
 	})
 	if incomplete.OK || incomplete.Error == nil {
 		t.Fatalf("incomplete reconciliation succeeded: %+v", incomplete)
 	}
+	negativeResponses["incomplete-reconciliation"] = incomplete
 	if rows := missionMethodRowCounts(t, database); rows != rowsBeforeDrift {
 		t.Fatalf("incomplete reconciliation persisted partial rows: before=%+v after=%+v", rowsBeforeDrift, rows)
 	}
@@ -325,7 +369,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 			{"old_work_id": "work-b", "status": workgraph.StatusActive, "disposition": workgraph.Invalidate, "new_work_ids": []ids.WorkID{}, "fork_edges": []workgraph.ForkEdge{}, "rationale": "dependent exercise is no longer required"},
 		},
 		"operation_id": "operation-reconcile-" + suffix, "actor_id": "actor-author",
-		"governance_context_id": governance.ID(), "rationale": "adopt explicit replacement scope", "occurred_at": at.Add(17 * time.Second),
+		"governance_context_id": governance.ID(), "rationale": "adopt explicit replacement scope", "occurred_at": at.Add(20 * time.Second),
 	}
 	reconciled := callMethod(t, ctx, "work", "reconcile", reconciliationRequest)
 	var reconciledResult struct {
@@ -355,7 +399,7 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 	}
 	secondProjection := callMethod(t, ctx, "projection", "tasks", map[string]any{
 		"database": database, "correlation_id": "correlation-project-2-" + suffix, "mission_id": missionID,
-		"rendered_at": at.Add(18 * time.Second), "trusted_root": outputRoot, "destination": "tasks.md",
+		"rendered_at": at.Add(21 * time.Second), "trusted_root": outputRoot, "destination": "tasks.md",
 	})
 	var secondProjectionResult struct {
 		Content    string `json:"content"`
@@ -365,7 +409,8 @@ func runPortableMissionFixture(t *testing.T, suffix string) portableMissionResul
 	if secondProjectionResult.Generation != 2 || !strings.Contains(secondProjectionResult.Content, "Define the revised contract") || strings.Contains(secondProjectionResult.Content, "Exercise the contract") {
 		t.Fatalf("generation-two projection=%+v", secondProjectionResult)
 	}
-	return portableMissionResult{database, trackerStore, outputRoot, generationOne, generationTwo, finalizedResult.Mission, reconciledResult.Mission, firstProjectionResult.Content, secondProjectionResult.Content}
+	nextTwo := callMethod(t, ctx, "mission", "next", map[string]any{"database": database, "correlation_id": "correlation-next-2-" + suffix, "mission_id": missionID})
+	return portableMissionResult{Database: database, TrackerStore: trackerStore, OutputRoot: outputRoot, GenerationOne: generationOne, GenerationTwo: generationTwo, MissionOne: finalizedResult.Mission, MissionTwo: reconciledResult.Mission, FirstTasks: firstProjectionResult.Content, SecondTasks: secondProjectionResult.Content, PlanPublic: plan, GenerationOnePublic: append(json.RawMessage(nil), finalizedResult.Revision...), GenerationTwoPublic: append(json.RawMessage(nil), reconciledResult.Revision...), NextOnePublic: append(json.RawMessage(nil), next.Result...), NextTwoPublic: append(json.RawMessage(nil), nextTwo.Result...), GenerationTwoRef: cloneRequestMap(t, candidateRef), DriftPublic: append(json.RawMessage(nil), drift.Result...), ReconciliationInput: cloneRequestMap(t, reconciliationRequest), NegativeResponses: negativeResponses}
 }
 
 type artifactRevisionView struct {

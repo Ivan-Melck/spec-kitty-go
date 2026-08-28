@@ -92,17 +92,14 @@ func (s *Store) CreateMission(ctx context.Context, commit mission.CreateCommit) 
 	if _, err := ids.ParseOperationID(commit.OperationID.String()); err != nil || commit.RequestCommitment.Validate() != nil || commit.OccurredAt.IsZero() || commit.OccurredAt.Location() != time.UTC {
 		return mission.CreateResult{}, missionError(mission.KindInvalidRequest, "create", "mission creation commit is invalid", err)
 	}
-	authorityRequired := commit.ProcessID != "" || commit.Governance.ID() != ""
-	if authorityRequired {
-		if _, err := ids.ParseActorID(commit.ActorID.String()); err != nil {
-			return mission.CreateResult{}, missionError(mission.KindInvalidRequest, "actor_id", "mission creation actor is invalid", err)
-		}
-		if _, err := ids.ParseProcessID(commit.ProcessID.String()); err != nil {
-			return mission.CreateResult{}, missionError(mission.KindInvalidRequest, "process_id", "mission creation process is invalid", err)
-		}
-		if err := commit.Governance.Validate(); err != nil {
-			return mission.CreateResult{}, missionError(mission.KindInvalidRequest, "governance_context", "mission creation governance is invalid", err)
-		}
+	if _, err := ids.ParseActorID(commit.ActorID.String()); err != nil {
+		return mission.CreateResult{}, missionError(mission.KindInvalidRequest, "actor_id", "mission creation actor is invalid", err)
+	}
+	if _, err := ids.ParseProcessID(commit.ProcessID.String()); err != nil {
+		return mission.CreateResult{}, missionError(mission.KindInvalidRequest, "process_id", "mission creation process is invalid", err)
+	}
+	if err := commit.Governance.Validate(); err != nil {
+		return mission.CreateResult{}, missionError(mission.KindInvalidRequest, "governance_context", "mission creation governance is invalid", err)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -115,21 +112,19 @@ func (s *Store) CreateMission(ctx context.Context, commit mission.CreateCommit) 
 		prior.Replayed = true
 		return prior, nil
 	}
-	if authorityRequired {
-		when := formatTime(commit.OccurredAt)
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO actors(actor_id,created_at) VALUES(?,?)`, commit.ActorID, when); err != nil {
-			return mission.CreateResult{}, missionError(mission.KindPersistenceUnavailable, "actor_id", "mission creation authority could not be persisted", err)
-		}
-		processResult, processErr := tx.ExecContext(ctx, `INSERT INTO processes(process_id,actor_id,observed_at) VALUES(?,?,?) ON CONFLICT(process_id) DO UPDATE SET observed_at=excluded.observed_at WHERE processes.actor_id=excluded.actor_id`, commit.ProcessID, commit.ActorID, when)
-		if processErr != nil {
-			return mission.CreateResult{}, missionError(mission.KindPersistenceUnavailable, "process_id", "mission creation authority could not be persisted", processErr)
-		}
-		if affected, _ := processResult.RowsAffected(); affected != 1 {
-			return mission.CreateResult{}, missionError(mission.KindIdempotencyConflict, "process_id", "process identity is bound to another actor", nil)
-		}
-		if err = saveGovernanceContextTx(ctx, tx, commit.Governance, commit.OperationID, commit.OccurredAt); err != nil {
-			return mission.CreateResult{}, err
-		}
+	when := formatTime(commit.OccurredAt)
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO actors(actor_id,created_at) VALUES(?,?)`, commit.ActorID, when); err != nil {
+		return mission.CreateResult{}, missionError(mission.KindPersistenceUnavailable, "actor_id", "mission creation authority could not be persisted", err)
+	}
+	processResult, processErr := tx.ExecContext(ctx, `INSERT INTO processes(process_id,actor_id,observed_at) VALUES(?,?,?) ON CONFLICT(process_id) DO UPDATE SET observed_at=excluded.observed_at WHERE processes.actor_id=excluded.actor_id`, commit.ProcessID, commit.ActorID, when)
+	if processErr != nil {
+		return mission.CreateResult{}, missionError(mission.KindPersistenceUnavailable, "process_id", "mission creation authority could not be persisted", processErr)
+	}
+	if affected, _ := processResult.RowsAffected(); affected != 1 {
+		return mission.CreateResult{}, missionError(mission.KindIdempotencyConflict, "process_id", "process identity is bound to another actor", nil)
+	}
+	if err = saveGovernanceContextTx(ctx, tx, commit.Governance, commit.OperationID, commit.OccurredAt); err != nil {
+		return mission.CreateResult{}, err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO phase3_missions(mission_id,project_id,definition_id,definition_version,definition_commitment,lifecycle,current_step,state_version,created_at,updated_at,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, commit.Instance.MissionID, commit.Instance.ProjectID, commit.Instance.DefinitionID, commit.Instance.DefinitionVersion, commit.Instance.DefinitionCommitment, commit.Instance.Lifecycle, commit.Instance.CurrentStep, commit.Instance.StateVersion, formatTime(commit.Instance.CreatedAt), formatTime(commit.Instance.UpdatedAt), encoded)
 	if err != nil {
@@ -138,17 +133,11 @@ func (s *Store) CreateMission(ctx context.Context, commit mission.CreateCommit) 
 		}
 		return mission.CreateResult{}, missionError(mission.KindPersistenceUnavailable, "store", "mission persistence operation failed", err)
 	}
-	if authorityRequired {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO phase3_mission_creation_authority(mission_id,actor_id,process_id,governance_context_id,governance_aggregate) VALUES(?,?,?,?,?)`, commit.Instance.MissionID, commit.ActorID, commit.ProcessID, commit.Governance.ID(), commit.Governance.Aggregate().Algorithm()+":"+commit.Governance.Aggregate().Digest()); err != nil {
-			return mission.CreateResult{}, missionError(mission.KindPersistenceUnavailable, "creation_authority", "mission creation authority could not be persisted", err)
-		}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO phase3_mission_creation_authority(mission_id,actor_id,process_id,governance_context_id,governance_aggregate) VALUES(?,?,?,?,?)`, commit.Instance.MissionID, commit.ActorID, commit.ProcessID, commit.Governance.ID(), commit.Governance.Aggregate().Algorithm()+":"+commit.Governance.Aggregate().Digest()); err != nil {
+		return mission.CreateResult{}, missionError(mission.KindPersistenceUnavailable, "creation_authority", "mission creation authority could not be persisted", err)
 	}
-	var governance *governancecontext.Context
-	if authorityRequired {
-		value := commit.Governance
-		governance = &value
-	}
-	resultJSON, _ := json.Marshal(createResultWire{Instance: commit.Instance, ActorID: commit.ActorID, ProcessID: commit.ProcessID, Governance: governance, AuthorityRecorded: authorityRequired})
+	governance := commit.Governance
+	resultJSON, _ := json.Marshal(createResultWire{Instance: commit.Instance, ActorID: commit.ActorID, ProcessID: commit.ProcessID, Governance: &governance, AuthorityRecorded: true})
 	if err = insertPhase3Operation(ctx, tx, commit.OperationID.String(), "create_mission", commit.Instance.MissionID.String(), commit.RequestCommitment.String(), resultJSON, commit.OccurredAt); err != nil {
 		return mission.CreateResult{}, err
 	}
@@ -158,7 +147,7 @@ func (s *Store) CreateMission(ctx context.Context, commit mission.CreateCommit) 
 	if err = tx.Commit(); err != nil {
 		return mission.CreateResult{}, missionError(mission.KindPersistenceUnavailable, "store", "mission persistence operation failed", err)
 	}
-	return mission.CreateResult{Instance: commit.Instance, ActorID: commit.ActorID, ProcessID: commit.ProcessID, Governance: commit.Governance, AuthorityRecorded: authorityRequired}, nil
+	return mission.CreateResult{Instance: commit.Instance, ActorID: commit.ActorID, ProcessID: commit.ProcessID, Governance: commit.Governance, AuthorityRecorded: true}, nil
 }
 
 func loadCreateOperation(ctx context.Context, q rowQuery, op ids.OperationID, digest mission.RequestCommitment) (mission.CreateResult, bool, error) {

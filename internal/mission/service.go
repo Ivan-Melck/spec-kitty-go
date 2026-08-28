@@ -406,14 +406,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if _, err := ids.ParseActorID(request.ActorID.String()); err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "actor_id", "actor identity is invalid")
 	}
-	authorityRequired := request.ProcessID != "" || request.Governance.ID() != ""
-	if authorityRequired {
-		if _, err := ids.ParseProcessID(request.ProcessID.String()); err != nil {
-			return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "process_id", "process identity is invalid")
-		}
-		if err := request.Governance.Validate(); err != nil {
-			return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "governance_context", "sealed governance context is invalid")
-		}
+	if _, err := ids.ParseProcessID(request.ProcessID.String()); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "process_id", "process identity is invalid")
+	}
+	if err := request.Governance.Validate(); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "governance_context", "sealed governance context is invalid")
 	}
 	if request.OccurredAt.IsZero() || request.OccurredAt.Location() != time.UTC {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "creation time must be non-zero UTC")
@@ -431,7 +428,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if _, err := NewMissionInstance(snapshot); err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "mission", "creation would construct invalid mission state")
 	}
-	commitment, err := createRequestCommitment(request, definition, authorityRequired)
+	commitment, err := createRequestCommitment(request, definition)
 	if err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "request", "creation request cannot be committed")
 	}
@@ -445,25 +442,13 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if !sameMissionSnapshot(snapshot, result.Instance) {
 		return CreateResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.create", "mission store violated create postconditions")
 	}
-	if authorityRequired && (!result.AuthorityRecorded || result.ActorID != request.ActorID || result.ProcessID != request.ProcessID || !sameGovernanceContext(result.Governance, request.Governance)) {
+	if !result.AuthorityRecorded || result.ActorID != request.ActorID || result.ProcessID != request.ProcessID || !sameGovernanceContext(result.Governance, request.Governance) {
 		return CreateResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.create", "mission store violated creation authority postconditions")
 	}
 	return CreateResult{Instance: result.Instance.clone(), ActorID: result.ActorID, ProcessID: result.ProcessID, Governance: result.Governance, AuthorityRecorded: result.AuthorityRecorded, Replayed: result.Replayed}, nil
 }
 
-func createRequestCommitment(request CreateRequest, definition MissionDefinition, authorityRequired bool) (RequestCommitment, error) {
-	if !authorityRequired {
-		// Preserve the accepted v13 request identity for historical callers.
-		return digestRequest(struct {
-			MissionID            ids.MissionID
-			ProjectID            ids.ProjectID
-			DefinitionID         ids.MissionDefinitionID
-			DefinitionVersion    DefinitionVersion
-			DefinitionCommitment DefinitionCommitment
-			ActorID              ids.ActorID
-			OccurredAt           string
-		}{request.MissionID, request.ProjectID, definition.ID(), definition.Version(), definition.Commitment(), request.ActorID, request.OccurredAt.Format(time.RFC3339Nano)})
-	}
+func createRequestCommitment(request CreateRequest, definition MissionDefinition) (RequestCommitment, error) {
 	return digestRequest(struct {
 		MissionID            ids.MissionID
 		ProjectID            ids.ProjectID

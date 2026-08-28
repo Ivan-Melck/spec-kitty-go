@@ -88,7 +88,7 @@ func runArtifactPublish(ctx context.Context, request artifactPublishRequest, std
 	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "artifact_publish_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "artifact_publish_refused", request.CorrelationID, request.OperationID, nil, controlStoreError())
 	}
 	defer store.Close()
 	service, _ := artifact.NewService(store)
@@ -106,9 +106,15 @@ func runArtifactPublish(ctx context.Context, request artifactPublishRequest, std
 }
 
 func runArtifactApprove(ctx context.Context, request artifactApproveRequest, stdout io.Writer) int {
+	if _, err := artifact.NewArtifactApproval(artifact.ArtifactApprovalParams{ID: request.ApprovalID, ArtifactRevisionID: request.ArtifactRevisionID, Verdict: request.Verdict, ActorID: request.ActorID.String(), EvidenceDigest: request.EvidenceDigest, GovernanceContextID: request.GovernanceContextID.String(), SubmittedAt: request.SubmittedAt}); err != nil {
+		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, nil, err)
+	}
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil {
+		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, nil, err)
+	}
 	store, err := sqlite.Open(ctx, request.Database)
 	if err != nil {
-		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, nil, err)
+		return encodeMethodFailure(stdout, "artifact_approval_refused", request.CorrelationID, request.OperationID, nil, controlStoreError())
 	}
 	defer store.Close()
 	service, _ := artifact.NewService(store)

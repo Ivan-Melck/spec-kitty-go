@@ -42,9 +42,12 @@ func TestCreationAuthorityRejectsPartialProvenanceBeforeStore(t *testing.T) {
 	definition := mustDefinition(t)
 	registry, _ := mission.NewRegistry(definition)
 	for _, mutate := range []func(*mission.CreateRequest){
-		func(request *mission.CreateRequest) { request.ProcessID = "process-partial" },
 		func(request *mission.CreateRequest) {
-			request.Governance = serviceGovernance(t, "governance-partial", fixtureTime())
+			request.ProcessID, request.Governance = "", governancecontext.Context{}
+		},
+		func(request *mission.CreateRequest) { request.Governance = governancecontext.Context{} },
+		func(request *mission.CreateRequest) {
+			request.ProcessID = ""
 		},
 	} {
 		store := &authorityCreateStore{memoryStore: newMemoryStore()}
@@ -53,6 +56,18 @@ func TestCreationAuthorityRejectsPartialProvenanceBeforeStore(t *testing.T) {
 		if _, err := mission.NewService(registry, store).Create(context.Background(), request); !mission.IsKind(err, mission.KindInvalidRequest) || store.calls != 0 {
 			t.Fatalf("partial provenance err=%v calls=%d", err, store.calls)
 		}
+	}
+}
+
+func TestCreationAuthorityIsMandatoryBelowHelper(t *testing.T) {
+	definition := mustDefinition(t)
+	registry, _ := mission.NewRegistry(definition)
+	store := &authorityCreateStore{memoryStore: newMemoryStore()}
+	request := createRequest(t, definition, "missing-authority")
+	request.ProcessID, request.Governance = "", governancecontext.Context{}
+
+	if _, err := mission.NewService(registry, store).Create(context.Background(), request); !mission.IsKind(err, mission.KindInvalidRequest) || store.calls != 0 {
+		t.Fatalf("missing provenance err=%v calls=%d", err, store.calls)
 	}
 }
 
