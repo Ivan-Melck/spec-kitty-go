@@ -166,6 +166,45 @@ func TestCompletedIntegrationReplayPrecedesCompleteEligibilityInspection(t *test
 	}
 }
 
+func TestCompleteIntegrationEligibilityConfigurationCannotBeDowngraded(t *testing.T) {
+	denied := completeIntegrationFact(t, "reconciliation-integration-denied", "revision-2", "work-1", workgraph.Invalidate, workgraph.StatusApproved, workgraph.EligibilityIntegration)
+	newLegacy := func() *memoryStore {
+		return &memoryStore{eligibility: workgraph.Consequence{IntegrationEligible: true, RunMayContinue: true, Reason: "permissive legacy tuple"}}
+	}
+	assertRefused := func(t *testing.T, service *Service, legacy *memoryStore, reader *recordingEligibilityReader, git *memoryGit) {
+		t.Helper()
+		_, err := service.WithEligibilityFacts(nil).Integrate(context.Background(), validRequest("operation-nil-downgrade"))
+		if !IsKind(err, KindRevisionIneligible) || service.mode != eligibilityComplete || service.eligibility == nil || !legacy.reviewRead || legacy.eligibilityRead || reader.calls != 0 || git.establishCalls != 0 || git.updates != 0 {
+			t.Fatalf("error=%v mode=%v full=%v review=%v full_reads=%d legacy=%v establish=%d updates=%d", err, service.mode, service.eligibility != nil, legacy.reviewRead, reader.calls, legacy.eligibilityRead, git.establishCalls, git.updates)
+		}
+	}
+	t.Run("auto-detected reader survives nil", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied}
+		full := &fullMemoryStore{memoryStore: legacy, recordingEligibilityReader: reader}
+		var configured Store = full
+		git := &memoryGit{target: testBase, workspaceHead: testBase}
+		assertRefused(t, NewService(configured, git), legacy, reader, git)
+	})
+	t.Run("explicit reader survives nil", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied}
+		git := &memoryGit{target: testBase, workspaceHead: testBase}
+		assertRefused(t, NewService(legacy, git).WithEligibilityFacts(reader), legacy, reader, git)
+	})
+	t.Run("full read failure never falls back", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied, err: errors.New("full authority unavailable")}
+		git := &memoryGit{target: testBase, workspaceHead: testBase}
+		request := validRequest("operation-full-read-failure")
+		request.ExpectedEligibility = denied
+		_, err := NewService(legacy, git).WithEligibilityFacts(reader).Integrate(context.Background(), request)
+		if !IsKind(err, KindStoreFailure) || reader.calls != 1 || legacy.eligibilityRead || git.establishCalls != 0 || git.updates != 0 {
+			t.Fatalf("error=%v full_reads=%d legacy=%v establish=%d updates=%d", err, reader.calls, legacy.eligibilityRead, git.establishCalls, git.updates)
+		}
+	})
+}
+
 func TestCompletedIntegrationReplayBypassesLaterIneligibility(t *testing.T) {
 	store := &memoryStore{}
 	git := &memoryGit{target: testBase, workspaceHead: testBase}
@@ -241,6 +280,11 @@ type recordingEligibilityReader struct {
 	workID      ids.WorkID
 	status      workgraph.WorkStatus
 	operation   workgraph.EligibilityOperation
+}
+
+type fullMemoryStore struct {
+	*memoryStore
+	*recordingEligibilityReader
 }
 
 func (r *recordingEligibilityReader) WorkEligibilityFact(_ context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {

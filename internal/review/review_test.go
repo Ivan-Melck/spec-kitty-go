@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -141,6 +142,42 @@ func TestSubmitReplaysBeforeCompleteReviewEligibilityInspection(t *testing.T) {
 	}
 }
 
+func TestCompleteReviewEligibilityConfigurationCannotBeDowngraded(t *testing.T) {
+	denied := completeReviewFact(t, "reconciliation-review-denied", "revision-2", "work-1", workgraph.Invalidate, workgraph.StatusHandedOff, workgraph.EligibilityReview)
+	newLegacy := func() *recordingStore {
+		return &recordingStore{eligibility: workgraph.Consequence{HandoffEligible: true, RunMayContinue: true, Reason: "permissive legacy tuple"}}
+	}
+	assertRefused := func(t *testing.T, service *Service, legacy *recordingStore, reader *recordingEligibilityReader) {
+		t.Helper()
+		_, err := service.WithEligibilityFacts(nil).Submit(context.Background(), validRequest(time.Date(2026, 8, 28, 21, 0, 0, 0, time.UTC)))
+		if !IsKind(err, KindRevisionIneligible) || service.mode != eligibilityComplete || service.eligibility == nil || legacy.eligibilityRead || legacy.inspected || legacy.committed || reader.calls != 0 {
+			t.Fatalf("error=%v mode=%v full=%v full_reads=%d legacy=%v inspect=%v commit=%v", err, service.mode, service.eligibility != nil, reader.calls, legacy.eligibilityRead, legacy.inspected, legacy.committed)
+		}
+	}
+	t.Run("auto-detected reader survives nil", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied}
+		full := &fullRecordingStore{recordingStore: legacy, recordingEligibilityReader: reader}
+		var configured Store = full
+		assertRefused(t, NewService(configured), legacy, reader)
+	})
+	t.Run("explicit reader survives nil", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied}
+		assertRefused(t, NewService(legacy).WithEligibilityFacts(reader), legacy, reader)
+	})
+	t.Run("full read failure never falls back", func(t *testing.T) {
+		legacy := newLegacy()
+		reader := &recordingEligibilityReader{fact: denied, err: errors.New("full authority unavailable")}
+		request := validRequest(time.Date(2026, 8, 28, 21, 0, 0, 0, time.UTC))
+		request.ExpectedEligibility = denied
+		_, err := NewService(legacy).WithEligibilityFacts(reader).Submit(context.Background(), request)
+		if !IsKind(err, KindConflict) || reader.calls != 1 || legacy.eligibilityRead || legacy.inspected || legacy.committed {
+			t.Fatalf("error=%v full_reads=%d legacy=%v inspect=%v commit=%v", err, reader.calls, legacy.eligibilityRead, legacy.inspected, legacy.committed)
+		}
+	})
+}
+
 func validRequest(now time.Time) Request {
 	return Request{
 		SchemaVersion: 1, CorrelationID: "correlation-review-1", OperationID: "operation-review-1",
@@ -181,6 +218,11 @@ type recordingEligibilityReader struct {
 	workID      ids.WorkID
 	status      workgraph.WorkStatus
 	operation   workgraph.EligibilityOperation
+}
+
+type fullRecordingStore struct {
+	*recordingStore
+	*recordingEligibilityReader
 }
 
 func (r *recordingEligibilityReader) WorkEligibilityFact(_ context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {

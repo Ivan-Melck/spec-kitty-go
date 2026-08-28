@@ -376,10 +376,25 @@ func TestCompleteEligibilityFactDerivesAndValidatesEveryAuthorityField(t *testin
 	if err != nil || !fact.Complete() || fact.LegacyV1() || !fact.Permitted() {
 		t.Fatalf("complete fact=%#v err=%v", fact, err)
 	}
-	mutants := []EligibilityFact{fact}
-	mutants[0].newRevisionID = "revision-other"
-	if fact.SameComplete(mutants[0]) || !fact.SameComplete(fact) {
-		t.Fatal("complete fact equality did not bind exact successor authority")
+	mutants := map[string]struct {
+		mutate                    func(*EligibilityFact)
+		remainsInternallyComplete bool
+	}{
+		"successor":  {func(value *EligibilityFact) { value.newRevisionID = "revision-other" }, true},
+		"permission": {func(value *EligibilityFact) { value.permitted = !value.permitted }, false},
+		"reason":     {func(value *EligibilityFact) { value.reason = "caller-authored reason" }, false},
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			changed := fact
+			mutant.mutate(&changed)
+			if changed.Complete() != mutant.remainsInternallyComplete || fact.SameComplete(changed) {
+				t.Fatal("complete fact accepted caller-authored authority mutation")
+			}
+		})
+	}
+	if !fact.SameComplete(fact) {
+		t.Fatal("complete fact does not equal itself")
 	}
 }
 
