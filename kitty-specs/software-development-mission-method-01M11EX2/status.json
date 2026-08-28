@@ -268,7 +268,8 @@
       "last_transition_at": "2026-08-28T09:08:13.501440+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Cycle 2 ready: all five rejection findings repaired; full focused, race, migration, architecture, compile, vet, staticcheck, module, formatting, and diff gates pass."
+        "Cycle 2 ready: all five rejection findings repaired; full focused, race, migration, architecture, compile, vet, staticcheck, module, formatting, and diff gates pass.",
+        "Cycle 3 ready: four remaining persistence invariants repaired; focused x20, full SQLite, race, migration, architecture, compile, vet, staticcheck, module, formatting and diff gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
