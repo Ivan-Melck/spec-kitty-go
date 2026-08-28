@@ -22,6 +22,8 @@ var safeLabel = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 var readCampaignSourceIdentity = sourceIdentity
 
+var validatePublicationCheckout = testcampaign.ValidatePhase3PublicationCheckout
+
 type profileResult struct {
 	Name       string `json:"name"`
 	ReportPath string `json:"report_path"`
@@ -49,11 +51,35 @@ func main() {
 	artifactDir := flag.String("artifact-dir", "", "directory for JSON transcripts and reports")
 	label := flag.String("label", "", "artifact label; valid only with -profile")
 	timeout := flag.Duration("timeout", 20*time.Minute, "deadline for each go test profile")
+	publicationRoot := flag.String("publication-root", "", "clean repository checkout containing the Phase 3 attestation")
+	payloadCommit := flag.String("payload-commit", "", "immutable Phase 3 payload commit")
+	attestationCommit := flag.String("attestation-commit", "", "exact checked-out Phase 3 documentation attestation")
 	flag.Parse()
-	if err := run(*profileName, *campaignName, *artifactDir, *label, *timeout); err != nil {
+	publicationRequested := *publicationRoot != "" || *payloadCommit != "" || *attestationCommit != ""
+	var err error
+	if publicationRequested {
+		if *profileName != "" || *campaignName != "" || *artifactDir != "" || *label != "" {
+			err = errors.New("publication validation cannot be combined with profile or campaign execution")
+		} else {
+			err = runPublication(*publicationRoot, *payloadCommit, *attestationCommit)
+		}
+	} else {
+		err = run(*profileName, *campaignName, *artifactDir, *label, *timeout)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func runPublication(root, payloadCommit, attestationCommit string) error {
+	if root == "" || payloadCommit == "" || attestationCommit == "" {
+		return errors.New("publication-root, payload-commit, and attestation-commit are all required")
+	}
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root {
+		return errors.New("publication-root must be an absolute clean path")
+	}
+	return validatePublicationCheckout(root, payloadCommit, attestationCommit)
 }
 
 func run(profileName, campaignName, artifactDir, label string, timeout time.Duration) error {

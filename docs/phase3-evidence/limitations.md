@@ -98,3 +98,10 @@ portable attempt 26 then passed. Real-provider attempts 27–30 remain explicitl
 non-admissible setup evidence for namespace identity, Git safe-directory,
 installer-variable, and sanitized-environment preconditions. Canonical offline
 attempt 31 passed the frozen provider runner and durable two-item selector.
+
+Review cycle 3 nevertheless rejected that publication: deleting setup attempts
+27–30 remained possible because the required-ID list had a moving tail;
+documented-command validation did not close every subcommand and path shape;
+Mermaid subgraphs were not balanced; and the reproducible Make gate entered
+through test code rather than the campaign command. The next source candidate
+must close those structural laws and requalify before a later payload can pass.

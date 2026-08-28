@@ -96,5 +96,7 @@ offline module-cache preconditions. Canonical attempt 31 passed both the frozen
 eleven-scenario provider runner and the separate durable two-item Phase 3
 selector. Portable attempt 26 passed the complete source-bound ladder; attempt
 25 remains the failed synthetic-publication-fixture qualification. Attempt 17
-remained diagnostic only. Raw bounded artifacts remain outside the repository;
+remained diagnostic only. Review cycle 3 rejected that publication because its
+failure-history tail, command grammar, Mermaid subgraph balance, and reusable
+validator entrypoint were not yet structurally closed. Raw bounded artifacts remain outside the repository;
 published records contain only safe digests and summaries.

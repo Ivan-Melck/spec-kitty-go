@@ -31,7 +31,7 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 	for _, required := range []string{
 		"mission-contract:", "-profile mission-contract", "mission-acceptance:", "-profile mission-acceptance",
 		"mission-adversarial:", "-profile mission-adversarial", "-campaign mission_full",
-		"phase3-publication:", "PHASE3_PUBLICATION_GATE=1", "TestPhase3PublicationCheckoutGateUsesTypedEnvironment",
+		"phase3-publication:", "$(GO) run ./internal/testcampaign/cmd/campaign", "-publication-root", "-payload-commit", "-attestation-commit",
 		"quality: preflight contract beads-contract mission-contract mission-acceptance race static dependencies",
 	} {
 		if !strings.Contains(makefile, required) {
@@ -81,11 +81,26 @@ func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
 		"dangling_mermaid_arrow": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/README.md"), "Source --> Portable", "Source -->")
 		},
+		"unbalanced_mermaid_subgraph": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), "    end\n\n    subgraph Kernel", "\n    subgraph Kernel")
+		},
 		"nonexistent_command": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/README.md"), "make mission-contract", "make mission-contract-missing")
 		},
 		"nonexistent_non_make_command": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/README.md"), "git show --stat", "phase3-command-that-does-not-exist --stat")
+		},
+		"bad_git_dash_c_verb": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), "git -C \"$disposable\" init", "git -C \"$disposable\" destroy")
+		},
+		"bad_go_mod_verb": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), "go mod download", "go mod overwrite")
+		},
+		"bad_provider_verb": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), `"$beads_bin" version --json`, `"$beads_bin" destroy --json`)
+		},
+		"nonexistent_cd_target": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), `cd "$disposable"`, "cd docs/does-not-exist")
 		},
 		"claim_test_mismatch": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/results.md"), "`TestMissionMethodSemanticDriftMutations1000`", "`TestMissionMethodSemanticDriftMutations999`")
@@ -162,11 +177,13 @@ func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
 func TestPhase3PublicationEveryRequiredFailureIdentityIsLoadBearing(t *testing.T) {
 	fixture := phase3PublicationFixture(t, phase3RepositoryRoot(t))
 	phase3UpgradeFixtureSchema(t, fixture)
-	for _, id := range []string{
-		"01", "02", "03", "04", "05", "06", "07", "08", "09",
-		"real-11", "real-12", "real-13", "real-14", "real-15", "real-16", "real-17",
-		"review-cycle-1", "20", "21", "real-23", "review-cycle-2", "25",
-	} {
+	var census phase3Census
+	contents, err := os.ReadFile(filepath.Join(fixture, "docs/phase3-evidence/campaign-census.json"))
+	if err != nil || json.Unmarshal(contents, &census) != nil {
+		t.Fatalf("read fixture census: %v", err)
+	}
+	for _, attempt := range census.FailedAttempts {
+		id := attempt.ID
 		t.Run(id, func(t *testing.T) {
 			candidate := phase3PublicationFixture(t, fixture)
 			phase3MutateCensus(t, candidate, func(record map[string]any) {
@@ -180,12 +197,33 @@ func TestPhase3PublicationEveryRequiredFailureIdentityIsLoadBearing(t *testing.T
 			}
 		})
 	}
+
+	phase3MutateCensus(t, fixture, func(record map[string]any) {
+		record["failed_or_non_admissible_attempts"] = append(record["failed_or_non_admissible_attempts"].([]any), map[string]any{
+			"id": "future-after-source-freeze", "source": "future", "verdict": "non_admissible", "reason": "synthetic future setup failure",
+		})
+	})
+	phase3RefreshFailureHistoryBinding(t, fixture)
+	candidate := phase3PublicationFixture(t, fixture)
+	phase3MutateCensus(t, candidate, func(record map[string]any) {
+		attempts := record["failed_or_non_admissible_attempts"].([]any)
+		record["failed_or_non_admissible_attempts"] = attempts[:len(attempts)-1]
+	})
+	if err := ValidatePhase3Publication(candidate); err == nil {
+		t.Fatal("post-freeze failed-attempt tail deletion survived canonical commitment")
+	}
 }
 
 func TestPhase3PublicationMachineEvidenceMutants(t *testing.T) {
 	fixture := phase3PublicationFixture(t, phase3RepositoryRoot(t))
 	phase3UpgradeFixtureSchema(t, fixture)
 	mutants := map[string]func(map[string]any){
+		"failure_history_count": func(record map[string]any) {
+			record["failure_history_count"] = record["failure_history_count"].(float64) - 1
+		},
+		"failure_history_digest": func(record map[string]any) {
+			record["failure_history_sha256"] = strings.Repeat("0", 64)
+		},
 		"race_winner": func(record map[string]any) {
 			races := record["scale_proofs"].(map[string]any)["two_process_finalization"].(map[string]any)
 			races["winners"] = float64(99)
@@ -226,6 +264,24 @@ func TestPhase3PublicationMachineEvidenceMutants(t *testing.T) {
 			t.Fatal("supporting-profile test substitution survived")
 		}
 	})
+	for _, mutant := range []struct {
+		name   string
+		field  string
+		mutate func(any) any
+	}{
+		{name: "census_failure_history_count", field: "failure_history_count", mutate: func(value any) any { return value.(float64) - 1 }},
+		{name: "census_failure_history_digest", field: "failure_history_sha256", mutate: func(any) any { return strings.Repeat("f", 64) }},
+	} {
+		t.Run(mutant.name, func(t *testing.T) {
+			candidate := phase3PublicationFixture(t, fixture)
+			phase3MutateCensus(t, candidate, func(record map[string]any) {
+				record[mutant.field] = mutant.mutate(record[mutant.field])
+			})
+			if err := ValidatePhase3Publication(candidate); err == nil {
+				t.Fatal("census failure-history commitment mutant survived")
+			}
+		})
+	}
 }
 
 func TestPhase3PublicationCheckoutRequiresCleanDocsOnlyAttestation(t *testing.T) {
@@ -324,18 +380,6 @@ func TestPhase3PublicationCheckoutRequiresCleanDocsOnlyAttestation(t *testing.T)
 	})
 }
 
-func TestPhase3PublicationCheckoutGateUsesTypedEnvironment(t *testing.T) {
-	if os.Getenv("PHASE3_PUBLICATION_GATE") != "1" {
-		t.Skip("executed by make phase3-publication with explicit immutable identities")
-	}
-	root := os.Getenv("PHASE3_PUBLICATION_ROOT")
-	payload := os.Getenv("PHASE3_PAYLOAD_COMMIT")
-	attestation := os.Getenv("PHASE3_ATTESTATION_COMMIT")
-	if err := ValidatePhase3PublicationCheckout(root, payload, attestation); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func phase3RepositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, source, _, ok := runtime.Caller(0)
@@ -397,7 +441,7 @@ func phase3CopyFixtureTree(t *testing.T, source, destination string) {
 func phase3UpgradeFixtureSchema(t *testing.T, root string) {
 	t.Helper()
 	phase3MutateQualification(t, root, func(record map[string]any) {
-		record["schema_version"] = float64(2)
+		record["schema_version"] = float64(phase3PublicationSchema)
 		scale := record["scale_proofs"].(map[string]any)
 		races := scale["two_process_finalization"].(map[string]any)
 		races["winners"], races["replays"], races["conflicts"] = float64(100), float64(50), float64(50)
@@ -412,7 +456,7 @@ func phase3UpgradeFixtureSchema(t *testing.T, root string) {
 		projection["mutants"] = []any{map[string]any{"id": "projection_checkbox_authority", "verdict": "killed"}, map[string]any{"id": "projection_import_path", "verdict": "killed"}, map[string]any{"id": "governance_current_source", "verdict": "killed"}, map[string]any{"id": "governance_commitment_omission", "verdict": "killed"}}
 	})
 	phase3MutateCensus(t, root, func(record map[string]any) {
-		record["schema_version"] = float64(2)
+		record["schema_version"] = float64(phase3PublicationSchema)
 		for _, raw := range record["supporting_profiles"].([]any) {
 			profile := raw.(map[string]any)
 			registryName := profile["name"].(string)
@@ -429,6 +473,32 @@ func phase3UpgradeFixtureSchema(t *testing.T, root string) {
 			}
 			profile["tests"] = tests
 		}
+	})
+	phase3RefreshFailureHistoryBinding(t, root)
+}
+
+func phase3RefreshFailureHistoryBinding(t *testing.T, root string) {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join(root, "docs/phase3-evidence/campaign-census.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var census phase3Census
+	if err = json.Unmarshal(contents, &census); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := phase3FailureHistoryDigest(census.FailedAttempts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := float64(len(census.FailedAttempts))
+	phase3MutateCensus(t, root, func(record map[string]any) {
+		record["failure_history_count"] = count
+		record["failure_history_sha256"] = digest
+	})
+	phase3MutateQualification(t, root, func(record map[string]any) {
+		record["failure_history_count"] = count
+		record["failure_history_sha256"] = digest
 	})
 }
 

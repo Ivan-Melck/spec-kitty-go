@@ -60,7 +60,10 @@ mission-adversarial: ## Run the slow Phase 3 drift, process-race, and crash cens
 phase3-publication: ## Validate a clean Phase 3 payload and docs-only attestation checkout.
 	@test -n "$(PAYLOAD_COMMIT)" || { echo 'PAYLOAD_COMMIT is required' >&2; exit 1; }
 	@test -n "$(ATTESTATION_COMMIT)" || { echo 'ATTESTATION_COMMIT is required' >&2; exit 1; }
-	PHASE3_PUBLICATION_GATE=1 PHASE3_PUBLICATION_ROOT="$(CURDIR)" PHASE3_PAYLOAD_COMMIT="$(PAYLOAD_COMMIT)" PHASE3_ATTESTATION_COMMIT="$(ATTESTATION_COMMIT)" $(GO) test ./internal/testcampaign -run '^TestPhase3PublicationCheckoutGateUsesTypedEnvironment$$' -count=1
+	$(GO) run ./internal/testcampaign/cmd/campaign \
+		-publication-root "$(CURDIR)" \
+		-payload-commit "$(PAYLOAD_COMMIT)" \
+		-attestation-commit "$(ATTESTATION_COMMIT)"
 
 scope: ## Run architecture, reachability, and rejecting-mutant guards.
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile architecture -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m

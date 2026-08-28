@@ -104,7 +104,9 @@ non-admissible or diagnostic; attempt 17 is explicitly diagnostic rather than
 canonical evidence. The rejected cycle-1 publication and attempts 20, 21, and
 23 are also retained with their original failed or non-admissible verdicts. The
 rejected cycle-2 publication and failed attempt 25 remain explicit too. Only
-attempts 26 and 31 support this publication.
+attempts 26 and 31 support the recorded campaign results. Review cycle 3 still
+rejected this publication's structural closure; that verdict remains in the
+machine ledger and is not upgraded by the passing campaigns.
 
 Raw test streams, provider databases, Dolt logs, temporary SQLite files,
 environment state, and authored provider bodies remain outside the repository.

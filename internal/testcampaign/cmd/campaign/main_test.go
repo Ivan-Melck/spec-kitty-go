@@ -19,6 +19,41 @@ func TestSourceIdentityFailsClosedOutsideGitRepository(t *testing.T) {
 	}
 }
 
+func TestRunPublicationRequiresCompleteTypedIdentity(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	for name, request := range map[string][3]string{
+		"missing_root":        {"", commit, commit},
+		"missing_payload":     {t.TempDir(), "", commit},
+		"missing_attestation": {t.TempDir(), commit, ""},
+		"relative_root":       {"relative", commit, commit},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := runPublication(request[0], request[1], request[2]); err == nil {
+				t.Fatal("incomplete publication command was accepted")
+			}
+		})
+	}
+}
+
+func TestRunPublicationCallsClosedCheckoutValidator(t *testing.T) {
+	original := validatePublicationCheckout
+	t.Cleanup(func() { validatePublicationCheckout = original })
+	root := t.TempDir()
+	payload := strings.Repeat("a", 40)
+	attestation := strings.Repeat("b", 40)
+	called := 0
+	validatePublicationCheckout = func(gotRoot, gotPayload, gotAttestation string) error {
+		called++
+		if gotRoot != root || gotPayload != payload || gotAttestation != attestation {
+			t.Fatalf("publication identity changed: root=%q payload=%q attestation=%q", gotRoot, gotPayload, gotAttestation)
+		}
+		return nil
+	}
+	if err := runPublication(root, payload, attestation); err != nil || called != 1 {
+		t.Fatalf("publication command delegation calls=%d err=%v", called, err)
+	}
+}
+
 func TestSourceIdentityIncludesRelevantUntrackedFiles(t *testing.T) {
 	repository := t.TempDir()
 	git := func(args ...string) {

@@ -1,9 +1,11 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "verdict": "pass",
   "source_commit": "f049baaa8751e0e2b48126ffe05823400f9f4881",
   "source_tree": "7ef44e98b332628f0688d274fd4b07eaddc0a2d5",
   "source_clean": true,
+  "failure_history_count": 27,
+  "failure_history_sha256": "2034b2c7719dd9970b2b11d94b986da491fabf34c486c20f1ff8d7140efa61e0",
   "profiles": [
     {
       "name": "mission-contract",
@@ -255,7 +257,8 @@
     {"id": "real-27", "source": "f049baa", "verdict": "non_admissible", "reason": "plain offline namespace could not read the outer namespace identity required by containment proof"},
     {"id": "real-28", "source": "f049baa", "verdict": "non_admissible", "reason": "root-owned read-only containment mount was not yet declared as the exact safe Git worktree"},
     {"id": "real-29", "source": "f049baa", "verdict": "non_admissible", "reason": "qualified installer identity was supplied under the wrong Make variable; zero scenarios started"},
-    {"id": "real-30", "source": "f049baa", "verdict": "non_admissible", "reason": "runner environment sanitization removed the ephemeral Git safe-directory declaration before source resolution"}
+    {"id": "real-30", "source": "f049baa", "verdict": "non_admissible", "reason": "runner environment sanitization removed the ephemeral Git safe-directory declaration before source resolution"},
+    {"id": "review-cycle-3", "source": "f049baa", "verdict": "fail", "reason": "publication closure omitted tail commitment, complete command grammar, balanced Mermaid subgraphs, and a non-test validator entrypoint"}
   ],
   "hosted_baseline": {"required_samples": 10, "observed_samples": 0, "duration_ms": null, "verdict": "pending"}
 }

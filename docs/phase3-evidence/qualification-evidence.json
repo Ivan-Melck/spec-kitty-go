@@ -1,6 +1,8 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "verdict": "pass",
+  "failure_history_count": 27,
+  "failure_history_sha256": "2034b2c7719dd9970b2b11d94b986da491fabf34c486c20f1ff8d7140efa61e0",
   "tested_source": {"commit": "f049baaa8751e0e2b48126ffe05823400f9f4881", "tree": "7ef44e98b332628f0688d274fd4b07eaddc0a2d5", "clean": true},
   "publication": {"payload_commit": null, "disposition": "the containing payload commit is recorded by the following documentation-only attestation"},
   "host": {"goos": "linux", "goarch": "amd64", "go_version": "go1.26.5", "git_version": "2.43.0", "staticcheck_version": "2026.1 (v0.7.0)", "govulncheck_version": "1.6.0", "hosted_baseline": null},

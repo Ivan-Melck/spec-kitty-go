@@ -162,7 +162,7 @@ func sortedCopy(values []string) []string {
 	return result
 }
 
-const phase3PublicationSchema = 2
+const phase3PublicationSchema = 3
 
 const phase3EvidenceFileLimit = 2 << 20
 
@@ -187,9 +187,11 @@ type phase3Counts struct {
 }
 
 type phase3Qualification struct {
-	SchemaVersion int    `json:"schema_version"`
-	Verdict       string `json:"verdict"`
-	TestedSource  struct {
+	SchemaVersion       int    `json:"schema_version"`
+	Verdict             string `json:"verdict"`
+	FailureHistoryCount int    `json:"failure_history_count"`
+	FailureHistorySHA   string `json:"failure_history_sha256"`
+	TestedSource        struct {
 		Commit string `json:"commit"`
 		Tree   string `json:"tree"`
 		Clean  bool   `json:"clean"`
@@ -331,14 +333,16 @@ type phase3MutantResult struct {
 }
 
 type phase3Census struct {
-	SchemaVersion int                     `json:"schema_version"`
-	Verdict       string                  `json:"verdict"`
-	SourceCommit  string                  `json:"source_commit"`
-	SourceTree    string                  `json:"source_tree"`
-	SourceClean   bool                    `json:"source_clean"`
-	Profiles      []phase3ProfileEvidence `json:"profiles"`
-	Supporting    []phase3ProfileEvidence `json:"supporting_profiles"`
-	Campaigns     []struct {
+	SchemaVersion       int                     `json:"schema_version"`
+	Verdict             string                  `json:"verdict"`
+	SourceCommit        string                  `json:"source_commit"`
+	SourceTree          string                  `json:"source_tree"`
+	SourceClean         bool                    `json:"source_clean"`
+	FailureHistoryCount int                     `json:"failure_history_count"`
+	FailureHistorySHA   string                  `json:"failure_history_sha256"`
+	Profiles            []phase3ProfileEvidence `json:"profiles"`
+	Supporting          []phase3ProfileEvidence `json:"supporting_profiles"`
+	Campaigns           []struct {
 		Name           string `json:"name"`
 		Verdict        string `json:"verdict"`
 		DurationMS     int64  `json:"duration_ms"`
@@ -348,18 +352,20 @@ type phase3Census struct {
 		Phase2FrozenRunner phase3ProviderRun `json:"phase2_frozen_runner"`
 		Phase3TwoItem      phase3ProviderRun `json:"phase3_two_item_selector"`
 	} `json:"real_provider"`
-	FailedAttempts []struct {
-		ID      string `json:"id"`
-		Source  string `json:"source"`
-		Verdict string `json:"verdict"`
-		Reason  string `json:"reason"`
-	} `json:"failed_or_non_admissible_attempts"`
+	FailedAttempts []phase3FailedAttempt `json:"failed_or_non_admissible_attempts"`
 	HostedBaseline struct {
 		RequiredSamples int    `json:"required_samples"`
 		ObservedSamples int    `json:"observed_samples"`
 		DurationMS      *int64 `json:"duration_ms"`
 		Verdict         string `json:"verdict"`
 	} `json:"hosted_baseline"`
+}
+
+type phase3FailedAttempt struct {
+	ID      string `json:"id"`
+	Source  string `json:"source"`
+	Verdict string `json:"verdict"`
+	Reason  string `json:"reason"`
 }
 
 type phase3ProfileEvidence struct {
@@ -558,7 +564,7 @@ func validatePhase3MachineEvidence(e phase3Qualification, c phase3Census) error 
 	if err := validatePhase3Campaigns(c); err != nil {
 		return err
 	}
-	if err := validatePhase3History(c.FailedAttempts); err != nil {
+	if err := validatePhase3History(c.FailedAttempts, e.FailureHistoryCount, e.FailureHistorySHA, c.FailureHistoryCount, c.FailureHistorySHA); err != nil {
 		return err
 	}
 	if c.HostedBaseline.RequiredSamples != 10 || c.HostedBaseline.ObservedSamples != 0 || c.HostedBaseline.DurationMS != nil || c.HostedBaseline.Verdict != "pending" {
@@ -760,31 +766,46 @@ func validatePhase3ProfileEvidence(profile phase3ProfileEvidence) error {
 	return nil
 }
 
-func validatePhase3History(attempts []struct {
-	ID      string `json:"id"`
-	Source  string `json:"source"`
-	Verdict string `json:"verdict"`
-	Reason  string `json:"reason"`
-}) error {
-	required := []string{
+func validatePhase3History(attempts []phase3FailedAttempt, evidenceCount int, evidenceDigest string, censusCount int, censusDigest string) error {
+	requiredPrefix := []string{
 		"01", "02", "03", "04", "05", "06", "07", "08", "09",
 		"real-11", "real-12", "real-13", "real-14", "real-15", "real-16", "real-17",
 		"review-cycle-1", "20", "21", "real-23", "review-cycle-2", "25",
+		"real-27", "real-28", "real-29", "real-30", "review-cycle-3",
+	}
+	if len(attempts) < len(requiredPrefix) {
+		return fmt.Errorf("phase3 failed-attempt history omitted required prefix")
 	}
 	seen := make(map[string]bool, len(attempts))
 	allowed := map[string]bool{"fail": true, "non_admissible": true, "superseded_pass": true, "diagnostic_fail": true, "diagnostic_pass": true}
-	for _, attempt := range attempts {
+	for index, attempt := range attempts {
 		if attempt.ID == "" || seen[attempt.ID] || !allowed[attempt.Verdict] || attempt.Source == "" || strings.TrimSpace(attempt.Reason) == "" || len(attempt.Reason) > 256 {
 			return fmt.Errorf("phase3 failed-attempt ledger is invalid")
 		}
+		if index < len(requiredPrefix) && attempt.ID != requiredPrefix[index] {
+			return fmt.Errorf("phase3 failed-attempt history prefix changed at %s", requiredPrefix[index])
+		}
 		seen[attempt.ID] = true
 	}
-	for _, id := range required {
-		if !seen[id] {
-			return fmt.Errorf("phase3 failed-attempt history omitted %s", id)
-		}
+	digest, err := phase3FailureHistoryDigest(attempts)
+	if err != nil {
+		return err
+	}
+	if evidenceCount != len(attempts) || censusCount != len(attempts) || evidenceDigest != digest || censusDigest != digest {
+		return fmt.Errorf("phase3 failed-attempt history count or commitment changed")
 	}
 	return nil
+}
+
+func phase3FailureHistoryDigest(attempts []phase3FailedAttempt) (string, error) {
+	canonical, err := json.Marshal(attempts)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize phase3 failed-attempt history: %w", err)
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("spec-kitty/phase3/failure-history/v1\x00"))
+	_, _ = hash.Write(canonical)
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func validatePhase3QualityGates(gates []struct {
@@ -945,11 +966,26 @@ func validatePhase3MermaidBody(declaration string, lines []string) error {
 		arrow := regexp.MustCompile(`^` + node + `\s+-->\s*(?:\|[^|]+\|\s*)?` + node + `$`)
 		nodeOnly := regexp.MustCompile(`^` + node + `$`)
 		subgraph := regexp.MustCompile(`^subgraph\s+` + node + `$`)
+		depth := 0
 		for _, line := range lines {
-			if line == "end" || nodeOnly.MatchString(line) || subgraph.MatchString(line) || arrow.MatchString(line) {
+			if subgraph.MatchString(line) {
+				depth++
+				continue
+			}
+			if line == "end" {
+				if depth == 0 {
+					return fmt.Errorf("unmatched flowchart end")
+				}
+				depth--
+				continue
+			}
+			if nodeOnly.MatchString(line) || arrow.MatchString(line) {
 				continue
 			}
 			return fmt.Errorf("invalid flowchart statement")
+		}
+		if depth != 0 {
+			return fmt.Errorf("unterminated flowchart subgraph")
 		}
 		return nil
 	}
@@ -981,6 +1017,9 @@ func validatePhase3DocumentedCommands(root, contents string, targets map[string]
 		for _, command := range phase3ShellCommands(block) {
 			name := command[0]
 			if name == "$beads_bin" || name == `"$beads_bin"` {
+				if err := validatePhase3CommandShape(root, command); err != nil {
+					return err
+				}
 				continue
 			}
 			if strings.HasPrefix(name, "scripts/") {
@@ -991,12 +1030,15 @@ func validatePhase3DocumentedCommands(root, contents string, targets map[string]
 				if statErr != nil || !info.Mode().IsRegular() {
 					return fmt.Errorf("phase3 documentation names nonexistent command %s", name)
 				}
+				if err := validatePhase3ScriptShape(command); err != nil {
+					return err
+				}
 				continue
 			}
 			if !allowed[name] {
 				return fmt.Errorf("phase3 documentation names unapproved command %s", name)
 			}
-			if err := validatePhase3CommandShape(command); err != nil {
+			if err := validatePhase3CommandShape(root, command); err != nil {
 				return err
 			}
 			if name == "make" {
@@ -1014,33 +1056,273 @@ func validatePhase3DocumentedCommands(root, contents string, targets map[string]
 	return nil
 }
 
-func validatePhase3CommandShape(command []string) error {
+func validatePhase3CommandShape(root string, command []string) error {
 	if len(command) == 0 {
 		return fmt.Errorf("phase3 documentation contains empty command")
 	}
-	requireSecond := func(allowed ...string) error {
-		if len(command) < 2 || !slices.Contains(allowed, command[1]) {
-			return fmt.Errorf("phase3 documentation names unsupported command shape %q", strings.Join(command, " "))
+	core, err := phase3CommandCore(command)
+	if err != nil {
+		return err
+	}
+	unsupported := func() error {
+		return fmt.Errorf("phase3 documentation names unsupported command shape %q", strings.Join(command, " "))
+	}
+	switch core[0] {
+	case "cd":
+		if len(core) != 2 || !phase3DocumentedDirectory(root, core[1]) {
+			return unsupported()
+		}
+		return nil
+	case "git":
+		if len(core) >= 2 && core[1] == "-C" {
+			if len(core) != 4 || !phase3DocumentedDirectory(root, core[2]) || core[3] != "init" {
+				return unsupported()
+			}
+			return nil
+		}
+		if len(core) == 3 && core[1] == "diff" && core[2] == "--check" {
+			return nil
+		}
+		if len(core) == 4 && core[1] == "show" && core[2] == "--stat" && phase3CommitPattern.MatchString(phase3ShellValue(core[3])) {
+			return nil
+		}
+		if len(core) == 3 && core[1] == "checkout" && phase3CommitPattern.MatchString(phase3ShellValue(core[2])) {
+			return nil
+		}
+		return unsupported()
+	case "go":
+		if len(core) == 3 && core[1] == "mod" && slices.Contains([]string{"download", "verify"}, core[2]) {
+			return nil
+		}
+		if len(core) == 3 && core[1] == "install" && core[2] == "./cmd/spk-phase1-helper" && phase3ExistingGoPath(root, core[2]) {
+			return nil
+		}
+		if len(core) >= 3 && core[1] == "run" && core[2] == "./cmd/spk-phase1-helper" && phase3ExistingGoPath(root, core[2]) {
+			if validatePhase3HelperArgs(core[3:]) == nil {
+				return nil
+			}
+		}
+		if len(core) == 3 && core[1] == "vet" && core[2] == "./..." {
+			return nil
+		}
+		if len(core) >= 3 && core[1] == "test" && validatePhase3GoTestArgs(core[2:]) {
+			return nil
+		}
+		return unsupported()
+	case "jq":
+		if len(core) == 3 && core[1] == "." && phase3SafeShellPath(core[2]) {
+			return nil
+		}
+		if len(core) == 4 && core[1] == "-r" && core[2] == ".executable_path" && phase3SafeShellPath(core[3]) {
+			return nil
+		}
+		return unsupported()
+	case "sha256sum":
+		if len(core) == 3 && core[1] == "--" && phase3SafeShellPath(core[2]) {
+			return nil
+		}
+		if len(core) == 3 && core[1] == "--check" && filepath.Base(phase3ShellValue(core[2])) == "SHA256SUMS" {
+			return nil
+		}
+		return unsupported()
+	case "staticcheck", "govulncheck":
+		if len(core) == 2 && core[1] == "./..." {
+			return nil
+		}
+		return unsupported()
+	case "mktemp":
+		if len(core) == 2 && strings.HasPrefix(phase3ShellValue(core[1]), "/tmp/") {
+			return nil
+		}
+		if len(core) == 3 && core[1] == "-d" && strings.HasPrefix(phase3ShellValue(core[2]), "/tmp/") {
+			return nil
+		}
+		return unsupported()
+	case "make":
+		if len(core) < 2 {
+			return unsupported()
+		}
+		for _, argument := range core[2:] {
+			if phase3MakeAssignment(argument) {
+				continue
+			}
+			if !regexp.MustCompile(`^[A-Z][A-Z0-9_]*=\S+$`).MatchString(argument) {
+				return unsupported()
+			}
+		}
+		return nil
+	case "pwd":
+		if len(core) == 1 {
+			return nil
+		}
+		return unsupported()
+	default:
+		if core[0] == "$beads_bin" || core[0] == `"$beads_bin"` {
+			return validatePhase3ProviderCommand(core)
+		}
+		return unsupported()
+	}
+}
+
+func phase3CommandCore(command []string) ([]string, error) {
+	for index, token := range command {
+		if token != ">" {
+			continue
+		}
+		if index == 0 || index+2 != len(command) || !phase3SafeShellPath(command[index+1]) {
+			return nil, fmt.Errorf("phase3 documentation names unsafe redirection in %q", strings.Join(command, " "))
+		}
+		return command[:index], nil
+	}
+	return command, nil
+}
+
+func phase3ShellValue(value string) string {
+	return strings.Trim(value, `"'`)
+}
+
+func phase3SafeShellPath(value string) bool {
+	value = phase3ShellValue(value)
+	if phase3ShellVariable(value) {
+		return true
+	}
+	return value != "" && !filepath.IsAbs(value) && filepath.Clean(value) == value && !strings.HasPrefix(value, "..") && !strings.ContainsAny(value, "\x00\n")
+}
+
+func phase3DocumentedDirectory(root, value string) bool {
+	value = phase3ShellValue(value)
+	if phase3ShellVariable(value) {
+		return true
+	}
+	if regexp.MustCompile(`^\$[A-Za-z_][A-Za-z0-9_]*$`).MatchString(value) {
+		return true
+	}
+	if value == "" || filepath.IsAbs(value) || filepath.Clean(value) != value || strings.HasPrefix(value, "..") {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(root, value))
+	return err == nil && info.IsDir()
+}
+
+func phase3ShellVariable(value string) bool {
+	if len(value) < 2 || value[0] != '$' || !((value[1] >= 'A' && value[1] <= 'Z') || (value[1] >= 'a' && value[1] <= 'z') || value[1] == '_') {
+		return false
+	}
+	for _, character := range value[2:] {
+		if !((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func phase3MakeAssignment(value string) bool {
+	name, assigned, ok := strings.Cut(value, "=")
+	if !ok || assigned == "" || name == "" || name[0] < 'A' || name[0] > 'Z' {
+		return false
+	}
+	for _, character := range name[1:] {
+		if !((character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func phase3ExistingGoPath(root, value string) bool {
+	value = phase3ShellValue(value)
+	if !strings.HasPrefix(value, "./") || filepath.Clean(value) != strings.TrimPrefix(value, "./") {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(root, strings.TrimPrefix(value, "./")))
+	return err == nil
+}
+
+func validatePhase3GoTestArgs(arguments []string) bool {
+	foundPackage := false
+	for index := 0; index < len(arguments); index++ {
+		argument := phase3ShellValue(arguments[index])
+		switch argument {
+		case "-race":
+		case "-run", "-count":
+			index++
+			if index >= len(arguments) || phase3ShellValue(arguments[index]) == "" {
+				return false
+			}
+		default:
+			if strings.HasPrefix(argument, "-count=") && regexp.MustCompile(`^[0-9]+$`).MatchString(strings.TrimPrefix(argument, "-count=")) {
+				continue
+			}
+			if !strings.HasPrefix(argument, "./") {
+				return false
+			}
+			foundPackage = true
+		}
+	}
+	return foundPackage
+}
+
+func validatePhase3HelperArgs(arguments []string) error {
+	if len(arguments) < 2 || arguments[0] != "tracker" || arguments[1] != "inspect-beads" {
+		return fmt.Errorf("unsupported helper command")
+	}
+	allowed := map[string]bool{"--project": true, "--executable": true, "--workspace": true, "--database-identity": true, "--protocol-schema": true, "--mode": true, "--expected-digest": true}
+	for index := 2; index < len(arguments); index++ {
+		if arguments[index] == "--read-only=true" {
+			continue
+		}
+		if !allowed[arguments[index]] || index+1 >= len(arguments) {
+			return fmt.Errorf("unsupported helper argument")
+		}
+		index++
+	}
+	return nil
+}
+
+func validatePhase3ProviderCommand(command []string) error {
+	unsupported := func() error {
+		return fmt.Errorf("phase3 documentation names unsupported provider command shape %q", strings.Join(command, " "))
+	}
+	if len(command) == 3 && slices.Contains([]string{"version", "where", "export"}, command[1]) && command[2] == "--json" {
+		return nil
+	}
+	if len(command) == 4 && command[1] == "dolt" && slices.Contains([]string{"show", "status"}, command[2]) && command[3] == "--json" {
+		return nil
+	}
+	if len(command) >= 2 && command[1] == "init" {
+		allowed := map[string]bool{"--stealth": true, "--skip-agents": true, "--skip-hooks": true, "--non-interactive": true}
+		for index := 2; index < len(command); index++ {
+			if allowed[command[index]] {
+				continue
+			}
+			if command[index] == "--prefix" && index+1 < len(command) {
+				index++
+				continue
+			}
+			return unsupported()
 		}
 		return nil
 	}
-	switch command[0] {
-	case "git":
-		return requireSecond("-C", "checkout", "diff", "show")
-	case "go":
-		return requireSecond("install", "mod", "run", "test", "vet")
-	case "jq":
-		return requireSecond(".", "-e", "-r")
-	case "sha256sum":
-		return requireSecond("--", "--check")
-	case "staticcheck", "govulncheck":
-		return requireSecond("./...")
-	case "mktemp":
-		if len(command) < 2 || (command[1] != "-d" && !strings.HasPrefix(command[1], "/tmp/")) {
-			return fmt.Errorf("phase3 documentation names unsupported command shape %q", strings.Join(command, " "))
+	if len(command) >= 3 && command[1] == "backup" {
+		if len(command) == 4 && command[2] == "init" && phase3SafeShellPath(command[3]) {
+			return nil
+		}
+		if len(command) == 3 && slices.Contains([]string{"sync", "status"}, command[2]) {
+			return nil
 		}
 	}
-	return nil
+	return unsupported()
+}
+
+func validatePhase3ScriptShape(command []string) error {
+	core, err := phase3CommandCore(command)
+	if err != nil {
+		return err
+	}
+	if len(core) == 3 && core[0] == "scripts/install-qualified-beads.sh" && core[1] == "--dest" && phase3SafeShellPath(core[2]) {
+		return nil
+	}
+	return fmt.Errorf("phase3 documentation names unsupported script command shape %q", strings.Join(command, " "))
 }
 
 func phase3ExecutableBlocks(contents string) ([]string, error) {
