@@ -206,6 +206,11 @@
       ],
       "write_scope": [
         "cmd/spk-phase1-helper/main.go",
+        "internal/controlstore/sqlite/migrations.go",
+        "internal/controlstore/sqlite/mission.go",
+        "internal/controlstore/sqlite/mission_method_query.go",
+        "internal/controlstore/sqlite/mission_method_query_test.go",
+        "internal/controlstore/sqlite/mission_test.go",
         "internal/helpercmd/artifact.go",
         "internal/helpercmd/artifact_test.go",
         "internal/helpercmd/mission_method.go",
@@ -213,8 +218,11 @@
         "internal/helpercmd/projection.go",
         "internal/helpercmd/projection_test.go",
         "internal/helpercmd/root.go",
+        "internal/mission/service.go",
+        "internal/mission/service_test.go",
         "internal/scenario/mission_method_fake_test.go",
-        "internal/scenario/mission_method_helpers_test.go"
+        "internal/scenario/mission_method_helpers_test.go",
+        "internal/testcampaign/manifest.go"
       ],
       "predicted_surfaces": [
         "api",
