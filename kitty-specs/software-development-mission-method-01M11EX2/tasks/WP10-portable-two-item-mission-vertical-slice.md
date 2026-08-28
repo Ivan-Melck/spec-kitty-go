@@ -202,17 +202,21 @@ in `internal/testcampaign/manifest.go`.
    SQLite atomically persists/verifies actor-process and governance bindings;
    replay restores the original authority evidence. Missing or changed
    provenance fails closed.
-3. Reject a missing or unsupported definition without silently defaulting to software-development.
-4. Implement `artifact publish` for intent/specification/plan using exact content digest, repository-relative source ref, source revision, creator, timestamp, typed validation result, and explicit expected-latest revision identity (empty means no predecessor).
-5. Implement `artifact approve` against one exact revision with verdict, approver, evidence digest, governance binding, and operation identity.
-6. Implement `mission transition` with the caller's exact prior
+3. Preserve accepted SQLite migrations v1 through v13 byte-for-byte and in
+   their original order. Append initialization-provenance storage as v14 only;
+   test fresh creation, populated-v13 upgrade, and failure preservation.
+4. Reject a missing or unsupported definition without silently defaulting to software-development.
+5. Implement `artifact publish` for intent/specification/plan using exact content digest, repository-relative source ref, source revision, creator, timestamp, typed validation result, and explicit expected-latest revision identity (empty means no predecessor).
+6. Implement `artifact approve` against one exact revision with verdict, approver, evidence digest, governance binding, and operation identity.
+7. Implement `mission transition` with the caller's exact prior
    `MissionSnapshot` from a typed query, requested successor, exact artifact
    revision references, actor/governance, and operation identity.
-7. Implement `mission decompose` using WP04's command, approved plan gate, fake provider binding, proposed stable work definitions, and operation identity.
-8. Do not load spec or plan truth by interpreting Markdown. Files may supply bytes whose digests are committed; typed command input supplies the artifact meaning.
-9. Ensure publishing changed plan content creates a new revision and makes the older approval inapplicable rather than editing it.
-10. Preserve exact idempotency: same operation plus same request replays; conflicting reuse fails without extra rows or provider mutations.
-11. Add command tests for every happy transition and for absent, stale, rejected, wrong-kind, wrong-mission, and invalid-governance refusals.
+8. Implement `mission decompose` using WP04's command, approved plan gate, fake provider binding, proposed stable work definitions, and operation identity. It performs no mission transition.
+9. After a complete successful decomposition, require two explicit `mission transition` commands with distinct operation IDs and exact snapshots: `plan_approved` to `decomposing`, then `decomposing` to `work_draft_ready`. Partial, failed, or ambiguous decomposition invokes neither.
+10. Do not load spec or plan truth by interpreting Markdown. Files may supply bytes whose digests are committed; typed command input supplies the artifact meaning.
+11. Ensure publishing changed plan content creates a new revision and makes the older approval inapplicable rather than editing it.
+12. Preserve exact idempotency: same operation plus same request replays; conflicting reuse fails without extra rows or provider mutations.
+13. Add command tests for every happy transition and for absent, stale, rejected, wrong-kind, wrong-mission, and invalid-governance refusals.
 
 **Files**:
 
@@ -229,6 +233,8 @@ in `internal/testcampaign/manifest.go`.
 **Validation**:
 
 - A fresh database reaches decomposed/validated work only through the legal approved sequence.
+- SQLite migrations v1 through v13 remain byte/order identical; only v14 is
+  appended, and populated-v13 upgrades preserve all prior authority evidence.
 - Changed artifact bytes invalidate applicability of the previous approval.
 - Refusals name stable kinds, observed/expected state where safe, and bounded recovery.
 - Tracker work alone cannot cause a mission transition.
