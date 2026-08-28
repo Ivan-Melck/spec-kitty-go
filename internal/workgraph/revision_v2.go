@@ -388,36 +388,88 @@ func validateV2JSONShape(encoded []byte) error {
 	if err := decoder.Decode(&root); err != nil {
 		return err
 	}
-	work, ok := root["work_items"].([]any)
-	if !ok {
-		return fmt.Errorf("work_items must be an array")
+	if err := requireJSONInteger(root, "schema_version"); err != nil {
+		return err
 	}
-	lanes, ok := root["lanes"].([]any)
-	if !ok {
-		return fmt.Errorf("lanes must be an array")
+	for _, field := range []string{"work_revision_id", "project_id", "mission_id", "planning_source_commit", "dependency_policy", "graph_digest", "criteria_digest", "finalized_by", "finalized_at", "governance_context_id"} {
+		if err := requireJSONString(root, field); err != nil {
+			return err
+		}
 	}
-	if _, ok := root["provider_observations"].([]any); !ok {
-		return fmt.Errorf("provider_observations must be an array")
+	if err := requireJSONInteger(root, "generation"); err != nil {
+		return err
+	}
+	if err := optionalJSONString(root, "predecessor_id"); err != nil {
+		return err
+	}
+	definition, err := requireJSONObject(root, "mission_definition")
+	if err != nil {
+		return err
+	}
+	if err := requireJSONString(definition, "key"); err != nil {
+		return err
+	}
+	if err := requireJSONInteger(definition, "version"); err != nil {
+		return err
+	}
+	if err := requireJSONString(definition, "digest"); err != nil {
+		return err
+	}
+	work, err := requireJSONArray(root, "work_items")
+	if err != nil {
+		return err
+	}
+	lanes, err := requireJSONArray(root, "lanes")
+	if err != nil {
+		return err
+	}
+	providerObservations, err := requireJSONArray(root, "provider_observations")
+	if err != nil {
+		return err
 	}
 	for _, rawItem := range work {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
 			return fmt.Errorf("work item must be an object")
 		}
-		criteria, ok := item["criteria"].([]any)
-		if !ok {
-			return fmt.Errorf("criteria must be an array")
+		for _, field := range []string{"work_id", "title", "description"} {
+			if err := requireJSONString(item, field); err != nil {
+				return err
+			}
 		}
-		if _, ok := item["dependencies"].([]any); !ok {
-			return fmt.Errorf("dependencies must be an array")
+		if err := optionalJSONString(item, "design_context"); err != nil {
+			return err
 		}
-		if _, ok := item["write_scopes"].([]any); !ok {
-			return fmt.Errorf("write_scopes must be an array")
+		criteria, err := requireJSONArray(item, "criteria")
+		if err != nil {
+			return err
+		}
+		dependencies, err := requireJSONArray(item, "dependencies")
+		if err != nil {
+			return err
+		}
+		if err := requireStringElements(dependencies, "dependencies"); err != nil {
+			return err
+		}
+		writeScopes, err := requireJSONArray(item, "write_scopes")
+		if err != nil {
+			return err
+		}
+		if err := requireStringElements(writeScopes, "write_scopes"); err != nil {
+			return err
 		}
 		for _, rawCriterion := range criteria {
 			criterion, ok := rawCriterion.(map[string]any)
 			if !ok {
 				return fmt.Errorf("criterion must be an object")
+			}
+			for _, field := range []string{"criterion_id", "text", "verifier_kind"} {
+				if err := requireJSONString(criterion, field); err != nil {
+					return err
+				}
+			}
+			if err := requireJSONBool(criterion, "required"); err != nil {
+				return err
 			}
 			if metadata, present := criterion["metadata"]; present {
 				if _, ok := metadata.(map[string]any); !ok {
@@ -431,11 +483,104 @@ func validateV2JSONShape(encoded []byte) error {
 		if !ok {
 			return fmt.Errorf("lane must be an object")
 		}
-		if _, ok := lane["work_ids"].([]any); !ok {
-			return fmt.Errorf("lane work_ids must be an array")
+		if err := requireJSONString(lane, "lane_id"); err != nil {
+			return err
 		}
-		if _, ok := lane["dependency_lane_ids"].([]any); !ok {
-			return fmt.Errorf("lane dependency_lane_ids must be an array")
+		workIDs, err := requireJSONArray(lane, "work_ids")
+		if err != nil {
+			return err
+		}
+		if err := requireStringElements(workIDs, "work_ids"); err != nil {
+			return err
+		}
+		dependencyLaneIDs, err := requireJSONArray(lane, "dependency_lane_ids")
+		if err != nil {
+			return err
+		}
+		if err := requireStringElements(dependencyLaneIDs, "dependency_lane_ids"); err != nil {
+			return err
+		}
+	}
+	for _, rawObservation := range providerObservations {
+		observation, ok := rawObservation.(map[string]any)
+		if !ok {
+			return fmt.Errorf("provider observation must be an object")
+		}
+		for _, field := range []string{"work_id", "provider", "external_id", "revision"} {
+			if err := requireJSONString(observation, field); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func requireJSONString(object map[string]any, field string) error {
+	value, present := object[field]
+	if !present {
+		return fmt.Errorf("%s is required", field)
+	}
+	if _, ok := value.(string); !ok {
+		return fmt.Errorf("%s must be a string", field)
+	}
+	return nil
+}
+func optionalJSONString(object map[string]any, field string) error {
+	if _, present := object[field]; !present {
+		return nil
+	}
+	return requireJSONString(object, field)
+}
+func requireJSONInteger(object map[string]any, field string) error {
+	value, present := object[field]
+	if !present {
+		return fmt.Errorf("%s is required", field)
+	}
+	number, ok := value.(json.Number)
+	if !ok {
+		return fmt.Errorf("%s must be an integer", field)
+	}
+	if _, err := strconv.ParseUint(number.String(), 10, 64); err != nil {
+		return fmt.Errorf("%s must be an integer", field)
+	}
+	return nil
+}
+func requireJSONBool(object map[string]any, field string) error {
+	value, present := object[field]
+	if !present {
+		return fmt.Errorf("%s is required", field)
+	}
+	if _, ok := value.(bool); !ok {
+		return fmt.Errorf("%s must be a boolean", field)
+	}
+	return nil
+}
+func requireJSONObject(object map[string]any, field string) (map[string]any, error) {
+	value, present := object[field]
+	if !present {
+		return nil, fmt.Errorf("%s is required", field)
+	}
+	result, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an object", field)
+	}
+	return result, nil
+}
+func requireJSONArray(object map[string]any, field string) ([]any, error) {
+	value, present := object[field]
+	if !present {
+		return nil, fmt.Errorf("%s is required", field)
+	}
+	result, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array", field)
+	}
+	return result, nil
+}
+func requireStringElements(values []any, field string) error {
+	for _, value := range values {
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("%s entries must be strings", field)
 		}
 	}
 	return nil
@@ -660,6 +805,7 @@ func validateAndCloneProviderObservations(input []ProviderObservationV2, items [
 	}
 	result := append([]ProviderObservationV2(nil), input...)
 	seen := make(map[ids.WorkID]struct{}, len(input))
+	mappings := make(map[string]ids.WorkID, len(input))
 	for _, item := range result {
 		if _, ok := known[item.WorkID]; !ok {
 			return nil, invalidV2("provider_observations", "observation references unknown work", nil)
@@ -671,6 +817,11 @@ func validateAndCloneProviderObservations(input []ProviderObservationV2, items [
 		if !stableToken(item.Provider) || !boundedOpaque(item.ExternalID, 512) || !boundedOpaque(item.Revision, 512) {
 			return nil, invalidV2("provider_observations", "provider mapping or revision is invalid", nil)
 		}
+		mappingKey := item.Provider + "\x00" + item.ExternalID
+		if owner, duplicate := mappings[mappingKey]; duplicate {
+			return nil, newError(KindInvalidRevision, "provider mapping identity is assigned to more than one work item", map[string]string{"provider": item.Provider, "work_id": owner.String(), "related_work_id": item.WorkID.String()})
+		}
+		mappings[mappingKey] = item.WorkID
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Provider != result[j].Provider {

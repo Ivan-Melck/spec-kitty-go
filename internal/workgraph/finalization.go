@@ -44,6 +44,7 @@ func NewFinalizationObservation(draft DraftObservation, evidence []ObservationEv
 	}
 	copyEvidence := make([]ObservationEvidence, len(evidence))
 	seen := make(map[ids.WorkID]struct{}, len(evidence))
+	mappings := make(map[string]ids.WorkID, len(evidence))
 	for i, item := range evidence {
 		if _, exists := known[item.WorkID]; !exists {
 			return FinalizationObservation{}, invalidV2("provider_observations", "provider evidence references unknown work", nil)
@@ -55,6 +56,11 @@ func NewFinalizationObservation(draft DraftObservation, evidence []ObservationEv
 		if !stableToken(item.Provider) || !boundedOpaque(item.ExternalID, 512) || !boundedOpaque(item.Revision, 512) || item.MetadataSchema == 0 || !lowerDigest(item.DefinitionDigest) {
 			return FinalizationObservation{}, invalidV2("provider_observations", "provider evidence is incomplete", nil)
 		}
+		mappingKey := item.Provider + "\x00" + item.ExternalID
+		if owner, duplicate := mappings[mappingKey]; duplicate {
+			return FinalizationObservation{}, newError(KindInvalidRevision, "provider mapping identity is assigned to more than one work item", map[string]string{"provider": item.Provider, "work_id": owner.String(), "related_work_id": item.WorkID.String()})
+		}
+		mappings[mappingKey] = item.WorkID
 		criteria := make(map[string]struct{}, len(known[item.WorkID].Criteria()))
 		for _, criterion := range known[item.WorkID].Criteria() {
 			criteria[criterion.ID] = struct{}{}

@@ -66,6 +66,21 @@ func TestFinalizationObservationRejectsIncompleteCoverageAndDefendsCopies(t *tes
 	}
 }
 
+func TestFinalizationObservationRejectsDuplicateExternalMappingButAllowsSharedRevision(t *testing.T) {
+	full := finalizationObservationFixture(t)
+	evidence := full.Evidence()
+	evidence[1].Provider = evidence[0].Provider
+	evidence[1].ExternalID = evidence[0].ExternalID
+	if _, err := NewFinalizationObservation(full.Draft(), evidence); !IsKind(err, KindInvalidRevision) {
+		t.Fatalf("duplicate external mapping = %v", err)
+	}
+	evidence = full.Evidence()
+	evidence[1].Revision = evidence[0].Revision
+	if _, err := NewFinalizationObservation(full.Draft(), evidence); err != nil {
+		t.Fatalf("shared opaque revision across distinct mappings refused: %v", err)
+	}
+}
+
 func TestCandidateRefusesSemanticAndLaneCycleMutants(t *testing.T) {
 	invalid := finalizationObservationFixture(t)
 	work := invalid.draft.Work()

@@ -2,6 +2,7 @@ package workgraph
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,14 @@ func TestLegacyRevisionGoldenBytesAndStrictVersionDispatch(t *testing.T) {
 		"schema zero":               []byte(`{"schema_version":0}`),
 		"future schema":             []byte(`{"schema_version":3}`),
 		"legacy digest mismatch":    bytes.Replace(encoded, []byte(revision.GraphDigest()), []byte("sha256:"+strings.Repeat("0", 64)), 1),
+		"missing dependencies":      bytes.Replace(encoded, []byte(`,"dependencies":[]`), nil, 1),
+		"null dependencies":         bytes.Replace(encoded, []byte(`"dependencies":[]`), []byte(`"dependencies":null`), 1),
+		"wrong dependencies type":   bytes.Replace(encoded, []byte(`"dependencies":[]`), []byte(`"dependencies":{}`), 1),
+		"missing criterion text":    bytes.Replace(encoded, []byte(`,"text":"test A"`), nil, 1),
+		"unknown criterion field":   bytes.Replace(encoded, []byte(`"text":"test A"`), []byte(`"text":"test A","unknown":true`), 1),
+		"missing source revision":   bytes.Replace(encoded, []byte(`,"revision":"7"`), nil, 1),
+		"null lanes":                bytes.Replace(encoded, mustLegacyJSONField(t, encoded, "graph", "lanes"), []byte("null"), 1),
+		"explicit empty parent":     bytes.Replace(encoded, []byte(`{"id":"lane-a"}`), []byte(`{"id":"lane-a","parent_id":""}`), 1),
 	}
 	for name, mutant := range mutants {
 		t.Run(name, func(t *testing.T) {
@@ -64,6 +73,19 @@ func TestLegacyRevisionGoldenBytesAndStrictVersionDispatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustLegacyJSONField(t *testing.T, encoded []byte, parent, field string) []byte {
+	t.Helper()
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &root); err != nil {
+		t.Fatal(err)
+	}
+	var nested map[string]json.RawMessage
+	if err := json.Unmarshal(root[parent], &nested); err != nil {
+		t.Fatal(err)
+	}
+	return nested[field]
 }
 
 func TestFinalizeCanonicalizesEquivalentGraphsAndDefendsImmutability(t *testing.T) {

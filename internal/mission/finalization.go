@@ -114,6 +114,9 @@ func (service *FinalizationService) Finalize(ctx context.Context, command Finali
 	if replay, found, replayErr := service.store.ReplayFinalization(ctx, command.MissionID, command.OperationID, requestDigest); replayErr != nil {
 		return FinalizationResult{}, normalizeFinalizationStoreError(replayErr)
 	} else if found {
+		if err := validateFinalizationPostconditions(command, replay.Revision, replay, requestDigest); err != nil {
+			return FinalizationResult{}, err
+		}
 		replay.RequestDigest = requestDigest
 		replay.Replayed = true
 		return replay, nil
@@ -140,7 +143,7 @@ func (service *FinalizationService) Finalize(ctx context.Context, command Finali
 	if err != nil {
 		return FinalizationResult{}, normalizeFinalizationStoreError(err)
 	}
-	if err := validateFinalizationPostconditions(command, candidate, result); err != nil {
+	if err := validateFinalizationPostconditions(command, candidate, result, requestDigest); err != nil {
 		return FinalizationResult{}, err
 	}
 	result.RequestDigest = requestDigest
@@ -175,7 +178,7 @@ func validateFinalizationCommand(command FinalizationCommand) error {
 	if command.OccurredAt.IsZero() || command.OccurredAt.Location() != time.UTC {
 		return finalizationError(FinalizationInvalidRequest, FinalizationCorrectInput, "occurred_at", "finalization time must be non-zero UTC", nil)
 	}
-	if command.ExpectedMission.DefinitionID.String() != "software-development" || command.ExpectedMission.DefinitionCommitment.Validate() != nil {
+	if command.ExpectedMission.DefinitionID.String() != "software-development" || command.ExpectedMission.DefinitionVersion != 1 || command.ExpectedMission.DefinitionCommitment.Validate() != nil {
 		return finalizationError(FinalizationInvalidRequest, FinalizationCorrectInput, "mission_definition", "mission definition commitment is unsupported", nil)
 	}
 	if !validPlanningSourceCommit(command.PlanningSourceCommit) {
@@ -212,10 +215,21 @@ func finalizationCommandDigest(command FinalizationCommand) (string, error) {
 	}{command.MissionID, command.ProjectID, command.ExpectedMission.DefinitionID, command.ExpectedMission.DefinitionVersion, command.ExpectedMission.DefinitionCommitment, command.ExpectedMission.CurrentStep, command.ExpectedMission.StateVersion, command.ExpectedCurrentGeneration, command.ProposedRevisionID, command.RequestedGeneration, command.PredecessorID, command.PlanningSourceCommit, command.ActorID, command.GovernanceContextID, command.OccurredAt.Format(time.RFC3339Nano)})
 }
 
-func validateFinalizationPostconditions(command FinalizationCommand, candidate workgraph.RevisionV2, result FinalizationResult) error {
+func validateFinalizationPostconditions(command FinalizationCommand, candidate workgraph.RevisionV2, result FinalizationResult, requestDigest string) error {
+	definition := candidate.MissionDefinition()
+	if candidate.ID() != command.ProposedRevisionID || candidate.ProjectID() != command.ProjectID || candidate.MissionID() != command.MissionID || candidate.Generation() != 1 || candidate.PredecessorID() != "" || candidate.PlanningSourceCommit() != command.PlanningSourceCommit || definition.Key != command.ExpectedMission.DefinitionID.String() || definition.Version != uint64(command.ExpectedMission.DefinitionVersion) || definition.Digest != command.ExpectedMission.DefinitionCommitment.String() || candidate.FinalizedBy() != command.ActorID || !candidate.FinalizedAt().Equal(command.OccurredAt) || candidate.GovernanceContextID() != command.GovernanceContextID {
+		return finalizationError(FinalizationContractFailure, FinalizationRepairPersistence, "store.revision", "finalization store returned a revision outside the requested authority", nil)
+	}
 	candidateBytes, _ := candidate.Encode()
 	resultBytes, _ := result.Revision.Encode()
-	if !bytes.Equal(candidateBytes, resultBytes) || result.Mission.Validate() != nil || result.Mission.MissionID != command.MissionID || result.Mission.ProjectID != command.ProjectID || result.Mission.CurrentWorkRevisionID != candidate.ID() || result.Mission.CurrentStep != StepWorkFinalized || result.Mission.StateVersion != command.ExpectedMission.StateVersion+1 {
+	expectedMission := command.ExpectedMission.clone()
+	expectedMission.CurrentStep = StepWorkFinalized
+	expectedMission.CurrentWorkRevisionID = candidate.ID()
+	expectedMission.StateVersion++
+	expectedMission.Lifecycle = LifecycleTerminal
+	expectedMission.TerminalOutcome = OutcomeWorkFinalized
+	expectedMission.UpdatedAt = command.OccurredAt
+	if !bytes.Equal(candidateBytes, resultBytes) || result.Mission.Validate() != nil || !sameMissionSnapshot(expectedMission, result.Mission) || result.RequestDigest != requestDigest {
 		return finalizationError(FinalizationContractFailure, FinalizationRepairPersistence, "store.publish", "finalization store violated publication postconditions", nil)
 	}
 	return nil

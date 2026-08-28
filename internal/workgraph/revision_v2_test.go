@@ -98,6 +98,48 @@ func TestRevisionV2GenerationAndStrictSchemaRefusals(t *testing.T) {
 	}
 }
 
+func TestRevisionV2StrictScalarPresenceTypeAndNullability(t *testing.T) {
+	params := revisionV2Fixture()
+	params.WorkItems[0].Criteria[0].Required = false
+	params.WorkItems[0].DesignContext = ""
+	revision, err := NewRevisionV2(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := revision.Encode()
+	mutants := map[string][]byte{
+		"required null":          bytes.Replace(encoded, []byte(`"required":false`), []byte(`"required":null`), 1),
+		"required missing":       bytes.Replace(encoded, []byte(`,"required":false`), nil, 1),
+		"required wrong type":    bytes.Replace(encoded, []byte(`"required":false`), []byte(`"required":"false"`), 1),
+		"design context null":    bytes.Replace(encoded, []byte(`"description":"Implement the first bounded unit."`), []byte(`"description":"Implement the first bounded unit.","design_context":null`), 1),
+		"predecessor null":       bytes.Replace(encoded, []byte(`"generation":1`), []byte(`"generation":1,"predecessor_id":null`), 1),
+		"finalized by null":      bytes.Replace(encoded, []byte(`"finalized_by":"actor-finalizer"`), []byte(`"finalized_by":null`), 1),
+		"mission version null":   bytes.Replace(encoded, []byte(`"version":1`), []byte(`"version":null`), 1),
+		"criterion text missing": bytes.Replace(encoded, []byte(`"text":"Run the unit test.",`), nil, 1),
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if _, err := DecodeRevisionV2(mutant); !IsKind(err, KindInvalidRevision) {
+				t.Fatalf("shape mutant accepted: %s", mutant)
+			}
+		})
+	}
+}
+
+func TestRevisionV2RejectsDuplicateExternalMappingButAllowsSharedRevision(t *testing.T) {
+	params := revisionV2Fixture()
+	params.ProviderObservations[1].Provider = params.ProviderObservations[0].Provider
+	params.ProviderObservations[1].ExternalID = params.ProviderObservations[0].ExternalID
+	if _, err := NewRevisionV2(params); !IsKind(err, KindInvalidRevision) {
+		t.Fatalf("duplicate mapping = %v", err)
+	}
+	params = revisionV2Fixture()
+	params.ProviderObservations[1].Revision = params.ProviderObservations[0].Revision
+	if _, err := NewRevisionV2(params); err != nil {
+		t.Fatalf("shared revision across distinct mappings refused: %v", err)
+	}
+}
+
 func mustJSONField(t *testing.T, encoded []byte, field string) []byte {
 	t.Helper()
 	var root map[string]json.RawMessage

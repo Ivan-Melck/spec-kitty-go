@@ -1,6 +1,7 @@
 package mission
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -33,6 +34,53 @@ func TestFinalizationSagaObservesTwiceThenPublishesGenerationOne(t *testing.T) {
 	}
 	if !replay.Replayed || source.calls.Load() != 2 || store.publishCalls.Load() != 1 {
 		t.Fatalf("replay crossed service boundaries: %#v", replay)
+	}
+}
+
+func TestFinalizationReplayValidatesCompletePersistencePostconditionsBeforeSuccess(t *testing.T) {
+	mutants := map[string]func(t *testing.T, result *FinalizationResult){
+		"zero revision": func(_ *testing.T, result *FinalizationResult) { result.Revision = workgraph.RevisionV2{} },
+		"wrong revision": func(t *testing.T, result *FinalizationResult) {
+			encoded, err := result.Revision.Encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded = bytes.Replace(encoded, []byte(`"work_revision_id":"revision-final"`), []byte(`"work_revision_id":"revision-other"`), 1)
+			revision, err := workgraph.DecodeRevisionV2(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.Revision = revision
+		},
+		"wrong mission": func(_ *testing.T, result *FinalizationResult) { result.Mission.MissionID = "mission-other" },
+		"wrong current pointer": func(_ *testing.T, result *FinalizationResult) {
+			result.Mission.CurrentWorkRevisionID = "revision-other"
+		},
+		"wrong state version": func(_ *testing.T, result *FinalizationResult) { result.Mission.StateVersion++ },
+		"wrong definition": func(_ *testing.T, result *FinalizationResult) {
+			result.Mission.DefinitionCommitment = DefinitionCommitment(strings.Repeat("d", 64))
+		},
+		"wrong request digest": func(_ *testing.T, result *FinalizationResult) { result.RequestDigest = strings.Repeat("0", 64) },
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			store := newFinalizationStore()
+			source := &finalizationSource{fallback: missionFinalizationObservation(t, "revision-1")}
+			service := NewFinalizationService(source, store)
+			command := finalizationCommandFixture("operation-corrupt-replay")
+			if _, err := service.Finalize(context.Background(), command); err != nil {
+				t.Fatal(err)
+			}
+			calls := source.calls.Load()
+			record := store.operations[command.OperationID]
+			mutate(t, &record.result)
+			store.operations[command.OperationID] = record
+			_, err := service.Finalize(context.Background(), command)
+			typed, ok := err.(*FinalizationError)
+			if !ok || typed.Kind != FinalizationContractFailure || typed.Recovery != FinalizationRepairPersistence || source.calls.Load() != calls || store.publishCalls.Load() != 1 {
+				t.Fatalf("corrupt replay crossed boundary: err=%v provider=%d/%d publish=%d", err, source.calls.Load(), calls, store.publishCalls.Load())
+			}
+		})
 	}
 }
 
@@ -87,15 +135,15 @@ func TestFinalizationDetectsStorePostconditionViolation(t *testing.T) {
 }
 
 func TestFinalizationRejectsGenerationAndOperationMutants(t *testing.T) {
-	tests := map[string]func(*FinalizationCommand){"successor generation": func(c *FinalizationCommand) { c.RequestedGeneration = 2; c.PredecessorID = "revision-old" }, "expected current": func(c *FinalizationCommand) { c.ExpectedCurrentGeneration = 1 }, "wrong step": func(c *FinalizationCommand) { c.ExpectedMission.CurrentStep = StepReconciliationRequired }, "invalid planning source": func(c *FinalizationCommand) { c.PlanningSourceCommit = "not-a-git-object" }}
+	tests := map[string]func(*FinalizationCommand){"successor generation": func(c *FinalizationCommand) { c.RequestedGeneration = 2; c.PredecessorID = "revision-old" }, "expected current": func(c *FinalizationCommand) { c.ExpectedCurrentGeneration = 1 }, "wrong step": func(c *FinalizationCommand) { c.ExpectedMission.CurrentStep = StepReconciliationRequired }, "invalid planning source": func(c *FinalizationCommand) { c.PlanningSourceCommit = "not-a-git-object" }, "unsupported definition version": func(c *FinalizationCommand) { c.ExpectedMission.DefinitionVersion = 2 }}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			command := finalizationCommandFixture(ids.OperationID("operation-mutant-" + strings.ReplaceAll(name, " ", "-")))
 			mutate(&command)
 			source := &finalizationSource{values: []workgraph.FinalizationObservation{missionFinalizationObservation(t, "revision-1")}}
 			store := newFinalizationStore()
-			if _, err := NewFinalizationService(source, store).Finalize(context.Background(), command); err == nil || source.calls.Load() != 0 || store.publishCalls.Load() != 0 {
-				t.Fatalf("guard did not fire: %v", err)
+			if _, err := NewFinalizationService(source, store).Finalize(context.Background(), command); err == nil || source.calls.Load() != 0 || store.replayCalls.Load() != 0 || store.publishCalls.Load() != 0 {
+				t.Fatalf("guard did not fire before ports: %v replay=%d provider=%d publish=%d", err, store.replayCalls.Load(), source.calls.Load(), store.publishCalls.Load())
 			}
 		})
 	}
@@ -211,6 +259,7 @@ type memoryFinalizationStore struct {
 	operations           map[ids.OperationID]storedFinalization
 	current              *FinalizationResult
 	publishCalls         atomic.Int64
+	replayCalls          atomic.Int64
 	loseFirstResponse    bool
 	failBeforeCommit     bool
 	violatePostcondition bool
@@ -224,6 +273,7 @@ func newFinalizationStore() *memoryFinalizationStore {
 	return &memoryFinalizationStore{operations: map[ids.OperationID]storedFinalization{}}
 }
 func (store *memoryFinalizationStore) ReplayFinalization(_ context.Context, _ ids.MissionID, operation ids.OperationID, digest string) (FinalizationResult, bool, error) {
+	store.replayCalls.Add(1)
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	record, ok := store.operations[operation]
