@@ -41,6 +41,46 @@ func TestGenerationOneAtomicReplayAndExactReceipt(t *testing.T) {
 	}
 }
 
+func TestGenerationOneLateBoundaryFaultRollsBackMissionPointerAndRevision(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
+	snapshot := phase3MissionSnapshot(at)
+	seedPhase3Mission(t, store, snapshot)
+	revision := testRevisionV2(t, "revision-fault", 1, "", "fault title", at.Add(time.Second))
+	if _, err = store.db.Exec(`CREATE TRIGGER fault_finalization_operation BEFORE INSERT ON phase3_operations WHEN NEW.operation_kind='finalize_generation_one' BEGIN SELECT RAISE(ABORT,'seeded late fault'); END`); err != nil {
+		t.Fatal(err)
+	}
+	commit := mission.FinalizationCommit{ExpectedMission: snapshot, OperationID: "operation-finalize-fault", RequestDigest: digest64("4"), ExpectedReceipt: mission.FinalizationReceipt(digest64("5")), Candidate: revision, ActorID: "actor-01", GovernanceContextID: "governance-01", OccurredAt: at.Add(time.Second)}
+	if _, err = store.PublishGenerationOne(ctx, commit); err == nil {
+		t.Fatal("late boundary fault was hidden")
+	}
+	loaded, err := store.LoadMission(ctx, snapshot.MissionID)
+	if err != nil || !sameSnapshot(loaded, snapshot) {
+		t.Fatalf("mission advanced after fault: %#v err=%v", loaded, err)
+	}
+	var revisions, pointers, operations int
+	if err = store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM phase3_work_revisions_v2),(SELECT COUNT(*) FROM phase3_current_work_revisions),(SELECT COUNT(*) FROM phase3_operations)`).Scan(&revisions, &pointers, &operations); err != nil || revisions+pointers+operations != 0 {
+		t.Fatalf("partial authority revisions=%d pointers=%d operations=%d err=%v", revisions, pointers, operations, err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	loaded, err = store.LoadMission(ctx, snapshot.MissionID)
+	if err != nil || !sameSnapshot(loaded, snapshot) {
+		t.Fatalf("reopened mission advanced: %#v err=%v", loaded, err)
+	}
+}
+
 func phase3MissionSnapshot(at time.Time) mission.MissionSnapshot {
 	return mission.MissionSnapshot{MissionID: "mission-01", ProjectID: "project-01", DefinitionID: "software-development", DefinitionVersion: 1, DefinitionCommitment: mission.DefinitionCommitment(digest64("a")), Lifecycle: mission.LifecycleOpen, CurrentStep: mission.StepWorkDraftReady, StateVersion: 1, CreatedAt: at, UpdatedAt: at}
 }

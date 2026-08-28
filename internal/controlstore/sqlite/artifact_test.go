@@ -128,3 +128,42 @@ func TestArtifactPublicationHundredCallerTwoConnectionRace(t *testing.T) {
 		}
 	}
 }
+
+func TestArtifactPublicationBoundaryFaultRollsBackAndReopensCleanly(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := artifact.PolicyFor(artifact.KindIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validation, err := artifact.NewValidationResult(artifact.ValidationResultParams{ArtifactRevisionID: "artifact-fault", Verdict: artifact.ValidationPass, Policy: policy, ValidatedAt: time.Date(2026, 8, 28, 8, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.Exec(`CREATE TRIGGER fault_artifact_validation BEFORE INSERT ON phase3_artifact_validations BEGIN SELECT RAISE(ABORT,'seeded boundary fault'); END`); err != nil {
+		t.Fatal(err)
+	}
+	request := artifact.AtomicPublishRequest{OperationID: "operation-artifact-fault", RequestDigest: digest64("2"), ArtifactRevisionID: "artifact-fault", MissionID: "mission-fault", Kind: artifact.KindIntent, ContentDigest: digest64("3"), SourceRef: "refs/heads/main", SourceRevision: "revision-fault", CreatedBy: "actor-fault", CreatedAt: time.Date(2026, 8, 28, 8, 0, 1, 0, time.UTC), Validation: validation}
+	if _, err = store.PublishAtomic(ctx, request); err == nil {
+		t.Fatal("boundary fault was hidden")
+	}
+	var revisions, operations int
+	if err = store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM phase3_artifact_revisions),(SELECT COUNT(*) FROM phase3_operations)`).Scan(&revisions, &operations); err != nil || revisions != 0 || operations != 0 {
+		t.Fatalf("partial publication revisions=%d operations=%d err=%v", revisions, operations, err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err = store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM phase3_artifact_revisions),(SELECT COUNT(*) FROM phase3_operations)`).Scan(&revisions, &operations); err != nil || revisions != 0 || operations != 0 {
+		t.Fatalf("reopened partial publication revisions=%d operations=%d err=%v", revisions, operations, err)
+	}
+}
