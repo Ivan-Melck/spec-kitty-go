@@ -176,11 +176,15 @@
         "WP09"
       ],
       "write_scope": [
+        "internal/mission/readmodel/model.go",
+        "internal/mission/readmodel/model_test.go",
         "internal/projection/atomic_file.go",
         "internal/projection/atomic_file_test.go",
         "internal/projection/model.go",
         "internal/projection/tasks.go",
-        "internal/projection/tasks_test.go"
+        "internal/projection/tasks_test.go",
+        "internal/workgraph/readmodel/model.go",
+        "internal/workgraph/readmodel/model_test.go"
       ],
       "predicted_surfaces": [
         "api",
