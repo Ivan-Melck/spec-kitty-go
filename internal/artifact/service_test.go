@@ -3,7 +3,6 @@ package artifact
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -75,6 +74,7 @@ func TestPublishReplayConflictAndAmbiguousCommitRecovery(t *testing.T) {
 		}},
 		{"source revision", func(c *PublishCommand) { c.SourceRevision = "commit-mutated" }},
 		{"actor", func(c *PublishCommand) { c.CreatedBy = "actor-mutated" }},
+		{"expected latest revision", func(c *PublishCommand) { c.ExpectedLatestRevisionID = first.Revision.ID() }},
 		{"validation", func(c *PublishCommand) {
 			policy, _ := PolicyFor(c.Kind)
 			c.Validation = mustValidation(t, ValidationResultParams{ArtifactRevisionID: c.ArtifactRevisionID, Verdict: ValidationPass, Policy: policy, ValidatedAt: c.Validation.ValidatedAt().Add(time.Second)})
@@ -91,6 +91,13 @@ func TestPublishReplayConflictAndAmbiguousCommitRecovery(t *testing.T) {
 				t.Fatalf("conflict mutated store: writes=%d", repository.publishWrites)
 			}
 		})
+	}
+	malformedPrior := publishFixture(t, "malformed-prior", KindPlan, []byte("invalid prior"), true, now)
+	malformedPrior.ExpectedLatestRevisionID = "not valid"
+	_, err = service.Publish(ctx, malformedPrior)
+	assertErrorKind(t, err, ErrorInvalidIdentity)
+	if repository.publishWrites != 1 {
+		t.Fatalf("invalid prior reached repository: writes=%d", repository.publishWrites)
 	}
 
 	ambiguousRepository := newMemoryRepository()
@@ -163,7 +170,7 @@ func TestApprovalReplayConflictAndRequiredValidation(t *testing.T) {
 	assertErrorKind(t, err, ErrorPolicyUnsatisfied)
 }
 
-func TestConcurrentPublicationAllocatesUniqueRevisions(t *testing.T) {
+func TestConcurrentPublicationAgainstSamePriorHasOneWinner(t *testing.T) {
 	ctx := context.Background()
 	repository := newMemoryRepository()
 	service, _ := NewService(repository)
@@ -188,21 +195,22 @@ func TestConcurrentPublicationAllocatesUniqueRevisions(t *testing.T) {
 	group.Wait()
 	close(results)
 	close(errorsSeen)
+	conflicts := 0
 	for err := range errorsSeen {
-		t.Fatal(err)
-	}
-	numbers := make([]int, 0, total)
-	for result := range results {
-		numbers = append(numbers, int(result.Revision.RevisionNumber()))
-	}
-	sort.Ints(numbers)
-	if len(numbers) != total {
-		t.Fatalf("results=%d", len(numbers))
-	}
-	for index, number := range numbers {
-		if number != index+1 {
-			t.Fatalf("numbers=%v", numbers)
+		if !IsKind(err, ErrorIdempotencyConflict) {
+			t.Fatalf("unexpected error: %v", err)
 		}
+		conflicts++
+	}
+	winners := 0
+	for result := range results {
+		winners++
+		if result.Revision.RevisionNumber() != 1 {
+			t.Fatalf("winner revision=%d", result.Revision.RevisionNumber())
+		}
+	}
+	if winners != 1 || conflicts != total-1 || repository.publishWrites != 1 {
+		t.Fatalf("winners=%d conflicts=%d writes=%d", winners, conflicts, repository.publishWrites)
 	}
 }
 
@@ -285,7 +293,7 @@ func TestRequestCommitmentKnownVectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if PublishRequestCommitmentAlgorithm != "sha256:spec-kitty-artifact-publish-request-v1" || request.RequestDigest != "cf221af475d7678fbd5e39cf6d7c2c72851632c0c8b7cc879ebecc94d6a499ec" {
+	if PublishRequestCommitmentAlgorithm != "sha256:spec-kitty-artifact-publish-request-v2" || request.RequestDigest != "03021e3474c3474bb724ea287e16d2bf9424b4437b3ad2549b414f6df38ca776" {
 		t.Fatalf("publish request vector drifted: algorithm=%q digest=%s", PublishRequestCommitmentAlgorithm, request.RequestDigest)
 	}
 	approval, err := prepareApproval(ApproveCommand{
@@ -367,6 +375,9 @@ func (r *memoryRepository) PublishAtomic(_ context.Context, request AtomicPublis
 		return PublishResult{}, diagnostic(ErrorIdempotencyConflict, "artifact_revision_id", RecoveryResolveConflict, "artifact revision identity already exists", nil)
 	}
 	key := artifactKey(request.MissionID, request.Kind)
+	if r.current[key] != request.ExpectedLatestRevisionID {
+		return PublishResult{}, diagnostic(ErrorIdempotencyConflict, "expected_latest_revision_id", RecoveryResolveConflict, "artifact latest revision changed", nil)
+	}
 	next := uint64(1)
 	if currentID := r.current[key]; currentID != "" {
 		next = r.revisions[currentID].RevisionNumber() + 1
@@ -514,6 +525,9 @@ func approveFixture(suffix, revisionID string, verdict ApprovalVerdict, now time
 
 func publishArtifact(t *testing.T, ctx context.Context, service *Service, repository *memoryRepository, command PublishCommand) ArtifactRevision {
 	t.Helper()
+	repository.mu.Lock()
+	command.ExpectedLatestRevisionID = repository.current[artifactKey(command.MissionID, command.Kind)]
+	repository.mu.Unlock()
 	result, err := service.Publish(ctx, command)
 	if err != nil {
 		t.Fatal(err)

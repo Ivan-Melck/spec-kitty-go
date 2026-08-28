@@ -55,4 +55,50 @@ func TestSuccessorPublicationPersistsCompleteEligibility(t *testing.T) {
 	if err != nil || !fact.Complete() || fact.NewRevisionID() != newRevision.ID() || fact.Permitted() {
 		t.Fatalf("fact=%#v err=%v", fact, err)
 	}
+	if _, err = store.db.Exec(`DROP TRIGGER immutable_phase3_eligibility_update`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_eligibility_facts SET new_work_revision_id='revision-missing' WHERE reconciliation_id='reconciliation-01'`); err == nil {
+		t.Fatal("eligibility revision substitution succeeded")
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_eligibility_facts SET disposition='continue' WHERE reconciliation_id='reconciliation-01' AND work_status='active' AND operation='handoff'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.WorkEligibilityFact(ctx, old.ID(), "work-01", workgraph.StatusActive, workgraph.EligibilityHandoff); err == nil {
+		t.Fatal("substituted disposition restored as authority")
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_eligibility_facts SET disposition='invalidate',work_status='approved',operation='review' WHERE reconciliation_id='reconciliation-01' AND work_status='active' AND operation='handoff'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.WorkEligibilityFact(ctx, old.ID(), "work-01", workgraph.StatusApproved, workgraph.EligibilityReview); err == nil {
+		t.Fatal("substituted status and operation restored as authority")
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_eligibility_facts SET work_status='active',operation='handoff' WHERE reconciliation_id='reconciliation-01' AND work_status='approved' AND operation='review'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.Exec(`DROP TRIGGER immutable_phase3_reconciliation_update`); err != nil {
+		t.Fatal(err)
+	}
+	var canonicalMixed []byte
+	if err = store.db.QueryRow(`SELECT encoded_reconciliation FROM phase3_mixed_reconciliations WHERE reconciliation_id='reconciliation-01'`).Scan(&canonicalMixed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_mixed_reconciliations SET encoded_reconciliation='{}' WHERE reconciliation_id='reconciliation-01'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.WorkEligibilityFact(ctx, old.ID(), "work-01", workgraph.StatusActive, workgraph.EligibilityHandoff); err == nil {
+		t.Fatal("substituted reconciliation header restored as authority")
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_mixed_reconciliations SET encoded_reconciliation=? WHERE reconciliation_id='reconciliation-01'`, canonicalMixed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.Exec(`DROP TRIGGER immutable_phase3_work_revision_update`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_work_revisions_v2 SET encoded_revision='{}' WHERE work_revision_id=?`, newRevision.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.WorkEligibilityFact(ctx, old.ID(), "work-01", workgraph.StatusActive, workgraph.EligibilityHandoff); err == nil {
+		t.Fatal("substituted successor revision restored as authority")
+	}
 }

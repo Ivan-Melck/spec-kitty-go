@@ -156,7 +156,10 @@ CREATE TABLE phase3_missions (
   state_version INTEGER NOT NULL CHECK(state_version > 0),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  snapshot_json BLOB NOT NULL
+  snapshot_json BLOB NOT NULL,
+  FOREIGN KEY(mission_id,current_work_revision_id)
+    REFERENCES phase3_current_work_revisions(mission_id,work_revision_id)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 );
 CREATE TABLE phase3_operations (
   operation_id TEXT PRIMARY KEY,
@@ -219,12 +222,18 @@ CREATE TABLE phase3_work_revisions_v2 (
   criteria_digest TEXT NOT NULL,
   encoded_revision BLOB NOT NULL,
   UNIQUE(mission_id, generation),
+  UNIQUE(work_revision_id, mission_id),
+  UNIQUE(work_revision_id, mission_id, generation),
   FOREIGN KEY(predecessor_id) REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT
 );
 CREATE TABLE phase3_current_work_revisions (
-  mission_id TEXT PRIMARY KEY,
-  work_revision_id TEXT NOT NULL UNIQUE REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
-  generation INTEGER NOT NULL CHECK(generation > 0)
+  mission_id TEXT PRIMARY KEY REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  work_revision_id TEXT NOT NULL UNIQUE,
+  generation INTEGER NOT NULL CHECK(generation > 0),
+  UNIQUE(mission_id, work_revision_id),
+  FOREIGN KEY(work_revision_id, mission_id, generation)
+    REFERENCES phase3_work_revisions_v2(work_revision_id, mission_id, generation)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 );
 CREATE TABLE phase3_drift_reports (
   drift_report_id TEXT PRIMARY KEY,
@@ -240,19 +249,25 @@ CREATE TABLE phase3_mixed_reconciliations (
   old_work_revision_id TEXT NOT NULL REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
   new_work_revision_id TEXT NOT NULL REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
   request_digest TEXT NOT NULL,
-  encoded_reconciliation BLOB NOT NULL
+  encoded_reconciliation BLOB NOT NULL,
+  UNIQUE(reconciliation_id, old_work_revision_id, new_work_revision_id)
 );
 CREATE TABLE phase3_eligibility_facts (
-  reconciliation_id TEXT NOT NULL REFERENCES phase3_mixed_reconciliations(reconciliation_id) ON DELETE RESTRICT,
+  reconciliation_id TEXT NOT NULL,
   old_work_revision_id TEXT NOT NULL,
   new_work_revision_id TEXT NOT NULL,
   work_id TEXT NOT NULL,
-  work_status TEXT NOT NULL,
-  disposition TEXT NOT NULL,
-  operation TEXT NOT NULL,
+  work_status TEXT NOT NULL CHECK(work_status IN ('active','handed_off','approved')),
+  disposition TEXT NOT NULL CHECK(disposition IN ('continue','supersede','invalidate','fork')),
+  operation TEXT NOT NULL CHECK(operation IN ('handoff','review','integration')),
   allowed INTEGER NOT NULL CHECK(allowed IN (0,1)),
   reason TEXT NOT NULL,
-  PRIMARY KEY(reconciliation_id, work_id, work_status, operation)
+  PRIMARY KEY(reconciliation_id, work_id, work_status, operation),
+  FOREIGN KEY(reconciliation_id, old_work_revision_id, new_work_revision_id)
+    REFERENCES phase3_mixed_reconciliations(reconciliation_id, old_work_revision_id, new_work_revision_id)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(old_work_revision_id) REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
+  FOREIGN KEY(new_work_revision_id) REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT
 );
 CREATE TABLE phase3_decisions (
   decision_id TEXT PRIMARY KEY,
@@ -293,10 +308,34 @@ CREATE TABLE phase3_outbox (
   event_id TEXT NOT NULL UNIQUE REFERENCES phase3_events(event_id) ON DELETE RESTRICT,
   event_kind TEXT NOT NULL,
   payload_digest TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  delivery_status TEXT NOT NULL DEFAULT 'pending' CHECK(delivery_status IN ('pending','claimed','retryable','delivered')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+  available_at TEXT NOT NULL,
+  claim_id TEXT,
+  claimed_at TEXT,
+  last_attempt_at TEXT,
+  delivered_at TEXT,
+  CHECK(julianday(created_at) IS NOT NULL AND julianday(available_at) IS NOT NULL),
+  CHECK(
+    (delivery_status='pending' AND attempt_count=0 AND claim_id IS NULL AND claimed_at IS NULL AND last_attempt_at IS NULL AND delivered_at IS NULL AND julianday(available_at)>=julianday(created_at))
+    OR (delivery_status='claimed' AND attempt_count>0 AND claim_id IS NOT NULL AND claimed_at IS NOT NULL AND julianday(claimed_at) IS NOT NULL AND delivered_at IS NULL AND (last_attempt_at IS NULL OR (julianday(last_attempt_at) IS NOT NULL AND julianday(claimed_at)>=julianday(last_attempt_at))))
+    OR (delivery_status='retryable' AND attempt_count>0 AND claim_id IS NULL AND claimed_at IS NULL AND last_attempt_at IS NOT NULL AND julianday(last_attempt_at) IS NOT NULL AND delivered_at IS NULL AND julianday(available_at)>=julianday(last_attempt_at))
+    OR (delivery_status='delivered' AND attempt_count>0 AND claim_id IS NULL AND claimed_at IS NULL AND last_attempt_at IS NOT NULL AND delivered_at IS NOT NULL AND julianday(last_attempt_at) IS NOT NULL AND julianday(delivered_at) IS NOT NULL AND julianday(delivered_at)>=julianday(last_attempt_at))
+  )
 );
 CREATE TRIGGER immutable_phase3_operation_update BEFORE UPDATE ON phase3_operations BEGIN SELECT RAISE(ABORT,'phase3 operation is immutable'); END;
 CREATE TRIGGER immutable_phase3_operation_delete BEFORE DELETE ON phase3_operations BEGIN SELECT RAISE(ABORT,'phase3 operation is immutable'); END;
+CREATE TRIGGER phase3_operation_excludes_legacy_operations BEFORE INSERT ON phase3_operations
+WHEN EXISTS(SELECT 1 FROM operations WHERE operation_id=NEW.operation_id)
+  OR EXISTS(SELECT 1 FROM work_graph_operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in another namespace'); END;
+CREATE TRIGGER legacy_operation_excludes_phase3 BEFORE INSERT ON operations
+WHEN EXISTS(SELECT 1 FROM phase3_operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in phase3'); END;
+CREATE TRIGGER work_graph_operation_excludes_phase3 BEFORE INSERT ON work_graph_operations
+WHEN EXISTS(SELECT 1 FROM phase3_operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in phase3'); END;
 CREATE TRIGGER immutable_phase3_transition_update BEFORE UPDATE ON phase3_mission_transitions BEGIN SELECT RAISE(ABORT,'mission transition is immutable'); END;
 CREATE TRIGGER immutable_phase3_transition_delete BEFORE DELETE ON phase3_mission_transitions BEGIN SELECT RAISE(ABORT,'mission transition is immutable'); END;
 CREATE TRIGGER immutable_phase3_artifact_revision_update BEFORE UPDATE ON phase3_artifact_revisions BEGIN SELECT RAISE(ABORT,'artifact revision is immutable'); END;
@@ -317,7 +356,16 @@ CREATE TRIGGER immutable_phase3_mission_action_update BEFORE UPDATE ON phase3_mi
 CREATE TRIGGER immutable_phase3_mission_action_delete BEFORE DELETE ON phase3_mission_actions BEGIN SELECT RAISE(ABORT,'mission action is immutable'); END;
 CREATE TRIGGER immutable_phase3_event_update BEFORE UPDATE ON phase3_events BEGIN SELECT RAISE(ABORT,'phase3 event is immutable'); END;
 CREATE TRIGGER immutable_phase3_event_delete BEFORE DELETE ON phase3_events BEGIN SELECT RAISE(ABORT,'phase3 event is immutable'); END;
-CREATE TRIGGER immutable_phase3_outbox_update BEFORE UPDATE ON phase3_outbox BEGIN SELECT RAISE(ABORT,'phase3 outbox is immutable'); END;
+CREATE TRIGGER immutable_phase3_outbox_identity_update
+BEFORE UPDATE OF sequence,event_id,event_kind,payload_digest,created_at ON phase3_outbox
+BEGIN SELECT RAISE(ABORT,'phase3 outbox identity is immutable'); END;
+CREATE TRIGGER phase3_outbox_delivery_transition
+BEFORE UPDATE ON phase3_outbox
+WHEN NOT (
+  (OLD.delivery_status IN ('pending','retryable') AND NEW.delivery_status='claimed' AND NEW.attempt_count=OLD.attempt_count+1)
+  OR (OLD.delivery_status='claimed' AND NEW.delivery_status IN ('retryable','delivered') AND NEW.attempt_count=OLD.attempt_count)
+)
+BEGIN SELECT RAISE(ABORT,'phase3 outbox delivery transition is invalid'); END;
 CREATE TRIGGER immutable_phase3_outbox_delete BEFORE DELETE ON phase3_outbox BEGIN SELECT RAISE(ABORT,'phase3 outbox is immutable'); END;
 `
 

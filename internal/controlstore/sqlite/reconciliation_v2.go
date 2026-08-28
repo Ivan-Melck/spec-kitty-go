@@ -261,15 +261,43 @@ func persistEligibilityFacts(ctx context.Context, tx *sql.Tx, r workgraph.MixedR
 }
 
 func (s *Store) WorkEligibilityFact(ctx context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {
-	var reconciliation, newRevision, disposition string
+	var reconciliation, storedOld, newRevision, disposition, storedWork, storedStatus, storedOperation string
 	var allowed bool
 	var reason string
-	err := s.db.QueryRowContext(ctx, `SELECT reconciliation_id,new_work_revision_id,disposition,allowed,reason FROM phase3_eligibility_facts WHERE old_work_revision_id=? AND work_id=? AND work_status=? AND operation=? ORDER BY reconciliation_id DESC LIMIT 1`, oldRevision, workID, status, operation).Scan(&reconciliation, &newRevision, &disposition, &allowed, &reason)
+	var mixedBytes, oldBytes, newBytes, driftBytes []byte
+	err := s.db.QueryRowContext(ctx, `SELECT f.reconciliation_id,f.old_work_revision_id,f.new_work_revision_id,f.work_id,f.work_status,f.disposition,f.operation,f.allowed,f.reason,
+		       r.encoded_reconciliation,old_revision.encoded_revision,new_revision.encoded_revision,d.encoded_report
+		FROM phase3_eligibility_facts f
+		JOIN phase3_mixed_reconciliations r
+		  ON r.reconciliation_id=f.reconciliation_id
+		 AND r.old_work_revision_id=f.old_work_revision_id
+		 AND r.new_work_revision_id=f.new_work_revision_id
+		JOIN phase3_work_revisions_v2 old_revision
+		  ON old_revision.work_revision_id=f.old_work_revision_id
+		JOIN phase3_work_revisions_v2 new_revision
+		  ON new_revision.work_revision_id=f.new_work_revision_id
+		 AND new_revision.mission_id=old_revision.mission_id
+		JOIN phase3_drift_reports d
+		  ON d.drift_report_id=r.drift_report_id
+		 AND d.old_work_revision_id=f.old_work_revision_id
+		 AND d.new_work_revision_id=f.new_work_revision_id
+		WHERE f.old_work_revision_id=? AND f.work_id=? AND f.work_status=? AND f.operation=?
+		ORDER BY f.reconciliation_id DESC LIMIT 1`, oldRevision, workID, status, operation).Scan(&reconciliation, &storedOld, &newRevision, &storedWork, &storedStatus, &disposition, &storedOperation, &allowed, &reason, &mixedBytes, &oldBytes, &newBytes, &driftBytes)
 	if err != nil {
 		return workgraph.EligibilityFact{}, err
 	}
-	fact, err := workgraph.NewEligibilityFact(reconciliation, oldRevision, ids.WorkRevisionID(newRevision), workID, status, workgraph.Disposition(disposition), operation)
-	if err != nil || !fact.Complete() || fact.Permitted() != allowed || fact.Reason() != reason {
+	fact, err := workgraph.NewEligibilityFact(reconciliation, ids.WorkRevisionID(storedOld), ids.WorkRevisionID(newRevision), ids.WorkID(storedWork), workgraph.WorkStatus(storedStatus), workgraph.Disposition(disposition), workgraph.EligibilityOperation(storedOperation))
+	oldValue, oldErr := workgraph.DecodeRevisionV2(oldBytes)
+	newValue, newErr := workgraph.DecodeRevisionV2(newBytes)
+	var driftWire json.RawMessage = driftBytes
+	driftAt := mustDriftTime(driftWire)
+	drift, driftErr := workgraph.DetectDrift(oldValue, newValue, driftAt)
+	canonicalDrift, canonicalDriftErr := drift.Encode()
+	var mixedWireValue mixedWire
+	wireErr := strictJSON(mixedBytes, &mixedWireValue)
+	mixed, mixedErr := restoreMixed(mixedWireValue, oldValue, newValue, drift)
+	want, wantErr := mixed.EligibilityFact(workID, status, operation)
+	if err != nil || oldErr != nil || newErr != nil || driftErr != nil || canonicalDriftErr != nil || string(canonicalDrift) != string(driftBytes) || wireErr != nil || mixedErr != nil || wantErr != nil || !fact.SameComplete(want) || fact.Permitted() != allowed || fact.Reason() != reason {
 		return workgraph.EligibilityFact{}, errors.New("stored eligibility fact is invalid")
 	}
 	return fact, nil

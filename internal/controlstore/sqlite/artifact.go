@@ -113,6 +113,11 @@ func validateAtomicPublish(r artifact.AtomicPublishRequest) error {
 	if err != nil {
 		return err
 	}
+	if r.ExpectedLatestRevisionID != "" {
+		if _, err = artifact.RestoreArtifactRevision(artifact.ArtifactRevisionParams{ID: r.ExpectedLatestRevisionID, MissionID: r.MissionID, Kind: r.Kind, RevisionNumber: 1, ContentDigest: r.ContentDigest, SourceRef: r.SourceRef, SourceRevision: r.SourceRevision, CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt}); err != nil {
+			return artifactError(artifact.ErrorInvalidCommand, "expected_latest_revision_id", "expected latest revision identity is invalid")
+		}
+	}
 	if r.Validation.ArtifactRevisionID() != r.ArtifactRevisionID {
 		return artifactError(artifact.ErrorInvalidValidation, "validation", "validation is outside publication scope")
 	}
@@ -135,10 +140,24 @@ func (s *Store) PublishAtomic(ctx context.Context, r artifact.AtomicPublishReque
 		prior.Replayed = true
 		return prior, nil
 	}
-	var next uint64
-	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision_number),0)+1 FROM phase3_artifact_revisions WHERE mission_id=? AND kind=?`, r.MissionID, r.Kind).Scan(&next); err != nil {
+	if conflict, e := phase3OperationConflictsWithLegacy(ctx, tx, r.OperationID); e != nil {
+		return artifact.PublishResult{}, artifactError(artifact.ErrorRepositoryFailure, "store", "operation identity cannot be inspected")
+	} else if conflict {
+		return artifact.PublishResult{}, artifactError(artifact.ErrorIdempotencyConflict, "operation_id", "operation identity is already bound")
+	}
+	var currentID string
+	var currentNumber uint64
+	err = tx.QueryRowContext(ctx, `SELECT artifact_revision_id,revision_number FROM phase3_artifact_revisions WHERE mission_id=? AND kind=? ORDER BY revision_number DESC LIMIT 1`, r.MissionID, r.Kind).Scan(&currentID, &currentNumber)
+	if errors.Is(err, sql.ErrNoRows) {
+		currentID = ""
+		currentNumber = 0
+	} else if err != nil {
 		return artifact.PublishResult{}, artifactError(artifact.ErrorRepositoryFailure, "store", "artifact repository is unavailable")
 	}
+	if currentID != r.ExpectedLatestRevisionID {
+		return artifact.PublishResult{}, artifactError(artifact.ErrorIdempotencyConflict, "expected_latest_revision_id", "artifact latest revision changed")
+	}
+	next := currentNumber + 1
 	revision, err := artifact.NewArtifactRevision(artifact.ArtifactRevisionParams{ID: r.ArtifactRevisionID, MissionID: r.MissionID, Kind: r.Kind, RevisionNumber: next, ContentDigest: r.ContentDigest, SourceRef: r.SourceRef, SourceRevision: r.SourceRevision, CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt})
 	if err != nil {
 		return artifact.PublishResult{}, err
@@ -266,6 +285,11 @@ func (s *Store) ApproveAtomic(ctx context.Context, r artifact.AtomicApprovalRequ
 	} else if found {
 		prior.Replayed = true
 		return prior, nil
+	}
+	if conflict, e := phase3OperationConflictsWithLegacy(ctx, tx, r.OperationID); e != nil {
+		return artifact.ApprovalResult{}, artifactError(artifact.ErrorRepositoryFailure, "store", "operation identity cannot be inspected")
+	} else if conflict {
+		return artifact.ApprovalResult{}, artifactError(artifact.ErrorIdempotencyConflict, "operation_id", "operation identity is already bound")
 	}
 	w := approvalToWire(approval)
 	raw, _ := json.Marshal(w)

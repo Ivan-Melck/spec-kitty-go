@@ -81,6 +81,71 @@ func TestGenerationOneLateBoundaryFaultRollsBackMissionPointerAndRevision(t *tes
 	}
 }
 
+func TestCurrentWorkRevisionPointerBindsMissionRevisionAndGeneration(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	snapshot := phase3MissionSnapshot(at)
+	revision := testRevisionV2(t, "revision-pointer-01", 1, "", "pointer title", at)
+	revisionBytes, _ := revision.Encode()
+	snapshot.CurrentWorkRevisionID = revision.ID()
+	snapshot.Lifecycle = mission.LifecycleTerminal
+	snapshot.CurrentStep = mission.StepWorkFinalized
+	snapshot.TerminalOutcome = mission.OutcomeWorkFinalized
+	snapshotBytes, _ := encodeSnapshot(snapshot)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO phase3_work_revisions_v2(work_revision_id,mission_id,project_id,generation,predecessor_id,graph_digest,criteria_digest,encoded_revision) VALUES(?,?,?,?,?,?,?,?)`, revision.ID(), revision.MissionID(), revision.ProjectID(), revision.Generation(), nil, revision.GraphDigest(), revision.CriteriaDigest(), revisionBytes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO phase3_missions(mission_id,project_id,definition_id,definition_version,definition_commitment,lifecycle,current_step,current_work_revision_id,state_version,created_at,updated_at,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, snapshot.MissionID, snapshot.ProjectID, snapshot.DefinitionID, snapshot.DefinitionVersion, snapshot.DefinitionCommitment, snapshot.Lifecycle, snapshot.CurrentStep, snapshot.CurrentWorkRevisionID, snapshot.StateVersion, formatTime(snapshot.CreatedAt), formatTime(snapshot.UpdatedAt), snapshotBytes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO phase3_current_work_revisions(mission_id,work_revision_id,generation) VALUES(?,?,?)`, snapshot.MissionID, revision.ID(), revision.Generation()); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	foreign := testRevisionV2(t, "revision-pointer-foreign", 2, revision.ID(), "foreign title", at.Add(time.Second))
+	foreignBytes, _ := foreign.Encode()
+	// A directly inserted revision with another mission is enough to attack the
+	// pointer FK without relying on domain constructors to create bad state.
+	if _, err = store.db.Exec(`INSERT INTO phase3_work_revisions_v2(work_revision_id,mission_id,project_id,generation,predecessor_id,graph_digest,criteria_digest,encoded_revision) VALUES(?,?,?,?,?,?,?,?)`, foreign.ID(), "mission-foreign", foreign.ProjectID(), foreign.Generation(), revision.ID(), foreign.GraphDigest(), foreign.CriteriaDigest(), foreignBytes); err != nil {
+		t.Fatal(err)
+	}
+	mutants := []string{
+		`UPDATE phase3_current_work_revisions SET generation=2 WHERE mission_id='mission-01'`,
+		`UPDATE phase3_current_work_revisions SET work_revision_id='revision-pointer-foreign',generation=2 WHERE mission_id='mission-01'`,
+		`UPDATE phase3_missions SET current_work_revision_id='revision-pointer-foreign' WHERE mission_id='mission-01'`,
+		`UPDATE phase3_missions SET current_work_revision_id='revision-missing' WHERE mission_id='mission-01'`,
+	}
+	for _, statement := range mutants {
+		if _, err = store.db.Exec(statement); err == nil {
+			t.Fatalf("pointer mutant succeeded: %s", statement)
+		}
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var missionID, revisionID string
+	var generation uint64
+	if err = store.db.QueryRow(`SELECT mission_id,work_revision_id,generation FROM phase3_current_work_revisions WHERE mission_id='mission-01'`).Scan(&missionID, &revisionID, &generation); err != nil || missionID != snapshot.MissionID.String() || revisionID != revision.ID().String() || generation != 1 {
+		t.Fatalf("reopened pointer mission=%q revision=%q generation=%d err=%v", missionID, revisionID, generation, err)
+	}
+}
+
 func phase3MissionSnapshot(at time.Time) mission.MissionSnapshot {
 	return mission.MissionSnapshot{MissionID: "mission-01", ProjectID: "project-01", DefinitionID: "software-development", DefinitionVersion: 1, DefinitionCommitment: mission.DefinitionCommitment(digest64("a")), Lifecycle: mission.LifecycleOpen, CurrentStep: mission.StepWorkDraftReady, StateVersion: 1, CreatedAt: at, UpdatedAt: at}
 }

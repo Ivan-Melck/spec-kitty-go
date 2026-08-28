@@ -63,7 +63,7 @@ func digest64(seed string) string {
 	return out[:64]
 }
 
-func TestArtifactPublicationHundredCallerTwoConnectionRace(t *testing.T) {
+func TestArtifactPublicationHundredCallerTwoConnectionExactPriorRace(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "control.db")
 	left, err := Open(ctx, path)
@@ -112,20 +112,85 @@ func TestArtifactPublicationHundredCallerTwoConnectionRace(t *testing.T) {
 	wg.Wait()
 	close(results)
 	close(failures)
+	conflicts := 0
 	for e := range failures {
-		t.Errorf("publication race: %v", e)
-	}
-	seen := make(map[uint64]bool, callers)
-	for result := range results {
-		seen[result.Revision.RevisionNumber()] = true
-	}
-	if len(seen) != callers {
-		t.Fatalf("unique revisions=%d want=%d", len(seen), callers)
-	}
-	for i := 1; i <= callers; i++ {
-		if !seen[uint64(i)] {
-			t.Fatalf("missing revision number %d", i)
+		if !artifact.IsKind(e, artifact.ErrorIdempotencyConflict) {
+			t.Errorf("publication race: %v", e)
+		} else {
+			conflicts++
 		}
+	}
+	winners := 0
+	for result := range results {
+		winners++
+		if result.Revision.RevisionNumber() != 1 {
+			t.Fatalf("winner revision=%d want=1", result.Revision.RevisionNumber())
+		}
+	}
+	if winners != 1 || conflicts != callers-1 {
+		t.Fatalf("winners=%d conflicts=%d", winners, conflicts)
+	}
+	var revisions, operations, events int
+	if err = left.db.QueryRow(`SELECT (SELECT COUNT(*) FROM phase3_artifact_revisions),(SELECT COUNT(*) FROM phase3_operations WHERE operation_kind='artifact_publish'),(SELECT COUNT(*) FROM phase3_events WHERE event_kind='artifact_published')`).Scan(&revisions, &operations, &events); err != nil || revisions != 1 || operations != 1 || events != 1 {
+		t.Fatalf("partial race revisions=%d operations=%d events=%d err=%v", revisions, operations, events, err)
+	}
+}
+
+func TestArtifactPublicationExactPriorReplayPrecedesCurrentCAS(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	policy, _ := artifact.PolicyFor(artifact.KindPlan)
+	validation, _ := artifact.NewValidationResult(artifact.ValidationResultParams{ArtifactRevisionID: "artifact-replay", Verdict: artifact.ValidationPass, Policy: policy, ValidatedAt: time.Date(2026, 8, 28, 7, 0, 0, 0, time.UTC)})
+	request := artifact.AtomicPublishRequest{OperationID: "operation-replay", RequestDigest: digest64("8"), ArtifactRevisionID: "artifact-replay", MissionID: "mission-replay", Kind: artifact.KindPlan, ContentDigest: digest64("9"), SourceRef: "refs/heads/main", SourceRevision: "revision-replay", CreatedBy: "actor-replay", CreatedAt: time.Date(2026, 8, 28, 7, 0, 1, 0, time.UTC), Validation: validation}
+	first, err := store.PublishAtomic(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_artifact_revisions SET revision_number=2 WHERE artifact_revision_id=?`, first.Revision.ID()); err == nil {
+		t.Fatal("immutable revision mutation unexpectedly succeeded")
+	}
+	replay, err := store.PublishAtomic(ctx, request)
+	if err != nil || !replay.Replayed || replay.Revision.ID() != first.Revision.ID() {
+		t.Fatalf("replay=%#v err=%v", replay, err)
+	}
+	stale := request
+	stale.OperationID = "operation-stale"
+	stale.RequestDigest = digest64("a")
+	stale.ArtifactRevisionID = "artifact-stale"
+	stale.Validation, _ = artifact.NewValidationResult(artifact.ValidationResultParams{ArtifactRevisionID: stale.ArtifactRevisionID, Verdict: artifact.ValidationPass, Policy: policy, ValidatedAt: request.CreatedAt})
+	if _, err = store.PublishAtomic(ctx, stale); !artifact.IsKind(err, artifact.ErrorIdempotencyConflict) {
+		t.Fatalf("stale exact-prior error=%v", err)
+	}
+	var revisions, operations int
+	if err = store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM phase3_artifact_revisions),(SELECT COUNT(*) FROM phase3_operations WHERE operation_kind='artifact_publish')`).Scan(&revisions, &operations); err != nil || revisions != 1 || operations != 1 {
+		t.Fatalf("stale write revisions=%d operations=%d err=%v", revisions, operations, err)
+	}
+}
+
+func TestArtifactPublicationRejectsLegacyOperationBeforeAggregateWrites(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err = store.db.Exec(`INSERT INTO operations(operation_id,operation_kind,idempotency_key,correlation_id,request_digest,status,created_at) VALUES('operation-artifact-legacy','claim','legacy-key','correlation','digest','completed','2026-08-28T07:30:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := artifact.PolicyFor(artifact.KindPlan)
+	validation, _ := artifact.NewValidationResult(artifact.ValidationResultParams{ArtifactRevisionID: "artifact-legacy-op", Verdict: artifact.ValidationPass, Policy: policy, ValidatedAt: time.Date(2026, 8, 28, 7, 30, 0, 0, time.UTC)})
+	request := artifact.AtomicPublishRequest{OperationID: "operation-artifact-legacy", RequestDigest: digest64("b"), ArtifactRevisionID: "artifact-legacy-op", MissionID: "mission-legacy-op", Kind: artifact.KindPlan, ContentDigest: digest64("c"), SourceRef: "refs/heads/main", SourceRevision: "revision-legacy-op", CreatedBy: "actor-legacy-op", CreatedAt: time.Date(2026, 8, 28, 7, 30, 1, 0, time.UTC), Validation: validation}
+	if _, err = store.PublishAtomic(ctx, request); !artifact.IsKind(err, artifact.ErrorIdempotencyConflict) {
+		t.Fatalf("legacy operation conflict=%v", err)
+	}
+	var revisions, validations, phase3Operations, events int
+	if err = store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM phase3_artifact_revisions),(SELECT COUNT(*) FROM phase3_artifact_validations),(SELECT COUNT(*) FROM phase3_operations),(SELECT COUNT(*) FROM phase3_events)`).Scan(&revisions, &validations, &phase3Operations, &events); err != nil || revisions+validations+phase3Operations+events != 0 {
+		t.Fatalf("partial aggregate revisions=%d validations=%d operations=%d events=%d err=%v", revisions, validations, phase3Operations, events, err)
 	}
 }
 

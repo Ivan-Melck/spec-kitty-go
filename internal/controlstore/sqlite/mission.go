@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/artifact"
+	"github.com/spec-kitty/go-kitty3/internal/controlstore"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 )
 
 var _ mission.Store = (*Store)(nil)
+var _ controlstore.OutboxStore = (*Store)(nil)
 
 type transitionResultWire struct {
 	Instance  mission.MissionSnapshot  `json:"instance"`
@@ -264,18 +266,186 @@ type rowQuery interface {
 }
 
 func insertPhase3Operation(ctx context.Context, tx *sql.Tx, op, kind, missionID, digest string, result []byte, at time.Time) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO phase3_operations(operation_id,operation_kind,mission_id,request_digest,result_json,occurred_at) VALUES(?,?,?,?,?,?)`, op, kind, missionID, digest, result, formatTime(at))
+	conflict, err := phase3OperationConflictsWithLegacy(ctx, tx, op)
 	if err != nil {
+		return missionError(mission.KindPersistenceUnavailable, "store", "operation identity cannot be inspected", err)
+	}
+	if conflict {
+		return missionError(mission.KindIdempotencyConflict, "operation_id", "operation identity is already bound", nil)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO phase3_operations(operation_id,operation_kind,mission_id,request_digest,result_json,occurred_at) VALUES(?,?,?,?,?,?)`, op, kind, missionID, digest, result, formatTime(at))
+	if err != nil {
+		if contains(err.Error(), "OperationID is already bound") {
+			return missionError(mission.KindIdempotencyConflict, "operation_id", "operation identity is already bound", nil)
+		}
 		return missionError(mission.KindPersistenceUnavailable, "store", "mission persistence operation failed", err)
 	}
 	return nil
+}
+
+func phase3OperationConflictsWithLegacy(ctx context.Context, q rowQuery, operationID string) (bool, error) {
+	var conflict bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE operation_id=?) OR EXISTS(SELECT 1 FROM work_graph_operations WHERE operation_id=?)`, operationID, operationID).Scan(&conflict)
+	return conflict, err
 }
 func insertPhase3Event(ctx context.Context, tx *sql.Tx, eventID, op, missionID, kind, digest string, at time.Time) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO phase3_events(event_id,operation_id,mission_id,event_kind,payload_digest,occurred_at) VALUES(?,?,?,?,?,?)`, eventID, op, missionID, kind, digest, formatTime(at)); err != nil {
 		return missionError(mission.KindPersistenceUnavailable, "store", "mission persistence operation failed", err)
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO phase3_outbox(event_id,event_kind,payload_digest,created_at) VALUES(?,?,?,?)`, eventID, kind, digest, formatTime(at))
+	_, err := tx.ExecContext(ctx, `INSERT INTO phase3_outbox(event_id,event_kind,payload_digest,created_at,available_at) VALUES(?,?,?,?,?)`, eventID, kind, digest, formatTime(at), formatTime(at))
 	return err
+}
+
+func scanOutbox(row *sql.Row) (controlstore.OutboxEnvelope, error) {
+	var value controlstore.OutboxEnvelope
+	var created, available string
+	var claimed, last, delivered sql.NullString
+	err := row.Scan(&value.Sequence, &value.EventID, &value.EventKind, &value.PayloadDigest, &created, &value.DeliveryStatus, &value.AttemptCount, &available, &value.ClaimID, &claimed, &last, &delivered)
+	if err != nil {
+		return value, err
+	}
+	if value.CreatedAt, err = parseTime(created); err != nil {
+		return value, fmt.Errorf("stored outbox creation time is invalid")
+	}
+	if value.AvailableAt, err = parseTime(available); err != nil {
+		return value, fmt.Errorf("stored outbox availability is invalid")
+	}
+	if claimed.Valid {
+		if value.ClaimedAt, err = parseTime(claimed.String); err != nil {
+			return value, fmt.Errorf("stored outbox claim time is invalid")
+		}
+	}
+	if last.Valid {
+		if value.LastAttemptAt, err = parseTime(last.String); err != nil {
+			return value, fmt.Errorf("stored outbox attempt time is invalid")
+		}
+	}
+	if delivered.Valid {
+		if value.DeliveredAt, err = parseTime(delivered.String); err != nil {
+			return value, fmt.Errorf("stored outbox delivery time is invalid")
+		}
+	}
+	if value.Sequence <= 0 || !boundedStoreText(value.EventID, 256) || !boundedStoreText(value.EventKind, 128) || !boundedStoreText(value.PayloadDigest, 128) {
+		return value, fmt.Errorf("stored outbox identity is invalid")
+	}
+	switch value.DeliveryStatus {
+	case controlstore.OutboxPending:
+		if value.AttemptCount != 0 || value.ClaimID != "" || !value.ClaimedAt.IsZero() || !value.LastAttemptAt.IsZero() || !value.DeliveredAt.IsZero() {
+			return value, fmt.Errorf("stored pending outbox evidence is invalid")
+		}
+	case controlstore.OutboxClaimed:
+		if value.AttemptCount == 0 || !boundedStoreText(value.ClaimID, 128) || value.ClaimedAt.IsZero() || !value.DeliveredAt.IsZero() {
+			return value, fmt.Errorf("stored claimed outbox evidence is invalid")
+		}
+	case controlstore.OutboxRetryable:
+		if value.AttemptCount == 0 || value.ClaimID != "" || !value.ClaimedAt.IsZero() || value.LastAttemptAt.IsZero() || !value.DeliveredAt.IsZero() {
+			return value, fmt.Errorf("stored retryable outbox evidence is invalid")
+		}
+	case controlstore.OutboxDelivered:
+		if value.AttemptCount == 0 || value.ClaimID != "" || !value.ClaimedAt.IsZero() || value.LastAttemptAt.IsZero() || value.DeliveredAt.IsZero() {
+			return value, fmt.Errorf("stored delivered outbox evidence is invalid")
+		}
+	default:
+		return value, fmt.Errorf("stored outbox status is invalid")
+	}
+	return value, nil
+}
+
+const outboxColumns = `sequence,event_id,event_kind,payload_digest,created_at,delivery_status,attempt_count,available_at,COALESCE(claim_id,''),claimed_at,last_attempt_at,delivered_at`
+
+func (s *Store) ClaimOutbox(ctx context.Context, claimID string, now time.Time) (controlstore.OutboxEnvelope, bool, error) {
+	if !boundedStoreText(claimID, 128) || now.IsZero() || now.Location() != time.UTC {
+		return controlstore.OutboxEnvelope{}, false, fmt.Errorf("outbox claim is invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return controlstore.OutboxEnvelope{}, false, err
+	}
+	defer tx.Rollback()
+	var sequence int64
+	err = tx.QueryRowContext(ctx, `SELECT sequence FROM phase3_outbox WHERE delivery_status IN ('pending','retryable') AND julianday(available_at)<=julianday(?) ORDER BY sequence LIMIT 1`, formatTime(now)).Scan(&sequence)
+	if errors.Is(err, sql.ErrNoRows) {
+		return controlstore.OutboxEnvelope{}, false, nil
+	}
+	if err != nil {
+		return controlstore.OutboxEnvelope{}, false, err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='claimed',attempt_count=attempt_count+1,claim_id=?,claimed_at=? WHERE sequence=? AND delivery_status IN ('pending','retryable') AND julianday(available_at)<=julianday(?)`, claimID, formatTime(now), sequence, formatTime(now))
+	if err != nil {
+		return controlstore.OutboxEnvelope{}, false, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return controlstore.OutboxEnvelope{}, false, nil
+	}
+	value, err := scanOutbox(tx.QueryRowContext(ctx, `SELECT `+outboxColumns+` FROM phase3_outbox WHERE sequence=?`, sequence))
+	if err != nil {
+		return controlstore.OutboxEnvelope{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return controlstore.OutboxEnvelope{}, false, err
+	}
+	return value, true, nil
+}
+func (s *Store) RetryOutbox(ctx context.Context, sequence int64, claimID string, available, attempted time.Time) (controlstore.OutboxEnvelope, error) {
+	if sequence <= 0 || !boundedStoreText(claimID, 128) || available.IsZero() || available.Location() != time.UTC || attempted.IsZero() || attempted.Location() != time.UTC || available.Before(attempted) {
+		return controlstore.OutboxEnvelope{}, fmt.Errorf("outbox retry is invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return controlstore.OutboxEnvelope{}, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='retryable',claim_id=NULL,claimed_at=NULL,last_attempt_at=?,available_at=? WHERE sequence=? AND delivery_status='claimed' AND claim_id=? AND julianday(?)>=julianday(claimed_at)`, formatTime(attempted), formatTime(available), sequence, claimID, formatTime(attempted))
+	if err != nil {
+		return controlstore.OutboxEnvelope{}, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return controlstore.OutboxEnvelope{}, fmt.Errorf("outbox claim changed")
+	}
+	value, err := scanOutbox(tx.QueryRowContext(ctx, `SELECT `+outboxColumns+` FROM phase3_outbox WHERE sequence=?`, sequence))
+	if err != nil {
+		return value, err
+	}
+	if err = tx.Commit(); err != nil {
+		return value, err
+	}
+	return value, nil
+}
+func (s *Store) DeliverOutbox(ctx context.Context, sequence int64, claimID string, at time.Time) (controlstore.OutboxEnvelope, error) {
+	if sequence <= 0 || !boundedStoreText(claimID, 128) || at.IsZero() || at.Location() != time.UTC {
+		return controlstore.OutboxEnvelope{}, fmt.Errorf("outbox delivery is invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return controlstore.OutboxEnvelope{}, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE phase3_outbox SET delivery_status='delivered',claim_id=NULL,claimed_at=NULL,last_attempt_at=?,delivered_at=? WHERE sequence=? AND delivery_status='claimed' AND claim_id=? AND julianday(?)>=julianday(claimed_at)`, formatTime(at), formatTime(at), sequence, claimID, formatTime(at))
+	if err != nil {
+		return controlstore.OutboxEnvelope{}, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return controlstore.OutboxEnvelope{}, fmt.Errorf("outbox claim changed")
+	}
+	value, err := scanOutbox(tx.QueryRowContext(ctx, `SELECT `+outboxColumns+` FROM phase3_outbox WHERE sequence=?`, sequence))
+	if err != nil {
+		return value, err
+	}
+	if err = tx.Commit(); err != nil {
+		return value, err
+	}
+	return value, nil
+}
+func boundedStoreText(value string, limit int) bool {
+	if value == "" || len(value) > limit {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x21 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 func sameSnapshot(a, b mission.MissionSnapshot) bool {
 	aa, _ := json.Marshal(a)
