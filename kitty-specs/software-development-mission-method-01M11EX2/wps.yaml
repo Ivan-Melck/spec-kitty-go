@@ -40,13 +40,21 @@ work_packages:
 
   - id: WP03
     title: "Typed Artifact Revisions and Fresh Approvals"
-    dependencies: [WP01]
+    dependencies: [WP02]
+    scope: codebase-wide
     owned_files:
       - "internal/artifact/model.go"
       - "internal/artifact/validation.go"
       - "internal/artifact/service.go"
       - "internal/artifact/model_test.go"
       - "internal/artifact/service_test.go"
+      - "internal/mission/service.go"
+      - "internal/mission/lifecycle_test.go"
+      - "internal/architecture/reachability.go"
+      - "internal/architecture/reachability_test.go"
+    create_intent:
+      - "internal/mission/service.go"
+      - "internal/mission/lifecycle_test.go"
     requirement_refs: [FR-004, FR-005, FR-006, FR-007, FR-028, NFR-004, NFR-012, NFR-014, C-001, C-012]
     plan_concern_refs: [IC-02]
     subtasks: [T012, T013, T014, T015, T016]
@@ -59,7 +67,10 @@ work_packages:
   - id: WP04
     title: "Provider-Neutral Decomposition and Work Quality"
     dependencies: [WP02, WP03]
+    scope: codebase-wide
     owned_files:
+      - "internal/architecture/policy.go"
+      - "internal/architecture/policy_test.go"
       - "internal/tracker/provider.go"
       - "internal/tracker/work_definition.go"
       - "internal/tracker/work_definition_test.go"
