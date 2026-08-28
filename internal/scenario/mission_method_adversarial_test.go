@@ -283,7 +283,7 @@ func qualificationLanes(t *testing.T, params workgraph.RevisionV2Params) []workg
 		}
 		scopes := make([]workgraph.WriteScopeObservation, 0, len(item.WriteScopes))
 		for _, scope := range item.WriteScopes {
-			scopes = append(scopes, workgraph.WriteScopeObservation{Path: scope.Path, Domain: scope.Domain, Access: scope.Access, SerializationKey: scope.SerializationKey})
+			scopes = append(scopes, workgraph.WriteScopeObservation(scope))
 		}
 		observed, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{
 			ProjectID: params.ProjectID, WorkID: item.WorkID, Title: item.Title, Description: item.Description, DesignContext: item.DesignContext,

@@ -14,13 +14,18 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/integration"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
+
+type legacyV1IntegrationStore struct{ integration.Store }
+
+var _ integration.Store = legacyV1IntegrationStore{}
 
 func runIntegrate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("integrate", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var database, primary, managedRoot, barrier, correlation, at string
+	var database, primary, managedRoot, barrier, correlation, at, eligibility string
 	var operation, reviewID, project, repository, targetRef, actor, process, candidate string
 	var schema uint
 	var ttl time.Duration
@@ -28,6 +33,7 @@ func runIntegrate(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	flags.StringVar(&primary, "repository", "", "primary Git checkout root")
 	flags.StringVar(&managedRoot, "workspace-root", "", "managed workspace root")
 	flags.StringVar(&barrier, "barrier", "", "fault boundary directory")
+	flags.StringVar(&eligibility, "eligibility-mode", string(eligibilityComplete), "complete or explicitly proven legacy-v1 eligibility")
 	flags.UintVar(&schema, "schema-version", 0, "command schema version")
 	flags.StringVar(&correlation, "correlation-id", "", "correlation ID")
 	flags.StringVar(&at, "at", "", "RFC3339 timestamp")
@@ -55,6 +61,10 @@ func runIntegrate(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return encodeIntegrationFailure(stdout, integrationRequestContext(request), &integration.Error{Kind: integration.KindInvalid, Message: "project ID is invalid", Cause: err})
 	}
+	mode, err := parseEligibilityMode(eligibility)
+	if err != nil {
+		return encodeIntegrationFailure(stdout, integrationRequestContext(request), &integration.Error{Kind: integration.KindInvalid, Message: err.Error()})
+	}
 	commandContext := integrationRequestContext(request)
 	commandContext.aggregates["project_id"] = projectID.String()
 	repositoryAdapter, err := gitrepo.Bind(ctx, gitrepo.Runner{}, request.RepositoryID, projectID, primary, managedRoot, request.TargetRef, now)
@@ -71,7 +81,11 @@ func runIntegrate(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	defer store.Close()
 	commandContext = enrichIntegrationReviewContext(ctx, store, request, commandContext)
 	controller := faults.FileController{Directory: barrier, Participant: process}
-	record, err := integration.NewService(store, repositoryAdapter).WithFaults(controller).Integrate(ctx, request)
+	service, err := configureIntegrationEligibility(ctx, store, repositoryAdapter, &request, mode)
+	if err != nil {
+		return encodeIntegrationFailure(stdout, commandContext, err)
+	}
+	record, err := service.WithFaults(controller).Integrate(ctx, request)
 	if errors.Is(err, faults.ErrCrashRequested) {
 		return 86
 	}
@@ -90,6 +104,39 @@ func runIntegrate(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		RecoveryActions: []string{"retry the same operation ID; recovery probes Git facts before durable phase"}, OccurredAt: record.DoneAt, Record: record,
 	}
 	return encodeJSON(stdout, Response{OK: true, Integration: &result})
+}
+
+func configureIntegrationEligibility(ctx context.Context, store *sqlite.Store, repositoryAdapter *gitrepo.Repository, request *integration.Request, mode eligibilityMode) (*integration.Service, error) {
+	complete := integration.NewService(store, repositoryAdapter)
+	legacy := integration.NewService(legacyV1IntegrationStore{Store: store}, repositoryAdapter)
+	if record, found, err := store.LookupIntegrationOperation(ctx, *request); err != nil {
+		return nil, err
+	} else if found && (record.Status == integration.StatusDone || record.Status == integration.StatusRepairRequired) {
+		if mode == eligibilityLegacyV1 {
+			return legacy, nil
+		}
+		return complete, nil
+	}
+	reviewRecord, err := store.Review(ctx, request.ReviewID)
+	if err != nil {
+		return nil, &integration.Error{Kind: integration.KindNotApproved, Message: "immutable approved review is unavailable", Cause: err}
+	}
+	switch mode {
+	case eligibilityLegacyV1:
+		if err := requireLegacyV1Revision(ctx, store, reviewRecord.WorkRevisionID); err != nil {
+			return nil, &integration.Error{Kind: integration.KindRevisionIneligible, Message: "legacy-v1 eligibility namespace is unavailable", Cause: err}
+		}
+		return legacy, nil
+	case eligibilityComplete:
+		fact, err := store.WorkEligibilityFact(ctx, reviewRecord.WorkRevisionID, reviewRecord.WorkID, workgraph.StatusApproved, workgraph.EligibilityIntegration)
+		if err != nil || !fact.Complete() {
+			return nil, &integration.Error{Kind: integration.KindRevisionIneligible, Message: "complete WorkRevision integration eligibility is unavailable", Cause: err}
+		}
+		request.ExpectedEligibility = fact
+		return complete, nil
+	default:
+		return nil, &integration.Error{Kind: integration.KindInvalid, Message: "eligibility mode is invalid"}
+	}
 }
 
 type integrationCommandContext struct {

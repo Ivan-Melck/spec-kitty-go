@@ -16,13 +16,61 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
+
+type eligibilityMode string
+
+const (
+	eligibilityComplete eligibilityMode = "complete"
+	eligibilityLegacyV1 eligibilityMode = "legacy-v1"
+)
+
+type revisionNamespaceStore interface {
+	WorkRevisionV2(context.Context, ids.WorkRevisionID) (workgraph.RevisionV2, error)
+	WorkRevision(context.Context, ids.WorkRevisionID) (workgraph.Revision, error)
+}
+
+type legacyV1HandoffStore struct{ handoff.Store }
+type legacyV1ReviewStore struct{ review.Store }
+
+var (
+	_ handoff.Store = legacyV1HandoffStore{}
+	_ review.Store  = legacyV1ReviewStore{}
+)
+
+func parseEligibilityMode(value string) (eligibilityMode, error) {
+	mode := eligibilityMode(value)
+	switch mode {
+	case eligibilityComplete, eligibilityLegacyV1:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("eligibility mode must be complete or legacy-v1")
+	}
+}
+
+func requireLegacyV1Revision(ctx context.Context, store revisionNamespaceStore, revisionID ids.WorkRevisionID) error {
+	if _, err := store.WorkRevisionV2(ctx, revisionID); err == nil {
+		return errors.New("legacy-v1 eligibility cannot address a v2 WorkRevision")
+	} else {
+		var typed *mission.FinalizationError
+		if !errors.As(err, &typed) || typed.Kind != mission.FinalizationCurrentConflict || typed.Field != "work_revision_id" {
+			return errors.New("v2 WorkRevision namespace could not be proven absent")
+		}
+	}
+	revision, err := store.WorkRevision(ctx, revisionID)
+	if err != nil || revision.ID() != revisionID {
+		return errors.New("legacy-v1 WorkRevision identity could not be proven")
+	}
+	return nil
+}
 
 func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("handoff", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var database, barrier, correlation, at, operation, handoffID, project, mission, revision, work, run, workspaceID, lease, actor, process, token, candidate, contributors, evidence string
+	var database, barrier, correlation, at, operation, handoffID, project, missionID, revision, work, run, workspaceID, lease, actor, process, token, candidate, contributors, evidence, eligibility string
 	var generation int64
 	var schema uint
 	flags.StringVar(&database, "db", "", "control database")
@@ -33,7 +81,8 @@ func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	flags.StringVar(&operation, "operation", "", "operation ID")
 	flags.StringVar(&handoffID, "handoff-id", "", "handoff ID")
 	flags.StringVar(&project, "project", "", "project ID")
-	flags.StringVar(&mission, "mission", "", "mission ID")
+	flags.StringVar(&missionID, "mission", "", "mission ID")
+	flags.StringVar(&eligibility, "eligibility-mode", string(eligibilityComplete), "complete or explicitly proven legacy-v1 eligibility")
 	flags.StringVar(&revision, "revision", "", "work revision ID")
 	flags.StringVar(&work, "work", "", "work ID")
 	flags.StringVar(&run, "run", "", "run ID")
@@ -53,7 +102,7 @@ func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	if err != nil {
 		return encodeJudgmentInvalid(stdout, operation, correlation, actor, process, time.Time{}, err)
 	}
-	request := handoff.Request{SchemaVersion: uint16(schema), CorrelationID: correlation, OperationID: ids.OperationID(operation), HandoffID: ids.HandoffID(handoffID), ProjectID: ids.ProjectID(project), MissionID: ids.MissionID(mission), WorkRevisionID: ids.WorkRevisionID(revision), WorkID: ids.WorkID(work), RunID: ids.RunID(run), WorkspaceID: ids.WorkspaceID(workspaceID), LeaseID: ids.LeaseID(lease), LeaseGeneration: generation, Token: token, ActorID: ids.ActorID(actor), ProcessID: ids.ProcessID(process), Candidate: candidate, EvidenceDigest: evidence, SubmittedAt: now.UTC()}
+	request := handoff.Request{SchemaVersion: uint16(schema), CorrelationID: correlation, OperationID: ids.OperationID(operation), HandoffID: ids.HandoffID(handoffID), ProjectID: ids.ProjectID(project), MissionID: ids.MissionID(missionID), WorkRevisionID: ids.WorkRevisionID(revision), WorkID: ids.WorkID(work), RunID: ids.RunID(run), WorkspaceID: ids.WorkspaceID(workspaceID), LeaseID: ids.LeaseID(lease), LeaseGeneration: generation, Token: token, ActorID: ids.ActorID(actor), ProcessID: ids.ProcessID(process), Candidate: candidate, EvidenceDigest: evidence, SubmittedAt: now.UTC()}
 	for _, value := range strings.Split(contributors, ",") {
 		if value != "" {
 			request.Contributors = append(request.Contributors, ids.ActorID(value))
@@ -62,13 +111,21 @@ func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	if err := request.Validate(); err != nil {
 		return encodeJudgmentFailure(stdout, handoffJudgmentContext(request), err)
 	}
+	mode, err := parseEligibilityMode(eligibility)
+	if err != nil {
+		return encodeJudgmentFailure(stdout, handoffJudgmentContext(request), &handoff.Error{Kind: handoff.KindInvalid, Message: err.Error()})
+	}
 	store, err := sqlite.Open(ctx, database)
 	if err != nil {
 		return encodeJudgmentFailure(stdout, handoffJudgmentContext(request), err)
 	}
 	defer store.Close()
 	controller := faults.FileController{Directory: barrier, Participant: process}
-	record, err := handoff.NewService(store, gitrepo.NewHandoffVerifier()).WithFaults(controller).Submit(ctx, request)
+	service, err := configureHandoffEligibility(ctx, store, &request, mode)
+	if err != nil {
+		return encodeJudgmentFailure(stdout, handoffJudgmentContext(request), err)
+	}
+	record, err := service.WithFaults(controller).Submit(ctx, request)
 	if errors.Is(err, faults.ErrCrashRequested) {
 		return 86
 	}
@@ -79,10 +136,47 @@ func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	return encodeJSON(stdout, Response{OK: true, Judgment: &result})
 }
 
+func configureHandoffEligibility(ctx context.Context, store *sqlite.Store, request *handoff.Request, mode eligibilityMode) (*handoff.Service, error) {
+	complete := handoff.NewService(store, gitrepo.NewHandoffVerifier())
+	legacy := handoff.NewService(legacyV1HandoffStore{Store: store}, gitrepo.NewHandoffVerifier())
+	if _, found, err := store.LookupHandoffOperation(ctx, *request); err != nil {
+		return nil, err
+	} else if found {
+		if mode == eligibilityLegacyV1 {
+			return legacy, nil
+		}
+		return complete, nil
+	}
+	if _, found, err := store.LookupHandoffRefusal(ctx, *request); err != nil {
+		return nil, err
+	} else if found {
+		if mode == eligibilityLegacyV1 {
+			return legacy, nil
+		}
+		return complete, nil
+	}
+	switch mode {
+	case eligibilityLegacyV1:
+		if err := requireLegacyV1Revision(ctx, store, request.WorkRevisionID); err != nil {
+			return nil, &handoff.Error{Kind: handoff.KindRevisionIneligible, Message: "legacy-v1 eligibility namespace is unavailable", Cause: err}
+		}
+		return legacy, nil
+	case eligibilityComplete:
+		fact, err := store.WorkEligibilityFact(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusActive, workgraph.EligibilityHandoff)
+		if err != nil || !fact.Complete() {
+			return nil, &handoff.Error{Kind: handoff.KindRevisionIneligible, Message: "complete WorkRevision handoff eligibility is unavailable", Cause: err}
+		}
+		request.ExpectedEligibility = fact
+		return complete, nil
+	default:
+		return nil, &handoff.Error{Kind: handoff.KindInvalid, Message: "eligibility mode is invalid"}
+	}
+}
+
 func runReview(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("review", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var database, barrier, correlation, at, operation, reviewID, handoffID, revision, work, lease, actor, process, token, candidate, verdict, criteriaJSON, evidence string
+	var database, barrier, correlation, at, operation, reviewID, handoffID, revision, work, lease, actor, process, token, candidate, verdict, criteriaJSON, evidence, eligibility string
 	var generation int64
 	var schema uint
 	flags.StringVar(&database, "db", "", "control database")
@@ -95,6 +189,7 @@ func runReview(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	flags.StringVar(&handoffID, "handoff-id", "", "handoff ID")
 	flags.StringVar(&revision, "revision", "", "work revision ID")
 	flags.StringVar(&work, "work", "", "work ID")
+	flags.StringVar(&eligibility, "eligibility-mode", string(eligibilityComplete), "complete or explicitly proven legacy-v1 eligibility")
 	flags.StringVar(&lease, "lease", "", "lease ID")
 	flags.Int64Var(&generation, "generation", 0, "lease generation")
 	flags.StringVar(&token, "token", "", "opaque lease token")
@@ -122,13 +217,21 @@ func runReview(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if err := request.Validate(); err != nil {
 		return encodeJudgmentFailure(stdout, reviewJudgmentContext(request), err)
 	}
+	mode, err := parseEligibilityMode(eligibility)
+	if err != nil {
+		return encodeJudgmentFailure(stdout, reviewJudgmentContext(request), &review.Error{Kind: review.KindInvalid, Message: err.Error()})
+	}
 	store, err := sqlite.Open(ctx, database)
 	if err != nil {
 		return encodeJudgmentFailure(stdout, reviewJudgmentContext(request), err)
 	}
 	defer store.Close()
 	controller := faults.FileController{Directory: barrier, Participant: process}
-	record, err := review.NewService(store).WithFaults(controller).Submit(ctx, request)
+	service, err := configureReviewEligibility(ctx, store, &request, mode)
+	if err != nil {
+		return encodeJudgmentFailure(stdout, reviewJudgmentContext(request), err)
+	}
+	record, err := service.WithFaults(controller).Submit(ctx, request)
 	if errors.Is(err, faults.ErrCrashRequested) {
 		return 86
 	}
@@ -137,6 +240,35 @@ func runReview(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	result := reviewSuccess(request, record)
 	return encodeJSON(stdout, Response{OK: true, Judgment: &result})
+}
+
+func configureReviewEligibility(ctx context.Context, store *sqlite.Store, request *review.Request, mode eligibilityMode) (*review.Service, error) {
+	complete := review.NewService(store)
+	legacy := review.NewService(legacyV1ReviewStore{Store: store})
+	if _, found, err := store.LookupReviewOperation(ctx, *request); err != nil {
+		return nil, err
+	} else if found {
+		if mode == eligibilityLegacyV1 {
+			return legacy, nil
+		}
+		return complete, nil
+	}
+	switch mode {
+	case eligibilityLegacyV1:
+		if err := requireLegacyV1Revision(ctx, store, request.WorkRevisionID); err != nil {
+			return nil, &review.Error{Kind: review.KindRevisionIneligible, Message: "legacy-v1 eligibility namespace is unavailable", Cause: err}
+		}
+		return legacy, nil
+	case eligibilityComplete:
+		fact, err := store.WorkEligibilityFact(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff, workgraph.EligibilityReview)
+		if err != nil || !fact.Complete() {
+			return nil, &review.Error{Kind: review.KindRevisionIneligible, Message: "complete WorkRevision review eligibility is unavailable", Cause: err}
+		}
+		request.ExpectedEligibility = fact
+		return complete, nil
+	default:
+		return nil, &review.Error{Kind: review.KindInvalid, Message: "eligibility mode is invalid"}
+	}
 }
 
 func parseReviewIdentifiers(request review.Request) (review.Request, error) {

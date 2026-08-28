@@ -41,7 +41,11 @@ func TestReviewImmutableCandidateAndActorIndependence(t *testing.T) {
 	if moved == candidate {
 		t.Fatal("workspace did not move after handoff")
 	}
-	replayed := runHandoffHelper(t, fixture, capsule, candidate, "handoff-immutable", "operation-handoff-immutable", "")
+	// A completed immutable operation replays before a current eligibility
+	// lookup. Selecting complete mode against this historical v1 revision is a
+	// deletion control for accidentally moving namespace/fact inspection ahead
+	// of replay.
+	replayed := runJudgmentHelper(t, replaceJudgmentArg(handoffArgs(fixture, capsule, candidate, "handoff-immutable", "operation-handoff-immutable"), "--eligibility-mode", "complete"))
 	replayedHandoff, _ := json.Marshal(replayed.Judgment.Handoff)
 	if !replayed.OK || string(replayedHandoff) != string(originalHandoff) {
 		t.Fatalf("moved branch replay changed immutable handoff: original=%s replay=%s response=%+v", originalHandoff, replayedHandoff, replayed)
@@ -75,7 +79,7 @@ func TestReviewImmutableCandidateAndActorIndependence(t *testing.T) {
 	}
 	assertJudgmentEnvelope(t, distinct, "review_recorded", "operation-review-distinct")
 	originalReview, _ := json.Marshal(distinct.Judgment.Review)
-	reviewReplay := runReviewHelper(t, fixture, capsule, candidate, "handoff-immutable", "review-distinct", "operation-review-distinct", "actor-independent", "process-independent", review.Approved, "")
+	reviewReplay := runJudgmentHelper(t, replaceJudgmentArg(reviewArgs(fixture, capsule, candidate, "handoff-immutable", "review-distinct", "operation-review-distinct", "actor-independent", "process-independent", review.Approved), "--eligibility-mode", "complete"))
 	replayedReview, _ := json.Marshal(reviewReplay.Judgment.Review)
 	if !reviewReplay.OK || string(replayedReview) != string(originalReview) {
 		t.Fatalf("review replay changed immutable verdict: original=%s replay=%s response=%+v", originalReview, replayedReview, reviewReplay)
@@ -424,7 +428,7 @@ func runHandoffHelper(t *testing.T, fixture workspaceScenario, capsule *executio
 }
 
 func handoffArgs(fixture workspaceScenario, capsule *execution.RunCapsule, candidate, handoffID, operation string) []string {
-	return []string{"handoff", "--db", fixture.database, "--schema-version", "1", "--correlation-id", operation, "--at", "2026-08-24T12:00:30Z", "--operation", operation, "--handoff-id", handoffID, "--project", "project-1", "--mission", "mission-1", "--revision", capsule.WorkRevisionID.String(), "--work", capsule.WorkID.String(), "--run", capsule.RunID.String(), "--workspace", capsule.WorkspaceID.String(), "--lease", capsule.LeaseID.String(), "--generation", fmt.Sprint(capsule.Generation), "--token", capsule.Token, "--actor", capsule.AggregateIDs["actor_id"], "--process", capsule.AggregateIDs["process_id"], "--candidate", candidate, "--contributors", capsule.AggregateIDs["actor_id"], "--evidence-digest", repeatedHex('e', 64)}
+	return []string{"handoff", "--db", fixture.database, "--eligibility-mode", "legacy-v1", "--schema-version", "1", "--correlation-id", operation, "--at", "2026-08-24T12:00:30Z", "--operation", operation, "--handoff-id", handoffID, "--project", "project-1", "--mission", "mission-1", "--revision", capsule.WorkRevisionID.String(), "--work", capsule.WorkID.String(), "--run", capsule.RunID.String(), "--workspace", capsule.WorkspaceID.String(), "--lease", capsule.LeaseID.String(), "--generation", fmt.Sprint(capsule.Generation), "--token", capsule.Token, "--actor", capsule.AggregateIDs["actor_id"], "--process", capsule.AggregateIDs["process_id"], "--candidate", candidate, "--contributors", capsule.AggregateIDs["actor_id"], "--evidence-digest", repeatedHex('e', 64)}
 }
 
 func runReviewHelper(t *testing.T, fixture workspaceScenario, capsule *execution.RunCapsule, candidate, handoffID, reviewID, operation, actor, process string, verdict review.Verdict, barrier string) helpercmd.Response {
@@ -442,7 +446,7 @@ func reviewArgs(fixture workspaceScenario, capsule *execution.RunCapsule, candid
 		status = review.Failed
 	}
 	criteria, _ := json.Marshal([]review.CriterionResult{{CriterionID: "criterion-" + capsule.WorkID.String(), Status: status, Evidence: "scenario evidence"}})
-	return []string{"review", "--db", fixture.database, "--schema-version", "1", "--correlation-id", operation, "--at", "2026-08-24T12:00:40Z", "--operation", operation, "--review-id", reviewID, "--handoff-id", handoffID, "--revision", capsule.WorkRevisionID.String(), "--work", capsule.WorkID.String(), "--lease", capsule.LeaseID.String(), "--generation", fmt.Sprint(capsule.Generation), "--token", capsule.Token, "--actor", actor, "--process", process, "--candidate", candidate, "--verdict", string(verdict), "--criteria-json", string(criteria), "--evidence-digest", repeatedHex('f', 64)}
+	return []string{"review", "--db", fixture.database, "--eligibility-mode", "legacy-v1", "--schema-version", "1", "--correlation-id", operation, "--at", "2026-08-24T12:00:40Z", "--operation", operation, "--review-id", reviewID, "--handoff-id", handoffID, "--revision", capsule.WorkRevisionID.String(), "--work", capsule.WorkID.String(), "--lease", capsule.LeaseID.String(), "--generation", fmt.Sprint(capsule.Generation), "--token", capsule.Token, "--actor", actor, "--process", process, "--candidate", candidate, "--verdict", string(verdict), "--criteria-json", string(criteria), "--evidence-digest", repeatedHex('f', 64)}
 }
 
 func runJudgmentHelper(t *testing.T, args []string) helpercmd.Response {
