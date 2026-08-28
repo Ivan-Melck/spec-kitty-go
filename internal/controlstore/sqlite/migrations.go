@@ -11,7 +11,7 @@ import (
 	"io"
 )
 
-const currentSchemaVersion = 13
+const currentSchemaVersion = 14
 
 var migrations = []string{
 	`CREATE TABLE projects (
@@ -139,7 +139,28 @@ CREATE TABLE external_effect_observations (
 	handoffRefusalMigrationV11,
 	governanceContextMigrationV12,
 	phase3MissionMethodMigrationV13,
+	phase3MissionCreationAuthorityMigrationV14,
 }
+
+// phase3MissionCreationAuthorityMigrationV14 is appended after the accepted
+// v13 mission-method schema. Migrations 1-13 are frozen storage contracts.
+const phase3MissionCreationAuthorityMigrationV14 = `
+CREATE TABLE phase3_mission_creation_authority (
+  mission_id TEXT PRIMARY KEY REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT,
+  actor_id TEXT NOT NULL REFERENCES actors(actor_id) ON DELETE RESTRICT,
+  process_id TEXT NOT NULL REFERENCES processes(process_id) ON DELETE RESTRICT,
+  governance_context_id TEXT NOT NULL REFERENCES governance_contexts(context_id) ON DELETE RESTRICT,
+  governance_aggregate TEXT NOT NULL,
+  FOREIGN KEY(process_id,actor_id) REFERENCES processes(process_id,actor_id) ON DELETE RESTRICT
+);
+CREATE TRIGGER immutable_phase3_mission_creation_authority_update
+BEFORE UPDATE ON phase3_mission_creation_authority BEGIN
+  SELECT RAISE(ABORT,'mission creation authority is immutable');
+END;
+CREATE TRIGGER immutable_phase3_mission_creation_authority_delete
+BEFORE DELETE ON phase3_mission_creation_authority BEGIN
+  SELECT RAISE(ABORT,'mission creation authority is immutable');
+END;`
 
 // phase3MissionMethodMigrationV13 is intentionally append-only. Versions
 // 1-12 are historical wire/storage contracts and must remain byte stable.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/artifact"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
 
@@ -315,6 +316,8 @@ type CreateRequest struct {
 	DefinitionVersion DefinitionVersion
 	OperationID       ids.OperationID
 	ActorID           ids.ActorID
+	ProcessID         ids.ProcessID
+	Governance        governancecontext.Context
 	OccurredAt        time.Time
 }
 
@@ -323,12 +326,18 @@ type CreateCommit struct {
 	OperationID       ids.OperationID
 	RequestCommitment RequestCommitment
 	ActorID           ids.ActorID
+	ProcessID         ids.ProcessID
+	Governance        governancecontext.Context
 	OccurredAt        time.Time
 }
 
 type CreateResult struct {
-	Instance MissionSnapshot
-	Replayed bool
+	Instance          MissionSnapshot
+	ActorID           ids.ActorID
+	ProcessID         ids.ProcessID
+	Governance        governancecontext.Context
+	AuthorityRecorded bool
+	Replayed          bool
 }
 
 type TransitionCommit struct {
@@ -397,6 +406,15 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if _, err := ids.ParseActorID(request.ActorID.String()); err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "actor_id", "actor identity is invalid")
 	}
+	authorityRequired := request.ProcessID != "" || request.Governance.ID() != ""
+	if authorityRequired {
+		if _, err := ids.ParseProcessID(request.ProcessID.String()); err != nil {
+			return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "process_id", "process identity is invalid")
+		}
+		if err := request.Governance.Validate(); err != nil {
+			return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "governance_context", "sealed governance context is invalid")
+		}
+	}
 	if request.OccurredAt.IsZero() || request.OccurredAt.Location() != time.UTC {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "creation time must be non-zero UTC")
 	}
@@ -413,19 +431,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if _, err := NewMissionInstance(snapshot); err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "mission", "creation would construct invalid mission state")
 	}
-	commitment, err := digestRequest(struct {
-		MissionID            ids.MissionID
-		ProjectID            ids.ProjectID
-		DefinitionID         ids.MissionDefinitionID
-		DefinitionVersion    DefinitionVersion
-		DefinitionCommitment DefinitionCommitment
-		ActorID              ids.ActorID
-		OccurredAt           string
-	}{request.MissionID, request.ProjectID, definition.ID(), definition.Version(), definition.Commitment(), request.ActorID, request.OccurredAt.Format(time.RFC3339Nano)})
+	commitment, err := createRequestCommitment(request, definition, authorityRequired)
 	if err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "request", "creation request cannot be committed")
 	}
-	result, err := s.store.CreateMission(ctx, CreateCommit{Instance: snapshot.clone(), OperationID: request.OperationID, RequestCommitment: commitment, ActorID: request.ActorID, OccurredAt: request.OccurredAt})
+	result, err := s.store.CreateMission(ctx, CreateCommit{Instance: snapshot.clone(), OperationID: request.OperationID, RequestCommitment: commitment, ActorID: request.ActorID, ProcessID: request.ProcessID, Governance: request.Governance, OccurredAt: request.OccurredAt})
 	if err != nil {
 		return CreateResult{}, normalizeStoreError(err)
 	}
@@ -435,7 +445,53 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if !sameMissionSnapshot(snapshot, result.Instance) {
 		return CreateResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.create", "mission store violated create postconditions")
 	}
-	return CreateResult{Instance: result.Instance.clone(), Replayed: result.Replayed}, nil
+	if authorityRequired && (!result.AuthorityRecorded || result.ActorID != request.ActorID || result.ProcessID != request.ProcessID || !sameGovernanceContext(result.Governance, request.Governance)) {
+		return CreateResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.create", "mission store violated creation authority postconditions")
+	}
+	return CreateResult{Instance: result.Instance.clone(), ActorID: result.ActorID, ProcessID: result.ProcessID, Governance: result.Governance, AuthorityRecorded: result.AuthorityRecorded, Replayed: result.Replayed}, nil
+}
+
+func createRequestCommitment(request CreateRequest, definition MissionDefinition, authorityRequired bool) (RequestCommitment, error) {
+	if !authorityRequired {
+		// Preserve the accepted v13 request identity for historical callers.
+		return digestRequest(struct {
+			MissionID            ids.MissionID
+			ProjectID            ids.ProjectID
+			DefinitionID         ids.MissionDefinitionID
+			DefinitionVersion    DefinitionVersion
+			DefinitionCommitment DefinitionCommitment
+			ActorID              ids.ActorID
+			OccurredAt           string
+		}{request.MissionID, request.ProjectID, definition.ID(), definition.Version(), definition.Commitment(), request.ActorID, request.OccurredAt.Format(time.RFC3339Nano)})
+	}
+	return digestRequest(struct {
+		MissionID            ids.MissionID
+		ProjectID            ids.ProjectID
+		DefinitionID         ids.MissionDefinitionID
+		DefinitionVersion    DefinitionVersion
+		DefinitionCommitment DefinitionCommitment
+		ActorID              ids.ActorID
+		ProcessID            ids.ProcessID
+		Governance           governancecontext.Context
+		OccurredAt           string
+	}{request.MissionID, request.ProjectID, definition.ID(), definition.Version(), definition.Commitment(), request.ActorID,
+		request.ProcessID, request.Governance, request.OccurredAt.Format(time.RFC3339Nano)})
+}
+
+func sameGovernanceContext(left, right governancecontext.Context) bool {
+	if left.ID() != right.ID() || left.SchemaVersion() != right.SchemaVersion() || left.Aggregate() != right.Aggregate() || !left.CreatedAt().Equal(right.CreatedAt()) {
+		return false
+	}
+	leftEntries, rightEntries := left.Entries(), right.Entries()
+	if len(leftEntries) != len(rightEntries) {
+		return false
+	}
+	for index := range leftEntries {
+		if leftEntries[index].Kind() != rightEntries[index].Kind() || leftEntries[index].Ref() != rightEntries[index].Ref() || leftEntries[index].Revision() != rightEntries[index].Revision() || leftEntries[index].Commitment() != rightEntries[index].Commitment() {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) Transition(ctx context.Context, request TransitionRequest) (TransitionResult, error) {

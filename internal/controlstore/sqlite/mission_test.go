@@ -2,12 +2,15 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controlstore"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
@@ -61,6 +64,68 @@ func TestPhase3MissionCreateReplayConflictAndReopen(t *testing.T) {
 	}
 	if loaded.ProjectID != request.ProjectID || loaded.StateVersion != 1 {
 		t.Fatalf("restored mission mismatch: %#v", loaded)
+	}
+}
+
+func TestPhase3MissionCreationAuthorityIsExactDurableAndImmutable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, _ := softwaredev.Definition()
+	registry, _ := mission.NewRegistry(definition)
+	at := time.Date(2026, 8, 28, 8, 0, 0, 0, time.UTC)
+	governance := creationGovernance(t, "governance-create", at)
+	request := mission.CreateRequest{MissionID: "mission-authority", ProjectID: "project-authority", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-authority", ActorID: "actor-authority", ProcessID: "process-authority", Governance: governance, OccurredAt: at}
+	service := mission.NewService(registry, store)
+	first, err := service.Create(ctx, request)
+	if err != nil || !first.AuthorityRecorded || first.ActorID != request.ActorID || first.ProcessID != request.ProcessID || first.Governance.ID() != governance.ID() {
+		t.Fatalf("create=%+v err=%v", first, err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	replay, err := mission.NewService(registry, store).Create(ctx, request)
+	if err != nil || !replay.Replayed || replay.Governance.Aggregate() != governance.Aggregate() {
+		t.Fatalf("replay=%+v err=%v", replay, err)
+	}
+	mutations := []mission.CreateRequest{request, request, request}
+	mutations[0].ProcessID = "process-substitute"
+	mutations[1].ActorID = "actor-substitute"
+	mutations[2].Governance = creationGovernance(t, "governance-substitute", at)
+	for _, changed := range mutations {
+		if _, err = mission.NewService(registry, store).Create(ctx, changed); !mission.IsKind(err, mission.KindIdempotencyConflict) {
+			t.Fatalf("authority substitution err=%v", err)
+		}
+	}
+	if _, err = store.db.Exec(`UPDATE phase3_mission_creation_authority SET process_id='process-mutated' WHERE mission_id='mission-authority'`); err == nil {
+		t.Fatal("immutable creation authority was updated")
+	}
+}
+
+func TestMissionCreationProvenanceRejectsPartialInputBeforeWrite(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	definition, _ := softwaredev.Definition()
+	registry, _ := mission.NewRegistry(definition)
+	request := mission.CreateRequest{MissionID: "mission-partial-authority", ProjectID: "project-authority", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: "operation-partial-authority", ActorID: "actor-authority", ProcessID: "process-authority", OccurredAt: time.Date(2026, 8, 28, 8, 0, 0, 0, time.UTC)}
+	if _, err = mission.NewService(registry, store).Create(ctx, request); !mission.IsKind(err, mission.KindInvalidRequest) {
+		t.Fatalf("partial provenance err=%v", err)
+	}
+	var missions int
+	if err = store.db.QueryRow(`SELECT COUNT(*) FROM phase3_missions`).Scan(&missions); err != nil || missions != 0 {
+		t.Fatalf("partial provenance wrote missions=%d err=%v", missions, err)
 	}
 }
 
@@ -580,13 +645,95 @@ func TestPhase3MigrationIsAppendOnlyAndForeignKeysRemainEnabled(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err = store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
+	if err = store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 14 {
 		t.Fatalf("schema=%d err=%v", version, err)
 	}
 	settings, err := store.Settings(context.Background())
 	if err != nil || !settings.ForeignKeys || settings.JournalMode != "wal" {
 		t.Fatalf("settings=%+v err=%v", settings, err)
 	}
+}
+
+func TestPopulatedPhase3V13UpgradesToV14WithoutChangingPriorEvidence(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 13; index++ {
+		if _, err = raw.ExecContext(ctx, migrations[index]); err != nil {
+			t.Fatalf("migration %d: %v", index+1, err)
+		}
+	}
+	if _, err = raw.ExecContext(ctx, `PRAGMA user_version=13; INSERT INTO phase3_missions(mission_id,project_id,definition_id,definition_version,definition_commitment,lifecycle,current_step,state_version,created_at,updated_at,snapshot_json) VALUES('mission-v13','project-v13','software-development',1,?, 'open','initialized',1,'2026-08-28T00:00:00Z','2026-08-28T00:00:00Z',?)`, strings.Repeat("a", 64), `{"MissionID":"mission-v13","ProjectID":"project-v13","DefinitionID":"software-development","DefinitionVersion":1,"DefinitionCommitment":"`+strings.Repeat("a", 64)+`","Lifecycle":"open","CurrentStep":"initialized","CurrentWorkRevisionID":"","StateVersion":1,"CreatedAt":"2026-08-28T00:00:00Z","UpdatedAt":"2026-08-28T00:00:00Z","TerminalOutcome":"","ActiveBlockers":null,"UnresolvedDecisions":null}`); err != nil {
+		t.Fatal(err)
+	}
+	if err = raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var version, missions, authorities int
+	if err = store.db.QueryRow(`SELECT (SELECT user_version FROM pragma_user_version),(SELECT COUNT(*) FROM phase3_missions WHERE mission_id='mission-v13'),(SELECT COUNT(*) FROM phase3_mission_creation_authority)`).Scan(&version, &missions, &authorities); err != nil || version != 14 || missions != 1 || authorities != 0 {
+		t.Fatalf("version=%d missions=%d authorities=%d err=%v", version, missions, authorities, err)
+	}
+}
+
+func TestFailedPhase3V14MigrationPreservesV13VersionAndRows(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 13; index++ {
+		if _, err = raw.ExecContext(ctx, migrations[index]); err != nil {
+			t.Fatalf("migration %d: %v", index+1, err)
+		}
+	}
+	if _, err = raw.ExecContext(ctx, `PRAGMA user_version=13;
+		INSERT INTO phase3_missions(mission_id,project_id,definition_id,definition_version,definition_commitment,lifecycle,current_step,state_version,created_at,updated_at,snapshot_json)
+		VALUES('mission-v13-failure','project-v13','software-development',1,?, 'open','initialized',1,'2026-08-28T00:00:00Z','2026-08-28T00:00:00Z',?);
+		CREATE TABLE phase3_mission_creation_authority(conflict TEXT);`, strings.Repeat("a", 64), `{"MissionID":"mission-v13-failure","ProjectID":"project-v13","DefinitionID":"software-development","DefinitionVersion":1,"DefinitionCommitment":"`+strings.Repeat("a", 64)+`","Lifecycle":"open","CurrentStep":"initialized","CurrentWorkRevisionID":"","StateVersion":1,"CreatedAt":"2026-08-28T00:00:00Z","UpdatedAt":"2026-08-28T00:00:00Z","TerminalOutcome":"","ActiveBlockers":null,"UnresolvedDecisions":null}`); err != nil {
+		t.Fatal(err)
+	}
+	if err = raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if store, openErr := Open(ctx, path); openErr == nil {
+		store.Close()
+		t.Fatal("conflicting v14 schema unexpectedly migrated")
+	}
+	raw, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var version, rows int
+	if err = raw.QueryRow(`SELECT (SELECT user_version FROM pragma_user_version),(SELECT COUNT(*) FROM phase3_missions WHERE mission_id='mission-v13-failure')`).Scan(&version, &rows); err != nil || version != 13 || rows != 1 {
+		t.Fatalf("version=%d rows=%d err=%v", version, rows, err)
+	}
+}
+
+func creationGovernance(t *testing.T, id string, at time.Time) governancecontext.Context {
+	t.Helper()
+	commitment, err := governancecontext.NewCommitment(governancecontext.AlgorithmSHA256, strings.Repeat("b", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := governancecontext.NewEntry(governancecontext.KindProfile, "implementer-ivan", "1", commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := governancecontext.NewContext(ids.GovernanceContextID(id), governancecontext.SchemaVersion, []governancecontext.Entry{entry}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func TestMissionCreateHundredCallerTwoConnectionReplayRace(t *testing.T) {
