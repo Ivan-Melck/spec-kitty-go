@@ -96,6 +96,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return RunTracker(ctx, args[1:], stdout, stderr)
 	case "workgraph":
 		return RunWorkGraph(ctx, args[1:], stdout, stderr)
+	case "mission":
+		return RunMission(ctx, args[1:], stdout, stderr)
+	case "artifact":
+		return RunArtifact(ctx, args[1:], stdout, stderr)
+	case "work":
+		return RunMissionWork(ctx, args[1:], stdout, stderr)
+	case "projection":
+		return RunProjection(ctx, args[1:], stdout, stderr)
 	case "architecture-check":
 		return runArchitectureCheck(ctx, args[1:], stdout, stderr)
 	default:
@@ -104,7 +112,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-const helperUsage = "usage: spk-phase1-helper claim|start-run|recover-start|expire-authority|zombie-write|workspace-inspect|workspace-cleanup|handoff|review|integrate|inspect|tracker|workgraph|architecture-check [options]"
+const helperUsage = "usage: spk-phase1-helper claim|start-run|recover-start|expire-authority|zombie-write|workspace-inspect|workspace-cleanup|handoff|review|integrate|inspect|tracker|workgraph|mission|artifact|work|projection|architecture-check [options]"
 
 func runClaim(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("claim", flag.ContinueOnError)

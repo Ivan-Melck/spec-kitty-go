@@ -519,7 +519,8 @@ func TestServiceCreateReplayConflictTransitionRaceAndStoreFailure(t *testing.T) 
 	create := mission.CreateRequest{
 		MissionID: mustMissionID(t, "mission.service"), ProjectID: mustProjectID(t, "project.service"),
 		DefinitionID: definition.ID(), DefinitionVersion: definition.Version(),
-		OperationID: mustOperationID(t, "operation.create"), ActorID: mustActorID(t, "actor.create"), OccurredAt: createdAt,
+		OperationID: mustOperationID(t, "operation.create"), ActorID: mustActorID(t, "actor.create"),
+		ProcessID: ids.ProcessID("process.create"), Governance: serviceGovernance(t, "governance.create", createdAt), OccurredAt: createdAt,
 	}
 	first, err := service.Create(context.Background(), create)
 	if err != nil || first.Replayed || first.Instance.StateVersion != 1 || first.Instance.DefinitionCommitment != definition.Commitment() {
@@ -1227,7 +1228,7 @@ func (s *memoryStore) CreateMission(_ context.Context, commit mission.CreateComm
 		return mission.CreateResult{}, domainError(mission.KindAlreadyExists)
 	}
 	s.snapshot = cloneSnapshot(commit.Instance)
-	result := mission.CreateResult{Instance: cloneSnapshot(s.snapshot)}
+	result := mission.CreateResult{Instance: cloneSnapshot(s.snapshot), ActorID: commit.ActorID, ProcessID: commit.ProcessID, Governance: commit.Governance, AuthorityRecorded: true}
 	s.createOps[commit.OperationID] = storedCreate{commit.RequestCommitment, result}
 	return result, nil
 }
@@ -1376,7 +1377,7 @@ func createRequest(t *testing.T, definition mission.MissionDefinition, suffix st
 		MissionID: mustMissionID(t, "mission."+suffix), ProjectID: mustProjectID(t, "project."+suffix),
 		DefinitionID: definition.ID(), DefinitionVersion: definition.Version(),
 		OperationID: mustOperationID(t, "operation.create."+suffix), ActorID: mustActorID(t, "actor.create."+suffix),
-		OccurredAt: fixtureTime(),
+		ProcessID: ids.ProcessID("process.create." + suffix), Governance: serviceGovernance(t, "governance.create."+suffix, fixtureTime()), OccurredAt: fixtureTime(),
 	}
 }
 

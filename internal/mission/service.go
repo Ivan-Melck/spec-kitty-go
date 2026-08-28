@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/artifact"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
 
@@ -315,6 +316,8 @@ type CreateRequest struct {
 	DefinitionVersion DefinitionVersion
 	OperationID       ids.OperationID
 	ActorID           ids.ActorID
+	ProcessID         ids.ProcessID
+	Governance        governancecontext.Context
 	OccurredAt        time.Time
 }
 
@@ -323,12 +326,18 @@ type CreateCommit struct {
 	OperationID       ids.OperationID
 	RequestCommitment RequestCommitment
 	ActorID           ids.ActorID
+	ProcessID         ids.ProcessID
+	Governance        governancecontext.Context
 	OccurredAt        time.Time
 }
 
 type CreateResult struct {
-	Instance MissionSnapshot
-	Replayed bool
+	Instance          MissionSnapshot
+	ActorID           ids.ActorID
+	ProcessID         ids.ProcessID
+	Governance        governancecontext.Context
+	AuthorityRecorded bool
+	Replayed          bool
 }
 
 type TransitionCommit struct {
@@ -397,6 +406,12 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if _, err := ids.ParseActorID(request.ActorID.String()); err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "actor_id", "actor identity is invalid")
 	}
+	if _, err := ids.ParseProcessID(request.ProcessID.String()); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "process_id", "process identity is invalid")
+	}
+	if err := request.Governance.Validate(); err != nil {
+		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "governance_context", "sealed governance context is invalid")
+	}
 	if request.OccurredAt.IsZero() || request.OccurredAt.Location() != time.UTC {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "occurred_at", "creation time must be non-zero UTC")
 	}
@@ -413,19 +428,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if _, err := NewMissionInstance(snapshot); err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "mission", "creation would construct invalid mission state")
 	}
-	commitment, err := digestRequest(struct {
-		MissionID            ids.MissionID
-		ProjectID            ids.ProjectID
-		DefinitionID         ids.MissionDefinitionID
-		DefinitionVersion    DefinitionVersion
-		DefinitionCommitment DefinitionCommitment
-		ActorID              ids.ActorID
-		OccurredAt           string
-	}{request.MissionID, request.ProjectID, definition.ID(), definition.Version(), definition.Commitment(), request.ActorID, request.OccurredAt.Format(time.RFC3339Nano)})
+	commitment, err := createRequestCommitment(request, definition)
 	if err != nil {
 		return CreateResult{}, refusal(KindInvalidRequest, RecoveryCorrectInput, "request", "creation request cannot be committed")
 	}
-	result, err := s.store.CreateMission(ctx, CreateCommit{Instance: snapshot.clone(), OperationID: request.OperationID, RequestCommitment: commitment, ActorID: request.ActorID, OccurredAt: request.OccurredAt})
+	result, err := s.store.CreateMission(ctx, CreateCommit{Instance: snapshot.clone(), OperationID: request.OperationID, RequestCommitment: commitment, ActorID: request.ActorID, ProcessID: request.ProcessID, Governance: request.Governance, OccurredAt: request.OccurredAt})
 	if err != nil {
 		return CreateResult{}, normalizeStoreError(err)
 	}
@@ -435,7 +442,41 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (CreateResu
 	if !sameMissionSnapshot(snapshot, result.Instance) {
 		return CreateResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.create", "mission store violated create postconditions")
 	}
-	return CreateResult{Instance: result.Instance.clone(), Replayed: result.Replayed}, nil
+	if !result.AuthorityRecorded || result.ActorID != request.ActorID || result.ProcessID != request.ProcessID || !sameGovernanceContext(result.Governance, request.Governance) {
+		return CreateResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "store.create", "mission store violated creation authority postconditions")
+	}
+	return CreateResult{Instance: result.Instance.clone(), ActorID: result.ActorID, ProcessID: result.ProcessID, Governance: result.Governance, AuthorityRecorded: result.AuthorityRecorded, Replayed: result.Replayed}, nil
+}
+
+func createRequestCommitment(request CreateRequest, definition MissionDefinition) (RequestCommitment, error) {
+	return digestRequest(struct {
+		MissionID            ids.MissionID
+		ProjectID            ids.ProjectID
+		DefinitionID         ids.MissionDefinitionID
+		DefinitionVersion    DefinitionVersion
+		DefinitionCommitment DefinitionCommitment
+		ActorID              ids.ActorID
+		ProcessID            ids.ProcessID
+		Governance           governancecontext.Context
+		OccurredAt           string
+	}{request.MissionID, request.ProjectID, definition.ID(), definition.Version(), definition.Commitment(), request.ActorID,
+		request.ProcessID, request.Governance, request.OccurredAt.Format(time.RFC3339Nano)})
+}
+
+func sameGovernanceContext(left, right governancecontext.Context) bool {
+	if left.ID() != right.ID() || left.SchemaVersion() != right.SchemaVersion() || left.Aggregate() != right.Aggregate() || !left.CreatedAt().Equal(right.CreatedAt()) {
+		return false
+	}
+	leftEntries, rightEntries := left.Entries(), right.Entries()
+	if len(leftEntries) != len(rightEntries) {
+		return false
+	}
+	for index := range leftEntries {
+		if leftEntries[index].Kind() != rightEntries[index].Kind() || leftEntries[index].Ref() != rightEntries[index].Ref() || leftEntries[index].Revision() != rightEntries[index].Revision() || leftEntries[index].Commitment() != rightEntries[index].Commitment() {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) Transition(ctx context.Context, request TransitionRequest) (TransitionResult, error) {
@@ -671,23 +712,67 @@ func validateReplayPostcondition(definition MissionDefinition, request Transitio
 	return nil
 }
 
+type missionSnapshotIdentity struct {
+	MissionID             ids.MissionID           `json:"mission_id"`
+	ProjectID             ids.ProjectID           `json:"project_id"`
+	DefinitionID          ids.MissionDefinitionID `json:"definition_id"`
+	DefinitionVersion     DefinitionVersion       `json:"definition_version"`
+	DefinitionCommitment  DefinitionCommitment    `json:"definition_commitment"`
+	Lifecycle             LifecycleStatus         `json:"lifecycle"`
+	CurrentStep           StepKey                 `json:"current_step"`
+	CurrentWorkRevisionID ids.WorkRevisionID      `json:"current_work_revision_id"`
+	StateVersion          uint64                  `json:"state_version"`
+	CreatedAt             string                  `json:"created_at"`
+	UpdatedAt             string                  `json:"updated_at"`
+	TerminalOutcome       TerminalOutcome         `json:"terminal_outcome"`
+	ActiveBlockers        []ids.BlockerID         `json:"active_blockers"`
+	UnresolvedDecisions   []ids.DecisionID        `json:"unresolved_decisions"`
+}
+
+func canonicalMissionSnapshotIdentity(snapshot MissionSnapshot) missionSnapshotIdentity {
+	blockers := make([]ids.BlockerID, len(snapshot.ActiveBlockers))
+	copy(blockers, snapshot.ActiveBlockers)
+	sort.Slice(blockers, func(i, j int) bool { return blockers[i] < blockers[j] })
+	decisions := make([]ids.DecisionID, len(snapshot.UnresolvedDecisions))
+	copy(decisions, snapshot.UnresolvedDecisions)
+	sort.Slice(decisions, func(i, j int) bool { return decisions[i] < decisions[j] })
+	return missionSnapshotIdentity{
+		MissionID:             snapshot.MissionID,
+		ProjectID:             snapshot.ProjectID,
+		DefinitionID:          snapshot.DefinitionID,
+		DefinitionVersion:     snapshot.DefinitionVersion,
+		DefinitionCommitment:  snapshot.DefinitionCommitment,
+		Lifecycle:             snapshot.Lifecycle,
+		CurrentStep:           snapshot.CurrentStep,
+		CurrentWorkRevisionID: snapshot.CurrentWorkRevisionID,
+		StateVersion:          snapshot.StateVersion,
+		CreatedAt:             snapshot.CreatedAt.Format(time.RFC3339Nano),
+		UpdatedAt:             snapshot.UpdatedAt.Format(time.RFC3339Nano),
+		TerminalOutcome:       snapshot.TerminalOutcome,
+		ActiveBlockers:        blockers,
+		UnresolvedDecisions:   decisions,
+	}
+}
+
 func sameMissionSnapshot(left, right MissionSnapshot) bool {
-	if left.MissionID != right.MissionID || left.ProjectID != right.ProjectID ||
-		left.DefinitionID != right.DefinitionID || left.DefinitionVersion != right.DefinitionVersion ||
-		left.DefinitionCommitment != right.DefinitionCommitment || left.Lifecycle != right.Lifecycle ||
-		left.CurrentStep != right.CurrentStep || left.CurrentWorkRevisionID != right.CurrentWorkRevisionID ||
-		left.StateVersion != right.StateVersion || !left.CreatedAt.Equal(right.CreatedAt) ||
-		!left.UpdatedAt.Equal(right.UpdatedAt) || left.TerminalOutcome != right.TerminalOutcome ||
-		len(left.ActiveBlockers) != len(right.ActiveBlockers) || len(left.UnresolvedDecisions) != len(right.UnresolvedDecisions) {
+	canonicalLeft := canonicalMissionSnapshotIdentity(left)
+	canonicalRight := canonicalMissionSnapshotIdentity(right)
+	if canonicalLeft.MissionID != canonicalRight.MissionID || canonicalLeft.ProjectID != canonicalRight.ProjectID ||
+		canonicalLeft.DefinitionID != canonicalRight.DefinitionID || canonicalLeft.DefinitionVersion != canonicalRight.DefinitionVersion ||
+		canonicalLeft.DefinitionCommitment != canonicalRight.DefinitionCommitment || canonicalLeft.Lifecycle != canonicalRight.Lifecycle ||
+		canonicalLeft.CurrentStep != canonicalRight.CurrentStep || canonicalLeft.CurrentWorkRevisionID != canonicalRight.CurrentWorkRevisionID ||
+		canonicalLeft.StateVersion != canonicalRight.StateVersion || canonicalLeft.CreatedAt != canonicalRight.CreatedAt ||
+		canonicalLeft.UpdatedAt != canonicalRight.UpdatedAt || canonicalLeft.TerminalOutcome != canonicalRight.TerminalOutcome ||
+		len(canonicalLeft.ActiveBlockers) != len(canonicalRight.ActiveBlockers) || len(canonicalLeft.UnresolvedDecisions) != len(canonicalRight.UnresolvedDecisions) {
 		return false
 	}
-	for index := range left.ActiveBlockers {
-		if left.ActiveBlockers[index] != right.ActiveBlockers[index] {
+	for index := range canonicalLeft.ActiveBlockers {
+		if canonicalLeft.ActiveBlockers[index] != canonicalRight.ActiveBlockers[index] {
 			return false
 		}
 	}
-	for index := range left.UnresolvedDecisions {
-		if left.UnresolvedDecisions[index] != right.UnresolvedDecisions[index] {
+	for index := range canonicalLeft.UnresolvedDecisions {
+		if canonicalLeft.UnresolvedDecisions[index] != canonicalRight.UnresolvedDecisions[index] {
 			return false
 		}
 	}

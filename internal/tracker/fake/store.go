@@ -40,6 +40,15 @@ type HistoryEntry struct {
 	Revision tracker.Revision `json:"revision"`
 }
 
+// HumanState is provider-visible catalog state with no Spec Kitty authority.
+// Status and assignment are intentionally observable so qualification can
+// prove that external workflow labels never become mission state.
+type HumanState struct {
+	Status   string           `json:"status"`
+	Assignee string           `json:"assignee"`
+	Revision tracker.Revision `json:"revision"`
+}
+
 type Store struct {
 	path     string
 	lockPath string
@@ -67,6 +76,7 @@ type diskWork struct {
 	Criteria         []string          `json:"criteria,omitempty"`
 	Dependencies     []string          `json:"dependencies,omitempty"`
 	Assignee         string            `json:"assignee,omitempty"`
+	Status           string            `json:"status,omitempty"`
 	AssignmentMarker string            `json:"assignment_marker,omitempty"`
 	Comments         []tracker.Comment `json:"comments,omitempty"`
 	Revision         tracker.Revision  `json:"revision"`
@@ -143,6 +153,45 @@ func (s *Store) HumanAssign(ctx context.Context, workKey, assignee string) error
 		state.History = append(state.History, HistoryEntry{Kind: "human_assignment", WorkKey: workKey, Value: assignee, Revision: work.Revision})
 		return nil
 	})
+}
+
+// HumanSetStatus records an unattributed provider-side status mutation. The
+// closed values are fake-provider catalog labels only; callers must never map
+// them to mission, execution, review, or integration authority.
+func (s *Store) HumanSetStatus(ctx context.Context, workKey, status string) (HumanState, error) {
+	if status != "open" && status != "in_progress" && status != "blocked" && status != "done" {
+		return HumanState{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "human status is invalid"}
+	}
+	var result HumanState
+	err := s.update(ctx, func(state *diskState) error {
+		work, ok := state.Works[workKey]
+		if !ok {
+			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work does not exist"}
+		}
+		work.Revision++
+		work.Status = status
+		state.History = append(state.History, HistoryEntry{Kind: "human_status", WorkKey: workKey, Value: status, Revision: work.Revision})
+		result = humanState(work)
+		return nil
+	})
+	return result, err
+}
+
+func (s *Store) ObserveHumanState(ctx context.Context, workKey string) (HumanState, error) {
+	var result HumanState
+	err := s.read(ctx, func(state diskState) error {
+		work, ok := state.Works[workKey]
+		if !ok {
+			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work does not exist"}
+		}
+		result = humanState(work)
+		return nil
+	})
+	return result, err
+}
+
+func humanState(work *diskWork) HumanState {
+	return HumanState{Status: work.Status, Assignee: work.Assignee, Revision: work.Revision}
 }
 
 // HumanEditTitle simulates an unattributed concurrent provider writer. It is
