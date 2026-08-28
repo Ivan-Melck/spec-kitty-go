@@ -128,6 +128,7 @@ func scenarioCampaignTopLevelTests(t *testing.T) []string {
 		testcampaign.MissionContractProfile,
 		testcampaign.MissionAcceptanceProfile,
 		testcampaign.MissionAdversarialProfile,
+		testcampaign.MissionRealIdentityProfile,
 	}
 	seen := make(map[string]struct{})
 	for _, name := range profiles {

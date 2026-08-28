@@ -60,7 +60,7 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 	if err != nil || historical.Pattern == "" || strings.Contains(historical.Pattern, "TestMissionMethodSemanticDriftMutations1000") {
 		t.Fatalf("historical full-scenario census was not frozen independently: profile=%+v err=%v", historical, err)
 	}
-	for _, name := range []string{MissionContractProfile, MissionAcceptanceProfile, MissionAdversarialProfile} {
+	for _, name := range []string{MissionContractProfile, MissionAcceptanceProfile, MissionAdversarialProfile, MissionRealIdentityProfile} {
 		profile, err := ProfileByName(name)
 		if err != nil {
 			t.Fatalf("profile %s: %v", name, err)
@@ -94,10 +94,21 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 		}
 	}
 	contract, _ := ProfileByName(MissionContractProfile)
-	for _, identity := range []string{"TestMissionMethodBeadsQualificationProfileIdentity", "TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"} {
+	for _, identity := range []string{"TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"} {
 		if !slices.Contains(contract.ExpectedTests, identity) {
 			t.Fatalf("mission contract profile omitted %s", identity)
 		}
+	}
+	if slices.Contains(contract.ExpectedTests, "TestMissionMethodBeadsQualificationProfileIdentity") {
+		t.Fatal("opt-in real-provider identity leaked into the portable contract profile")
+	}
+	realIdentity, err := ProfileByName(MissionRealIdentityProfile)
+	if err != nil || !slices.Equal(realIdentity.ExpectedTests, []string{"TestMissionMethodBeadsQualificationProfileIdentity"}) {
+		t.Fatalf("real-provider identity profile changed: profile=%+v err=%v", realIdentity, err)
+	}
+	full, err := CampaignByName(MissionFullCampaign)
+	if err != nil || slices.Contains(full.Profiles, MissionRealIdentityProfile) || slices.Contains(full.RequiredTests, "TestMissionMethodBeadsQualificationProfileIdentity") {
+		t.Fatalf("portable mission campaign acquired opt-in real-provider identity: campaign=%+v err=%v", full, err)
 	}
 }
 

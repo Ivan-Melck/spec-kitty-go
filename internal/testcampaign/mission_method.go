@@ -7,22 +7,27 @@ import (
 )
 
 const (
-	MissionContractProfile    = "mission-contract"
-	MissionAcceptanceProfile  = "mission-acceptance"
-	MissionAdversarialProfile = "mission-adversarial"
-	MissionFullCampaign       = "mission_full"
+	MissionContractProfile     = "mission-contract"
+	MissionAcceptanceProfile   = "mission-acceptance"
+	MissionAdversarialProfile  = "mission-adversarial"
+	MissionRealIdentityProfile = "mission-real-identity"
+	MissionFullCampaign        = "mission_full"
 )
 
 var missionProfiles = map[string]Profile{
 	MissionContractProfile: {
 		Name: MissionContractProfile, Package: "./internal/scenario",
-		Pattern: "^(TestMissionMethodBeadsQualificationProfileIdentity|TestMissionMethodQualificationContract|TestQualityCampaignUniversalInvariants|TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries)$",
+		Pattern: "^(TestMissionMethodQualificationContract|TestQualityCampaignUniversalInvariants|TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries)$",
 		ExpectedTests: []string{
-			"TestMissionMethodBeadsQualificationProfileIdentity",
 			"TestMissionMethodQualificationContract",
 			"TestQualityCampaignUniversalInvariants",
 			"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
 		},
+	},
+	MissionRealIdentityProfile: {
+		Name: MissionRealIdentityProfile, Package: "./internal/scenario",
+		Pattern:       "^(TestMissionMethodBeadsQualificationProfileIdentity)$",
+		ExpectedTests: []string{"TestMissionMethodBeadsQualificationProfileIdentity"},
 	},
 	MissionAcceptanceProfile: {
 		Name: MissionAcceptanceProfile, Package: "./internal/scenario",
@@ -67,7 +72,6 @@ func init() {
 		RequiredTests: []string{
 			"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
 			"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-			"TestMissionMethodBeadsQualificationProfileIdentity",
 			"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
 			"TestMissionMethodCrashBoundaryCensus",
 			"TestMissionMethodFinalizationProcessRaces100",
@@ -96,7 +100,6 @@ func ValidateMissionCampaign(campaign Campaign) error {
 	wantTests := []string{
 		"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
 		"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-		"TestMissionMethodBeadsQualificationProfileIdentity",
 		"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
 		"TestMissionMethodCrashBoundaryCensus",
 		"TestMissionMethodFinalizationProcessRaces100",
