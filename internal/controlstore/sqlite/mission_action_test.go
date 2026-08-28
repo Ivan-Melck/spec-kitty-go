@@ -9,6 +9,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
 )
 
 func TestMissionActionPersistsExactOutcomeAndReceiptBeforeMutableReads(t *testing.T) {
@@ -42,6 +43,52 @@ func TestMissionActionPersistsExactOutcomeAndReceiptBeforeMutableReads(t *testin
 	}
 	if replayed.Receipt != first.Receipt || !sameSnapshot(replayed.Outcome.Mission, after) || string(rawBefore) != string(mustOperationResult(t, store, commit.OperationID)) {
 		t.Fatal("action replay was reconstructed from mutable state")
+	}
+}
+
+func TestMissionActionAdapterRequiresExactInjectedDefinitionAndObservationWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	definition, err := softwaredev.Definition()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := mission.NewRegistry(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 28, 5, 0, 0, 0, time.UTC)
+	snapshot := mission.MissionSnapshot{MissionID: "mission-registry", ProjectID: "project-01", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), DefinitionCommitment: definition.Commitment(), Lifecycle: mission.LifecycleOpen, CurrentStep: mission.StepInitialized, StateVersion: 1, CreatedAt: at, UpdatedAt: at}
+	seedPhase3Mission(t, store, snapshot)
+	adapter, err := NewMissionActionAdapter(store, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before, after int64
+	if err = store.db.QueryRow(`SELECT total_changes()`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := adapter.ObserveAction(ctx, snapshot.MissionID)
+	if err != nil || observed.Definition.Commitment() != snapshot.DefinitionCommitment {
+		t.Fatalf("observation=%#v err=%v", observed, err)
+	}
+	if err = store.db.QueryRow(`SELECT total_changes()`).Scan(&after); err != nil || after != before {
+		t.Fatalf("observation wrote state before=%d after=%d err=%v", before, after, err)
+	}
+	empty, _ := mission.NewRegistry()
+	missing, _ := NewMissionActionAdapter(store, empty)
+	if _, err = missing.ObserveAction(ctx, snapshot.MissionID); !mission.IsKind(err, mission.KindDefinitionMismatch) {
+		t.Fatalf("missing registry definition: %v", err)
+	}
+	fake := phase3MissionSnapshot(at)
+	fake.MissionID = "mission-substituted"
+	seedPhase3Mission(t, store, fake)
+	if _, err = adapter.ObserveAction(ctx, fake.MissionID); !mission.IsKind(err, mission.KindDefinitionMismatch) {
+		t.Fatalf("substituted registry commitment: %v", err)
 	}
 }
 

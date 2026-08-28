@@ -11,13 +11,53 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
-	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
-var _ mission.ActionStore = (*Store)(nil)
+var _ mission.ActionStore = (*MissionActionAdapter)(nil)
 var _ mission.MissionFactStore = (*Store)(nil)
-var _ mission.NextSnapshotSource = (*Store)(nil)
+
+// MissionActionAdapter composes durable state with the application-owned,
+// immutable definition registry. Keeping definition law outside the provider
+// adapter preserves the architecture direction while still making one atomic
+// Next observation available to the mission service.
+type MissionActionAdapter struct {
+	store    *Store
+	registry mission.Registry
+}
+
+func NewMissionActionAdapter(store *Store, registry mission.Registry) (*MissionActionAdapter, error) {
+	if store == nil {
+		return nil, missionError(mission.KindInvalidRequest, "store", "mission action store is required", nil)
+	}
+	return &MissionActionAdapter{store: store, registry: registry}, nil
+}
+func (a *MissionActionAdapter) ReplayAction(ctx context.Context, id ids.MissionID, op ids.OperationID, digest string) (mission.ActionResult, bool, error) {
+	return a.store.ReplayAction(ctx, id, op, digest)
+}
+func (a *MissionActionAdapter) CommitAction(ctx context.Context, c mission.ActionCommit) (mission.ActionResult, error) {
+	return a.store.CommitAction(ctx, c)
+}
+func (a *MissionActionAdapter) ObserveAction(ctx context.Context, id ids.MissionID) (mission.NextSnapshot, error) {
+	tx, err := a.store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return mission.NextSnapshot{}, missionError(mission.KindPersistenceUnavailable, "next", "next snapshot is unavailable", err)
+	}
+	defer tx.Rollback()
+	var raw []byte
+	if err = tx.QueryRowContext(ctx, `SELECT snapshot_json FROM phase3_missions WHERE mission_id=?`, id).Scan(&raw); err != nil {
+		return mission.NextSnapshot{}, missionError(mission.KindNotFound, "mission", "mission was not found", nil)
+	}
+	snapshot, e := decodeSnapshot(raw)
+	if e != nil {
+		return mission.NextSnapshot{}, e
+	}
+	definition, e := a.registry.Resolve(snapshot.DefinitionID, snapshot.DefinitionVersion)
+	if e != nil || definition.Commitment() != snapshot.DefinitionCommitment {
+		return mission.NextSnapshot{}, missionError(mission.KindDefinitionMismatch, "definition", "stored definition does not match", e)
+	}
+	return observeNextTx(ctx, tx, snapshot, definition)
+}
 
 type decisionWire struct {
 	Params     mission.DecisionParams     `json:"params"`
@@ -235,31 +275,10 @@ func persistActionFact(ctx context.Context, tx *sql.Tx, d *mission.Decision, b *
 	return nil
 }
 
-func (s *Store) ObserveAction(ctx context.Context, id ids.MissionID) (mission.NextSnapshot, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return mission.NextSnapshot{}, missionError(mission.KindPersistenceUnavailable, "next", "next snapshot is unavailable", err)
-	}
-	defer tx.Rollback()
-	return observeNextTx(ctx, tx, id)
-}
-func (s *Store) ObserveNext(ctx context.Context, id ids.MissionID) (mission.NextSnapshot, error) {
-	return s.ObserveAction(ctx, id)
-}
-func observeNextTx(ctx context.Context, tx *sql.Tx, id ids.MissionID) (mission.NextSnapshot, error) {
-	var raw []byte
-	if err := tx.QueryRowContext(ctx, `SELECT snapshot_json FROM phase3_missions WHERE mission_id=?`, id).Scan(&raw); err != nil {
-		return mission.NextSnapshot{}, missionError(mission.KindNotFound, "mission", "mission was not found", nil)
-	}
-	snapshot, err := decodeSnapshot(raw)
-	if err != nil {
-		return mission.NextSnapshot{}, err
-	}
-	definition, err := softwaredev.Definition()
-	if err != nil || definition.ID() != snapshot.DefinitionID || definition.Version() != snapshot.DefinitionVersion || definition.Commitment() != snapshot.DefinitionCommitment {
-		return mission.NextSnapshot{}, missionError(mission.KindDefinitionMismatch, "definition", "stored definition does not match", err)
-	}
+func observeNextTx(ctx context.Context, tx *sql.Tx, snapshot mission.MissionSnapshot, definition mission.MissionDefinition) (mission.NextSnapshot, error) {
+	id := snapshot.MissionID
 	result := mission.NextSnapshot{Mission: snapshot, Definition: definition}
+	var err error
 	result.Decisions, err = loadDecisionsTx(ctx, tx, id)
 	if err != nil {
 		return mission.NextSnapshot{}, err
