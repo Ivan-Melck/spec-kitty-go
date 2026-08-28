@@ -348,6 +348,10 @@ BEGIN SELECT RAISE(ABORT,'OperationID is already bound in work graph'); END;
 CREATE TRIGGER work_graph_operation_excludes_legacy BEFORE INSERT ON work_graph_operations
 WHEN EXISTS(SELECT 1 FROM operations WHERE operation_id=NEW.operation_id)
 BEGIN SELECT RAISE(ABORT,'OperationID is already bound in legacy operations'); END;
+CREATE TRIGGER immutable_legacy_operation_identity
+BEFORE UPDATE OF operation_id ON operations
+WHEN NEW.operation_id<>OLD.operation_id
+BEGIN SELECT RAISE(ABORT,'legacy operation identity is immutable'); END;
 CREATE TRIGGER immutable_phase3_transition_update BEFORE UPDATE ON phase3_mission_transitions BEGIN SELECT RAISE(ABORT,'mission transition is immutable'); END;
 CREATE TRIGGER immutable_phase3_transition_delete BEFORE DELETE ON phase3_mission_transitions BEGIN SELECT RAISE(ABORT,'mission transition is immutable'); END;
 CREATE TRIGGER immutable_phase3_artifact_revision_update BEFORE UPDATE ON phase3_artifact_revisions BEGIN SELECT RAISE(ABORT,'artifact revision is immutable'); END;

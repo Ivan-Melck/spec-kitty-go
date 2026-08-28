@@ -485,6 +485,94 @@ func TestLegacyOperationNamespacesTwoStoreRaceHasOneGlobalWinner(t *testing.T) {
 	}
 }
 
+func TestLegacyOperationIdentityMutationIsRejectedWithoutBlockingLegalResults(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "control.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, _ := softwaredev.Definition()
+	registry, _ := mission.NewRegistry(definition)
+	phase3ID := "operation-global-mutation-phase3"
+	if _, err = mission.NewService(registry, store).Create(ctx, mission.CreateRequest{MissionID: "mission-global-mutation", ProjectID: "project-global-mutation", DefinitionID: definition.ID(), DefinitionVersion: definition.Version(), OperationID: ids.OperationID(phase3ID), ActorID: "actor-global-mutation", OccurredAt: time.Date(2026, 8, 28, 5, 0, 0, 0, time.UTC)}); err != nil {
+		t.Fatal(err)
+	}
+	revision := storeRevision(t, "revision-global-mutation", 1, "work-global-mutation")
+	if err = store.finalizeWorkRevisionForTest(ctx, revision, 0); err != nil {
+		t.Fatal(err)
+	}
+	workGraphID := "operation-finalize-" + revision.ID().String()
+	insertLegacy := func(operationID, key string) {
+		t.Helper()
+		if _, insertErr := store.db.Exec(`INSERT INTO operations(operation_id,operation_kind,idempotency_key,correlation_id,request_digest,status,created_at) VALUES(?,?,?,?,?,'started','2026-08-28T05:00:00Z')`, operationID, "start_run", key, "correlation-"+key, "digest-"+key); insertErr != nil {
+			t.Fatal(insertErr)
+		}
+	}
+	insertLegacy("operation-legacy-mutate-phase3", "key-mutate-phase3")
+	insertLegacy("operation-legacy-mutate-workgraph", "key-mutate-workgraph")
+	insertLegacy("operation-legacy-mutate-free", "key-mutate-free")
+	insertLegacy("operation-legacy-legal-success", "key-legal-success")
+	insertLegacy("operation-legacy-legal-failure", "key-legal-failure")
+	counts := func() [8]int {
+		t.Helper()
+		var value [8]int
+		query := `SELECT (SELECT COUNT(*) FROM operations),(SELECT COUNT(*) FROM work_graph_operations),(SELECT COUNT(*) FROM phase3_operations),(SELECT COUNT(*) FROM runs),(SELECT COUNT(*) FROM work_graph_revisions),(SELECT COUNT(*) FROM events),(SELECT COUNT(*) FROM phase3_events),(SELECT COUNT(*) FROM phase3_outbox)`
+		if queryErr := store.db.QueryRow(query).Scan(&value[0], &value[1], &value[2], &value[3], &value[4], &value[5], &value[6], &value[7]); queryErr != nil {
+			t.Fatal(queryErr)
+		}
+		return value
+	}
+	before := counts()
+	mutants := []struct {
+		source string
+		target string
+	}{
+		{"operation-legacy-mutate-phase3", phase3ID},
+		{"operation-legacy-mutate-workgraph", workGraphID},
+		{"operation-legacy-mutate-free", "operation-legacy-unused-target"},
+	}
+	for _, mutant := range mutants {
+		if _, err = store.db.Exec(`UPDATE operations SET operation_id=? WHERE operation_id=?`, mutant.target, mutant.source); err == nil {
+			t.Fatalf("legacy identity mutation %q -> %q succeeded", mutant.source, mutant.target)
+		}
+		var status string
+		if err = store.db.QueryRow(`SELECT status FROM operations WHERE operation_id=?`, mutant.source).Scan(&status); err != nil || status != "started" {
+			t.Fatalf("source %q changed status=%q err=%v", mutant.source, status, err)
+		}
+	}
+	if _, err = store.db.Exec(`UPDATE work_graph_operations SET operation_id='operation-workgraph-mutated' WHERE operation_id=?`, workGraphID); err == nil {
+		t.Fatal("work graph operation identity mutation succeeded")
+	}
+	if after := counts(); after != before {
+		t.Fatalf("failed identity mutations changed durable evidence: before=%v after=%v", before, after)
+	}
+	if _, err = store.db.Exec(`UPDATE operations SET status='succeeded',result_run_id='run-legal',result_lease_id='lease-legal',result_generation=1,result_deadline='2026-08-28T05:05:00Z' WHERE operation_id='operation-legacy-legal-success'`); err != nil {
+		t.Fatalf("legal success update failed: %v", err)
+	}
+	if _, err = store.db.Exec(`UPDATE operations SET status='failed',result_error_kind='authority_conflict',result_error_payload='{}' WHERE operation_id='operation-legacy-legal-failure'`); err != nil {
+		t.Fatalf("legal failure update failed: %v", err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, mutant := range mutants {
+		var present int
+		if err = store.db.QueryRow(`SELECT COUNT(*) FROM operations WHERE operation_id=?`, mutant.source).Scan(&present); err != nil || present != 1 {
+			t.Fatalf("reopened source %q present=%d err=%v", mutant.source, present, err)
+		}
+	}
+	var succeeded, failed string
+	if err = store.db.QueryRow(`SELECT (SELECT status FROM operations WHERE operation_id='operation-legacy-legal-success'),(SELECT status FROM operations WHERE operation_id='operation-legacy-legal-failure')`).Scan(&succeeded, &failed); err != nil || succeeded != "succeeded" || failed != "failed" {
+		t.Fatalf("reopened legal statuses succeeded=%q failed=%q err=%v", succeeded, failed, err)
+	}
+}
+
 func TestPhase3MigrationIsAppendOnlyAndForeignKeysRemainEnabled(t *testing.T) {
 	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
