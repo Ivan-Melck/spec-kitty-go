@@ -57,6 +57,49 @@ type ReconcileRequest struct {
 	OccurredAt  time.Time
 }
 
+type WorkStatusAssignment struct {
+	WorkID ids.WorkID
+	Status WorkStatus
+}
+
+type WorkDispositionDecisionParams struct {
+	OldWorkID   ids.WorkID
+	Disposition Disposition
+	NewWorkIDs  []ids.WorkID
+	ForkEdges   []ForkEdge
+	Rationale   string
+}
+
+type MixedReconcileRequest struct {
+	ID         string
+	Old        RevisionV2
+	New        RevisionV2
+	Drift      DriftReport
+	Statuses   []WorkStatusAssignment
+	Decisions  []WorkDispositionDecisionParams
+	ActorID    ids.ActorID
+	Rationale  string
+	OccurredAt time.Time
+}
+
+type WorkDispositionDecision struct {
+	oldWorkID   ids.WorkID
+	disposition Disposition
+	newWorkIDs  []ids.WorkID
+	forkEdges   []ForkEdge
+	rationale   string
+}
+
+func (decision WorkDispositionDecision) OldWorkID() ids.WorkID    { return decision.oldWorkID }
+func (decision WorkDispositionDecision) Disposition() Disposition { return decision.disposition }
+func (decision WorkDispositionDecision) NewWorkIDs() []ids.WorkID {
+	return append([]ids.WorkID(nil), decision.newWorkIDs...)
+}
+func (decision WorkDispositionDecision) ForkEdges() []ForkEdge {
+	return append([]ForkEdge(nil), decision.forkEdges...)
+}
+func (decision WorkDispositionDecision) Rationale() string { return decision.rationale }
+
 type consequenceKey struct {
 	workID ids.WorkID
 	status WorkStatus
@@ -78,6 +121,27 @@ type Reconciliation struct {
 	forkEdges         []ForkEdge
 	occurredAt        time.Time
 	consequences      map[consequenceKey]Consequence
+	requestDigest     string
+}
+
+type MixedReconciliation struct {
+	id                string
+	oldRevisionID     ids.WorkRevisionID
+	newRevisionID     ids.WorkRevisionID
+	oldGraphDigest    string
+	newGraphDigest    string
+	oldCriteriaDigest string
+	newCriteriaDigest string
+	actorID           ids.ActorID
+	rationale         string
+	oldWorkIDs        []ids.WorkID
+	newWorkIDs        []ids.WorkID
+	forkEdges         []ForkEdge
+	occurredAt        time.Time
+	consequences      map[consequenceKey]Consequence
+	decisions         []WorkDispositionDecision
+	assignedStatuses  map[ids.WorkID]WorkStatus
+	driftReportID     string
 	requestDigest     string
 }
 
@@ -139,6 +203,204 @@ func Reconcile(request ReconcileRequest) (Reconciliation, error) {
 	}
 	reconciliation.requestDigest = reconciliation.semanticDigest()
 	return reconciliation, nil
+}
+
+// ReconcileMixed validates one complete immutable per-work decision plan.
+// The legacy Reconcile constructor above remains the frozen v1 path used by
+// historical control-store records.
+func ReconcileMixed(request MixedReconcileRequest) (MixedReconciliation, error) {
+	if _, err := ids.ParseOperationID(request.ID); err != nil {
+		return MixedReconciliation{}, &Error{Kind: KindInvalidReconciliation, Message: "reconciliation ID is invalid", Cause: err}
+	}
+	if _, err := ids.ParseActorID(request.ActorID.String()); err != nil {
+		return MixedReconciliation{}, &Error{Kind: KindInvalidReconciliation, Message: "ActorID is invalid", Cause: err}
+	}
+	if !boundedText(request.Rationale, 4096) || request.OccurredAt.IsZero() || request.OccurredAt.Location() != time.UTC {
+		return MixedReconciliation{}, newError(KindInvalidReconciliation, "bounded rationale and UTC occurrence time are required", nil)
+	}
+	if err := validateMixedRevisionPair(request.Old, request.New, request.Drift); err != nil {
+		return MixedReconciliation{}, err
+	}
+	affectedOld := request.Drift.AffectedOldWorkIDs()
+	if request.Drift.SemanticStatus() != SemanticChanged || len(affectedOld) == 0 {
+		return MixedReconciliation{}, newError(KindInvalidReconciliation, "mixed reconciliation requires semantic drift affecting prior work", nil)
+	}
+	statuses, err := canonicalMixedStatuses(request.Statuses, affectedOld)
+	if err != nil {
+		return MixedReconciliation{}, err
+	}
+	decisions, err := canonicalMixedDecisions(request.Decisions, request.Old, request.New, request.Drift, statuses)
+	if err != nil {
+		return MixedReconciliation{}, err
+	}
+	reconciliation := MixedReconciliation{
+		id: request.ID, oldRevisionID: request.Old.ID(), newRevisionID: request.New.ID(),
+		oldGraphDigest: request.Old.GraphDigest(), newGraphDigest: request.New.GraphDigest(),
+		oldCriteriaDigest: request.Old.CriteriaDigest(), newCriteriaDigest: request.New.CriteriaDigest(),
+		actorID: request.ActorID, rationale: request.Rationale, oldWorkIDs: affectedOld,
+		newWorkIDs: request.Drift.AffectedNewWorkIDs(), occurredAt: request.OccurredAt,
+		decisions: decisions, assignedStatuses: statuses, driftReportID: request.Drift.ID(),
+		consequences: make(map[consequenceKey]Consequence, len(decisions)*len(allStatuses)),
+	}
+	for _, decision := range decisions {
+		reconciliation.forkEdges = append(reconciliation.forkEdges, decision.forkEdges...)
+		for _, status := range allStatuses {
+			reconciliation.consequences[consequenceKey{decision.oldWorkID, status}] = consequenceFor(decision.disposition, status)
+		}
+	}
+	sort.Slice(reconciliation.forkEdges, func(i, j int) bool {
+		if reconciliation.forkEdges[i].FromOldWorkID == reconciliation.forkEdges[j].FromOldWorkID {
+			return reconciliation.forkEdges[i].ToNewWorkID < reconciliation.forkEdges[j].ToNewWorkID
+		}
+		return reconciliation.forkEdges[i].FromOldWorkID < reconciliation.forkEdges[j].FromOldWorkID
+	})
+	reconciliation.requestDigest = reconciliation.mixedSemanticDigest()
+	return reconciliation, nil
+}
+
+func validateMixedRevisionPair(oldRevision, newRevision RevisionV2, report DriftReport) error {
+	if validateDriftRevision(oldRevision) != nil || validateDriftRevision(newRevision) != nil ||
+		oldRevision.ProjectID() != newRevision.ProjectID() || oldRevision.MissionID() != newRevision.MissionID() ||
+		newRevision.Generation() != oldRevision.Generation()+1 || newRevision.PredecessorID() != oldRevision.ID() {
+		return newError(KindInvalidReconciliation, "successor must be the exact next immutable generation in the same scope", nil)
+	}
+	if report.ID() == "" || report.MissionID() != oldRevision.MissionID() || report.BaseRevisionID() != oldRevision.ID() ||
+		report.CandidateRevisionID() != newRevision.ID() || report.BaseGraphDigest() != oldRevision.GraphDigest() ||
+		report.CandidateGraphDigest() != newRevision.GraphDigest() {
+		return newError(KindInvalidReconciliation, "drift evidence does not bind the exact predecessor and successor", nil)
+	}
+	return nil
+}
+
+func canonicalMixedStatuses(input []WorkStatusAssignment, affected []ids.WorkID) (map[ids.WorkID]WorkStatus, error) {
+	expected := make(map[ids.WorkID]bool, len(affected))
+	for _, workID := range affected {
+		expected[workID] = true
+	}
+	result := make(map[ids.WorkID]WorkStatus, len(input))
+	for _, assignment := range input {
+		if !expected[assignment.WorkID] || result[assignment.WorkID] != "" || !knownWorkStatus(assignment.Status) {
+			return nil, newError(KindInvalidReconciliation, "work statuses must exactly and uniquely cover affected old work", map[string]string{"work_id": assignment.WorkID.String()})
+		}
+		result[assignment.WorkID] = assignment.Status
+	}
+	if len(result) != len(expected) {
+		return nil, newError(KindInvalidReconciliation, "work statuses omit affected old work", nil)
+	}
+	return result, nil
+}
+
+func canonicalMixedDecisions(input []WorkDispositionDecisionParams, oldRevision, newRevision RevisionV2, report DriftReport, statuses map[ids.WorkID]WorkStatus) ([]WorkDispositionDecision, error) {
+	expected := make(map[ids.WorkID]bool, len(report.affectedOld))
+	newAffected := make(map[ids.WorkID]bool, len(report.affectedNew))
+	for _, workID := range report.affectedOld {
+		expected[workID] = true
+	}
+	for _, workID := range report.affectedNew {
+		newAffected[workID] = true
+	}
+	seen := make(map[ids.WorkID]bool, len(input))
+	result := make([]WorkDispositionDecision, 0, len(input))
+	for _, proposed := range input {
+		if !expected[proposed.OldWorkID] || seen[proposed.OldWorkID] || !containsV2Work(oldRevision, proposed.OldWorkID) {
+			return nil, newError(KindInvalidReconciliation, "decisions must exactly and uniquely cover affected old work", map[string]string{"work_id": proposed.OldWorkID.String()})
+		}
+		seen[proposed.OldWorkID] = true
+		if !knownDisposition(proposed.Disposition) || !boundedText(proposed.Rationale, 1024) {
+			return nil, newError(KindInvalidReconciliation, "decision disposition or rationale is invalid", map[string]string{"work_id": proposed.OldWorkID.String()})
+		}
+		newWorkIDs, err := canonicalMixedNewWorkIDs(proposed.NewWorkIDs, newRevision, newAffected)
+		if err != nil {
+			return nil, err
+		}
+		edges := append([]ForkEdge(nil), proposed.ForkEdges...)
+		sort.Slice(edges, func(i, j int) bool {
+			if edges[i].FromOldWorkID == edges[j].FromOldWorkID {
+				return edges[i].ToNewWorkID < edges[j].ToNewWorkID
+			}
+			return edges[i].FromOldWorkID < edges[j].FromOldWorkID
+		})
+		if err := validateMixedDecisionShape(proposed.OldWorkID, proposed.Disposition, newWorkIDs, edges, statuses[proposed.OldWorkID], report); err != nil {
+			return nil, err
+		}
+		result = append(result, WorkDispositionDecision{proposed.OldWorkID, proposed.Disposition, newWorkIDs, edges, proposed.Rationale})
+	}
+	if len(seen) != len(expected) {
+		return nil, newError(KindInvalidReconciliation, "decisions omit affected old work", nil)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].oldWorkID < result[j].oldWorkID })
+	return result, nil
+}
+
+func canonicalMixedNewWorkIDs(input []ids.WorkID, revision RevisionV2, affected map[ids.WorkID]bool) ([]ids.WorkID, error) {
+	result := append([]ids.WorkID(nil), input...)
+	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	for index, workID := range result {
+		if (index > 0 && result[index-1] == workID) || !containsV2Work(revision, workID) || !affected[workID] {
+			return nil, newError(KindInvalidReconciliation, "decision successor must be one unique affected new work item", map[string]string{"work_id": workID.String()})
+		}
+	}
+	return result, nil
+}
+
+func validateMixedDecisionShape(oldWorkID ids.WorkID, disposition Disposition, newWorkIDs []ids.WorkID, edges []ForkEdge, status WorkStatus, report DriftReport) error {
+	if disposition != Fork && len(edges) != 0 {
+		return newError(KindInvalidReconciliation, "fork edges are legal only for fork decisions", map[string]string{"work_id": oldWorkID.String()})
+	}
+	switch disposition {
+	case Continue:
+		if len(newWorkIDs) != 1 || newWorkIDs[0] != oldWorkID || !continueCompatible(report, oldWorkID) {
+			return newError(KindInvalidReconciliation, "continue requires an unchanged same-identity work contract", map[string]string{"work_id": oldWorkID.String()})
+		}
+	case Supersede:
+		if len(newWorkIDs) == 0 || containsWorkID(newWorkIDs, oldWorkID) {
+			return newError(KindInvalidReconciliation, "supersede requires explicit distinct replacement work", map[string]string{"work_id": oldWorkID.String()})
+		}
+	case Invalidate:
+		if containsWorkID(newWorkIDs, oldWorkID) || (status == StatusIntegrated && len(newWorkIDs) == 0) {
+			return newError(KindInvalidReconciliation, "integrated invalidation requires explicit distinct repair work", map[string]string{"work_id": oldWorkID.String()})
+		}
+	case Fork:
+		if len(newWorkIDs) < 2 {
+			return newError(KindInvalidReconciliation, "fork requires at least two distinct successor identities", map[string]string{"work_id": oldWorkID.String()})
+		}
+		if err := validateFork([]ids.WorkID{oldWorkID}, newWorkIDs, edges); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func continueCompatible(report DriftReport, workID ids.WorkID) bool {
+	for _, change := range report.changes {
+		if change.oldWorkID == workID || change.newWorkID == workID {
+			return false
+		}
+	}
+	return true
+}
+
+func knownDisposition(value Disposition) bool {
+	return value == Continue || value == Supersede || value == Invalidate || value == Fork
+}
+func knownWorkStatus(value WorkStatus) bool {
+	return value == StatusActive || value == StatusHandedOff || value == StatusApproved || value == StatusIntegrated
+}
+func containsWorkID(values []ids.WorkID, target ids.WorkID) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+func containsV2Work(revision RevisionV2, workID ids.WorkID) bool {
+	for _, item := range revision.WorkItems() {
+		if item.WorkID() == workID {
+			return true
+		}
+	}
+	return false
 }
 
 func canonicalWorkIDs(input []ids.WorkID, revision Revision, side string) ([]ids.WorkID, error) {
@@ -236,6 +498,53 @@ func (r Reconciliation) Consequence(workID ids.WorkID, status WorkStatus) (Conse
 	return consequence, ok
 }
 
+func (r MixedReconciliation) ID() string                        { return r.id }
+func (r MixedReconciliation) OldRevisionID() ids.WorkRevisionID { return r.oldRevisionID }
+func (r MixedReconciliation) NewRevisionID() ids.WorkRevisionID { return r.newRevisionID }
+func (r MixedReconciliation) OldGraphDigest() string            { return r.oldGraphDigest }
+func (r MixedReconciliation) NewGraphDigest() string            { return r.newGraphDigest }
+func (r MixedReconciliation) OldCriteriaDigest() string         { return r.oldCriteriaDigest }
+func (r MixedReconciliation) NewCriteriaDigest() string         { return r.newCriteriaDigest }
+func (r MixedReconciliation) ActorID() ids.ActorID              { return r.actorID }
+func (r MixedReconciliation) Rationale() string                 { return r.rationale }
+func (r MixedReconciliation) OldWorkIDs() []ids.WorkID {
+	return append([]ids.WorkID(nil), r.oldWorkIDs...)
+}
+func (r MixedReconciliation) NewWorkIDs() []ids.WorkID {
+	return append([]ids.WorkID(nil), r.newWorkIDs...)
+}
+func (r MixedReconciliation) ForkEdges() []ForkEdge { return append([]ForkEdge(nil), r.forkEdges...) }
+func (r MixedReconciliation) OccurredAt() time.Time { return r.occurredAt }
+func (r MixedReconciliation) RequestDigest() string { return r.requestDigest }
+func (r MixedReconciliation) DriftReportID() string { return r.driftReportID }
+func (r MixedReconciliation) Decisions() []WorkDispositionDecision {
+	result := make([]WorkDispositionDecision, len(r.decisions))
+	for index, decision := range r.decisions {
+		result[index] = decision
+		result[index].newWorkIDs = decision.NewWorkIDs()
+		result[index].forkEdges = decision.ForkEdges()
+	}
+	return result
+}
+func (r MixedReconciliation) Decision(workID ids.WorkID) (WorkDispositionDecision, bool) {
+	for _, decision := range r.decisions {
+		if decision.oldWorkID == workID {
+			decision.newWorkIDs = decision.NewWorkIDs()
+			decision.forkEdges = decision.ForkEdges()
+			return decision, true
+		}
+	}
+	return WorkDispositionDecision{}, false
+}
+func (r MixedReconciliation) AssignedStatus(workID ids.WorkID) (WorkStatus, bool) {
+	status, ok := r.assignedStatuses[workID]
+	return status, ok
+}
+func (r MixedReconciliation) Consequence(workID ids.WorkID, status WorkStatus) (Consequence, bool) {
+	consequence, ok := r.consequences[consequenceKey{workID, status}]
+	return consequence, ok
+}
+
 func (r Reconciliation) semanticDigest() string {
 	payload := struct {
 		ID                string             `json:"id"`
@@ -261,4 +570,36 @@ func (r Reconciliation) semanticDigest() string {
 	}
 	encoded, _ := json.Marshal(payload)
 	return digest(encoded)
+}
+
+func (r MixedReconciliation) mixedSemanticDigest() string {
+	type decisionWire struct {
+		OldWorkID   ids.WorkID   `json:"old_work_id"`
+		Disposition Disposition  `json:"disposition"`
+		NewWorkIDs  []ids.WorkID `json:"new_work_ids"`
+		ForkEdges   []ForkEdge   `json:"fork_edges"`
+		Rationale   string       `json:"rationale"`
+		Status      WorkStatus   `json:"work_status"`
+	}
+	decisions := make([]decisionWire, len(r.decisions))
+	for index, decision := range r.decisions {
+		decisions[index] = decisionWire{decision.oldWorkID, decision.disposition, decision.NewWorkIDs(), decision.ForkEdges(), decision.rationale, r.assignedStatuses[decision.oldWorkID]}
+	}
+	payload := struct {
+		SchemaVersion     uint16             `json:"schema_version"`
+		ID                string             `json:"reconciliation_id"`
+		DriftReportID     string             `json:"drift_report_id"`
+		OldRevisionID     ids.WorkRevisionID `json:"old_work_revision_id"`
+		NewRevisionID     ids.WorkRevisionID `json:"new_work_revision_id"`
+		OldGraphDigest    string             `json:"old_graph_digest"`
+		NewGraphDigest    string             `json:"new_graph_digest"`
+		OldCriteriaDigest string             `json:"old_criteria_digest"`
+		NewCriteriaDigest string             `json:"new_criteria_digest"`
+		Decisions         []decisionWire     `json:"decisions"`
+		ActorID           ids.ActorID        `json:"actor_id"`
+		Rationale         string             `json:"rationale"`
+		OccurredAt        string             `json:"occurred_at"`
+	}{2, r.id, r.driftReportID, r.oldRevisionID, r.newRevisionID, r.oldGraphDigest, r.newGraphDigest, r.oldCriteriaDigest, r.newCriteriaDigest, decisions, r.actorID, r.rationale, r.occurredAt.Format(time.RFC3339Nano)}
+	encoded, _ := json.Marshal(payload)
+	return digest(append([]byte("spec-kitty/reconciliation/v2\x00"), encoded...))
 }
