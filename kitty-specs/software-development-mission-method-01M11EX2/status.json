@@ -349,7 +349,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Implementation cd87e18 qualified: focused helper x10, fake scenario x3, helper/scenario race, full dependency suites, architecture, compile, vet, staticcheck, module, formatting, build, and exact 17-of-18 governed scope; main.go required no change.",
-        "Cycle-2 repair 81022d4 closes all five formal findings; 14 governed files, mandatory provenance, provider-derived drift, pre-open validation, full T056 matrix, typed refusal state/classification; repeated/race/architecture/static/build gates pass."
+        "Cycle-2 repair 81022d4 closes all five formal findings; 14 governed files, mandatory provenance, provider-derived drift, pre-open validation, full T056 matrix, typed refusal state/classification; repeated/race/architecture/static/build gates pass.",
+        "Cycle-3 repair 2c80d17 closes command-wide pre-open validation, real fake status/assignment non-authority, and closed observed/expected refusal evidence; six governed files; full repeated/race/architecture/static/build gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
