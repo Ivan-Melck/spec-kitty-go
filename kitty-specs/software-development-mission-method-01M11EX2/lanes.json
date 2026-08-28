@@ -223,7 +223,8 @@
         "internal/mission/lifecycle_test.go",
         "internal/scenario/mission_method_fake_test.go",
         "internal/scenario/mission_method_helpers_test.go",
-        "internal/testcampaign/manifest.go"
+        "internal/testcampaign/manifest.go",
+        "internal/tracker/fake/store.go"
       ],
       "predicted_surfaces": [
         "api",

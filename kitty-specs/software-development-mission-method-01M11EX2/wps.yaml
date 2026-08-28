@@ -213,6 +213,7 @@ work_packages:
       - "internal/controlstore/sqlite/mission_method_query.go"
       - "internal/controlstore/sqlite/mission_method_query_test.go"
       - "internal/testcampaign/manifest.go"
+      - "internal/tracker/fake/store.go"
       - "internal/helpercmd/root.go"
       - "internal/helpercmd/mission_method.go"
       - "internal/helpercmd/mission_method_test.go"
