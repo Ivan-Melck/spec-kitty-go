@@ -155,6 +155,14 @@ func configureHandoffEligibility(ctx context.Context, store *sqlite.Store, reque
 		}
 		return complete, nil
 	}
+	// A fencing failure is more fundamental than revision eligibility. This
+	// read-only inspection cannot authorize the command: Submit still performs
+	// eligibility validation and re-inspects authority before verifier or store
+	// mutation. Keeping it after immutable replay preserves exact lost-response
+	// behavior while preventing an invalidated revision from masking a zombie.
+	if _, err := store.InspectHandoffAuthority(ctx, *request); err != nil {
+		return nil, err
+	}
 	switch mode {
 	case eligibilityLegacyV1:
 		if err := requireLegacyV1Revision(ctx, store, request.WorkRevisionID); err != nil {
@@ -252,6 +260,13 @@ func configureReviewEligibility(ctx context.Context, store *sqlite.Store, reques
 			return legacy, nil
 		}
 		return complete, nil
+	}
+	// InspectReview records an attributed attempt and is therefore not a valid
+	// preflight. The SQLite adapter exposes this narrower read-only probe so a
+	// stale lease is diagnosed before eligibility without creating authority.
+	// Submit still performs the authoritative inspection and transactional CAS.
+	if err := store.InspectReviewAuthority(ctx, *request); err != nil {
+		return nil, err
 	}
 	switch mode {
 	case eligibilityLegacyV1:
