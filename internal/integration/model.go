@@ -8,7 +8,10 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
+
+type EligibilityFact = workgraph.EligibilityFact
 
 type ErrorKind string
 
@@ -78,6 +81,9 @@ type Request struct {
 	Candidate     string
 	LeaseTTL      time.Duration
 	StartedAt     time.Time
+	// ExpectedEligibility binds the immutable approved review to its complete
+	// mixed-reconciliation authority. It is resolved after the review lookup.
+	ExpectedEligibility EligibilityFact
 }
 
 func (r Request) Validate() error {

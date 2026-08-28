@@ -1,0 +1,13 @@
+{
+  "wp_id": "WP06",
+  "captured_at": "2026-08-28T04:32:52Z",
+  "base_branch": "feat/software-development-mission-method",
+  "base_commit": "99e4308080dcee0ef87fbfad09ce6414ca0f7cf8",
+  "test_runner": "pytest",
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "failures": [],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}
