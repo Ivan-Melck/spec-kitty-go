@@ -97,7 +97,7 @@ func mappingIndexFromIssues(issues []providerIssue) workMappingIndex {
 			MetadataSchema: kitty.SchemaVersion, CreatedByOperation: kitty.CreatedByOperation,
 		}
 		key := workMappingKey{projectID: kitty.ProjectID, workID: kitty.WorkID}
-		if prior, present := index.byExternal[issue.externalID]; present && (prior.ProjectID != reference.ProjectID || prior.WorkID != reference.WorkID) {
+		if prior, present := index.byExternal[issue.externalID]; present {
 			delete(index.byExternal, issue.externalID)
 			index.conflictingExternal[issue.externalID] = struct{}{}
 			index.conflictingWork[workMappingKey{projectID: prior.ProjectID, workID: prior.WorkID}] = struct{}{}
@@ -106,17 +106,25 @@ func mappingIndexFromIssues(issues []providerIssue) workMappingIndex {
 			delete(index.byWork, key)
 			continue
 		}
-		if _, conflicted := index.conflictingExternal[issue.externalID]; !conflicted {
-			index.byExternal[issue.externalID] = reference
-		}
-		if prior, present := index.byWork[key]; present && prior.ExternalID != issue.externalID {
-			delete(index.byWork, key)
+		if _, conflicted := index.conflictingExternal[issue.externalID]; conflicted {
 			index.conflictingWork[key] = struct{}{}
+			delete(index.byWork, key)
 			continue
 		}
-		if _, conflicted := index.conflictingWork[key]; !conflicted {
-			index.byWork[key] = reference
+		if prior, present := index.byWork[key]; present {
+			delete(index.byWork, key)
+			index.conflictingWork[key] = struct{}{}
+			delete(index.byExternal, prior.ExternalID)
+			index.conflictingExternal[prior.ExternalID] = struct{}{}
+			index.conflictingExternal[issue.externalID] = struct{}{}
+			continue
 		}
+		if _, conflicted := index.conflictingWork[key]; conflicted {
+			index.conflictingExternal[issue.externalID] = struct{}{}
+			continue
+		}
+		index.byExternal[issue.externalID] = reference
+		index.byWork[key] = reference
 	}
 	return index
 }

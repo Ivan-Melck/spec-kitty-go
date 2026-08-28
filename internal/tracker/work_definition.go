@@ -357,7 +357,10 @@ type WorkDefinitionMutation struct {
 }
 
 // WorkDefinitionPort is the narrow mutable-planning port. It is deliberately
-// separate from the legacy Provider compatibility interface.
+// separate from the legacy Provider compatibility interface. Capabilities are
+// a static binding declaration: composition resolves them once and supplies a
+// value copy to mission services; request-time capability discovery is neither
+// tracker I/O nor decomposition authority.
 type WorkDefinitionPort interface {
 	DefinitionCapabilities(context.Context) (WorkDefinitionCapabilities, error)
 	CreateDefinition(context.Context, CreateWorkDefinitionRequest) (WorkDefinitionMutation, error)

@@ -52,6 +52,7 @@ type catalogRunner struct {
 	ambiguousKind        CommandKind
 	applyBeforeAmbiguous bool
 	afterCreate          func(*storedCatalogIssue)
+	duplicateListID      string
 	mode                 tracker.ConcurrencyMode
 	serverID             string
 	serverEndpoint       string
@@ -94,6 +95,9 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 		items := make([]map[string]any, 0, len(ids))
 		for _, id := range ids {
 			items = append(items, runner.issues[id].wire())
+			if id == runner.duplicateListID {
+				items = append(items, runner.issues[id].wire())
+			}
 		}
 		data = items
 	case CommandShow:
@@ -535,6 +539,21 @@ func TestCatalogDuplicateMappingIsAConflictWithoutSecondMutation(t *testing.T) {
 	before := runner.mutationCount()
 	if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
 		t.Fatalf("error=%v mutations=%d", err, runner.mutationCount())
+	}
+}
+
+func TestCatalogByteIdenticalDuplicateListEntryIsAConflict(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	created, err := bound.CreateWork(context.Background(), createRequest(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.duplicateListID = created.Record.ExternalRef.ExternalID
+	runner.mu.Unlock()
+	before := runner.mutationCount()
+	if _, err := bound.ObserveDefinitionCatalog(context.Background(), created.Record.ExternalRef.ProjectID); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
+		t.Fatalf("duplicate list error=%v mutations=%d", err, runner.mutationCount())
 	}
 }
 

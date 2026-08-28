@@ -52,7 +52,7 @@ func TestDecompositionRefusesIneligiblePlanBeforeProviderAuthority(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			command, missionState, plans, provider := decompositionFixture(t)
 			test.mutate(&command, missionState, plans)
-			service := mission.NewDecompositionService(missionState, plans, provider, provider.authority)
+			service := newDecompositionTestService(t, missionState, plans, provider)
 			if _, err := service.Decompose(context.Background(), command); err == nil {
 				t.Fatal("ineligible decomposition accepted")
 			}
@@ -65,7 +65,7 @@ func TestDecompositionRefusesIneligiblePlanBeforeProviderAuthority(t *testing.T)
 
 func TestDecompositionCreatesTwoItemGraphAndReplaysExactly(t *testing.T) {
 	command, missions, plans, provider := decompositionFixture(t)
-	service := mission.NewDecompositionService(missions, plans, provider, provider.authority)
+	service := newDecompositionTestService(t, missions, plans, provider)
 	first, err := service.Decompose(context.Background(), command)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestDecompositionRootAuthorityBindsCompleteRequestBeforeProvider(t *testing
 	for _, test := range mutations {
 		t.Run(test.name, func(t *testing.T) {
 			command, missions, plans, provider := decompositionFixture(t)
-			service := mission.NewDecompositionService(missions, plans, provider, provider.authority)
+			service := newDecompositionTestService(t, missions, plans, provider)
 			if _, err := service.Decompose(context.Background(), command); err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +165,7 @@ func TestDecompositionFreshRootRejectsPreexistingChildMutation(t *testing.T) {
 	if _, err := provider.port.CreateDefinition(context.Background(), tracker.CreateWorkDefinitionRequest{OperationID: child, Definition: definition}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+	result, err := newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
 	var typed *mission.DecompositionError
 	if !errors.As(err, &typed) || typed.Kind != mission.DecompositionProviderFailure || result.Status != mission.DecompositionAmbiguous {
 		t.Fatalf("result=%+v err=%v", result, err)
@@ -179,7 +179,7 @@ func TestDecompositionFreshRootRejectsPartiallyRepairedChildMutation(t *testing.
 		mutation.PriorMutation = true
 		return mutation
 	}
-	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+	result, err := newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
 	var typed *mission.DecompositionError
 	if !errors.As(err, &typed) || typed.Kind != mission.DecompositionProviderFailure || result.Status != mission.DecompositionAmbiguous {
 		t.Fatalf("result=%+v err=%v", result, err)
@@ -194,9 +194,68 @@ func TestDecompositionValidatesCompleteGraphBeforeFirstProviderWrite(t *testing.
 		t.Fatal(err)
 	}
 	command.Work[1].Definition = invalid
-	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+	result, err := newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
 	if err == nil || len(result.Findings) == 0 || provider.prepareCalls != 0 || provider.createCalls != 0 {
 		t.Fatalf("invalid graph result=%+v error=%v provider=%+v", result, err, provider)
+	}
+}
+
+func TestDecompositionRefusesUnsupportedRequirementsBeforeRootReservation(t *testing.T) {
+	tests := []struct {
+		name         string
+		capabilities tracker.WorkDefinitionCapabilities
+		prepare      func(*testing.T, *mission.DecompositionCommand, *countingDefinitionProvider)
+		wantKind     tracker.ErrorKind
+	}{
+		{
+			name:         "guarded update",
+			capabilities: tracker.WorkDefinitionCapabilities{Create: true, GuardedUpdate: false, BlockingGraph: true},
+			wantKind:     tracker.ErrorGuardedUpdateUnsupported,
+			prepare: func(t *testing.T, command *mission.DecompositionCommand, provider *countingDefinitionProvider) {
+				created, err := provider.port.CreateDefinition(context.Background(), tracker.CreateWorkDefinitionRequest{OperationID: "operation-capability-seed", Definition: command.Work[0].Definition})
+				if err != nil {
+					t.Fatal(err)
+				}
+				reference := created.Observation.ExternalRef()
+				command.Work[0].Existing = &reference
+				command.Work[0].ExpectedObservation = created.Observation.ProviderObservation().Revision
+			},
+		},
+		{
+			name:         "blocking graph",
+			capabilities: tracker.WorkDefinitionCapabilities{Create: true, GuardedUpdate: true, BlockingGraph: false},
+			wantKind:     tracker.ErrorCapabilityUnsupported,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, missions, plans, provider := decompositionFixture(t)
+			if test.prepare != nil {
+				test.prepare(t, &command, provider)
+			}
+			provider.createCalls, provider.updateCalls, provider.observeCalls = 0, 0, 0
+
+			_, err := mission.NewDecompositionService(missions, plans, provider, test.capabilities, provider.authority).Decompose(context.Background(), command)
+			var typed *mission.DecompositionError
+			if !errors.As(err, &typed) || typed.Kind != mission.DecompositionProviderCapability || !tracker.IsKind(err, test.wantKind) {
+				t.Fatalf("error=%T %v", err, err)
+			}
+			if provider.capabilityCalls != 0 || provider.authority.calls != 0 || len(provider.authority.seen) != 0 || provider.createCalls != 0 || provider.updateCalls != 0 || provider.observeCalls != 0 {
+				t.Fatalf("capability refusal crossed authority boundary: provider=%+v authority=%+v", provider, provider.authority)
+			}
+		})
+	}
+}
+
+func TestDecompositionUsesTheCompositionCapabilitySnapshot(t *testing.T) {
+	command, missions, plans, provider := decompositionFixture(t)
+	declared := tracker.WorkDefinitionCapabilities{Create: true, GuardedUpdate: true, BlockingGraph: true}
+	service := mission.NewDecompositionService(missions, plans, provider, declared, provider.authority)
+	provider.capabilityOverride = &tracker.WorkDefinitionCapabilities{}
+	provider.capabilityErr = errors.New("request-time capability discovery must not run")
+	result, err := service.Decompose(context.Background(), command)
+	if err != nil || result.Status != mission.DecompositionComplete || provider.capabilityCalls != 0 || provider.authority.calls != 1 {
+		t.Fatalf("result=%+v err=%v provider=%+v authority=%+v", result, err, provider, provider.authority)
 	}
 }
 
@@ -222,7 +281,7 @@ func TestDecompositionRejectsLocallyDetectableUpdateMappingMismatchesBeforeProvi
 			command.Work[0].Existing = &reference
 			command.Work[0].ExpectedObservation = created.Observation.ProviderObservation().Revision
 			test.mutate(&command.Work[0])
-			_, err = mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+			_, err = newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
 			var typed *mission.DecompositionError
 			if !errors.As(err, &typed) || typed.Kind != mission.DecompositionInvalidRequest {
 				t.Fatalf("mapping mismatch error = %T %v", err, err)
@@ -243,7 +302,7 @@ func TestDecompositionAcceptsAnExactlyAttributedGuardedUpdate(t *testing.T) {
 	reference := created.Observation.ExternalRef()
 	command.Work[0].Existing = &reference
 	command.Work[0].ExpectedObservation = created.Observation.ProviderObservation().Revision
-	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+	result, err := newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
 	if err != nil || result.Status != mission.DecompositionComplete || len(result.Observations) != 2 || provider.updateCalls != 1 || provider.createCalls != 1 {
 		t.Fatalf("exact update result=%+v error=%v provider=%+v", result, err, provider)
 	}
@@ -309,7 +368,7 @@ func TestDecompositionRejectsUnattributedProviderResultsWithoutAdoptingState(t *
 		t.Run(test.name, func(t *testing.T) {
 			command, missions, plans, provider := decompositionFixture(t)
 			test.setup(t, provider)
-			result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+			result, err := newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
 			var typed *mission.DecompositionError
 			if !errors.As(err, &typed) || typed.Kind != mission.DecompositionProviderFailure || typed.Recovery != mission.DecompositionObserveThenReconcile || typed.Field != "provider_attribution" {
 				t.Fatalf("attribution error = %T %+v result=%+v", err, typed, result)
@@ -329,7 +388,7 @@ func TestDecompositionSurfacesTimeoutAfterApplyAsAmbiguous(t *testing.T) {
 	if err := provider.store.Inject(context.Background(), fake.FailureTimeoutAfterApply); err != nil {
 		t.Fatal(err)
 	}
-	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+	result, err := newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
 	if err == nil || result.Status != mission.DecompositionAmbiguous || result.Recovery != mission.DecompositionObserveThenReconcile || len(result.Observations) != 1 || result.FailedWorkID == "" {
 		t.Fatalf("ambiguous result=%+v error=%v", result, err)
 	}
@@ -341,7 +400,7 @@ func TestDecompositionSurfacesTimeoutAfterApplyAsAmbiguous(t *testing.T) {
 func TestDecompositionSurfacesPartialProviderFailureWithoutClaimingRollback(t *testing.T) {
 	command, missions, plans, provider := decompositionFixture(t)
 	provider.failCreateAt = 2
-	result, err := mission.NewDecompositionService(missions, plans, provider, provider.authority).Decompose(context.Background(), command)
+	result, err := newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
 	if err == nil || result.Status != mission.DecompositionPartial || result.Recovery != mission.DecompositionObserveThenReconcile || len(result.Observations) != 1 || result.Observations[0].Definition().WorkID() != "work-foundation" || result.FailedWorkID != "work-feature" {
 		t.Fatalf("partial result=%+v error=%v", result, err)
 	}
@@ -373,10 +432,18 @@ type countingDefinitionProvider struct {
 	failCreateAt                                                          int
 	createHook                                                            func(tracker.CreateWorkDefinitionRequest, tracker.WorkDefinitionMutation) tracker.WorkDefinitionMutation
 	observeHook                                                           func(tracker.ExternalWorkRef, tracker.WorkDefinitionObservation) tracker.WorkDefinitionObservation
+	capabilityOverride                                                    *tracker.WorkDefinitionCapabilities
+	capabilityErr                                                         error
 }
 
 func (p *countingDefinitionProvider) DefinitionCapabilities(ctx context.Context) (tracker.WorkDefinitionCapabilities, error) {
 	p.capabilityCalls++
+	if p.capabilityErr != nil {
+		return tracker.WorkDefinitionCapabilities{}, p.capabilityErr
+	}
+	if p.capabilityOverride != nil {
+		return *p.capabilityOverride, nil
+	}
 	return p.port.DefinitionCapabilities(ctx)
 }
 func (p *countingDefinitionProvider) CreateDefinition(ctx context.Context, r tracker.CreateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
@@ -416,6 +483,15 @@ func decompositionFixture(t *testing.T) (mission.DecompositionCommand, *missionS
 	provider := &countingDefinitionProvider{port: fake.NewProvider(store), store: store, authority: &countingDecompositionAuthority{seen: map[ids.OperationID]string{}}}
 	plans := &planSource{observation: approvalObservation(t, snapshot.MissionID, artifact.KindPlan, command.PlanRevisionID, planDigest, artifact.VerdictApproved)}
 	return command, &missionSource{snapshot: snapshot}, plans, provider
+}
+
+func newDecompositionTestService(t *testing.T, missions *missionSource, plans *planSource, provider *countingDefinitionProvider) *mission.DecompositionService {
+	t.Helper()
+	capabilities, err := provider.port.DefinitionCapabilities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mission.NewDecompositionService(missions, plans, provider, capabilities, provider.authority)
 }
 
 type countingDecompositionAuthority struct {

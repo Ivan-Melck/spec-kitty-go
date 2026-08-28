@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,6 +37,8 @@ func TestMissionMethodFakeAndBeadsPreserveTheSameSemanticDefinitions(t *testing.
 		missionMethodDefinition(t, "project-1", "work-foundation", nil),
 		missionMethodDefinition(t, "project-1", "work-feature", []ids.WorkID{"work-foundation"}),
 	}
+	beadsObservations := make([]tracker.WorkDefinitionObservation, 0, len(definitions))
+	fakeObservations := make([]tracker.WorkDefinitionObservation, 0, len(definitions))
 	for _, definition := range definitions {
 		op := ids.OperationID("operation-" + definition.WorkID().String())
 		beadsMutation, beadsErr := beadsAdapter.CreateDefinition(ctx, tracker.CreateWorkDefinitionRequest{OperationID: op, Definition: definition})
@@ -49,10 +52,59 @@ func TestMissionMethodFakeAndBeadsPreserveTheSameSemanticDefinitions(t *testing.
 		if beadsMutation.Observation.ExternalRef().Provider == fakeMutation.Observation.ExternalRef().Provider || beadsMutation.Observation.ProviderObservation().Revision == 0 || fakeMutation.Observation.ProviderObservation().Revision == 0 {
 			t.Fatalf("provider-specific evidence was erased: beads=%+v fake=%+v", beadsMutation.Observation.ExternalRef(), fakeMutation.Observation.ExternalRef())
 		}
+		beadsObservations = append(beadsObservations, beadsMutation.Observation)
+		fakeObservations = append(fakeObservations, fakeMutation.Observation)
 	}
 	observed, err := beadsAdapter.ObserveDefinitionCatalog(ctx, "project-1")
 	if err != nil || len(observed) != 2 || observed[0].Definition().WorkID() != "work-feature" || observed[1].Definition().WorkID() != "work-foundation" {
 		t.Fatalf("canonical catalog=%+v err=%v", observed, err)
+	}
+	definitionLaw, err := softwaredev.Definition()
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved := mission.MissionSnapshot{MissionID: "mission-provider-parity", ProjectID: "project-1"}
+	beadsFinalization := missionMethodFinalizationObservation(t, approved, beadsObservations)
+	fakeFinalization := missionMethodFinalizationObservation(t, approved, fakeObservations)
+	beadsFindings := workgraph.ValidateDraft(beadsFinalization.Draft(), workgraph.DefaultQualityPolicy())
+	fakeFindings := workgraph.ValidateDraft(fakeFinalization.Draft(), workgraph.DefaultQualityPolicy())
+	if len(beadsFindings) != 0 || len(fakeFindings) != 0 {
+		t.Fatalf("provider-neutral coverage differs: beads=%+v fake=%+v", beadsFindings, fakeFindings)
+	}
+	at := time.Date(2026, 8, 28, 11, 0, 0, 0, time.UTC)
+	beadsRevision := missionMethodRevision(t, approved, beadsObservations, 1, "", "revision-beads-parity", at, definitionLaw)
+	fakeRevision := missionMethodRevision(t, approved, fakeObservations, 1, "", "revision-fake-parity", at, definitionLaw)
+	beadsSemantic := missionMethodSemanticRevisionDigest(t, beadsFinalization.Draft(), beadsRevision)
+	fakeSemantic := missionMethodSemanticRevisionDigest(t, fakeFinalization.Draft(), fakeRevision)
+	if beadsSemantic != fakeSemantic || beadsRevision.CriteriaDigest() != fakeRevision.CriteriaDigest() {
+		t.Fatalf("provider-neutral executable digest differs: beads=%s fake=%s beads_graph=%s fake_graph=%s", beadsSemantic, fakeSemantic, beadsRevision.GraphDigest(), fakeRevision.GraphDigest())
+	}
+	beadsEncoded, beadsEncodeErr := beadsRevision.Encode()
+	fakeEncoded, fakeEncodeErr := fakeRevision.Encode()
+	if beadsEncodeErr != nil || fakeEncodeErr != nil {
+		t.Fatalf("encode parity revisions: beads=%v fake=%v", beadsEncodeErr, fakeEncodeErr)
+	}
+	if beadsRevision.GraphDigest() == fakeRevision.GraphDigest() || bytes.Equal(beadsEncoded, fakeEncoded) {
+		t.Fatal("attributable provider mapping evidence was erased from WorkRevision")
+	}
+	mutatedDefinition, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{
+		ProjectID: definitions[0].ProjectID(), WorkID: definitions[0].WorkID(), Title: definitions[0].Title(),
+		Description: "semantic parity mutant", DesignContext: definitions[0].DesignContext(), Criteria: definitions[0].Criteria(),
+		Dependencies: definitions[0].Dependencies(), WriteScopes: definitions[0].WriteScopes(), Provenance: definitions[0].Provenance(), MetadataSchema: definitions[0].MetadataSchema(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutatedObservation, err := tracker.NewWorkDefinitionObservation(mutatedDefinition, fakeObservations[0].ExternalRef(), fakeObservations[0].ProviderObservation(), fakeObservations[0].ObservedAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := append([]tracker.WorkDefinitionObservation(nil), fakeObservations...)
+	mutated[0] = mutatedObservation
+	mutatedFinalization := missionMethodFinalizationObservation(t, approved, mutated)
+	mutatedRevision := missionMethodRevision(t, approved, mutated, 1, "", "revision-fake-parity-mutant", at, definitionLaw)
+	if missionMethodSemanticRevisionDigest(t, mutatedFinalization.Draft(), mutatedRevision) == fakeSemantic {
+		t.Fatal("semantic-field mutant did not change the provider-neutral revision digest")
 	}
 }
 
@@ -77,25 +129,51 @@ func TestMissionMethodRealBeadsTwoItemQualification(t *testing.T) {
 	approvedPlan := missionMethodApprovedPlan(t, ctx, store, fixture.projectID, definitionLaw, governance, at)
 	foundation := missionMethodDefinition(t, fixture.projectID, "work-foundation", nil)
 	feature := missionMethodDefinition(t, fixture.projectID, "work-feature", []ids.WorkID{"work-foundation"})
-	for _, definition := range []tracker.WorkDefinition{foundation, feature} {
-		request := tracker.CreateWorkDefinitionRequest{OperationID: ids.OperationID("operation-" + definition.WorkID().String()), Definition: definition}
-		first, err := bound.CreateDefinition(ctx, request)
-		if err != nil || first.Replayed {
-			t.Fatalf("create %s=%+v err=%v", definition.WorkID(), first, err)
+	capabilities, err := bound.DefinitionCapabilities(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &missionMethodCountingDefinitionPort{WorkDefinitionPort: bound}
+	decompositionCommand := mission.DecompositionCommand{
+		MissionID: approvedPlan.MissionID, ProjectID: fixture.projectID, Provider: beadsProvider,
+		ExpectedMission: approvedPlan, PlanRevisionID: "artifact-plan-real-beads",
+		PlanContentDigest: artifact.ContentCommitment([]byte("approved real Beads plan")),
+		ApprovedScope:     []workgraph.ApprovedScope{{ID: "plan-core", Kind: workgraph.ScopePlanConcern, MissionID: approvedPlan.MissionID}},
+		Work:              []mission.WorkProposal{{Definition: foundation}, {Definition: feature}},
+		ActorID:           "actor-real-beads", OperationID: "operation-decompose-real-beads",
+		GovernanceContextID: governance.ID(), OccurredAt: at.Add(9 * time.Second),
+	}
+	decomposed, err := mission.NewDecompositionService(store, store, provider, capabilities, store).Decompose(ctx, decompositionCommand)
+	if err != nil || decomposed.Replayed || decomposed.Status != mission.DecompositionComplete || len(decomposed.Observations) != 2 || provider.freshMutations != 2 {
+		t.Fatalf("durable decomposition=%+v provider=%+v err=%v", decomposed, provider, err)
+	}
+	for _, observation := range decomposed.Observations {
+		want := missionMethodDerivedWorkOperation(decompositionCommand.OperationID, observation.Definition().WorkID())
+		if observation.ExternalRef().CreatedByOperation != want {
+			t.Fatalf("child operation for %s=%s want=%s", observation.Definition().WorkID(), observation.ExternalRef().CreatedByOperation, want)
 		}
-		replay, err := bound.CreateDefinition(ctx, request)
-		if err != nil || !replay.Replayed {
-			t.Fatalf("replay %s=%+v err=%v", definition.WorkID(), replay, err)
-		}
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = sqlite.Open(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshBeforeReplay := provider.freshMutations
+	mutationCallsBeforeReplay := provider.mutationCalls
+	replayedDecomposition, err := mission.NewDecompositionService(store, store, provider, capabilities, store).Decompose(ctx, decompositionCommand)
+	if err != nil || !replayedDecomposition.Replayed || replayedDecomposition.RequestDigest != decomposed.RequestDigest || len(replayedDecomposition.Observations) != 2 || provider.freshMutations != freshBeforeReplay || provider.mutationCalls != mutationCallsBeforeReplay+2 {
+		t.Fatalf("reopened decomposition replay=%+v provider=%+v err=%v", replayedDecomposition, provider, err)
 	}
 	catalog, err := bound.ObserveDefinitionCatalog(ctx, fixture.projectID)
 	if err != nil || len(catalog) != 2 {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
 	}
-	draftReady := missionMethodTransition(t, ctx, store, definitionLaw, approvedPlan, mission.StepDecomposing, governance.ID(), "real-beads-decomposing", at.Add(9*time.Second))
-	draftReady = missionMethodTransition(t, ctx, store, definitionLaw, draftReady, mission.StepWorkDraftReady, governance.ID(), "real-beads-draft-ready", at.Add(10*time.Second))
+	draftReady := missionMethodTransition(t, ctx, store, definitionLaw, approvedPlan, mission.StepDecomposing, governance.ID(), "real-beads-decomposing", at.Add(10*time.Second))
+	draftReady = missionMethodTransition(t, ctx, store, definitionLaw, draftReady, mission.StepWorkDraftReady, governance.ID(), "real-beads-draft-ready", at.Add(11*time.Second))
 	source := &missionMethodBeadsFinalizationSource{adapter: bound, projectID: fixture.projectID, missionID: approvedPlan.MissionID, planRevisionID: "artifact-plan-real-beads", planDigest: artifact.ContentCommitment([]byte("approved real Beads plan"))}
-	finalizedAt := at.Add(11 * time.Second)
+	finalizedAt := at.Add(12 * time.Second)
 	finalizationCommand := mission.FinalizationCommand{MissionID: approvedPlan.MissionID, ProjectID: fixture.projectID, ExpectedMission: draftReady, ExpectedCurrentGeneration: 0, ProposedRevisionID: "revision-real-beads-1", RequestedGeneration: 1, PlanningSourceCommit: strings.Repeat("a", 40), ActorID: "actor-real-beads", OperationID: "operation-finalize-real-beads", GovernanceContextID: governance.ID(), OccurredAt: finalizedAt}
 	finalized, err := mission.NewFinalizationService(source, store).Finalize(ctx, finalizationCommand)
 	if err != nil || source.observations != 2 || finalized.Revision.Generation() != 1 || finalized.Mission.CurrentWorkRevisionID != finalized.Revision.ID() {
@@ -115,8 +193,8 @@ func TestMissionMethodRealBeadsTwoItemQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	statusCandidate := missionMethodRevision(t, approvedPlan, statusCatalog, 2, generationOne.ID(), "revision-real-beads-status", at.Add(12*time.Second), definitionLaw)
-	statusDrift, err := workgraph.DetectDrift(generationOne, statusCandidate, at.Add(13*time.Second))
+	statusCandidate := missionMethodRevision(t, approvedPlan, statusCatalog, 2, generationOne.ID(), "revision-real-beads-status", at.Add(13*time.Second), definitionLaw)
+	statusDrift, err := workgraph.DetectDrift(generationOne, statusCandidate, at.Add(14*time.Second))
 	if err != nil || statusDrift.SemanticStatus() != workgraph.SemanticObservationOnly {
 		t.Fatalf("provider workflow status became executable authority: drift=%s changes=%+v old_graph=%s new_graph=%s err=%v", statusDrift.SemanticStatus(), statusDrift.Changes(), generationOne.GraphDigest(), statusCandidate.GraphDigest(), err)
 	}
@@ -127,7 +205,7 @@ func TestMissionMethodRealBeadsTwoItemQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publishedAt := at.Add(14 * time.Second)
+	publishedAt := at.Add(15 * time.Second)
 	generationTwo := missionMethodRevision(t, approvedPlan, changedCatalog, 2, generationOne.ID(), "revision-real-beads-2", publishedAt, definitionLaw)
 	drift, err := workgraph.DetectDrift(generationOne, generationTwo, publishedAt)
 	if err != nil || drift.SemanticStatus() != workgraph.SemanticChanged {
@@ -164,7 +242,7 @@ func TestMissionMethodRealBeadsTwoItemQualification(t *testing.T) {
 	if err != nil || persisted.Workgraph.Generation() != 2 || persisted.Workgraph.RevisionID() != generationTwo.ID() || len(persisted.Workgraph.Reconciliations()) != len(reconciliation.Decisions()) {
 		t.Fatalf("persisted generation=%+v err=%v", persisted, err)
 	}
-	view, err := projection.NewTasksView(persisted.Mission, persisted.Workgraph, at.Add(15*time.Second))
+	view, err := projection.NewTasksView(persisted.Mission, persisted.Workgraph, at.Add(16*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +254,86 @@ func TestMissionMethodRealBeadsTwoItemQualification(t *testing.T) {
 		t.Fatalf("generation-two projection is incomplete: %s", projectionBytes)
 	}
 	t.Logf("qualified beads=%s binary_sha256=%s schema=%d generation_one=%s generation_two=%s drift=%s reconciliation=%s projection_bytes=%d", SupportedBeadsVersion, fixture.digest, SupportedProtocolSchema, generationOne.GraphDigest(), generationTwo.GraphDigest(), drift.SemanticStatus(), reconciliation.ID(), len(projectionBytes))
+}
+
+type missionMethodCountingDefinitionPort struct {
+	tracker.WorkDefinitionPort
+	mutationCalls  int
+	freshMutations int
+}
+
+func (port *missionMethodCountingDefinitionPort) CreateDefinition(ctx context.Context, request tracker.CreateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
+	port.mutationCalls++
+	result, err := port.WorkDefinitionPort.CreateDefinition(ctx, request)
+	if err == nil && !result.Replayed {
+		port.freshMutations++
+	}
+	return result, err
+}
+
+func (port *missionMethodCountingDefinitionPort) UpdateDefinition(ctx context.Context, request tracker.UpdateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
+	port.mutationCalls++
+	result, err := port.WorkDefinitionPort.UpdateDefinition(ctx, request)
+	if err == nil && !result.Replayed {
+		port.freshMutations++
+	}
+	return result, err
+}
+
+func missionMethodDerivedWorkOperation(parent ids.OperationID, workID ids.WorkID) ids.OperationID {
+	digest := sha256.Sum256([]byte(parent.String() + "\x00" + workID.String()))
+	return ids.OperationID(fmt.Sprintf("decompose-%x", digest[:16]))
+}
+
+func missionMethodSemanticRevisionDigest(t *testing.T, draft workgraph.DraftObservation, revision workgraph.RevisionV2) string {
+	t.Helper()
+	type semanticWork struct {
+		ProjectID         ids.ProjectID                     `json:"project_id"`
+		WorkID            ids.WorkID                        `json:"work_id"`
+		Title             string                            `json:"title"`
+		Description       string                            `json:"description"`
+		DesignContext     string                            `json:"design_context"`
+		CrossDomainReason string                            `json:"cross_domain_reason,omitempty"`
+		Criteria          []workgraph.CriterionObservation  `json:"criteria"`
+		Dependencies      []ids.WorkID                      `json:"dependencies"`
+		WriteScopes       []workgraph.WriteScopeObservation `json:"write_scopes"`
+		Provenance        []workgraph.ScopeReference        `json:"provenance"`
+	}
+	work := draft.Work()
+	semantic := make([]semanticWork, len(work))
+	for index, item := range work {
+		semantic[index] = semanticWork{
+			ProjectID: item.ProjectID(), WorkID: item.WorkID(), Title: item.Title(), Description: item.Description(),
+			DesignContext: item.DesignContext(), CrossDomainReason: item.CrossDomainReason(), Criteria: item.Criteria(),
+			Dependencies: item.Dependencies(), WriteScopes: item.WriteScopes(), Provenance: item.Provenance(),
+		}
+	}
+	revisionBytes, err := revision.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revisionWire map[string]json.RawMessage
+	if err := json.Unmarshal(revisionBytes, &revisionWire); err != nil {
+		t.Fatal(err)
+	}
+	for _, auditOrProviderField := range []string{"work_revision_id", "generation", "predecessor_id", "provider_observations", "graph_digest", "finalized_by", "finalized_at", "governance_context_id"} {
+		delete(revisionWire, auditOrProviderField)
+	}
+	encoded, err := json.Marshal(struct {
+		Domain         string                     `json:"domain"`
+		ProjectID      ids.ProjectID              `json:"project_id"`
+		MissionID      ids.MissionID              `json:"mission_id"`
+		PlanRevisionID string                     `json:"plan_revision_id"`
+		PlanDigest     string                     `json:"plan_digest"`
+		ApprovedScope  []workgraph.ApprovedScope  `json:"approved_scope"`
+		Work           []semanticWork             `json:"work"`
+		Revision       map[string]json.RawMessage `json:"revision"`
+	}{"spec-kitty/provider-neutral-semantic-revision/v1", draft.ProjectID(), draft.MissionID(), draft.PlanRevisionID(), draft.PlanDigest(), draft.ApprovedScope(), semantic, revisionWire})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", digest)
 }
 
 type missionMethodBeadsFinalizationSource struct {

@@ -114,12 +114,13 @@ type DecompositionService struct {
 	missions   MissionSnapshotSource
 	plans      PlanApprovalSource
 	provider   tracker.WorkDefinitionPort
+	capability tracker.WorkDefinitionCapabilities
 	operations DecompositionOperationAuthority
 	quality    workgraph.QualityPolicy
 }
 
-func NewDecompositionService(missions MissionSnapshotSource, plans PlanApprovalSource, provider tracker.WorkDefinitionPort, operations DecompositionOperationAuthority) *DecompositionService {
-	return &DecompositionService{missions: missions, plans: plans, provider: provider, operations: operations, quality: workgraph.DefaultQualityPolicy()}
+func NewDecompositionService(missions MissionSnapshotSource, plans PlanApprovalSource, provider tracker.WorkDefinitionPort, capability tracker.WorkDefinitionCapabilities, operations DecompositionOperationAuthority) *DecompositionService {
+	return &DecompositionService{missions: missions, plans: plans, provider: provider, capability: capability, operations: operations, quality: workgraph.DefaultQualityPolicy()}
 }
 
 func (service *DecompositionService) Decompose(ctx context.Context, command DecompositionCommand) (DecompositionResult, error) {
@@ -162,6 +163,11 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 		return DecompositionResult{Findings: findings}, decompositionError(DecompositionInvalidWork, DecompositionReviseWork, "work", "proposed work has validation findings", nil)
 	}
 
+	requirements := decompositionRequirements(command.Work)
+	if err := service.capability.Require(requirements); err != nil {
+		return DecompositionResult{}, decompositionError(DecompositionProviderCapability, DecompositionRepairProvider, "provider_capabilities", "provider cannot safely persist complete work definitions", err)
+	}
+
 	requestDigest := decompositionRequestDigest(command)
 	reservation, err := service.operations.ReserveDecompositionOperation(ctx, DecompositionOperationRequest{MissionID: command.MissionID, OperationID: command.OperationID, RequestDigest: requestDigest, OccurredAt: command.OccurredAt})
 	if err != nil {
@@ -171,14 +177,6 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 			kind, recovery = DecompositionOperationConflict, DecompositionCorrectInput
 		}
 		return DecompositionResult{RequestDigest: requestDigest}, decompositionError(kind, recovery, "operation_id", "local decomposition authority refused the operation", err)
-	}
-	capabilities, err := service.provider.DefinitionCapabilities(ctx)
-	requirements := decompositionRequirements(command.Work)
-	if err == nil {
-		err = capabilities.Require(requirements)
-	}
-	if err != nil {
-		return DecompositionResult{}, decompositionError(DecompositionProviderCapability, DecompositionRepairProvider, "provider_capabilities", "provider cannot safely persist complete work definitions", err)
 	}
 
 	ordered := orderWorkProposals(command.Work)
