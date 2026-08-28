@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 3
-mission_slug: software-development-mission-method-01M11EX2
-reproduction_command:
-reviewed_at: '2026-08-28T09:30:47Z'
-reviewer_agent: user
-wp_id: WP09
----
-
 # WP09 review feedback — cycle 3
 
 Verdict: **changes requested**.

@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 3
-mission_slug: software-development-mission-method-01M11EX2
-reproduction_command:
-reviewed_at: '2026-08-28T09:13:49Z'
-reviewer_agent: user
-wp_id: WP08
----
-
 # WP08 review — cycle 3
 
 Verdict: **changes requested**. Repair commit `ff0fe184` closes the four cycle-2 reproductions under insertion, concurrency, restart, temporal, and one-sided-pointer attacks. One narrow mutation path still violates the global OperationID invariant.

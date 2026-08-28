@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 2
-mission_slug: software-development-mission-method-01M11EX2
-reproduction_command:
-reviewed_at: '2026-08-27T22:57:54Z'
-reviewer_agent: user
-wp_id: WP04
----
-
 # WP04 Review Feedback — Cycle 2
 
 **Verdict:** Reject

@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 2
-mission_slug: software-development-mission-method-01M11EX2
-reproduction_command:
-reviewed_at: '2026-08-28T08:50:18Z'
-reviewer_agent: user
-wp_id: WP08
----
-
 # WP08 review — cycle 2
 
 Verdict: **changes requested**. Repair commit `005ddabf` materially improves all five cycle-1 areas. Artifact expected-prior CAS and eligibility canonical reconstruction now pass their adversarial controls. Four executable failures remain across outbox recovery, global operation identity, and current-pointer all-or-none integrity.

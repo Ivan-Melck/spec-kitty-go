@@ -305,8 +305,14 @@ adapter owns schema and SQL. Transactions are aggregate-scoped:
 - publish artifact plus validation event;
 - approve exact artifact revision;
 - transition mission under expected state version;
+- reserve decomposition saga operation identity and request digest before
+  external effects;
 - finalize revision under expected current generation;
 - publish successor revision plus complete reconciliation plan and consequences.
 
 Provider work mutation and observation remain outside these transactions and use
-the existing saga/idempotency rules.
+the existing saga/idempotency rules. Before those effects, the local store
+immutably reserves the decomposition root `OperationID`, mission, operation kind,
+and complete request digest in `phase3_operations`. This reservation is not a
+tracker lease, update fence, or provider capability; it prevents changed-command
+replay and permits exact partial-saga resumption across process restart.
