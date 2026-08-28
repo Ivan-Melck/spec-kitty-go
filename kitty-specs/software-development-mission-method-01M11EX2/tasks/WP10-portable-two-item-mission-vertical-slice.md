@@ -66,6 +66,7 @@ owned_files:
 - internal/controlstore/sqlite/mission_method_query.go
 - internal/controlstore/sqlite/mission_method_query_test.go
 - internal/testcampaign/manifest.go
+- internal/tracker/fake/store.go
 - internal/helpercmd/root.go
 - internal/helpercmd/mission_method.go
 - internal/helpercmd/mission_method_test.go
@@ -135,7 +136,7 @@ by WP06; do not hard-code an outcome that its validator rejects.
 Use only the Spec Kitty lane worktree allocated to WP10. Verify accepted WP04, WP08, and WP09 lineages exist on the dependency-resolved base. The accepted result merges back into `feat/software-development-mission-method`.
 
 Do not edit the primary checkout, create worktrees manually, merge another
-lane, push to `main`, or modify files outside the nineteen owned paths. WP11
+lane, push to `main`, or modify files outside the twenty owned paths. WP11
 owns Beads parity. WP12 owns campaign execution and evidence documents; WP10
 may add only its exact new top-level test names to the existing frozen census
 in `internal/testcampaign/manifest.go`.
@@ -332,7 +333,7 @@ in `internal/testcampaign/manifest.go`.
 3. Assert no diagnostic contains credentials, environment values, full provider output, private transcript content, or unrestricted artifact bytes.
 4. Snapshot the SQLite database, fake tracker bytes/state, and projection destination before repeated `mission next`; require zero mutation across at least 100 queries.
 5. Edit, corrupt, and delete generated `tasks.md`, then prove canonical mission, tracker, approval, WorkRevision, decision, and next results are unchanged.
-6. Mutate tracker status/assignment only and prove mission advancement and `next` do not infer authority from them.
+6. Mutate tracker status/assignment only and prove mission advancement and `next` do not infer authority from them. The durable fake persists status as provider-visible, non-authoritative state and exposes an explicit human-status mutation seam for this proof.
 7. Decode only public typed helper results and provider-neutral work observations into a fresh-reader summary for each work item.
 8. Require that summary to identify objective, dependencies, acceptance criteria, current generation, source plan/revision, and next legal action for 100% of fixtures.
 9. Prohibit test access to private package fields, setup-only variables, fixture prose not emitted by the application, or conversational context during comprehension checks.
@@ -347,6 +348,7 @@ in `internal/testcampaign/manifest.go`.
 - `internal/helpercmd/mission_method_test.go`
 - `internal/helpercmd/artifact_test.go`
 - `internal/helpercmd/projection_test.go`
+- `internal/tracker/fake/store.go` — non-authoritative status field/mutation only.
 
 **Validation**:
 
@@ -410,7 +412,7 @@ All portable tests must run offline with isolated temporary state. Do not add sl
 - Standalone comprehension succeeds using only public typed results for every fixture.
 - No test parses human-formatted CLI output or relies on private transcript/setup context.
 - Focused, repeated, race, compilation, vet, build, formatting, module, and hygiene checks pass.
-- Only the nineteen frontmatter-owned files are modified by implementation.
+- Only the twenty frontmatter-owned files are modified by implementation.
 - T052 through T056 are recorded through the event-sourced status command:
 
   ```bash
@@ -450,6 +452,6 @@ Verify explicitly:
 12. Refusal assertions name typed reasons and verify no partial mutation.
 13. Standalone-comprehension checks use only public outputs and have omission mutants.
 14. No Beads, HTTP/API, MCP, Team Kitty, Gapdb, execution, review, or integration surface enters the implementation.
-15. The diff is confined to the exact nineteen owned paths.
+15. The diff is confined to the exact twenty owned paths.
 
 Reject a solution that directly seeds final database rows instead of driving commands, parses output prose, defaults the mission type, treats tracker status as workflow state, mutates during `next`, persists drift implicitly during a query, imports generated tasks, recreates domain rules in helper handlers, or builds Phase 6 transport polish into the qualification binary.
