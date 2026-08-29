@@ -258,9 +258,52 @@ GapDB snapshot + WAL
   -> command admission
 ```
 
-The runtime remains degraded or closed when database identity, event schema,
-reducer compatibility, checkpoint digest, or epoch creation cannot be
-validated. A checkpoint is an accelerator, never a second authority.
+### 8.1 Checkpoint selection and readiness precedence
+
+A checkpoint is an accelerator, never a second authority. An invalid latest
+checkpoint therefore does not by itself invalidate an otherwise complete and
+compatible control journal, and it never permits the runtime to guess state.
+Restore applies this deterministic order for each mission:
+
+1. Validate recovered journal identity, continuity, event schemas, and reducer
+   compatibility first. If any of these checks fails, do not consult a
+   checkpoint as an alternate source of truth; enter `closed` recovery.
+2. Inspect checkpoint candidates from greatest through-revision to least. A
+   candidate is usable only when every validity rule in the control-journal
+   contract passes. Reject and diagnose an invalid candidate, then consider
+   the next older candidate; never repair it in place or omit journal events to
+   make it fit.
+3. Select the newest valid checkpoint whose checkpoint bytes plus subsequent
+   journal suffix fit the configured startup replay budget. The budget is
+   revision-pinned policy and is computed from deterministic inputs such as
+   encoded bytes and event count, not from whichever candidate finishes first.
+4. If no checkpoint is both valid and within budget, reduce the complete
+   journal from its origin only when that reduction fits the same budget.
+5. If neither an older valid checkpoint nor full-journal reduction is
+   admissible, refuse command admission and enter `degraded` recovery. Do not
+   create a runtime epoch, reconcile external systems, publish an authoritative
+   mission projection, or acknowledge authority-changing work.
+
+Thus the legal precedence is **newest valid bounded checkpoint, then full
+journal when bounded, then refusal**. An invalid latest checkpoint is retained
+or quarantined as forensic evidence and appears in recovery diagnostics even
+when an older checkpoint or full reduction succeeds.
+
+`Degraded` means the recovered journal is intact and compatible but the
+configured replay budget or an operational resource limit prevents safe
+product restore; only recovery diagnosis and operator actions are available.
+`Closed` means authoritative integrity or compatibility cannot be established,
+or durable creation of the replacement runtime epoch fails. Neither state is
+ready, and neither may grant a lease or dispatch an external effect.
+
+For `degraded` recovery, an operator may run a side-effect-free offline journal
+verification and checkpoint rebuild with the pinned schema/reducer, or approve
+a new explicit startup-policy revision with a larger deterministic budget,
+then restart recovery. For `closed` recovery, the operator must restore a
+verified GapDB backup, install a compatible reducer/schema migration, or repair
+the storage/runtime fault and retry. There is no force-ready option: operator
+action cannot accept a corrupt checkpoint, skip an event, fabricate a
+projection, or bypass durable epoch creation.
 
 <a id="fr-007"></a>
 ## 9. Playback and portable terminal evidence
