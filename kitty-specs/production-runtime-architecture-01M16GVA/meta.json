@@ -13,6 +13,7 @@
   "accepted_at": "2026-08-29T16:27:00.058455+00:00",
   "accepted_by": "codex",
   "accepted_from_commit": "5b814137728c5096dadc5c8f1819ea9efd446f7b",
+  "baseline_merge_commit": "7ed53f42e95a9271bf6ee11e57e6e2beabdb27bd",
   "coordination_branch": "kitty/mission-production-runtime-architecture-01M16GVA",
   "created_at": "2026-08-29T10:25:36.481133+00:00",
   "flattened": false,
