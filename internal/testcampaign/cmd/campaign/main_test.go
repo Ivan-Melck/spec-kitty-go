@@ -19,6 +19,41 @@ func TestSourceIdentityFailsClosedOutsideGitRepository(t *testing.T) {
 	}
 }
 
+func TestRunPublicationRequiresCompleteTypedIdentity(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	for name, request := range map[string][3]string{
+		"missing_root":        {"", commit, commit},
+		"missing_payload":     {t.TempDir(), "", commit},
+		"missing_attestation": {t.TempDir(), commit, ""},
+		"relative_root":       {"relative", commit, commit},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := runPublication(request[0], request[1], request[2]); err == nil {
+				t.Fatal("incomplete publication command was accepted")
+			}
+		})
+	}
+}
+
+func TestRunPublicationCallsClosedCheckoutValidator(t *testing.T) {
+	original := validatePublicationCheckout
+	t.Cleanup(func() { validatePublicationCheckout = original })
+	root := t.TempDir()
+	payload := strings.Repeat("a", 40)
+	attestation := strings.Repeat("b", 40)
+	called := 0
+	validatePublicationCheckout = func(gotRoot, gotPayload, gotAttestation string) error {
+		called++
+		if gotRoot != root || gotPayload != payload || gotAttestation != attestation {
+			t.Fatalf("publication identity changed: root=%q payload=%q attestation=%q", gotRoot, gotPayload, gotAttestation)
+		}
+		return nil
+	}
+	if err := runPublication(root, payload, attestation); err != nil || called != 1 {
+		t.Fatalf("publication command delegation calls=%d err=%v", called, err)
+	}
+}
+
 func TestSourceIdentityIncludesRelevantUntrackedFiles(t *testing.T) {
 	repository := t.TempDir()
 	git := func(args ...string) {
@@ -119,5 +154,18 @@ func TestBindCampaignSourceRejectsIncompleteAndDriftingProfiles(t *testing.T) {
 				t.Fatal("source drift was accepted")
 			}
 		})
+	}
+}
+
+func TestNewVerifyRequestBindsConfiguredTimeoutAndDeadlineOutcome(t *testing.T) {
+	started := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	profile := testcampaign.Profile{Name: "mission-contract", Package: "./internal/scenario", Pattern: "^TestMissionMethodQualificationContract$", ExpectedTests: []string{"TestMissionMethodQualificationContract"}}
+	request := newVerifyRequest(profile, "github.com/spec-kitty/go-kitty3/internal/scenario", 124, started, started.Add(time.Minute), 4*time.Minute, true)
+	if request.Campaign != profile.Name || request.Package == "" || request.Pattern != profile.Pattern || len(request.Expected) != 1 || request.ProcessExit != 124 || request.StartedAt != started || request.FinishedAt != started.Add(time.Minute) || request.Timeout != 4*time.Minute || !request.TimedOut {
+		t.Fatalf("verify request lost timeout or source fields: %+v", request)
+	}
+	request.Expected[0] = "mutated"
+	if profile.ExpectedTests[0] == "mutated" {
+		t.Fatal("verify request leaked expected-test mutation into profile")
 	}
 }

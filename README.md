@@ -1,12 +1,12 @@
 # Spec Kitty Redesign
 
-> A Go-native authority kernel with a qualified Beads ticket substrate for safe,
-> concurrent, mission-shaped software work.
+> A Go-native authority kernel and qualified software-development mission method
+> for safe, concurrent, provider-neutral work.
 
 | Project property | Delivered value |
 |---|---|
-| Maturity | Qualified Phase 1 authority kernel plus qualified Phase 2 Beads tracker integration |
-| Language | Go 1.26.4 |
+| Maturity | Qualified Phase 3 software-development mission method on the Phase 1 authority kernel and Phase 2 Beads integration |
+| Language | Go 1.26.5 application toolchain; the reviewed Beads binary retains its Go 1.26.4 build identity |
 | Default tracker | Beads 1.2.2 through a checksum-pinned JSON command protocol |
 | Control store | SQLite; Gapdb adoption is a separate evidence and human-approval decision |
 | Execution model | Lease-scoped Git worktrees, independent review, serialized target-ref integration |
@@ -19,9 +19,13 @@ It preserves the behaviors that made Spec Kitty valuable—mission governance,
 concurrent isolated work, independent review, and safe integration—while choosing
 Go-native boundaries for authority, failure, and recovery.
 
-Phase 2 adds the first production tracker adapter. Beads supplies a revisioned
-ticket catalog, dependencies, discussion, and visible assignment. It does not gain
-mission authority. The governing separation remains:
+Phase 3 adds a durable software-development mission method over the qualified
+kernel and tracker boundary. It takes accepted intent through approved
+specification and plan, provider-neutral decomposition, immutable executable
+graph generations, explicit drift reconciliation, typed `next`, and derived
+projections. Beads supplies a revisioned ticket catalog, dependencies,
+discussion, and visible assignment. It does not gain mission authority. The
+governing separation remains:
 
 ```text
 Beads:       what work exists, what blocks it, and what humans discuss
@@ -39,6 +43,7 @@ integration remain Spec Kitty facts.
 - [Architectural thesis](#architectural-thesis)
 - [What changed relative to Python Spec Kitty](#what-changed-relative-to-python-spec-kitty)
 - [Architecture](#architecture)
+- [Software-development mission method](#software-development-mission-method)
 - [Authority and concurrency](#authority-and-concurrency)
 - [Beads compatibility contract](#beads-compatibility-contract)
 - [Build and installation](#build-and-installation)
@@ -155,7 +160,51 @@ internal/review/             Actor-independent judgments
 internal/integration/        Repository/target-ref serialization
 internal/controlstore/sqlite Single-machine transactional authority
 docs/phase2-evidence/        Published Phase 2 evidence and limitations
+docs/phase3-evidence/        Source-bound mission-method qualification
 ```
+
+## Software-development mission method
+
+The mission method is an authority protocol, not a Markdown workflow. An
+approved plan is decomposed through a provider-neutral work-definition port.
+Finalization observes the provider twice, validates a complete executable graph,
+and atomically publishes immutable generation 1. Later provider changes produce
+pure drift evidence. Only explicit per-work reconciliation can publish a
+successor generation.
+
+```mermaid
+flowchart LR
+    Intent["accepted intent"] --> Spec["approved specification"]
+    Spec --> Plan["approved plan"]
+    Plan --> Decompose["provider-neutral decomposition"]
+    Decompose --> Observe["double observation"]
+    Observe --> Gen1["immutable WorkRevision generation 1"]
+    Gen1 --> Run["typed next and eligible work"]
+    Gen1 --> Drift["pure semantic drift report"]
+    Drift --> Reconcile["continue / supersede / invalidate / fork"]
+    Reconcile --> Gen2["atomic immutable successor generation"]
+    Gen1 --> Projection["derived tasks.md"]
+    Gen2 --> Projection
+```
+
+The durable laws are deliberately strict:
+
+- mission state and approved artifacts decide legal advancement;
+- tracker status, assignment, comments, and readiness remain non-authoritative;
+- every executable graph has a stable generation, canonical digest, complete
+  criteria, dependencies, scopes, lanes, and provider attribution;
+- current revisions are never edited in place;
+- drift is observation-only until an explicit complete reconciliation is
+  atomically published;
+- handoff, review, and integration consume complete live eligibility facts;
+- `next` reads exactly one aggregate snapshot and performs no writes; and
+- `tasks.md` can be deleted, corrupted, or replaced without changing authority.
+
+The portable proving helper exposes strict JSON commands for mission creation,
+artifact publication/approval, decomposition, finalization, drift,
+reconciliation, typed `next`, tracker status projection, and read-model tasks
+rendering. It is a composition and qualification surface, not the future polished
+end-user CLI.
 
 ## Authority and concurrency
 
@@ -254,8 +303,8 @@ Or install the helper into the selected Go binary directory:
 go install ./cmd/spk-phase1-helper
 ```
 
-The helper remains a thin Phase 1/2 composition and diagnostic surface; it is
-not the eventual full Spec Kitty CLI.
+The helper remains a thin composition and diagnostic surface; it is not the
+eventual full Spec Kitty CLI.
 
 ### Install the checksum-qualified provider
 
@@ -435,6 +484,19 @@ make beads-contract
 make quality
 ```
 
+The exact Phase 3 profiles are also directly runnable:
+
+```bash
+make mission-contract
+make mission-acceptance
+make mission-adversarial
+make full-campaign
+```
+
+The local PR-equivalent `quality` campaign qualified in 37.559 seconds. The
+exhaustive, process-race, fault, and real-provider work remains scheduled or
+manually runnable and is required for a full qualification record.
+
 The exact real-provider target requires the installer identity, verified binary,
 a pinned external Dolt server tuple, and an enforced offline network namespace.
 The CI workflow in [`.github/workflows/beads-qualification.yml`](.github/workflows/beads-qualification.yml)
@@ -480,13 +542,16 @@ git diff --check
 
 ## Delivered boundary
 
-Phase 2 delivers a qualified default tracker substrate composed with the Phase 1
-authority kernel. It does not deliver the eventual full mission method and CLI,
-Team Kitty or hosted sync, Orchestrator API serving, MCP, Python-project
-migration, alternate production trackers, multi-machine control authority, or a
-complete replacement of mission artifacts by tickets. Those are future missions;
-they are listed here once so the delivered Beads adapter does not read like a
-hypothesis or an unfinished experiment.
+Phase 3 delivers and qualifies the software-development mission method: approved
+artifacts, provider-neutral decomposition, immutable WorkRevision generations,
+semantic drift, mixed reconciliation, action-scoped governance, strict typed
+`next`, durable SQLite publication, and derived tasks projection. The complete
+portable two-item path and its real Beads equivalent both pass.
+
+Phase 3 does not deliver Phase 4 execution dispatch, Phase 5 production
+review/integration orchestration, or Phase 6 CLI/API/MCP/Team Kitty surfaces. It
+also does not claim alternate production trackers, multi-machine control
+authority, hosted performance, or replacement of mission artifacts by tickets.
 
 SQLite remains the qualified control store in this repository. Gapdb has its own
 successful MVP evidence, but replacing SQLite is a separate migration/adoption
@@ -495,6 +560,17 @@ human record. Phase 2 neither performs nor implies that adoption.
 
 ## Evidence and design record
 
+The current Phase 3 evidence attests qualified source
+`03afabd6d875dd133d18fa759669498d92e097be` (tree
+`6173b2dbce671d6243b14f99414170c8a5929f0f`) through immutable payload
+`dfe477926f7d33b0cbe0e002d413938058231ffd` (tree
+`724bfc55847011c44562ddde23ccf8c26d9cc61f`). The source, payload, and this
+documentation attestation are deliberately distinct identities; qualification
+does not transfer transitively between them.
+
+- [Phase 3 evidence index](docs/phase3-evidence/README.md)
+- [Phase 3 results](docs/phase3-evidence/results.md)
+- [Phase 3 limitations](docs/phase3-evidence/limitations.md)
 - [Phase 2 evidence index](docs/phase2-evidence/README.md)
 - [Phase 2 results](docs/phase2-evidence/results.md)
 - [Phase 2 limitations](docs/phase2-evidence/limitations.md)

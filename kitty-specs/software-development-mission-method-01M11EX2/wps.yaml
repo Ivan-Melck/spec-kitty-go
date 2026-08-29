@@ -1,0 +1,292 @@
+work_packages:
+  - id: WP01
+    title: "Permanent Mission Authority Architecture Guard"
+    dependencies: []
+    owned_files:
+      - "internal/architecture/graph.go"
+      - "internal/architecture/graph_test.go"
+      - "internal/architecture/policy.go"
+      - "internal/architecture/policy_test.go"
+      - "internal/architecture/reachability.go"
+      - "internal/architecture/reachability_test.go"
+    requirement_refs: [FR-003, FR-009, FR-019, FR-025, NFR-008, C-001, C-002, C-003, C-005, C-006, C-007, C-008]
+    plan_concern_refs: [IC-10]
+    subtasks: [T001, T002, T003, T004, T005]
+    prompt_file: "tasks/WP01-permanent-mission-authority-architecture-guard.md"
+    agent_profile: paula-patterns
+    role: architecture-scout
+    agent: codex
+    model: ""
+
+  - id: WP02
+    title: "Static Mission Definition and Lifecycle Authority"
+    dependencies: [WP01]
+    owned_files:
+      - "internal/ids/mission.go"
+      - "internal/mission/model.go"
+      - "internal/mission/definition.go"
+      - "internal/mission/service.go"
+      - "internal/mission/lifecycle_test.go"
+      - "internal/missiontype/softwaredev/definition.go"
+      - "internal/missiontype/softwaredev/definition_test.go"
+    requirement_refs: [FR-001, FR-002, FR-003, FR-006, FR-007, FR-024, FR-028, NFR-014, C-001, C-003, C-004, C-005, C-012]
+    plan_concern_refs: [IC-01]
+    subtasks: [T006, T007, T008, T009, T010, T011]
+    prompt_file: "tasks/WP02-static-mission-definition-and-lifecycle-authority.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP03
+    title: "Typed Artifact Revisions and Fresh Approvals"
+    dependencies: [WP02]
+    scope: codebase-wide
+    owned_files:
+      - "internal/artifact/model.go"
+      - "internal/artifact/validation.go"
+      - "internal/artifact/service.go"
+      - "internal/artifact/model_test.go"
+      - "internal/artifact/service_test.go"
+      - "internal/mission/service.go"
+      - "internal/mission/lifecycle_test.go"
+      - "internal/architecture/reachability.go"
+      - "internal/architecture/reachability_test.go"
+    create_intent:
+      - "internal/mission/service.go"
+      - "internal/mission/lifecycle_test.go"
+    requirement_refs: [FR-004, FR-005, FR-006, FR-007, FR-028, NFR-004, NFR-012, NFR-014, C-001, C-012]
+    plan_concern_refs: [IC-02]
+    subtasks: [T012, T013, T014, T015, T016]
+    prompt_file: "tasks/WP03-typed-artifact-revisions-and-fresh-approvals.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP04
+    title: "Provider-Neutral Decomposition and Work Quality"
+    dependencies: [WP02, WP03]
+    scope: codebase-wide
+    owned_files:
+      - "internal/architecture/policy.go"
+      - "internal/architecture/policy_test.go"
+      - "internal/tracker/provider.go"
+      - "internal/tracker/work_definition.go"
+      - "internal/tracker/work_definition_test.go"
+      - "internal/tracker/fake/provider.go"
+      - "internal/tracker/fake/store.go"
+      - "internal/tracker/fake/work_definition_test.go"
+      - "internal/workgraph/observation.go"
+      - "internal/workgraph/validation.go"
+      - "internal/workgraph/validation_test.go"
+      - "internal/mission/decomposition.go"
+      - "internal/mission/decomposition_test.go"
+    requirement_refs: [FR-008, FR-009, FR-010, FR-011, FR-012, FR-028, NFR-006, NFR-013, NFR-014, C-001, C-002, C-007, C-012]
+    plan_concern_refs: [IC-03]
+    subtasks: [T017, T018, T019, T020, T021, T022]
+    prompt_file: "tasks/WP04-provider-neutral-decomposition-and-work-quality.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP05
+    title: "WorkRevision v2 and Deterministic Finalization"
+    dependencies: [WP04]
+    owned_files:
+      - "internal/workgraph/revision.go"
+      - "internal/workgraph/revision_test.go"
+      - "internal/workgraph/revision_v2.go"
+      - "internal/workgraph/revision_v2_test.go"
+      - "internal/workgraph/finalization.go"
+      - "internal/workgraph/finalization_test.go"
+      - "internal/workgraph/lanes.go"
+      - "internal/workgraph/lanes_test.go"
+      - "internal/mission/finalization.go"
+      - "internal/mission/finalization_test.go"
+    requirement_refs: [FR-012, FR-013, FR-014, FR-015, FR-028, NFR-002, NFR-003, NFR-004, NFR-014, C-001, C-007, C-009, C-010]
+    plan_concern_refs: [IC-04]
+    subtasks: [T023, T024, T025, T026, T027, T028]
+    prompt_file: "tasks/WP05-workrevision-v2-and-deterministic-finalization.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP06
+    title: "Semantic Drift and Mixed Reconciliation"
+    dependencies: [WP05]
+    owned_files:
+      - "internal/workgraph/drift.go"
+      - "internal/workgraph/drift_test.go"
+      - "internal/workgraph/reconcile.go"
+      - "internal/workgraph/reconcile_test.go"
+      - "internal/mission/reconciliation.go"
+      - "internal/mission/reconciliation_test.go"
+      - "internal/handoff/model.go"
+      - "internal/review/model.go"
+      - "internal/integration/model.go"
+    requirement_refs: [FR-016, FR-017, FR-018, FR-019, FR-020, FR-028, NFR-001, NFR-003, NFR-004, NFR-014, C-001, C-008, C-011, C-012]
+    plan_concern_refs: [IC-05]
+    subtasks: [T029, T030, T031, T032, T033, T034]
+    prompt_file: "tasks/WP06-semantic-drift-and-mixed-reconciliation.md"
+    agent_profile: debugger-debbie
+    role: investigator
+    agent: codex
+    model: ""
+
+  - id: WP07
+    title: "Action Governance and Pure Next Protocol"
+    dependencies: [WP02, WP03, WP05]
+    owned_files:
+      - "internal/governancecontext/mission_action.go"
+      - "internal/governancecontext/mission_action_test.go"
+      - "internal/mission/decision.go"
+      - "internal/mission/decision_test.go"
+      - "internal/mission/next.go"
+      - "internal/mission/next_test.go"
+      - "internal/mission/action.go"
+      - "internal/mission/action_test.go"
+    requirement_refs: [FR-021, FR-022, FR-023, FR-024, FR-028, NFR-005, NFR-009, NFR-012, NFR-014, C-001, C-005, C-006, C-012]
+    plan_concern_refs: [IC-06, IC-07]
+    subtasks: [T035, T036, T037, T038, T039, T040]
+    prompt_file: "tasks/WP07-action-governance-and-pure-next-protocol.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP08
+    title: "Transactional Mission Control Persistence"
+    dependencies: [WP02, WP03, WP05, WP06, WP07]
+    owned_files:
+      - "internal/controlstore/store.go"
+      - "internal/controlstore/sqlite/migrations.go"
+      - "internal/controlstore/sqlite/mission.go"
+      - "internal/controlstore/sqlite/mission_test.go"
+      - "internal/controlstore/sqlite/artifact.go"
+      - "internal/controlstore/sqlite/artifact_test.go"
+      - "internal/controlstore/sqlite/workrevision_v2.go"
+      - "internal/controlstore/sqlite/workrevision_v2_test.go"
+      - "internal/controlstore/sqlite/reconciliation_v2.go"
+      - "internal/controlstore/sqlite/reconciliation_v2_test.go"
+      - "internal/controlstore/sqlite/mission_action.go"
+      - "internal/controlstore/sqlite/mission_action_test.go"
+    requirement_refs: [FR-003, FR-004, FR-005, FR-013, FR-017, FR-018, FR-021, FR-023, FR-024, FR-028, NFR-003, NFR-004, NFR-007, NFR-009, NFR-012, C-009, C-010, C-012]
+    plan_concern_refs: [IC-01, IC-02, IC-04, IC-05, IC-06, IC-07]
+    subtasks: [T041, T042, T043, T044, T045, T046, T047]
+    prompt_file: "tasks/WP08-transactional-mission-control-persistence.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP09
+    title: "One-Way Tasks Compatibility Projection"
+    dependencies: [WP05, WP06, WP07]
+    owned_files:
+      - "internal/projection/model.go"
+      - "internal/projection/tasks.go"
+      - "internal/projection/tasks_test.go"
+      - "internal/projection/atomic_file.go"
+      - "internal/projection/atomic_file_test.go"
+    requirement_refs: [FR-003, FR-025, FR-026, FR-028, NFR-005, NFR-008, NFR-010, NFR-012, C-001, C-002, C-005, C-006]
+    plan_concern_refs: [IC-08]
+    subtasks: [T048, T049, T050, T051]
+    prompt_file: "tasks/WP09-one-way-tasks-compatibility-projection.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP10
+    title: "Portable Two-Item Mission Vertical Slice"
+    dependencies: [WP04, WP08, WP09]
+    owned_files:
+      - "internal/mission/service.go"
+      - "internal/mission/service_test.go"
+      - "internal/mission/lifecycle_test.go"
+      - "internal/controlstore/sqlite/migrations.go"
+      - "internal/controlstore/sqlite/mission.go"
+      - "internal/controlstore/sqlite/mission_test.go"
+      - "internal/controlstore/sqlite/mission_method_query.go"
+      - "internal/controlstore/sqlite/mission_method_query_test.go"
+      - "internal/testcampaign/manifest.go"
+      - "internal/tracker/fake/store.go"
+      - "internal/helpercmd/root.go"
+      - "internal/helpercmd/mission_method.go"
+      - "internal/helpercmd/mission_method_test.go"
+      - "internal/helpercmd/artifact.go"
+      - "internal/helpercmd/artifact_test.go"
+      - "internal/helpercmd/projection.go"
+      - "internal/helpercmd/projection_test.go"
+      - "cmd/spk-phase1-helper/main.go"
+      - "internal/scenario/mission_method_fake_test.go"
+      - "internal/scenario/mission_method_helpers_test.go"
+    requirement_refs: [FR-001, FR-003, FR-006, FR-007, FR-008, FR-009, FR-013, FR-016, FR-017, FR-018, FR-021, FR-022, FR-023, FR-025, FR-026, FR-027, FR-028, NFR-006, NFR-013, NFR-014, C-001, C-002, C-005, C-006, C-012]
+    plan_concern_refs: [IC-03, IC-04, IC-05, IC-07, IC-08, IC-09]
+    subtasks: [T052, T053, T054, T055, T056]
+    prompt_file: "tasks/WP10-portable-two-item-mission-vertical-slice.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP11
+    title: "Beads Mission-Method Provider Parity"
+    dependencies: [WP10]
+    owned_files:
+      - "internal/tracker/beads/catalog.go"
+      - "internal/tracker/beads/catalog_test.go"
+      - "internal/tracker/beads/metadata.go"
+      - "internal/tracker/beads/metadata_test.go"
+      - "internal/tracker/beads/graph.go"
+      - "internal/tracker/beads/graph_test.go"
+      - "internal/tracker/beads/mission_method_integration_test.go"
+      - "internal/scenario/mission_method_beads_test.go"
+      - "internal/tracker/work_definition.go"
+      - "internal/tracker/work_definition_test.go"
+      - "internal/mission/decomposition.go"
+      - "internal/mission/decomposition_test.go"
+      - "internal/controlstore/sqlite/decomposition.go"
+      - "internal/controlstore/sqlite/decomposition_test.go"
+      - "internal/helpercmd/mission_method.go"
+      - "internal/helpercmd/mission_method_test.go"
+    requirement_refs: [FR-008, FR-009, FR-015, FR-016, FR-027, FR-028, NFR-001, NFR-002, NFR-006, NFR-011, NFR-013, NFR-014, C-001, C-007, C-009]
+    plan_concern_refs: [IC-03, IC-04, IC-05, IC-09]
+    subtasks: [T057, T058, T059, T060]
+    prompt_file: "tasks/WP11-beads-mission-method-provider-parity.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP12
+    title: "Adversarial Qualification and Source-Bound Evidence"
+    dependencies: [WP01, WP10, WP11]
+    owned_files:
+      - "internal/scenario/mission_method_adversarial_test.go"
+      - "internal/scenario/mission_method_fault_test.go"
+      - "internal/scenario/mission_method_race_test.go"
+      - "internal/scenario/mission_method_projection_test.go"
+      - "internal/testcampaign/mission_method.go"
+      - "internal/testcampaign/mission_method_test.go"
+      - "Makefile"
+      - ".github/workflows/quality.yml"
+      - ".github/workflows/full-campaign.yml"
+      - "README.md"
+      - "docs/phase3-evidence/README.md"
+      - "docs/phase3-evidence/qualification-evidence.json"
+      - "docs/phase3-evidence/campaign-census.json"
+      - "docs/phase3-evidence/results.md"
+      - "docs/phase3-evidence/limitations.md"
+      - "docs/phase3-evidence/SHA256SUMS"
+    requirement_refs: [FR-003, FR-009, FR-010, FR-011, FR-012, FR-013, FR-015, FR-016, FR-017, FR-018, FR-019, FR-020, FR-021, FR-022, FR-023, FR-025, FR-027, FR-028, NFR-001, NFR-002, NFR-003, NFR-004, NFR-005, NFR-006, NFR-007, NFR-008, NFR-009, NFR-010, NFR-011, NFR-012, NFR-013, NFR-014, C-001, C-002, C-005, C-006, C-007, C-008, C-009, C-010, C-011, C-012]
+    plan_concern_refs: [IC-09, IC-10]
+    subtasks: [T061, T062, T063, T064, T065, T066, T067]
+    prompt_file: "tasks/WP12-adversarial-qualification-and-source-bound-evidence.md"
+    agent_profile: debugger-debbie
+    role: investigator
+    agent: codex
+    model: ""

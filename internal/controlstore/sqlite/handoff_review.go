@@ -348,6 +348,45 @@ func (s *Store) InspectReview(ctx context.Context, request review.Request) (revi
 	return inspectReviewScope(ctx, s.db, request)
 }
 
+// InspectReviewAuthority performs the read-only authority portion of review
+// inspection. Composition adapters use it after immutable operation replay to
+// preserve a stale-fence diagnosis without recording a review attempt or
+// treating the observation as permission to commit. CommitReview repeats the
+// same authority checks transactionally before it writes a verdict.
+func (s *Store) InspectReviewAuthority(ctx context.Context, request review.Request) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	_, err := inspectReviewAuthority(ctx, s.db, request)
+	return err
+}
+
+func inspectReviewAuthority(ctx context.Context, query handoffQuery, request review.Request) (handoff.Record, error) {
+	h, err := loadHandoff(ctx, query, request.HandoffID)
+	if err != nil {
+		return handoff.Record{}, &review.Error{Kind: review.KindNotFound, Message: "immutable handoff was not found", Cause: err}
+	}
+	if h.WorkRevisionID != request.WorkRevisionID || h.WorkID != request.WorkID || h.LeaseID != request.LeaseID || h.LeaseGeneration != request.LeaseGeneration {
+		return handoff.Record{}, &review.Error{Kind: review.KindCandidateMismatch, Message: "review identity differs from immutable handoff"}
+	}
+	if h.Candidate != request.Candidate {
+		return handoff.Record{}, &review.Error{Kind: review.KindCandidateMismatch, Message: "review candidate differs from immutable handoff"}
+	}
+	var status, deadline, digestValue string
+	var generation int64
+	if err := query.QueryRowContext(ctx, `SELECT generation,token_digest,status,deadline FROM leases WHERE lease_id=?`, request.LeaseID).Scan(&generation, &digestValue, &status, &deadline); err != nil {
+		return handoff.Record{}, &review.Error{Kind: review.KindStaleAuthority, Message: "handoff lease was not found", Cause: err}
+	}
+	deadlineTime, err := time.Parse(time.RFC3339Nano, deadline)
+	if err != nil {
+		return handoff.Record{}, &review.Error{Kind: review.KindConflict, Message: "lease deadline is corrupt", Cause: err}
+	}
+	if generation != request.LeaseGeneration || digestValue != tokenDigest(request.Token) || status != "active" || !deadlineTime.After(request.SubmittedAt.UTC()) {
+		return handoff.Record{}, &review.Error{Kind: review.KindStaleAuthority, Message: "review requires the handoff's current live fencing authority"}
+	}
+	return h, nil
+}
+
 func (s *Store) LookupReviewOperation(ctx context.Context, request review.Request) (review.Record, bool, error) {
 	digest, err := reviewRequestDigest(request)
 	if err != nil {
@@ -443,16 +482,13 @@ func (s *Store) CommitReview(ctx context.Context, request review.Request) (revie
 	} else if found {
 		return replay, nil
 	}
-	scope, err := inspectReviewScope(ctx, tx, request)
+	h, err := inspectReviewAuthority(ctx, tx, request)
 	if err != nil {
 		return review.Record{}, err
 	}
-	h := scope.Handoff
-	if h.WorkRevisionID != request.WorkRevisionID || h.WorkID != request.WorkID || h.LeaseID != request.LeaseID || h.LeaseGeneration != request.LeaseGeneration {
-		return review.Record{}, &review.Error{Kind: review.KindCandidateMismatch, Message: "review identity differs from immutable handoff"}
-	}
-	if h.Candidate != request.Candidate {
-		return review.Record{}, &review.Error{Kind: review.KindCandidateMismatch, Message: "review candidate differs from immutable handoff"}
+	scope, err := inspectReviewScope(ctx, tx, request)
+	if err != nil {
+		return review.Record{}, err
 	}
 	if err := review.ValidateCriterionSet(request.Criteria, scope.CriterionIDs); err != nil {
 		return review.Record{}, err
@@ -461,18 +497,6 @@ func (s *Store) CommitReview(ctx context.Context, request review.Request) (revie
 		if contributor == request.ActorID {
 			return review.Record{}, &review.Error{Kind: review.KindReviewerNotIndependent, Message: "reviewer ActorID contributed to the candidate", Observed: map[string]string{"actor_id": request.ActorID.String(), "process_id": request.ProcessID.String()}, Expected: map[string]string{"actor_id": "not in handoff contributor set"}}
 		}
-	}
-	var status, deadline, digestValue string
-	var generation int64
-	if err := tx.QueryRowContext(ctx, `SELECT generation,token_digest,status,deadline FROM leases WHERE lease_id=?`, request.LeaseID).Scan(&generation, &digestValue, &status, &deadline); err != nil {
-		return review.Record{}, &review.Error{Kind: review.KindStaleAuthority, Message: "handoff lease was not found", Cause: err}
-	}
-	deadlineTime, parseErr := time.Parse(time.RFC3339Nano, deadline)
-	if parseErr != nil {
-		return review.Record{}, &review.Error{Kind: review.KindConflict, Message: "lease deadline is corrupt", Cause: parseErr}
-	}
-	if generation != request.LeaseGeneration || digestValue != tokenDigest(request.Token) || status != "active" || !deadlineTime.After(request.SubmittedAt.UTC()) {
-		return review.Record{}, &review.Error{Kind: review.KindStaleAuthority, Message: "review requires the handoff's current live fencing authority"}
 	}
 	var latest int64
 	if err := tx.QueryRowContext(ctx, `SELECT MAX(handoff_generation) FROM handoffs WHERE work_revision_id=? AND work_id=?`, request.WorkRevisionID, request.WorkID).Scan(&latest); err != nil {

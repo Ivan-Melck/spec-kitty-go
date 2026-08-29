@@ -1,6 +1,7 @@
 package workgraph
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -239,6 +240,7 @@ func (d *Draft) Finalize(metadata FinalizeMetadata) (Revision, error) {
 }
 
 func (r Revision) ID() ids.WorkRevisionID   { return r.id }
+func (r Revision) SchemaVersion() uint16    { return 1 }
 func (r Revision) ProjectID() ids.ProjectID { return r.projectID }
 func (r Revision) MissionID() ids.MissionID { return r.missionID }
 func (r Revision) Number() int64            { return r.number }
@@ -275,7 +277,10 @@ func (r Revision) Encode() ([]byte, error) {
 
 func DecodeRevision(encoded []byte) (Revision, error) {
 	var envelope revisionEnvelope
-	if err := json.Unmarshal(encoded, &envelope); err != nil {
+	if err := decodeStrictJSON(encoded, &envelope); err != nil {
+		return Revision{}, &Error{Kind: KindInvalidRevision, Message: "decode persisted WorkRevision", Cause: err}
+	}
+	if err := requireLegacyEnvelopeShape(encoded); err != nil {
 		return Revision{}, &Error{Kind: KindInvalidRevision, Message: "decode persisted WorkRevision", Cause: err}
 	}
 	draft := NewDraft(envelope.Graph.ProjectID, envelope.Graph.MissionID)
@@ -296,7 +301,128 @@ func DecodeRevision(encoded []byte) (Revision, error) {
 	if revision.graphDigest != envelope.GraphDigest || revision.criteriaDigest != envelope.CriteriaDigest {
 		return Revision{}, newError(KindInvalidRevision, "persisted WorkRevision digest does not match canonical content", map[string]string{"work_revision_id": envelope.ID.String()})
 	}
+	canonical, err := revision.Encode()
+	if err != nil || !bytes.Equal(canonical, encoded) {
+		return Revision{}, &Error{Kind: KindInvalidRevision, Message: "persisted legacy WorkRevision is not in its frozen canonical encoding", Cause: err}
+	}
 	return revision, nil
+}
+
+func requireLegacyEnvelopeShape(encoded []byte) error {
+	var fields map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&fields); err != nil {
+		return err
+	}
+	required := []string{"id", "number", "actor_id", "finalized_at", "graph_digest", "criteria_digest", "graph"}
+	if len(fields) != len(required) {
+		return fmt.Errorf("legacy WorkRevision has an incomplete top-level shape")
+	}
+	for _, field := range required {
+		if _, exists := fields[field]; !exists {
+			return fmt.Errorf("legacy WorkRevision is missing %s", field)
+		}
+	}
+	for _, field := range []string{"id", "actor_id", "finalized_at", "graph_digest", "criteria_digest"} {
+		if err := requireJSONString(fields, field); err != nil {
+			return err
+		}
+	}
+	if err := requireJSONInteger(fields, "number"); err != nil {
+		return err
+	}
+	graph, err := requireJSONObject(fields, "graph")
+	if err != nil {
+		return err
+	}
+	if len(graph) != 4 {
+		return fmt.Errorf("legacy graph has an incomplete shape")
+	}
+	for _, field := range []string{"project_id", "mission_id"} {
+		if err := requireJSONString(graph, field); err != nil {
+			return err
+		}
+	}
+	lanes, err := requireJSONArray(graph, "lanes")
+	if err != nil {
+		return err
+	}
+	for _, rawLane := range lanes {
+		lane, ok := rawLane.(map[string]any)
+		if !ok {
+			return fmt.Errorf("legacy lane must be an object")
+		}
+		if len(lane) < 1 || len(lane) > 2 {
+			return fmt.Errorf("legacy lane has an incomplete shape")
+		}
+		if err := requireJSONString(lane, "id"); err != nil {
+			return err
+		}
+		if err := optionalJSONString(lane, "parent_id"); err != nil {
+			return err
+		}
+		for key := range lane {
+			if key != "id" && key != "parent_id" {
+				return fmt.Errorf("legacy lane contains unknown field")
+			}
+		}
+	}
+	workItems, err := requireJSONArray(graph, "work_items")
+	if err != nil {
+		return err
+	}
+	for _, rawWork := range workItems {
+		work, ok := rawWork.(map[string]any)
+		if !ok || len(work) != 6 {
+			return fmt.Errorf("legacy work item has an incomplete shape")
+		}
+		for _, field := range []string{"id", "title", "lane_id"} {
+			if err := requireJSONString(work, field); err != nil {
+				return err
+			}
+		}
+		criteria, err := requireJSONArray(work, "criteria")
+		if err != nil {
+			return err
+		}
+		for _, rawCriterion := range criteria {
+			criterion, ok := rawCriterion.(map[string]any)
+			if !ok || len(criterion) != 2 {
+				return fmt.Errorf("legacy criterion has an incomplete shape")
+			}
+			if err := requireJSONString(criterion, "id"); err != nil {
+				return err
+			}
+			if err := requireJSONString(criterion, "text"); err != nil {
+				return err
+			}
+		}
+		dependencies, err := requireJSONArray(work, "dependencies")
+		if err != nil {
+			return err
+		}
+		if err := requireStringElements(dependencies, "dependencies"); err != nil {
+			return err
+		}
+		sources, err := requireJSONArray(work, "source_revisions")
+		if err != nil {
+			return err
+		}
+		for _, rawSource := range sources {
+			source, ok := rawSource.(map[string]any)
+			if !ok || len(source) != 2 {
+				return fmt.Errorf("legacy source revision has an incomplete shape")
+			}
+			if err := requireJSONString(source, "provider"); err != nil {
+				return err
+			}
+			if err := requireJSONString(source, "revision"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 type canonicalGraph struct {

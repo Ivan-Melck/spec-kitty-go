@@ -18,6 +18,8 @@ import (
 
 const beadsProvider = "beads"
 
+var _ tracker.WorkDefinitionPort = (*BoundAdapter)(nil)
+
 type providerIssue struct {
 	externalID    string
 	title         *string
@@ -119,6 +121,210 @@ func (bound *BoundAdapter) ReadWork(ctx context.Context, reference tracker.Exter
 	return bound.issueRecord(issue)
 }
 
+// ObserveDefinition projects only the provider-neutral mutable planning
+// contract. Human acceptance prose and provider workflow fields remain
+// presentation/diagnostic data and never fill missing structured authority.
+func (bound *BoundAdapter) ObserveDefinition(ctx context.Context, reference tracker.ExternalWorkRef) (tracker.WorkDefinitionObservation, error) {
+	if bound == nil {
+		return tracker.WorkDefinitionObservation{}, invalidCatalogRequest("catalog binding is missing", nil)
+	}
+	if err := reference.Validate(); err != nil {
+		return tracker.WorkDefinitionObservation{}, invalidCatalogRequest("external work reference is invalid", err)
+	}
+	if reference.ProjectID != bound.binding.ProjectID || reference.Provider != beadsProvider || reference.MetadataSchema != metadataSchemaV1 {
+		return tracker.WorkDefinitionObservation{}, mappingConflict("external work reference does not belong to this definition binding")
+	}
+	if err := validatePinnedBinding(bound.binding); err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	issue, err := bound.readIssue(ctx, reference.ExternalID)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	if err := validateIssueMapping(issue, reference.ProjectID, reference.WorkID, reference.CreatedByOperation); err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	observed, err := bound.definitionObservation(issue)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	index, err := bound.loadMappingIndex(ctx)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	resolved, err := index.resolve(reference.ProjectID, reference.WorkID)
+	if err != nil || resolved.ExternalID != reference.ExternalID {
+		return tracker.WorkDefinitionObservation{}, mappingConflict("definition mapping changed during observation")
+	}
+	edges, dependencyObservation, err := bound.observeDependencies(ctx, resolved, index)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	dependencies := make([]ids.WorkID, len(edges))
+	for index, edge := range edges {
+		dependencies[index] = edge.BlockingWorkID
+	}
+	if !sameWorkIDs(dependencies, observed.Definition().Dependencies()) {
+		return tracker.WorkDefinitionObservation{}, mappingConflict("blocking graph disagrees with structured work dependencies")
+	}
+	return combineDefinitionObservation(observed, dependencyObservation)
+}
+
+func (bound *BoundAdapter) DefinitionCapabilities(context.Context) (tracker.WorkDefinitionCapabilities, error) {
+	if bound == nil || validatePinnedBinding(bound.binding) != nil {
+		return tracker.WorkDefinitionCapabilities{}, invalidCatalogRequest("definition binding is invalid", nil)
+	}
+	return tracker.WorkDefinitionCapabilities{Create: true, GuardedUpdate: false, BlockingGraph: true}, nil
+}
+
+func (bound *BoundAdapter) CreateDefinition(ctx context.Context, request tracker.CreateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
+	if bound == nil || len(request.Definition.CanonicalData()) == 0 || request.Definition.ProjectID() != bound.binding.ProjectID {
+		return tracker.WorkDefinitionMutation{}, invalidCatalogRequest("complete bound work definition is required", nil)
+	}
+	if _, err := ids.ParseOperationID(request.OperationID.String()); err != nil {
+		return tracker.WorkDefinitionMutation{}, invalidCatalogRequest("operation identity is invalid", err)
+	}
+	document, err := decodeMetadata(request.Definition.ProviderMetadata().Bytes())
+	if err != nil || document.namespace != nil {
+		return tracker.WorkDefinitionMutation{}, invalidCatalogRequest("definition provider metadata cannot own the adapter namespace", err)
+	}
+	desired := metadataFromDefinition(request.Definition, request.OperationID, request.OperationID)
+	digest := sha256.Sum256(request.Definition.CanonicalData())
+	desired.ContentDigest = fmt.Sprintf("%x", digest)
+	metadata, err := mergeMetadata(request.Definition.ProviderMetadata().Bytes(), desired)
+	if err != nil {
+		return tracker.WorkDefinitionMutation{}, err
+	}
+	readiness, err := bound.Preflight(ctx)
+	if err != nil {
+		return tracker.WorkDefinitionMutation{}, err
+	}
+	var mutation tracker.WorkDefinitionMutation
+	_, err = bound.withCatalogMutation(ctx, readiness, request.Definition.WorkID(), func() (tracker.WorkMutation, error) {
+		matches, err := bound.observeMapping(ctx, request.Definition.ProjectID(), request.Definition.WorkID())
+		if err != nil {
+			return tracker.WorkMutation{}, err
+		}
+		if len(matches) != 0 {
+			issue := matches[0]
+			observed, observeErr := bound.definitionObservation(issue)
+			if observeErr != nil || issue.document.kitty.CreatedByOperation != request.OperationID || issue.document.kitty.LastOperation != request.OperationID || !bytes.Equal(observed.Definition().CanonicalData(), request.Definition.CanonicalData()) {
+				return tracker.WorkMutation{}, mappingConflict("stable work identity is already bound to another definition operation")
+			}
+			mutation = tracker.WorkDefinitionMutation{Observation: observed, Replayed: true, PriorMutation: true, Noop: true}
+			return tracker.WorkMutation{}, nil
+		}
+		criteria := make([]tracker.Criterion, len(request.Definition.Criteria()))
+		for index, criterion := range request.Definition.Criteria() {
+			criteria[index] = tracker.Criterion{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
+		}
+		command, err := newCreateCommand(bound.commandBinding(), createValues{title: request.Definition.Title(), description: request.Definition.Description(), acceptance: renderCriteria(criteria), metadata: string(metadata)})
+		if err != nil {
+			return tracker.WorkMutation{}, err
+		}
+		response, executeErr := bound.adapter.execute(ctx, command)
+		if executeErr != nil && !mutationCouldHaveApplied(response) {
+			return tracker.WorkMutation{}, executeErr
+		}
+		matches, observeErr := bound.observeMapping(ctx, request.Definition.ProjectID(), request.Definition.WorkID())
+		if observeErr != nil || len(matches) != 1 {
+			return tracker.WorkMutation{}, &tracker.Error{Kind: tracker.ErrorAmbiguous, RecoveryCode: "observe_then_reconcile", Message: "created definition could not be attributed", Cause: observeErr}
+		}
+		observed, observeErr := bound.definitionObservation(matches[0])
+		if observeErr != nil || !bytes.Equal(observed.Definition().CanonicalData(), request.Definition.CanonicalData()) {
+			return tracker.WorkMutation{}, mappingConflict("created provider issue differs from the complete definition")
+		}
+		mutation = tracker.WorkDefinitionMutation{Observation: observed}
+		if executeErr != nil {
+			return tracker.WorkMutation{}, &tracker.Error{Kind: tracker.ErrorAmbiguous, RecoveryCode: "observe_then_reconcile", Message: "provider response was ambiguous after an attributable create", Cause: executeErr}
+		}
+		return tracker.WorkMutation{}, nil
+	})
+	if err != nil {
+		return mutation, err
+	}
+	for _, blocking := range request.Definition.Dependencies() {
+		edge, edgeErr := bound.PutBlockingDependency(ctx, tracker.DependencyRequest{OperationID: dependencyOperation(request.OperationID, request.Definition.WorkID(), blocking), ProjectID: request.Definition.ProjectID(), Dependency: tracker.DependencyRef{BlockedWorkID: request.Definition.WorkID(), BlockingWorkID: blocking, Kind: tracker.DependencyBlocks}})
+		err = edgeErr
+		if err != nil {
+			return mutation, err
+		}
+		mutation.Replayed = mutation.Replayed && edge.Replayed
+		mutation.PriorMutation = mutation.PriorMutation || edge.Replayed
+	}
+	observed, err := bound.ObserveDefinition(ctx, mutation.Observation.ExternalRef())
+	if err != nil {
+		return mutation, err
+	}
+	mutation.Observation = observed
+	return mutation, nil
+}
+
+func (bound *BoundAdapter) UpdateDefinition(context.Context, tracker.UpdateWorkDefinitionRequest) (tracker.WorkDefinitionMutation, error) {
+	return tracker.WorkDefinitionMutation{}, &tracker.Error{Kind: tracker.ErrorGuardedUpdateUnsupported, RecoveryCode: "reconcile_without_mutation", Message: "Beads v1.2.2 cannot guard work-definition updates", Capability: tracker.CapabilityCatalogUpdate}
+}
+
+func dependencyOperation(parent ids.OperationID, blocked, blocking ids.WorkID) ids.OperationID {
+	digest := sha256.Sum256([]byte(parent.String() + "\x00" + blocked.String() + "\x00" + blocking.String()))
+	return ids.OperationID(fmt.Sprintf("dependency-%x", digest[:16]))
+}
+
+func metadataFromDefinition(definition tracker.WorkDefinition, createdBy, lastOperation ids.OperationID) kittyMetadata {
+	criteria := definition.Criteria()
+	catalogCriteria := make([]tracker.Criterion, len(criteria))
+	for index, criterion := range criteria {
+		catalogCriteria[index] = tracker.Criterion{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
+	}
+	return kittyMetadata{
+		SchemaVersion: metadataSchemaV1, ProjectID: definition.ProjectID(), WorkID: definition.WorkID(),
+		CreatedByOperation: createdBy, LastOperation: lastOperation, Criteria: catalogCriteria, WorkCriteria: criteria,
+		DesignContext: definition.DesignContext(), CrossDomainReason: definition.CrossDomainReason(), Dependencies: definition.Dependencies(),
+		WriteScopes: definition.WriteScopes(), Provenance: definition.Provenance(), completeDefinition: true,
+	}
+}
+
+func (bound *BoundAdapter) definitionObservation(issue providerIssue) (tracker.WorkDefinitionObservation, error) {
+	if issue.document.namespace == nil || !issue.document.kitty.completeDefinition {
+		return tracker.WorkDefinitionObservation{}, definitionSchemaError("provider issue does not contain one complete work definition", nil)
+	}
+	record, err := bound.issueRecord(issue)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	providerMetadata, err := definitionProviderMetadata(issue.document)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, err
+	}
+	definition, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{
+		ProjectID: issue.document.kitty.ProjectID, WorkID: issue.document.kitty.WorkID,
+		Title: pointerValue(issue.title), Description: pointerValue(issue.description), DesignContext: issue.document.kitty.DesignContext,
+		CrossDomainReason: issue.document.kitty.CrossDomainReason, Criteria: append([]tracker.WorkCriterion(nil), issue.document.kitty.WorkCriteria...),
+		Dependencies: append([]ids.WorkID(nil), issue.document.kitty.Dependencies...), WriteScopes: append([]tracker.WriteScope(nil), issue.document.kitty.WriteScopes...),
+		Provenance: append([]tracker.ScopeRef(nil), issue.document.kitty.Provenance...), MetadataSchema: metadataSchemaV1, ProviderMetadata: providerMetadata,
+	})
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, definitionSchemaError("provider issue work definition is invalid", err)
+	}
+	return tracker.NewWorkDefinitionObservation(definition, record.ExternalRef, record.Observation, record.Observation.ObservedAt)
+}
+
+func definitionProviderMetadata(document metadataDocument) (tracker.OpaqueMetadata, error) {
+	root := cloneRawMap(document.root)
+	delete(root, metadataNamespace)
+	if len(root) == 0 {
+		return tracker.OpaqueMetadata{}, nil
+	}
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return tracker.OpaqueMetadata{}, metadataProtocolError("provider metadata cannot be projected", err)
+	}
+	metadata, err := tracker.NewOpaqueMetadata(encoded)
+	if err != nil {
+		return tracker.OpaqueMetadata{}, metadataProtocolError("provider metadata exceeds the neutral contract", err)
+	}
+	return metadata, nil
+}
+
 func (bound *BoundAdapter) UpdateWork(ctx context.Context, request tracker.UpdateWorkRequest) (tracker.WorkMutation, error) {
 	if err := validateUpdateRequest(bound, request); err != nil {
 		return tracker.WorkMutation{}, err
@@ -140,6 +346,9 @@ func (bound *BoundAdapter) UpdateWork(ctx context.Context, request tracker.Updat
 		}
 		if err := validateIssueMapping(current, request.ExternalRef.ProjectID, request.ExternalRef.WorkID, request.ExternalRef.CreatedByOperation); err != nil {
 			return tracker.WorkMutation{}, err
+		}
+		if current.document.kitty.completeDefinition {
+			return tracker.WorkMutation{}, &tracker.Error{Kind: tracker.ErrorGuardedUpdateUnsupported, RecoveryCode: "reconcile_without_mutation", Message: "complete work definitions require guarded replacement", Capability: tracker.CapabilityCatalogUpdate}
 		}
 		currentRecord, err := bound.issueRecord(current)
 		if err != nil {

@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
@@ -17,6 +18,98 @@ func sampleKittyMetadata() kittyMetadata {
 			{ID: "criterion-human", Text: "operator approves", Verifier: tracker.VerifierHumanDecision, Required: false},
 		},
 		DesignContext: "bounded adapter", ContentDigest: "digest",
+	}
+}
+
+func sampleDefinitionMetadata() kittyMetadata {
+	value := sampleKittyMetadata()
+	value.WorkCriteria = []tracker.WorkCriterion{
+		{ID: "criterion-test", Text: "tests pass", Outcome: "focused tests pass", Verifier: tracker.VerifierTest, Required: true, EvidenceHint: "go test ./..."},
+		{ID: "criterion-human", Text: "operator approves", Outcome: "approval recorded", Verifier: tracker.VerifierHumanDecision, Required: false},
+	}
+	value.CrossDomainReason = ""
+	value.Dependencies = []ids.WorkID{"work-0"}
+	value.WriteScopes = []tracker.WriteScope{{Path: "internal/tracker/beads", Domain: "tracker", Access: tracker.ScopeWriteExclusive, SerializationKey: "beads-adapter"}}
+	value.Provenance = []tracker.ScopeRef{{ID: "plan-provider", Kind: tracker.ScopePlanConcern}, {ID: "requirement-parity", Kind: tracker.ScopeRequiredOutcome}}
+	value.completeDefinition = true
+	return value
+}
+
+func TestMetadataCompleteDefinitionRoundTripPreservesEveryNeutralField(t *testing.T) {
+	want := sampleDefinitionMetadata()
+	encoded, err := mergeMetadata([]byte(`{"foreign":{"keep":true},"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[],"future":{"keep":true}}}`), want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := decodeMetadata(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(document.kitty, want) {
+		t.Fatalf("round trip=%#v want=%#v", document.kitty, want)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &root); err != nil {
+		t.Fatal(err)
+	}
+	if string(root["foreign"]) != `{"keep":true}` {
+		t.Fatalf("foreign metadata changed: %s", root["foreign"])
+	}
+	var namespace map[string]json.RawMessage
+	if err := json.Unmarshal(root[metadataNamespace], &namespace); err != nil {
+		t.Fatal(err)
+	}
+	if string(namespace["future"]) != `{"keep":true}` {
+		t.Fatalf("unknown namespace metadata changed: %s", namespace["future"])
+	}
+}
+
+func TestMetadataLegacySchemaOneIsReadableButNotComplete(t *testing.T) {
+	document, err := decodeMetadata([]byte(`{"spec_kitty":{"schema_version":1,"project_id":"project-1","work_id":"work-1","created_by_operation":"operation-create","last_operation":"operation-create","criteria":[{"id":"criterion-1","text":"legacy","verifier":"test","required":true}],"design_context":"legacy","content_digest":"digest"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.kitty.completeDefinition || len(document.kitty.Criteria) != 1 || document.kitty.Criteria[0].Text != "legacy" {
+		t.Fatalf("legacy metadata=%#v", document.kitty)
+	}
+}
+
+func TestMetadataIncompleteDefinitionFieldsFailClosed(t *testing.T) {
+	complete, err := mergeMetadata(nil, sampleDefinitionMetadata())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"dependencies", "write_scopes", "provenance", "cross_domain_reason"} {
+		t.Run(field, func(t *testing.T) {
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(complete, &root); err != nil {
+				t.Fatal(err)
+			}
+			var namespace map[string]json.RawMessage
+			if err := json.Unmarshal(root[metadataNamespace], &namespace); err != nil {
+				t.Fatal(err)
+			}
+			delete(namespace, field)
+			root[metadataNamespace], _ = json.Marshal(namespace)
+			mutant, _ := json.Marshal(root)
+			if _, err := decodeMetadata(mutant); !tracker.IsKind(err, tracker.ErrorSchemaSkew) {
+				t.Fatalf("missing %s error=%v", field, err)
+			}
+		})
+	}
+
+	var root map[string]json.RawMessage
+	_ = json.Unmarshal(complete, &root)
+	var namespace map[string]json.RawMessage
+	_ = json.Unmarshal(root[metadataNamespace], &namespace)
+	var criteria []map[string]any
+	_ = json.Unmarshal(namespace["criteria"], &criteria)
+	delete(criteria[0], "outcome")
+	namespace["criteria"], _ = json.Marshal(criteria)
+	root[metadataNamespace], _ = json.Marshal(namespace)
+	mutant, _ := json.Marshal(root)
+	if _, err := decodeMetadata(mutant); !tracker.IsKind(err, tracker.ErrorSchemaSkew) {
+		t.Fatalf("criterion without outcome error=%v", err)
 	}
 }
 

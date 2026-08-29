@@ -10,7 +10,11 @@ import (
 	"time"
 )
 
-const ReportSchemaVersion = 2
+// ReportSchemaVersion is 3 because the report now carries an explicit,
+// machine-checkable terminal-result census. Historical version-2 evidence is
+// immutable; consumers must opt in to the version-3 shape rather than infer
+// the new fields from absent JSON members.
+const ReportSchemaVersion = 3
 
 type testEvent struct {
 	Action  string  `json:"Action"`
@@ -28,9 +32,17 @@ type Report struct {
 	StartedAt     time.Time         `json:"started_at"`
 	FinishedAt    time.Time         `json:"finished_at"`
 	DurationMS    int64             `json:"duration_ms"`
+	TimeoutMS     int64             `json:"timeout_ms"`
+	TimedOut      bool              `json:"timed_out"`
 	ExpectedTests []string          `json:"expected_tests"`
 	StartedTests  []string          `json:"started_tests"`
 	TerminalTests map[string]string `json:"terminal_tests"`
+	ExpectedCount int               `json:"expected_count"`
+	StartedCount  int               `json:"started_count"`
+	TerminalCount int               `json:"terminal_count"`
+	PassedCount   int               `json:"passed_count"`
+	FailedCount   int               `json:"failed_count"`
+	SkippedCount  int               `json:"skipped_count"`
 	ProcessExit   int               `json:"process_exit"`
 	Verdict       string            `json:"verdict"`
 	Issues        []string          `json:"issues,omitempty"`
@@ -47,6 +59,8 @@ type VerifyRequest struct {
 	ProcessExit int
 	StartedAt   time.Time
 	FinishedAt  time.Time
+	Timeout     time.Duration
+	TimedOut    bool
 }
 
 // Verify parses only go test's JSON event protocol. It deliberately ignores
@@ -57,6 +71,7 @@ func Verify(reader io.Reader, request VerifyRequest) (Report, error) {
 		SchemaVersion: ReportSchemaVersion,
 		Campaign:      request.Campaign, Package: request.Package, Pattern: request.Pattern,
 		StartedAt: request.StartedAt.UTC(), FinishedAt: request.FinishedAt.UTC(),
+		TimeoutMS: request.Timeout.Milliseconds(), TimedOut: request.TimedOut,
 		ExpectedTests: append([]string(nil), request.Expected...), ProcessExit: request.ProcessExit,
 		TerminalTests: map[string]string{}, Verdict: "fail",
 	}
@@ -69,6 +84,12 @@ func Verify(reader io.Reader, request VerifyRequest) (Report, error) {
 	}
 	if len(request.Expected) == 0 {
 		issues = append(issues, "expected test census is empty")
+	}
+	if request.Timeout <= 0 {
+		issues = append(issues, "configured timeout must be positive")
+	}
+	if request.TimedOut {
+		issues = append(issues, "go test exceeded configured timeout")
 	}
 	expected := make(map[string]struct{}, len(request.Expected))
 	for _, name := range request.Expected {
@@ -135,6 +156,9 @@ func Verify(reader io.Reader, request VerifyRequest) (Report, error) {
 		report.StartedTests = append(report.StartedTests, name)
 	}
 	slices.Sort(report.StartedTests)
+	report.ExpectedCount = len(request.Expected)
+	report.StartedCount = len(report.StartedTests)
+	report.TerminalCount = len(report.TerminalTests)
 	for _, name := range request.Expected {
 		if !started[name] {
 			issues = append(issues, "missing start event for "+name)
@@ -145,7 +169,15 @@ func Verify(reader io.Reader, request VerifyRequest) (Report, error) {
 	}
 	failedTest := false
 	for _, terminal := range report.TerminalTests {
-		failedTest = failedTest || terminal == "fail"
+		switch terminal {
+		case "pass":
+			report.PassedCount++
+		case "fail":
+			report.FailedCount++
+			failedTest = true
+		case "skip":
+			report.SkippedCount++
+		}
 	}
 	if request.ProcessExit == 0 && (failedTest || packageFailed) {
 		issues = append(issues, "process exited zero despite a failing JSON terminal")
@@ -158,6 +190,9 @@ func Verify(reader io.Reader, request VerifyRequest) (Report, error) {
 	}
 	if failedTest {
 		issues = append(issues, "one or more expected tests failed")
+	}
+	if report.SkippedCount != 0 {
+		issues = append(issues, "one or more required tests skipped")
 	}
 	report.Issues = uniqueStrings(issues)
 	if len(report.Issues) == 0 {

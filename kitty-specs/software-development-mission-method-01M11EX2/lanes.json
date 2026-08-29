@@ -1,0 +1,345 @@
+{
+  "version": 1,
+  "mission_slug": "software-development-mission-method-01M11EX2",
+  "mission_id": "01M11EX2VFHERE58SQVCBFG6JN",
+  "mission_branch": "kitty/mission-software-development-mission-method-01M11EX2",
+  "target_branch": "feat/software-development-mission-method",
+  "lanes": [
+    {
+      "lane_id": "lane-a",
+      "wp_ids": [
+        "WP01",
+        "WP02",
+        "WP03",
+        "WP04"
+      ],
+      "write_scope": [
+        "internal/architecture/graph.go",
+        "internal/architecture/graph_test.go",
+        "internal/architecture/policy.go",
+        "internal/architecture/policy_test.go",
+        "internal/architecture/reachability.go",
+        "internal/architecture/reachability_test.go",
+        "internal/artifact/model.go",
+        "internal/artifact/model_test.go",
+        "internal/artifact/service.go",
+        "internal/artifact/service_test.go",
+        "internal/artifact/validation.go",
+        "internal/ids/mission.go",
+        "internal/mission/decomposition.go",
+        "internal/mission/decomposition_test.go",
+        "internal/mission/definition.go",
+        "internal/mission/lifecycle_test.go",
+        "internal/mission/model.go",
+        "internal/mission/service.go",
+        "internal/missiontype/softwaredev/definition.go",
+        "internal/missiontype/softwaredev/definition_test.go",
+        "internal/tracker/fake/provider.go",
+        "internal/tracker/fake/store.go",
+        "internal/tracker/fake/work_definition_test.go",
+        "internal/tracker/provider.go",
+        "internal/tracker/work_definition.go",
+        "internal/tracker/work_definition_test.go",
+        "internal/workgraph/observation.go",
+        "internal/workgraph/validation.go",
+        "internal/workgraph/validation_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-b",
+      "wp_ids": [
+        "WP05"
+      ],
+      "write_scope": [
+        "internal/mission/finalization.go",
+        "internal/mission/finalization_test.go",
+        "internal/workgraph/finalization.go",
+        "internal/workgraph/finalization_test.go",
+        "internal/workgraph/lanes.go",
+        "internal/workgraph/lanes_test.go",
+        "internal/workgraph/revision.go",
+        "internal/workgraph/revision_test.go",
+        "internal/workgraph/revision_v2.go",
+        "internal/workgraph/revision_v2_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-c",
+      "wp_ids": [
+        "WP06"
+      ],
+      "write_scope": [
+        "internal/handoff/model.go",
+        "internal/integration/model.go",
+        "internal/mission/reconciliation.go",
+        "internal/mission/reconciliation_test.go",
+        "internal/review/model.go",
+        "internal/workgraph/drift.go",
+        "internal/workgraph/drift_test.go",
+        "internal/workgraph/reconcile.go",
+        "internal/workgraph/reconcile_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-b"
+      ],
+      "parallel_group": 2
+    },
+    {
+      "lane_id": "lane-d",
+      "wp_ids": [
+        "WP07"
+      ],
+      "write_scope": [
+        "internal/governancecontext/mission_action.go",
+        "internal/governancecontext/mission_action_test.go",
+        "internal/mission/action.go",
+        "internal/mission/action_test.go",
+        "internal/mission/decision.go",
+        "internal/mission/decision_test.go",
+        "internal/mission/next.go",
+        "internal/mission/next_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b"
+      ],
+      "parallel_group": 2
+    },
+    {
+      "lane_id": "lane-e",
+      "wp_ids": [
+        "WP08"
+      ],
+      "write_scope": [
+        "internal/controlstore/sqlite/artifact.go",
+        "internal/controlstore/sqlite/artifact_test.go",
+        "internal/controlstore/sqlite/migrations.go",
+        "internal/controlstore/sqlite/mission.go",
+        "internal/controlstore/sqlite/mission_action.go",
+        "internal/controlstore/sqlite/mission_action_test.go",
+        "internal/controlstore/sqlite/mission_test.go",
+        "internal/controlstore/sqlite/reconciliation_v2.go",
+        "internal/controlstore/sqlite/reconciliation_v2_test.go",
+        "internal/controlstore/sqlite/workrevision_v2.go",
+        "internal/controlstore/sqlite/workrevision_v2_test.go",
+        "internal/controlstore/store.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b",
+        "lane-c",
+        "lane-d"
+      ],
+      "parallel_group": 3
+    },
+    {
+      "lane_id": "lane-f",
+      "wp_ids": [
+        "WP09"
+      ],
+      "write_scope": [
+        "internal/mission/readmodel/model.go",
+        "internal/mission/readmodel/model_test.go",
+        "internal/projection/atomic_file.go",
+        "internal/projection/atomic_file_test.go",
+        "internal/projection/model.go",
+        "internal/projection/tasks.go",
+        "internal/projection/tasks_test.go",
+        "internal/workgraph/readmodel/model.go",
+        "internal/workgraph/readmodel/model_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-b",
+        "lane-c",
+        "lane-d"
+      ],
+      "parallel_group": 3
+    },
+    {
+      "lane_id": "lane-g",
+      "wp_ids": [
+        "WP10"
+      ],
+      "write_scope": [
+        "cmd/spk-phase1-helper/main.go",
+        "internal/controlstore/sqlite/migrations.go",
+        "internal/controlstore/sqlite/mission.go",
+        "internal/controlstore/sqlite/mission_method_query.go",
+        "internal/controlstore/sqlite/mission_method_query_test.go",
+        "internal/controlstore/sqlite/mission_test.go",
+        "internal/helpercmd/artifact.go",
+        "internal/helpercmd/artifact_test.go",
+        "internal/helpercmd/mission_method.go",
+        "internal/helpercmd/mission_method_test.go",
+        "internal/helpercmd/projection.go",
+        "internal/helpercmd/projection_test.go",
+        "internal/helpercmd/root.go",
+        "internal/mission/service.go",
+        "internal/mission/service_test.go",
+        "internal/mission/lifecycle_test.go",
+        "internal/scenario/mission_method_fake_test.go",
+        "internal/scenario/mission_method_helpers_test.go",
+        "internal/testcampaign/manifest.go",
+        "internal/tracker/fake/store.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-e",
+        "lane-f"
+      ],
+      "parallel_group": 4
+    },
+    {
+      "lane_id": "lane-h",
+      "wp_ids": [
+        "WP11"
+      ],
+      "write_scope": [
+        "internal/scenario/mission_method_beads_test.go",
+        "internal/tracker/beads/catalog.go",
+        "internal/tracker/beads/catalog_test.go",
+        "internal/tracker/beads/graph.go",
+        "internal/tracker/beads/graph_test.go",
+      "internal/tracker/beads/metadata.go",
+      "internal/tracker/beads/metadata_test.go",
+      "internal/tracker/beads/mission_method_integration_test.go",
+      "internal/tracker/work_definition.go",
+      "internal/tracker/work_definition_test.go",
+      "internal/mission/decomposition.go",
+      "internal/mission/decomposition_test.go",
+      "internal/controlstore/sqlite/decomposition.go",
+      "internal/controlstore/sqlite/decomposition_test.go",
+      "internal/helpercmd/mission_method.go",
+      "internal/helpercmd/mission_method_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tests",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-g"
+      ],
+      "parallel_group": 5
+    },
+    {
+      "lane_id": "lane-i",
+      "wp_ids": [
+        "WP12"
+      ],
+      "write_scope": [
+        ".github/workflows/full-campaign.yml",
+        ".github/workflows/quality.yml",
+        "Makefile",
+        "README.md",
+        "docs/phase3-evidence/README.md",
+        "docs/phase3-evidence/SHA256SUMS",
+        "docs/phase3-evidence/campaign-census.json",
+        "docs/phase3-evidence/limitations.md",
+        "docs/phase3-evidence/qualification-evidence.json",
+        "docs/phase3-evidence/results.md",
+        "internal/scenario/mission_method_adversarial_test.go",
+        "internal/scenario/mission_method_fault_test.go",
+        "internal/scenario/mission_method_projection_test.go",
+        "internal/scenario/mission_method_race_test.go",
+        "internal/testcampaign/mission_method.go",
+        "internal/testcampaign/mission_method_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-g",
+        "lane-h"
+      ],
+      "parallel_group": 6
+    }
+  ],
+  "computed_at": "2026-08-27T22:35:11.520090+00:00",
+  "computed_from": "dependency_graph+ownership",
+  "planning_artifact_wps": [],
+  "planning_commit_sha": "475b2964a757585a88b0ac60946edd9dd6a00fbd",
+  "collapse_report": {
+    "events": [
+      {
+        "wp_a": "WP01",
+        "wp_b": "WP03",
+        "rule": "write_scope_overlap",
+        "evidence": "overlapping globs: 'internal/architecture/reachability.go' vs 'internal/architecture/reachability.go', 'internal/architecture/reachability_test.go' vs 'internal/architecture/reachability_test.go'"
+      },
+      {
+        "wp_a": "WP01",
+        "wp_b": "WP04",
+        "rule": "write_scope_overlap",
+        "evidence": "overlapping globs: 'internal/architecture/policy.go' vs 'internal/architecture/policy.go', 'internal/architecture/policy_test.go' vs 'internal/architecture/policy_test.go'"
+      },
+      {
+        "wp_a": "WP02",
+        "wp_b": "WP03",
+        "rule": "write_scope_overlap",
+        "evidence": "overlapping globs: 'internal/mission/service.go' vs 'internal/mission/service.go', 'internal/mission/lifecycle_test.go' vs 'internal/mission/lifecycle_test.go'; WP03 depends on WP02"
+      }
+    ],
+    "total_merges": 3,
+    "independent_wps_collapsed": 0,
+    "by_rule": {
+      "write_scope_overlap": 3
+    }
+  }
+}

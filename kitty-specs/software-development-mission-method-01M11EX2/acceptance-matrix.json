@@ -1,0 +1,291 @@
+{
+  "mission_slug": "software-development-mission-method-01M11EX2",
+  "mission_number": "",
+  "mission_type": "software-dev",
+  "overall_verdict": "pass",
+  "criteria": [
+    {
+      "criterion_id": "FR-001",
+      "description": "The software-development mission definition is explicit, statically registered, versioned, and fails loudly when absent or incompatible.",
+      "proof_type": "automated_test",
+      "evidence": "docs/phase3-evidence/results.md#requirements-and-constraints; mission contract profile 4/4; architecture/scope profiles 40/40",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Verified against the frozen source commit and tree recorded at matrix scope."
+    },
+    {
+      "criterion_id": "FR-002",
+      "description": "Every mission step has a typed contract for inputs, outputs, approvals, predecessors, and successors.",
+      "proof_type": "automated_test",
+      "evidence": "mission contract profile 4/4; internal/missiontype contract tests; docs/phase3-evidence/results.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Contract shape and illegal-transition refusals are executable."
+    },
+    {
+      "criterion_id": "FR-003",
+      "description": "Only mission state and approved evidence advance the mission; tracker state and projections have no mission authority.",
+      "proof_type": "automated_test",
+      "evidence": "TestMissionMethodProjectionAndGovernanceIndependence100; authority architecture mutants; results.md FR-003/C-001/C-002 row",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "One hundred projection attacks caused zero canonical changes."
+    },
+    {
+      "criterion_id": "FR-004",
+      "description": "Specification and plan outputs have typed immutable revision identity, provenance, validation, and approval state.",
+      "proof_type": "automated_test",
+      "evidence": "internal/artifact tests; portable two-item mission; mission acceptance profile 3/3",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Artifact revisions are exercised through production mission services."
+    },
+    {
+      "criterion_id": "FR-005",
+      "description": "Approval verdicts bind to an exact artifact revision and become stale after content changes.",
+      "proof_type": "automated_test",
+      "evidence": "artifact freshness tests; historical full-scenario census 73/73; mission adversarial profile 6/6",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Freshness is checked as authority evidence, not presentation metadata."
+    },
+    {
+      "criterion_id": "FR-006",
+      "description": "Planning is refused until specification validation and approval cover intent, scope, requirements, acceptance framing, assumptions, and boundaries.",
+      "proof_type": "automated_test",
+      "evidence": "portable mission lifecycle; mission contract and acceptance profiles; typed specification gate tests",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "The proving mission advances only from an approved specification revision."
+    },
+    {
+      "criterion_id": "FR-007",
+      "description": "Executable decomposition is refused until architecture, data flow, risk, compatibility, migration, and validation strategy are validated and approved.",
+      "proof_type": "automated_test",
+      "evidence": "portable mission lifecycle; plan-gate tests; mission acceptance profile 3/3",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "The proving path consumes an approved plan revision."
+    },
+    {
+      "criterion_id": "FR-008",
+      "description": "Approved plans decompose into stable tracker work with structured descriptions, criteria, dependencies, write scopes, and provenance.",
+      "proof_type": "automated_test",
+      "evidence": "portable fake-provider mission; real Beads two-item qualification; workgraph decomposition tests",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Both provider implementations produce the required typed work observations."
+    },
+    {
+      "criterion_id": "FR-009",
+      "description": "The same provider-neutral decomposition and finalization laws execute against the durable fake tracker and the qualified Beads adapter.",
+      "proof_type": "automated_test",
+      "evidence": "TestMissionMethodRealBeadsTwoItemQualification; fake/Beads parity; frozen real-provider runner 11/11",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Provider identity remains observation evidence outside kernel semantics."
+    },
+    {
+      "criterion_id": "FR-010",
+      "description": "Work-quality validation reports typed findings for missing context, untestable criteria, overreach, ambiguous ownership, and invalid boundaries.",
+      "proof_type": "automated_test",
+      "evidence": "mission acceptance/adversarial profiles; work-quality mutants; results.md FR-010/FR-011/FR-012 row",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Negative cases use stable typed findings."
+    },
+    {
+      "criterion_id": "FR-011",
+      "description": "Every required specification outcome maps to work, and every work item traces to approved plan scope.",
+      "proof_type": "automated_test",
+      "evidence": "coverage validation tests; mission acceptance/adversarial profiles; two-item provider parity",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Missing and extraneous coverage mutants are rejected."
+    },
+    {
+      "criterion_id": "FR-012",
+      "description": "Unknown, self, direct, and lane-collapse dependency cycles fail before finalization.",
+      "proof_type": "automated_test",
+      "evidence": "workgraph dependency and lane-collapse cycle tests; mission adversarial profile 6/6",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Graph validation precedes immutable publication."
+    },
+    {
+      "criterion_id": "FR-013",
+      "description": "Finalization publishes one immutable generation-numbered WorkRevision only after every gate passes.",
+      "proof_type": "automated_test",
+      "evidence": "TestMissionMethodFinalizationProcessRaces100; WorkRevision v2 tests; results.md FR-013/FR-015/NFR-002 row",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "One current generation wins in every two-process race."
+    },
+    {
+      "criterion_id": "FR-014",
+      "description": "A WorkRevision records mission, generation, predecessor, planning source, provider observations, graph, criteria, scopes, dependency policy, lane graph, and digest.",
+      "proof_type": "automated_test",
+      "evidence": "WorkRevision v2 schema and round-trip tests; portable two-item mission; qualification-evidence.json",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "The complete executable contract is content-addressed and restart-readable."
+    },
+    {
+      "criterion_id": "FR-015",
+      "description": "Semantically equivalent provider observations normalize to the same canonical bytes and graph digest.",
+      "proof_type": "automated_test",
+      "evidence": "TestMissionMethodNormalizationAndPureQueries100; 100/100 byte and digest equivalence",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Provider order and presentation do not affect revision identity."
+    },
+    {
+      "criterion_id": "FR-016",
+      "description": "Post-finalization tracker changes produce structured drift without mutating or revoking the current generation.",
+      "proof_type": "automated_test",
+      "evidence": "TestMissionMethodSemanticDriftMutations1000; 1,000/1,000 explicit drift results; zero silent mutations",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "The current WorkRevision remains immutable until explicit reconciliation."
+    },
+    {
+      "criterion_id": "FR-017",
+      "description": "Reconciliation creates an immutable successor generation naming its predecessor instead of editing history.",
+      "proof_type": "automated_test",
+      "evidence": "reconciliation successor tests; portable two-item generation 1 to generation 2 scenario",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Generation evolution is explicit and append-only."
+    },
+    {
+      "criterion_id": "FR-018",
+      "description": "Every affected active or accepted work item receives exactly one legal continue, supersede, invalidate, or fork disposition.",
+      "proof_type": "automated_test",
+      "evidence": "mixed reconciliation tests; disposition identity/cardinality mutants; results.md FR-017/FR-018/FR-020 row",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Missing, duplicate, and illegal dispositions are rejected."
+    },
+    {
+      "criterion_id": "FR-019",
+      "description": "Handoff, review, acceptance, and integration reject work whose generation disposition no longer permits the action.",
+      "proof_type": "automated_test",
+      "evidence": "TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation; live eligibility tests",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Stale authority refuses before downstream mutation while exact replay remains valid."
+    },
+    {
+      "criterion_id": "FR-020",
+      "description": "Reconciliation preserves integrated history and expresses changed requirements as repair, replacement, or forked work.",
+      "proof_type": "automated_test",
+      "evidence": "integrated-history reconciliation tests; C-011 architecture assertions; mixed reconciliation qualification",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "No reconciliation path rewrites accepted Git history."
+    },
+    {
+      "criterion_id": "FR-021",
+      "description": "Action-capable outcomes record the exact actor profile, doctrine identity and revisions, digest, and granted authority.",
+      "proof_type": "automated_test",
+      "evidence": "TestMissionMethodProjectionAndGovernanceIndependence100; 100/100 governance restart reconstructions",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Governance is action-scoped and retains its original interpretation."
+    },
+    {
+      "criterion_id": "FR-022",
+      "description": "The next query returns exactly one stable typed query, action, work_ready, review_ready, decision_required, blocked, or terminal outcome.",
+      "proof_type": "automated_test",
+      "evidence": "NextResult schema tests; TestMissionMethodNormalizationAndPureQueries100; results.md FR-022/FR-023 row",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "The seven-kind algebra is strict and identity-bearing."
+    },
+    {
+      "criterion_id": "FR-023",
+      "description": "Repeated next queries are pure; repeated action operations replay deterministically or conflict on changed identity.",
+      "proof_type": "automated_test",
+      "evidence": "TestMissionMethodNormalizationAndPureQueries100; action idempotency and changed-operation conflict tests",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "One hundred repeated queries produced zero durable writes."
+    },
+    {
+      "criterion_id": "FR-024",
+      "description": "Missing inputs, deferred decisions, validation failures, and blockers are durable typed mission facts with recovery guidance.",
+      "proof_type": "automated_test",
+      "evidence": "mission next/blocker/decision tests; restart reconstruction; stable error-contract matrices",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "No blocker or decision depends solely on transcript context."
+    },
+    {
+      "criterion_id": "FR-025",
+      "description": "tasks.md is a regenerable projection of authoritative mission and tracker state and cannot alter that state.",
+      "proof_type": "automated_test",
+      "evidence": "TestMissionMethodProjectionAndGovernanceIndependence100; eight projection attack kinds; zero authority changes",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Markdown is compatibility presentation, never the canonical work ledger."
+    },
+    {
+      "criterion_id": "FR-026",
+      "description": "Generated compatibility artifacts disclose source generation, render time, and non-authoritative status.",
+      "proof_type": "automated_test",
+      "evidence": "projection renderer and disclosure tests; projection architecture mutants; portable scenario outputs",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Projection provenance is explicit and machine-readable."
+    },
+    {
+      "criterion_id": "FR-027",
+      "description": "A two-item mission executes from intent through finalization, drift, explicit reconciliation, and projection regeneration with fake and Beads providers.",
+      "proof_type": "automated_test",
+      "evidence": "portable two-item mission; TestMissionMethodRealBeadsTwoItemQualification; canonical real-provider attempt 37",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Both providers reach equivalent generation and reconciliation semantics."
+    },
+    {
+      "criterion_id": "FR-028",
+      "description": "Transitions, approvals, finalization, drift, reconciliation, and next outcomes expose machine-readable source-bound audit evidence.",
+      "proof_type": "automated_test",
+      "evidence": "docs/phase3-evidence/qualification-evidence.json; campaign-census.json; SHA256SUMS; publication validator",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T08:36:07Z",
+      "notes": "Publication is bound to the frozen source commit/tree and rejects tampering or later commits."
+    }
+  ],
+  "negative_invariants": [],
+  "tested_source_commit": "03afabd6d875dd133d18fa759669498d92e097be",
+  "tested_source_tree": "6173b2dbce671d6243b14f99414170c8a5929f0f"
+}

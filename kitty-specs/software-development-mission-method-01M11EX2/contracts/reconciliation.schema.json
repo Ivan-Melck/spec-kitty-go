@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.dev/contracts/reconciliation.schema.json",
+  "title": "WorkRevision Reconciliation Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "reconciliation_id", "mission_id", "old_revision_id", "new_revision_id", "drift_report_id", "old_graph_digest", "new_graph_digest", "decisions", "actor_id", "rationale", "governance_context_id", "occurred_at", "request_digest"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "reconciliation_id": {"type": "string", "minLength": 1},
+    "mission_id": {"type": "string", "minLength": 1},
+    "old_revision_id": {"type": "string", "minLength": 1},
+    "new_revision_id": {"type": "string", "minLength": 1},
+    "drift_report_id": {"type": "string", "minLength": 1},
+    "old_graph_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "new_graph_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "decisions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["old_work_id", "disposition", "new_work_ids", "rationale"],
+        "properties": {
+          "old_work_id": {"type": "string", "minLength": 1},
+          "disposition": {"enum": ["continue", "supersede", "invalidate", "fork"]},
+          "new_work_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "fork_edges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["from_old_work_id", "to_new_work_id"],
+              "properties": {
+                "from_old_work_id": {"type": "string", "minLength": 1},
+                "to_new_work_id": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "rationale": {"type": "string", "minLength": 1}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"disposition": {"const": "fork"}}},
+            "then": {"required": ["fork_edges"], "properties": {"fork_edges": {"minItems": 1}}},
+            "else": {"properties": {"fork_edges": {"maxItems": 0}}}
+          }
+        ]
+      }
+    },
+    "actor_id": {"type": "string", "minLength": 1},
+    "rationale": {"type": "string", "minLength": 1},
+    "governance_context_id": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "request_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

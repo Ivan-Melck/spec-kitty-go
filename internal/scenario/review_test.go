@@ -21,6 +21,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/helpercmd"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 func TestReviewImmutableCandidateAndActorIndependence(t *testing.T) {
@@ -41,7 +42,11 @@ func TestReviewImmutableCandidateAndActorIndependence(t *testing.T) {
 	if moved == candidate {
 		t.Fatal("workspace did not move after handoff")
 	}
-	replayed := runHandoffHelper(t, fixture, capsule, candidate, "handoff-immutable", "operation-handoff-immutable", "")
+	// A completed immutable operation replays before a current eligibility
+	// lookup. Selecting complete mode against this historical v1 revision is a
+	// deletion control for accidentally moving namespace/fact inspection ahead
+	// of replay.
+	replayed := runJudgmentHelper(t, replaceJudgmentArg(handoffArgs(fixture, capsule, candidate, "handoff-immutable", "operation-handoff-immutable"), "--eligibility-mode", "complete"))
 	replayedHandoff, _ := json.Marshal(replayed.Judgment.Handoff)
 	if !replayed.OK || string(replayedHandoff) != string(originalHandoff) {
 		t.Fatalf("moved branch replay changed immutable handoff: original=%s replay=%s response=%+v", originalHandoff, replayedHandoff, replayed)
@@ -75,7 +80,7 @@ func TestReviewImmutableCandidateAndActorIndependence(t *testing.T) {
 	}
 	assertJudgmentEnvelope(t, distinct, "review_recorded", "operation-review-distinct")
 	originalReview, _ := json.Marshal(distinct.Judgment.Review)
-	reviewReplay := runReviewHelper(t, fixture, capsule, candidate, "handoff-immutable", "review-distinct", "operation-review-distinct", "actor-independent", "process-independent", review.Approved, "")
+	reviewReplay := runJudgmentHelper(t, replaceJudgmentArg(reviewArgs(fixture, capsule, candidate, "handoff-immutable", "review-distinct", "operation-review-distinct", "actor-independent", "process-independent", review.Approved), "--eligibility-mode", "complete"))
 	replayedReview, _ := json.Marshal(reviewReplay.Judgment.Review)
 	if !reviewReplay.OK || string(replayedReview) != string(originalReview) {
 		t.Fatalf("review replay changed immutable verdict: original=%s replay=%s response=%+v", originalReview, replayedReview, reviewReplay)
@@ -92,6 +97,63 @@ func TestReviewImmutableCandidateAndActorIndependence(t *testing.T) {
 		assertDiagnosticEnvelope(t, mutant.Error, "operation-review-distinct")
 	}
 	fixture.assertPrimaryUnchanged(t)
+}
+
+func TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation(t *testing.T) {
+	fixture, capsule, candidate := startPhase1RevisionCandidate(t, "helper-authority-order")
+	handoffID := "handoff-helper-authority-order"
+	handoffOperation := "operation-handoff-helper-authority-order"
+	acceptedHandoff := runHandoffHelper(t, fixture, capsule, candidate, handoffID, handoffOperation, "")
+	if !acceptedHandoff.OK || acceptedHandoff.Judgment == nil || acceptedHandoff.Judgment.Handoff == nil {
+		t.Fatalf("accepted handoff=%+v", acceptedHandoff)
+	}
+	reviewID := "review-helper-authority-order"
+	reviewOperation := "operation-review-helper-authority-order"
+	acceptedReview := runReviewHelper(t, fixture, capsule, candidate, handoffID, reviewID, reviewOperation, "actor-helper-reviewer", "process-helper-reviewer", review.Approved, "")
+	if !acceptedReview.OK || acceptedReview.Judgment == nil || acceptedReview.Judgment.Review == nil {
+		t.Fatalf("accepted review=%+v", acceptedReview)
+	}
+
+	newRevision := scenarioRevision(t, "revision-helper-authority-order-2", 2, []ids.WorkID{capsule.WorkID})
+	reconcilePhase1RevisionThroughHelper(t, fixture.database, "helper-authority-order", capsule.WorkRevisionID, newRevision, workgraph.Invalidate, []ids.WorkID{capsule.WorkID}, []ids.WorkID{capsule.WorkID}, nil)
+
+	staleHandoff := runHandoffHelper(t, fixture, capsule, candidate, "handoff-helper-authority-order-stale", "operation-handoff-helper-authority-order-stale", "")
+	if staleHandoff.OK || staleHandoff.Error == nil || staleHandoff.Error.Kind != execution.KindStaleAuthority {
+		t.Fatalf("stale handoff was masked by eligibility=%+v", staleHandoff)
+	}
+	staleReviewOperation := "operation-review-helper-authority-order-stale"
+	staleReview := runReviewHelper(t, fixture, capsule, candidate, handoffID, "review-helper-authority-order-stale", staleReviewOperation, "actor-helper-stale-reviewer", "process-helper-stale-reviewer", review.Approved, "")
+	if staleReview.OK || staleReview.Error == nil || staleReview.Error.Kind != execution.KindStaleAuthority {
+		t.Fatalf("stale review was masked by eligibility=%+v", staleReview)
+	}
+	db, err := sql.Open("sqlite", fixture.database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var staleAttempts int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM review_attempts WHERE operation_id=?`, staleReviewOperation).Scan(&staleAttempts); err != nil || staleAttempts != 0 {
+		t.Fatalf("stale review attempts=%d err=%v", staleAttempts, err)
+	}
+
+	handoffReplay := runJudgmentHelper(t, replaceJudgmentArg(handoffArgs(fixture, capsule, candidate, handoffID, handoffOperation), "--eligibility-mode", "complete"))
+	if !handoffReplay.OK || handoffReplay.Judgment == nil || handoffReplay.Judgment.Handoff == nil {
+		t.Fatalf("handoff replay inspected changed eligibility: response=%+v", handoffReplay)
+	}
+	originalHandoff, _ := json.Marshal(acceptedHandoff.Judgment.Handoff)
+	replayedHandoff, _ := json.Marshal(handoffReplay.Judgment.Handoff)
+	if string(replayedHandoff) != string(originalHandoff) {
+		t.Fatalf("handoff replay inspected changed eligibility: original=%s replay=%s response=%+v", originalHandoff, replayedHandoff, handoffReplay)
+	}
+	reviewReplay := runJudgmentHelper(t, replaceJudgmentArg(reviewArgs(fixture, capsule, candidate, handoffID, reviewID, reviewOperation, "actor-helper-reviewer", "process-helper-reviewer", review.Approved), "--eligibility-mode", "complete"))
+	if !reviewReplay.OK || reviewReplay.Judgment == nil || reviewReplay.Judgment.Review == nil {
+		t.Fatalf("review replay inspected changed eligibility: response=%+v", reviewReplay)
+	}
+	originalReview, _ := json.Marshal(acceptedReview.Judgment.Review)
+	replayedReview, _ := json.Marshal(reviewReplay.Judgment.Review)
+	if string(replayedReview) != string(originalReview) {
+		t.Fatalf("review replay inspected changed eligibility: original=%s replay=%s response=%+v", originalReview, replayedReview, reviewReplay)
+	}
 }
 
 func TestHandoffMovedOwnedBranchPreservesExactGitFactsAndRefusesReplay(t *testing.T) {
@@ -424,7 +486,7 @@ func runHandoffHelper(t *testing.T, fixture workspaceScenario, capsule *executio
 }
 
 func handoffArgs(fixture workspaceScenario, capsule *execution.RunCapsule, candidate, handoffID, operation string) []string {
-	return []string{"handoff", "--db", fixture.database, "--schema-version", "1", "--correlation-id", operation, "--at", "2026-08-24T12:00:30Z", "--operation", operation, "--handoff-id", handoffID, "--project", "project-1", "--mission", "mission-1", "--revision", capsule.WorkRevisionID.String(), "--work", capsule.WorkID.String(), "--run", capsule.RunID.String(), "--workspace", capsule.WorkspaceID.String(), "--lease", capsule.LeaseID.String(), "--generation", fmt.Sprint(capsule.Generation), "--token", capsule.Token, "--actor", capsule.AggregateIDs["actor_id"], "--process", capsule.AggregateIDs["process_id"], "--candidate", candidate, "--contributors", capsule.AggregateIDs["actor_id"], "--evidence-digest", repeatedHex('e', 64)}
+	return []string{"handoff", "--db", fixture.database, "--eligibility-mode", "legacy-v1", "--schema-version", "1", "--correlation-id", operation, "--at", "2026-08-24T12:00:30Z", "--operation", operation, "--handoff-id", handoffID, "--project", "project-1", "--mission", "mission-1", "--revision", capsule.WorkRevisionID.String(), "--work", capsule.WorkID.String(), "--run", capsule.RunID.String(), "--workspace", capsule.WorkspaceID.String(), "--lease", capsule.LeaseID.String(), "--generation", fmt.Sprint(capsule.Generation), "--token", capsule.Token, "--actor", capsule.AggregateIDs["actor_id"], "--process", capsule.AggregateIDs["process_id"], "--candidate", candidate, "--contributors", capsule.AggregateIDs["actor_id"], "--evidence-digest", repeatedHex('e', 64)}
 }
 
 func runReviewHelper(t *testing.T, fixture workspaceScenario, capsule *execution.RunCapsule, candidate, handoffID, reviewID, operation, actor, process string, verdict review.Verdict, barrier string) helpercmd.Response {
@@ -442,7 +504,7 @@ func reviewArgs(fixture workspaceScenario, capsule *execution.RunCapsule, candid
 		status = review.Failed
 	}
 	criteria, _ := json.Marshal([]review.CriterionResult{{CriterionID: "criterion-" + capsule.WorkID.String(), Status: status, Evidence: "scenario evidence"}})
-	return []string{"review", "--db", fixture.database, "--schema-version", "1", "--correlation-id", operation, "--at", "2026-08-24T12:00:40Z", "--operation", operation, "--review-id", reviewID, "--handoff-id", handoffID, "--revision", capsule.WorkRevisionID.String(), "--work", capsule.WorkID.String(), "--lease", capsule.LeaseID.String(), "--generation", fmt.Sprint(capsule.Generation), "--token", capsule.Token, "--actor", actor, "--process", process, "--candidate", candidate, "--verdict", string(verdict), "--criteria-json", string(criteria), "--evidence-digest", repeatedHex('f', 64)}
+	return []string{"review", "--db", fixture.database, "--eligibility-mode", "legacy-v1", "--schema-version", "1", "--correlation-id", operation, "--at", "2026-08-24T12:00:40Z", "--operation", operation, "--review-id", reviewID, "--handoff-id", handoffID, "--revision", capsule.WorkRevisionID.String(), "--work", capsule.WorkID.String(), "--lease", capsule.LeaseID.String(), "--generation", fmt.Sprint(capsule.Generation), "--token", capsule.Token, "--actor", actor, "--process", process, "--candidate", candidate, "--verdict", string(verdict), "--criteria-json", string(criteria), "--evidence-digest", repeatedHex('f', 64)}
 }
 
 func runJudgmentHelper(t *testing.T, args []string) helpercmd.Response {
