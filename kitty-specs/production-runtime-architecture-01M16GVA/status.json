@@ -19,7 +19,7 @@
   "work_packages": {
     "WP01": {
       "actor": "user",
-      "agent": "opencode",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 4,
@@ -31,24 +31,26 @@
         "Ready for review: canonical architecture and ADR at 2a6fabc. Force overrides only pre-existing inherited planning-artifact ancestry (9c502e2 and earlier), not implementation checks. Existing Go architecture suite passes; local links and FR anchors pass; Mermaid uses conservative syntax; git diff --check passes; ruff diff-scoped check: 0 Python files, exit 0. Pre-review Python gate reported no_coverage because this Go worktree has no importable tests package.",
         "Review actor launch failed before review: local Claude OAuth session expired; returning unreviewed WP to queue",
         "Review actor launch failed before review: Gemini account requires an unset Google Cloud project; returning unreviewed WP to queue",
-        "Review passed: all 8 anti-pattern checks PASS or N/A (doc-only WP). Both owned files are substantive and internally consistent. All FR-001–FR-009 and FR-023 anchored and traceable. No runtime code or frozen evidence modified. All locked architecture laws enforced (ActorID independence, zombie-writer/W2 freshness, SQLite unambiguously retired, Beads non-authority, fencing limits explicit). Delivery honesty clean: GapDB/API2.0/acceptance/MCP/host all labeled proposed with explicit does-not-ship statements. git diff --check clean on owned files. Mermaid syntax GitHub-conservative. Forward references listed explicitly in §17."
+        "Review passed: all 8 anti-pattern checks PASS or N/A (doc-only WP). Both owned files are substantive and internally consistent. All FR-001–FR-009 and FR-023 anchored and traceable. No runtime code or frozen evidence modified. All locked architecture laws enforced (ActorID independence, zombie-writer/W2 freshness, SQLite unambiguously retired, Beads non-authority, fencing limits explicit). Delivery honesty clean: GapDB/API2.0/acceptance/MCP/host all labeled proposed with explicit does-not-ship statements. git diff --check clean on owned files. Mermaid syntax GitHub-conservative. Forward references listed explicitly in §17.",
+        "Reopened to resolve WP08 cycle-1 canonical checkpoint-recovery precedence conflict"
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "reference": "Review passed: all 8 anti-pattern checks PASS or N/A (doc-only WP). Both owned files are substantive and internally consistent. All FR-001–FR-009 and FR-023 anchored and traceable. No runtime code or frozen evidence modified. All locked architecture laws enforced (ActorID independence, zombie-writer/W2 freshness, SQLite unambiguously retired, Beads non-authority, fencing limits explicit). Delivery honesty clean: GapDB/API2.0/acceptance/MCP/host all labeled proposed with explicit does-not-ship statements. git diff --check clean on owned files. Mermaid syntax GitHub-conservative. Forward references listed explicitly in §17.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done",
-        "T006": "done"
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned",
+        "T006": "planned"
       }
     },
     "WP02": {
