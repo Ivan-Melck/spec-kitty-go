@@ -28,7 +28,7 @@ requirement_refs:
 - NFR-014
 planning_base_branch: feat/production-runtime-architecture
 merge_target_branch: feat/production-runtime-architecture
-branch_strategy: Planning artifacts were generated on feat/production-runtime-architecture. Implementation uses the lane worktree assigned by lanes.json and merges accepted work back into feat/production-runtime-architecture.
+branch_strategy: Planning artifacts for this mission were generated on feat/production-runtime-architecture. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/production-runtime-architecture unless the human explicitly redirects the landing branch.
 subtasks:
 - T001
 - T002
@@ -42,7 +42,7 @@ authoritative_surface: docs/
 create_intent:
 - docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md
 - docs/adr/0002-production-orchestration-architecture.md
-execution_mode: planning_artifact
+execution_mode: code_change
 model: ''
 owned_files:
 - docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md
