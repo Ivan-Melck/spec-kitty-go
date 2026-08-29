@@ -1,6 +1,7 @@
 # Implementation Plan: Production Orchestration Architecture
 
-**Branch**: `feat/production-runtime-architecture` | **Date**: 2026-08-29 | **Spec**: [spec.md](spec.md)  
+**Branch**: `feat/production-runtime-architecture` | **Date**: 2026-08-29 | **Spec**: [spec.md](spec.md)
+
 **Input**: Ratify the Go-native production architecture and decompose delivery into evidence-backed missions.
 
 ## Summary
@@ -22,14 +23,22 @@ No production behavior changes in this mission. Repository-level documentation w
 
 ## Technical Context
 
-**Language/Version**: Go 1.26 application repository; Markdown, Mermaid, JSON Schema 2020-12, and strict JSON examples for this documentation mission  
-**Primary Dependencies**: Existing Phase 1–3 Go domain packages and evidence; GapDB public contract and evidence; Beads 1.2.2 adapter contract; Git; Orchestrator API 1.3 compatibility record; MCP `2026-07-28` and Tasks extension specifications  
-**Storage**: Documentation in Git for this mission; proposed runtime uses memory-primary GapDB with durable journal/checkpoint evidence and no SQLite production dependency  
-**Testing**: Requirement traceability, architecture ownership and dependency guards, mutant controls, JSON Schema validation, Mermaid portability, local-link validation, `git diff --check`, and adversarial architecture review  
-**Target Platform**: Documentation renders on GitHub; proposed first production runtime is Linux/amd64 with one machine/filesystem authority and remote clients behind the application API  
-**Project Type**: Documentation-oriented architecture and program mission in an existing single-module Go repository  
-**Performance Goals**: A reviewer locates current status, normative design, next mission, and risks in under five minutes; progress queries are designed for bounded revisioned responses rather than repository scans  
-**Constraints**: Documentation-only changes; no false shipped claims; preserve lease-scoped workspaces, review independence, and serialized integration; SQLite forbidden from the target production graph; MCP optional  
+**Language/Version**: Go 1.26 application repository; Markdown, Mermaid, JSON Schema 2020-12, and strict JSON examples for this documentation mission
+
+**Primary Dependencies**: Existing Phase 1–3 Go domain packages and evidence; GapDB public contract and evidence; Beads 1.2.2 adapter contract; Git; Orchestrator API 1.3 compatibility record; MCP `2026-07-28` and Tasks extension specifications
+
+**Storage**: Documentation in Git for this mission; proposed runtime uses memory-primary GapDB with durable journal/checkpoint evidence and no SQLite production dependency
+
+**Testing**: Requirement traceability, architecture ownership and dependency guards, mutant controls, JSON Schema validation, Mermaid portability, local-link validation, `git diff --check`, and adversarial architecture review
+
+**Target Platform**: Documentation renders on GitHub; proposed first production runtime is Linux/amd64 with one machine/filesystem authority and remote clients behind the application API
+
+**Project Type**: Documentation-oriented architecture and program mission in an existing single-module Go repository
+
+**Performance Goals**: A reviewer locates current status, normative design, next mission, and risks in under five minutes; progress queries are designed for bounded revisioned responses rather than repository scans
+
+**Constraints**: Documentation-only changes; no false shipped claims; preserve lease-scoped workspaces, review independence, and serialized integration; SQLite forbidden from the target production graph; MCP optional
+
 **Scale/Scope**: 28 functional requirements, 15 non-functional requirements, 18 constraints, six principal architecture contracts, one compatibility/migration inventory, and a seven-mission candidate program graph
 
 ## Charter Check
