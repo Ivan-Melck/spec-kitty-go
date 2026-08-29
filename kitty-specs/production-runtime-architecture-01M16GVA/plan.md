@@ -65,6 +65,7 @@ kitty-specs/production-runtime-architecture-01M16GVA/
 ├── plan.md
 ├── research.md
 ├── data-model.md
+├── program-manifest.json
 ├── quickstart.md
 ├── checklists/
 │   └── requirements.md
@@ -213,6 +214,7 @@ The proving program uses GapDB's supported public client and a pinned `gapdbd` l
 | `contracts/acceptance-evidence.schema.json` | Neutral evidence envelope | Two different provider examples validate against one schema |
 | `contracts/mcp-2026-07-28-projection.md` | Optional MCP mapping | No MCP-only capability; Tasks map to native operations |
 | `contracts/program-manifest.schema.json` | Future mission dependency/admission contract | Program graph validates and is acyclic |
+| `program-manifest.json` | Machine-readable seven-mission candidate program | Schema validation, referential integrity, dependency limit, and acyclicity |
 | `quickstart.md` | Reviewer/operator path through the design | Next action found in under five minutes |
 | `docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md` | Canonical ratified recommendation | Independent adversarial review and no conflicting active guidance |
 | `docs/PRODUCTION_RUNTIME_PROGRAM.md` | Dependency-ordered implementation roadmap | Bounded missions with entry/exit evidence and falsification targets |
