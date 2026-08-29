@@ -1,7 +1,7 @@
 {
-  "event_count": 5,
-  "last_event_id": "01M16N6DXC9RY29D8YDXVNMGK3",
-  "materialized_at": "2026-08-29T11:41:34.508950+00:00",
+  "event_count": 6,
+  "last_event_id": "01M16N6H0NEPA3KV251SW88VTE",
+  "materialized_at": "2026-08-29T11:41:37.686002+00:00",
   "mission_number": "",
   "mission_slug": "production-runtime-architecture-01M16GVA",
   "mission_type": "software-dev",
@@ -14,7 +14,7 @@
     "for_review": 0,
     "in_progress": 0,
     "in_review": 0,
-    "planned": 5
+    "planned": 6
   },
   "work_packages": {
     "WP01": {
@@ -51,6 +51,13 @@
       "lane": "planned",
       "last_event_id": "01M16N6DXC9RY29D8YDXVNMGK3",
       "last_transition_at": "2026-08-29T11:41:34.508950+00:00"
+    },
+    "WP06": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M16N6H0NEPA3KV251SW88VTE",
+      "last_transition_at": "2026-08-29T11:41:37.686002+00:00"
     }
   }
 }
