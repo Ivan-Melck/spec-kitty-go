@@ -25,6 +25,7 @@
   "purpose_context": "This mission consolidates the approved redesign into canonical architecture, contracts, behavioral preservation boundaries, and a dependency-ordered delivery program. It defines GapDB authority and recovery, Beads tracker composition, Orchestrator API 2.0, truthful progress, stack-neutral acceptance, and the optional stateless MCP adapter without claiming those future implementation slices are already shipped.",
   "purpose_tldr": "Ratify the Go-native production architecture and decompose delivery into evidence-backed missions.",
   "slug": "production-runtime-architecture-01M16GVA",
+  "status_phase": "1",
   "target_branch": "feat/production-runtime-architecture",
   "topology": "coord",
   "vcs": "git",
