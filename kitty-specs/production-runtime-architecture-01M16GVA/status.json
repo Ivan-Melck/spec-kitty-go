@@ -61,6 +61,9 @@
       "last_event_id": "01M16Y5S36VHKKNREPDQJVD5RJ",
       "last_transition_at": "2026-08-29T14:18:30.374420+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: process-complete API 2.0, native operations, revisioned progress, compatibility refusal, and conformance contract"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 346017,
