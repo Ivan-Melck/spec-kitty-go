@@ -1,472 +1,183 @@
-# Spec Kitty Go Re-architecture: Technical Project Plan
+# Spec Kitty Production Runtime: Technical Project Plan
 
-Status: Phase 1 authority kernel and Phase 2 Beads tracker integration are
-delivered and qualified. Later mission-method and external-surface phases remain
-future work.
+Status: **Phase 1–3 delivered at source-bound evidence boundaries; production
+architecture ratified; M1–M7 implementation proposed**
 
-Working repository: `go-kitty3`
+Updated: 2026-08-29
 
-Date: 2026-08-23
+Canonical target: [Production Orchestration Architecture](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md)
+
+Decision record: [ADR 0002](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/adr/0002-production-orchestration-architecture.md)
+
+Delivery program: [Production Runtime Program](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/PRODUCTION_RUNTIME_PROGRAM.md)
+
+This plan is an implementation guide and delivery-truth index. It summarizes
+the canonical records but does not redefine them. When this plan and a linked
+specialized contract differ, the canonical architecture and its accepted
+specialized record control.
 
 ## 1. Executive decision
 
-Build a new Go implementation of Spec Kitty around capability boundaries rather
-than porting the Python package structure.
+Build Spec Kitty as a Go-native set of cohesive authority capabilities rather
+than a translation of Python modules and artifact choreography. Preserve the
+product laws already proved by Phase 1–3, then recompose them on a memory-primary,
+GapDB-only production host.
 
-The implementation will preserve Spec Kitty's product method and its strongest
-execution property: multiple agents can work safely and concurrently in
-isolated lanes and worktrees, then pass through independent review and
-controlled integration.
-
-Beads will be the default first-party ticket substrate. It will own the normal
-work-tracker concerns: work descriptions, dependency relationships, assignment,
-discussion, and human-visible acceptance text. Spec Kitty will continue to own
-mission methodology, governance, execution leases, lane/worktree isolation,
-review authority, merge policy, and final mission acceptance.
-
-The architectural shorthand is:
+The stable ownership model is:
 
 ```text
-Beads:       What work exists, what blocks it, and its visible ownership
-Spec Kitty:  Whether work may run, where it runs, and how it is accepted
-Git:         The authoritative code and integration history
+Beads       -> mutable work definition, dependencies, discussion, assignment
+Spec Kitty  -> mission, WorkRevision, execution, review, acceptance, integration
+Git         -> source objects, commits, trees, ancestry, and ref outcomes
+GapDB       -> target ordered control-state substrate, never product semantics
 ```
 
-Beads is the default ticket substrate, not the architectural substrate. All
-tracker behavior remains behind narrow Go contracts so another provider can be
-selected without replacing the mission or execution engines.
+The first production runtime retains one machine and one filesystem authority.
+Remote callers cross Orchestrator API 2.0 rather than opening GapDB or mutating
+host workspaces and Git directly.
 
-The architecture was independently reviewed by Mini on 2026-08-23. Her
-accepted findings materially changed workspace replacement, work-revision
-reconciliation, reviewer independence, saga compensation, machine authority,
-and delivery order. The resolution record is in
-`docs/MINI_REVIEW_RESOLUTION.md`.
+## 2. Delivery truth and compatibility
 
-The current Python host was then characterized at commit
-`d060cff9a5c9f8cf369c8786e5bf9b4f89931d0a`. The resulting product contracts,
-intentional retirements, incident evidence, and required amendments are in
-`docs/PYTHON_BEHAVIOR_INVENTORY.md`; the executable Phase 1 fault matrix is in
-`docs/CONCURRENCY_SCENARIOS.md`.
+### 2.1 Delivered now
 
-## 2. Why this project exists
-
-Earlier Zig and Go experiments demonstrated that changing implementation
-language does not automatically produce a native design. A transliteration can
-retain Python's module boundaries, artifact-driven control flow, dynamic
-dispatch habits, state duplication, and filesystem conventions even when the
-new syntax is Go or Zig.
-
-This project is therefore a behavior-preserving re-architecture, not a package
-port.
-
-The desired synthesis is:
-
-- Spec Kitty's mission method, governance, work-package discipline, isolated
-  concurrency, implementation/review separation, and controlled merge.
-- Beads' ticket metaphor, dependency graph, durable comments, human-visible
-  acceptance fields, offline-first operation, and agent-oriented work queries.
-- ThickTicket's useful identity distinction between durable actors, external
-  provider identities, and ephemeral execution processes.
-- A small Go composition root with cohesive vertical capabilities, typed
-  contracts, explicit effects, and replaceable adapters.
-
-The project explicitly rejects the idea that one of those systems should be
-copied wholesale.
-
-## 3. Product outcomes
-
-### 3.1 Primary outcomes
-
-1. Preserve the complete software-development mission arc where it remains
-   valuable:
-
-   ```text
-   specify -> plan -> decompose -> implement/review -> accept -> merge
-           -> mission review -> retrospective
-   ```
-
-2. Replace the hand-maintained Markdown task list with a tracker-backed,
-   dependency-aware work graph.
-3. Preserve and strengthen concurrent agent execution in isolated worktrees.
-4. Make Beads the zero-configuration default while retaining a real tracker
-   substitution boundary.
-5. Keep Team Kitty, the Orchestrator API, MCP, CLI, and future clients as
-   integrations over the same application capabilities rather than alternate
-   control planes.
-6. Provide a migration path from existing Python Spec Kitty projects without
-   requiring Python at runtime.
-7. Make correctness observable and testable under crashes, contention, stale
-   processes, dirty repositories, provider failures, and merge conflicts.
-
-### 3.2 Secondary outcomes
-
-- Reduce agent tool calls spent creating, parsing, and checking task Markdown.
-- Give humans a normal ticket view without weakening mission governance.
-- Permit an actor to have multiple simultaneous agent processes without
-  confusing identity with execution ownership.
-- Make every mutating operation idempotent or explicitly non-repeatable.
-- Provide stable machine-readable JSON contracts for agent harnesses.
-
-## 4. Non-goals
-
-The first production release will not:
-
-- Reproduce Python source layout, class hierarchy, decorators, or command
-  implementation patterns.
-- Reimplement Beads, Dolt, Git, or a general issue-tracker database.
-- Adopt Beads Molecules, Gas Town roles, or merge slots as Spec Kitty workflow
-  law.
-- Make tracker status the mission state machine.
-- Make Team Kitty a required service or source of truth.
-- Support arbitrary in-process binary plugins.
-- Build a general workflow DSL before the first built-in mission type is proven.
-- Guarantee full bidirectional synchronization with every external tracker.
-- Preserve every historical file layout when a compatibility projection is
-  sufficient.
-- Use chat transcripts as canonical work, decision, or handoff state.
-
-## 5. Product laws
-
-These are acceptance invariants, not implementation preferences.
-
-### 5.1 Mission authority law
-
-A mission is more than an epic or collection of tickets. The mission engine is
-authoritative for intent, phase, governance context, required artifacts,
-acceptance gates, and terminal outcome.
-
-No tracker adapter may advance a mission merely because an issue status changed.
-
-### 5.2 Work authority law
-
-Exactly one configured tracker is the primary mutable authority for work
-definition during planning and decomposition. Other ticket systems may be
-mirrors, exports, or future alternative primaries, but two providers cannot both
-be writable authorities for the same mission.
-
-Before execution, Spec Kitty pins a `WorkRevision`: an immutable snapshot of
-work IDs, descriptions, dependencies, acceptance criteria, and relevant tracker
-versions. Execution consumes that revision. Later tracker edits are surfaced as
-drift and require explicit reconciliation; they do not silently change a
-running agent's contract.
-
-Each `WorkRevision` is a numbered generation of the executable graph and names
-its predecessor. Reconciliation creates a new generation and records an
-explicit disposition for affected work and active runs:
-
-- `continue`: the effective executable contract is unchanged and the current
-  run remains eligible for review and acceptance;
-- `supersede`: replacement work becomes current; the old run may finish only as
-  recoverable evidence and cannot be accepted or integrated;
-- `invalidate`: the old contract is no longer valid; active work is stopped at
-  the Spec Kitty authority boundary and its workspace is quarantined;
-- `fork`: the old and new work are intentionally retained as distinct valid
-  lines with separate stable WorkIDs and dependencies.
-
-Reconciliation is a mission decision, not a tracker side effect. A dependency
-or criterion edit cannot select its own disposition.
-
-### 5.3 Execution authority law
-
-Tracker assignment is visible ownership. A Spec Kitty run lease is execution
-authority. An agent may not mutate a worktree merely because a ticket is
-assigned to it.
-
-Every execution attempt must bind:
-
-```text
-MissionID + WorkID + WorkRevision + ActorID + ProcessID
-          + RunID + LaneID + WorkspaceID + Lease
-```
-
-### 5.4 Isolation law
-
-Parallel implementation runs never share a mutable checkout. Each run receives
-an isolated worktree rooted at a recorded base commit. Two agents must be able
-to work on different work packages in the same repository without overwriting
-files, branch pointers, task state, or tracker state.
-
-A mutable workspace belongs permanently to the lease generation that created
-it. A replacement lease never inherits that workspace. When a lease expires or
-is revoked, its workspace is quarantined and excluded from normal execution,
-review, and integration. The replacement receives a newly-created workspace.
-Potentially useful changes from the quarantined workspace require an explicit,
-quiescence-checked reconciliation operation.
-
-### 5.5 Singular integration law
-
-Implementation may fan out. Integration is serialized through a single
-Spec Kitty integration authority. Tracker-native merge locks or provider status
-transitions are advisory and cannot replace the integration queue.
-
-### 5.6 Review independence law
-
-An implementation run cannot approve its own output. Review is a separate
-authority boundary with a separately recorded actor, process, verdict, and
-evidence set.
-
-The reviewer `ActorID` must differ from every implementation `ActorID`
-contributing to the candidate. A different `ProcessID` belonging to the same
-actor is not independent review. Phase 1 has no waiver or bypass. Any future
-exception would be a separately specified and ratified feature, not an
-interpretation of this law.
-
-### 5.7 Durable coordination law
-
-Information required to resume or judge work must be durable. Work discussion
-belongs on the configured tracker when it is human-facing. Execution facts,
-leases, commands, and gate evidence belong in Spec Kitty's control state.
-Private transcript content is never the only record of a blocker, decision,
-handoff, or rejection.
-
-### 5.8 Derived-document law
-
-`tasks.md`, checkboxes, dashboards, and status summaries are projections. Agents
-must never be required to maintain the same state in both a tracker and a
-Markdown document.
-
-### 5.9 Integration boundary law
-
-CLI, MCP, Team Kitty, and the Orchestrator API call the same application command
-and query services. None may import storage implementations or mutate mission,
-work, run, or Git state directly.
-
-### 5.10 Honest recovery law
-
-Cross-system operations are explicit sagas with durable steps and compensating
-actions. The system must never claim an atomic transaction across SQLite, Beads,
-the filesystem, and Git when no such transaction exists.
-
-### 5.11 Attribution-safe compensation law
-
-A compensation may undo an external effect only while the current external
-state is demonstrably attributable to the operation being compensated. The
-operation records the provider revision, expected value, actor, and operation
-marker needed for compare-before-compensate. If a human or later operation has
-changed the state, recovery records a conflict or requests a decision rather
-than overwriting it.
-
-### 5.12 Single-machine control authority law
-
-The first release permits multiple local processes but exactly one machine and
-filesystem authority to open a Spec Kitty control store. The SQLite database is
-not supported on NFS, SMB, a multi-host shared volume, or independently mounted
-copies.
-
-Remote agents use the Orchestrator API and host-owned execution tools; they do
-not open the control database. An agent requiring direct shell access to a
-worktree executes within the same machine authority that owns the control store.
-Distributed control-store ownership is a separate future architecture.
-The first-release invariant is exact: one control store is owned by one machine
-and one filesystem authority.
-
-## 6. Conceptual model
-
-### 6.1 Stable identities
-
-| Identity | Meaning | Canonical owner |
+| Phase | Delivered behavior | Qualification boundary |
 |---|---|---|
-| `ProjectID` | Configured repository/project | Project capability |
-| `MissionID` | One governed mission instance | Mission capability |
-| `WorkID` | Provider-independent work identity | Work capability |
-| `ExternalWorkRef` | Provider, connection, remote ID | Tracker adapter |
-| `WorkRevisionID` | Immutable executable work-graph snapshot | Mission/work bridge |
-| `CriterionID` | Stable acceptance statement | Work revision |
-| `ActorID` | Durable human, agent, role, or system principal | Actor capability |
-| `ExternalSubjectRef` | Actor identity in Beads, GitHub, Jira, etc. | Identity mapping |
-| `ProcessID` | One agent or client process | Runtime boundary |
-| `RunID` | One attempt to perform or review work | Execution capability |
-| `LaneID` | Scheduling and integration isolation boundary | Lane capability |
-| `WorkspaceID` | Concrete worktree/checkout | Workspace capability |
-| `ReviewID` | One review verdict and evidence set | Review capability |
-| `IntegrationID` | One merge/promotion attempt | Integration capability |
+| Phase 1 | Concurrent leases, isolated lease-scoped worktrees, stale refusal, workspace quarantine, immutable handoff, ActorID-level review independence, and serialized conflict-preserving integration | Frozen source and evidence cited by [ADR 0001](adr/0001-phase1-authority-proving-ground-verdict.md) and the [Phase 1 index](phase1-evidence/README.md) |
+| Phase 2 | Provider-neutral tracker ports and exact Beads 1.2.2 JSON integration, including portable, dishonest, contention, backup, and real-provider evidence | Exact tuple and source-bound [Phase 2 evidence](phase2-evidence/README.md) |
+| Phase 3 | Governed specify/plan/decompose/finalize flow, immutable WorkRevision generations, semantic drift, `continue | supersede | invalidate | fork`, action-scoped governance, typed pure `next`, and derived tasks | Exact source and [Phase 3 evidence](phase3-evidence/README.md) |
 
-The implementation should define each ID exactly once. Avoid the prototype
-failure mode where separate packages invent incompatible `ActorID` types.
+The current repository contains the proving/helper command
+`cmd/spk-phase1-helper`. It does not contain the production `spec-kitty` host,
+GapDB runtime, API 2.0 server, stack-neutral acceptance engine, or MCP adapter.
+SQLite is the observed Phase 1–3 control-store implementation; that historical
+qualification remains valid only at its recorded boundary.
 
-### 6.2 Mission and work are related but not identical
+### 2.2 Ratified target
 
-```text
-Project
-  Mission
-    MissionRevision
-    WorkRevision
-      Lane 1..N
-        Ordered WorkID references
-        Accepted candidate lineage
-      WorkItem 1..N
-        Criterion 1..N
-        Dependency 0..N
-        Run 0..N
-          Workspace
-          Handoff
-          Review 0..N
-          Integration 0..N
-```
+GapDB is the sole target production control-state substrate. SQLite is not a
+fallback, migration runtime, dual-write peer, or safety net. API 2.0 is the
+target application vocabulary. API 1.3 remains a compatibility inventory and
+outer projection. Acceptance becomes stack-neutral. MCP `2026-07-28` is an
+optional separately packaged projection whose Tasks map to native operations.
 
-A Beads epic can represent a mission in the ticket surface, but it does not
-contain the whole mission. A work package normally maps one-to-one to a Beads
-issue, but Spec Kitty retains its own stable `WorkID` and stores the mapping.
+“Ratified” creates proof obligations; it does not make these components ship.
+The old spelling “Gapdb” remains searchable in historical records, but this plan
+uses the project name GapDB.
 
-### 6.3 Actor, assignment, and process
+### 2.3 Historical evidence rule
 
-- `ActorID` is durable: `lynn`, `robert`, `codex-reviewer`, or `qa`.
-- `ProcessID` is ephemeral: one launched Codex/Claude/local process.
-- `ExternalSubjectRef` maps the actor to a provider-specific identity.
-- Assignment says who is expected to own the visible ticket.
-- A run lease says which process may currently execute it.
+A later architecture decision neither inherits nor invalidates an older
+exact-source verdict. It changes what is built next. Frozen evidence and
+completed mission records remain untouched. Copying an old payload beside a
+new implementation neither qualifies the new code nor changes the old result.
 
-This permits two processes belonging to the same durable actor without
-collapsing their workspaces or audit trails.
+## 3. Migration classification of the previous active plan
 
-## 7. Source-of-truth matrix
+The previous plan was inventoried before replacement. The dispositions below
+cover every normative topic named by WP06: source of truth, storage, events,
+recovery, API, acceptance, MCP, repository layout, delivery phases, validation,
+risks, and definition of done.
 
-| Concern | Authority | Projections or mirrors |
+| Previous section | Disposition | Active treatment |
 |---|---|---|
-| Mission intent and approved artifacts | Versioned mission artifacts | Team Kitty, dashboard |
-| Mission lifecycle and decisions | Spec Kitty control store | CLI/API status, tracker comments |
-| Mutable work definition before finalization | Primary tracker (Beads by default) | Derived `tasks.md` |
-| Executable work graph | Pinned `WorkRevision` | Tracker labels/status summaries |
-| Visible assignment and discussion | Primary tracker | Team Kitty |
-| Execution leases and attempts | Spec Kitty control store | Tracker assignment/status |
-| Lane and workspace topology | Spec Kitty workspace service | Dashboard/API |
-| Source code and commit history | Git | Handoff artifacts |
-| Review verdict and evidence | Spec Kitty review store | Tracker comment/status |
-| Integration and merge outcome | Git plus Spec Kitty integration record | Tracker closure, Team Kitty |
-| Actor identity | Spec Kitty actor directory | Provider identity links |
-| External synchronization cursor | Connector adapter state | Diagnostics |
+| 1 Executive decision | Amend | Retain the behavior-first Go re-architecture; replace SQLite/API 1.3 future direction with the ratified target |
+| 2 Why this project exists | Retain | Python is behavioral evidence, not a package template |
+| 3 Product outcomes | Amend | Retain mission/concurrency/tracker outcomes; route external surfaces through API 2.0 and neutral acceptance |
+| 4 Non-goals | Amend | Retain anti-transliteration and anti-plugin-soup limits; add no production fallback and optional MCP isolation |
+| 5 Product laws | Retain/amend | Retain authority, isolation, review, integration, recovery, and compensation laws; replace SQLite-specific representation |
+| 6 Conceptual model | Amend | Retain stable identities; add runtime epoch, operation, decision, claim, evidence, and native-operation identities from canonical records |
+| 7 Source-of-truth matrix | Replace | Use the canonical single-writable-owner matrix summarized in section 5 |
+| 8 Architectural shape | Link-only summary | Canonical component and dependency boundaries control; this plan records only implementation sequencing |
+| 9 Beads integration | Retain as delivered history | Exact 1.2.2 tuple and bounded capabilities remain valid; Beads never expands into execution or mission authority |
+| 10 Mission methodology | Retain/amend | Preserve mission and WorkRevision semantics; target journal/API representation replaces filesystem state |
+| 11 Concurrency and workspace design | Retain law, replace storage | Keep quarantine/fresh replacement, leases, and serialized integration; replace SQLite persistence with GapDB journal/checkpoint/epoch contracts |
+| 12 Events, commands, queries | Replace | API 2.0 closed commands, durable operations, journal revisions, progress, and typed diagnostics control |
+| 13 Integrations | Replace/link | API 2.0 is the sole seam; Team Kitty and optional MCP are adapters, not alternate control planes |
+| 14 Repository organization | Move to historical context | Capability boundaries remain; speculative directory names are not a production contract |
+| 15 CLI surface | Replace | Current helper is documented honestly; future CLI projects API 2.0 and cannot be advertised as shipped |
+| 16 Migration and compatibility | Amend | Behavior inventory remains; API 1.3 becomes bounded translation/refusal; any data import is explicit offline work outside the normal graph |
+| 17 Old Phase 0–7 roadmap | Replace | The dependency-ordered M1–M7 program is the only active delivery sequence |
+| 18 Validation strategy | Amend | Retain contention/fault/model testing; add GapDB tuple, playback, structural absence, API, provider-neutral, and optional-module proofs |
+| 19 Observability and operations | Amend | Revisioned progress, typed decisions, recovery state, and native operations replace proposed store-shaped diagnostics |
+| 20 Risks | Retain/amend | Preserve authority-leak and concurrency risks; add lifecycle tuple, playback, hidden SQLite, API authority, and MCP isolation risks |
+| 21 ADR queue | Move to historical context | ADR 0002 and accepted specialized documents now resolve the production questions |
+| 22 Focused decisions | Replace | Unresolved implementation choices are mission entry checks; product direction is no longer open-ended |
+| 23 Definition of done | Replace | M6 core qualification and the release definition in section 13 control |
+| Appendix A Mini review brief | Move to historical context | The accepted resolution remains linked evidence, not an active review prompt |
+| Appendix B references | Link-only summary | Current canonical and historical indexes replace local prototype paths |
 
-The primary tracker can be replaced. The authorities in the right-hand column
-cannot silently become primary because an integration is convenient.
+## 4. Product laws retained across the redesign
 
-## 8. Architectural shape
+1. **Mission authority:** a mission is a governed lifecycle, not a tracker epic.
+2. **Executable graph immutability:** execution consumes one generation-numbered
+   WorkRevision. Tracker drift cannot mutate it in place.
+3. **Independent concurrency:** independent work may run concurrently only in
+   distinct mutable workspaces.
+4. **Lease-scoped workspace:** expiry quarantines W1 permanently from ordinary
+   authority; a replacement receives fresh W2.
+5. **Stale refusal:** epoch, generation, lease, fence, candidate, policy, and ref
+   mismatches fail closed before external effects.
+6. **Immutable candidate boundary:** review consumes a recorded Git candidate,
+   contributor set, criteria/evidence digest, and exact generation.
+7. **Actor-level review independence:** the reviewer ActorID differs from every
+   contributor ActorID. Phase 1 has no waiver or bypass. Phase 1 has no
+   same-actor waiver.
+8. **Stack-neutral acceptance:** providers produce evidence; only Spec Kitty's
+   acceptance capability decides the complete claim set.
+9. **Singular integration:** one repository/target-ref authority serializes Git
+   mutation and preserves conflict/repair evidence.
+10. **Attribution-safe compensation:** undo only when provider revision, value,
+    and operation marker still attribute the state to the compensated attempt.
+11. **Honest recovery:** storage recovery, product restore, epoch replacement,
+    external reconciliation, and playback are different claims.
+12. **Projection-only documents and transports:** Markdown, dashboards, tracker
+    status, API compatibility, and MCP never become independent authority.
 
-### 8.1 Small mechanism-only kernel
+## 5. Authority and component boundaries
 
-The kernel should contain only universally shared mechanics:
+Every category has one writable owner:
 
-- ID construction and validation.
-- Clocks and deterministic test clocks.
-- Typed errors and error classification.
-- Event envelope and causation metadata.
-- Idempotency keys.
-- Transaction and outbox primitives for the Spec Kitty control store.
-- Path safety and repository-root identity.
+| State | Writable owner | Never inferred from |
+|---|---|---|
+| Mission lifecycle | Spec Kitty mission capability | Tracker status or Markdown |
+| Mutable work definition | Configured primary tracker; Beads by default | Assignment as execution authority |
+| Executable graph | Spec Kitty WorkRevision capability | A later provider edit |
+| Run and lease | Spec Kitty execution capability | Process identity or ticket claim |
+| Mutable workspace | Host workspace capability | A path or previous lease |
+| Candidate | Spec Kitty handoff capability, from observed Git facts | Live directory contents |
+| Review | Spec Kitty review capability | Same actor in another process |
+| Acceptance | Spec Kitty acceptance capability | Provider success, tracker closure, or prose |
+| Integration decision | Spec Kitty integration capability | A tracker merge slot |
+| Git result | Git, observed through its adapter | Desired state in the journal |
+| Native operation | Spec Kitty operation capability | Transport session or MCP Task |
+| Progress | Rebuildable Spec Kitty projection at a journal revision | Hand-maintained percentage |
+| External provider state | Named external provider | Spec Kitty's desired value |
 
-The kernel must not contain mission steps, tracker statuses, Git commands,
-agent roles, or provider conditionals.
+Compile-time dependencies point inward:
 
-### 8.2 Vertical capabilities
+```mermaid
+flowchart TB
+    Clients[CLI hosted CI dashboard optional MCP]
+    Inbound[Inbound adapters]
+    App[Application capabilities]
+    Kernel[Authority kernel and pure reducers]
+    Ports[Application owned ports]
+    External[GapDB Beads Git workspace artifact providers]
 
-Each capability owns its domain types, policies, application operations, store
-ports, and contract tests. Adapters implement ports from the outside.
-
-Proposed first-party capabilities:
-
-| Capability | Responsibilities |
-|---|---|
-| `project` | Project discovery, configuration, repository identity |
-| `actor` | Actors, external identity links, process attribution |
-| `mission` | Mission type, steps, transitions, decisions, revisions |
-| `artifact` | Versioned spec/plan/research/review artifact locations |
-| `work` | Stable work IDs, tracker-neutral graph, finalization, drift |
-| `execution` | Run attempts, leases, heartbeats, handoffs, recovery |
-| `lane` | Lane allocation and concurrency policy |
-| `workspace` | Git worktrees, branch ownership, cleanup, safety checks |
-| `review` | Reviewer assignment, evidence, verdicts, rejection cycles |
-| `integration` | Acceptance preflight, merge queue, merge, conflict work |
-| `doctrine` | Action-scoped governance and profile resolution |
-| `sync` | Optional primary/mirror tracker synchronization |
-| `projection` | Dashboard, Markdown, status, and compatibility views |
-
-This table is a target ownership map, not permission to scaffold fourteen
-packages at the start. A capability becomes a package only when an executable
-slice demonstrates an independent policy boundary. Phase 1 began with—and
-qualified—the smallest cohesive implementation of control state, execution
-authority, workspace isolation, review, and integration. Later names and
-boundaries are split only when pressure from real behavior earns the separation.
-
-### 8.3 Narrow ports, not a mega-plugin interface
-
-The work capability should depend on independently satisfiable ports such as:
-
-```go
-type WorkCatalog interface {
-    Create(context.Context, WorkDraft) (ExternalWorkRef, error)
-    Get(context.Context, ExternalWorkRef) (WorkRecord, error)
-    Update(context.Context, ExternalWorkRef, WorkPatch) (WorkRecord, error)
-    List(context.Context, WorkQuery) ([]WorkRecord, error)
-}
-
-type WorkGraph interface {
-    AddDependency(context.Context, WorkID, WorkID, DependencyKind) error
-    Dependencies(context.Context, WorkID) ([]Dependency, error)
-    Ready(context.Context, ReadyQuery) ([]WorkRecord, error)
-}
-
-type WorkDiscussion interface {
-    AddComment(context.Context, WorkID, CommentDraft) (CommentRef, error)
-    Comments(context.Context, WorkID) ([]Comment, error)
-}
-
-type WorkAssignment interface {
-    Assign(context.Context, WorkID, ActorID) error
-    ClearAssignment(context.Context, WorkID) error
-}
+    Clients --> Inbound
+    Inbound --> App
+    App --> Kernel
+    App --> Ports
+    External --> Ports
 ```
 
-Acceptance definitions and provider capabilities should likewise be narrow.
-Adapters declare supported capabilities at startup. A mission can reject a
-provider that cannot meet its required semantics instead of discovering the
-gap halfway through execution.
+The kernel imports no SQLite/SQL, GapDB, Beads, Git implementation, filesystem
+allocator, qualification ecosystem, transport, or MCP package. Adapters report
+observations and typed failures; they do not author product verdicts.
 
-### 8.4 Explicit application orchestration
+## 6. Current Beads delivery boundary
 
-Application services coordinate capabilities. They should use straightforward
-control flow rather than a service locator, reflective dispatch, implicit event
-magic, or arbitrary hook chains.
-
-For example, `StartImplementation` explicitly:
-
-1. loads the mission and pinned work revision;
-2. checks work readiness and governance;
-3. acquires a Spec Kitty run lease;
-4. allocates a lane;
-5. creates an isolated worktree;
-6. records the workspace binding;
-7. mirrors assignment/progress to the tracker;
-8. returns the run capsule.
-
-Each completed step is durable. Failures run named compensations or leave a
-recoverable operation for `doctor`.
-
-### 8.5 Static composition first
-
-The initial binary uses explicit constructors in one composition root. The
-standard profile includes Beads, Git, local artifacts, the built-in mission
-types, CLI, and optional HTTP/MCP transports.
-
-Runtime-loaded Go plugins are out of scope. Future third-party executable
-integrations should use a versioned process or network protocol. This retains
-modularity without inheriting ABI fragility or plugin discovery magic.
-
-## 9. Beads integration
-
-### 9.1 Role
-
-Beads is the standard provider for `WorkCatalog`, `WorkGraph`,
-`WorkDiscussion`, visible assignment, and work-history projections.
-
-The Phase 2 investigation superseded the original public-library hypothesis.
-Beads 1.2.2 does not expose a supported Go consumer package usable by this
-module: the reusable implementation is beneath Go `internal/`, and its domain
-and storage contracts are not a compatibility promise. Importing those packages
-would also encourage the same semantic-copying mistake this redesign avoids and
-would couple Spec Kitty directly to Dolt schema details.
-
-The delivered adapter is `internal/tracker/beads`. The authority kernel depends
-only on provider-neutral tracker ports. The provider boundary is the bounded,
-documented JSON command protocol with this exact tuple:
+The accepted Phase 2 tuple remains:
 
 ```text
 Beads executable: 1.2.2
@@ -477,1318 +188,307 @@ integration:      argv-only documented JSON CLI
 binary SHA-256:   0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
 ```
 
-The adapter never parses human-formatted output, imports Beads implementation
-packages, issues direct Dolt SQL, or copies Beads domain structs into the kernel.
-Unknown optional fields in schema 1 are ignored. A future envelope or metadata
-schema fails before mutation.
+Every linked worktree observes the same canonical Beads workspace. Provider
+inspection is read-only. `embedded_serialized` coordinates Spec Kitty
+processes only; `server_multiwriter` requires the pinned qualified tuple.
+Content-derived observation revisions are neither ordered CAS tokens nor proof
+that a read/write pair is guarded.
 
-### 9.2 Mapping
+The 1.2.2 adapter supports catalog, graph, discussion, visible assignment,
+interchange, and backup behavior at its evidence boundary. It deliberately
+reports guarded arbitrary update and safe arbitrary compensation as unsupported
+when their guarantees cannot be supplied. Human or external changes are
+preserved and reconciled rather than overwritten.
 
-| Spec Kitty concept | Beads representation |
+Beads assignment is coordination, not authority. Beads readiness is diagnostic,
+comments are not review, and closing an issue does not accept a mission.
+
+## 7. Target GapDB journal, checkpoint, and recovery
+
+### 7.1 Memory-primary, durably acknowledged
+
+The authority host serves aggregates, WorkRevision indexes, ready sets, lease
+state, progress, idempotency results, and watchers from one memory-resident
+owner. Memory is the fast active representation, not the durable source.
+
+An authority-changing command follows this order:
+
+1. canonicalize the typed request and verify its OperationID/digest;
+2. check current revision, runtime epoch, generation, lease/fence, candidate,
+   policy, and command-specific preconditions;
+3. reduce the command purely against the in-memory projection;
+4. submit one conditional atomic GapDB mutation containing complete versioned
+   events, operation result, aggregate heads, checkpoint metadata, and effect
+   intents;
+5. acknowledge success only after durable confirmation;
+6. publish committed events to memory and watchers; and
+7. dispatch external effects asynchronously through ports.
+
+Same OperationID and digest replays one recorded result. The same ID with a
+different digest fails before reduction or effects.
+
+### 7.2 Sidecar and adoption tuple
+
+M1 uses a separately owned, project-local `gapdbd` sidecar through the public
+Unix-socket client. It does not import GapDB `internal/server`, discover an
+arbitrary executable on `PATH`, or assume an unshipped embedding lifecycle.
+
+The signed M1 tuple pins source revision, `gapdbd` binary digest, public client
+version/digest, protocol version, lifecycle policy, supported platform and local
+filesystem boundary, and evidence digest. M2 cannot start until that tuple and
+the journal torture proof are accepted.
+
+### 7.3 Recovery contracts
+
+```text
+GapDB snapshot and WAL recovery
+  -> Spec Kitty checkpoint validation
+  -> later control-event reduction
+  -> durable new RuntimeEpochID
+  -> predecessor lease invalidation and workspace quarantine
+  -> external fact and pending-effect reconciliation
+  -> recovered revisioned progress
+  -> authority-changing command admission
+```
+
+A checkpoint accelerates restore; it is never a second authority. Playback is
+a pure reducer over explicit checkpoint/journal facts and recorded external
+observations. It invokes no tracker, Git, filesystem, provider, artifact,
+outbox, or compensation adapter. Unknown event/reducer versions fail closed.
+
+## 8. Production execution, review, and integration
+
+Beads observations become an immutable executable generation only after graph
+validation and explicit finalization. Drift yields one of `continue`,
+`supersede`, `invalidate`, or `fork`; a running contract never changes in place.
+
+Claiming ready work durably creates a run and lease before a capsule is returned.
+Workspace allocation is an external saga after durable intent. Expired authority
+quarantines its workspace before replacement claim. A candidate handoff binds
+exact commit/tree/ref observations, WorkRevision, run/lease generation,
+contributors, criteria, and evidence.
+
+Review is candidate-bound and ActorID-independent. Acceptance evaluates the
+complete current claim set. Integration then reserves one repository/target-ref
+attempt, records a durable effect intent, moves Git only through its adapter,
+and records the observed outcome. Ambiguous effects reconcile before retry.
+Conflicts preserve the candidate and create explicit repair work.
+
+Every tracker, workspace, artifact, and Git saga follows this law:
+
+> Compensation may undo only external state still demonstrably attributable to
+> the operation being compensated.
+
+Ambiguity is `decision_required`, never a destructive guess.
+
+## 9. Orchestrator API 2.0 and mission progress
+
+[Orchestrator API 2.0](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/ORCHESTRATOR_API_2_0.md)
+is the proposed process-complete semantic seam. It is transport-neutral and
+defines closed named command families, typed results/refusals, explicit scope,
+OperationID/digest replay, host-created authority identities, policy/governance
+revisions, and bounded diagnostics.
+
+Progress is graph position and authority at one journal revision. A snapshot
+includes phase, WorkRevision generation, canonical work counts, active runs and
+leases, ready/critical/blocked paths, blockers, decisions, drift, legal next
+actions, epoch, checkpoint boundary, and freshness. A percentage is optional,
+derived, and labeled with its weighting rule.
+
+Native operations outlive transport requests. They support disconnect/reconnect,
+durable `input_required` decisions, cooperative cancellation intent, monotonic
+progress revisions, and immutable terminal results. Disconnect is not cancel;
+cancel is not lease revocation, compensation, or rollback.
+
+[API 1.3](ORCHESTRATOR_API_1_3_PROJECTION.md) remains compatibility history.
+One request may translate to exactly one safe named API 2.0 operation. Ambiguous,
+lossy, or authority-creating requests receive a typed upgrade refusal.
+
+## 10. Stack-neutral acceptance
+
+[The acceptance proof-system record](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/STACK_NEUTRAL_ACCEPTANCE.md)
+separates four concepts:
+
+| Concept | Responsibility |
 |---|---|
-| Mission ticket surface | Epic bead |
-| Work package | Child issue |
-| Blocking dependency | `blocks` dependency |
-| Non-blocking provenance | `discovered-from` or related edge |
-| Human work brief | Description |
-| Design constraints | Design field |
-| Acceptance definitions | Acceptance field plus namespaced metadata |
-| Durable discussion | Comments |
-| Visible owner | Assignee string mapped from `ActorID` |
-| Completion summary | Close reason/comment |
-| Spec Kitty identity | `spec_kitty.*` namespaced metadata |
+| AcceptanceClaim | A stack-neutral proposition contributed by policy |
+| QualificationBinding | An explicitly approved provider/version/digest and execution/trust policy |
+| EvidenceEnvelope | A bounded observation tied to mission, WorkRevision, candidate, provider, runner, policy, and input/result digests |
+| AcceptanceDecision | Kernel evaluation of the complete admissible proof set |
 
-Spec Kitty should use hash-style Beads IDs for concurrent creation. Sequential
-IDs are not suitable for the default multi-agent profile.
+Required claims form the strict union of organization, project, mission-type,
+and mission policy. Narrower layers may add or strengthen but not remove a
+higher-layer claim. Detection proposes bindings only; an authorized operation
+approves them. Missing providers produce a visible decision rather than an
+implicit skip.
 
-### 9.3 Structured acceptance without checkbox labor
+`pass`, `fail`, `error`, `skipped`, and `waived` remain distinct. Waivers are
+candidate-, claim-, scope-, authority-, policy-, and time-bound evidence.
+Provider commands and human-formatted output never enter kernel vocabulary.
 
-The decompose operation produces structured criteria before writing the issue:
+## 11. Optional MCP projection
 
-```go
-type Criterion struct {
-    ID          CriterionID
-    Text        string
-    Verifier    VerifierKind
-    Required    bool
-    EvidenceHint string
-}
+[The MCP adapter record](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/MCP_2026_07_28_ADAPTER.md)
+defines an optional separate module and binary over API 2.0. Core build, install,
+tests, complete CLI missions, and qualification must pass with the adapter and
+SDK physically absent.
+
+The proposed adapter pins MCP core `2026-07-28` and independently pins an
+immutable Tasks extension revision/schema digest at M7 admission. One MCP Task
+projects one NativeOperationID. Stateless requests reauthenticate and
+reauthorize; task tokens, TTL, transport connections, and delivery cursors own
+no mission authority.
+
+Task expiry removes retrieval convenience, not mission history. `tasks/cancel`
+records cooperative cancellation intent; actual completion, cancellation, or
+effect reconciliation determines the terminal truth. Every MCP tool has an
+equivalent normal API and CLI operation.
+
+## 12. Dependency-ordered implementation program
+
+The program contains seven proposed governed missions:
+
+| ID | Mission | Dependencies | Primary falsification target |
+|---|---|---|---|
+| M1 | GapDB journal proof | none | Public pinned sidecar lifecycle cannot preserve one authority history and identical restore/playback digest under zombie/crash faults |
+| M2 | GapDB-only authority replacement | M1 | SQLite remains reachable through production source, dependencies, binary, config, fallback, or migration |
+| M3 | Production execution composition | M2 | Real tracker/Git/workspace/review/integration disagreement can create duplicate or stale authority |
+| M4 | Stack-neutral acceptance implementation | M2 | Kernel needs ecosystem commands or two materially different providers yield unequal gate semantics |
+| M5 | API 2.0, native operations, progress, and CLI | M2, M3, M4 | A caller can mint authority, or disconnect/restart loses operation/progress truth |
+| M6 | Core qualification and release | M5 | Sustained concurrency/crash/install/recovery fails or Python/SQLite/MCP remains in core |
+| M7 | Optional MCP adapter | M5 | Adapter absence breaks core, or task/session/cancel state changes durable authority |
+
+```mermaid
+flowchart LR
+    M1[M1 GapDB proof] --> M2[M2 GapDB-only authority]
+    M2 --> M3[M3 Production execution]
+    M2 --> M4[M4 Neutral acceptance]
+    M2 --> M5[M5 API 2.0 and progress]
+    M3 --> M5
+    M4 --> M5
+    M5 --> M6[M6 Core qualification]
+    M5 --> M7[M7 Optional MCP]
 ```
 
-The Beads acceptance field renders these for humans. Namespaced metadata retains
-stable criterion IDs and schema version where supported. Finalization reads the
-structured representation into the immutable `WorkRevision`.
+Critical path: M1 → M2 → M3 → M5 → M6. M3 and M4 may run in parallel after
+M2 because they own separate execution and acceptance boundaries. M6 and M7
+may run in parallel after M5; M7 is deliberately off the core release path.
 
-Agents do not toggle criteria manually. Tests, review verdicts, policy gates, or
-explicit human decisions attach evidence to the criterion in Spec Kitty's
-review state. A projection can show open/passed/failed results in Beads without
-making that projection authoritative.
+The program stop rule is binding: if M1 cannot preserve authority and the
+restore/playback digest through the two-agent zombie torture chamber, stop.
+Do not begin the large M2 replacement and do not fall back to SQLite.
 
-### 9.4 Concurrency mode
+## 13. Qualification and release evidence
 
-The delivered adapter distinguishes two explicit modes:
+Each mission must make its hardest claim falsifiable before broad scaffolding.
+The combined program requires:
 
-- `embedded_serialized` takes an adapter-owned writer lock keyed by the
-  canonical binding. This coordinates Spec Kitty processes only; it cannot fence
-  direct human or external writers.
-- `server_multiwriter` requires a pinned server identity and endpoint and uses
-  provider-native concurrent writes. Phase 2 qualified eight processes creating
-  1,000 records with zero collisions or duplicates.
-- Startup performs a capability and health preflight before the first mutation.
-- Every linked worktree receives the same canonical Beads workspace binding.
-  Divergence returns `workspace_mismatch`; the adapter never creates or selects
-  one independent ticket database per worktree.
+- exact GapDB source/client/protocol/binary/lifecycle tuple and signed human
+  adoption record;
+- crash injection after every durable journal and external-effect boundary;
+- identical restore and playback projections/digests with fail-on-call adapters;
+- fresh replacement workspaces while a real stale writer continues in W1;
+- structural absence of SQLite across source, module graph, SBOM, binary,
+  install, configuration, and runtime paths;
+- dishonest, stale, slow, unavailable, and human-modified tracker scenarios;
+- ActorID-level self-review mutants and serialized integration races;
+- at least two materially different qualification providers under one neutral
+  gate, including stale and malformed evidence;
+- black-box API/CLI mission completion without direct tracker, store, Git, or
+  workspace mutation;
+- bounded progress watch restart/backpressure/reset and operation cancellation
+  races; and
+- a full core scenario with MCP and its SDK absent.
 
-### 9.5 Beads claims are useful but not sufficient
+M6 is the release gate. M7 qualifies only the optional artifact. Evidence
+payloads identify tested source/tree, environment, complete census, commands,
+digests, failures, and limitations. Documentation attestation follows payload
+publication; later commits do not inherit the verdict.
 
-The adapter may use Beads' atomic claim API to update visible ownership. Spec
-Kitty correctness must still rely on its own run-lease uniqueness constraint.
-This is required because alternate providers may not have atomic claims and
-because filesystem workspace creation cannot participate in the Beads
-transaction.
+## 14. Principal risks and controls
 
-The claim/start workflow is a saga:
-
-```text
-Acquire Spec Kitty execution lease
-  -> claim/assign Beads issue
-  -> allocate lane
-  -> create worktree
-  -> bind workspace to run
-  -> mark run active
-```
-
-If a later step fails, the operation records its exact stage. Recovery either
-finishes the start or releases the lease. It removes a newly-created workspace
-only when it can prove that no process received access and the path remains
-owned and clean; otherwise it quarantines the workspace. It clears the tracker
-assignment only when it was made by this attempt.
-
-“Made by this attempt” is proven at compensation time, not inferred only from
-the local operation log. The adapter performs compare-before-compensate using
-the strongest available provider primitive: revision/ETag, expected assignee,
-operation marker, or guarded update. If the current assignment no longer
-matches, recovery leaves it untouched and records a reconciliation conflict.
-
-### 9.6 Compatibility and safety policy
-
-Version numbers do not imply compatibility. Beads 1.2.2 is the tested recovery
-release; this plan makes no inference about behavior accidentally present in
-1.2.0, 1.2.1, or a future release. A new executable version or schema remains
-unsupported until portable, dishonest, real-provider, contention,
-backup/export, and authority-invariant qualification passes and a new binary
-digest is allowlisted.
-
-The content-derived observation revision is an opaque observation token. It is
-not ordered and is not compare-and-swap. Local serialization likewise cannot
-turn a read followed by `bd update` into a provider-side conditional mutation.
-Consequently, guarded arbitrary update and safe arbitrary compensation are
-unsupported for 1.2.2; requests for either guarantee fail before mutation.
-
-### 9.7 Operations and recovery
-
-Provider inspection is read-only. It reports the exact executable
-version/digest, JSON schema, canonical Beads workspace identity, concurrency
-mode, capability levels, health, and recovery code. It never initializes Beads,
-installs hooks, edits agent instruction files, repairs state, or chooses a
-per-worktree database. Explicit disposable initialization uses
-`--stealth --skip-agents --skip-hooks --non-interactive`.
-
-The stable response policy is:
-
-| Diagnostic | Recovery policy |
+| Risk | Control and proof |
 |---|---|
-| `unavailable` | Repair the absolute binding or install the qualified binary |
-| `version_skew` / `schema_skew` | Stop before mutation and restore or qualify an exact tuple |
-| `workspace_mismatch` | Repair the project binding; never initialize or switch silently |
-| `lock_contended` | Use bounded retry or a qualified server-multiwriter binding |
-| `malformed_protocol` | Stop automation and verify the binary/digest; do not parse prose |
-| `ambiguous` | Observe mapping, operation marker, value, and revision before deciding |
-| `revision_conflict` / `attribution_lost` | Preserve current provider state and reconcile explicitly |
-| `guarded_update_unsupported` | Reconcile without mutation |
-| `safe_compensation_unsupported` | Do not emulate a guard with read-then-write |
-
-JSONL is portable interchange, not a restorable backup. Full recovery uses the
-Dolt-native backup path, a constrained absolute destination, and restore
-inspection in a new disposable workspace. Destructive restore never targets the
-live project binding automatically.
-
-### 9.8 Features intentionally not adopted
-
-The standard adapter will not use the following as mission authority:
-
-- Molecules or formulas as the mission engine.
-- Beads agent records as the actor directory.
-- Beads merge slots as the integration queue.
-- Custom statuses as Spec Kitty step states.
-- Compaction as canonical mission-memory deletion.
-- Provider-side hooks that mutate Git or mission state without going through
-  application commands.
-
-## 10. Mission methodology
-
-### 10.1 Mission definitions
-
-A mission type is a versioned Go capability exposing typed step contracts and
-transition policy. Built-in mission types are statically registered.
-
-Configuration may select templates, doctrine packs, optional steps, and policy
-parameters. It must not become a second programming language for repository
-movement or authority rules.
-
-The initial release implements only the software-development mission type.
-Research, documentation, and custom/minimal missions are preserved in the
-behavior inventory and added only after the software-development path validates
-the mission-type boundary. The architecture must not build four speculative
-implementations merely to prove that a registry can hold them.
-
-### 10.2 Software-development steps
-
-| Step | Output and gate |
-|---|---|
-| Initialize | Project, actor, tracker, Git, and governance preflight |
-| Specify | Approved intent, scope, requirements, acceptance framing |
-| Plan | Architecture, data flow, risks, compatibility, validation strategy |
-| Decompose | Tracker-backed work graph with dependencies and criteria |
-| Finalize work | Immutable executable `WorkRevision` and drift digest |
-| Execute | Dependency-aware implementation/review loops in parallel lanes |
-| Accept | Mission-wide requirement and invariant coverage gate |
-| Merge | Serialized integration into the target branch |
-| Mission review | Post-merge spec-to-code fidelity and risk review |
-| Retrospective | Non-blocking learning record and closeout |
-
-`tasks` remains a compatibility command alias if needed, but its semantic action
-is `decompose`. It creates or reconciles work items; it does not author a
-canonical `tasks.md` checklist.
-
-### 10.3 Work-revision reconciliation
-
-Finalization creates generation 1 of the executable graph. Later accepted
-tracker edits create a candidate generation rather than mutating generation 1.
-The reconciliation command compares generations and requires one disposition
-for every affected active or accepted work item.
-
-Each generation also pins the planning source commit, graph digest,
-post-collapse lane DAG, provider revisions, dependency satisfaction levels,
-and write-scope decisions. Each run records the exact accepted dependency
-candidate commits used to prepare its base. A finalized revision is rejected if
-lane collapse produces a cyclic lane graph.
-
-Rules:
-
-- Unaffected work retains identity and may continue.
-- A `continue` decision records why the semantic contract is equivalent even if
-  tracker text or provider revision changed.
-- Superseded or invalidated runs cannot submit an acceptable handoff under the
-  old generation.
-- Invalidating an active run expires its authority and quarantines its
-  workspace; it cannot stop the underlying OS process from writing.
-- Forking allocates distinct WorkIDs so both lines can be scheduled and judged
-  without ambiguous ancestry.
-- Accepted but not integrated work is re-evaluated when dependencies or
-  criteria affecting it change.
-- Integrated history is never rewritten by reconciliation. Necessary follow-up
-  becomes new repair or replacement work.
-- The mission records who approved reconciliation and the old/new graph
-  digests.
-
-The scheduler, reviewer, accept gate, and integration queue all reject work
-whose revision disposition does not permit their action.
-
-### 10.4 Action-scoped governance
-
-Doctrine and agent profiles are loaded for the action being performed. A run
-capsule contains the relevant governance digest and explicit authority. Agents
-should not receive the entire doctrine catalog on every call.
-
-The run records the profile and doctrine revision so a later review can explain
-which governance governed the work.
-
-### 10.5 `next` remains the simple agent surface
-
-The canonical agent loop should stay compact:
-
-```text
-spec-kitty next --mission <id> --json
-```
-
-It returns one of a small number of typed outcomes:
-
-- `query`: more user or system information is required;
-- `action`: perform a mission step;
-- `work_ready`: one or more work items can be claimed;
-- `review_ready`: review work is available;
-- `decision_required`: explicit human authority is needed;
-- `blocked`: a durable blocker exists;
-- `terminal`: the mission reached a defined outcome.
-
-The engine decides what kind of action is legal. The transport only renders the
-result.
-
-## 11. Concurrency and workspace design
-
-### 11.1 Shared control root
-
-All worktrees for one Git repository must discover the same project identity,
-Spec Kitty control database, and Beads database.
-
-For Git projects, runtime control state should be anchored from the Git common
-directory rather than a worktree-local `.git` file. A project identity file
-records the repository root and protects against accidentally binding two
-unrelated repositories to the same control state.
-
-Versioned user artifacts remain in the repository. Ephemeral runtime and leases
-do not appear in feature branches.
-
-### 11.2 Control-state persistence
-
-The delivered authority kernel uses a small Spec Kitty control database with
-transactional uniqueness and an outbox. SQLite in WAL mode is the current
-qualified control store because it supports multiple local processes,
-compare-and-swap state changes, crash-safe transactions, and operational
-inspection without requiring a daemon.
-
-This is a single-machine design. Only processes under the machine/filesystem
-authority owning the project may open the database. Remote clients cross the
-Orchestrator API boundary. Startup refuses known network/shared filesystem
-locations where SQLite locking semantics cannot meet the contract.
-
-The Beads/Dolt database and Spec Kitty control database have separate authority.
-Cross-database actions use sagas and idempotency keys.
-
-The schema should begin with:
-
-- projects and repository identities;
-- missions and mission transitions;
-- decisions and blockers;
-- work mappings and immutable work revisions;
-- actors, provider identities, and processes;
-- runs, leases, heartbeats, and operation stages;
-- lanes and workspace bindings;
-- handoffs, reviews, criteria evidence, and verdicts;
-- integration attempts and merge queue;
-- events, outbox entries, and projection cursors;
-- idempotency records and schema version.
-
-### 11.3 Run lease
-
-A run lease is a durable compare-and-swap record with:
-
-- work and revision identity;
-- role (`implement`, `review`, `repair`, or a mission-defined role);
-- actor and process;
-- acquired, heartbeat, and expiry timestamps;
-- current lifecycle state;
-- lane/workspace binding;
-- fencing token incremented on every new lease.
-
-Spec Kitty commands that mutate run, workspace, review, or integration state
-present the fencing token. This prevents a stale process from using the control
-plane, but it cannot prevent arbitrary POSIX writes by a surviving shell, IDE,
-or agent process. Filesystem safety therefore comes from never transferring a
-mutable workspace between lease generations.
-
-On expiry or revocation, the control plane:
-
-1. marks the old run non-authoritative;
-2. quarantines its workspace and branch from normal automation;
-3. refuses handoff, review, acceptance, or integration from its fencing token;
-4. allocates a new workspace and branch for any replacement lease;
-5. leaves the old workspace intact until an explicit reconciliation proves the
-   writer is quiescent and decides whether to preserve any output.
-
-### 11.4 Lane lineage and run/workspace lifecycle
-
-A lane is durable scheduling and integration lineage. It records the ordered
-work assigned to the lane, dependency-lane edges, accepted candidate history,
-and current accepted head. It is not a mutable checkout and does not expire
-when one process or workspace expires.
-
-Runs and their lease-scoped workspaces have the lifecycle:
-
-```text
-available
-  -> reserved
-  -> workspace_ready
-  -> active
-  -> handoff_ready
-  -> under_review
-  -> accepted | changes_requested | abandoned
-  -> integration_queued
-  -> integrated | conflict_repair
-  -> cleaned
-
-active | workspace_ready | handoff_ready
-  -> quarantined
-  -> reconciled | archived
-```
-
-Transitions are validated by the run/workspace capabilities. Tracker status is
-projected from these states where useful but cannot cause the transition. A
-subsequent run in the same lane may start from the lane's pinned accepted head,
-but always receives a new WorkspaceID, directory, branch, and lease binding.
-
-### 11.5 Worktree contract
-
-Each logical lane records its WorkRevision, ordered work, dependency edges,
-accepted candidate sequence, and pinned accepted head.
-
-Each concrete implementation workspace records:
-
-- absolute canonical workspace path;
-- repository identity;
-- base branch and base commit;
-- owned branch name;
-- current head;
-- work and run IDs;
-- actor/process IDs;
-- creation operation ID;
-- lease generation and fencing token that created it;
-- quarantine time and reason, when applicable;
-- cleanup eligibility.
-
-Workspace allocation is a durable staged saga. At minimum it distinguishes
-lease acquisition, workspace reservation, worktree creation, base verification,
-dependency-commit application, branch-ownership verification, and the final
-`workspace_ready` publication. A directory or registered Git worktree existing
-is never sufficient evidence that allocation completed.
-
-Safety rules:
-
-- Never reuse the user's primary checkout for agent implementation.
-- Never delete an unrecognized or dirty worktree.
-- Never clean a path using an unresolved environment variable or broad glob.
-- Refuse branch ownership collisions.
-- Preserve a rejected implementation workspace until explicitly superseded or
-  safely archived.
-- Never rebind a workspace to a new lease, process, or fencing generation.
-- Quarantine an expired or revoked lease's workspace without claiming to make
-  the underlying directory immutable.
-- Never read a quarantined workspace as stable evidence until the writer is
-  proven quiescent and a reconciliation snapshot is created.
-- Review and integration consume a recorded handoff commit from a valid lease,
-  never the live mutable directory.
-- Make workspace creation idempotent for the same operation.
-- Detect manual branch movement and require reconciliation.
-
-A handoff is the immutable boundary between implementation and judgment. It
-binds the valid lease generation, candidate commit, WorkRevision, lane lineage,
-contributor ActorIDs, criterion/evidence digest, and workspace quiescence check.
-Review verdicts and criterion results are committed transactionally in the
-control store; optional large evidence is content-addressed. Git artifacts,
-matrices, tracker comments, and dashboards are projections of that authority.
-
-### 11.6 Dependency scheduling
-
-The scheduler reads the pinned work revision, not a stale `bd ready` result
-alone. A candidate is runnable only when:
-
-- all hard dependencies are accepted at the required level;
-- no active implementation lease exists;
-- mission phase permits execution;
-- actor/profile capabilities match;
-- required governance context is available;
-- repository and tracker preflights pass.
-
-Beads readiness is a valuable query and consistency cross-check. A discrepancy
-between Beads readiness and the pinned graph becomes a diagnostic finding.
-
-### 11.7 Integration queue
-
-Accepted work enters a Spec Kitty integration queue ordered by:
-
-1. dependency topology;
-2. mission priority policy;
-3. acceptance timestamp;
-4. stable WorkID tie-breaker.
-
-Only one integration attempt mutates a repository target ref at a time, across
-all missions. The serialization key is repository identity plus target ref. A
-clean merge records the resulting commit. A conflict preserves both branches,
-records evidence, and creates or reopens explicit repair work. It never silently
-rewrites another lane. Resume state is an advisory progress cache; recovery
-probes Git and durable integration records before declaring any phase complete.
-
-## 12. Events, commands, and queries
-
-### 12.1 Command rules
-
-Every mutation is a typed command with:
-
-- command name and schema version;
-- idempotency key;
-- actor and process identity;
-- correlation and causation IDs;
-- expected aggregate revision where relevant;
-- explicit target IDs;
-- validation performed before effects;
-- typed result or typed failure.
-
-Commands that touch a tracker, hosted service, or other external system also
-declare the destination and identifier classes that can leave the machine,
-required project identity/consent, idempotency key, expected provider
-revision/value, attribution marker, retry/offline policy, and whether local
-workflow may continue. Compensation is legal only while compare-before-
-compensate proves the external state still belongs to that operation.
-
-### 12.2 Event envelope
-
-```go
-type Event struct {
-    ID            EventID
-    Type          string
-    SchemaVersion int
-    Aggregate     AggregateRef
-    ActorID       ActorID
-    ProcessID     ProcessID
-    CorrelationID string
-    CausationID   string
-    OccurredAt    time.Time
-    Payload       json.RawMessage
-}
-```
-
-Events describe committed state. They do not substitute for canonical state.
-Consumers re-read the referenced aggregate before taking consequential action.
-
-### 12.3 Outbox
-
-State mutation and outbox insertion occur in one control-store transaction.
-Projectors and outbound integrations consume the outbox idempotently. Failed
-delivery cannot roll back an already-valid mission transition, and a Team Kitty
-outage cannot block local work unless the user selected an explicit hosted
-policy requiring it.
-
-### 12.4 Query model
-
-Queries return purpose-built views rather than leaking store records. The CLI,
-dashboard, MCP, and HTTP API use the same query services. Query handlers are
-read-only and cannot repair state as a side effect.
-
-## 13. Integrations
-
-### 13.1 Team Kitty
-
-Team Kitty is an optional outbound/inbound collaboration adapter.
-
-It may:
-
-- consume mission, work, run, review, and integration events;
-- publish human-facing status and notifications;
-- submit authenticated application commands;
-- synchronize explicitly supported collaboration data;
-- queue outbound changes while offline.
-
-It may not:
-
-- mutate the control database or Beads directly;
-- become required for local missions;
-- infer mission transitions from UI state;
-- overwrite local canonical state after a sync conflict;
-- hide failed delivery.
-
-### 13.2 Orchestrator API
-
-The Orchestrator API is a versioned transport over application commands and
-queries. It should expose:
-
-- capability discovery;
-- project and mission queries;
-- `next`;
-- work eligibility and claim requests;
-- run heartbeat, progress, and handoff;
-- review submission;
-- accept and merge commands;
-- event streaming with resumable cursors;
-- idempotency and optimistic concurrency.
-
-The API owns authentication, authorization, rate limits, and transport errors.
-The mission engine owns sequencing and authority.
-
-For the first release, this is also the mandatory boundary for remote agents.
-Only the host-side runtime opens SQLite and owns mutable Git workspaces. A
-remote model or harness may direct a host-side run through the API, but it does
-not mount the control database or directly share a worktree across machines.
-
-### 13.3 MCP
-
-MCP tools wrap the same command/query interfaces. Tool descriptions should be
-small, typed, and task-oriented. MCP does not get a privileged mutation path.
-
-### 13.4 Alternative trackers and mirrors
-
-Tracker configuration distinguishes:
-
-- `primary`: the single mutable work authority;
-- `mirror`: a downstream projection with declared direction;
-- `migration_source`: a temporary read source during provider migration.
-
-GitHub, Jira, ThickTicket, or another provider can later implement the narrow
-work ports. Unsupported capabilities fail at mission preflight with a precise
-message. The design does not force all providers into a misleading
-lowest-common-denominator status model.
-
-## 14. Proposed repository organization
-
-The exact names may evolve, but dependencies should point inward toward domain
-capabilities and application ports.
-
-```text
-cmd/
-  spec-kitty/                 composition root and CLI
-
-internal/
-  kernel/                     IDs, clock, errors, events, idempotency
-  app/                        explicit cross-capability use cases
-
-  project/                    vertical capability
-  actor/
-  mission/
-  artifact/
-  work/
-  execution/
-  lane/
-  workspace/
-  review/
-  integration/
-  doctrine/
-  sync/
-  projection/
-
-  missiontype/
-    softwaredev/
-    research/
-    documentation/
-    minimal/
-
-  controlstore/sqlite/         current transactional authority adapter
-  tracker/                     provider-neutral capability contracts
-    fake/                      portable reference provider
-    conformance/               provider-neutral contract suite
-    beads/                     bounded Beads JSON command adapter
-  gitrepo/                     argv-only Git adapter
-
-  transport/
-    cli/
-    http/
-    mcp/
-
-testkit/
-  fakeclock/
-  faketracker/
-  fakeagent/
-  gitfixture/
-  faultinject/
-
-docs/
-  decisions/
-  contracts/
-  operations/
-```
-
-Rules enforced by import tests or a dependency analyzer:
-
-- Domain capabilities do not import transports or concrete adapters.
-- Tracker adapters do not import workspace or integration internals.
-- Mission types call public capability ports, not stores.
-- Team Kitty and API packages do not import storage packages.
-- Git/workspace packages do not import tracker implementations.
-- The composition root is the only place allowed to know all implementations.
-
-## 15. CLI surface
-
-The first release should favor a small coherent command tree with human and
-stable JSON rendering:
-
-```text
-spec-kitty init
-spec-kitty doctor
-
-spec-kitty mission new
-spec-kitty mission status
-spec-kitty mission next
-spec-kitty mission specify
-spec-kitty mission plan
-spec-kitty mission decompose
-spec-kitty mission finalize-work
-
-spec-kitty work list
-spec-kitty work show
-spec-kitty work ready
-spec-kitty work claim
-spec-kitty work release
-
-spec-kitty run status
-spec-kitty run heartbeat
-spec-kitty run progress
-spec-kitty run handoff
-
-spec-kitty review submit
-spec-kitty accept
-spec-kitty merge
-spec-kitty retrospective
-```
-
-Compatibility aliases can preserve current agent entry points. Aliases dispatch
-to the same application command and emit deprecation metadata in JSON rather
-than maintaining duplicate implementations.
-
-Every command must define:
-
-- exit-code semantics;
-- JSON schema and version;
-- idempotency behavior;
-- whether it mutates state;
-- retry safety;
-- expected authority;
-- possible typed blockers and decisions.
-
-## 16. Migration and compatibility
-
-### 16.1 Behavioral inventory
-
-Before claiming parity, create a behavior inventory from the current Python
-host. Classify behavior as:
-
-- preserve exactly;
-- preserve semantically with a new representation;
-- provide through a compatibility projection;
-- intentionally retire with rationale.
-
-Priority areas are mission sequencing, work-package lifecycle, lanes/worktrees,
-review rejection loops, accept/merge safety, doctrine/profile context,
-orchestrator API contracts, Team Kitty sync, and recovery commands.
-
-### 16.2 One-way importer
-
-Provide a dry-run-first importer that:
-
-1. discovers existing `.kittify` and mission artifacts;
-2. validates the source without mutation;
-3. reports unsupported or ambiguous state;
-4. creates stable mission/work/actor mappings;
-5. imports work definitions into Beads;
-6. pins an initial work revision;
-7. imports relevant history and review evidence;
-8. verifies counts, dependencies, and digests;
-9. writes a migration receipt;
-10. leaves the Python project recoverable.
-
-No Python interpreter is required. The importer reads known file formats using
-Go. It never silently invents missing state.
-
-### 16.3 Compatibility projections
-
-Where users or tools still require familiar files, generate them from canonical
-state:
-
-- `tasks.md` as a read-only work summary;
-- legacy status views;
-- command aliases;
-- export bundles for older integrations.
-
-Generated files contain an explicit header stating that edits are not
-authoritative.
-
-### 16.4 Differential tests
-
-Run selected scenarios through the Python host and the Go host, normalize
-representation differences, and compare semantic outcomes. Differential tests
-are particularly important for blocked states, rejection cycles, merge
-preflights, stale worktrees, and migration.
-
-## 17. Delivery plan
-
-Each phase ends in an executable vertical result. Package scaffolding without a
-working scenario does not count as progress.
-
-### Phase 0: Behavioral characterization and architectural ratification — complete
-
-Objective achieved: current Python behavior attacked the proposed product laws
-before the delivered authority architecture was frozen. The inventory remained
-authoritative over the earlier draft while those decisions were being tested.
-
-Current progress:
-
-- Behavior inventory and incident review: complete at the pinned Python commit
-  recorded in `docs/PYTHON_BEHAVIOR_INVENTORY.md`.
-- Phase 1 executable scenario definitions: complete in
-  `docs/CONCURRENCY_SCENARIOS.md`.
-- Foundational authority decisions and the selected fixtures used by the Phase 1
-  experiment: complete and enforced by executable contracts. Broader migration
-  fixtures remain future work.
-
-Completed work for the delivered boundary:
-
-- Built the behavior inventory for current Python Spec Kitty.
-- Captured the selected command/result fixtures required by the authority slice.
-- Classified relevant behavior as preserve exactly, preserve semantically, project
-  for compatibility, or intentionally retire.
-- Used obscure recovery, lane, review, and integration behavior to challenge the
-  proposed authority boundaries.
-- Defined and executed the two-agent concurrency proving experiment in Phase 1.
-- Define supported Beads versions and the upgrade/skew policy. Completed in
-  Phase 2 with an exact version/schema/source/binary tuple.
-- Selected and qualified SQLite after focused WAL testing. Gapdb remains a
-  separate adoption decision requiring equivalent evidence and an explicit
-  signed human record.
-- Defined stable JSON error and result envelopes for the delivered commands.
-- Revised this plan from the inventory and ratified the delivered product laws
-  through architecture guards, fault scenarios, and mutant controls.
-
-Exit evidence:
-
-- Every behavior preserved in the delivered slice has an owner and executable
-  test.
-- Relevant legacy behavior attacked the foundational authority decisions before
-  qualification.
-- Authority and source-of-truth matrices are approved for the delivered slice.
-- The implementation and documentation show why Beads cannot advance a mission
-  or authorize a worktree.
-- The Phase 1 torture scenario and failure points are executable tests.
-
-### Phase 1: Two-agent authority proving ground — delivered and qualified
-
-Objective achieved: the executable campaign attacked the hardest architectural
-claim—safe parallel execution when authority, process lifetime, filesystem
-state, Git state, and recovery disagree—and retained passing, source-bound
-evidence.
-
-The Phase 1 boundary deliberately excluded Beads, a complete mission, MCP, Team
-Kitty, migration, projections, and multiple mission types. Phase 2 subsequently
-delivered the bounded Beads adapter; the other surfaces remain future work.
-
-Delivered work packages:
-
-1. Go module plus the minimum race/fault-injection test harness.
-2. Stable IDs, deterministic clock, typed failures, and operation IDs needed by
-   the experiment.
-3. A real SQLite control database containing only work mappings, actors,
-   processes, runs, leases, lanes, workspaces, handoffs, reviews, and integration
-   attempts needed by the experiment.
-4. A deliberately stupid fake tracker so Beads convenience cannot conceal an
-   authority leak.
-5. A real temporary Git repository with real branches and worktrees.
-6. Atomic run leases, generations, fencing checks, heartbeat/expiry, quarantine,
-   and replacement-workspace creation.
-7. Minimal handoff and actor-level independent review over recorded commits.
-8. Minimal serialized integration with conflict preservation.
-9. A crash hook after every durable boundary.
-10. One executable scenario:
-
-   ```text
-   2 work items + 2 actors + 1 fake tracker
-   + 1 SQLite control DB + 1 real Git repository
-
-   claim concurrently
-     -> allocate separate worktrees
-     -> crash or suspend one process at each boundary
-     -> expire its lease and quarantine its workspace
-     -> start a replacement in a new workspace
-     -> let a suspended stale writer resume and mutate the old workspace
-     -> finish both valid implementations
-     -> review with different ActorIDs
-     -> serialize integration
-   ```
-
-11. Inject at least: crash after lease, crash after workspace creation, tracker
-    outage, stale writer resume, manual branch movement, simultaneous
-    integration, and merge conflict.
-
-Exit criteria:
-
-- Two different work items execute concurrently in separate worktrees.
-- Two contenders for one item produce at most one valid execution lease.
-- An expired workspace is never transferred; its replacement is a distinct
-  path and branch.
-- A stale writer can continue changing its quarantined POSIX directory but
-  cannot hand off, review, accept, or integrate through Spec Kitty.
-- Recovery never clears a human-reassigned fake tracker owner.
-- Actor-level review independence is enforced.
-- Simultaneous integration is serialized and a conflict preserves both lines.
-- Repeating recoverable operations is idempotent.
-- `go test -race ./...` passes.
-
-Failure to satisfy these criteria pauses broader architecture. The result is
-used to revise authority, persistence, and workspace ADRs before Phase 2.
-
-### Phase 2: Beads default tracker
-
-Objective: compose the proven authority kernel with a production-quality Beads
-adapter while retaining the fake and dishonest providers as contract evidence.
-
-Status: delivered and qualified. Beads is the default tracker substrate behind
-provider-neutral ports; it is not mission, execution, workspace, review,
-acceptance, or integration authority.
-
-Work packages:
-
-1. Bounded JSON command protocol, version/schema preflight, and a
-   checksum-qualified Beads 1.2.2 executable.
-2. Read-only discovery and explicit disposable initialization without
-   unsolicited agent-file or Git-hook mutation.
-3. Catalog, graph, discussion, assignment, and observation adapters.
-4. Stable WorkID-to-Beads mapping and namespaced metadata.
-5. Typed provider capability, health, and recovery diagnostics.
-6. Embedded adapter serialization, qualified server-multiwriter operation, and
-   canonical worktree binding.
-7. Error translation, source re-binding, schema/version skew refusal, and
-   attribution-safe reconciliation guidance.
-8. Portable fake and dishonest-provider conformance.
-9. High-contention create, readiness, assignment-preservation, and stale-
-   authority tests.
-10. JSONL interchange, Dolt-native backup/restore, offline qualification, and
-    immutable evidence.
-
-Exit criteria:
-
-- Two concurrent processes cannot acquire authoritative Spec Kitty execution
-  leases for the same work.
-- Concurrent work creation produces no ID collisions.
-- All worktrees observe the same ticket state.
-- Beads failure never corrupts mission or lane state.
-- Version/schema mismatch fails before mutation with a recovery path.
-- No human-formatted CLI output is parsed.
-- Guarded arbitrary update and safe arbitrary compensation fail before mutation
-  because Beads 1.2.2 does not enforce those guarantees.
-
-### Phase 3: Software-development mission method
-
-Objective: preserve the larger Spec Kitty methodology while eliminating the
-canonical Markdown task list.
-
-Work packages:
-
-1. Specify step contracts, artifact service, and approval gate.
-2. Plan step contracts, architecture/risk outputs, and approval gate.
-3. Decompose structured work graph into Beads.
-4. Dependency-cycle, missing-coverage, overreach, and work-quality validation.
-5. Generated `WorkRevision`, immutable snapshot, digest, drift detection, and
-   `continue | supersede | invalidate | fork` reconciliation.
-6. Action-scoped doctrine/profile context and revision capture.
-7. `next` query/action/decision/blocked/terminal protocol.
-8. Derived `tasks.md` compatibility projection.
-
-Exit criteria:
-
-- A mission progresses from intent to finalized Beads work without a canonical
-  task Markdown file.
-- A fresh agent can understand each work item without private transcript
-  context.
-- Modifying Beads after finalization creates a drift result, not a silent run
-  contract change.
-- Reconciliation produces a new graph generation and an explicit disposition
-  for every affected active or accepted work item.
-- Mission steps remain authoritative independently of Beads statuses.
-
-### Phase 4: Production mission concurrency
-
-Objective: integrate the proven Phase 1 authority model with real Beads work and
-the software-development mission, then meet or exceed current Spec Kitty
-multi-agent execution.
-
-Work packages:
-
-1. Git repository identity, common-root discovery, and safe command runner.
-2. Harden proven run leases, control-plane fencing, heartbeats, expiry, and
-   stale recovery under mission transitions.
-3. Lane allocation, generation binding, quarantine, and lifecycle policy.
-4. Worktree create/status/quarantine/reconcile/archive/cleanup operations.
-5. Branch ownership and base/head drift detection.
-6. Run capsule with scoped context, tools, governance, and workspace.
-7. Progress and durable handoff records.
-8. Failure injection at every claim/lane/worktree saga boundary.
-9. Two-agent, same-project concurrency suite.
-
-Exit criteria:
-
-- Two agents edit different work packages concurrently with no shared mutable
-  checkout.
-- Same-actor concurrent processes remain distinguishable.
-- A killed process is recoverable without granting two valid fencing tokens.
-- Every replacement lease receives a new worktree; quarantined work cannot enter
-  review or integration without explicit reconciliation.
-- Dirty or manually modified worktrees are never deleted.
-- The primary user checkout remains untouched.
-- Tracker outage during start yields a recoverable operation rather than lost
-  or duplicated work.
-
-### Phase 5: Implement/review/integration loop
-
-Objective: complete Spec Kitty's differentiated execution method.
-
-Work packages:
-
-1. Dependency-aware implementer selection and run creation.
-2. Handoff contract and evidence capture.
-3. Independent reviewer runs with a different ActorID; Phase 1 admits no
-   same-actor exception.
-4. Structured approve/reject verdicts and rejection cycles.
-5. Criterion evidence and mission-wide coverage projection.
-6. Accept preflight and final readiness gate.
-7. Deterministic serialized integration queue.
-8. Merge execution, conflict evidence, and repair work creation.
-9. Post-merge mission review and retrospective.
-
-Exit criteria:
-
-- An implementation ActorID cannot approve its own work merely by starting a
-  different process.
-- Rejection retains evidence and returns work through a defined new attempt.
-- Accepted independent lanes integrate deterministically.
-- Merge conflicts preserve all branches and become explicit repair work.
-- Mission acceptance proves requirement and criterion coverage across work
-  packages.
-
-### Phase 6: External surfaces and migration
-
-Objective: connect the new core without creating alternate authorities.
-
-Work packages:
-
-1. Versioned Orchestrator API with idempotent commands and resumable events.
-2. MCP tool adapter over the same use cases.
-3. Team Kitty outbox consumer, offline queue, diagnostics, and conflict policy.
-4. Python project dry-run importer and migration receipt.
-5. Compatibility commands and derived artifacts.
-6. Tracker mirror framework and one proving adapter or fake contract.
-7. Upgrade, backup, and rollback operations.
-
-Exit criteria:
-
-- CLI, API, and MCP produce equivalent application outcomes.
-- Team Kitty can be unavailable without blocking an ordinary local mission.
-- No integration imports control-store implementations.
-- A representative Python mission migrates with verified work/dependency/state
-  counts and remains recoverable.
-
-### Phase 7: Hardening and release
-
-Objective: prove the system under realistic long-running and adversarial use.
-
-Work packages:
-
-1. Long-duration multi-agent soak tests.
-2. State-machine model tests and fuzzing.
-3. Filesystem, path traversal, symlink, and unsafe Git-operation review.
-4. Crash/restart matrix across all mutating commands.
-5. Performance budgets for `next`, readiness, status, and worktree operations.
-6. Upgrade/migration compatibility matrix.
-7. Operator diagnostics and recovery runbooks.
-8. Documentation, examples, and release packaging.
-
-Exit criteria:
-
-- Concurrency, crash, migration, and security suites pass on supported
-  platforms.
-- No known path silently loses work or grants ambiguous authority.
-- Operators can diagnose every durable blocked state without editing databases.
-- Release artifacts do not require Python.
-
-## 18. Validation strategy
-
-### 18.1 Test layers
-
-| Layer | Purpose |
-|---|---|
-| Domain unit tests | State transitions, invariants, validation |
-| Port contract tests | Every tracker/store/VCS implementation behaves consistently |
-| Adapter integration tests | Real Beads temp DBs and real temporary Git repos |
-| Application scenario tests | Multi-capability use cases and compensations |
-| Differential tests | Semantic comparison with Python host |
-| Contention tests | Multi-process claims, leases, updates, and merge queue |
-| Fault-injection tests | Crash after each durable saga stage |
-| Fuzz/model tests | Invalid transitions, graph cycles, malformed IDs and paths |
-| Soak tests | Long-running parallel missions and stale process recovery |
-
-### 18.2 Mandatory concurrency scenarios
-
-1. Two agents claim different ready work items simultaneously.
-2. Two agents race for the same work item; only one gets a valid run lease.
-3. The same durable actor runs two different processes on different work.
-4. One process dies after tracker assignment but before worktree creation.
-5. One process dies after worktree creation but before workspace binding.
-6. A stale process resumes arbitrary POSIX writes in its quarantined workspace
-   while a replacement works in a distinct workspace.
-7. A stale process tries to hand off or integrate using an old fencing token.
-8. A human reassigns a ticket before an old saga compensation runs.
-9. Two accepted lanes enter integration simultaneously.
-10. A merge conflict occurs after other independent work was integrated.
-11. A tracker update creates a new graph generation while an older revision is
-    executing; each affected work item receives an explicit disposition.
-12. All agents operate from separate worktrees while sharing control and Beads
-    state.
-13. A remote client uses the Orchestrator API while being unable to open SQLite
-    or directly mount the host worktree.
-
-### 18.3 Safety properties
-
-- At most one valid implementation lease per work revision.
-- A workspace is owned by exactly one lease generation and is never transferred
-  to a replacement.
-- A quarantined workspace cannot produce an accepted handoff without explicit
-  reconciliation.
-- At most one integration mutation at a time per target branch.
-- No cleanup deletes an unowned or dirty workspace.
-- No provider event directly mutates Git.
-- No mission transition depends on eventual projection delivery.
-- Every non-idempotent external effect has a durable operation record.
-- A compensation cannot overwrite external state that no longer matches its
-  recorded expected revision/value.
-- Only one machine/filesystem authority opens a control store.
-- Secrets never enter ticket descriptions, comments, events, diagnostics, or
-  migration receipts.
-
-## 19. Observability and operations
-
-`spec-kitty doctor` should report facts, not mutate by default:
-
-- project/repository identity;
-- control-store schema and health;
-- Beads location, mode, compatibility, and connectivity;
-- active and stale leases;
-- lane/worktree/branch consistency;
-- pending sagas and compensations;
-- outbox backlog and integration health;
-- work-revision drift;
-- merge queue state;
-- migration and upgrade status.
-
-Repairs are separate explicit commands with dry-run output. Each repair records
-who requested it, what invariants were checked, and exactly what changed.
-
-Structured logs include correlation, mission, work, run, lane, actor, and
-process IDs. Human output stays concise; JSON output is complete and stable.
-
-## 20. Principal risks and mitigations
-
-### Beads semantics leak into the core
-
-Risk: mission code begins to depend on Beads statuses, IDs, Molecules, or storage
-details.
-
-Mitigation: narrow ports, provider-neutral IDs, adapter conformance tests, import
-guards, and an always-available fake tracker implementation.
-
-### Two authorities disagree
-
-Risk: Beads assignment says one thing while Spec Kitty execution state says
-another.
-
-Mitigation: explicit authority matrix, saga stage records, drift diagnostics,
-and repair commands. Execution lease wins for mutation authority; tracker state
-is reconciled visibly.
-
-### Beads upgrade or schema skew
-
-Risk: a fast-moving dependency migrates data incompatibly or a user's `bd`
-binary disagrees with the embedded library.
-
-Mitigation: pin an executable version, source identity, binary digest, and JSON
-schema; use only the documented argv JSON protocol; preflight compatibility,
-back up before migrations, and qualify every future tuple before allowlisting
-it.
-
-### Modularity becomes plugin soup
-
-Risk: excessive interfaces, tiny packages, runtime registration, and generic
-payloads make behavior harder to follow.
-
-Mitigation: vertical capabilities, interfaces defined by consumers, static
-composition, typed commands, and a rule that a new capability must own a real
-policy boundary.
-
-### Mission methodology is weakened into tickets
-
-Risk: users lose specify/plan/governance/accept/review discipline because the
-ticket board looks sufficient.
-
-Mitigation: mission engine remains authoritative; mission gates query work but
-cannot be bypassed by closing issues.
-
-### Checkbox work returns in another form
-
-Risk: agents spend time toggling acceptance fields or duplicating status across
-criteria, tickets, and mission artifacts.
-
-Mitigation: criteria are definitions; evidence and verdicts derive completion.
-Human-only checks are explicit exceptions.
-
-### Cross-store crash windows
-
-Risk: SQLite, Beads, Git, and filesystem operations partially succeed.
-
-Mitigation: durable saga stages, idempotency keys, compare-before-compensate,
-control-plane fencing, workspace-per-lease isolation, fault injection, and
-honest `decision_required` recovery when automation cannot prove safety.
-
-### Database fencing is mistaken for filesystem fencing
-
-Risk: a stale but living agent continues ordinary file writes after its lease
-expires.
-
-Mitigation: never transfer its workspace. Quarantine the old workspace, give
-the replacement a new branch/worktree, reject old-token handoff and integration,
-and reconcile output only after quiescence is established.
-
-### SQLite is treated as a distributed database
-
-Risk: multiple machines or shared filesystems open one control database and
-invalidate local locking assumptions.
-
-Mitigation: one-machine/filesystem authority is a release invariant. Remote
-clients use the Orchestrator API and host-owned workspaces.
-
-### Compatibility dominates the new design
-
-Risk: reproducing legacy artifacts and commands recreates Python structure.
-
-Mitigation: compatibility is an outer adapter and projection layer with a
-sunset policy. The new capability model never imports it.
-
-## 21. Foundational decision record and future ADR queue
-
-Phase 0 characterization and the Phase 1 proving experiment are complete. The
-delivered Phase 1/2 decisions below are ratified through executable contracts,
-architecture guards, and retained evidence; separate narrative ADR files may
-improve discoverability but do not make the shipped behavior provisional. The
-Team Kitty/API serving and Python migration entries retain approved authority
-boundaries while their implementations remain future work.
-
-1. Beads as the default tracker, behind provider-neutral work ports.
-2. Mission authority versus tracker authority.
-3. Stable IDs and external mapping strategy.
-4. SQLite control state anchored to Git common repository identity.
-5. Run leases, control-plane fencing, expiry, and workspace quarantine policy.
-6. WorkRevision generations, reconciliation dispositions, and drift behavior.
-7. Lease-scoped worktree ownership, replacement, reconciliation, and cleanup.
-8. Actor-level review independence and rejection-cycle semantics; evaluate any
-   future exception only as a separately ratified feature.
-9. Serialized integration queue and conflict repair.
-10. Static composition and external plugin boundary.
-11. Versioned command/query/event schemas.
-12. Team Kitty and Orchestrator API authority boundaries.
-13. Python migration and compatibility sunset policy.
-14. Beads version, schema-skew, backup, and multi-writer policy.
-15. Attribution-safe external compensation.
-16. Single-machine SQLite authority and remote-agent API boundary.
-
-## 22. Decisions still requiring focused validation
-
-These are bounded technical decisions, not unresolved product direction:
-
-- Qualify each future Beads executable version, JSON envelope or metadata
-  schema, capability change, and binary digest before expanding the allowlist.
-- Measure SQLite WAL behavior under the intended number of local agent
-  processes and supported local filesystems; network filesystems remain out of
-  scope.
-- Choose lease and heartbeat defaults based on real agent runtimes.
-- Decide whether review uses a fresh read-only worktree, a detached checkout, or
-  a separately owned review workspace for each review mode.
-- Define how a host proves a quarantined workspace writer is quiescent before
-  reconciliation snapshots any of its output.
-- Define the supported Python migration floor and which historical formats are
-  intentionally unsupported.
-- Select the first non-Beads conformance adapter: fake-only, GitHub, or a local
-  in-memory reference.
-- Evaluate Gapdb as a control-store replacement only through a separate
-  migration campaign and explicit signed human adoption record; SQLite remains
-  current until then.
-
-None of these decisions should reopen the authority boundaries in this plan.
-
-## 23. Release-level definition of done
-
-The Go implementation is ready to replace the Python host for the initial
-software-development path when:
-
-- a real project can initialize locally without Python;
-- specify and plan produce governed versioned artifacts;
-- decompose creates a validated Beads work graph;
-- two or more agents concurrently implement independent work in isolated
-  worktrees;
-- claims, crashes, stale processes, and retries cannot create two valid
-  execution authorities for the same work;
-- an expired run's workspace is quarantined and never transferred to its
-  replacement;
-- a zombie writer cannot submit or integrate output through its expired
-  authority even if it can still write its old directory;
-- independent reviewers with different ActorIDs approve or reject with durable
-  evidence; Phase 1 has no same-actor waiver;
-- work-graph edits create a new generation with explicit disposition for
-  affected work;
-- accepted work integrates deterministically and conflicts create recoverable
-  repair work;
-- final acceptance verifies mission-wide requirement coverage;
-- Team Kitty and Orchestrator API can observe and command the workflow without
-  becoming alternate authorities;
-- a representative existing mission migrates with semantic fidelity;
-- all critical behavior has unit, integration, contention, and recovery tests;
-- no canonical Markdown task checklist remains.
-
-## Appendix A: Initial review brief for Mini (completed)
-
-Mini completed this review on 2026-08-23. The prompt is retained for design
-history; accepted findings and changes are recorded in
-`docs/MINI_REVIEW_RESOLUTION.md`.
-
-Please review this plan as an independent technical critic. The goal is not to
-endorse the direction; it is to find where it will fail, accrete accidental
-complexity, or lose a hard-won Spec Kitty behavior.
-
-The intended decisions are:
-
-1. Preserve Spec Kitty's mission methodology and lane/worktree concurrency.
-2. Use Beads as the default ticket substrate rather than building a tracker.
-3. Keep Beads replaceable through narrow capabilities.
-4. Separate durable actor identity, provider identity, and execution process.
-5. Replace canonical `tasks.md` with a tracker-backed work graph and
-   evidence-derived acceptance.
-6. Keep Team Kitty and the Orchestrator API outside the authority core.
-
-Please concentrate on:
-
-- Any place Beads has accidentally become mission or execution authority.
-- Any race, fencing, crash-recovery, worktree, or merge invariant that is
-  incomplete.
-- Whether the proposed source-of-truth boundaries can actually be operated
-  without confusing users or agents.
-- Whether the SQLite + Beads + Git saga design is justified or needlessly
-  complex.
-- Whether `WorkRevision` finalization preserves user editability while keeping
-  running work stable.
-- Whether the acceptance model truly eliminates checkbox labor.
-- Any part of the Python behavior likely to be lost by the migration strategy.
-- Interfaces that are too broad, too narrow, or defined at the wrong boundary.
-- Features that should be deferred to protect the first vertical slice.
-- The smallest executable slice that would disprove the architecture quickly.
-
-For each finding, please provide:
-
-```text
-Severity: blocker | high | medium | low
-Location: section or decision
-Finding: what is wrong or underspecified
-Failure scenario: how it breaks in practice
-Recommendation: the smallest corrective change
-```
-
-Please also answer three summary questions:
-
-1. Does this preserve what Spec Kitty does better than ThickTicket and Beads?
-2. Is Beads correctly bounded as a default substrate rather than a hidden
-   kernel dependency?
-3. What should be changed before the first line of implementation is written?
-
-## Appendix B: Primary references
-
-- Beads repository and product surface:
-  <https://github.com/gastownhall/beads>
-- Beads multi-agent coordination:
-  <https://github.com/gastownhall/beads/blob/main/docs/multi-agent/coordination.md>
-- Beads architecture and issue fields:
-  <https://github.com/gastownhall/beads/blob/main/docs/ARCHITECTURE.md>
-- ThickTicket architectural clarifications:
-  `/home/lynn/projects/thickticket/docs/ARCHITECTURAL_CLARIFICATIONS.md`
-- ThickTicket frontier governance:
-  `/home/lynn/projects/thickticket/docs/FRONTIER_GOVERNANCE.md`
+| GapDB lifecycle is not a stable public product boundary | M1 pins the external sidecar tuple and rejects internal imports or arbitrary PATH discovery |
+| Storage recovery is confused with product resumability | Separate storage, checkpoint/journal, epoch, reconciliation, playback, and portable terminal record proofs |
+| Fencing is mistaken for filesystem control | Permanent W1 quarantine, fresh W2, and real zombie-writer fault campaign |
+| Beads semantics leak into the kernel | Layered import/reachability guards and deliberately stupid/dishonest tracker conformance |
+| SQLite survives as a hidden safety net | M2 structural absence gates across every production surface |
+| External compensation overwrites human work | Compare provider revision, value, and operation attribution; ambiguity requires a decision |
+| API clients manufacture facts | Closed commands, host-generated authority identities, black-box negative and mutant suites |
+| Ecosystem command recipes contaminate acceptance | Neutral claims/bindings/evidence kernel plus unrelated-provider parity |
+| An optional transport gains unique semantics | Separate MCP module, core-absence gate, capability parity, and task/cancel/TTL races |
+| Compatibility recreates Python structure | API 1.3 and file projections stay outer adapters with explicit refusal |
+| Multi-machine assumptions leak into local storage | One authority host; remote clients use API 2.0; distributed ownership requires another ADR |
+
+## 15. Production definition of done
+
+The core production release is complete only when:
+
+- a clean supported host installs and starts without Python, SQLite, or MCP;
+- a pinned project-local `gapdbd` lifecycle passes its signed adoption proof;
+- checkpoint plus journal restore, new epoch, reconciliation, playback, and
+  terminal export are deterministic and operationally documented;
+- Beads-backed work finalizes into immutable executable generations without
+  tracker authority leakage;
+- two or more agents execute independent work in distinct lease-owned
+  workspaces, and stale/zombie authority cannot hand off or integrate;
+- different ActorIDs review exact candidates and acceptance evaluates the
+  complete neutral claim set;
+- integration is serialized by repository/target ref and conflict evidence is
+  recoverable;
+- CLI and API 2.0 complete the same mission and expose revisioned progress,
+  decisions, operations, and legal next actions;
+- sustained contention, arbitrary crash timing, install/restart/recovery,
+  architecture mutants, security review, and supported-platform qualification
+  pass at one frozen source; and
+- operators can diagnose every durable blocked state without editing storage.
+
+The optional MCP release has a separate definition: core absence, API/CLI
+parity, multi-instance stateless routing, Tasks revision pinning, decision input,
+TTL, loss, backpressure, cancellation/effect races, privacy, and boundedness.
+
+## 16. Active and historical indexes
+
+### Active target records
+
+- [Production Orchestration Architecture](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md)
+- [ADR 0002](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/adr/0002-production-orchestration-architecture.md)
+- [Orchestrator API 2.0](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/ORCHESTRATOR_API_2_0.md)
+- [Stack-Neutral Acceptance](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/STACK_NEUTRAL_ACCEPTANCE.md)
+- [Optional MCP Adapter](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/MCP_2026_07_28_ADAPTER.md)
+- [Production Runtime Program](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/PRODUCTION_RUNTIME_PROGRAM.md)
+
+### Compatibility and historical context
+
+- [Historical Architecture Dispositions](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/HISTORICAL_ARCHITECTURE_DISPOSITIONS.md)
+- [Orchestrator API 1.3 Projection](ORCHESTRATOR_API_1_3_PROJECTION.md)
+- [Python Behavior Inventory](PYTHON_BEHAVIOR_INVENTORY.md)
+- [Mini Review Resolution](MINI_REVIEW_RESOLUTION.md)
+- [Concurrency Scenarios](CONCURRENCY_SCENARIOS.md)
+- [Phase 1 Erratum](PHASE1_ACCEPTANCE_ERRATA.md)
+- [Phase 1 Evidence](phase1-evidence/README.md)
+- [Phase 2 Evidence](phase2-evidence/README.md)
+- [Phase 3 Evidence](phase3-evidence/README.md)
+
+These records explain why the present architecture exists. They are not a
+second source of production semantics.
+
+## 17. Active-language audit
+
+The migration deliberately retains the following terms. Their qualifiers keep
+historical and compatibility truth from competing with the target:
+
+| Retained term | Why it remains | Why it is not normative target guidance |
+|---|---|---|
+| SQLite | Names the observed Phase 1–3 implementation and the M2 structural-absence proof | Every target statement names GapDB-only authority and forbids fallback/dual write |
+| API 1.3 | Identifies an existing compatibility inventory and consumer boundary | API 2.0 is the sole proposed application vocabulary; unsafe translations refuse |
+| Beads 1.2.2 | Records the exact delivered provider tuple and operating commands | Beads owns mutable work/discussion only and remains behind provider-neutral ports |
+| Go campaign commands | Reproduces current repository qualification | Commands live in project/provider bindings; they are not universal acceptance claims |
+| MCP | Explains an optional proposed adapter and its core-absence proof | No MCP code ships now, and the normal CLI/API remain semantically complete without it |
+
+The pre-migration conflict search found SQLite-shaped future storage, API 1.3
+future-surface sequencing, fixed repository acceptance commands, and an
+undifferentiated MCP paragraph in the old active plan. The post-migration search
+retains those words only in the qualified categories above, in historical
+classification, or as an explicit falsification/absence condition.
