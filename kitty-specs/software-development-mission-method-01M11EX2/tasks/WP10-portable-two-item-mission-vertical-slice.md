@@ -44,6 +44,8 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/helpercmd/
 create_intent:
+- internal/controlstore/sqlite/mission_method_query.go
+- internal/controlstore/sqlite/mission_method_query_test.go
 - internal/helpercmd/mission_method.go
 - internal/helpercmd/mission_method_test.go
 - internal/helpercmd/artifact.go
@@ -55,6 +57,16 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- internal/mission/service.go
+- internal/mission/service_test.go
+- internal/mission/lifecycle_test.go
+- internal/controlstore/sqlite/migrations.go
+- internal/controlstore/sqlite/mission.go
+- internal/controlstore/sqlite/mission_test.go
+- internal/controlstore/sqlite/mission_method_query.go
+- internal/controlstore/sqlite/mission_method_query_test.go
+- internal/testcampaign/manifest.go
+- internal/tracker/fake/store.go
 - internal/helpercmd/root.go
 - internal/helpercmd/mission_method.go
 - internal/helpercmd/mission_method_test.go
@@ -110,13 +122,24 @@ work-b: exercise the contract
 work-b depends on work-a
 ```
 
-Each item needs stable `WorkID`, standalone objective/context, structured criteria, write scope, approved plan/spec traceability, and a complete provider observation. After generation 1, change work-a's criterion and make work-b unnecessary. Reconciliation must explicitly continue or replace the changed contract as permitted by the domain law and invalidate work-b, with every affected item covered exactly once. Use the exact legal dispositions enforced by WP06; do not hard-code an outcome that its validator rejects.
+Each item needs stable `WorkID`, standalone objective/context, structured
+criteria, write scope, approved plan/spec traceability, and a complete provider
+observation. After generation 1, create a distinct replacement `work-a-v2` with
+the changed criterion and make old `work-b` unnecessary in the explicitly
+supplied successor scope while preserving provider history. Reconciliation must
+supersede old `work-a` to `work-a-v2` and invalidate old `work-b`, with every
+affected item covered exactly once. Use the exact legal dispositions enforced
+by WP06; do not hard-code an outcome that its validator rejects.
 
 ## Branch Strategy
 
 Use only the Spec Kitty lane worktree allocated to WP10. Verify accepted WP04, WP08, and WP09 lineages exist on the dependency-resolved base. The accepted result merges back into `feat/software-development-mission-method`.
 
-Do not edit the primary checkout, create worktrees manually, merge another lane, push to `main`, or modify files outside the ten owned paths. WP11 owns Beads parity. WP12 owns CI campaigns and evidence documents.
+Do not edit the primary checkout, create worktrees manually, merge another
+lane, push to `main`, or modify files outside the twenty owned paths. WP11
+owns Beads parity. WP12 owns campaign execution and evidence documents; WP10
+may add only its exact new top-level test names to the existing frozen census
+in `internal/testcampaign/manifest.go`.
 
 ## Qualification Surface Laws
 
@@ -147,6 +170,13 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 8. Centralize only transport concerns such as flag parsing and envelope encoding; call existing mission/artifact/workgraph/projection services for behavior.
 9. Wire SQLite as the qualified control-store adapter and the durable fake as the default portable tracker without exposing either in domain envelopes.
 10. Use dependency injection seams in tests so command parsing and service composition can be verified without global state.
+11. Mutating helper DTOs carry the exact expected snapshots and revision IDs
+    used in domain request commitments. Never load post-commit mutable state to
+    synthesize a lost-response replay request. Pure queries omit operation IDs.
+12. Strict JSON rejects unknown/duplicate/trailing/null fields, normalizes
+    arrays, uses `json.Number`, rejects leftover arguments, and emits only
+    bounded typed diagnostics. Never marshal private-field domain values or raw
+    error prose.
 
 **Files**:
 
@@ -169,18 +199,35 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 **Steps**:
 
 1. Implement `mission initialize` with explicit project, mission, definition key/version, actor, process, operation, time, and sealed governance context.
-2. Reject a missing or unsupported definition without silently defaulting to software-development.
-3. Implement `artifact publish` for intent/specification/plan using exact content digest, repository-relative source ref, source revision, creator, timestamp, and typed validation result.
-4. Implement `artifact approve` against one exact revision with verdict, approver, evidence digest, governance binding, and operation identity.
-5. Implement `mission transition` with expected state version, requested successor, exact artifact revision references, actor/governance, and operation identity.
-6. Implement `mission decompose` using WP04's command, approved plan gate, fake provider binding, proposed stable work definitions, and operation identity.
-7. Do not load spec or plan truth by interpreting Markdown. Files may supply bytes whose digests are committed; typed command input supplies the artifact meaning.
-8. Ensure publishing changed plan content creates a new revision and makes the older approval inapplicable rather than editing it.
-9. Preserve exact idempotency: same operation plus same request replays; conflicting reuse fails without extra rows or provider mutations.
-10. Add command tests for every happy transition and for absent, stale, rejected, wrong-kind, wrong-mission, and invalid-governance refusals.
+2. Extend creation authority so the domain request commitment and durable
+   mission row bind the exact `ProcessID` and sealed `GovernanceContext`.
+   SQLite atomically persists/verifies actor-process and governance bindings;
+   replay restores the original authority evidence. Missing or changed
+   provenance fails closed.
+3. Preserve accepted SQLite migrations v1 through v13 byte-for-byte and in
+   their original order. Append initialization-provenance storage as v14 only;
+   test fresh creation, populated-v13 upgrade, and failure preservation.
+4. Reject a missing or unsupported definition without silently defaulting to software-development.
+5. Implement `artifact publish` for intent/specification/plan using exact content digest, repository-relative source ref, source revision, creator, timestamp, typed validation result, and explicit expected-latest revision identity (empty means no predecessor).
+6. Implement `artifact approve` against one exact revision with verdict, approver, evidence digest, governance binding, and operation identity.
+7. Implement `mission transition` with the caller's exact prior
+   `MissionSnapshot` from a typed query, requested successor, exact artifact
+   revision references, actor/governance, and operation identity.
+8. Implement `mission decompose` using WP04's command, approved plan gate, fake provider binding, proposed stable work definitions, and operation identity. It performs no mission transition.
+9. After a complete successful decomposition, require two explicit `mission transition` commands with distinct operation IDs and exact snapshots: `plan_approved` to `decomposing`, then `decomposing` to `work_draft_ready`. Partial, failed, or ambiguous decomposition invokes neither.
+10. Do not load spec or plan truth by interpreting Markdown. Files may supply bytes whose digests are committed; typed command input supplies the artifact meaning.
+11. Ensure publishing changed plan content creates a new revision and makes the older approval inapplicable rather than editing it.
+12. Preserve exact idempotency: same operation plus same request replays; conflicting reuse fails without extra rows or provider mutations.
+13. Add command tests for every happy transition and for absent, stale, rejected, wrong-kind, wrong-mission, and invalid-governance refusals.
 
 **Files**:
 
+- `internal/mission/service.go`
+- `internal/mission/service_test.go`
+- `internal/mission/lifecycle_test.go` — legacy creation fixtures only.
+- `internal/controlstore/sqlite/migrations.go`
+- `internal/controlstore/sqlite/mission.go`
+- `internal/controlstore/sqlite/mission_test.go`
 - `internal/helpercmd/mission_method.go`
 - `internal/helpercmd/mission_method_test.go`
 - `internal/helpercmd/artifact.go`
@@ -189,6 +236,8 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 **Validation**:
 
 - A fresh database reaches decomposed/validated work only through the legal approved sequence.
+- SQLite migrations v1 through v13 remain byte/order identical; only v14 is
+  appended, and populated-v13 upgrades preserve all prior authority evidence.
 - Changed artifact bytes invalidate applicability of the previous approval.
 - Refusals name stable kinds, observed/expected state where safe, and bounded recovery.
 - Tracker work alone cannot cause a mission transition.
@@ -202,16 +251,28 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 1. Implement `work finalize` with mission, expected current generation, exact plan source commit, provider observations, proposed WorkRevision ID, operation ID, actor, and governance.
 2. Re-observe/recheck provider revisions through the domain finalization service and publish generation 1 only when expected generation is zero.
 3. Implement pure `mission next` over WP08's consistent snapshot and encode the exact closed `NextResult`.
-4. Implement `projection tasks` using WP09's read model and renderer, supporting JSON-contained UTF-8 bytes or an explicitly requested safe atomic output path.
-5. Implement `work drift` as a provider-observation query that leaves the current generation and local authoritative state unchanged.
-6. If reconciliation requires a persisted drift report, expose that as an explicit idempotent mutation rather than hiding persistence inside the drift query.
-7. Implement `work reconcile` with expected old revision, candidate successor, exact persisted drift report, one decision per affected work, rationale, actor, governance, time, and operation ID.
-8. Return old/new graph digests, successor generation, decisions, fork ancestry where present, and derived consequences without allocating workspaces or expiring real Phase 4 leases.
-9. After reconciliation, query and projection must both reference generation 2 while historical generation 1 and approvals remain inspectable.
-10. Add focused tests for replay/conflict, incomplete/duplicate dispositions, stale generation, provider-revision-only noise, unsafe output path, and projection regeneration.
+4. Add one adapter-owned, one-transaction observation that restores current
+   mission, WorkRevision, drift availability, and reconciliation facts into
+   WP09's mission/workgraph read-model types. It never returns a
+   `projection.TasksView`, queries a provider, or exposes raw storage DTOs.
+5. Implement `projection tasks` from that typed observation and WP09's
+   renderer, supporting JSON-contained UTF-8 bytes or an explicit trusted root
+   plus repository-relative safe output path.
+6. Implement `work drift` as a provider-observation query that leaves the current generation and local authoritative state unchanged.
+7. Keep drift observation pure. Its typed result is untrusted command input
+   until `work reconcile` validates it against the expected old revision and
+   exact successor, then atomically persists drift, decisions, reconciliation,
+   successor, pointer, event, and outbox. There is no separate persisted-drift
+   command or pre-reconciliation drift identity.
+8. Implement `work reconcile` with expected old revision, candidate successor, exact drift report, one decision per affected work, rationale, actor, governance, time, and operation ID.
+9. Return old/new graph digests, successor generation, decisions, fork ancestry where present, and derived consequences without allocating workspaces or expiring real Phase 4 leases.
+10. After reconciliation, query and projection must both reference generation 2 while historical generation 1 and approvals remain inspectable.
+11. Add focused tests for replay/conflict, incomplete/duplicate dispositions, stale generation, provider-revision-only noise, unsafe output path, and projection regeneration.
 
 **Files**:
 
+- `internal/controlstore/sqlite/mission_method_query.go`
+- `internal/controlstore/sqlite/mission_method_query_test.go`
 - `internal/helpercmd/mission_method.go`
 - `internal/helpercmd/mission_method_test.go`
 - `internal/helpercmd/projection.go`
@@ -221,7 +282,8 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 
 - Generation 1 finalization, pure next, drift observation, explicit reconciliation, generation 2, and re-render all use real application services.
 - Deleting or editing the output Markdown cannot change subsequent `next` or canonical queries.
-- A drift query makes no local authoritative write unless the caller invokes the separate persistence command.
+- A drift query makes no local authoritative write; only atomic reconciliation
+  may persist the exact observed report as authority evidence.
 
 ### Subtask T055: Prove the full durable fake two-item scenario
 
@@ -235,9 +297,14 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 4. Finalize generation 1 and assert no predecessor, exact planning source, complete provider observations, deterministic graph/criteria digests, and an acyclic lane DAG.
 5. Query `next` repeatedly and require `work_ready` with generation 1 and the exact canonical WorkIDs, with no durable state delta.
 6. Render `tasks.md`; assert the non-authoritative warning, mission state version, revision ID/digest, dependency, criteria, drift state, and render time disclosure.
-7. Mutate the fake tracker after finalization by changing work-a's criterion and making work-b unnecessary while leaving generation 1 immutable.
-8. Observe semantic drift, persist the report explicitly, and verify affected old/new WorkIDs and field-level changes.
-9. Submit a legal mixed reconciliation covering each affected work exactly once, publish generation 2 atomically, and assert the invalidation consequence required by later authority/workspace consumers.
+7. Add distinct fake work `work-a-v2` with the changed criterion and explicitly
+   omit old `work-a` and `work-b` from the successor candidate while leaving
+   provider history and generation 1 immutable.
+8. Observe semantic drift without a local write and verify affected old/new
+   WorkIDs and field-level changes.
+9. Submit a legal mixed reconciliation that supersedes old `work-a` to
+   `work-a-v2` and invalidates old `work-b`; atomically persist the report,
+   decisions, reconciliation, and generation 2.
 10. Restart by closing and reopening both durable stores between major phases; verify generation, artifact, approval, mapping, drift, decision, and reconciliation evidence survives.
 11. Re-query and regenerate projection; require generation 2 while generation 1 remains decodable and auditable.
 12. Run the same scenario at least twice with different temporary roots to prove it has no ambient repository or process state dependency.
@@ -246,6 +313,7 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 
 - `internal/scenario/mission_method_fake_test.go`
 - `internal/scenario/mission_method_helpers_test.go`
+- `internal/testcampaign/manifest.go` — exact census additions only.
 
 **Validation**:
 
@@ -265,7 +333,7 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 3. Assert no diagnostic contains credentials, environment values, full provider output, private transcript content, or unrestricted artifact bytes.
 4. Snapshot the SQLite database, fake tracker bytes/state, and projection destination before repeated `mission next`; require zero mutation across at least 100 queries.
 5. Edit, corrupt, and delete generated `tasks.md`, then prove canonical mission, tracker, approval, WorkRevision, decision, and next results are unchanged.
-6. Mutate tracker status/assignment only and prove mission advancement and `next` do not infer authority from them.
+6. Mutate tracker status/assignment only and prove mission advancement and `next` do not infer authority from them. The durable fake persists status as provider-visible, non-authoritative state and exposes an explicit human-status mutation seam for this proof.
 7. Decode only public typed helper results and provider-neutral work observations into a fresh-reader summary for each work item.
 8. Require that summary to identify objective, dependencies, acceptance criteria, current generation, source plan/revision, and next legal action for 100% of fixtures.
 9. Prohibit test access to private package fields, setup-only variables, fixture prose not emitted by the application, or conversational context during comprehension checks.
@@ -280,6 +348,7 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 - `internal/helpercmd/mission_method_test.go`
 - `internal/helpercmd/artifact_test.go`
 - `internal/helpercmd/projection_test.go`
+- `internal/tracker/fake/store.go` — non-authoritative status field/mutation only.
 
 **Validation**:
 
@@ -343,7 +412,7 @@ All portable tests must run offline with isolated temporary state. Do not add sl
 - Standalone comprehension succeeds using only public typed results for every fixture.
 - No test parses human-formatted CLI output or relies on private transcript/setup context.
 - Focused, repeated, race, compilation, vet, build, formatting, module, and hygiene checks pass.
-- Only the ten frontmatter-owned files are modified by implementation.
+- Only the twenty frontmatter-owned files are modified by implementation.
 - T052 through T056 are recorded through the event-sourced status command:
 
   ```bash
@@ -383,6 +452,6 @@ Verify explicitly:
 12. Refusal assertions name typed reasons and verify no partial mutation.
 13. Standalone-comprehension checks use only public outputs and have omission mutants.
 14. No Beads, HTTP/API, MCP, Team Kitty, Gapdb, execution, review, or integration surface enters the implementation.
-15. The diff is confined to the exact ten owned paths.
+15. The diff is confined to the exact twenty owned paths.
 
 Reject a solution that directly seeds final database rows instead of driving commands, parses output prose, defaults the mission type, treats tracker status as workflow state, mutates during `next`, persists drift implicitly during a query, imports generated tasks, recreates domain rules in helper handlers, or builds Phase 6 transport polish into the qualification binary.
