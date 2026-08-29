@@ -253,6 +253,9 @@
       "last_event_id": "01M172JM2G8AB4KC85DW2H0G2S",
       "last_transition_at": "2026-08-29T15:35:25.520087+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: Independent architecture review complete. Verdict: PASS. ActorID opencode, 30 adversarial scenarios all PASS, zero blocker/high/medium findings, 71 requirements mapped, 9 conflicts closed. Source tree 5c75920; review commit ef6caf2."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 346017,
