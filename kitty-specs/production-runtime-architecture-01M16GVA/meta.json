@@ -14,9 +14,8 @@
   "accepted_by": "codex",
   "accepted_from_commit": "5b814137728c5096dadc5c8f1819ea9efd446f7b",
   "baseline_merge_commit": "7ed53f42e95a9271bf6ee11e57e6e2beabdb27bd",
-  "coordination_branch": "kitty/mission-production-runtime-architecture-01M16GVA",
   "created_at": "2026-08-29T10:25:36.481133+00:00",
-  "flattened": false,
+  "flattened": true,
   "friendly_name": "Production Orchestration Architecture",
   "mission_id": "01M16GVAPZHXJPSY62B97QHR5W",
   "mission_number": 2,
@@ -28,7 +27,6 @@
   "slug": "production-runtime-architecture-01M16GVA",
   "status_phase": "1",
   "target_branch": "feat/production-runtime-architecture",
-  "topology": "coord",
   "vcs": "git",
   "vcs_locked_at": "2026-08-29T13:47:01.436339+00:00"
 }
