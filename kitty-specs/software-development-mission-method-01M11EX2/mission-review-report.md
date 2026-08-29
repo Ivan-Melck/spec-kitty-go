@@ -1,13 +1,13 @@
 # Mission Review Report: software-development-mission-method-01M11EX2
 
-**Reviewer**: Codex  
-**Date**: 2026-08-29  
-**Mission**: `software-development-mission-method-01M11EX2` — Software Development Mission Method  
-**Mission type**: `software-dev`  
-**Repository baseline**: `e5ece623e9e0b849dce6f703acc01645a77716ea`  
-**Qualified source**: `03afabd6d875dd133d18fa759669498d92e097be` (tree `6173b2dbce671d6243b14f99414170c8a5929f0f`)  
-**HEAD at review**: `4d76b70a7edf1ab152a454c3e06d3c7de6446c67`  
-**WPs reviewed**: WP01–WP12
+- **Reviewer**: Codex
+- **Date**: 2026-08-29
+- **Mission**: `software-development-mission-method-01M11EX2` — Software Development Mission Method
+- **Mission type**: `software-dev`
+- **Repository baseline**: `e5ece623e9e0b849dce6f703acc01645a77716ea`
+- **Qualified source**: `03afabd6d875dd133d18fa759669498d92e097be` (tree `6173b2dbce671d6243b14f99414170c8a5929f0f`)
+- **HEAD at review**: `4d76b70a7edf1ab152a454c3e06d3c7de6446c67`
+- **WPs reviewed**: WP01–WP12
 
 ## Executive conclusion
 
@@ -173,9 +173,9 @@ No implementation drift was found.
 
 ### RISK-1: Generated baseline metadata is not a review baseline
 
-**Type**: AUDIT-BOOKKEEPING  
-**Severity**: LOW  
-**Location**: `kitty-specs/software-development-mission-method-01M11EX2/meta.json:16`
+- **Type**: AUDIT-BOOKKEEPING
+- **Severity**: LOW
+- **Location**: `kitty-specs/software-development-mission-method-01M11EX2/meta.json:16`
 
 The stored `baseline_merge_commit` is an intermediate feature/coordination
 merge. Review tools that consume it literally will undercount the mission diff.
@@ -185,9 +185,9 @@ bookkeeping explicitly.
 
 ### RISK-2: Go projects need a lenient acceptance path for Python-shaped paths
 
-**Type**: TOOLING-PORTABILITY  
-**Severity**: LOW  
-**Location**: acceptance workflow, not product code
+- **Type**: TOOLING-PORTABILITY
+- **Severity**: LOW
+- **Location**: acceptance workflow, not product code
 
 The installed generic acceptance gate expects top-level `src/` and `tests/`.
 This idiomatic Go repository uses `cmd/` and `internal/`, so acceptance required
@@ -197,9 +197,9 @@ runtime rather than by adding fake Python-shaped directories.
 
 ### RISK-3: Transition-force telemetry conflates rejection flow and bypass
 
-**Type**: PROCESS-OBSERVABILITY  
-**Severity**: LOW  
-**Location**: `status.events.jsonl` and generated `retrospective.yaml`
+- **Type**: PROCESS-OBSERVABILITY
+- **Severity**: LOW
+- **Location**: `status.events.jsonl` and generated `retrospective.yaml`
 
 Many `force: true` events are documented backward rewinds from review into
 planned work, allocator recovery, or conflict recovery. Some approvals (WP08
