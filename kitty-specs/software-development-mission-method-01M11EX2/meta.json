@@ -1,4 +1,16 @@
 {
+  "acceptance_history": [
+    {
+      "acceptance_mode": "local",
+      "accepted_at": "2026-08-29T08:39:41.880716+00:00",
+      "accepted_by": "codex",
+      "accepted_from_commit": "28027e5ad2d527f900d7b8e238b2521c20dc2bed"
+    }
+  ],
+  "acceptance_mode": "local",
+  "accepted_at": "2026-08-29T08:39:41.880716+00:00",
+  "accepted_by": "codex",
+  "accepted_from_commit": "28027e5ad2d527f900d7b8e238b2521c20dc2bed",
   "coordination_branch": "kitty/mission-software-development-mission-method-01M11EX2",
   "created_at": "2026-08-27T11:15:24.655883+00:00",
   "flattened": false,
