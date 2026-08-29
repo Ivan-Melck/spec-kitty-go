@@ -11,7 +11,7 @@ import (
 	"io"
 )
 
-const currentSchemaVersion = 12
+const currentSchemaVersion = 14
 
 var migrations = []string{
 	`CREATE TABLE projects (
@@ -138,7 +138,274 @@ CREATE TABLE external_effect_observations (
 	integrationMigrationV10,
 	handoffRefusalMigrationV11,
 	governanceContextMigrationV12,
+	phase3MissionMethodMigrationV13,
+	phase3MissionCreationAuthorityMigrationV14,
 }
+
+// phase3MissionCreationAuthorityMigrationV14 is appended after the accepted
+// v13 mission-method schema. Migrations 1-13 are frozen storage contracts.
+const phase3MissionCreationAuthorityMigrationV14 = `
+CREATE TABLE phase3_mission_creation_authority (
+  mission_id TEXT PRIMARY KEY REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT,
+  actor_id TEXT NOT NULL REFERENCES actors(actor_id) ON DELETE RESTRICT,
+  process_id TEXT NOT NULL REFERENCES processes(process_id) ON DELETE RESTRICT,
+  governance_context_id TEXT NOT NULL REFERENCES governance_contexts(context_id) ON DELETE RESTRICT,
+  governance_aggregate TEXT NOT NULL,
+  FOREIGN KEY(process_id,actor_id) REFERENCES processes(process_id,actor_id) ON DELETE RESTRICT
+);
+CREATE TRIGGER immutable_phase3_mission_creation_authority_update
+BEFORE UPDATE ON phase3_mission_creation_authority BEGIN
+  SELECT RAISE(ABORT,'mission creation authority is immutable');
+END;
+CREATE TRIGGER immutable_phase3_mission_creation_authority_delete
+BEFORE DELETE ON phase3_mission_creation_authority BEGIN
+  SELECT RAISE(ABORT,'mission creation authority is immutable');
+END;`
+
+// phase3MissionMethodMigrationV13 is intentionally append-only. Versions
+// 1-12 are historical wire/storage contracts and must remain byte stable.
+const phase3MissionMethodMigrationV13 = `
+CREATE TABLE phase3_missions (
+  mission_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  definition_id TEXT NOT NULL,
+  definition_version INTEGER NOT NULL CHECK(definition_version > 0),
+  definition_commitment TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK(lifecycle IN ('open','terminal')),
+  current_step TEXT NOT NULL,
+  state_version INTEGER NOT NULL CHECK(state_version > 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  snapshot_json BLOB NOT NULL,
+  current_work_revision_id TEXT GENERATED ALWAYS AS (NULLIF(json_extract(snapshot_json,'$.CurrentWorkRevisionID'),'')) STORED,
+  UNIQUE(mission_id,current_work_revision_id),
+  CHECK(json_valid(snapshot_json)),
+  FOREIGN KEY(mission_id,current_work_revision_id)
+    REFERENCES phase3_current_work_revisions(mission_id,work_revision_id)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE phase3_operations (
+  operation_id TEXT PRIMARY KEY,
+  operation_kind TEXT NOT NULL,
+  mission_id TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  result_json BLOB NOT NULL,
+  occurred_at TEXT NOT NULL,
+  UNIQUE(operation_kind, mission_id, operation_id)
+);
+CREATE TABLE phase3_mission_transitions (
+  event_id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT,
+  operation_id TEXT NOT NULL UNIQUE REFERENCES phase3_operations(operation_id) ON DELETE RESTRICT,
+  old_state_version INTEGER NOT NULL,
+  new_state_version INTEGER NOT NULL,
+  old_step TEXT NOT NULL,
+  new_step TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  governance_context_id TEXT REFERENCES governance_contexts(context_id) ON DELETE RESTRICT,
+  audit_json BLOB NOT NULL,
+  UNIQUE(mission_id, new_state_version)
+);
+CREATE TABLE phase3_artifact_revisions (
+  artifact_revision_id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  revision_number INTEGER NOT NULL CHECK(revision_number > 0),
+  content_digest TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  source_revision TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  revision_json BLOB NOT NULL,
+  UNIQUE(mission_id, kind, revision_number)
+);
+CREATE TABLE phase3_artifact_validations (
+  artifact_revision_id TEXT PRIMARY KEY REFERENCES phase3_artifact_revisions(artifact_revision_id) ON DELETE RESTRICT,
+  verdict TEXT NOT NULL CHECK(verdict IN ('pass','fail')),
+  validation_json BLOB NOT NULL
+);
+CREATE TABLE phase3_artifact_approvals (
+  approval_id TEXT PRIMARY KEY,
+  artifact_revision_id TEXT NOT NULL REFERENCES phase3_artifact_revisions(artifact_revision_id) ON DELETE RESTRICT,
+  verdict TEXT NOT NULL CHECK(verdict IN ('approved','rejected')),
+  actor_id TEXT NOT NULL,
+  evidence_digest TEXT NOT NULL,
+  governance_context_id TEXT NOT NULL REFERENCES governance_contexts(context_id) ON DELETE RESTRICT,
+  submitted_at TEXT NOT NULL,
+  approval_json BLOB NOT NULL,
+  UNIQUE(artifact_revision_id)
+);
+CREATE TABLE phase3_work_revisions_v2 (
+  work_revision_id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK(generation > 0),
+  predecessor_id TEXT,
+  graph_digest TEXT NOT NULL,
+  criteria_digest TEXT NOT NULL,
+  encoded_revision BLOB NOT NULL,
+  UNIQUE(mission_id, generation),
+  UNIQUE(work_revision_id, mission_id),
+  UNIQUE(work_revision_id, mission_id, generation),
+  FOREIGN KEY(predecessor_id) REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT
+);
+CREATE TABLE phase3_current_work_revisions (
+  mission_id TEXT PRIMARY KEY,
+  work_revision_id TEXT NOT NULL UNIQUE,
+  generation INTEGER NOT NULL CHECK(generation > 0),
+  UNIQUE(mission_id, work_revision_id),
+  FOREIGN KEY(mission_id,work_revision_id)
+    REFERENCES phase3_missions(mission_id,current_work_revision_id)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(work_revision_id, mission_id, generation)
+    REFERENCES phase3_work_revisions_v2(work_revision_id, mission_id, generation)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE phase3_drift_reports (
+  drift_report_id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  old_work_revision_id TEXT NOT NULL REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
+  new_work_revision_id TEXT NOT NULL REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
+  semantic_status TEXT NOT NULL,
+  encoded_report BLOB NOT NULL
+);
+CREATE TABLE phase3_mixed_reconciliations (
+  reconciliation_id TEXT PRIMARY KEY,
+  drift_report_id TEXT NOT NULL UNIQUE REFERENCES phase3_drift_reports(drift_report_id) ON DELETE RESTRICT,
+  old_work_revision_id TEXT NOT NULL REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
+  new_work_revision_id TEXT NOT NULL REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
+  request_digest TEXT NOT NULL,
+  encoded_reconciliation BLOB NOT NULL,
+  UNIQUE(reconciliation_id, old_work_revision_id, new_work_revision_id)
+);
+CREATE TABLE phase3_eligibility_facts (
+  reconciliation_id TEXT NOT NULL,
+  old_work_revision_id TEXT NOT NULL,
+  new_work_revision_id TEXT NOT NULL,
+  work_id TEXT NOT NULL,
+  work_status TEXT NOT NULL CHECK(work_status IN ('active','handed_off','approved')),
+  disposition TEXT NOT NULL CHECK(disposition IN ('continue','supersede','invalidate','fork')),
+  operation TEXT NOT NULL CHECK(operation IN ('handoff','review','integration')),
+  allowed INTEGER NOT NULL CHECK(allowed IN (0,1)),
+  reason TEXT NOT NULL,
+  PRIMARY KEY(reconciliation_id, work_id, work_status, operation),
+  FOREIGN KEY(reconciliation_id, old_work_revision_id, new_work_revision_id)
+    REFERENCES phase3_mixed_reconciliations(reconciliation_id, old_work_revision_id, new_work_revision_id)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(old_work_revision_id) REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT,
+  FOREIGN KEY(new_work_revision_id) REFERENCES phase3_work_revisions_v2(work_revision_id) ON DELETE RESTRICT
+);
+CREATE TABLE phase3_decisions (
+  decision_id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT,
+  status TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK(version > 0),
+  decision_json BLOB NOT NULL
+);
+CREATE TABLE phase3_blockers (
+  blocker_id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT,
+  status TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK(version > 0),
+  blocker_json BLOB NOT NULL
+);
+CREATE TABLE phase3_mission_actions (
+  operation_id TEXT PRIMARY KEY REFERENCES phase3_operations(operation_id) ON DELETE RESTRICT,
+  mission_id TEXT NOT NULL REFERENCES phase3_missions(mission_id) ON DELETE RESTRICT,
+  action_key TEXT NOT NULL,
+  successor TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
+  governance_context_id TEXT NOT NULL REFERENCES governance_contexts(context_id) ON DELETE RESTRICT,
+  governance_commitment TEXT NOT NULL,
+  receipt TEXT NOT NULL,
+  occurred_at TEXT NOT NULL
+);
+CREATE TABLE phase3_events (
+  event_id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL REFERENCES phase3_operations(operation_id) ON DELETE RESTRICT,
+  mission_id TEXT NOT NULL,
+  event_kind TEXT NOT NULL,
+  payload_digest TEXT NOT NULL,
+  occurred_at TEXT NOT NULL
+);
+CREATE TABLE phase3_outbox (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE REFERENCES phase3_events(event_id) ON DELETE RESTRICT,
+  event_kind TEXT NOT NULL,
+  payload_digest TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  delivery_status TEXT NOT NULL DEFAULT 'pending' CHECK(delivery_status IN ('pending','claimed','retryable','delivered')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+  available_at TEXT NOT NULL,
+  claim_id TEXT,
+  claimed_at TEXT,
+  claim_expires_at TEXT,
+  last_attempt_at TEXT,
+  delivered_at TEXT,
+  CHECK(julianday(created_at) IS NOT NULL AND julianday(available_at) IS NOT NULL),
+  CHECK(
+    (delivery_status='pending' AND attempt_count=0 AND claim_id IS NULL AND claimed_at IS NULL AND claim_expires_at IS NULL AND last_attempt_at IS NULL AND delivered_at IS NULL AND julianday(available_at)>=julianday(created_at))
+    OR (delivery_status='claimed' AND attempt_count>0 AND claim_id IS NOT NULL AND length(claim_id) BETWEEN 1 AND 128 AND claim_id NOT GLOB '*[^!-~]*' AND claimed_at IS NOT NULL AND claim_expires_at IS NOT NULL AND julianday(claimed_at) IS NOT NULL AND julianday(claim_expires_at)>julianday(claimed_at) AND julianday(claim_expires_at)<=julianday(claimed_at)+(5.0/1440.0) AND julianday(claimed_at)>=julianday(available_at) AND julianday(available_at)>=julianday(created_at) AND delivered_at IS NULL AND (last_attempt_at IS NULL OR (julianday(last_attempt_at) IS NOT NULL AND julianday(claimed_at)>=julianday(last_attempt_at))))
+    OR (delivery_status='retryable' AND attempt_count>0 AND claim_id IS NULL AND claimed_at IS NOT NULL AND claim_expires_at IS NOT NULL AND last_attempt_at IS NOT NULL AND julianday(claimed_at) IS NOT NULL AND julianday(claim_expires_at)>julianday(claimed_at) AND julianday(claim_expires_at)<=julianday(claimed_at)+(5.0/1440.0) AND julianday(last_attempt_at)>=julianday(claimed_at) AND julianday(last_attempt_at)<=julianday(claim_expires_at) AND delivered_at IS NULL AND julianday(available_at)>=julianday(last_attempt_at) AND julianday(available_at)>=julianday(created_at))
+    OR (delivery_status='delivered' AND attempt_count>0 AND claim_id IS NULL AND claimed_at IS NOT NULL AND claim_expires_at IS NOT NULL AND last_attempt_at IS NOT NULL AND delivered_at IS NOT NULL AND julianday(claimed_at) IS NOT NULL AND julianday(claim_expires_at)>julianday(claimed_at) AND julianday(claim_expires_at)<=julianday(claimed_at)+(5.0/1440.0) AND julianday(last_attempt_at)>=julianday(claimed_at) AND julianday(last_attempt_at)<=julianday(claim_expires_at) AND julianday(delivered_at)>=julianday(last_attempt_at) AND julianday(delivered_at)<=julianday(claim_expires_at) AND julianday(available_at)>=julianday(created_at))
+  )
+);
+CREATE TRIGGER immutable_phase3_operation_update BEFORE UPDATE ON phase3_operations BEGIN SELECT RAISE(ABORT,'phase3 operation is immutable'); END;
+CREATE TRIGGER immutable_phase3_operation_delete BEFORE DELETE ON phase3_operations BEGIN SELECT RAISE(ABORT,'phase3 operation is immutable'); END;
+CREATE TRIGGER phase3_operation_excludes_legacy_operations BEFORE INSERT ON phase3_operations
+WHEN EXISTS(SELECT 1 FROM operations WHERE operation_id=NEW.operation_id)
+  OR EXISTS(SELECT 1 FROM work_graph_operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in another namespace'); END;
+CREATE TRIGGER legacy_operation_excludes_phase3 BEFORE INSERT ON operations
+WHEN EXISTS(SELECT 1 FROM phase3_operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in phase3'); END;
+CREATE TRIGGER work_graph_operation_excludes_phase3 BEFORE INSERT ON work_graph_operations
+WHEN EXISTS(SELECT 1 FROM phase3_operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in phase3'); END;
+CREATE TRIGGER legacy_operation_excludes_work_graph BEFORE INSERT ON operations
+WHEN EXISTS(SELECT 1 FROM work_graph_operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in work graph'); END;
+CREATE TRIGGER work_graph_operation_excludes_legacy BEFORE INSERT ON work_graph_operations
+WHEN EXISTS(SELECT 1 FROM operations WHERE operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'OperationID is already bound in legacy operations'); END;
+CREATE TRIGGER immutable_legacy_operation_identity
+BEFORE UPDATE OF operation_id ON operations
+WHEN NEW.operation_id<>OLD.operation_id
+BEGIN SELECT RAISE(ABORT,'legacy operation identity is immutable'); END;
+CREATE TRIGGER immutable_phase3_transition_update BEFORE UPDATE ON phase3_mission_transitions BEGIN SELECT RAISE(ABORT,'mission transition is immutable'); END;
+CREATE TRIGGER immutable_phase3_transition_delete BEFORE DELETE ON phase3_mission_transitions BEGIN SELECT RAISE(ABORT,'mission transition is immutable'); END;
+CREATE TRIGGER immutable_phase3_artifact_revision_update BEFORE UPDATE ON phase3_artifact_revisions BEGIN SELECT RAISE(ABORT,'artifact revision is immutable'); END;
+CREATE TRIGGER immutable_phase3_artifact_revision_delete BEFORE DELETE ON phase3_artifact_revisions BEGIN SELECT RAISE(ABORT,'artifact revision is immutable'); END;
+CREATE TRIGGER immutable_phase3_artifact_validation_update BEFORE UPDATE ON phase3_artifact_validations BEGIN SELECT RAISE(ABORT,'artifact validation is immutable'); END;
+CREATE TRIGGER immutable_phase3_artifact_validation_delete BEFORE DELETE ON phase3_artifact_validations BEGIN SELECT RAISE(ABORT,'artifact validation is immutable'); END;
+CREATE TRIGGER immutable_phase3_artifact_approval_update BEFORE UPDATE ON phase3_artifact_approvals BEGIN SELECT RAISE(ABORT,'artifact approval is immutable'); END;
+CREATE TRIGGER immutable_phase3_artifact_approval_delete BEFORE DELETE ON phase3_artifact_approvals BEGIN SELECT RAISE(ABORT,'artifact approval is immutable'); END;
+CREATE TRIGGER immutable_phase3_work_revision_update BEFORE UPDATE ON phase3_work_revisions_v2 BEGIN SELECT RAISE(ABORT,'work revision v2 is immutable'); END;
+CREATE TRIGGER immutable_phase3_work_revision_delete BEFORE DELETE ON phase3_work_revisions_v2 BEGIN SELECT RAISE(ABORT,'work revision v2 is immutable'); END;
+CREATE TRIGGER immutable_phase3_drift_update BEFORE UPDATE ON phase3_drift_reports BEGIN SELECT RAISE(ABORT,'drift report is immutable'); END;
+CREATE TRIGGER immutable_phase3_drift_delete BEFORE DELETE ON phase3_drift_reports BEGIN SELECT RAISE(ABORT,'drift report is immutable'); END;
+CREATE TRIGGER immutable_phase3_reconciliation_update BEFORE UPDATE ON phase3_mixed_reconciliations BEGIN SELECT RAISE(ABORT,'mixed reconciliation is immutable'); END;
+CREATE TRIGGER immutable_phase3_reconciliation_delete BEFORE DELETE ON phase3_mixed_reconciliations BEGIN SELECT RAISE(ABORT,'mixed reconciliation is immutable'); END;
+CREATE TRIGGER immutable_phase3_eligibility_update BEFORE UPDATE ON phase3_eligibility_facts BEGIN SELECT RAISE(ABORT,'eligibility fact is immutable'); END;
+CREATE TRIGGER immutable_phase3_eligibility_delete BEFORE DELETE ON phase3_eligibility_facts BEGIN SELECT RAISE(ABORT,'eligibility fact is immutable'); END;
+CREATE TRIGGER immutable_phase3_mission_action_update BEFORE UPDATE ON phase3_mission_actions BEGIN SELECT RAISE(ABORT,'mission action is immutable'); END;
+CREATE TRIGGER immutable_phase3_mission_action_delete BEFORE DELETE ON phase3_mission_actions BEGIN SELECT RAISE(ABORT,'mission action is immutable'); END;
+CREATE TRIGGER immutable_phase3_event_update BEFORE UPDATE ON phase3_events BEGIN SELECT RAISE(ABORT,'phase3 event is immutable'); END;
+CREATE TRIGGER immutable_phase3_event_delete BEFORE DELETE ON phase3_events BEGIN SELECT RAISE(ABORT,'phase3 event is immutable'); END;
+CREATE TRIGGER immutable_phase3_outbox_identity_update
+BEFORE UPDATE OF sequence,event_id,event_kind,payload_digest,created_at ON phase3_outbox
+BEGIN SELECT RAISE(ABORT,'phase3 outbox identity is immutable'); END;
+CREATE TRIGGER phase3_outbox_delivery_transition
+BEFORE UPDATE ON phase3_outbox
+WHEN NOT (
+  (OLD.delivery_status IN ('pending','retryable') AND NEW.delivery_status='claimed' AND NEW.attempt_count=OLD.attempt_count+1)
+  OR (OLD.delivery_status='claimed' AND NEW.delivery_status='claimed' AND julianday(OLD.claim_expires_at)<=julianday(NEW.claimed_at) AND NEW.attempt_count=OLD.attempt_count+1 AND NEW.claim_id<>OLD.claim_id)
+  OR (OLD.delivery_status='claimed' AND NEW.delivery_status IN ('retryable','delivered') AND NEW.attempt_count=OLD.attempt_count)
+)
+BEGIN SELECT RAISE(ABORT,'phase3 outbox delivery transition is invalid'); END;
+CREATE TRIGGER immutable_phase3_outbox_delete BEFORE DELETE ON phase3_outbox BEGIN SELECT RAISE(ABORT,'phase3 outbox is immutable'); END;
+`
 
 const governanceContextMigrationV12 = `
 CREATE TABLE governance_contexts (

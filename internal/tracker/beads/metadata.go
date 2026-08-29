@@ -18,6 +18,9 @@ const (
 	maxCriterionIDBytes          = 128
 	maxCriterionTextBytes        = 64 << 10
 	maxEvidenceHintBytes         = 16 << 10
+	maxWorkDependencies          = 4096
+	maxWorkScopes                = 4096
+	maxWorkProvenance            = 4096
 )
 
 type criterionMetadata struct {
@@ -26,6 +29,7 @@ type criterionMetadata struct {
 	Verifier     tracker.VerifierKind `json:"verifier"`
 	Required     bool                 `json:"required"`
 	EvidenceHint string               `json:"evidence_hint,omitempty"`
+	Outcome      string               `json:"outcome,omitempty"`
 }
 
 type kittyMetadata struct {
@@ -36,8 +40,14 @@ type kittyMetadata struct {
 	LastOperation      ids.OperationID
 	AssignmentMarker   ids.OperationID
 	Criteria           []tracker.Criterion
+	WorkCriteria       []tracker.WorkCriterion
 	DesignContext      string
+	CrossDomainReason  string
+	Dependencies       []ids.WorkID
+	WriteScopes        []tracker.WriteScope
+	Provenance         []tracker.ScopeRef
 	ContentDigest      string
+	completeDefinition bool
 }
 
 type metadataDocument struct {
@@ -106,14 +116,18 @@ func decodeKittyMetadata(namespace map[string]json.RawMessage) (kittyMetadata, e
 		return kittyMetadata{}, metadataProtocolError("spec_kitty metadata schema is unsupported", nil)
 	}
 	var wire struct {
-		ProjectID          string              `json:"project_id"`
-		WorkID             string              `json:"work_id"`
-		CreatedByOperation string              `json:"created_by_operation"`
-		LastOperation      string              `json:"last_operation"`
-		AssignmentMarker   string              `json:"assignment_marker"`
-		Criteria           []criterionMetadata `json:"criteria"`
-		DesignContext      string              `json:"design_context"`
-		ContentDigest      string              `json:"content_digest"`
+		ProjectID          string               `json:"project_id"`
+		WorkID             string               `json:"work_id"`
+		CreatedByOperation string               `json:"created_by_operation"`
+		LastOperation      string               `json:"last_operation"`
+		AssignmentMarker   string               `json:"assignment_marker"`
+		Criteria           []criterionMetadata  `json:"criteria"`
+		DesignContext      string               `json:"design_context"`
+		CrossDomainReason  string               `json:"cross_domain_reason"`
+		Dependencies       []ids.WorkID         `json:"dependencies"`
+		WriteScopes        []tracker.WriteScope `json:"write_scopes"`
+		Provenance         []tracker.ScopeRef   `json:"provenance"`
+		ContentDigest      string               `json:"content_digest"`
 	}
 	encoded, err := json.Marshal(namespace)
 	if err != nil {
@@ -149,17 +163,84 @@ func decodeKittyMetadata(namespace map[string]json.RawMessage) (kittyMetadata, e
 		}
 	}
 	criteria := make([]tracker.Criterion, len(wire.Criteria))
+	workCriteria := make([]tracker.WorkCriterion, len(wire.Criteria))
 	for index, criterion := range wire.Criteria {
 		criteria[index] = tracker.Criterion{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
+		workCriteria[index] = tracker.WorkCriterion{ID: criterion.ID, Text: criterion.Text, Outcome: criterion.Outcome, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
 	}
 	if err := validateCriteria(criteria); err != nil {
 		return kittyMetadata{}, metadataProtocolError("spec_kitty criteria are invalid", err)
 	}
+	phase3Fields := []string{"cross_domain_reason", "dependencies", "write_scopes", "provenance"}
+	phase3Present := 0
+	for _, field := range phase3Fields {
+		if _, present := namespace[field]; present {
+			phase3Present++
+		}
+	}
+	if phase3Present != 0 && phase3Present != len(phase3Fields) {
+		return kittyMetadata{}, definitionSchemaError("complete work-definition metadata fields are required together", nil)
+	}
+	complete := phase3Present == len(phase3Fields)
+	if complete {
+		if len(workCriteria) == 0 || len(wire.WriteScopes) == 0 || len(wire.Provenance) == 0 || len(wire.Dependencies) > maxWorkDependencies || len(wire.WriteScopes) > maxWorkScopes || len(wire.Provenance) > maxWorkProvenance {
+			return kittyMetadata{}, definitionSchemaError("complete work-definition metadata is incomplete or exceeds bounds", nil)
+		}
+		for _, criterion := range workCriteria {
+			if criterion.Outcome == "" {
+				return kittyMetadata{}, definitionSchemaError("complete work-definition criteria require outcomes", nil)
+			}
+		}
+		if err := validateDefinitionCollections(wire.Dependencies, wire.WriteScopes, wire.Provenance); err != nil {
+			return kittyMetadata{}, definitionSchemaError("complete work-definition metadata is invalid", err)
+		}
+	} else {
+		workCriteria = nil
+	}
 	return kittyMetadata{
 		SchemaVersion: schema, ProjectID: projectID, WorkID: workID,
 		CreatedByOperation: created, LastOperation: last, AssignmentMarker: assignment,
-		Criteria: criteria, DesignContext: wire.DesignContext, ContentDigest: wire.ContentDigest,
+		Criteria: criteria, WorkCriteria: workCriteria, DesignContext: wire.DesignContext,
+		CrossDomainReason: wire.CrossDomainReason, Dependencies: append([]ids.WorkID(nil), wire.Dependencies...),
+		WriteScopes: append([]tracker.WriteScope(nil), wire.WriteScopes...), Provenance: append([]tracker.ScopeRef(nil), wire.Provenance...),
+		ContentDigest: wire.ContentDigest, completeDefinition: complete,
 	}, nil
+}
+
+func validateDefinitionCollections(dependencies []ids.WorkID, scopes []tracker.WriteScope, provenance []tracker.ScopeRef) error {
+	seenDependencies := make(map[ids.WorkID]struct{}, len(dependencies))
+	for _, dependency := range dependencies {
+		if _, err := ids.ParseWorkID(dependency.String()); err != nil {
+			return err
+		}
+		if _, duplicate := seenDependencies[dependency]; duplicate {
+			return fmt.Errorf("duplicate dependency")
+		}
+		seenDependencies[dependency] = struct{}{}
+	}
+	seenScopes := make(map[string]struct{}, len(scopes))
+	for _, scope := range scopes {
+		if err := scope.Validate(); err != nil {
+			return err
+		}
+		key := scope.Path + "\x00" + string(scope.Access)
+		if _, duplicate := seenScopes[key]; duplicate {
+			return fmt.Errorf("duplicate write scope")
+		}
+		seenScopes[key] = struct{}{}
+	}
+	seenProvenance := make(map[string]struct{}, len(provenance))
+	for _, reference := range provenance {
+		if err := reference.Validate(); err != nil {
+			return err
+		}
+		key := string(reference.Kind) + "\x00" + reference.ID
+		if _, duplicate := seenProvenance[key]; duplicate {
+			return fmt.Errorf("duplicate provenance")
+		}
+		seenProvenance[key] = struct{}{}
+	}
+	return nil
 }
 
 func requiredJSON(values map[string]json.RawMessage, key string, target any) error {
@@ -211,8 +292,15 @@ func mergeMetadata(payload []byte, desired kittyMetadata) ([]byte, error) {
 		namespace = make(map[string]json.RawMessage)
 	}
 	wireCriteria := make([]criterionMetadata, len(desired.Criteria))
-	for index, criterion := range desired.Criteria {
-		wireCriteria[index] = criterionMetadata{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
+	if desired.completeDefinition {
+		wireCriteria = make([]criterionMetadata, len(desired.WorkCriteria))
+		for index, criterion := range desired.WorkCriteria {
+			wireCriteria[index] = criterionMetadata{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint, Outcome: criterion.Outcome}
+		}
+	} else {
+		for index, criterion := range desired.Criteria {
+			wireCriteria[index] = criterionMetadata{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
+		}
 	}
 	setJSON(namespace, "schema_version", desired.SchemaVersion)
 	setJSON(namespace, "project_id", desired.ProjectID.String())
@@ -222,6 +310,17 @@ func mergeMetadata(payload []byte, desired kittyMetadata) ([]byte, error) {
 	setJSON(namespace, "criteria", wireCriteria)
 	setJSON(namespace, "design_context", desired.DesignContext)
 	setJSON(namespace, "content_digest", desired.ContentDigest)
+	if desired.completeDefinition {
+		setJSON(namespace, "cross_domain_reason", desired.CrossDomainReason)
+		setJSON(namespace, "dependencies", desired.Dependencies)
+		setJSON(namespace, "write_scopes", desired.WriteScopes)
+		setJSON(namespace, "provenance", desired.Provenance)
+	} else {
+		delete(namespace, "cross_domain_reason")
+		delete(namespace, "dependencies")
+		delete(namespace, "write_scopes")
+		delete(namespace, "provenance")
+	}
 	if desired.AssignmentMarker == "" {
 		delete(namespace, "assignment_marker")
 	} else {
@@ -261,6 +360,20 @@ func validateKittyMetadata(value kittyMetadata) error {
 	if err := validateCriteria(value.Criteria); err != nil {
 		return invalidCatalogRequest("criteria are invalid", err)
 	}
+	if value.completeDefinition {
+		if len(value.WorkCriteria) == 0 || len(value.WriteScopes) == 0 || len(value.Provenance) == 0 {
+			return invalidCatalogRequest("complete work-definition metadata is incomplete", nil)
+		}
+		for _, criterion := range value.WorkCriteria {
+			catalogCriterion := tracker.Criterion{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
+			if err := catalogCriterion.Validate(); err != nil || criterion.Outcome == "" {
+				return invalidCatalogRequest("complete work-definition criterion is invalid", err)
+			}
+		}
+		if err := validateDefinitionCollections(value.Dependencies, value.WriteScopes, value.Provenance); err != nil {
+			return invalidCatalogRequest("complete work-definition metadata is invalid", err)
+		}
+	}
 	return nil
 }
 
@@ -285,6 +398,10 @@ func setJSON(destination map[string]json.RawMessage, key string, value any) {
 
 func metadataProtocolError(message string, cause error) error {
 	return &tracker.Error{Kind: tracker.ErrorMalformedProtocol, RecoveryCode: "reconcile_provider_metadata", Message: message, Cause: cause}
+}
+
+func definitionSchemaError(message string, cause error) error {
+	return &tracker.Error{Kind: tracker.ErrorSchemaSkew, RecoveryCode: "repair_complete_work_definition", Message: message, Cause: cause}
 }
 
 func mappingConflict(message string) error {

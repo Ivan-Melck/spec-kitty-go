@@ -333,6 +333,86 @@ func TestDistinctActorChangesRequestedIsDurableAndReviewNeedsLiveAuthority(t *te
 	}
 }
 
+func TestReadOnlyReviewAuthorityProbeDetectsStaleLeaseWithoutRecordingAttempt(t *testing.T) {
+	fixture := newHandoffReviewFixture(t)
+	handoffRecord, err := fixture.store.CommitHandoff(fixture.ctx, fixture.handoffRequest("handoff-authority-probe", "operation-handoff-authority-probe", commitForStore('b')), fixture.evidence(commitForStore('b')))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := fixture.reviewRequest("review-authority-probe", "operation-review-authority-probe", "actor-reviewer", "process-reviewer", handoffRecord, review.Approved)
+	assertAttempts := func(want int) {
+		t.Helper()
+		var got int
+		if err := fixture.store.db.QueryRowContext(fixture.ctx, `SELECT COUNT(*) FROM review_attempts WHERE operation_id=?`, request.OperationID).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("review attempts=%d want=%d", got, want)
+		}
+	}
+	assertAttempts(0)
+	if err := fixture.store.InspectReviewAuthority(fixture.ctx, request); err != nil {
+		t.Fatalf("current authority probe=%v", err)
+	}
+	assertAttempts(0)
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*review.Request)
+		kind   review.ErrorKind
+	}{
+		{name: "revision", mutate: func(r *review.Request) { r.WorkRevisionID = "revision-substituted" }, kind: review.KindCandidateMismatch},
+		{name: "work", mutate: func(r *review.Request) { r.WorkID = "work-substituted" }, kind: review.KindCandidateMismatch},
+		{name: "candidate", mutate: func(r *review.Request) { r.Candidate = commitForStore('c') }, kind: review.KindCandidateMismatch},
+		{name: "lease-id", mutate: func(r *review.Request) { r.LeaseID = "lease-substituted" }, kind: review.KindCandidateMismatch},
+		{name: "generation", mutate: func(r *review.Request) { r.LeaseGeneration++ }, kind: review.KindCandidateMismatch},
+		{name: "token", mutate: func(r *review.Request) { r.Token = "stale-token" }, kind: review.KindStaleAuthority},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mutant := request
+			test.mutate(&mutant)
+			if err := fixture.store.InspectReviewAuthority(fixture.ctx, mutant); !review.IsKind(err, test.kind) {
+				t.Fatalf("authority probe=%v", err)
+			}
+			assertAttempts(0)
+		})
+	}
+
+	for _, test := range []struct {
+		name   string
+		column string
+		value  string
+	}{
+		{name: "status", column: "status", value: "expired"},
+		{name: "deadline", column: "deadline", value: request.SubmittedAt.UTC().Format(time.RFC3339Nano)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			isolated := newHandoffReviewFixture(t)
+			record, err := isolated.store.CommitHandoff(isolated.ctx, isolated.handoffRequest(ids.HandoffID("handoff-authority-"+test.name), ids.OperationID("operation-handoff-authority-"+test.name), commitForStore('b')), isolated.evidence(commitForStore('b')))
+			if err != nil {
+				t.Fatal(err)
+			}
+			isolatedRequest := isolated.reviewRequest(ids.ReviewID("review-authority-"+test.name), ids.OperationID("operation-review-authority-"+test.name), "actor-reviewer", ids.ProcessID("process-reviewer-"+test.name), record, review.Approved)
+			if err := isolated.store.InspectReviewAuthority(isolated.ctx, isolatedRequest); err != nil {
+				t.Fatalf("current authority probe=%v", err)
+			}
+			if _, err := isolated.store.db.ExecContext(isolated.ctx, `UPDATE leases SET `+test.column+`=? WHERE lease_id=?`, test.value, isolatedRequest.LeaseID); err != nil {
+				t.Fatal(err)
+			}
+			if err := isolated.store.InspectReviewAuthority(isolated.ctx, isolatedRequest); !review.IsKind(err, review.KindStaleAuthority) {
+				t.Fatalf("authority probe=%v", err)
+			}
+			var attempts int
+			if err := isolated.store.db.QueryRowContext(isolated.ctx, `SELECT COUNT(*) FROM review_attempts WHERE operation_id=?`, isolatedRequest.OperationID).Scan(&attempts); err != nil {
+				t.Fatal(err)
+			}
+			if attempts != 0 {
+				t.Fatalf("review attempts=%d", attempts)
+			}
+		})
+	}
+}
+
 func TestHandoffReviewMutationAttacksCannotAlterCandidateOrCriteria(t *testing.T) {
 	fixture := newHandoffReviewFixture(t)
 	handoffRecord, err := fixture.store.CommitHandoff(fixture.ctx, fixture.handoffRequest("handoff-mutation", "operation-handoff-mutation", commitForStore('b')), fixture.evidence(commitForStore('b')))

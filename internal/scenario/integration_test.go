@@ -76,7 +76,9 @@ func TestIntegrationIG00ThroughIG09RecoversFromRealGitFacts(t *testing.T) {
 			}
 			assertIntegrationEnvelope(t, response.Integration, operation)
 			original, _ := json.Marshal(response.Integration.Record)
-			code, replay := runIntegrationInProcess(t, args)
+			replayArgs := append([]string(nil), args...)
+			setArgument(replayArgs, "--eligibility-mode", "complete")
+			code, replay := runIntegrationInProcess(t, replayArgs)
 			replayed, _ := json.Marshal(replay.Integration.Record)
 			if code != 0 || !replay.OK || string(original) != string(replayed) {
 				t.Fatalf("%s replay code=%d original=%s replay=%s response=%+v", boundary, code, original, replayed, replay)
@@ -762,7 +764,7 @@ func approveMissionCandidate(t *testing.T, fixture workspaceScenario, capsule *e
 }
 
 func integrationArgs(fixture workspaceScenario, database, operation, reviewID, candidate, actor, process string, at time.Time) []string {
-	return []string{"integrate", "--db", database, "--repository", fixture.repository, "--workspace-root", fixture.managedRoot, "--barrier", fixture.barrier,
+	return []string{"integrate", "--db", database, "--eligibility-mode", "legacy-v1", "--repository", fixture.repository, "--workspace-root", fixture.managedRoot, "--barrier", fixture.barrier,
 		"--schema-version", "1", "--correlation-id", operation, "--at", at.Format(time.RFC3339Nano), "--operation", operation, "--review-id", reviewID,
 		"--project", "project-1", "--repository-id", "repository-1", "--target-ref", "refs/heads/main", "--actor", actor, "--process", process, "--candidate", candidate, "--ttl", "2m"}
 }

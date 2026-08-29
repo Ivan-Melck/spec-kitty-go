@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
@@ -38,17 +40,33 @@ type HistoryEntry struct {
 	Revision tracker.Revision `json:"revision"`
 }
 
+// HumanState is provider-visible catalog state with no Spec Kitty authority.
+// Status and assignment are intentionally observable so qualification can
+// prove that external workflow labels never become mission state.
+type HumanState struct {
+	Status   string           `json:"status"`
+	Assignee string           `json:"assignee"`
+	Revision tracker.Revision `json:"revision"`
+}
+
 type Store struct {
 	path     string
 	lockPath string
 }
 
 type diskState struct {
-	Version     uint16                      `json:"version"`
-	Works       map[string]*diskWork        `json:"works"`
-	Failures    []FailureMode               `json:"failures,omitempty"`
-	Compensated map[string]tracker.Revision `json:"compensated,omitempty"`
-	History     []HistoryEntry              `json:"history,omitempty"`
+	Version              uint16                         `json:"version"`
+	Works                map[string]*diskWork           `json:"works"`
+	Failures             []FailureMode                  `json:"failures,omitempty"`
+	Compensated          map[string]tracker.Revision    `json:"compensated,omitempty"`
+	History              []HistoryEntry                 `json:"history,omitempty"`
+	DefinitionOperations map[string]definitionOperation `json:"definition_operations,omitempty"`
+	DefinitionRequests   map[string]string              `json:"definition_requests,omitempty"`
+}
+
+type definitionOperation struct {
+	Digest  string `json:"digest"`
+	WorkKey string `json:"work_key"`
 }
 
 type diskWork struct {
@@ -58,9 +76,28 @@ type diskWork struct {
 	Criteria         []string          `json:"criteria,omitempty"`
 	Dependencies     []string          `json:"dependencies,omitempty"`
 	Assignee         string            `json:"assignee,omitempty"`
+	Status           string            `json:"status,omitempty"`
 	AssignmentMarker string            `json:"assignment_marker,omitempty"`
 	Comments         []tracker.Comment `json:"comments,omitempty"`
 	Revision         tracker.Revision  `json:"revision"`
+	Definition       *diskDefinition   `json:"definition,omitempty"`
+}
+
+type diskDefinition struct {
+	ProjectID          ids.ProjectID           `json:"project_id"`
+	WorkID             ids.WorkID              `json:"work_id"`
+	Title              string                  `json:"title"`
+	Description        string                  `json:"description"`
+	DesignContext      string                  `json:"design_context"`
+	CrossDomainReason  string                  `json:"cross_domain_reason,omitempty"`
+	Criteria           []tracker.WorkCriterion `json:"criteria"`
+	Dependencies       []ids.WorkID            `json:"dependencies,omitempty"`
+	WriteScopes        []tracker.WriteScope    `json:"write_scopes"`
+	Provenance         []tracker.ScopeRef      `json:"provenance"`
+	MetadataSchema     uint16                  `json:"metadata_schema"`
+	ProviderMetadata   json.RawMessage         `json:"provider_metadata,omitempty"`
+	CreatedByOperation ids.OperationID         `json:"created_by_operation"`
+	ObservedAt         time.Time               `json:"observed_at"`
 }
 
 func Open(path string) (*Store, error) {
@@ -114,6 +151,65 @@ func (s *Store) HumanAssign(ctx context.Context, workKey, assignee string) error
 		work.Assignee = assignee
 		work.AssignmentMarker = ""
 		state.History = append(state.History, HistoryEntry{Kind: "human_assignment", WorkKey: workKey, Value: assignee, Revision: work.Revision})
+		return nil
+	})
+}
+
+// HumanSetStatus records an unattributed provider-side status mutation. The
+// closed values are fake-provider catalog labels only; callers must never map
+// them to mission, execution, review, or integration authority.
+func (s *Store) HumanSetStatus(ctx context.Context, workKey, status string) (HumanState, error) {
+	if status != "open" && status != "in_progress" && status != "blocked" && status != "done" {
+		return HumanState{}, &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "human status is invalid"}
+	}
+	var result HumanState
+	err := s.update(ctx, func(state *diskState) error {
+		work, ok := state.Works[workKey]
+		if !ok {
+			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work does not exist"}
+		}
+		work.Revision++
+		work.Status = status
+		state.History = append(state.History, HistoryEntry{Kind: "human_status", WorkKey: workKey, Value: status, Revision: work.Revision})
+		result = humanState(work)
+		return nil
+	})
+	return result, err
+}
+
+func (s *Store) ObserveHumanState(ctx context.Context, workKey string) (HumanState, error) {
+	var result HumanState
+	err := s.read(ctx, func(state diskState) error {
+		work, ok := state.Works[workKey]
+		if !ok {
+			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work does not exist"}
+		}
+		result = humanState(work)
+		return nil
+	})
+	return result, err
+}
+
+func humanState(work *diskWork) HumanState {
+	return HumanState{Status: work.Status, Assignee: work.Assignee, Revision: work.Revision}
+}
+
+// HumanEditTitle simulates an unattributed concurrent provider writer. It is
+// intentionally explicit so guarded-update tests never rely on timing.
+func (s *Store) HumanEditTitle(ctx context.Context, workKey, title string) error {
+	if title == "" {
+		return &tracker.Error{Kind: tracker.ErrorInvalidRequest, Message: "title is required"}
+	}
+	return s.update(ctx, func(state *diskState) error {
+		work, ok := state.Works[workKey]
+		if !ok || work.Definition == nil {
+			return &tracker.Error{Kind: tracker.ErrorNotFound, Message: "work definition does not exist"}
+		}
+		work.Revision++
+		work.Title = title
+		work.Definition.Title = title
+		work.Definition.ObservedAt = time.Now().UTC()
+		state.History = append(state.History, HistoryEntry{Kind: "human_definition_edit", WorkKey: workKey, Value: title, Revision: work.Revision})
 		return nil
 	})
 }
@@ -184,7 +280,7 @@ func unlock(file *os.File) {
 }
 
 func (s *Store) load() (diskState, error) {
-	state := diskState{Version: 1, Works: map[string]*diskWork{}, Compensated: map[string]tracker.Revision{}}
+	state := diskState{Version: 1, Works: map[string]*diskWork{}, Compensated: map[string]tracker.Revision{}, DefinitionOperations: map[string]definitionOperation{}, DefinitionRequests: map[string]string{}}
 	file, err := os.Open(s.path)
 	if os.IsNotExist(err) {
 		return state, nil
@@ -204,6 +300,12 @@ func (s *Store) load() (diskState, error) {
 	}
 	if state.Compensated == nil {
 		state.Compensated = map[string]tracker.Revision{}
+	}
+	if state.DefinitionOperations == nil {
+		state.DefinitionOperations = map[string]definitionOperation{}
+	}
+	if state.DefinitionRequests == nil {
+		state.DefinitionRequests = map[string]string{}
 	}
 	return state, nil
 }

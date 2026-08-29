@@ -1,7 +1,9 @@
 package beads
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -50,37 +52,52 @@ func (bound *BoundAdapter) beginProviderMutation(ctx context.Context) (func(), e
 }
 
 func (bound *BoundAdapter) loadMappingIndex(ctx context.Context) (workMappingIndex, error) {
-	request, err := newListCommand(bound.commandBinding())
+	issues, err := bound.listMappedIssues(ctx)
 	if err != nil {
 		return workMappingIndex{}, err
+	}
+	return mappingIndexFromIssues(issues), nil
+}
+
+func (bound *BoundAdapter) listMappedIssues(ctx context.Context) ([]providerIssue, error) {
+	request, err := newListCommand(bound.commandBinding())
+	if err != nil {
+		return nil, err
 	}
 	response, err := bound.adapter.execute(ctx, request)
 	if err != nil {
-		return workMappingIndex{}, err
+		return nil, err
 	}
 	var encoded []json.RawMessage
 	if err := json.Unmarshal(response.payload, &encoded); err != nil {
-		return workMappingIndex{}, metadataProtocolError("provider issue list is malformed", err)
+		return nil, metadataProtocolError("provider issue list is malformed", err)
 	}
+	issues := make([]providerIssue, 0, len(encoded))
+	for _, raw := range encoded {
+		issue, err := decodeProviderIssue(raw)
+		if err != nil {
+			return nil, err
+		}
+		if issue.document.namespace != nil {
+			issues = append(issues, issue)
+		}
+	}
+	return issues, nil
+}
+
+func mappingIndexFromIssues(issues []providerIssue) workMappingIndex {
 	index := workMappingIndex{
 		byExternal: make(map[string]tracker.ExternalWorkRef), byWork: make(map[workMappingKey]tracker.ExternalWorkRef),
 		conflictingExternal: make(map[string]struct{}), conflictingWork: make(map[workMappingKey]struct{}),
 	}
-	for _, raw := range encoded {
-		issue, err := decodeProviderIssue(raw)
-		if err != nil {
-			return workMappingIndex{}, err
-		}
-		if issue.document.namespace == nil {
-			continue
-		}
+	for _, issue := range issues {
 		kitty := issue.document.kitty
 		reference := tracker.ExternalWorkRef{
 			ProjectID: kitty.ProjectID, WorkID: kitty.WorkID, Provider: beadsProvider, ExternalID: issue.externalID,
 			MetadataSchema: kitty.SchemaVersion, CreatedByOperation: kitty.CreatedByOperation,
 		}
 		key := workMappingKey{projectID: kitty.ProjectID, workID: kitty.WorkID}
-		if prior, present := index.byExternal[issue.externalID]; present && (prior.ProjectID != reference.ProjectID || prior.WorkID != reference.WorkID) {
+		if prior, present := index.byExternal[issue.externalID]; present {
 			delete(index.byExternal, issue.externalID)
 			index.conflictingExternal[issue.externalID] = struct{}{}
 			index.conflictingWork[workMappingKey{projectID: prior.ProjectID, workID: prior.WorkID}] = struct{}{}
@@ -89,19 +106,27 @@ func (bound *BoundAdapter) loadMappingIndex(ctx context.Context) (workMappingInd
 			delete(index.byWork, key)
 			continue
 		}
-		if _, conflicted := index.conflictingExternal[issue.externalID]; !conflicted {
-			index.byExternal[issue.externalID] = reference
-		}
-		if prior, present := index.byWork[key]; present && prior.ExternalID != issue.externalID {
-			delete(index.byWork, key)
+		if _, conflicted := index.conflictingExternal[issue.externalID]; conflicted {
 			index.conflictingWork[key] = struct{}{}
+			delete(index.byWork, key)
 			continue
 		}
-		if _, conflicted := index.conflictingWork[key]; !conflicted {
-			index.byWork[key] = reference
+		if prior, present := index.byWork[key]; present {
+			delete(index.byWork, key)
+			index.conflictingWork[key] = struct{}{}
+			delete(index.byExternal, prior.ExternalID)
+			index.conflictingExternal[prior.ExternalID] = struct{}{}
+			index.conflictingExternal[issue.externalID] = struct{}{}
+			continue
 		}
+		if _, conflicted := index.conflictingWork[key]; conflicted {
+			index.conflictingExternal[issue.externalID] = struct{}{}
+			continue
+		}
+		index.byExternal[issue.externalID] = reference
+		index.byWork[key] = reference
 	}
-	return index, nil
+	return index
 }
 
 func (index workMappingIndex) resolve(projectID ids.ProjectID, workID ids.WorkID) (tracker.ExternalWorkRef, error) {
@@ -340,11 +365,124 @@ func (bound *BoundAdapter) observeDependencies(ctx context.Context, blocked trac
 		}
 		edges = normalized
 	}
-	observation, err := bound.observationFromInput(catalogObservation{ExternalID: blocked.ExternalID, Dependencies: rawEdges})
+	observation, err := bound.observationFromInput(catalogObservation{ExternalID: blocked.ExternalID, Dependencies: normalizeObservationDependencies(rawEdges)})
 	if err != nil {
 		return nil, tracker.ProviderObservation{}, err
 	}
 	return edges, observation, nil
+}
+
+func normalizeObservationDependencies(edges []observationDependency) []observationDependency {
+	edges = append([]observationDependency(nil), edges...)
+	sort.Slice(edges, func(i, j int) bool {
+		left, right := edges[i], edges[j]
+		if left.Blocked != right.Blocked {
+			return left.Blocked < right.Blocked
+		}
+		if left.Blocking != right.Blocking {
+			return left.Blocking < right.Blocking
+		}
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		return left.EdgeID < right.EdgeID
+	})
+	if len(edges) < 2 {
+		return edges
+	}
+	result := edges[:1]
+	for _, edge := range edges[1:] {
+		prior := result[len(result)-1]
+		if edge.Blocked == prior.Blocked && edge.Blocking == prior.Blocking && edge.Kind == prior.Kind {
+			continue
+		}
+		result = append(result, edge)
+	}
+	return result
+}
+
+// ObserveDefinitionCatalog returns a strict provider-neutral graph snapshot.
+// All mapped issues in the bound workspace must belong to this project, carry
+// complete definition metadata, and agree exactly with Beads blocking edges.
+func (bound *BoundAdapter) ObserveDefinitionCatalog(ctx context.Context, projectID ids.ProjectID) ([]tracker.WorkDefinitionObservation, error) {
+	if bound == nil || projectID != bound.binding.ProjectID {
+		return nil, invalidCatalogRequest("definition catalog project does not match the provider binding", nil)
+	}
+	issues, err := bound.listMappedIssues(ctx)
+	if err != nil {
+		return nil, err
+	}
+	index := mappingIndexFromIssues(issues)
+	result := make([]tracker.WorkDefinitionObservation, 0, len(issues))
+	for _, issue := range issues {
+		kitty := issue.document.kitty
+		if kitty.ProjectID != projectID {
+			return nil, mappingConflict("mapped definition catalog contains another project")
+		}
+		reference, err := index.resolve(projectID, kitty.WorkID)
+		if err != nil || reference.ExternalID != issue.externalID {
+			return nil, mappingConflict("mapped definition catalog is not one-to-one")
+		}
+		observed, err := bound.definitionObservation(issue)
+		if err != nil {
+			return nil, err
+		}
+		edges, dependencyObservation, err := bound.observeDependencies(ctx, reference, index)
+		if err != nil {
+			return nil, err
+		}
+		dependencies := make([]ids.WorkID, len(edges))
+		for edgeIndex, edge := range edges {
+			if edge.BlockedWorkID != kitty.WorkID {
+				return nil, mappingConflict("blocking edge points at another mapped work item")
+			}
+			dependencies[edgeIndex] = edge.BlockingWorkID
+		}
+		if !sameWorkIDs(dependencies, observed.Definition().Dependencies()) {
+			return nil, mappingConflict("blocking graph disagrees with structured work dependencies")
+		}
+		combined, err := combineDefinitionObservation(observed, dependencyObservation)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, combined)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Definition().WorkID() < result[j].Definition().WorkID() })
+	return result, nil
+}
+
+func sameWorkIDs(left, right []ids.WorkID) bool {
+	left = append([]ids.WorkID(nil), left...)
+	right = append([]ids.WorkID(nil), right...)
+	sort.Slice(left, func(i, j int) bool { return left[i] < left[j] })
+	sort.Slice(right, func(i, j int) bool { return right[i] < right[j] })
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func combineDefinitionObservation(definition tracker.WorkDefinitionObservation, dependency tracker.ProviderObservation) (tracker.WorkDefinitionObservation, error) {
+	provider := definition.ProviderObservation()
+	var canonical bytes.Buffer
+	writeLengthPrefixed(&canonical, []byte("spec-kitty/beads-definition-observation/v1"))
+	writeLengthPrefixed(&canonical, provider.CanonicalFields())
+	writeLengthPrefixed(&canonical, dependency.CanonicalFields())
+	digest := sha256.Sum256(canonical.Bytes())
+	combined, err := tracker.NewProviderObservation(provider.ExternalID, canonical.Bytes(), revisionFromDigest(digest), digestString(digest), provider.ProviderToken, provider.ObservedAt)
+	if err != nil {
+		return tracker.WorkDefinitionObservation{}, metadataProtocolError("combined definition observation is invalid", err)
+	}
+	combined.ProviderUpdatedAt, combined.ProviderUpdatedAtPresent = provider.ProviderUpdatedAt, provider.ProviderUpdatedAtPresent
+	combined.Assignee, combined.OperationMarker = provider.Assignee, provider.OperationMarker
+	reference := definition.ExternalRef()
+	reference.LastObservation = combined.Revision
+	return tracker.NewWorkDefinitionObservation(definition.Definition(), reference, combined, definition.ObservedAt())
 }
 
 func decodeProviderDependency(payload []byte, defaultBlocked string) (observationDependency, error) {

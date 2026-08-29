@@ -190,6 +190,8 @@ var profiles = map[string]Profile{
 			"TestIntegrationRecoversRepositoryFirstFenceAcquisitionWindows",
 			"TestIntegrationSameOperationRecoversAfterProcessDeathBetweenGitFenceAndSQLite",
 			"TestIntegrationSerializesTwoLanesFromTwoMissions",
+			"TestMissionMethodFakeTwoItemDurableScenario",
+			"TestMissionMethodHelperPureQueriesProjectionDamageAndStandaloneComprehension",
 			"TestPhase1ApprovedBeforeExpiryRemainsIntegrable",
 			"TestPhase1CatalogRegressionScenarios",
 			"TestPhase1DurableWorkRevisionConsumerScenarios",

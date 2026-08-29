@@ -44,6 +44,7 @@ type catalogRunner struct {
 	workspace            string
 	databaseID           string
 	issues               map[string]storedCatalogIssue
+	edges                []observationDependency
 	calls                []CommandKind
 	argvs                [][]string
 	nextID               uint64
@@ -51,6 +52,7 @@ type catalogRunner struct {
 	ambiguousKind        CommandKind
 	applyBeforeAmbiguous bool
 	afterCreate          func(*storedCatalogIssue)
+	duplicateListID      string
 	mode                 tracker.ConcurrencyMode
 	serverID             string
 	serverEndpoint       string
@@ -93,6 +95,9 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 		items := make([]map[string]any, 0, len(ids))
 		for _, id := range ids {
 			items = append(items, runner.issues[id].wire())
+			if id == runner.duplicateListID {
+				items = append(items, runner.issues[id].wire())
+			}
 		}
 		data = items
 	case CommandShow:
@@ -102,6 +107,19 @@ func (runner *catalogRunner) run(_ context.Context, request command) commandResu
 			return providerFailureResult(request.kind, "not_found")
 		}
 		data = []map[string]any{issue.wire()}
+	case CommandDependencyList:
+		blocked := request.argv[2]
+		edges := make([]map[string]any, 0)
+		for _, edge := range runner.edges {
+			if edge.Blocked == blocked {
+				edges = append(edges, map[string]any{"id": edge.Blocking, "dependency_type": edge.Kind, "edge_id": edge.EdgeID})
+			}
+		}
+		data = edges
+	case CommandDependencyAdd:
+		runner.edges = append(runner.edges, observationDependency{Blocked: request.argv[2], Blocking: request.argv[3], Kind: "blocks", EdgeID: fmt.Sprintf("edge-%d", len(runner.edges)+1)})
+		data = map[string]any{"status": "added", "issue_id": request.argv[2], "depends_on_id": request.argv[3], "type": "blocks"}
+		result.mutationOutcome = mutationApplied
 	case CommandCreate:
 		if runner.ambiguousKind == CommandCreate && !runner.applyBeforeAmbiguous {
 			runner.ambiguousKind = ""
@@ -317,6 +335,137 @@ func createRequest(index int) tracker.CreateWorkRequest {
 	}
 }
 
+func completeDefinition(t *testing.T, workID ids.WorkID) tracker.WorkDefinition {
+	t.Helper()
+	metadata, err := tracker.NewOpaqueMetadata([]byte(`{"foreign":{"keep":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{
+		ProjectID: "project-1", WorkID: workID, Title: "Complete " + workID.String(), Description: "Provider-neutral description.",
+		DesignContext: "Provider-neutral design context.", CrossDomainReason: "Shared graph policy requires coordination.",
+		Criteria:       []tracker.WorkCriterion{{ID: "criterion-1", Text: "The behavior is verified", Outcome: "focused tests pass", Verifier: tracker.VerifierTest, Required: true, EvidenceHint: "go test ./..."}},
+		WriteScopes:    []tracker.WriteScope{{Path: "internal/tracker/beads", Domain: "tracker", Access: tracker.ScopeWriteExclusive, SerializationKey: "beads-adapter"}},
+		Provenance:     []tracker.ScopeRef{{ID: "plan-provider", Kind: tracker.ScopePlanConcern}, {ID: "requirement-parity", Kind: tracker.ScopeRequiredOutcome}},
+		MetadataSchema: tracker.WorkDefinitionMetadataSchemaV1, ProviderMetadata: metadata,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return definition
+}
+
+func TestCatalogProjectsCompleteProviderNeutralDefinitionDefensively(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	definition := completeDefinition(t, "work-1")
+	metadata, err := mergeMetadata(definition.ProviderMetadata().Bytes(), metadataFromDefinition(definition, "operation-create-definition", "operation-create-definition"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.issues["bd-definition"] = storedCatalogIssue{ID: "bd-definition", Title: definition.Title(), Description: definition.Description(), Acceptance: "human prose must not be parsed", Metadata: metadata, UpdatedAt: runner.tick()}
+	runner.mu.Unlock()
+	reference := tracker.ExternalWorkRef{ProjectID: definition.ProjectID(), WorkID: definition.WorkID(), Provider: beadsProvider, ExternalID: "bd-definition", MetadataSchema: tracker.WorkDefinitionMetadataSchemaV1, CreatedByOperation: "operation-create-definition", LastObservation: 1}
+	observed, err := bound.ObserveDefinition(context.Background(), reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(observed.Definition().CanonicalData(), definition.CanonicalData()) || observed.ExternalRef().ExternalID != "bd-definition" || observed.ProviderObservation().Revision == 0 {
+		t.Fatalf("observation=%#v definition=%s", observed, observed.Definition().CanonicalData())
+	}
+	criteria := observed.Definition().Criteria()
+	criteria[0].Outcome = "caller mutation"
+	scopes := observed.Definition().WriteScopes()
+	scopes[0].Path = "caller/mutation"
+	if bytes.Equal(observed.Definition().CanonicalData(), tracker.WorkDefinition{}.CanonicalData()) || observed.Definition().Criteria()[0].Outcome != "focused tests pass" || observed.Definition().WriteScopes()[0].Path != "internal/tracker/beads" {
+		t.Fatal("observation exposed provider-backed definition slices")
+	}
+
+	runner.mu.Lock()
+	issue := runner.issues["bd-definition"]
+	issue.Acceptance = "different human prose at the same timestamp"
+	runner.issues[issue.ID] = issue
+	runner.mu.Unlock()
+	after, err := bound.ObserveDefinition(context.Background(), reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after.Definition().CanonicalData(), definition.CanonicalData()) || after.ProviderObservation().Revision == observed.ProviderObservation().Revision {
+		t.Fatalf("presentation prose became authority or escaped observation identity: before=%d after=%d", observed.ProviderObservation().Revision, after.ProviderObservation().Revision)
+	}
+}
+
+func TestCatalogCreatesCompleteDefinitionAndHonestlyRefusesGuardedUpdate(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	definition := completeDefinition(t, "work-create-definition")
+	request := tracker.CreateWorkDefinitionRequest{OperationID: "operation-create-definition", Definition: definition}
+	created, err := bound.CreateDefinition(context.Background(), request)
+	if err != nil || created.Replayed || !bytes.Equal(created.Observation.Definition().CanonicalData(), definition.CanonicalData()) {
+		t.Fatalf("created=%#v err=%v", created, err)
+	}
+	replayed, err := bound.CreateDefinition(context.Background(), request)
+	if err != nil || !replayed.Replayed || runner.mutationCount() != 1 {
+		t.Fatalf("replayed=%#v err=%v mutations=%d", replayed, err, runner.mutationCount())
+	}
+	capabilities, err := bound.DefinitionCapabilities(context.Background())
+	if err != nil || !capabilities.Create || capabilities.GuardedUpdate || !capabilities.BlockingGraph {
+		t.Fatalf("capabilities=%+v err=%v", capabilities, err)
+	}
+	before := runner.mutationCount()
+	if _, err := bound.UpdateDefinition(context.Background(), tracker.UpdateWorkDefinitionRequest{OperationID: "operation-update-definition", ExternalRef: created.Observation.ExternalRef(), ExpectedObservation: created.Observation.ProviderObservation().Revision, Definition: definition}); !tracker.IsKind(err, tracker.ErrorGuardedUpdateUnsupported) || runner.mutationCount() != before {
+		t.Fatalf("guarded update err=%v mutations=%d", err, runner.mutationCount())
+	}
+	legacyCriteria := make([]tracker.Criterion, len(definition.Criteria()))
+	for index, criterion := range definition.Criteria() {
+		legacyCriteria[index] = tracker.Criterion{ID: criterion.ID, Text: criterion.Text, Verifier: criterion.Verifier, Required: criterion.Required, EvidenceHint: criterion.EvidenceHint}
+	}
+	if _, err := bound.UpdateWork(context.Background(), tracker.UpdateWorkRequest{ExternalRef: created.Observation.ExternalRef(), OperationID: "operation-legacy-update-definition", ExpectedObservation: created.Observation.ProviderObservation().Revision, RequiredGuard: tracker.UpdateUnguarded, Title: definition.Title(), Description: "must not partially replace a complete definition", DesignContext: definition.DesignContext(), Criteria: legacyCriteria}); !tracker.IsKind(err, tracker.ErrorGuardedUpdateUnsupported) || runner.mutationCount() != before {
+		t.Fatalf("legacy complete-definition update err=%v mutations=%d", err, runner.mutationCount())
+	}
+}
+
+func TestCatalogCreateDefinitionPersistsBlockingGraphAndReplaysEveryChild(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	foundation := completeDefinition(t, "work-foundation")
+	if _, err := bound.CreateDefinition(context.Background(), tracker.CreateWorkDefinitionRequest{OperationID: "operation-foundation", Definition: foundation}); err != nil {
+		t.Fatal(err)
+	}
+	featureBase := completeDefinition(t, "work-feature")
+	feature, err := tracker.NewWorkDefinition(tracker.WorkDefinitionParams{
+		ProjectID: featureBase.ProjectID(), WorkID: featureBase.WorkID(), Title: featureBase.Title(), Description: featureBase.Description(), DesignContext: featureBase.DesignContext(),
+		CrossDomainReason: featureBase.CrossDomainReason(), Criteria: featureBase.Criteria(), Dependencies: []ids.WorkID{"work-foundation"}, WriteScopes: featureBase.WriteScopes(), Provenance: featureBase.Provenance(), MetadataSchema: featureBase.MetadataSchema(), ProviderMetadata: featureBase.ProviderMetadata(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := tracker.CreateWorkDefinitionRequest{OperationID: "operation-feature", Definition: feature}
+	created, err := bound.CreateDefinition(context.Background(), request)
+	if err != nil || created.Replayed || !bytes.Equal(created.Observation.Definition().CanonicalData(), feature.CanonicalData()) {
+		t.Fatalf("created=%#v err=%v", created, err)
+	}
+	replay, err := bound.CreateDefinition(context.Background(), request)
+	if err != nil || !replay.Replayed || len(runner.edges) != 1 {
+		t.Fatalf("replay=%#v err=%v edges=%#v", replay, err, runner.edges)
+	}
+	observed, err := bound.ObserveDefinitionCatalog(context.Background(), "project-1")
+	if err != nil || len(observed) != 2 || observed[0].Definition().WorkID() != "work-feature" && observed[1].Definition().WorkID() != "work-feature" {
+		t.Fatalf("catalog=%#v err=%v", observed, err)
+	}
+}
+
+func TestCatalogLegacyDefinitionObservationFailsClosedWithoutMutation(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	request := createRequest(1)
+	created, err := bound.CreateWork(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := runner.mutationCount()
+	if _, err := bound.ObserveDefinition(context.Background(), created.Record.ExternalRef); !tracker.IsKind(err, tracker.ErrorSchemaSkew) || runner.mutationCount() != before {
+		t.Fatalf("legacy observation error=%v mutations=%d", err, runner.mutationCount())
+	}
+}
+
 func updateRequest(record tracker.WorkRecord, operation string) tracker.UpdateWorkRequest {
 	return tracker.UpdateWorkRequest{
 		ExternalRef: record.ExternalRef, OperationID: ids.OperationID(operation), ExpectedObservation: record.Observation.Revision,
@@ -390,6 +539,21 @@ func TestCatalogDuplicateMappingIsAConflictWithoutSecondMutation(t *testing.T) {
 	before := runner.mutationCount()
 	if _, err := bound.CreateWork(context.Background(), request); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
 		t.Fatalf("error=%v mutations=%d", err, runner.mutationCount())
+	}
+}
+
+func TestCatalogByteIdenticalDuplicateListEntryIsAConflict(t *testing.T) {
+	bound, runner := newCatalogTestAdapter(t)
+	created, err := bound.CreateWork(context.Background(), createRequest(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.duplicateListID = created.Record.ExternalRef.ExternalID
+	runner.mu.Unlock()
+	before := runner.mutationCount()
+	if _, err := bound.ObserveDefinitionCatalog(context.Background(), created.Record.ExternalRef.ProjectID); !tracker.IsKind(err, tracker.ErrorRevisionConflict) || runner.mutationCount() != before {
+		t.Fatalf("duplicate list error=%v mutations=%d", err, runner.mutationCount())
 	}
 }
 

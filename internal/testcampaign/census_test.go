@@ -23,10 +23,37 @@ func TestVerifyAcceptsExactTopLevelCensusAndIgnoresOwnedSubtests(t *testing.T) {
 		`{"Action":"pass","Package":"example.test/pkg","Test":"TestAlpha/child"}`,
 		`{"Action":"pass","Package":"example.test/pkg","Test":"TestAlpha"}`,
 		`{"Action":"run","Package":"example.test/pkg","Test":"TestBeta"}`,
-		`{"Action":"skip","Package":"example.test/pkg","Test":"TestBeta"}`,
+		`{"Action":"pass","Package":"example.test/pkg","Test":"TestBeta"}`,
 		`{"Action":"pass","Package":"example.test/pkg"}`,
 	}, "\n")), verifyFixture([]string{"TestAlpha", "TestBeta"}, 0))
-	if err != nil || report.Verdict != "pass" || len(report.StartedTests) != 2 || report.TerminalTests["TestAlpha"] != "pass" || report.TerminalTests["TestBeta"] != "skip" {
+	if err != nil || report.SchemaVersion != 3 || report.Verdict != "pass" || len(report.StartedTests) != 2 || report.TerminalTests["TestAlpha"] != "pass" || report.TerminalTests["TestBeta"] != "pass" || report.ExpectedCount != 2 || report.StartedCount != 2 || report.TerminalCount != 2 || report.PassedCount != 2 || report.FailedCount != 0 || report.SkippedCount != 0 || report.TimeoutMS != 120_000 || report.TimedOut {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+}
+
+func TestVerifySerializesTimeoutAndDeadlineOutcomeDistinctly(t *testing.T) {
+	request := verifyFixture([]string{"TestAlpha"}, 1)
+	request.TimedOut = true
+	report, err := Verify(strings.NewReader(events("run")), request)
+	if err == nil || report.TimeoutMS != 120_000 || !report.TimedOut || report.ProcessExit != 1 || !strings.Contains(err.Error(), "exceeded configured timeout") {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+
+	request = verifyFixture([]string{"TestAlpha"}, 0)
+	request.Timeout = 0
+	report, err = Verify(strings.NewReader(events("run", "pass")), request)
+	if err == nil || report.TimeoutMS != 0 || report.TimedOut || !strings.Contains(err.Error(), "configured timeout must be positive") {
+		t.Fatalf("missing timeout report=%+v err=%v", report, err)
+	}
+}
+
+func TestVerifyRejectsRequiredSkipAndSerializesDistinctCounts(t *testing.T) {
+	report, err := Verify(strings.NewReader(strings.Join([]string{
+		`{"Action":"run","Package":"example.test/pkg","Test":"TestAlpha"}`,
+		`{"Action":"skip","Package":"example.test/pkg","Test":"TestAlpha"}`,
+		`{"Action":"pass","Package":"example.test/pkg"}`,
+	}, "\n")), verifyFixture([]string{"TestAlpha"}, 0))
+	if err == nil || report.Verdict != "fail" || report.ExpectedCount != 1 || report.StartedCount != 1 || report.TerminalCount != 1 || report.PassedCount != 0 || report.FailedCount != 0 || report.SkippedCount != 1 || !strings.Contains(err.Error(), "required tests skipped") {
 		t.Fatalf("report=%+v err=%v", report, err)
 	}
 }
@@ -504,5 +531,5 @@ func events(actions ...string) string {
 
 func verifyFixture(expected []string, exit int) VerifyRequest {
 	started := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
-	return VerifyRequest{Campaign: "fixture", Package: "example.test/pkg", Expected: expected, ProcessExit: exit, StartedAt: started, FinishedAt: started.Add(time.Second)}
+	return VerifyRequest{Campaign: "fixture", Package: "example.test/pkg", Expected: expected, ProcessExit: exit, StartedAt: started, FinishedAt: started.Add(time.Second), Timeout: 2 * time.Minute}
 }
