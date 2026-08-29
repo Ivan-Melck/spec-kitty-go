@@ -12,5 +12,7 @@
   "purpose_tldr": "Ratify the Go-native production architecture and decompose delivery into evidence-backed missions.",
   "slug": "production-runtime-architecture-01M16GVA",
   "target_branch": "feat/production-runtime-architecture",
-  "topology": "coord"
+  "topology": "coord",
+  "vcs": "git",
+  "vcs_locked_at": "2026-08-29T13:47:01.436339+00:00"
 }
