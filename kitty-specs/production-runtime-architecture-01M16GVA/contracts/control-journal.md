@@ -126,4 +126,3 @@ An implementation is not qualified until executable tests cover:
 - unsafe compensation refusal;
 - manual Git ref movement and missing candidate objects; and
 - playback proving zero adapter calls.
-

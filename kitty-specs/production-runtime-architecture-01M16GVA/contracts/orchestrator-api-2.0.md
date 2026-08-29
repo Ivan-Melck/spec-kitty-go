@@ -126,4 +126,3 @@ Each class declares whether retry is safe with the same operation identity, safe
 - Removing early authority checks or adapter dependency guards kills a mutant test.
 - A slow consumer receives bounded backpressure or a resume reset, never unbounded memory growth.
 - Duplicate requests cannot create duplicate workspaces, leases, external effects, or integration attempts.
-
