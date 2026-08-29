@@ -126,7 +126,8 @@
       "last_transition_at": "2026-08-29T14:40:48.087638+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: optional stateless MCP 2026-07-28 projection with native Tasks, DecisionID input, cancellation races, and core-absence gates"
+        "Ready for review: optional stateless MCP 2026-07-28 projection with native Tasks, DecisionID input, cancellation races, and core-absence gates",
+        "Review passed: All anti-pattern checks pass or N/A (documentation-only WP). All reviewer-guidance adversarial criteria pass. 12/12 required sections present. Both adversarial sequences correct. All 11 requirement refs covered (C-011/012/013/017, FR-020/021/022/023, NFR-010/013/014). Single impl commit e62df30 adds only docs/MCP_2026_07_28_ADAPTER.md; zero Go module/SDK/binary/runtime changes. C-001 and C-017 respected. --force applied: planning artifacts on lane branch are auto-rebase inherited artifacts (R-STATUS-JSON-REMATERIALIZE), not reviewer edits."
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
