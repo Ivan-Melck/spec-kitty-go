@@ -23,15 +23,21 @@ operation ID plus different content conflicts.
 ## `mission initialize`
 
 **Kind**: command, idempotent mutation  
-**Authority**: actor plus sealed governance context  
+**Authority**: actor, process, and sealed governance context
+
 **Input**: project, mission, explicit definition key/version, actor, process,
-operation, time  
-**Output**: initialized mission identity, definition commitment, state version,
-and next-result projection  
+sealed governance context, operation, time
+
+**Output**: initialized mission identity, definition commitment, bound creation
+authority, state version, and next-result projection
+
 **Refusals**: missing/unsupported definition, duplicate conflicting mission,
 invalid governance context
 
-No default mission type is inferred.
+No default mission type is inferred. The request commitment and durable mission
+record bind the exact actor, process, and complete sealed governance context.
+Idempotent replay restores that original authority evidence; missing or changed
+provenance fails closed.
 
 ## `artifact publish`
 
@@ -58,8 +64,9 @@ evidence mismatch
 
 **Kind**: command, idempotent mutation  
 **Authority**: actor and action-scoped governance  
-**Input**: mission, expected state version, requested successor step, referenced
-artifact revisions, operation identity  
+**Input**: mission, exact expected `MissionSnapshot`, requested successor step,
+referenced artifact revisions, operation identity
+
 **Output**: new step and state version  
 **Refusals**: illegal edge, missing/stale approval, open decision, active blocker,
 expected-version conflict
@@ -69,16 +76,28 @@ Tracker statuses and projection files are never inputs.
 ## `mission decompose`
 
 **Kind**: saga command  
-**Authority**: current decompose step plus approved plan  
+**Authority**: exact `plan_approved` mission snapshot plus approved plan
 **Input**: mission, exact plan artifact, provider binding, proposed stable work
 definitions, operation identity  
 **Output**: mapped tracker work observations and validation report  
 **Refusals**: plan mismatch, provider unavailable/ambiguous, coverage/quality
 failure, mapping conflict
 
-Provider effects use the existing tracker operation marker and observation
-rules. A partial external result remains a recoverable saga; it never advances
-the mission automatically.
+After local validation, the consumer-owned control store durably reserves the
+root operation identity and complete canonical request digest before any
+provider call. The same identity and digest may resume a partial saga; any
+cross-kind, cross-mission, or changed-content reuse conflicts without touching
+the provider. Child effects then use the tracker operation marker and
+observation rules. Capability requirements are derived from the validated
+proposal set: create-only work does not require guarded update, while updates
+and dependency edges require their corresponding real provider capabilities.
+Local serialization never upgrades an unguarded provider into CAS.
+
+The command performs no mission transition. After a complete successful
+result, the caller submits two ordinary `mission transition` commands with
+distinct operation IDs and exact snapshots: `plan_approved` to `decomposing`,
+then `decomposing` to `work_draft_ready`. A partial, failed, or ambiguous result
+submits neither transition and remains a recoverable saga.
 
 ## `work finalize`
 
@@ -103,14 +122,16 @@ later generation requires reconciliation.
 **Refusals**: unavailable/incomplete provider observation, incompatible metadata
 schema, corrupt current revision
 
-Persisting a drift report for later reconciliation is a separate idempotent
-command.
+The report is untrusted observation data. The query neither assigns it an
+authoritative local identity nor persists it. It becomes durable evidence only
+if `work reconcile` validates and commits that exact report atomically with the
+decisions and successor generation.
 
 ## `work reconcile`
 
 **Kind**: command, atomic local publication after provider observation  
 **Authority**: explicit reconciliation actor and governance  
-**Input**: expected old revision, successor WorkRevision, persisted drift
+**Input**: expected old revision, successor WorkRevision, exact typed drift
 report, exactly covering per-work decisions, rationales, operation identity  
 **Output**: reconciliation record, successor generation, derived consequences,
 and required later authority actions  
@@ -118,8 +139,12 @@ and required later authority actions
 invalid fork ancestry, semantic change under unjustified continue, stale current
 generation, digest mismatch
 
-The command does not itself manipulate Phase 4 workspaces. It records typed
-`expire_authority` and `quarantine_workspace` consequences for later consumers.
+The command validates the supplied observation against the expected old
+revision and exact successor, then atomically persists the drift report,
+decisions, reconciliation, successor, current pointer, event, and outbox. There
+is no separate persist-drift command. It does not itself manipulate Phase 4
+workspaces; it records typed `expire_authority` and `quarantine_workspace`
+consequences for later consumers.
 
 ## `mission next`
 
@@ -134,7 +159,9 @@ write nothing. A result naming an action is not authority to execute it.
 ## `projection tasks`
 
 **Kind**: query/render operation  
-**Input**: mission identity and optional output destination  
+**Input**: mission identity and either in-memory output or an explicit trusted
+root plus a repository-relative output destination
+
 **Output**: UTF-8 Markdown bytes or atomically replaced file, containing source
 mission state version, WorkRevision ID/digest, drift status, render time, and an
 explicit non-authoritative warning  
