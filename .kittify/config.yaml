@@ -9,6 +9,8 @@ agents:
   available:
   - codex
   - claude
+  - gemini
+  - opencode
   auto_commit: true
   lint_on_edit: false
 activated_directives:
