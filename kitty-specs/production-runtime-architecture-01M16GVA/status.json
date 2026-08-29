@@ -245,7 +245,7 @@
     },
     "WP08": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -257,6 +257,7 @@
         "Ready for review: Independent architecture review complete. Verdict: PASS. ActorID opencode, 30 adversarial scenarios all PASS, zero blocker/high/medium findings, 71 requirements mapped, 9 conflicts closed. Source tree 5c75920; review commit ef6caf2."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/production-runtime-architecture-01M16GVA/tasks/WP08-independent-architecture-review-and-publication-gate/review-cycle-1.md",
         "reference": "review-cycle://production-runtime-architecture-01M16GVA/WP08-independent-architecture-review-and-publication-gate/review-cycle-1.md",
@@ -264,16 +265,16 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T043": "done",
-        "T044": "done",
-        "T045": "done",
-        "T046": "done",
-        "T047": "done",
-        "T048": "done",
-        "T049": "done"
+        "T043": "planned",
+        "T044": "planned",
+        "T045": "planned",
+        "T046": "planned",
+        "T047": "planned",
+        "T048": "planned",
+        "T049": "planned"
       }
     }
   }
