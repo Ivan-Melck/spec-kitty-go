@@ -4,7 +4,7 @@
   "flattened": false,
   "friendly_name": "Software Development Mission Method",
   "mission_id": "01M11EX2VFHERE58SQVCBFG6JN",
-  "mission_number": null,
+  "mission_number": 2,
   "mission_slug": "software-development-mission-method-01M11EX2",
   "mission_type": "software-dev",
   "pr_bound": true,
