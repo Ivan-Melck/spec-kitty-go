@@ -94,7 +94,7 @@ func TestCampaignWorkflowContracts(t *testing.T) {
 	workflows := map[string][]string{
 		"quality.yml": {
 			"pull_request:", "push:", "contents: read", "cancel-in-progress: true", "timeout-minutes: 15",
-			"make quality", "hosted_baseline", "if: always()", "retention-days: 14", "github.run_id", "github.run_attempt",
+			"make quality-core", "hosted_baseline", "if: always()", "retention-days: 14", "github.run_id", "github.run_attempt",
 		},
 		"full-campaign.yml": {
 			"schedule:", "workflow_dispatch:", "contents: read", "cancel-in-progress: false", "timeout-minutes: 90",

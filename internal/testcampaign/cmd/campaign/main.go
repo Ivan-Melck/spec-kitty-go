@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -179,10 +180,7 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 		return testcampaign.Report{}, reportPath, fmt.Errorf("create stderr transcript: %w", err)
 	}
 
-	args := []string{"test", "-json", "-count=1", profile.Package, "-timeout", timeout.String()}
-	if profile.Pattern != "" {
-		args = append(args, "-run", profile.Pattern)
-	}
+	args := profileTestArgs(profile, timeout)
 	command := exec.CommandContext(ctx, "go", args...)
 	command.Stdout = io.MultiWriter(os.Stdout, transcript)
 	command.Stderr = io.MultiWriter(os.Stderr, stderr)
@@ -236,6 +234,17 @@ func runProfile(profileName, artifactDir, label string, timeout time.Duration) (
 		return report, reportPath, fmt.Errorf("go test failed: %w", runErr)
 	}
 	return report, reportPath, nil
+}
+
+func profileTestArgs(profile testcampaign.Profile, timeout time.Duration) []string {
+	args := []string{"test", "-json", "-count=1", profile.Package, "-timeout", timeout.String()}
+	if profile.Parallel > 0 {
+		args = append(args, "-parallel", strconv.Itoa(profile.Parallel))
+	}
+	if profile.Pattern != "" {
+		args = append(args, "-run", profile.Pattern)
+	}
+	return args
 }
 
 func newVerifyRequest(profile testcampaign.Profile, packagePath string, processExit int, startedAt, finishedAt time.Time, timeout time.Duration, timedOut bool) testcampaign.VerifyRequest {

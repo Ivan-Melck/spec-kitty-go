@@ -16,7 +16,7 @@ OFFLINE_ENFORCED ?=
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race static dependencies quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all
+.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -85,11 +85,14 @@ dependencies: ## Verify module bytes and scan reachable vulnerabilities.
 
 beads-contract: ## Run the exact portable and adversarial provider campaign without Beads or network.
 	@mkdir -p "$(ARTIFACT_DIR)"
-	env -u BEADS_BIN -u BEADS_SERVER_ID -u BEADS_SERVER_ENDPOINT -u DOLT_SERVER_HOST -u DOLT_SERVER_PORT -u DOLT_CREDENTIALS_PATH GOPROXY=off GOSUMDB=off $(GO) run ./internal/testcampaign/cmd/campaign -campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 9m
+	env -u BEADS_BIN -u BEADS_SERVER_ID -u BEADS_SERVER_ENDPOINT -u DOLT_SERVER_HOST -u DOLT_SERVER_PORT -u DOLT_CREDENTIALS_PATH GOPROXY=off GOSUMDB=off $(GO) run ./internal/testcampaign/cmd/campaign -campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 
-quality: preflight contract beads-contract mission-contract mission-acceptance race static dependencies ## Run the bounded pull-request campaign.
+quality-core: preflight contract mission-contract mission-acceptance race static dependencies ## Run the bounded core pull-request campaign; provider qualification is a separate CI job.
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign quality -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
-	@printf 'quality campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
+	@printf 'core quality campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
+
+quality: beads-contract quality-core ## Run the complete local pull-request gate aggregate.
+	@printf 'quality aggregate passed; evidence=%s\n' "$(ARTIFACT_DIR)"
 
 beads-qualification: ## Run real pinned Beads qualification only inside an enforced offline boundary.
 	@set -eu; mkdir -p "$(ARTIFACT_DIR)" "$(PROVIDER_TMP_DIR)"; \

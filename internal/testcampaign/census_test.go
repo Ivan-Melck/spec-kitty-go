@@ -164,6 +164,17 @@ func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
 	}
 }
 
+func TestProviderAdversarialParallelismIsExplicitAndBounded(t *testing.T) {
+	profile, err := ProfileByName("provider-adversarial")
+	if err != nil || profile.Parallel != 8 {
+		t.Fatalf("provider adversarial parallelism=%d err=%v", profile.Parallel, err)
+	}
+	profile.Parallel = 33
+	if err := validateProfile(profile); err == nil || !strings.Contains(err.Error(), "parallelism") {
+		t.Fatalf("unbounded profile parallelism was accepted: %v", err)
+	}
+}
+
 func TestProviderProfilesMatchAcceptedTopLevelTests(t *testing.T) {
 	root := campaignRepositoryRoot(t)
 	tests := []struct {
@@ -321,7 +332,7 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		t.Fatal(err)
 	}
 	makefile := string(content)
-	for target, campaign := range map[string]string{"quality": "quality", "full-campaign": "full_campaign", "beads-contract": "provider_bounded"} {
+	for target, campaign := range map[string]string{"quality-core": "quality", "full-campaign": "full_campaign", "beads-contract": "provider_bounded"} {
 		if err := validateMakeCampaignBinding(makefile, target, campaign); err != nil {
 			t.Fatal(err)
 		}
@@ -339,14 +350,14 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		new  string
 	}{
 		{"one profile", "-campaign provider_bounded", "-profile provider-portable"},
-		{"raised PR budget", "-timeout 9m", "-timeout 10m"},
-		{"removed PR budget", "-timeout 9m", ""},
+		{"raised PR budget", `-campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m`, `-campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 9m`},
+		{"removed PR budget", `-campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m`, `-campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)"`},
 		{"PATH fallback", `case "$(BEADS_BIN)" in /*)`, `command -v bd >/dev/null; case "$(BEADS_BIN)" in *)`},
 		{"missing digest comparison", `test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)"`, `test -n "$$observed"`},
 		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`, `test -n "$(OFFLINE_ENFORCED)"`},
 		{"missing namespace proof", `test "$$current_net" != "$$host_net"`, `test -n "$$current_net"`},
 		{"missing inherited offline Go modules", `GOENV="$$go_env"`, `GOENV=`},
-		{"quality omits bounded campaign", "quality: preflight contract beads-contract", "quality: preflight contract"},
+		{"quality omits bounded campaign", "quality: beads-contract quality-core", "quality: quality-core"},
 	}
 	for _, mutant := range mutants {
 		t.Run(mutant.name, func(t *testing.T) {
@@ -484,12 +495,12 @@ func validateProviderMakeControls(makefile string) error {
 		text    string
 	}{
 		{"one profile", "-campaign provider_bounded"},
-		{"raised PR budget", "-timeout 9m"},
+		{"raised PR budget", `-campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m`},
 		{"PATH fallback", `case "$(BEADS_BIN)" in /*)`},
 		{"missing digest comparison", `test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)"`},
 		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`},
 		{"missing namespace proof", `test "$$current_net" != "$$host_net"`},
-		{"quality omits bounded campaign", "quality: preflight contract beads-contract"},
+		{"quality omits bounded campaign", "quality: beads-contract quality-core"},
 		{"installer tuple", `.source_commit == "6c124203e771433a3550c348771a5b5e27fd3c21"`},
 		{"installer schema", `(keys | length == 9) and .schema_version == 1`},
 		{"offline Go modules", "GOPROXY=off GOSUMDB=off"},

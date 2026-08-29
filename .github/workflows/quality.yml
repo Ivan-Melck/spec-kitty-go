@@ -55,7 +55,7 @@ jobs:
           started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           started_seconds=$(date +%s)
           set +e
-          make quality ARTIFACT_DIR="$ARTIFACT_DIR"
+          make quality-core ARTIFACT_DIR="$ARTIFACT_DIR"
           status=$?
           set -e
           finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
