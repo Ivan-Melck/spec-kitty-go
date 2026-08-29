@@ -13,6 +13,7 @@ type Profile struct {
 	Name          string
 	Package       string
 	Pattern       string
+	Parallel      int
 	ExpectedTests []string
 }
 
@@ -102,9 +103,10 @@ var profiles = map[string]Profile{
 		},
 	},
 	"provider-adversarial": {
-		Name:    "provider-adversarial",
-		Package: "./internal/scenario",
-		Pattern: "^(TestBeadsDishonestRunsSharedPortableConformance|TestBeadsDishonestSharedConformanceKillsDeletedPublicMethods|TestBeadsDishonestProtocolFaultMatrix|TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions|TestBeadsFaultRegistryExactCensus|TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant|TestBeadsFaultAuthorityAuditKillsUnrelatedProviderRoutingMutant|TestBeadsDishonestTruthfulWarningStaleAndWrongState|TestBeadsDishonestSlowCancellationKillsChild|TestBeadsDishonestExplicitBarrierSurvivesSchedulerLoad|TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry|TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry|TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry|TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry|TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry|TestBeadsUnsafeDecisionMutantsAreKilled|TestBeadsHumanAssignmentPreservation100|TestBeadsHumanAssignmentCampaignKillsPostAttributionOverwriteMutant|TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe|TestBeadsFaultDiagnosticsNeverTreatProseAsAuthority)$",
+		Name:     "provider-adversarial",
+		Package:  "./internal/scenario",
+		Pattern:  "^(TestBeadsDishonestRunsSharedPortableConformance|TestBeadsDishonestSharedConformanceKillsDeletedPublicMethods|TestBeadsDishonestProtocolFaultMatrix|TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions|TestBeadsFaultRegistryExactCensus|TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant|TestBeadsFaultAuthorityAuditKillsUnrelatedProviderRoutingMutant|TestBeadsDishonestTruthfulWarningStaleAndWrongState|TestBeadsDishonestSlowCancellationKillsChild|TestBeadsDishonestExplicitBarrierSurvivesSchedulerLoad|TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry|TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry|TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry|TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry|TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry|TestBeadsUnsafeDecisionMutantsAreKilled|TestBeadsHumanAssignmentPreservation100|TestBeadsHumanAssignmentCampaignKillsPostAttributionOverwriteMutant|TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe|TestBeadsFaultDiagnosticsNeverTreatProseAsAuthority)$",
+		Parallel: 8,
 		ExpectedTests: []string{
 			"TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry",
 			"TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry",
@@ -355,6 +357,9 @@ func sortedUniqueNonempty(values []string) bool {
 func validateProfile(profile Profile) error {
 	if profile.Name == "" || profile.Package == "" || len(profile.ExpectedTests) == 0 {
 		return fmt.Errorf("profile name, package, and expected tests are required")
+	}
+	if profile.Parallel < 0 || profile.Parallel > 32 {
+		return fmt.Errorf("profile %s parallelism must be between 0 and 32", profile.Name)
 	}
 	if !slices.IsSorted(profile.ExpectedTests) {
 		return fmt.Errorf("profile %s expected tests must be sorted", profile.Name)

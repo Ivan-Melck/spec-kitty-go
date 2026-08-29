@@ -1,0 +1,141 @@
+{
+  "event_count": 76,
+  "last_event_id": "01M175RPZ8CD8REXWX7CBCWSBP",
+  "materialized_at": "2026-08-29T16:31:10.824667+00:00",
+  "mission_number": "",
+  "mission_slug": "production-runtime-architecture-01M16GVA",
+  "mission_type": "software-dev",
+  "summary": {
+    "approved": 0,
+    "blocked": 0,
+    "canceled": 0,
+    "claimed": 0,
+    "done": 8,
+    "for_review": 0,
+    "in_progress": 0,
+    "in_review": 0,
+    "planned": 0
+  },
+  "work_packages": {
+    "WP01": {
+      "actor": "merge",
+      "agent": "codex",
+      "force_count": 5,
+      "lane": "done",
+      "last_event_id": "01M175QZWX1C9AT6859C3M0F1D",
+      "last_transition_at": "2026-08-29T16:30:47.197274+00:00",
+      "review_result": {
+        "reference": "Review passed (cycle 3): d67d2a3 resolves the locked-decision FAIL from cycle 2. Section 8.1 removes the conflicting 'degraded or closed when checkpoint digest cannot be validated' text and replaces it with a deterministic 5-step algorithm (newest valid bounded checkpoint -> full journal when bounded -> refusal). Degraded and closed are explicitly defined and mutually exclusive. Operator recovery paths described with no force-ready option. Consistent with control-journal.md:74 and restart protocol. Consistent with ADR 0002 point 3 separate contracts. All anti-pattern checks pass (doc-only WP). Owned files only; frozen evidence unchanged.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
+    },
+    "WP02": {
+      "actor": "merge",
+      "agent": "codex",
+      "force_count": 1,
+      "lane": "done",
+      "last_event_id": "01M175R35S7XTAX1GWVR7PDZFQ",
+      "last_transition_at": "2026-08-29T16:30:50.553673+00:00",
+      "review_result": {
+        "reference": "Review passed: docs/ORCHESTRATOR_API_2_0.md satisfies all 13 requirement refs. Progress JSON validates against progress.schema.json. Both Mermaid diagrams syntactically valid. Frozen file untouched. WP02 commit is a single-file add of the owned document. Links to WP01 artifacts confirmed present in approved lane-a (dependency ordering correct). All anti-pattern checks pass or N/A (documentation WP). --force used per review prompt instruction: lane branch contains inherited planning artifacts from spec-kitty auto-rebase (not reviewer-authored changes).",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
+    },
+    "WP03": {
+      "actor": "merge",
+      "agent": "codex",
+      "force_count": 1,
+      "lane": "done",
+      "last_event_id": "01M175R6HJEEFQXB42AZM5605Z",
+      "last_transition_at": "2026-08-29T16:30:54.002888+00:00",
+      "review_result": {
+        "reference": "Review passed: complete implementable proof-system architecture; all 8 anti-pattern checks pass or N/A; FR-015/016/017/018/019/023 fully covered; C-001/C-009/C-010/C-017 honored; schema validation confirms 3 positive examples valid and both negative mutants rejected; detection is suggestion-only, no claim embeds a tool, waivers have full accountable authority, cross-stack applicability demonstrated. --force applied: planning artifacts (status.events.jsonl, status.json) present on lane branch from auto-rebase coordination commits, not from WP03 implementation.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
+    },
+    "WP04": {
+      "actor": "merge",
+      "agent": "codex",
+      "force_count": 1,
+      "lane": "done",
+      "last_event_id": "01M175RCY5FZS60YTAZPVSJM9W",
+      "last_transition_at": "2026-08-29T16:31:00.549054+00:00",
+      "review_result": {
+        "reference": "Review passed: All anti-pattern checks pass or N/A (documentation-only WP). All reviewer-guidance adversarial criteria pass. 12/12 required sections present. Both adversarial sequences correct. All 11 requirement refs covered (C-011/012/013/017, FR-020/021/022/023, NFR-010/013/014). Single impl commit e62df30 adds only docs/MCP_2026_07_28_ADAPTER.md; zero Go module/SDK/binary/runtime changes. C-001 and C-017 respected. --force applied: planning artifacts on lane branch are auto-rebase inherited artifacts (R-STATUS-JSON-REMATERIALIZE), not reviewer edits.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
+    },
+    "WP05": {
+      "actor": "merge",
+      "agent": "codex",
+      "force_count": 2,
+      "lane": "done",
+      "last_event_id": "01M175R9ZXQZBV8K1DSJZR2RTF",
+      "last_transition_at": "2026-08-29T16:30:57.533598+00:00",
+      "review_result": {
+        "reference": "Review passed: all machine validation passes (schema, unique IDs, max-3-deps, dep refs, critical path, dep map, tsort acyclicity); published manifest is byte-equivalent to source manifest; all nine requirement refs covered; no frozen files touched; no MUST NOT clauses violated; no shared-file conflicts; each mission has exactly one falsification target; M1 torture chamber is a genuine disproof experiment with explicit stop rule; M2 has no disguised fallback; M7 is genuinely optional and off core critical path. --force used: inherited planning artifacts on lane branch are coordination-artifact commits from auto-rebase, not a WP05 implementation issue.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
+    },
+    "WP06": {
+      "actor": "merge",
+      "agent": "codex",
+      "force_count": 2,
+      "lane": "done",
+      "last_event_id": "01M175RKNMF3ZMWZAGRP8Z501P",
+      "last_transition_at": "2026-08-29T16:31:07.444121+00:00",
+      "review_result": {
+        "reference": "Review passed: documentation-only WP satisfies all FR/NFR/C requirements. README delivers confident delivered-vs-target split with five-minute review path answering all 8 required questions. Technical plan section 3 classification table explicitly dispositions all prior sections. Local links intact, evidence checksums pass, Mermaid portability improved, all documented Make targets verified present. govulncheck GO-2026-4970 (os.Root symlink escape, fixed in go1.26.5) is pre-existing code vulnerability in internal/projection/atomic_file.go outside WP06 documentation scope; WP06 correctly includes govulncheck in verification ladder; does not block this documentation WP. Frozen surfaces untouched. --force applied: inherited planning artifacts on lane branch per review prompt instruction.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
+    },
+    "WP07": {
+      "actor": "merge",
+      "agent": "codex",
+      "force_count": 1,
+      "lane": "done",
+      "last_event_id": "01M175RG2HNJEMQCJXH7Z27JRP",
+      "last_transition_at": "2026-08-29T16:31:03.761315+00:00",
+      "review_result": {
+        "reference": "Review passed: All frozen evidence verified intact (git trees and SHA256SUMS match recorded hashes, git diff --exit-code returns 0). Three owned files only. ADR 0001 and API 1.3 bodies unmodified; prominent status/supersession sections prepended. HISTORICAL_ARCHITECTURE_DISPOSITIONS.md covers all required artifact families with correct disposition vocabulary. Language audit section 7 constrains unqualified term use. No compatibility adapter claimed implemented. Forward links to canonical docs (WP01/WP02/WP05 lanes) resolve after integration per DoD. All FR/C/NFR refs addressed. Anti-pattern checklist: N/A for code items; FR coverage, frozen surface, shared-file ownership all PASS. --force: inherited planning artifact kitty-specs status files on lane branch per review prompt instruction.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
+    },
+    "WP08": {
+      "actor": "merge",
+      "agent": "opencode",
+      "force_count": 2,
+      "lane": "done",
+      "last_event_id": "01M175RPZ8CD8REXWX7CBCWSBP",
+      "last_transition_at": "2026-08-29T16:31:10.824667+00:00",
+      "review_result": {
+        "reference": "Review passed: cycle 3 independently verified exact source commit 0cd9303 and tree a4a747fb; 32/32 scenarios; MED-001 explicitly disposed to M1; Section 8.1 checkpoint precedence consistent with the control-journal contract, ledger, traceability, brief, and report; formal Low findings are LOW-001/M1 and LOW-002/M7 with Scenario 1.2 residual-only; OpenCode report authorship and WP01 review participation are distinguished from WP01-WP07 implementation authors, and Codex independently reviewed WP08. JSON schemas/examples, manifest parity and graph, frozen evidence checksums, links, whitespace, and internal architecture tests pass. Anti-patterns: dead code N/A, synthetic fixture N/A, silent empty N/A, FR coverage PASS, frozen surface PASS, locked decision PASS, shared-file ownership PASS, production fragility N/A.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
+    }
+  }
+}

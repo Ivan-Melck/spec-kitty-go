@@ -169,3 +169,15 @@ func TestNewVerifyRequestBindsConfiguredTimeoutAndDeadlineOutcome(t *testing.T) 
 		t.Fatal("verify request leaked expected-test mutation into profile")
 	}
 }
+
+func TestProfileTestArgsPinsConfiguredParallelism(t *testing.T) {
+	profile := testcampaign.Profile{Name: "provider-adversarial", Package: "./internal/scenario", Pattern: "^TestBeads", Parallel: 8, ExpectedTests: []string{"TestBeads"}}
+	args := strings.Join(profileTestArgs(profile, 8*time.Minute), " ")
+	if !strings.Contains(args, "-parallel 8") || !strings.Contains(args, "-timeout 8m0s") || !strings.Contains(args, "-run ^TestBeads") {
+		t.Fatalf("profile arguments lost bounded scheduling controls: %s", args)
+	}
+	profile.Parallel = 0
+	if args = strings.Join(profileTestArgs(profile, 8*time.Minute), " "); strings.Contains(args, "-parallel") {
+		t.Fatalf("default profile unexpectedly forced parallelism: %s", args)
+	}
+}

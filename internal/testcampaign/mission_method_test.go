@@ -32,14 +32,15 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		"mission-contract:", "-profile mission-contract", "mission-acceptance:", "-profile mission-acceptance",
 		"mission-adversarial:", "-profile mission-adversarial", "-campaign mission_full",
 		"phase3-publication:", "$(GO) run ./internal/testcampaign/cmd/campaign", "-publication-root", "-payload-commit", "-attestation-commit",
-		"quality: preflight contract beads-contract mission-contract mission-acceptance race static dependencies",
+		"quality-core: preflight contract mission-contract mission-acceptance race static dependencies",
+		"quality: beads-contract quality-core",
 	} {
 		if !strings.Contains(makefile, required) {
 			t.Fatalf("Makefile contract omitted %q", required)
 		}
 	}
 	quality := read(".github/workflows/quality.yml")
-	for _, required := range []string{"permissions:\n  contents: read", "timeout-minutes: 15", "go-version: 1.26.5", "duration_seconds\" -ge 600", "if: always()", "make quality"} {
+	for _, required := range []string{"permissions:\n  contents: read", "timeout-minutes: 15", "go-version: 1.26.5", "duration_seconds\" -ge 600", "if: always()", "make quality-core"} {
 		if !strings.Contains(quality, required) {
 			t.Fatalf("quality workflow contract omitted %q", required)
 		}
