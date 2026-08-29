@@ -103,5 +103,16 @@ Review cycle 3 nevertheless rejected that publication: deleting setup attempts
 27–30 remained possible because the required-ID list had a moving tail;
 documented-command validation did not close every subcommand and path shape;
 Mermaid subgraphs were not balanced; and the reproducible Make gate entered
-through test code rather than the campaign command. The next source candidate
-must close those structural laws and requalify before a later payload can pass.
+through test code rather than the campaign command. Source `03afabd6` closes
+those structural laws. Portable attempt 32 passed before a later host restart;
+the restart erased its volatile artifacts, so attempt 36 repeated the complete
+portable ladder against the same clean commit and tree.
+
+Real-provider attempt 33 stopped before qualification because the outer
+container's libc could not load the host bubblewrap binary. Attempt 34's frozen
+provider runner passed, but its separate two-item selector skipped after the
+digest environment was omitted; the combined attempt is therefore
+non-admissible. Attempt 35 was interrupted by the host restart before terminal
+evidence survived. Canonical offline attempt 37 corrected the wrapper, passed
+11/11 provider scenarios and 1,000/1,000 multiwriter operations, and required
+an explicit non-skipped pass from the durable two-item selector.

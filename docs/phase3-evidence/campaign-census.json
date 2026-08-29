@@ -1,11 +1,11 @@
 {
   "schema_version": 3,
   "verdict": "pass",
-  "source_commit": "f049baaa8751e0e2b48126ffe05823400f9f4881",
-  "source_tree": "7ef44e98b332628f0688d274fd4b07eaddc0a2d5",
+  "source_commit": "03afabd6d875dd133d18fa759669498d92e097be",
+  "source_tree": "6173b2dbce671d6243b14f99414170c8a5929f0f",
   "source_clean": true,
-  "failure_history_count": 27,
-  "failure_history_sha256": "2034b2c7719dd9970b2b11d94b986da491fabf34c486c20f1ff8d7140efa61e0",
+  "failure_history_count": 30,
+  "failure_history_sha256": "6c02e555aa4a9ac1f78f21b4fb8ce2ef4f287f0ce06eb67f02febb071cfb71ba",
   "profiles": [
     {
       "name": "mission-contract",
@@ -16,8 +16,8 @@
       "passed": 4,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 38174,
-      "artifact_sha256": "e20f20bc200ba1d580dfd79594c190362f78527c53f5fd1579c394af53ed893c",
+      "duration_ms": 38168,
+      "artifact_sha256": "84390c00d2d838d0cd42999c27a60734f39c7431e4c4948babcaad6dde65af83",
       "tests": ["TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation", "TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"]
     },
     {
@@ -29,8 +29,8 @@
       "passed": 3,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 25800,
-      "artifact_sha256": "d36db2f6567d7fab6af7152c72ec781fd3fd8484454cf3a13205a52786195be4",
+      "duration_ms": 25063,
+      "artifact_sha256": "e60b6782bb8066549f75bfa2a3aada43a102bf281e6d90898bf5af748222be86",
       "tests": ["TestMissionMethodNormalizationAndPureQueries100", "TestMissionMethodProjectionAndGovernanceIndependence100", "TestMissionMethodProviderParityPortableCampaign"]
     },
     {
@@ -42,8 +42,8 @@
       "passed": 6,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 81048,
-      "artifact_sha256": "3f68dd8ef40aead402e25519d5937f01bfa5f5e1e30f160f126d81a457a7600c",
+      "duration_ms": 82150,
+      "artifact_sha256": "c454e008274027d97791326d6a84989cb3f1102368986913aabb44f4758850ee",
       "tests": ["TestDishonestMissionAuthorityDetectsSameCountOutboxMutation", "TestMissionMethodBeadsDishonestProviderRefusesBeforePublication", "TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse", "TestMissionMethodCrashBoundaryCensus", "TestMissionMethodFinalizationProcessRaces100", "TestMissionMethodSemanticDriftMutations1000"]
     },
     {
@@ -55,20 +55,20 @@
       "passed": 1,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 10790,
-      "artifact_sha256": "207850c513fc13c7374e0d0f498372678b4552b9b3ab96fe637502089813ba8b",
+      "duration_ms": 10320,
+      "artifact_sha256": "3ec85d925b28fc2ddef4ddf987c2b5db38b88592e33909064f60b03ad7c57666",
       "tests": ["TestMissionMethodRealBeadsTwoItemQualification"]
     }
   ],
   "supporting_profiles": [
     {
-      "name": "provider-portable", "expected": 2, "started": 2, "terminal": 2, "passed": 2, "failed": 0, "skipped": 0, "duration_ms": 173,
-      "artifact_sha256": "0fdf0c054cb71c9f9dbf8c8785c0df480e8a670dc0eb2b880d575489eec665dd",
+      "name": "provider-portable", "expected": 2, "started": 2, "terminal": 2, "passed": 2, "failed": 0, "skipped": 0, "duration_ms": 186,
+      "artifact_sha256": "266ba2fc46799deb2cba2293c19a29f1abc9d24a25ee3a1b6970db06ba6c7629",
       "tests": ["TestDurableFakePortableConformance", "TestRegistryAndCapabilityMutantsFailClosed"]
     },
     {
-      "name": "provider-adversarial", "expected": 20, "started": 20, "terminal": 20, "passed": 20, "failed": 0, "skipped": 0, "duration_ms": 269780,
-      "artifact_sha256": "ef702d278416837ecb13a46547a6ef81f57521e059a9883c00cf7ffd9b9595b9",
+      "name": "provider-adversarial", "expected": 20, "started": 20, "terminal": 20, "passed": 20, "failed": 0, "skipped": 0, "duration_ms": 278545,
+      "artifact_sha256": "8fd86aee77dc161af28c3c2a837e7baf217f34f18bf09e2f6e9506fdbecdb7c4",
       "tests": [
         "TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry",
         "TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry",
@@ -93,8 +93,8 @@
       ]
     },
     {
-      "name": "architecture", "expected": 38, "started": 38, "terminal": 38, "passed": 38, "failed": 0, "skipped": 0, "duration_ms": 14051,
-      "artifact_sha256": "55fe69e72be5356862037feccae016e7bd9b0cda34c49192e2c26fe4c42f21ea",
+      "name": "architecture", "expected": 38, "started": 38, "terminal": 38, "passed": 38, "failed": 0, "skipped": 0, "duration_ms": 14107,
+      "artifact_sha256": "8cf7e452aa71a7d02f6bd979593a729d007cee3344cd8c7c1468e6341d55cad8",
       "tests": [
         "TestBeadsDocumentationDeliveryClaims",
         "TestBeadsDocumentationLinksMermaidAndCommands",
@@ -137,13 +137,13 @@
       ]
     },
     {
-      "name": "scope", "expected": 2, "started": 2, "terminal": 2, "passed": 2, "failed": 0, "skipped": 0, "duration_ms": 1906,
-      "artifact_sha256": "5685850edd7d037d62f23129fc23206ccf8a60ba4634c7adf6674e032232c2d7",
+      "name": "scope", "expected": 2, "started": 2, "terminal": 2, "passed": 2, "failed": 0, "skipped": 0, "duration_ms": 2017,
+      "artifact_sha256": "b6be837a54502c6345489f4f3675d5125b8cdf9e193dc9abb45b1ebbc440b30e",
       "tests": ["TestPhase1ProductionDependencyAndArchitectureScope", "TestPhase1SourceScopeMutantControl"]
     },
     {
-      "name": "historical-full-scenario", "expected": 73, "started": 73, "terminal": 73, "passed": 73, "failed": 0, "skipped": 0, "duration_ms": 764811,
-      "artifact_sha256": "19abcdd75ea2f49f2c0921cd5e546ddb735c9e824186a40d511ce77a4dbd7cb4",
+      "name": "historical-full-scenario", "expected": 73, "started": 73, "terminal": 73, "passed": 73, "failed": 0, "skipped": 0, "duration_ms": 765708,
+      "artifact_sha256": "c288ccd2ab08133de7571c7bb8df45288d97303b95f9c4fdd56ca787bdf02584",
       "tests": [
         "TestCampaignProfileMutantControls",
         "TestCampaignProfilesPreserveUniversalInvariants",
@@ -222,14 +222,14 @@
     }
   ],
   "campaigns": [
-    {"name": "quality", "verdict": "pass", "duration_ms": 38047, "artifact_sha256": "bfcc106ae2131cd4121f5c128e0966513b4047eb37d39b51daa62b1a40d83f39"},
-    {"name": "provider_bounded", "verdict": "pass", "duration_ms": 270022, "artifact_sha256": "0eccbe9a5b3050cad882bd3344fa87148a79c872a7423fd546d2de95194b3849"},
-    {"name": "full_campaign", "verdict": "pass", "duration_ms": 764854, "artifact_sha256": "9881a69353706eb7d6604701ba9fb44d7c691afbec43f6a9b13de88a931538ba"},
-    {"name": "mission_full", "verdict": "pass", "duration_ms": 145168, "artifact_sha256": "f24d45206d1f5fb61d823efac31ef102f843e86196562c3a5c04b3bf6e30d653"}
+    {"name": "quality", "verdict": "pass", "duration_ms": 37951, "artifact_sha256": "2a9ba0d0afc83a1dcf9e5965c04ec03b4b5e38e6c07de41a136ad6d791e3076a"},
+    {"name": "provider_bounded", "verdict": "pass", "duration_ms": 278807, "artifact_sha256": "6d26df1d7f7ce38fb9bc02e9381197b24c9e5e27b3593d939d7a6f502c5d5468"},
+    {"name": "full_campaign", "verdict": "pass", "duration_ms": 765749, "artifact_sha256": "368e30d5f5fee5a909bd481c9a150e6b3237fe669fc267b12f2cf08cccfdf84d"},
+    {"name": "mission_full", "verdict": "pass", "duration_ms": 145497, "artifact_sha256": "47a7e1a8b4271c311bd4bc5ca0502cd2b298ca77fcbc6278e6e1ed4cd2ce01cd"}
   ],
   "real_provider": {
-    "phase2_frozen_runner": {"expected": 11, "started": 11, "terminal": 11, "passed": 11, "failed": 0, "artifact_sha256": "aea8aa5fc69f178e0de1118e9e2aa2756e48116fb4d93447b4f454990ecc3da0"},
-    "phase3_two_item_selector": {"expected": 1, "started": 1, "terminal": 1, "passed": 1, "failed": 0, "artifact_sha256": "207850c513fc13c7374e0d0f498372678b4552b9b3ab96fe637502089813ba8b"}
+    "phase2_frozen_runner": {"expected": 11, "started": 11, "terminal": 11, "passed": 11, "failed": 0, "artifact_sha256": "39e96729c5efda74a21561ec0b70890bb69f716f541d465b33c720ded20fa8ec"},
+    "phase3_two_item_selector": {"expected": 1, "started": 1, "terminal": 1, "passed": 1, "failed": 0, "artifact_sha256": "3ec85d925b28fc2ddef4ddf987c2b5db38b88592e33909064f60b03ad7c57666"}
   },
   "failed_or_non_admissible_attempts": [
     {"id": "01", "source": "6e1cc43", "verdict": "non_admissible", "reason": "qualification wrapper toolchain environment conflict"},
@@ -258,7 +258,10 @@
     {"id": "real-28", "source": "f049baa", "verdict": "non_admissible", "reason": "root-owned read-only containment mount was not yet declared as the exact safe Git worktree"},
     {"id": "real-29", "source": "f049baa", "verdict": "non_admissible", "reason": "qualified installer identity was supplied under the wrong Make variable; zero scenarios started"},
     {"id": "real-30", "source": "f049baa", "verdict": "non_admissible", "reason": "runner environment sanitization removed the ephemeral Git safe-directory declaration before source resolution"},
-    {"id": "review-cycle-3", "source": "f049baa", "verdict": "fail", "reason": "publication closure omitted tail commitment, complete command grammar, balanced Mermaid subgraphs, and a non-test validator entrypoint"}
+    {"id": "review-cycle-3", "source": "f049baa", "verdict": "fail", "reason": "publication closure omitted tail commitment, complete command grammar, balanced Mermaid subgraphs, and a non-test validator entrypoint"},
+    {"id": "real-33", "source": "03afabd", "verdict": "non_admissible", "reason": "outer container could not load the host bubblewrap binary because its glibc was older"},
+    {"id": "real-34", "source": "03afabd", "verdict": "non_admissible", "reason": "provider runner passed but the durable two-item selector skipped after its digest environment was omitted"},
+    {"id": "real-35", "source": "03afabd", "verdict": "non_admissible", "reason": "host restart interrupted qualification and erased volatile artifacts before terminal evidence"}
   ],
   "hosted_baseline": {"required_samples": 10, "observed_samples": 0, "duration_ms": null, "verdict": "pending"}
 }

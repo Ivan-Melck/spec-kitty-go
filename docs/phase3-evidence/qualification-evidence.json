@@ -1,22 +1,22 @@
 {
   "schema_version": 3,
   "verdict": "pass",
-  "failure_history_count": 27,
-  "failure_history_sha256": "2034b2c7719dd9970b2b11d94b986da491fabf34c486c20f1ff8d7140efa61e0",
-  "tested_source": {"commit": "f049baaa8751e0e2b48126ffe05823400f9f4881", "tree": "7ef44e98b332628f0688d274fd4b07eaddc0a2d5", "clean": true},
+  "failure_history_count": 30,
+  "failure_history_sha256": "6c02e555aa4a9ac1f78f21b4fb8ce2ef4f287f0ce06eb67f02febb071cfb71ba",
+  "tested_source": {"commit": "03afabd6d875dd133d18fa759669498d92e097be", "tree": "6173b2dbce671d6243b14f99414170c8a5929f0f", "clean": true},
   "publication": {"payload_commit": null, "disposition": "the containing payload commit is recorded by the following documentation-only attestation"},
   "host": {"goos": "linux", "goarch": "amd64", "go_version": "go1.26.5", "git_version": "2.43.0", "staticcheck_version": "2026.1 (v0.7.0)", "govulncheck_version": "1.6.0", "hosted_baseline": null},
   "portable_campaign": {
-    "started_at": "2026-08-28T20:13:50.599029208Z",
-    "finished_at": "2026-08-28T20:36:45.794915916Z",
-    "quality": {"verdict": "pass", "duration_ms": 38047},
-    "historical_full_scenario": {"expected": 73, "started": 73, "terminal": 73, "passed": 73, "failed": 0, "skipped": 0, "duration_ms": 764811, "timeout_ms": 3600000, "timed_out": false},
-    "mission_full": {"expected": 13, "started": 13, "terminal": 13, "passed": 13, "failed": 0, "skipped": 0, "duration_ms": 145168}
+    "started_at": "2026-08-29T07:45:25.104225651Z",
+    "finished_at": "2026-08-29T08:08:37.62031234Z",
+    "quality": {"verdict": "pass", "duration_ms": 37951},
+    "historical_full_scenario": {"expected": 73, "started": 73, "terminal": 73, "passed": 73, "failed": 0, "skipped": 0, "duration_ms": 765708, "timeout_ms": 3600000, "timed_out": false},
+    "mission_full": {"expected": 13, "started": 13, "terminal": 13, "passed": 13, "failed": 0, "skipped": 0, "duration_ms": 145497}
   },
   "mission_profiles": {
-    "mission_contract": {"expected": 4, "started": 4, "terminal": 4, "passed": 4, "failed": 0, "skipped": 0, "duration_ms": 38174, "timeout_ms": 1200000, "timed_out": false},
-    "mission_acceptance": {"expected": 3, "started": 3, "terminal": 3, "passed": 3, "failed": 0, "skipped": 0, "duration_ms": 25800, "timeout_ms": 1200000, "timed_out": false},
-    "mission_adversarial": {"expected": 6, "started": 6, "terminal": 6, "passed": 6, "failed": 0, "skipped": 0, "duration_ms": 81048, "timeout_ms": 1200000, "timed_out": false}
+    "mission_contract": {"expected": 4, "started": 4, "terminal": 4, "passed": 4, "failed": 0, "skipped": 0, "duration_ms": 38168, "timeout_ms": 1200000, "timed_out": false},
+    "mission_acceptance": {"expected": 3, "started": 3, "terminal": 3, "passed": 3, "failed": 0, "skipped": 0, "duration_ms": 25063, "timeout_ms": 1200000, "timed_out": false},
+    "mission_adversarial": {"expected": 6, "started": 6, "terminal": 6, "passed": 6, "failed": 0, "skipped": 0, "duration_ms": 82150, "timeout_ms": 1200000, "timed_out": false}
   },
   "scale_proofs": {
     "semantic_drift": {"seed": 99533022, "generator_schema": 1, "expected": 1000, "changed": 1000, "silent": 0, "normalization_repetitions": 100},
@@ -51,10 +51,10 @@
   "provider_qualification": {
     "provider": "beads", "version": "1.2.2", "binary_sha256": "0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6", "source_tag_commit": "6c124203e771433a3550c348771a5b5e27fd3c21", "protocol_schema": 1, "storage_mode": "server_multiwriter", "offline_network_namespace": true,
     "expected": 11, "started": 11, "terminal": 11, "passed": 11, "failed": 0,
-    "started_at": "2026-08-28T20:44:36.321477444Z", "finished_at": "2026-08-28T20:51:56.878737777Z", "artifact_sha256": "aea8aa5fc69f178e0de1118e9e2aa2756e48116fb4d93447b4f454990ecc3da0",
-    "contention": {"processes": 8, "attempted": 1000, "terminal": 1000, "passed": 1000, "collisions": 0, "duplicates": 0, "duration_ms": 149490.865},
+    "started_at": "2026-08-29T08:09:35.280724119Z", "finished_at": "2026-08-29T08:16:18.909024145Z", "artifact_sha256": "39e96729c5efda74a21561ec0b70890bb69f716f541d465b33c720ded20fa8ec",
+    "contention": {"processes": 8, "attempted": 1000, "terminal": 1000, "passed": 1000, "collisions": 0, "duplicates": 0, "duration_ms": 136971.845},
     "authority_audits": 23, "authority_invariant_failures": 0,
-    "mission_method_two_item": {"expected": 1, "started": 1, "terminal": 1, "passed": 1, "failed": 0, "duration_ms": 10790, "raw_artifact_retained_outside_repository": true, "raw_artifact_sha256": "207850c513fc13c7374e0d0f498372678b4552b9b3ab96fe637502089813ba8b"}
+    "mission_method_two_item": {"expected": 1, "started": 1, "terminal": 1, "passed": 1, "failed": 0, "duration_ms": 10320, "raw_artifact_retained_outside_repository": true, "raw_artifact_sha256": "3ec85d925b28fc2ddef4ddf987c2b5db38b88592e33909064f60b03ad7c57666"}
   },
   "quality_gates": [
     {"name": "compile_all", "verdict": "pass", "duration_ms": null},
@@ -65,8 +65,8 @@
     {"name": "govulncheck", "verdict": "pass", "duration_ms": null, "reachable_findings": 0},
     {"name": "format", "verdict": "pass", "duration_ms": null},
     {"name": "build", "verdict": "pass", "duration_ms": null},
-    {"name": "architecture", "verdict": "pass", "duration_ms": 14051},
-    {"name": "scope", "verdict": "pass", "duration_ms": 1906}
+    {"name": "architecture", "verdict": "pass", "duration_ms": 14107},
+    {"name": "scope", "verdict": "pass", "duration_ms": 2017}
   ],
   "privacy": {"absolute_home_paths": 0, "credentials": 0, "environment_dumps": 0, "private_transcripts": 0, "raw_provider_databases": 0, "unrestricted_tool_output": 0}
 }

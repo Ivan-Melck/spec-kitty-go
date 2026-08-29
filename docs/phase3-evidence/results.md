@@ -19,10 +19,10 @@ grant qualification to the later payload or documentation commits.
 | Stale authority is checked before eligibility without defeating replay | `TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation` | pass; no downstream mutation |
 | Existing Phase 1/2 behavior remains intact | historical `full-scenario` census | 73/73 pass |
 | Architecture and scope laws remain executable | architecture and scope profiles with mutants | 40/40 pass |
-| The bounded local PR path remains usable | `make quality` | pass in 38.047 s |
-| Full portable qualification is complete | `make full-campaign` | pass; 15m 10.022s exhaustive and mission-profile runtime |
+| The bounded local PR path remains usable | `make quality` | pass in 37.951 s |
+| Full portable qualification is complete | `make full-campaign` | pass; 15m 11.246s exhaustive and mission-profile runtime |
 | Pinned real provider works under isolated multiwriter load | frozen real-provider runner | 11/11; 1,000/1,000 contention operations |
-| Evidence publication is closed and falsifiable | Phase 3 publication validator and permanent documentation/machine/checkout mutants | strict schema v2; broken links, Mermaid, commands, claims, limitations, checksums, history, verdicts, evidence facts, and ancestry are rejected |
+| Evidence publication is closed and falsifiable | Phase 3 publication validator and permanent documentation/machine/checkout mutants | strict schema v3; broken links, Mermaid, commands, claims, limitations, checksums, history, verdicts, evidence facts, and ancestry are rejected |
 
 ## Requirements and constraints
 
@@ -44,7 +44,7 @@ grant qualification to the later payload or documentation commits.
 | NFR-004 | Nine transaction-abort, provider-lost-response, prewrite, and postcommit/pre-response boundaries recover without partial aggregates. The mid-transaction process-kill limit is explicit. |
 | NFR-005 | Local bounded queries meet executable thresholds. This package publishes no general production SLO or hosted measurement. |
 | NFR-008 | Import/reachability/deferred-surface policies and production-shaped mutants prevent trackers, projections, or transports from minting authority. |
-| NFR-011 | The local PR-equivalent campaign passed in 38.047 seconds; exhaustive and real-provider work remain scheduled/manual. |
+| NFR-011 | The local PR-equivalent campaign passed in 37.951 seconds; exhaustive and real-provider work remain scheduled/manual. |
 | NFR-012, C-012 | Evidence scans reject credentials, environment dumps, private transcripts, raw provider bodies/databases, and unbounded output. |
 | NFR-013 | Typed read models preserve objective, dependencies, criteria, generation, and next legal action in qualification cases. |
 | NFR-014 | Negative matrices require typed stable kinds, bounded observed/expected evidence, and recovery categories without raw provider or SQL leakage. |
@@ -69,16 +69,16 @@ grant qualification to the later payload or documentation commits.
 ## Source and provider measurements
 
 Portable qualification binds commit
-`f049baaa8751e0e2b48126ffe05823400f9f4881`, tree
-`7ef44e98b332628f0688d274fd4b07eaddc0a2d5`, with a clean worktree before and
+`03afabd6d875dd133d18fa759669498d92e097be`, tree
+`6173b2dbce671d6243b14f99414170c8a5929f0f`, with a clean worktree before and
 after execution. Go 1.26.5 on Linux/amd64 compiled and tested the application.
 `go vet`, staticcheck 2026.1, module verification, formatting, binary builds,
 and govulncheck 1.6.0 passed; the vulnerability scan reported zero reachable
 findings.
 
-The isolated Beads 1.2.2 run recorded p95 latency of 311.481 ms for 100
-preflight observations and 201.333 ms for 200 warm single-item reads. Eight
-processes completed 1,000 provider-native creates in 149,490.865 ms with no
+The isolated Beads 1.2.2 run recorded p95 latency of 284.427 ms for 100
+preflight observations and 165.528 ms for 200 warm single-item reads. Eight
+processes completed 1,000 provider-native creates in 136,971.845 ms with no
 collision or duplicate. These are local observations, not service-level
 objectives.
 
@@ -90,13 +90,18 @@ census failures, and the genuine stale-authority ordering defect. None satisfies
 the pass record. The rejected cycle-1 publication and candidate attempts 20 and
 21 are also retained: the first lacked a strict reusable publication validator,
 and the latter two failed toolchain qualification boundaries. Real-provider
-setup attempts 11–16, 23, and 27–30 are retained as
+setup attempts 11–16, 23, 27–30, and 33–35 are retained as
 non-admissible or diagnostic: they established network, namespace, Git, and
-offline module-cache preconditions. Canonical attempt 31 passed both the frozen
-eleven-scenario provider runner and the separate durable two-item Phase 3
-selector. Portable attempt 26 passed the complete source-bound ladder; attempt
-25 remains the failed synthetic-publication-fixture qualification. Attempt 17
-remained diagnostic only. Review cycle 3 rejected that publication because its
-failure-history tail, command grammar, Mermaid subgraph balance, and reusable
-validator entrypoint were not yet structurally closed. Raw bounded artifacts remain outside the repository;
-published records contain only safe digests and summaries.
+offline module-cache preconditions. Attempt 33 exposed the outer-container libc
+mismatch, attempt 34 caught a skipped two-item selector despite a passing
+provider runner, and attempt 35 was interrupted by the host restart before
+terminal evidence survived. Portable attempt 32 had passed before that restart;
+attempt 36 is the canonical clean rerun whose complete artifacts back this
+payload. Canonical real-provider attempt 37 passed both the frozen
+eleven-scenario runner and the separate durable two-item Phase 3 selector.
+Attempt 25 remains the failed synthetic-publication-fixture qualification, and
+attempt 17 remained diagnostic only. Review cycle 3 rejected the preceding
+publication because its failure-history tail, command grammar, Mermaid subgraph
+balance, and reusable validator entrypoint were not yet structurally closed.
+Raw bounded artifacts remain outside the repository; published records contain
+only safe digests and summaries.
