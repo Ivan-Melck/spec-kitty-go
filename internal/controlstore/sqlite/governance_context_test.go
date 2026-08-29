@@ -49,7 +49,11 @@ func TestGovernanceContextMigrationPreservesHistoricalRunsFromEveryShippedVersio
 			if err != nil {
 				t.Fatal(err)
 			}
-			if governance.RunID != "run-history" || governance.LeaseID != "lease-history" || governance.Provenance != GovernanceUnknownPreProvenance || governance.Context.ID() != "" {
+			wantProvenance, wantContext := GovernanceUnknownPreProvenance, ids.GovernanceContextID("")
+			if version >= 12 {
+				wantProvenance, wantContext = GovernanceVerified, "context-history"
+			}
+			if governance.RunID != "run-history" || governance.LeaseID != "lease-history" || governance.Provenance != wantProvenance || governance.Context.ID() != wantContext {
 				t.Fatalf("historical provenance=%+v", governance)
 			}
 			var operations, runs, leases int
@@ -170,7 +174,7 @@ func TestGovernanceContextClaimIsAtomicImmutableInspectableAndReplayable(t *test
 	}
 }
 
-func TestGovernanceContextMigrationKeepsHistoricalUnknownBindingImmutable(t *testing.T) {
+func TestPopulatedV12MigrationKeepsVerifiedBindingImmutable(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "control.db")
 	raw, err := sql.Open("sqlite", path)
@@ -200,7 +204,7 @@ func TestGovernanceContextMigrationKeepsHistoricalUnknownBindingImmutable(t *tes
 	defer store.Close()
 	persistGovernanceContextForTest(t, ctx, store, testGovernanceContext(t, "context-current", time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)))
 	if _, err := store.db.ExecContext(ctx, `UPDATE runs SET governance_context_id='context-current' WHERE run_id='run-history'`); err == nil {
-		t.Fatal("historical NULL provenance was backfilled")
+		t.Fatal("verified v12 provenance was rebound")
 	}
 	for name, inspect := range map[string]func() (RunGovernance, error){
 		"run":   func() (RunGovernance, error) { return store.GovernanceForRun(ctx, "run-history") },
@@ -208,7 +212,7 @@ func TestGovernanceContextMigrationKeepsHistoricalUnknownBindingImmutable(t *tes
 	} {
 		t.Run(name, func(t *testing.T) {
 			governance, err := inspect()
-			if err != nil || governance.Provenance != GovernanceUnknownPreProvenance || governance.Context.ID() != "" {
+			if err != nil || governance.Provenance != GovernanceVerified || governance.Context.ID() != "context-history" {
 				t.Fatalf("historical governance=%+v err=%v", governance, err)
 			}
 		})
@@ -403,6 +407,18 @@ func seedHistoricalAuthority(t *testing.T, ctx context.Context, db *sql.DB, vers
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
+	if version >= 12 {
+		value := testGovernanceContext(t, "context-history", time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC))
+		if err := saveGovernanceContextTx(ctx, tx, value, "operation-history", value.CreatedAt()); err != nil {
+			t.Fatalf("seed shipped v%d governance: %v", version, err)
+		}
+	}
+	runHistory := `INSERT INTO runs(run_id,operation_id,project_id,mission_id,work_id,work_revision_id,actor_id,process_id,generation,status,created_at) VALUES('run-history','operation-history','project-history','mission-history','work-history','revision-history','actor-history','process-history',1,'active','2026-08-25T12:00:00Z')`
+	runExpired := `INSERT INTO runs(run_id,operation_id,project_id,mission_id,work_id,work_revision_id,actor_id,process_id,generation,status,created_at) VALUES('run-expired','operation-expired','project-history','mission-history','work-expired','revision-history','actor-history','process-history',1,'expired','2026-08-25T10:00:00Z')`
+	if version >= 12 {
+		runHistory = `INSERT INTO runs(run_id,operation_id,project_id,mission_id,work_id,work_revision_id,actor_id,process_id,generation,status,created_at,governance_context_id) VALUES('run-history','operation-history','project-history','mission-history','work-history','revision-history','actor-history','process-history',1,'active','2026-08-25T12:00:00Z','context-history')`
+		runExpired = `INSERT INTO runs(run_id,operation_id,project_id,mission_id,work_id,work_revision_id,actor_id,process_id,generation,status,created_at,governance_context_id) VALUES('run-expired','operation-expired','project-history','mission-history','work-expired','revision-history','actor-history','process-history',1,'expired','2026-08-25T10:00:00Z','context-history')`
+	}
 	statements := []string{
 		`INSERT INTO projects(project_id,created_at) VALUES('project-history','2026-08-25T12:00:00Z')`,
 		`INSERT INTO actors(actor_id,created_at) VALUES('actor-history','2026-08-25T12:00:00Z')`,
@@ -412,8 +428,8 @@ func seedHistoricalAuthority(t *testing.T, ctx context.Context, db *sql.DB, vers
 		`INSERT INTO work_items(work_id,work_revision_id,state) VALUES('work-expired','revision-history','ready')`,
 		`INSERT INTO operations(operation_id,operation_kind,idempotency_key,correlation_id,request_digest,status,result_run_id,result_lease_id,result_generation,result_deadline,created_at) VALUES('operation-history','start_run','operation-history','operation-history','digest-history','succeeded','run-history','lease-history',1,'2026-08-25T13:00:00Z','2026-08-25T12:00:00Z')`,
 		`INSERT INTO operations(operation_id,operation_kind,idempotency_key,correlation_id,request_digest,status,result_run_id,result_lease_id,result_generation,result_deadline,created_at) VALUES('operation-expired','start_run','operation-expired','operation-expired','digest-expired','succeeded','run-expired','lease-expired',1,'2026-08-25T11:00:00Z','2026-08-25T10:00:00Z')`,
-		`INSERT INTO runs(run_id,operation_id,project_id,mission_id,work_id,work_revision_id,actor_id,process_id,generation,status,created_at) VALUES('run-history','operation-history','project-history','mission-history','work-history','revision-history','actor-history','process-history',1,'active','2026-08-25T12:00:00Z')`,
-		`INSERT INTO runs(run_id,operation_id,project_id,mission_id,work_id,work_revision_id,actor_id,process_id,generation,status,created_at) VALUES('run-expired','operation-expired','project-history','mission-history','work-expired','revision-history','actor-history','process-history',1,'expired','2026-08-25T10:00:00Z')`,
+		runHistory,
+		runExpired,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
