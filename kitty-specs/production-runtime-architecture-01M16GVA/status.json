@@ -20,8 +20,8 @@
     "WP01": {
       "actor": "gemini",
       "agent": "gemini",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
       "lane": "for_review",
       "last_event_id": "01M16X6HW7SFRHRR7D7HSCHGAV",
@@ -29,7 +29,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: canonical architecture and ADR at 2a6fabc. Force overrides only pre-existing inherited planning-artifact ancestry (9c502e2 and earlier), not implementation checks. Existing Go architecture suite passes; local links and FR anchors pass; Mermaid uses conservative syntax; git diff --check passes; ruff diff-scoped check: 0 Python files, exit 0. Pre-review Python gate reported no_coverage because this Go worktree has no importable tests package.",
-        "Review actor launch failed before review: local Claude OAuth session expired; returning unreviewed WP to queue"
+        "Review actor launch failed before review: local Claude OAuth session expired; returning unreviewed WP to queue",
+        "Review actor launch failed before review: Gemini account requires an unset Google Cloud project; returning unreviewed WP to queue"
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
@@ -37,7 +38,7 @@
         "reviewer": "gemini",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
       "subtasks": {
