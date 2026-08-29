@@ -259,7 +259,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: Independent architecture review complete. Verdict: PASS. ActorID opencode, 30 adversarial scenarios all PASS, zero blocker/high/medium findings, 71 requirements mapped, 9 conflicts closed. Source tree 5c75920; review commit ef6caf2.",
-        "Ready for review: cycle 2 repairs complete. Fixed 32-scenario census (was 30), carried Medium MED-001 GapDB WAL/crash finding with M1 owner, rewrote Scenario 1.6 to follow Section 8.1 deterministic checkpoint precedence (closes CONFLICT-010), updated all source references to 0cd9303/a4a747fb. Commit dc47a7e. All publication checks pass."
+        "Ready for review: cycle 2 repairs complete. Fixed 32-scenario census (was 30), carried Medium MED-001 GapDB WAL/crash finding with M1 owner, rewrote Scenario 1.6 to follow Section 8.1 deterministic checkpoint precedence (closes CONFLICT-010), updated all source references to 0cd9303/a4a747fb. Commit dc47a7e. All publication checks pass.",
+        "Ready for review: cycle 3 repair — aligned canonical Low inventory (LOW-001=Scenario 1.6/M1, LOW-002=MCP Tasks pin/M7, Scenario 1.2 is residual-only) and corrected independence wording (OpenCode independent of WP01-WP07 implementation authors; WP01 cycle-2 review participation disclosed; Codex is WP08 reviewer). Preserved 32 census, MED-001, checkpoint precedence, exact source 0cd9303/a4a747fb. Commit 80336a2."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
