@@ -254,6 +254,8 @@ work_packages:
       - "internal/scenario/mission_method_projection_test.go"
       - "internal/testcampaign/mission_method.go"
       - "internal/testcampaign/mission_method_test.go"
+      - "internal/testcampaign/cmd/campaign/main.go"
+      - "internal/testcampaign/cmd/campaign/main_test.go"
       - "Makefile"
       - ".github/workflows/quality.yml"
       - ".github/workflows/full-campaign.yml"
