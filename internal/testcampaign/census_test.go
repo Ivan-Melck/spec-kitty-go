@@ -339,8 +339,8 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		new  string
 	}{
 		{"one profile", "-campaign provider_bounded", "-profile provider-portable"},
-		{"raised PR budget", "-timeout 5m", "-timeout 6m"},
-		{"removed PR budget", "-timeout 5m", ""},
+		{"raised PR budget", "-timeout 6m", "-timeout 7m"},
+		{"removed PR budget", "-timeout 6m", ""},
 		{"PATH fallback", `case "$(BEADS_BIN)" in /*)`, `command -v bd >/dev/null; case "$(BEADS_BIN)" in *)`},
 		{"missing digest comparison", `test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)"`, `test -n "$$observed"`},
 		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`, `test -n "$(OFFLINE_ENFORCED)"`},
@@ -484,7 +484,7 @@ func validateProviderMakeControls(makefile string) error {
 		text    string
 	}{
 		{"one profile", "-campaign provider_bounded"},
-		{"raised PR budget", "-timeout 5m"},
+		{"raised PR budget", "-timeout 6m"},
 		{"PATH fallback", `case "$(BEADS_BIN)" in /*)`},
 		{"missing digest comparison", `test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)"`},
 		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`},
