@@ -258,7 +258,8 @@
       "last_transition_at": "2026-08-29T16:09:44.563781+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: Independent architecture review complete. Verdict: PASS. ActorID opencode, 30 adversarial scenarios all PASS, zero blocker/high/medium findings, 71 requirements mapped, 9 conflicts closed. Source tree 5c75920; review commit ef6caf2."
+        "Ready for review: Independent architecture review complete. Verdict: PASS. ActorID opencode, 30 adversarial scenarios all PASS, zero blocker/high/medium findings, 71 requirements mapped, 9 conflicts closed. Source tree 5c75920; review commit ef6caf2.",
+        "Ready for review: cycle 2 repairs complete. Fixed 32-scenario census (was 30), carried Medium MED-001 GapDB WAL/crash finding with M1 owner, rewrote Scenario 1.6 to follow Section 8.1 deterministic checkpoint precedence (closes CONFLICT-010), updated all source references to 0cd9303/a4a747fb. Commit dc47a7e. All publication checks pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
