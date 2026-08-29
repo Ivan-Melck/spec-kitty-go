@@ -1,0 +1,321 @@
+{
+  "mission_slug": "production-runtime-architecture-01M16GVA",
+  "mission_number": "",
+  "mission_type": "software-dev",
+  "overall_verdict": "pass",
+  "criteria": [
+    {
+      "criterion_id": "FR-001",
+      "description": "One normative production-runtime architecture supersedes conflicting active design statements.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-001-canonical-recommendation; documentation-conflict-ledger.md; docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "The terminal review found one canonical record and zero open normative conflicts."
+    },
+    {
+      "criterion_id": "FR-002",
+      "description": "Every capability is labeled delivered, retained, amended, proposed, retired, or historical with evidence for delivered claims.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-002-delivery-truth; architecture-review-report.md#7-delivery-truth-audit",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "No proposed production capability is represented as currently shipped."
+    },
+    {
+      "criterion_id": "FR-003",
+      "description": "Python and Phase 1-3 behavior is classified into preserved laws, amendments, retirements, and later proof obligations.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-003-behavioral-preservation-map; docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md#3-behavioral-preservation-and-retirement-map",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Frozen Phase 1-3 evidence remains historical and byte-verified."
+    },
+    {
+      "criterion_id": "FR-004",
+      "description": "Every mission-state category has one writable authority and explicit projection rules.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-004-authority-ownership-map; docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md#4-authority-ownership-matrix",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "The review found zero duplicate writable authorities and zero unowned categories."
+    },
+    {
+      "criterion_id": "FR-005",
+      "description": "The architecture distinguishes memory-primary projections, durable acknowledgement evidence, and ephemeral observations.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-005-memory-primary-state-model; docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md#5-memory-primary-durable-authority",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Durable success precedes authoritative acknowledgement."
+    },
+    {
+      "criterion_id": "FR-006",
+      "description": "Checkpoint, journal, restore, runtime-epoch, and reconciliation semantics support safe mission resumption.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-006-resume-protocol; docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md#81-checkpoint-selection-and-readiness-precedence; architecture-review-brief.md#scenario-16-corrupt-checkpoint",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "WP01 cycle 2 established deterministic bounded checkpoint fallback and degraded/closed behavior."
+    },
+    {
+      "criterion_id": "FR-007",
+      "description": "Playback is deterministic, side-effect-free, versioned, and portable.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-007-playback-protocol; docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md#9-playback-and-portable-terminal-evidence",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Playback reduces recorded inputs and cannot invoke adapters."
+    },
+    {
+      "criterion_id": "FR-008",
+      "description": "The target production graph is GapDB-only and identifies the mission that must prove SQLite removal.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-008-storage-adoption-boundary; docs/PRODUCTION_RUNTIME_PROGRAM.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "SQLite remains historical evidence only; M2 owns structural absence proof."
+    },
+    {
+      "criterion_id": "FR-009",
+      "description": "Beads is the default first-party tracker behind provider-neutral ports and cannot grant execution authority.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-009-tracker-composition; docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md#10-tracker-composition",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Tracker state and mission authority remain separate."
+    },
+    {
+      "criterion_id": "FR-010",
+      "description": "Orchestrator API 2.0 exposes the governed mission lifecycle through typed capabilities.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-010-process-complete-api; docs/ORCHESTRATOR_API_2_0.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "This is a ratified contract, not a claim that the server ships today."
+    },
+    {
+      "criterion_id": "FR-011",
+      "description": "Mutation uses named typed commands and rejects generic transitions, manufactured authority, and direct store or Git mutation.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-011-typed-mutation-surface; docs/ORCHESTRATOR_API_2_0.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "The command vocabulary is closed and authority is host-owned."
+    },
+    {
+      "criterion_id": "FR-012",
+      "description": "Native operations define resumable handles, progress, input, cancellation, terminal results, and idempotent replay.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-012-native-asynchronous-operations; docs/ORCHESTRATOR_API_2_0.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Operation semantics are transport-independent."
+    },
+    {
+      "criterion_id": "FR-013",
+      "description": "Mission progress reports phase, generation, counts, active work, review and integration position, critical path, blockers, next actions, drift, and revision.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-013-mission-progress; docs/ORCHESTRATOR_API_2_0.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "List, get, and watch are projections of one application model."
+    },
+    {
+      "criterion_id": "FR-014",
+      "description": "CLI, hosted clients, Team Kitty, CI, dashboards, and optional adapters project the same application capabilities.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-014-client-parity; docs/ORCHESTRATOR_API_2_0.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "No transport owns alternate workflow semantics."
+    },
+    {
+      "criterion_id": "FR-015",
+      "description": "Acceptance claims compose organization, project, mission-type, and mission requirements without assuming a language stack.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-015-acceptance-claims; docs/STACK_NEUTRAL_ACCEPTANCE.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "The proposed acceptance kernel is ecosystem-neutral."
+    },
+    {
+      "criterion_id": "FR-016",
+      "description": "Claim-to-provider bindings are explicit and revision-pinned; stack detection is suggestion-only.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-016-provider-resolution; docs/STACK_NEUTRAL_ACCEPTANCE.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Missing qualified providers produce actionable refusal."
+    },
+    {
+      "criterion_id": "FR-017",
+      "description": "Acceptance evidence binds claim, candidate, generation, policy, provider, runner, time, and artifact digests.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-017-evidence-contract; contracts/acceptance-evidence.schema.json; docs/STACK_NEUTRAL_ACCEPTANCE.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Published examples validate against the JSON Schema."
+    },
+    {
+      "criterion_id": "FR-018",
+      "description": "The gate defines pass, fail, error, skipped, and waived outcomes with freshness and strict policy union.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-018-gate-evaluation; docs/STACK_NEUTRAL_ACCEPTANCE.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Waivers are explicit evidence and never inferred from provider output."
+    },
+    {
+      "criterion_id": "FR-019",
+      "description": "Qualification is dependency-aware, concurrent, content-reusable, invalidatable, and progress-projectable.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-019-qualification-graph; docs/STACK_NEUTRAL_ACCEPTANCE.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Reuse keys bind content and policy rather than filenames or timestamps."
+    },
+    {
+      "criterion_id": "FR-020",
+      "description": "MCP is optional, independently packaged, and contributes no unique workflow capability or core dependency.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-020-optional-mcp-packaging; docs/MCP_2026_07_28_ADAPTER.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Core installation and qualification remain MCP-free."
+    },
+    {
+      "criterion_id": "FR-021",
+      "description": "The optional adapter is pinned to MCP 2026-07-28 stateless semantics and does not treat protocol sessions as authority.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-021-stateless-mcp-contract; docs/MCP_2026_07_28_ADAPTER.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "M7 must pin an immutable Tasks extension revision before implementation."
+    },
+    {
+      "criterion_id": "FR-022",
+      "description": "Negotiated MCP Tasks project native operations without becoming mission, run, lease, decision, cancellation, TTL, or evidence authority.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-022-mcp-tasks-mapping; docs/MCP_2026_07_28_ADAPTER.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Task loss or expiry cannot revoke domain authority."
+    },
+    {
+      "criterion_id": "FR-023",
+      "description": "Dependency and mutant guards prevent adapters from leaking into the authority kernel.",
+      "proof_type": "automated_test",
+      "evidence": "requirement-traceability.md#fr-023-architecture-enforcement; go test ./internal/architecture -count=1; architecture-review-report.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "The architecture guard and rejecting mutants passed."
+    },
+    {
+      "criterion_id": "FR-024",
+      "description": "The implementation program is acyclic and dependency-ordered with bounded missions, contract dependencies, falsification experiments, and gates.",
+      "proof_type": "automated_test",
+      "evidence": "requirement-traceability.md#fr-024-program-graph; docs/programs/production-runtime-program.json; architecture-review-report.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Schema, unique-ID, maximum-dependency, acyclicity, critical-path, and parity checks passed."
+    },
+    {
+      "criterion_id": "FR-025",
+      "description": "Every proposed mission has explicit entry evidence, exit evidence, non-goals, and go/no-go conditions.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-025-mission-admission-rules; docs/PRODUCTION_RUNTIME_PROGRAM.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "All M1-M7 program rows are bounded and independently governed."
+    },
+    {
+      "criterion_id": "FR-026",
+      "description": "Active README, project-plan, ADR, contract, and operational guidance is migrated or explicitly retained as history.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-026-documentation-migration; documentation-conflict-ledger.md; docs/HISTORICAL_ARCHITECTURE_DISPOSITIONS.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Ten normative conflicts are recorded and closed; historical evidence remains immutable."
+    },
+    {
+      "criterion_id": "FR-027",
+      "description": "M1 is selected as the smallest first mission capable of disproving the most consequential unproven architecture claim.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-027-first-executable-slice; README.md#what-happens-next; docs/PRODUCTION_RUNTIME_PROGRAM.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "M1 owns the GapDB durability, recovery, ambiguity, and replay disproof boundary."
+    },
+    {
+      "criterion_id": "FR-028",
+      "description": "An adversarial review attacks authority, recovery, evidence, API, acceptance, MCP isolation, and program overreach.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#fr-028-review-brief; architecture-review-brief.md; architecture-review-report.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "All 32 scenarios pass with zero unresolved blocker/high findings."
+    },
+    {
+      "criterion_id": "NFR-001-015",
+      "description": "All fifteen non-functional requirements are mapped and independently verified.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#non-functional-requirements; architecture-review-report.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "Traceability, authority clarity, delivery honesty, boundedness, portability, links, recovery, neutrality, isolation, evidence economy, and independent review all pass."
+    },
+    {
+      "criterion_id": "C-001-018",
+      "description": "All eighteen mission constraints are mapped and independently verified.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#constraints; architecture-review-report.md",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "The mission remains documentation-only and preserves every locked authority, storage, API, acceptance, MCP, history, and filesystem boundary."
+    },
+    {
+      "criterion_id": "SC-001-010",
+      "description": "All ten measurable success criteria are mapped to passing evidence.",
+      "proof_type": "code_review",
+      "evidence": "requirement-traceability.md#success-criteria; architecture-review-report.md#8-final-verdict",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-08-29T16:23:40Z",
+      "notes": "The terminal report records exact source, full coverage, ten closed conflicts, and no blocker/high findings."
+    }
+  ],
+  "negative_invariants": [],
+  "tested_source_commit": "6acddb2de93619c61e55e48bf20e73e6cbf8cbff",
+  "tested_source_tree": "9416ac279d4cd9b66c37d73646ebb8f6f87e7b0c"
+}
