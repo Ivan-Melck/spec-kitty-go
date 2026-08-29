@@ -76,6 +76,9 @@
       "last_event_id": "01M16Y3TSSVF2G6DQNFYQJARJV",
       "last_transition_at": "2026-08-29T14:17:26.585645+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: stack-neutral claim, binding, evidence, policy, DAG, waiver, isolation, and schema-validation architecture committed at bbc9e07"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 346017,
