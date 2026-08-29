@@ -5,14 +5,14 @@ mission_number: 2
 friendly_name: Production Orchestration Architecture
 mission_type: software-dev
 target_branch: feat/production-runtime-architecture
-created_at: '2026-08-29T16:31:18.205969+00:00'
+created_at: '2026-08-29T16:46:08.568451+00:00'
 created_by:
-  kind: runtime
-  id: spec-kitty-generator
-  display: Spec Kitty Generator
+  kind: human
+  id: cli
+  display: spec-kitty retrospect
 provenance:
-  kind: runtime_post_completion
-  invoked_at: '2026-08-29T16:31:18.205969+00:00'
+  kind: explicit_create
+  invoked_at: '2026-08-29T16:46:08.568451+00:00'
   policy_resolved_from:
     enabled: <default>
     timing: <default>
@@ -29,6 +29,7 @@ provenance:
     permissions.apply_structural_changes: <default>
     precedence: <default>
     generator: <default>
+  command: spec-kitty retrospect create
 policy_source:
   enabled: <default>
   timing: <default>
@@ -166,6 +167,13 @@ not_helpful:
   evidence_refs:
   - e-014
   details: WP WP08 was sent back from review to planning 2 time(s).
+- id: n-013
+  category: review_loop
+  summary: mission-review-report.md present with findings
+  evidence_refs:
+  - e-026
+  details: A mission-review-report.md artifact is present for this mission. Review its findings to understand documented
+    review outcomes.
 gaps: []
 proposals: []
 evidence_refs:
@@ -257,5 +265,26 @@ evidence_refs:
 - id: e-025
   kind: file
   path: kitty-specs/production-runtime-architecture-01M16GVA/analysis-report.md
+- id: e-026
+  kind: file
+  path: kitty-specs/production-runtime-architecture-01M16GVA/mission-review-report.md
 generator_version: '1.0'
-provenance_history: []
+provenance_history:
+- kind: runtime_post_completion
+  invoked_at: '2026-08-29T16:31:18.205969+00:00'
+  policy_resolved_from:
+    enabled: <default>
+    timing: <default>
+    failure_policy: <default>
+    write_record: <default>
+    generate_proposals: <default>
+    apply_proposals: <default>
+    permissions.write_record: <default>
+    permissions.inspect_mission_artifacts: <default>
+    permissions.propose_glossary_changes: <default>
+    permissions.propose_drg_changes: <default>
+    permissions.propose_doctrine_changes: <default>
+    permissions.apply_low_risk_changes: <default>
+    permissions.apply_structural_changes: <default>
+    precedence: <default>
+    generator: <default>
