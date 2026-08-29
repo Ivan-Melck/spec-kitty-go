@@ -20,15 +20,16 @@
     "WP01": {
       "actor": "claude",
       "agent": "claude",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
       "lane": "for_review",
       "last_event_id": "01M16X45GXKFJ9NDRF2RRV9E4K",
       "last_transition_at": "2026-08-29T14:00:08.989620+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for review: canonical architecture and ADR at 2a6fabc. Force overrides only pre-existing inherited planning-artifact ancestry (9c502e2 and earlier), not implementation checks. Existing Go architecture suite passes; local links and FR anchors pass; Mermaid uses conservative syntax; git diff --check passes; ruff diff-scoped check: 0 Python files, exit 0. Pre-review Python gate reported no_coverage because this Go worktree has no importable tests package."
+        "Ready for review: canonical architecture and ADR at 2a6fabc. Force overrides only pre-existing inherited planning-artifact ancestry (9c502e2 and earlier), not implementation checks. Existing Go architecture suite passes; local links and FR anchors pass; Mermaid uses conservative syntax; git diff --check passes; ruff diff-scoped check: 0 Python files, exit 0. Pre-review Python gate reported no_coverage because this Go worktree has no importable tests package.",
+        "Review actor launch failed before review: local Claude OAuth session expired; returning unreviewed WP to queue"
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
@@ -36,7 +37,7 @@
         "reviewer": "claude",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
       "subtasks": {
