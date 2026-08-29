@@ -26,9 +26,14 @@ implementation actors.
 **Independence verdict:** INDEPENDENT — reviewer ActorID `opencode` does not
 appear in any WP01–WP07 implementation attribution on the dependency branches.
 
-Note: Per the WP08 prompt, the normal WP review after this report should also
-be performed by an actor independent of ActorID `opencode`. The prompt's
-independence requirement is acknowledged.
+Note: ActorID `opencode` participated as the WP01 cycle-2 reviewer (the
+checkpoint-precedence repair in commit `0cd9303` that added Section 8.1). That
+review participation is distinct from WP01 implementation authorship; the
+implementation authors are the agents that authored the code commits on the
+WP01 lane branch, and none of them declare ActorID `opencode`. The independence
+predicate above applies to implementation authorship only. The subsequent WP08
+review after this report is performed by ActorID `codex`, which is independent
+of report author `opencode`.
 
 ### 1.3 Source commit and dependency lineage
 
@@ -169,8 +174,8 @@ implementation uncertainty is correctly identified as proof obligations for M1�
 
 ### 3.4 Low/informational findings: TWO
 
-These are informational notes with no architectural effect. They are correctly
-scoped to M1 proof obligations and require no rework of the documentation.
+These are informational notes with no architectural effect and require no rework
+of the documentation. LOW-001 is scoped to M1; LOW-002 is scoped to M7.
 
 ---
 
@@ -338,7 +343,7 @@ All conditions for ratification are met at the exact reviewed source tree
   fallback ambiguity) closed by WP01 commit 0cd9303; zero open.
 - All 32 adversarial attack scenarios pass.
 - All publication gate checks pass.
-- Reviewer independence: CONFIRMED (ActorID `opencode` independent of all WP01–WP07 actors).
+- Reviewer independence: CONFIRMED (ActorID `opencode` independent of all WP01–WP07 implementation-author ActorIDs; WP01 cycle-2 review participation disclosed in Section 1.2; WP08 review actor is `codex`, independent of report author).
 
 ### 8.2 Verdict scope and limitations
 

@@ -871,4 +871,4 @@ a SQLite fallback, dual write, or weakened proof to bypass its stop condition.
 **All 32 scenarios: PASS.**
 **Zero blocker findings. Zero high findings.**
 **One Medium finding (1.3 GapDB partial-WAL/crash proof gap): explicitly scheduled to M1 as GapDB adoption proof obligation. Does not block ratification (medium findings require explicit disposition and program owner; both are present). See MED-001 in `architecture-review-report.md`.**
-**Two Low/informational gaps: 1.2 zombie-writer proof residual (M1); 1.6 startup replay budget policy thresholds (M1).**
+**Two formal Low/informational findings: LOW-001 (Scenario 1.6 startup replay budget policy thresholds, owned by M1); LOW-002 (MCP Tasks draft pin from document review of `docs/MCP_2026_07_28_ADAPTER.md` Section 1, owned by M7). Scenario 1.2 zombie-writer carries a tracked residual proof risk routed to M1 but is not a formal Low finding — see the "Residual risk" note in Scenario 1.2 and the summary table column above.**
