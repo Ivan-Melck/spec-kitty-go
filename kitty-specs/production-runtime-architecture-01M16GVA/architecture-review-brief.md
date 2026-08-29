@@ -3,9 +3,10 @@
 **WP08 artifact — Independent Architecture Review and Publication Gate**
 
 Reviewer ActorID: `opencode`
-Reviewer ProcessID: `proc-opencode-wp08-review-2026-08-29`
+Reviewer ProcessID: `proc-opencode-wp08-review-cycle2-2026-08-29`
 Review date: 2026-08-29
-Source tree reviewed: `5c7592046f0abc85ac52e8eb1f830771d50ff9d8`
+Source commit reviewed: `0cd93038dbc051a0717d071927e8e432f526c10f`
+Source tree reviewed: `a4a747fb268ec93a6c7324ce1be22d11668e6a01`
 
 This brief presents concrete falsification questions and scenarios executed
 against the integrated architecture documentation. It covers three attack
@@ -189,27 +190,69 @@ over-specifying GapDB internals.
 or stale checkpoint must not prevent recovery.
 
 **Attack:** The latest checkpoint has an invalid prefix digest. Can recovery
-proceed to a safe state?
+proceed to a safe state? What is the exact deterministic precedence for
+checkpoint selection and fallback?
 
-**Architecture response:** Section 8, Recovery contract 2: "Spec Kitty product
-restore validates the latest mission checkpoint and its prefix digest, then
-reduces subsequent versioned control events." The runtime "remains degraded or
-closed when…checkpoint digest…cannot be validated."
+**Architecture response (Section 8.1, added by commit 0cd9303):**
 
-Section 8 also states: "A checkpoint is an accelerator, never a second
-authority." This means the system can fall back to full journal reduction from
-the GapDB-stored base if no valid checkpoint exists, at the cost of replay time.
+Prior to commit `0cd9303`, an implicit normative tension existed between Section
+8 prose ("remains degraded or closed when checkpoint digest cannot be
+validated") and `contracts/control-journal.md`:74 ("Restore may fall back to an
+older valid checkpoint or full journal reduction, subject to bounded startup
+policy"). WP01 resolved this by adding Section 8.1 "Checkpoint selection and
+readiness precedence" to the canonical architecture document.
 
-**Result:** PASS — The architecture correctly refuses to run with a corrupt
-checkpoint (fail-closed) and does not claim checkpoint repair is possible at
-the architecture level. The degraded/closed state requires operator action
-(presumably creating a new checkpoint from a known-good journal state, which
-requires M1's checkpoint/recovery proof).
+Section 8.1 defines a deterministic five-step restore order for each mission:
 
-**Gap (Low, informational):** The architecture does not specify a maximum
-acceptable journal replay window without a checkpoint (performance bound). This
-is appropriate for a documentation mission but is a future specification item
-for M1.
+1. **Journal validation first.** Validate recovered journal identity,
+   continuity, event schemas, and reducer compatibility. If any of these checks
+   fails → do not consult a checkpoint as an alternate source of truth; enter
+   `closed` recovery. Journal integrity is a prerequisite that cannot be
+   substituted by any checkpoint.
+2. **Inspect checkpoint candidates newest-first.** A candidate is usable only
+   when every validity rule in the control-journal contract passes. Reject and
+   diagnose an invalid candidate; consider the next older candidate. Never
+   repair an invalid checkpoint in place or omit journal events to make it fit.
+3. **Select the newest valid checkpoint within the startup budget.** The budget
+   is revision-pinned policy computed from deterministic inputs (encoded bytes,
+   event count), not from whichever candidate finishes first.
+4. **Full journal reduction when no valid checkpoint is within budget.** If no
+   checkpoint satisfies both validity and budget, reduce the complete journal
+   from origin — but only when that reduction also fits the same budget.
+5. **Refuse command admission and enter `degraded` recovery** if neither an
+   older valid checkpoint nor full-journal reduction is admissible.
+
+The legal precedence is therefore: **newest valid bounded checkpoint → full
+journal when bounded → refusal (`degraded`/`closed`)**. An invalid latest
+checkpoint does not itself trigger fail-closed: the runtime inspects older
+candidates, and then full journal reduction, before entering a non-ready state.
+
+`Closed` recovery is reserved for journal integrity or compatibility failure
+(step 1). `Degraded` recovery applies when the recovered journal is intact but
+the configured replay budget prevents safe product restore (step 5). Neither
+state may grant a lease or dispatch an external effect. Operator paths are
+explicit: `degraded` allows side-effect-free offline journal verification,
+checkpoint rebuild, or an approved policy change; `closed` requires storage
+restore, schema migration, or fault repair. There is no force-ready option.
+
+The `contracts/control-journal.md`:74 compact summary ("fall back to an older
+valid checkpoint or full journal reduction, subject to bounded startup policy")
+remains accurate as a high-level description; Section 8.1 is the canonical
+elaboration that governs when and in what order those fallbacks apply.
+
+**Result:** PASS — Section 8.1 resolves the scenario with complete deterministic
+precedence. A corrupt latest checkpoint triggers neither a silent unlimited
+fallback nor an unconditional refusal. The architecture correctly distinguishes
+journal integrity failure (`closed`) from budget-constrained replay limitation
+(`degraded`). No incompatible outcomes remain; the former implicit tension
+between the Section 8 prose and the control-journal contract is closed.
+
+**Gap (Low, informational):** The architecture introduces the concept of a
+bounded startup policy (Section 8.1 steps 3–4) and states it is
+revision-pinned policy computed from deterministic inputs, but does not specify
+the maximum allowable budget value. Selecting and validating the exact policy
+thresholds is a future specification item for M1 (checkpoint restore and
+recovery sequence proof). This is appropriate for a documentation mission.
 
 ---
 
@@ -794,10 +837,10 @@ a SQLite fallback, dual write, or weakened proof to bypass its stop condition.
 |---|---|---|---|
 | 1.1 Two agents claim same work | Authority | PASS | — |
 | 1.2 Zombie writer after lease expiry | Authority | PASS (proof deferred to M1) | Residual risk tracked |
-| 1.3 Crash before durable acknowledgement | Recovery | PASS | — |
+| 1.3 Crash before durable acknowledgement | Recovery | PASS | Medium (GapDB WAL/crash proof gap: routed to M1) |
 | 1.4 Crash after durable acknowledgement | Recovery | PASS | — |
 | 1.5 GapDB ambiguous response | Recovery | PASS (proof deferred to M1) | — |
-| 1.6 Corrupt checkpoint | Recovery | PASS | Low gap (perf bound) |
+| 1.6 Corrupt checkpoint | Recovery | PASS | Low (startup budget policy thresholds: M1) |
 | 1.7 Stale/dishonest/human-edited tracker | Authority | PASS | — |
 | 1.8 Candidate Git refs move | Authority | PASS | — |
 | 1.9 Same ActorID / new ProcessID review | Authority | PASS | — |
@@ -825,6 +868,7 @@ a SQLite fallback, dual write, or weakened proof to bypass its stop condition.
 | 3.8 Exit evidence is executable | Program | PASS | — |
 | 3.9 Rollback semantics correct | Program | PASS | — |
 
-**All 30 scenarios: PASS.**
+**All 32 scenarios: PASS.**
 **Zero blocker findings. Zero high findings.**
-**Two low/informational gaps (1.2 residual risk, 1.6 checkpoint perf bound) correctly deferred to M1.**
+**One Medium finding (1.3 GapDB partial-WAL/crash proof gap): explicitly scheduled to M1 as GapDB adoption proof obligation. Does not block ratification (medium findings require explicit disposition and program owner; both are present). See MED-001 in `architecture-review-report.md`.**
+**Two Low/informational gaps: 1.2 zombie-writer proof residual (M1); 1.6 startup replay budget policy thresholds (M1).**

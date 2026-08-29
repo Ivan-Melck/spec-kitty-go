@@ -11,7 +11,7 @@
 | Field | Value |
 |---|---|
 | Reviewer ActorID | `opencode` |
-| Reviewer ProcessID | `proc-opencode-wp08-review-2026-08-29` |
+| Reviewer ProcessID | `proc-opencode-wp08-review-cycle2-2026-08-29` |
 | Tool | OpenCode — `anthropic/claude-sonnet-4.6` via `openrouter` |
 | Review date | 2026-08-29 |
 
@@ -32,8 +32,10 @@ independence requirement is acknowledged.
 
 ### 1.3 Source commit and dependency lineage
 
-**Source tree reviewed:** `5c7592046f0abc85ac52e8eb1f830771d50ff9d8`
-(pre-review source commit `5c75920` as specified)
+**Source commit reviewed:** `0cd93038dbc051a0717d071927e8e432f526c10f`
+**Source tree reviewed:** `a4a747fb268ec93a6c7324ce1be22d11668e6a01`
+(source commit `0cd9303` consolidates WP01–WP07 integration and adds Section 8.1
+checkpoint selection and readiness precedence)
 
 **Dependency integration commits (all approved WPs, now on `feat/production-runtime-architecture`):**
 
@@ -47,6 +49,7 @@ independence requirement is acknowledged.
 | WP06 | `a0c8d6373f3bff0765b933531f81b9db00748433` | Active README and technical plan migration |
 | WP07 | `5d660b9d5a52d956e126ffe254156cffff031cbd` | Historical evidence and compatibility dispositions |
 | Post-WP01 fix | `5c7592046f0abc85ac52e8eb1f830771d50ff9d8` | Restore WP01 review artifact after consolidation |
+| WP01 (cycle 2) | `0cd93038dbc051a0717d071927e8e432f526c10f` | Define Section 8.1 checkpoint recovery precedence |
 
 **Reviewed documents (canonical set):**
 
@@ -78,7 +81,7 @@ independence requirement is acknowledged.
 3. **Conflict ledger search** — repository-wide search for SQLite, GapDB, API 1.3,
    generic transition, acceptance commands, MCP, future phases, source of truth,
    authority, and delivery honesty (see `documentation-conflict-ledger.md`).
-4. **Adversarial falsification** — 30 concrete scenarios executed against the
+4. **Adversarial falsification** — 32 concrete scenarios executed against the
    design (see `architecture-review-brief.md`). Covers all attack themes from
    Mini's prior findings and the WP08 prompt.
 5. **Publication gate checks** — all mechanical validation commands executed.
@@ -147,10 +150,22 @@ No high findings were found. Recovery, evidence, compatibility, and program
 behavior are sufficiently specified for a documentation mission. All remaining
 implementation uncertainty is correctly identified as proof obligations for M1–M7.
 
-### 3.3 Medium findings: ZERO
+### 3.3 Medium findings: ONE
 
-No medium findings were found. All bounded ambiguity and operational risk has
-been explicitly assigned to program missions with stop rules.
+---
+
+**MED-001: GapDB partial-WAL/crash proof gap — delegated to M1**
+
+| Field | Value |
+|---|---|
+| Location | `architecture-review-brief.md` Scenario 1.3; `docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md` Section 8 Recovery contract 1 |
+| Finding | The architecture does not specify the exact GapDB crash-during-write-step-5 (partial WAL write) recovery semantics. It delegates this to GapDB's WAL/snapshot recovery contract (Architecture doc Section 8, Recovery contract 1: "GapDB storage recovery validates database identity and format, loads the latest valid checksummed snapshot, and replays complete WAL frames"). The architecture correctly separates GapDB storage recovery from Spec Kitty product restore (Recovery contracts 1 and 2), but the boundary behavior during partial-WAL writes is not independently specified in the architecture documents and cannot be without importing GapDB internals (Section 17: "Spec Kitty does not import GapDB `internal/server`"). |
+| Severity | Medium |
+| Disposition | **Explicitly scheduled — routed to M1 as bounded, documented proof obligation.** M1's 14 GapDB adoption scenarios explicitly include "ambiguous response reconciliation" and "crash and ambiguous-response injection passes at every durable boundary" as required exit criteria. The deferral is architecturally correct: the runtime treats GapDB as an opaque ordered substrate whose internal WAL semantics are GapDB's own contract. The architecture correctly specifies the client-side idempotency mechanism (`OperationID` + `request_digest`) that handles the observable outcome of any GapDB write ambiguity (Scenario 1.5). |
+| Program owner | M1 (GapDB storage adoption) |
+| Ratification status | **Does not block ratification.** Per verdict rules: "Ratification requires zero unresolved blocker or high findings. Medium/low findings need explicit disposition and program owner." This finding has an explicit disposition (delegated to M1) and a named program owner (M1). |
+
+---
 
 ### 3.4 Low/informational findings: TWO
 
@@ -213,14 +228,14 @@ normative conflicts remain. Full detail in `documentation-conflict-ledger.md`.
 
 ## 5. API, acceptance, MCP, and program attack results
 
-See `architecture-review-brief.md` for the full 30-scenario attack record.
+See `architecture-review-brief.md` for the full 32-scenario attack record.
 
 Summary:
 - **Domain 1 (Authority, Concurrency, Recovery, Compensation — T045):** 11 scenarios, 11 PASS
 - **Domain 2 (API, Progress, Acceptance, MCP — T046):** 12 scenarios, 12 PASS
 - **Domain 3 (Program and Delivery Truth — T047):** 9 scenarios, 9 PASS
 
-All 30 attack scenarios: PASS.
+All 32 attack scenarios: PASS.
 
 ---
 
@@ -310,22 +325,25 @@ this document."
 ### 8.1 Verdict: PASS
 
 All conditions for ratification are met at the exact reviewed source tree
-`5c7592046f0abc85ac52e8eb1f830771d50ff9d8`:
+`a4a747fb268ec93a6c7324ce1be22d11668e6a01` (commit `0cd9303`):
 
 - Zero unresolved blocker findings.
 - Zero unresolved high findings.
-- Zero open medium findings.
+- One Medium finding (MED-001: GapDB partial-WAL/crash proof gap) explicitly
+  scheduled with M1 as program owner; does not block ratification.
 - Two low/informational findings correctly assigned to M1 and M7 program missions
   with explicit proof obligations.
 - All 71 requirements mapped with zero unmapped.
-- All 9 normative conflicts closed with zero open.
-- All 30 adversarial attack scenarios pass.
+- All 9 normative conflicts closed plus CONFLICT-010 (former checkpoint
+  fallback ambiguity) closed by WP01 commit 0cd9303; zero open.
+- All 32 adversarial attack scenarios pass.
 - All publication gate checks pass.
 - Reviewer independence: CONFIRMED (ActorID `opencode` independent of all WP01–WP07 actors).
 
 ### 8.2 Verdict scope and limitations
 
-This verdict applies **only** to the exact source tree `5c7592046f0abc85ac52e8eb1f830771d50ff9d8`.
+This verdict applies **only** to the exact source tree `a4a747fb268ec93a6c7324ce1be22d11668e6a01`
+(commit `0cd93038dbc051a0717d071927e8e432f526c10f`).
 
 This verdict does **not** claim:
 - That GapDB, Orchestrator API 2.0, stack-neutral acceptance, the production

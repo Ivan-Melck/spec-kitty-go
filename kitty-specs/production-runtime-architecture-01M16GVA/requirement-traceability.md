@@ -3,10 +3,11 @@
 **WP08 artifact — Independent Architecture Review and Publication Gate**
 
 Reviewer ActorID: `opencode`
-Reviewer ProcessID: `proc-opencode-wp08-review-2026-08-29`
+Reviewer ProcessID: `proc-opencode-wp08-review-cycle2-2026-08-29`
 Tool: OpenCode (claude-sonnet-4.6 via openrouter)
 Review date: 2026-08-29
-Source tree reviewed: `5c7592046f0abc85ac52e8eb1f830771d50ff9d8` (`feat/production-runtime-architecture`)
+Source commit reviewed: `0cd93038dbc051a0717d071927e8e432f526c10f`
+Source tree reviewed: `a4a747fb268ec93a6c7324ce1be22d11668e6a01` (`feat/production-runtime-architecture`)
 
 This matrix covers every functional requirement (FR-001–FR-028), non-functional
 requirement (NFR-001–NFR-015), constraint (C-001–C-018), and success criterion
@@ -88,7 +89,7 @@ verification method, the delivery state, and this reviewer's verdict.
 | Supporting contract | `kitty-specs/production-runtime-architecture-01M16GVA/contracts/control-journal.md` |
 | Verification method | Section 8 defines the 5 separate recovery contracts and the recovery sequence. The sequence diagram is textual (not Mermaid) and portable. |
 | Delivery state | `planning artifact` |
-| Verdict | **PASS** — The five contracts (GapDB storage recovery, product restore, runtime-epoch replacement, external reconciliation, progress publication) are separate and ordered. "Remains degraded or closed when…cannot be validated" enforces fail-closed. |
+| Verdict | **PASS** — The five contracts (GapDB storage recovery, product restore, runtime-epoch replacement, external reconciliation, progress publication) are separate and ordered. Section 8.1 (added by commit 0cd9303) specifies deterministic checkpoint selection and readiness precedence: journal validation first → newest valid bounded checkpoint → full journal when bounded → refusal (`degraded`/`closed`). The `degraded` and `closed` states are defined with distinct recovery paths; no force-ready option exists. `contracts/control-journal.md`:74 compact summary is a governed subordinate case of Section 8.1. |
 
 ### FR-007 Playback protocol
 

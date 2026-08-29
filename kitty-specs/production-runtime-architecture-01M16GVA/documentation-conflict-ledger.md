@@ -3,9 +3,10 @@
 **WP08 artifact — Independent Architecture Review and Publication Gate**
 
 Reviewer ActorID: `opencode`
-Reviewer ProcessID: `proc-opencode-wp08-review-2026-08-29`
+Reviewer ProcessID: `proc-opencode-wp08-review-cycle2-2026-08-29`
 Review date: 2026-08-29
-Source tree reviewed: `5c7592046f0abc85ac52e8eb1f830771d50ff9d8`
+Source commit reviewed: `0cd93038dbc051a0717d071927e8e432f526c10f`
+Source tree reviewed: `a4a747fb268ec93a6c7324ce1be22d11668e6a01`
 
 This ledger records every active normative conflict found in the repository-wide
 search. It distinguishes immutable historical evidence from active guidance,
@@ -143,6 +144,18 @@ documentation mission) were excluded from normative conflict checks.
 | Owner WP | WP07 |
 | Closure evidence | WP07 added contextual annotations to ORCHESTRATOR_API_1_3_PROJECTION.md. The disposition index row records "Mutability class: Historical/current compatibility inventory; outer-adapter guidance only" and "Superseded active guidance: API 1.3 commands, lane vocabulary, and generic transition as future application semantics." |
 
+### CONFLICT-010: Implicit ambiguity — checkpoint fallback vs. fail-closed semantics
+
+| Field | Value |
+|---|---|
+| Location | `docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md` Section 8 (pre-0cd9303); `kitty-specs/production-runtime-architecture-01M16GVA/contracts/control-journal.md`:74 |
+| Old claim | The pre-0cd9303 Section 8 prose stated the runtime "remains degraded or closed when…checkpoint digest…cannot be validated." `contracts/control-journal.md`:74 stated "Restore may fall back to an older valid checkpoint or full journal reduction, subject to bounded startup policy." Together, these created an implicit normative tension: does an invalid latest checkpoint cause immediate fail-closed, or does the runtime first inspect older checkpoints and attempt full journal reduction? Neither document specified the precedence order that governs when each behavior applies. |
+| Disposition | **Closed by WP01 (commit 0cd9303)** |
+| Canonical successor | `docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md` Section 8.1 "Checkpoint selection and readiness precedence" |
+| Owner WP | WP01 |
+| Closure evidence | Commit `0cd93038dbc051a0717d071927e8e432f526c10f` adds Section 8.1 with a deterministic five-step restore sequence: (1) journal validation — `closed` if integrity fails; (2–3) inspect checkpoint candidates newest-first within budget; (4) full journal reduction when no valid checkpoint is within budget; (5) refuse and enter `degraded` if neither option is admissible. The legal precedence is explicitly stated: "newest valid bounded checkpoint, then full journal when bounded, then refusal." |
+| Post-closure state | `contracts/control-journal.md`:74 compact summary remains accurate as a high-level description. Section 8.1 is the canonical elaboration that governs when and in what order those fallbacks apply. The former ambiguity is fully resolved. |
+
 ---
 
 ## Part II: Historical evidence — non-normative (no action required)
@@ -165,7 +178,7 @@ conflict resolution is required.
 
 ## Part III: Ledger summary and closure confirmation
 
-### Active normative conflicts: 9 found, 9 closed
+### Active normative conflicts: 10 found, 10 closed
 
 | ID | File(s) | Conflict type | Status |
 |---|---|---|---|
@@ -178,6 +191,7 @@ conflict resolution is required.
 | CONFLICT-007 | `CONCURRENCY_SCENARIOS.md` | SQLite as required proving representation | Historical/Closed (WP07) |
 | CONFLICT-008 | `adr/0001-...md` | Verdict scope inference | Historical/Closed (WP07) |
 | CONFLICT-009 | `ORCHESTRATOR_API_1_3_PROJECTION.md` | Missing canonical-pointer header | Closed (WP07) |
+| CONFLICT-010 | `PRODUCTION_ORCHESTRATION_ARCHITECTURE.md`, `contracts/control-journal.md` | Checkpoint fallback vs. fail-closed ambiguity | Closed (WP01, 0cd9303) |
 
 **Zero open active normative conflicts.**
 
