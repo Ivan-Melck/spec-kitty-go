@@ -6,6 +6,37 @@ Target: `CONTRACT_VERSION = "1.3.0"`
 
 Revalidated: 2026-08-25
 
+## Current disposition (2026-08-29)
+
+**Classification: compatibility projection and historical/current inventory for
+existing API 1.3 consumers. It is not the vocabulary for new application
+design.**
+
+The [production orchestration architecture](PRODUCTION_ORCHESTRATION_ARCHITECTURE.md)
+and [Orchestrator API 2.0](ORCHESTRATOR_API_2_0.md) are the canonical target
+records. This document remains the source-bound inventory of API 1.3 command,
+envelope, policy, and error semantics needed to assess existing consumers. Its
+detailed observations are retained; they do not make API 1.3 the future kernel
+or application model.
+
+The proposed compatibility rule is deliberately narrow:
+
+- a safely representable 1.3 request delegates to exactly one named API 2.0
+  operation and returns a bounded 1.3 projection;
+- generic lane-oriented `transition` semantics are not carried forward as
+  authority, and lane/path vocabulary remains presentation only;
+- a lossy, ambiguous, or unsafe request receives a typed upgrade refusal
+  rather than a guessed transition, manufactured success, or weakened policy;
+- compatibility translation remains outside the application and authority
+  kernel tiers; and
+- no compatibility adapter is claimed as implemented merely because this
+  mapping exists.
+
+Historical 1.3 facts below remain valid at their cited source boundary. New
+production behavior requires the API 2.0 implementation and compatibility
+conformance missions named by the canonical architecture; qualification does
+not transfer from this design record.
+
 ## Purpose and evidence basis
 
 This record proves that the Phase 1 authority kernel can be projected through

@@ -7,6 +7,39 @@
 - Independent attestation: `ae7c39adf1aecd9ced3da63a5a883d0b81fe4c46`
 - Evidence: `docs/phase1-evidence/results.json`, `final-campaign-manifest.json`, and `scenario-catalog.json`
 
+## Current disposition (2026-08-29)
+
+**The Phase 1 verdict and every observed SQLite, Git, workspace, review, and
+fault-campaign fact in this ADR remain valid only for the frozen source and
+single-machine/local-filesystem boundary above.** The verdict has not been
+withdrawn, broadened, or reissued for a later implementation.
+
+[ADR 0002](0002-production-orchestration-architecture.md) and the
+[production orchestration architecture](../PRODUCTION_ORCHESTRATION_ARCHITECTURE.md)
+supersede this ADR's future production storage and application-API direction.
+They propose GapDB-only control state and Orchestrator API 2.0; neither target
+inherits Phase 1 qualification, and neither is implemented by this annotation.
+
+The target retains the product laws this proving ground established:
+
+- one machine and one local-filesystem authority for the first runtime;
+- lease-generation-scoped workspaces, quarantine, and fresh replacement
+  workspaces;
+- immutable candidate handoff and `ActorID`-level reviewer independence;
+- stale-authority refusal and generation-pinned WorkRevision consequences; and
+- repository/target-ref serialization with conflict evidence preservation.
+
+The changed representation creates new proof obligations. Later missions must
+qualify the pinned GapDB public boundary, reproduce recovery/playback and the
+zombie-writer experiment, prove complete SQLite removal without fallback,
+implement API 2.0 and bounded API 1.3 translation/refusal, and requalify the
+production composition. Until then, modernc SQLite 1.57.0 and Git 2.43.0 remain
+observed historical implementations—not evidence for GapDB or API 2.0.
+
+The original decision, component verdicts, versions, limitations, and evidence
+interpretation follow unchanged so readers can still understand why this
+decision was reasonable before the production program existed.
+
 ## Decision
 
 Ratify the Phase 1 authority architecture inside the tested single-machine and
