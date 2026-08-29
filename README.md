@@ -561,10 +561,10 @@ human record. Phase 2 neither performs nor implies that adoption.
 ## Evidence and design record
 
 The current Phase 3 evidence attests qualified source
-`f049baaa8751e0e2b48126ffe05823400f9f4881` (tree
-`7ef44e98b332628f0688d274fd4b07eaddc0a2d5`) through immutable payload
-`f0374a99df9b122b10b703f840eb6dd4977c7503` (tree
-`92100ef7de7cc5f2b8466f68a90187c4a0e52c69`). The source, payload, and this
+`03afabd6d875dd133d18fa759669498d92e097be` (tree
+`6173b2dbce671d6243b14f99414170c8a5929f0f`) through immutable payload
+`dfe477926f7d33b0cbe0e002d413938058231ffd` (tree
+`724bfc55847011c44562ddde23ccf8c26d9cc61f`). The source, payload, and this
 documentation attestation are deliberately distinct identities; qualification
 does not transfer transitively between them.
 

@@ -18,8 +18,8 @@ non-claims.
 The immutable payload commit is:
 
 ```text
-commit: f0374a99df9b122b10b703f840eb6dd4977c7503
-tree:   92100ef7de7cc5f2b8466f68a90187c4a0e52c69
+commit: dfe477926f7d33b0cbe0e002d413938058231ffd
+tree:   724bfc55847011c44562ddde23ccf8c26d9cc61f
 ```
 
 This index and the repository README are a following documentation-only
@@ -30,7 +30,7 @@ Verify the payload:
 
 ```bash
 (cd docs/phase3-evidence && sha256sum --check SHA256SUMS)
-git show --stat f0374a99df9b122b10b703f840eb6dd4977c7503
+git show --stat dfe477926f7d33b0cbe0e002d413938058231ffd
 ```
 
 Verify the exact clean docs-only attestation checkout through the reusable gate.
@@ -39,7 +39,7 @@ running the command; the gate refuses when it differs from the checkout's HEAD:
 
 ```bash
 make phase3-publication \
-  PAYLOAD_COMMIT=f0374a99df9b122b10b703f840eb6dd4977c7503 \
+  PAYLOAD_COMMIT=dfe477926f7d33b0cbe0e002d413938058231ffd \
   ATTESTATION_COMMIT="$ATTESTATION_COMMIT"
 ```
 
@@ -47,11 +47,11 @@ make phase3-publication \
 
 ```mermaid
 flowchart LR
-    Source["qualified source<br/>f049baa / 7ef44e9"]
-    Portable["portable attempt 26<br/>full campaign pass"]
-    Provider["real attempt 31<br/>11 of 11 pass"]
-    Mission["real attempt 31<br/>two-item mission pass"]
-    Payload["payload<br/>f0374a9 / 92100ef"]
+    Source["qualified source<br/>03afabd / 6173b2d"]
+    Portable["portable attempt 36<br/>full campaign pass"]
+    Provider["real attempt 37<br/>11 of 11 pass"]
+    Mission["real attempt 37<br/>two-item mission pass"]
+    Payload["payload<br/>dfe4779 / 724bfc5"]
     Attest["docs-only attestation<br/>index and repository README"]
 
     Source --> Portable
@@ -64,9 +64,9 @@ flowchart LR
 ```
 
 The tested source is commit
-`f049baaa8751e0e2b48126ffe05823400f9f4881`, tree
-`7ef44e98b332628f0688d274fd4b07eaddc0a2d5`. Attempt 26 ran the full portable
-ladder against that clean identity. Attempt 31 ran both the frozen
+`03afabd6d875dd133d18fa759669498d92e097be`, tree
+`6173b2dbce671d6243b14f99414170c8a5929f0f`. Attempt 36 ran the full portable
+ladder against that clean identity. Attempt 37 ran both the frozen
 eleven-scenario Beads qualification and the independently selected durable
 two-item Phase 3 Beads mission inside the qualified offline containment. All
 three evidence contracts passed.
@@ -99,14 +99,18 @@ The complete numerical and test-identity record is in
 
 Attempts 01–09 were not erased: the ledger retains toolchain/prerequisite
 failures, exact-census failures, load-sensitive claimant observations, and the
-stale-authority ordering defect. Containment attempts 11–16 and 27–30 remain
-non-admissible or diagnostic; attempt 17 is explicitly diagnostic rather than
-canonical evidence. The rejected cycle-1 publication and attempts 20, 21, and
-23 are also retained with their original failed or non-admissible verdicts. The
-rejected cycle-2 publication and failed attempt 25 remain explicit too. Only
-attempts 26 and 31 support the recorded campaign results. Review cycle 3 still
-rejected this publication's structural closure; that verdict remains in the
-machine ledger and is not upgraded by the passing campaigns.
+stale-authority ordering defect. Containment attempts 11–16, 27–30, and 33–35
+remain non-admissible or diagnostic; attempt 17 is explicitly diagnostic rather
+than canonical evidence. Attempt 33 exposed a libc mismatch, attempt 34 caught
+a skipped two-item selector, and attempt 35 records the host restart that
+interrupted qualification. The rejected cycle-1 publication and attempts 20,
+21, and 23 retain their original verdicts. The rejected cycle-2 publication and
+failed attempt 25 remain explicit too. Portable attempt 32 passed before the
+restart; attempt 36 is the canonical clean rerun whose retained artifacts back
+this payload. Only attempts 36 and 37 support the current recorded campaign
+results. Review cycle 3 rejected the preceding publication's structural
+closure; that verdict remains in the machine ledger and is not upgraded by the
+later passing campaigns.
 
 Raw test streams, provider databases, Dolt logs, temporary SQLite files,
 environment state, and authored provider bodies remain outside the repository.
