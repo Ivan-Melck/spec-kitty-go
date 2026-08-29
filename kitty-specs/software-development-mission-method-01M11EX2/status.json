@@ -2,7 +2,7 @@
   "event_count": 224,
   "last_event_id": "01M16B4B4K8PC1WYYVDFCTC3NC",
   "materialized_at": "2026-08-29T08:45:40.371518+00:00",
-  "mission_number": "2",
+  "mission_number": "",
   "mission_slug": "software-development-mission-method-01M11EX2",
   "mission_type": "software-dev",
   "summary": {
@@ -20,429 +20,184 @@
     "WP01": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
       "force_count": 3,
       "lane": "done",
       "last_event_id": "01M16B357KAMHEE2HX2TGJT7J8",
       "last_transition_at": "2026-08-29T08:45:01.555820+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Ready for review: permanent Phase 3 tier, direction, deferred-surface, Markdown-authority, reachability, and mutant guards; focused, repeated, race, compile, vet, staticcheck, module, formatting, and hygiene checks pass.",
-        "Ready for review cycle 2: projection dependencies are structurally limited to typed read-model packages; a production-shaped unregistered mutation mutant is rejected; seven new evidence groups are folded into the exact architecture census; architecture campaign passes; focused, repeated, race, compile, vet, staticcheck, module, formatting, and hygiene checks pass. Forced only past stale planning-branch artifact detection; net coordination diff is four owned architecture files.",
-        "Review cycle 2 passed: projection is structurally read-only with a real unregistered-mutation mutant and typed-read-model control; exact architecture census 38/38 passes; authoritative net diff against coordination is confined to four WP01-owned files; focused, repeated, race, compile, vet, module, formatting, and hygiene gates pass; anti-pattern checks 1-8 PASS. Force used only because the lane-history guard misclassified coordination-owned runtime commits already present on the coordination branch; net diff was independently clean."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Review cycle 2 passed: projection is structurally read-only with a real unregistered-mutation mutant and typed-read-model control; exact architecture census 38/38 passes; authoritative net diff against coordination is confined to four WP01-owned files; focused, repeated, race, compile, vet, module, formatting, and hygiene gates pass; anti-pattern checks 1-8 PASS. Force used only because the lane-history guard misclassified coordination-owned runtime commits already present on the coordination branch; net diff was independently clean.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP02": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
       "force_count": 5,
       "lane": "done",
       "last_event_id": "01M16B38P7BMCZ79N9CAH58XKK",
       "last_transition_at": "2026-08-29T08:45:05.095470+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Ready for review: static exact-version mission definition, typed lifecycle authority, pure gated CAS transitions, idempotent atomic store port, and exhaustive deterministic/race-safe tests",
-        "Cycle 2 ready: exact mission-store semantic postconditions and replay re-evaluation, bounded canonical diagnostics, exhaustive static-law/FR-028 audit census, canonical reconciliation naming; focused repeat/race, contract/static, scope/architecture, compile, vet/staticcheck, module, formatting, and diff gates pass. Product commits e1c71e1 and 20c0eff are confined to the seven WP02-owned paths; inherited dependency/runtime history is separately attributable.",
-        "Cycle 3 ready at adb5229: graph diagnostics now bind exact closed step/rule and edge endpoints while invalid keys expose only bounded step indices; exported EvaluateTransition enforces exact ExpectedSnapshot CAS with direct one-sided mutants. Focused count=10, race, contract, architecture/scope, vet, staticcheck, compile-only, module, formatting, and diff gates pass. Diff-scoped ruff: no changed Python files, exit 0.",
-        "Arbiter escalation after 3 review cycles: all authority, CAS, replay, privacy, static-law, and qualification findings are closed, but T007 still lacks exact bounded offending-step/rule diagnostics and load-bearing mutants for every invalid initial/terminal/outcome/unknown-edge definition class. Reviewer and arbiter agree this is a genuine acceptance gap. Request human authorization for one surgical remediation and independent verification rather than force-approval.",
-        "Human-authorized surgical remediation after Arbiter Mode: close the sole remaining T007 exact offending-step/rule diagnostic and mutant-coverage gap, then obtain independent verification. No other scope is reopened.",
-        "Arbiter remediation ready at 22f6831: complete bounded exact T007 diagnostic census for invalid/absent initial and terminal state, outcomes, predecessor/successor classes, edge rules, safe indices, and non-disclosure; corrected definition-level unknown-successor mutant. T007 count=50, focused count=10, race, contract, architecture/scope, vet, staticcheck, compile-only, module, formatting, and diff gates pass. Diff-scoped ruff: no changed Python files, exit 0.",
-        "Arbiter review passed at 22f6831: exact bounded graph diagnostic matrix and secret-safe mutants are load-bearing; full-snapshot CAS, store authority postconditions, static law, race, contract, architecture, scope, vet, staticcheck, build, module, formatting, and product diff gates pass."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Arbiter review passed at 22f6831: exact bounded graph diagnostic matrix and secret-safe mutants are load-bearing; full-snapshot CAS, store authority postconditions, static law, race, contract, architecture, scope, vet, staticcheck, build, module, formatting, and product diff gates pass.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T006": "done",
-        "T007": "done",
-        "T008": "done",
-        "T009": "done",
-        "T010": "done",
-        "T011": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP03": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
       "force_count": 2,
       "lane": "done",
       "last_event_id": "01M16B3CF0M8V1TK761WX5G03X",
       "last_transition_at": "2026-08-29T08:45:08.960555+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Ready for review: immutable typed artifact revisions, canonical validation, atomic idempotent publication and exact-revision approval freshness; package/race/schema/static/architecture gates pass. Full internal scenario census failure reproduced unchanged on coordination baseline.",
-        "Review cycle 3 passed: aggregate current-approval observation and atomic transition authority close successor races; immutable domain-qualified revision/approval commitments make replay deterministic without mutable rereads; cycle-1 reachability, schema, validation, privacy, idempotency, and nine-file ownership laws remain green. Focused repeat/race/static/contract/scope gates pass. Full internal exception is non-attributable: unchanged baseline scenario census plus isolated-passing Phase-1 timeout."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Review cycle 3 passed: aggregate current-approval observation and atomic transition authority close successor races; immutable domain-qualified revision/approval commitments make replay deterministic without mutable rereads; cycle-1 reachability, schema, validation, privacy, idempotency, and nine-file ownership laws remain green. Focused repeat/race/static/contract/scope gates pass. Full internal exception is non-attributable: unchanged baseline scenario census plus isolated-passing Phase-1 timeout.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T012": "done",
-        "T013": "done",
-        "T014": "done",
-        "T015": "done",
-        "T016": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP04": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
       "force_count": 2,
       "lane": "done",
       "last_event_id": "01M16B3FZ3G990KYDESKEWCMB1",
       "last_transition_at": "2026-08-29T08:45:12.547821+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Ready for review: provider-neutral work definitions, durable fake saga semantics, exact approved-plan decomposition gate, typed quality/coverage/ownership/dependency validation, provider-free workgraph observation, and post-lane graph seam; focused, repeated, race, compatibility, static, and clean architecture campaign pass.",
-        "Ready for cycle-2 review: closed FR-010 findings, canonical bounded lane diagnostics, provider attribution and zero-call mapping preflight, and load-bearing exact workgraph-to-tracker architecture denial; full WP04 gates pass",
-        "Review cycle 2 rejected: T020 raw-provider validation accepts whitespace-only or oversized cross-domain justification because ValidateDraft checks only reason == empty. All five cycle-1 blockers and all focused/race/static/compatibility/architecture gates otherwise pass.",
-        "Ready for cycle-3 review: cross-domain justification now uses bounded 512-byte text semantics with absent, whitespace, 513-byte, non-leaking, valid prose, and exact 512-byte controls; all WP04 gates pass",
-        "Review cycle 3 passed for product 711c0a3 (topology cleanup 837ac3b): raw-provider cross-domain boundary emits exact non-leaking unrelated_ownership/cross_domain_reason findings for absent, whitespace, and 513-byte reasons; meaningful and exact-512 controls pass. All cycle-1 fixes, focused/repeated/race/architecture 38/38/compatibility/static gates pass. Anti-patterns: dead-code N/A (declared WP05 forward seam); synthetic-fixture PASS; silent-empty PASS; FR coverage PASS; frozen-surface PASS; locked-decisions PASS; shared-file ownership PASS (prompt-governed architecture overlap); production-fragility N/A."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Review cycle 3 passed for product 711c0a3 (topology cleanup 837ac3b): raw-provider cross-domain boundary emits exact non-leaking unrelated_ownership/cross_domain_reason findings for absent, whitespace, and 513-byte reasons; meaningful and exact-512 controls pass. All cycle-1 fixes, focused/repeated/race/architecture 38/38/compatibility/static gates pass. Anti-patterns: dead-code N/A (declared WP05 forward seam); synthetic-fixture PASS; silent-empty PASS; FR coverage PASS; frozen-surface PASS; locked-decisions PASS; shared-file ownership PASS (prompt-governed architecture overlap); production-fragility N/A.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T017": "done",
-        "T018": "done",
-        "T019": "done",
-        "T020": "done",
-        "T021": "done",
-        "T022": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP05": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
       "force_count": 3,
       "lane": "done",
       "last_event_id": "01M16B3KB8PCXXYH7NWZCMP6JS",
       "last_transition_at": "2026-08-29T08:45:16.008041+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Ready for independent review. Product 16b938a; focused x10, race, vet, staticcheck, module, formatting pass. Full internal: all non-scenario packages pass; known out-of-scope scenario census drift and IG-02 10m timeout remain baseline-reproduced.",
-        "Review cycle 1 rejected: corrupt replay bypasses postconditions; v2 scalar null/required schema shape and nested v1 shape are not strict; unsupported definition version crosses ports; duplicate provider mapping identity is accepted. Focused/race/static/architecture gates otherwise pass; scenario baseline is unchanged and independently attributable.",
-        "Cycle 2 ready for independent review. Product a9e9760 fixes all five cycle-1 findings; focused x10, race, architecture, compile, vet, staticcheck, module, formatting pass.",
-        "Review cycle 2 rejected: same-ID substitution of pinned RevisionV2 provider evidence survives replay postconditions. Add an atomically persisted domain-separated full-outcome receipt over exact revision bytes, complete mission outcome, operation, and request; recompute on replay before provider calls. Other four cycle-1 fixes and focused/race/architecture/static gates pass.",
-        "Cycle 3 ready for independent review. Product ddc0100 binds exact outcome receipt; focused x20, race, architecture, compile, vet, staticcheck, module, formatting pass.",
-        "Arbiter review passed: complete ExpectedMission identity mutations return operation_conflict before provider/publish; blocker/decision reorder and nil/empty are canonical-equivalent without caller mutation; exact-outcome receipt, v1/v2 compatibility, deterministic lanes, saga faults, replay, concurrency, race, architecture mutants, vet, staticcheck, module, and formatting gates pass. Anti-patterns 1-8 PASS. The surgical internal/mission/service.go crossing centralizes canonical MissionSnapshot identity and is explicitly authorized by the human Arbiter activity log; all mission lifecycle regressions pass. Known scenario census drift is non-attributable (unchanged tree cf52671e); isolated IG-02 passes."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Arbiter review passed: complete ExpectedMission identity mutations return operation_conflict before provider/publish; blocker/decision reorder and nil/empty are canonical-equivalent without caller mutation; exact-outcome receipt, v1/v2 compatibility, deterministic lanes, saga faults, replay, concurrency, race, architecture mutants, vet, staticcheck, module, and formatting gates pass. Anti-patterns 1-8 PASS. The surgical internal/mission/service.go crossing centralizes canonical MissionSnapshot identity and is explicitly authorized by the human Arbiter activity log; all mission lifecycle regressions pass. Known scenario census drift is non-attributable (unchanged tree cf52671e); isolated IG-02 passes.",
         "reviewer": "codex",
         "verdict": "approved"
       },
-      "role": "implementer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T023": "done",
-        "T024": "done",
-        "T025": "done",
-        "T026": "done",
-        "T027": "done",
-        "T028": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP06": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
       "force_count": 2,
       "lane": "done",
       "last_event_id": "01M16B3PQBC582PXMFW12KM6JK",
       "last_transition_at": "2026-08-29T08:45:19.467469+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Review cycle 3 passed: eligibility mode is monotonic and fail-closed across handoff/review/integration; auto-detected and installed full readers survive nil, zero expectation cannot select legacy, full read errors/LegacyV1/mismatches never fall back, and committed replay remains eligibility-free. Addition-only publication/replay stays exact with zero actions. Focused x20, race, frozen SQLite, architecture, vet/staticcheck, seven-file scope, and anti-pattern checks pass."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Review cycle 3 passed: eligibility mode is monotonic and fail-closed across handoff/review/integration; auto-detected and installed full readers survive nil, zero expectation cannot select legacy, full read errors/LegacyV1/mismatches never fall back, and committed replay remains eligibility-free. Addition-only publication/replay stays exact with zero actions. Focused x20, race, frozen SQLite, architecture, vet/staticcheck, seven-file scope, and anti-pattern checks pass.",
         "reviewer": "codex",
         "verdict": "approved"
       },
-      "role": "implementer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T029": "done",
-        "T030": "done",
-        "T031": "done",
-        "T032": "done",
-        "T033": "done",
-        "T034": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP07": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
       "lane": "done",
       "last_event_id": "01M16B3T2PCTXG51RXGNQG96RS",
       "last_transition_at": "2026-08-29T08:45:22.902832+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Review passed: canonical action destination is single-source and stable across strict JSON; command digest, replay conflict, and current-law re-resolution bind the same identity; focused x20/x100, race, architecture, compile, vet, staticcheck, module, format, scope and hygiene gates passed."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Review passed: canonical action destination is single-source and stable across strict JSON; command digest, replay conflict, and current-law re-resolution bind the same identity; focused x20/x100, race, architecture, compile, vet, staticcheck, module, format, scope and hygiene gates passed.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T035": "done",
-        "T036": "done",
-        "T037": "done",
-        "T038": "done",
-        "T039": "done",
-        "T040": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP08": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
       "force_count": 5,
       "lane": "done",
       "last_event_id": "01M16B3XB31ER5615NA3CZV5FB",
       "last_transition_at": "2026-08-29T08:45:26.243530+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Cycle 2 ready: all five rejection findings repaired; full focused, race, migration, architecture, compile, vet, staticcheck, module, formatting, and diff gates pass.",
-        "Cycle 3 ready: four remaining persistence invariants repaired; focused x20, full SQLite, race, migration, architecture, compile, vet, staticcheck, module, formatting and diff gates pass.",
-        "Arbiter repair ready: legacy OperationID identity frozen while legal status/result updates remain valid; focused x50 and all WP08 qualification gates pass.",
-        "Arbiter decision after three rejection cycles: approve only after surgical repair c5b3899. Independent evidence check passes the exact mutable legacy OperationID mutant x50 and race x10; legal status/result updates, reopen/zero-write evidence, all prior WP08 blocker families, architecture and static gates pass; v1-v12 migrations remain byte-identical.",
-        "Acceptance repair: restore terminal-state agent attribution from the canonical claim history; lifecycle verdict unchanged."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": {
-        "actor": "operator",
-        "at": "2026-08-28T09:20:01Z",
-        "reason": "Arbiter decision after three rejection cycles: approve only after surgical repair c5b3899. Independent evidence check passes the exact mutable legacy OperationID mutant x50 and race x10; legal status/result updates, reopen/zero-write evidence, all prior WP08 blocker families, architecture and static gates pass; v1-v12 migrations remain byte-identical.",
-        "wp_id": "WP08"
-      },
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP08-transactional-mission-control-persistence/review-cycle-3.md",
         "reference": "review-cycle://software-development-mission-method-01M11EX2/WP08-transactional-mission-control-persistence/review-cycle-3.md",
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
-      "subtasks": {
-        "T041": "done",
-        "T042": "done",
-        "T043": "done",
-        "T044": "done",
-        "T045": "done",
-        "T046": "done",
-        "T047": "done"
-      }
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP09": {
       "actor": "merge",
       "agent": "codex",
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
       "force_count": 4,
       "lane": "done",
       "last_event_id": "01M16B40WSK1TCGRWZXVE6S4WR",
       "last_transition_at": "2026-08-29T08:45:29.881265+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Ready: typed read-model seam, deterministic disclosed tasks projection, atomic safe writer, one-way architecture guards, focused/race/atomic/architecture/vet/static gates pass; full non-scenario internal packages pass.",
-        "Arbiter repair ready: read-model reconciliation shapes now mirror WP06 disposition law; focused x50, projection, race, architecture, vet, staticcheck, module and formatting gates pass.",
-        "Arbiter PASS after exhausted review cycles: repair 2d1fe1b enforces WP06 status-free reconciliation disposition identity/cardinality laws; independent exact-scope mutants and controls x100, readmodel/projection x10, race x3, architecture, vet, staticcheck, formatting, and clean-lane evidence passed.",
-        "Acceptance repair: restore terminal-state agent attribution from the canonical claim history; lifecycle verdict unchanged."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": {
-        "actor": "operator",
-        "at": "2026-08-28T09:38:30Z",
-        "reason": "Arbiter PASS after exhausted review cycles: repair 2d1fe1b enforces WP06 status-free reconciliation disposition identity/cardinality laws; independent exact-scope mutants and controls x100, readmodel/projection x10, race x3, architecture, vet, staticcheck, formatting, and clean-lane evidence passed.",
-        "wp_id": "WP09"
-      },
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/software-development-mission-method-01M11EX2/tasks/WP09-one-way-tasks-compatibility-projection/review-cycle-3.md",
         "reference": "review-cycle://software-development-mission-method-01M11EX2/WP09-one-way-tasks-compatibility-projection/review-cycle-3.md",
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
-      "subtasks": {
-        "T048": "done",
-        "T049": "done",
-        "T050": "done",
-        "T051": "done"
-      }
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP10": {
       "actor": "merge",
-      "agent": "reviewer-boyle",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
+      "agent": "codex",
       "force_count": 3,
       "lane": "done",
       "last_event_id": "01M16B44HRCMF4YZYHY74CKWWH",
       "last_transition_at": "2026-08-29T08:45:33.624529+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Implementation cd87e18 qualified: focused helper x10, fake scenario x3, helper/scenario race, full dependency suites, architecture, compile, vet, staticcheck, module, formatting, build, and exact 17-of-18 governed scope; main.go required no change.",
-        "Cycle-2 repair 81022d4 closes all five formal findings; 14 governed files, mandatory provenance, provider-derived drift, pre-open validation, full T056 matrix, typed refusal state/classification; repeated/race/architecture/static/build gates pass.",
-        "Cycle-3 repair 2c80d17 closes command-wide pre-open validation, real fake status/assignment non-authority, and closed observed/expected refusal evidence; six governed files; full repeated/race/architecture/static/build gates pass.",
-        "Independent cycle-3 review passed at product commit 2c80d176455a1589af1a169714be5309f106d2f1; all ten preflight, provider non-authority, diagnostic evidence, migration, race, architecture, static, build, module, formatting, and scope gates passed."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Independent cycle-3 review passed at product commit 2c80d176455a1589af1a169714be5309f106d2f1; all ten preflight, provider non-authority, diagnostic evidence, migration, race, architecture, static, build, module, formatting, and scope gates passed.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T052": "done",
-        "T053": "done",
-        "T054": "done",
-        "T055": "done",
-        "T056": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP11": {
       "actor": "merge",
-      "agent": "reviewer-renata",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
+      "agent": "codex",
       "force_count": 4,
       "lane": "done",
       "last_event_id": "01M16B47YQJSXD3MJQAP9MT0AE",
       "last_transition_at": "2026-08-29T08:45:37.111100+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Implementation complete at d52778c; normalized review topology 948e033; independent offline Beads qualification and source-bound architecture/scope campaigns passed.",
-        "Independent cycle-1 review rejected d52778c/948e033; four bounded repair invariants recorded.",
-        "Cycle-2 repair ready at 02d5003; all four review invariants closed; independent offline Beads qualification passed at immutable candidate. Correcting stale reviewer assignment from prior rejection.",
-        "Independent cycle-2 review rejected 02d5003 on same-count authority snapshot and missing identity substitutions; bounded test-only repair recorded.",
-        "Cycle 3 candidate 4b2e2537 plus topology-only b989963: complete authority-content evidence and identity-substitution coverage; all implementer and independent pre-review gates green.",
-        "Independent cycle-3 review PASS: full authority-content commitments, load-bearing outbox mutant, wrong WorkID/external-mapping refusal, prior closures, race/static/architecture/scope, and pinned offline Beads 1.2.2 all verified."
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Independent cycle-3 review PASS: full authority-content commitments, load-bearing outbox mutant, wrong WorkID/external-mapping refusal, prior closures, race/static/architecture/scope, and pinned offline Beads 1.2.2 all verified.",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
       "shell_pid": 3760839,
-      "shell_pid_created_at": "1787619279.6",
-      "subtasks": {
-        "T057": "done",
-        "T058": "done",
-        "T059": "done",
-        "T060": "done"
-      }
+      "shell_pid_created_at": "1787619279.6"
     },
     "WP12": {
       "actor": "merge",
-      "agent": "reviewer-renata",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
+      "agent": "codex",
       "force_count": 4,
       "lane": "done",
       "last_event_id": "01M16B4B4K8PC1WYYVDFCTC3NC",
       "last_transition_at": "2026-08-29T08:45:40.371518+00:00",
-      "model": "__resolved_model_absent__",
-      "notes": [
-        "Cycle 2 strict publication validator and requalification complete",
-        "Cycle 3 publication closure and exact attestation gate complete",
-        "Implementation complete: recovered Phase 3 evidence qualified and source-bound",
-        "Review passed: cycle 4 publication and recovered evidence independently verified"
-      ],
-      "provider": "__resolved_provider_absent__",
-      "review": null,
       "review_result": {
         "reference": "Review passed: cycle 4 publication and recovered evidence independently verified",
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
-      "subtasks": {
-        "T061": "done",
-        "T062": "done",
-        "T063": "done",
-        "T064": "done",
-        "T065": "done",
-        "T066": "done",
-        "T067": "done"
-      }
+      "shell_pid": 3760839,
+      "shell_pid_created_at": "1787619279.6"
     }
   }
 }
