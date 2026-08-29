@@ -1,0 +1,13 @@
+{
+  "wp_id": "WP11",
+  "captured_at": "2026-08-28T11:54:25Z",
+  "base_branch": "feat/software-development-mission-method",
+  "base_commit": "4eb32cd4dac76902da43f27205e06780ac7986a4",
+  "test_runner": "pytest",
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "failures": [],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}

@@ -206,6 +206,11 @@
       ],
       "write_scope": [
         "cmd/spk-phase1-helper/main.go",
+        "internal/controlstore/sqlite/migrations.go",
+        "internal/controlstore/sqlite/mission.go",
+        "internal/controlstore/sqlite/mission_method_query.go",
+        "internal/controlstore/sqlite/mission_method_query_test.go",
+        "internal/controlstore/sqlite/mission_test.go",
         "internal/helpercmd/artifact.go",
         "internal/helpercmd/artifact_test.go",
         "internal/helpercmd/mission_method.go",
@@ -213,8 +218,13 @@
         "internal/helpercmd/projection.go",
         "internal/helpercmd/projection_test.go",
         "internal/helpercmd/root.go",
+        "internal/mission/service.go",
+        "internal/mission/service_test.go",
+        "internal/mission/lifecycle_test.go",
         "internal/scenario/mission_method_fake_test.go",
-        "internal/scenario/mission_method_helpers_test.go"
+        "internal/scenario/mission_method_helpers_test.go",
+        "internal/testcampaign/manifest.go",
+        "internal/tracker/fake/store.go"
       ],
       "predicted_surfaces": [
         "api",
@@ -240,9 +250,17 @@
         "internal/tracker/beads/catalog_test.go",
         "internal/tracker/beads/graph.go",
         "internal/tracker/beads/graph_test.go",
-        "internal/tracker/beads/metadata.go",
-        "internal/tracker/beads/metadata_test.go",
-        "internal/tracker/beads/mission_method_integration_test.go"
+      "internal/tracker/beads/metadata.go",
+      "internal/tracker/beads/metadata_test.go",
+      "internal/tracker/beads/mission_method_integration_test.go",
+      "internal/tracker/work_definition.go",
+      "internal/tracker/work_definition_test.go",
+      "internal/mission/decomposition.go",
+      "internal/mission/decomposition_test.go",
+      "internal/controlstore/sqlite/decomposition.go",
+      "internal/controlstore/sqlite/decomposition_test.go",
+      "internal/helpercmd/mission_method.go",
+      "internal/helpercmd/mission_method_test.go"
       ],
       "predicted_surfaces": [
         "api",
