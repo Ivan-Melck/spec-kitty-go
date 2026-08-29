@@ -1,0 +1,13 @@
+{
+  "wp_id": "WP02",
+  "captured_at": "2026-08-29T14:07:18Z",
+  "base_branch": "feat/production-runtime-architecture",
+  "base_commit": "e2750fc25c9d4b13d054af13e3be360164ae7530",
+  "test_runner": "pytest",
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "failures": [],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}
