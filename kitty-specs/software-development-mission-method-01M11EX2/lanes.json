@@ -250,9 +250,17 @@
         "internal/tracker/beads/catalog_test.go",
         "internal/tracker/beads/graph.go",
         "internal/tracker/beads/graph_test.go",
-        "internal/tracker/beads/metadata.go",
-        "internal/tracker/beads/metadata_test.go",
-        "internal/tracker/beads/mission_method_integration_test.go"
+      "internal/tracker/beads/metadata.go",
+      "internal/tracker/beads/metadata_test.go",
+      "internal/tracker/beads/mission_method_integration_test.go",
+      "internal/tracker/work_definition.go",
+      "internal/tracker/work_definition_test.go",
+      "internal/mission/decomposition.go",
+      "internal/mission/decomposition_test.go",
+      "internal/controlstore/sqlite/decomposition.go",
+      "internal/controlstore/sqlite/decomposition_test.go",
+      "internal/helpercmd/mission_method.go",
+      "internal/helpercmd/mission_method_test.go"
       ],
       "predicted_surfaces": [
         "api",
@@ -287,7 +295,9 @@
         "internal/scenario/mission_method_projection_test.go",
         "internal/scenario/mission_method_race_test.go",
         "internal/testcampaign/mission_method.go",
-        "internal/testcampaign/mission_method_test.go"
+        "internal/testcampaign/mission_method_test.go",
+        "internal/testcampaign/cmd/campaign/main.go",
+        "internal/testcampaign/cmd/campaign/main_test.go"
       ],
       "predicted_surfaces": [
         "api",

@@ -1,6 +1,6 @@
 {
   "mission_slug": "software-development-mission-method-01M11EX2",
-  "snapshot_id": "da4b6589-8c93-463f-acd8-d46baa81be18",
+  "snapshot_id": "49ddc2c2-b8a8-486e-84af-fb9f17dff855",
   "total_artifacts": 80,
   "required_artifacts": 3,
   "required_present": 3,
@@ -8,11 +8,9 @@
   "optional_artifacts": 77,
   "optional_present": 77,
   "completeness_status": "complete",
-  "parity_hash_sha256": "sha256:c2197a59b1be650db48f440e298a8a2f72852987da08ae30cdd29e7f7e1367a4",
+  "parity_hash_sha256": "sha256:4afc1fa1c20373850bc93d87398b9ce9567f30c74d4e8d3576c5e1a38e01cc7b",
   "parity_hash_components": [
-    "052b7334c8eda2046e9c4ba40d90bbe3622a0d16be5329f3360eccac0f21b705",
     "05d311291f040012628de4cdbc5ca0ef6f042a9499ccc9e847ce3e334a89e41c",
-    "05f33492b0463b3ba26aeea50446cf15e49f14812a44d558cf86845ff49ede25",
     "0668672d293ca7654cd448cc54ed093900781a20dd349650bb5f906936742e8b",
     "09cef04dfe92e3cbb9c94b59482a1ea6518449a8f2aa0f72635a00d64cd06c44",
     "0a56a5f17c65d0fb11dd1dbe663314d08486844f11a65f3f78e1b2c37f95c179",
@@ -21,19 +19,16 @@
     "1784eebbe96c396d92b8e8675599b0fa3549019dcc94cceece4a9dedf9536368",
     "187a84634755d4955fa95518e3c939d720c9cc9d3ab3d8e260c34aa32c542612",
     "188cf6c9c30da281acf0d47dc8b968176c5369dca60f5ae0df80f8e4ddbbf340",
-    "1a909016566994c45ccbb570e083d63a09d9b6345af46514c43a8bebea558691",
     "20324dcad281c509056f191292977df5503f76efab59922e90a6f8ceebf3ef46",
     "20c1a4160194cf35e51040defb8e3f6d18b4f1e80dde6652376f7ed84e6ee590",
     "2993ad8d1407e677c571ad1de1d9c6d6445cc7dd040f4cfab24ff74358a09294",
-    "2a04cbbcc9d4243812974429b85ad619122fc5d16385467e7dd41582b7fa28f6",
     "2a30a602b2c2c1fd7197c1945fd334b4d28b60df88399ce28e565d6ef762bd81",
-    "2d17c7c7ee1d41cf9138d6b4c644ab70168f01b67a3ce2dae464b919dbe01db7",
-    "2ee2d8a14b3f8c1a4006370c572e0c917a11c26dd5bd0fdbf68bfd8706edd024",
     "2ee74f5f115c0fc97ff494799aa497bc9d0f9847bebb9dbbc5cd5d4499138064",
     "2f0d4cc127becce5b8a5f557ac4c70c24d84122d14e0d63c8c78571480ce8141",
     "318722bbb7abd67046a2e2710e41fb04176fee2b42570780828abc456a19a1e8",
+    "365d38d2f62c9e00137ec8c8b3490e84fa962bf1dd7b5a6c4ae3a9f04363d848",
+    "38af4b90a7ca4645b76650af59633cae03a7003d8aca9fbce75be91bcf0310c3",
     "38f7e03e8021fbe5fe9c72ca4aedaacc3618aba9129dbdcc420898ab80833c3f",
-    "3a0210775307b421f86f3a5585eeb87220cd38770cc4f2f542fa6d0a4f53ed5d",
     "3c54c5c990b82c2fb50d8d7bdf3930c229d7a40d7cb75b3c2ce791fc839222e4",
     "3f1e696239e38efc0c771e58471b235d4001915bab237468f266a7abb1103b58",
     "421e16efc8550728adddccf56f8eed6cb8a2028133aa8f9e70de2c3c4baba74f",
@@ -43,53 +38,58 @@
     "5659e2c1b922de8f946497dd087413b1c6c3c84b1b64576fbb1fd5daf65c0286",
     "599abffc4ac84cded882fadc642af3a2da1145411d451ab6f483f3a780d50cae",
     "5a0dfe1ae9e28f2e7d847c4d357b973ad3342a12c897826d92d545f1de457edd",
-    "5cb247e36b004b26a3ef71bd40e392f30ac33ddc52b2c7055f91911b87ad7948",
-    "6657173d16a2e8367ee5edd0900aaeedb427c0e87830a4520aa95f686f7f5f70",
-    "6932118892968cb063b5280f397b514dbad46c863507ddac3704a5fc9ffa3be5",
+    "63cce665ee70ab415e4e61152ecd526de645d798be79c205e7c3de701093ea4b",
     "6caaa12e9488b1da3d00d26af1fc194d83b404c4f9b4434684c2f05575baad4a",
+    "6e307174c1a0a4754252ebb2cbda9fa1aa7c127fbf7a09a1d16ef830ec914e4b",
     "70fd9e21720f055b3276ccede89c530f31bb0074cc981aed97e8b24ab3563c5c",
-    "718028713ea20684355ba43752c79ec00f0b07d167ea3d6f88e0b58bf4c49e7a",
     "7316bf3795087847ccf8066bd1c96f1ae9d8d34100e71fdf60e4be7e74e735a7",
-    "73c9507c0aad577d668e9bbf7c1e96fa473290e845622cc17b4b3b90f74855b2",
     "7485899de2f14a17eaac9d3fa18a16d7e98e9269f76529a15c590301fc17903a",
-    "78cea01dcc5ee8c16cec40934873c32c42d2dca3ebc616ee5ae6e1a20791a23b",
     "7a673c274ace140d5cccc8327823d45de87844a985b4e758322ca3ac5c09cb86",
     "7f5396bb2e7587b03e23c1e5a9a4639802468c48b154d3c9b1f4914a1062e682",
-    "7f5f61873c5956a6650f6c3742594488758264739e4f6cb5d5cef3abfa48e180",
+    "824f039856d5653ed5e41815bba07f395dee5c9bf8b0e87593311d8587e88b41",
+    "83c3d65063f7f839de674a26574345c3cd93d5e6cc25ab9fff43e9ee6a75d6d1",
+    "86d47a4d2e21157fe219a01fbae6e742370fb5fc98300143a4e85a319c672b15",
     "8a199b49c16426608cc8149bf423c2fe2dc2f8b3396ef62467cee6a9e59ccbcc",
     "8ac8a7fb4ae852ffefbcf472e3f47c491833500a335ec3dad685c2a4b6846ea3",
+    "8cc5df3a93665aa96c24f723d7887a2accadc19baf69c6ee84f56e7e0c934489",
     "8cf1efd9ab8b972e082bf3af92b7749947d3cf449356f273f80c83d2a3571b25",
     "9069d2f29c4ce3274716967281076ee95891cb7f39f937203c66ea1cada15e00",
     "910060c60566c7b2b2a301cca8b5633d305d397896956abb22d1b4f0c56d6a56",
-    "97fea64045701220daf8a301734ecfefe93d50edb9a7fcd1535580892bc2ce05",
+    "9418992b04466f5ccbfccc3d0f859ac0c887d9c08bd95c0a2e75af1845fcb03f",
+    "9555d3667334ac261a0e4f7bff740d1e45c012d178c7996f2259189223105339",
     "9c1e3c9ae76225b40f4bbcd78a15311cdb5a9a90190dd29a39b6d7da5e0e5ba7",
     "9ea7a7c6ab41342adead8dbf9372ee819b53050d39b49cb5b803fa38c0244eea",
     "a02b3180e981a3cb6b0e928247dfcb999820ab19c63a739817fe30de9d064f8b",
+    "af23c085c4cbec338dc9e56a1c3789176376479a53b84ef71d1d709202afbbce",
     "af804bf9afd5dbf8ed0d55604e7c880eae45dc34bcde7939bfee09f7a68dbf3a",
     "b1907e7cc6d347a4ca5cdf6b216c11bd3ac59557721f40fcaf57da7cc5eb1cb8",
+    "b34d82fcb6778b7889a6e3ec5ba2cbf6d921f77cf1dff6cf694f8561a9e3f614",
+    "b579ada657b49f11579cf26df62703bef552da04629ef67e2654d26ea91d78b6",
     "b645bafd23c97f9d3007c7c9aa5a9c66b02726f85e951f856de854dcc2c48c1a",
-    "b74484397b6ee580846593634381fdfe7623832dc078c59ba606566ac8fab9ec",
+    "be014c8ef9cbf10081a4ef7c211a06e1d89c54821ebdfc38028984ef69e0e51c",
     "bfba757def1d5e3ec781f804fce3a1a31d05dcb9dd1be5e1f1f590cc53183c02",
     "c36776fb58c4af24732916962e7b027ec2b592d30dc9efb64e47ca1b75f7ebf0",
+    "c3db3276675b380fe0d91148951aa9d8e3d57db675166de9fe2571dde23898a3",
     "c7fb917cf99a3595e6ddecaa8042d9a0140247ab1c36b9557fb384bb2cd9468d",
     "cd17ea9b3311a12a01480b9dc35d022a75dee78101e45ef9d8187febf56d4b96",
     "d2963cdad26ca974267a63dde7a529972e8f2f9b2e6627f8dacf340dd6ce8a83",
     "d31176d3b4dd31361d4e698a58a5938a9beac8895c6675fc4c138d263db50aa0",
-    "d3b90e87b53da2b1426076b50b47c68d11af79d25687ed6edf08e834d51c1a36",
+    "d3f2076f9ec2cc76fa698f7210de6159a46505da91c52e81b169c37bd63e5f71",
+    "d4594b9e5bf169a2c40ef7f308ace05519ffe95ee8b17522f8486841a195693f",
     "d510902c7a693b305c6b9789e4775fb7b9072ca9edccd90038822e5a3bbd3446",
     "d5876403caef40797c17e17569287bc8b63c7557bf18853336cc5f5b919ac5f6",
-    "d666e30e8ca6d0fa0a1694bb998b05681e9cc53319c0452ff795a16fd1af05b4",
-    "e24ab0e19257f34e70a02ffedb30eb43b5d86a176c359bb0c180c06a3f73086d",
+    "dfa3e61d648028081e418ac21aaea5c03482860725c25b3b85e3dba6fee183de",
+    "e1e95a5c4504b86b29ec66a93033c027d054d370995a621a4fb5bc53377b8d83",
     "e480b930f18114415bc0e189e562ef69e0d09b724c901c2a603364d4abe0043d",
     "e52e25a776a7282b35f817972a648f298f28e7d41517e4d2c05c82a4968641ac",
+    "e643ef8673714c81f00578a532a624935f8d09bcb0f5f8942d38230c990dade2",
     "ecf15aa56e3ba80d0bd981d67aba8971a9764778fc1e29bf9e60ae1db53445ae",
     "eeb59501ad9270d45ef5954739c92776647b498c4925cb6212de0d0b3d532ac4",
-    "ef09eefcc444165adf573a19c9018b193752924b47c5c09a03d9d302f481b0b5",
-    "f7596151aa4192802547a37048ed2437e481590cdbc96f96b16d0ccaf190a95c",
-    "f7cb6d1220f06aa67f298346822ca6db5362f08d0bb2ed153708159eb738d64f",
     "f9cdea15d4e065c64cbabe26be9ddeaa9b35382921d0ca7cf21ff3db252f3eeb",
     "f9f3bc52a2f25b431d18f2e5e2e2c0c355dbb6d39da4d93300133457e715501d",
-    "fa76916a9db19f72d3b46d9e59d48716dcdf02763a1d4d2ced91f1888a8eb9ca"
+    "fa76916a9db19f72d3b46d9e59d48716dcdf02763a1d4d2ced91f1888a8eb9ca",
+    "fa97617a5954213b838b2dc9bf858f6c535fbeee00570391569f9eb4f80cd8f0",
+    "fbe392fbba4d49eff4c31235425fa07dbfd50c63f03a7366a7aa65632199298f"
   ],
   "artifact_summaries": [
     {
@@ -103,49 +103,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.237038+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.allocator-recovery",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP09-one-way-tasks-compatibility-projection/allocator-recovery.md",
-      "content_hash_sha256": "78cea01dcc5ee8c16cec40934873c32c42d2dca3ebc616ee5ae6e1a20791a23b",
-      "size_bytes": 276,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.618036+00:00",
+      "indexed_at": "2026-08-29T08:30:23.875930+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.analysis-report",
       "artifact_class": "evidence",
       "relative_path": "analysis-report.md",
-      "content_hash_sha256": "f7cb6d1220f06aa67f298346822ca6db5362f08d0bb2ed153708159eb738d64f",
-      "size_bytes": 4237,
+      "content_hash_sha256": "e643ef8673714c81f00578a532a624935f8d09bcb0f5f8942d38230c990dade2",
+      "size_bytes": 5152,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.275102+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.architecture-recovery",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP09-one-way-tasks-compatibility-projection/architecture-recovery.md",
-      "content_hash_sha256": "7f5f61873c5956a6650f6c3742594488758264739e4f6cb5d5cef3abfa48e180",
-      "size_bytes": 459,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.635610+00:00",
+      "indexed_at": "2026-08-29T08:30:23.919558+00:00",
       "provenance": null
     },
     {
@@ -159,21 +131,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.279459+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.baseline-tests",
-      "artifact_class": "evidence",
-      "relative_path": "tasks/WP05-workrevision-v2-and-deterministic-finalization/baseline-tests.json",
-      "content_hash_sha256": "ef09eefcc444165adf573a19c9018b193752924b47c5c09a03d9d302f481b0b5",
-      "size_bytes": 347,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.443938+00:00",
+      "indexed_at": "2026-08-29T08:30:23.923988+00:00",
       "provenance": null
     },
     {
@@ -187,7 +145,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.469721+00:00",
+      "indexed_at": "2026-08-29T08:30:24.183602+00:00",
       "provenance": null
     },
     {
@@ -201,21 +159,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.491098+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.baseline-tests",
-      "artifact_class": "evidence",
-      "relative_path": "tasks/WP07-action-governance-and-pure-next-protocol/baseline-tests.json",
-      "content_hash_sha256": "d666e30e8ca6d0fa0a1694bb998b05681e9cc53319c0452ff795a16fd1af05b4",
-      "size_bytes": 347,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.508253+00:00",
+      "indexed_at": "2026-08-29T08:30:24.202157+00:00",
       "provenance": null
     },
     {
@@ -229,7 +173,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.526027+00:00",
+      "indexed_at": "2026-08-29T08:30:24.247680+00:00",
       "provenance": null
     },
     {
@@ -243,63 +187,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.548187+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.baseline-tests",
-      "artifact_class": "evidence",
-      "relative_path": "tasks/WP06-semantic-drift-and-mixed-reconciliation/baseline-tests.json",
-      "content_hash_sha256": "2d17c7c7ee1d41cf9138d6b4c644ab70168f01b67a3ce2dae464b919dbe01db7",
-      "size_bytes": 347,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.574484+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.baseline-tests",
-      "artifact_class": "evidence",
-      "relative_path": "tasks/WP08-transactional-mission-control-persistence/baseline-tests.json",
-      "content_hash_sha256": "05f33492b0463b3ba26aeea50446cf15e49f14812a44d558cf86845ff49ede25",
-      "size_bytes": 347,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.592145+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.baseline-tests",
-      "artifact_class": "evidence",
-      "relative_path": "tasks/WP09-one-way-tasks-compatibility-projection/baseline-tests.json",
-      "content_hash_sha256": "b74484397b6ee580846593634381fdfe7623832dc078c59ba606566ac8fab9ec",
-      "size_bytes": 347,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.627272+00:00",
+      "indexed_at": "2026-08-29T08:30:24.264838+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.lanes",
       "artifact_class": "output",
       "relative_path": "lanes.json",
-      "content_hash_sha256": "2a04cbbcc9d4243812974429b85ad619122fc5d16385467e7dd41582b7fa28f6",
-      "size_bytes": 10110,
+      "content_hash_sha256": "83c3d65063f7f839de674a26574345c3cd93d5e6cc25ab9fff43e9ee6a75d6d1",
+      "size_bytes": 10021,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.249923+00:00",
+      "indexed_at": "2026-08-29T08:30:23.888837+00:00",
       "provenance": null
     },
     {
@@ -313,7 +215,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.254113+00:00",
+      "indexed_at": "2026-08-29T08:30:23.893602+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.mission-events",
+      "artifact_class": "output",
+      "relative_path": "mission-events.jsonl",
+      "content_hash_sha256": "9418992b04466f5ccbfccc3d0f859ac0c887d9c08bd95c0a2e75af1845fcb03f",
+      "size_bytes": 257,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:23.911214+00:00",
       "provenance": null
     },
     {
@@ -327,7 +243,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.292052+00:00",
+      "indexed_at": "2026-08-29T08:30:23.937593+00:00",
       "provenance": null
     },
     {
@@ -341,7 +257,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.296295+00:00",
+      "indexed_at": "2026-08-29T08:30:23.942118+00:00",
       "provenance": null
     },
     {
@@ -355,7 +271,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.347161+00:00",
+      "indexed_at": "2026-08-29T08:30:24.002612+00:00",
       "provenance": null
     },
     {
@@ -369,7 +285,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.287715+00:00",
+      "indexed_at": "2026-08-29T08:30:23.933074+00:00",
       "provenance": null
     },
     {
@@ -383,7 +299,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.300585+00:00",
+      "indexed_at": "2026-08-29T08:30:23.946532+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP12-adversarial-qualification-and-source-bound-evidence/review-cycle-1.md",
+      "content_hash_sha256": "9555d3667334ac261a0e4f7bff740d1e45c012d178c7996f2259189223105339",
+      "size_bytes": 2986,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.115133+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP10-portable-two-item-mission-vertical-slice/review-cycle-1.md",
+      "content_hash_sha256": "86d47a4d2e21157fe219a01fbae6e742370fb5fc98300143a4e85a319c672b15",
+      "size_bytes": 888,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.132868+00:00",
       "provenance": null
     },
     {
@@ -397,7 +341,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.430922+00:00",
+      "indexed_at": "2026-08-29T08:30:24.151319+00:00",
       "provenance": null
     },
     {
@@ -411,7 +355,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.456736+00:00",
+      "indexed_at": "2026-08-29T08:30:24.169644+00:00",
       "provenance": null
     },
     {
@@ -425,7 +369,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.474089+00:00",
+      "indexed_at": "2026-08-29T08:30:24.188208+00:00",
       "provenance": null
     },
     {
@@ -439,7 +383,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.499389+00:00",
+      "indexed_at": "2026-08-29T08:30:24.206964+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP11-beads-mission-method-provider-parity/review-cycle-1.md",
+      "content_hash_sha256": "af23c085c4cbec338dc9e56a1c3789176376479a53b84ef71d1d709202afbbce",
+      "size_bytes": 3919,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.216120+00:00",
       "provenance": null
     },
     {
@@ -453,7 +411,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.512767+00:00",
+      "indexed_at": "2026-08-29T08:30:24.234437+00:00",
       "provenance": null
     },
     {
@@ -467,7 +425,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.534832+00:00",
+      "indexed_at": "2026-08-29T08:30:24.251986+00:00",
       "provenance": null
     },
     {
@@ -481,7 +439,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.561708+00:00",
+      "indexed_at": "2026-08-29T08:30:24.278540+00:00",
       "provenance": null
     },
     {
@@ -495,7 +453,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.579201+00:00",
+      "indexed_at": "2026-08-29T08:30:24.291622+00:00",
       "provenance": null
     },
     {
@@ -509,7 +467,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.609535+00:00",
+      "indexed_at": "2026-08-29T08:30:24.309063+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP12-adversarial-qualification-and-source-bound-evidence/review-cycle-2.md",
+      "content_hash_sha256": "b34d82fcb6778b7889a6e3ec5ba2cbf6d921f77cf1dff6cf694f8561a9e3f614",
+      "size_bytes": 2095,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.119518+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP10-portable-two-item-mission-vertical-slice/review-cycle-2.md",
+      "content_hash_sha256": "365d38d2f62c9e00137ec8c8b3490e84fa962bf1dd7b5a6c4ae3a9f04363d848",
+      "size_bytes": 2925,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.137260+00:00",
       "provenance": null
     },
     {
@@ -523,7 +509,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.435144+00:00",
+      "indexed_at": "2026-08-29T08:30:24.155932+00:00",
       "provenance": null
     },
     {
@@ -537,7 +523,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.461236+00:00",
+      "indexed_at": "2026-08-29T08:30:24.174672+00:00",
       "provenance": null
     },
     {
@@ -551,7 +537,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.478341+00:00",
+      "indexed_at": "2026-08-29T08:30:24.192876+00:00",
       "provenance": null
     },
     {
@@ -565,7 +551,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.503823+00:00",
+      "indexed_at": "2026-08-29T08:30:24.211708+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP11-beads-mission-method-provider-parity/review-cycle-2.md",
+      "content_hash_sha256": "c3db3276675b380fe0d91148951aa9d8e3d57db675166de9fe2571dde23898a3",
+      "size_bytes": 1697,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.220638+00:00",
       "provenance": null
     },
     {
@@ -579,7 +579,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.517096+00:00",
+      "indexed_at": "2026-08-29T08:30:24.238699+00:00",
       "provenance": null
     },
     {
@@ -593,7 +593,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.539215+00:00",
+      "indexed_at": "2026-08-29T08:30:24.256306+00:00",
       "provenance": null
     },
     {
@@ -607,7 +607,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.565992+00:00",
+      "indexed_at": "2026-08-29T08:30:24.282823+00:00",
       "provenance": null
     },
     {
@@ -621,7 +621,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.583568+00:00",
+      "indexed_at": "2026-08-29T08:30:24.295987+00:00",
       "provenance": null
     },
     {
@@ -635,7 +635,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.613823+00:00",
+      "indexed_at": "2026-08-29T08:30:24.313511+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP12-adversarial-qualification-and-source-bound-evidence/review-cycle-3.md",
+      "content_hash_sha256": "dfa3e61d648028081e418ac21aaea5c03482860725c25b3b85e3dba6fee183de",
+      "size_bytes": 1692,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.123906+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP10-portable-two-item-mission-vertical-slice/review-cycle-3.md",
+      "content_hash_sha256": "6e307174c1a0a4754252ebb2cbda9fa1aa7c127fbf7a09a1d16ef830ec914e4b",
+      "size_bytes": 2633,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.141800+00:00",
       "provenance": null
     },
     {
@@ -649,7 +677,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.439535+00:00",
+      "indexed_at": "2026-08-29T08:30:24.160551+00:00",
       "provenance": null
     },
     {
@@ -663,7 +691,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.482573+00:00",
+      "indexed_at": "2026-08-29T08:30:24.197361+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP11-beads-mission-method-provider-parity/review-cycle-3.md",
+      "content_hash_sha256": "e1e95a5c4504b86b29ec66a93033c027d054d370995a621a4fb5bc53377b8d83",
+      "size_bytes": 1563,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.225263+00:00",
       "provenance": null
     },
     {
@@ -677,7 +719,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.521445+00:00",
+      "indexed_at": "2026-08-29T08:30:24.243377+00:00",
       "provenance": null
     },
     {
@@ -691,7 +733,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.543743+00:00",
+      "indexed_at": "2026-08-29T08:30:24.260619+00:00",
       "provenance": null
     },
     {
@@ -705,7 +747,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.570217+00:00",
+      "indexed_at": "2026-08-29T08:30:24.287193+00:00",
       "provenance": null
     },
     {
@@ -719,7 +761,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.587903+00:00",
+      "indexed_at": "2026-08-29T08:30:24.300273+00:00",
       "provenance": null
     },
     {
@@ -733,7 +775,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.622728+00:00",
+      "indexed_at": "2026-08-29T08:30:24.317924+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-4",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP12-adversarial-qualification-and-source-bound-evidence/review-cycle-4.md",
+      "content_hash_sha256": "b579ada657b49f11579cf26df62703bef552da04629ef67e2654d26ea91d78b6",
+      "size_bytes": 293,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.128374+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-4",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP10-portable-two-item-mission-vertical-slice/review-cycle-4.md",
+      "content_hash_sha256": "63cce665ee70ab415e4e61152ecd526de645d798be79c205e7c3de701093ea4b",
+      "size_bytes": 460,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.146787+00:00",
       "provenance": null
     },
     {
@@ -747,7 +817,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.452555+00:00",
+      "indexed_at": "2026-08-29T08:30:24.164923+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-4",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP11-beads-mission-method-provider-parity/review-cycle-4.md",
+      "content_hash_sha256": "8cc5df3a93665aa96c24f723d7887a2accadc19baf69c6ee84f56e7e0c934489",
+      "size_bytes": 441,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.229851+00:00",
       "provenance": null
     },
     {
@@ -761,7 +845,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.557066+00:00",
+      "indexed_at": "2026-08-29T08:30:24.274075+00:00",
       "provenance": null
     },
     {
@@ -775,7 +859,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.605080+00:00",
+      "indexed_at": "2026-08-29T08:30:24.304575+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-4",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP09-one-way-tasks-compatibility-projection/review-cycle-4.md",
+      "content_hash_sha256": "38af4b90a7ca4645b76650af59633cae03a7003d8aca9fbce75be91bcf0310c3",
+      "size_bytes": 237,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-29T08:30:24.322223+00:00",
       "provenance": null
     },
     {
@@ -789,7 +887,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.552462+00:00",
+      "indexed_at": "2026-08-29T08:30:24.269297+00:00",
       "provenance": null
     },
     {
@@ -803,133 +901,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.465388+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.review-feedback-1",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP04-provider-neutral-decomposition-and-work-quality/review-feedback-1.md",
-      "content_hash_sha256": "e24ab0e19257f34e70a02ffedb30eb43b5d86a176c359bb0c180c06a3f73086d",
-      "size_bytes": 5779,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.486686+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.review-feedback-2",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP05-workrevision-v2-and-deterministic-finalization/review-feedback-2.md",
-      "content_hash_sha256": "2ee2d8a14b3f8c1a4006370c572e0c917a11c26dd5bd0fdbf68bfd8706edd024",
-      "size_bytes": 6919,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.448364+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.review-feedback-2",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP04-provider-neutral-decomposition-and-work-quality/review-feedback-2.md",
-      "content_hash_sha256": "97fea64045701220daf8a301734ecfefe93d50edb9a7fcd1535580892bc2ce05",
-      "size_bytes": 4146,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.495242+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.review-feedback-2",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP03-typed-artifact-revisions-and-fresh-approvals/review-feedback-2.md",
-      "content_hash_sha256": "6932118892968cb063b5280f397b514dbad46c863507ddac3704a5fc9ffa3be5",
-      "size_bytes": 5161,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.530287+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.review-feedback-2",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP08-transactional-mission-control-persistence/review-feedback-2.md",
-      "content_hash_sha256": "f7596151aa4192802547a37048ed2437e481590cdbc96f96b16d0ccaf190a95c",
-      "size_bytes": 6623,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.596569+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.review-feedback-3",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP08-transactional-mission-control-persistence/review-feedback-3.md",
-      "content_hash_sha256": "718028713ea20684355ba43752c79ec00f0b07d167ea3d6f88e0b58bf4c49e7a",
-      "size_bytes": 3456,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.600855+00:00",
-      "provenance": null
-    },
-    {
-      "artifact_key": "artifact.review-feedback-3",
-      "artifact_class": "output",
-      "relative_path": "tasks/WP09-one-way-tasks-compatibility-projection/review-feedback-3.md",
-      "content_hash_sha256": "3a0210775307b421f86f3a5585eeb87220cd38770cc4f2f542fa6d0a4f53ed5d",
-      "size_bytes": 4867,
-      "wp_id": null,
-      "step_id": null,
-      "required_status": "optional",
-      "is_present": true,
-      "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.631488+00:00",
+      "indexed_at": "2026-08-29T08:30:24.179162+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.status",
       "artifact_class": "output",
       "relative_path": "status.json",
-      "content_hash_sha256": "6657173d16a2e8367ee5edd0900aaeedb427c0e87830a4520aa95f686f7f5f70",
-      "size_bytes": 12251,
+      "content_hash_sha256": "be014c8ef9cbf10081a4ef7c211a06e1d89c54821ebdfc38028984ef69e0e51c",
+      "size_bytes": 29460,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.228705+00:00",
+      "indexed_at": "2026-08-29T08:30:23.866938+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.status.events",
       "artifact_class": "output",
       "relative_path": "status.events.jsonl",
-      "content_hash_sha256": "052b7334c8eda2046e9c4ba40d90bbe3622a0d16be5329f3360eccac0f21b705",
-      "size_bytes": 86286,
+      "content_hash_sha256": "d3f2076f9ec2cc76fa698f7210de6159a46505da91c52e81b169c37bd63e5f71",
+      "size_bytes": 260966,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.241603+00:00",
+      "indexed_at": "2026-08-29T08:30:23.880332+00:00",
       "provenance": null
     },
     {
@@ -943,7 +943,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.283608+00:00",
+      "indexed_at": "2026-08-29T08:30:23.928601+00:00",
       "provenance": null
     },
     {
@@ -957,7 +957,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.318572+00:00",
+      "indexed_at": "2026-08-29T08:30:23.972616+00:00",
       "provenance": null
     },
     {
@@ -971,7 +971,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.366429+00:00",
+      "indexed_at": "2026-08-29T08:30:24.027466+00:00",
       "provenance": null
     },
     {
@@ -985,7 +985,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.342070+00:00",
+      "indexed_at": "2026-08-29T08:30:23.998042+00:00",
       "provenance": null
     },
     {
@@ -999,7 +999,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.328531+00:00",
+      "indexed_at": "2026-08-29T08:30:23.985567+00:00",
       "provenance": null
     },
     {
@@ -1013,7 +1013,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.356881+00:00",
+      "indexed_at": "2026-08-29T08:30:24.015156+00:00",
       "provenance": null
     },
     {
@@ -1027,7 +1027,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.385400+00:00",
+      "indexed_at": "2026-08-29T08:30:24.053334+00:00",
       "provenance": null
     },
     {
@@ -1041,7 +1041,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.416490+00:00",
+      "indexed_at": "2026-08-29T08:30:24.095687+00:00",
       "provenance": null
     },
     {
@@ -1055,7 +1055,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.395645+00:00",
+      "indexed_at": "2026-08-29T08:30:24.067504+00:00",
       "provenance": null
     },
     {
@@ -1069,35 +1069,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.376091+00:00",
+      "indexed_at": "2026-08-29T08:30:24.040343+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.wp10-portable-two-item-mission-vertical-slice",
       "artifact_class": "output",
       "relative_path": "tasks/WP10-portable-two-item-mission-vertical-slice.md",
-      "content_hash_sha256": "d3b90e87b53da2b1426076b50b47c68d11af79d25687ed6edf08e834d51c1a36",
-      "size_bytes": 25130,
+      "content_hash_sha256": "fbe392fbba4d49eff4c31235425fa07dbfd50c63f03a7366a7aa65632199298f",
+      "size_bytes": 28820,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.426611+00:00",
+      "indexed_at": "2026-08-29T08:30:24.110130+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.wp11-beads-mission-method-provider-parity",
       "artifact_class": "output",
       "relative_path": "tasks/WP11-beads-mission-method-provider-parity.md",
-      "content_hash_sha256": "73c9507c0aad577d668e9bbf7c1e96fa473290e845622cc17b4b3b90f74855b2",
-      "size_bytes": 22089,
+      "content_hash_sha256": "d4594b9e5bf169a2c40ef7f308ace05519ffe95ee8b17522f8486841a195693f",
+      "size_bytes": 27710,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.309867+00:00",
+      "indexed_at": "2026-08-29T08:30:23.959634+00:00",
       "provenance": null
     },
     {
@@ -1111,21 +1111,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.406835+00:00",
+      "indexed_at": "2026-08-29T08:30:24.083161+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.wps",
       "artifact_class": "output",
       "relative_path": "wps.yaml",
-      "content_hash_sha256": "1a909016566994c45ccbb570e083d63a09d9b6345af46514c43a8bebea558691",
-      "size_bytes": 11783,
+      "content_hash_sha256": "824f039856d5653ed5e41815bba07f395dee5c9bf8b0e87593311d8587e88b41",
+      "size_bytes": 11894,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.245805+00:00",
+      "indexed_at": "2026-08-29T08:30:23.884486+00:00",
       "provenance": null
     },
     {
@@ -1139,7 +1139,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.266458+00:00",
+      "indexed_at": "2026-08-29T08:30:23.907007+00:00",
       "provenance": null
     },
     {
@@ -1153,7 +1153,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.232857+00:00",
+      "indexed_at": "2026-08-29T08:30:23.871370+00:00",
       "provenance": null
     },
     {
@@ -1167,7 +1167,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.262346+00:00",
+      "indexed_at": "2026-08-29T08:30:23.902540+00:00",
       "provenance": null
     },
     {
@@ -1181,7 +1181,7 @@
       "required_status": "required",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.258216+00:00",
+      "indexed_at": "2026-08-29T08:30:23.897929+00:00",
       "provenance": null
     },
     {
@@ -1195,23 +1195,23 @@
       "required_status": "required",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.223385+00:00",
+      "indexed_at": "2026-08-29T08:30:23.862251+00:00",
       "provenance": null
     },
     {
       "artifact_key": "output.tasks.list",
       "artifact_class": "output",
       "relative_path": "tasks.md",
-      "content_hash_sha256": "5cb247e36b004b26a3ef71bd40e392f30ac33ddc52b2c7055f91911b87ad7948",
-      "size_bytes": 9668,
+      "content_hash_sha256": "fa97617a5954213b838b2dc9bf858f6c535fbeee00570391569f9eb4f80cd8f0",
+      "size_bytes": 9474,
       "wp_id": null,
       "step_id": null,
       "required_status": "required",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-28T09:35:31.270647+00:00",
+      "indexed_at": "2026-08-29T08:30:23.915402+00:00",
       "provenance": null
     }
   ],
-  "computed_at": "2026-08-28 09:35:32.371520+00:00"
+  "computed_at": "2026-08-29 08:30:25.140756+00:00"
 }
