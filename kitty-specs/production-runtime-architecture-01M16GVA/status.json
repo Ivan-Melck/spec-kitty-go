@@ -32,7 +32,8 @@
         "Review actor launch failed before review: local Claude OAuth session expired; returning unreviewed WP to queue",
         "Review actor launch failed before review: Gemini account requires an unset Google Cloud project; returning unreviewed WP to queue",
         "Review passed: all 8 anti-pattern checks PASS or N/A (doc-only WP). Both owned files are substantive and internally consistent. All FR-001–FR-009 and FR-023 anchored and traceable. No runtime code or frozen evidence modified. All locked architecture laws enforced (ActorID independence, zombie-writer/W2 freshness, SQLite unambiguously retired, Beads non-authority, fencing limits explicit). Delivery honesty clean: GapDB/API2.0/acceptance/MCP/host all labeled proposed with explicit does-not-ship statements. git diff --check clean on owned files. Mermaid syntax GitHub-conservative. Forward references listed explicitly in §17.",
-        "Reopened to resolve WP08 cycle-1 canonical checkpoint-recovery precedence conflict"
+        "Reopened to resolve WP08 cycle-1 canonical checkpoint-recovery precedence conflict",
+        "Cycle 2 ready for review: d67d2a3 normatively resolves corrupt-checkpoint precedence in docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md. Journal validity is checked first; recovery chooses the newest valid bounded checkpoint, then bounded full-journal reduction, otherwise refuses in degraded state; closed state and operator-only remedies are explicit, with no force-ready/event-skip path. ADR 0002 remains consistent and unchanged. Checks: git diff --check; go test ./internal/architecture -count=1; ruff diff-scoped check: 0 changed Python files, exit 0. Force override is limited to inherited committed kitty-specs lane metadata."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
