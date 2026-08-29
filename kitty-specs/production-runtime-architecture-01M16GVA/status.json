@@ -1,7 +1,7 @@
 {
-  "event_count": 62,
-  "last_event_id": "01M174JF6WKH25MZT0MAMS6458",
-  "materialized_at": "2026-08-29T16:10:17.692040+00:00",
+  "event_count": 63,
+  "last_event_id": "01M174RRFGQX8RHKAC04NN0ZM7",
+  "materialized_at": "2026-08-29T16:13:43.792365+00:00",
   "mission_number": "",
   "mission_slug": "production-runtime-architecture-01M16GVA",
   "mission_type": "software-dev",
@@ -13,8 +13,8 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 0
+    "in_review": 0,
+    "planned": 1
   },
   "work_packages": {
     "WP01": {
@@ -248,14 +248,14 @@
       }
     },
     "WP08": {
-      "actor": "codex",
+      "actor": "user",
       "agent": "codex",
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
-      "force_count": 1,
-      "lane": "in_review",
-      "last_event_id": "01M174JF6WKH25MZT0MAMS6458",
-      "last_transition_at": "2026-08-29T16:10:17.692040+00:00",
+      "force_count": 2,
+      "lane": "planned",
+      "last_event_id": "01M174RRFGQX8RHKAC04NN0ZM7",
+      "last_transition_at": "2026-08-29T16:13:43.792365+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review: Independent architecture review complete. Verdict: PASS. ActorID opencode, 30 adversarial scenarios all PASS, zero blocker/high/medium findings, 71 requirements mapped, 9 conflicts closed. Source tree 5c75920; review commit ef6caf2.",
@@ -264,8 +264,8 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/production-runtime-architecture-01M16GVA/tasks/WP08-independent-architecture-review-and-publication-gate/review-cycle-1.md",
-        "reference": "review-cycle://production-runtime-architecture-01M16GVA/WP08-independent-architecture-review-and-publication-gate/review-cycle-1.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/production-runtime-architecture-01M16GVA/tasks/WP08-independent-architecture-review-and-publication-gate/review-cycle-2.md",
+        "reference": "review-cycle://production-runtime-architecture-01M16GVA/WP08-independent-architecture-review-and-publication-gate/review-cycle-2.md",
         "reviewer": "user",
         "verdict": "changes_requested"
       },
