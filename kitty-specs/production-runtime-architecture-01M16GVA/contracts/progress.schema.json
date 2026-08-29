@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.org/schemas/orchestrator-api/2.0/mission-progress.schema.json",
+  "title": "MissionProgress",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mission",
+    "lifecycle",
+    "work",
+    "active_authority",
+    "graph",
+    "blockers",
+    "decisions",
+    "drift",
+    "next_actions",
+    "observation"
+  ],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "mission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_name", "mission_type", "work_revision_id", "generation"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "display_name": { "$ref": "#/$defs/boundedText" },
+        "mission_type": { "$ref": "#/$defs/id" },
+        "work_revision_id": { "$ref": "#/$defs/id" },
+        "generation": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "status", "acceptance", "integration"],
+      "properties": {
+        "phase": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["planned", "ready", "running", "input_required", "blocked", "accepting", "integrating", "completed", "failed", "cancelled"] },
+        "acceptance": { "$ref": "#/$defs/position" },
+        "integration": { "$ref": "#/$defs/position" }
+      }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "counts"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" }
+        }
+      }
+    },
+    "active_authority": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["work_id", "run_id", "actor_id", "process_id", "lease_id", "workspace_id", "expires_at"],
+        "properties": {
+          "work_id": { "$ref": "#/$defs/id" },
+          "run_id": { "$ref": "#/$defs/id" },
+          "actor_id": { "$ref": "#/$defs/id" },
+          "process_id": { "$ref": "#/$defs/id" },
+          "lease_id": { "$ref": "#/$defs/id" },
+          "workspace_id": { "$ref": "#/$defs/id" },
+          "expires_at": { "$ref": "#/$defs/timestamp" }
+        }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ready", "critical_path", "blocked_path"],
+      "properties": {
+        "ready": { "$ref": "#/$defs/idList" },
+        "critical_path": { "$ref": "#/$defs/idList" },
+        "blocked_path": { "$ref": "#/$defs/idList" }
+      }
+    },
+    "blockers": { "$ref": "#/$defs/issueList" },
+    "decisions": { "$ref": "#/$defs/issueList" },
+    "drift": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "severity", "reason"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "kind": { "enum": ["tracker", "git", "workspace", "policy", "projection", "artifact", "external_effect"] },
+          "severity": { "enum": ["info", "warning", "blocking"] },
+          "reason": { "$ref": "#/$defs/boundedText" }
+        }
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "scope", "reason"],
+        "properties": {
+          "command": { "$ref": "#/$defs/id" },
+          "scope": { "type": "object", "maxProperties": 16, "additionalProperties": { "$ref": "#/$defs/id" } },
+          "reason": { "$ref": "#/$defs/boundedText" }
+        }
+      }
+    },
+    "percentage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "weighting_rule"],
+      "properties": {
+        "value": { "type": "number", "minimum": 0, "maximum": 100 },
+        "weighting_rule": { "$ref": "#/$defs/boundedText" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["journal_revision", "runtime_epoch_id", "observed_at", "last_progress_at", "checkpoint_through_revision"],
+      "properties": {
+        "journal_revision": { "type": "integer", "minimum": 0 },
+        "runtime_epoch_id": { "$ref": "#/$defs/id" },
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "last_progress_at": { "$ref": "#/$defs/timestamp" },
+        "checkpoint_through_revision": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$" },
+    "boundedText": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "idList": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "$ref": "#/$defs/id" },
+        "current_id": { "$ref": "#/$defs/id" },
+        "reason": { "$ref": "#/$defs/boundedText" }
+      }
+    },
+    "issueList": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "reason", "responsible_authority", "available_actions"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "reason": { "$ref": "#/$defs/boundedText" },
+          "responsible_authority": { "$ref": "#/$defs/id" },
+          "available_actions": { "$ref": "#/$defs/idList" }
+        }
+      }
+    }
+  }
+}
