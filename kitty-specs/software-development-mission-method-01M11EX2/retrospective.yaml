@@ -1,0 +1,560 @@
+schema_version: 1
+mission_id: 01M11EX2VFHERE58SQVCBFG6JN
+mission_slug: software-development-mission-method-01M11EX2
+mission_number:
+friendly_name: Software Development Mission Method
+mission_type: software-dev
+target_branch: feat/software-development-mission-method
+created_at: '2026-08-29T08:45:46.271080+00:00'
+created_by:
+  kind: runtime
+  id: spec-kitty-generator
+  display: Spec Kitty Generator
+provenance:
+  kind: runtime_post_completion
+  invoked_at: '2026-08-29T08:45:46.271080+00:00'
+  policy_resolved_from:
+    enabled: <default>
+    timing: <default>
+    failure_policy: <default>
+    write_record: <default>
+    generate_proposals: <default>
+    apply_proposals: <default>
+    permissions.write_record: <default>
+    permissions.inspect_mission_artifacts: <default>
+    permissions.propose_glossary_changes: <default>
+    permissions.propose_drg_changes: <default>
+    permissions.propose_doctrine_changes: <default>
+    permissions.apply_low_risk_changes: <default>
+    permissions.apply_structural_changes: <default>
+    precedence: <default>
+    generator: <default>
+policy_source:
+  enabled: <default>
+  timing: <default>
+  failure_policy: <default>
+  write_record: <default>
+  generate_proposals: <default>
+  apply_proposals: <default>
+  permissions.write_record: <default>
+  permissions.inspect_mission_artifacts: <default>
+  permissions.propose_glossary_changes: <default>
+  permissions.propose_drg_changes: <default>
+  permissions.propose_doctrine_changes: <default>
+  permissions.apply_low_risk_changes: <default>
+  permissions.apply_structural_changes: <default>
+  precedence: <default>
+  generator: <default>
+findings_status: has_findings
+helped: []
+not_helpful:
+- id: n-038
+  category: doc
+  summary: analysis-report.md present with findings
+  evidence_refs:
+  - e-059
+  details: An analysis-report.md artifact is present for this mission. Review its findings to understand documented
+    issues and decisions.
+- id: n-026
+  category: implementation
+  summary: WP01 needed 2 implementation cycles
+  evidence_refs:
+  - e-047
+  details: WP WP01 entered in_progress 2 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-027
+  category: implementation
+  summary: WP02 needed 4 implementation cycles
+  evidence_refs:
+  - e-048
+  details: WP WP02 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-028
+  category: implementation
+  summary: WP03 needed 3 implementation cycles
+  evidence_refs:
+  - e-049
+  details: WP WP03 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-029
+  category: implementation
+  summary: WP04 needed 3 implementation cycles
+  evidence_refs:
+  - e-050
+  details: WP WP04 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-030
+  category: implementation
+  summary: WP05 needed 4 implementation cycles
+  evidence_refs:
+  - e-051
+  details: WP WP05 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-031
+  category: implementation
+  summary: WP06 needed 3 implementation cycles
+  evidence_refs:
+  - e-052
+  details: WP WP06 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-032
+  category: implementation
+  summary: WP07 needed 2 implementation cycles
+  evidence_refs:
+  - e-053
+  details: WP WP07 entered in_progress 2 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-033
+  category: implementation
+  summary: WP08 needed 4 implementation cycles
+  evidence_refs:
+  - e-054
+  details: WP WP08 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-034
+  category: implementation
+  summary: WP09 needed 3 implementation cycles
+  evidence_refs:
+  - e-055
+  details: WP WP09 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-035
+  category: implementation
+  summary: WP10 needed 3 implementation cycles
+  evidence_refs:
+  - e-056
+  details: WP WP10 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-036
+  category: implementation
+  summary: WP11 needed 3 implementation cycles
+  evidence_refs:
+  - e-057
+  details: WP WP11 entered in_progress 3 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-037
+  category: implementation
+  summary: WP12 needed 4 implementation cycles
+  evidence_refs:
+  - e-058
+  details: WP WP12 entered in_progress 4 times. Multiple implementation cycles suggest rework not captured as a
+    documented review rejection; the WP scope or contract may need refinement.
+- id: n-014
+  category: process
+  summary: WP01 required 3 --force override(s) during workflow
+  evidence_refs:
+  - e-031
+  details: WP WP01 required 3 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-015
+  category: process
+  summary: WP02 required 5 --force override(s) during workflow
+  evidence_refs:
+  - e-032
+  details: WP WP02 required 5 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-016
+  category: process
+  summary: WP03 required 2 --force override(s) during workflow
+  evidence_refs:
+  - e-033
+  details: WP WP03 required 2 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-017
+  category: process
+  summary: WP04 required 2 --force override(s) during workflow
+  evidence_refs:
+  - e-034
+  details: WP WP04 required 2 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-018
+  category: process
+  summary: WP05 required 3 --force override(s) during workflow
+  evidence_refs:
+  - e-035
+  details: WP WP05 required 3 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-019
+  category: process
+  summary: WP06 required 2 --force override(s) during workflow
+  evidence_refs:
+  - e-036
+  details: WP WP06 required 2 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-020
+  category: process
+  summary: WP07 required 2 --force override(s) during workflow
+  evidence_refs:
+  - e-037
+  details: WP WP07 required 2 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-021
+  category: process
+  summary: WP08 required 5 --force override(s) during workflow
+  evidence_refs:
+  - e-038
+  details: WP WP08 required 5 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-013
+  category: process
+  summary: WP09 had 1 lane bounce(s) before approval
+  evidence_refs:
+  - e-030
+  details: WP WP09 moved backward across workflow lanes 1 time(s) outside the documented reviewer-feedback flow.
+- id: n-022
+  category: process
+  summary: WP09 required 4 --force override(s) during workflow
+  evidence_refs:
+  - e-039
+  details: WP WP09 required 4 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-023
+  category: process
+  summary: WP10 required 3 --force override(s) during workflow
+  evidence_refs:
+  - e-040
+  details: WP WP10 required 3 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-024
+  category: process
+  summary: WP11 required 4 --force override(s) during workflow
+  evidence_refs:
+  - e-041
+  details: WP WP11 required 4 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-025
+  category: process
+  summary: WP12 required 4 --force override(s) during workflow
+  evidence_refs:
+  - e-042
+  details: WP WP12 required 4 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
+    guard failed or the operator routed around it; investigate the underlying cause.
+- id: n-001
+  category: review_loop
+  summary: WP01 required 1 rejection cycle(s) before approval
+  evidence_refs:
+  - e-018
+  details: WP WP01 was sent back from review to planning 1 time(s).
+- id: n-002
+  category: review_loop
+  summary: WP02 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-019
+  details: WP WP02 was sent back from review to planning 3 time(s).
+- id: n-003
+  category: review_loop
+  summary: WP03 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-020
+  details: WP WP03 was sent back from review to planning 2 time(s).
+- id: n-004
+  category: review_loop
+  summary: WP04 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-021
+  details: WP WP04 was sent back from review to planning 2 time(s).
+- id: n-005
+  category: review_loop
+  summary: WP05 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-022
+  details: WP WP05 was sent back from review to planning 3 time(s).
+- id: n-006
+  category: review_loop
+  summary: WP06 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-023
+  details: WP WP06 was sent back from review to planning 2 time(s).
+- id: n-007
+  category: review_loop
+  summary: WP07 required 1 rejection cycle(s) before approval
+  evidence_refs:
+  - e-024
+  details: WP WP07 was sent back from review to planning 1 time(s).
+- id: n-008
+  category: review_loop
+  summary: WP08 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-025
+  details: WP WP08 was sent back from review to planning 3 time(s).
+- id: n-009
+  category: review_loop
+  summary: WP09 required 1 rejection cycle(s) before approval
+  evidence_refs:
+  - e-026
+  details: WP WP09 was sent back from review to planning 1 time(s).
+- id: n-010
+  category: review_loop
+  summary: WP10 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-027
+  details: WP WP10 was sent back from review to planning 2 time(s).
+- id: n-011
+  category: review_loop
+  summary: WP11 required 2 rejection cycle(s) before approval
+  evidence_refs:
+  - e-028
+  details: WP WP11 was sent back from review to planning 2 time(s).
+- id: n-012
+  category: review_loop
+  summary: WP12 required 3 rejection cycle(s) before approval
+  evidence_refs:
+  - e-029
+  details: WP WP12 was sent back from review to planning 3 time(s).
+gaps:
+- id: g-001
+  category: process
+  summary: Arbiter override needed for WP02 (4x)
+  evidence_refs:
+  - e-043
+  details: WP WP02 required 4 arbiter override(s). Arbiter overrides are an escape hatch; recurring use suggests the
+    normal review path is blocked and the underlying policy/guard may need adjustment.
+- id: g-002
+  category: process
+  summary: Arbiter override needed for WP05 (1x)
+  evidence_refs:
+  - e-044
+  details: WP WP05 required 1 arbiter override(s). Arbiter overrides are an escape hatch; recurring use suggests the
+    normal review path is blocked and the underlying policy/guard may need adjustment.
+- id: g-003
+  category: process
+  summary: Arbiter override needed for WP08 (2x)
+  evidence_refs:
+  - e-045
+  details: WP WP08 required 2 arbiter override(s). Arbiter overrides are an escape hatch; recurring use suggests the
+    normal review path is blocked and the underlying policy/guard may need adjustment.
+- id: g-004
+  category: process
+  summary: Arbiter override needed for WP09 (2x)
+  evidence_refs:
+  - e-046
+  details: WP WP09 required 2 arbiter override(s). Arbiter overrides are an escape hatch; recurring use suggests the
+    normal review path is blocked and the underlying policy/guard may need adjustment.
+proposals: []
+evidence_refs:
+- id: e-001
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/meta.json
+- id: e-002
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/spec.md
+- id: e-003
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/plan.md
+- id: e-004
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/tasks.md
+- id: e-005
+  kind: file
+  path:
+    kitty-specs/software-development-mission-method-01M11EX2/tasks/WP01-permanent-mission-authority-architecture-guard.md
+- id: e-006
+  kind: file
+  path:
+    kitty-specs/software-development-mission-method-01M11EX2/tasks/WP02-static-mission-definition-and-lifecycle-authority.md
+- id: e-007
+  kind: file
+  path:
+    kitty-specs/software-development-mission-method-01M11EX2/tasks/WP03-typed-artifact-revisions-and-fresh-approvals.md
+- id: e-008
+  kind: file
+  path:
+    kitty-specs/software-development-mission-method-01M11EX2/tasks/WP04-provider-neutral-decomposition-and-work-quality.md
+- id: e-009
+  kind: file
+  path:
+    kitty-specs/software-development-mission-method-01M11EX2/tasks/WP05-workrevision-v2-and-deterministic-finalization.md
+- id: e-010
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/tasks/WP06-semantic-drift-and-mixed-reconciliation.md
+- id: e-011
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/tasks/WP07-action-governance-and-pure-next-protocol.md
+- id: e-012
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/tasks/WP08-transactional-mission-control-persistence.md
+- id: e-013
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/tasks/WP09-one-way-tasks-compatibility-projection.md
+- id: e-014
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/tasks/WP10-portable-two-item-mission-vertical-slice.md
+- id: e-015
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/tasks/WP11-beads-mission-method-provider-parity.md
+- id: e-016
+  kind: file
+  path:
+    kitty-specs/software-development-mission-method-01M11EX2/tasks/WP12-adversarial-qualification-and-source-bound-evidence.md
+- id: e-017
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+- id: e-018
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M11Y7G9V8ZW2PTNN2YBW59EC
+- id: e-019
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M121F167K2T8GCG692VX08PF..01M1250KDX4DZ7D0Q826PVPKV4
+- id: e-020
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M1225EY39TYZER2YWMDF2P42..01M12HCVY932GPF37AEEE7XX3R
+- id: e-021
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M12NCCF11K6Y1X99Y16NRQD8..01M12Q3GQ2JB3VH8H6SC48WVPG
+- id: e-022
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M12THKR8QT7SHZW6YD3N6GT6..01M12WE2FANSGB4RFMK7VCX40R
+- id: e-023
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13FP2RHE0ZNBR6FM6KFE8HP..01M13H39EV9EJNQFC91462B4YE
+- id: e-024
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13M9XM5TZXWV428SEPR6A51
+- id: e-025
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13Q8RZ7WTGWNMBYA6FW03KE..01M13TB9H7M8G7GB8KR6D31D3X
+- id: e-026
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13VABW1V725P9N0EKTW70VY
+- id: e-027
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13Z54HQXV2NR3PSVC7MDSRA..01M141KMF8QGXGA61TB374C9CV
+- id: e-028
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M148256C7B343TGPWF62354W..01M14A5SE55DTZ38T3P1HWHZJT
+- id: e-029
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M14VK9DE158395QK5YCJ2MSJ..01M1536RT6RSGXECBEFZH710PF
+- id: e-030
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13S49PS4ASQH6KGA7AX4H4E
+- id: e-031
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M11Y7G9V8ZW2PTNN2YBW59EC..01M11ZCG3SVMP9FCSSJSRDBC6C
+- id: e-032
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M121F167K2T8GCG692VX08PF..01M12ETQWJ750JB7R3KSKSJ84T
+- id: e-033
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M1225EY39TYZER2YWMDF2P42..01M12HCVY932GPF37AEEE7XX3R
+- id: e-034
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M12NCCF11K6Y1X99Y16NRQD8..01M12Q3GQ2JB3VH8H6SC48WVPG
+- id: e-035
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M12THKR8QT7SHZW6YD3N6GT6..01M12WE2FANSGB4RFMK7VCX40R
+- id: e-036
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13FP2RHE0ZNBR6FM6KFE8HP..01M13H39EV9EJNQFC91462B4YE
+- id: e-037
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13HZTH424EGYGCMERMDYMB6..01M13M9XM5TZXWV428SEPR6A51
+- id: e-038
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13N1CQ9PHGK7NRNEZ9T5SAV..01M13TPN2CM4A1YSAZWZPETG6X
+- id: e-039
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13RS3F7MV9HXEC4Q4QYWGAZ..01M13VRFJJ5PBNKB40RRM5CG8B
+- id: e-040
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13WA4A3A2VYAH1EF50BGHB5..01M141KMF8QGXGA61TB374C9CV
+- id: e-041
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M143GQNSVDBJ8DECZ9B4CKZV..01M14A5SE55DTZ38T3P1HWHZJT
+- id: e-042
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M14BR6SFZHTATYC2K67HYYT3..01M1536RT6RSGXECBEFZH710PF
+- id: e-043
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M1252N2X02KJ6386MMJAT59R..01M12FJZ83AYEW77BZW6YH6S42
+- id: e-044
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13A0M0KV1DAJ5Z2T1JD6GXH
+- id: e-045
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13TKMK82AGKVXPJPCE09BVZ..01M13TPN2CM4A1YSAZWZPETG6X
+- id: e-046
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: 01M13VKHCWN0W326KRY7F2KDAV..01M13VRFJJ5PBNKB40RRM5CG8B
+- id: e-047
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-048
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-049
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-050
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-051
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-052
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-053
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-054
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-055
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-056
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-057
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-058
+  kind: event_range
+  path: kitty-specs/software-development-mission-method-01M11EX2/status.events.jsonl
+  range: implementation_cycles
+- id: e-059
+  kind: file
+  path: kitty-specs/software-development-mission-method-01M11EX2/analysis-report.md
+generator_version: '1.0'
+provenance_history: []
