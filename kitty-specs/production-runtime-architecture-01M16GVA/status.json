@@ -1,7 +1,7 @@
 {
-  "event_count": 21,
-  "last_event_id": "01M16XJGESMG09R910YWZQY4VJ",
-  "materialized_at": "2026-08-29T14:07:58.931206+00:00",
+  "event_count": 23,
+  "last_event_id": "01M16XKWYVS8W4JE6MMFDAMCAC",
+  "materialized_at": "2026-08-29T14:08:44.500861+00:00",
   "mission_number": "",
   "mission_slug": "production-runtime-architecture-01M16GVA",
   "mission_type": "software-dev",
@@ -12,9 +12,9 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 2,
+    "in_progress": 3,
     "in_review": 0,
-    "planned": 5
+    "planned": 4
   },
   "work_packages": {
     "WP01": {
@@ -89,11 +89,19 @@
       "last_transition_at": "2026-08-29T11:41:30.908061+00:00"
     },
     "WP05": {
-      "actor": "finalize-tasks",
+      "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "planner-priti",
+      "agent_profile_version": "1.0",
       "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M16N6DXC9RY29D8YDXVNMGK3",
-      "last_transition_at": "2026-08-29T11:41:34.508950+00:00"
+      "lane": "in_progress",
+      "last_event_id": "01M16XKWYVS8W4JE6MMFDAMCAC",
+      "last_transition_at": "2026-08-29T14:08:44.500861+00:00",
+      "model": "__resolved_model_absent__",
+      "provider": "__resolved_provider_absent__",
+      "role": "implementer",
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
     },
     "WP06": {
       "actor": "finalize-tasks",
