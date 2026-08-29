@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "program_id", "title", "missions"],
   "properties": {
+    "$schema": { "type": "string", "minLength": 1, "maxLength": 2048 },
     "schema_version": { "const": "1.0" },
     "program_id": { "$ref": "#/$defs/id" },
     "title": { "$ref": "#/$defs/text" },

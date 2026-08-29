@@ -16,6 +16,8 @@ This mission is documentation-only. It prepares the production redesign for work
    - [program manifest schema](contracts/program-manifest.schema.json)
 5. Review the program below, starting with M1's falsification target.
 
+The same candidate graph is available as a machine-readable [program manifest](program-manifest.json), governed by the [program manifest schema](contracts/program-manifest.schema.json).
+
 ## Delivery truth
 
 | Surface | Current delivered state | Ratified target |
