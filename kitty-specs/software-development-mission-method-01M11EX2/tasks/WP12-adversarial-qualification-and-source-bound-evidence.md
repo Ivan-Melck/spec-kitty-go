@@ -84,8 +84,6 @@ owned_files:
 - internal/scenario/mission_method_projection_test.go
 - internal/testcampaign/mission_method.go
 - internal/testcampaign/mission_method_test.go
-- internal/testcampaign/cmd/campaign/main.go
-- internal/testcampaign/cmd/campaign/main_test.go
 - Makefile
 - .github/workflows/quality.yml
 - .github/workflows/full-campaign.yml
@@ -373,8 +371,6 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 12. Complete a final strict mutant audit: each load-bearing authority, drift, race, crash, projection, governance, census, privacy, and source-binding rule must have a named mutant that fails.
 13. Do not fabricate commit IDs before they exist; use the established two-step payload then docs-only attestation pattern.
 14. Preserve all raw admissible and non-admissible external artifacts outside the repository when privacy/size rules prohibit committing them, and publish their digests plus bounded summaries.
-15. Expose publication verification through the existing non-test campaign command and documented Make target; a test-only entrypoint is not sufficient.
-16. Make failure-history completeness structural so attempts discovered after source freeze remain deletion-detectable, and validate complete command/subcommand/path shapes plus balanced Mermaid blocks.
 
 **Files**:
 
@@ -387,8 +383,6 @@ Do not edit the primary checkout, create worktrees manually, merge another lane,
 - `docs/phase3-evidence/SHA256SUMS`
 - `internal/scenario/mission_method_adversarial_test.go`
 - `internal/testcampaign/mission_method_test.go`
-- `internal/testcampaign/cmd/campaign/main.go`
-- `internal/testcampaign/cmd/campaign/main_test.go`
 
 **Validation**:
 
