@@ -25,7 +25,7 @@ subtasks:
 - T045
 - T046
 history: []
-agent_profile: implementer-ivan
+agent_profile: reviewer-renata
 authoritative_surface: internal/provingground/effects.go
 create_intent:
 - internal/provingground/effects.go
