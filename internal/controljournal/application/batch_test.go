@@ -1,0 +1,337 @@
+package application
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+)
+
+func TestBatchMinimumMaximumAndPermanentBoundaries(t *testing.T) {
+	minimum := batchFixture(t, "minimum", 1, 1, 0)
+	if product, err := minimum.ProductBatch(); err != nil || len(productMutations(product)) != 3 {
+		t.Fatalf("minimum product mutations=%d err=%v", len(productMutations(product)), err)
+	}
+	maximum := batchFixture(t, "maximum", storegapdb.MaxEventsPerCommand, storegapdb.MaxHeadsPerCommand, storegapdb.MaxIntentsPerCommand)
+	if product, err := maximum.ProductBatch(); err != nil || len(productMutations(product)) != 1+128+32+16 {
+		t.Fatalf("maximum product mutations=%d err=%v", len(productMutations(product)), err)
+	}
+
+	base := batchInputFixture(t, "events-plus-one", 1, 1, 0)
+	base.Events = append(make([]controljournal.EventEnvelopeV1, storegapdb.MaxEventsPerCommand+1), base.Events[0])
+	if _, err := NewValidatedBatchV1(base); outcomeOf(err) != OutcomeBudgetExceeded {
+		t.Fatalf("event boundary+1 err=%v", err)
+	}
+	base = batchInputFixture(t, "heads-plus-one", 1, 1, 0)
+	base.ExpectedHeads = append(make([]controljournal.ExpectedAggregateHeadV1, storegapdb.MaxHeadsPerCommand+1), base.ExpectedHeads[0])
+	base.NextHeads = append(make([]controljournal.NewAggregateHeadV1, storegapdb.MaxHeadsPerCommand+1), base.NextHeads[0])
+	if _, err := NewValidatedBatchV1(base); outcomeOf(err) != OutcomeBudgetExceeded {
+		t.Fatalf("head boundary+1 err=%v", err)
+	}
+	base = batchInputFixture(t, "intents-plus-one", 1, 1, 0)
+	base.EffectIntents = append(make([]controljournal.EffectIntentV1, storegapdb.MaxIntentsPerCommand+1), base.EffectIntents...)
+	if _, err := NewValidatedBatchV1(base); outcomeOf(err) != OutcomeBudgetExceeded {
+		t.Fatalf("intent boundary+1 err=%v", err)
+	}
+	for name, test := range map[string]struct {
+		at  func(int) error
+		max int
+	}{
+		"mutation": {validateMutationBudget, storegapdb.MaxMutationsPerBatch},
+		"raw":      {validateRawBudget, storegapdb.MaxRawBatchBytes},
+		"wire":     {validateWireBudget, storegapdb.MaxWireFrameBytes},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := test.at(test.max); err != nil {
+				t.Fatalf("exact boundary refused: %v", err)
+			}
+			if err := test.at(test.max + 1); outcomeOf(err) != OutcomeBudgetExceeded {
+				t.Fatalf("boundary+1 survived: %v", err)
+			}
+		})
+	}
+}
+
+func TestBatchCommandDigestCanonicalAndOrderIndependent(t *testing.T) {
+	first, err := ValidateCommandEnvelopeV1(CommandEnvelopeInputV1{
+		SchemaVersion: 1, ProjectID: "project", MissionID: "mission", OperationID: "operation",
+		CommandType: "mission.advance", RuntimeEpochID: "epoch", Payload: []byte(`{"z":2,"a":{"y":1,"x":0}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ValidateCommandEnvelopeV1(CommandEnvelopeInputV1{
+		SchemaVersion: 1, ProjectID: "project", MissionID: "mission", OperationID: "operation",
+		CommandType: "mission.advance", RuntimeEpochID: "epoch", Payload: []byte(` { "a" : { "x":0,"y":1 }, "z" : 2 } `),
+	})
+	if err != nil || first.Digest() != second.Digest() || !bytes.Equal(first.CanonicalBytes(), second.CanonicalBytes()) {
+		t.Fatalf("canonical command mismatch err=%v", err)
+	}
+	input := batchInputFixture(t, "order", 2, 2, 2)
+	original, err := NewValidatedBatchV1(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.ExpectedHeads[0], input.ExpectedHeads[1] = input.ExpectedHeads[1], input.ExpectedHeads[0]
+	input.NextHeads[0], input.NextHeads[1] = input.NextHeads[1], input.NextHeads[0]
+	input.EffectIntents[0], input.EffectIntents[1] = input.EffectIntents[1], input.EffectIntents[0]
+	shuffled, err := NewValidatedBatchV1(input)
+	if err != nil || original.command.digest != shuffled.command.digest || original.seal != shuffled.seal {
+		t.Fatalf("mutation order changed identity err=%v", err)
+	}
+	if _, err := ValidateCommandEnvelopeV1(CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: "p", MissionID: "m", OperationID: "o", CommandType: "c", RuntimeEpochID: "e", Payload: []byte(`{"x":1,"x":2}`)}); err == nil {
+		t.Fatal("duplicate JSON command field survived")
+	}
+}
+
+func TestBatchImmutableUnforgeableAndNoCurrentRevision(t *testing.T) {
+	input := batchInputFixture(t, "immutable", 2, 1, 1)
+	batch, err := NewValidatedBatchV1(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	product, err := batch.ProductBatch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := cloneProductBatch(product)
+	product.Operation.Value[0] ^= 0xff
+	product.Events[0].Value[0] ^= 0xff
+	product.Events = nil
+	again, err := batch.ProductBatch()
+	if err != nil || !reflect.DeepEqual(again, want) {
+		t.Fatalf("validated batch was mutable err=%v", err)
+	}
+	if _, err := (ValidatedBatchV1{}).ProductBatch(); outcomeOf(err) != OutcomeRefused {
+		t.Fatalf("zero batch capability survived: %v", err)
+	}
+	for _, mutation := range productMutations(again) {
+		if strings.Contains(string(mutation.Value), "committed_revision") || strings.Contains(mutation.Key, "/revisions/") {
+			t.Fatalf("current-batch revision leaked into %q", mutation.Key)
+		}
+	}
+}
+
+func TestBatchRefusesDuplicatesInconsistencyAndSplitMutant(t *testing.T) {
+	for name, mutate := range map[string]func(*BatchInputV1){
+		"duplicate event": func(input *BatchInputV1) { input.Events[1] = input.Events[0] },
+		"duplicate head": func(input *BatchInputV1) {
+			input.ExpectedHeads[1] = input.ExpectedHeads[0]
+			input.NextHeads[1] = input.NextHeads[0]
+		},
+		"duplicate effect": func(input *BatchInputV1) { input.EffectIntents[1] = input.EffectIntents[0] },
+		"wrong operation": func(input *BatchInputV1) {
+			input.Events[0] = eventFixture(t, "foreign-event", 0, len(input.Events), "foreign", "aggregate-0", input.Command.runtimeEpochID)
+		},
+		"wrong epoch": func(input *BatchInputV1) {
+			input.Events[0] = eventFixture(t, "wrong-epoch-event", 0, len(input.Events), input.Command.operationID, "aggregate-0", "other-epoch")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := batchInputFixture(t, "mutant-"+strings.ReplaceAll(name, " ", "-"), 2, 2, 2)
+			mutate(&input)
+			if _, err := NewValidatedBatchV1(input); err == nil {
+				t.Fatal("mutant survived")
+			}
+		})
+	}
+	batch := batchFixture(t, "split", 2, 1, 0)
+	product, _ := batch.ProductBatch()
+	product.Events = product.Events[:1]
+	// Mutating a copy cannot create another usable publication capability.
+	if batchDigest(product) == batch.seal {
+		t.Fatal("split-batch mutant retained the validation seal")
+	}
+}
+
+func TestBatchCheckpointMustBePriorPrefix(t *testing.T) {
+	input := batchInputFixture(t, "checkpoint", 1, 1, 0)
+	input.Checkpoint = &PriorPrefixCheckpointV1{
+		CheckpointID: "checkpoint-1", ThroughRevision: 7, ThroughEventID: "prior-event",
+		CheckpointValue: []byte(`{"through_revision":7}`), CheckpointHeadValue: []byte(`{"checkpoint_id":"checkpoint-1"}`),
+	}
+	batch, err := NewValidatedBatchV1(input)
+	if err != nil || batch.product.Checkpoint == nil || batch.product.CheckpointHead == nil {
+		t.Fatalf("prior checkpoint refused: %v", err)
+	}
+	input.Checkpoint.ThroughEventID = input.Events[0].EventID
+	if _, err := NewValidatedBatchV1(input); outcomeOf(err) != OutcomeInvalidCheckpoint {
+		t.Fatalf("current-prefix checkpoint survived: %v", err)
+	}
+	input.Checkpoint.ThroughEventID = "prior-event"
+	input.Checkpoint.ObservedHeadRevision = 99
+	if _, err := NewValidatedBatchV1(input); outcomeOf(err) != OutcomeInvalidCheckpoint {
+		t.Fatalf("new selector with predicted revision survived: %v", err)
+	}
+}
+
+func TestBatchExistingHeadRequiresExactPriorRevision(t *testing.T) {
+	input := batchInputFixture(t, "existing", 1, 1, 0)
+	input.ExpectedHeads[0].LogicalVersion = 7
+	input.ExpectedHeads[0].ObservedHeadRevision = 44
+	input.ExpectedPreconditionsDigest, _ = CanonicalPreconditionsDigestV1(input.ExpectedHeads)
+	input.Events[0] = eventFixtureVersion(t, input.Events[0].EventID, 0, 1, input.Command.operationID, "aggregate-0", input.Command.runtimeEpochID, 8)
+	digest := sha256.Sum256([]byte("existing-state"))
+	head, err := controljournal.ConstructAggregateHeadV1("mission", "aggregate-0", 8, input.Command.runtimeEpochID, input.Events[0].EventID, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.NextHeads[0] = controljournal.NewAggregateHeadV1{Head: head}
+	batch, err := NewValidatedBatchV1(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if condition := batch.product.AggregateHeads[0].Condition; condition.Kind != storegapdb.ConditionRevision || condition.ExpectedRevision != 44 {
+		t.Fatalf("existing head condition=%+v", condition)
+	}
+	input.ExpectedHeads[0].ObservedHeadRevision = 0
+	input.ExpectedPreconditionsDigest = [32]byte{}
+	if _, err := NewValidatedBatchV1(input); err == nil {
+		t.Fatal("existing logical version without provider revision survived")
+	}
+}
+
+func TestBatchPreconditionDigestAndEventMembershipMutants(t *testing.T) {
+	input := batchInputFixture(t, "preconditions", 1, 1, 0)
+	input.ExpectedPreconditionsDigest[0] ^= 0xff
+	if _, err := NewValidatedBatchV1(input); outcomeOf(err) != OutcomeRefused {
+		t.Fatalf("dishonest preconditions digest survived: %v", err)
+	}
+	input = batchInputFixture(t, "foreign-aggregate", 1, 1, 0)
+	input.Events[0] = eventFixture(t, "event-foreign", 0, 1, input.Command.operationID, "untouched", input.Command.runtimeEpochID)
+	if _, err := NewValidatedBatchV1(input); outcomeOf(err) != OutcomeRefused {
+		t.Fatalf("untouched aggregate event survived: %v", err)
+	}
+}
+
+func FuzzBatchCommandCanonicalization(f *testing.F) {
+	for _, seed := range [][]byte{[]byte(`{}`), []byte(`{"a":1,"b":[true,false]}`), []byte(`{"duplicate":1,"duplicate":2}`), nil} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		if len(payload) > storegapdb.MaxOrdinaryValueBytes+1 {
+			t.Skip()
+		}
+		command, err := ValidateCommandEnvelopeV1(CommandEnvelopeInputV1{
+			SchemaVersion: 1, ProjectID: "project", MissionID: "mission", OperationID: "operation-fuzz",
+			CommandType: "mission.advance", RuntimeEpochID: "epoch-fuzz", Payload: payload,
+		})
+		if err != nil {
+			return
+		}
+		revalidated, err := ValidateCommandEnvelopeV1(CommandEnvelopeInputV1{
+			SchemaVersion: 1, ProjectID: "project", MissionID: "mission", OperationID: "operation-fuzz",
+			CommandType: "mission.advance", RuntimeEpochID: "epoch-fuzz", Payload: command.payload,
+		})
+		if err != nil || command.digest != revalidated.digest || !bytes.Equal(command.canonical, revalidated.canonical) {
+			t.Fatalf("canonical command was not stable: %v", err)
+		}
+	})
+}
+
+func batchFixture(t *testing.T, suffix string, events, heads, intents int) ValidatedBatchV1 {
+	t.Helper()
+	batch, err := NewValidatedBatchV1(batchInputFixture(t, suffix, events, heads, intents))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return batch
+}
+
+func batchInputFixture(t *testing.T, suffix string, eventCount, headCount, intentCount int) BatchInputV1 {
+	t.Helper()
+	operation := controljournal.OperationID("operation-" + suffix)
+	epoch := controljournal.RuntimeEpochID("epoch-" + suffix)
+	command, err := ValidateCommandEnvelopeV1(CommandEnvelopeInputV1{
+		SchemaVersion: 1, ProjectID: "project", MissionID: "mission", OperationID: operation,
+		CommandType: "mission.advance", RuntimeEpochID: epoch, Payload: []byte(fmt.Sprintf(`{"suffix":%q}`, suffix)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make([]controljournal.EventEnvelopeV1, eventCount)
+	for index := range events {
+		aggregate := fmt.Sprintf("aggregate-%d", index%headCount)
+		events[index] = eventFixture(t, controljournal.EventID(fmt.Sprintf("event-%s-%03d", suffix, index)), index, eventCount, operation, aggregate, epoch)
+	}
+	expected := make([]controljournal.ExpectedAggregateHeadV1, headCount)
+	next := make([]controljournal.NewAggregateHeadV1, headCount)
+	for index := range expected {
+		id := controljournal.AggregateID(fmt.Sprintf("aggregate-%d", index))
+		last := controljournal.EventID("")
+		for _, event := range events {
+			if event.AggregateID == id {
+				last = event.EventID
+			}
+		}
+		digest := sha256.Sum256([]byte(fmt.Sprintf("state-%s-%d", suffix, index)))
+		head, err := controljournal.ConstructAggregateHeadV1("mission", id, 1, epoch, last, digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected[index] = controljournal.ExpectedAggregateHeadV1{AggregateKind: "mission", AggregateID: id}
+		next[index] = controljournal.NewAggregateHeadV1{Head: head}
+	}
+	effects := make([]controljournal.EffectIntentV1, intentCount)
+	for index := range effects {
+		effect, err := controljournal.NewEffectIntentV1(
+			controljournal.IntentID(fmt.Sprintf("intent-%s-%02d", suffix, index)),
+			controljournal.EffectID(fmt.Sprintf("effect-%s-%02d", suffix, index)), operation,
+			"github", "revision-1", fmt.Sprintf("marker-%d", index), []byte(`{"old":true}`), []byte(`{"new":true}`),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		effects[index] = effect
+	}
+	preconditions, err := CanonicalPreconditionsDigestV1(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return BatchInputV1{
+		Command: command, ExpectedHeads: expected, NextHeads: next, Events: events, EffectIntents: effects,
+		ExpectedPreconditionsDigest: preconditions,
+		ResultType:                  "mission.advanced", ResultSchemaVersion: 1,
+		CanonicalResult: []byte(fmt.Sprintf(`{"suffix":%q}`, suffix)),
+	}
+}
+
+func eventFixture(t *testing.T, id controljournal.EventID, index, count int, operation controljournal.OperationID, aggregate string, epoch controljournal.RuntimeEpochID) controljournal.EventEnvelopeV1 {
+	return eventFixtureVersion(t, id, index, count, operation, aggregate, epoch, 1)
+}
+
+func eventFixtureVersion(t *testing.T, id controljournal.EventID, index, count int, operation controljournal.OperationID, aggregate string, epoch controljournal.RuntimeEpochID, logicalVersion uint64) controljournal.EventEnvelopeV1 {
+	t.Helper()
+	eventIndex, err := controljournal.NewEventIndexV1(uint16(index))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventCount, err := controljournal.NewEventCountV1(uint16(count))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := controljournal.NewEventEnvelopeV1(controljournal.EventEnvelopeInputV1{
+		EnvelopeVersion: 1, EventID: id, EventType: "mission.advanced", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", ProjectID: "project", AggregateKind: "mission", AggregateID: controljournal.AggregateID(aggregate),
+		AggregateLogicalVersion: logicalVersion, OperationID: operation, RuntimeEpochID: epoch,
+		EventIndex: eventIndex, EventCount: eventCount, Payload: []byte(`{"advanced":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
+func outcomeOf(err error) OutcomeKind {
+	var typed *Error
+	if errors.As(err, &typed) {
+		return typed.Kind
+	}
+	return ""
+}
