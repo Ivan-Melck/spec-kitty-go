@@ -233,6 +233,17 @@ func (a *Adapter) AtomicBatch(ctx context.Context, batch ProductBatch) (Mutation
 	return a.commitAtomicBatch(ctx, "atomic_batch", batch.OperationID, providerBatch, rawBytes)
 }
 
+// PreflightAtomicBatch runs the exact admitted product encoder and wire-frame
+// measurement without holding a provider mutation capability. Application
+// code can therefore fail closed before its sole publication call.
+func (a *Adapter) PreflightAtomicBatch(batch ProductBatch) (BatchMeasurement, error) {
+	providerBatch, rawBytes, err := encodeProductBatch(batch)
+	if err != nil {
+		return BatchMeasurement{}, adapterError("preflight_atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
+	}
+	return a.measureAtomicBatch("preflight_atomic_batch", batch.OperationID, providerBatch, rawBytes)
+}
+
 // AdmitRuntimeEpoch commits the five semantically named startup records in one
 // provider transaction.  It is separate from AtomicBatch so epoch metadata
 // cannot masquerade as ordinary product events or aggregate heads.
@@ -245,27 +256,8 @@ func (a *Adapter) AdmitRuntimeEpoch(ctx context.Context, batch RuntimeEpochBatch
 }
 
 func (a *Adapter) commitAtomicBatch(ctx context.Context, operation, operationID string, providerBatch gapdbapi.Batch, rawBytes int) (MutationResult, error) {
-	if rawBytes > MaxRawBatchBytes {
-		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "raw batch byte budget exceeded", nil)
-	}
-	if err := validateMutationCount(len(providerBatch.Mutations)); err != nil {
-		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
-	}
-	if providerBatch.Ack != gapdbapi.AckDurable {
-		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "atomic batch requires durable acknowledgement", nil)
-	}
-	wire := struct {
-		SchemaVersion uint64         `json:"schema_version"`
-		RequestID     string         `json:"request_id"`
-		Operation     string         `json:"operation"`
-		Arguments     gapdbapi.Batch `json:"arguments"`
-	}{AdmittedWireVersion, operationID, "atomic_batch", providerBatch}
-	encoded, err := json.Marshal(wire)
-	if err != nil {
-		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "wire request cannot be encoded", err)
-	}
-	if err := validateWireFrameSize(a.wireSize(encoded)); err != nil {
-		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
+	if _, err := a.measureAtomicBatch(operation, operationID, providerBatch, rawBytes); err != nil {
+		return MutationResult{}, err
 	}
 	ctx, cancel := a.requestContext(ctx)
 	defer cancel()
@@ -275,6 +267,33 @@ func (a *Adapter) commitAtomicBatch(ctx context.Context, operation, operationID 
 		return MutationResult{}, translateError(operation, operationID, err)
 	}
 	return convertMutationResult(operation, operationID, result, len(providerBatch.Mutations), gapdbapi.AckDurable)
+}
+
+func (a *Adapter) measureAtomicBatch(operation, operationID string, providerBatch gapdbapi.Batch, rawBytes int) (BatchMeasurement, error) {
+	if rawBytes > MaxRawBatchBytes {
+		return BatchMeasurement{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "raw batch byte budget exceeded", nil)
+	}
+	if err := validateMutationCount(len(providerBatch.Mutations)); err != nil {
+		return BatchMeasurement{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
+	}
+	if providerBatch.Ack != gapdbapi.AckDurable {
+		return BatchMeasurement{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "atomic batch requires durable acknowledgement", nil)
+	}
+	wire := struct {
+		SchemaVersion uint64         `json:"schema_version"`
+		RequestID     string         `json:"request_id"`
+		Operation     string         `json:"operation"`
+		Arguments     gapdbapi.Batch `json:"arguments"`
+	}{AdmittedWireVersion, operationID, "atomic_batch", providerBatch}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return BatchMeasurement{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "wire request cannot be encoded", err)
+	}
+	wireBytes := a.wireSize(encoded)
+	if err := validateWireFrameSize(wireBytes); err != nil {
+		return BatchMeasurement{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
+	}
+	return BatchMeasurement{MutationCount: len(providerBatch.Mutations), RawBytes: rawBytes, WireBytes: wireBytes}, nil
 }
 
 func (a *Adapter) Scan(ctx context.Context, request ScanRequest) (ScanPage, error) {

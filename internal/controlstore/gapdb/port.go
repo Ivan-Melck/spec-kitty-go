@@ -158,6 +158,12 @@ type MutationResult struct {
 	MutationCount  int
 }
 
+type BatchMeasurement struct {
+	MutationCount int
+	RawBytes      int
+	WireBytes     int
+}
+
 // ProductBatch mirrors the indivisible application transaction without
 // exposing provider types. Checkpoint is the only record permitted to use the
 // larger checkpoint value budget; CheckpointHead remains an ordinary value.
@@ -273,6 +279,7 @@ func AuthorityCodec(namespace AuthorityNamespace) string {
 type Port interface {
 	Get(context.Context, string) (Record, error)
 	ConditionalMutate(context.Context, string, Mutation, AckMode) (MutationResult, error)
+	PreflightAtomicBatch(ProductBatch) (BatchMeasurement, error)
 	AtomicBatch(context.Context, ProductBatch) (MutationResult, error)
 	AdmitRuntimeEpoch(context.Context, RuntimeEpochBatch) (MutationResult, error)
 	Scan(context.Context, ScanRequest) (ScanPage, error)

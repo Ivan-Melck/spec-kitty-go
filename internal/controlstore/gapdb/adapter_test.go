@@ -188,6 +188,34 @@ func TestAtomicBatchWireBudgetGuardsThePublicationPath(t *testing.T) {
 	}
 }
 
+func TestAtomicBatchPreflightUsesExactEncoderWithoutProviderCall(t *testing.T) {
+	var calls atomic.Int32
+	provider := &fakeProvider{batchFn: func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+		calls.Add(1)
+		return gapdbapi.MutationResult{}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	for _, measured := range []int{MaxWireFrameBytes, MaxWireFrameBytes + 1} {
+		adapter.wireSize = func(encoded []byte) int {
+			if len(encoded) == 0 {
+				t.Fatal("preflight measured empty admitted frame")
+			}
+			return measured
+		}
+		measurement, err := adapter.PreflightAtomicBatch(minimalBatch())
+		if measured == MaxWireFrameBytes {
+			if err != nil || measurement.WireBytes != measured || measurement.MutationCount != 3 {
+				t.Fatalf("exact measurement=%+v err=%v", measurement, err)
+			}
+		} else if !IsKind(err, OutcomeInvalid) {
+			t.Fatalf("wire plus one error=%v", err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("preflight reached provider %d times", calls.Load())
+	}
+}
+
 func TestBatchRequiresRoleSpecificConditions(t *testing.T) {
 	for _, test := range []struct {
 		name   string
