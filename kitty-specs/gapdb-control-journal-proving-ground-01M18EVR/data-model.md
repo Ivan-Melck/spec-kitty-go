@@ -46,22 +46,25 @@ path, tracker assignment, or GapDB revision.
 
 ## Keyspace
 
-Keys are ASCII, versioned, and scoped by a canonical encoded project ID. The
-following logical layout is proposed; the concrete codec must reject ambiguous
-escaping and enforce a product key budget below GapDB's 4-KiB default.
+Keys are ASCII, versioned, and scoped by canonical ProjectID and MissionID.
+Every M1 product key begins with exactly
+`spk/v1/<project-id>/<mission-id>/`. Mission scope prevents collision and
+bounds this proving slice; no leading-slash, `/v1/projects`, project-only, or
+compatibility alias is valid. The codec rejects ambiguous escaping and enforces
+a product key budget below GapDB's 4-KiB default.
 
 ```text
-/v1/projects/{project}/binding
-/v1/projects/{project}/runtime/current
-/v1/projects/{project}/operations/{operation}
-/v1/projects/{project}/journal/{event}
-/v1/projects/{project}/heads/{aggregate-kind}/{aggregate}
-/v1/projects/{project}/projection/head
-/v1/projects/{project}/checkpoints/current
-/v1/projects/{project}/checkpoints/{checkpoint}
-/v1/projects/{project}/effects/{effect}/intent
-/v1/projects/{project}/effects/{effect}/attempts/{attempt}
-/v1/projects/{project}/effects/{effect}/observations/{observation}
+spk/v1/<project-id>/<mission-id>/binding
+spk/v1/<project-id>/<mission-id>/runtime/epochs/<runtime-epoch-id>
+spk/v1/<project-id>/<mission-id>/runtime/current
+spk/v1/<project-id>/<mission-id>/operations/<operation-id>
+spk/v1/<project-id>/<mission-id>/journal/<event-id>
+spk/v1/<project-id>/<mission-id>/heads/<aggregate-kind>/<aggregate-id>
+spk/v1/<project-id>/<mission-id>/checkpoint-head
+spk/v1/<project-id>/<mission-id>/checkpoints/<checkpoint-id>
+spk/v1/<project-id>/<mission-id>/effects/<effect-id>/intent
+spk/v1/<project-id>/<mission-id>/effects/<effect-id>/attempts/<attempt-id>
+spk/v1/<project-id>/<mission-id>/effects/<effect-id>/observations/<observation-id>
 ```
 
 Journal keys contain preallocated `EventID`s, not commit revisions. GapDB
@@ -208,21 +211,14 @@ lease/fence/generation/candidate facts required by the command. Full projected
 state can remain memory-resident or in a bounded projection record, but the
 head's digest must match reduction of the accepted prefix.
 
-### Projection head
+### Projection digests
 
-```text
-ProjectionHead {
-  schema_version
-  through_gapdb_revision
-  through_event_id
-  canonical_projection_digest
-  reducer_set_digest
-  checkpoint_id?
-}
-```
-
-The projection head participates in the same batch. It attests the expected
-post-command canonical digest; it is not a substitute for journal replay.
+Each affected AggregateHead carries its own canonical state/projection digest
+and is CASed independently. M1 stores no global projection head in ordinary
+command batches: such a head would make unrelated aggregates conflict. Restore,
+playback, and evidence compute the whole-product canonical projection digest by
+a stable ordered fold of all aggregate heads/reduced states. That derived global
+digest is comparison evidence, not a shared mutation precondition.
 
 ### Checkpoint
 
@@ -252,11 +248,13 @@ CheckpointHead {
 }
 ```
 
-When a checkpoint is due, its record and head are part of the command's single
-batch. The product chooses a revision-pinned deterministic budget; a checkpoint
-that exceeds it is refused before publication rather than split across writes.
-Large-artifact indirection is outside M1 unless the one-batch law can still be
-proved. M1 should select state small enough to fit the explicit proving budget.
+When a checkpoint is due, the next command's single batch carries a checkpoint
+of the known already-accepted prefix preceding that command. Its through
+revision comes from prior Record metadata; it never guesses the revision GapDB
+will assign to the forming batch. The selector/evidence hashes the complete
+canonical checkpoint bytes, so the checkpoint contains no recursive self-hash.
+A checkpoint exceeding the revision-pinned budget is refused before publication
+rather than split across writes. Large-artifact indirection is outside M1.
 
 ### External-effect records
 
@@ -311,7 +309,6 @@ pure reducer. It then sends one `AckDurable` `AtomicBatch` containing:
 | Operation record | key absent |
 | Every event envelope | key absent |
 | Every affected aggregate head | CAS observed revision, or absent for create |
-| Projection head | CAS observed revision, or absent for bootstrap |
 | Checkpoint record/head when due | record absent; head CAS/absent |
 | Every new effect intent | key absent |
 
@@ -350,6 +347,12 @@ lease can reactivate or inherit it. Replacement authorization creates a fresh
 capsule cannot satisfy current head preconditions for handoff, review, or
 integration.
 
+Lease expiry advances a lease generation and journals authority/quarantine
+transitions; it does not create or advance RuntimeEpochID. RuntimeEpochID changes
+only at the mandatory host-restart admission barrier. Lease generation, fence
+token, aggregate logical version, GapDB Record.Revision, and RuntimeEpochID are
+distinct capsule fields.
+
 ### Candidate, review, and integration
 
 ```text
@@ -376,7 +379,9 @@ the serialized integration authority.
    only if it fits the same declared bound.
 5. If neither path is bounded, enter `degraded`; if journal integrity or reducer
    compatibility cannot be established, enter `closed`.
-6. Compare the reduced projection digest with the stored projection head.
+6. Stable-fold the restored aggregate heads/states into the global canonical
+   projection digest and compare it with playback/evidence expectations; no
+   global projection record is CASed by ordinary commands.
 7. Create the new runtime epoch durably; quarantine every predecessor lease and
    workspace through product events.
 8. Reconcile outstanding effect intents by observation, then publish progress
@@ -461,7 +466,9 @@ Canonical validation additionally requires:
    reuse; if the host cannot prove it, it must leave the process alone.
 4. The checkpoint product byte budget and cadence must be selected before test
    generation so checkpoint eligibility is deterministic and revision-pinned.
-5. M1 must decide whether projection data beyond the head is stored in GapDB or
-   rebuilt into memory only. Either choice must preserve the one-batch law.
+5. M1 resolves projection storage by keeping the full fast view in memory and
+   per-aggregate digests in independently CASed aggregate heads. The global
+   digest is a deterministic restore/playback/evidence fold, never a shared
+   command-batch CAS.
 6. Journal compaction and destructive retention are deferred. The proving
    database retains all journal events and checkpoints needed for audit.

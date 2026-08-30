@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/authority-capsule-v1.schema.json",
+  "title": "Spec Kitty M1 authority capsule v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "project_id", "mission_id", "work_revision_id",
+    "actor_id", "process_id", "run_id", "lease_id", "workspace_id",
+    "runtime_epoch_id", "lease_generation", "fence_token",
+    "authority_head_record_revision"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "project_id": { "$ref": "#/$defs/token" },
+    "mission_id": { "$ref": "#/$defs/token" },
+    "work_revision_id": { "$ref": "#/$defs/token" },
+    "actor_id": { "$ref": "#/$defs/token" },
+    "process_id": { "$ref": "#/$defs/token" },
+    "run_id": { "$ref": "#/$defs/token" },
+    "lease_id": { "$ref": "#/$defs/token" },
+    "workspace_id": { "$ref": "#/$defs/token" },
+    "runtime_epoch_id": { "$ref": "#/$defs/token" },
+    "lease_generation": { "type": "integer", "minimum": 1 },
+    "fence_token": { "type": "integer", "minimum": 1 },
+    "authority_head_record_revision": { "type": "integer", "minimum": 1 }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    }
+  }
+}

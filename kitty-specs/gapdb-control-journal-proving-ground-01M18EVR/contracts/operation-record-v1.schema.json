@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/operation-record-v1.schema.json",
+  "title": "Spec Kitty accepted operation record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "operation_id", "command_type", "request_digest",
+    "runtime_epoch_id", "expected_preconditions_digest", "status",
+    "result_type", "result_schema_version", "canonical_result",
+    "event_ids", "effect_ids"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "operation_id": { "$ref": "#/$defs/token" },
+    "command_type": { "$ref": "#/$defs/token" },
+    "request_digest": { "$ref": "#/$defs/sha256" },
+    "runtime_epoch_id": { "$ref": "#/$defs/token" },
+    "expected_preconditions_digest": { "$ref": "#/$defs/sha256" },
+    "status": { "const": "accepted" },
+    "result_type": { "$ref": "#/$defs/token" },
+    "result_schema_version": { "type": "integer", "minimum": 1 },
+    "canonical_result": { "type": "object" },
+    "event_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/token" }
+    },
+    "effect_ids": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/token" }
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

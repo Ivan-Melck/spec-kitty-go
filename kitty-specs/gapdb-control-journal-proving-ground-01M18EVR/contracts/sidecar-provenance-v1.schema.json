@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/sidecar-provenance-v1.schema.json",
+  "title": "GapDB sidecar provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "supervisor_run_id", "admitted_tuple_sha256",
+    "executable_path", "executable_sha256", "executable_size",
+    "executable_device", "executable_inode", "host_pid",
+    "host_process_start_ticks", "configured_daemon_socket_path",
+    "connected_daemon_socket_path", "status", "health", "describe_config",
+    "wire_version_proof", "storage_admission_fact",
+    "product_policy_sha256", "qualification_proxy", "admitted_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "supervisor_run_id": { "$ref": "#/$defs/token" },
+    "admitted_tuple_sha256": {
+      "const": "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
+    },
+    "executable_path": { "type": "string", "pattern": "^/" },
+    "executable_sha256": {
+      "const": "62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e"
+    },
+    "executable_size": { "const": 5300621 },
+    "executable_device": { "type": "integer", "minimum": 0 },
+    "executable_inode": { "type": "integer", "minimum": 1 },
+    "host_pid": { "type": "integer", "minimum": 1 },
+    "host_process_start_ticks": { "type": "integer", "minimum": 1 },
+    "configured_daemon_socket_path": { "type": "string", "pattern": "^/" },
+    "connected_daemon_socket_path": { "type": "string", "pattern": "^/" },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "database_id", "owner_pid", "owner_started_at", "lifecycle",
+        "current_revision", "durable_through_revision",
+        "reserved_revision_end", "snapshot_revision", "active_wal_start",
+        "limits"
+      ],
+      "properties": {
+        "database_id": { "$ref": "#/$defs/token" },
+        "owner_pid": { "type": "integer", "minimum": 1 },
+        "owner_started_at": { "type": "string", "format": "date-time" },
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "current_revision": { "type": "integer", "minimum": 0 },
+        "durable_through_revision": { "type": "integer", "minimum": 0 },
+        "reserved_revision_end": { "type": "integer", "minimum": 0 },
+        "snapshot_revision": { "type": "integer", "minimum": 0 },
+        "active_wal_start": { "type": "integer", "minimum": 0 },
+        "limits": { "type": "object", "minProperties": 1 }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "healthy", "failing_subsystems", "safe_actions"],
+      "properties": {
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "healthy": { "type": "boolean" },
+        "failing_subsystems": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "safe_actions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "describe_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effective", "source", "safe_ceilings", "restart_required"],
+      "properties": {
+        "effective": { "type": "object", "minProperties": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "safe_ceilings": { "type": "object", "minProperties": 1 },
+        "restart_required": { "type": "boolean" }
+      }
+    },
+    "wire_version_proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "reference_sha256", "strict_typed_envelope"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "reference_sha256": {
+          "const": "cd08e19252628a1cbfe5bd43018caae86569e041dc01f9d4472dc2eae72389c2"
+        },
+        "strict_typed_envelope": { "const": true }
+      }
+    },
+    "storage_admission_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["storage_version", "reference_sha256"],
+      "properties": {
+        "storage_version": { "const": 1 },
+        "reference_sha256": {
+          "const": "6d4cca9611e9e272e02d6e566dccc887dacf738c1da8c5d580237f731018295c"
+        }
+      }
+    },
+    "product_policy_sha256": { "$ref": "#/$defs/sha256" },
+    "qualification_proxy": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "product_socket_path", "daemon_socket_path",
+            "source_commit", "binary_sha256"
+          ],
+          "properties": {
+            "product_socket_path": { "type": "string", "pattern": "^/" },
+            "daemon_socket_path": { "type": "string", "pattern": "^/" },
+            "source_commit": { "$ref": "#/$defs/git" },
+            "binary_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      ]
+    },
+    "admitted_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "git": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "lifecycle": {
+      "enum": ["ready", "degraded_read_only", "draining", "inspection_only"]
+    }
+  }
+}

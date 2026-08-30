@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/runtime-current-v1.schema.json",
+  "title": "Spec Kitty current host-runtime binding v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "runtime_epoch_id", "host_instance_id",
+    "created_operation_id", "status"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "runtime_epoch_id": { "$ref": "#/$defs/token" },
+    "predecessor_runtime_epoch_id": { "$ref": "#/$defs/token" },
+    "host_instance_id": { "$ref": "#/$defs/token" },
+    "created_operation_id": { "$ref": "#/$defs/token" },
+    "status": { "enum": ["recovering", "reconciling", "ready", "degraded", "closed"] }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    }
+  }
+}

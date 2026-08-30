@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/checkpoint-v1.schema.json",
+  "title": "Spec Kitty control-journal checkpoint v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "checkpoint_id", "reducer_set_digest",
+    "event_schema_set_digest", "project_id", "mission_id",
+    "through_record_revision", "through_event_id", "event_count",
+    "event_prefix_digest", "canonical_projection_digest",
+    "uncompressed_size", "codec", "projection"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "checkpoint_id": { "$ref": "#/$defs/token" },
+    "reducer_set_digest": { "$ref": "#/$defs/sha256" },
+    "event_schema_set_digest": { "$ref": "#/$defs/sha256" },
+    "project_id": { "$ref": "#/$defs/token" },
+    "mission_id": { "$ref": "#/$defs/token" },
+    "through_record_revision": { "type": "integer", "minimum": 1 },
+    "through_event_id": { "$ref": "#/$defs/token" },
+    "event_count": { "type": "integer", "minimum": 1 },
+    "event_prefix_digest": { "$ref": "#/$defs/sha256" },
+    "canonical_projection_digest": { "$ref": "#/$defs/sha256" },
+    "uncompressed_size": { "type": "integer", "minimum": 0, "maximum": 4194304 },
+    "codec": { "const": "canonical-json-v1" },
+    "projection": { "type": "object" }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/evidence-manifest-v1.schema.json",
+  "title": "M1 combined evidence manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "program_id", "mission_id", "run_id",
+    "source_commit", "source_tree", "admitted_tuple_sha256",
+    "sidecar_provenance_sha256", "scenario_results", "fault_results",
+    "ordered_trial", "focused_subtrial_summaries", "mutant_results",
+    "invariant_summary", "independent_review", "artifacts", "outcome"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "program_id": { "const": "production-runtime" },
+    "mission_id": { "const": "M1" },
+    "run_id": { "$ref": "#/$defs/token" },
+    "source_commit": { "$ref": "#/$defs/git" },
+    "source_tree": { "$ref": "#/$defs/git" },
+    "admitted_tuple_sha256": {
+      "const": "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
+    },
+    "sidecar_provenance_sha256": { "$ref": "#/$defs/sha256" },
+    "scenario_results": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "prefixItems": [
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "data/get-put" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "conditional/cas-delete" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "batch/atomic" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "scan/sorted-prefix" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "watch/registered-order" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "expiry/release-authority" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "ack/memory-visible" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "ack/durable-restart" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "inspect/authority" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "authority/lease" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "authority/review" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "authority/workflow" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "authority/integration" } } },
+        { "$ref": "#/$defs/scenarioResult", "properties": { "scenario_id": { "const": "response-loss/reconcile" } } }
+      ],
+      "items": false
+    },
+    "fault_results": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "prefixItems": [
+        { "$ref": "#/$defs/faultResult", "properties": { "fault_id": { "const": "GJ-01" }, "cut": { "const": "before_request_publication" } } },
+        { "$ref": "#/$defs/faultResult", "properties": { "fault_id": { "const": "GJ-02" }, "cut": { "const": "after_durable_acceptance_before_client_response" } } },
+        { "$ref": "#/$defs/faultResult", "properties": { "fault_id": { "const": "GJ-03" }, "cut": { "const": "after_workspace_creation_before_durable_binding" } } },
+        { "$ref": "#/$defs/faultResult", "properties": { "fault_id": { "const": "GJ-04" }, "cut": { "const": "after_durable_binding_before_run_capsule_response" } } },
+        { "$ref": "#/$defs/faultResult", "properties": { "fault_id": { "const": "GJ-05" }, "cut": { "const": "after_effect_intent_before_observation" } } }
+      ],
+      "items": false
+    },
+    "ordered_trial": {
+      "$ref": "https://spec-kitty.local/contracts/ordered-trial-v1.schema.json"
+    },
+    "focused_subtrial_summaries": {
+      "type": "array",
+      "maxItems": 8,
+      "prefixItems": [
+        { "$ref": "#/$defs/focusedSummary", "properties": { "id": { "const": "atomic-publication-nfr001" } } },
+        { "$ref": "#/$defs/focusedSummary", "properties": { "id": { "const": "lost-response-idempotency-nfr002" } } },
+        { "$ref": "#/$defs/focusedSummary", "properties": { "id": { "const": "concurrent-claims-nfr003" } } },
+        { "$ref": "#/$defs/focusedSummary", "properties": { "id": { "const": "competing-integrations-nfr004" } } },
+        { "$ref": "#/$defs/focusedSummary", "properties": { "id": { "const": "restore-playback-nfr005" } } },
+        { "$ref": "#/$defs/focusedSummary", "properties": { "id": { "const": "restart-epoch-nfr007" } } },
+        { "$ref": "#/$defs/focusedSummary", "properties": { "id": { "const": "zombie-isolation-nfr008" } } },
+        { "$ref": "#/$defs/focusedSummary", "properties": { "id": { "const": "attribution-reassignment-nfr015" } } }
+      ],
+      "items": false
+    },
+    "mutant_results": {
+      "type": "array",
+      "minItems": 19,
+      "maxItems": 19,
+      "prefixItems": [
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "split-batch" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "pre-ack-publish" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "retry-new-operation-id" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "revision-fill-in" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "server-revision-in-value-or-key" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "invalid-event-order" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "current-batch-checkpoint" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "global-authority-cas" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "shared-projection-head" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "runtime-coordinate-conflation" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "workspace-reuse" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "same-contributor-review" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "invalid-checkpoint" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "playback-adapter-or-write" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "watch-as-journal" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "misattributed-public-fields" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "fake-timeout" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "gapdb-import-allowlist-or-internal-server" } } },
+        { "$ref": "#/$defs/namedResult", "properties": { "id": { "const": "incomplete-signature" } } }
+      ],
+      "items": false
+    },
+    "invariant_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "one_valid_authority_per_work_revision",
+        "workspace_binding_immutable", "stale_authority_refused",
+        "primary_isolation", "reviewer_actor_independence",
+        "serialized_target_authority", "effect_attribution",
+        "journal_complete"
+      ],
+      "properties": {
+        "one_valid_authority_per_work_revision": { "type": "boolean" },
+        "workspace_binding_immutable": { "type": "boolean" },
+        "stale_authority_refused": { "type": "boolean" },
+        "primary_isolation": { "type": "boolean" },
+        "reviewer_actor_independence": { "type": "boolean" },
+        "serialized_target_authority": { "type": "boolean" },
+        "effect_attribution": { "type": "boolean" },
+        "journal_complete": { "type": "boolean" }
+      }
+    },
+    "independent_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict"],
+      "properties": {
+        "reviewer_actor_id": { "$ref": "#/$defs/token" },
+        "reviewer_process_id": { "$ref": "#/$defs/token" },
+        "verdict": { "enum": ["pass", "fail", "incomplete"] },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "outcome": { "enum": ["pass", "fail", "incomplete"] }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "outcome": { "const": "pass" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "scenario_results": {
+            "minItems": 14,
+            "contains": { "$ref": "#/$defs/passScenario" },
+            "minContains": 14
+          },
+          "fault_results": {
+            "minItems": 5,
+            "contains": { "$ref": "#/$defs/passFault" },
+            "minContains": 5
+          },
+          "ordered_trial": {
+            "properties": { "outcome": { "const": "pass" } },
+            "required": ["outcome"]
+          },
+          "focused_subtrial_summaries": {
+            "minItems": 8,
+            "contains": { "$ref": "#/$defs/passFocusedSummary" },
+            "minContains": 8
+          },
+          "mutant_results": {
+            "minItems": 19,
+            "contains": { "$ref": "#/$defs/passMutant" },
+            "minContains": 19
+          },
+          "invariant_summary": {
+            "properties": {
+              "one_valid_authority_per_work_revision": { "const": true },
+              "workspace_binding_immutable": { "const": true },
+              "stale_authority_refused": { "const": true },
+              "primary_isolation": { "const": true },
+              "reviewer_actor_independence": { "const": true },
+              "serialized_target_authority": { "const": true },
+              "effect_attribution": { "const": true },
+              "journal_complete": { "const": true }
+            }
+          },
+          "independent_review": {
+            "required": [
+              "reviewer_actor_id", "reviewer_process_id", "artifact_sha256"
+            ],
+            "properties": { "verdict": { "const": "pass" } }
+          },
+          "artifacts": { "minItems": 1 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "scenarioID": {
+      "enum": [
+        "data/get-put", "conditional/cas-delete", "batch/atomic",
+        "scan/sorted-prefix", "watch/registered-order",
+        "expiry/release-authority", "ack/memory-visible",
+        "ack/durable-restart", "inspect/authority", "authority/lease",
+        "authority/review", "authority/workflow", "authority/integration",
+        "response-loss/reconcile"
+      ]
+    },
+    "git": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "passScenario": {
+      "type": "object",
+      "properties": {
+        "started": { "const": true },
+        "terminal": { "const": true },
+        "outcome": { "const": "pass" }
+      },
+      "required": ["started", "terminal", "outcome"]
+    },
+    "passFault": {
+      "type": "object",
+      "properties": {
+        "started": { "const": true },
+        "terminal": { "const": true },
+        "outcome": { "const": "pass" }
+      },
+      "required": ["started", "terminal", "outcome"]
+    },
+    "passFocusedSummary": {
+      "type": "object",
+      "properties": {
+        "repetitions_started": { "type": "integer", "minimum": 100 },
+        "repetitions_terminal": { "type": "integer", "minimum": 100 },
+        "repetitions_passed": { "type": "integer", "minimum": 100 }
+      },
+      "required": [
+        "repetitions_started", "repetitions_terminal", "repetitions_passed"
+      ]
+    },
+    "passMutant": {
+      "type": "object",
+      "properties": { "outcome": { "const": "killed" } },
+      "required": ["outcome"]
+    },
+    "scenarioResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_id", "run_id", "seed", "started", "terminal",
+        "outcome", "artifact_sha256"
+      ],
+      "properties": {
+        "scenario_id": { "$ref": "#/$defs/scenarioID" },
+        "run_id": { "$ref": "#/$defs/token" },
+        "seed": { "type": "integer", "minimum": 0 },
+        "started": { "type": "boolean" },
+        "terminal": { "type": "boolean" },
+        "outcome": { "enum": ["pass", "fail", "incomplete"] },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "faultResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fault_id", "run_id", "seed", "cut", "started", "terminal",
+        "outcome", "artifact_sha256"
+      ],
+      "properties": {
+        "fault_id": { "enum": ["GJ-01", "GJ-02", "GJ-03", "GJ-04", "GJ-05"] },
+        "run_id": { "$ref": "#/$defs/token" },
+        "seed": { "type": "integer", "minimum": 0 },
+        "cut": { "type": "string", "minLength": 1 },
+        "started": { "type": "boolean" },
+        "terminal": { "type": "boolean" },
+        "outcome": { "enum": ["pass", "fail", "incomplete"] },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "focusedSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "run_id", "repetitions_started", "repetitions_terminal",
+        "repetitions_passed", "artifact_sha256"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/token" },
+        "run_id": { "$ref": "#/$defs/token" },
+        "repetitions_started": { "type": "integer", "minimum": 0 },
+        "repetitions_terminal": { "type": "integer", "minimum": 0 },
+        "repetitions_passed": { "type": "integer", "minimum": 0 },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "namedResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "run_id", "outcome", "artifact_sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/token" },
+        "run_id": { "$ref": "#/$defs/token" },
+        "outcome": { "enum": ["killed", "survived", "not_run"] },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "sha256", "size_bytes"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/token" },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

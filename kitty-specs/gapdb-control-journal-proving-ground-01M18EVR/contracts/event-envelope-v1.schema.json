@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/event-envelope-v1.schema.json",
+  "title": "Spec Kitty control-journal event envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "envelope_version", "event_type", "event_schema_version",
+    "reducer_version", "event_id", "operation_id", "project_id",
+    "aggregate_kind", "aggregate_id", "aggregate_logical_version",
+    "runtime_epoch_id",
+    "event_index", "event_count", "payload", "canonical_event_digest"
+  ],
+  "properties": {
+    "envelope_version": { "const": 1 },
+    "event_type": { "$ref": "#/$defs/token" },
+    "event_schema_version": { "type": "integer", "minimum": 1 },
+    "reducer_version": { "$ref": "#/$defs/token" },
+    "event_id": { "$ref": "#/$defs/token" },
+    "operation_id": { "$ref": "#/$defs/token" },
+    "project_id": { "$ref": "#/$defs/token" },
+    "aggregate_kind": { "$ref": "#/$defs/token" },
+    "aggregate_id": { "$ref": "#/$defs/token" },
+    "aggregate_logical_version": { "type": "integer", "minimum": 1 },
+    "runtime_epoch_id": { "$ref": "#/$defs/token" },
+    "event_index": { "type": "integer", "minimum": 0, "maximum": 127 },
+    "event_count": { "type": "integer", "minimum": 1, "maximum": 128 },
+    "work_revision_id": { "$ref": "#/$defs/token" },
+    "lease_id": { "$ref": "#/$defs/token" },
+    "lease_generation": { "type": "integer", "minimum": 1 },
+    "fence_token": { "type": "integer", "minimum": 1 },
+    "policy_revision": { "$ref": "#/$defs/token" },
+    "doctrine_revision": { "$ref": "#/$defs/token" },
+    "profile_revision": { "$ref": "#/$defs/token" },
+    "recorded_observations": { "type": "object" },
+    "payload": { "type": "object" },
+    "canonical_event_digest": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

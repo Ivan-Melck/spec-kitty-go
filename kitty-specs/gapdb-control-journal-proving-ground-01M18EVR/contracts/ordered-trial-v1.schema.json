@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/ordered-trial-v1.schema.json",
+  "title": "M1 FR-044 and SC-013 ordered torture trial v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "trial_id", "started", "terminal", "outcome"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "$ref": "#/$defs/token" },
+    "trial_id": { "const": "m1-ordered-torture-trial" },
+    "started": { "type": "boolean" },
+    "terminal": { "type": "boolean" },
+    "outcome": { "enum": ["pass", "fail", "incomplete"] },
+    "fr_044_satisfied": { "type": "boolean" },
+    "sc_013_satisfied": { "type": "boolean" },
+    "identities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "implementation_a": { "$ref": "#/$defs/participant" },
+        "implementation_b": { "$ref": "#/$defs/participant" },
+        "replacement_c": { "$ref": "#/$defs/participant" }
+      }
+    },
+    "workspace_isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "w1_quarantined": { "type": "boolean" },
+        "w2_preserved": { "type": "boolean" },
+        "w3_fresh": { "type": "boolean" },
+        "zombie_authority_successes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "owner_restart": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "same_umbrella_run": { "type": "boolean" },
+        "before_runtime_epoch_id": { "$ref": "#/$defs/token" },
+        "after_runtime_epoch_id": { "$ref": "#/$defs/token" },
+        "new_epoch_admitted": { "type": "boolean" }
+      }
+    },
+    "old_capsule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "predecessor_runtime_epoch_id": { "$ref": "#/$defs/token" },
+        "refused": { "type": "boolean" },
+        "reason_kind": { "type": "string", "minLength": 1 }
+      }
+    },
+    "restore_playback": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "restore_digest": { "$ref": "#/$defs/sha256" },
+        "playback_digest": { "$ref": "#/$defs/sha256" },
+        "digests_equal": { "type": "boolean" },
+        "playback_adapter_calls": { "type": "integer", "minimum": 0 },
+        "playback_durable_writes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "reviews": {
+      "type": "array",
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/review" }
+    },
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_ref": { "type": "string", "minLength": 1 },
+        "candidate_ids": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/token" }
+        },
+        "publication_order": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/token" }
+        },
+        "competing_attempts": { "type": "integer", "minimum": 0 },
+        "serialized": { "type": "boolean" },
+        "successful_publications": { "type": "integer", "minimum": 0 },
+        "false_completions": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "artifact_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "outcome": { "const": "pass" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "required": [
+          "fr_044_satisfied", "sc_013_satisfied", "identities",
+          "workspace_isolation", "owner_restart", "old_capsule",
+          "restore_playback", "reviews", "integration", "artifact_sha256"
+        ],
+        "properties": {
+          "started": { "const": true },
+          "terminal": { "const": true },
+          "fr_044_satisfied": { "const": true },
+          "sc_013_satisfied": { "const": true },
+          "identities": {
+            "required": [
+              "implementation_a", "implementation_b", "replacement_c"
+            ],
+            "properties": {
+              "implementation_a": {
+                "properties": {
+                  "actor_id": { "const": "A" },
+                  "process_id": { "const": "A" },
+                  "workspace_id": { "const": "W1" }
+                }
+              },
+              "implementation_b": {
+                "properties": {
+                  "actor_id": { "const": "B" },
+                  "process_id": { "const": "B" },
+                  "workspace_id": { "const": "W2" }
+                }
+              },
+              "replacement_c": {
+                "properties": {
+                  "actor_id": { "const": "A" },
+                  "process_id": { "const": "C" },
+                  "workspace_id": { "const": "W3" }
+                }
+              }
+            }
+          },
+          "workspace_isolation": {
+            "required": [
+              "w1_quarantined", "w2_preserved", "w3_fresh",
+              "zombie_authority_successes"
+            ],
+            "properties": {
+              "w1_quarantined": { "const": true },
+              "w2_preserved": { "const": true },
+              "w3_fresh": { "const": true },
+              "zombie_authority_successes": { "const": 0 }
+            }
+          },
+          "owner_restart": {
+            "required": [
+              "same_umbrella_run", "before_runtime_epoch_id",
+              "after_runtime_epoch_id", "new_epoch_admitted"
+            ],
+            "properties": {
+              "same_umbrella_run": { "const": true },
+              "new_epoch_admitted": { "const": true }
+            }
+          },
+          "old_capsule": {
+            "required": [
+              "predecessor_runtime_epoch_id", "refused", "reason_kind"
+            ],
+            "properties": {
+              "refused": { "const": true },
+              "reason_kind": { "const": "runtime_epoch_conflict" }
+            }
+          },
+          "restore_playback": {
+            "required": [
+              "restore_digest", "playback_digest", "digests_equal",
+              "playback_adapter_calls", "playback_durable_writes"
+            ],
+            "properties": {
+              "digests_equal": { "const": true },
+              "playback_adapter_calls": { "const": 0 },
+              "playback_durable_writes": { "const": 0 }
+            }
+          },
+          "reviews": {
+            "minItems": 2,
+            "contains": { "$ref": "#/$defs/passReview" },
+            "minContains": 2
+          },
+          "integration": {
+            "required": [
+              "target_ref", "candidate_ids", "publication_order",
+              "competing_attempts", "serialized",
+              "successful_publications", "false_completions"
+            ],
+            "properties": {
+              "candidate_ids": { "minItems": 2 },
+              "publication_order": { "minItems": 2 },
+              "competing_attempts": { "minimum": 2 },
+              "serialized": { "const": true },
+              "successful_publications": { "const": 2 },
+              "false_completions": { "const": 0 }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_id", "process_id", "workspace_id"],
+      "properties": {
+        "actor_id": { "$ref": "#/$defs/token" },
+        "process_id": { "$ref": "#/$defs/token" },
+        "workspace_id": { "$ref": "#/$defs/token" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id", "contributor_actor_ids", "reviewer_actor_id",
+        "actor_independent", "verdict"
+      ],
+      "properties": {
+        "candidate_id": { "$ref": "#/$defs/token" },
+        "contributor_actor_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/token" }
+        },
+        "reviewer_actor_id": { "$ref": "#/$defs/token" },
+        "actor_independent": { "type": "boolean" },
+        "verdict": { "enum": ["approved", "rejected", "incomplete"] }
+      }
+    },
+    "passReview": {
+      "type": "object",
+      "properties": {
+        "actor_independent": { "const": true },
+        "verdict": { "const": "approved" }
+      },
+      "required": ["actor_independent", "verdict"]
+    }
+  }
+}

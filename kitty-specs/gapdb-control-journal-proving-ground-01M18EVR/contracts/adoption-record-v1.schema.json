@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.local/contracts/adoption-record-v1.schema.json",
+  "title": "M1 human adoption record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "program_id", "mission_id", "decision",
+    "evidence_manifest_sha256", "admitted_tuple_sha256", "source_commit",
+    "source_tree", "sidecar_sha256", "signer", "rationale", "signed_at",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "program_id": { "const": "production-runtime" },
+    "mission_id": { "const": "M1" },
+    "decision": { "enum": ["adopt", "refuse"] },
+    "evidence_manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "admitted_tuple_sha256": {
+      "const": "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
+    },
+    "source_commit": { "$ref": "#/$defs/git" },
+    "source_tree": { "$ref": "#/$defs/git" },
+    "sidecar_sha256": { "$ref": "#/$defs/sha256" },
+    "signer": { "const": "github:lynncoleart" },
+    "rationale": { "type": "string", "minLength": 1 },
+    "signed_at": { "type": "string", "format": "date-time" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "enum": ["detached", "approved-local-reference"] },
+        "value": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "git": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}
