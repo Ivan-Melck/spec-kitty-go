@@ -15,9 +15,6 @@ requirement_refs:
 planning_base_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
 merge_target_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
 branch_strategy: Planning artifacts for this mission were generated on kitty/mission-gapdb-control-journal-proving-ground-01M18EVR. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into the mission branch; only the accepted mission may merge to main.
-base_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
-base_commit: 102020108e29fafdd99f9d2ed30cdbb5eb6ae937
-created_at: '2026-08-30T06:51:25.242494+00:00'
 subtasks:
 - T001
 - T002
