@@ -123,6 +123,11 @@ type Adapter struct {
 	client     provider
 	endpointID string
 	timeout    time.Duration
+	// wireSize is fixed to len by production construction. Keeping the
+	// measurement as an unexported seam lets boundary tests drive the otherwise
+	// unreachable 12 MiB clamp through AtomicBatch's publication path: the
+	// stricter 6 MiB raw limit keeps admitted JSON frames below that ceiling.
+	wireSize func([]byte) int
 }
 
 func New(client *gapdbapi.Client, endpoint string) (*Adapter, error) {
@@ -143,7 +148,10 @@ func newAdapter(client provider, endpoint string, timeout time.Duration) (*Adapt
 		return nil, adapterError("new", "", OutcomeInvalid, RecoveryFixRequest, "request timeout must be positive", nil)
 	}
 	digest := sha256.Sum256([]byte(endpoint))
-	return &Adapter{client: client, endpointID: hex.EncodeToString(digest[:]), timeout: timeout}, nil
+	return &Adapter{
+		client: client, endpointID: hex.EncodeToString(digest[:]), timeout: timeout,
+		wireSize: func(encoded []byte) int { return len(encoded) },
+	}, nil
 }
 
 func (a *Adapter) Get(ctx context.Context, key string) (Record, error) {
@@ -221,7 +229,7 @@ func (a *Adapter) AtomicBatch(ctx context.Context, batch ProductBatch) (Mutation
 	if err != nil {
 		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, "wire request cannot be encoded", err)
 	}
-	if err := validateWireFrameSize(len(encoded)); err != nil {
+	if err := validateWireFrameSize(a.wireSize(encoded)); err != nil {
 		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
 	}
 	ctx, cancel := a.requestContext(ctx)

@@ -89,6 +89,37 @@ func TestProviderBatchAndWireCeilingsAreInclusive(t *testing.T) {
 	}
 }
 
+func TestAtomicBatchWireBudgetGuardsThePublicationPath(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		measuredBytes int
+		wantCalls     int32
+		wantInvalid   bool
+	}{
+		{"exact", MaxWireFrameBytes, 1, false},
+		{"plus-one", MaxWireFrameBytes + 1, 0, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls atomic.Int32
+			provider := &fakeProvider{batchFn: func(_ context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+				calls.Add(1)
+				return gapdbapi.MutationResult{Revision: 1, Ack: gapdbapi.AckDurable, DurableThroughRevision: 1, MutationCount: len(batch.Mutations)}, nil
+			}}
+			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+			adapter.wireSize = func(encoded []byte) int {
+				if len(encoded) == 0 {
+					t.Fatal("publication path measured an empty wire frame")
+				}
+				return test.measuredBytes
+			}
+			_, err := adapter.AtomicBatch(context.Background(), minimalBatch())
+			if test.wantInvalid != IsKind(err, OutcomeInvalid) || calls.Load() != test.wantCalls {
+				t.Fatalf("measured=%d err=%v calls=%d want_calls=%d", test.measuredBytes, err, calls.Load(), test.wantCalls)
+			}
+		})
+	}
+}
+
 func TestBatchRequiresRoleSpecificConditions(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -188,8 +219,16 @@ func TestBatchRawAndWireBudgets(t *testing.T) {
 		return gapdbapi.MutationResult{Revision: 1, Ack: gapdbapi.AckDurable, DurableThroughRevision: 1, MutationCount: len(encoded.Mutations)}, nil
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	actualWireBytes := 0
+	adapter.wireSize = func(encoded []byte) int {
+		actualWireBytes = len(encoded)
+		return actualWireBytes
+	}
 	if _, err := adapter.AtomicBatch(context.Background(), batch); err != nil {
 		t.Fatalf("exact raw/wire budget rejected: %v", err)
+	}
+	if actualWireBytes == 0 || actualWireBytes >= MaxWireFrameBytes {
+		t.Fatalf("admitted codec implication failed: raw=%d wire=%d maximum=%d", MaxRawBatchBytes, actualWireBytes, MaxWireFrameBytes)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("exact boundary provider calls=%d", calls.Load())
