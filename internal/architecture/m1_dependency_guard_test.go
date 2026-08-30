@@ -671,25 +671,18 @@ func ReduceRaw(events RawEvents) { _ = events }
 			kind: "journal-at-method",
 		},
 		{
-			name: "alternate-cursor-capability-producer",
+			name: "extra-exported-capability-accessor",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func ForgeCursor(journal ValidatedJournalV1) (JournalCursorV1, error) { return journal.CursorV1() }")
+				return appendM1Fixture(files, "func (journal *ValidatedJournalV1) CursorV1() ValidatedJournalV1 { return *journal }")
 			},
-			kind: "journal-capability-producer",
+			kind: "journal-capability-method-set",
 		},
 		{
-			name: "alternate-cursor-method-producer",
+			name: "alternate-exported-capability-producer",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func (journal ValidatedJournalV1) OtherCursor() (JournalCursorV1, error) { return journal.CursorV1() }")
+				return appendM1Fixture(files, "type JournalCursorV1 struct { journal ValidatedJournalV1 }; func ForgeCursor(journal ValidatedJournalV1) JournalCursorV1 { return JournalCursorV1{journal: journal} }")
 			},
 			kind: "journal-capability-producer",
-		},
-		{
-			name: "cursor-extra-method",
-			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func (cursor *JournalCursorV1) PeekV1() (StoredEventV1, bool, error) { return StoredEventV1{}, false, nil }")
-			},
-			kind: "journal-cursor-next",
 		},
 	}
 
@@ -853,16 +846,6 @@ type ValidatedJournalV1 struct {
 	seal validationSealV1
 	records []StoredEventV1
 }
-type journalCursorSealV1 struct {
-	version uint8
-	journalDigest [32]byte
-	recordCount uint64
-}
-type JournalCursorV1 struct {
-	seal journalCursorSealV1
-	journal ValidatedJournalV1
-	index int
-}
 type InvalidValidatedJournalError struct{}
 `),
 		},
@@ -890,14 +873,6 @@ func (journal ValidatedJournalV1) Len() (int, error) {
 func (journal ValidatedJournalV1) At(index int) (StoredEventV1, error) {
 	_, _ = journal, index
 	return StoredEventV1{}, &InvalidValidatedJournalError{}
-}
-func (journal ValidatedJournalV1) CursorV1() (JournalCursorV1, error) {
-	_ = journal
-	return JournalCursorV1{}, &InvalidValidatedJournalError{}
-}
-func (cursor *JournalCursorV1) NextV1() (StoredEventV1, bool, error) {
-	_ = cursor
-	return StoredEventV1{}, false, &InvalidValidatedJournalError{}
 }
 `),
 		},
@@ -1093,7 +1068,7 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 	violations = append(violations, typeErrors.violations...)
 	if pkg == nil {
 		violations = append(violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: "journal-contract-missing", Detail: "root package cannot be type checked"})
-		return append(violations, inspectM1JournalCompetitors(parsed, nil, nil, nil, nil)...)
+		return append(violations, inspectM1JournalCompetitors(parsed, nil, nil, nil)...)
 	}
 	violations = append(violations, m1ResolveJournalPackageTypes(fset, parsed, pkg, rootInfo)...)
 
@@ -1143,34 +1118,19 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 		m1RequireFunction(pkg, "ValidateJournalV1", []types.Type{registry, types.NewSlice(stored)}, []types.Type{validated, errorType}, "journal-validator", &violations)
 		m1RequireMethod(validated, "Len", nil, []types.Type{types.Typ[types.Int], errorType}, "journal-len-method", &violations)
 		m1RequireMethod(validated, "At", []types.Type{types.Typ[types.Int]}, []types.Type{stored, errorType}, "journal-at-method", &violations)
-	}
-	validator := m1ExactValidatorFunction(pkg, registry, stored, validated)
-	cursorSeal := m1RequireNamedStruct(pkg, "journalCursorSealV1", "journal-cursor-seal", &violations)
-	if cursorSeal != nil {
-		m1RequireExactStructFields(cursorSeal, []m1ExpectedField{
-			{name: "version", typ: types.Typ[types.Uint8]},
-			{name: "journalDigest", typ: types.NewArray(types.Typ[types.Byte], 32)},
-			{name: "recordCount", typ: types.Typ[types.Uint64]},
-		}, "journal-cursor-seal", &violations)
-	}
-	cursor := m1RequireNamedStruct(pkg, "JournalCursorV1", "journal-cursor", &violations)
-	if cursor != nil && cursorSeal != nil && validated != nil {
-		m1RequireExactStructFields(cursor, []m1ExpectedField{
-			{name: "seal", typ: cursorSeal},
-			{name: "journal", typ: validated},
-			{name: "index", typ: types.Typ[types.Int]},
-		}, "journal-cursor", &violations)
-	}
-	if validated != nil && cursor != nil {
-		m1RequireMethod(validated, "CursorV1", nil, []types.Type{cursor, errorType}, "journal-cursor-mint", &violations)
-	}
-	if cursor != nil && stored != nil {
-		m1RequirePointerMethod(cursor, "NextV1", nil, []types.Type{stored, types.Typ[types.Bool], errorType}, "journal-cursor-next", &violations)
-		if methods := types.NewMethodSet(types.NewPointer(cursor)); methods.Len() != 1 {
-			violations = append(violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: "journal-cursor-next", Detail: "JournalCursorV1 exposes more than exact NextV1 traversal"})
+		methods := types.NewMethodSet(types.NewPointer(validated))
+		exportedMethods := 0
+		for index := 0; index < methods.Len(); index++ {
+			if methods.At(index).Obj().Exported() {
+				exportedMethods++
+			}
+		}
+		if exportedMethods != 2 {
+			violations = append(violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: "journal-capability-method-set", Detail: "ValidatedJournalV1 must expose only exact Len and At accessors"})
 		}
 	}
-	violations = append(violations, inspectM1JournalCompetitors(parsed, stored, validated, cursor, validator)...)
+	validator := m1ExactValidatorFunction(pkg, registry, stored, validated)
+	violations = append(violations, inspectM1JournalCompetitors(parsed, stored, validated, validator)...)
 	return violations
 }
 
@@ -1441,24 +1401,6 @@ func m1RequireMethod(receiver *types.Named, name string, parameters, results []t
 	}
 }
 
-func m1RequirePointerMethod(receiver *types.Named, name string, parameters, results []types.Type, kind string, violations *[]m1ArchitectureViolation) {
-	pointer := types.NewPointer(receiver)
-	selection := types.NewMethodSet(pointer).Lookup(nil, name)
-	if selection == nil {
-		*violations = append(*violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: kind, Detail: "missing exact pointer method " + name})
-		return
-	}
-	function, ok := selection.Obj().(*types.Func)
-	if !ok {
-		*violations = append(*violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: kind, Detail: name + " is not a method"})
-		return
-	}
-	signature := function.Type().(*types.Signature)
-	if signature.Variadic() || signature.Recv() == nil || !types.Identical(signature.Recv().Type(), pointer) || !m1TupleMatches(signature.Params(), parameters) || !m1TupleMatches(signature.Results(), results) {
-		*violations = append(*violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: kind, Detail: name + " does not have the exact frozen pointer-method signature"})
-	}
-}
-
 func m1TupleMatches(tuple *types.Tuple, expected []types.Type) bool {
 	if tuple.Len() != len(expected) {
 		return false
@@ -1471,12 +1413,12 @@ func m1TupleMatches(tuple *types.Tuple, expected []types.Type) bool {
 	return true
 }
 
-func inspectM1JournalCompetitors(files []m1ParsedJournalFile, stored, validated, cursor *types.Named, validator *types.Func) []m1ArchitectureViolation {
+func inspectM1JournalCompetitors(files []m1ParsedJournalFile, stored, validated *types.Named, validator *types.Func) []m1ArchitectureViolation {
 	var violations []m1ArchitectureViolation
 	for _, parsed := range files {
 		root := filepath.ToSlash(filepath.Dir(parsed.source.Path)) == "internal/controljournal" && parsed.file.Name.Name == "controljournal"
 		violations = append(violations, m1RecordRevisionOwnerViolations(parsed, root)...)
-		violations = append(violations, m1CallableAuthorityViolations(parsed, stored, validated, cursor, validator)...)
+		violations = append(violations, m1CallableAuthorityViolations(parsed, stored, validated, validator)...)
 		violations = append(violations, m1ValidatorRebindingViolations(parsed, validator)...)
 		for _, declaration := range parsed.file.Decls {
 			generic, ok := declaration.(*ast.GenDecl)
@@ -1520,7 +1462,7 @@ func m1TypeIsExactValidatedReference(typ types.Type, validated *types.Named) boo
 	return types.Identical(typ, validated)
 }
 
-func m1CallableAuthorityViolations(parsed m1ParsedJournalFile, stored, validated, cursor *types.Named, validator *types.Func) []m1ArchitectureViolation {
+func m1CallableAuthorityViolations(parsed m1ParsedJournalFile, stored, validated *types.Named, validator *types.Func) []m1ArchitectureViolation {
 	if parsed.info == nil || stored == nil || validated == nil {
 		return nil
 	}
@@ -1542,11 +1484,7 @@ func m1CallableAuthorityViolations(parsed m1ParsedJournalFile, stored, validated
 		if signature == nil {
 			return true
 		}
-		var function *types.Func
-		if isDeclaration {
-			function, _ = parsed.info.Defs[declaration.Name].(*types.Func)
-		}
-		authoritative := isDeclaration && (validator != nil && function == validator || m1IsExactCursorMint(function, validated, cursor))
+		authoritative := isDeclaration && validator != nil && parsed.info.Defs[declaration.Name] == validator
 		if authoritative {
 			return true
 		}
@@ -1565,19 +1503,6 @@ func m1CallableAuthorityViolations(parsed m1ParsedJournalFile, stored, validated
 		}
 	}
 	return violations
-}
-
-func m1IsExactCursorMint(function *types.Func, validated, cursor *types.Named) bool {
-	if function == nil || validated == nil || cursor == nil || function.Name() != "CursorV1" {
-		return false
-	}
-	signature, _ := function.Type().(*types.Signature)
-	if signature == nil || signature.Recv() == nil || !types.Identical(signature.Recv().Type(), validated) ||
-		signature.Params().Len() != 0 || signature.Results().Len() != 2 {
-		return false
-	}
-	return types.Identical(signature.Results().At(0).Type(), cursor) &&
-		types.Identical(signature.Results().At(1).Type(), types.Universe.Lookup("error").Type())
 }
 
 func m1CallableSignature(typ types.Type) *types.Signature {

@@ -1,7 +1,13 @@
 package checkpoint
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -96,10 +102,7 @@ type checkpointFixture struct {
 func buildFixture(t *testing.T, records []controljournal.StoredEventV1, aggregates []AggregateSnapshotV1, checkpointID string) checkpointFixture {
 	t.Helper()
 	journal := testJournal(t, records...)
-	watermark, err := journalWatermark(journal, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	watermark := fixtureWatermark(t, records)
 	authority := testAuthority()
 	authority.DurableRevision = watermark.ThroughRecordRevision
 	result, err := BuildV1(BuildInputV1{CheckpointID: CheckpointID(checkpointID), Source: testSource(t), PriorPrefix: journal, EventRegistry: testEventRegistry(t), Reducers: testReducers(t), Watermark: watermark, Aggregates: aggregates, Authority: authority, FormingBatchOperation: "forming-operation"})
@@ -121,12 +124,48 @@ func buildFixture(t *testing.T, records []controljournal.StoredEventV1, aggregat
 	return checkpointFixture{Capability: result, Record: record, Head: head, RecordBytes: publication.RecordBytes, HeadBytes: publication.HeadBytes}
 }
 
+func fixtureWatermark(t *testing.T, records []controljournal.StoredEventV1) WatermarkV1 {
+	t.Helper()
+	ordered := append([]controljournal.StoredEventV1(nil), records...)
+	sort.Slice(ordered, func(left, right int) bool {
+		if ordered[left].RecordRevision != ordered[right].RecordRevision {
+			return ordered[left].RecordRevision < ordered[right].RecordRevision
+		}
+		if ordered[left].Envelope.EventIndex != ordered[right].Envelope.EventIndex {
+			return ordered[left].Envelope.EventIndex < ordered[right].Envelope.EventIndex
+		}
+		return ordered[left].Envelope.EventID < ordered[right].Envelope.EventID
+	})
+	digest := [32]byte{}
+	for _, record := range ordered {
+		encoded, err := controljournal.EncodeEventEnvelopeV1(record.Envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var folded bytes.Buffer
+		folded.Write(digest[:])
+		var revision [8]byte
+		binary.BigEndian.PutUint64(revision[:], record.RecordRevision)
+		folded.Write(revision[:])
+		var size [8]byte
+		binary.BigEndian.PutUint64(size[:], uint64(len(encoded)))
+		folded.Write(size[:])
+		folded.Write(encoded)
+		digest = sha256.Sum256(folded.Bytes())
+	}
+	if len(ordered) == 0 {
+		return WatermarkV1{}
+	}
+	last := ordered[len(ordered)-1]
+	return WatermarkV1{ThroughRecordRevision: last.RecordRevision, ThroughEventID: last.Envelope.EventID, EventCount: uint64(len(ordered)), EventPrefixDigest: digest}
+}
+
 func TestCheckpointCanonicalBytesStableAcrossAggregateOrder(t *testing.T) {
 	records := []controljournal.StoredEventV1{
-		testStoredEvent(t, 7, "event-a", "operation-a", "aggregate-a", 1, 0, 1, `{"value":1}`),
+		testStoredEvent(t, 7, "event-a", "operation-a", "aggregate-a", 1, 0, 1, `{"zeta":2,"alpha":1}`),
 		testStoredEvent(t, 8, "event-b", "operation-b", "aggregate-b", 1, 0, 1, `{"value":2}`),
 	}
-	a := snapshot(t, "aggregate-a", 1, "event-a", `{"value":1}`)
+	a := snapshot(t, "aggregate-a", 1, "event-a", `{"zeta":2,"alpha":1}`)
 	b := snapshot(t, "aggregate-b", 1, "event-b", `{"value":2}`)
 	left := buildFixture(t, records, []AggregateSnapshotV1{a, b}, "checkpoint-1")
 	right := buildFixture(t, records, []AggregateSnapshotV1{b, a}, "checkpoint-1")
@@ -141,6 +180,160 @@ func TestCheckpointCanonicalBytesStableAcrossAggregateOrder(t *testing.T) {
 	if err != nil || string(encoded) != string(left.RecordBytes) {
 		t.Fatalf("checkpoint round trip drift err=%v", err)
 	}
+	for _, wire := range []reflect.Type{
+		reflect.TypeOf(checkpointWireV1{}), reflect.TypeOf(checkpointProjectionV1{}),
+		reflect.TypeOf(aggregateWireV1{}), reflect.TypeOf(authorityWireV1{}),
+		reflect.TypeOf(checkpointHeadWireV1{}),
+	} {
+		assertJSONFieldOrder(t, wire)
+	}
+	keys := checkpointObjectKeys(t, left.RecordBytes)
+	sorted := append([]string(nil), keys...)
+	sort.Strings(sorted)
+	if !reflect.DeepEqual(keys, sorted) {
+		t.Fatalf("checkpoint encoding keys are not lexicographic: %v", keys)
+	}
+}
+
+func TestCheckpointDecodeRejectsEveryNoncanonicalObjectSpelling(t *testing.T) {
+	record := testStoredEvent(t, 7, "event-a", "operation-a", "aggregate-a", 1, 0, 1, `{"zeta":2,"alpha":1}`)
+	fixture := buildFixture(t, []controljournal.StoredEventV1{record}, []AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"zeta":2,"alpha":1}`)}, "checkpoint-canonical")
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(fixture.RecordBytes, &top); err != nil {
+		t.Fatal(err)
+	}
+	topKeys := checkpointObjectKeys(t, fixture.RecordBytes)
+	reversedTop := reverseStrings(topKeys)
+
+	var projection map[string]json.RawMessage
+	if err := json.Unmarshal(top["projection"], &projection); err != nil {
+		t.Fatal(err)
+	}
+	projectionKeys := checkpointObjectKeys(t, top["projection"])
+	projectionReordered := cloneRawMap(projection)
+	topProjectionReordered := cloneRawMap(top)
+	topProjectionReordered["projection"] = marshalCheckpointRawObject(t, projectionReordered, reverseStrings(projectionKeys))
+
+	var aggregates []map[string]json.RawMessage
+	if err := json.Unmarshal(projection["aggregates"], &aggregates); err != nil || len(aggregates) != 1 {
+		t.Fatalf("aggregates=%d err=%v", len(aggregates), err)
+	}
+	stateKeys := checkpointObjectKeys(t, aggregates[0]["state"])
+	stateReordered := cloneRawMap(aggregates[0])
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(stateReordered["state"], &state); err != nil {
+		t.Fatal(err)
+	}
+	stateReordered["state"] = marshalCheckpointRawObject(t, state, reverseStrings(stateKeys))
+
+	withAggregate := func(aggregate map[string]json.RawMessage) []byte {
+		aggregateKeys := checkpointObjectKeys(t, mustMarshalJSON(t, aggregates[0]))
+		projectionCopy := cloneRawMap(projection)
+		projectionCopy["aggregates"] = mustMarshalJSON(t, []json.RawMessage{marshalCheckpointRawObject(t, aggregate, aggregateKeys)})
+		topCopy := cloneRawMap(top)
+		topCopy["projection"] = marshalCheckpointRawObject(t, projectionCopy, projectionKeys)
+		return marshalCheckpointRawObject(t, topCopy, topKeys)
+	}
+
+	mutants := map[string][]byte{
+		"top-level reordered":  marshalCheckpointRawObject(t, top, reversedTop),
+		"top-level whitespace": append([]byte(" "), fixture.RecordBytes...),
+		"top-level duplicate":  append([]byte(`{"canonical_projection_digest":"00",`), fixture.RecordBytes[1:]...),
+		"trailing whitespace":  append(append([]byte(nil), fixture.RecordBytes...), ' '),
+		"nested projection":    marshalCheckpointRawObject(t, topProjectionReordered, topKeys),
+		"nested state order":   withAggregate(stateReordered),
+		"nested state spacing": bytes.Replace(fixture.RecordBytes, []byte(`"alpha":1,"zeta":2`), []byte(`"alpha":1, "zeta":2`), 1),
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if bytes.Equal(mutant, fixture.RecordBytes) {
+				t.Fatal("canonical mutant setup did not change bytes")
+			}
+			if _, err := DecodeRecordV1(mutant); err == nil {
+				t.Fatal("accepted noncanonical checkpoint bytes")
+			}
+		})
+	}
+}
+
+func assertJSONFieldOrder(t *testing.T, wire reflect.Type) {
+	t.Helper()
+	fields := make([]string, wire.NumField())
+	for index := range fields {
+		fields[index] = wire.Field(index).Tag.Get("json")
+	}
+	sorted := append([]string(nil), fields...)
+	sort.Strings(sorted)
+	if !reflect.DeepEqual(fields, sorted) {
+		t.Fatalf("%s JSON fields are not lexicographic: %v", wire.Name(), fields)
+	}
+}
+
+func checkpointObjectKeys(t *testing.T, encoded []byte) []string {
+	t.Helper()
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &values); err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(values))
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	if _, err := decoder.Token(); err != nil {
+		t.Fatal(err)
+	}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, key.(string))
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return keys
+}
+
+func marshalCheckpointRawObject(t *testing.T, values map[string]json.RawMessage, order []string) []byte {
+	t.Helper()
+	var encoded bytes.Buffer
+	encoded.WriteByte('{')
+	for index, key := range order {
+		if index > 0 {
+			encoded.WriteByte(',')
+		}
+		keyBytes, _ := json.Marshal(key)
+		encoded.Write(keyBytes)
+		encoded.WriteByte(':')
+		encoded.Write(values[key])
+	}
+	encoded.WriteByte('}')
+	return encoded.Bytes()
+}
+
+func cloneRawMap(value map[string]json.RawMessage) map[string]json.RawMessage {
+	cloned := make(map[string]json.RawMessage, len(value))
+	for key, raw := range value {
+		cloned[key] = append([]byte(nil), raw...)
+	}
+	return cloned
+}
+
+func reverseStrings(value []string) []string {
+	reversed := append([]string(nil), value...)
+	for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
+		reversed[left], reversed[right] = reversed[right], reversed[left]
+	}
+	return reversed
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func TestCheckpointRejectsCurrentBatchAndNonterminalWatermark(t *testing.T) {

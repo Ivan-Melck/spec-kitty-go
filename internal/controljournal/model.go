@@ -503,21 +503,6 @@ type ValidatedJournalV1 struct {
 	records []StoredEventV1
 }
 
-type journalCursorSealV1 struct {
-	version       uint8
-	journalDigest [32]byte
-	recordCount   uint64
-}
-
-// JournalCursorV1 is a sealed, read-only traversal minted only after one full
-// journal capability verification. It prevents O(n²) repeated hashing while
-// retaining copy-on-access event publication and no raw slice authority.
-type JournalCursorV1 struct {
-	seal    journalCursorSealV1
-	journal ValidatedJournalV1
-	index   int
-}
-
 type InvalidValidatedJournalError struct{}
 
 func (InvalidValidatedJournalError) Error() string { return "invalid validated journal" }
@@ -631,36 +616,6 @@ func (journal ValidatedJournalV1) At(index int) (StoredEventV1, error) {
 	return record, nil
 }
 
-func (journal ValidatedJournalV1) CursorV1() (JournalCursorV1, error) {
-	if !journal.isValid() {
-		return JournalCursorV1{}, InvalidValidatedJournalError{}
-	}
-	records := make([]StoredEventV1, len(journal.records))
-	for index, record := range journal.records {
-		records[index] = StoredEventV1{RecordRevision: record.RecordRevision, Envelope: record.Envelope.clone()}
-	}
-	cloned := ValidatedJournalV1{seal: journal.seal, records: records}
-	return JournalCursorV1{
-		seal:    journalCursorSealV1{version: 1, journalDigest: journal.seal.digest, recordCount: uint64(len(records))},
-		journal: cloned,
-	}, nil
-}
-
-func (cursor *JournalCursorV1) NextV1() (StoredEventV1, bool, error) {
-	if cursor == nil || cursor.seal.version != 1 || cursor.seal.journalDigest == [32]byte{} ||
-		cursor.journal.seal.version != 1 || cursor.journal.seal.digest != cursor.seal.journalDigest ||
-		cursor.seal.recordCount != uint64(len(cursor.journal.records)) || cursor.index < 0 || cursor.index > len(cursor.journal.records) {
-		return StoredEventV1{}, false, InvalidValidatedJournalError{}
-	}
-	if cursor.index == len(cursor.journal.records) {
-		return StoredEventV1{}, false, nil
-	}
-	record := cursor.journal.records[cursor.index]
-	cursor.index++
-	record.Envelope = record.Envelope.clone()
-	return record, true, nil
-}
-
 func (journal ValidatedJournalV1) isValid() bool {
 	if journal.seal.version != 1 || journal.seal.digest == [32]byte{} {
 		return false
@@ -670,28 +625,52 @@ func (journal ValidatedJournalV1) isValid() bool {
 }
 
 func (journal ValidatedJournalV1) contentDigest() ([32]byte, error) {
-	var encoded bytes.Buffer
+	encoded := sha256.New()
+	recordBytes := appendJournalSealUint64(make([]byte, 0, 512), uint64(len(journal.records)))
+	_, _ = encoded.Write(recordBytes)
 	for _, record := range journal.records {
-		if record.RecordRevision == 0 {
-			return [32]byte{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "record_revision"}
-		}
-		if err := record.Envelope.validate(); err != nil {
-			return [32]byte{}, err
-		}
-		unsigned, err := record.Envelope.canonicalBytes(false)
-		if err != nil || sha256.Sum256(unsigned) != record.Envelope.digest {
-			return [32]byte{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "canonical_event_digest"}
-		}
-		var revision [8]byte
-		binary.BigEndian.PutUint64(revision[:], record.RecordRevision)
-		encoded.Write(revision[:])
-		payload, err := record.Envelope.canonicalBytes(true)
-		if err != nil {
-			return [32]byte{}, err
-		}
-		writeLengthPrefixed(&encoded, payload)
+		recordBytes = recordBytes[:0]
+		event := record.Envelope
+		recordBytes = appendJournalSealUint64(recordBytes, record.RecordRevision)
+		recordBytes = appendJournalSealUint64(recordBytes, uint64(event.EnvelopeVersion))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.EventID))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.EventType))
+		recordBytes = appendJournalSealUint64(recordBytes, uint64(event.EventSchemaVersion))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.ReducerVersion))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.ProjectID))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.AggregateKind))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.AggregateID))
+		recordBytes = appendJournalSealUint64(recordBytes, event.AggregateLogicalVersion)
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.OperationID))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.RuntimeEpochID))
+		recordBytes = appendJournalSealUint64(recordBytes, uint64(event.EventIndex))
+		recordBytes = appendJournalSealUint64(recordBytes, uint64(event.EventCount))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.WorkRevisionID))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.LeaseID))
+		recordBytes = appendJournalSealUint64(recordBytes, event.LeaseGeneration)
+		recordBytes = appendJournalSealUint64(recordBytes, event.FenceToken)
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.PolicyRevision))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.DoctrineRevision))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.ProfileRevision))
+		recordBytes = appendJournalSealBytes(recordBytes, event.recordedObservations)
+		recordBytes = appendJournalSealBytes(recordBytes, event.payload)
+		recordBytes = appendJournalSealBytes(recordBytes, event.digest[:])
+		_, _ = encoded.Write(recordBytes)
 	}
-	return sha256.Sum256(encoded.Bytes()), nil
+	var digest [32]byte
+	copy(digest[:], encoded.Sum(nil))
+	return digest, nil
+}
+
+func appendJournalSealUint64(encoded []byte, value uint64) []byte {
+	var binaryValue [8]byte
+	binary.BigEndian.PutUint64(binaryValue[:], value)
+	return appendJournalSealBytes(encoded, binaryValue[:])
+}
+
+func appendJournalSealBytes(encoded, value []byte) []byte {
+	encoded = binary.BigEndian.AppendUint64(encoded, uint64(len(value)))
+	return append(encoded, value...)
 }
 
 func writeLengthPrefixed(buffer *bytes.Buffer, value []byte) {

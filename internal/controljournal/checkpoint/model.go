@@ -4,6 +4,7 @@
 package checkpoint
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -121,20 +122,20 @@ func (e NotReadyErrorV1) Error() string {
 }
 
 type checkpointWireV1 struct {
-	SchemaVersion             uint32                 `json:"schema_version"`
+	CanonicalProjectionDigest string                 `json:"canonical_projection_digest"`
 	CheckpointID              string                 `json:"checkpoint_id"`
-	ReducerSetDigest          string                 `json:"reducer_set_digest"`
-	EventSchemaSetDigest      string                 `json:"event_schema_set_digest"`
-	ProjectID                 string                 `json:"project_id"`
-	MissionID                 string                 `json:"mission_id"`
-	ThroughRecordRevision     uint64                 `json:"through_record_revision"`
-	ThroughEventID            string                 `json:"through_event_id"`
+	Codec                     string                 `json:"codec"`
 	EventCount                uint64                 `json:"event_count"`
 	EventPrefixDigest         string                 `json:"event_prefix_digest"`
-	CanonicalProjectionDigest string                 `json:"canonical_projection_digest"`
-	UncompressedSize          uint64                 `json:"uncompressed_size"`
-	Codec                     string                 `json:"codec"`
+	EventSchemaSetDigest      string                 `json:"event_schema_set_digest"`
+	MissionID                 string                 `json:"mission_id"`
+	ProjectID                 string                 `json:"project_id"`
 	Projection                checkpointProjectionV1 `json:"projection"`
+	ReducerSetDigest          string                 `json:"reducer_set_digest"`
+	SchemaVersion             uint32                 `json:"schema_version"`
+	ThroughEventID            string                 `json:"through_event_id"`
+	ThroughRecordRevision     uint64                 `json:"through_record_revision"`
+	UncompressedSize          uint64                 `json:"uncompressed_size"`
 }
 
 type checkpointProjectionV1 struct {
@@ -217,7 +218,7 @@ func projectionFromAggregates(aggregates []AggregateSnapshotV1) (reducer.Project
 			return reducer.ProjectionV1{}, err
 		}
 		state, err := reducer.NewStateV1(aggregate.State)
-		if err != nil || state.Digest() != aggregate.StateDigest {
+		if err != nil || !bytes.Equal(state.CanonicalBytes(), aggregate.State) || state.Digest() != aggregate.StateDigest {
 			return reducer.ProjectionV1{}, controljournal.ValidationError{Kind: controljournal.RefusalJournalCorrupt, Field: "checkpoint_state_digest"}
 		}
 		key := reducer.AggregateKeyV1{Kind: aggregate.Kind, ID: aggregate.ID}

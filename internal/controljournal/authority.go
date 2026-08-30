@@ -25,19 +25,19 @@ type AuthorityCapsuleV1 struct {
 }
 
 type authorityCapsuleWireV1 struct {
-	SchemaVersion               uint32 `json:"schema_version"`
-	ProjectID                   string `json:"project_id"`
-	MissionID                   string `json:"mission_id"`
-	WorkRevisionID              string `json:"work_revision_id"`
 	ActorID                     string `json:"actor_id"`
-	ProcessID                   string `json:"process_id"`
-	RunID                       string `json:"run_id"`
-	LeaseID                     string `json:"lease_id"`
-	WorkspaceID                 string `json:"workspace_id"`
-	RuntimeEpochID              string `json:"runtime_epoch_id"`
-	LeaseGeneration             uint64 `json:"lease_generation"`
-	FenceToken                  uint64 `json:"fence_token"`
 	AuthorityHeadRecordRevision uint64 `json:"authority_head_record_revision"`
+	FenceToken                  uint64 `json:"fence_token"`
+	LeaseGeneration             uint64 `json:"lease_generation"`
+	LeaseID                     string `json:"lease_id"`
+	MissionID                   string `json:"mission_id"`
+	ProcessID                   string `json:"process_id"`
+	ProjectID                   string `json:"project_id"`
+	RunID                       string `json:"run_id"`
+	RuntimeEpochID              string `json:"runtime_epoch_id"`
+	SchemaVersion               uint32 `json:"schema_version"`
+	WorkRevisionID              string `json:"work_revision_id"`
+	WorkspaceID                 string `json:"workspace_id"`
 }
 
 // NewAuthorityCapsuleV1 validates every coordinate before the capsule can be
@@ -100,7 +100,7 @@ func DecodeAuthorityCapsuleV1(encoded []byte) (AuthorityCapsuleV1, error) {
 	if err := decoder.Decode(&wire); err != nil {
 		return AuthorityCapsuleV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "authority_capsule"}
 	}
-	return NewAuthorityCapsuleV1(AuthorityCapsuleV1{
+	capsule, err := NewAuthorityCapsuleV1(AuthorityCapsuleV1{
 		SchemaVersion: wire.SchemaVersion, ProjectID: ProjectID(wire.ProjectID),
 		MissionID: MissionID(wire.MissionID), WorkRevisionID: WorkRevisionID(wire.WorkRevisionID),
 		ActorID: ActorID(wire.ActorID), ProcessID: ProcessID(wire.ProcessID),
@@ -109,4 +109,12 @@ func DecodeAuthorityCapsuleV1(encoded []byte) (AuthorityCapsuleV1, error) {
 		LeaseGeneration: wire.LeaseGeneration, FenceToken: wire.FenceToken,
 		AuthorityHeadRecordRevision: wire.AuthorityHeadRecordRevision,
 	})
+	if err != nil {
+		return AuthorityCapsuleV1{}, err
+	}
+	reencoded, err := EncodeAuthorityCapsuleV1(capsule)
+	if err != nil || !bytes.Equal(encoded, reencoded) {
+		return AuthorityCapsuleV1{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "authority_capsule_canonical_bytes"}
+	}
+	return capsule, nil
 }

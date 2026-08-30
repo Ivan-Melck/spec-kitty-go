@@ -3,7 +3,12 @@ package controljournal
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"sort"
 	"testing"
 )
 
@@ -18,18 +23,54 @@ func validAuthorityCapsule() AuthorityCapsuleV1 {
 }
 
 func TestAuthorityCapsuleFrozenThirteenFieldContract(t *testing.T) {
-	typeOf := reflect.TypeOf(AuthorityCapsuleV1{})
-	expected := []string{
-		"SchemaVersion", "ProjectID", "MissionID", "WorkRevisionID", "ActorID",
-		"ProcessID", "RunID", "LeaseID", "WorkspaceID", "RuntimeEpochID",
-		"LeaseGeneration", "FenceToken", "AuthorityHeadRecordRevision",
+	_, current, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("authority test path unavailable")
 	}
-	if typeOf.NumField() != len(expected) {
-		t.Fatalf("authority capsule field count=%d want=%d", typeOf.NumField(), len(expected))
+	encoded, err := os.ReadFile(filepath.Join(filepath.Dir(current), "..", "..", "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts", "authority-capsule-v1.schema.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for index, name := range expected {
-		if typeOf.Field(index).Name != name {
-			t.Fatalf("authority capsule field %d=%s want=%s", index, typeOf.Field(index).Name, name)
+	var schema struct {
+		AdditionalProperties *bool                      `json:"additionalProperties"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+		Required             []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(encoded, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema.AdditionalProperties == nil || *schema.AdditionalProperties || len(schema.Properties) != 13 || len(schema.Required) != len(schema.Properties) {
+		t.Fatalf("authority schema is not a closed thirteen-field object: %+v", schema)
+	}
+	schemaProperties := make([]string, 0, len(schema.Properties))
+	for name := range schema.Properties {
+		schemaProperties = append(schemaProperties, name)
+	}
+	sort.Strings(schemaProperties)
+	required := append([]string(nil), schema.Required...)
+	sort.Strings(required)
+	if !reflect.DeepEqual(required, schemaProperties) {
+		t.Fatalf("authority schema required/property drift required=%v properties=%v", required, schemaProperties)
+	}
+	wireType := reflect.TypeOf(authorityCapsuleWireV1{})
+	wireProperties := make([]string, wireType.NumField())
+	for index := range wireProperties {
+		wireProperties[index] = wireType.Field(index).Tag.Get("json")
+	}
+	sortedWire := append([]string(nil), wireProperties...)
+	sort.Strings(sortedWire)
+	if !reflect.DeepEqual(sortedWire, schemaProperties) {
+		t.Fatalf("authority runtime/schema field drift runtime=%v schema=%v", sortedWire, schemaProperties)
+	}
+	if !reflect.DeepEqual(wireProperties, sortedWire) {
+		t.Fatalf("authority wire declaration is not lexicographic: %v", wireProperties)
+	}
+	if reflect.TypeOf(AuthorityCapsuleV1{}).NumField() != len(schemaProperties) {
+		t.Fatalf("authority semantic field count does not mirror schema")
+	}
+	for _, name := range schemaProperties {
+		if _, present := schema.Properties[name]; !present {
+			t.Fatalf("schema property disappeared during mirror: %s", name)
 		}
 	}
 }
@@ -39,6 +80,12 @@ func TestAuthorityCapsuleCanonicalRoundTripAndClosedObject(t *testing.T) {
 	encoded, err := EncodeAuthorityCapsuleV1(capsule)
 	if err != nil {
 		t.Fatal(err)
+	}
+	keys := jsonObjectKeys(t, encoded)
+	sorted := append([]string(nil), keys...)
+	sort.Strings(sorted)
+	if !reflect.DeepEqual(keys, sorted) {
+		t.Fatalf("authority encoding keys are not lexicographic: %v", keys)
 	}
 	decoded, err := DecodeAuthorityCapsuleV1(encoded)
 	if err != nil || decoded != capsule {
@@ -64,6 +111,80 @@ func TestAuthorityCapsuleCanonicalRoundTripAndClosedObject(t *testing.T) {
 	if _, err := DecodeAuthorityCapsuleV1(missing); err == nil {
 		t.Fatal("accepted missing required authority property")
 	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &raw); err != nil {
+		t.Fatal(err)
+	}
+	reversed := append([]string(nil), sorted...)
+	for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
+		reversed[left], reversed[right] = reversed[right], reversed[left]
+	}
+	mutants := map[string][]byte{
+		"reordered":  marshalRawObject(t, raw, reversed),
+		"whitespace": append([]byte(" "), encoded...),
+		"duplicate":  append([]byte(`{"actor_id":"actor-1",`), encoded[1:]...),
+		"trailing":   append(append([]byte(nil), encoded...), ' '),
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if _, err := DecodeAuthorityCapsuleV1(mutant); err == nil {
+				t.Fatal("accepted noncanonical authority bytes")
+			}
+		})
+	}
+}
+
+func jsonObjectKeys(t *testing.T, encoded []byte) []string {
+	t.Helper()
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		t.Fatalf("not an object: token=%v err=%v", token, err)
+	}
+	var keys []string
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, ok := token.(string)
+		if !ok {
+			t.Fatalf("non-string object key: %v", token)
+		}
+		keys = append(keys, key)
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		t.Fatalf("object close token=%v err=%v", token, err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		t.Fatalf("trailing object token err=%v", err)
+	}
+	return keys
+}
+
+func marshalRawObject(t *testing.T, values map[string]json.RawMessage, order []string) []byte {
+	t.Helper()
+	var encoded bytes.Buffer
+	encoded.WriteByte('{')
+	for index, key := range order {
+		value, present := values[key]
+		if !present {
+			t.Fatalf("missing raw key %s", key)
+		}
+		if index > 0 {
+			encoded.WriteByte(',')
+		}
+		keyBytes, _ := json.Marshal(key)
+		encoded.Write(keyBytes)
+		encoded.WriteByte(':')
+		encoded.Write(value)
+	}
+	encoded.WriteByte('}')
+	return encoded.Bytes()
 }
 
 func TestAuthorityCapsuleConstructorAndWireMutantsFailClosed(t *testing.T) {

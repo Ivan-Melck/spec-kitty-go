@@ -34,20 +34,17 @@ type ResultV1 struct {
 }
 
 func RunV1(input InputV1) (ResultV1, error) {
-	cursor, err := input.Journal.CursorV1()
+	length, err := input.Journal.Len()
 	if err != nil {
 		return ResultV1{}, err
 	}
 	encodedBytes := 0
 	var count int
 	var terminal controljournal.StoredEventV1
-	for {
-		record, ok, atErr := cursor.NextV1()
+	for index := 0; index < length; index++ {
+		record, atErr := input.Journal.At(index)
 		if atErr != nil {
 			return ResultV1{}, atErr
-		}
-		if !ok {
-			break
 		}
 		if count == maxPlaybackEvents {
 			return ResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "playback_events"}
