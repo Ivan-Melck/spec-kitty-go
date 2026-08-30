@@ -162,13 +162,26 @@ func TestReconcileRealGJ02ResponseDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer directConnection.Close()
+	registry, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{
+		EventType: "mission.advance", EventSchemaVersion: 1, ReducerVersion: "mission-v1",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := controljournal.ValidateJournalV1(registry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkProductRecovered(restored); err != nil {
+		t.Fatal(err)
+	}
+	startupProof, err := lifecycle.BindOwnerStartupEpochV1("epoch-real-gj02")
+	if err != nil {
+		t.Fatal(err)
+	}
 	admission, result, err := AdmitRuntimeEpochV1(t.Context(), directAdapter, EpochAdmissionInputV1{
 		ProjectID: "project", MissionID: "mission", OperationID: "admit-real-gj02", EventID: "epoch-event-real-gj02",
-		NewRuntimeEpochID: "epoch-real-gj02", HostInstanceID: "host-real-gj02",
-		StartedAtObservation: provenance.Observation.Status.OwnerStartedAt, SidecarPath: binary,
-		SidecarSHA256: provenance.ExecutedImage.SHA256, DatabaseID: provenance.DatabaseID,
-		OwnerPIDObservation: provenance.Process.PID, OwnerStartedAtObservation: provenance.Observation.Status.OwnerStartedAt,
-		ExpectedRuntimeHead: controljournal.ExpectedAggregateHeadV1{AggregateKind: "runtime", AggregateID: "host-runtime"},
+		StartupProof: startupProof,
 	})
 	if err != nil || result.Kind != OutcomeCommitted {
 		t.Fatalf("real admission result=%+v err=%v", result, err)
@@ -213,6 +226,7 @@ func TestReconcileRealGJ02ResponseDrop(t *testing.T) {
 	if err != nil || result.Kind != OutcomeAlreadyCommitted || result.CommittedRevision != cut.Revision {
 		t.Fatalf("real reconciliation result=%+v cut=%+v err=%v", result, cut, err)
 	}
+	assertUniversalApplicationInvariants(t, directAdapter, batch, true, cut.Revision)
 	page, err := directAdapter.Scan(t.Context(), storegapdb.ScanRequest{Prefix: "spk/v1/project/mission/operations/", Limit: 10})
 	if err != nil {
 		t.Fatal(err)

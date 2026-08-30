@@ -58,6 +58,90 @@ func TestBatchMinimumMaximumAndPermanentBoundaries(t *testing.T) {
 	}
 }
 
+func TestBatchRawBudgetExactAndPlusOneThroughProductionPath(t *testing.T) {
+	input, exact := exactRawBudgetInput(t, "raw-production")
+	if got := productRawBytes(exact.product); got != storegapdb.MaxRawBatchBytes {
+		t.Fatalf("exact production raw bytes=%d want=%d", got, storegapdb.MaxRawBatchBytes)
+	}
+	port := newMemoryPort()
+	service, _ := admittedService(t, port, "raw-production")
+	before := port.batchCalls
+	result, err := service.Apply(t.Context(), exact)
+	if err != nil || result.Kind != OutcomeCommitted || port.batchCalls != before+1 {
+		t.Fatalf("exact raw apply result=%+v calls=%d err=%v", result, port.batchCalls-before, err)
+	}
+
+	last := len(input.Events) - 1
+	original := input.Events[last]
+	payload := original.Payload()
+	marker := bytes.LastIndex(payload, []byte{'"'})
+	if marker <= 0 {
+		t.Fatal("large payload shape changed")
+	}
+	payload = append(payload[:marker], append([]byte{'x'}, payload[marker:]...)...)
+	input.Events[last] = eventFixturePayload(t, original.EventID, last, len(input.Events), input.Command.operationID, "aggregate-0", input.Command.runtimeEpochID, 1, payload)
+	before = port.batchCalls
+	if _, err := NewValidatedBatchV1(input); outcomeOf(err) != OutcomeBudgetExceeded {
+		t.Fatalf("raw production boundary+1 survived: %v", err)
+	}
+	if port.batchCalls != before {
+		t.Fatalf("raw pre-call refusal mutated port calls=%d", port.batchCalls-before)
+	}
+}
+
+func exactRawBudgetInput(t *testing.T, suffix string) (BatchInputV1, ValidatedBatchV1) {
+	t.Helper()
+	const eventCount = 26
+	input := batchInputFixture(t, suffix, eventCount, 1, 0)
+	paddings := make([]int, eventCount)
+	for index := range paddings {
+		paddings[index] = 230_000
+		input.Events[index] = eventFixturePayload(t, input.Events[index].EventID, index, eventCount, input.Command.operationID, "aggregate-0", input.Command.runtimeEpochID, 1, paddedObject(paddings[index]))
+	}
+	batch, err := NewValidatedBatchV1(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining := storegapdb.MaxRawBatchBytes - productRawBytes(batch.product)
+	if remaining <= 0 {
+		t.Fatalf("large fixture did not leave tunable capacity: remaining=%d", remaining)
+	}
+	for index := range paddings {
+		capacity := 255_000 - paddings[index]
+		if capacity > remaining {
+			capacity = remaining
+		}
+		paddings[index] += capacity
+		remaining -= capacity
+		if remaining == 0 {
+			break
+		}
+	}
+	if remaining != 0 {
+		t.Fatalf("large fixture cannot reach exact raw bound: remaining=%d", remaining)
+	}
+	for index := range paddings {
+		input.Events[index] = eventFixturePayload(t, input.Events[index].EventID, index, eventCount, input.Command.operationID, "aggregate-0", input.Command.runtimeEpochID, 1, paddedObject(paddings[index]))
+	}
+	batch, err = NewValidatedBatchV1(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return input, batch
+}
+
+func paddedObject(size int) []byte {
+	return []byte(`{"padding":"` + strings.Repeat("x", size) + `"}`)
+}
+
+func productRawBytes(product storegapdb.ProductBatch) int {
+	total := 0
+	for _, mutation := range productMutations(product) {
+		total += len(mutation.Key) + len(mutation.Value)
+	}
+	return total
+}
+
 func TestBatchCommandDigestCanonicalAndOrderIndependent(t *testing.T) {
 	first, err := ValidateCommandEnvelopeV1(CommandEnvelopeInputV1{
 		SchemaVersion: 1, ProjectID: "project", MissionID: "mission", OperationID: "operation",
@@ -307,6 +391,10 @@ func eventFixture(t *testing.T, id controljournal.EventID, index, count int, ope
 }
 
 func eventFixtureVersion(t *testing.T, id controljournal.EventID, index, count int, operation controljournal.OperationID, aggregate string, epoch controljournal.RuntimeEpochID, logicalVersion uint64) controljournal.EventEnvelopeV1 {
+	return eventFixturePayload(t, id, index, count, operation, aggregate, epoch, logicalVersion, []byte(`{"advanced":true}`))
+}
+
+func eventFixturePayload(t *testing.T, id controljournal.EventID, index, count int, operation controljournal.OperationID, aggregate string, epoch controljournal.RuntimeEpochID, logicalVersion uint64, payload []byte) controljournal.EventEnvelopeV1 {
 	t.Helper()
 	eventIndex, err := controljournal.NewEventIndexV1(uint16(index))
 	if err != nil {
@@ -320,7 +408,7 @@ func eventFixtureVersion(t *testing.T, id controljournal.EventID, index, count i
 		EnvelopeVersion: 1, EventID: id, EventType: "mission.advanced", EventSchemaVersion: 1,
 		ReducerVersion: "mission-v1", ProjectID: "project", AggregateKind: "mission", AggregateID: controljournal.AggregateID(aggregate),
 		AggregateLogicalVersion: logicalVersion, OperationID: operation, RuntimeEpochID: epoch,
-		EventIndex: eventIndex, EventCount: eventCount, Payload: []byte(`{"advanced":true}`),
+		EventIndex: eventIndex, EventCount: eventCount, Payload: payload,
 	})
 	if err != nil {
 		t.Fatal(err)

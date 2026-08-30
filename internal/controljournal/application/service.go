@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
 // OutcomeKind is the stable application-level result vocabulary.
@@ -84,6 +86,7 @@ type ResultV1 struct {
 // A command can make exactly one mutation call and perform ordinary reads.
 type publicationPort interface {
 	Get(context.Context, string) (storegapdb.Record, error)
+	PreflightAtomicBatch(storegapdb.ProductBatch) (storegapdb.BatchMeasurement, error)
 	AtomicBatch(context.Context, storegapdb.ProductBatch) (storegapdb.MutationResult, error)
 }
 
@@ -116,21 +119,21 @@ func (a EpochAdmissionV1) RuntimeEpochID() (controljournal.RuntimeEpochID, error
 }
 
 type EpochAdmissionInputV1 struct {
-	ProjectID                 controljournal.ProjectID
-	MissionID                 controljournal.MissionID
-	OperationID               controljournal.OperationID
-	EventID                   controljournal.EventID
-	NewRuntimeEpochID         controljournal.RuntimeEpochID
-	PreviousRuntimeEpochID    controljournal.RuntimeEpochID
-	HostInstanceID            string
-	StartedAtObservation      string
-	SidecarPath               string
-	SidecarSHA256             string
-	DatabaseID                string
-	OwnerPIDObservation       int
-	OwnerStartedAtObservation string
-	ExpectedRuntimeHead       controljournal.ExpectedAggregateHeadV1
-	ObservedCurrentRevision   uint64
+	ProjectID    controljournal.ProjectID
+	MissionID    controljournal.MissionID
+	OperationID  controljournal.OperationID
+	EventID      controljournal.EventID
+	StartupProof sidecargapdb.OwnerStartupProofV1
+}
+
+// epochAdmissionRequestV1 is an internal test seam. Production can obtain the
+// Startup facts only from the sealed sidecar proof in EpochAdmissionInputV1.
+type epochAdmissionRequestV1 struct {
+	ProjectID   controljournal.ProjectID
+	MissionID   controljournal.MissionID
+	OperationID controljournal.OperationID
+	EventID     controljournal.EventID
+	Startup     sidecargapdb.OwnerStartupFactsV1
 }
 
 type epochAdmissionWireV1 struct {
@@ -160,6 +163,17 @@ type runtimeCurrentWireV1 struct {
 // a fresh immutable epoch and replaces (or creates) runtime/current. Ordinary
 // Service.Apply never includes either key.
 func AdmitRuntimeEpochV1(ctx context.Context, port epochAdmissionPort, input EpochAdmissionInputV1) (EpochAdmissionV1, ResultV1, error) {
+	facts, err := input.StartupProof.Facts()
+	if err != nil {
+		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "owner startup proof is absent or invalid")
+	}
+	return admitRuntimeEpochFactsV1(ctx, port, epochAdmissionRequestV1{
+		ProjectID: input.ProjectID, MissionID: input.MissionID, OperationID: input.OperationID,
+		EventID: input.EventID, Startup: facts,
+	})
+}
+
+func admitRuntimeEpochFactsV1(ctx context.Context, port epochAdmissionPort, input epochAdmissionRequestV1) (EpochAdmissionV1, ResultV1, error) {
 	if port == nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "publication port is absent")
 	}
@@ -175,29 +189,31 @@ func AdmitRuntimeEpochV1(ctx context.Context, port epochAdmissionPort, input Epo
 	if _, err := controljournal.NewEventID(string(input.EventID)); err != nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "event identity is invalid")
 	}
-	if _, err := controljournal.NewRuntimeEpochID(string(input.NewRuntimeEpochID)); err != nil || input.NewRuntimeEpochID == input.PreviousRuntimeEpochID {
-		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "new runtime epoch identity is invalid or reused")
-	}
-	if (input.PreviousRuntimeEpochID == "") != (input.ObservedCurrentRevision == 0) {
-		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "previous epoch and current revision disagree")
-	}
-	if input.PreviousRuntimeEpochID != "" {
-		if _, err := controljournal.NewRuntimeEpochID(string(input.PreviousRuntimeEpochID)); err != nil {
-			return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "previous runtime epoch identity is invalid")
-		}
-	}
-	if !validToken(input.HostInstanceID) || !validToken(input.DatabaseID) || input.OwnerPIDObservation <= 0 ||
-		input.StartedAtObservation == "" || input.OwnerStartedAtObservation == "" || input.SidecarPath == "" || !validSHA256(input.SidecarSHA256) {
+	facts := input.Startup
+	if _, err := controljournal.NewRuntimeEpochID(string(facts.RuntimeEpochID)); err != nil ||
+		!validToken(facts.HostInstanceID) || !validToken(facts.DatabaseID) || facts.Daemon.PID <= 0 || facts.Daemon.StartTicks == 0 ||
+		facts.AdmittedAt == "" || facts.DaemonOwnerStartedAt == "" || facts.ExecutablePath == "" || !validSHA256(facts.ExecutableSHA256) {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime epoch provenance is incomplete")
 	}
-	if input.ExpectedRuntimeHead.AggregateKind != "runtime" || input.ExpectedRuntimeHead.AggregateID != "host-runtime" {
-		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime aggregate coordinate is invalid")
+	prefix := canonicalPrefix(input.ProjectID, input.MissionID)
+	operationKey := prefix + "operations/" + string(input.OperationID)
+	if stored, readErr := port.Get(ctx, operationKey); readErr == nil {
+		return reconcileExistingEpochAdmission(ctx, port, input, stored)
+	} else if !storegapdb.IsKind(readErr, storegapdb.OutcomeNotFound) {
+		return EpochAdmissionV1{}, mapReadError(input.OperationID, readErr), nil
+	}
+	expectedHead, currentRevision, predecessor, predecessorResult := readRuntimePredecessor(ctx, port, input, prefix)
+	if predecessorResult.Kind != "" {
+		if predecessorResult.Kind == OutcomeAlreadyCommitted {
+			return reconcileCurrentEpochAdmission(ctx, port, input, predecessorResult.OperationID)
+		}
+		return EpochAdmissionV1{}, predecessorResult, nil
 	}
 	epochWire := epochAdmissionWireV1{
-		SchemaVersion: 1, RuntimeEpochID: string(input.NewRuntimeEpochID), PredecessorRuntimeEpochID: string(input.PreviousRuntimeEpochID),
-		HostInstanceID: input.HostInstanceID, StartedAtObservation: input.StartedAtObservation,
-		SidecarPath: input.SidecarPath, SidecarSHA256: input.SidecarSHA256, DatabaseID: input.DatabaseID,
-		OwnerPIDObservation: input.OwnerPIDObservation, OwnerStartedAtObservation: input.OwnerStartedAtObservation,
+		SchemaVersion: 1, RuntimeEpochID: string(facts.RuntimeEpochID), PredecessorRuntimeEpochID: string(predecessor),
+		HostInstanceID: facts.HostInstanceID, StartedAtObservation: facts.AdmittedAt,
+		SidecarPath: facts.ExecutablePath, SidecarSHA256: facts.ExecutableSHA256, DatabaseID: facts.DatabaseID,
+		OwnerPIDObservation: facts.Daemon.PID, OwnerStartedAtObservation: facts.DaemonOwnerStartedAt,
 		Status: "recovering",
 	}
 	epochValue, err := json.Marshal(epochWire)
@@ -205,8 +221,8 @@ func AdmitRuntimeEpochV1(ctx context.Context, port epochAdmissionPort, input Epo
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime epoch record cannot be encoded")
 	}
 	currentValue, err := json.Marshal(runtimeCurrentWireV1{
-		SchemaVersion: 1, RuntimeEpochID: string(input.NewRuntimeEpochID), PredecessorRuntimeEpochID: string(input.PreviousRuntimeEpochID),
-		HostInstanceID: input.HostInstanceID, CreatedOperationID: string(input.OperationID), Status: "recovering",
+		SchemaVersion: 1, RuntimeEpochID: string(facts.RuntimeEpochID), PredecessorRuntimeEpochID: string(predecessor),
+		HostInstanceID: facts.HostInstanceID, CreatedOperationID: string(input.OperationID), Status: "recovering",
 	})
 	if err != nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime current binding cannot be encoded")
@@ -216,8 +232,8 @@ func AdmitRuntimeEpochV1(ctx context.Context, port epochAdmissionPort, input Epo
 	event, err := controljournal.NewEventEnvelopeV1(controljournal.EventEnvelopeInputV1{
 		EnvelopeVersion: 1, EventID: input.EventID, EventType: "runtime.epoch_admitted", EventSchemaVersion: 1,
 		ReducerVersion: "runtime-v1", ProjectID: input.ProjectID, AggregateKind: "runtime", AggregateID: "host-runtime",
-		AggregateLogicalVersion: input.ExpectedRuntimeHead.LogicalVersion + 1, OperationID: input.OperationID,
-		RuntimeEpochID: input.NewRuntimeEpochID, EventIndex: eventIndex, EventCount: eventCount, Payload: epochValue,
+		AggregateLogicalVersion: expectedHead.LogicalVersion + 1, OperationID: input.OperationID,
+		RuntimeEpochID: facts.RuntimeEpochID, EventIndex: eventIndex, EventCount: eventCount, Payload: epochValue,
 	})
 	if err != nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime epoch event is invalid")
@@ -226,19 +242,19 @@ func AdmitRuntimeEpochV1(ctx context.Context, port epochAdmissionPort, input Epo
 	if err != nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime epoch event cannot be encoded")
 	}
-	head, err := controljournal.ConstructAggregateHeadV1("runtime", "host-runtime", input.ExpectedRuntimeHead.LogicalVersion+1, input.NewRuntimeEpochID, input.EventID, sha256.Sum256(currentValue))
-	if err != nil || controljournal.ValidateHeadTransition(input.ExpectedRuntimeHead, controljournal.NewAggregateHeadV1{Head: head}) != nil {
+	head, err := controljournal.ConstructAggregateHeadV1("runtime", "host-runtime", expectedHead.LogicalVersion+1, facts.RuntimeEpochID, input.EventID, sha256.Sum256(currentValue))
+	if err != nil || controljournal.ValidateHeadTransition(expectedHead, controljournal.NewAggregateHeadV1{Head: head}) != nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime aggregate transition is invalid")
 	}
 	headValue, err := controljournal.EncodeAggregateHeadV1(head)
 	if err != nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime aggregate head cannot be encoded")
 	}
-	preconditionsDigest := sha256.Sum256([]byte(fmt.Sprintf("runtime-admission-v1\x00%d\x00%d\x00%s", input.ExpectedRuntimeHead.LogicalVersion, input.ExpectedRuntimeHead.ObservedHeadRevision, input.PreviousRuntimeEpochID)))
+	preconditionsDigest := sha256.Sum256([]byte(fmt.Sprintf("runtime-admission-v1\x00%d\x00%d\x00%d\x00%s", expectedHead.LogicalVersion, expectedHead.ObservedHeadRevision, currentRevision, predecessor)))
 	requestDigest := sha256.Sum256(epochValue)
 	operation, err := controljournal.NewOperationRecordV1(controljournal.OperationRecordInputV1{
 		OperationID: input.OperationID, CommandType: "runtime.admit", RequestDigest: requestDigest,
-		RuntimeEpochID: input.NewRuntimeEpochID, ExpectedPreconditionsDigest: preconditionsDigest,
+		RuntimeEpochID: facts.RuntimeEpochID, ExpectedPreconditionsDigest: preconditionsDigest,
 		ResultType: "runtime.epoch_admitted", ResultSchemaVersion: 1, CanonicalResult: currentValue,
 		EventIDs: []controljournal.EventID{input.EventID},
 	})
@@ -249,27 +265,21 @@ func AdmitRuntimeEpochV1(ctx context.Context, port epochAdmissionPort, input Epo
 	if err != nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime operation cannot be encoded")
 	}
-	prefix := canonicalPrefix(input.ProjectID, input.MissionID)
 	currentCondition := storegapdb.Condition{Kind: storegapdb.ConditionAbsent}
-	if input.ObservedCurrentRevision > 0 {
-		currentCondition = storegapdb.Condition{Kind: storegapdb.ConditionRevision, ExpectedRevision: input.ObservedCurrentRevision}
+	if currentRevision > 0 {
+		currentCondition = storegapdb.Condition{Kind: storegapdb.ConditionRevision, ExpectedRevision: currentRevision}
 	}
 	headCondition := storegapdb.Condition{Kind: storegapdb.ConditionAbsent}
-	if input.ExpectedRuntimeHead.ObservedHeadRevision > 0 {
-		headCondition = storegapdb.Condition{Kind: storegapdb.ConditionRevision, ExpectedRevision: input.ExpectedRuntimeHead.ObservedHeadRevision}
+	if expectedHead.ObservedHeadRevision > 0 {
+		headCondition = storegapdb.Condition{Kind: storegapdb.ConditionRevision, ExpectedRevision: expectedHead.ObservedHeadRevision}
 	}
 	batch := storegapdb.RuntimeEpochBatch{
 		OperationID:    string(input.OperationID),
 		Operation:      absentPut(prefix+"operations/"+string(input.OperationID), operationValue),
 		Event:          absentPut(prefix+"journal/"+string(input.EventID), eventValue),
 		AggregateHead:  storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: prefix + "heads/runtime/host-runtime", Condition: headCondition, Value: headValue},
-		EpochRecord:    absentPut(prefix+"runtime/epochs/"+string(input.NewRuntimeEpochID), epochValue),
+		EpochRecord:    absentPut(prefix+"runtime/epochs/"+string(facts.RuntimeEpochID), epochValue),
 		CurrentBinding: storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: prefix + "runtime/current", Condition: currentCondition, Value: currentValue},
-	}
-	if stored, readErr := port.Get(ctx, batch.Operation.Key); readErr == nil {
-		return reconcileEpochAdmission(ctx, port, input, batch, stored)
-	} else if !storegapdb.IsKind(readErr, storegapdb.OutcomeNotFound) {
-		return EpochAdmissionV1{}, mapReadError(input.OperationID, readErr), nil
 	}
 	result, err := port.AdmitRuntimeEpoch(ctx, batch)
 	if err != nil {
@@ -279,33 +289,155 @@ func AdmitRuntimeEpochV1(ctx context.Context, port epochAdmissionPort, input Epo
 	if result.Ack != storegapdb.AckDurable || result.Revision == 0 || result.DurableThrough != result.Revision || result.MutationCount != 5 {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeIndeterminate, "runtime epoch acknowledgement is malformed")
 	}
-	admission := EpochAdmissionV1{projectID: input.ProjectID, missionID: input.MissionID, epochID: input.NewRuntimeEpochID, revision: result.Revision}
-	admission.seal = epochAdmissionDigest(admission.projectID, admission.missionID, admission.epochID, admission.revision)
+	admission := newEpochAdmission(input.ProjectID, input.MissionID, facts.RuntimeEpochID, result.Revision)
 	return admission, ResultV1{Kind: OutcomeCommitted, OperationID: input.OperationID, CommittedRevision: result.Revision, Recovery: RecoveryNone}, nil
 }
 
-func reconcileEpochAdmission(ctx context.Context, port epochAdmissionPort, input EpochAdmissionInputV1, batch storegapdb.RuntimeEpochBatch, operation storegapdb.Record) (EpochAdmissionV1, ResultV1, error) {
-	expected := []storegapdb.Mutation{batch.Operation, batch.Event, batch.AggregateHead, batch.EpochRecord, batch.CurrentBinding}
-	for _, mutation := range expected {
-		record := operation
-		var err error
-		if mutation.Key != batch.Operation.Key {
-			record, err = port.Get(ctx, mutation.Key)
-			if err != nil {
-				return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
-			}
-		}
-		if record.Revision != operation.Revision || record.Key != mutation.Key || !bytes.Equal(record.Value, mutation.Value) {
-			kind := OutcomeIndeterminate
-			if mutation.Key == batch.Operation.Key {
-				kind = OutcomeOperationIdentityCollision
-			}
-			return EpochAdmissionV1{}, ResultV1{Kind: kind, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
+func reconcileCurrentEpochAdmission(ctx context.Context, port epochAdmissionPort, input epochAdmissionRequestV1, operationID controljournal.OperationID) (EpochAdmissionV1, ResultV1, error) {
+	prefix := canonicalPrefix(input.ProjectID, input.MissionID)
+	operationRecord, err := port.Get(ctx, prefix+"operations/"+string(operationID))
+	if err != nil {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: operationID, Recovery: RecoveryOperator}, nil
+	}
+	operation, err := controljournal.DecodeOperationRecordV1(operationRecord.Value)
+	if err != nil {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: operationID, Recovery: RecoveryOperator}, nil
+	}
+	eventIDs := operation.EventIDs()
+	if len(eventIDs) != 1 {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: operationID, Recovery: RecoveryOperator}, nil
+	}
+	observed := input
+	observed.OperationID = operationID
+	observed.EventID = eventIDs[0]
+	return reconcileExistingEpochAdmission(ctx, port, observed, operationRecord)
+}
+
+func readRuntimePredecessor(ctx context.Context, port epochAdmissionPort, input epochAdmissionRequestV1, prefix string) (controljournal.ExpectedAggregateHeadV1, uint64, controljournal.RuntimeEpochID, ResultV1) {
+	currentKey, headKey := prefix+"runtime/current", prefix+"heads/runtime/host-runtime"
+	currentRecord, currentErr := port.Get(ctx, currentKey)
+	headRecord, headErr := port.Get(ctx, headKey)
+	currentAbsent := storegapdb.IsKind(currentErr, storegapdb.OutcomeNotFound)
+	headAbsent := storegapdb.IsKind(headErr, storegapdb.OutcomeNotFound)
+	if currentAbsent && headAbsent {
+		return controljournal.ExpectedAggregateHeadV1{AggregateKind: "runtime", AggregateID: "host-runtime"}, 0, "", ResultV1{}
+	}
+	if currentErr != nil || headErr != nil || currentRecord.Key != currentKey || headRecord.Key != headKey || currentRecord.Revision == 0 || headRecord.Revision == 0 || currentRecord.Revision != headRecord.Revision {
+		return controljournal.ExpectedAggregateHeadV1{}, 0, "", ResultV1{Kind: OutcomeRefused, OperationID: input.OperationID, Recovery: RecoveryOperator}
+	}
+	current, err := decodeRuntimeCurrentV1(currentRecord.Value)
+	if err != nil {
+		return controljournal.ExpectedAggregateHeadV1{}, 0, "", ResultV1{Kind: OutcomeRefused, OperationID: input.OperationID, Recovery: RecoveryOperator}
+	}
+	head, err := controljournal.DecodeAggregateHeadV1(headRecord.Value)
+	if err != nil || head.AggregateKind != "runtime" || head.AggregateID != "host-runtime" || head.LogicalVersion == 0 ||
+		head.RuntimeEpochID != controljournal.RuntimeEpochID(current.RuntimeEpochID) || head.StateDigest != sha256.Sum256(currentRecord.Value) {
+		return controljournal.ExpectedAggregateHeadV1{}, 0, "", ResultV1{Kind: OutcomeRefused, OperationID: input.OperationID, Recovery: RecoveryOperator}
+	}
+	if controljournal.RuntimeEpochID(current.RuntimeEpochID) == input.Startup.RuntimeEpochID {
+		return controljournal.ExpectedAggregateHeadV1{}, 0, "", ResultV1{Kind: OutcomeAlreadyCommitted, OperationID: controljournal.OperationID(current.CreatedOperationID), CommittedRevision: currentRecord.Revision, Recovery: RecoveryNone}
+	}
+	expected := controljournal.ExpectedAggregateHeadV1{AggregateKind: "runtime", AggregateID: "host-runtime", LogicalVersion: head.LogicalVersion, ObservedHeadRevision: headRecord.Revision}
+	return expected, currentRecord.Revision, controljournal.RuntimeEpochID(current.RuntimeEpochID), ResultV1{}
+}
+
+func reconcileExistingEpochAdmission(ctx context.Context, port epochAdmissionPort, input epochAdmissionRequestV1, operationRecord storegapdb.Record) (EpochAdmissionV1, ResultV1, error) {
+	prefix := canonicalPrefix(input.ProjectID, input.MissionID)
+	operation, err := controljournal.DecodeOperationRecordV1(operationRecord.Value)
+	if err != nil || operationRecord.Key != prefix+"operations/"+string(input.OperationID) || operationRecord.Revision == 0 || operation.OperationID != input.OperationID || operation.CommandType != "runtime.admit" ||
+		operation.RuntimeEpochID != input.Startup.RuntimeEpochID || operation.ResultType != "runtime.epoch_admitted" || len(operation.EventIDs()) != 1 || operation.EventIDs()[0] != input.EventID || len(operation.EffectIDs()) != 0 {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeOperationIdentityCollision, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
+	}
+	current, err := decodeRuntimeCurrentV1(operation.CanonicalResult())
+	if err != nil || current.RuntimeEpochID != string(input.Startup.RuntimeEpochID) || current.HostInstanceID != input.Startup.HostInstanceID || current.CreatedOperationID != string(input.OperationID) {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeOperationIdentityCollision, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
+	}
+	eventKey := prefix + "journal/" + string(input.EventID)
+	headKey := prefix + "heads/runtime/host-runtime"
+	epochKey := prefix + "runtime/epochs/" + string(input.Startup.RuntimeEpochID)
+	currentKey := prefix + "runtime/current"
+	eventRecord, eventErr := port.Get(ctx, eventKey)
+	headRecord, headErr := port.Get(ctx, headKey)
+	epochRecord, epochErr := port.Get(ctx, epochKey)
+	currentRecord, currentErr := port.Get(ctx, currentKey)
+	for _, observed := range []struct {
+		record storegapdb.Record
+		key    string
+		err    error
+	}{{eventRecord, eventKey, eventErr}, {headRecord, headKey, headErr}, {epochRecord, epochKey, epochErr}, {currentRecord, currentKey, currentErr}} {
+		if observed.err != nil || observed.record.Key != observed.key || observed.record.Revision != operationRecord.Revision {
+			return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
 		}
 	}
-	admission := EpochAdmissionV1{projectID: input.ProjectID, missionID: input.MissionID, epochID: input.NewRuntimeEpochID, revision: operation.Revision}
-	admission.seal = epochAdmissionDigest(admission.projectID, admission.missionID, admission.epochID, admission.revision)
-	return admission, ResultV1{Kind: OutcomeAlreadyCommitted, OperationID: input.OperationID, CommittedRevision: operation.Revision, Recovery: RecoveryNone}, nil
+	if !bytes.Equal(currentRecord.Value, operation.CanonicalResult()) {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
+	}
+	epoch, err := decodeRuntimeEpochV1(epochRecord.Value)
+	if err != nil || epoch.RuntimeEpochID != string(input.Startup.RuntimeEpochID) || epoch.PredecessorRuntimeEpochID != current.PredecessorRuntimeEpochID ||
+		epoch.HostInstanceID != input.Startup.HostInstanceID || epoch.DatabaseID != input.Startup.DatabaseID || epoch.OwnerPIDObservation != input.Startup.Daemon.PID ||
+		epoch.OwnerStartedAtObservation != input.Startup.DaemonOwnerStartedAt || epoch.SidecarPath != input.Startup.ExecutablePath || epoch.SidecarSHA256 != input.Startup.ExecutableSHA256 ||
+		epoch.StartedAtObservation != input.Startup.AdmittedAt || operation.RequestDigest != sha256.Sum256(epochRecord.Value) {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeOperationIdentityCollision, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
+	}
+	event, err := controljournal.DecodeEventEnvelopeV1(eventRecord.Value)
+	if err != nil || event.EventID != input.EventID || event.OperationID != input.OperationID || event.RuntimeEpochID != input.Startup.RuntimeEpochID ||
+		event.AggregateKind != "runtime" || event.AggregateID != "host-runtime" || !bytes.Equal(event.Payload(), epochRecord.Value) {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
+	}
+	head, err := controljournal.DecodeAggregateHeadV1(headRecord.Value)
+	if err != nil || head.AggregateKind != "runtime" || head.AggregateID != "host-runtime" || head.RuntimeEpochID != input.Startup.RuntimeEpochID ||
+		head.LastEventID != input.EventID || head.LogicalVersion != event.AggregateLogicalVersion || head.StateDigest != sha256.Sum256(currentRecord.Value) {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
+	}
+	admission := newEpochAdmission(input.ProjectID, input.MissionID, input.Startup.RuntimeEpochID, operationRecord.Revision)
+	return admission, ResultV1{Kind: OutcomeAlreadyCommitted, OperationID: input.OperationID, CommittedRevision: operationRecord.Revision, Recovery: RecoveryNone}, nil
+}
+
+func decodeRuntimeCurrentV1(encoded []byte) (runtimeCurrentWireV1, error) {
+	var value runtimeCurrentWireV1
+	if err := decodeCanonicalWireV1(encoded, &value); err != nil || value.SchemaVersion != 1 || !validToken(value.RuntimeEpochID) || !validToken(value.HostInstanceID) || !validToken(value.CreatedOperationID) || !validRuntimeStatus(value.Status) || value.PredecessorRuntimeEpochID != "" && !validToken(value.PredecessorRuntimeEpochID) {
+		return runtimeCurrentWireV1{}, errors.New("runtime current binding is invalid")
+	}
+	return value, nil
+}
+
+func decodeRuntimeEpochV1(encoded []byte) (epochAdmissionWireV1, error) {
+	var value epochAdmissionWireV1
+	if err := decodeCanonicalWireV1(encoded, &value); err != nil || value.SchemaVersion != 1 || !validToken(value.RuntimeEpochID) || !validToken(value.HostInstanceID) || !validToken(value.DatabaseID) || value.OwnerPIDObservation <= 0 || value.StartedAtObservation == "" || value.OwnerStartedAtObservation == "" || value.SidecarPath == "" || !validSHA256(value.SidecarSHA256) || !validRuntimeStatus(value.Status) || value.PredecessorRuntimeEpochID != "" && !validToken(value.PredecessorRuntimeEpochID) {
+		return epochAdmissionWireV1{}, errors.New("runtime epoch record is invalid")
+	}
+	return value, nil
+}
+
+func decodeCanonicalWireV1(encoded []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("JSON contains trailing data")
+	}
+	canonical, err := json.Marshal(destination)
+	if err != nil || !bytes.Equal(canonical, encoded) {
+		return errors.New("JSON is not canonical")
+	}
+	return nil
+}
+
+func validRuntimeStatus(value string) bool {
+	switch value {
+	case "recovering", "reconciling", "ready", "degraded", "closed":
+		return true
+	default:
+		return false
+	}
+}
+
+func newEpochAdmission(project controljournal.ProjectID, mission controljournal.MissionID, epoch controljournal.RuntimeEpochID, revision uint64) EpochAdmissionV1 {
+	admission := EpochAdmissionV1{projectID: project, missionID: mission, epochID: epoch, revision: revision}
+	admission.seal = epochAdmissionDigest(project, mission, epoch, revision)
+	return admission
 }
 
 func validSHA256(value string) bool {
@@ -358,9 +490,31 @@ func (s *Service) Apply(ctx context.Context, batch ValidatedBatchV1) (ResultV1, 
 	case !storegapdb.IsKind(err, storegapdb.OutcomeNotFound):
 		return mapReadError(batch.command.operationID, err), nil
 	}
+	if preflight := s.preflightAggregateHeads(ctx, batch); preflight.Kind != "" {
+		return preflight, nil
+	}
 	product, err := batch.ProductBatch()
 	if err != nil {
 		return ResultV1{}, err
+	}
+	operationRecord, err := controljournal.DecodeOperationRecordV1(batch.operationRecordBytes)
+	if err != nil || !operationMatchesBatch(operationRecord, batch) {
+		return ResultV1{Kind: OutcomeIndeterminate, OperationID: batch.command.operationID, Recovery: RecoveryOperator}, nil
+	}
+	measurement, err := s.port.PreflightAtomicBatch(product)
+	if err != nil {
+		kind := OutcomeRefused
+		if storegapdb.IsKind(err, storegapdb.OutcomeInvalid) {
+			kind = OutcomeBudgetExceeded
+		}
+		return ResultV1{Kind: kind, OperationID: batch.command.operationID, Recovery: RecoveryOperator}, nil
+	}
+	mutationCount := len(productMutations(product))
+	if measurement.MutationCount != mutationCount || measurement.RawBytes <= 0 || measurement.WireBytes <= 0 {
+		return ResultV1{Kind: OutcomeRefused, OperationID: batch.command.operationID, Recovery: RecoveryOperator}, nil
+	}
+	if measurement.RawBytes > storegapdb.MaxRawBatchBytes || measurement.WireBytes > storegapdb.MaxWireFrameBytes {
+		return ResultV1{Kind: OutcomeBudgetExceeded, OperationID: batch.command.operationID, Recovery: RecoveryOperator}, nil
 	}
 	result, err := s.port.AtomicBatch(ctx, product)
 	if err != nil {
@@ -383,9 +537,45 @@ func (s *Service) Apply(ctx context.Context, batch ValidatedBatchV1) (ResultV1, 
 	}
 	return ResultV1{
 		Kind: OutcomeCommitted, OperationID: batch.command.operationID,
-		CommittedRevision: result.Revision, ResultType: batchResultType(batch),
-		CanonicalResult: batchResult(batch), Recovery: RecoveryNone,
+		CommittedRevision: result.Revision, ResultType: operationRecord.ResultType,
+		CanonicalResult: operationRecord.CanonicalResult(), Recovery: RecoveryNone,
 	}, nil
+}
+
+func (s *Service) preflightAggregateHeads(ctx context.Context, batch ValidatedBatchV1) ResultV1 {
+	for index, expected := range batch.expectedHeads {
+		mutation := batch.product.AggregateHeads[index]
+		record, err := s.port.Get(ctx, mutation.Key)
+		if expected.LogicalVersion == 0 {
+			if storegapdb.IsKind(err, storegapdb.OutcomeNotFound) {
+				continue
+			}
+			if err != nil {
+				return mapReadError(batch.command.operationID, err)
+			}
+			if _, decodeErr := controljournal.DecodeAggregateHeadV1(record.Value); decodeErr != nil {
+				return ResultV1{Kind: OutcomeRefused, OperationID: batch.command.operationID, Recovery: RecoveryOperator}
+			}
+			return ResultV1{Kind: OutcomeLogicalVersionConflict, OperationID: batch.command.operationID, Recovery: RecoveryRetrySameOperation}
+		}
+		if err != nil {
+			if storegapdb.IsKind(err, storegapdb.OutcomeNotFound) {
+				return ResultV1{Kind: OutcomeHeadRevisionConflict, OperationID: batch.command.operationID, Recovery: RecoveryRetrySameOperation}
+			}
+			return mapReadError(batch.command.operationID, err)
+		}
+		if record.Key != mutation.Key || record.Revision != expected.ObservedHeadRevision {
+			return ResultV1{Kind: OutcomeHeadRevisionConflict, OperationID: batch.command.operationID, Recovery: RecoveryRetrySameOperation}
+		}
+		head, decodeErr := controljournal.DecodeAggregateHeadV1(record.Value)
+		if decodeErr != nil || head.AggregateKind != expected.AggregateKind || head.AggregateID != expected.AggregateID {
+			return ResultV1{Kind: OutcomeRefused, OperationID: batch.command.operationID, Recovery: RecoveryOperator}
+		}
+		if head.LogicalVersion != expected.LogicalVersion {
+			return ResultV1{Kind: OutcomeLogicalVersionConflict, OperationID: batch.command.operationID, Recovery: RecoveryRetrySameOperation}
+		}
+	}
+	return ResultV1{}
 }
 
 func (s *Service) classifyAggregateConflict(ctx context.Context, batch ValidatedBatchV1) ResultV1 {
@@ -449,22 +639,6 @@ func operationMatchesBatch(record controljournal.OperationRecordV1, batch Valida
 func mustOperationBytes(record controljournal.OperationRecordV1) []byte {
 	value, _ := controljournal.EncodeOperationRecordV1(record)
 	return value
-}
-
-func batchResultType(batch ValidatedBatchV1) string {
-	record, err := controljournal.DecodeOperationRecordV1(batch.operationRecordBytes)
-	if err != nil {
-		return ""
-	}
-	return record.ResultType
-}
-
-func batchResult(batch ValidatedBatchV1) []byte {
-	record, err := controljournal.DecodeOperationRecordV1(batch.operationRecordBytes)
-	if err != nil {
-		return nil
-	}
-	return record.CanonicalResult()
 }
 
 func mapMutationError(operationID controljournal.OperationID, err error) ResultV1 {
