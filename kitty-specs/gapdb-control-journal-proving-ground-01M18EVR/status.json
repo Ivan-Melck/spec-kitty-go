@@ -19,7 +19,7 @@
   "work_packages": {
     "WP01": {
       "actor": "codex-capability-fix-5",
-      "agent": "reviewer-renata-capability-4",
+      "agent": "codex-capability-fix-5",
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 18,
@@ -36,7 +36,8 @@
         "Exact journal capability guard replaces heuristic semantic discovery; focused architecture gates pass at f47b033.",
         "Cycle 5 repaired at bac5afb: resolved raw-event alias/variadic/receiver authority, anonymous revision owners, and alternate SQLite providers; reviewer mutants and architecture gates pass.",
         "Cycle 6 repaired at 484eed7: recursive exact-type callable census, validator rebinding refusal, whole-tree journal purity, and SQLite/SQLCipher provider classification; expanded mutants and architecture gates pass.",
-        "Cycle 7 repaired at e64b6fc: fail-closed root/child type checks, directional capability result census, validator-owned construction, and in-memory pure sibling resolution; full prior mutant replay and architecture gates pass."
+        "Cycle 7 repaired at e64b6fc: fail-closed root/child type checks, directional capability result census, validator-owned construction, and in-memory pure sibling resolution; full prior mutant replay and architecture gates pass.",
+        "Cycle 8 repair committed at dd8e7bd: exact typed conversion and context-elided literal construction escapes are now rejected; full architecture, vet, staticcheck, formatting, and diff checks pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
