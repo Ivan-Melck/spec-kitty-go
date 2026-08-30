@@ -244,7 +244,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Cycle 3 ready at 18e8812: exact retained coordinates and public capsule lifecycle; canonical application and intent digests; sealed historical receipt restore; public W1 quarantine and fresh Process C/W3 with B continuing; exact admitted GapDB and real Git, race and architecture gates pass.",
-        "Cycle 4 ready at 6762c00: public heartbeat rejects caller TTL unequal to admitted Config.LeaseTTL before exact capsule binding or durable mutation; matching policy refreshes the exact head and deadline; full repetition, race, exact GapDB/real Git, architecture, vet, staticcheck, compile, and diff gates pass."
+        "Cycle 4 ready at 6762c00: public heartbeat rejects caller TTL unequal to admitted Config.LeaseTTL before exact capsule binding or durable mutation; matching policy refreshes the exact head and deadline; full repetition, race, exact GapDB/real Git, architecture, vet, staticcheck, compile, and diff gates pass.",
+        "Attribution correction: preserve the append-only CLI approval, re-enter review, and emit the cycle 4 verdict under the claimed reviewer identity"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
