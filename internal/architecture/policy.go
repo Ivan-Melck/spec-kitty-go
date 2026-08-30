@@ -225,7 +225,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			{
 				Name: TierAdapter, Production: true, ProviderAdapter: true,
 				Packages: []PackagePattern{
-					pkg("internal/controlstore/gapdb"), pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
+					pkg("internal/controlstore/gapdb"), pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/sidecar/gapdb"), pkg("internal/tracker/fake"),
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
 				},
 				AllowedLocalTargets: []TierName{
