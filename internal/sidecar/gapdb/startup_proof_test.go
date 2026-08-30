@@ -41,9 +41,13 @@ func TestOwnerStartupProofBindsOneEpochAcrossLifecycleAliases(t *testing.T) {
 }
 
 func TestOwnerStartupProofRefusesUnadmittedStoppedAndManualValues(t *testing.T) {
+	unrecovered := startupProofLifecycle("database-unrecovered")
+	unrecovered.provenance.Readiness.ProductRecovered = false
+	unrecovered.provenance.Readiness.ReadyForProductRecovery = false
 	for name, lifecycle := range map[string]*Lifecycle{
-		"unadmitted": {},
-		"stopped":    startupProofLifecycle("database-stopped"),
+		"unadmitted":  {},
+		"stopped":     startupProofLifecycle("database-stopped"),
+		"unrecovered": unrecovered,
 	} {
 		if name == "stopped" {
 			lifecycle.stopped = true
@@ -71,7 +75,11 @@ func startupProofLifecycle(databaseID string) *Lifecycle {
 			Executable:  ExecutableProvenance{ExecutablePath: "/opt/spec-kitty/gapdbd", SHA256: strings.Repeat("b", 64)},
 			Process:     ProcessIdentity{PID: 4242, StartTicks: 77, Device: 3, Inode: 4, Size: 5, SHA256: strings.Repeat("b", 64)},
 			Observation: CompositeObservation{Status: statusWithOwnerStartedAt("2026-08-30T12:00:00Z")},
-			Readiness:   ReadinessPredicates{Admitted: true}, AdmittedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
+			Readiness: ReadinessPredicates{
+				ByteRecovered: true, Healthy: true, Configured: true, Admitted: true,
+				ProductRecovered: true, ReadyForProductRecovery: true,
+			},
+			AdmittedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
 		},
 	}
 }
