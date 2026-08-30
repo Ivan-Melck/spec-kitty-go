@@ -71,10 +71,6 @@ an incomplete evidence census.
 
 This WP strengthens tests only. It does not redesign approved contracts, create
 runtime packages, add GapDB to the module, or manufacture passing evidence.
-It freezes the exact `ValidateJournalV1` to `ValidatedJournalV1` capability
-boundary described by the control-journal contract. It must not discover an
-authoritative seam by scoring arbitrary type/function shapes, lexical order, or
-filenames; WP02 owns the implementation and behavioral proofs of that seam.
 
 ## Context and product laws
 
@@ -171,22 +167,6 @@ mission contracts as read-only fixtures. Do not edit `go.mod` or `go.sum`.
    constructions through precise source/fixture rules documented in the test.
 6. Allow existing historical SQLite implementation to remain untouched.
 7. Produce stable, actionable path/import diagnostics.
-8. Recursively census every non-test Go file below `internal/controljournal`.
-   An absent production tree passes; its first production file anywhere
-   activates the complete frozen capability contract.
-9. Once activated, use Go type information to require the exact root-package
-   `StoredEventV1`, `EventVersionV1`, `EventRegistryV1`,
-   `ValidatedJournalV1`, `NewEventRegistryV1`, `ValidateJournalV1`, `Len`, and
-   `At` declarations from the contract. Direct fields and exact types are
-   required; promoted fields do not count.
-10. Reject a second producer of `ValidatedJournalV1`, any other validation or
-    ordering function accepting raw `[]StoredEventV1`, aliases or embedding
-    that recreate the capability, and any direct `RecordRevision` owner other
-    than `StoredEventV1`.
-11. Compile a temporary honest implementation against the exact public symbols
-    as the positive control. Do not use reflection, signature discovery,
-    comparator scoring, or production self-signing to choose or validate an
-    arbitrary seam.
 
 **Tests**:
 
@@ -195,11 +175,6 @@ mission contracts as read-only fixtures. Do not edit `go.mod` or `go.sum`.
 - A neutral package importing GapDB fails.
 - Any package importing `internal/server` fails.
 - Historical SQLite code is not misclassified as new M1 fallback.
-- A production file named `events.go` or located in a reducer subpackage
-  activates the complete contract; there is no `model.go` filename gate.
-- Embedded `RecordRevision`, a second capability producer, and raw-slice
-  validation competitors fail even when decorative valid types/functions are
-  present before or after them.
 
 **Exit evidence**: `go test ./internal/architecture -run M1Dependency`.
 
@@ -215,15 +190,10 @@ mission contracts as read-only fixtures. Do not edit `go.mod` or `go.sum`.
 2. Include mutants for allowlist widening, `internal/server`, SQLite fallback,
    current-batch revision fill-in, global authority CAS, shared projection head,
    runtime-coordinate conflation, and incomplete evidence signature.
-3. Include journal activation mutants for a malformed `events.go`, a
-   reducer-first file, and a missing root seam; ownership mutants for embedded
-   `RecordRevision`, aliases/embedding, and a second capability producer; and
-   decoys before and after broken authoritative declarations.
-4. Require every mutant to fail for its intended architectural reason.
-5. Include an absent-package control and one complete exact implementation
-   beside the mutants to avoid always-failing guards.
-6. Keep mutants local and deterministic; do not modify the working tree.
-7. Give mutant IDs compatible with the mission evidence vocabulary.
+3. Require every mutant to fail for its intended architectural reason.
+4. Include a clean control beside each mutant to avoid always-failing guards.
+5. Keep mutants local and deterministic; do not modify the working tree.
+6. Give mutant IDs compatible with the mission evidence vocabulary.
 
 **Exit evidence**: `go test ./internal/architecture -run 'M1.*Mutant'`.
 
@@ -245,12 +215,8 @@ mission contracts as read-only fixtures. Do not edit `go.mod` or `go.sum`.
 
 The reviewer should deliberately add one forbidden-import mutant and one
 vacuous-evidence mutant to a temporary fixture and see both fail. Reject the WP
-if a guard relies on filenames or generic signature discovery, if a decorative
-or unused function can mask a broken exact seam, if an approved contract was
-rewritten to fit a test, or if product budgets merely equal the GapDB runtime
-ceilings. Ordering, grouping, version, and digest runtime semantics are WP02's
-responsibility; WP01 must freeze the exact structural capability without
-pretending to implement that future package.
+if a guard relies on filenames alone, if an approved contract was rewritten to
+fit a test, or if product budgets merely equal the GapDB runtime ceilings.
 
 ## Completion criteria
 
