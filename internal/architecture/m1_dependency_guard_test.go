@@ -607,9 +607,23 @@ func ReduceRaw(events RawEvents) { _ = events }
 			kind: "journal-constructor",
 		},
 		{
+			name: "generic-registry-constructor",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return replaceM1Fixture(files, "func NewEventRegistryV1(versions []EventVersionV1) (EventRegistryV1, error)", "func NewEventRegistryV1[T any](versions []EventVersionV1) (EventRegistryV1, error)")
+			},
+			kind: "journal-constructor",
+		},
+		{
 			name: "wrong-validation-signature",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
 				return replaceM1Fixture(files, "func ValidateJournalV1(registry EventRegistryV1, events []StoredEventV1) (ValidatedJournalV1, error)", "func ValidateJournalV1(events []StoredEventV1, registry EventRegistryV1) (ValidatedJournalV1, error)")
+			},
+			kind: "journal-validator",
+		},
+		{
+			name: "generic-journal-validator",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return replaceM1Fixture(files, "func ValidateJournalV1(registry EventRegistryV1, events []StoredEventV1) (ValidatedJournalV1, error)", "func ValidateJournalV1[T any](registry EventRegistryV1, events []StoredEventV1) (ValidatedJournalV1, error)")
 			},
 			kind: "journal-validator",
 		},
@@ -1097,7 +1111,7 @@ func m1ExactValidatorFunction(pkg *types.Package, registry, stored, validated *t
 		return nil
 	}
 	signature, _ := function.Type().(*types.Signature)
-	if signature == nil || signature.Recv() != nil || signature.Variadic() ||
+	if signature == nil || signature.Recv() != nil || !m1SignatureIsNongeneric(signature) || signature.Variadic() ||
 		!m1TupleMatches(signature.Params(), []types.Type{registry, types.NewSlice(stored)}) ||
 		!m1TupleMatches(signature.Results(), []types.Type{validated, types.Universe.Lookup("error").Type()}) {
 		return nil
@@ -1322,9 +1336,20 @@ func m1RequireFunction(pkg *types.Package, name string, parameters, results []ty
 		return
 	}
 	signature, ok := object.Type().(*types.Signature)
-	if !ok || signature.Recv() != nil || signature.Variadic() || !m1TupleMatches(signature.Params(), parameters) || !m1TupleMatches(signature.Results(), results) {
+	if !ok || signature.Recv() != nil || !m1SignatureIsNongeneric(signature) || signature.Variadic() || !m1TupleMatches(signature.Params(), parameters) || !m1TupleMatches(signature.Results(), results) {
 		*violations = append(*violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: kind, Detail: name + " does not have the exact frozen signature"})
 	}
+}
+
+func m1SignatureIsNongeneric(signature *types.Signature) bool {
+	return signature != nil && m1TypeParamListLen(signature.TypeParams()) == 0 && m1TypeParamListLen(signature.RecvTypeParams()) == 0
+}
+
+func m1TypeParamListLen(parameters *types.TypeParamList) int {
+	if parameters == nil {
+		return 0
+	}
+	return parameters.Len()
 }
 
 func m1RequireMethod(receiver *types.Named, name string, parameters, results []types.Type, kind string, violations *[]m1ArchitectureViolation) {
