@@ -268,7 +268,9 @@ func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
 
 	journal := module + "/internal/controljournal"
 	reducer := journal + "/reducer"
-	for _, packagePath := range []string{journal, reducer} {
+	checkpoint := journal + "/checkpoint"
+	playback := journal + "/playback"
+	for _, packagePath := range []string{journal, reducer, checkpoint, playback} {
 		tier, classifyErr := policy.Classify(packagePath)
 		if classifyErr != nil || tier.Name != TierFoundation || !tier.Production {
 			t.Fatalf("control journal classification path=%s tier=%+v err=%v", packagePath, tier, classifyErr)
@@ -283,6 +285,37 @@ func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
 	if err := policy.Check(graph); err != nil {
 		t.Fatalf("pure control-journal sibling edge rejected: %v", err)
 	}
+}
+
+func TestDefaultPolicySeparatesJournalApplicationComposition(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	application := module + "/internal/controljournal/application"
+	adapter := module + "/internal/controlstore/gapdb"
+	sidecar := module + "/internal/sidecar/gapdb"
+	assertTier(t, policy, application, TierComposition)
+	for _, target := range []string{module + "/internal/controljournal", adapter, sidecar} {
+		graph := fixtureGraph(
+			[]string{application, target},
+			ImportEdge{SourcePackage: application, TargetPackage: target, Kind: ImportModuleLocal},
+		)
+		graph.ModulePath = module
+		if err := policy.Check(graph); err != nil {
+			t.Fatalf("application composition rejected target=%s: %v", target, err)
+		}
+	}
+
+	pure := module + "/internal/controljournal/playback"
+	graph := fixtureGraph(
+		[]string{pure, adapter},
+		ImportEdge{SourcePackage: pure, TargetPackage: adapter, Kind: ImportModuleLocal},
+	)
+	graph.ModulePath = module
+	assertExactViolation(t, policy, graph, RuleLocalDirection, pure, TierFoundation, adapter, TierAdapter)
 }
 
 func TestDefaultPolicyClassifiesGapDBAsExactProviderAdapter(t *testing.T) {
