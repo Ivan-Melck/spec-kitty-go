@@ -171,6 +171,18 @@ type ProductBatch struct {
 	CheckpointHead *Mutation
 }
 
+// RuntimeEpochBatch is the indivisible owner-startup transaction.  Its named
+// records prevent callers from smuggling epoch metadata through product event
+// or aggregate-head slots merely to satisfy ProductBatch cardinalities.
+type RuntimeEpochBatch struct {
+	OperationID    string
+	Operation      Mutation
+	Event          Mutation
+	AggregateHead  Mutation
+	EpochRecord    Mutation
+	CurrentBinding Mutation
+}
+
 type ScanRequest struct {
 	Prefix   string
 	Limit    int
@@ -262,6 +274,7 @@ type Port interface {
 	Get(context.Context, string) (Record, error)
 	ConditionalMutate(context.Context, string, Mutation, AckMode) (MutationResult, error)
 	AtomicBatch(context.Context, ProductBatch) (MutationResult, error)
+	AdmitRuntimeEpoch(context.Context, RuntimeEpochBatch) (MutationResult, error)
 	Scan(context.Context, ScanRequest) (ScanPage, error)
 	Watch(context.Context, string, uint64) (NotificationWatch, error)
 	Inspect(context.Context) (Inspection, error)

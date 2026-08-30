@@ -44,6 +44,65 @@ func TestBatchTranslatesOneProductBatchToOneAtomicCall(t *testing.T) {
 	}
 }
 
+func TestRuntimeEpochBatchUsesOneHonestAtomicCall(t *testing.T) {
+	var calls atomic.Int32
+	provider := &fakeProvider{batchFn: func(_ context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+		calls.Add(1)
+		if batch.Ack != gapdbapi.AckDurable || len(batch.Mutations) != 5 {
+			t.Fatalf("translated epoch batch=%+v", batch)
+		}
+		wantKeys := []string{"operation", "epoch-event", "runtime-head", "epoch-record", "current-binding"}
+		for index, want := range wantKeys {
+			if batch.Mutations[index].Key != want {
+				t.Fatalf("mutation %d key=%q want=%q", index, batch.Mutations[index].Key, want)
+			}
+		}
+		if batch.Mutations[2].Condition.ExpectedRevision != 40 || batch.Mutations[4].Condition.ExpectedRevision != 41 {
+			t.Fatalf("startup CAS coordinates lost: %+v", batch.Mutations)
+		}
+		return gapdbapi.MutationResult{Revision: 42, Ack: gapdbapi.AckDurable, DurableThroughRevision: 42, MutationCount: 5}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	result, err := adapter.AdmitRuntimeEpoch(context.Background(), runtimeEpochBatch())
+	if err != nil || result.Revision != 42 || result.MutationCount != 5 || calls.Load() != 1 {
+		t.Fatalf("result=%+v calls=%d err=%v", result, calls.Load(), err)
+	}
+}
+
+func TestRuntimeEpochBatchRejectsSemanticSlotMutantsBeforeProviderCall(t *testing.T) {
+	var calls atomic.Int32
+	provider := &fakeProvider{batchFn: func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+		calls.Add(1)
+		return gapdbapi.MutationResult{}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	tests := map[string]func(*RuntimeEpochBatch){
+		"operation not absent": func(batch *RuntimeEpochBatch) { batch.Operation.Condition = Condition{Kind: ConditionAny} },
+		"event not absent": func(batch *RuntimeEpochBatch) {
+			batch.Event.Condition = Condition{Kind: ConditionRevision, ExpectedRevision: 1}
+		},
+		"epoch not absent":   func(batch *RuntimeEpochBatch) { batch.EpochRecord.Condition = Condition{Kind: ConditionAny} },
+		"head unconditional": func(batch *RuntimeEpochBatch) { batch.AggregateHead.Condition = Condition{Kind: ConditionAny} },
+		"binding unconditional": func(batch *RuntimeEpochBatch) {
+			batch.CurrentBinding.Condition = Condition{Kind: ConditionAny}
+		},
+		"duplicate key": func(batch *RuntimeEpochBatch) { batch.EpochRecord.Key = batch.Event.Key },
+		"delete":        func(batch *RuntimeEpochBatch) { batch.Event.Kind = MutationDelete },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			batch := runtimeEpochBatch()
+			mutate(&batch)
+			if _, err := adapter.AdmitRuntimeEpoch(t.Context(), batch); err == nil {
+				t.Fatal("invalid runtime epoch batch accepted")
+			}
+		})
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("invalid batches reached provider %d times", calls.Load())
+	}
+}
+
 func TestBatchCountBoundaries(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -680,6 +739,17 @@ func minimalBatch() ProductBatch {
 	return ProductBatch{
 		OperationID: "operation", Operation: put("operation", nil, ConditionAbsent, 0),
 		Events: mutations("event", 1), AggregateHeads: mutations("head", 1),
+	}
+}
+
+func runtimeEpochBatch() RuntimeEpochBatch {
+	return RuntimeEpochBatch{
+		OperationID:    "epoch-operation",
+		Operation:      put("operation", []byte("operation"), ConditionAbsent, 0),
+		Event:          put("epoch-event", []byte("event"), ConditionAbsent, 0),
+		AggregateHead:  put("runtime-head", []byte("head"), ConditionRevision, 40),
+		EpochRecord:    put("epoch-record", []byte("epoch"), ConditionAbsent, 0),
+		CurrentBinding: put("current-binding", []byte("binding"), ConditionRevision, 41),
 	}
 }
 

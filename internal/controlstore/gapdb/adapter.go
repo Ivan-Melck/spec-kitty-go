@@ -210,36 +210,51 @@ func (a *Adapter) AtomicBatch(ctx context.Context, batch ProductBatch) (Mutation
 	if err != nil {
 		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
 	}
+	return a.commitAtomicBatch(ctx, "atomic_batch", batch.OperationID, providerBatch, rawBytes)
+}
+
+// AdmitRuntimeEpoch commits the five semantically named startup records in one
+// provider transaction.  It is separate from AtomicBatch so epoch metadata
+// cannot masquerade as ordinary product events or aggregate heads.
+func (a *Adapter) AdmitRuntimeEpoch(ctx context.Context, batch RuntimeEpochBatch) (MutationResult, error) {
+	providerBatch, rawBytes, err := encodeRuntimeEpochBatch(batch)
+	if err != nil {
+		return MutationResult{}, adapterError("admit_runtime_epoch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
+	}
+	return a.commitAtomicBatch(ctx, "admit_runtime_epoch", batch.OperationID, providerBatch, rawBytes)
+}
+
+func (a *Adapter) commitAtomicBatch(ctx context.Context, operation, operationID string, providerBatch gapdbapi.Batch, rawBytes int) (MutationResult, error) {
 	if rawBytes > MaxRawBatchBytes {
-		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, "raw batch byte budget exceeded", nil)
+		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "raw batch byte budget exceeded", nil)
 	}
 	if err := validateMutationCount(len(providerBatch.Mutations)); err != nil {
-		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
+		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
 	}
 	if providerBatch.Ack != gapdbapi.AckDurable {
-		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, "atomic batch requires durable acknowledgement", nil)
+		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "atomic batch requires durable acknowledgement", nil)
 	}
 	wire := struct {
 		SchemaVersion uint64         `json:"schema_version"`
 		RequestID     string         `json:"request_id"`
 		Operation     string         `json:"operation"`
 		Arguments     gapdbapi.Batch `json:"arguments"`
-	}{AdmittedWireVersion, batch.OperationID, "atomic_batch", providerBatch}
+	}{AdmittedWireVersion, operationID, "atomic_batch", providerBatch}
 	encoded, err := json.Marshal(wire)
 	if err != nil {
-		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, "wire request cannot be encoded", err)
+		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, "wire request cannot be encoded", err)
 	}
 	if err := validateWireFrameSize(a.wireSize(encoded)); err != nil {
-		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
+		return MutationResult{}, adapterError(operation, operationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
 	}
 	ctx, cancel := a.requestContext(ctx)
 	defer cancel()
-	ctx = gapdbapi.WithRequestID(ctx, batch.OperationID)
+	ctx = gapdbapi.WithRequestID(ctx, operationID)
 	result, err := a.client.AtomicBatch(ctx, providerBatch)
 	if err != nil {
-		return MutationResult{}, translateError("atomic_batch", batch.OperationID, err)
+		return MutationResult{}, translateError(operation, operationID, err)
 	}
-	return convertMutationResult("atomic_batch", batch.OperationID, result, len(providerBatch.Mutations), gapdbapi.AckDurable)
+	return convertMutationResult(operation, operationID, result, len(providerBatch.Mutations), gapdbapi.AckDurable)
 }
 
 func (a *Adapter) Scan(ctx context.Context, request ScanRequest) (ScanPage, error) {
@@ -511,6 +526,46 @@ func encodeProductBatch(batch ProductBatch) (gapdbapi.Batch, int, error) {
 		}
 		if _, exists := seen[mutation.Key]; exists {
 			return gapdbapi.Batch{}, 0, fmt.Errorf("duplicate mutation key at index %d", index)
+		}
+		seen[mutation.Key] = struct{}{}
+		rawBytes += len(mutation.Key) + len(mutation.Value)
+		provider.Mutations[index] = providerMutation(mutation)
+	}
+	return provider, rawBytes, nil
+}
+
+func encodeRuntimeEpochBatch(batch RuntimeEpochBatch) (gapdbapi.Batch, int, error) {
+	if err := validateOperationID(batch.OperationID); err != nil {
+		return gapdbapi.Batch{}, 0, err
+	}
+	if batch.Operation.Condition.Kind != ConditionAbsent {
+		return gapdbapi.Batch{}, 0, errors.New("operation record must require absence")
+	}
+	if batch.Event.Condition.Kind != ConditionAbsent {
+		return gapdbapi.Batch{}, 0, errors.New("epoch event must require absence")
+	}
+	if batch.EpochRecord.Condition.Kind != ConditionAbsent {
+		return gapdbapi.Batch{}, 0, errors.New("immutable epoch record must require absence")
+	}
+	if batch.AggregateHead.Condition.Kind == ConditionAny {
+		return gapdbapi.Batch{}, 0, errors.New("runtime aggregate head requires an absent or revision condition")
+	}
+	if batch.CurrentBinding.Condition.Kind == ConditionAny {
+		return gapdbapi.Batch{}, 0, errors.New("current epoch binding requires an absent or revision condition")
+	}
+	mutations := []Mutation{batch.Operation, batch.Event, batch.AggregateHead, batch.EpochRecord, batch.CurrentBinding}
+	provider := gapdbapi.Batch{Ack: gapdbapi.AckDurable, Mutations: make([]gapdbapi.Mutation, len(mutations))}
+	seen := make(map[string]struct{}, len(mutations))
+	rawBytes := 0
+	for index, mutation := range mutations {
+		if mutation.Kind != MutationPut {
+			return gapdbapi.Batch{}, 0, fmt.Errorf("runtime epoch mutation %d must be a put", index)
+		}
+		if err := validateMutation(mutation, MaxOrdinaryValueBytes); err != nil {
+			return gapdbapi.Batch{}, 0, fmt.Errorf("runtime epoch mutation %d: %w", index, err)
+		}
+		if _, duplicate := seen[mutation.Key]; duplicate {
+			return gapdbapi.Batch{}, 0, fmt.Errorf("duplicate runtime epoch mutation key at index %d", index)
 		}
 		seen[mutation.Key] = struct{}{}
 		rawBytes += len(mutation.Key) + len(mutation.Value)
