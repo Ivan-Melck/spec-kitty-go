@@ -259,6 +259,32 @@ func TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority(t *t
 	}
 }
 
+func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	journal := module + "/internal/controljournal"
+	reducer := journal + "/reducer"
+	for _, packagePath := range []string{journal, reducer} {
+		tier, classifyErr := policy.Classify(packagePath)
+		if classifyErr != nil || tier.Name != TierFoundation || !tier.Production {
+			t.Fatalf("control journal classification path=%s tier=%+v err=%v", packagePath, tier, classifyErr)
+		}
+	}
+
+	graph := fixtureGraph(
+		[]string{journal, reducer},
+		ImportEdge{SourcePackage: reducer, TargetPackage: journal, Kind: ImportModuleLocal},
+	)
+	graph.ModulePath = module
+	if err := policy.Check(graph); err != nil {
+		t.Fatalf("pure control-journal sibling edge rejected: %v", err)
+	}
+}
+
 // WP08 coordination guard: conformance is deliberately test-only quality
 // tooling. It may exercise the provider-neutral contract and adapters, but no
 // authority package may acquire it as a production dependency.

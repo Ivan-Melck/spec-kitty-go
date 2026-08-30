@@ -170,7 +170,10 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 		Tiers: []Tier{
 			{
 				Name: TierFoundation, Production: true,
-				Packages:            []PackagePattern{pkg("internal/ids"), pkg("internal/faults"), pkg("internal/governancecontext")},
+				Packages: []PackagePattern{
+					pkg("internal/ids"), pkg("internal/faults"), pkg("internal/governancecontext"),
+					PackagePrefix(modulePath + "/internal/controljournal"),
+				},
 				AllowedLocalTargets: []TierName{TierFoundation},
 			},
 			{
