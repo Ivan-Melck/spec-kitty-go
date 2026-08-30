@@ -1,7 +1,7 @@
 {
-  "event_count": 91,
-  "last_event_id": "01M19AQS3TAKMA8CR4G0J29NMK",
-  "materialized_at": "2026-08-30T12:36:31.994045+00:00",
+  "event_count": 92,
+  "last_event_id": "01M19B8CJEENGV53WN532JEHAV",
+  "materialized_at": "2026-08-30T12:45:36.206220+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
@@ -13,8 +13,8 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 7
+    "in_review": 0,
+    "planned": 8
   },
   "work_packages": {
     "WP01": {
@@ -95,19 +95,25 @@
       }
     },
     "WP03": {
-      "actor": "renata-wp03",
+      "actor": "user",
       "agent": "renata-wp03",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 1,
-      "lane": "in_review",
-      "last_event_id": "01M19AQS3TAKMA8CR4G0J29NMK",
-      "last_transition_at": "2026-08-30T12:36:31.994045+00:00",
+      "force_count": 2,
+      "lane": "planned",
+      "last_event_id": "01M19B8CJEENGV53WN532JEHAV",
+      "last_transition_at": "2026-08-30T12:45:36.206220+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review at 0977613: exact pinned public GapDB adapter, bounded atomic/CAS/scan/watch/inspect/authority ports, typed ambiguity and redacted diagnostics, and all 14 real external sidecar scenarios pass. Green: focused/full package tests; package and external race; M1 architecture guards; bounded fuzz; vet; staticcheck; go mod verify; exact go list dependency census; gofmt; git diff --check. Ruff diff-scoped check: no Python files changed, exit 0. Force records only the known protected-coordination metadata workaround after all implementation gates passed."
       ],
       "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP03-public-gapdb-adapter-and-external-scenarios/review-cycle-1.md",
+        "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP03-public-gapdb-adapter-and-external-scenarios/review-cycle-1.md",
+        "reviewer": "user",
+        "verdict": "changes_requested"
+      },
       "role": "reviewer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
