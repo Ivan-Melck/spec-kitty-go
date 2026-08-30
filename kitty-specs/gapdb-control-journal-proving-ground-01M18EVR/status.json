@@ -165,9 +165,9 @@
     },
     "WP05": {
       "actor": "codex-wp05",
-      "agent": null,
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent": "codex-wp05",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 7,
       "lane": "for_review",
       "last_event_id": "01M19Z95K9T2ZHMKWKE8P1PBEG",
@@ -185,7 +185,7 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
