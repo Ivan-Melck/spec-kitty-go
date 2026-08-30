@@ -142,22 +142,23 @@
         "Ready for independent review at 208f4d6: exact descriptor-bound admitted GapDB sidecar; openat2 no-symlink provenance; pidfd with exact /proc fallback; crash attachment; composite Status/Health/DescribeConfig attribution; validator-sealed product readiness; attribution-safe runtime/socket cleanup; and real GJ-02 response-drop proxy with strict one-frame durable acceptance. Green: exact admitted binary package count=20; race count=10; no-binary package; fuzz 241405 executions/147 new interesting; M1 architecture guards count=10 and architecture/policy/mutant count=3; vet; staticcheck; gofmt; git diff --check; public dependency census. Ruff diff-scoped check: no Python files changed, exit 0. Force bypasses only the known root-mirror protected-coordination false positive after all implementation gates passed."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP04-exact-sidecar-lifecycle-and-response-drop-proxy/review-cycle-1.md",
         "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP04-exact-sidecar-lifecycle-and-response-drop-proxy/review-cycle-1.md",
         "reviewer": "renata-wp04-cycle1",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T018": "done",
-        "T019": "done",
-        "T020": "done",
-        "T021": "done",
-        "T022": "done",
-        "T023": "done"
+        "T018": "planned",
+        "T019": "planned",
+        "T020": "planned",
+        "T021": "planned",
+        "T022": "planned",
+        "T023": "planned"
       }
     },
     "WP05": {
