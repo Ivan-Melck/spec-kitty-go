@@ -247,7 +247,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			{
 				Name: TierComposition, Production: true,
 				Packages: []PackagePattern{
-					pkg("internal/controljournal/application"), pkg("internal/helpercmd"), pkg("cmd/spk-phase1-helper"),
+					pkg("internal/controljournal/application"), pkg("internal/helpercmd"), pkg("internal/provingground"), pkg("cmd/spk-phase1-helper"),
 				},
 				AllowedLocalTargets: append(append([]TierName(nil), allRuntime...), TierQuality),
 			},
