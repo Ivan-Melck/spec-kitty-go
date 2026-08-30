@@ -1,7 +1,7 @@
 {
-  "event_count": 26,
-  "last_event_id": "01M18VERQXG1VTFKZFCVSX29RF",
-  "materialized_at": "2026-08-30T08:09:28.061129+00:00",
+  "event_count": 27,
+  "last_event_id": "01M18VNJN87DXZ5HMQZEEK60JD",
+  "materialized_at": "2026-08-30T08:13:11.208462+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
@@ -13,19 +13,19 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 9
+    "in_review": 0,
+    "planned": 10
   },
   "work_packages": {
     "WP01": {
-      "actor": "reviewer-renata",
+      "actor": "user",
       "agent": "reviewer-renata",
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
-      "force_count": 6,
-      "lane": "in_review",
-      "last_event_id": "01M18VERQXG1VTFKZFCVSX29RF",
-      "last_transition_at": "2026-08-30T08:09:28.061129+00:00",
+      "force_count": 7,
+      "lane": "planned",
+      "last_event_id": "01M18VNJN87DXZ5HMQZEEK60JD",
+      "last_transition_at": "2026-08-30T08:13:11.208462+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for review at 7947c5f: froze exact typed product budgets and pinned runtime ceilings; strengthened schema, source-bound evidence census, reviewer separation, ordered-trial semantics, adoption-state and event-order contracts; added AST GapDB/internal-server/SQLite and forbidden-construction guards with clean/mutant controls. Green: go test ./internal/architecture; focused M1 slices; go vet ./internal/architecture; staticcheck ./internal/architecture; git diff --check. Repository go test ./... -short exposed the existing internal/scenario 10m package timeout; isolated TestPhase1NamedFaultBoundaryMatrix passed in 362.720s. Force bypass applies only to the primary checkout's expected untracked mission planning directory; the WP01 lane is clean.",
@@ -36,8 +36,8 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP01-frozen-journal-contracts-and-guards/review-cycle-2.md",
-        "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP01-frozen-journal-contracts-and-guards/review-cycle-2.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP01-frozen-journal-contracts-and-guards/review-cycle-3.md",
+        "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP01-frozen-journal-contracts-and-guards/review-cycle-3.md",
         "reviewer": "reviewer-renata",
         "verdict": "changes_requested"
       },
