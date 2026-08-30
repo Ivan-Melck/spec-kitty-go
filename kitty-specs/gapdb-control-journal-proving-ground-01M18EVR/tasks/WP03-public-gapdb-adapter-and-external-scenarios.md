@@ -250,4 +250,4 @@ are counted without actually starting and terminating.
 
 ## Activity Log
 
-- 2026-08-30T12:47:41Z – renata-wp03 – Independent review by renata-wp03 rejected 0977613; durable findings are in review-cycle-1.md. The preceding move-task transition used the CLI's default actor label `user`; review claim `01M19AQS3TAKMA8CR4G0J29NMK` and this annotation preserve the actual reviewer identity.
+- 2026-08-30T12:47:41Z – renata-wp03 – Independent review by renata-wp03 rejected 0977613; durable findings are in review-cycle-1.md. The preceding move-task transition used the CLI's default actor label 'user'; review claim 01M19AQS3TAKMA8CR4G0J29NMK and this annotation preserve the actual reviewer identity.
