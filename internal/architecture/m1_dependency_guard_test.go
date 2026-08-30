@@ -1,18 +1,20 @@
 package architecture
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const m1GapDBModule = "github.com/spec-kitty/gapdb"
@@ -202,27 +204,70 @@ type CommittedEvent struct { RecordRevision uint64; EventIndex uint32; EventID s
 		{
 			Path: "internal/controljournal/validation.go",
 			Source: []byte(`package controljournal
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+)
 func CompareCommittedEventOrder(left, right CommittedEvent) int {
 	if left.RecordRevision < right.RecordRevision { return -1 }
+	if left.RecordRevision > right.RecordRevision { return 1 }
 	if left.EventIndex < right.EventIndex { return -1 }
+	if left.EventIndex > right.EventIndex { return 1 }
 	if left.EventID < right.EventID { return -1 }
+	if left.EventID > right.EventID { return 1 }
 	return 0
 }
-func ValidateCommittedEventGroup(event CommittedEvent) error {
-	if event.EnvelopeVersion != 1 || event.EventType == "" || event.EventSchemaVersion != 1 || event.ReducerVersion != "v1" { return errInvalid }
-	if !SupportedEventVersion(event.EventType, event.EventSchemaVersion, event.ReducerVersion) { return errInvalid }
-	if event.RecordRevision == 0 || event.OperationID == "" || event.EventIndex >= event.EventCount || event.EventID == "" { return errInvalid }
-	if !CanonicalEventDigestMatches(event.CanonicalEventDigest) { return errInvalid }
+func CanonicalEventDigest(event CommittedEvent) string {
+	payload := fmt.Sprintf("%d|%d|%s|%s|%s|%d|%d|%s|%d", event.RecordRevision, event.EventIndex, event.EventID, event.OperationID, event.EventType, event.EnvelopeVersion, event.EventSchemaVersion, event.ReducerVersion, event.EventCount)
+	digest := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(digest[:])
+}
+func SupportedEventVersion(eventType string, eventVersion uint32, reducerVersion string) bool {
+	return eventType == "work-claimed" && eventVersion == 1 && reducerVersion == "work-v1"
+}
+func ValidateCommittedEventGroup(events []CommittedEvent) error {
+	if len(events) == 0 { return fmt.Errorf("empty group") }
+	seenIDs, seenTuples := map[string]bool{}, map[string]bool{}
+	for index, event := range events {
+		if event.EnvelopeVersion != 1 || !SupportedEventVersion(event.EventType, event.EventSchemaVersion, event.ReducerVersion) { return fmt.Errorf("unsupported version") }
+		if event.RecordRevision == 0 || event.OperationID == "" || event.EventIndex >= event.EventCount || event.EventID == "" { return fmt.Errorf("malformed group") }
+		if event.CanonicalEventDigest != CanonicalEventDigest(event) { return fmt.Errorf("digest mismatch") }
+		tuple := fmt.Sprintf("%d/%d/%s", event.RecordRevision, event.EventIndex, event.EventID)
+		if seenIDs[event.EventID] || seenTuples[tuple] { return fmt.Errorf("duplicate event") }
+		seenIDs[event.EventID], seenTuples[tuple] = true, true
+		if index == 0 {
+			if event.EventIndex != 0 { return fmt.Errorf("missing first index") }
+			continue
+		}
+		previous := events[index-1]
+		if CompareCommittedEventOrder(previous, event) >= 0 { return fmt.Errorf("nonmonotonic group") }
+		if previous.RecordRevision == event.RecordRevision && (previous.OperationID != event.OperationID || previous.EventCount != event.EventCount || event.EventIndex != previous.EventIndex+1) { return fmt.Errorf("noncontiguous group") }
+		if previous.RecordRevision != event.RecordRevision && event.EventIndex != 0 { return fmt.Errorf("missing record start") }
+	}
 	return nil
 }
-func SupportedEventVersion(eventType string, eventVersion uint32, reducerVersion string) bool { return eventType != "" && eventVersion == 1 && reducerVersion == "v1" }
-func CanonicalEventDigestMatches(digest string) bool { return digest != "" }
-var errInvalid error
 `),
 		},
 	}
 	if violations := inspectM1Sources(clean); len(violations) != 0 {
 		t.Fatalf("clean production journal seams rejected: %v", violations)
+	}
+	renamed := make([]m1SourceFile, len(clean))
+	for index, file := range clean {
+		source := string(file.Source)
+		for original, replacement := range map[string]string{
+			"CompareCommittedEventOrder(":  "threeWay(",
+			"CanonicalEventDigest(":        "foldBytes(",
+			"SupportedEventVersion(":       "registryContains(",
+			"ValidateCommittedEventGroup(": "refuseBadBatch(",
+		} {
+			source = strings.ReplaceAll(source, original, replacement)
+		}
+		renamed[index] = m1SourceFile{Path: file.Path, Source: []byte(source)}
+	}
+	if violations := inspectM1Sources(renamed); len(violations) != 0 {
+		t.Fatalf("behaviorally valid seams with arbitrary function names rejected: %v", violations)
 	}
 	tests := []struct {
 		id     string
@@ -300,6 +345,108 @@ var errInvalid error
 			mutant := m1SourceFile{Path: "internal/controljournal/model.go", Source: []byte(test.source)}
 			if violations := inspectM1Sources([]m1SourceFile{mutant}); !containsM1Violation(violations, test.kind) {
 				t.Fatalf("production journal mutant survived %s: %v", test.kind, violations)
+			}
+		})
+	}
+}
+
+func TestM1DependencyJournalBehavioralBypassMutants(t *testing.T) {
+	base := `package controljournal
+type CommittedEvent struct { RecordRevision uint64; EventIndex uint32; EventID string; OperationID string; EventType string; EnvelopeVersion uint32; EventSchemaVersion uint32; ReducerVersion string; EventCount uint32; CanonicalEventDigest string }
+`
+	correctComparatorSyntax := `
+func CompareCommittedEventOrder(left, right CommittedEvent) int {
+	if left.RecordRevision < right.RecordRevision { return -1 }; if left.RecordRevision > right.RecordRevision { return 1 }
+	if left.EventIndex < right.EventIndex { return -1 }; if left.EventIndex > right.EventIndex { return 1 }
+	if left.EventID < right.EventID { return -1 }; if left.EventID > right.EventID { return 1 }; return 0
+}
+`
+	decoratedValidator := `
+func ValidateCommittedEventGroup(event CommittedEvent) error {
+	if event.EnvelopeVersion != 1 || event.EventType == "" || event.EventSchemaVersion != 1 || event.ReducerVersion != "v1" { return errInvalid }
+	if !SupportedEventVersion(event.EventType, event.EventSchemaVersion, event.ReducerVersion) { return errInvalid }
+	if event.RecordRevision == 0 || event.OperationID == "" || event.EventIndex >= event.EventCount || event.EventID == "" { return errInvalid }
+	if !CanonicalEventDigestMatches(event.CanonicalEventDigest) { return errInvalid }; return nil
+}
+func SupportedEventVersion(string, uint32, string) bool { return true }
+func CanonicalEventDigestMatches(digest string) bool { return digest != "" }
+var errInvalid error
+`
+	wholeGroupValidator := func(versionGuard, digestGuard string) string {
+		source := `
+type invalidJournalError struct{}
+func (invalidJournalError) Error() string { return "invalid" }
+var errInvalid error = invalidJournalError{}
+func CanonicalEventDigest(event CommittedEvent) string { return event.EventID + "|" + event.OperationID + "|" + event.EventType + "|" + event.ReducerVersion }
+func SupportedEventVersion(eventType string, eventVersion uint32, reducerVersion string) bool { return eventType == "work-claimed" && eventVersion == 1 && reducerVersion == "work-v1" }
+func ValidateCommittedEventGroup(events []CommittedEvent) error {
+	if len(events) == 0 { return errInvalid }
+	seen := map[string]bool{}
+	for index, event := range events {
+		VERSION_GUARD
+		if event.RecordRevision == 0 || event.OperationID == "" || event.EventIndex >= event.EventCount || event.EventID == "" { return errInvalid }
+		DIGEST_GUARD
+		if seen[event.EventID] { return errInvalid }; seen[event.EventID] = true
+		if index == 0 { if event.EventIndex != 0 { return errInvalid }; continue }
+		previous := events[index-1]
+		if CompareCommittedEventOrder(previous, event) >= 0 { return errInvalid }
+		if previous.RecordRevision == event.RecordRevision && (previous.OperationID != event.OperationID || previous.EventCount != event.EventCount || event.EventIndex != previous.EventIndex+1) { return errInvalid }
+		if previous.RecordRevision != event.RecordRevision && event.EventIndex != 0 { return errInvalid }
+	}
+	return nil
+}
+`
+		source = strings.Replace(source, "VERSION_GUARD", versionGuard, 1)
+		return strings.Replace(source, "DIGEST_GUARD", digestGuard, 1)
+	}
+	validVersionGuard := `if event.EnvelopeVersion != 1 || !SupportedEventVersion(event.EventType, event.EventSchemaVersion, event.ReducerVersion) { return errInvalid }`
+	validDigestGuard := `if event.CanonicalEventDigest != CanonicalEventDigest(event) { return errInvalid }`
+	tests := []struct {
+		id, source, kind, detail string
+	}{
+		{
+			id: "invalid-event-order/decorated-wrong-comparator",
+			source: base + `
+func CompareCommittedEventOrder(left, right CommittedEvent) int {
+	if left.RecordRevision < right.RecordRevision { return -1 }
+	if left.EventIndex < right.EventIndex { return -1 }
+	if left.EventID < right.EventID { return -1 }; return 0
+}
+` + wholeGroupValidator(validVersionGuard, validDigestGuard),
+			kind:   "event-order-seam",
+			detail: "executable comparator violates",
+		},
+		{
+			id:     "invalid-event-order/single-event-group-validator",
+			source: base + correctComparatorSyntax + decoratedValidator,
+			kind:   "event-group-refusal-seam",
+			detail: "no func([]T) error validator",
+		},
+		{
+			id: "version-refusal/nonempty-only-digest-verifier",
+			source: base + correctComparatorSyntax + wholeGroupValidator(validVersionGuard,
+				`if event.CanonicalEventDigest == "" { return errInvalid }`),
+			kind:   "event-digest-refusal-seam",
+			detail: "executable group validator admits a canonical digest mismatch",
+		},
+		{
+			id: "version-refusal/ignored-always-true-verifier",
+			source: base + correctComparatorSyntax + wholeGroupValidator(
+				`_ = SupportedEventVersion(event.EventType, event.EventSchemaVersion, event.ReducerVersion); if event.EnvelopeVersion != event.EnvelopeVersion || event.EventType != event.EventType || event.EventSchemaVersion != event.EventSchemaVersion || event.ReducerVersion != event.ReducerVersion { return errInvalid }`,
+				validDigestGuard),
+			kind:   "event-version-refusal-seam",
+			detail: "executable group validator admits an unknown",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.id, func(t *testing.T) {
+			violations := inspectM1Sources([]m1SourceFile{{Path: "internal/controljournal/model.go", Source: []byte(test.source)}})
+			detail, found := findM1Violation(violations, test.kind)
+			if !found {
+				t.Fatalf("behaviorally invalid production seam survived %s guard: %v", test.kind, violations)
+			}
+			if !strings.Contains(detail, test.detail) {
+				t.Fatalf("%s was rejected without exercising the intended semantic boundary: %q", test.kind, detail)
 			}
 		})
 	}
@@ -427,7 +574,7 @@ func inspectM1JournalContractSeams(files []m1SourceFile) []m1ArchitectureViolati
 	if err != nil || !declaresM1EventModel(modelAST) {
 		return nil // The repository-wide parser reports syntax errors once.
 	}
-	functions := make(map[string]*ast.FuncDecl)
+	var functions []*ast.FuncDecl
 	for _, file := range files {
 		path := filepath.ToSlash(file.Path)
 		if filepath.ToSlash(filepath.Dir(path)) != "internal/controljournal" || strings.HasSuffix(path, "_test.go") {
@@ -439,54 +586,337 @@ func inspectM1JournalContractSeams(files []m1SourceFile) []m1ArchitectureViolati
 		}
 		for _, declaration := range parsed.Decls {
 			if function, ok := declaration.(*ast.FuncDecl); ok && function.Recv == nil {
-				functions[function.Name.Name] = function
+				functions = append(functions, function)
 			}
 		}
 	}
 
+	seam := discoverM1ExecutableJournalSeam(functions)
 	var violations []m1ArchitectureViolation
-	comparator := functions["CompareCommittedEventOrder"]
-	if comparator == nil {
-		comparator = functions["CompareEventOrder"]
+	appendViolation := func(kind, detail string) {
+		violations = append(violations, m1ArchitectureViolation{Path: model.Path, Kind: kind, Detail: detail})
 	}
-	if comparator == nil || !usesM1OrderCoordinates(comparator) {
-		violations = append(violations, m1ArchitectureViolation{
-			Path: model.Path, Kind: "event-order-seam",
-			Detail: "production comparator must use RecordRevision, EventIndex, then EventID",
-		})
+	if len(seam.Comparators) == 0 {
+		appendViolation("event-order-seam", "no func(T, T) int comparator is executable for the committed event type")
+	}
+	if len(seam.Validators) == 0 {
+		appendViolation("event-group-refusal-seam", "no func([]T) error validator observes a whole committed event group")
+		appendViolation("event-version-refusal-seam", "no whole-group validator can refuse unknown event and reducer versions")
+	}
+	if len(seam.Digests) == 0 {
+		appendViolation("event-digest-refusal-seam", "no func(T) string canonical digest calculator is executable for mismatch probes")
+	}
+	if seam.EventType == "" || (len(seam.Comparators) == 0 && (len(seam.Validators) == 0 || len(seam.Digests) == 0)) {
+		return violations
 	}
 
-	validator := functions["ValidateCommittedEventGroup"]
-	if validator == nil {
-		validator = functions["ValidateEventGroup"]
-	}
-	selectors := comparedSelectorNames(validator)
-	if validator == nil || !containsAllNames(selectors, "EnvelopeVersion", "EventType", "EventSchemaVersion", "ReducerVersion") || !callsM1VersionVerifier(validator) {
-		violations = append(violations, m1ArchitectureViolation{
-			Path: model.Path, Kind: "event-version-refusal-seam",
-			Detail: "production group validator must consult envelope, event-type/schema, and reducer versions",
-		})
-	}
-	if validator == nil || !containsAllNames(selectors, "RecordRevision", "OperationID", "EventIndex", "EventCount", "EventID") {
-		violations = append(violations, m1ArchitectureViolation{
-			Path: model.Path, Kind: "event-group-refusal-seam",
-			Detail: "production group validator must consult revision, operation, index/count, and EventID",
-		})
-	}
-	if validator == nil || !containsAllNames(selectorNames(validator), "CanonicalEventDigest") || !callsAnyName(validator, "CanonicalEventDigestMatches", "VerifyCanonicalEventDigest", "ValidateCanonicalEventDigest") {
-		violations = append(violations, m1ArchitectureViolation{
-			Path: model.Path, Kind: "event-digest-refusal-seam",
-			Detail: "production group validator must consult CanonicalEventDigest",
-		})
+	probeFailures, probeDetail := executeM1JournalSemanticProbe(files, seam)
+	for _, kind := range []string{"event-order-seam", "event-group-refusal-seam", "event-version-refusal-seam", "event-digest-refusal-seam"} {
+		if probeFailures[kind] {
+			appendViolation(kind, probeDetail[kind])
+		}
 	}
 	return violations
 }
 
-func callsM1VersionVerifier(function *ast.FuncDecl) bool {
-	return callsNameMatching(function, func(name string) bool {
-		lower := strings.ToLower(name)
-		return strings.Contains(lower, "version") && (strings.Contains(lower, "support") || strings.Contains(lower, "valid") || strings.Contains(lower, "registr"))
-	})
+type m1DigestSeam struct {
+	Name       string
+	PointerArg bool
+	ReturnsErr bool
+}
+
+type m1ExecutableJournalSeam struct {
+	EventType   string
+	Comparators []string
+	Validators  []string
+	Digests     []m1DigestSeam
+}
+
+func discoverM1ExecutableJournalSeam(functions []*ast.FuncDecl) m1ExecutableJournalSeam {
+	byType := make(map[string]*m1ExecutableJournalSeam)
+	for _, function := range functions {
+		parameters := m1FieldTypeNames(function.Type.Params)
+		results := m1FieldTypeNames(function.Type.Results)
+		if len(parameters) == 2 && parameters[0] == parameters[1] && len(results) == 1 && results[0] == "int" && isM1NamedType(parameters[0]) {
+			seam := m1SeamForType(byType, parameters[0])
+			seam.Comparators = append(seam.Comparators, function.Name.Name)
+		}
+		if len(parameters) == 1 && strings.HasPrefix(parameters[0], "[]") && len(results) == 1 && results[0] == "error" && isM1NamedType(strings.TrimPrefix(parameters[0], "[]")) {
+			seam := m1SeamForType(byType, strings.TrimPrefix(parameters[0], "[]"))
+			seam.Validators = append(seam.Validators, function.Name.Name)
+		}
+		if len(parameters) == 1 && (len(results) == 1 || len(results) == 2) && results[0] == "string" && (len(results) == 1 || results[1] == "error") {
+			eventType := strings.TrimPrefix(parameters[0], "*")
+			if isM1NamedType(eventType) {
+				seam := m1SeamForType(byType, eventType)
+				seam.Digests = append(seam.Digests, m1DigestSeam{Name: function.Name.Name, PointerArg: strings.HasPrefix(parameters[0], "*"), ReturnsErr: len(results) == 2})
+			}
+		}
+	}
+	var best m1ExecutableJournalSeam
+	bestScore := -1
+	for _, seam := range byType {
+		score := 0
+		if len(seam.Comparators) > 0 {
+			score += 4
+		}
+		if len(seam.Validators) > 0 {
+			score += 2
+		}
+		if len(seam.Digests) > 0 {
+			score++
+		}
+		if score > bestScore || (score == bestScore && seam.EventType < best.EventType) {
+			best, bestScore = *seam, score
+		}
+	}
+	return best
+}
+
+func m1SeamForType(byType map[string]*m1ExecutableJournalSeam, eventType string) *m1ExecutableJournalSeam {
+	if byType[eventType] == nil {
+		byType[eventType] = &m1ExecutableJournalSeam{EventType: eventType}
+	}
+	return byType[eventType]
+}
+
+func isM1NamedType(name string) bool {
+	if name == "" || strings.ContainsAny(name, "[]{}().") {
+		return false
+	}
+	switch name {
+	case "bool", "byte", "complex64", "complex128", "error", "float32", "float64", "int", "int8", "int16", "int32", "int64", "rune", "string", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+		return false
+	}
+	for index, character := range name {
+		if character != '_' && !('a' <= character && character <= 'z') && !('A' <= character && character <= 'Z') && !(index > 0 && '0' <= character && character <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func m1FieldTypeNames(fields *ast.FieldList) []string {
+	if fields == nil {
+		return nil
+	}
+	var names []string
+	for _, field := range fields.List {
+		name := m1SimpleTypeName(field.Type)
+		count := len(field.Names)
+		if count == 0 {
+			count = 1
+		}
+		for range count {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func m1SimpleTypeName(expression ast.Expr) string {
+	switch value := expression.(type) {
+	case *ast.Ident:
+		return value.Name
+	case *ast.StarExpr:
+		return "*" + m1SimpleTypeName(value.X)
+	case *ast.ArrayType:
+		if value.Len == nil {
+			return "[]" + m1SimpleTypeName(value.Elt)
+		}
+	}
+	return ""
+}
+
+func executeM1JournalSemanticProbe(files []m1SourceFile, seam m1ExecutableJournalSeam) (map[string]bool, map[string]string) {
+	enabled := map[string]bool{
+		"event-order-seam":           len(seam.Comparators) > 0,
+		"event-group-refusal-seam":   len(seam.Validators) > 0 && len(seam.Digests) > 0,
+		"event-version-refusal-seam": len(seam.Validators) > 0 && len(seam.Digests) > 0,
+		"event-digest-refusal-seam":  len(seam.Validators) > 0 && len(seam.Digests) > 0,
+	}
+	failures := make(map[string]bool)
+	details := make(map[string]string)
+	tempDir, err := os.MkdirTemp("", "m1-journal-contract-")
+	if err != nil {
+		return m1ProbeInfrastructureFailure(enabled, "create semantic probe: "+err.Error())
+	}
+	defer os.RemoveAll(tempDir)
+	if err := os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte("module github.com/spec-kitty/go-kitty3\n\ngo 1.26\n"), 0o600); err != nil {
+		return m1ProbeInfrastructureFailure(enabled, "write semantic probe module: "+err.Error())
+	}
+	for _, file := range files {
+		path := filepath.ToSlash(file.Path)
+		if filepath.ToSlash(filepath.Dir(path)) != "internal/controljournal" || strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(tempDir, filepath.Base(path)), file.Source, 0o600); err != nil {
+			return m1ProbeInfrastructureFailure(enabled, "write semantic probe source: "+err.Error())
+		}
+	}
+	probe := renderM1JournalSemanticProbe(seam, enabled)
+	if err := os.WriteFile(filepath.Join(tempDir, "m1_contract_probe_test.go"), []byte(probe), 0o600); err != nil {
+		return m1ProbeInfrastructureFailure(enabled, "write semantic probe test: "+err.Error())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "test", ".", "-run", "^TestM1ArchitectureJournalSemantics$", "-count=1")
+	command.Dir = tempDir
+	command.Env = append(os.Environ(), "GOWORK=off")
+	output, commandErr := command.CombinedOutput()
+	markers := map[string]string{
+		"event-order-seam":           "M1_SEMANTIC_ORDER",
+		"event-group-refusal-seam":   "M1_SEMANTIC_GROUP",
+		"event-version-refusal-seam": "M1_SEMANTIC_VERSION",
+		"event-digest-refusal-seam":  "M1_SEMANTIC_DIGEST",
+	}
+	for kind, marker := range markers {
+		if strings.Contains(string(output), marker) {
+			failures[kind] = true
+			details[kind] = m1SemanticFailureDetail(kind)
+		}
+	}
+	if commandErr != nil && len(failures) == 0 {
+		detail := strings.TrimSpace(string(output))
+		if len(detail) > 600 {
+			detail = detail[:600]
+		}
+		if ctx.Err() != nil {
+			detail = "semantic probe timed out"
+		}
+		return m1ProbeInfrastructureFailure(enabled, "semantic probe could not execute: "+detail)
+	}
+	return failures, details
+}
+
+func m1ProbeInfrastructureFailure(enabled map[string]bool, detail string) (map[string]bool, map[string]string) {
+	failures := make(map[string]bool)
+	details := make(map[string]string)
+	for kind, active := range enabled {
+		if active {
+			failures[kind] = true
+			details[kind] = detail
+		}
+	}
+	return failures, details
+}
+
+func m1SemanticFailureDetail(kind string) string {
+	switch kind {
+	case "event-order-seam":
+		return "executable comparator violates three-way (RecordRevision, EventIndex, EventID) ordering"
+	case "event-group-refusal-seam":
+		return "executable group validator admits missing, duplicate, mixed-operation, or nonmonotonic events"
+	case "event-version-refusal-seam":
+		return "executable group validator admits an unknown envelope, event, or reducer version"
+	default:
+		return "executable group validator admits a canonical digest mismatch"
+	}
+}
+
+func renderM1JournalSemanticProbe(seam m1ExecutableJournalSeam, enabled map[string]bool) string {
+	comparators := make([]string, len(seam.Comparators))
+	copy(comparators, seam.Comparators)
+	validators := make([]string, len(seam.Validators))
+	copy(validators, seam.Validators)
+	digests := make([]string, 0, len(seam.Digests))
+	for _, digest := range seam.Digests {
+		argument := "event"
+		if digest.PointerArg {
+			argument = "&event"
+		}
+		body := "return " + digest.Name + "(" + argument + ")"
+		if digest.ReturnsErr {
+			body = "value, err := " + digest.Name + "(" + argument + "); if err != nil { return \"\" }; return value"
+		}
+		digests = append(digests, "func(event "+seam.EventType+") string { "+body+" }")
+	}
+	return fmt.Sprintf(`package controljournal
+
+import "testing"
+
+func TestM1ArchitectureJournalSemantics(t *testing.T) {
+	if %t {
+		ok := false
+		for _, compare := range []func(%s, %s) int{%s} { if m1ContractOrderOK(compare) { ok = true } }
+		if !ok { t.Error("M1_SEMANTIC_ORDER") }
+	}
+	if %t {
+		groupOK, versionOK, digestOK := false, false, false
+		for _, validate := range []func([]%s) error{%s} {
+			for _, digest := range []func(%s) string{%s} {
+				if m1ContractGroupOK(validate, digest) { groupOK = true }
+				if m1ContractVersionOK(validate, digest) { versionOK = true }
+				if m1ContractDigestOK(validate, digest) { digestOK = true }
+			}
+		}
+		if !groupOK { t.Error("M1_SEMANTIC_GROUP") }
+		if !versionOK { t.Error("M1_SEMANTIC_VERSION") }
+		if !digestOK { t.Error("M1_SEMANTIC_DIGEST") }
+	}
+}
+
+func m1ContractOrderOK(compare func(%s, %s) int) bool {
+	var left, right %s
+	left.RecordRevision, right.RecordRevision = 6, 7; left.EventIndex, right.EventIndex = 9, 0; left.EventID, right.EventID = "z", "a"
+	if compare(left, right) >= 0 || compare(right, left) <= 0 { return false }
+	left.RecordRevision, right.RecordRevision = 7, 7; left.EventIndex, right.EventIndex = 0, 1; left.EventID, right.EventID = "z", "a"
+	if compare(left, right) >= 0 || compare(right, left) <= 0 { return false }
+	left.EventIndex, right.EventIndex = 1, 1; left.EventID, right.EventID = "a", "b"
+	if compare(left, right) >= 0 || compare(right, left) <= 0 { return false }
+	return compare(left, left) == 0
+}
+
+func m1ContractSignedEvent(digest func(%s) string, revision uint64, index, count uint32, id, operation string) %s {
+	var event %s
+	event.RecordRevision = revision; event.EventIndex = index; event.EventCount = count
+	event.EventID = id; event.OperationID = operation; event.EnvelopeVersion = 1
+	event.EventType = "work-claimed"; event.EventSchemaVersion = 1; event.ReducerVersion = "work-v1"
+	event.CanonicalEventDigest = digest(event)
+	return event
+}
+
+func m1ContractResign(event %s, digest func(%s) string) %s {
+	event.CanonicalEventDigest = ""; event.CanonicalEventDigest = digest(event); return event
+}
+
+func m1ContractGroupOK(validate func([]%s) error, digest func(%s) string) bool {
+	first := m1ContractSignedEvent(digest, 7, 0, 2, "event-a", "operation-1")
+	second := m1ContractSignedEvent(digest, 7, 1, 2, "event-b", "operation-1")
+	if validate([]%s{first, second}) != nil { return false }
+	missing := m1ContractSignedEvent(digest, 7, 2, 3, "event-c", "operation-1")
+	if validate([]%s{first, missing}) == nil || validate([]%s{first, first}) == nil { return false }
+	mixed := m1ContractSignedEvent(digest, 7, 1, 2, "event-b", "operation-2")
+	if validate([]%s{first, mixed}) == nil { return false }
+	newer := m1ContractSignedEvent(digest, 8, 0, 1, "event-c", "operation-2")
+	older := m1ContractSignedEvent(digest, 7, 0, 1, "event-d", "operation-3")
+	return validate([]%s{newer, older}) != nil
+}
+
+func m1ContractVersionOK(validate func([]%s) error, digest func(%s) string) bool {
+	valid := m1ContractSignedEvent(digest, 7, 0, 1, "event-a", "operation-1")
+	if validate([]%s{valid}) != nil { return false }
+	unknownEnvelope := valid; unknownEnvelope.EnvelopeVersion = 2; unknownEnvelope = m1ContractResign(unknownEnvelope, digest)
+	unknownType := valid; unknownType.EventType = "unknown-event"; unknownType = m1ContractResign(unknownType, digest)
+	unknownEvent := valid; unknownEvent.EventSchemaVersion = 2; unknownEvent = m1ContractResign(unknownEvent, digest)
+	unknownReducer := valid; unknownReducer.ReducerVersion = "unknown-v2"; unknownReducer = m1ContractResign(unknownReducer, digest)
+	return validate([]%s{unknownEnvelope}) != nil && validate([]%s{unknownType}) != nil && validate([]%s{unknownEvent}) != nil && validate([]%s{unknownReducer}) != nil
+}
+
+func m1ContractDigestOK(validate func([]%s) error, digest func(%s) string) bool {
+	event := m1ContractSignedEvent(digest, 7, 0, 1, "event-a", "operation-1")
+	if validate([]%s{event}) != nil { return false }
+	event.CanonicalEventDigest = "mismatched-canonical-digest"
+	return validate([]%s{event}) != nil
+}
+`, enabled["event-order-seam"], seam.EventType, seam.EventType, strings.Join(comparators, ", "),
+		enabled["event-group-refusal-seam"], seam.EventType, strings.Join(validators, ", "), seam.EventType, strings.Join(digests, ", "),
+		seam.EventType, seam.EventType, seam.EventType,
+		seam.EventType, seam.EventType, seam.EventType,
+		seam.EventType, seam.EventType, seam.EventType,
+		seam.EventType, seam.EventType, seam.EventType, seam.EventType, seam.EventType, seam.EventType, seam.EventType,
+		seam.EventType, seam.EventType, seam.EventType, seam.EventType, seam.EventType, seam.EventType, seam.EventType,
+		seam.EventType, seam.EventType, seam.EventType, seam.EventType)
 }
 
 func declaresM1EventModel(file *ast.File) bool {
@@ -497,7 +927,11 @@ func declaresM1EventModel(file *ast.File) bool {
 		}
 		for _, specification := range generic.Specs {
 			typeSpec, ok := specification.(*ast.TypeSpec)
-			if ok && slices.Contains([]string{"EventEnvelope", "CommittedEvent"}, typeSpec.Name.Name) {
+			if !ok {
+				continue
+			}
+			structure, ok := typeSpec.Type.(*ast.StructType)
+			if ok && m1StructHasFields(structure, "EventID", "EventIndex") {
 				return true
 			}
 		}
@@ -505,91 +939,15 @@ func declaresM1EventModel(file *ast.File) bool {
 	return false
 }
 
-func usesM1OrderCoordinates(function *ast.FuncDecl) bool {
-	names := comparedSelectorNames(function)
-	revision := firstNameIndex(names, "RecordRevision", "CommittedRevision")
-	eventIndex := firstNameIndex(names, "EventIndex")
-	eventID := firstNameIndex(names, "EventID")
-	return revision >= 0 && eventIndex > revision && eventID > eventIndex
-}
-
-func selectorNames(function *ast.FuncDecl) []string {
-	if function == nil || function.Body == nil {
-		return nil
-	}
-	var names []string
-	ast.Inspect(function.Body, func(node ast.Node) bool {
-		if selector, ok := node.(*ast.SelectorExpr); ok {
-			names = append(names, selector.Sel.Name)
-		}
-		return true
-	})
-	return names
-}
-
-func comparedSelectorNames(function *ast.FuncDecl) []string {
-	if function == nil || function.Body == nil {
-		return nil
-	}
-	var names []string
-	ast.Inspect(function.Body, func(node ast.Node) bool {
-		comparison, ok := node.(*ast.BinaryExpr)
-		if !ok || (comparison.Op != token.EQL && comparison.Op != token.NEQ && comparison.Op != token.LSS && comparison.Op != token.LEQ && comparison.Op != token.GTR && comparison.Op != token.GEQ) {
-			return true
-		}
-		ast.Inspect(comparison, func(child ast.Node) bool {
-			if selector, ok := child.(*ast.SelectorExpr); ok {
-				names = append(names, selector.Sel.Name)
-			}
-			return true
-		})
-		return false
-	})
-	return names
-}
-
-func callsAnyName(function *ast.FuncDecl, wanted ...string) bool {
-	return callsNameMatching(function, func(name string) bool { return slices.Contains(wanted, name) })
-}
-
-func callsNameMatching(function *ast.FuncDecl, matches func(string) bool) bool {
-	if function == nil || function.Body == nil {
-		return false
-	}
-	found := false
-	ast.Inspect(function.Body, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		name := ""
-		switch callable := call.Fun.(type) {
-		case *ast.Ident:
-			name = callable.Name
-		case *ast.SelectorExpr:
-			name = callable.Sel.Name
-		}
-		if matches(name) {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
-}
-
-func firstNameIndex(names []string, wanted ...string) int {
-	for index, name := range names {
-		if slices.Contains(wanted, name) {
-			return index
+func m1StructHasFields(structure *ast.StructType, wanted ...string) bool {
+	found := make(map[string]bool)
+	for _, field := range structure.Fields.List {
+		for _, name := range field.Names {
+			found[name.Name] = true
 		}
 	}
-	return -1
-}
-
-func containsAllNames(names []string, wanted ...string) bool {
 	for _, name := range wanted {
-		if !slices.Contains(names, name) {
+		if !found[name] {
 			return false
 		}
 	}
@@ -611,10 +969,15 @@ func isSQLiteImport(path string) bool {
 }
 
 func containsM1Violation(violations []m1ArchitectureViolation, kind string) bool {
+	_, found := findM1Violation(violations, kind)
+	return found
+}
+
+func findM1Violation(violations []m1ArchitectureViolation, kind string) (string, bool) {
 	for _, violation := range violations {
 		if violation.Kind == kind {
-			return true
+			return violation.Detail, true
 		}
 	}
-	return false
+	return "", false
 }
