@@ -1,19 +1,19 @@
 {
-  "event_count": 119,
-  "last_event_id": "01M19KRXGZGJ0GQG4ABRY13CAY",
-  "materialized_at": "2026-08-30T15:14:26.463982+00:00",
+  "event_count": 120,
+  "last_event_id": "01M19KT9YBS37RQ1GRPBV50YMQ",
+  "materialized_at": "2026-08-30T15:15:11.947279+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 4,
+    "approved": 3,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 0,
+    "in_review": 1,
     "planned": 6
   },
   "work_packages": {
@@ -129,19 +129,20 @@
       }
     },
     "WP04": {
-      "actor": "user",
+      "actor": "renata-wp04-cycle3",
       "agent": "renata-wp04-cycle3",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 8,
-      "lane": "approved",
-      "last_event_id": "01M19KRXGZGJ0GQG4ABRY13CAY",
-      "last_transition_at": "2026-08-30T15:14:26.463982+00:00",
+      "force_count": 9,
+      "lane": "in_review",
+      "last_event_id": "01M19KT9YBS37RQ1GRPBV50YMQ",
+      "last_transition_at": "2026-08-30T15:15:11.947279+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review at 208f4d6: exact descriptor-bound admitted GapDB sidecar; openat2 no-symlink provenance; pidfd with exact /proc fallback; crash attachment; composite Status/Health/DescribeConfig attribution; validator-sealed product readiness; attribution-safe runtime/socket cleanup; and real GJ-02 response-drop proxy with strict one-frame durable acceptance. Green: exact admitted binary package count=20; race count=10; no-binary package; fuzz 241405 executions/147 new interesting; M1 architecture guards count=10 and architecture/policy/mutant count=3; vet; staticcheck; gofmt; git diff --check; public dependency census. Ruff diff-scoped check: no Python files changed, exit 0. Force bypasses only the known root-mirror protected-coordination false positive after all implementation gates passed.",
         "Cycle 1 blockers repaired in a786447. Execution copies the admitted source into a private sealed memfd, rehashes that executed image, and descriptor-execs it while retaining separate source and executed provenance. Every public observation is decoded through the strict protocol-v1 path on the same SO_PEERCRED-attributed Unix connection, bound to the pinned socket inode. Cleanup is descriptor-relative and no-follow; topology refuses Git, shared, unknown, split-authority, and symlinked storage. Pidfd success/fallback/error/identity-drift branches and safe unobserved-child reap are behaviorally covered; no raceable PID signaling fallback exists. GJ-02 requires exact expected database, request mutation count, and durable revision before cutting zero response bytes. Staged-integration waiver: exported sidecar entry points intentionally have no external production caller until the earliest dependent composition work package WP05; no dead caller was fabricated in WP04. Evidence: exact admitted daemon count=20 and race count=10 passed; strict-wire fuzz 309391 executions; complete architecture, controljournal/controlstore GapDB regressions, vet, staticcheck, module verification, formatting, and diff checks passed. Full repository run was bounded after all reported packages passed because legacy internal/scenario is a known approximately 733-second non-WP gate.",
-        "Cycle 2 evidence-grammar blocker repaired in 750549b. SupervisorRunID now enforces the frozen 1-128 ASCII-byte token grammar and ProductPolicySHA256 enforces exactly 64 lowercase hexadecimal bytes before executable verification, topology work, process creation, or artifact creation. Production-path tests make bypassing normalization red and cover empty, spaces, leading punctuation, non-ASCII, overlong, uppercase, nonhex, short, and long inputs. Minimum, allowed-punctuation, and maximum legal identities start the exact admitted daemon and emit evidence accepted by the frozen schema. Green: focused count=10, sidecar count=20, full race count=5, schema race count=10, complete architecture, vet, staticcheck, module verification, gofmt, and diff checks."
+        "Cycle 2 evidence-grammar blocker repaired in 750549b. SupervisorRunID now enforces the frozen 1-128 ASCII-byte token grammar and ProductPolicySHA256 enforces exactly 64 lowercase hexadecimal bytes before executable verification, topology work, process creation, or artifact creation. Production-path tests make bypassing normalization red and cover empty, spaces, leading punctuation, non-ASCII, overlong, uppercase, nonhex, short, and long inputs. Minimum, allowed-punctuation, and maximum legal identities start the exact admitted daemon and emit evidence accepted by the frozen schema. Green: focused count=10, sidecar count=20, full race count=5, schema race count=10, complete architecture, vet, staticcheck, module verification, gofmt, and diff checks.",
+        "Review passed by renata-wp04-cycle3: Start rejects exact frozen identity grammar before executable verification, process start, or filesystem effects; accepted 1/128-byte tokens and lowercase SHA-256 publish schema-valid evidence; both deletion mutants red; cycle-1 authority repairs and all qualification gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
