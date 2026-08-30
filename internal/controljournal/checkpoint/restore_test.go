@@ -2,7 +2,6 @@ package checkpoint
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -10,19 +9,58 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/playback"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/reducer"
 )
 
 type restoreReader struct {
-	heads      []CheckpointHeadV1
-	blobs      map[CheckpointID][]byte
-	pages      []JournalScanPageV1
-	pageIndex  int
-	staleCalls int
-	starts     []WatermarkV1
+	heads       []CheckpointHeadV1
+	blobs       map[CheckpointID][]byte
+	pages       []JournalScanPageV1
+	pageIndex   int
+	headCalls   int
+	staleCalls  int
+	staleAtPage int
+	staleOnce   bool
+	staleDone   bool
+	starts      []WatermarkV1
 }
 
 func (r *restoreReader) CheckpointHeadsV1(context.Context) ([]CheckpointHeadV1, error) {
+	r.headCalls++
 	return append([]CheckpointHeadV1(nil), r.heads...), nil
+}
+
+func TestRestoreCheckpointOnlyBindsActualRegistriesBeforeRead(t *testing.T) {
+	first := testStoredEvent(t, 7, "event-a", "operation-a", "aggregate-a", 1, 0, 1, `{"value":1}`)
+	checkpoint := buildFixture(t, []controljournal.StoredEventV1{first}, []AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"value":1}`)}, "checkpoint-registry")
+	wrongEvents, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{
+		{EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1"},
+		{EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongReducers, err := reducer.NewRegistryV1([]reducer.EntryV1{
+		{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1},
+		{AggregateKind: "mission", EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*RestoreInputV1){
+		"event registry":   func(input *RestoreInputV1) { input.EventRegistry = wrongEvents },
+		"reducer registry": func(input *RestoreInputV1) { input.Reducers = wrongReducers },
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader := &restoreReader{heads: []CheckpointHeadV1{checkpoint.Head}, blobs: map[CheckpointID][]byte{checkpoint.Head.CheckpointID: checkpoint.RecordBytes}, pages: []JournalScanPageV1{encodedPage(t, nil)}}
+			input := restoreInput(reader, t)
+			mutate(&input)
+			result, err := RestoreV1(context.Background(), input)
+			if err == nil || result.Ready || reader.headCalls != 0 {
+				t.Fatalf("registry mismatch read checkpoint result=%+v head_calls=%d err=%v", result, reader.headCalls, err)
+			}
+		})
+	}
 }
 func (r *restoreReader) CheckpointBlobV1(_ context.Context, id CheckpointID) ([]byte, error) {
 	value, ok := r.blobs[id]
@@ -41,12 +79,38 @@ func (r *restoreReader) JournalPageV1(_ context.Context, after WatermarkV1, curs
 		r.pageIndex = 0
 		return JournalScanPageV1{}, ErrStaleScanV1
 	}
+	if r.staleOnce && !r.staleDone && r.pageIndex == r.staleAtPage {
+		r.staleDone = true
+		r.pageIndex = 0
+		return JournalScanPageV1{}, ErrStaleScanV1
+	}
 	if r.pageIndex >= len(r.pages) {
 		return JournalScanPageV1{}, fmt.Errorf("unexpected cursor %q", cursor)
 	}
 	page := r.pages[r.pageIndex]
 	r.pageIndex++
 	return page, nil
+}
+
+func encodedPages(t *testing.T, records []controljournal.StoredEventV1) []JournalScanPageV1 {
+	t.Helper()
+	if len(records) == 0 {
+		return []JournalScanPageV1{encodedPage(t, nil)}
+	}
+	pages := make([]JournalScanPageV1, 0, (len(records)+MaxScanPageRecords-1)/MaxScanPageRecords)
+	for start := 0; start < len(records); start += MaxScanPageRecords {
+		end := start + MaxScanPageRecords
+		if end > len(records) {
+			end = len(records)
+		}
+		page := encodedPage(t, records[start:end])
+		page.Truncated = end < len(records)
+		if page.Truncated {
+			page.Cursor = fmt.Sprintf("page-%d", len(pages)+1)
+		}
+		pages = append(pages, page)
+	}
+	return pages
 }
 
 func encodedPage(t *testing.T, records []controljournal.StoredEventV1) JournalScanPageV1 {
@@ -67,7 +131,7 @@ func encodedPage(t *testing.T, records []controljournal.StoredEventV1) JournalSc
 }
 
 func restoreInput(reader RestoreReaderV1, t *testing.T) RestoreInputV1 {
-	return RestoreInputV1{Reader: reader, Source: testSource(), EventRegistry: testEventRegistry(t), Reducers: testReducers(t)}
+	return RestoreInputV1{Reader: reader, Source: testSource(t), EventRegistry: testEventRegistry(t), Reducers: testReducers(t)}
 }
 
 func TestRestoreSuffixOnlyCheckpointOnlyAndCheckpointPlusSuffix(t *testing.T) {
@@ -121,24 +185,12 @@ func TestRestoreSuffixOnlyCheckpointOnlyAndCheckpointPlusSuffix(t *testing.T) {
 
 func TestRestoreCheckpointPrefixMayExceedSuffixBoundsWithoutPrefixIO(t *testing.T) {
 	last := MaxRestoreEvents + 1
-	aggregates := []AggregateSnapshotV1{snapshot(t, "aggregate-a", uint64(last), controljournalToken("event-prefix", last), fmt.Sprintf(`{"value":%d}`, last))}
-	projection, projectionErr := projectionFromAggregates(aggregates)
-	if projectionErr != nil {
-		t.Fatal(projectionErr)
+	records := make([]controljournal.StoredEventV1, last)
+	for index := range records {
+		number := index + 1
+		records[index] = testStoredEvent(t, uint64(number), controljournalToken("event-prefix", number), controljournalToken("operation-prefix", number), "aggregate-a", uint64(number), 0, 1, fmt.Sprintf(`{"value":%d}`, number))
 	}
-	authority := testAuthority()
-	authority.DurableRevision = uint64(last)
-	record := CheckpointRecordV1{SchemaVersion: 1, CheckpointID: "checkpoint-large-prefix", ReducerSetDigest: testSource().ReducerSetDigest, EventSchemaSetDigest: testSource().EventSchemaSetDigest, ProjectID: testSource().ProjectID, MissionID: testSource().MissionID, Watermark: WatermarkV1{ThroughRecordRevision: uint64(last), ThroughEventID: controljournal.EventID(controljournalToken("event-prefix", last)), EventCount: uint64(last), EventPrefixDigest: digestBytes([]byte("trusted-large-prefix"))}, CanonicalProjectionDigest: projection.GlobalDigest(), Codec: CodecCanonicalJSONV1, Aggregates: aggregates, Authority: authority}
-	projectionBytes, marshalErr := json.Marshal(checkpointProjectionV1FromRecord(record))
-	if marshalErr != nil {
-		t.Fatal(marshalErr)
-	}
-	record.UncompressedSize = uint64(len(projectionBytes))
-	recordBytes, encodeErr := EncodeRecordV1(record)
-	if encodeErr != nil {
-		t.Fatal(encodeErr)
-	}
-	checkpoint := BuildResultV1{Record: record, RecordBytes: recordBytes, Head: CheckpointHeadV1{SchemaVersion: 1, CheckpointID: record.CheckpointID, CheckpointRecordDigest: digestBytes(recordBytes), ThroughRecordRevision: record.Watermark.ThroughRecordRevision, ThroughEventID: record.Watermark.ThroughEventID}}
+	checkpoint := buildFixture(t, records, []AggregateSnapshotV1{snapshot(t, "aggregate-a", uint64(last), controljournalToken("event-prefix", last), fmt.Sprintf(`{"value":%d}`, last))}, "checkpoint-large-prefix")
 	suffix := testStoredEvent(t, uint64(last+1), "event-suffix", "operation-suffix", "aggregate-a", uint64(last+1), 0, 1, fmt.Sprintf(`{"value":%d}`, last+1))
 	reader := &restoreReader{heads: []CheckpointHeadV1{checkpoint.Head}, blobs: map[CheckpointID][]byte{checkpoint.Head.CheckpointID: checkpoint.RecordBytes}, pages: []JournalScanPageV1{encodedPage(t, []controljournal.StoredEventV1{suffix})}}
 	result, err := RestoreV1(context.Background(), restoreInput(reader, t))
@@ -171,6 +223,12 @@ func TestRestoreExplicitEarlierFallbackAndAllInvalidRefusal(t *testing.T) {
 	}
 	if result.SelectedCheckpoint == nil || result.SelectedCheckpoint.CheckpointID != "checkpoint-old" {
 		t.Fatalf("did not choose explicit earlier checkpoint: %+v", result.SelectedCheckpoint)
+	}
+
+	reader = &restoreReader{heads: []CheckpointHeadV1{newest}, blobs: map[CheckpointID][]byte{"checkpoint-new": []byte(`{"broken":true}`)}, pages: []JournalScanPageV1{encodedPage(t, []controljournal.StoredEventV1{first})}}
+	result, err = RestoreV1(context.Background(), restoreInput(reader, t))
+	if err != nil || !result.Ready || result.SelectedCheckpoint != nil || len(reader.starts) != 1 || reader.starts[0] != (WatermarkV1{}) {
+		t.Fatalf("bounded origin fallback result=%+v starts=%+v err=%v", result, reader.starts, err)
 	}
 
 	reader = &restoreReader{heads: []CheckpointHeadV1{newest}, blobs: map[CheckpointID][]byte{"checkpoint-new": []byte(`{"broken":true}`)}, pages: []JournalScanPageV1{encodedPage(t, nil)}}
@@ -236,20 +294,45 @@ func TestRestoreBoundExactAndPlusOneBeforeAppend(t *testing.T) {
 		t.Fatalf("plus-one event bound returned partial len=%d err=%v", len(events), err)
 	}
 
-	exactBytePage := encodedPage(t, []controljournal.StoredEventV1{stored})
-	exactBytePage.ObservedRevision = 1
-	exactBytePage.RawBytes = MaxRestoreBytes
-	reader = &restoreReader{pages: []JournalScanPageV1{exactBytePage}}
+	exactPage := encodedPage(t, []controljournal.StoredEventV1{stored})
+	exactPage.ObservedRevision = 1
+	exactPage.RawBytes = MaxScanPageBytes
+	reader = &restoreReader{pages: []JournalScanPageV1{exactPage}}
 	stale = 0
-	if _, observation, err = scanJournal(context.Background(), reader, WatermarkV1{}, &stale); err != nil || observation.ScanBytes != MaxRestoreBytes {
-		t.Fatalf("exact byte bound obs=%+v err=%v", observation, err)
+	if _, observation, err = scanJournal(context.Background(), reader, WatermarkV1{}, &stale); err != nil || observation.ScanBytes != MaxScanPageBytes {
+		t.Fatalf("exact page byte bound obs=%+v err=%v", observation, err)
 	}
-	plusBytePage := exactBytePage
-	plusBytePage.RawBytes = MaxRestoreBytes + 1
+	plusBytePage := exactPage
+	plusBytePage.RawBytes = MaxScanPageBytes + 1
 	reader = &restoreReader{pages: []JournalScanPageV1{plusBytePage}}
 	stale = 0
 	if events, _, err = scanJournal(context.Background(), reader, WatermarkV1{}, &stale); err == nil || events != nil {
-		t.Fatalf("plus-one byte bound returned partial len=%d err=%v", len(events), err)
+		t.Fatalf("plus-one page byte bound returned partial len=%d err=%v", len(events), err)
+	}
+
+	totalPages := make([]JournalScanPageV1, MaxRestoreBytes/MaxScanPageBytes)
+	for index := range totalPages {
+		totalPages[index] = exactPage
+		totalPages[index].Truncated = index+1 < len(totalPages)
+		if totalPages[index].Truncated {
+			totalPages[index].Cursor = fmt.Sprintf("total-%d", index+1)
+		}
+	}
+	reader = &restoreReader{pages: totalPages}
+	stale = 0
+	if _, observation, err = scanJournal(context.Background(), reader, WatermarkV1{}, &stale); err != nil || observation.ScanBytes != MaxRestoreBytes {
+		t.Fatalf("exact total byte bound obs=%+v err=%v", observation, err)
+	}
+	totalPages[len(totalPages)-1].Truncated = true
+	totalPages[len(totalPages)-1].Cursor = "total-plus"
+	plusTotal := encodedPage(t, []controljournal.StoredEventV1{stored})
+	plusTotal.ObservedRevision = 1
+	plusTotal.RawBytes = 1
+	totalPages = append(totalPages, plusTotal)
+	reader = &restoreReader{pages: totalPages}
+	stale = 0
+	if events, _, err = scanJournal(context.Background(), reader, WatermarkV1{}, &stale); err == nil || events != nil {
+		t.Fatalf("plus-one total byte bound returned partial len=%d err=%v", len(events), err)
 	}
 }
 
@@ -268,6 +351,26 @@ func TestRestoreFixedPageCountRejectsImpossibleCountAndIgnoresTail(t *testing.T)
 	events, observation, err := scanJournal(context.Background(), reader, WatermarkV1{}, &stale)
 	if err != nil || len(events) != 0 || observation.EventCount != 0 || observation.ScanRecords != 0 {
 		t.Fatalf("unused array tail became journal authority events=%d obs=%+v err=%v", len(events), observation, err)
+	}
+}
+
+func TestRestorePristineJournalThenFirstEpochAdmission(t *testing.T) {
+	reader := &restoreReader{pages: []JournalScanPageV1{encodedPage(t, nil)}}
+	restored, err := RestoreV1(context.Background(), restoreInput(reader, t))
+	if err != nil || !restored.Ready || !restored.Pristine || restored.CommandAdmissionOpen ||
+		restored.Authority != (AuthoritySummaryV1{}) || restored.TerminalWatermark != (WatermarkV1{}) ||
+		restored.SelectedCheckpoint != nil || restored.CanonicalProjectionDigest == [32]byte{} {
+		t.Fatalf("pristine restore=%+v err=%v", restored, err)
+	}
+	binding, err := BindRuntimeEpochV1(restored, "run-1", "", "epoch-first", 1)
+	if err != nil || !binding.FirstAdmission || !binding.CommandAdmissionOpen || binding.PredecessorEpochID != "" {
+		t.Fatalf("first binding=%+v err=%v", binding, err)
+	}
+	if err := ValidateCapsuleEpochV1(binding, epochTestCapsule("epoch-first", 1)); err != nil {
+		t.Fatalf("first admitted capsule refused: %v", err)
+	}
+	if _, err := BindRuntimeEpochV1(restored, "run-1", "epoch-invented", "epoch-first", 1); err == nil {
+		t.Fatal("pristine restore accepted an invented predecessor")
 	}
 }
 
@@ -314,7 +417,7 @@ func TestRestoreBoundPagesAndStaleRestartCap(t *testing.T) {
 }
 
 func TestEpochBindingRefusesPredecessorAndLeaseExpiryDoesNotRotate(t *testing.T) {
-	restored := RestoreResultV1{Ready: true}
+	restored := RestoreResultV1{Ready: true, Authority: AuthoritySummaryV1{RunID: "run-1", RuntimeEpochID: "epoch-old", DurableRevision: 44}}
 	binding, err := BindRuntimeEpochV1(restored, "run-1", "epoch-old", "epoch-new", 44)
 	if err != nil {
 		t.Fatal(err)
@@ -322,11 +425,11 @@ func TestEpochBindingRefusesPredecessorAndLeaseExpiryDoesNotRotate(t *testing.T)
 	if binding.RuntimeEpochID == binding.PredecessorEpochID || binding.RunID != "run-1" || binding.DurableRevision != 44 {
 		t.Fatalf("binding=%+v", binding)
 	}
-	old := AuthorityCapsuleV1{RunID: "run-1", RuntimeEpochID: "epoch-old", DurableRevision: 44}
+	old := epochTestCapsule("epoch-old", 44)
 	if err := ValidateCapsuleEpochV1(binding, old); err == nil {
 		t.Fatal("predecessor epoch capsule accepted")
 	}
-	current := AuthorityCapsuleV1{RunID: "run-1", RuntimeEpochID: "epoch-new", DurableRevision: 44}
+	current := epochTestCapsule("epoch-new", 44)
 	if err := ValidateCapsuleEpochV1(binding, current); err != nil {
 		t.Fatal(err)
 	}
@@ -345,6 +448,16 @@ func TestEpochBindingRefusesPredecessorAndLeaseExpiryDoesNotRotate(t *testing.T)
 	}
 }
 
+func epochTestCapsule(epoch controljournal.RuntimeEpochID, revision uint64) controljournal.AuthorityCapsuleV1 {
+	return controljournal.AuthorityCapsuleV1{
+		SchemaVersion: 1, ProjectID: "project-1", MissionID: "mission-1",
+		WorkRevisionID: "revision-1", ActorID: "actor-1", ProcessID: "process-1",
+		RunID: "run-1", LeaseID: "lease-1", WorkspaceID: "workspace-1",
+		RuntimeEpochID: epoch, LeaseGeneration: 2, FenceToken: 3,
+		AuthorityHeadRecordRevision: revision,
+	}
+}
+
 func TestRestoreReadSeamCannotUseWatchAsJournal(t *testing.T) {
 	seam := reflect.TypeOf((*RestoreReaderV1)(nil)).Elem()
 	want := map[string]bool{"CheckpointHeadsV1": true, "CheckpointBlobV1": true, "JournalPageV1": true}
@@ -355,6 +468,87 @@ func TestRestoreReadSeamCannotUseWatchAsJournal(t *testing.T) {
 		method := seam.Method(index)
 		if !want[method.Name] || method.Name == "Watch" {
 			t.Fatalf("watch-as-journal or unknown restore capability: %s", method.Name)
+		}
+	}
+}
+
+func TestRestorePlaybackDigestEqualityAcrossOneHundredValidHistories(t *testing.T) {
+	for trial := 0; trial < 100; trial++ {
+		count := trial%5 + 1
+		records := make([]controljournal.StoredEventV1, count)
+		for index := range records {
+			number := index + 1
+			records[index] = testStoredEvent(t, uint64(number), fmt.Sprintf("event-%d-%d", trial, number), fmt.Sprintf("operation-%d-%d", trial, number), "aggregate-a", uint64(number), 0, 1, fmt.Sprintf(`{"trial":%d,"value":%d}`, trial, number))
+		}
+		reader := &restoreReader{pages: encodedPages(t, records)}
+		restored, err := RestoreV1(context.Background(), restoreInput(reader, t))
+		if err != nil || !restored.Ready {
+			t.Fatalf("trial %d restore=%+v err=%v", trial, restored, err)
+		}
+		played, err := playback.RunV1(playback.InputV1{Journal: testJournal(t, records...), Reducers: testReducers(t)})
+		if err != nil {
+			t.Fatalf("trial %d playback: %v", trial, err)
+		}
+		if err := playback.CompareDigestV1(restored.CanonicalProjectionDigest, played); err != nil {
+			t.Fatalf("trial %d restore/playback mismatch: %v", trial, err)
+		}
+	}
+}
+
+func TestRestoreValidTwoThousandOneRecordTraversalAndStaleRestart(t *testing.T) {
+	const count = 2001
+	records := make([]controljournal.StoredEventV1, count)
+	for index := range records {
+		number := index + 1
+		records[index] = testStoredEvent(t, uint64(number), controljournalToken("event-campaign", number), controljournalToken("operation-campaign", number), "aggregate-a", uint64(number), 0, 1, fmt.Sprintf(`{"value":%d}`, number))
+	}
+	want := snapshot(t, "aggregate-a", count, controljournalToken("event-campaign", count), fmt.Sprintf(`{"value":%d}`, count)).StateDigest
+	for _, test := range []struct {
+		name         string
+		stale        bool
+		wantStarts   int
+		wantRestarts uint32
+	}{
+		{name: "complete", wantStarts: 1},
+		{name: "stale cursor full restart", stale: true, wantStarts: 2, wantRestarts: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reader := &restoreReader{pages: encodedPages(t, records), staleOnce: test.stale, staleAtPage: 2}
+			result, err := RestoreV1(context.Background(), restoreInput(reader, t))
+			if err != nil || !result.Ready || result.Observation.EventCount != count || result.Observation.StaleRestarts != test.wantRestarts || len(reader.starts) != test.wantStarts {
+				t.Fatalf("result=%+v starts=%d err=%v", result, len(reader.starts), err)
+			}
+			state, ok := result.Projection.State(reducer.AggregateKeyV1{Kind: "mission", ID: "aggregate-a"})
+			if !ok || state.Digest() != want {
+				t.Fatalf("terminal projection state ok=%v digest=%x want=%x", ok, state.Digest(), want)
+			}
+		})
+	}
+}
+
+func TestEpochOneHundredCleanAndUncleanRestarts(t *testing.T) {
+	seen := make(map[controljournal.RuntimeEpochID]bool, 100)
+	for trial := 0; trial < 100; trial++ {
+		predecessor := controljournal.RuntimeEpochID(fmt.Sprintf("epoch-old-%d", trial))
+		admitted := controljournal.RuntimeEpochID(fmt.Sprintf("epoch-new-%d", trial))
+		revision := uint64(trial + 10)
+		restored := RestoreResultV1{Ready: true, Authority: AuthoritySummaryV1{RunID: "run-1", RuntimeEpochID: predecessor, DurableRevision: revision}}
+		if trial%2 == 0 {
+			restored.SelectedCheckpoint = &CheckpointHeadV1{CheckpointID: CheckpointID(fmt.Sprintf("clean-%d", trial))}
+		}
+		binding, err := BindRuntimeEpochV1(restored, "run-1", predecessor, admitted, revision)
+		if err != nil || binding.FirstAdmission || !binding.CommandAdmissionOpen || seen[binding.RuntimeEpochID] {
+			t.Fatalf("trial %d binding=%+v err=%v", trial, binding, err)
+		}
+		seen[binding.RuntimeEpochID] = true
+		if err := ValidateCapsuleEpochV1(binding, epochTestCapsule(predecessor, revision)); err == nil {
+			t.Fatalf("trial %d predecessor capsule accepted", trial)
+		}
+		if err := ValidateCapsuleEpochV1(binding, epochTestCapsule(admitted, revision)); err != nil {
+			t.Fatalf("trial %d current capsule refused: %v", trial, err)
+		}
+		if LeaseExpiredV1(binding) != binding {
+			t.Fatalf("trial %d lease expiry rotated binding", trial)
 		}
 	}
 }

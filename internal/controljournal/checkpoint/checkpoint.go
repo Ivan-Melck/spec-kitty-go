@@ -27,6 +27,7 @@ type BuildInputV1 struct {
 	CheckpointID          CheckpointID
 	Source                SourceIdentityV1
 	PriorPrefix           controljournal.ValidatedJournalV1
+	EventRegistry         controljournal.EventRegistryV1
 	Reducers              reducer.RegistryV1
 	Watermark             WatermarkV1
 	Aggregates            []AggregateSnapshotV1
@@ -34,56 +35,79 @@ type BuildInputV1 struct {
 	FormingBatchOperation controljournal.OperationID
 }
 
-type BuildResultV1 struct {
-	Record      CheckpointRecordV1
-	Head        CheckpointHeadV1
-	RecordBytes []byte
-	HeadBytes   []byte
+type checkpointValidationSealV1 struct {
+	version               uint8
+	digest                [32]byte
+	formingBatchOperation controljournal.OperationID
 }
 
-func BuildV1(input BuildInputV1) (BuildResultV1, error) {
+// ValidatedCheckpointV1 is the sole checkpoint-publication capability. Its
+// bytes and seal are private; every accessor revalidates them and returns
+// defensive copies. Durable restore deliberately accepts raw persisted bytes
+// and repeats their cryptographic and semantic validation after restart.
+type ValidatedCheckpointV1 struct {
+	seal        checkpointValidationSealV1
+	recordBytes []byte
+	headBytes   []byte
+}
+
+type InvalidValidatedCheckpointErrorV1 struct{}
+
+func (InvalidValidatedCheckpointErrorV1) Error() string { return "invalid validated checkpoint" }
+
+type CheckpointPublicationV1 struct {
+	CheckpointID            CheckpointID
+	FormingBatchOperationID controljournal.OperationID
+	RecordBytes             []byte
+	HeadBytes               []byte
+}
+
+func BuildV1(input BuildInputV1) (ValidatedCheckpointV1, error) {
 	if _, err := controljournal.NewRecordID(string(input.CheckpointID)); err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
 	}
 	if _, err := controljournal.NewOperationID(string(input.FormingBatchOperation)); err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
 	}
 	if err := validateSource(input.Source); err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
+	}
+	if err := validateRegistryBindings(input.Source, input.EventRegistry, input.Reducers); err != nil {
+		return ValidatedCheckpointV1{}, err
 	}
 	if err := validateAuthority(input.Authority); err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
 	}
 	if input.Authority.RunID != input.Source.RunID {
-		return BuildResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "checkpoint_run"}
+		return ValidatedCheckpointV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "checkpoint_run"}
 	}
 	actual, err := journalWatermark(input.PriorPrefix, input.FormingBatchOperation)
 	if err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
 	}
 	if actual != input.Watermark {
-		return BuildResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalJournalCorrupt, Field: "checkpoint_watermark"}
+		return ValidatedCheckpointV1{}, controljournal.ValidationError{Kind: controljournal.RefusalJournalCorrupt, Field: "checkpoint_watermark"}
 	}
 	if input.Authority.DurableRevision != actual.ThroughRecordRevision {
-		return BuildResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "checkpoint_authority_revision"}
+		return ValidatedCheckpointV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "checkpoint_authority_revision"}
 	}
 	projection, err := projectionFromAggregates(input.Aggregates)
 	if err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
 	}
 	reduced, err := reducer.ApplyV1(input.Reducers, reducer.EmptyProjectionV1(), input.PriorPrefix)
 	if err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
 	}
 	if err := verifySnapshotAgainstPrefix(input.PriorPrefix, reduced, input.Aggregates); err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
 	}
 	if projection.GlobalDigest() != reduced.GlobalDigest() {
-		return BuildResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalJournalCorrupt, Field: "checkpoint_projection"}
+		return ValidatedCheckpointV1{}, controljournal.ValidationError{Kind: controljournal.RefusalJournalCorrupt, Field: "checkpoint_projection"}
 	}
 	derivedAuthority, err := deriveAuthority(input.Source.RunID, AuthoritySummaryV1{}, input.PriorPrefix)
 	if err != nil || derivedAuthority != input.Authority {
-		return BuildResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalJournalCorrupt, Field: "checkpoint_authority"}
+		return ValidatedCheckpointV1{}, controljournal.ValidationError{Kind: controljournal.RefusalJournalCorrupt, Field: "checkpoint_authority"}
 	}
 	record := CheckpointRecordV1{
 		SchemaVersion: SchemaVersionV1, CheckpointID: input.CheckpointID,
@@ -94,12 +118,12 @@ func BuildV1(input BuildInputV1) (BuildResultV1, error) {
 	}
 	projectionBytes, err := json.Marshal(checkpointProjectionV1FromRecord(record))
 	if err != nil {
-		return BuildResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "checkpoint_projection"}
+		return ValidatedCheckpointV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "checkpoint_projection"}
 	}
 	record.UncompressedSize = uint64(len(projectionBytes))
 	recordBytes, err := canonicalCheckpoint(record)
 	if err != nil || len(recordBytes) > MaxCheckpointBytes {
-		return BuildResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "checkpoint_bytes"}
+		return ValidatedCheckpointV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "checkpoint_bytes"}
 	}
 	digest := sha256.Sum256(recordBytes)
 	head := CheckpointHeadV1{
@@ -109,9 +133,108 @@ func BuildV1(input BuildInputV1) (BuildResultV1, error) {
 	}
 	headBytes, err := EncodeHeadV1(head)
 	if err != nil {
-		return BuildResultV1{}, err
+		return ValidatedCheckpointV1{}, err
 	}
-	return BuildResultV1{Record: record, Head: head, RecordBytes: recordBytes, HeadBytes: headBytes}, nil
+	return sealCheckpoint(recordBytes, headBytes, input.FormingBatchOperation), nil
+}
+
+func sealCheckpoint(recordBytes, headBytes []byte, formingBatchOperation controljournal.OperationID) ValidatedCheckpointV1 {
+	recordCopy := append([]byte(nil), recordBytes...)
+	headCopy := append([]byte(nil), headBytes...)
+	return ValidatedCheckpointV1{
+		seal: checkpointValidationSealV1{
+			version: 1, formingBatchOperation: formingBatchOperation,
+			digest: checkpointCapabilityDigest(recordCopy, headCopy, formingBatchOperation),
+		},
+		recordBytes: recordCopy, headBytes: headCopy,
+	}
+}
+
+func checkpointCapabilityDigest(recordBytes, headBytes []byte, formingBatchOperation controljournal.OperationID) [32]byte {
+	var value bytes.Buffer
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(recordBytes)))
+	value.Write(size[:])
+	value.Write(recordBytes)
+	binary.BigEndian.PutUint64(size[:], uint64(len(headBytes)))
+	value.Write(size[:])
+	value.Write(headBytes)
+	binary.BigEndian.PutUint64(size[:], uint64(len(formingBatchOperation)))
+	value.Write(size[:])
+	value.WriteString(string(formingBatchOperation))
+	return sha256.Sum256(value.Bytes())
+}
+
+func (checkpoint ValidatedCheckpointV1) validatedParts() (CheckpointRecordV1, CheckpointHeadV1, error) {
+	if checkpoint.seal.version != 1 || checkpoint.seal.digest == [32]byte{} ||
+		checkpointCapabilityDigest(checkpoint.recordBytes, checkpoint.headBytes, checkpoint.seal.formingBatchOperation) != checkpoint.seal.digest {
+		return CheckpointRecordV1{}, CheckpointHeadV1{}, InvalidValidatedCheckpointErrorV1{}
+	}
+	if _, err := controljournal.NewOperationID(string(checkpoint.seal.formingBatchOperation)); err != nil {
+		return CheckpointRecordV1{}, CheckpointHeadV1{}, InvalidValidatedCheckpointErrorV1{}
+	}
+	record, err := DecodeRecordV1(checkpoint.recordBytes)
+	if err != nil {
+		return CheckpointRecordV1{}, CheckpointHeadV1{}, InvalidValidatedCheckpointErrorV1{}
+	}
+	head, err := DecodeHeadV1(checkpoint.headBytes)
+	if err != nil || head.CheckpointID != record.CheckpointID ||
+		head.ThroughRecordRevision != record.Watermark.ThroughRecordRevision ||
+		head.ThroughEventID != record.Watermark.ThroughEventID ||
+		head.CheckpointRecordDigest != digestBytes(checkpoint.recordBytes) {
+		return CheckpointRecordV1{}, CheckpointHeadV1{}, InvalidValidatedCheckpointErrorV1{}
+	}
+	return record, head, nil
+}
+
+func (checkpoint ValidatedCheckpointV1) RecordV1() (CheckpointRecordV1, error) {
+	record, _, err := checkpoint.validatedParts()
+	if err != nil {
+		return CheckpointRecordV1{}, err
+	}
+	record.Aggregates = cloneAggregates(record.Aggregates)
+	return record, nil
+}
+
+func (checkpoint ValidatedCheckpointV1) HeadV1() (CheckpointHeadV1, error) {
+	_, head, err := checkpoint.validatedParts()
+	return head, err
+}
+
+// PublicationV1 yields the immutable batch inputs needed by the application
+// layer without exporting the checkpoint's proof seal or backing storage.
+func (checkpoint ValidatedCheckpointV1) PublicationV1(formingBatchOperation controljournal.OperationID) (CheckpointPublicationV1, error) {
+	record, _, err := checkpoint.validatedParts()
+	if err != nil {
+		return CheckpointPublicationV1{}, err
+	}
+	if _, err := controljournal.NewOperationID(string(formingBatchOperation)); err != nil || formingBatchOperation != checkpoint.seal.formingBatchOperation {
+		return CheckpointPublicationV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "checkpoint_forming_batch_operation"}
+	}
+	return CheckpointPublicationV1{
+		CheckpointID:            record.CheckpointID,
+		FormingBatchOperationID: checkpoint.seal.formingBatchOperation,
+		RecordBytes:             append([]byte(nil), checkpoint.recordBytes...),
+		HeadBytes:               append([]byte(nil), checkpoint.headBytes...),
+	}, nil
+}
+
+func validateRegistryBindings(source SourceIdentityV1, events controljournal.EventRegistryV1, reducers reducer.RegistryV1) error {
+	eventDigest, err := events.Digest()
+	if err != nil {
+		return controljournal.ValidationError{Kind: controljournal.RefusalUnsupportedVersion, Field: "event_schema_set"}
+	}
+	reducerDigest, err := reducers.Digest()
+	if err != nil {
+		return controljournal.ValidationError{Kind: controljournal.RefusalUnsupportedVersion, Field: "reducer_set"}
+	}
+	if source.EventSchemaSetDigest != eventDigest {
+		return controljournal.ValidationError{Kind: controljournal.RefusalUnsupportedVersion, Field: "event_schema_set_digest"}
+	}
+	if source.ReducerSetDigest != reducerDigest {
+		return controljournal.ValidationError{Kind: controljournal.RefusalUnsupportedVersion, Field: "reducer_set_digest"}
+	}
+	return nil
 }
 
 func verifySnapshotAgainstPrefix(journal controljournal.ValidatedJournalV1, reduced reducer.ProjectionV1, aggregates []AggregateSnapshotV1) error {
@@ -121,14 +244,17 @@ func verifySnapshotAgainstPrefix(journal controljournal.ValidatedJournalV1, redu
 		epoch   controljournal.RuntimeEpochID
 	}
 	terminals := make(map[reducer.AggregateKeyV1]terminalHead, len(aggregates))
-	length, err := journal.Len()
+	cursor, err := journal.CursorV1()
 	if err != nil {
 		return err
 	}
-	for index := 0; index < length; index++ {
-		record, atErr := journal.At(index)
+	for {
+		record, ok, atErr := cursor.NextV1()
 		if atErr != nil {
 			return atErr
+		}
+		if !ok {
+			break
 		}
 		key := reducer.AggregateKeyV1{Kind: record.Envelope.AggregateKind, ID: record.Envelope.AggregateID}
 		terminals[key] = terminalHead{version: record.Envelope.AggregateLogicalVersion, event: record.Envelope.EventID, epoch: record.Envelope.RuntimeEpochID}
@@ -261,12 +387,9 @@ func journalWatermark(journal controljournal.ValidatedJournalV1, forming control
 }
 
 func extendWatermark(prior WatermarkV1, journal controljournal.ValidatedJournalV1, forming controljournal.OperationID) (WatermarkV1, error) {
-	length, err := journal.Len()
+	cursor, err := journal.CursorV1()
 	if err != nil {
 		return WatermarkV1{}, err
-	}
-	if length == 0 {
-		return prior, nil
 	}
 	if prior.EventCount == 0 {
 		if prior.ThroughRecordRevision != 0 || prior.ThroughEventID != "" || prior.EventPrefixDigest != [32]byte{} {
@@ -277,13 +400,17 @@ func extendWatermark(prior WatermarkV1, journal controljournal.ValidatedJournalV
 	}
 	digest := prior.EventPrefixDigest
 	var last controljournal.StoredEventV1
-	if prior.EventCount > ^uint64(0)-uint64(length) {
-		return WatermarkV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "event_prefix"}
-	}
-	for index := 0; index < length; index++ {
-		record, atErr := journal.At(index)
+	var appended uint64
+	for {
+		record, ok, atErr := cursor.NextV1()
 		if atErr != nil {
 			return WatermarkV1{}, atErr
+		}
+		if !ok {
+			break
+		}
+		if prior.EventCount == ^uint64(0)-appended {
+			return WatermarkV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "event_prefix"}
 		}
 		if forming != "" && record.Envelope.OperationID == forming {
 			return WatermarkV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "current_batch_checkpoint"}
@@ -306,8 +433,12 @@ func extendWatermark(prior WatermarkV1, journal controljournal.ValidatedJournalV
 		folded.Write(encoded)
 		digest = sha256.Sum256(folded.Bytes())
 		last = record
+		appended++
 	}
-	return WatermarkV1{ThroughRecordRevision: last.RecordRevision, ThroughEventID: last.Envelope.EventID, EventCount: prior.EventCount + uint64(length), EventPrefixDigest: digest}, nil
+	if appended == 0 {
+		return prior, nil
+	}
+	return WatermarkV1{ThroughRecordRevision: last.RecordRevision, ThroughEventID: last.Envelope.EventID, EventCount: prior.EventCount + appended, EventPrefixDigest: digest}, nil
 }
 
 func validateRecord(record CheckpointRecordV1) error {

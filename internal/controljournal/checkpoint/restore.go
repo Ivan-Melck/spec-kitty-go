@@ -45,6 +45,8 @@ type RestoreObservationV1 struct {
 
 type RestoreResultV1 struct {
 	Ready                     bool
+	Pristine                  bool
+	CommandAdmissionOpen      bool
 	SelectedCheckpoint        *CheckpointHeadV1
 	Projection                reducer.ProjectionV1
 	Authority                 AuthoritySummaryV1
@@ -59,6 +61,9 @@ func RestoreV1(ctx context.Context, input RestoreInputV1) (RestoreResultV1, erro
 	}
 	if err := validateSource(input.Source); err != nil {
 		return RestoreResultV1{}, notReady(NotReadyAuthorityClosed, "source_identity", "repair the admitted source identity")
+	}
+	if err := validateRegistryBindings(input.Source, input.EventRegistry, input.Reducers); err != nil {
+		return RestoreResultV1{}, notReady(NotReadyAuthorityClosed, "registry_binding", "install the exact sealed event and reducer registries")
 	}
 	heads, err := input.Reader.CheckpointHeadsV1(ctx)
 	if err != nil {
@@ -75,27 +80,7 @@ func RestoreV1(ctx context.Context, input RestoreInputV1) (RestoreResultV1, erro
 	})
 	var staleRestarts uint32
 	if len(heads) == 0 {
-		events, observation, scanErr := scanJournal(ctx, input.Reader, WatermarkV1{}, &staleRestarts)
-		if scanErr != nil {
-			return RestoreResultV1{}, scanErr
-		}
-		journal, validateErr := controljournal.ValidateJournalV1(input.EventRegistry, events)
-		if validateErr != nil {
-			return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "journal", "preserve the store and repair or restore an approved backup")
-		}
-		terminal, watermarkErr := extendWatermark(WatermarkV1{}, journal, "")
-		if watermarkErr != nil || terminal.EventCount == 0 {
-			return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "journal_watermark", "preserve the store and inspect the committed journal")
-		}
-		projection, applyErr := reducer.ApplyV1(input.Reducers, reducer.EmptyProjectionV1(), journal)
-		if applyErr != nil {
-			return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "journal_reduction", "install the exact reducer set or restore compatible history")
-		}
-		authority, authorityErr := deriveAuthority(input.Source.RunID, AuthoritySummaryV1{}, journal)
-		if authorityErr != nil {
-			return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "authority_summary", "inspect the authority event history")
-		}
-		return readyResult(nil, projection, authority, terminal, observation), nil
+		return restoreFromOrigin(ctx, input, &staleRestarts, false)
 	}
 
 	for index := range heads {
@@ -138,7 +123,37 @@ func RestoreV1(ctx context.Context, input RestoreInputV1) (RestoreResultV1, erro
 		}
 		return readyResult(&selected, restored, authority, terminal, observation), nil
 	}
-	return RestoreResultV1{}, notReady(NotReadyInvalidCheckpoint, "checkpoint_candidates", "inspect immutable invalid candidates or provide an explicitly eligible earlier checkpoint")
+	return restoreFromOrigin(ctx, input, &staleRestarts, true)
+}
+
+func restoreFromOrigin(ctx context.Context, input RestoreInputV1, staleRestarts *uint32, invalidCandidates bool) (RestoreResultV1, error) {
+	events, observation, err := scanJournal(ctx, input.Reader, WatermarkV1{}, staleRestarts)
+	if err != nil {
+		return RestoreResultV1{}, err
+	}
+	if invalidCandidates && len(events) == 0 {
+		return RestoreResultV1{}, notReady(NotReadyInvalidCheckpoint, "checkpoint_candidates", "preserve the contradictory checkpoint evidence and recover the missing origin history")
+	}
+	journal, err := controljournal.ValidateJournalV1(input.EventRegistry, events)
+	if err != nil {
+		return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "journal", "preserve the store and repair or restore an approved backup")
+	}
+	terminal, err := extendWatermark(WatermarkV1{}, journal, "")
+	if err != nil {
+		return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "journal_watermark", "preserve the store and inspect the committed journal")
+	}
+	projection, err := reducer.ApplyV1(input.Reducers, reducer.EmptyProjectionV1(), journal)
+	if err != nil {
+		return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "journal_reduction", "install the exact reducer set or restore compatible history")
+	}
+	if len(events) == 0 {
+		return readyPristineResult(projection, observation), nil
+	}
+	authority, err := deriveAuthority(input.Source.RunID, AuthoritySummaryV1{}, journal)
+	if err != nil {
+		return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "authority_summary", "inspect the authority event history")
+	}
+	return readyResult(nil, projection, authority, terminal, observation), nil
 }
 
 func scanJournal(ctx context.Context, reader RestoreReaderV1, after WatermarkV1, staleRestarts *uint32) ([]controljournal.StoredEventV1, RestoreObservationV1, error) {
@@ -174,6 +189,12 @@ func scanJournal(ctx context.Context, reader RestoreReaderV1, after WatermarkV1,
 			}
 			observed = page.ObservedRevision
 			observation.ScanPages++
+			if page.RawBytes > MaxScanPageBytes {
+				return nil, observation, notReady(NotReadyReplayBound, "scan_page_bytes", "publish a bounded checkpoint or enforce the admitted page byte ceiling")
+			}
+			if page.RawBytes > MaxRestoreBytes-observation.ScanBytes {
+				return nil, observation, notReady(NotReadyReplayBound, "scan_bytes", "publish an eligible checkpoint or raise the reviewed restore bound")
+			}
 			if page.RecordCount > MaxScanPageRecords {
 				return nil, observation, notReady(NotReadyReplayBound, "scan_page_records", "enforce the admitted fixed page capacity")
 			}
@@ -188,16 +209,13 @@ func scanJournal(ctx context.Context, reader RestoreReaderV1, after WatermarkV1,
 					return nil, observation, notReady(NotReadyJournalCorrupt, "event_envelope", "preserve the store and inspect the corrupt event")
 				}
 				itemBytes := uint64(len(encoded))
-				if itemBytes > MaxRestoreBytes-measuredRaw {
+				if itemBytes > MaxScanPageBytes-measuredRaw {
 					return nil, observation, notReady(NotReadyReplayBound, "scan_page_bytes", "publish a bounded checkpoint")
 				}
 				measuredRaw += itemBytes
 			}
 			if page.RawBytes < measuredRaw {
 				return nil, observation, notReady(NotReadyJournalCorrupt, "scan_raw_bytes", "inspect the provider byte accounting")
-			}
-			if page.RawBytes > MaxRestoreBytes-observation.ScanBytes {
-				return nil, observation, notReady(NotReadyReplayBound, "scan_bytes", "publish an eligible checkpoint or raise the reviewed restore bound")
 			}
 			observation.ScanBytes += page.RawBytes
 			if uint64(page.RecordCount) > MaxRestoreEvents-observation.ScanRecords {
@@ -252,7 +270,11 @@ func selectCheckpoint(ctx context.Context, input RestoreInputV1, head Checkpoint
 }
 
 func readyResult(head *CheckpointHeadV1, projection reducer.ProjectionV1, authority AuthoritySummaryV1, watermark WatermarkV1, observation RestoreObservationV1) RestoreResultV1 {
-	return RestoreResultV1{Ready: true, SelectedCheckpoint: head, Projection: projection, Authority: authority, TerminalWatermark: watermark, CanonicalProjectionDigest: projection.GlobalDigest(), Observation: observation}
+	return RestoreResultV1{Ready: true, CommandAdmissionOpen: false, SelectedCheckpoint: head, Projection: projection, Authority: authority, TerminalWatermark: watermark, CanonicalProjectionDigest: projection.GlobalDigest(), Observation: observation}
+}
+
+func readyPristineResult(projection reducer.ProjectionV1, observation RestoreObservationV1) RestoreResultV1 {
+	return RestoreResultV1{Ready: true, Pristine: true, CommandAdmissionOpen: false, Projection: projection, CanonicalProjectionDigest: projection.GlobalDigest(), Observation: observation}
 }
 
 func deriveAuthority(runID controljournal.RunID, initial AuthoritySummaryV1, journal controljournal.ValidatedJournalV1) (AuthoritySummaryV1, error) {
@@ -260,14 +282,17 @@ func deriveAuthority(runID controljournal.RunID, initial AuthoritySummaryV1, jou
 	if summary.RunID == "" {
 		summary.RunID = runID
 	}
-	length, err := journal.Len()
+	cursor, err := journal.CursorV1()
 	if err != nil {
 		return AuthoritySummaryV1{}, err
 	}
-	for index := 0; index < length; index++ {
-		record, atErr := journal.At(index)
+	for {
+		record, ok, atErr := cursor.NextV1()
 		if atErr != nil {
 			return AuthoritySummaryV1{}, atErr
+		}
+		if !ok {
+			break
 		}
 		summary.RuntimeEpochID = record.Envelope.RuntimeEpochID
 		summary.DurableRevision = record.RecordRevision
@@ -277,7 +302,7 @@ func deriveAuthority(runID controljournal.RunID, initial AuthoritySummaryV1, jou
 			summary.FenceToken = record.Envelope.FenceToken
 		}
 	}
-	if summary.RunID != runID || summary.RuntimeEpochID == "" || summary.DurableRevision == 0 {
+	if summary.RunID != runID || validateAuthority(summary) != nil {
 		return AuthoritySummaryV1{}, errors.New("authority summary incomplete")
 	}
 	return summary, nil
@@ -287,17 +312,25 @@ func notReady(kind NotReadyKindV1, field, recovery string) NotReadyErrorV1 {
 }
 
 func BindRuntimeEpochV1(restored RestoreResultV1, runID controljournal.RunID, predecessor, admitted controljournal.RuntimeEpochID, durableRevision uint64) (EpochBindingV1, error) {
-	if !restored.Ready {
+	if !restored.Ready || restored.CommandAdmissionOpen {
 		return EpochBindingV1{}, notReady(NotReadyAuthorityClosed, "restore", "complete product restore before admitting an epoch")
 	}
 	if _, err := controljournal.NewRunID(string(runID)); err != nil {
 		return EpochBindingV1{}, err
 	}
-	if _, err := controljournal.NewRuntimeEpochID(string(predecessor)); err != nil {
-		return EpochBindingV1{}, err
-	}
 	if _, err := controljournal.NewRuntimeEpochID(string(admitted)); err != nil {
 		return EpochBindingV1{}, err
+	}
+	firstAdmission := restored.Pristine
+	if firstAdmission {
+		if predecessor != "" || restored.Authority != (AuthoritySummaryV1{}) || restored.TerminalWatermark != (WatermarkV1{}) {
+			return EpochBindingV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "first_runtime_epoch"}
+		}
+	} else if _, err := controljournal.NewRuntimeEpochID(string(predecessor)); err != nil {
+		return EpochBindingV1{}, err
+	}
+	if !firstAdmission && (restored.Authority.RunID == "" || restored.Authority.RuntimeEpochID == "" || restored.Authority.DurableRevision == 0) {
+		return EpochBindingV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "restored_authority"}
 	}
 	if restored.Authority.RunID != "" && restored.Authority.RunID != runID {
 		return EpochBindingV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "runtime_run"}
@@ -305,14 +338,18 @@ func BindRuntimeEpochV1(restored RestoreResultV1, runID controljournal.RunID, pr
 	if restored.Authority.RuntimeEpochID != "" && restored.Authority.RuntimeEpochID != predecessor {
 		return EpochBindingV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "predecessor_epoch"}
 	}
-	if predecessor == admitted || durableRevision == 0 {
+	if (!firstAdmission && predecessor == admitted) || durableRevision == 0 {
 		return EpochBindingV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "runtime_epoch"}
 	}
-	return EpochBindingV1{RunID: runID, RuntimeEpochID: admitted, PredecessorEpochID: predecessor, DurableRevision: durableRevision}, nil
+	return EpochBindingV1{RunID: runID, RuntimeEpochID: admitted, PredecessorEpochID: predecessor, DurableRevision: durableRevision, FirstAdmission: firstAdmission, CommandAdmissionOpen: true}, nil
 }
 
-func ValidateCapsuleEpochV1(binding EpochBindingV1, capsule AuthorityCapsuleV1) error {
-	if capsule.RunID != binding.RunID || capsule.RuntimeEpochID != binding.RuntimeEpochID || capsule.RuntimeEpochID == binding.PredecessorEpochID || capsule.DurableRevision != binding.DurableRevision {
+func ValidateCapsuleEpochV1(binding EpochBindingV1, capsule controljournal.AuthorityCapsuleV1) error {
+	validated, err := controljournal.NewAuthorityCapsuleV1(capsule)
+	if err != nil {
+		return err
+	}
+	if !binding.CommandAdmissionOpen || validated.RunID != binding.RunID || validated.RuntimeEpochID != binding.RuntimeEpochID || validated.RuntimeEpochID == binding.PredecessorEpochID || validated.AuthorityHeadRecordRevision != binding.DurableRevision {
 		return controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "runtime_epoch_capsule"}
 	}
 	return nil

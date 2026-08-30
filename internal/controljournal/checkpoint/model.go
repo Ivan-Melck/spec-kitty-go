@@ -23,6 +23,7 @@ const (
 	CheckpointByteCadence    = uint64(4 << 20)
 	MaxRestoreEvents         = 16_000
 	MaxRestoreBytes          = 48 << 20
+	MaxScanPageBytes         = 8 << 20
 	MaxRestorePages          = 32
 	MaxStaleRestarts         = 2
 	MaxScanPageRecords       = 500
@@ -88,16 +89,12 @@ type SourceIdentityV1 struct {
 }
 
 type EpochBindingV1 struct {
-	RunID              controljournal.RunID
-	RuntimeEpochID     controljournal.RuntimeEpochID
-	PredecessorEpochID controljournal.RuntimeEpochID
-	DurableRevision    uint64
-}
-
-type AuthorityCapsuleV1 struct {
-	RunID           controljournal.RunID
-	RuntimeEpochID  controljournal.RuntimeEpochID
-	DurableRevision uint64
+	RunID                controljournal.RunID
+	RuntimeEpochID       controljournal.RuntimeEpochID
+	PredecessorEpochID   controljournal.RuntimeEpochID
+	DurableRevision      uint64
+	FirstAdmission       bool
+	CommandAdmissionOpen bool
 }
 
 type NotReadyKindV1 string

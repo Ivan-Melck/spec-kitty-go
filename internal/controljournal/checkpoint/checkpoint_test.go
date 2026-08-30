@@ -1,7 +1,6 @@
 package checkpoint
 
 import (
-	"crypto/sha256"
 	"errors"
 	"strings"
 	"testing"
@@ -10,8 +9,17 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/reducer"
 )
 
-func testSource() SourceIdentityV1 {
-	return SourceIdentityV1{ProjectID: "project-1", MissionID: "mission-1", RunID: "run-1", ReducerSetDigest: sha256.Sum256([]byte("reducers-v1")), EventSchemaSetDigest: sha256.Sum256([]byte("events-v1"))}
+func testSource(t *testing.T) SourceIdentityV1 {
+	t.Helper()
+	eventDigest, err := testEventRegistry(t).Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducerDigest, err := testReducers(t).Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return SourceIdentityV1{ProjectID: "project-1", MissionID: "mission-1", RunID: "run-1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}
 }
 
 func testAuthority() AuthoritySummaryV1 {
@@ -77,7 +85,15 @@ func snapshot(t *testing.T, id string, version uint64, eventID, state string) Ag
 	return AggregateSnapshotV1{Kind: "mission", ID: controljournal.AggregateID(id), LogicalVersion: version, RuntimeEpochID: "epoch-1", LastEventID: controljournal.EventID(eventID), State: value.CanonicalBytes(), StateDigest: value.Digest()}
 }
 
-func buildFixture(t *testing.T, records []controljournal.StoredEventV1, aggregates []AggregateSnapshotV1, checkpointID string) BuildResultV1 {
+type checkpointFixture struct {
+	Capability  ValidatedCheckpointV1
+	Record      CheckpointRecordV1
+	Head        CheckpointHeadV1
+	RecordBytes []byte
+	HeadBytes   []byte
+}
+
+func buildFixture(t *testing.T, records []controljournal.StoredEventV1, aggregates []AggregateSnapshotV1, checkpointID string) checkpointFixture {
 	t.Helper()
 	journal := testJournal(t, records...)
 	watermark, err := journalWatermark(journal, "")
@@ -86,11 +102,23 @@ func buildFixture(t *testing.T, records []controljournal.StoredEventV1, aggregat
 	}
 	authority := testAuthority()
 	authority.DurableRevision = watermark.ThroughRecordRevision
-	result, err := BuildV1(BuildInputV1{CheckpointID: CheckpointID(checkpointID), Source: testSource(), PriorPrefix: journal, Reducers: testReducers(t), Watermark: watermark, Aggregates: aggregates, Authority: authority, FormingBatchOperation: "forming-operation"})
+	result, err := BuildV1(BuildInputV1{CheckpointID: CheckpointID(checkpointID), Source: testSource(t), PriorPrefix: journal, EventRegistry: testEventRegistry(t), Reducers: testReducers(t), Watermark: watermark, Aggregates: aggregates, Authority: authority, FormingBatchOperation: "forming-operation"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return result
+	record, err := result.RecordV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := result.HeadV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication, err := result.PublicationV1("forming-operation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return checkpointFixture{Capability: result, Record: record, Head: head, RecordBytes: publication.RecordBytes, HeadBytes: publication.HeadBytes}
 }
 
 func TestCheckpointCanonicalBytesStableAcrossAggregateOrder(t *testing.T) {
@@ -121,7 +149,7 @@ func TestCheckpointRejectsCurrentBatchAndNonterminalWatermark(t *testing.T) {
 	watermark, _ := journalWatermark(journal, "")
 	authority := testAuthority()
 	authority.DurableRevision = watermark.ThroughRecordRevision
-	base := BuildInputV1{CheckpointID: "checkpoint-1", Source: testSource(), PriorPrefix: journal, Reducers: testReducers(t), Watermark: watermark, Aggregates: []AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"value":1}`)}, Authority: authority, FormingBatchOperation: "forming-operation"}
+	base := BuildInputV1{CheckpointID: "checkpoint-1", Source: testSource(t), PriorPrefix: journal, EventRegistry: testEventRegistry(t), Reducers: testReducers(t), Watermark: watermark, Aggregates: []AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"value":1}`)}, Authority: authority, FormingBatchOperation: "forming-operation"}
 	current := base
 	current.FormingBatchOperation = "operation-a"
 	if _, err := BuildV1(current); err == nil {
@@ -148,7 +176,7 @@ func TestCheckpointBuildRefusesFabricatedProjectionHeadAndAuthority(t *testing.T
 	}
 	authority := testAuthority()
 	authority.DurableRevision = watermark.ThroughRecordRevision
-	base := BuildInputV1{CheckpointID: "checkpoint-proof", Source: testSource(), PriorPrefix: journal, Reducers: testReducers(t), Watermark: watermark, Aggregates: []AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"value":1}`)}, Authority: authority, FormingBatchOperation: "forming-operation"}
+	base := BuildInputV1{CheckpointID: "checkpoint-proof", Source: testSource(t), PriorPrefix: journal, EventRegistry: testEventRegistry(t), Reducers: testReducers(t), Watermark: watermark, Aggregates: []AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"value":1}`)}, Authority: authority, FormingBatchOperation: "forming-operation"}
 	mutants := map[string]func(*BuildInputV1){
 		"state": func(input *BuildInputV1) {
 			input.Aggregates = []AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"value":9}`)}
@@ -205,6 +233,106 @@ func TestCheckpointInvalidRecordMutantsRefuse(t *testing.T) {
 	head.CheckpointRecordDigest[0] ^= 1
 	if head.CheckpointRecordDigest == result.Head.CheckpointRecordDigest {
 		t.Fatal("digest mutant setup failed")
+	}
+}
+
+func TestCheckpointCapabilityIsSealedAndCopyOnAccess(t *testing.T) {
+	fixture := buildFixture(t,
+		[]controljournal.StoredEventV1{testStoredEvent(t, 7, "event-a", "operation-a", "aggregate-a", 1, 0, 1, `{"value":1}`)},
+		[]AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"value":1}`)}, "checkpoint-capability")
+	assertInvalid := func(t *testing.T, value ValidatedCheckpointV1) {
+		t.Helper()
+		if _, err := value.RecordV1(); !errors.As(err, new(InvalidValidatedCheckpointErrorV1)) {
+			t.Fatalf("record accessor error=%T %v", err, err)
+		}
+		if _, err := value.HeadV1(); !errors.As(err, new(InvalidValidatedCheckpointErrorV1)) {
+			t.Fatalf("head accessor error=%T %v", err, err)
+		}
+		if _, err := value.PublicationV1("forming-operation"); !errors.As(err, new(InvalidValidatedCheckpointErrorV1)) {
+			t.Fatalf("publication accessor error=%T %v", err, err)
+		}
+	}
+	assertInvalid(t, ValidatedCheckpointV1{})
+	manual := ValidatedCheckpointV1{seal: checkpointValidationSealV1{version: 1, digest: [32]byte{1}, formingBatchOperation: "forming-operation"}, recordBytes: []byte(`{}`), headBytes: []byte(`{}`)}
+	assertInvalid(t, manual)
+	for name, mutate := range map[string]func(*ValidatedCheckpointV1){
+		"seal":              func(value *ValidatedCheckpointV1) { value.seal.digest[0] ^= 1 },
+		"forming operation": func(value *ValidatedCheckpointV1) { value.seal.formingBatchOperation = "different-operation" },
+		"record":            func(value *ValidatedCheckpointV1) { value.recordBytes[0] ^= 1 },
+		"head":              func(value *ValidatedCheckpointV1) { value.headBytes[0] ^= 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := fixture.Capability
+			value.recordBytes = append([]byte(nil), value.recordBytes...)
+			value.headBytes = append([]byte(nil), value.headBytes...)
+			mutate(&value)
+			assertInvalid(t, value)
+		})
+	}
+	publication, err := fixture.Capability.PublicationV1("forming-operation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication.RecordBytes[0] ^= 1
+	publication.HeadBytes[0] ^= 1
+	second, err := fixture.Capability.PublicationV1("forming-operation")
+	if err != nil || string(second.RecordBytes) != string(fixture.RecordBytes) || string(second.HeadBytes) != string(fixture.HeadBytes) {
+		t.Fatalf("publication mutation reached sealed checkpoint err=%v", err)
+	}
+	if second.FormingBatchOperationID != "forming-operation" {
+		t.Fatalf("publication lost forming operation: %+v", second)
+	}
+	if _, err := fixture.Capability.PublicationV1("different-operation"); err == nil {
+		t.Fatal("checkpoint built for operation A published into operation B")
+	}
+	record, err := fixture.Capability.RecordV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Aggregates[0].State[0] ^= 1
+	again, err := fixture.Capability.RecordV1()
+	if err != nil || string(again.Aggregates[0].State) != `{"value":1}` {
+		t.Fatalf("record mutation reached sealed checkpoint state=%s err=%v", again.Aggregates[0].State, err)
+	}
+}
+
+func TestCheckpointBuildBindsActualEventAndReducerRegistries(t *testing.T) {
+	record := testStoredEvent(t, 7, "event-a", "operation-a", "aggregate-a", 1, 0, 1, `{"value":1}`)
+	journal := testJournal(t, record)
+	watermark, err := journalWatermark(journal, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := testAuthority()
+	authority.DurableRevision = watermark.ThroughRecordRevision
+	base := BuildInputV1{CheckpointID: "checkpoint-bindings", Source: testSource(t), PriorPrefix: journal, EventRegistry: testEventRegistry(t), Reducers: testReducers(t), Watermark: watermark, Aggregates: []AggregateSnapshotV1{snapshot(t, "aggregate-a", 1, "event-a", `{"value":1}`)}, Authority: authority, FormingBatchOperation: "forming-operation"}
+	wrongEvents, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{
+		{EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1"},
+		{EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongReducers, err := reducer.NewRegistryV1([]reducer.EntryV1{
+		{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1},
+		{AggregateKind: "mission", EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*BuildInputV1){
+		"event registry":       func(input *BuildInputV1) { input.EventRegistry = wrongEvents },
+		"reducer registry":     func(input *BuildInputV1) { input.Reducers = wrongReducers },
+		"event digest label":   func(input *BuildInputV1) { input.Source.EventSchemaSetDigest[0] ^= 1 },
+		"reducer digest label": func(input *BuildInputV1) { input.Source.ReducerSetDigest[0] ^= 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := base
+			mutate(&input)
+			if _, err := BuildV1(input); err == nil {
+				t.Fatal("registry/source digest mismatch accepted")
+			}
+		})
 	}
 }
 

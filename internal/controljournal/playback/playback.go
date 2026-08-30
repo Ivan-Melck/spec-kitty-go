@@ -34,18 +34,23 @@ type ResultV1 struct {
 }
 
 func RunV1(input InputV1) (ResultV1, error) {
-	length, err := input.Journal.Len()
+	cursor, err := input.Journal.CursorV1()
 	if err != nil {
 		return ResultV1{}, err
 	}
-	if length > maxPlaybackEvents {
-		return ResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "playback_events"}
-	}
 	encodedBytes := 0
-	for index := 0; index < length; index++ {
-		record, atErr := input.Journal.At(index)
+	var count int
+	var terminal controljournal.StoredEventV1
+	for {
+		record, ok, atErr := cursor.NextV1()
 		if atErr != nil {
 			return ResultV1{}, atErr
+		}
+		if !ok {
+			break
+		}
+		if count == maxPlaybackEvents {
+			return ResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "playback_events"}
 		}
 		encoded, encodeErr := controljournal.EncodeEventEnvelopeV1(record.Envelope)
 		if encodeErr != nil {
@@ -55,18 +60,16 @@ func RunV1(input InputV1) (ResultV1, error) {
 			return ResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "playback_bytes"}
 		}
 		encodedBytes += len(encoded)
+		terminal = record
+		count++
 	}
 	projection, err := reducer.ApplyV1(input.Reducers, reducer.EmptyProjectionV1(), input.Journal)
 	if err != nil {
 		return ResultV1{}, err
 	}
-	result := ResultV1{Projection: projection, EventCount: uint64(length), CanonicalProjectionDigest: projection.GlobalDigest(), Observation: ObservationV1{AdapterCalls: 0, DurableWrites: 0}}
-	if length > 0 {
-		last, atErr := input.Journal.At(length - 1)
-		if atErr != nil {
-			return ResultV1{}, atErr
-		}
-		result.ThroughRecordRevision, result.ThroughEventID = last.RecordRevision, last.Envelope.EventID
+	result := ResultV1{Projection: projection, EventCount: uint64(count), CanonicalProjectionDigest: projection.GlobalDigest(), Observation: ObservationV1{AdapterCalls: 0, DurableWrites: 0}}
+	if count > 0 {
+		result.ThroughRecordRevision, result.ThroughEventID = terminal.RecordRevision, terminal.Envelope.EventID
 	}
 	return result, nil
 }
