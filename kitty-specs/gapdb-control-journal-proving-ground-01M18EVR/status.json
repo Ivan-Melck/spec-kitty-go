@@ -245,7 +245,8 @@
       "notes": [
         "Cycle 3 ready at 18e8812: exact retained coordinates and public capsule lifecycle; canonical application and intent digests; sealed historical receipt restore; public W1 quarantine and fresh Process C/W3 with B continuing; exact admitted GapDB and real Git, race and architecture gates pass.",
         "Cycle 4 ready at 6762c00: public heartbeat rejects caller TTL unequal to admitted Config.LeaseTTL before exact capsule binding or durable mutation; matching policy refreshes the exact head and deadline; full repetition, race, exact GapDB/real Git, architecture, vet, staticcheck, compile, and diff gates pass.",
-        "Attribution correction: preserve the append-only CLI approval, re-enter review, and emit the cycle 4 verdict under the claimed reviewer identity"
+        "Attribution correction: preserve the append-only CLI approval, re-enter review, and emit the cycle 4 verdict under the claimed reviewer identity",
+        "Cycle 4 approved at 6762c00: mismatched heartbeat TTL refuses before exact binding or durable mutation and matching TTL applies admitted policy; retained impersonation, exact replay identity, sealed historical receipts, digest/event mutants, TOCTOU, epoch race/deadlock, zombie isolation, public W1-to-W3, admitted GapDB/real Git, architecture/no-SQLite, race, vet, staticcheck, formatting, and compile gates pass; WP09 live caller remains explicitly deferred"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -254,7 +255,7 @@
         "reviewer": "codex-wp07-reviewer-cycle4",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
       "subtasks": {
