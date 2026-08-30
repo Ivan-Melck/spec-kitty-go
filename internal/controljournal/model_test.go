@@ -175,6 +175,38 @@ func TestModelRegistryIsExactAndDefensivelyCopied(t *testing.T) {
 	}
 }
 
+func TestEventRegistryDigestIsCanonicalAndRejectsZeroOrTamperedState(t *testing.T) {
+	left, err := NewEventRegistryV1([]EventVersionV1{{EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}, {EventType: "mission.updated", EventSchemaVersion: 2, ReducerVersion: "mission-v2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := NewEventRegistryV1([]EventVersionV1{{EventType: "mission.updated", EventSchemaVersion: 2, ReducerVersion: "mission-v2"}, {EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftDigest, err := left.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightDigest, err := right.Digest()
+	if err != nil || leftDigest != rightDigest {
+		t.Fatalf("registry digest order drift left=%x right=%x err=%v", leftDigest, rightDigest, err)
+	}
+	if _, err := (EventRegistryV1{}).Digest(); err == nil {
+		t.Fatal("zero event registry exposed a digest")
+	}
+	tampered := left
+	tampered.digest[0] ^= 1
+	if _, err := tampered.Digest(); err == nil {
+		t.Fatal("tampered event registry digest accepted")
+	}
+	tampered, _ = NewEventRegistryV1([]EventVersionV1{{EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}, {EventType: "mission.updated", EventSchemaVersion: 2, ReducerVersion: "mission-v2"}})
+	delete(tampered.versions, eventVersionKey("mission.created", 1, "mission-v1"))
+	if _, err := tampered.Digest(); err == nil {
+		t.Fatal("tampered event registry contents accepted")
+	}
+}
+
 func TestOrderCanonicalizesAndGroupsAtomically(t *testing.T) {
 	registry := fixtureRegistry(t)
 	e0 := fixtureEnvelope(t, "event-a", "operation-1", 0, 2, "agg-1", 1)
@@ -307,6 +339,68 @@ func TestModelMalformedForgedCapabilityFailsClosed(t *testing.T) {
 		if record, err := forged.At(0); !errors.As(err, new(InvalidValidatedJournalError)) {
 			t.Fatalf("forged At = %#v, %T %v", record, err, err)
 		}
+	}
+}
+
+func TestModelJournalSealBindsEveryStoredFieldAndOrder(t *testing.T) {
+	mutants := []struct {
+		name   string
+		mutate func(*StoredEventV1)
+	}{
+		{name: "record revision", mutate: func(record *StoredEventV1) { record.RecordRevision++ }},
+		{name: "envelope version", mutate: func(record *StoredEventV1) { record.Envelope.EnvelopeVersion++ }},
+		{name: "event id", mutate: func(record *StoredEventV1) { record.Envelope.EventID = "event-mutant" }},
+		{name: "event type", mutate: func(record *StoredEventV1) { record.Envelope.EventType = "mission.mutant" }},
+		{name: "event schema version", mutate: func(record *StoredEventV1) { record.Envelope.EventSchemaVersion++ }},
+		{name: "reducer version", mutate: func(record *StoredEventV1) { record.Envelope.ReducerVersion = "mission-mutant" }},
+		{name: "project id", mutate: func(record *StoredEventV1) { record.Envelope.ProjectID = "project-mutant" }},
+		{name: "aggregate kind", mutate: func(record *StoredEventV1) { record.Envelope.AggregateKind = "mutant" }},
+		{name: "aggregate id", mutate: func(record *StoredEventV1) { record.Envelope.AggregateID = "aggregate-mutant" }},
+		{name: "aggregate logical version", mutate: func(record *StoredEventV1) { record.Envelope.AggregateLogicalVersion++ }},
+		{name: "operation id", mutate: func(record *StoredEventV1) { record.Envelope.OperationID = "operation-mutant" }},
+		{name: "runtime epoch id", mutate: func(record *StoredEventV1) { record.Envelope.RuntimeEpochID = "epoch-mutant" }},
+		{name: "event index", mutate: func(record *StoredEventV1) { record.Envelope.EventIndex++ }},
+		{name: "event count", mutate: func(record *StoredEventV1) { record.Envelope.EventCount++ }},
+		{name: "work revision id", mutate: func(record *StoredEventV1) { record.Envelope.WorkRevisionID = "work-revision-mutant" }},
+		{name: "lease id", mutate: func(record *StoredEventV1) { record.Envelope.LeaseID = "lease-mutant" }},
+		{name: "lease generation", mutate: func(record *StoredEventV1) { record.Envelope.LeaseGeneration++ }},
+		{name: "fence token", mutate: func(record *StoredEventV1) { record.Envelope.FenceToken++ }},
+		{name: "policy revision", mutate: func(record *StoredEventV1) { record.Envelope.PolicyRevision = "policy-mutant" }},
+		{name: "doctrine revision", mutate: func(record *StoredEventV1) { record.Envelope.DoctrineRevision = "doctrine-mutant" }},
+		{name: "profile revision", mutate: func(record *StoredEventV1) { record.Envelope.ProfileRevision = "profile-mutant" }},
+		{name: "recorded observations", mutate: func(record *StoredEventV1) { record.Envelope.recordedObservations[0] = '[' }},
+		{name: "payload", mutate: func(record *StoredEventV1) { record.Envelope.payload[0] = '[' }},
+		{name: "canonical event digest", mutate: func(record *StoredEventV1) { record.Envelope.digest[0] ^= 1 }},
+	}
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			journal, err := ValidateJournalV1(fixtureRegistry(t), []StoredEventV1{{RecordRevision: 1, Envelope: fixtureEnvelope(t, "event-1", "operation-1", 0, 1, "agg-1", 1)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutant.mutate(&journal.records[0])
+			if _, err := journal.Len(); !errors.As(err, new(InvalidValidatedJournalError)) {
+				t.Fatalf("Len accepted %s mutation: %T %v", mutant.name, err, err)
+			}
+			if _, err := journal.At(0); !errors.As(err, new(InvalidValidatedJournalError)) {
+				t.Fatalf("At accepted %s mutation: %T %v", mutant.name, err, err)
+			}
+		})
+	}
+
+	journal, err := ValidateJournalV1(fixtureRegistry(t), []StoredEventV1{
+		{RecordRevision: 1, Envelope: fixtureEnvelope(t, "event-1", "operation-1", 0, 1, "agg-1", 1)},
+		{RecordRevision: 2, Envelope: fixtureEnvelope(t, "event-2", "operation-2", 0, 1, "agg-2", 1)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.records[0], journal.records[1] = journal.records[1], journal.records[0]
+	if _, err := journal.Len(); !errors.As(err, new(InvalidValidatedJournalError)) {
+		t.Fatalf("Len accepted record-order mutation: %T %v", err, err)
+	}
+	if _, err := journal.At(0); !errors.As(err, new(InvalidValidatedJournalError)) {
+		t.Fatalf("At accepted record-order mutation: %T %v", err, err)
 	}
 }
 

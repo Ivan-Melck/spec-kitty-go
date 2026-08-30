@@ -31,7 +31,7 @@ subtasks:
 - T034
 - T035
 history: []
-agent_profile: implementer-ivan
+agent_profile: reviewer-renata
 authoritative_surface: internal/controljournal/checkpoint/
 create_intent:
 - internal/controljournal/checkpoint/model.go

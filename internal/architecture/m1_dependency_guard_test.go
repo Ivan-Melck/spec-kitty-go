@@ -27,6 +27,7 @@ var m1GapDBImportAllowlist = map[string]bool{
 // admitted deliberately rather than inheriting ambient I/O through a helper.
 var m1JournalPureImportAllowlist = map[string]bool{
 	"bytes":           true,
+	"context":         true,
 	"crypto/sha256":   true,
 	"encoding/binary": true,
 	"encoding/hex":    true,
@@ -202,6 +203,13 @@ func TestM1DependencyJournalPurityMutants(t *testing.T) {
 	})
 	if violations := inspectM1Sources(cleanPlayback); len(violations) != 0 {
 		t.Fatalf("clean recursively pure playback rejected: %v", violations)
+	}
+	cleanCheckpoint := append(m1ExactJournalFixture(), m1SourceFile{
+		Path:   "internal/controljournal/checkpoint/restore.go",
+		Source: []byte("package checkpoint\nimport (\"context\"; \"github.com/spec-kitty/go-kitty3/internal/controljournal\")\ntype Reader interface { Read(context.Context) controljournal.StoredEventV1 }\n"),
+	})
+	if violations := inspectM1Sources(cleanCheckpoint); len(violations) != 0 {
+		t.Fatalf("pure cancellation-aware checkpoint seam rejected: %v", violations)
 	}
 
 	for _, imported := range []string{
@@ -681,6 +689,20 @@ func ReduceRaw(events RawEvents) { _ = events }
 			},
 			kind: "journal-at-method",
 		},
+		{
+			name: "extra-exported-capability-accessor",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func (journal *ValidatedJournalV1) CursorV1() ValidatedJournalV1 { return *journal }")
+			},
+			kind: "journal-capability-method-set",
+		},
+		{
+			name: "alternate-exported-capability-producer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type JournalCursorV1 struct { journal ValidatedJournalV1 }; func ForgeCursor(journal ValidatedJournalV1) JournalCursorV1 { return JournalCursorV1{journal: journal} }")
+			},
+			kind: "journal-capability-producer",
+		},
 	}
 
 	for _, mutant := range tests {
@@ -1115,6 +1137,16 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 		m1RequireFunction(pkg, "ValidateJournalV1", []types.Type{registry, types.NewSlice(stored)}, []types.Type{validated, errorType}, "journal-validator", &violations)
 		m1RequireMethod(validated, "Len", nil, []types.Type{types.Typ[types.Int], errorType}, "journal-len-method", &violations)
 		m1RequireMethod(validated, "At", []types.Type{types.Typ[types.Int]}, []types.Type{stored, errorType}, "journal-at-method", &violations)
+		methods := types.NewMethodSet(types.NewPointer(validated))
+		exportedMethods := 0
+		for index := 0; index < methods.Len(); index++ {
+			if methods.At(index).Obj().Exported() {
+				exportedMethods++
+			}
+		}
+		if exportedMethods != 2 {
+			violations = append(violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: "journal-capability-method-set", Detail: "ValidatedJournalV1 must expose only exact Len and At accessors"})
+		}
 	}
 	validator := m1ExactValidatorFunction(pkg, registry, stored, validated)
 	violations = append(violations, inspectM1JournalCompetitors(parsed, stored, validated, validator)...)

@@ -486,6 +486,13 @@ func (r EventRegistryV1) valid() bool {
 	return sha256.Sum256(encoded.Bytes()) == r.digest
 }
 
+func (r EventRegistryV1) Digest() ([32]byte, error) {
+	if !r.valid() {
+		return [32]byte{}, ValidationError{Kind: RefusalInvalidValue, Field: "event_registry"}
+	}
+	return r.digest, nil
+}
+
 type validationSealV1 struct {
 	version uint8
 	digest  [32]byte
@@ -618,28 +625,52 @@ func (journal ValidatedJournalV1) isValid() bool {
 }
 
 func (journal ValidatedJournalV1) contentDigest() ([32]byte, error) {
-	var encoded bytes.Buffer
+	encoded := sha256.New()
+	recordBytes := appendJournalSealUint64(make([]byte, 0, 512), uint64(len(journal.records)))
+	_, _ = encoded.Write(recordBytes)
 	for _, record := range journal.records {
-		if record.RecordRevision == 0 {
-			return [32]byte{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "record_revision"}
-		}
-		if err := record.Envelope.validate(); err != nil {
-			return [32]byte{}, err
-		}
-		unsigned, err := record.Envelope.canonicalBytes(false)
-		if err != nil || sha256.Sum256(unsigned) != record.Envelope.digest {
-			return [32]byte{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "canonical_event_digest"}
-		}
-		var revision [8]byte
-		binary.BigEndian.PutUint64(revision[:], record.RecordRevision)
-		encoded.Write(revision[:])
-		payload, err := record.Envelope.canonicalBytes(true)
-		if err != nil {
-			return [32]byte{}, err
-		}
-		writeLengthPrefixed(&encoded, payload)
+		recordBytes = recordBytes[:0]
+		event := record.Envelope
+		recordBytes = appendJournalSealUint64(recordBytes, record.RecordRevision)
+		recordBytes = appendJournalSealUint64(recordBytes, uint64(event.EnvelopeVersion))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.EventID))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.EventType))
+		recordBytes = appendJournalSealUint64(recordBytes, uint64(event.EventSchemaVersion))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.ReducerVersion))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.ProjectID))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.AggregateKind))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.AggregateID))
+		recordBytes = appendJournalSealUint64(recordBytes, event.AggregateLogicalVersion)
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.OperationID))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.RuntimeEpochID))
+		recordBytes = appendJournalSealUint64(recordBytes, uint64(event.EventIndex))
+		recordBytes = appendJournalSealUint64(recordBytes, uint64(event.EventCount))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.WorkRevisionID))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.LeaseID))
+		recordBytes = appendJournalSealUint64(recordBytes, event.LeaseGeneration)
+		recordBytes = appendJournalSealUint64(recordBytes, event.FenceToken)
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.PolicyRevision))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.DoctrineRevision))
+		recordBytes = appendJournalSealBytes(recordBytes, []byte(event.ProfileRevision))
+		recordBytes = appendJournalSealBytes(recordBytes, event.recordedObservations)
+		recordBytes = appendJournalSealBytes(recordBytes, event.payload)
+		recordBytes = appendJournalSealBytes(recordBytes, event.digest[:])
+		_, _ = encoded.Write(recordBytes)
 	}
-	return sha256.Sum256(encoded.Bytes()), nil
+	var digest [32]byte
+	copy(digest[:], encoded.Sum(nil))
+	return digest, nil
+}
+
+func appendJournalSealUint64(encoded []byte, value uint64) []byte {
+	var binaryValue [8]byte
+	binary.BigEndian.PutUint64(binaryValue[:], value)
+	return appendJournalSealBytes(encoded, binaryValue[:])
+}
+
+func appendJournalSealBytes(encoded, value []byte) []byte {
+	encoded = binary.BigEndian.AppendUint64(encoded, uint64(len(value)))
+	return append(encoded, value...)
 }
 
 func writeLengthPrefixed(buffer *bytes.Buffer, value []byte) {
