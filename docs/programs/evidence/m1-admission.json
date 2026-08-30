@@ -15,13 +15,16 @@
   "gapdb_tuple": {
     "repository": "https://github.com/spec-kitty/gapdb.git",
     "source_revision": "ff3dd478f87c6b4cbb1dcc168562f99879ba8c25",
+    "source_tree": "64ada3cd6328aca73ef902e4ab9fe0405823841c",
     "release_tag": null,
     "module_version": "v0.0.0-20260824033134-ff3dd478f87c",
     "module_sum": "h1:kmYoO7Q3PlsNM6M0dSYtuJJSQSlbflC2wz3d/Bek2L0=",
     "go_mod_sum": "h1:8xNZ3k+SQIqcxLkS8bjbooOAv9xzZcbg5arjKaV6fcQ=",
     "sidecar": {
       "command": "gapdbd",
+      "artifact_kind": "pinned_module_install",
       "sha256": "62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e",
+      "size_bytes": 5300621,
       "build_recipe": "GOBIN=<project-bin-directory> CGO_ENABLED=0 GOTOOLCHAIN=go1.26.7 go install -trimpath github.com/spec-kitty/gapdb/cmd/gapdbd@v0.0.0-20260824033134-ff3dd478f87c",
       "build_repetitions": 2,
       "identical_repetitions": 2
