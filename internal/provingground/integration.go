@@ -107,6 +107,14 @@ func (c *IntegrationCoordinator) IntegrateApproved(ctx context.Context, items []
 	if len(items) == 0 {
 		return nil, refusal(OutcomeInvalidCommand, "integration-plan", "at least one approved candidate is required")
 	}
+	// Coordinate refusal is deliberately outside even the process-level plan
+	// lock. Foreign repository/target/epoch/revision input cannot acquire any
+	// local or durable integration authority.
+	for _, item := range items {
+		if err := c.prevalidate(item); err != nil {
+			return nil, err
+		}
+	}
 	var results []baseintegration.Record
 	err := c.withPlanAuthority(ctx, func() error {
 		var integrateErr error
@@ -321,14 +329,25 @@ func (c *IntegrationCoordinator) prevalidate(item IntegrationItem) error {
 	if err := item.Request.Validate(); err != nil {
 		return err
 	}
+	binding := c.reviews.repository.Binding()
+	config := c.reviews.runtime.core.config
+	currentEpoch := c.reviews.runtime.core.currentEpoch()
+	if item.Request.RepositoryID != binding.RepositoryID || item.Request.TargetRef != binding.TargetRef ||
+		item.Capsule.ProjectID != config.ProjectID || item.Capsule.MissionID != config.MissionID ||
+		item.Capsule.WorkRevisionID != config.WorkRevisionID || item.Capsule.RuntimeEpochID != currentEpoch {
+		return &baseintegration.Error{Kind: baseintegration.KindNotApproved, Message: "repository, target, WorkRevision, and runtime epoch must match the admitted composition before integration authority is acquired"}
+	}
 	reviewRecord, ok := c.reviews.Review(item.Request.ReviewID)
-	if !ok || reviewRecord.Verdict != basereview.Approved || reviewRecord.Candidate != item.Request.Candidate {
+	if !ok || reviewRecord.Verdict != basereview.Approved || reviewRecord.Candidate != item.Request.Candidate ||
+		reviewRecord.WorkRevisionID != ids.WorkRevisionID(config.WorkRevisionID) {
 		return &baseintegration.Error{Kind: baseintegration.KindNotApproved, Message: "exact approved review is required before repository fencing"}
 	}
 	c.reviews.store.mu.Lock()
 	candidate, exists := c.reviews.store.candidates[reviewRecord.HandoffID]
 	c.reviews.store.mu.Unlock()
-	if !exists || candidate.Authority != evidenceFromCapsule(item.Capsule) {
+	if !exists || candidate.Authority != evidenceFromCapsule(item.Capsule) ||
+		candidate.Record.RepositoryID != binding.RepositoryID || candidate.Record.WorkRevisionID != ids.WorkRevisionID(config.WorkRevisionID) ||
+		candidate.RuntimeEpochID != currentEpoch || candidate.Record.Candidate != item.Request.Candidate {
 		return &baseintegration.Error{Kind: baseintegration.KindNotApproved, Message: "approved candidate capsule is absent or changed"}
 	}
 	if err := c.reviews.runtime.Authorize(item.Capsule, "integration", item.Request.StartedAt); err != nil {
@@ -482,9 +501,15 @@ func (s *workflowStore) publishIntegration(ctx context.Context, entry integratio
 	return err
 }
 
+// IntegrationAttributionCampaign is the bounded WP08 campaign hook. WP09 is
+// intentionally its first non-test caller; WP10 is the first shipped product
+// composition of the effect, review, and integration coordinators proven here.
 func IntegrationAttributionCampaign(ctx context.Context, repetitions int, trial func(context.Context, int) error) error {
 	return RunFocusedCampaign(ctx, repetitions, trial)
 }
+
+// CompetingIntegrationCampaign follows the same delivery boundary: WP09 owns
+// the first non-test campaign invocation and WP10 owns shipped composition.
 func CompetingIntegrationCampaign(ctx context.Context, repetitions int, trial func(context.Context, int) error) error {
 	return RunFocusedCampaign(ctx, repetitions, trial)
 }

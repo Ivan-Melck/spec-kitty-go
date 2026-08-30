@@ -201,6 +201,43 @@ func TestIntegrationInvalidatedRevisionRefusesBeforeRepositoryFence(t *testing.T
 	}
 }
 
+func TestIntegrationForeignCoordinatesRefuseBeforePlanAuthorityOrFence(t *testing.T) {
+	mutants := map[string]func(*twoCandidateFixture, *IntegrationItem){
+		"repository": func(_ *twoCandidateFixture, item *IntegrationItem) { item.Request.RepositoryID = "repository-foreign" },
+		"target":     func(_ *twoCandidateFixture, item *IntegrationItem) { item.Request.TargetRef = "refs/heads/foreign" },
+		"epoch": func(_ *twoCandidateFixture, item *IntegrationItem) {
+			item.Capsule.RuntimeEpochID = "epoch-foreign"
+		},
+		"revision": func(_ *twoCandidateFixture, item *IntegrationItem) {
+			item.Capsule.WorkRevisionID = "revision-foreign"
+		},
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			fixture := newTwoCandidateFixture(t)
+			item := fixture.item(0, "operation-foreign-"+name)
+			mutate(fixture, &item)
+			if _, err := fixture.integration.Integrate(t.Context(), item); !baseintegration.IsKind(err, baseintegration.KindNotApproved) {
+				t.Fatalf("foreign coordinate survived: %v", err)
+			}
+			fixture.review.store.mu.Lock()
+			plans, authorities := len(fixture.review.store.plans), len(fixture.review.store.planAuthorities)
+			fixture.review.store.mu.Unlock()
+			if plans != 0 || authorities != 0 {
+				t.Fatalf("foreign coordinate published plan=%d authority=%d", plans, authorities)
+			}
+			for _, record := range fixture.journal.records {
+				if strings.Contains(string(record.Value), `"event_type":"integration.plan"`) {
+					t.Fatal("foreign coordinate durably published an integration plan")
+				}
+			}
+			if refs := gitRun(t, fixture.root, "for-each-ref", "--format=%(refname)", "refs/spec-kitty/fences/"); refs != "" {
+				t.Fatalf("foreign coordinate acquired fence: %s", refs)
+			}
+		})
+	}
+}
+
 func TestIntegrationPlanRefusesManualMovementBetweenCandidates(t *testing.T) {
 	fixture := newTwoCandidateFixture(t)
 	fixture.integration.WithFaults(&callbackHook{cut: "IGP-02", fn: func() {
@@ -389,5 +426,51 @@ func TestWP08FocusedCampaignHooksEnforceOneHundredRepetitions(t *testing.T) {
 				t.Fatal("campaign admitted fewer than 100 repetitions")
 			}
 		})
+	}
+}
+
+func TestWP08IntegrationCampaignRunsOneHundredRealScenariosWithAntiVacuity(t *testing.T) {
+	fixture := newTwoCandidateFixture(t)
+	item := fixture.item(0, "operation-campaign-exact")
+	competingTrials, competingCalls, violations := 0, 0, 0
+	err := CompetingIntegrationCampaign(t.Context(), 100, func(ctx context.Context, repetition int) error {
+		results := make([]baseintegration.Record, 2)
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		for i := range results {
+			wg.Add(1)
+			go func(i int) { defer wg.Done(); results[i], errs[i] = fixture.integration.Integrate(ctx, item) }(i)
+		}
+		wg.Wait()
+		competingTrials++
+		competingCalls += 2
+		for i := range results {
+			if errs[i] != nil || results[i].Status != baseintegration.StatusDone || results[i].OperationID != item.Request.OperationID || results[i].ResultCommit == "" {
+				violations++
+				return errors.New("exact competing integration did not converge on one durable result")
+			}
+		}
+		if results[0].ResultCommit != results[1].ResultCommit {
+			violations++
+			return errors.New("competing integrations observed different publications")
+		}
+		if _, restoreErr := fixture.review.journal.loadAggregateEvents(ctx, "integration"); restoreErr != nil {
+			return restoreErr
+		}
+		fixture.review.store.mu.Lock()
+		for _, authority := range fixture.review.store.planAuthorities {
+			if !authority.complete() {
+				fixture.review.store.mu.Unlock()
+				return errors.New("campaign exposed incomplete plan authority")
+			}
+		}
+		fixture.review.store.mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if competingTrials != 100 || competingCalls != 200 || violations != 0 {
+		t.Fatalf("integration campaign census trials=%d calls=%d violations=%d", competingTrials, competingCalls, violations)
 	}
 }

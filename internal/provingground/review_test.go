@@ -2,10 +2,12 @@ package provingground
 
 import (
 	"context"
+	"crypto/sha256"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -174,6 +176,98 @@ func TestReviewRejectsW1StaleChangedCandidateMissingEvidenceAndChangedReplay(t *
 	mutant.EvidenceDigest = strings.Repeat("a", 64)
 	if _, err := fixture.coordinator.SubmitReview(t.Context(), fixture.capsule, mutant); !basereview.IsKind(err, basereview.KindIdempotencyConflict) {
 		t.Fatalf("changed-input review replay survived: %v", err)
+	}
+}
+
+func TestCandidateAuthorityRejectsCrossWorkSubstitution(t *testing.T) {
+	fixture := newReviewFixture(t, "process-b")
+	request := fixture.handoffRequest()
+	request.WorkID = "work-a"
+	request.ExpectedEligibility = completeTestFact("work-a", workgraph.StatusActive, workgraph.EligibilityHandoff)
+	if _, err := fixture.coordinator.SubmitCandidate(t.Context(), fixture.capsule, request); err == nil {
+		t.Fatal("cross-work request substituted a workspace authority")
+	}
+	if _, ok := fixture.coordinator.Candidate(request.HandoffID); ok {
+		t.Fatal("cross-work request published candidate evidence")
+	}
+}
+
+func TestCandidateHR01RaceAdmitsOneExactImmutableEvidenceBinding(t *testing.T) {
+	fixture := newReviewFixture(t, "process-b")
+	second, err := newReviewCoordinator(t.Context(), fixture.runtime, fixture.journal, fixture.journal, fixture.repository, testEligibility{}, map[ids.WorkID][]string{"work-b": {"criterion-build", "criterion-test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	fixture.coordinator.handoff.WithFaults(&callbackHook{cut: "HR-01", fn: func() {
+		once.Do(func() { close(entered) })
+		<-release
+	}})
+	first := fixture.handoffRequest()
+	secondRequest := first
+	secondRequest.OperationID = "operation-handoff-competing"
+	secondRequest.EvidenceDigest = strings.Repeat("a", 64)
+	firstErr := make(chan error, 1)
+	go func() {
+		_, submitErr := fixture.coordinator.SubmitCandidate(t.Context(), fixture.capsule, first)
+		firstErr <- submitErr
+	}()
+	<-entered
+	winner, secondErr := second.SubmitCandidate(t.Context(), fixture.capsule, secondRequest)
+	close(release)
+	loserErr := <-firstErr
+	if secondErr != nil || winner.EvidenceDigest != secondRequest.EvidenceDigest {
+		t.Fatalf("competing exact winner=%#v err=%v", winner, secondErr)
+	}
+	if !handoff.IsKind(loserErr, handoff.KindIdempotencyConflict) {
+		t.Fatalf("mixed-evidence loser was not refused: %v", loserErr)
+	}
+	restored, err := newReviewCoordinator(t.Context(), fixture.runtime, fixture.journal, fixture.journal, fixture.repository, testEligibility{}, map[ids.WorkID][]string{"work-b": {"criterion-build", "criterion-test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := restored.Candidate(first.HandoffID)
+	if !ok || got.EvidenceDigest != secondRequest.EvidenceDigest {
+		t.Fatalf("durable candidate mixed request evidence: %#v", got)
+	}
+}
+
+func TestWorkflowRestoreRejectsTamperedOperationRequestAndResultIdentity(t *testing.T) {
+	for _, mutation := range []string{"request-digest", "canonical-result"} {
+		t.Run(mutation, func(t *testing.T) {
+			fixture := newReviewFixture(t, "process-b")
+			if _, err := fixture.coordinator.SubmitCandidate(t.Context(), fixture.capsule, fixture.handoffRequest()); err != nil {
+				t.Fatal(err)
+			}
+			key := fixture.coordinator.journal.prefix() + "operations/operation-handoff"
+			fixture.journal.mu.Lock()
+			stored := fixture.journal.records[key]
+			record, err := controljournal.DecodeOperationRecordV1(stored.Value)
+			if err != nil {
+				fixture.journal.mu.Unlock()
+				t.Fatal(err)
+			}
+			requestDigest := record.RequestDigest
+			result := record.CanonicalResult()
+			if mutation == "request-digest" {
+				requestDigest = sha256.Sum256([]byte("changed request"))
+			} else {
+				result = []byte(`{"changed":true}`)
+			}
+			mutant, err := controljournal.NewOperationRecordV1(controljournal.OperationRecordInputV1{OperationID: record.OperationID, CommandType: record.CommandType, RequestDigest: requestDigest, RuntimeEpochID: record.RuntimeEpochID, ExpectedPreconditionsDigest: record.ExpectedPreconditionsDigest, ResultType: record.ResultType, ResultSchemaVersion: record.ResultSchemaVersion, CanonicalResult: result, EventIDs: record.EventIDs(), EffectIDs: record.EffectIDs()})
+			if err == nil {
+				stored.Value, err = controljournal.EncodeOperationRecordV1(mutant)
+				fixture.journal.records[key] = stored
+			}
+			fixture.journal.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := newReviewCoordinator(t.Context(), fixture.runtime, fixture.journal, fixture.journal, fixture.repository, testEligibility{}, map[ids.WorkID][]string{"work-b": {"criterion-build", "criterion-test"}}); err == nil {
+				t.Fatalf("%s operation identity survived restore", mutation)
+			}
+		})
 	}
 }
 

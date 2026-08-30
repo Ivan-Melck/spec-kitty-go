@@ -45,6 +45,12 @@ type handoffRefusalJournalRecord struct {
 	RuntimeEpochID controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
 }
 
+type candidateReservation struct {
+	RequestDigest string
+	Authority     authorityEvidence
+	Binding       WorkspaceBinding
+}
+
 // ReviewCoordinator composes immutable Git handoff and the existing review
 // service over the admitted journal. The candidate capsule belongs to the
 // implementation; the review ActorID deliberately does not.
@@ -66,6 +72,8 @@ type workflowStore struct {
 	criteria        map[ids.WorkID][]string
 	candidates      map[ids.HandoffID]candidateJournalRecord
 	candidateOps    map[ids.OperationID]ids.HandoffID
+	reservations    map[ids.HandoffID]candidateReservation
+	reservationOps  map[ids.OperationID]ids.HandoffID
 	refusals        map[ids.OperationID]handoffRefusalJournalRecord
 	reviews         map[ids.ReviewID]reviewJournalRecord
 	reviewOps       map[ids.OperationID]ids.ReviewID
@@ -91,7 +99,7 @@ func newReviewCoordinator(ctx context.Context, runtime *Runtime, app batchApplie
 	if runtime == nil || app == nil || port == nil || repository == nil || eligibility == nil {
 		return nil, refusal(OutcomeInvalidCommand, "review", "complete review composition is required")
 	}
-	store := &workflowStore{journal: newWorkflowJournal(runtime.core.config, app, port), runtime: runtime, repository: repository, eligibility: eligibility, criteria: make(map[ids.WorkID][]string), candidates: make(map[ids.HandoffID]candidateJournalRecord), candidateOps: make(map[ids.OperationID]ids.HandoffID), refusals: make(map[ids.OperationID]handoffRefusalJournalRecord), reviews: make(map[ids.ReviewID]reviewJournalRecord), reviewOps: make(map[ids.OperationID]ids.ReviewID), plans: make(map[controljournal.OperationID]IntegrationPlan), planAuthorities: make(map[controljournal.AggregateID]integrationPlanAuthority), integrations: make(map[ids.OperationID]integrationJournalRecord)}
+	store := &workflowStore{journal: newWorkflowJournal(runtime.core.config, app, port), runtime: runtime, repository: repository, eligibility: eligibility, criteria: make(map[ids.WorkID][]string), candidates: make(map[ids.HandoffID]candidateJournalRecord), candidateOps: make(map[ids.OperationID]ids.HandoffID), reservations: make(map[ids.HandoffID]candidateReservation), reservationOps: make(map[ids.OperationID]ids.HandoffID), refusals: make(map[ids.OperationID]handoffRefusalJournalRecord), reviews: make(map[ids.ReviewID]reviewJournalRecord), reviewOps: make(map[ids.OperationID]ids.ReviewID), plans: make(map[controljournal.OperationID]IntegrationPlan), planAuthorities: make(map[controljournal.AggregateID]integrationPlanAuthority), integrations: make(map[ids.OperationID]integrationJournalRecord)}
 	for workID, values := range criteria {
 		if _, err := ids.ParseWorkID(workID.String()); err != nil || len(values) == 0 {
 			return nil, refusal(OutcomeInvalidCommand, "review", "criteria must name admitted work with at least one criterion")
@@ -126,7 +134,13 @@ func (c *ReviewCoordinator) SubmitCandidate(ctx context.Context, capsule control
 	if request.ProjectID.String() != string(capsule.ProjectID) || request.MissionID.String() != string(capsule.MissionID) || request.WorkRevisionID.String() != string(capsule.WorkRevisionID) || request.RunID.String() != string(capsule.RunID) || request.WorkspaceID.String() != string(capsule.WorkspaceID) || request.LeaseID.String() != string(capsule.LeaseID) || request.LeaseGeneration != int64(capsule.LeaseGeneration) || request.Token != fmt.Sprint(capsule.FenceToken) || request.ActorID.String() != string(capsule.ActorID) || request.ProcessID.String() != string(capsule.ProcessID) {
 		return handoff.Record{}, refusal(OutcomeStaleLease, "candidate", "handoff request differs from the exact current capsule")
 	}
-	c.store.bindCandidateAuthority(request.HandoffID, evidenceFromCapsule(capsule))
+	binding, ok := c.runtime.Binding(capsule.WorkspaceID)
+	if !ok || !exactCandidateBinding(c.repository, binding, capsule, request) {
+		return handoff.Record{}, refusal(OutcomeStaleLease, "candidate", "handoff request, capsule, workspace, and repository do not describe one exact authority")
+	}
+	if err := c.store.reserveCandidate(request, evidenceFromCapsule(capsule), binding); err != nil {
+		return handoff.Record{}, err
+	}
 	return c.handoff.Submit(ctx, request)
 }
 
@@ -165,14 +179,31 @@ func (c *ReviewCoordinator) Review(id ids.ReviewID) (basereview.Record, bool) {
 	return v.Record, ok
 }
 
-func (s *workflowStore) bindCandidateAuthority(id ids.HandoffID, authority authorityEvidence) {
+func exactCandidateBinding(repository *gitrepo.Repository, binding WorkspaceBinding, capsule controljournal.AuthorityCapsuleV1, request handoff.Request) bool {
+	if repository == nil {
+		return false
+	}
+	repositoryBinding := repository.Binding()
+	return binding.Status == "active-bound" && binding.CanonicalPath != "" && binding.OwnedBranch != "" && binding.LaneID != "" && binding.WorkspaceID == capsule.WorkspaceID && string(binding.WorkspaceID) == request.WorkspaceID.String() && string(binding.WorkID) == request.WorkID.String() && binding.RepositoryID == repositoryBinding.RepositoryID && binding.ActorID == capsule.ActorID && string(binding.ActorID) == request.ActorID.String() && binding.ProcessID == capsule.ProcessID && string(binding.ProcessID) == request.ProcessID.String() && binding.RunID == capsule.RunID && string(binding.RunID) == request.RunID.String() && binding.LeaseID == capsule.LeaseID && string(binding.LeaseID) == request.LeaseID.String() && binding.Generation == capsule.LeaseGeneration && int64(binding.Generation) == request.LeaseGeneration && binding.FenceToken == capsule.FenceToken && request.Token == fmt.Sprint(binding.FenceToken) && binding.AuthorityHeadRecordRevision == capsule.AuthorityHeadRecordRevision && binding.WorkRevisionID == capsule.WorkRevisionID && string(binding.WorkRevisionID) == request.WorkRevisionID.String() && binding.RuntimeEpochID == capsule.RuntimeEpochID
+}
+
+func (s *workflowStore) reserveCandidate(request handoff.Request, authority authorityEvidence, binding WorkspaceBinding) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	existing := s.candidates[id]
-	if existing.Record.HandoffID == "" {
-		existing.Authority = authority
-		s.candidates[id] = existing
+	digest := digestJSON(request)
+	if committed, ok := s.candidates[request.HandoffID]; ok && committed.Record.HandoffID != "" && committed.RequestDigest != digest {
+		return &handoff.Error{Kind: handoff.KindIdempotencyConflict, Message: "candidate identity is already committed to another request"}
 	}
+	if reservedID, ok := s.reservationOps[request.OperationID]; ok && reservedID != request.HandoffID {
+		return &handoff.Error{Kind: handoff.KindIdempotencyConflict, Message: "handoff operation is already reserved for another candidate"}
+	}
+	want := candidateReservation{RequestDigest: digest, Authority: authority, Binding: binding}
+	if prior, ok := s.reservations[request.HandoffID]; ok && !reflect.DeepEqual(prior, want) {
+		return &handoff.Error{Kind: handoff.KindIdempotencyConflict, Message: "candidate authority is already reserved by another exact request"}
+	}
+	s.reservations[request.HandoffID] = want
+	s.reservationOps[request.OperationID] = request.HandoffID
+	return nil
 }
 
 func (s *workflowStore) WorkEligibility(_ context.Context, _ ids.WorkRevisionID, _ ids.WorkID, _ workgraph.WorkStatus) (workgraph.Consequence, string, error) {
@@ -223,6 +254,12 @@ func (s *workflowStore) CommitHandoffRefusal(ctx context.Context, request handof
 	if mismatch == nil || mismatch.Kind != handoff.KindCandidateMismatch || mismatch.Cause != nil || mismatch.Observed["divergence_kind"] != handoff.BranchMovementDivergence || mismatch.Observed["evidence_ref_root"] == "" {
 		return handoff.Refusal{}, &handoff.Error{Kind: handoff.KindConflict, Message: "only a completely preserved branch-movement refusal may be journaled"}
 	}
+	s.mu.Lock()
+	reservation, reserved := s.reservations[request.HandoffID]
+	s.mu.Unlock()
+	if !reserved || reservation.RequestDigest != digestJSON(request) {
+		return handoff.Refusal{}, &handoff.Error{Kind: handoff.KindIdempotencyConflict, Message: "handoff refusal lacks its exact immutable authority reservation"}
+	}
 	refused := handoff.Refusal{
 		OperationID:     request.OperationID,
 		Kind:            mismatch.Kind,
@@ -231,7 +268,7 @@ func (s *workflowStore) CommitHandoffRefusal(ctx context.Context, request handof
 		Expected:        copyStringMap(mismatch.Expected),
 		RecoveryActions: append([]string(nil), mismatch.RecoveryActions...),
 		OccurredAt:      request.SubmittedAt.UTC(),
-		RepositoryPath:  s.repository.Binding().PrimaryPath,
+		RepositoryPath:  reservation.Binding.CanonicalPath,
 	}
 	entry := handoffRefusalJournalRecord{Refusal: refused, RequestDigest: digestJSON(request), RepositoryPath: refused.RepositoryPath, RuntimeEpochID: s.runtime.core.currentEpoch()}
 	entry.Refusal.RepositoryPath = ""
@@ -253,18 +290,21 @@ func (s *workflowStore) CommitHandoffRefusal(ctx context.Context, request handof
 
 func (s *workflowStore) InspectHandoffAuthority(_ context.Context, r handoff.Request) (handoff.AuthorityScope, error) {
 	s.mu.Lock()
-	bound := s.candidates[r.HandoffID].Authority
+	reservation, ok := s.reservations[r.HandoffID]
 	s.mu.Unlock()
-	capsule, err := bound.capsule()
+	if !ok || reservation.RequestDigest != digestJSON(r) {
+		return handoff.AuthorityScope{}, &handoff.Error{Kind: handoff.KindIdempotencyConflict, Message: "candidate authority reservation differs from this exact request"}
+	}
+	capsule, err := reservation.Authority.capsule()
 	if err != nil {
 		return handoff.AuthorityScope{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "candidate authority is absent"}
 	}
 	if err := s.runtime.Authorize(capsule, "handoff", r.SubmittedAt); err != nil {
 		return handoff.AuthorityScope{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "candidate authority is stale", Cause: err}
 	}
-	binding, ok := s.runtime.Binding(capsule.WorkspaceID)
-	if !ok || binding.CanonicalPath == "" {
-		return handoff.AuthorityScope{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "workspace binding is unavailable"}
+	binding, current := s.runtime.Binding(capsule.WorkspaceID)
+	if !current || !reflect.DeepEqual(binding, reservation.Binding) || !exactCandidateBinding(s.repository, binding, capsule, r) {
+		return handoff.AuthorityScope{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "workspace binding changed after exact candidate reservation"}
 	}
 	criteria := s.criteria[r.WorkID]
 	return handoff.AuthorityScope{RepositoryID: binding.RepositoryID, RepositoryPath: binding.CanonicalPath, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, LaneID: binding.LaneID, CriteriaDigest: digestJSON(criteria), OperationID: r.OperationID, HandoffID: r.HandoffID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID}, nil
@@ -272,14 +312,19 @@ func (s *workflowStore) InspectHandoffAuthority(_ context.Context, r handoff.Req
 
 func (s *workflowStore) CommitHandoff(ctx context.Context, r handoff.Request, e handoff.CandidateEvidence) (handoff.Record, error) {
 	s.mu.Lock()
-	authority := s.candidates[r.HandoffID].Authority
+	reservation, reserved := s.reservations[r.HandoffID]
 	prior, alreadyExists := s.candidates[r.HandoffID]
 	s.mu.Unlock()
+	if !reserved || reservation.RequestDigest != digestJSON(r) {
+		return handoff.Record{}, &handoff.Error{Kind: handoff.KindIdempotencyConflict, Message: "candidate commit lacks its exact immutable authority reservation"}
+	}
+	authority := reservation.Authority
 	contributors, _ := handoff.CanonicalContributors(r.Contributors)
 	criteria := append([]string(nil), s.criteria[r.WorkID]...)
 	binding, bound := s.runtime.Binding(controljournal.WorkspaceID(r.WorkspaceID))
-	if !bound {
-		return handoff.Record{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "workspace binding disappeared before candidate publication"}
+	capsule, capsuleErr := authority.capsule()
+	if !bound || capsuleErr != nil || !reflect.DeepEqual(binding, reservation.Binding) || !exactCandidateBinding(s.repository, binding, capsule, r) || e.PinnedBase != binding.PinnedBase || e.OwnedBranch != binding.OwnedBranch || e.ObservedBranchHead != r.Candidate {
+		return handoff.Record{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "candidate commit authority differs from the exact inspected reservation"}
 	}
 	record := handoff.Record{HandoffID: r.HandoffID, HandoffGeneration: 1, ProjectID: r.ProjectID, MissionID: r.MissionID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID, RunID: r.RunID, WorkspaceID: r.WorkspaceID, RepositoryID: s.repository.Binding().RepositoryID, LeaseID: r.LeaseID, LeaseGeneration: r.LeaseGeneration, LaneID: binding.LaneID, Candidate: r.Candidate, PinnedBase: e.PinnedBase, Contributors: contributors, ContributorDigest: digestJSON(contributors), CriteriaDigest: digestJSON(criteria), EvidenceDigest: r.EvidenceDigest, Verification: e, SubmittedAt: r.SubmittedAt.UTC()}
 	entry := candidateJournalRecord{Record: record, Authority: authority, Criteria: criteria, CandidateDigest: digestJSON(struct {
@@ -288,6 +333,32 @@ func (s *workflowStore) CommitHandoff(ctx context.Context, r handoff.Request, e 
 		Contributors []ids.ActorID                 `json:"contributors"`
 		Epoch        controljournal.RuntimeEpochID `json:"epoch"`
 	}{record.Candidate, record.EvidenceDigest, contributors, authority.RuntimeEpochID}), CriteriaDigest: record.CriteriaDigest, RequestDigest: digestJSON(r), RuntimeEpochID: authority.RuntimeEpochID}
+	// A coordinator that was constructed before another process committed this
+	// HandoffID may have a stale in-memory projection. Consult the sealed journal
+	// immediately before publication: exact evidence is replayable, while any
+	// other durable binding is immutable. Concurrent absent reads remain safe
+	// because the aggregate-head CAS admits only one first publication.
+	events, restoreErr := s.journal.loadAggregateEvents(ctx, "candidate")
+	if restoreErr != nil {
+		return handoff.Record{}, restoreErr
+	}
+	for _, event := range events {
+		if event.AggregateID != controljournal.AggregateID(r.HandoffID) || event.EventType != "candidate.created" {
+			continue
+		}
+		var durable candidateJournalRecord
+		if json.Unmarshal(event.Payload(), &durable) != nil || durable.Record.HandoffID != r.HandoffID {
+			return handoff.Record{}, &handoff.Error{Kind: handoff.KindConflict, Message: "durable candidate aggregate is malformed"}
+		}
+		if !reflect.DeepEqual(durable, entry) {
+			return handoff.Record{}, &handoff.Error{Kind: handoff.KindIdempotencyConflict, Message: "candidate identity is already durably bound to different evidence"}
+		}
+		s.mu.Lock()
+		s.candidates[r.HandoffID] = durable
+		s.candidateOps[r.OperationID] = r.HandoffID
+		s.mu.Unlock()
+		return durable.Record, nil
+	}
 	if alreadyExists && prior.Record.HandoffID != "" && !reflect.DeepEqual(prior, entry) {
 		return handoff.Record{}, &handoff.Error{Kind: handoff.KindIdempotencyConflict, Message: "candidate identity is already bound to different immutable evidence"}
 	}
@@ -361,12 +432,20 @@ func (s *workflowStore) CommitReview(ctx context.Context, r basereview.Request) 
 }
 
 func (s *workflowStore) restore(ctx context.Context) error {
+	budget := &restoreBudget{}
 	for _, kind := range []controljournal.AggregateKind{"candidate", "review", "integration"} {
-		events, err := s.journal.loadAggregateEvents(ctx, kind)
+		events, err := s.journal.loadAggregateEventsWithBudget(ctx, kind, budget)
 		if err != nil {
 			return err
 		}
 		for _, event := range events {
+			commandType, resultType, admitted := workflowEventOperationIdentity(event.EventType)
+			if !admitted {
+				return refusal(OutcomeIndeterminate, "workflow-restore", "workflow event type is not admitted")
+			}
+			if err := s.journal.validateOperationIdentity(ctx, event, commandType, resultType, event.Payload(), nil); err != nil {
+				return err
+			}
 			switch event.AggregateKind {
 			case "candidate":
 				switch event.EventType {
@@ -427,6 +506,25 @@ func (s *workflowStore) restore(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func workflowEventOperationIdentity(eventType controljournal.EventType) (string, string, bool) {
+	switch eventType {
+	case "candidate.created":
+		return "candidate.create", "candidate-v1", true
+	case "candidate.refused":
+		return "candidate.refuse", "handoff-refusal-v1", true
+	case "review.recorded":
+		return "review.submit", "review-v1", true
+	case "integration.plan":
+		return "integration.plan", "integration-plan-authority-v1", true
+	case "integration.plan_completed":
+		return "integration.plan.complete", "integration-plan-authority-v1", true
+	case "integration.intent", "integration.activated", "integration.workspace", "integration.revalidated", "integration.result", "integration.repair", "integration.completed", "integration.cleanup_eligible", "integration.cleanup_completed":
+		return string(eventType), "integration-v1", true
+	default:
+		return "", "", false
+	}
 }
 func operationFromDigestEvent(e controljournal.EventEnvelopeV1) ids.OperationID {
 	return ids.OperationID(e.OperationID)

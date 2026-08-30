@@ -3,6 +3,7 @@ package provingground
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -71,8 +72,11 @@ type effectState struct {
 	IntentID         controljournal.IntentID    `json:"intent_id"`
 	OperationID      controljournal.OperationID `json:"operation_id"`
 	Provider         string                     `json:"provider"`
+	ProjectID        ids.ProjectID              `json:"project_id"`
 	ExternalID       string                     `json:"external_id"`
 	WorkID           ids.WorkID                 `json:"work_id"`
+	MetadataSchema   uint16                     `json:"metadata_schema"`
+	CreatedBy        ids.OperationID            `json:"created_by_operation"`
 	ExpectedRevision tracker.Revision           `json:"expected_revision"`
 	ExpectedAssignee string                     `json:"expected_assignee"`
 	DesiredAssignee  string                     `json:"desired_assignee"`
@@ -80,6 +84,7 @@ type effectState struct {
 	Diagnostic       string                     `json:"diagnostic"`
 	OccurredAt       time.Time                  `json:"occurred_at"`
 	Authority        authorityEvidence          `json:"authority"`
+	DispatchID       string                     `json:"dispatch_id,omitempty"`
 	Resolution       *EffectResolution          `json:"resolution,omitempty"`
 }
 
@@ -115,6 +120,9 @@ type EffectCoordinator struct {
 	maxAttempts int
 	mu          sync.Mutex
 	states      map[controljournal.EffectID]effectState
+	dispatcher  string
+	lockMu      sync.Mutex
+	effectLocks map[controljournal.EffectID]*sync.Mutex
 }
 
 func NewEffectCoordinator(ctx context.Context, runtime *Runtime, app *application.Service, port storegapdb.Port, provider tracker.AssignmentProjection, maxAttempts int) (*EffectCoordinator, error) {
@@ -127,7 +135,11 @@ func newEffectCoordinator(ctx context.Context, runtime *Runtime, app batchApplie
 	if runtime == nil || app == nil || port == nil || provider == nil || maxAttempts < 1 || maxAttempts > 16 {
 		return nil, refusal(OutcomeInvalidCommand, "effects", "complete effect composition is required")
 	}
-	c := &EffectCoordinator{runtime: runtime, journal: newWorkflowJournal(runtime.core.config, app, port), provider: provider, faults: faults.Noop{}, maxAttempts: maxAttempts, states: make(map[controljournal.EffectID]effectState)}
+	dispatcherBytes := make([]byte, 16)
+	if _, err := rand.Read(dispatcherBytes); err != nil {
+		return nil, refusal(OutcomeIndeterminate, "effects", "create process-scoped effect dispatcher identity")
+	}
+	c := &EffectCoordinator{runtime: runtime, journal: newWorkflowJournal(runtime.core.config, app, port), provider: provider, faults: faults.Noop{}, maxAttempts: maxAttempts, states: make(map[controljournal.EffectID]effectState), dispatcher: hex.EncodeToString(dispatcherBytes), effectLocks: make(map[controljournal.EffectID]*sync.Mutex)}
 	if err := c.restore(ctx); err != nil {
 		return nil, err
 	}
@@ -147,15 +159,22 @@ func (c *EffectCoordinator) PublishAssignment(ctx context.Context, request Assig
 	if err := c.validateIntent(request); err != nil {
 		return EffectResolution{}, err
 	}
-	state := effectState{SchemaVersion: 1, EffectID: request.EffectID, IntentID: request.IntentID, OperationID: request.OperationID, Provider: request.ExternalRef.Provider, ExternalID: request.ExternalRef.ExternalID, WorkID: request.ExternalRef.WorkID, ExpectedRevision: request.ExpectedRevision, ExpectedAssignee: request.ExpectedAssignee, DesiredAssignee: request.DesiredAssignee, Marker: request.Marker, Diagnostic: boundedDiagnostic(request.Diagnostic), OccurredAt: request.OccurredAt.UTC(), Authority: evidenceFromCapsule(request.Authority)}
+	lock := c.effectLock(request.EffectID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	state := effectState{SchemaVersion: 1, EffectID: request.EffectID, IntentID: request.IntentID, OperationID: request.OperationID, Provider: request.ExternalRef.Provider, ProjectID: request.ExternalRef.ProjectID, ExternalID: request.ExternalRef.ExternalID, WorkID: request.ExternalRef.WorkID, MetadataSchema: request.ExternalRef.MetadataSchema, CreatedBy: request.ExternalRef.CreatedByOperation, ExpectedRevision: request.ExpectedRevision, ExpectedAssignee: request.ExpectedAssignee, DesiredAssignee: request.DesiredAssignee, Marker: request.Marker, Diagnostic: boundedDiagnostic(request.Diagnostic), OccurredAt: request.OccurredAt.UTC(), Authority: evidenceFromCapsule(request.Authority)}
 	c.mu.Lock()
 	prior, exists := c.states[request.EffectID]
 	c.mu.Unlock()
 	if exists && !sameEffectIntent(prior, state) {
 		return EffectResolution{}, refusal(OutcomeAuthorityConflict, "effect-intent", "effect identity was reused for a different request")
 	}
-	if exists && prior.Resolution != nil {
+	if exists && prior.Resolution != nil && terminalEffectOutcome(prior.Resolution.Outcome) {
 		return *prior.Resolution, nil
+	}
+	if exists {
+		state = prior
 	}
 	expected, _ := json.Marshal(map[string]string{"assignee": request.ExpectedAssignee})
 	desired, _ := json.Marshal(map[string]string{"assignee": request.DesiredAssignee})
@@ -163,7 +182,8 @@ func (c *EffectCoordinator) PublishAssignment(ctx context.Context, request Assig
 	if err != nil {
 		return EffectResolution{}, refusal(OutcomeInvalidCommand, "effect-intent", "effect intent is malformed")
 	}
-	if _, err := c.journal.publish(ctx, journalPublication{OperationID: request.OperationID, CommandType: "effect.intent", ResultType: "effect-intent-v1", AggregateKind: "external-effect", AggregateID: controljournal.AggregateID(request.EffectID), EventType: "effect.intent_recorded", Payload: state, Result: state, EffectIntents: []controljournal.EffectIntentV1{intent}}); err != nil {
+	publication, err := c.journal.publish(ctx, journalPublication{OperationID: request.OperationID, CommandType: "effect.intent", ResultType: "effect-intent-v1", AggregateKind: "external-effect", AggregateID: controljournal.AggregateID(request.EffectID), EventType: "effect.intent_recorded", Payload: state, Result: state, EffectIntents: []controljournal.EffectIntentV1{intent}})
+	if err != nil {
 		return EffectResolution{}, err
 	}
 	c.mu.Lock()
@@ -172,12 +192,111 @@ func (c *EffectCoordinator) PublishAssignment(ctx context.Context, request Assig
 	if err := c.faults.Reach(ctx, "GJ-05"); err != nil {
 		return EffectResolution{}, err
 	}
-	if exists {
+	if exists || publication.Kind == application.OutcomeAlreadyCommitted {
+		observed, observeErr := c.provider.ObserveAssignment(ctx, request.ExternalRef)
+		if observeErr != nil || state.DispatchID != "" || !coherentProviderIdentity(state, observed) || observed.Observation.Revision != state.ExpectedRevision || observed.Assignee != state.ExpectedAssignee || observed.OperationMarker != "" {
+			return c.observeAndRecord(ctx, request.EffectID, observed, observeErr)
+		}
+	}
+	reserved, reserveErr := c.reserveInitialDispatch(ctx, state)
+	if reserveErr != nil {
+		return EffectResolution{}, reserveErr
+	}
+	if !reserved {
 		observed, observeErr := c.provider.ObserveAssignment(ctx, request.ExternalRef)
 		return c.observeAndRecord(ctx, request.EffectID, observed, observeErr)
 	}
+	// EF-01 models process death after durable dispatch authority but before the
+	// provider call. Recovery may observe attribution, but it must never blindly
+	// repeat the mutation merely because the provider still shows the precondition.
+	if err := c.faults.Reach(ctx, "EF-01"); err != nil {
+		return EffectResolution{}, err
+	}
 	mutation, mutationErr := c.provider.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: request.ExternalRef, OperationID: ids.OperationID(request.OperationID), Assignee: request.DesiredAssignee, ExpectedObservation: request.ExpectedRevision, RequiredGuarantee: tracker.AssignmentAtomicClaim})
+	if mutationErr == nil && mutation.Guarantee != tracker.AssignmentAtomicClaim {
+		mutationErr = &tracker.Error{Kind: tracker.ErrorAmbiguous, Message: "provider assignment response omitted the required atomic claim guarantee"}
+	}
 	return c.observeAndRecord(ctx, request.EffectID, mutation.Observation, mutationErr)
+}
+
+func (c *EffectCoordinator) effectLock(id controljournal.EffectID) *sync.Mutex {
+	c.lockMu.Lock()
+	defer c.lockMu.Unlock()
+	if c.effectLocks[id] == nil {
+		c.effectLocks[id] = &sync.Mutex{}
+	}
+	return c.effectLocks[id]
+}
+
+func (c *EffectCoordinator) reserveInitialDispatch(ctx context.Context, state effectState) (bool, error) {
+	// Reservation is an empty -> reserved transition, not a general append. Read
+	// and validate the exact unreserved aggregate head, then pin publication to
+	// that observed head revision. A contender cannot read the winner's newer
+	// head and append a second reservation under a different dispatcher.
+	headKey := c.journal.prefix() + "heads/external-effect/" + string(state.EffectID)
+	headRecord, err := c.journal.port.Get(ctx, headKey)
+	if err != nil {
+		return false, err
+	}
+	head, err := controljournal.DecodeAggregateHeadV1(headRecord.Value)
+	if err != nil || headRecord.Key != headKey || headRecord.Revision == 0 || head.AggregateKind != "external-effect" || head.AggregateID != controljournal.AggregateID(state.EffectID) {
+		return false, refusal(OutcomeIndeterminate, "effect-dispatch", "effect head is malformed before dispatch reservation")
+	}
+	eventKey := c.journal.prefix() + "journal/" + string(head.LastEventID)
+	eventRecord, err := c.journal.port.Get(ctx, eventKey)
+	if err != nil {
+		return false, err
+	}
+	event, err := controljournal.DecodeEventEnvelopeV1(eventRecord.Value)
+	var current effectState
+	if err != nil || eventRecord.Key != eventKey || eventRecord.Revision != headRecord.Revision || event.AggregateKind != "external-effect" || event.AggregateID != controljournal.AggregateID(state.EffectID) || event.AggregateLogicalVersion != head.LogicalVersion || event.EventID != head.LastEventID || sha256.Sum256(event.Payload()) != head.StateDigest || json.Unmarshal(event.Payload(), &current) != nil || !sameEffectIntent(current, state) {
+		return false, refusal(OutcomeAuthorityConflict, "effect-dispatch", "durable effect intent changed before dispatch reservation")
+	}
+	if current.DispatchID != "" {
+		c.mu.Lock()
+		c.states[state.EffectID] = current
+		c.mu.Unlock()
+		return false, nil
+	}
+	state.DispatchID = c.dispatcher
+	operationID := derivedOperationID("effect-dispatch-reserve", string(state.EffectID), c.dispatcher)
+	result, err := c.journal.publish(ctx, journalPublication{OperationID: operationID, CommandType: "effect.dispatch.reserve", ResultType: "effect-dispatch-v1", AggregateKind: "external-effect", AggregateID: controljournal.AggregateID(state.EffectID), EventType: "effect.dispatch_reserved", Payload: state, Result: state, PinHead: true, ExpectedLogical: head.LogicalVersion, ExpectedRevision: headRecord.Revision})
+	if err == nil && result.Kind == application.OutcomeCommitted {
+		c.mu.Lock()
+		c.states[state.EffectID] = state
+		c.mu.Unlock()
+		return true, nil
+	}
+	if refreshErr := c.refreshEffect(ctx, state.EffectID); refreshErr != nil {
+		if err != nil {
+			return false, err
+		}
+		return false, refreshErr
+	}
+	return false, nil
+}
+
+func (c *EffectCoordinator) refreshEffect(ctx context.Context, effectID controljournal.EffectID) error {
+	events, err := c.journal.loadAggregateEvents(ctx, "external-effect")
+	if err != nil {
+		return err
+	}
+	var found effectState
+	for _, event := range events {
+		if event.AggregateID != controljournal.AggregateID(effectID) {
+			continue
+		}
+		if json.Unmarshal(event.Payload(), &found) != nil || found.EffectID != effectID {
+			return refusal(OutcomeIndeterminate, "effect-refresh", "effect event payload is malformed")
+		}
+	}
+	if found.EffectID == "" {
+		return refusal(OutcomeIndeterminate, "effect-refresh", "effect aggregate disappeared after dispatch contention")
+	}
+	c.mu.Lock()
+	c.states[effectID] = found
+	c.mu.Unlock()
+	return nil
 }
 
 // RecoverUnresolved enumerates durable intents and observes every unresolved
@@ -210,7 +329,7 @@ func (c *EffectCoordinator) RecoverUnresolved(ctx context.Context) ([]EffectReso
 			results = append(results, resolution)
 			continue
 		}
-		ref := tracker.ExternalWorkRef{ProjectID: ids.ProjectID(c.runtime.core.config.ProjectID), WorkID: state.WorkID, Provider: state.Provider, ExternalID: state.ExternalID, MetadataSchema: 1, CreatedByOperation: ids.OperationID(state.OperationID), LastObservation: state.ExpectedRevision}
+		ref := externalRefFromState(state)
 		observed, err := c.provider.ObserveAssignment(ctx, ref)
 		resolution, recordErr := c.observeAndRecord(ctx, id, observed, err)
 		if recordErr != nil && !isProviderRecoverable(recordErr) {
@@ -232,7 +351,7 @@ func (c *EffectCoordinator) Compensate(ctx context.Context, effectID controljour
 	if state.Resolution == nil || state.Resolution.Outcome != EffectApplied {
 		return EffectResolution{}, refusal(OutcomeAuthorityConflict, "compensate", "only an attributable applied effect can be compensated")
 	}
-	ref := tracker.ExternalWorkRef{ProjectID: ids.ProjectID(c.runtime.core.config.ProjectID), WorkID: state.WorkID, Provider: state.Provider, ExternalID: state.ExternalID, MetadataSchema: 1, CreatedByOperation: ids.OperationID(state.OperationID), LastObservation: state.ExpectedRevision}
+	ref := externalRefFromState(state)
 	observed, err := c.provider.ObserveAssignment(ctx, ref)
 	if err != nil {
 		return c.recordCompensation(ctx, state, operationID, EffectUnavailable, tracker.AssignmentObservation{}, err, now)
@@ -252,7 +371,7 @@ func (c *EffectCoordinator) Compensate(ctx context.Context, effectID controljour
 			outcome = EffectAmbiguous
 		}
 	}
-	if mutationErr == nil && (mutation.Observation.Assignee != state.ExpectedAssignee || mutation.Observation.OperationMarker != "" || mutation.Observation.Observation.Revision == 0) {
+	if mutationErr == nil && (mutation.Guarantee != tracker.AssignmentAtomicClaim || !coherentProviderIdentity(state, mutation.Observation) || mutation.Observation.Assignee != state.ExpectedAssignee || mutation.Observation.OperationMarker != "" || mutation.Observation.Observation.Revision == observed.Observation.Revision) {
 		outcome = EffectAmbiguous
 	}
 	return c.recordCompensation(ctx, state, operationID, outcome, mutation.Observation, mutationErr, now)
@@ -302,10 +421,12 @@ func (c *EffectCoordinator) observeAndRecord(ctx context.Context, effectID contr
 		resolution.Outcome, resolution.Diagnostic = EffectAmbiguous, boundedDiagnostic(providerErr.Error())
 	case !coherentProviderIdentity(state, observed):
 		resolution.Outcome, resolution.Diagnostic = EffectAmbiguous, "provider returned incoherent binding or observation identity"
-	case observed.Assignee == state.DesiredAssignee && observed.OperationMarker == state.Marker:
+	case observed.Assignee == state.DesiredAssignee && observed.OperationMarker == state.Marker && observed.Observation.Revision != state.ExpectedRevision:
 		resolution.Outcome, resolution.Diagnostic = EffectApplied, "provider state proves the intended attributable postcondition"
-	case observed.Observation.Revision == state.ExpectedRevision && observed.Assignee == state.ExpectedAssignee && observed.OperationMarker == "":
+	case state.DispatchID == "" && observed.Observation.Revision == state.ExpectedRevision && observed.Assignee == state.ExpectedAssignee && observed.OperationMarker == "":
 		resolution.Outcome, resolution.Diagnostic = EffectAbsent, "provider still exposes the attributable precondition"
+	case state.DispatchID != "" && observed.Observation.Revision == state.ExpectedRevision && observed.Assignee == state.ExpectedAssignee && observed.OperationMarker == "":
+		resolution.Outcome, resolution.Diagnostic = EffectAmbiguous, "dispatch authority exists but the provider still exposes the precondition; blind repeat is forbidden"
 	default:
 		resolution.Outcome, resolution.Diagnostic = EffectAttributionLost, "provider state belongs to another writer or revision"
 	}
@@ -342,10 +463,10 @@ func (c *EffectCoordinator) recordCompensation(ctx context.Context, state effect
 }
 
 func coherentProviderIdentity(state effectState, o tracker.AssignmentObservation) bool {
-	return o.ExternalRef.Provider == state.Provider && o.ExternalRef.ExternalID == state.ExternalID && o.ExternalRef.WorkID == state.WorkID && o.Observation.ExternalID == state.ExternalID && o.Observation.Revision != 0 && !o.Observation.ObservedAt.IsZero()
+	return o.ExternalRef.ProjectID == state.ProjectID && o.ExternalRef.WorkID == state.WorkID && o.ExternalRef.Provider == state.Provider && o.ExternalRef.ExternalID == state.ExternalID && o.ExternalRef.MetadataSchema == state.MetadataSchema && o.ExternalRef.CreatedByOperation == state.CreatedBy && o.ExternalRef.LastObservation == o.Observation.Revision && o.Observation.ExternalID == state.ExternalID && o.Observation.Revision != 0 && !o.Observation.ObservedAt.IsZero() && len(o.Observation.CanonicalFields()) != 0 && o.Assignee == o.Observation.Assignee && o.OperationMarker == o.Observation.OperationMarker
 }
 func coherentEffectObservation(state effectState, o tracker.AssignmentObservation) bool {
-	return coherentProviderIdentity(state, o) && o.Observation.Revision == state.Resolution.ProviderRevision && o.Assignee == state.DesiredAssignee && o.OperationMarker == state.Marker
+	return coherentProviderIdentity(state, o) && o.Observation.Revision == state.Resolution.ProviderRevision && o.Observation.Revision != state.ExpectedRevision && o.Assignee == state.DesiredAssignee && o.OperationMarker == state.Marker
 }
 func terminalEffectOutcome(o EffectOutcome) bool {
 	return o == EffectApplied || o == EffectAbsent || o == EffectAttributionLost || o == EffectCompensated || o == EffectCompensationUnsafe || o == EffectReconciliationLimit
@@ -353,9 +474,15 @@ func terminalEffectOutcome(o EffectOutcome) bool {
 func sameEffectIntent(a, b effectState) bool {
 	a.Resolution = nil
 	b.Resolution = nil
+	a.DispatchID = ""
+	b.DispatchID = ""
 	aa, _ := json.Marshal(a)
 	bb, _ := json.Marshal(b)
 	return bytes.Equal(aa, bb)
+}
+
+func externalRefFromState(state effectState) tracker.ExternalWorkRef {
+	return tracker.ExternalWorkRef{ProjectID: state.ProjectID, WorkID: state.WorkID, Provider: state.Provider, ExternalID: state.ExternalID, MetadataSchema: state.MetadataSchema, CreatedByOperation: state.CreatedBy, LastObservation: state.ExpectedRevision}
 }
 func isProviderRecoverable(err error) bool {
 	return tracker.IsKind(err, tracker.ErrorUnavailable) || tracker.IsKind(err, tracker.ErrorTimeout) || tracker.IsKind(err, tracker.ErrorAmbiguous)
@@ -375,8 +502,11 @@ func (c *EffectCoordinator) restore(ctx context.Context) error {
 	}
 	for _, event := range events {
 		var state effectState
-		if json.Unmarshal(event.Payload(), &state) != nil || state.EffectID == "" {
+		if json.Unmarshal(event.Payload(), &state) != nil || !completeEffectState(state) || event.AggregateID != controljournal.AggregateID(state.EffectID) {
 			return refusal(OutcomeIndeterminate, "effect-restore", "effect event payload is malformed")
+		}
+		if err := c.validateEffectPublication(ctx, event, state); err != nil {
+			return err
 		}
 		intentKey := c.journal.prefix() + "effects/" + string(state.EffectID) + "/intent"
 		stored, getErr := c.journal.port.Get(ctx, intentKey)
@@ -390,10 +520,64 @@ func (c *EffectCoordinator) restore(ctx context.Context) error {
 		expectedEncoded, encodeErr := controljournal.EncodeEffectIntentV1(expectedIntent)
 		operationStored, operationErr := c.journal.port.Get(ctx, c.journal.prefix()+"operations/"+string(state.OperationID))
 		operation, operationDecodeErr := controljournal.DecodeOperationRecordV1(operationStored.Value)
-		if decodeErr != nil || constructErr != nil || encodeErr != nil || operationErr != nil || operationDecodeErr != nil || stored.Key != intentKey || stored.Revision == 0 || stored.Revision != operationStored.Revision || operation.OperationID != state.OperationID || !containsEffect(operation.EffectIDs(), state.EffectID) || !bytes.Equal(stored.Value, expectedEncoded) || intent.EffectID != expectedIntent.EffectID {
+		if decodeErr != nil || constructErr != nil || encodeErr != nil || operationErr != nil || operationDecodeErr != nil || stored.Key != intentKey || stored.Revision == 0 || stored.Revision != operationStored.Revision || operation.OperationID != state.OperationID || !reflectEffectIDs(operation.EffectIDs(), []controljournal.EffectID{state.EffectID}) || !bytes.Equal(stored.Value, expectedEncoded) || intent.EffectID != expectedIntent.EffectID {
 			return refusal(OutcomeIndeterminate, "effect-restore", "durable effect intent contradicts journal state")
 		}
 		c.states[state.EffectID] = state
+	}
+	return nil
+}
+
+func completeEffectState(state effectState) bool {
+	return state.SchemaVersion == 1 && state.EffectID != "" && state.IntentID != "" && state.OperationID != "" && state.Provider != "" && state.ProjectID != "" && state.ExternalID != "" && state.WorkID != "" && state.MetadataSchema != 0 && state.CreatedBy != "" && state.ExpectedRevision != 0 && state.DesiredAssignee != "" && state.Marker == string(state.OperationID) && !state.OccurredAt.IsZero() && state.Authority.RuntimeEpochID != ""
+}
+
+func (c *EffectCoordinator) validateEffectPublication(ctx context.Context, event controljournal.EventEnvelopeV1, state effectState) error {
+	commandType, resultType := "", ""
+	var result any
+	effects := []controljournal.EffectID(nil)
+	switch event.EventType {
+	case "effect.intent_recorded":
+		commandType, resultType, result = "effect.intent", "effect-intent-v1", state
+		effects = []controljournal.EffectID{state.EffectID}
+	case "effect.dispatch_reserved":
+		commandType, resultType, result = "effect.dispatch.reserve", "effect-dispatch-v1", state
+	case "effect.observed":
+		commandType, resultType, result = "effect.observation", "effect-observation-v1", state.Resolution
+	case "effect.reconciliation_limited":
+		commandType, resultType, result = "effect.reconciliation_limit", "effect-observation-v1", state.Resolution
+	case "effect.compensation_recorded":
+		commandType, resultType, result = "effect.compensation", "effect-compensation-v1", state.Resolution
+	default:
+		return refusal(OutcomeIndeterminate, "effect-restore", "effect event type is not admitted")
+	}
+	if result == nil {
+		return refusal(OutcomeIndeterminate, "effect-restore", "effect result is absent")
+	}
+	canonicalResult, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	canonicalResult, err = controljournal.CanonicalJSONObject(canonicalResult)
+	if err != nil {
+		return err
+	}
+	commandPayload, _ := json.Marshal(struct {
+		OperationID controljournal.OperationID `json:"operation_id"`
+		Result      json.RawMessage            `json:"result"`
+	}{event.OperationID, canonicalResult})
+	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: c.journal.config.ProjectID, MissionID: c.journal.config.MissionID, OperationID: event.OperationID, CommandType: commandType, RuntimeEpochID: c.journal.config.RuntimeEpochID, Payload: commandPayload})
+	if err != nil {
+		return err
+	}
+	key := c.journal.prefix() + "operations/" + string(event.OperationID)
+	stored, err := c.journal.port.Get(ctx, key)
+	if err != nil {
+		return refusal(OutcomeIndeterminate, "effect-restore", "effect operation is unavailable")
+	}
+	operation, err := controljournal.DecodeOperationRecordV1(stored.Value)
+	if err != nil || stored.Key != key || stored.Revision == 0 || operation.OperationID != event.OperationID || operation.CommandType != commandType || operation.RuntimeEpochID != c.journal.config.RuntimeEpochID || operation.RequestDigest != command.Digest() || operation.ResultType != resultType || !bytes.Equal(operation.CanonicalResult(), canonicalResult) || !reflectEventIDs(operation.EventIDs(), []controljournal.EventID{event.EventID}) || !reflectEffectIDs(operation.EffectIDs(), effects) {
+		return refusal(OutcomeIndeterminate, "effect-restore", "effect operation membership or canonical identity is contradictory")
 	}
 	return nil
 }
@@ -406,6 +590,9 @@ type journalPublication struct {
 	EventType               controljournal.EventType
 	Payload, Result         any
 	EffectIntents           []controljournal.EffectIntentV1
+	PinHead                 bool
+	ExpectedLogical         uint64
+	ExpectedRevision        uint64
 }
 
 type workflowJournalPort interface {
@@ -458,7 +645,12 @@ func (j *workflowJournal) publish(ctx context.Context, p journalPublication) (ap
 	}
 	headKey := j.prefix() + "heads/" + string(p.AggregateKind) + "/" + string(p.AggregateID)
 	logical, revision := uint64(1), uint64(0)
-	if stored, getErr := j.port.Get(ctx, headKey); getErr == nil {
+	if p.PinHead {
+		if p.ExpectedLogical == 0 || p.ExpectedRevision == 0 {
+			return application.ResultV1{}, refusal(OutcomeInvalidCommand, p.CommandType, "pinned publication requires an exact observed aggregate head")
+		}
+		logical, revision = p.ExpectedLogical+1, p.ExpectedRevision
+	} else if stored, getErr := j.port.Get(ctx, headKey); getErr == nil {
 		head, decodeErr := controljournal.DecodeAggregateHeadV1(stored.Value)
 		if decodeErr != nil || head.AggregateKind != p.AggregateKind || head.AggregateID != p.AggregateID {
 			return application.ResultV1{}, refusal(OutcomeIndeterminate, "journal", "aggregate head is malformed")
@@ -544,6 +736,31 @@ func (j *workflowJournal) replay(ctx context.Context, p journalPublication, comm
 	return application.ResultV1{Kind: application.OutcomeAlreadyCommitted, OperationID: p.OperationID, CommittedRevision: stored.Revision, ResultType: record.ResultType, CanonicalResult: record.CanonicalResult(), Recovery: application.RecoveryNone}, true, nil
 }
 
+func (j *workflowJournal) validateOperationIdentity(ctx context.Context, event controljournal.EventEnvelopeV1, commandType, resultType string, canonicalResult []byte, effectIDs []controljournal.EffectID) error {
+	result, err := controljournal.CanonicalJSONObject(canonicalResult)
+	if err != nil {
+		return refusal(OutcomeIndeterminate, "restore", "stored operation result is not canonical")
+	}
+	commandPayload, _ := json.Marshal(struct {
+		OperationID controljournal.OperationID `json:"operation_id"`
+		Result      json.RawMessage            `json:"result"`
+	}{event.OperationID, result})
+	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: j.config.ProjectID, MissionID: j.config.MissionID, OperationID: event.OperationID, CommandType: commandType, RuntimeEpochID: j.config.RuntimeEpochID, Payload: commandPayload})
+	if err != nil {
+		return err
+	}
+	key := j.prefix() + "operations/" + string(event.OperationID)
+	stored, err := j.port.Get(ctx, key)
+	if err != nil {
+		return refusal(OutcomeIndeterminate, "restore", "stored operation identity is unavailable")
+	}
+	operation, err := controljournal.DecodeOperationRecordV1(stored.Value)
+	if err != nil || stored.Key != key || stored.Revision == 0 || operation.OperationID != event.OperationID || operation.CommandType != commandType || operation.RuntimeEpochID != j.config.RuntimeEpochID || operation.RequestDigest != command.Digest() || operation.ResultType != resultType || operation.ResultSchemaVersion != 1 || !bytes.Equal(operation.CanonicalResult(), result) || !reflectEventIDs(operation.EventIDs(), []controljournal.EventID{event.EventID}) || !reflectEffectIDs(operation.EffectIDs(), effectIDs) {
+		return refusal(OutcomeIndeterminate, "restore", "stored operation command, result, or exact membership is contradictory")
+	}
+	return nil
+}
+
 func reflectEffectIDs(a, b []controljournal.EffectID) bool {
 	if len(a) != len(b) {
 		return false
@@ -556,13 +773,45 @@ func reflectEffectIDs(a, b []controljournal.EffectID) bool {
 	return true
 }
 
-func (j *workflowJournal) scanPrefixAt(ctx context.Context, prefix string, want uint64) ([]storegapdb.Record, uint64, error) {
+const (
+	maxWorkflowRestorePages  = 32
+	maxWorkflowRestoreEvents = 16_000
+	maxWorkflowRestoreBytes  = 48 << 20
+)
+
+type restoreBudget struct {
+	pages  int
+	events int
+	bytes  int
+}
+
+func (b *restoreBudget) consume(records []storegapdb.Record, countEvents bool) error {
+	b.pages++
+	if b.pages > maxWorkflowRestorePages {
+		return refusal(OutcomeIndeterminate, "scan", "provider scan exceeded the global page bound")
+	}
+	for _, record := range records {
+		b.bytes += len(record.Key) + len(record.Value)
+		if countEvents {
+			b.events++
+		}
+	}
+	if b.bytes > maxWorkflowRestoreBytes || b.events > maxWorkflowRestoreEvents {
+		return refusal(OutcomeIndeterminate, "scan", "provider scan exceeded the global event or 48MiB byte bound")
+	}
+	return nil
+}
+
+func (j *workflowJournal) scanPrefixAt(ctx context.Context, prefix string, want uint64, budget *restoreBudget, countEvents bool) ([]storegapdb.Record, uint64, error) {
 	var out []storegapdb.Record
 	cursor := ""
 	bound := want
-	for pageNo := 0; pageNo < 32; pageNo++ {
+	for {
 		page, err := j.port.Scan(ctx, storegapdb.ScanRequest{Prefix: prefix, Limit: storegapdb.MaxScanRecords, Cursor: cursor, MaxBytes: storegapdb.MaxScanBytes})
 		if err != nil {
+			return nil, 0, err
+		}
+		if err := budget.consume(page.Records, countEvents); err != nil {
 			return nil, 0, err
 		}
 		if bound == 0 {
@@ -585,40 +834,63 @@ func (j *workflowJournal) scanPrefixAt(ctx context.Context, prefix string, want 
 		}
 		cursor = page.Cursor
 	}
-	return nil, 0, refusal(OutcomeIndeterminate, "scan", "provider scan exceeded the page bound")
 }
 
 // loadAggregateEvents reconstructs one aggregate kind from a fixed provider
 // observation. It validates logical order, terminal heads, operation/event
 // membership, and terminal payload digest before exposing any state.
 func (j *workflowJournal) loadAggregateEvents(ctx context.Context, kind controljournal.AggregateKind) ([]controljournal.EventEnvelopeV1, error) {
-	journalRecords, bound, err := j.scanPrefixAt(ctx, j.prefix()+"journal/", 0)
+	return j.loadAggregateEventsWithBudget(ctx, kind, &restoreBudget{})
+}
+
+func (j *workflowJournal) loadAggregateEventsWithBudget(ctx context.Context, kind controljournal.AggregateKind, budget *restoreBudget) ([]controljournal.EventEnvelopeV1, error) {
+	journalRecords, bound, err := j.scanPrefixAt(ctx, j.prefix()+"journal/", 0, budget, true)
 	if err != nil {
 		return nil, err
 	}
-	headRecords, _, err := j.scanPrefixAt(ctx, j.prefix()+"heads/"+string(kind)+"/", bound)
+	headRecords, _, err := j.scanPrefixAt(ctx, j.prefix()+"heads/"+string(kind)+"/", bound, budget, false)
 	if err != nil {
 		return nil, err
 	}
 	byAggregate := map[controljournal.AggregateID][]controljournal.EventEnvelopeV1{}
+	byOperation := map[controljournal.OperationID][]controljournal.EventEnvelopeV1{}
+	operationRevisions := map[controljournal.OperationID]uint64{}
 	for _, stored := range journalRecords {
 		event, decodeErr := controljournal.DecodeEventEnvelopeV1(stored.Value)
-		if decodeErr != nil {
+		if decodeErr != nil || stored.Key != j.prefix()+"journal/"+string(event.EventID) || stored.Revision == 0 || stored.Revision > bound || event.ProjectID != j.config.ProjectID || event.RuntimeEpochID != j.config.RuntimeEpochID || event.WorkRevisionID != j.config.WorkRevisionID {
 			return nil, refusal(OutcomeIndeterminate, "restore", "journal contains a malformed event")
 		}
-		if event.AggregateKind != kind {
-			continue
+		byOperation[event.OperationID] = append(byOperation[event.OperationID], event)
+		if revision, exists := operationRevisions[event.OperationID]; exists && revision != stored.Revision {
+			return nil, refusal(OutcomeIndeterminate, "restore", "operation event group spans durable revisions")
 		}
-		operationKey := j.prefix() + "operations/" + string(event.OperationID)
+		operationRevisions[event.OperationID] = stored.Revision
+		if event.AggregateKind == kind {
+			byAggregate[event.AggregateID] = append(byAggregate[event.AggregateID], event)
+		}
+	}
+	// Seal every operation group in the observed journal, including foreign
+	// aggregate kinds. A malformed unrelated event must never be ignored while
+	// reconstructing a supposedly trustworthy fixed-revision projection.
+	for operationID, events := range byOperation {
+		sort.Slice(events, func(i, k int) bool { return events[i].EventIndex < events[k].EventIndex })
+		ids := make([]controljournal.EventID, len(events))
+		for index, event := range events {
+			if int(event.EventIndex) != index || int(event.EventCount) != len(events) || event.OperationID != operationID {
+				return nil, refusal(OutcomeIndeterminate, "restore", "operation event group is missing, extra, reordered, or malformed")
+			}
+			ids[index] = event.EventID
+		}
+		operationKey := j.prefix() + "operations/" + string(operationID)
 		operationStored, getErr := j.port.Get(ctx, operationKey)
-		if getErr != nil || operationStored.Revision == 0 || operationStored.Revision > bound {
-			return nil, refusal(OutcomeIndeterminate, "restore", "event operation is unavailable within the observation")
+		budget.bytes += len(operationKey) + len(operationStored.Value)
+		if getErr != nil || budget.bytes > maxWorkflowRestoreBytes || operationStored.Key != operationKey || operationStored.Revision == 0 || operationStored.Revision > bound || operationStored.Revision != operationRevisions[operationID] {
+			return nil, refusal(OutcomeIndeterminate, "restore", "event operation is unavailable within the bounded observation")
 		}
 		operation, opErr := controljournal.DecodeOperationRecordV1(operationStored.Value)
-		if opErr != nil || operation.OperationID != event.OperationID || !containsEvent(operation.EventIDs(), event.EventID) {
-			return nil, refusal(OutcomeIndeterminate, "restore", "event is not a member of its durable operation")
+		if opErr != nil || operation.OperationID != operationID || operation.RuntimeEpochID != j.config.RuntimeEpochID || !reflectEventIDs(operation.EventIDs(), ids) {
+			return nil, refusal(OutcomeIndeterminate, "restore", "operation event membership is not exact")
 		}
-		byAggregate[event.AggregateID] = append(byAggregate[event.AggregateID], event)
 	}
 	heads := map[controljournal.AggregateID]controljournal.AggregateHeadV1{}
 	for _, stored := range headRecords {
@@ -656,22 +928,16 @@ func (j *workflowJournal) loadAggregateEvents(ctx context.Context, kind controlj
 	})
 	return ordered, nil
 }
-func containsEvent(values []controljournal.EventID, want controljournal.EventID) bool {
-	for _, value := range values {
-		if value == want {
-			return true
+func reflectEventIDs(a, b []controljournal.EventID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
 	}
-	return false
-}
-
-func containsEffect(values []controljournal.EffectID, want controljournal.EffectID) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func derivedOperationID(parts ...string) controljournal.OperationID {
@@ -683,7 +949,7 @@ func derivedOperationID(parts ...string) controljournal.OperationID {
 // registries after WP08. Keeping them explicit prevents a later campaign from
 // silently replaying only the authority subset.
 func M1EventRegistryV1() (controljournal.EventRegistryV1, error) {
-	types := []string{"effect.intent_recorded", "effect.observed", "effect.reconciliation_limited", "effect.compensation_recorded", "candidate.created", "candidate.refused", "review.recorded", "integration.plan", "integration.plan_completed", "integration.intent", "integration.activated", "integration.workspace", "integration.revalidated", "integration.result", "integration.repair", "integration.completed", "integration.cleanup_eligible", "integration.cleanup_completed"}
+	types := []string{"effect.intent_recorded", "effect.dispatch_reserved", "effect.observed", "effect.reconciliation_limited", "effect.compensation_recorded", "candidate.created", "candidate.refused", "review.recorded", "integration.plan", "integration.plan_completed", "integration.intent", "integration.activated", "integration.workspace", "integration.revalidated", "integration.result", "integration.repair", "integration.completed", "integration.cleanup_eligible", "integration.cleanup_completed"}
 	base := []controljournal.EventVersionV1{{EventType: "runtime.epoch_admitted", EventSchemaVersion: 1, ReducerVersion: "runtime-v1"}, {EventType: "authority.claimed", EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1"}, {EventType: "authority.heartbeat", EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1"}, {EventType: "authority.expired", EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1"}, {EventType: "authority.predecessor_invalidated", EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1"}, {EventType: "workspace.bound", EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1"}, {EventType: "workspace.quarantined", EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1"}, {EventType: "runtime.owner_restarted", EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1"}}
 	for _, eventType := range types {
 		base = append(base, controljournal.EventVersionV1{EventType: eventType, EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1"})
@@ -695,7 +961,7 @@ func M1ReducerRegistryV1() (reducer.RegistryV1, error) {
 	for _, x := range []struct {
 		k controljournal.AggregateKind
 		e controljournal.EventType
-	}{{"external-effect", "effect.intent_recorded"}, {"external-effect", "effect.observed"}, {"external-effect", "effect.reconciliation_limited"}, {"external-effect", "effect.compensation_recorded"}, {"candidate", "candidate.created"}, {"candidate", "candidate.refused"}, {"review", "review.recorded"}, {"integration", "integration.plan"}, {"integration", "integration.plan_completed"}, {"integration", "integration.intent"}, {"integration", "integration.activated"}, {"integration", "integration.workspace"}, {"integration", "integration.revalidated"}, {"integration", "integration.result"}, {"integration", "integration.repair"}, {"integration", "integration.completed"}, {"integration", "integration.cleanup_eligible"}, {"integration", "integration.cleanup_completed"}} {
+	}{{"external-effect", "effect.intent_recorded"}, {"external-effect", "effect.dispatch_reserved"}, {"external-effect", "effect.observed"}, {"external-effect", "effect.reconciliation_limited"}, {"external-effect", "effect.compensation_recorded"}, {"candidate", "candidate.created"}, {"candidate", "candidate.refused"}, {"review", "review.recorded"}, {"integration", "integration.plan"}, {"integration", "integration.plan_completed"}, {"integration", "integration.intent"}, {"integration", "integration.activated"}, {"integration", "integration.workspace"}, {"integration", "integration.revalidated"}, {"integration", "integration.result"}, {"integration", "integration.repair"}, {"integration", "integration.completed"}, {"integration", "integration.cleanup_eligible"}, {"integration", "integration.cleanup_completed"}} {
 		entries = append(entries, reducer.EntryV1{AggregateKind: x.k, EventType: x.e, EventSchemaVersion: 1, ReducerVersion: "proving-ground-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1})
 	}
 	return reducer.NewRegistryV1(entries)

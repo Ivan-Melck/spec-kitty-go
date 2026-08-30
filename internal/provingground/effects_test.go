@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +29,30 @@ type wp08Store struct {
 	revision   uint64
 	records    map[string]storegapdb.Record
 	applyCalls int
+}
+
+type restoreBoundMutantPort struct {
+	*wp08Store
+	mode  string
+	calls int
+}
+
+func (p *restoreBoundMutantPort) Scan(_ context.Context, request storegapdb.ScanRequest) (storegapdb.ScanPage, error) {
+	p.calls++
+	page := storegapdb.ScanPage{ObservedRevision: p.revision, AsOf: time.Unix(1, 0).UTC()}
+	switch p.mode {
+	case "pages":
+		page.Truncated = true
+		page.Cursor = strings.Repeat("x", p.calls)
+	case "events":
+		page.Records = make([]storegapdb.Record, maxWorkflowRestoreEvents+1)
+		for i := range page.Records {
+			page.Records[i] = storegapdb.Record{Key: request.Prefix + "event", Value: []byte(`{}`), Revision: p.revision}
+		}
+	case "bytes":
+		page.Records = []storegapdb.Record{{Key: request.Prefix + "event", Value: make([]byte, maxWorkflowRestoreBytes+1), Revision: p.revision}}
+	}
+	return page, nil
 }
 
 func newWP08Store() *wp08Store {
@@ -268,6 +293,69 @@ func TestEffectExactReplayRejectsMissingOrTamperedDurableIntent(t *testing.T) {
 	}
 }
 
+func TestEffectRestoreRejectsNonExactOperationMembership(t *testing.T) {
+	for _, mutation := range []string{"extra-effect", "extra-event", "wrong-event"} {
+		t.Run(mutation, func(t *testing.T) {
+			journal := newWP08Store()
+			runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
+			_, provider, ref := wp08Provider(t)
+			coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+			coordinator.WithFaults(&effectCutHook{cut: "GJ-05", err: errors.New("cut")})
+			_, _ = coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref))
+			key := coordinator.journal.prefix() + "operations/operation-assign"
+			journal.mu.Lock()
+			stored := journal.records[key]
+			record, err := controljournal.DecodeOperationRecordV1(stored.Value)
+			if err != nil {
+				journal.mu.Unlock()
+				t.Fatal(err)
+			}
+			events, effects := record.EventIDs(), record.EffectIDs()
+			switch mutation {
+			case "extra-effect":
+				effects = append(effects, "effect-foreign")
+			case "extra-event":
+				events = append(events, "event-foreign")
+			case "wrong-event":
+				events[0] = "event-foreign"
+			}
+			mutant, err := controljournal.NewOperationRecordV1(controljournal.OperationRecordInputV1{OperationID: record.OperationID, CommandType: record.CommandType, RequestDigest: record.RequestDigest, RuntimeEpochID: record.RuntimeEpochID, ExpectedPreconditionsDigest: record.ExpectedPreconditionsDigest, ResultType: record.ResultType, ResultSchemaVersion: record.ResultSchemaVersion, CanonicalResult: record.CanonicalResult(), EventIDs: events, EffectIDs: effects})
+			if err != nil {
+				journal.mu.Unlock()
+				t.Fatal(err)
+			}
+			stored.Value, err = controljournal.EncodeOperationRecordV1(mutant)
+			if err == nil {
+				journal.records[key] = stored
+			}
+			journal.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3); err == nil {
+				t.Fatalf("%s operation membership survived restore", mutation)
+			}
+		})
+	}
+}
+
+func TestWorkflowRestoreEnforcesGlobalPageEventAnd48MiBBounds(t *testing.T) {
+	for _, mode := range []string{"pages", "events", "bytes"} {
+		t.Run(mode, func(t *testing.T) {
+			journal := newWP08Store()
+			config := testConfig(t)
+			mutant := &restoreBoundMutantPort{wp08Store: journal, mode: mode}
+			workflow := newWorkflowJournal(config, journal, mutant)
+			if _, err := workflow.loadAggregateEvents(t.Context(), "external-effect"); err == nil {
+				t.Fatalf("%s restore budget mutant survived", mode)
+			}
+			if mutant.calls > maxWorkflowRestorePages+1 {
+				t.Fatalf("page traversal exceeded declared bound: %d", mutant.calls)
+			}
+		})
+	}
+}
+
 func TestCompensationPreservesHumanReassignmentAndValidAttributionCompensatesOnce(t *testing.T) {
 	for _, human := range []bool{false, true} {
 		t.Run(map[bool]string{false: "attributable", true: "human"}[human], func(t *testing.T) {
@@ -340,11 +428,122 @@ func TestEffectDishonestAndUnavailableProviderCannotFabricateAttribution(t *test
 	}
 }
 
+func TestEffectStaleDesiredValueAndMarkerCannotFabricateAppliedFact(t *testing.T) {
+	journal := newWP08Store()
+	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
+	_, provider, ref := wp08Provider(t)
+	coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	coordinator.WithFaults(&effectCutHook{cut: "GJ-05", err: errors.New("cut")})
+	_, _ = coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref))
+	stale := tracker.AssignmentObservation{
+		ExternalRef: tracker.ExternalWorkRef{ProjectID: ref.ProjectID, WorkID: ref.WorkID, Provider: ref.Provider, ExternalID: ref.ExternalID, MetadataSchema: ref.MetadataSchema, CreatedByOperation: ref.CreatedByOperation, LastObservation: 1},
+		Assignee:    "actor-b", OperationMarker: "operation-assign",
+		Observation: tracker.ProviderObservation{ExternalID: ref.ExternalID, Revision: 1, ObservedAt: time.Date(2026, 8, 30, 12, 3, 0, 0, time.UTC), Assignee: "actor-b", OperationMarker: "operation-assign"},
+	}
+	restored, err := newEffectCoordinator(t.Context(), runtime, journal, journal, dishonestProjection{AssignmentProjection: provider, observation: stale}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := restored.RecoverUnresolved(t.Context())
+	if err != nil || len(results) != 1 || results[0].Outcome == EffectApplied {
+		t.Fatalf("stale desired state fabricated application: %#v err=%v", results, err)
+	}
+}
+
 type slowProjection struct {
 	tracker.AssignmentProjection
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
+}
+
+type blockingMutationProjection struct {
+	tracker.AssignmentProjection
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingMutationProjection) ProjectAssignment(ctx context.Context, request tracker.ProjectAssignmentRequest) (tracker.AssignmentMutation, error) {
+	p.once.Do(func() { close(p.started) })
+	select {
+	case <-ctx.Done():
+		return tracker.AssignmentMutation{}, ctx.Err()
+	case <-p.release:
+		return p.AssignmentProjection.ProjectAssignment(ctx, request)
+	}
+}
+
+func TestConcurrentExactEffectDispatchNeverRecordsTerminalAbsent(t *testing.T) {
+	journal := newWP08Store()
+	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
+	providerStore, provider, ref := wp08Provider(t)
+	blocked := &blockingMutationProjection{AssignmentProjection: provider, started: make(chan struct{}), release: make(chan struct{})}
+	first, err := newEffectCoordinator(t.Context(), runtime, journal, journal, blocked, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := wp08Intent(capsule, ref)
+	firstResult := make(chan EffectResolution, 1)
+	firstErr := make(chan error, 1)
+	go func() {
+		result, publishErr := first.PublishAssignment(t.Context(), intent)
+		firstResult <- result
+		firstErr <- publishErr
+	}()
+	<-blocked.started
+	loser, loserErr := second.PublishAssignment(t.Context(), intent)
+	if loserErr != nil || loser.Outcome != EffectAmbiguous {
+		t.Fatalf("in-flight loser=%#v err=%v", loser, loserErr)
+	}
+	if loser.Outcome == EffectAbsent {
+		t.Fatal("in-flight dispatch was durably classified absent")
+	}
+	close(blocked.release)
+	winner := <-firstResult
+	if err := <-firstErr; err != nil || winner.Outcome != EffectApplied {
+		t.Fatalf("dispatch winner=%#v err=%v", winner, err)
+	}
+	restored, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, ok := restored.State(intent.EffectID)
+	if !ok || state.Resolution == nil || state.Resolution.Outcome != EffectApplied {
+		t.Fatalf("terminal effect=%#v", state)
+	}
+	history, _ := providerStore.History(t.Context())
+	if len(history) != 2 { // seed plus exactly one assignment
+		t.Fatalf("concurrent exact dispatch provider history=%#v", history)
+	}
+}
+
+func TestCrashAfterDispatchReservationRemainsAmbiguousWithoutBlindRepeat(t *testing.T) {
+	journal := newWP08Store()
+	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
+	providerStore, provider, ref := wp08Provider(t)
+	coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	crash := errors.New("crash after dispatch reservation")
+	coordinator.WithFaults(&effectCutHook{cut: "EF-01", err: crash})
+	if _, err := coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref)); !errors.Is(err, crash) {
+		t.Fatalf("want EF-01 crash: %v", err)
+	}
+	restored, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := restored.RecoverUnresolved(t.Context())
+	if err != nil || len(results) != 1 || results[0].Outcome != EffectAmbiguous {
+		t.Fatalf("reserved-dispatch recovery=%#v err=%v", results, err)
+	}
+	history, _ := providerStore.History(t.Context())
+	if len(history) != 1 {
+		t.Fatalf("reserved-dispatch crash blindly repeated provider mutation: %#v", history)
+	}
 }
 
 func (p *slowProjection) ObserveAssignment(ctx context.Context, ref tracker.ExternalWorkRef) (tracker.AssignmentObservation, error) {
@@ -468,6 +667,57 @@ func TestCompensationMissingAtomicGuardIsSafeUnsupported(t *testing.T) {
 	}
 }
 
+func TestWP08AttributionCampaignRunsOneHundredRealScenariosWithAntiVacuity(t *testing.T) {
+	ambiguityTrials, reassignmentTrials, violations := 0, 0, 0
+	err := IntegrationAttributionCampaign(t.Context(), 100, func(ctx context.Context, repetition int) error {
+		journal := newWP08Store()
+		runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
+		providerStore, provider, ref := wp08Provider(t)
+		if injectErr := providerStore.Inject(ctx, trackerfake.FailureTimeoutAfterApply); injectErr != nil {
+			return injectErr
+		}
+		coordinator, createErr := newEffectCoordinator(ctx, runtime, journal, journal, provider, 3)
+		if createErr != nil {
+			return createErr
+		}
+		intent := wp08Intent(capsule, ref)
+		ambiguous, publishErr := coordinator.PublishAssignment(ctx, intent)
+		ambiguityTrials++
+		if !tracker.IsKind(publishErr, tracker.ErrorAmbiguous) || terminalEffectOutcome(ambiguous.Outcome) {
+			violations++
+			return errors.New("ambiguity trial did not remain recoverable")
+		}
+		values, recoverErr := coordinator.RecoverUnresolved(ctx)
+		if recoverErr != nil || len(values) != 1 || values[0].Outcome != EffectApplied {
+			violations++
+			return errors.New("ambiguity trial did not recover its attributable applied fact")
+		}
+		if humanErr := providerStore.HumanAssign(ctx, "ticket-a", "human-reassigned"); humanErr != nil {
+			return humanErr
+		}
+		terminal, compensateErr := coordinator.Compensate(ctx, intent.EffectID, controljournal.OperationID("operation-compensate-"+strconv.Itoa(repetition)), intent.OccurredAt.Add(time.Minute))
+		reassignmentTrials++
+		if compensateErr != nil || terminal.Outcome != EffectAttributionLost {
+			violations++
+			return errors.New("reassignment trial did not preserve the human writer")
+		}
+		state, ok := coordinator.State(intent.EffectID)
+		if !ok || !completeEffectState(state) || state.Resolution == nil || state.Resolution.Outcome != EffectAttributionLost {
+			return errors.New("campaign terminal state violated universal effect invariants")
+		}
+		if _, restoreErr := coordinator.journal.loadAggregateEvents(ctx, "external-effect"); restoreErr != nil {
+			return restoreErr
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ambiguityTrials != 100 || reassignmentTrials != 100 || violations != 0 {
+		t.Fatalf("dishonest campaign census ambiguity=%d reassignment=%d violations=%d", ambiguityTrials, reassignmentTrials, violations)
+	}
+}
+
 func TestWorkflowJournalExactReplayAfterLaterTransitionAndRestoreTamperGuards(t *testing.T) {
 	journal := newWP08Store()
 	config := testConfig(t)
@@ -517,6 +767,7 @@ func TestM1RegistriesCoverEveryWP08ProductionPublication(t *testing.T) {
 		eventType controljournal.EventType
 	}{
 		{"external-effect", "effect.intent_recorded"},
+		{"external-effect", "effect.dispatch_reserved"},
 		{"external-effect", "effect.observed"},
 		{"external-effect", "effect.reconciliation_limited"},
 		{"external-effect", "effect.compensation_recorded"},
