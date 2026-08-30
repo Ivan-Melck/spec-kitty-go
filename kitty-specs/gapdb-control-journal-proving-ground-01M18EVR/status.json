@@ -165,7 +165,7 @@
     },
     "WP05": {
       "actor": "user",
-      "agent": "reviewer-renata-wp05",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
@@ -177,6 +177,7 @@
         "Ready for independent review: atomic one-call publication, honest epoch admission, bounded ordinary-read ambiguity reconciliation, GJ-01 census preservation, and real WP04 GJ-02 response-drop evidence all green."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP05-atomic-application-batch-and-ambiguity/review-cycle-1.md",
         "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP05-atomic-application-batch-and-ambiguity/review-cycle-1.md",
@@ -184,15 +185,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T024": "done",
-        "T025": "done",
-        "T026": "done",
-        "T027": "done",
-        "T028": "done",
-        "T029": "done"
+        "T024": "planned",
+        "T025": "planned",
+        "T026": "planned",
+        "T027": "planned",
+        "T028": "planned",
+        "T029": "planned"
       }
     },
     "WP06": {
