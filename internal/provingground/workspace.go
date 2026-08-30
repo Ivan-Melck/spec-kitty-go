@@ -130,6 +130,9 @@ func (r *Runtime) Authorize(capsule controljournal.AuthorityCapsuleV1, action st
 // Heartbeat refreshes retained execution authority and returns a new exact
 // frozen capsule carrying the journal's new authority-head revision.
 func (r *Runtime) Heartbeat(ctx context.Context, operationID controljournal.OperationID, capsule controljournal.AuthorityCapsuleV1, now time.Time, ttl time.Duration) (controljournal.AuthorityCapsuleV1, error) {
+	if ttl != r.core.config.LeaseTTL {
+		return controljournal.AuthorityCapsuleV1{}, refusal(OutcomeInvalidCommand, "heartbeat", "requested lease TTL does not match the admitted runtime policy")
+	}
 	exact, err := r.authorityFromCapsule(capsule, "heartbeat")
 	if err != nil {
 		return controljournal.AuthorityCapsuleV1{}, err

@@ -271,9 +271,23 @@ func TestPublicReplaceWorkspacePrevalidatesAndCreatesFreshW3WhileBContinues(t *t
 			t.Fatalf("capsule mutant quarantined W1: %+v", binding)
 		}
 	}
+	beforeTTLMutant, ok := core.Current("work-a")
+	if !ok {
+		t.Fatal("public heartbeat fixture lost current authority")
+	}
+	if _, err := runtime.Heartbeat(t.Context(), "heartbeat-public-ttl-mutant", w1.Authority, now.Add(2*time.Second), 10*time.Minute); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("public heartbeat accepted mismatched TTL: %v", err)
+	}
+	afterTTLMutant, ok := core.Current("work-a")
+	if !ok || afterTTLMutant.AuthorityHeadRecordRevision != beforeTTLMutant.AuthorityHeadRecordRevision || !afterTTLMutant.Deadline.Equal(beforeTTLMutant.Deadline) {
+		t.Fatalf("mismatched TTL changed durable authority: before=%+v after=%+v current=%v", beforeTTLMutant, afterTTLMutant, ok)
+	}
 	refreshed, err := runtime.Heartbeat(t.Context(), "heartbeat-public-a", w1.Authority, now.Add(2*time.Second), time.Minute)
 	if err != nil || refreshed.AuthorityHeadRecordRevision == w1.Authority.AuthorityHeadRecordRevision {
 		t.Fatalf("public heartbeat did not refresh exact capsule: before=%+v after=%+v err=%v", w1.Authority, refreshed, err)
+	}
+	if current, ok := core.Current("work-a"); !ok || !current.Deadline.Equal(now.Add(2*time.Second+time.Minute)) {
+		t.Fatalf("matching TTL did not apply admitted lease policy: %+v current=%v", current, ok)
 	}
 	w1.Authority = refreshed
 	w1.Run.Deadline = now.Add(2*time.Second + time.Minute)
