@@ -54,11 +54,28 @@ var mutantIDs = []string{
 	"gapdb-import-allowlist-or-internal-server", "incomplete-signature",
 }
 
+var invariantIDs = []string{
+	"one_valid_authority_per_work_revision",
+	"workspace_binding_immutable",
+	"stale_authority_refused",
+	"primary_isolation",
+	"reviewer_actor_independence",
+	"serialized_target_authority",
+	"effect_attribution",
+	"journal_complete",
+}
+
+type m1SourceBinding struct {
+	Commit string
+	Tree   string
+}
+
 func TestM1EvidencePassPredicateRejectsVacuousPasses(t *testing.T) {
 	compiled := compileEvidenceSchema(t)
 	valid := passingEvidenceFixture()
+	source := sourceBindingOf(valid)
 	assertSchemaValid(t, compiled, valid)
-	if err := validateEvidencePass(valid); err != nil {
+	if err := validateEvidencePass(valid, source); err != nil {
 		t.Fatalf("positive fixture rejected: %v", err)
 	}
 
@@ -89,6 +106,7 @@ func TestM1EvidencePassPredicateRejectsVacuousPasses(t *testing.T) {
 			item(m, "focused_subtrial_summaries", 0)["repetitions_terminal"] = 101
 		}},
 		{"child RunID differs", func(m map[string]any) { item(m, "scenario_results", 0)["run_id"] = "other-run" }},
+		{"source digest differs", func(m map[string]any) { m["source_tree"] = strings.Repeat("c", 40) }},
 		{"runtime epoch reused", func(m map[string]any) {
 			object(object(m, "ordered_trial"), "owner_restart")["after_runtime_epoch_id"] = "epoch-before"
 		}},
@@ -122,6 +140,12 @@ func TestM1EvidencePassPredicateRejectsVacuousPasses(t *testing.T) {
 		{"reviewer contributed", func(m map[string]any) {
 			item(object(m, "ordered_trial"), "reviews", 0)["reviewer_actor_id"] = "A"
 		}},
+		{"reviewer contributed to other candidate", func(m map[string]any) {
+			item(object(m, "ordered_trial"), "reviews", 0)["reviewer_actor_id"] = "B"
+		}},
+		{"campaign reviewer contributed", func(m map[string]any) {
+			object(m, "independent_review")["reviewer_actor_id"] = "A"
+		}},
 		{"integration not serialized", func(m map[string]any) {
 			object(object(m, "ordered_trial"), "integration")["serialized"] = false
 		}},
@@ -138,9 +162,130 @@ func TestM1EvidencePassPredicateRejectsVacuousPasses(t *testing.T) {
 			fixture := cloneMap(t, valid)
 			test.mutate(fixture)
 			schemaErr := compiled.Validate(fixture)
-			semanticErr := validateEvidencePass(fixture)
+			semanticErr := validateEvidencePass(fixture, source)
 			if schemaErr == nil && semanticErr == nil {
 				t.Fatal("vacuous pass was accepted by schema and semantic predicate")
+			}
+		})
+	}
+}
+
+func TestM1EvidenceExactCensusRejectsEveryRemoval(t *testing.T) {
+	valid := passingEvidenceFixture()
+	source := sourceBindingOf(valid)
+	tests := []struct {
+		key        string
+		diagnostic string
+		ids        []string
+	}{
+		{"scenario_results", "scenario_results", scenarioIDs},
+		{"fault_results", "fault_results", faultIDs},
+		{"focused_subtrial_summaries", "focused summary", focusedIDs},
+		{"mutant_results", "mutant_results", mutantIDs},
+	}
+	for _, test := range tests {
+		for index, id := range test.ids {
+			t.Run(test.key+"/"+id, func(t *testing.T) {
+				fixture := cloneMap(t, valid)
+				values := array(fixture, test.key)
+				fixture[test.key] = append(values[:index:index], values[index+1:]...)
+				if err := validateEvidencePass(fixture, source); err == nil || !strings.Contains(err.Error(), test.diagnostic) {
+					t.Fatalf("removing %s from %s did not fail its census: %v", id, test.key, err)
+				}
+			})
+		}
+	}
+}
+
+func TestM1EvidenceRejectsEveryFalseUniversalInvariant(t *testing.T) {
+	valid := passingEvidenceFixture()
+	source := sourceBindingOf(valid)
+	for _, id := range invariantIDs {
+		t.Run(id, func(t *testing.T) {
+			fixture := cloneMap(t, valid)
+			object(fixture, "invariant_summary")[id] = false
+			if err := validateEvidencePass(fixture, source); err == nil || !strings.Contains(err.Error(), id) {
+				t.Fatalf("false invariant was not rejected by name: %v", err)
+			}
+		})
+	}
+}
+
+func TestM1EvidenceMutantControls(t *testing.T) {
+	clean := passingEvidenceFixture()
+	source := sourceBindingOf(clean)
+	if err := validateEvidencePass(clean, source); err != nil {
+		t.Fatalf("clean control rejected: %v", err)
+	}
+	tests := []struct {
+		id     string
+		mutate func(map[string]any)
+	}{
+		{"incomplete-signature", func(m map[string]any) { m["mutant_results"] = array(m, "mutant_results")[:18] }},
+		{"foreign-child-run", func(m map[string]any) { item(m, "fault_results", 0)["run_id"] = "foreign-run" }},
+		{"foreign-source-tree", func(m map[string]any) { m["source_tree"] = strings.Repeat("c", 40) }},
+	}
+	for _, test := range tests {
+		t.Run(test.id, func(t *testing.T) {
+			fixture := cloneMap(t, clean)
+			test.mutate(fixture)
+			if err := validateEvidencePass(fixture, source); err == nil {
+				t.Fatal("mutant survived the complete evidence signature guard")
+			}
+		})
+	}
+}
+
+func TestM1EvidenceContributorBindingMutants(t *testing.T) {
+	clean := passingEvidenceFixture()
+	source := sourceBindingOf(clean)
+	if err := validateEvidencePass(clean, source); err != nil {
+		t.Fatalf("clean contributor binding rejected: %v", err)
+	}
+	tests := []struct {
+		id     string
+		mutate func(map[string]any)
+	}{
+		{
+			"same-contributor-review/falsified-candidate-contributors",
+			func(m map[string]any) {
+				review := item(object(m, "ordered_trial"), "reviews", 0)
+				review["contributor_actor_ids"] = []any{"not-actor-a"}
+				review["reviewer_actor_id"] = "A"
+			},
+		},
+		{
+			"same-contributor-review/empty-candidate-contributors",
+			func(m map[string]any) {
+				review := item(object(m, "ordered_trial"), "reviews", 0)
+				review["contributor_actor_ids"] = []any{}
+				review["reviewer_actor_id"] = "A"
+			},
+		},
+		{
+			"same-contributor-review/swapped-candidate-contributors",
+			func(m map[string]any) {
+				trial := object(m, "ordered_trial")
+				item(trial, "reviews", 0)["contributor_actor_ids"] = []any{"B"}
+				item(trial, "reviews", 1)["contributor_actor_ids"] = []any{"A"}
+			},
+		},
+		{
+			"same-contributor-review/falsified-campaign-contributors",
+			func(m map[string]any) {
+				trial := object(m, "ordered_trial")
+				item(trial, "reviews", 0)["contributor_actor_ids"] = []any{"not-actor-a"}
+				item(trial, "reviews", 1)["contributor_actor_ids"] = []any{"not-actor-b"}
+				object(m, "independent_review")["reviewer_actor_id"] = "A"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.id, func(t *testing.T) {
+			fixture := cloneMap(t, clean)
+			test.mutate(fixture)
+			if err := validateEvidencePass(fixture, source); err == nil {
+				t.Fatal("mutant falsified contributor identity without losing pass admissibility")
 			}
 		})
 	}
@@ -233,14 +378,14 @@ func TestM1EvidenceSchemaRetainsHonestFailureAndIncomplete(t *testing.T) {
 				}
 			}
 			assertSchemaValid(t, compiled, fixture)
-			if validateEvidencePass(fixture) == nil {
+			if validateEvidencePass(fixture, sourceBindingOf(fixture)) == nil {
 				t.Fatal("honest non-pass evidence was admitted as a pass")
 			}
 		})
 	}
 }
 
-func validateEvidencePass(m map[string]any) error {
+func validateEvidencePass(m map[string]any, source m1SourceBinding) error {
 	var reasons []string
 	check := func(ok bool, message string) {
 		if !ok {
@@ -249,6 +394,11 @@ func validateEvidencePass(m map[string]any) error {
 	}
 	runID, _ := m["run_id"].(string)
 	check(m["outcome"] == "pass", "manifest outcome")
+	check(runID != "", "manifest RunID")
+	check(m["source_commit"] == source.Commit, "source_commit binding")
+	check(m["source_tree"] == source.Tree, "source_tree binding")
+	check(source.Commit != "" && source.Tree != "", "source binding provenance")
+	check(m["admitted_tuple_sha256"] == "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d", "admitted tuple")
 	checkResults := func(key string, ids []string, idKey, pass string) {
 		values := array(m, key)
 		check(len(values) == len(ids), key+" census")
@@ -284,16 +434,28 @@ func validateEvidencePass(m map[string]any) error {
 		check(summary["run_id"] == runID, "focused summary RunID")
 		check(started >= 100 && started == terminal && terminal == passed, "focused summary census")
 	}
-	for key, value := range object(m, "invariant_summary") {
-		check(value == true, "universal invariant "+key)
+	invariants := object(m, "invariant_summary")
+	check(len(invariants) == len(invariantIDs), "universal invariant census")
+	for _, key := range invariantIDs {
+		check(invariants[key] == true, "universal invariant "+key)
 	}
-	check(object(m, "independent_review")["verdict"] == "pass", "independent review")
+	review := object(m, "independent_review")
+	check(review["verdict"] == "pass", "independent review")
+	independentReviewer := stringValue(review["reviewer_actor_id"])
+	check(independentReviewer != "", "independent reviewer identity")
+	check(!slices.Contains(orderedTrialSourceContributors(object(m, "ordered_trial")), independentReviewer), "independent reviewer contributor separation")
 	check(len(array(m, "artifacts")) > 0, "artifacts")
 	validateOrderedTrial(object(m, "ordered_trial"), runID, check)
 	if len(reasons) != 0 {
 		return fmt.Errorf("%s", strings.Join(reasons, "; "))
 	}
 	return nil
+}
+
+func sourceBindingOf(m map[string]any) m1SourceBinding {
+	commit, _ := m["source_commit"].(string)
+	tree, _ := m["source_tree"].(string)
+	return m1SourceBinding{Commit: commit, Tree: tree}
 }
 
 func validateOrderedTrial(trial map[string]any, runID string, check func(bool, string)) {
@@ -316,18 +478,24 @@ func validateOrderedTrial(trial map[string]any, runID string, check func(bool, s
 	check(restart["same_umbrella_run"] == true && restart["new_epoch_admitted"] == true, "owner restart")
 	check(restart["before_runtime_epoch_id"] != restart["after_runtime_epoch_id"], "new RuntimeEpochID")
 	capsule := object(trial, "old_capsule")
-	check(capsule["predecessor_runtime_epoch_id"] == restart["before_runtime_epoch_id"] && capsule["refused"] == true, "old capsule")
+	check(capsule["predecessor_runtime_epoch_id"] == restart["before_runtime_epoch_id"] && capsule["refused"] == true && capsule["reason_kind"] == "runtime_epoch_conflict", "old capsule")
 	playback := object(trial, "restore_playback")
 	check(playback["restore_digest"] == playback["playback_digest"] && playback["digests_equal"] == true, "restore/playback equality")
 	check(integer(playback["playback_adapter_calls"]) == 0 && integer(playback["playback_durable_writes"]) == 0, "zero-call playback")
 	reviews := array(trial, "reviews")
 	var reviewed []string
+	expectedContributors := orderedTrialContributorBindings(trial)
+	sourceContributors := orderedTrialSourceContributors(trial)
 	check(len(reviews) == 2, "review census")
 	for _, raw := range reviews {
 		review := raw.(map[string]any)
 		reviewer := review["reviewer_actor_id"].(string)
 		contributors := stringsOf(review["contributor_actor_ids"])
-		check(review["actor_independent"] == true && review["verdict"] == "approved" && !slices.Contains(contributors, reviewer), "review independence")
+		slices.Sort(contributors)
+		expected := slices.Clone(expectedContributors[stringValue(review["candidate_id"])])
+		slices.Sort(expected)
+		check(slices.Equal(contributors, expected), "candidate contributor binding")
+		check(reviewer != "" && review["actor_independent"] == true && review["verdict"] == "approved" && !slices.Contains(sourceContributors, reviewer), "review independence")
 		reviewed = append(reviewed, review["candidate_id"].(string))
 	}
 	integration := object(trial, "integration")
@@ -337,7 +505,44 @@ func validateOrderedTrial(trial map[string]any, runID string, check func(bool, s
 	slices.Sort(candidates)
 	slices.Sort(order)
 	check(slices.Equal(reviewed, candidates) && slices.Equal(candidates, order), "integration candidates")
-	check(integration["serialized"] == true && integer(integration["successful_publications"]) == 2 && integer(integration["false_completions"]) == 0, "serialized integration")
+	check(integer(integration["competing_attempts"]) >= 2 && integration["serialized"] == true && integer(integration["successful_publications"]) == 2 && integer(integration["false_completions"]) == 0, "serialized integration")
+	check(stringValue(trial["artifact_sha256"]) != "", "ordered trial artifact")
+}
+
+func orderedTrialContributorBindings(trial map[string]any) map[string][]string {
+	identities := object(trial, "identities")
+	implementationA := stringValue(object(identities, "implementation_a")["actor_id"])
+	implementationB := stringValue(object(identities, "implementation_b")["actor_id"])
+	replacementC := stringValue(object(identities, "replacement_c")["actor_id"])
+	candidates := stringsOf(object(trial, "integration")["candidate_ids"])
+	if len(candidates) != 2 {
+		return nil
+	}
+	actorAContributors := []string{implementationA}
+	if replacementC != "" && replacementC != implementationA {
+		actorAContributors = append(actorAContributors, replacementC)
+	}
+	return map[string][]string{
+		candidates[0]: actorAContributors,
+		candidates[1]: {implementationB},
+	}
+}
+
+func orderedTrialSourceContributors(trial map[string]any) []string {
+	var contributors []string
+	for _, binding := range orderedTrialContributorBindings(trial) {
+		for _, actorID := range binding {
+			if actorID != "" && !slices.Contains(contributors, actorID) {
+				contributors = append(contributors, actorID)
+			}
+		}
+	}
+	return contributors
+}
+
+func stringValue(value any) string {
+	result, _ := value.(string)
+	return result
 }
 
 func passingEvidenceFixture() map[string]any {
