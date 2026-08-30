@@ -25,6 +25,8 @@ history: []
 agent_profile: architect-alphonso
 authoritative_surface: internal/architecture/
 create_intent:
+- internal/architecture/m1_contracts_test.go
+- internal/architecture/m1_evidence_semantics_test.go
 - internal/architecture/m1_budget_contract_test.go
 - internal/architecture/m1_dependency_guard_test.go
 execution_mode: code_change
@@ -219,4 +221,3 @@ fit a test, or if product budgets merely equal the GapDB runtime ceilings.
 - Existing honest failure evidence remains representable.
 - No production package, module dependency, or frozen contract changed.
 - The result is a guardrail, not a claim that M1 has passed.
-
