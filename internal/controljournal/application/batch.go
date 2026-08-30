@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 )
 
@@ -125,16 +126,12 @@ func (c ValidatedCommandEnvelopeV1) valid() bool {
 	return err == nil && bytes.Equal(validated.canonical, c.canonical) && validated.digest == c.digest
 }
 
-// PriorPrefixCheckpointV1 carries an already-proven prefix. Its values never
-// refer to the revision that the forming command will receive.
-type PriorPrefixCheckpointV1 struct {
-	CheckpointID             string
-	ThroughRevision          uint64
-	ThroughEventID           controljournal.EventID
-	CheckpointValue          []byte
-	CheckpointHeadValue      []byte
-	ObservedHeadRevision     uint64
-	CheckpointHeadPreviously bool
+// CheckpointInputV1 combines a constructor-sealed prior-prefix proof with the
+// caller's exact provider observation of the mutable checkpoint selector.
+// Revision zero proves selector absence; a positive revision requests CAS.
+type CheckpointInputV1 struct {
+	Validated            journalcheckpoint.ValidatedCheckpointV1
+	ObservedHeadRevision uint64
 }
 
 // BatchInputV1 is the complete semantic result of validating and reducing one
@@ -146,7 +143,7 @@ type BatchInputV1 struct {
 	NextHeads                   []controljournal.NewAggregateHeadV1
 	Events                      []controljournal.EventEnvelopeV1
 	EffectIntents               []controljournal.EffectIntentV1
-	Checkpoint                  *PriorPrefixCheckpointV1
+	Checkpoint                  *CheckpointInputV1
 	ExpectedPreconditionsDigest [32]byte
 	ResultType                  string
 	ResultSchemaVersion         uint32
@@ -163,7 +160,6 @@ type ValidatedBatchV1 struct {
 	nextHeads            []controljournal.NewAggregateHeadV1
 	events               []controljournal.EventEnvelopeV1
 	intents              []controljournal.EffectIntentV1
-	checkpoint           *PriorPrefixCheckpointV1
 	operationRecordBytes []byte
 }
 
@@ -322,9 +318,8 @@ func NewValidatedBatchV1(input BatchInputV1) (ValidatedBatchV1, error) {
 		OperationID: string(operationID), Operation: absentPut(prefix+"operations/"+string(operationID), operationBytes),
 		Events: eventMutations, AggregateHeads: headMutations, EffectIntents: intentMutations,
 	}
-	checkpoint := cloneCheckpoint(input.Checkpoint)
-	if checkpoint != nil {
-		if err := validateCheckpoint(prefix, checkpoint, events, &product); err != nil {
+	if input.Checkpoint != nil {
+		if err := validateCheckpoint(prefix, operationID, input.Command.projectID, input.Command.missionID, input.Checkpoint, events, &product); err != nil {
 			return ValidatedBatchV1{}, err
 		}
 	}
@@ -334,7 +329,7 @@ func NewValidatedBatchV1(input BatchInputV1) (ValidatedBatchV1, error) {
 	batch := ValidatedBatchV1{
 		command: cloneCommand(input.Command), product: cloneProductBatch(product),
 		expectedHeads: expectedHeads, nextHeads: nextHeads, events: events,
-		intents: intents, checkpoint: checkpoint,
+		intents:              intents,
 		operationRecordBytes: append([]byte(nil), operationBytes...),
 	}
 	batch.seal = batchDigest(batch.product)
@@ -377,29 +372,37 @@ func CanonicalPreconditionsDigestV1(heads []controljournal.ExpectedAggregateHead
 	return sha256.Sum256(encoded), nil
 }
 
-func validateCheckpoint(prefix string, checkpoint *PriorPrefixCheckpointV1, events []controljournal.EventEnvelopeV1, product *storegapdb.ProductBatch) error {
-	if !validToken(checkpoint.CheckpointID) || checkpoint.ThroughRevision == 0 || checkpoint.ThroughEventID == "" ||
-		len(checkpoint.CheckpointValue) == 0 || len(checkpoint.CheckpointValue) > storegapdb.MaxCheckpointValueBytes ||
-		len(checkpoint.CheckpointHeadValue) == 0 || len(checkpoint.CheckpointHeadValue) > storegapdb.MaxOrdinaryValueBytes {
+func validateCheckpoint(prefix string, operationID controljournal.OperationID, projectID controljournal.ProjectID, missionID controljournal.MissionID, input *CheckpointInputV1, events []controljournal.EventEnvelopeV1, product *storegapdb.ProductBatch) error {
+	publication, err := input.Validated.PublicationV1(operationID)
+	if err != nil {
+		return refusal(OutcomeInvalidCheckpoint, "checkpoint capability is invalid for the forming operation")
+	}
+	record, err := input.Validated.RecordV1()
+	if err != nil {
+		return refusal(OutcomeInvalidCheckpoint, "checkpoint record capability is invalid")
+	}
+	head, err := input.Validated.HeadV1()
+	if err != nil || publication.FormingBatchOperationID != operationID ||
+		publication.CheckpointID != record.CheckpointID || head.CheckpointID != record.CheckpointID ||
+		record.ProjectID != projectID || record.MissionID != missionID ||
+		record.Watermark.ThroughRecordRevision == 0 || record.Watermark.ThroughEventID == "" ||
+		head.ThroughRecordRevision != record.Watermark.ThroughRecordRevision || head.ThroughEventID != record.Watermark.ThroughEventID ||
+		len(publication.RecordBytes) == 0 || len(publication.RecordBytes) > storegapdb.MaxCheckpointValueBytes ||
+		len(publication.HeadBytes) == 0 || len(publication.HeadBytes) > storegapdb.MaxOrdinaryValueBytes {
 		return refusal(OutcomeInvalidCheckpoint, "checkpoint does not prove a bounded prior prefix")
 	}
 	for _, event := range events {
-		if event.EventID == checkpoint.ThroughEventID {
+		if event.EventID == record.Watermark.ThroughEventID {
 			return refusal(OutcomeInvalidCheckpoint, "checkpoint includes a current-batch event")
 		}
 	}
-	record := absentPut(prefix+"checkpoints/"+checkpoint.CheckpointID, checkpoint.CheckpointValue)
+	checkpointRecord := absentPut(prefix+"checkpoints/"+string(record.CheckpointID), publication.RecordBytes)
 	headCondition := storegapdb.Condition{Kind: storegapdb.ConditionAbsent}
-	if checkpoint.CheckpointHeadPreviously {
-		if checkpoint.ObservedHeadRevision == 0 {
-			return refusal(OutcomeInvalidCheckpoint, "checkpoint head revision is absent")
-		}
-		headCondition = storegapdb.Condition{Kind: storegapdb.ConditionRevision, ExpectedRevision: checkpoint.ObservedHeadRevision}
-	} else if checkpoint.ObservedHeadRevision != 0 {
-		return refusal(OutcomeInvalidCheckpoint, "new checkpoint head predicts a revision")
+	if input.ObservedHeadRevision > 0 {
+		headCondition = storegapdb.Condition{Kind: storegapdb.ConditionRevision, ExpectedRevision: input.ObservedHeadRevision}
 	}
-	head := storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: prefix + "checkpoint-head", Condition: headCondition, Value: append([]byte(nil), checkpoint.CheckpointHeadValue...)}
-	product.Checkpoint, product.CheckpointHead = &record, &head
+	checkpointHead := storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: prefix + "checkpoint-head", Condition: headCondition, Value: append([]byte(nil), publication.HeadBytes...)}
+	product.Checkpoint, product.CheckpointHead = &checkpointRecord, &checkpointHead
 	return nil
 }
 
@@ -546,16 +549,6 @@ func cloneCommand(value ValidatedCommandEnvelopeV1) ValidatedCommandEnvelopeV1 {
 	value.payload = append([]byte(nil), value.payload...)
 	value.canonical = append([]byte(nil), value.canonical...)
 	return value
-}
-
-func cloneCheckpoint(value *PriorPrefixCheckpointV1) *PriorPrefixCheckpointV1 {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	copy.CheckpointValue = append([]byte(nil), value.CheckpointValue...)
-	copy.CheckpointHeadValue = append([]byte(nil), value.CheckpointHeadValue...)
-	return &copy
 }
 
 func absentPut(key string, value []byte) storegapdb.Mutation {

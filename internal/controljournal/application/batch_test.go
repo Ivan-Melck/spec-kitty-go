@@ -3,6 +3,7 @@ package application
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"reflect"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/reducer"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 )
 
@@ -236,22 +239,47 @@ func TestBatchRefusesDuplicatesInconsistencyAndSplitMutant(t *testing.T) {
 
 func TestBatchCheckpointMustBePriorPrefix(t *testing.T) {
 	input := batchInputFixture(t, "checkpoint", 1, 1, 0)
-	input.Checkpoint = &PriorPrefixCheckpointV1{
-		CheckpointID: "checkpoint-1", ThroughRevision: 7, ThroughEventID: "prior-event",
-		CheckpointValue: []byte(`{"through_revision":7}`), CheckpointHeadValue: []byte(`{"checkpoint_id":"checkpoint-1"}`),
-	}
+	capability := checkpointCapabilityFixture(t, "project", "mission", "prior-operation", input.Command.operationID)
+	input.Checkpoint = &CheckpointInputV1{Validated: capability}
 	batch, err := NewValidatedBatchV1(input)
 	if err != nil || batch.product.Checkpoint == nil || batch.product.CheckpointHead == nil {
 		t.Fatalf("prior checkpoint refused: %v", err)
 	}
-	input.Checkpoint.ThroughEventID = input.Events[0].EventID
-	if _, err := NewValidatedBatchV1(input); outcomeOf(err) != OutcomeInvalidCheckpoint {
-		t.Fatalf("current-prefix checkpoint survived: %v", err)
+	publication, err := capability.PublicationV1(input.Command.operationID)
+	if err != nil || !bytes.Equal(batch.product.Checkpoint.Value, publication.RecordBytes) || !bytes.Equal(batch.product.CheckpointHead.Value, publication.HeadBytes) {
+		t.Fatalf("checkpoint publication mismatch: %v", err)
 	}
-	input.Checkpoint.ThroughEventID = "prior-event"
+	publication.RecordBytes[0] ^= 0xff
+	publication.HeadBytes[0] ^= 0xff
+	if bytes.Equal(batch.product.Checkpoint.Value, publication.RecordBytes) || bytes.Equal(batch.product.CheckpointHead.Value, publication.HeadBytes) {
+		t.Fatal("checkpoint publication retained mutable accessor bytes")
+	}
+	if batch.product.CheckpointHead.Condition.Kind != storegapdb.ConditionAbsent {
+		t.Fatalf("new selector condition=%+v", batch.product.CheckpointHead.Condition)
+	}
 	input.Checkpoint.ObservedHeadRevision = 99
-	if _, err := NewValidatedBatchV1(input); outcomeOf(err) != OutcomeInvalidCheckpoint {
-		t.Fatalf("new selector with predicted revision survived: %v", err)
+	replacement, err := NewValidatedBatchV1(input)
+	if err != nil || replacement.product.CheckpointHead.Condition.Kind != storegapdb.ConditionRevision || replacement.product.CheckpointHead.Condition.ExpectedRevision != 99 {
+		t.Fatalf("existing selector condition=%+v err=%v", replacement.product.CheckpointHead.Condition, err)
+	}
+}
+
+func TestBatchCheckpointCapabilityRefusesZeroCrossMissionAndCurrentPrefixReuse(t *testing.T) {
+	base := batchInputFixture(t, "checkpoint-refusal", 1, 1, 0)
+	for name, capability := range map[string]journalcheckpoint.ValidatedCheckpointV1{
+		"zero or manually unrepresentable": {},
+		"cross project":                    checkpointCapabilityFixture(t, "other-project", "mission", "prior-operation", base.Command.operationID),
+		"cross mission":                    checkpointCapabilityFixture(t, "project", "other-mission", "prior-operation", base.Command.operationID),
+		"wrong forming operation":          checkpointCapabilityFixture(t, "project", "mission", "prior-operation", "different-forming-operation"),
+		"current prefix reuse":             checkpointCapabilityFixture(t, "project", "mission", base.Command.operationID, "different-forming-operation"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := base
+			input.Checkpoint = &CheckpointInputV1{Validated: capability}
+			if _, err := NewValidatedBatchV1(input); outcomeOf(err) != OutcomeInvalidCheckpoint {
+				t.Fatalf("checkpoint mutant survived: %v", err)
+			}
+		})
 	}
 }
 
@@ -414,6 +442,90 @@ func eventFixturePayload(t *testing.T, id controljournal.EventID, index, count i
 		t.Fatal(err)
 	}
 	return event
+}
+
+func checkpointCapabilityFixture(t *testing.T, project, mission string, priorOperation, formingOperation controljournal.OperationID) journalcheckpoint.ValidatedCheckpointV1 {
+	t.Helper()
+	eventRegistry, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{
+		EventType: "mission.advanced", EventSchemaVersion: 1, ReducerVersion: "mission-v1",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducers, err := reducer.NewRegistryV1([]reducer.EntryV1{{
+		AggregateKind: "mission", EventType: "mission.advanced", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventIndex, _ := controljournal.NewEventIndexV1(0)
+	eventCount, _ := controljournal.NewEventCountV1(1)
+	payload := []byte(`{"advanced":true}`)
+	event, err := controljournal.NewEventEnvelopeV1(controljournal.EventEnvelopeInputV1{
+		EnvelopeVersion: 1, EventID: "checkpoint-prior-event", EventType: "mission.advanced", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", ProjectID: controljournal.ProjectID(project), AggregateKind: "mission", AggregateID: "checkpoint-aggregate",
+		AggregateLogicalVersion: 1, OperationID: priorOperation, RuntimeEpochID: "checkpoint-epoch",
+		LeaseID: "checkpoint-lease", LeaseGeneration: 1, FenceToken: 1,
+		EventIndex: eventIndex, EventCount: eventCount, Payload: payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := controljournal.StoredEventV1{RecordRevision: 7, Envelope: event}
+	journal, err := controljournal.ValidateJournalV1(eventRegistry, []controljournal.StoredEventV1{stored})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := controljournal.EncodeEventEnvelopeV1(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var folded bytes.Buffer
+	folded.Write(make([]byte, sha256.Size))
+	var number [8]byte
+	binary.BigEndian.PutUint64(number[:], stored.RecordRevision)
+	folded.Write(number[:])
+	binary.BigEndian.PutUint64(number[:], uint64(len(encoded)))
+	folded.Write(number[:])
+	folded.Write(encoded)
+	watermark := journalcheckpoint.WatermarkV1{
+		ThroughRecordRevision: stored.RecordRevision, ThroughEventID: event.EventID,
+		EventCount: 1, EventPrefixDigest: sha256.Sum256(folded.Bytes()),
+	}
+	state, err := reducer.NewStateV1(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventDigest, err := eventRegistry.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducerDigest, err := reducers.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability, err := journalcheckpoint.BuildV1(journalcheckpoint.BuildInputV1{
+		CheckpointID: "checkpoint-prior", PriorPrefix: journal, EventRegistry: eventRegistry, Reducers: reducers,
+		Source: journalcheckpoint.SourceIdentityV1{
+			ProjectID: controljournal.ProjectID(project), MissionID: controljournal.MissionID(mission), RunID: "checkpoint-run",
+			ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest,
+		},
+		Watermark: watermark,
+		Aggregates: []journalcheckpoint.AggregateSnapshotV1{{
+			Kind: "mission", ID: "checkpoint-aggregate", LogicalVersion: 1, RuntimeEpochID: "checkpoint-epoch",
+			LastEventID: event.EventID, State: state.CanonicalBytes(), StateDigest: state.Digest(),
+		}},
+		Authority: journalcheckpoint.AuthoritySummaryV1{
+			RunID: "checkpoint-run", RuntimeEpochID: "checkpoint-epoch", LeaseID: "checkpoint-lease",
+			LeaseGeneration: 1, FenceToken: 1, DurableRevision: stored.RecordRevision,
+		},
+		FormingBatchOperation: formingOperation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return capability
 }
 
 func outcomeOf(err error) OutcomeKind {
