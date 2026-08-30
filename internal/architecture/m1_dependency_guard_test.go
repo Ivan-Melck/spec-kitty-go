@@ -452,6 +452,88 @@ func CompareCommittedEventOrder(left, right CommittedEvent) int {
 	}
 }
 
+func TestM1DependencyJournalDecoyCannotMaskBrokenProductionSeam(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		validType  string
+		brokenType string
+	}{
+		{name: "valid-lexically-earlier", validType: "AProbeEvent", brokenType: "CommittedEvent"},
+		{name: "valid-lexically-later", validType: "ZProbeEvent", brokenType: "CommittedEvent"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := "package controljournal\n\n" +
+				m1JournalSeamFixture(test.validType, "arbitraryValid", true) +
+				m1JournalSeamFixture(test.brokenType, "arbitraryBroken", false)
+			violations := inspectM1Sources([]m1SourceFile{{
+				Path:   "internal/controljournal/model.go",
+				Source: []byte(source),
+			}})
+			for _, kind := range []string{"event-order-seam", "event-group-refusal-seam", "event-version-refusal-seam", "event-digest-refusal-seam"} {
+				detail, found := findM1Violation(violations, kind)
+				if !found {
+					t.Fatalf("valid unused decoy masked broken %s behavior: %v", kind, violations)
+				}
+				if !strings.Contains(detail, test.brokenType+": executable") {
+					t.Fatalf("%s did not bind its behavioral failure to %s: %q", kind, test.brokenType, detail)
+				}
+			}
+		})
+	}
+}
+
+func TestM1DependencyJournalMultipleValidSeams(t *testing.T) {
+	source := "package controljournal\n\n" +
+		m1JournalSeamFixture("FirstArbitraryRecord", "firstArbitraryFunctions", true) +
+		m1JournalSeamFixture("SecondRenamedRecord", "secondRenamedFunctions", true)
+	if violations := inspectM1Sources([]m1SourceFile{{
+		Path:   "internal/controljournal/model.go",
+		Source: []byte(source),
+	}}); len(violations) != 0 {
+		t.Fatalf("multiple behaviorally valid renamed seams rejected: %v", violations)
+	}
+}
+
+func m1JournalSeamFixture(eventType, prefix string, valid bool) string {
+	comparator := `
+	if left.RecordRevision < right.RecordRevision { return -1 }
+	if left.RecordRevision > right.RecordRevision { return 1 }
+	if left.EventIndex < right.EventIndex { return -1 }
+	if left.EventIndex > right.EventIndex { return 1 }
+	if left.EventID < right.EventID { return -1 }
+	if left.EventID > right.EventID { return 1 }
+	return 0`
+	validator := `
+	if len(events) == 0 { return journalFixtureError{} }
+	seen := map[string]bool{}
+	for index, event := range events {
+		if event.EnvelopeVersion != 1 || event.EventType != "work-claimed" || event.EventSchemaVersion != 1 || event.ReducerVersion != "work-v1" { return journalFixtureError{} }
+		if event.RecordRevision == 0 || event.OperationID == "" || event.EventIndex >= event.EventCount || event.EventID == "" { return journalFixtureError{} }
+		if event.CanonicalEventDigest != ` + prefix + `Digest(event) { return journalFixtureError{} }
+		if seen[event.EventID] { return journalFixtureError{} }; seen[event.EventID] = true
+		if index == 0 { if event.EventIndex != 0 { return journalFixtureError{} }; continue }
+		previous := events[index-1]
+		if ` + prefix + `Compare(previous, event) >= 0 { return journalFixtureError{} }
+		if previous.RecordRevision == event.RecordRevision && (previous.OperationID != event.OperationID || previous.EventCount != event.EventCount || event.EventIndex != previous.EventIndex+1) { return journalFixtureError{} }
+		if previous.RecordRevision != event.RecordRevision && event.EventIndex != 0 { return journalFixtureError{} }
+	}
+	return nil`
+	digest := `return event.EventID + "|" + event.OperationID + "|" + event.EventType + "|" + event.ReducerVersion`
+	if !valid {
+		comparator = `if left.RecordRevision < right.RecordRevision { return -1 }; if left.EventIndex < right.EventIndex { return -1 }; return 0`
+		validator = `return nil`
+		digest = `return "accepted"`
+	}
+	return fmt.Sprintf(`
+type %[1]s struct { RecordRevision uint64; EventIndex uint32; EventID string; OperationID string; EventType string; EnvelopeVersion uint32; EventSchemaVersion uint32; ReducerVersion string; EventCount uint32; CanonicalEventDigest string }
+type %[2]sFixtureError struct{}
+func (%[2]sFixtureError) Error() string { return "invalid" }
+func %[2]sCompare(left, right %[1]s) int { %[3]s }
+func %[2]sDigest(event %[1]s) string { %[4]s }
+func %[2]sValidate(events []%[1]s) error { %[5]s }
+`, eventType, prefix, comparator, digest, strings.ReplaceAll(validator, "journalFixtureError", prefix+"FixtureError"))
+}
+
 func collectM1RepositorySources(t *testing.T) []m1SourceFile {
 	t.Helper()
 	root := filepath.Clean(filepath.Join(m1ContractsDir(t), "..", "..", ".."))
@@ -570,11 +652,11 @@ func inspectM1JournalContractSeams(files []m1SourceFile) []m1ArchitectureViolati
 	if model == nil {
 		return nil
 	}
-	modelAST, err := parser.ParseFile(token.NewFileSet(), model.Path, model.Source, 0)
-	if err != nil || !declaresM1EventModel(modelAST) {
+	if _, err := parser.ParseFile(token.NewFileSet(), model.Path, model.Source, 0); err != nil {
 		return nil // The repository-wide parser reports syntax errors once.
 	}
 	var functions []*ast.FuncDecl
+	eventTypeSet := make(map[string]bool)
 	for _, file := range files {
 		path := filepath.ToSlash(file.Path)
 		if filepath.ToSlash(filepath.Dir(path)) != "internal/controljournal" || strings.HasSuffix(path, "_test.go") {
@@ -584,36 +666,49 @@ func inspectM1JournalContractSeams(files []m1SourceFile) []m1ArchitectureViolati
 		if err != nil {
 			continue // The repository-wide parser reports this error once.
 		}
+		for _, eventType := range m1EventContractTypeNames(parsed) {
+			eventTypeSet[eventType] = true
+		}
 		for _, declaration := range parsed.Decls {
 			if function, ok := declaration.(*ast.FuncDecl); ok && function.Recv == nil {
 				functions = append(functions, function)
 			}
 		}
 	}
+	eventTypes := make([]string, 0, len(eventTypeSet))
+	for eventType := range eventTypeSet {
+		eventTypes = append(eventTypes, eventType)
+	}
+	sort.Strings(eventTypes)
+	if len(eventTypes) == 0 {
+		return nil
+	}
 
-	seam := discoverM1ExecutableJournalSeam(functions)
+	seams := discoverM1ExecutableJournalSeams(functions, eventTypes)
 	var violations []m1ArchitectureViolation
 	appendViolation := func(kind, detail string) {
 		violations = append(violations, m1ArchitectureViolation{Path: model.Path, Kind: kind, Detail: detail})
 	}
-	if len(seam.Comparators) == 0 {
-		appendViolation("event-order-seam", "no func(T, T) int comparator is executable for the committed event type")
-	}
-	if len(seam.Validators) == 0 {
-		appendViolation("event-group-refusal-seam", "no func([]T) error validator observes a whole committed event group")
-		appendViolation("event-version-refusal-seam", "no whole-group validator can refuse unknown event and reducer versions")
-	}
-	if len(seam.Digests) == 0 {
-		appendViolation("event-digest-refusal-seam", "no func(T) string canonical digest calculator is executable for mismatch probes")
-	}
-	if seam.EventType == "" || (len(seam.Comparators) == 0 && (len(seam.Validators) == 0 || len(seam.Digests) == 0)) {
-		return violations
-	}
+	for _, seam := range seams {
+		if len(seam.Comparators) == 0 {
+			appendViolation("event-order-seam", seam.EventType+": no func(T, T) int comparator is executable for this committed-event candidate")
+		}
+		if len(seam.Validators) == 0 {
+			appendViolation("event-group-refusal-seam", seam.EventType+": no func([]T) error validator observes a whole committed event group")
+			appendViolation("event-version-refusal-seam", seam.EventType+": no whole-group validator can refuse unknown event and reducer versions")
+		}
+		if len(seam.Digests) == 0 {
+			appendViolation("event-digest-refusal-seam", seam.EventType+": no func(T) string canonical digest calculator is executable for mismatch probes")
+		}
+		if len(seam.Comparators) == 0 && (len(seam.Validators) == 0 || len(seam.Digests) == 0) {
+			continue
+		}
 
-	probeFailures, probeDetail := executeM1JournalSemanticProbe(files, seam)
-	for _, kind := range []string{"event-order-seam", "event-group-refusal-seam", "event-version-refusal-seam", "event-digest-refusal-seam"} {
-		if probeFailures[kind] {
-			appendViolation(kind, probeDetail[kind])
+		probeFailures, probeDetail := executeM1JournalSemanticProbe(files, seam)
+		for _, kind := range []string{"event-order-seam", "event-group-refusal-seam", "event-version-refusal-seam", "event-digest-refusal-seam"} {
+			if probeFailures[kind] {
+				appendViolation(kind, seam.EventType+": "+probeDetail[kind])
+			}
 		}
 	}
 	return violations
@@ -632,68 +727,35 @@ type m1ExecutableJournalSeam struct {
 	Digests     []m1DigestSeam
 }
 
-func discoverM1ExecutableJournalSeam(functions []*ast.FuncDecl) m1ExecutableJournalSeam {
-	byType := make(map[string]*m1ExecutableJournalSeam)
+func discoverM1ExecutableJournalSeams(functions []*ast.FuncDecl, eventTypes []string) []m1ExecutableJournalSeam {
+	byType := make(map[string]*m1ExecutableJournalSeam, len(eventTypes))
+	for _, eventType := range eventTypes {
+		byType[eventType] = &m1ExecutableJournalSeam{EventType: eventType}
+	}
 	for _, function := range functions {
 		parameters := m1FieldTypeNames(function.Type.Params)
 		results := m1FieldTypeNames(function.Type.Results)
-		if len(parameters) == 2 && parameters[0] == parameters[1] && len(results) == 1 && results[0] == "int" && isM1NamedType(parameters[0]) {
-			seam := m1SeamForType(byType, parameters[0])
+		if len(parameters) == 2 && parameters[0] == parameters[1] && len(results) == 1 && results[0] == "int" && byType[parameters[0]] != nil {
+			seam := byType[parameters[0]]
 			seam.Comparators = append(seam.Comparators, function.Name.Name)
 		}
-		if len(parameters) == 1 && strings.HasPrefix(parameters[0], "[]") && len(results) == 1 && results[0] == "error" && isM1NamedType(strings.TrimPrefix(parameters[0], "[]")) {
-			seam := m1SeamForType(byType, strings.TrimPrefix(parameters[0], "[]"))
+		if len(parameters) == 1 && strings.HasPrefix(parameters[0], "[]") && len(results) == 1 && results[0] == "error" && byType[strings.TrimPrefix(parameters[0], "[]")] != nil {
+			seam := byType[strings.TrimPrefix(parameters[0], "[]")]
 			seam.Validators = append(seam.Validators, function.Name.Name)
 		}
 		if len(parameters) == 1 && (len(results) == 1 || len(results) == 2) && results[0] == "string" && (len(results) == 1 || results[1] == "error") {
 			eventType := strings.TrimPrefix(parameters[0], "*")
-			if isM1NamedType(eventType) {
-				seam := m1SeamForType(byType, eventType)
+			if byType[eventType] != nil {
+				seam := byType[eventType]
 				seam.Digests = append(seam.Digests, m1DigestSeam{Name: function.Name.Name, PointerArg: strings.HasPrefix(parameters[0], "*"), ReturnsErr: len(results) == 2})
 			}
 		}
 	}
-	var best m1ExecutableJournalSeam
-	bestScore := -1
-	for _, seam := range byType {
-		score := 0
-		if len(seam.Comparators) > 0 {
-			score += 4
-		}
-		if len(seam.Validators) > 0 {
-			score += 2
-		}
-		if len(seam.Digests) > 0 {
-			score++
-		}
-		if score > bestScore || (score == bestScore && seam.EventType < best.EventType) {
-			best, bestScore = *seam, score
-		}
+	seams := make([]m1ExecutableJournalSeam, 0, len(byType))
+	for _, eventType := range eventTypes {
+		seams = append(seams, *byType[eventType])
 	}
-	return best
-}
-
-func m1SeamForType(byType map[string]*m1ExecutableJournalSeam, eventType string) *m1ExecutableJournalSeam {
-	if byType[eventType] == nil {
-		byType[eventType] = &m1ExecutableJournalSeam{EventType: eventType}
-	}
-	return byType[eventType]
-}
-
-func isM1NamedType(name string) bool {
-	if name == "" || strings.ContainsAny(name, "[]{}().") {
-		return false
-	}
-	switch name {
-	case "bool", "byte", "complex64", "complex128", "error", "float32", "float64", "int", "int8", "int16", "int32", "int64", "rune", "string", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
-		return false
-	}
-	for index, character := range name {
-		if character != '_' && !('a' <= character && character <= 'z') && !('A' <= character && character <= 'Z') && !(index > 0 && '0' <= character && character <= '9') {
-			return false
-		}
-	}
-	return true
+	return seams
 }
 
 func m1FieldTypeNames(fields *ast.FieldList) []string {
@@ -919,7 +981,10 @@ func m1ContractDigestOK(validate func([]%s) error, digest func(%s) string) bool 
 		seam.EventType, seam.EventType, seam.EventType, seam.EventType)
 }
 
-func declaresM1EventModel(file *ast.File) bool {
+func m1EventContractTypeNames(file *ast.File) []string {
+	// Production ownership is structural: these three frozen ordering fields
+	// identify every committed-event candidate regardless of its type name.
+	var names []string
 	for _, declaration := range file.Decls {
 		generic, ok := declaration.(*ast.GenDecl)
 		if !ok || generic.Tok != token.TYPE {
@@ -931,12 +996,13 @@ func declaresM1EventModel(file *ast.File) bool {
 				continue
 			}
 			structure, ok := typeSpec.Type.(*ast.StructType)
-			if ok && m1StructHasFields(structure, "EventID", "EventIndex") {
-				return true
+			if ok && m1StructHasFields(structure, "RecordRevision", "EventIndex", "EventID") {
+				names = append(names, typeSpec.Name.Name)
 			}
 		}
 	}
-	return false
+	sort.Strings(names)
+	return names
 }
 
 func m1StructHasFields(structure *ast.StructType, wanted ...string) bool {
