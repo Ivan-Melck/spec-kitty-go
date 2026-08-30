@@ -61,7 +61,10 @@ func NewRegistryV1(entries []EntryV1) (RegistryV1, error) {
 		return RegistryV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "reducer_registry"}
 	}
 	for _, entry := range entries {
-		if entry.AggregateKind == "" || entry.EventType == "" || entry.EventSchemaVersion == 0 || entry.ReducerVersion == "" || entry.Reduce == nil {
+		if err := controljournal.ValidateReducerCoordinateV1(entry.AggregateKind, entry.EventType, entry.EventSchemaVersion, entry.ReducerVersion); err != nil {
+			return RegistryV1{}, err
+		}
+		if entry.Reduce == nil {
 			return RegistryV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "reducer_entry"}
 		}
 		key := reducerKey(entry.AggregateKind, entry.EventType, entry.EventSchemaVersion, entry.ReducerVersion)
@@ -87,13 +90,19 @@ type ProjectionV1 struct {
 func NewProjectionV1(initial map[AggregateKeyV1]StateV1, heads map[AggregateKeyV1]uint64) (ProjectionV1, error) {
 	projection := ProjectionV1{states: make(map[AggregateKeyV1]StateV1, len(initial)), heads: make(map[AggregateKeyV1]uint64, len(heads))}
 	for key, state := range initial {
-		if key.Kind == "" || key.ID == "" || !json.Valid(state.canonical) {
+		if err := controljournal.ValidateAggregateCoordinateV1(key.Kind, key.ID); err != nil {
+			return ProjectionV1{}, err
+		}
+		if !json.Valid(state.canonical) {
 			return ProjectionV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "projection_state"}
 		}
 		projection.states[key] = StateV1{canonical: state.CanonicalBytes()}
 	}
 	for key, head := range heads {
-		if key.Kind == "" || key.ID == "" || head == 0 {
+		if err := controljournal.ValidateAggregateCoordinateV1(key.Kind, key.ID); err != nil {
+			return ProjectionV1{}, err
+		}
+		if head == 0 {
 			return ProjectionV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "projection_head"}
 		}
 		projection.heads[key] = head

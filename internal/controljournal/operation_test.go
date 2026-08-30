@@ -3,6 +3,7 @@ package controljournal
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -62,6 +63,130 @@ func TestOperationAcceptanceDeliveryAndReadinessAreSeparate(t *testing.T) {
 	}
 	if bytesOnly.Recovery == RecoveryProductReady {
 		t.Fatal("byte recovery implied product readiness")
+	}
+}
+
+func TestOperationOutcomeTransitionsRejectEveryInvalidPriorState(t *testing.T) {
+	valid, err := NewOperationOutcomeV1("operation-1", OperationAmbiguous, "command.result", []byte(`{"value":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutants := map[string]OperationOutcomeV1{
+		"zero":                  {},
+		"wrong schema":          valid,
+		"bad operation id":      valid,
+		"bad kind":              valid,
+		"unexpected resolution": valid,
+		"missing resolution":    valid,
+		"bad resolution":        valid,
+		"bad delivery":          valid,
+		"bad recovery":          valid,
+		"premature ready":       valid,
+		"bad result type":       valid,
+		"missing result":        valid,
+		"malformed result":      valid,
+		"noncanonical result":   valid,
+		"oversized result":      valid,
+	}
+	mutant := mutants["wrong schema"]
+	mutant.SchemaVersion = 2
+	mutants["wrong schema"] = mutant
+	mutant = mutants["bad operation id"]
+	mutant.OperationID = "has space"
+	mutants["bad operation id"] = mutant
+	mutant = mutants["bad kind"]
+	mutant.Kind = "invented"
+	mutants["bad kind"] = mutant
+	mutant = mutants["unexpected resolution"]
+	mutant.Resolution = OperationDurablyApplied
+	mutants["unexpected resolution"] = mutant
+	mutant = mutants["missing resolution"]
+	mutant.Kind = OperationReconciled
+	mutants["missing resolution"] = mutant
+	mutant = mutants["bad resolution"]
+	mutant.Kind = OperationReconciled
+	mutant.Resolution = OperationConflict
+	mutants["bad resolution"] = mutant
+	mutant = mutants["bad delivery"]
+	mutant.Delivery = "invented"
+	mutants["bad delivery"] = mutant
+	mutant = mutants["bad recovery"]
+	mutant.Recovery = "invented"
+	mutants["bad recovery"] = mutant
+	mutant = mutants["premature ready"]
+	mutant.Recovery = RecoveryProductReady
+	mutants["premature ready"] = mutant
+	mutant = mutants["bad result type"]
+	mutant.ResultType = "has space"
+	mutants["bad result type"] = mutant
+	mutant = mutants["missing result"]
+	mutant.result = nil
+	mutants["missing result"] = mutant
+	mutant = mutants["malformed result"]
+	mutant.result = []byte("{")
+	mutants["malformed result"] = mutant
+	mutant = mutants["noncanonical result"]
+	mutant.result = []byte(`{"z":2,"a":1}`)
+	mutants["noncanonical result"] = mutant
+	mutant = mutants["oversized result"]
+	mutant.result = []byte(`{"value":"` + strings.Repeat("a", MaxOrdinaryValueBytes) + `"}`)
+	mutants["oversized result"] = mutant
+
+	for name, prior := range mutants {
+		t.Run(name, func(t *testing.T) {
+			outcome, err := prior.WithDelivery(DeliveryReturned)
+			assertZeroOperationOutcomeError(t, outcome, err)
+			outcome, err = prior.WithRecovery(RecoveryBytesRestored)
+			assertZeroOperationOutcomeError(t, outcome, err)
+			outcome, err = ReconcileAmbiguousOperationV1(prior, OperationDurablyApplied)
+			assertZeroOperationOutcomeError(t, outcome, err)
+		})
+	}
+}
+
+func TestOperationOutcomeTransitionsReturnZeroOnInvalidRequest(t *testing.T) {
+	ambiguous, err := NewOperationOutcomeV1("operation-1", OperationAmbiguous, "command.result", []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := ambiguous.WithDelivery("invented")
+	assertZeroOperationOutcomeError(t, outcome, err)
+	outcome, err = ambiguous.WithRecovery("invented")
+	assertZeroOperationOutcomeError(t, outcome, err)
+	outcome, err = ambiguous.WithRecovery(RecoveryProductReady)
+	assertZeroOperationOutcomeError(t, outcome, err)
+	outcome, err = ReconcileAmbiguousOperationV1(ambiguous, OperationConflict)
+	assertZeroOperationOutcomeError(t, outcome, err)
+
+	applied, err := NewOperationOutcomeV1("operation-2", OperationDurablyApplied, "command.result", []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := applied.WithRecovery(RecoveryProductReady)
+	if err != nil || ready.Recovery != RecoveryProductReady {
+		t.Fatalf("durably applied outcome did not become product-ready: %#v %v", ready, err)
+	}
+	reconciled, err := ReconcileAmbiguousOperationV1(ambiguous, OperationDurablyApplied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err = reconciled.WithRecovery(RecoveryProductReady)
+	if err != nil || ready.Recovery != RecoveryProductReady {
+		t.Fatalf("applied reconciliation did not become product-ready: %#v %v", ready, err)
+	}
+}
+
+func assertZeroOperationOutcomeError(t *testing.T, outcome OperationOutcomeV1, err error) {
+	t.Helper()
+	var validationError ValidationError
+	if !errors.As(err, &validationError) {
+		t.Fatalf("outcome error = %T %v", err, err)
+	}
+	if outcome.SchemaVersion != 0 || outcome.OperationID != "" || outcome.Kind != "" || outcome.Resolution != "" || outcome.Delivery != "" || outcome.Recovery != "" || outcome.ResultType != "" || outcome.result != nil {
+		t.Fatalf("failure returned nonzero outcome: %#v", outcome)
+	}
+	if len(err.Error()) > 128 {
+		t.Fatalf("diagnostic exceeded bound: %q", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
@@ -70,6 +71,95 @@ func registry(t *testing.T) RegistryV1 {
 		t.Fatal(err)
 	}
 	return registry
+}
+
+func TestReducerRegistryRejectsInvalidRootCoordinates(t *testing.T) {
+	valid := EntryV1{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Reduce: replaceState}
+	invalidTokens := map[string]string{
+		"empty":               "",
+		"space":               "bad token",
+		"leading punctuation": "-bad",
+		"invalid utf8":        string([]byte{0xff}),
+		"129 bytes":           strings.Repeat("a", 129),
+	}
+	for name, value := range invalidTokens {
+		for _, coordinate := range []string{"aggregate_kind", "event_type", "reducer_version"} {
+			t.Run(coordinate+"/"+name, func(t *testing.T) {
+				entry := valid
+				switch coordinate {
+				case "aggregate_kind":
+					entry.AggregateKind = controljournal.AggregateKind(value)
+				case "event_type":
+					entry.EventType = controljournal.EventType(value)
+				case "reducer_version":
+					entry.ReducerVersion = controljournal.ReducerVersion(value)
+				}
+				if _, err := NewRegistryV1([]EntryV1{entry}); err == nil {
+					t.Fatalf("accepted invalid %s %q", coordinate, value)
+				}
+			})
+		}
+	}
+	zeroSchema := valid
+	zeroSchema.EventSchemaVersion = 0
+	if _, err := NewRegistryV1([]EntryV1{zeroSchema}); err == nil {
+		t.Fatal("accepted zero event schema")
+	}
+	nilReducer := valid
+	nilReducer.Reduce = nil
+	if _, err := NewRegistryV1([]EntryV1{nilReducer}); err == nil {
+		t.Fatal("accepted nil reducer")
+	}
+	if _, err := NewRegistryV1([]EntryV1{valid, valid}); err == nil {
+		t.Fatal("accepted duplicate reducer coordinate")
+	}
+	maxToken := controljournal.AggregateKind(strings.Repeat("a", 128))
+	atBoundary := valid
+	atBoundary.AggregateKind = maxToken
+	atBoundary.EventType = controljournal.EventType(maxToken)
+	atBoundary.ReducerVersion = controljournal.ReducerVersion(maxToken)
+	if _, err := NewRegistryV1([]EntryV1{atBoundary}); err != nil {
+		t.Fatalf("rejected 128-byte reducer coordinates: %v", err)
+	}
+}
+
+func TestReducerProjectionRejectsInvalidRootCoordinates(t *testing.T) {
+	state, err := NewStateV1([]byte(`{"value":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	validKey := AggregateKeyV1{Kind: "mission", ID: "aggregate-1"}
+	invalidTokens := map[string]string{
+		"empty":               "",
+		"space":               "bad token",
+		"leading punctuation": "-bad",
+		"invalid utf8":        string([]byte{0xff}),
+		"129 bytes":           strings.Repeat("a", 129),
+	}
+	for name, value := range invalidTokens {
+		for _, coordinate := range []string{"aggregate_kind", "aggregate_id"} {
+			key := validKey
+			if coordinate == "aggregate_kind" {
+				key.Kind = controljournal.AggregateKind(value)
+			} else {
+				key.ID = controljournal.AggregateID(value)
+			}
+			t.Run("state/"+coordinate+"/"+name, func(t *testing.T) {
+				if _, err := NewProjectionV1(map[AggregateKeyV1]StateV1{key: state}, map[AggregateKeyV1]uint64{key: 1}); err == nil {
+					t.Fatalf("accepted invalid state %s %q", coordinate, value)
+				}
+			})
+			t.Run("head/"+coordinate+"/"+name, func(t *testing.T) {
+				if _, err := NewProjectionV1(map[AggregateKeyV1]StateV1{validKey: state}, map[AggregateKeyV1]uint64{key: 1}); err == nil {
+					t.Fatalf("accepted invalid head %s %q", coordinate, value)
+				}
+			})
+		}
+	}
+	boundary := AggregateKeyV1{Kind: controljournal.AggregateKind(strings.Repeat("a", 128)), ID: controljournal.AggregateID(strings.Repeat("b", 128))}
+	if _, err := NewProjectionV1(map[AggregateKeyV1]StateV1{boundary: state}, map[AggregateKeyV1]uint64{boundary: 1}); err != nil {
+		t.Fatalf("rejected 128-byte aggregate coordinate: %v", err)
+	}
 }
 
 func TestReducerRepeatedHistoryIsByteIdentical(t *testing.T) {

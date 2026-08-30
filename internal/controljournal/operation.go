@@ -45,37 +45,42 @@ type OperationOutcomeV1 struct {
 }
 
 func NewOperationOutcomeV1(operationID OperationID, kind OperationObservationKind, resultType string, result []byte) (OperationOutcomeV1, error) {
-	if err := validateToken("operation_id", string(operationID)); err != nil {
-		return OperationOutcomeV1{}, err
-	}
 	if !validOperationKind(kind) || kind == OperationReconciled {
 		return OperationOutcomeV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "operation_kind"}
-	}
-	if resultType != "" {
-		if err := validateToken("result_type", resultType); err != nil {
-			return OperationOutcomeV1{}, err
-		}
 	}
 	canonical, err := canonicalJSONObject(result, "operation_result")
 	if err != nil {
 		return OperationOutcomeV1{}, err
 	}
-	return OperationOutcomeV1{SchemaVersion: 1, OperationID: operationID, Kind: kind, Delivery: DeliveryNotAttempted, Recovery: RecoveryBytesUnavailable, ResultType: resultType, result: canonical}, nil
+	outcome := OperationOutcomeV1{SchemaVersion: 1, OperationID: operationID, Kind: kind, Delivery: DeliveryNotAttempted, Recovery: RecoveryBytesUnavailable, ResultType: resultType, result: canonical}
+	if err := outcome.validateInvariants(); err != nil {
+		return OperationOutcomeV1{}, err
+	}
+	return outcome, nil
 }
 
 func (o OperationOutcomeV1) Result() []byte { return append([]byte(nil), o.result...) }
 
 func (o OperationOutcomeV1) WithDelivery(delivery DeliveryObservation) (OperationOutcomeV1, error) {
-	if delivery != DeliveryNotAttempted && delivery != DeliveryReturned && delivery != DeliveryDropped {
+	if err := o.validateInvariants(); err != nil {
+		return OperationOutcomeV1{}, err
+	}
+	if !validDelivery(delivery) {
 		return OperationOutcomeV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "delivery"}
 	}
 	o.result = append([]byte(nil), o.result...)
 	o.Delivery = delivery
+	if err := o.validateInvariants(); err != nil {
+		return OperationOutcomeV1{}, err
+	}
 	return o, nil
 }
 
 func (o OperationOutcomeV1) WithRecovery(recovery RecoveryObservation) (OperationOutcomeV1, error) {
-	if recovery != RecoveryBytesUnavailable && recovery != RecoveryBytesRestored && recovery != RecoveryProductReady {
+	if err := o.validateInvariants(); err != nil {
+		return OperationOutcomeV1{}, err
+	}
+	if !validRecovery(recovery) {
 		return OperationOutcomeV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "recovery"}
 	}
 	if recovery == RecoveryProductReady && o.Kind != OperationDurablyApplied && o.Resolution != OperationDurablyApplied {
@@ -83,17 +88,70 @@ func (o OperationOutcomeV1) WithRecovery(recovery RecoveryObservation) (Operatio
 	}
 	o.result = append([]byte(nil), o.result...)
 	o.Recovery = recovery
+	if err := o.validateInvariants(); err != nil {
+		return OperationOutcomeV1{}, err
+	}
 	return o, nil
 }
 
 func ReconcileAmbiguousOperationV1(outcome OperationOutcomeV1, resolution OperationObservationKind) (OperationOutcomeV1, error) {
+	if err := outcome.validateInvariants(); err != nil {
+		return OperationOutcomeV1{}, err
+	}
 	if outcome.Kind != OperationAmbiguous || resolution != OperationDurablyApplied && resolution != OperationRefused {
 		return OperationOutcomeV1{}, ValidationError{Kind: RefusalInvalidTransition, Field: "operation_reconciliation"}
 	}
 	outcome.result = append([]byte(nil), outcome.result...)
 	outcome.Kind = OperationReconciled
 	outcome.Resolution = resolution
+	if err := outcome.validateInvariants(); err != nil {
+		return OperationOutcomeV1{}, err
+	}
 	return outcome, nil
+}
+
+// validateInvariants is the single decision seam for every usable outcome.
+// It rejects manually assembled and tampered values before they can transition
+// or be serialized as durable evidence.
+func (o OperationOutcomeV1) validateInvariants() error {
+	if o.SchemaVersion != 1 {
+		return ValidationError{Kind: RefusalUnsupportedVersion, Field: "operation_outcome"}
+	}
+	if err := validateToken("operation_id", string(o.OperationID)); err != nil {
+		return err
+	}
+	if !validOperationKind(o.Kind) {
+		return ValidationError{Kind: RefusalInvalidValue, Field: "operation_kind"}
+	}
+	if o.Kind == OperationReconciled {
+		if o.Resolution != OperationDurablyApplied && o.Resolution != OperationRefused {
+			return ValidationError{Kind: RefusalInvalidTransition, Field: "operation_reconciliation"}
+		}
+	} else if o.Resolution != "" {
+		return ValidationError{Kind: RefusalInvalidTransition, Field: "operation_reconciliation"}
+	}
+	if !validDelivery(o.Delivery) {
+		return ValidationError{Kind: RefusalInvalidValue, Field: "delivery"}
+	}
+	if !validRecovery(o.Recovery) {
+		return ValidationError{Kind: RefusalInvalidValue, Field: "recovery"}
+	}
+	if o.Recovery == RecoveryProductReady && o.Kind != OperationDurablyApplied && o.Resolution != OperationDurablyApplied {
+		return ValidationError{Kind: RefusalInvalidTransition, Field: "recovery"}
+	}
+	if o.ResultType != "" {
+		if err := validateToken("result_type", o.ResultType); err != nil {
+			return err
+		}
+	}
+	canonical, err := canonicalJSONObject(o.result, "operation_result")
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(canonical, o.result) {
+		return ValidationError{Kind: RefusalInvalidValue, Field: "operation_result"}
+	}
+	return nil
 }
 
 func validOperationKind(kind OperationObservationKind) bool {
@@ -372,28 +430,8 @@ type operationOutcomeWireV1 struct {
 }
 
 func EncodeOperationOutcomeV1(outcome OperationOutcomeV1) ([]byte, error) {
-	if outcome.SchemaVersion != 1 || !validOperationKind(outcome.Kind) || !validDelivery(outcome.Delivery) || !validRecovery(outcome.Recovery) {
-		return nil, ValidationError{Kind: RefusalUnsupportedVersion, Field: "operation_outcome"}
-	}
-	if err := validateToken("operation_id", string(outcome.OperationID)); err != nil {
+	if err := outcome.validateInvariants(); err != nil {
 		return nil, err
-	}
-	if outcome.ResultType != "" {
-		if err := validateToken("result_type", outcome.ResultType); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := canonicalJSONObject(outcome.result, "operation_result"); err != nil {
-		return nil, err
-	}
-	if outcome.Kind == OperationReconciled && outcome.Resolution != OperationDurablyApplied && outcome.Resolution != OperationRefused {
-		return nil, ValidationError{Kind: RefusalInvalidTransition, Field: "operation_reconciliation"}
-	}
-	if outcome.Kind != OperationReconciled && outcome.Resolution != "" {
-		return nil, ValidationError{Kind: RefusalInvalidTransition, Field: "operation_reconciliation"}
-	}
-	if outcome.Recovery == RecoveryProductReady && outcome.Kind != OperationDurablyApplied && outcome.Resolution != OperationDurablyApplied {
-		return nil, ValidationError{Kind: RefusalInvalidTransition, Field: "recovery"}
 	}
 	encoded, err := json.Marshal(operationOutcomeWireV1{Delivery: outcome.Delivery, Kind: outcome.Kind, OperationID: string(outcome.OperationID), Recovery: outcome.Recovery, Resolution: outcome.Resolution, Result: outcome.Result(), ResultType: outcome.ResultType, SchemaVersion: 1})
 	if err != nil || len(encoded) > MaxOrdinaryValueBytes {

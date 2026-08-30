@@ -136,6 +136,23 @@ func NewReducerVersion(value string) (ReducerVersion, error) {
 	return identity[ReducerVersion]("reducer_version", value)
 }
 
+// ValidateAggregateCoordinateV1 applies the root journal token grammar to one
+// aggregate identity without granting storage or mutation authority.
+func ValidateAggregateCoordinateV1(kind AggregateKind, id AggregateID) error {
+	return validateTokens(tokenField{"aggregate_kind", string(kind)}, tokenField{"aggregate_id", string(id)})
+}
+
+// ValidateReducerCoordinateV1 validates one exact reducer-registry coordinate.
+func ValidateReducerCoordinateV1(kind AggregateKind, eventType EventType, schema uint32, version ReducerVersion) error {
+	if err := validateTokens(tokenField{"aggregate_kind", string(kind)}, tokenField{"event_type", string(eventType)}, tokenField{"reducer_version", string(version)}); err != nil {
+		return err
+	}
+	if schema == 0 {
+		return ValidationError{Kind: RefusalInvalidValue, Field: "event_schema_version"}
+	}
+	return nil
+}
+
 func identity[T ~string](field, value string) (T, error) {
 	if err := validateToken(field, value); err != nil {
 		return "", err

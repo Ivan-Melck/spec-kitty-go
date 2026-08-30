@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -65,6 +66,37 @@ func TestModelIdentityValidation(t *testing.T) {
 	}
 	if _, err := NewEventCountV1(129); err == nil {
 		t.Fatal("accepted count 129")
+	}
+}
+
+func TestModelRootCoordinateValidatorsUseExactTokenGrammar(t *testing.T) {
+	invalid := []string{"", "has space", "-leading", string([]byte{0xff}), strings.Repeat("a", 129)}
+	for _, value := range invalid {
+		if err := ValidateAggregateCoordinateV1(AggregateKind(value), "aggregate-1"); err == nil {
+			t.Fatalf("aggregate kind accepted %q", value)
+		}
+		if err := ValidateAggregateCoordinateV1("mission", AggregateID(value)); err == nil {
+			t.Fatalf("aggregate id accepted %q", value)
+		}
+		if err := ValidateReducerCoordinateV1(AggregateKind(value), "mission.updated", 1, "mission-v1"); err == nil {
+			t.Fatalf("reducer aggregate kind accepted %q", value)
+		}
+		if err := ValidateReducerCoordinateV1("mission", EventType(value), 1, "mission-v1"); err == nil {
+			t.Fatalf("event type accepted %q", value)
+		}
+		if err := ValidateReducerCoordinateV1("mission", "mission.updated", 1, ReducerVersion(value)); err == nil {
+			t.Fatalf("reducer version accepted %q", value)
+		}
+	}
+	if err := ValidateReducerCoordinateV1("mission", "mission.updated", 0, "mission-v1"); err == nil {
+		t.Fatal("zero event schema accepted")
+	}
+	max := strings.Repeat("a", 128)
+	if err := ValidateAggregateCoordinateV1(AggregateKind(max), AggregateID(max)); err != nil {
+		t.Fatalf("128-byte aggregate coordinate rejected: %v", err)
+	}
+	if err := ValidateReducerCoordinateV1(AggregateKind(max), EventType(max), 1, ReducerVersion(max)); err != nil {
+		t.Fatalf("128-byte reducer coordinate rejected: %v", err)
 	}
 }
 
