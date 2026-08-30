@@ -1,0 +1,77 @@
+{
+  "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
+  "snapshot_id": "0d02a782-7a32-4f6b-ae31-3e21db0d07e2",
+  "total_artifacts": 4,
+  "required_artifacts": 0,
+  "required_present": 0,
+  "required_missing": 0,
+  "optional_artifacts": 4,
+  "optional_present": 4,
+  "completeness_status": "complete",
+  "parity_hash_sha256": "sha256:9920dd887727ae0b8ffc9881962a3b4e0d4edbfc7e4ffc56f00ccd7bdc4ee263",
+  "parity_hash_components": [
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "artifact_summaries": [
+    {
+      "artifact_key": "artifact.evidence-log",
+      "artifact_class": "evidence",
+      "relative_path": "research/evidence-log.csv",
+      "content_hash_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-30T04:31:42.638851+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.source-register",
+      "artifact_class": "output",
+      "relative_path": "research/source-register.csv",
+      "content_hash_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-30T04:31:42.643480+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "evidence.data-model",
+      "artifact_class": "evidence",
+      "relative_path": "data-model.md",
+      "content_hash_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-30T04:31:42.634118+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "evidence.research",
+      "artifact_class": "evidence",
+      "relative_path": "research.md",
+      "content_hash_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-08-30T04:31:42.628286+00:00",
+      "provenance": null
+    }
+  ],
+  "computed_at": "2026-08-30 04:32:02.797162+00:00"
+}
