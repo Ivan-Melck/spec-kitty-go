@@ -32,21 +32,22 @@
         "Correct review claim identity: reviewer ActorID must differ from implementation ActorID"
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP01-frozen-journal-contracts-and-guards/review-cycle-1.md",
         "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP01-frozen-journal-contracts-and-guards/review-cycle-1.md",
         "reviewer": "reviewer-renata",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned"
       }
     },
     "WP02": {
