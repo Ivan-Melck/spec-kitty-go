@@ -21,8 +21,8 @@
     "go_mod_sum": "h1:8xNZ3k+SQIqcxLkS8bjbooOAv9xzZcbg5arjKaV6fcQ=",
     "sidecar": {
       "command": "gapdbd",
-      "sha256": "b8ba102aeb21855fc4271a528b7dd858342f6123e04d0e5b51875647450d918b",
-      "build_recipe": "CGO_ENABLED=0 GOTOOLCHAIN=go1.26.7 go build -trimpath -o gapdbd ./cmd/gapdbd",
+      "sha256": "62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e",
+      "build_recipe": "GOBIN=<project-bin-directory> CGO_ENABLED=0 GOTOOLCHAIN=go1.26.7 go install -trimpath github.com/spec-kitty/gapdb/cmd/gapdbd@v0.0.0-20260824033134-ff3dd478f87c",
       "build_repetitions": 2,
       "identical_repetitions": 2
     },
@@ -58,13 +58,17 @@
   "harness": {
     "qualified_source_commit": "03afabd6d875dd133d18fa759669498d92e097be",
     "qualified_source_tree": "6173b2dbce671d6243b14f99414170c8a5929f0f",
+    "original_phase1_campaign_source_commit": "adf15aac42f3f03dd27ad6252df973bcd8b42433",
     "phase1_scenario_catalog": "docs/phase1-evidence/scenario-catalog.json",
     "phase1_scenario_catalog_sha256": "93c93729ad0662d50d424d5fce936cc1b002296a823213d3e4a8e9292f6a740d",
     "phase3_qualification": "docs/phase3-evidence/qualification-evidence.json",
     "phase3_qualification_sha256": "fe398043b9b4a05462928c53d08d1b3d1ec36b11b8a6c47478e6a9db5d4e07fb",
     "phase3_campaign_census": "docs/phase3-evidence/campaign-census.json",
     "phase3_campaign_census_sha256": "a46effeeb48b93fa06c35324dff14a5b0dee54655efe9a5b291b1e46341ccaf1",
-    "historical_scenario_census": 73,
+    "historical_top_level_scenario_census": 73,
+    "phase1_contract_catalog_cases": 35,
+    "phase1_named_crash_boundaries": 28,
+    "phase1_frozen_top_level_tests": 17,
     "declared_phase3_crash_boundaries": 9
   },
   "prior_gapdb_evidence": {
