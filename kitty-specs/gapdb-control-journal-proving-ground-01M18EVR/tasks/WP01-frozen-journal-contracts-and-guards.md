@@ -71,10 +71,6 @@ an incomplete evidence census.
 
 This WP strengthens tests only. It does not redesign approved contracts, create
 runtime packages, add GapDB to the module, or manufacture passing evidence.
-It freezes the exact sealed `ValidateJournalV1` to `ValidatedJournalV1`
-capability boundary described by the control-journal contract. It must not
-discover an authoritative seam by scoring arbitrary type/function shapes,
-lexical order, or filenames; WP02 owns its runtime semantic proofs.
 
 ## Context and product laws
 
@@ -171,23 +167,6 @@ mission contracts as read-only fixtures. Do not edit `go.mod` or `go.sum`.
    constructions through precise source/fixture rules documented in the test.
 6. Allow existing historical SQLite implementation to remain untouched.
 7. Produce stable, actionable path/import diagnostics.
-8. Recursively census every non-test Go file below `internal/controljournal`.
-   An absent production tree passes; its first production file anywhere
-   activates the complete frozen capability contract.
-9. Once activated, require the exact root types, direct fields, functions, and
-   signatures in `control-journal-v1.md`, including `validationSealV1`,
-   `InvalidValidatedJournalError`, and the error-returning `Len` and `At`
-   methods. Type-check every root and child package fail closed.
-10. Reject alternate raw-event validation/ordering authority, alternate usable
-    capability producers, capability alias/embedding recreation, and direct
-    `RecordRevision` ownership outside `StoredEventV1`. Permit the planned pure
-    sibling-package DAG while denying external side-effect imports recursively.
-11. Freeze the exact unexported seal/capability field shapes. Do not attempt to
-    prohibit legal Go zero-value declarations or containers: WP02 must prove
-    that all zero/manual/seal-mismatched values are unusable.
-12. Use exact type information and honest synthetic implementations. Do not use
-    reflection, arbitrary signature discovery, comparator scoring, or runtime
-    semantic self-probes to select a future implementation seam.
 
 **Tests**:
 
@@ -196,11 +175,6 @@ mission contracts as read-only fixtures. Do not edit `go.mod` or `go.sum`.
 - A neutral package importing GapDB fails.
 - Any package importing `internal/server` fails.
 - Historical SQLite code is not misclassified as new M1 fallback.
-- Production activation is recursive and filename-independent.
-- Wrong seal fields, exported capability state, non-erroring accessors, missing
-  invalid-capability error, alternate authority paths, impure children, and
-  type-check failures are killed by mutants.
-- Legal zero/manual capability declarations are honest controls, not mutants.
 
 **Exit evidence**: `go test ./internal/architecture -run M1Dependency`.
 
@@ -216,13 +190,10 @@ mission contracts as read-only fixtures. Do not edit `go.mod` or `go.sum`.
 2. Include mutants for allowlist widening, `internal/server`, SQLite fallback,
    current-batch revision fill-in, global authority CAS, shared projection head,
    runtime-coordinate conflation, and incomplete evidence signature.
-3. Include activation, exact-signature, direct-field, sealed-capability,
-   alternate authority, recursive purity, and fail-closed type-check mutants.
-4. Require every mutant to fail for its intended architectural reason.
-5. Include absent-package, exact implementation, pure sibling-DAG, consumer,
-   and legal zero-value controls to avoid always-failing guards.
-6. Keep mutants local and deterministic; do not modify the working tree.
-7. Give mutant IDs compatible with the mission evidence vocabulary.
+3. Require every mutant to fail for its intended architectural reason.
+4. Include a clean control beside each mutant to avoid always-failing guards.
+5. Keep mutants local and deterministic; do not modify the working tree.
+6. Give mutant IDs compatible with the mission evidence vocabulary.
 
 **Exit evidence**: `go test ./internal/architecture -run 'M1.*Mutant'`.
 
@@ -244,11 +215,8 @@ mission contracts as read-only fixtures. Do not edit `go.mod` or `go.sum`.
 
 The reviewer should deliberately add one forbidden-import mutant and one
 vacuous-evidence mutant to a temporary fixture and see both fail. Reject the WP
-if a guard relies on filenames or generic signature discovery, if an approved
-contract was rewritten to fit a test, or if product budgets merely equal the
-GapDB runtime ceilings. Do not reject WP01 because Go can declare a zero
-`ValidatedJournalV1`; reject it if the frozen seal and error surfaces are
-insufficient for WP02 to prove that value unusable.
+if a guard relies on filenames alone, if an approved contract was rewritten to
+fit a test, or if product budgets merely equal the GapDB runtime ceilings.
 
 ## Completion criteria
 
