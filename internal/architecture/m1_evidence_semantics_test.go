@@ -236,6 +236,61 @@ func TestM1EvidenceMutantControls(t *testing.T) {
 	}
 }
 
+func TestM1EvidenceContributorBindingMutants(t *testing.T) {
+	clean := passingEvidenceFixture()
+	source := sourceBindingOf(clean)
+	if err := validateEvidencePass(clean, source); err != nil {
+		t.Fatalf("clean contributor binding rejected: %v", err)
+	}
+	tests := []struct {
+		id     string
+		mutate func(map[string]any)
+	}{
+		{
+			"same-contributor-review/falsified-candidate-contributors",
+			func(m map[string]any) {
+				review := item(object(m, "ordered_trial"), "reviews", 0)
+				review["contributor_actor_ids"] = []any{"not-actor-a"}
+				review["reviewer_actor_id"] = "A"
+			},
+		},
+		{
+			"same-contributor-review/empty-candidate-contributors",
+			func(m map[string]any) {
+				review := item(object(m, "ordered_trial"), "reviews", 0)
+				review["contributor_actor_ids"] = []any{}
+				review["reviewer_actor_id"] = "A"
+			},
+		},
+		{
+			"same-contributor-review/swapped-candidate-contributors",
+			func(m map[string]any) {
+				trial := object(m, "ordered_trial")
+				item(trial, "reviews", 0)["contributor_actor_ids"] = []any{"B"}
+				item(trial, "reviews", 1)["contributor_actor_ids"] = []any{"A"}
+			},
+		},
+		{
+			"same-contributor-review/falsified-campaign-contributors",
+			func(m map[string]any) {
+				trial := object(m, "ordered_trial")
+				item(trial, "reviews", 0)["contributor_actor_ids"] = []any{"not-actor-a"}
+				item(trial, "reviews", 1)["contributor_actor_ids"] = []any{"not-actor-b"}
+				object(m, "independent_review")["reviewer_actor_id"] = "A"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.id, func(t *testing.T) {
+			fixture := cloneMap(t, clean)
+			test.mutate(fixture)
+			if err := validateEvidencePass(fixture, source); err == nil {
+				t.Fatal("mutant falsified contributor identity without losing pass admissibility")
+			}
+		})
+	}
+}
+
 func TestM1EvidenceSchemaConditionalRejectsVacuousPasses(t *testing.T) {
 	compiled := compileEvidenceSchema(t)
 	valid := passingEvidenceFixture()
@@ -388,7 +443,7 @@ func validateEvidencePass(m map[string]any, source m1SourceBinding) error {
 	check(review["verdict"] == "pass", "independent review")
 	independentReviewer := stringValue(review["reviewer_actor_id"])
 	check(independentReviewer != "", "independent reviewer identity")
-	check(!slices.Contains(orderedTrialContributors(object(m, "ordered_trial")), independentReviewer), "independent reviewer contributor separation")
+	check(!slices.Contains(orderedTrialSourceContributors(object(m, "ordered_trial")), independentReviewer), "independent reviewer contributor separation")
 	check(len(array(m, "artifacts")) > 0, "artifacts")
 	validateOrderedTrial(object(m, "ordered_trial"), runID, check)
 	if len(reasons) != 0 {
@@ -429,12 +484,18 @@ func validateOrderedTrial(trial map[string]any, runID string, check func(bool, s
 	check(integer(playback["playback_adapter_calls"]) == 0 && integer(playback["playback_durable_writes"]) == 0, "zero-call playback")
 	reviews := array(trial, "reviews")
 	var reviewed []string
-	contributors := orderedTrialContributors(trial)
+	expectedContributors := orderedTrialContributorBindings(trial)
+	sourceContributors := orderedTrialSourceContributors(trial)
 	check(len(reviews) == 2, "review census")
 	for _, raw := range reviews {
 		review := raw.(map[string]any)
 		reviewer := review["reviewer_actor_id"].(string)
-		check(reviewer != "" && review["actor_independent"] == true && review["verdict"] == "approved" && !slices.Contains(contributors, reviewer), "review independence")
+		contributors := stringsOf(review["contributor_actor_ids"])
+		slices.Sort(contributors)
+		expected := slices.Clone(expectedContributors[stringValue(review["candidate_id"])])
+		slices.Sort(expected)
+		check(slices.Equal(contributors, expected), "candidate contributor binding")
+		check(reviewer != "" && review["actor_independent"] == true && review["verdict"] == "approved" && !slices.Contains(sourceContributors, reviewer), "review independence")
 		reviewed = append(reviewed, review["candidate_id"].(string))
 	}
 	integration := object(trial, "integration")
@@ -448,14 +509,33 @@ func validateOrderedTrial(trial map[string]any, runID string, check func(bool, s
 	check(stringValue(trial["artifact_sha256"]) != "", "ordered trial artifact")
 }
 
-func orderedTrialContributors(trial map[string]any) []string {
+func orderedTrialContributorBindings(trial map[string]any) map[string][]string {
+	identities := object(trial, "identities")
+	implementationA := stringValue(object(identities, "implementation_a")["actor_id"])
+	implementationB := stringValue(object(identities, "implementation_b")["actor_id"])
+	replacementC := stringValue(object(identities, "replacement_c")["actor_id"])
+	candidates := stringsOf(object(trial, "integration")["candidate_ids"])
+	if len(candidates) != 2 {
+		return nil
+	}
+	actorAContributors := []string{implementationA}
+	if replacementC != "" && replacementC != implementationA {
+		actorAContributors = append(actorAContributors, replacementC)
+	}
+	return map[string][]string{
+		candidates[0]: actorAContributors,
+		candidates[1]: {implementationB},
+	}
+}
+
+func orderedTrialSourceContributors(trial map[string]any) []string {
 	var contributors []string
-	for _, raw := range array(trial, "reviews") {
-		review, ok := raw.(map[string]any)
-		if !ok {
-			continue
+	for _, binding := range orderedTrialContributorBindings(trial) {
+		for _, actorID := range binding {
+			if actorID != "" && !slices.Contains(contributors, actorID) {
+				contributors = append(contributors, actorID)
+			}
 		}
-		contributors = append(contributors, stringsOf(review["contributor_actor_ids"])...)
 	}
 	return contributors
 }

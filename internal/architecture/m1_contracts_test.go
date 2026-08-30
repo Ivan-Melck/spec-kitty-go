@@ -113,45 +113,82 @@ func TestM1SchemasAdoptionStateIsExplicit(t *testing.T) {
 	}
 }
 
-func TestM1SchemasEventOrderingContract(t *testing.T) {
-	ordered := []m1EventPosition{
-		{CommittedRevision: 7, EventIndex: 0, EventID: "event-b"},
-		{CommittedRevision: 6, EventIndex: 9, EventID: "event-z"},
-		{CommittedRevision: 7, EventIndex: 0, EventID: "event-a"},
-		{CommittedRevision: 7, EventIndex: 1, EventID: "event-a"},
+func TestM1SchemasFR016EventEnvelopeRefusals(t *testing.T) {
+	schema := compileM1ContractSchema(t, "event-envelope-v1.schema.json")
+	hash := strings.Repeat("a", 64)
+	valid := map[string]any{
+		"envelope_version": 1, "event_type": "work-claimed", "event_schema_version": 1,
+		"reducer_version": "work-v1", "event_id": "event-1", "operation_id": "operation-1",
+		"project_id": "project-1", "aggregate_kind": "work", "aggregate_id": "work-1",
+		"aggregate_logical_version": 1, "runtime_epoch_id": "epoch-1",
+		"event_index": 0, "event_count": 1, "payload": map[string]any{},
+		"canonical_event_digest": hash,
 	}
-	slices.SortFunc(ordered, compareM1EventPosition)
-	want := []m1EventPosition{
-		{CommittedRevision: 6, EventIndex: 9, EventID: "event-z"},
-		{CommittedRevision: 7, EventIndex: 0, EventID: "event-a"},
-		{CommittedRevision: 7, EventIndex: 0, EventID: "event-b"},
-		{CommittedRevision: 7, EventIndex: 1, EventID: "event-a"},
+	if err := schema.Validate(valid); err != nil {
+		t.Fatalf("positive event envelope rejected: %v", err)
 	}
-	if !slices.Equal(ordered, want) {
-		t.Fatalf("event order is not (committed revision, event index, EventID): got %v", ordered)
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"unknown envelope version", func(v map[string]any) { v["envelope_version"] = 2 }},
+		{"missing event schema version", func(v map[string]any) { delete(v, "event_schema_version") }},
+		{"missing reducer version", func(v map[string]any) { delete(v, "reducer_version") }},
+		{"negative event index", func(v map[string]any) { v["event_index"] = -1 }},
+		{"event index beyond product bound", func(v map[string]any) { v["event_index"] = 128 }},
+		{"zero event count", func(v map[string]any) { v["event_count"] = 0 }},
+		{"event count beyond product bound", func(v map[string]any) { v["event_count"] = 129 }},
+		{"malformed canonical digest", func(v map[string]any) { v["canonical_event_digest"] = "not-a-digest" }},
+		{"unversioned extra field", func(v map[string]any) { v["future_field"] = true }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := cloneMap(t, valid)
+			test.mutate(fixture)
+			if err := schema.Validate(fixture); err == nil {
+				t.Fatal("closed event envelope accepted an invalid structural fixture")
+			}
+		})
+	}
+
+	// Event-schema and reducer versions are registry keys, not schema enums.
+	// Their unknown-value refusal and the cross-record ordering/group/digest
+	// semantics are enforced against the production seams by the M1 dependency
+	// guard, so a later runtime cannot make the schema test pass by self-testing
+	// a test-only comparator or registry.
+	registryUnknown := cloneMap(t, valid)
+	registryUnknown["event_schema_version"] = 2
+	registryUnknown["reducer_version"] = "unknown-v2"
+	if err := schema.Validate(registryUnknown); err != nil {
+		t.Fatalf("structural schema incorrectly owns runtime registry compatibility: %v", err)
 	}
 }
 
-type m1EventPosition struct {
-	CommittedRevision uint64
-	EventIndex        uint32
-	EventID           string
-}
-
-func compareM1EventPosition(left, right m1EventPosition) int {
-	if left.CommittedRevision < right.CommittedRevision {
-		return -1
+func compileM1ContractSchema(t *testing.T, name string) *jsonschema.Schema {
+	t.Helper()
+	path := filepath.Join(m1ContractsDir(t), name)
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if left.CommittedRevision > right.CommittedRevision {
-		return 1
+	var document any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatal(err)
 	}
-	if left.EventIndex < right.EventIndex {
-		return -1
+	id, ok := document.(map[string]any)["$id"].(string)
+	if !ok || id == "" {
+		t.Fatalf("%s: missing $id", name)
 	}
-	if left.EventIndex > right.EventIndex {
-		return 1
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource(id, document); err != nil {
+		t.Fatal(err)
 	}
-	return strings.Compare(left.EventID, right.EventID)
+	schema, err := compiler.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema
 }
 
 func m1ContractsDir(t *testing.T) string {
