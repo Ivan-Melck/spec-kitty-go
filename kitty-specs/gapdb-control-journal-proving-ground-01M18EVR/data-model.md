@@ -190,6 +190,43 @@ Events are append-only and inserted with `RequireAbsent`. Event payloads carry
 all observations required for deterministic reduction. A reducer cannot ask the
 clock, filesystem, Git, tracker, policy service, or any other adapter for facts.
 
+### Stored and validated journal values
+
+The pure Go journal boundary distinguishes product bytes from storage metadata:
+
+```text
+StoredEventV1 {
+  record_revision       // positive GapDB Record.Revision metadata
+  envelope              // EventEnvelopeV1 product value
+}
+
+EventVersionV1 {
+  event_type
+  event_schema_version
+  reducer_version
+}
+
+EventRegistryV1 {
+  immutable_exact_version_tuples
+}
+
+ValidatedJournalV1 {
+  unexported_canonical_stored_events
+}
+```
+
+Construction of `EventRegistryV1` validates and defensively copies its exact
+tuples. `ValidateJournalV1` is the sole constructor of
+`ValidatedJournalV1`; reducers and playback accept that capability instead of
+unvalidated stored-event slices. Its accessors return values without exposing
+mutable internal collections. This makes successful validation a structural
+precondition rather than a convention callers can bypass.
+
+`RecordRevision` belongs only to `StoredEventV1`; it is neither serialized in
+the event envelope nor included in the canonical event digest. Canonical order
+is `(record_revision, event_index, event_id)`. A validation failure produces a
+stable typed refusal and no usable validated capability.
+
 ### Aggregate head
 
 ```text

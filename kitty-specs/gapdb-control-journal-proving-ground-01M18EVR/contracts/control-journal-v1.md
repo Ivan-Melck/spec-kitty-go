@@ -101,6 +101,71 @@ GapDB watch delivery is a transient progress optimization only. It may wake a
 reader, but it is never journal history, durable acceptance evidence, or a
 substitute for revision-bound reads and scans.
 
+### Frozen Go validation capability
+
+The Go implementation exposes one explicit validation capability at the root
+of `internal/controljournal`. This is a frozen architecture seam, not a naming
+heuristic:
+
+```go
+package controljournal
+
+type StoredEventV1 struct {
+    RecordRevision uint64
+    Envelope       EventEnvelopeV1
+}
+
+type EventVersionV1 struct {
+    EventType          string
+    EventSchemaVersion uint32
+    ReducerVersion     string
+}
+
+type EventRegistryV1 struct { /* immutable unexported state */ }
+
+func NewEventRegistryV1([]EventVersionV1) (EventRegistryV1, error)
+
+type ValidatedJournalV1 struct { /* canonical events in unexported state */ }
+
+func ValidateJournalV1(
+    EventRegistryV1,
+    []StoredEventV1,
+) (ValidatedJournalV1, error)
+
+func (ValidatedJournalV1) Len() int
+func (ValidatedJournalV1) At(int) (StoredEventV1, bool)
+```
+
+`ValidatedJournalV1` is the authority-bearing capability passed to playback and
+reducers. Only `ValidateJournalV1` may construct one. No other function or
+method below `internal/controljournal` may return it, accept a raw
+`[]StoredEventV1` for ordering or validation, or recreate the capability by
+aliasing or embedding. `StoredEventV1` alone owns the direct `RecordRevision`
+field; a promoted or embedded field does not satisfy that ownership rule.
+
+Architecture enforcement recursively examines every non-test Go file below
+`internal/controljournal`. Before any such production file exists, the frozen
+guard passes. The first production file anywhere in that tree activates the
+complete contract, including the exact root-package types and function
+signatures above. No filename has special status, and decorative types or
+unused comparator-shaped functions cannot satisfy or mask the authoritative
+seam.
+
+Validation canonicalizes shuffled input by
+`(RecordRevision, EventIndex, EventID)`. Each operation group has one positive
+record revision, one OperationID, one common positive `event_count` in the
+range 1–128, distinct EventIDs, and exactly the zero-based indices
+`[0,event_count)`. Duplicate or non-total positions and missing, mixed,
+out-of-range, or over-budget groups refuse atomically.
+
+The immutable registry requires an exact
+`(EventType, EventSchemaVersion, ReducerVersion)` tuple and admits no wildcard
+or best-effort skip. Envelope version is exactly v1. The canonical event digest
+is computed from canonical envelope bytes excluding the digest field;
+`RecordRevision` is external GapDB metadata and is excluded. Any ordering,
+grouping, version, registry, or digest failure returns a typed refusal and no
+usable `ValidatedJournalV1`.
+
 ## Atomic commit contents
 
 One batch contains:
