@@ -199,7 +199,7 @@
     },
     "WP06": {
       "actor": "user",
-      "agent": "reviewer-renata-wp06",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
@@ -211,6 +211,7 @@
         "Ready for review: canonical prior-prefix checkpoints, suffix-only bounded restore, terminal authority and epoch binding, and structurally zero-I/O playback; focused/repeated/race/fuzz/architecture/regression/static gates pass. Follow-up risk: approved ValidatedJournal Len/At independently rehash on every access, making large traversals O(n^2)."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP06-checkpoint-restore-epoch-and-playback/review-cycle-1.md",
         "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP06-checkpoint-restore-epoch-and-playback/review-cycle-1.md",
@@ -218,15 +219,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T030": "done",
-        "T031": "done",
-        "T032": "done",
-        "T033": "done",
-        "T034": "done",
-        "T035": "done"
+        "T030": "planned",
+        "T031": "planned",
+        "T032": "planned",
+        "T033": "planned",
+        "T034": "planned",
+        "T035": "planned"
       }
     },
     "WP07": {
