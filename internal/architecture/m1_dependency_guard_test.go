@@ -563,6 +563,41 @@ func ReduceRaw(events RawEvents) { _ = events }
 			kind: "journal-capability-construction",
 		},
 		{
+			name: "direct-capability-conversion",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func ForgeByConversion() {\n\traw := struct{ events []StoredEventV1 }{}\n\t_ = ValidatedJournalV1(raw)\n}\n")
+			},
+			kind: "journal-capability-construction",
+		},
+		{
+			name: "interface-wrapped-capability-conversion",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func ForgeInterfaceByConversion() any {\n\traw := struct{ events []StoredEventV1 }{}\n\treturn any(ValidatedJournalV1(raw))\n}\n")
+			},
+			kind: "journal-capability-construction",
+		},
+		{
+			name: "closure-capability-conversion",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func ForgeClosureByConversion() any {\n\treturn func() any {\n\t\traw := struct{ events []StoredEventV1 }{}\n\t\treturn ValidatedJournalV1(raw)\n\t}()\n}\n")
+			},
+			kind: "journal-capability-construction",
+		},
+		{
+			name: "slice-elided-capability-literal",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func consumeAny(any) {}\nfunc ForgeElidedSlice() {\n\tconsumeAny([]ValidatedJournalV1{{}}[0])\n}\n")
+			},
+			kind: "journal-capability-construction",
+		},
+		{
+			name: "map-elided-capability-literal",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func consumeMap(map[string]ValidatedJournalV1) {}\nfunc ForgeElidedMap() {\n\tconsumeMap(map[string]ValidatedJournalV1{\"x\": {}})\n}\n")
+			},
+			kind: "journal-capability-construction",
+		},
+		{
 			name: "wrong-registry-constructor-signature",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
 				return replaceM1Fixture(files, "func NewEventRegistryV1(versions []EventVersionV1) (EventRegistryV1, error)", "func NewEventRegistryV1(versions ...EventVersionV1) (EventRegistryV1, error)")
@@ -627,9 +662,19 @@ func NewSink() Sink { return nil }
 type Consumer interface { Consume(ValidatedJournalV1) }
 func NewConsumer() Consumer { return nil }
 type ValidatedHolder struct { Journal ValidatedJournalV1 }
+type OrdinaryValue struct { count int }
+func consumeAny(any) {}
+func consumeOrdinaryMap(map[string]OrdinaryValue) {}
+func NewOrdinaryValue() OrdinaryValue { return OrdinaryValue{} }
+func (value OrdinaryValue) Count() int { return value.count }
 func CallValidatorDirectly() {
 	_, _ = ValidateJournalV1(EventRegistryV1{}, nil)
 	_, _ = (ValidateJournalV1)(EventRegistryV1{}, nil)
+	raw := struct { count int }{}
+	_ = OrdinaryValue(raw)
+	consumeAny([]OrdinaryValue{{}}[0])
+	consumeOrdinaryMap(map[string]OrdinaryValue{"x": {}})
+	_ = NewOrdinaryValue().Count()
 }
 `)
 	files = append(files, m1SourceFile{
@@ -731,6 +776,12 @@ func NewEventRegistryV1(versions []EventVersionV1) (EventRegistryV1, error) {
 
 func ValidateJournalV1(registry EventRegistryV1, events []StoredEventV1) (ValidatedJournalV1, error) {
 	_ = registry
+	raw := struct { events []StoredEventV1 }{events: append([]StoredEventV1(nil), events...)}
+	_ = ValidatedJournalV1(raw)
+	_ = any(ValidatedJournalV1(raw))
+	_ = func(value any) any { return value }(ValidatedJournalV1(raw))
+	_ = []ValidatedJournalV1{{}}[0]
+	_ = map[string]ValidatedJournalV1{"control": {}}["control"]
 	return ValidatedJournalV1{events: append([]StoredEventV1(nil), events...)}, nil
 }
 
@@ -1276,10 +1327,17 @@ func m1CapabilityConstructionViolations(parsed m1ParsedJournalFile, validated *t
 	ast.Inspect(parsed.file, func(node ast.Node) bool {
 		switch value := node.(type) {
 		case *ast.CompositeLit:
-			if m1TypeIsExactValidated(parsed.info.TypeOf(value.Type), validated) {
+			// Ask go/types for the literal expression rather than its optional
+			// syntax type. Nested literals in slices and maps may omit Type while
+			// still constructing an exact ValidatedJournalV1 value.
+			if m1TypeIsExactValidated(parsed.info.TypeOf(value), validated) {
 				appendViolation(value, "composite literal")
 			}
 		case *ast.CallExpr:
+			if m1CallConvertsToExactValidated(value, parsed.info, validated) {
+				appendViolation(value, "type conversion")
+				break
+			}
 			identifier, ok := value.Fun.(*ast.Ident)
 			builtin, isBuiltin := parsed.info.Uses[identifier].(*types.Builtin)
 			if ok && isBuiltin && builtin.Name() == "new" && len(value.Args) == 1 && m1TypeIsExactValidated(parsed.info.TypeOf(value.Args[0]), validated) {
@@ -1293,6 +1351,37 @@ func m1CapabilityConstructionViolations(parsed m1ParsedJournalFile, validated *t
 		return true
 	})
 	return violations
+}
+
+func m1CallConvertsToExactValidated(call *ast.CallExpr, info *types.Info, validated *types.Named) bool {
+	if call == nil || info == nil || validated == nil {
+		return false
+	}
+	if target, ok := info.Types[call.Fun]; ok && target.IsType() {
+		return m1TypeIsExactValidated(target.Type, validated)
+	}
+
+	// TypeAndValue is the authoritative discriminator. Keep the object lookup
+	// as a narrow fallback for partially populated, otherwise valid type-info
+	// maps: only an exact type name can denote a conversion here. A function or
+	// method returning the capability is therefore never mistaken for one.
+	target := call.Fun
+	for {
+		parenthesized, ok := target.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		target = parenthesized.X
+	}
+	var object types.Object
+	switch expression := target.(type) {
+	case *ast.Ident:
+		object = info.Uses[expression]
+	case *ast.SelectorExpr:
+		object = info.Uses[expression.Sel]
+	}
+	typeName, ok := object.(*types.TypeName)
+	return ok && m1TypeIsExactValidated(typeName.Type(), validated)
 }
 
 func m1ValueSpecBindsStorage(specification *ast.ValueSpec) bool {
