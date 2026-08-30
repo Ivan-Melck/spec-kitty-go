@@ -140,6 +140,16 @@ func TestM1DependencyMutantControls(t *testing.T) {
 			kind: "sqlite-import",
 		},
 		{
+			id:   "sqlite-compatible-sqlcipher-driver",
+			file: m1SourceFile{Path: "internal/provingground/runtime.go", Source: []byte("package provingground\nimport _ \"github.com/mutecomm/go-sqlcipher/v4\"\n")},
+			kind: "sqlite-import",
+		},
+		{
+			id:   "sqlite-provider-classification-case-insensitive",
+			file: m1SourceFile{Path: "internal/provingground/runtime.go", Source: []byte("package provingground\nimport _ \"example.test/storage/Go-SQLCipher\"\n")},
+			kind: "sqlite-import",
+		},
+		{
 			id:   "current-batch-revision-fill-in",
 			file: m1SourceFile{Path: "internal/provingground/apply.go", Source: []byte("package provingground\nvar CurrentBatchRevision uint64\n")},
 			kind: "current-batch-revision",
@@ -186,6 +196,13 @@ func TestM1DependencyJournalPurityMutants(t *testing.T) {
 	if violations := inspectM1Sources(cleanReducer); len(violations) != 0 {
 		t.Fatalf("clean pure reducer rejected: %v", violations)
 	}
+	cleanPlayback := append(m1ExactJournalFixture(), m1SourceFile{
+		Path:   "internal/controljournal/playback/playback.go",
+		Source: []byte("package playback\nimport (\"crypto/sha256\"; \"github.com/spec-kitty/go-kitty3/internal/controljournal\")\nvar _ = sha256.Sum256\nvar _ controljournal.ValidatedJournalV1\n"),
+	})
+	if violations := inspectM1Sources(cleanPlayback); len(violations) != 0 {
+		t.Fatalf("clean recursively pure playback rejected: %v", violations)
+	}
 
 	for _, imported := range []string{
 		"os",
@@ -205,6 +222,7 @@ func TestM1DependencyJournalPurityMutants(t *testing.T) {
 		}{
 			{name: "kernel", path: "internal/controljournal/io.go", packageName: "controljournal", kind: "journal-kernel-impure-import"},
 			{name: "reducer", path: "internal/controljournal/reducer/io.go", packageName: "reducer", kind: "reducer-impure-import"},
+			{name: "playback", path: "internal/controljournal/playback/io.go", packageName: "playback", kind: "journal-child-impure-import"},
 		} {
 			t.Run(boundary.name+"/"+imported, func(t *testing.T) {
 				files := append(m1ExactJournalFixture(), m1SourceFile{
@@ -376,6 +394,132 @@ func ReduceRaw(events RawEvents) { _ = events }
 			kind: "journal-record-revision-owner",
 		},
 		{
+			name: "function-literal-raw-consumer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "var SortRaw = func(events []StoredEventV1) { _ = events }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "interface-method-raw-consumer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type RawSorter interface { Sort([]StoredEventV1) }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "function-literal-capability-producer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "var Manufacture = func() ValidatedJournalV1 { return ValidatedJournalV1{} }\n")
+			},
+			kind: "journal-capability-producer",
+		},
+		{
+			name: "generic-raw-slice-constraint",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func SortGeneric[S ~[]StoredEventV1](events S) { _ = events }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "named-raw-slice-wrapper",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type RawInput struct { Events []StoredEventV1 }\nfunc SortWrapped(input RawInput) { _ = input }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "nested-anonymous-raw-slice-wrapper",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func SortNested(input struct { Batch struct { Events []StoredEventV1 } }) { _ = input }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "array-raw-container",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func SortArray(input [1][]StoredEventV1) { _ = input }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "map-raw-container",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func SortMap(input map[string][]StoredEventV1) { _ = input }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "channel-raw-container",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func SortChannel(input chan []StoredEventV1) { _ = input }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "function-wrapper-raw-container",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func SortCallback(input func([]StoredEventV1)) { _ = input }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "pointer-raw-wrapper",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type RawPointerInput struct { Events []StoredEventV1 }\nfunc SortPointer(input *RawPointerInput) { _ = input }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "generic-union-raw-constraint",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func SortUnion[S ~[]StoredEventV1 | ~[1]StoredEventV1](events S) { _ = events }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "function-variable-raw-consumer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "var SortVariable func([]StoredEventV1)\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "wrapped-capability-producer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type CapabilityResult struct { Journal ValidatedJournalV1 }\nfunc ManufactureWrapped() CapabilityResult { return CapabilityResult{} }\n")
+			},
+			kind: "journal-capability-producer",
+		},
+		{
+			name: "nested-container-capability-producer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func ManufactureNested() map[string][]*ValidatedJournalV1 { return nil }\n")
+			},
+			kind: "journal-capability-producer",
+		},
+		{
+			name: "interface-capability-producer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type Manufacturer interface { Manufacture() ValidatedJournalV1 }\n")
+			},
+			kind: "journal-capability-producer",
+		},
+		{
+			name: "function-variable-capability-producer",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "var ManufactureVariable func() ValidatedJournalV1\n")
+			},
+			kind: "journal-capability-producer",
+		},
+		{
+			name: "validator-function-value-rebinding",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "var ValidateAgain = ValidateJournalV1\n")
+			},
+			kind: "journal-validator-rebinding",
+		},
+		{
 			name: "wrong-registry-constructor-signature",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
 				return replaceM1Fixture(files, "func NewEventRegistryV1(versions []EventVersionV1) (EventRegistryV1, error)", "func NewEventRegistryV1(versions ...EventVersionV1) (EventRegistryV1, error)")
@@ -428,6 +572,17 @@ type EventVersions []EventVersionV1
 func InspectVersions(versions EventVersions) { _ = versions }
 func (versions EventVersions) Len() int { return len(versions) }
 var revisionMetadata struct { Revision uint64 }
+var InspectVersionLiteral = func(versions []EventVersionV1) { _ = versions }
+var InspectVersionVariable func([]EventVersionV1)
+type VersionInspector interface { Inspect([]EventVersionV1) }
+type VersionWrapper struct { Versions []EventVersionV1 }
+func InspectVersionWrapper(input VersionWrapper) { _ = input }
+func InspectGenericVersions[S ~[]EventVersionV1](versions S) { _ = versions }
+func ConsumeValidated(journal ValidatedJournalV1) { _ = journal }
+func CallValidatorDirectly() {
+	_, _ = ValidateJournalV1(EventRegistryV1{}, nil)
+	_, _ = (ValidateJournalV1)(EventRegistryV1{}, nil)
+}
 `)
 	files = append(files, m1SourceFile{
 		Path: "internal/controljournal/reducer/versions.go",
@@ -435,6 +590,9 @@ var revisionMetadata struct { Revision uint64 }
 import journal "github.com/spec-kitty/go-kitty3/internal/controljournal"
 type Versions = []journal.EventVersionV1
 func Inspect(versions Versions) { _ = versions }
+func CallValidatorDirectly() {
+	_, _ = journal.ValidateJournalV1(journal.EventRegistryV1{}, nil)
+}
 `),
 	})
 	if violations := inspectM1Sources(files); len(violations) != 0 {
@@ -611,6 +769,9 @@ func inspectM1Sources(files []m1SourceFile) []m1ArchitectureViolation {
 			if isM1ProductionJournalKernelPath(file.Path) && !m1JournalPureImportAllowlist[path] {
 				violations = append(violations, m1ArchitectureViolation{Path: file.Path, Kind: "journal-kernel-impure-import", Detail: path})
 			}
+			if isM1ProductionJournalChildPath(file.Path) && !m1JournalPureImportAllowlist[path] {
+				violations = append(violations, m1ArchitectureViolation{Path: file.Path, Kind: "journal-child-impure-import", Detail: path})
+			}
 		}
 
 		if isM1SourcePath(file.Path) && !strings.HasSuffix(file.Path, "_test.go") {
@@ -696,7 +857,7 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 	pkg, _ := config.Check("github.com/spec-kitty/go-kitty3/internal/controljournal", fset, rootFiles, rootInfo)
 	if pkg == nil {
 		violations = append(violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: "journal-contract-missing", Detail: "root package cannot be type checked"})
-		return append(violations, inspectM1JournalCompetitors(parsed, nil)...)
+		return append(violations, inspectM1JournalCompetitors(parsed, nil, nil, nil)...)
 	}
 	m1ResolveJournalPackageTypes(fset, parsed, pkg, rootInfo)
 
@@ -728,8 +889,26 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 		m1RequireMethod(validated, "Len", nil, []types.Type{types.Typ[types.Int]}, "journal-len-method", &violations)
 		m1RequireMethod(validated, "At", []types.Type{types.Typ[types.Int]}, []types.Type{stored, types.Typ[types.Bool]}, "journal-at-method", &violations)
 	}
-	violations = append(violations, inspectM1JournalCompetitors(parsed, stored)...)
+	validator := m1ExactValidatorFunction(pkg, registry, stored, validated)
+	violations = append(violations, inspectM1JournalCompetitors(parsed, stored, validated, validator)...)
 	return violations
+}
+
+func m1ExactValidatorFunction(pkg *types.Package, registry, stored, validated *types.Named) *types.Func {
+	if registry == nil || stored == nil || validated == nil {
+		return nil
+	}
+	function, _ := pkg.Scope().Lookup("ValidateJournalV1").(*types.Func)
+	if function == nil {
+		return nil
+	}
+	signature, _ := function.Type().(*types.Signature)
+	if signature == nil || signature.Recv() != nil || signature.Variadic() ||
+		!m1TupleMatches(signature.Params(), []types.Type{registry, types.NewSlice(stored)}) ||
+		!m1TupleMatches(signature.Results(), []types.Type{validated, types.Universe.Lookup("error").Type()}) {
+		return nil
+	}
+	return function
 }
 
 func m1NewTypesInfo() *types.Info {
@@ -900,35 +1079,286 @@ func m1TupleMatches(tuple *types.Tuple, expected []types.Type) bool {
 	return true
 }
 
-func inspectM1JournalCompetitors(files []m1ParsedJournalFile, stored *types.Named) []m1ArchitectureViolation {
+func inspectM1JournalCompetitors(files []m1ParsedJournalFile, stored, validated *types.Named, validator *types.Func) []m1ArchitectureViolation {
 	var violations []m1ArchitectureViolation
 	for _, parsed := range files {
 		root := filepath.ToSlash(filepath.Dir(parsed.source.Path)) == "internal/controljournal" && parsed.file.Name.Name == "controljournal"
 		violations = append(violations, m1RecordRevisionOwnerViolations(parsed, root)...)
+		violations = append(violations, m1CallableAuthorityViolations(parsed, stored, validated, validator)...)
+		violations = append(violations, m1ValidatorRebindingViolations(parsed, validator)...)
 		for _, declaration := range parsed.file.Decls {
-			switch value := declaration.(type) {
-			case *ast.GenDecl:
-				if value.Tok != token.TYPE {
-					continue
-				}
-				for _, specification := range value.Specs {
-					typeSpec := specification.(*ast.TypeSpec)
-					if typeSpec.Name.Name != "ValidatedJournalV1" && m1ExprReferencesName(typeSpec.Type, "ValidatedJournalV1") {
-						violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-capability-recreation", Detail: typeSpec.Name.Name + " aliases, derives, or embeds ValidatedJournalV1"})
-					}
-				}
-			case *ast.FuncDecl:
-				authoritative := root && value.Recv == nil && value.Name.Name == "ValidateJournalV1"
-				if !authoritative && m1FieldListReferencesName(value.Type.Results, "ValidatedJournalV1") {
-					violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-capability-producer", Detail: value.Name.Name + " is a competing ValidatedJournalV1 producer"})
-				}
-				if !authoritative && m1FunctionConsumesRawStoredEvents(value, parsed.info, stored) {
-					violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-raw-slice-authority", Detail: value.Name.Name + " accepts unvalidated []StoredEventV1"})
+			generic, ok := declaration.(*ast.GenDecl)
+			if !ok || generic.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range generic.Specs {
+				typeSpec := specification.(*ast.TypeSpec)
+				if typeSpec.Name.Name != "ValidatedJournalV1" && m1ExprReferencesName(typeSpec.Type, "ValidatedJournalV1") {
+					violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-capability-recreation", Detail: typeSpec.Name.Name + " aliases, derives, or embeds ValidatedJournalV1"})
 				}
 			}
 		}
 	}
 	return violations
+}
+
+func m1CallableAuthorityViolations(parsed m1ParsedJournalFile, stored, validated *types.Named, validator *types.Func) []m1ArchitectureViolation {
+	if parsed.info == nil || stored == nil || validated == nil {
+		return nil
+	}
+	parents := m1ASTParents(parsed.file)
+	var violations []m1ArchitectureViolation
+	ast.Inspect(parsed.file, func(node ast.Node) bool {
+		functionType, ok := node.(*ast.FuncType)
+		if !ok {
+			return true
+		}
+		parent := parents[functionType]
+		signature, _ := parsed.info.TypeOf(functionType).(*types.Signature)
+		declaration, isDeclaration := parent.(*ast.FuncDecl)
+		if isDeclaration {
+			if function, ok := parsed.info.Defs[declaration.Name].(*types.Func); ok {
+				signature, _ = function.Type().(*types.Signature)
+			}
+		}
+		if signature == nil {
+			return true
+		}
+		authoritative := isDeclaration && validator != nil && parsed.info.Defs[declaration.Name] == validator
+		if authoritative {
+			return true
+		}
+
+		violations = append(violations, m1SignatureAuthorityViolations(parsed.source.Path, signature, stored, validated)...)
+		return true
+	})
+	for _, object := range parsed.info.Defs {
+		variable, ok := object.(*types.Var)
+		if !ok {
+			continue
+		}
+		signature := m1CallableSignature(variable.Type())
+		if signature != nil {
+			violations = append(violations, m1SignatureAuthorityViolations(parsed.source.Path, signature, stored, validated)...)
+		}
+	}
+	return violations
+}
+
+func m1CallableSignature(typ types.Type) *types.Signature {
+	if typ == nil {
+		return nil
+	}
+	typ = types.Unalias(typ)
+	if named, ok := typ.(*types.Named); ok {
+		typ = named.Underlying()
+	}
+	signature, _ := typ.(*types.Signature)
+	return signature
+}
+
+func m1SignatureAuthorityViolations(path string, signature *types.Signature, stored, validated *types.Named) []m1ArchitectureViolation {
+	var violations []m1ArchitectureViolation
+	for index := 0; index < signature.Params().Len(); index++ {
+		if m1TypeContainsRawStoredEventAuthority(signature.Params().At(index).Type(), stored, validated, make(map[types.Type]bool)) {
+			violations = append(violations, m1ArchitectureViolation{Path: path, Kind: "journal-raw-slice-authority", Detail: "non-authoritative callable input contains raw StoredEventV1 slice authority"})
+			break
+		}
+	}
+	if signature.Recv() != nil && m1TypeContainsRawStoredEventAuthority(signature.Recv().Type(), stored, validated, make(map[types.Type]bool)) {
+		violations = append(violations, m1ArchitectureViolation{Path: path, Kind: "journal-raw-slice-authority", Detail: "non-authoritative callable receiver contains raw StoredEventV1 slice authority"})
+	}
+	for index := 0; index < signature.Results().Len(); index++ {
+		if m1TypeContainsValidatedJournal(signature.Results().At(index).Type(), validated, make(map[types.Type]bool)) {
+			violations = append(violations, m1ArchitectureViolation{Path: path, Kind: "journal-capability-producer", Detail: "non-authoritative callable result contains ValidatedJournalV1"})
+			break
+		}
+	}
+	return violations
+}
+
+func m1ASTParents(root ast.Node) map[ast.Node]ast.Node {
+	parents := make(map[ast.Node]ast.Node)
+	var stack []ast.Node
+	ast.Inspect(root, func(node ast.Node) bool {
+		if node == nil {
+			stack = stack[:len(stack)-1]
+			return false
+		}
+		if len(stack) != 0 {
+			parents[node] = stack[len(stack)-1]
+		}
+		stack = append(stack, node)
+		return true
+	})
+	return parents
+}
+
+func m1ValidatorRebindingViolations(parsed m1ParsedJournalFile, validator *types.Func) []m1ArchitectureViolation {
+	if parsed.info == nil || validator == nil {
+		return nil
+	}
+	parents := m1ASTParents(parsed.file)
+	var violations []m1ArchitectureViolation
+	ast.Inspect(parsed.file, func(node ast.Node) bool {
+		identifier, ok := node.(*ast.Ident)
+		if !ok || parsed.info.Uses[identifier] != validator {
+			return true
+		}
+		callTarget := ast.Expr(identifier)
+		for {
+			parent := parents[callTarget]
+			if selector, ok := parent.(*ast.SelectorExpr); ok && selector.Sel == callTarget {
+				callTarget = selector
+				continue
+			}
+			if parentheses, ok := parent.(*ast.ParenExpr); ok && parentheses.X == callTarget {
+				callTarget = parentheses
+				continue
+			}
+			break
+		}
+		if call, ok := parents[callTarget].(*ast.CallExpr); ok && call.Fun == callTarget {
+			return true
+		}
+		violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-validator-rebinding", Detail: "ValidateJournalV1 may be called directly but not rebound as a function value"})
+		return true
+	})
+	return violations
+}
+
+func m1TypeContainsRawStoredEventAuthority(typ types.Type, stored, validated *types.Named, seen map[types.Type]bool) bool {
+	if typ == nil {
+		return false
+	}
+	typ = types.Unalias(typ)
+	if validated != nil && types.Identical(typ, validated) {
+		return false
+	}
+	if seen[typ] {
+		return false
+	}
+	seen[typ] = true
+
+	switch value := typ.(type) {
+	case *types.Named:
+		return m1TypeContainsRawStoredEventAuthority(value.Underlying(), stored, validated, seen)
+	case *types.Pointer:
+		return m1TypeContainsRawStoredEventAuthority(value.Elem(), stored, validated, seen)
+	case *types.Slice:
+		return types.Identical(types.Unalias(value.Elem()), stored) || m1TypeContainsRawStoredEventAuthority(value.Elem(), stored, validated, seen)
+	case *types.Array:
+		return m1TypeContainsRawStoredEventAuthority(value.Elem(), stored, validated, seen)
+	case *types.Map:
+		return m1TypeContainsRawStoredEventAuthority(value.Key(), stored, validated, seen) || m1TypeContainsRawStoredEventAuthority(value.Elem(), stored, validated, seen)
+	case *types.Chan:
+		return m1TypeContainsRawStoredEventAuthority(value.Elem(), stored, validated, seen)
+	case *types.Struct:
+		for index := 0; index < value.NumFields(); index++ {
+			if m1TypeContainsRawStoredEventAuthority(value.Field(index).Type(), stored, validated, seen) {
+				return true
+			}
+		}
+	case *types.Signature:
+		return m1TupleContainsRawAuthority(value.Params(), stored, validated, seen) ||
+			m1TupleContainsRawAuthority(value.Results(), stored, validated, seen)
+	case *types.Interface:
+		value = value.Complete()
+		for index := 0; index < value.NumMethods(); index++ {
+			if m1TypeContainsRawStoredEventAuthority(value.Method(index).Type(), stored, validated, seen) {
+				return true
+			}
+		}
+		for index := 0; index < value.NumEmbeddeds(); index++ {
+			if m1TypeContainsRawStoredEventAuthority(value.EmbeddedType(index), stored, validated, seen) {
+				return true
+			}
+		}
+	case *types.TypeParam:
+		return m1TypeContainsRawStoredEventAuthority(value.Constraint(), stored, validated, seen)
+	case *types.Union:
+		for index := 0; index < value.Len(); index++ {
+			if m1TypeContainsRawStoredEventAuthority(value.Term(index).Type(), stored, validated, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func m1TupleContainsRawAuthority(tuple *types.Tuple, stored, validated *types.Named, seen map[types.Type]bool) bool {
+	for index := 0; index < tuple.Len(); index++ {
+		if m1TypeContainsRawStoredEventAuthority(tuple.At(index).Type(), stored, validated, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func m1TypeContainsValidatedJournal(typ types.Type, validated *types.Named, seen map[types.Type]bool) bool {
+	if typ == nil {
+		return false
+	}
+	typ = types.Unalias(typ)
+	if types.Identical(typ, validated) {
+		return true
+	}
+	if seen[typ] {
+		return false
+	}
+	seen[typ] = true
+	switch value := typ.(type) {
+	case *types.Named:
+		return m1TypeContainsValidatedJournal(value.Underlying(), validated, seen)
+	case *types.Pointer:
+		return m1TypeContainsValidatedJournal(value.Elem(), validated, seen)
+	case *types.Slice:
+		return m1TypeContainsValidatedJournal(value.Elem(), validated, seen)
+	case *types.Array:
+		return m1TypeContainsValidatedJournal(value.Elem(), validated, seen)
+	case *types.Map:
+		return m1TypeContainsValidatedJournal(value.Key(), validated, seen) || m1TypeContainsValidatedJournal(value.Elem(), validated, seen)
+	case *types.Chan:
+		return m1TypeContainsValidatedJournal(value.Elem(), validated, seen)
+	case *types.Struct:
+		for index := 0; index < value.NumFields(); index++ {
+			if m1TypeContainsValidatedJournal(value.Field(index).Type(), validated, seen) {
+				return true
+			}
+		}
+	case *types.Signature:
+		return m1TupleContainsValidated(value.Params(), validated, seen) || m1TupleContainsValidated(value.Results(), validated, seen)
+	case *types.Interface:
+		value = value.Complete()
+		for index := 0; index < value.NumMethods(); index++ {
+			if m1TypeContainsValidatedJournal(value.Method(index).Type(), validated, seen) {
+				return true
+			}
+		}
+		for index := 0; index < value.NumEmbeddeds(); index++ {
+			if m1TypeContainsValidatedJournal(value.EmbeddedType(index), validated, seen) {
+				return true
+			}
+		}
+	case *types.TypeParam:
+		return m1TypeContainsValidatedJournal(value.Constraint(), validated, seen)
+	case *types.Union:
+		for index := 0; index < value.Len(); index++ {
+			if m1TypeContainsValidatedJournal(value.Term(index).Type(), validated, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func m1TupleContainsValidated(tuple *types.Tuple, validated *types.Named, seen map[types.Type]bool) bool {
+	for index := 0; index < tuple.Len(); index++ {
+		if m1TypeContainsValidatedJournal(tuple.At(index).Type(), validated, seen) {
+			return true
+		}
+	}
+	return false
 }
 
 func m1RecordRevisionOwnerViolations(parsed m1ParsedJournalFile, root bool) []m1ArchitectureViolation {
@@ -971,36 +1401,6 @@ func m1RecordRevisionOwnerViolations(parsed m1ParsedJournalFile, root bool) []m1
 	return violations
 }
 
-func m1FunctionConsumesRawStoredEvents(function *ast.FuncDecl, info *types.Info, stored *types.Named) bool {
-	if info != nil && stored != nil {
-		object, _ := info.Defs[function.Name].(*types.Func)
-		if object != nil {
-			signature, _ := object.Type().(*types.Signature)
-			if signature != nil {
-				for index := 0; index < signature.Params().Len(); index++ {
-					if m1TypeIsRawStoredEventSlice(signature.Params().At(index).Type(), stored) {
-						return true
-					}
-				}
-				if signature.Recv() != nil && m1TypeIsRawStoredEventSlice(signature.Recv().Type(), stored) {
-					return true
-				}
-			}
-		}
-	}
-	// Fail closed for the literal forms even when an unrelated package error
-	// prevents go/types from resolving a declaration.
-	return m1FieldListHasRawStoredSliceSyntax(function.Type.Params) || m1FieldListHasRawStoredSliceSyntax(function.Recv)
-}
-
-func m1TypeIsRawStoredEventSlice(typ types.Type, stored *types.Named) bool {
-	if pointer, ok := typ.(*types.Pointer); ok {
-		typ = pointer.Elem()
-	}
-	slice, ok := typ.Underlying().(*types.Slice)
-	return ok && types.Identical(slice.Elem(), stored)
-}
-
 func m1ExprReferencesName(expression ast.Expr, name string) bool {
 	found := false
 	ast.Inspect(expression, func(node ast.Node) bool {
@@ -1014,37 +1414,6 @@ func m1ExprReferencesName(expression ast.Expr, name string) bool {
 	return found
 }
 
-func m1FieldListReferencesName(fields *ast.FieldList, name string) bool {
-	if fields == nil {
-		return false
-	}
-	for _, field := range fields.List {
-		if m1ExprReferencesName(field.Type, name) {
-			return true
-		}
-	}
-	return false
-}
-
-func m1FieldListHasRawStoredSliceSyntax(fields *ast.FieldList) bool {
-	if fields == nil {
-		return false
-	}
-	for _, field := range fields.List {
-		switch expression := field.Type.(type) {
-		case *ast.ArrayType:
-			if expression.Len == nil && m1ExprReferencesName(expression.Elt, "StoredEventV1") {
-				return true
-			}
-		case *ast.Ellipsis:
-			if m1ExprReferencesName(expression.Elt, "StoredEventV1") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func isM1ProductionReducerPath(path string) bool {
 	path = filepath.ToSlash(path)
 	return strings.HasPrefix(path, "internal/controljournal/reducer/") && !strings.HasSuffix(path, "_test.go")
@@ -1053,6 +1422,14 @@ func isM1ProductionReducerPath(path string) bool {
 func isM1ProductionJournalKernelPath(path string) bool {
 	path = filepath.ToSlash(path)
 	return filepath.ToSlash(filepath.Dir(path)) == "internal/controljournal" && !strings.HasSuffix(path, "_test.go")
+}
+
+func isM1ProductionJournalChildPath(path string) bool {
+	path = filepath.ToSlash(path)
+	return strings.HasPrefix(path, "internal/controljournal/") &&
+		filepath.ToSlash(filepath.Dir(path)) != "internal/controljournal" &&
+		!isM1ProductionReducerPath(path) &&
+		!strings.HasSuffix(path, "_test.go")
 }
 
 func isM1SourcePath(path string) bool {
@@ -1074,6 +1451,8 @@ func isSQLiteImport(path string) bool {
 		"github.com/ncruces/go-sqlite3",
 		"github.com/tursodatabase/go-libsql",
 		"github.com/tursodatabase/libsql-client-go",
+		"github.com/mutecomm/go-sqlcipher",
+		"github.com/xeodou/go-sqlcipher",
 		"github.com/uptrace/bun/driver/sqlitedialect",
 		"github.com/uptrace/bun/driver/sqliteshim",
 		"gorm.io/driver/sqlite",
@@ -1088,7 +1467,7 @@ func isSQLiteImport(path string) bool {
 	// path components, not source text, so a new SQLite driver fails closed
 	// without making comments or string literals architectural evidence.
 	for _, component := range strings.Split(strings.ToLower(path), "/") {
-		if strings.Contains(component, "sqlite") {
+		if strings.Contains(component, "sqlite") || strings.Contains(component, "sqlcipher") {
 			return true
 		}
 	}
