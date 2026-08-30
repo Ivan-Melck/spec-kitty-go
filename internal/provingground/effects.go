@@ -857,7 +857,8 @@ func (j *workflowJournal) loadAggregateEventsWithBudget(ctx context.Context, kin
 	operationRevisions := map[controljournal.OperationID]uint64{}
 	for _, stored := range journalRecords {
 		event, decodeErr := controljournal.DecodeEventEnvelopeV1(stored.Value)
-		if decodeErr != nil || stored.Key != j.prefix()+"journal/"+string(event.EventID) || stored.Revision == 0 || stored.Revision > bound || event.ProjectID != j.config.ProjectID || event.RuntimeEpochID != j.config.RuntimeEpochID || event.WorkRevisionID != j.config.WorkRevisionID {
+		wp08Kind := event.AggregateKind == "external-effect" || event.AggregateKind == "candidate" || event.AggregateKind == "review" || event.AggregateKind == "integration"
+		if decodeErr != nil || stored.Key != j.prefix()+"journal/"+string(event.EventID) || stored.Revision == 0 || stored.Revision > bound || event.ProjectID != j.config.ProjectID || event.RuntimeEpochID != j.config.RuntimeEpochID || wp08Kind && event.WorkRevisionID != j.config.WorkRevisionID {
 			return nil, refusal(OutcomeIndeterminate, "restore", "journal contains a malformed event")
 		}
 		byOperation[event.OperationID] = append(byOperation[event.OperationID], event)
