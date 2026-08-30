@@ -3,8 +3,10 @@ package provingground
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +16,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/application"
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
 
 type journalFixture struct {
@@ -53,6 +57,7 @@ func (f *journalFixture) Apply(_ context.Context, batch application.ValidatedBat
 	for _, mutation := range product.AggregateHeads {
 		f.records[mutation.Key] = storegapdb.Record{Key: mutation.Key, Value: append([]byte(nil), mutation.Value...), Revision: revision}
 	}
+	f.records[product.Operation.Key] = storegapdb.Record{Key: product.Operation.Key, Value: append([]byte(nil), product.Operation.Value...), Revision: revision}
 	f.results[product.OperationID] = revision
 	return application.ResultV1{Kind: application.OutcomeCommitted, CommittedRevision: revision}, nil
 }
@@ -333,6 +338,133 @@ func TestAuthorityExpireValidatesFenceAndProcessCoordinates(t *testing.T) {
 	}
 }
 
+func TestRetainedExecutionHeartbeatAndExpireRejectImpersonationCoordinates(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	mutants := []struct {
+		name   string
+		kind   OutcomeKind
+		mutate func(*execution.HeartbeatRequest, *execution.ExpireRequest)
+	}{
+		{"actor", OutcomeActorProcessMismatch, func(h *execution.HeartbeatRequest, e *execution.ExpireRequest) {
+			h.ActorID, e.ActorID = "actor-b", "actor-b"
+		}},
+		{"process", OutcomeActorProcessMismatch, func(h *execution.HeartbeatRequest, e *execution.ExpireRequest) {
+			h.ProcessID, e.ProcessID = "process-b", "process-b"
+		}},
+		{"token", OutcomeStaleFence, func(h *execution.HeartbeatRequest, e *execution.ExpireRequest) { h.Token, e.Token = "999", "999" }},
+		{"lease", OutcomeStaleLease, func(h *execution.HeartbeatRequest, e *execution.ExpireRequest) {
+			h.LeaseID, e.LeaseID = "lease-foreign", "lease-foreign"
+		}},
+		{"generation", OutcomeStaleLease, func(h *execution.HeartbeatRequest, e *execution.ExpireRequest) { h.Generation, e.Generation = 2, 2 }},
+	}
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			service := mustService(t, &recordingApplier{}, nil)
+			authority, err := service.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "retained-"+mutant.name, now))
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository := &executionAuthorityRepository{core: service}
+			heartbeat := execution.HeartbeatRequest{SchemaVersion: execution.ResultSchemaVersion, OperationID: ids.OperationID("heartbeat-" + mutant.name), ActorID: "actor-a", ProcessID: "process-a", LeaseID: ids.LeaseID(authority.LeaseID), Generation: int64(authority.Generation), Token: fmt.Sprint(authority.FenceToken), Now: now.Add(time.Second), LeaseTTL: time.Minute}
+			expire := execution.ExpireRequest{SchemaVersion: execution.ResultSchemaVersion, OperationID: ids.OperationID("expire-" + mutant.name), ActorID: "actor-a", ProcessID: "process-a", LeaseID: ids.LeaseID(authority.LeaseID), Generation: int64(authority.Generation), Token: fmt.Sprint(authority.FenceToken), Now: authority.Deadline}
+			mutant.mutate(&heartbeat, &expire)
+			if _, err := repository.Heartbeat(t.Context(), heartbeat); !IsOutcome(err, mutant.kind) {
+				t.Fatalf("heartbeat mutant survived: %v", err)
+			}
+			if err := repository.Expire(t.Context(), expire); !IsOutcome(err, mutant.kind) {
+				t.Fatalf("expire mutant survived: %v", err)
+			}
+			if _, current := service.Current("work-a"); !current {
+				t.Fatal("impersonation refusal removed current authority")
+			}
+		})
+	}
+}
+
+func TestExpireOperationIdentityBindsEveryAuthorityCoordinateAndTime(t *testing.T) {
+	service := mustService(t, &recordingApplier{}, nil)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	authority, _ := service.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "digest-expire", now))
+	if err := service.Expire(t.Context(), "expire-digest", authority, authority.Deadline); err != nil {
+		t.Fatal(err)
+	}
+	mutants := []func(*Authority){
+		func(a *Authority) { a.ActorID = "actor-b" }, func(a *Authority) { a.ProcessID = "process-b" },
+		func(a *Authority) { a.FenceToken++ }, func(a *Authority) { a.AuthorityHeadRecordRevision++ },
+		func(a *Authority) { a.WorkRevisionID = "revision-other" }, func(a *Authority) { a.RuntimeEpochID = "epoch-other" },
+		func(a *Authority) { a.LeaseID = "lease-other" }, func(a *Authority) { a.Generation++ },
+	}
+	for index, mutate := range mutants {
+		changed := authority
+		mutate(&changed)
+		if err := service.Expire(t.Context(), "expire-digest", changed, authority.Deadline); !IsOutcome(err, OutcomeInvalidCommand) {
+			t.Fatalf("coordinate mutant %d survived: %v", index, err)
+		}
+	}
+	if err := service.Expire(t.Context(), "expire-digest", authority, authority.Deadline.Add(time.Nanosecond)); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("time mutant survived: %v", err)
+	}
+}
+
+func TestReplaceRuntimeOperationIdentityBindsAuthoritativeTime(t *testing.T) {
+	service := mustService(t, &recordingApplier{}, nil)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	replacement := &recordingApplier{}
+	if err := service.ReplaceRuntime(t.Context(), "restart-digest", "epoch-two", replacement, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReplaceRuntime(t.Context(), "restart-digest", "epoch-two", replacement, now.Add(time.Nanosecond)); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("restart time mutant survived: %v", err)
+	}
+}
+
+func TestRetainedClaimReplayBindsOriginalStartIdentity(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	service := mustService(t, &recordingApplier{}, nil)
+	repository := &executionAuthorityRepository{core: service}
+	request := execution.StartRequest{CorrelationID: "claim-replay", OperationID: "claim-replay", ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-a", Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, now)}
+	if _, err := repository.Claim(t.Context(), request, "run-m1", "lease-replay-one"); err != nil {
+		t.Fatal(err)
+	}
+	changed := request
+	changed.ActorID, changed.ProcessID = "actor-b", "process-b"
+	if _, err := repository.Claim(t.Context(), changed, "run-m1", "lease-replay-two"); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("retained start identity mutant survived: %v", err)
+	}
+	changed = request
+	changed.Now = now.Add(time.Nanosecond)
+	if _, err := repository.Claim(t.Context(), changed, "run-m1", "lease-replay-three"); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("retained start time mutant survived: %v", err)
+	}
+}
+
+func TestRetainedClaimAndOwnerRestartAreRaceFree(t *testing.T) {
+	for iteration := 0; iteration < 50; iteration++ {
+		now := time.Date(2026, 8, 30, 12, 0, iteration, 0, time.UTC)
+		service := mustService(t, &recordingApplier{}, nil)
+		repository := &executionAuthorityRepository{core: service}
+		request := execution.StartRequest{CorrelationID: fmt.Sprintf("race-%d", iteration), OperationID: ids.OperationID(fmt.Sprintf("claim-race-%d", iteration)), ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-a", Now: now, LeaseTTL: time.Minute, GovernanceContext: testGovernanceContext(t, now)}
+		start := make(chan struct{})
+		errors := make(chan error, 2)
+		go func() {
+			<-start
+			_, err := repository.Claim(t.Context(), request, "run-m1", ids.LeaseID(fmt.Sprintf("lease-race-%d", iteration)))
+			errors <- err
+		}()
+		go func() {
+			<-start
+			errors <- service.ReplaceRuntime(t.Context(), controljournal.OperationID(fmt.Sprintf("restart-race-%d", iteration)), "epoch-two", &recordingApplier{}, now.Add(time.Second))
+		}()
+		close(start)
+		for range 2 {
+			if err := <-errors; err != nil && !IsOutcome(err, OutcomeStaleEpoch) {
+				t.Fatalf("iteration %d: %v", iteration, err)
+			}
+		}
+		assertAuthorityInvariants(t, service)
+	}
+}
+
 func TestAuthorityExpireIsOneAtomicRetryableInvalidation(t *testing.T) {
 	git := newFakeGit(t)
 	base := &recordingApplier{}
@@ -473,6 +605,9 @@ func TestReplaceRuntimeExactRetryAfterSealedProcessRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := journal.calls
+	if err := fresh.ReplaceRuntime(t.Context(), "restart-sealed-retry", "epoch-two", journal, now.Add(2*time.Second+time.Nanosecond)); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("changed owner-restart time survived sealed reconstruction: %v", err)
+	}
 	if err := fresh.ReplaceRuntime(t.Context(), "restart-sealed-retry", "epoch-two", journal, now.Add(2*time.Second)); err != nil {
 		t.Fatalf("exact owner-restart retry failed after sealed reconstruction: %v", err)
 	}
@@ -483,6 +618,111 @@ func TestReplaceRuntimeExactRetryAfterSealedProcessRestart(t *testing.T) {
 		if binding, _ := fresh.Binding(id); binding.Status != "quarantined" {
 			t.Fatalf("restored restart lost %s quarantine: %+v", id, binding)
 		}
+	}
+}
+
+func TestExpireExactDigestRetryAfterSealedProcessRestart(t *testing.T) {
+	journal := newJournalFixture()
+	service := mustService(t, journal, nil)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	authority, _ := service.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "expire-sealed-digest", now))
+	if err := service.Expire(t.Context(), "expire-sealed-digest", authority, authority.Deadline); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := EventRegistryV1()
+	reducers, _ := ReducerRegistryV1()
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	restored, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{Reader: journal, Source: checkpoint.SourceIdentityV1{ProjectID: "project-m1", MissionID: "mission-m1", RunID: "run-m1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: checkpoint.RestoreBindingV1{DatabaseID: "database-expire-digest", HostInstanceID: "host-expire-digest"}, EventRegistry: events, Reducers: reducers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationKey := "spk/v1/project-m1/mission-m1/operations/expire-sealed-digest"
+	originalOperation := journal.records[operationKey]
+	var operationWire map[string]any
+	if err := json.Unmarshal(originalOperation.Value, &operationWire); err != nil {
+		t.Fatal(err)
+	}
+	operationWire["request_digest"] = strings.Repeat("f", 64)
+	mutatedOperation, err := json.Marshal(operationWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.records[operationKey] = storegapdb.Record{Key: operationKey, Value: mutatedOperation, Revision: originalOperation.Revision}
+	if _, err := restoreValidated(t.Context(), testConfig(t), journal, nil, journal, restored); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("application request-digest mutant survived sealed restore: %v", err)
+	}
+	journal.records[operationKey] = originalOperation
+	operationWire = nil
+	if err := json.Unmarshal(originalOperation.Value, &operationWire); err != nil {
+		t.Fatal(err)
+	}
+	operationWire["event_ids"] = []string{"event-ffffffffffffffffffffffffffffffff"}
+	mutatedOperation, err = json.Marshal(operationWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.records[operationKey] = storegapdb.Record{Key: operationKey, Value: mutatedOperation, Revision: originalOperation.Revision}
+	if _, err := restoreValidated(t.Context(), testConfig(t), journal, nil, journal, restored); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("operation event-membership mutant survived sealed restore: %v", err)
+	}
+	journal.records[operationKey] = originalOperation
+	fresh, err := restoreValidated(t.Context(), testConfig(t), journal, nil, journal, restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := authority
+	changed.AuthorityHeadRecordRevision++
+	if err := fresh.Expire(t.Context(), "expire-sealed-digest", changed, authority.Deadline); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("sealed coordinate mutant survived: %v", err)
+	}
+	if err := fresh.Expire(t.Context(), "expire-sealed-digest", authority, authority.Deadline.Add(time.Nanosecond)); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("sealed time mutant survived: %v", err)
+	}
+	if err := fresh.Expire(t.Context(), "expire-sealed-digest", authority, authority.Deadline); err != nil {
+		t.Fatalf("exact sealed retry: %v", err)
+	}
+}
+
+func TestExpireReceiptRestoresFromHistoryAfterReplacementGeneration(t *testing.T) {
+	journal := newJournalFixture()
+	git := newFakeGit(t)
+	service := mustService(t, journal, git)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	a, _ := service.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "history-a", now))
+	_, _ = service.EnsureWorkspace(t.Context(), workspaceRequest(a, "history-w1", now.Add(time.Second)))
+	if err := service.Expire(t.Context(), "expire-history-a", a, a.Deadline); err != nil {
+		t.Fatal(err)
+	}
+	cRequest := claimRequest("work-a", "actor-a", "process-c", "history-c", a.Deadline.Add(time.Second))
+	c, err := service.Claim(t.Context(), cRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.EnsureWorkspace(t.Context(), workspaceRequest(c, "history-w3", cRequest.Now.Add(time.Second))); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := EventRegistryV1()
+	reducers, _ := ReducerRegistryV1()
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	restored, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{Reader: journal, Source: checkpoint.SourceIdentityV1{ProjectID: "project-m1", MissionID: "mission-m1", RunID: "run-m1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: checkpoint.RestoreBindingV1{DatabaseID: "database-history", HostInstanceID: "host-history"}, EventRegistry: events, Reducers: reducers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := restoreValidated(t.Context(), testConfig(t), journal, git, journal, restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := journal.calls
+	if err := fresh.Expire(t.Context(), "expire-history-a", a, a.Deadline); err != nil {
+		t.Fatalf("historical exact retry: %v", err)
+	}
+	if journal.calls != calls {
+		t.Fatal("historical exact retry republished")
+	}
+	if current, ok := fresh.Current("work-a"); !ok || current.ProcessID != "process-c" {
+		t.Fatalf("historical retry damaged replacement: %+v %v", current, ok)
 	}
 }
 

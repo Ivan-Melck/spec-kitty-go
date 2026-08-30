@@ -117,6 +117,8 @@ type Authority struct {
 	GovernanceContextID         string                        `json:"governance_context_id,omitempty"`
 	GovernanceContextAlgorithm  string                        `json:"governance_context_algorithm,omitempty"`
 	GovernanceContextDigest     string                        `json:"governance_context_digest,omitempty"`
+	InvalidatedAt               *time.Time                    `json:"invalidated_at,omitempty"`
+	InvalidationCommandDigest   string                        `json:"invalidation_command_digest,omitempty"`
 }
 
 type workState struct {
@@ -144,10 +146,11 @@ type service struct {
 
 	works map[controljournal.WorkID]*workState
 
-	workspaceMu sync.RWMutex
-	workspaces  map[controljournal.WorkspaceID]WorkspaceBinding
-	workspaceOp map[controljournal.OperationID]WorkspaceBinding
-	git         GitWorkspace
+	workspaceMu       sync.RWMutex
+	workspaces        map[controljournal.WorkspaceID]WorkspaceBinding
+	workspaceOp       map[controljournal.OperationID]WorkspaceBinding
+	workspaceReceipts map[controljournal.OperationID]workspaceReceipt
+	git               GitWorkspace
 }
 
 type runtimeProjection struct {
@@ -176,12 +179,128 @@ type projection struct {
 }
 
 type invalidationReceipt struct {
-	Kind             string
-	WorkID           controljournal.WorkID
-	LeaseID          controljournal.LeaseID
-	Generation       uint64
-	PredecessorEpoch controljournal.RuntimeEpochID
-	RuntimeEpochID   controljournal.RuntimeEpochID
+	Kind                     string
+	WorkID                   controljournal.WorkID
+	LeaseID                  controljournal.LeaseID
+	Generation               uint64
+	PredecessorEpoch         controljournal.RuntimeEpochID
+	RuntimeEpochID           controljournal.RuntimeEpochID
+	CommandDigest            string
+	ApplicationRequestDigest [32]byte
+	CanonicalResult          []byte
+	Authority                Authority
+}
+
+type expireCommandIdentity struct {
+	OperationID                 controljournal.OperationID    `json:"operation_id"`
+	ProjectID                   controljournal.ProjectID      `json:"project_id"`
+	MissionID                   controljournal.MissionID      `json:"mission_id"`
+	WorkRevisionID              controljournal.WorkRevisionID `json:"work_revision_id"`
+	WorkID                      controljournal.WorkID         `json:"work_id"`
+	ActorID                     controljournal.ActorID        `json:"actor_id"`
+	ProcessID                   controljournal.ProcessID      `json:"process_id"`
+	RunID                       controljournal.RunID          `json:"run_id"`
+	LeaseID                     controljournal.LeaseID        `json:"lease_id"`
+	RuntimeEpochID              controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
+	Generation                  uint64                        `json:"generation"`
+	FenceToken                  uint64                        `json:"fence_token"`
+	AuthorityHeadRecordRevision uint64                        `json:"authority_head_record_revision"`
+	Deadline                    time.Time                     `json:"deadline"`
+	GovernanceContextID         string                        `json:"governance_context_id,omitempty"`
+	GovernanceContextAlgorithm  string                        `json:"governance_context_algorithm,omitempty"`
+	GovernanceContextDigest     string                        `json:"governance_context_digest,omitempty"`
+	OccurredAt                  time.Time                     `json:"occurred_at"`
+}
+
+type ownerRestartCommandIdentity struct {
+	OperationID      controljournal.OperationID    `json:"operation_id"`
+	RunID            controljournal.RunID          `json:"run_id"`
+	PredecessorEpoch controljournal.RuntimeEpochID `json:"predecessor_epoch_id"`
+	RuntimeEpochID   controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
+	OccurredAt       time.Time                     `json:"occurred_at"`
+}
+
+type invalidatedLease struct {
+	WorkID     controljournal.WorkID    `json:"work_id"`
+	ActorID    controljournal.ActorID   `json:"actor_id"`
+	ProcessID  controljournal.ProcessID `json:"process_id"`
+	LeaseID    controljournal.LeaseID   `json:"lease_id"`
+	Generation uint64                   `json:"generation"`
+	FenceToken uint64                   `json:"fence_token"`
+}
+
+type ownerRestartState struct {
+	OperationID      controljournal.OperationID    `json:"operation_id"`
+	RunID            controljournal.RunID          `json:"run_id"`
+	PredecessorEpoch controljournal.RuntimeEpochID `json:"predecessor_epoch_id"`
+	RuntimeEpochID   controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
+	OccurredAt       time.Time                     `json:"occurred_at"`
+	CommandDigest    string                        `json:"command_digest"`
+	Invalidated      []invalidatedLease            `json:"invalidated_authorities"`
+}
+
+func canonicalCommandDigest(value any) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := controljournal.CanonicalJSONObject(encoded)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func expireCommandDigest(operationID controljournal.OperationID, authority Authority, now time.Time) (string, error) {
+	return canonicalCommandDigest(expireCommandIdentity{
+		OperationID: operationID, ProjectID: authority.ProjectID, MissionID: authority.MissionID,
+		WorkRevisionID: authority.WorkRevisionID, WorkID: authority.WorkID, ActorID: authority.ActorID,
+		ProcessID: authority.ProcessID, RunID: authority.RunID, LeaseID: authority.LeaseID,
+		RuntimeEpochID: authority.RuntimeEpochID, Generation: authority.Generation, FenceToken: authority.FenceToken,
+		AuthorityHeadRecordRevision: authority.AuthorityHeadRecordRevision, Deadline: authority.Deadline.UTC(),
+		GovernanceContextID: authority.GovernanceContextID, GovernanceContextAlgorithm: authority.GovernanceContextAlgorithm,
+		GovernanceContextDigest: authority.GovernanceContextDigest, OccurredAt: now.UTC(),
+	})
+}
+
+func ownerRestartCommandDigest(operationID controljournal.OperationID, runID controljournal.RunID, predecessor, epoch controljournal.RuntimeEpochID, now time.Time) (string, error) {
+	return canonicalCommandDigest(ownerRestartCommandIdentity{OperationID: operationID, RunID: runID, PredecessorEpoch: predecessor, RuntimeEpochID: epoch, OccurredAt: now.UTC()})
+}
+
+func applicationCommandDigest(config Config, operationID controljournal.OperationID, commandType string, epoch controljournal.RuntimeEpochID, canonicalResult []byte) ([32]byte, error) {
+	result, err := controljournal.CanonicalJSONObject(canonicalResult)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	payload, err := json.Marshal(struct {
+		OperationID controljournal.OperationID `json:"operation_id"`
+		Result      json.RawMessage            `json:"result"`
+	}{OperationID: operationID, Result: result})
+	if err != nil {
+		return [32]byte{}, err
+	}
+	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: config.ProjectID, MissionID: config.MissionID, OperationID: operationID, CommandType: commandType, RuntimeEpochID: epoch, Payload: payload})
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return command.Digest(), nil
+}
+
+func canonicalResultBytes(value any) ([]byte, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return controljournal.CanonicalJSONObject(encoded)
+}
+
+func receiptMatchesApplication(config Config, operationID controljournal.OperationID, commandType string, epoch controljournal.RuntimeEpochID, receipt invalidationReceipt) bool {
+	if receipt.ApplicationRequestDigest == [32]byte{} || len(receipt.CanonicalResult) == 0 {
+		return false
+	}
+	digest, err := applicationCommandDigest(config, operationID, commandType, epoch, receipt.CanonicalResult)
+	return err == nil && digest == receipt.ApplicationRequestDigest
 }
 
 func newService(config Config, applier batchApplier, git GitWorkspace) (*service, error) {
@@ -216,9 +335,10 @@ func newService(config Config, applier batchApplier, git GitWorkspace) (*service
 	}
 	return &service{
 		config: config, epoch: config.RuntimeEpochID, applier: applier, faults: faults.Noop{}, works: works, git: git,
-		workspaces:    make(map[controljournal.WorkspaceID]WorkspaceBinding),
-		workspaceOp:   make(map[controljournal.OperationID]WorkspaceBinding),
-		invalidations: make(map[controljournal.OperationID]invalidationReceipt),
+		workspaces:        make(map[controljournal.WorkspaceID]WorkspaceBinding),
+		workspaceOp:       make(map[controljournal.OperationID]WorkspaceBinding),
+		workspaceReceipts: make(map[controljournal.OperationID]workspaceReceipt),
+		invalidations:     make(map[controljournal.OperationID]invalidationReceipt),
 	}, nil
 }
 
@@ -310,13 +430,22 @@ func restoreValidated(ctx context.Context, config Config, applier batchApplier, 
 			ws.current = &authority
 			ws.operations[authority.OperationID] = authority
 		} else if authority.Status == "expired" {
-			if authority.OperationID == "" {
-				return nil, refusal(OutcomeInvalidCommand, "restore", "expired authority lacks its invalidation operation")
+			if authority.OperationID == "" || authority.InvalidatedAt == nil || authority.InvalidatedAt.IsZero() || authority.InvalidationCommandDigest == "" {
+				return nil, refusal(OutcomeInvalidCommand, "restore", "expired authority lacks its sealed invalidation identity")
 			}
-			if prior, duplicate := service.invalidations[authority.OperationID]; duplicate && (prior.Kind != "lease_expired" || prior.WorkID != authority.WorkID || prior.LeaseID != authority.LeaseID || prior.Generation != authority.Generation) {
+			digest, digestErr := expireCommandDigest(authority.OperationID, authority, *authority.InvalidatedAt)
+			if digestErr != nil || digest != authority.InvalidationCommandDigest {
+				return nil, refusal(OutcomeInvalidCommand, "restore", "expired authority command identity is not canonical")
+			}
+			applicationDigest, canonicalResult, operationErr := readRestoredOperation(ctx, reader, prefix, config, authority.OperationID, "authority.expire", "authority.expired", authority.RuntimeEpochID, digest, journalBound, facts.ObservedStoreRevision)
+			if operationErr != nil {
+				return nil, operationErr
+			}
+			receipt := invalidationReceipt{Kind: "lease_expired", WorkID: authority.WorkID, LeaseID: authority.LeaseID, Generation: authority.Generation, RuntimeEpochID: authority.RuntimeEpochID, CommandDigest: digest, ApplicationRequestDigest: applicationDigest, CanonicalResult: canonicalResult, Authority: authority}
+			if prior, duplicate := service.invalidations[authority.OperationID]; duplicate && (prior.Kind != receipt.Kind || prior.CommandDigest != receipt.CommandDigest) {
 				return nil, refusal(OutcomeInvalidCommand, "restore", "invalidation operation identity is duplicated")
 			}
-			service.invalidations[authority.OperationID] = invalidationReceipt{Kind: "lease_expired", WorkID: authority.WorkID, LeaseID: authority.LeaseID, Generation: authority.Generation, RuntimeEpochID: authority.RuntimeEpochID}
+			service.invalidations[authority.OperationID] = receipt
 		} else if authority.Status != "predecessor-epoch" {
 			return nil, refusal(OutcomeInvalidCommand, "restore", "authority state has an unknown terminal status")
 		}
@@ -331,18 +460,25 @@ func restoreValidated(ctx context.Context, config Config, applier batchApplier, 
 		if err != nil {
 			return nil, err
 		}
-		var restart struct {
-			OperationID      controljournal.OperationID    `json:"operation_id"`
-			PredecessorEpoch controljournal.RuntimeEpochID `json:"predecessor_epoch_id"`
-			RuntimeEpochID   controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
-		}
-		if json.Unmarshal(runtimeState.CanonicalBytes(), &restart) != nil || restart.OperationID == "" || restart.PredecessorEpoch == "" || restart.RuntimeEpochID != config.RuntimeEpochID {
+		var restart ownerRestartState
+		if json.Unmarshal(runtimeState.CanonicalBytes(), &restart) != nil || restart.OperationID == "" || restart.PredecessorEpoch == "" || restart.RuntimeEpochID != config.RuntimeEpochID || restart.RunID != config.RunID || restart.OccurredAt.IsZero() || restart.CommandDigest == "" {
 			return nil, refusal(OutcomeInvalidCommand, "restore", "runtime state does not match the admitted epoch")
 		}
+		digest, digestErr := ownerRestartCommandDigest(restart.OperationID, restart.RunID, restart.PredecessorEpoch, restart.RuntimeEpochID, restart.OccurredAt)
+		if digestErr != nil || digest != restart.CommandDigest {
+			return nil, refusal(OutcomeInvalidCommand, "restore", "runtime restart command identity is not canonical")
+		}
 		service.runtimeLogical, service.runtimeHeadRevision, service.predecessorEpoch = head.LogicalVersion, record.Revision, restart.PredecessorEpoch
-		service.invalidations[restart.OperationID] = invalidationReceipt{Kind: "owner_restarted", PredecessorEpoch: restart.PredecessorEpoch, RuntimeEpochID: restart.RuntimeEpochID}
+		applicationDigest, canonicalResult, operationErr := readRestoredOperation(ctx, reader, prefix, config, restart.OperationID, "runtime.owner_restart", "runtime.owner_restarted", restart.RuntimeEpochID, digest, journalBound, facts.ObservedStoreRevision)
+		if operationErr != nil {
+			return nil, operationErr
+		}
+		service.invalidations[restart.OperationID] = invalidationReceipt{Kind: "owner_restarted", PredecessorEpoch: restart.PredecessorEpoch, RuntimeEpochID: restart.RuntimeEpochID, CommandDigest: digest, ApplicationRequestDigest: applicationDigest, CanonicalResult: canonicalResult}
 	}
 	if err := restoreWorkspaceCensus(ctx, service, reader, prefix, restored.Projection, journalBound, facts.ObservedStoreRevision); err != nil {
+		return nil, err
+	}
+	if err := restoreInvalidationReceipts(ctx, service, reader, prefix, journalBound, facts.ObservedStoreRevision); err != nil {
 		return nil, err
 	}
 	return service, nil
@@ -465,6 +601,170 @@ func readRestoredHead(ctx context.Context, reader restoreHeadReader, prefix stri
 	return record, head, nil
 }
 
+func readRestoredOperation(ctx context.Context, reader restoreHeadReader, headsPrefix string, config Config, operationID controljournal.OperationID, commandType, resultType string, epoch controljournal.RuntimeEpochID, intentDigest string, journalBound, observedBound uint64) ([32]byte, []byte, error) {
+	key := strings.TrimSuffix(headsPrefix, "heads/") + "operations/" + string(operationID)
+	record, err := reader.Get(ctx, key)
+	if err != nil || record.Key != key || record.Revision == 0 || record.Revision > journalBound || record.Revision > observedBound {
+		return [32]byte{}, nil, refusal(OutcomeIndeterminate, "restore", "durable operation receipt is unavailable within the sealed observation")
+	}
+	operation, err := controljournal.DecodeOperationRecordV1(record.Value)
+	if err != nil || operation.OperationID != operationID || operation.CommandType != commandType || operation.ResultType != resultType || operation.RuntimeEpochID != epoch || operation.RequestDigest == [32]byte{} {
+		return [32]byte{}, nil, refusal(OutcomeInvalidCommand, "restore", "durable operation receipt contradicts sealed playback")
+	}
+	canonicalResult := operation.CanonicalResult()
+	var resultIdentity struct {
+		CommandDigest string `json:"command_digest"`
+	}
+	expectedApplicationDigest, digestErr := applicationCommandDigest(config, operationID, commandType, epoch, canonicalResult)
+	if json.Unmarshal(canonicalResult, &resultIdentity) != nil || resultIdentity.CommandDigest != intentDigest || digestErr != nil || expectedApplicationDigest != operation.RequestDigest {
+		return [32]byte{}, nil, refusal(OutcomeInvalidCommand, "restore", "durable operation request digest or canonical result contradicts projected intent")
+	}
+	eventIDs := operation.EventIDs()
+	if len(eventIDs) == 0 {
+		return [32]byte{}, nil, refusal(OutcomeInvalidCommand, "restore", "durable operation receipt has no event membership")
+	}
+	for index, eventID := range eventIDs {
+		if eventID != stableIndexedEventID(operationID, index) {
+			return [32]byte{}, nil, refusal(OutcomeInvalidCommand, "restore", "durable operation receipt has foreign event membership")
+		}
+	}
+	return operation.RequestDigest, canonicalResult, nil
+}
+
+func restoreInvalidationReceipts(ctx context.Context, service *service, reader restoreHeadReader, headsPrefix string, journalBound, observedBound uint64) error {
+	base := strings.TrimSuffix(headsPrefix, "heads/")
+	membership, invalidationOperations, err := journalOperationMembership(ctx, reader, base+"journal/", journalBound, observedBound)
+	if err != nil {
+		return err
+	}
+	cursor := ""
+	pages := 0
+	seenInvalidations := make(map[controljournal.OperationID]struct{}, len(invalidationOperations))
+	for {
+		pages++
+		if pages > checkpoint.MaxRestorePages {
+			return refusal(OutcomeIndeterminate, "restore", "operation receipt census exceeded its page bound")
+		}
+		page, scanErr := reader.Scan(ctx, storegapdb.ScanRequest{Prefix: base + "operations/", Limit: storegapdb.MaxScanRecords, Cursor: cursor, MaxBytes: storegapdb.MaxScanBytes})
+		if scanErr != nil || page.ObservedRevision != observedBound {
+			return refusal(OutcomeIndeterminate, "restore", "operation receipt census moved beyond the sealed observation")
+		}
+		for _, record := range page.Records {
+			if !strings.HasPrefix(record.Key, base+"operations/") || record.Revision == 0 || record.Revision > journalBound || record.Revision > observedBound {
+				return refusal(OutcomeInvalidCommand, "restore", "operation receipt census contains foreign or post-seal state")
+			}
+			operation, decodeErr := controljournal.DecodeOperationRecordV1(record.Value)
+			if decodeErr != nil || record.Key != base+"operations/"+string(operation.OperationID) {
+				return refusal(OutcomeInvalidCommand, "restore", "operation receipt census contains malformed identity")
+			}
+			if operation.CommandType != "authority.expire" && operation.CommandType != "runtime.owner_restart" {
+				continue
+			}
+			seenInvalidations[operation.OperationID] = struct{}{}
+			canonicalResult := operation.CanonicalResult()
+			var result invalidationResult
+			if json.Unmarshal(canonicalResult, &result) != nil || result.CommandDigest == "" || result.OccurredAt.IsZero() || result.RuntimeEpochID != operation.RuntimeEpochID {
+				return refusal(OutcomeInvalidCommand, "restore", "invalidation operation result is malformed")
+			}
+			expectedApplicationDigest, digestErr := applicationCommandDigest(service.config, operation.OperationID, operation.CommandType, operation.RuntimeEpochID, canonicalResult)
+			if digestErr != nil || expectedApplicationDigest != operation.RequestDigest || !operationMembershipMatches(operation.OperationID, operation.EventIDs(), membership[operation.OperationID]) {
+				return refusal(OutcomeInvalidCommand, "restore", "invalidation operation digest or event membership contradicts the journal")
+			}
+			receipt := invalidationReceipt{CommandDigest: result.CommandDigest, ApplicationRequestDigest: operation.RequestDigest, CanonicalResult: canonicalResult, RuntimeEpochID: operation.RuntimeEpochID}
+			switch operation.CommandType {
+			case "authority.expire":
+				if result.Kind != "lease_expired" || len(result.Authorities) != 1 {
+					return refusal(OutcomeInvalidCommand, "restore", "expiry receipt lacks exactly one terminal authority")
+				}
+				authority := result.Authorities[0]
+				digest, digestErr := expireCommandDigest(operation.OperationID, authority, result.OccurredAt)
+				if digestErr != nil || digest != result.CommandDigest || authority.Status != "expired" || authority.OperationID != operation.OperationID || authority.InvalidatedAt == nil || !authority.InvalidatedAt.Equal(result.OccurredAt) || authority.InvalidationCommandDigest != result.CommandDigest {
+					return refusal(OutcomeInvalidCommand, "restore", "expiry receipt does not bind its terminal authority")
+				}
+				receipt.Kind, receipt.WorkID, receipt.LeaseID, receipt.Generation, receipt.Authority = "lease_expired", authority.WorkID, authority.LeaseID, authority.Generation, authority
+			case "runtime.owner_restart":
+				digest, digestErr := ownerRestartCommandDigest(operation.OperationID, service.config.RunID, result.PredecessorEpochID, result.RuntimeEpochID, result.OccurredAt)
+				if digestErr != nil || digest != result.CommandDigest || result.Kind != "owner_restarted" || result.PredecessorEpochID == "" {
+					return refusal(OutcomeInvalidCommand, "restore", "owner-restart receipt does not bind its epoch transition")
+				}
+				receipt.Kind, receipt.PredecessorEpoch = "owner_restarted", result.PredecessorEpochID
+			}
+			if prior, duplicate := service.invalidations[operation.OperationID]; duplicate && (prior.Kind != receipt.Kind || prior.CommandDigest != receipt.CommandDigest || prior.ApplicationRequestDigest != receipt.ApplicationRequestDigest) {
+				return refusal(OutcomeInvalidCommand, "restore", "invalidation receipt conflicts with the current projection")
+			}
+			service.invalidations[operation.OperationID] = receipt
+		}
+		if !page.Truncated {
+			for operationID := range invalidationOperations {
+				if _, seen := seenInvalidations[operationID]; !seen {
+					return refusal(OutcomeInvalidCommand, "restore", "journal invalidation event lacks its typed durable operation receipt")
+				}
+			}
+			return nil
+		}
+		if page.Cursor == "" || page.Cursor == cursor {
+			return refusal(OutcomeIndeterminate, "restore", "operation receipt census cursor made no progress")
+		}
+		cursor = page.Cursor
+	}
+}
+
+func journalOperationMembership(ctx context.Context, reader restoreHeadReader, prefix string, journalBound, observedBound uint64) (map[controljournal.OperationID]map[controljournal.EventID]struct{}, map[controljournal.OperationID]struct{}, error) {
+	result := make(map[controljournal.OperationID]map[controljournal.EventID]struct{})
+	invalidations := make(map[controljournal.OperationID]struct{})
+	cursor := ""
+	for pages := 1; ; pages++ {
+		if pages > checkpoint.MaxRestorePages {
+			return nil, nil, refusal(OutcomeIndeterminate, "restore", "journal membership census exceeded its page bound")
+		}
+		page, err := reader.Scan(ctx, storegapdb.ScanRequest{Prefix: prefix, Limit: storegapdb.MaxScanRecords, Cursor: cursor, MaxBytes: storegapdb.MaxScanBytes})
+		if err != nil || page.ObservedRevision != observedBound {
+			return nil, nil, refusal(OutcomeIndeterminate, "restore", "journal membership census moved beyond the sealed observation")
+		}
+		for _, record := range page.Records {
+			if !strings.HasPrefix(record.Key, prefix) {
+				return nil, nil, refusal(OutcomeInvalidCommand, "restore", "journal membership census returned a foreign key")
+			}
+			event, decodeErr := controljournal.DecodeEventEnvelopeV1(record.Value)
+			if decodeErr != nil || record.Key != prefix+string(event.EventID) || record.Revision == 0 || record.Revision > journalBound || record.Revision > observedBound {
+				return nil, nil, refusal(OutcomeInvalidCommand, "restore", "journal membership census contains malformed history")
+			}
+			if result[event.OperationID] == nil {
+				result[event.OperationID] = make(map[controljournal.EventID]struct{})
+			}
+			if _, duplicate := result[event.OperationID][event.EventID]; duplicate {
+				return nil, nil, refusal(OutcomeInvalidCommand, "restore", "journal membership census contains a duplicate event")
+			}
+			result[event.OperationID][event.EventID] = struct{}{}
+			if event.EventType == "authority.expired" || event.EventType == "runtime.owner_restarted" {
+				invalidations[event.OperationID] = struct{}{}
+			}
+		}
+		if !page.Truncated {
+			return result, invalidations, nil
+		}
+		if page.Cursor == "" || page.Cursor == cursor {
+			return nil, nil, refusal(OutcomeIndeterminate, "restore", "journal membership census cursor made no progress")
+		}
+		cursor = page.Cursor
+	}
+}
+
+func operationMembershipMatches(operationID controljournal.OperationID, expected []controljournal.EventID, observed map[controljournal.EventID]struct{}) bool {
+	if len(expected) == 0 || len(expected) != len(observed) {
+		return false
+	}
+	for index, eventID := range expected {
+		if eventID != stableIndexedEventID(operationID, index) {
+			return false
+		}
+		if _, ok := observed[eventID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func restoreWorkspaceCensus(ctx context.Context, service *service, reader restoreHeadReader, prefix string, projection reducer.ProjectionV1, journalBound, observedBound uint64) error {
 	cursor := ""
 	seenOps := make(map[controljournal.OperationID]struct{})
@@ -495,8 +795,16 @@ func restoreWorkspaceCensus(ctx context.Context, service *service, reader restor
 				return err
 			}
 			var binding WorkspaceBinding
-			if json.Unmarshal(state.CanonicalBytes(), &binding) != nil || binding.WorkspaceID != controljournal.WorkspaceID(id) || binding.WorkRevisionID != service.config.WorkRevisionID || binding.RunID != service.config.RunID || binding.LogicalVersion != logical || binding.Status != "active-bound" && binding.Status != "quarantined" {
+			if json.Unmarshal(state.CanonicalBytes(), &binding) != nil || binding.WorkspaceID != controljournal.WorkspaceID(id) || binding.WorkRevisionID != service.config.WorkRevisionID || binding.RunID != service.config.RunID || binding.RepositoryID == "" || binding.LaneID == "" || binding.RequestedAt.IsZero() || binding.CommandDigest == "" || binding.AuthorityHeadRecordRevision == 0 || binding.LogicalVersion != logical || binding.Status != "active-bound" && binding.Status != "quarantined" {
 				return refusal(OutcomeInvalidCommand, "restore", "workspace state is malformed or foreign")
+			}
+			commandDigest, digestErr := workspaceCommandDigest(workspaceRequestFromBinding(service.config, binding))
+			if digestErr != nil || commandDigest != binding.CommandDigest {
+				return refusal(OutcomeInvalidCommand, "restore", "workspace command identity is not canonical")
+			}
+			applicationDigest, canonicalResult, operationErr := readRestoredOperation(ctx, reader, prefix, service.config, binding.OperationID, "workspace.bind", "workspace.bound", binding.RuntimeEpochID, commandDigest, journalBound, observedBound)
+			if operationErr != nil {
+				return operationErr
 			}
 			if _, duplicate := seenOps[binding.OperationID]; duplicate {
 				return refusal(OutcomeInvalidCommand, "restore", "workspace operation identity is duplicated")
@@ -514,6 +822,7 @@ func restoreWorkspaceCensus(ctx context.Context, service *service, reader restor
 			}
 			service.workspaces[binding.WorkspaceID] = binding
 			service.workspaceOp[binding.OperationID] = binding
+			service.workspaceReceipts[binding.OperationID] = workspaceReceipt{CommandDigest: commandDigest, ApplicationRequestDigest: applicationDigest, CanonicalResult: canonicalResult}
 		}
 		if !page.Truncated {
 			break
@@ -546,6 +855,12 @@ func (s *service) WithFaults(hook faults.Hook) *service {
 	}
 	s.faults = hook
 	return s
+}
+
+func (s *service) currentEpoch() controljournal.RuntimeEpochID {
+	s.epochMu.RLock()
+	defer s.epochMu.RUnlock()
+	return s.epoch
 }
 
 func (s *service) Claim(ctx context.Context, request ClaimRequest) (Authority, error) {
@@ -622,7 +937,7 @@ func (s *service) validateClaim(request ClaimRequest) (*workState, error) {
 // a token or only a process identity.
 func (s *service) Authorize(authority Authority, action string, now time.Time) error {
 	state := s.works[authority.WorkID]
-	if state == nil || authority.WorkRevisionID != s.config.WorkRevisionID {
+	if state == nil || authority.ProjectID != s.config.ProjectID || authority.MissionID != s.config.MissionID || authority.WorkRevisionID != s.config.WorkRevisionID {
 		return refusal(OutcomeStaleWorkRevision, action, "work revision is not current")
 	}
 	s.epochMu.RLock()
@@ -650,6 +965,11 @@ func (s *service) authorizeLocked(state *workState, authority Authority, action 
 	}
 	if authority.ActorID != current.ActorID || authority.ProcessID != current.ProcessID || authority.RunID != current.RunID {
 		return refusal(OutcomeActorProcessMismatch, action, "capsule execution identity is not current")
+	}
+	if authority.ProjectID != current.ProjectID || authority.MissionID != current.MissionID || authority.WorkRevisionID != current.WorkRevisionID || authority.WorkID != current.WorkID ||
+		authority.RuntimeEpochID != current.RuntimeEpochID || !authority.Deadline.Equal(current.Deadline) || authority.Status != current.Status ||
+		authority.GovernanceContextID != current.GovernanceContextID || authority.GovernanceContextAlgorithm != current.GovernanceContextAlgorithm || authority.GovernanceContextDigest != current.GovernanceContextDigest {
+		return refusal(OutcomeStaleLease, action, "complete authority capsule does not match current authority")
 	}
 	if now.IsZero() || !now.Before(current.Deadline) {
 		return refusal(OutcomeStaleLease, action, "lease deadline has passed")
@@ -694,12 +1014,16 @@ func (s *service) Expire(ctx context.Context, operationID controljournal.Operati
 	if state == nil {
 		return refusal(OutcomeStaleWorkRevision, "expire", "work is unknown")
 	}
+	digest, err := expireCommandDigest(operationID, authority, now)
+	if err != nil || now.IsZero() {
+		return refusal(OutcomeInvalidCommand, "expire", "expiry command identity is invalid")
+	}
 	s.epochMu.RLock()
 	defer s.epochMu.RUnlock()
 	s.commandMu.Lock()
 	if receipt, ok := s.invalidations[operationID]; ok {
 		s.commandMu.Unlock()
-		if receipt.Kind == "lease_expired" && receipt.WorkID == authority.WorkID && receipt.LeaseID == authority.LeaseID && receipt.Generation == authority.Generation && receipt.RuntimeEpochID == authority.RuntimeEpochID {
+		if receipt.Kind == "lease_expired" && receipt.CommandDigest == digest && receiptMatchesApplication(s.config, operationID, "authority.expire", receipt.RuntimeEpochID, receipt) {
 			return nil
 		}
 		return refusal(OutcomeInvalidCommand, "expire", "operation identity was reused for a different invalidation")
@@ -721,6 +1045,8 @@ func (s *service) Expire(ctx context.Context, operationID controljournal.Operati
 	defer s.workspaceMu.Unlock()
 	next := *state.current
 	next.Status, next.OperationID = "expired", operationID
+	invalidatedAt := now.UTC()
+	next.InvalidatedAt, next.InvalidationCommandDigest = &invalidatedAt, digest
 	transitions := []publication{{eventType: "authority.expired", aggregateKind: "authority", aggregateID: controljournal.AggregateID(authority.WorkID), logical: state.logical + 1, observedRevision: state.headRevision, authority: next, payload: next}}
 	quarantined := make([]WorkspaceBinding, 0, 1)
 	for _, binding := range s.workspaces {
@@ -736,11 +1062,15 @@ func (s *service) Expire(ctx context.Context, operationID controljournal.Operati
 	for _, binding := range quarantined {
 		transitions = append(transitions, publication{eventType: "workspace.quarantined", aggregateKind: "workspace", aggregateID: controljournal.AggregateID(binding.WorkspaceID), logical: binding.LogicalVersion, observedRevision: binding.RecordRevision, authority: authority, payload: binding})
 	}
-	result := invalidationResult{Kind: "lease_expired", RuntimeEpochID: s.epoch, Authorities: []Authority{next}, Workspaces: quarantined}
+	result := invalidationResult{Kind: "lease_expired", CommandDigest: digest, RuntimeEpochID: s.epoch, OccurredAt: now.UTC(), Authorities: []Authority{next}, Workspaces: quarantined}
+	canonicalResult, canonicalErr := canonicalResultBytes(result)
+	if canonicalErr != nil {
+		return refusal(OutcomeInvalidCommand, "expire", "expiry result cannot be canonicalized")
+	}
 	if err := s.faults.Reach(ctx, "PG-EXPIRE-BEFORE-APPLY"); err != nil {
 		return &Error{Kind: OutcomeAmbiguous, Action: "expire", Detail: "expiry was cut before durable application", Recovery: []string{"retry the same operation ID"}, Cause: err}
 	}
-	revision, err := s.publishCommand(ctx, s.applier, s.epoch, operationID, "authority.expire", "authority.expired", result, transitions)
+	revision, applicationDigest, err := s.publishCommand(ctx, s.applier, s.epoch, operationID, "authority.expire", "authority.expired", result, transitions)
 	if err != nil {
 		return err
 	}
@@ -756,7 +1086,7 @@ func (s *service) Expire(ctx context.Context, operationID controljournal.Operati
 		s.workspaces[binding.WorkspaceID] = binding
 	}
 	s.commandMu.Lock()
-	s.invalidations[operationID] = invalidationReceipt{Kind: "lease_expired", WorkID: authority.WorkID, LeaseID: authority.LeaseID, Generation: authority.Generation, RuntimeEpochID: authority.RuntimeEpochID}
+	s.invalidations[operationID] = invalidationReceipt{Kind: "lease_expired", WorkID: authority.WorkID, LeaseID: authority.LeaseID, Generation: authority.Generation, RuntimeEpochID: authority.RuntimeEpochID, CommandDigest: digest, ApplicationRequestDigest: applicationDigest, CanonicalResult: canonicalResult, Authority: authority}
 	s.commandMu.Unlock()
 	return nil
 }
@@ -771,26 +1101,25 @@ func (s *service) ReplaceRuntime(ctx context.Context, operationID controljournal
 	}
 	s.epochMu.Lock()
 	defer s.epochMu.Unlock()
+	old := s.epoch
+	if receipt, ok := s.invalidations[operationID]; ok && receipt.Kind == "owner_restarted" {
+		old = receipt.PredecessorEpoch
+	}
+	digest, err := ownerRestartCommandDigest(operationID, s.config.RunID, old, epoch, now)
+	if err != nil {
+		return refusal(OutcomeInvalidCommand, "restart", "restart command identity is invalid")
+	}
 	s.commandMu.Lock()
 	if receipt, ok := s.invalidations[operationID]; ok {
 		s.commandMu.Unlock()
-		if receipt.Kind == "owner_restarted" && receipt.PredecessorEpoch == s.predecessorEpoch && receipt.RuntimeEpochID == epoch {
+		if receipt.Kind == "owner_restarted" && receipt.CommandDigest == digest && receiptMatchesApplication(s.config, operationID, "runtime.owner_restart", receipt.RuntimeEpochID, receipt) {
 			return nil
 		}
 		return refusal(OutcomeInvalidCommand, "restart", "operation identity was reused for a different invalidation")
 	}
 	s.commandMu.Unlock()
-	old := s.epoch
 	if epoch == old {
 		return refusal(OutcomeInvalidCommand, "restart", "runtime epoch must be fresh")
-	}
-	type invalidatedLease struct {
-		WorkID     controljournal.WorkID    `json:"work_id"`
-		ActorID    controljournal.ActorID   `json:"actor_id"`
-		ProcessID  controljournal.ProcessID `json:"process_id"`
-		LeaseID    controljournal.LeaseID   `json:"lease_id"`
-		Generation uint64                   `json:"generation"`
-		FenceToken uint64                   `json:"fence_token"`
 	}
 	invalidated := make([]invalidatedLease, 0, len(s.works))
 	locked := make([]*workState, 0, len(s.config.WorkIDs))
@@ -809,14 +1138,7 @@ func (s *service) ReplaceRuntime(ctx context.Context, operationID controljournal
 	}()
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
-	restart := struct {
-		OperationID      controljournal.OperationID    `json:"operation_id"`
-		RunID            controljournal.RunID          `json:"run_id"`
-		PredecessorEpoch controljournal.RuntimeEpochID `json:"predecessor_epoch_id"`
-		RuntimeEpochID   controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
-		OccurredAt       time.Time                     `json:"occurred_at"`
-		Invalidated      []invalidatedLease            `json:"invalidated_authorities"`
-	}{operationID, s.config.RunID, old, epoch, now.UTC(), invalidated}
+	restart := ownerRestartState{OperationID: operationID, RunID: s.config.RunID, PredecessorEpoch: old, RuntimeEpochID: epoch, OccurredAt: now.UTC(), CommandDigest: digest, Invalidated: invalidated}
 	transitions := []publication{{eventType: "runtime.owner_restarted", aggregateKind: "runtime-composition", aggregateID: controljournal.AggregateID(s.config.RunID), logical: s.runtimeLogical + 1, observedRevision: s.runtimeHeadRevision, payload: restart}}
 	stale := make([]Authority, 0, len(invalidated))
 	for _, workID := range s.config.WorkIDs {
@@ -843,11 +1165,15 @@ func (s *service) ReplaceRuntime(ctx context.Context, operationID controljournal
 	for _, binding := range quarantined {
 		transitions = append(transitions, publication{eventType: "workspace.quarantined", aggregateKind: "workspace", aggregateID: controljournal.AggregateID(binding.WorkspaceID), logical: binding.LogicalVersion, observedRevision: binding.RecordRevision, authority: Authority{RunID: binding.RunID, WorkID: binding.WorkID, ActorID: binding.ActorID, ProcessID: binding.ProcessID, LeaseID: binding.LeaseID, Generation: binding.Generation, FenceToken: binding.FenceToken}, payload: binding})
 	}
-	result := invalidationResult{Kind: "owner_restarted", RuntimeEpochID: epoch, PredecessorEpochID: old, Authorities: stale, Workspaces: quarantined}
+	result := invalidationResult{Kind: "owner_restarted", CommandDigest: digest, RuntimeEpochID: epoch, PredecessorEpochID: old, OccurredAt: now.UTC(), Authorities: stale, Workspaces: quarantined}
+	canonicalResult, canonicalErr := canonicalResultBytes(result)
+	if canonicalErr != nil {
+		return refusal(OutcomeInvalidCommand, "restart", "restart result cannot be canonicalized")
+	}
 	if err := s.faults.Reach(ctx, "PG-RESTART-BEFORE-APPLY"); err != nil {
 		return &Error{Kind: OutcomeAmbiguous, Action: "restart", Detail: "restart was cut before durable application", Recovery: []string{"retry the same operation ID"}, Cause: err}
 	}
-	revision, err := s.publishCommand(ctx, applier, epoch, operationID, "runtime.owner_restart", "runtime.owner_restarted", result, transitions)
+	revision, applicationDigest, err := s.publishCommand(ctx, applier, epoch, operationID, "runtime.owner_restart", "runtime.owner_restarted", result, transitions)
 	if err != nil {
 		return err
 	}
@@ -870,7 +1196,7 @@ func (s *service) ReplaceRuntime(ctx context.Context, operationID controljournal
 		s.workspaces[binding.WorkspaceID] = binding
 	}
 	s.commandMu.Lock()
-	s.invalidations[operationID] = invalidationReceipt{Kind: "owner_restarted", PredecessorEpoch: old, RuntimeEpochID: epoch}
+	s.invalidations[operationID] = invalidationReceipt{Kind: "owner_restarted", PredecessorEpoch: old, RuntimeEpochID: epoch, CommandDigest: digest, ApplicationRequestDigest: applicationDigest, CanonicalResult: canonicalResult}
 	s.commandMu.Unlock()
 	return nil
 }
@@ -928,45 +1254,51 @@ type publication struct {
 
 type invalidationResult struct {
 	Kind               string                        `json:"kind"`
+	CommandDigest      string                        `json:"command_digest"`
 	RuntimeEpochID     controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
 	PredecessorEpochID controljournal.RuntimeEpochID `json:"predecessor_epoch_id,omitempty"`
+	OccurredAt         time.Time                     `json:"occurred_at"`
 	Authorities        []Authority                   `json:"authorities"`
 	Workspaces         []WorkspaceBinding            `json:"workspaces"`
 }
 
 func (s *service) publish(ctx context.Context, input publication) (uint64, error) {
-	return s.publishCommand(ctx, s.applier, s.epoch, input.operationID, input.commandType, input.resultType, input.payload, []publication{input})
+	// Every single-aggregate caller holds epochMu for the complete validation
+	// and publication interval. Reusing that protected value avoids recursively
+	// acquiring an RWMutex while a replacement writer is queued.
+	revision, _, err := s.publishCommand(ctx, s.applier, s.epoch, input.operationID, input.commandType, input.resultType, input.payload, []publication{input})
+	return revision, err
 }
 
-func (s *service) publishCommand(ctx context.Context, applier batchApplier, epoch controljournal.RuntimeEpochID, operationID controljournal.OperationID, commandType, resultType string, canonicalResult any, inputs []publication) (uint64, error) {
+func (s *service) publishCommand(ctx context.Context, applier batchApplier, epoch controljournal.RuntimeEpochID, operationID controljournal.OperationID, commandType, resultType string, canonicalResult any, inputs []publication) (uint64, [32]byte, error) {
 	if len(inputs) == 0 {
-		return 0, refusal(OutcomeInvalidCommand, commandType, "command must affect at least one aggregate")
+		return 0, [32]byte{}, refusal(OutcomeInvalidCommand, commandType, "command must affect at least one aggregate")
 	}
 	resultPayload, err := json.Marshal(canonicalResult)
 	if err != nil {
-		return 0, refusal(OutcomeInvalidCommand, commandType, "result cannot be canonicalized")
+		return 0, [32]byte{}, refusal(OutcomeInvalidCommand, commandType, "result cannot be canonicalized")
 	}
 	resultPayload, err = controljournal.CanonicalJSONObject(resultPayload)
 	if err != nil {
-		return 0, refusal(OutcomeInvalidCommand, commandType, "result must be a canonical object")
+		return 0, [32]byte{}, refusal(OutcomeInvalidCommand, commandType, "result must be a canonical object")
 	}
 	commandPayload, err := json.Marshal(struct {
 		OperationID controljournal.OperationID `json:"operation_id"`
 		Result      json.RawMessage            `json:"result"`
 	}{OperationID: operationID, Result: resultPayload})
 	if err != nil {
-		return 0, refusal(OutcomeInvalidCommand, commandType, "command cannot be canonicalized")
+		return 0, [32]byte{}, refusal(OutcomeInvalidCommand, commandType, "command cannot be canonicalized")
 	}
 	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{
 		SchemaVersion: 1, ProjectID: s.config.ProjectID, MissionID: s.config.MissionID,
 		OperationID: operationID, CommandType: commandType, RuntimeEpochID: epoch, Payload: commandPayload,
 	})
 	if err != nil {
-		return 0, err
+		return 0, [32]byte{}, err
 	}
 	count, err := controljournal.NewEventCountV1(uint16(len(inputs)))
 	if err != nil {
-		return 0, err
+		return 0, [32]byte{}, err
 	}
 	events := make([]controljournal.EventEnvelopeV1, 0, len(inputs))
 	expected := make([]controljournal.ExpectedAggregateHeadV1, 0, len(inputs))
@@ -974,15 +1306,15 @@ func (s *service) publishCommand(ctx context.Context, applier batchApplier, epoc
 	for ordinal, input := range inputs {
 		payload, err := json.Marshal(input.payload)
 		if err != nil {
-			return 0, refusal(OutcomeInvalidCommand, commandType, "payload cannot be canonicalized")
+			return 0, [32]byte{}, refusal(OutcomeInvalidCommand, commandType, "payload cannot be canonicalized")
 		}
 		payload, err = controljournal.CanonicalJSONObject(payload)
 		if err != nil {
-			return 0, refusal(OutcomeInvalidCommand, commandType, "event payload must be a canonical object")
+			return 0, [32]byte{}, refusal(OutcomeInvalidCommand, commandType, "event payload must be a canonical object")
 		}
 		index, err := controljournal.NewEventIndexV1(uint16(ordinal))
 		if err != nil {
-			return 0, err
+			return 0, [32]byte{}, err
 		}
 		observations, _ := json.Marshal(map[string]any{
 			"actor_id": input.authority.ActorID, "process_id": input.authority.ProcessID,
@@ -1000,12 +1332,12 @@ func (s *service) publishCommand(ctx context.Context, applier batchApplier, epoc
 			RecordedObservations: observations, Payload: payload,
 		})
 		if err != nil {
-			return 0, err
+			return 0, [32]byte{}, err
 		}
 		digest := sha256.Sum256(payload)
 		head, err := controljournal.ConstructAggregateHeadV1(input.aggregateKind, input.aggregateID, input.logical, epoch, eventID, digest)
 		if err != nil {
-			return 0, err
+			return 0, [32]byte{}, err
 		}
 		expected = append(expected, controljournal.ExpectedAggregateHeadV1{
 			AggregateKind: input.aggregateKind, AggregateID: input.aggregateID,
@@ -1016,7 +1348,7 @@ func (s *service) publishCommand(ctx context.Context, applier batchApplier, epoc
 	}
 	preconditions, err := application.CanonicalPreconditionsDigestV1(expected)
 	if err != nil {
-		return 0, err
+		return 0, [32]byte{}, err
 	}
 	batch, err := application.NewValidatedBatchV1(application.BatchInputV1{
 		Command: command, ExpectedHeads: expected, NextHeads: next,
@@ -1024,26 +1356,26 @@ func (s *service) publishCommand(ctx context.Context, applier batchApplier, epoc
 		ResultType: resultType, ResultSchemaVersion: 1, CanonicalResult: resultPayload,
 	})
 	if err != nil {
-		return 0, err
+		return 0, [32]byte{}, err
 	}
 	result, err := applier.Apply(ctx, batch)
 	if err != nil {
-		return 0, err
+		return 0, [32]byte{}, err
 	}
 	switch result.Kind {
 	case application.OutcomeCommitted, application.OutcomeAlreadyCommitted:
 		if result.CommittedRevision == 0 {
-			return 0, refusal(OutcomeIndeterminate, commandType, "accepted operation has no durable revision")
+			return 0, [32]byte{}, refusal(OutcomeIndeterminate, commandType, "accepted operation has no durable revision")
 		}
-		return result.CommittedRevision, nil
+		return result.CommittedRevision, command.Digest(), nil
 	case application.OutcomeLogicalVersionConflict, application.OutcomeHeadRevisionConflict:
-		return 0, refusal(OutcomeAuthorityConflict, commandType, "aggregate authority changed concurrently")
+		return 0, [32]byte{}, refusal(OutcomeAuthorityConflict, commandType, "aggregate authority changed concurrently")
 	case application.OutcomeRuntimeEpochConflict:
-		return 0, refusal(OutcomeStaleEpoch, commandType, "runtime epoch is no longer admitted")
+		return 0, [32]byte{}, refusal(OutcomeStaleEpoch, commandType, "runtime epoch is no longer admitted")
 	case application.OutcomeAmbiguousResponse, application.OutcomeIndeterminate:
-		return 0, refusal(OutcomeAmbiguous, commandType, "durable result requires same-operation reconciliation", "retry the same operation ID")
+		return 0, [32]byte{}, refusal(OutcomeAmbiguous, commandType, "durable result requires same-operation reconciliation", "retry the same operation ID")
 	default:
-		return 0, refusal(OutcomeIndeterminate, commandType, "journal application refused the transition")
+		return 0, [32]byte{}, refusal(OutcomeIndeterminate, commandType, "journal application refused the transition")
 	}
 }
 

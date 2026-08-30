@@ -221,6 +221,121 @@ type fixedExecutionClock struct{ now time.Time }
 
 func (f fixedExecutionClock) Now() time.Time { return f.now }
 
+type sequenceExecutionIdentities struct {
+	mu     sync.Mutex
+	run    ids.RunID
+	leases []ids.LeaseID
+	next   int
+}
+
+func (s *sequenceExecutionIdentities) RunID() (ids.RunID, error) { return s.run, nil }
+func (s *sequenceExecutionIdentities) LeaseID() (ids.LeaseID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.next >= len(s.leases) {
+		return "", context.Canceled
+	}
+	lease := s.leases[s.next]
+	s.next++
+	return lease, nil
+}
+
+func TestPublicReplaceWorkspacePrevalidatesAndCreatesFreshW3WhileBContinues(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	git := newFakeGit(t)
+	core := mustService(t, &recordingApplier{}, git)
+	identities := &sequenceExecutionIdentities{run: "run-m1", leases: []ids.LeaseID{"lease-public-a", "lease-public-b", "lease-public-c"}}
+	authorityRepository := &executionAuthorityRepository{core: core}
+	runtime := &Runtime{core: core, execution: execution.NewService(authorityRepository, identities, fixedExecutionClock{now}), authority: authorityRepository}
+	governance := testGovernanceContext(t, now)
+	startA := execution.StartRequest{OperationID: "claim-public-a", ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-a", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}
+	startB := execution.StartRequest{OperationID: "claim-public-b", ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-b", ActorID: "actor-b", ProcessID: "process-b", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}
+	w1, err := runtime.StartWorkspace(t.Context(), startA, WorkspaceSpec{OperationID: "bind-public-w1", WorkspaceID: "workspace-public-w1", RepositoryID: "repository-m1", LaneID: "lane-public-w1", OwnedBranch: "runs/public-w1", PinnedBase: "0123456789abcdef0123456789abcdef01234567", Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w2, err := runtime.StartWorkspace(t.Context(), startB, WorkspaceSpec{OperationID: "bind-public-w2", WorkspaceID: "workspace-public-w2", RepositoryID: "repository-m1", LaneID: "lane-public-w2", OwnedBranch: "runs/public-w2", PinnedBase: "0123456789abcdef0123456789abcdef01234567", Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*controljournal.AuthorityCapsuleV1){func(c *controljournal.AuthorityCapsuleV1) { c.RuntimeEpochID = "epoch-other" }, func(c *controljournal.AuthorityCapsuleV1) { c.AuthorityHeadRecordRevision++ }} {
+		changed := w1.Authority
+		mutate(&changed)
+		if _, err := runtime.Heartbeat(t.Context(), "heartbeat-public-mutant", changed, now.Add(2*time.Second), time.Minute); err == nil {
+			t.Fatal("heartbeat accepted stale epoch/head capsule")
+		}
+		if err := runtime.Expire(t.Context(), "expire-public-capsule-mutant", changed, w1.Run.Deadline); err == nil {
+			t.Fatal("expiry accepted stale epoch/head capsule")
+		}
+		if binding, _ := runtime.Binding(w1.Authority.WorkspaceID); binding.Status != "active-bound" {
+			t.Fatalf("capsule mutant quarantined W1: %+v", binding)
+		}
+	}
+	refreshed, err := runtime.Heartbeat(t.Context(), "heartbeat-public-a", w1.Authority, now.Add(2*time.Second), time.Minute)
+	if err != nil || refreshed.AuthorityHeadRecordRevision == w1.Authority.AuthorityHeadRecordRevision {
+		t.Fatalf("public heartbeat did not refresh exact capsule: before=%+v after=%+v err=%v", w1.Authority, refreshed, err)
+	}
+	w1.Authority = refreshed
+	w1.Run.Deadline = now.Add(2*time.Second + time.Minute)
+	startC := execution.StartRequest{OperationID: "claim-public-c", ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-c", Now: w1.Run.Deadline.Add(time.Second), LeaseTTL: time.Minute, GovernanceContext: governance}
+	specW3 := WorkspaceSpec{OperationID: "bind-public-w3", WorkspaceID: "workspace-public-w3", RepositoryID: "repository-m1", LaneID: "lane-public-w3", OwnedBranch: "runs/public-w3", PinnedBase: "0123456789abcdef0123456789abcdef01234567", Now: startC.Now.Add(time.Second)}
+	mutants := []func(*execution.StartRequest, *WorkspaceSpec){
+		func(_ *execution.StartRequest, s *WorkspaceSpec) { s.WorkspaceID = w1.Authority.WorkspaceID },
+		func(s *execution.StartRequest, _ *WorkspaceSpec) { s.ProcessID = "process-a" },
+		func(s *execution.StartRequest, _ *WorkspaceSpec) { s.ActorID = "actor-b" },
+	}
+	for index, mutate := range mutants {
+		changedStart, changedSpec := startC, specW3
+		mutate(&changedStart, &changedSpec)
+		if _, err := runtime.ReplaceWorkspace(t.Context(), controljournal.OperationID("expire-public-mutant-"+string(rune('a'+index))), w1.Authority, w1.Run.Deadline, changedStart, changedSpec); !IsOutcome(err, OutcomeInvalidCommand) {
+			t.Fatalf("prevalidation mutant %d: %v", index, err)
+		}
+		if binding, _ := runtime.Binding(w1.Authority.WorkspaceID); binding.Status != "active-bound" {
+			t.Fatalf("mutant %d quarantined W1: %+v", index, binding)
+		}
+	}
+	w3, err := runtime.ReplaceWorkspace(t.Context(), "expire-public-a", w1.Authority, w1.Run.Deadline, startC, specW3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w3.Authority.ProcessID != "process-c" || w3.Authority.WorkspaceID == w1.Authority.WorkspaceID || w3.Authority.LeaseID == w1.Authority.LeaseID {
+		t.Fatalf("replacement not fresh: w1=%+v w3=%+v", w1.Authority, w3.Authority)
+	}
+	if binding, _ := runtime.Binding(w1.Authority.WorkspaceID); binding.Status != "quarantined" {
+		t.Fatalf("W1 not quarantined: %+v", binding)
+	}
+	if binding, _ := runtime.Binding(w2.Authority.WorkspaceID); binding.Status != "active-bound" {
+		t.Fatalf("B/W2 stopped: %+v", binding)
+	}
+}
+
+func TestPublicExactCapsuleAdmissionCannotBeErasedByConcurrentHeadAdvance(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	core := mustService(t, &recordingApplier{}, newFakeGit(t))
+	stale, err := core.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "toctou", now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &executionAuthorityRepository{core: core}
+	release, err := repository.bindExact("expire-toctou", stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	refreshed, err := core.Heartbeat(t.Context(), "heartbeat-toctou", stale, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := execution.NewService(repository, fixedExecutionIdentities{run: "run-m1", lease: "lease-unused"}, fixedExecutionClock{now})
+	err = service.Expire(t.Context(), execution.ExpireRequest{SchemaVersion: execution.ResultSchemaVersion, OperationID: "expire-toctou", ActorID: "actor-a", ProcessID: "process-a", LeaseID: ids.LeaseID(stale.LeaseID), Generation: int64(stale.Generation), Token: "1", Now: refreshed.Deadline})
+	if !IsOutcome(err, OutcomeStaleLease) {
+		t.Fatalf("stale exact capsule was replaced by current head: %v", err)
+	}
+	if current, ok := core.Current("work-a"); !ok || current.AuthorityHeadRecordRevision != refreshed.AuthorityHeadRecordRevision {
+		t.Fatalf("stale exact expiry damaged refreshed authority: %+v %v", current, ok)
+	}
+}
+
 func TestRealGapDBExecutionGitGJ04AndExpireExactRetryAfterSealedRestart(t *testing.T) {
 	binary := os.Getenv("SPEC_KITTY_M1_GAPDBD")
 	if binary == "" {
@@ -310,26 +425,26 @@ func TestRealGapDBExecutionGitGJ04AndExpireExactRetryAfterSealedRestart(t *testi
 	}
 	primaryBefore := repository.Binding().Primary
 	config := testConfig(t)
-	identities := fixedExecutionIdentities{run: "run-m1", lease: "lease-real-gj04"}
+	identities := &sequenceExecutionIdentities{run: "run-m1", leases: []ids.LeaseID{"lease-real-b", "lease-real-gj04"}}
 	runtime, err := NewRuntime(config, app, repository, identities, fixedExecutionClock{now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime.core.WithFaults(&cutHook{id: "GJ-04", remaining: 1})
 	governance := testGovernanceContext(t, now)
+	startB := execution.StartRequest{CorrelationID: "real-b", OperationID: "claim-real-b", ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-b", ActorID: "actor-b", ProcessID: "process-b", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}
+	specB := WorkspaceSpec{OperationID: "bind-real-w2", WorkspaceID: "workspace-real-w2", RepositoryID: "repository-m1", LaneID: "lane-real-w2", OwnedBranch: "runs/real-w2", PinnedBase: base, Now: now.Add(time.Second)}
+	deliveryB, err := runtime.StartWorkspace(t.Context(), startB, specB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.core.WithFaults(&cutHook{id: "GJ-04", remaining: 1})
 	start := execution.StartRequest{CorrelationID: "real-gj04", OperationID: "claim-real-gj04", ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-a", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}
 	spec := WorkspaceSpec{OperationID: "bind-real-gj04", WorkspaceID: "workspace-real-gj04", RepositoryID: "repository-m1", LaneID: "lane-real-gj04", OwnedBranch: "runs/real-gj04", PinnedBase: base, Now: now.Add(time.Second)}
 	if _, err := runtime.StartWorkspace(t.Context(), start, spec); !IsOutcome(err, OutcomeAmbiguous) {
 		t.Fatalf("GJ-04 result=%v", err)
 	}
-	authority, ok := runtime.core.Current("work-a")
-	workspaceBinding, bound := runtime.core.Binding(spec.WorkspaceID)
-	if !ok || !bound {
+	if _, bound := runtime.Binding(spec.WorkspaceID); !bound {
 		t.Fatal("GJ-04 did not leave durable authority and binding")
-	}
-	wantCapsule, err := controljournal.NewAuthorityCapsuleV1(controljournal.AuthorityCapsuleV1{SchemaVersion: 1, ProjectID: authority.ProjectID, MissionID: authority.MissionID, WorkRevisionID: authority.WorkRevisionID, ActorID: authority.ActorID, ProcessID: authority.ProcessID, RunID: authority.RunID, LeaseID: authority.LeaseID, WorkspaceID: workspaceBinding.WorkspaceID, RuntimeEpochID: authority.RuntimeEpochID, LeaseGeneration: authority.Generation, FenceToken: authority.FenceToken, AuthorityHeadRecordRevision: authority.AuthorityHeadRecordRevision})
-	if err != nil {
-		t.Fatal(err)
 	}
 	restoreReader, _ := application.NewRestoreReaderV1(adapter, "project-m1", "mission-m1")
 	restored, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{
@@ -339,7 +454,8 @@ func TestRealGapDBExecutionGitGJ04AndExpireExactRetryAfterSealedRestart(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := RestoreRuntimeValidated(t.Context(), config, app, repository, adapter, restored, identities, fixedExecutionClock{now})
+	restartedIdentities := &sequenceExecutionIdentities{run: "run-m1", leases: []ids.LeaseID{"lease-replay-unused", "lease-real-c"}}
+	restarted, err := RestoreRuntimeValidated(t.Context(), config, app, repository, adapter, restored, restartedIdentities, fixedExecutionClock{now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,13 +463,20 @@ func TestRealGapDBExecutionGitGJ04AndExpireExactRetryAfterSealedRestart(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := controljournal.EncodeAuthorityCapsuleV1(wantCapsule)
-	got, _ := controljournal.EncodeAuthorityCapsuleV1(delivery.Authority)
-	if string(got) != string(want) || !delivery.Run.Replayed {
-		t.Fatalf("GJ-04 capsule replay changed: replay=%v\nwant=%s\ngot=%s", delivery.Run.Replayed, want, got)
+	if !delivery.Run.Replayed {
+		t.Fatal("GJ-04 capsule was not replayed")
 	}
-	if err := restarted.core.Expire(t.Context(), "expire-real-restart", authority, authority.Deadline); err != nil {
+	startC := execution.StartRequest{CorrelationID: "real-c", OperationID: "claim-real-c", ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-c", Now: delivery.Run.Deadline.Add(time.Second), LeaseTTL: time.Minute, GovernanceContext: governance}
+	specC := WorkspaceSpec{OperationID: "bind-real-w3", WorkspaceID: "workspace-real-w3", RepositoryID: "repository-m1", LaneID: "lane-real-w3", OwnedBranch: "runs/real-w3", PinnedBase: base, Now: startC.Now.Add(time.Second)}
+	deliveryC, err := restarted.ReplaceWorkspace(t.Context(), "expire-real-restart", delivery.Authority, delivery.Run.Deadline, startC, specC)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if deliveryC.Authority.ProcessID != "process-c" || deliveryC.Authority.WorkspaceID == delivery.Authority.WorkspaceID {
+		t.Fatalf("fresh W3 was not delivered: %+v", deliveryC.Authority)
+	}
+	if got, _ := restarted.Binding(deliveryB.Authority.WorkspaceID); got.Status != "active-bound" {
+		t.Fatalf("B/W2 stopped: %+v", got)
 	}
 	postExpireReader, _ := application.NewRestoreReaderV1(adapter, "project-m1", "mission-m1")
 	postExpire, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{
@@ -367,13 +490,16 @@ func TestRealGapDBExecutionGitGJ04AndExpireExactRetryAfterSealedRestart(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := afterProcessLoss.core.Expire(t.Context(), "expire-real-restart", authority, authority.Deadline); err != nil {
+	if err := afterProcessLoss.Expire(t.Context(), "expire-real-restart", delivery.Authority, delivery.Run.Deadline); err != nil {
 		t.Fatalf("committed expiry did not survive process reconstruction: %v", err)
 	}
-	if got, _ := afterProcessLoss.core.Binding(spec.WorkspaceID); got.Status != "quarantined" {
+	if got, _ := afterProcessLoss.Binding(spec.WorkspaceID); got.Status != "quarantined" {
 		t.Fatalf("restored expiry lost quarantine: %+v", got)
 	}
-	if err := afterProcessLoss.Authorize(wantCapsule, "handoff", authority.Deadline.Add(time.Second)); !IsOutcome(err, OutcomeStaleLease) {
+	if got, _ := afterProcessLoss.Binding(specC.WorkspaceID); got.Status != "active-bound" {
+		t.Fatalf("restored W3 missing: %+v", got)
+	}
+	if err := afterProcessLoss.Authorize(delivery.Authority, "handoff", delivery.Run.Deadline.Add(time.Second)); !IsOutcome(err, OutcomeStaleLease) {
 		t.Fatalf("exact expired authority capsule survived sealed reconstruction: %v", err)
 	}
 	primaryAfter, err := repository.SnapshotPrimary(t.Context())

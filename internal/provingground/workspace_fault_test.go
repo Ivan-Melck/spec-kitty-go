@@ -95,6 +95,56 @@ func TestGJ04RetryReturnsSameBindingWithoutDuplicateWorkspace(t *testing.T) {
 	}
 }
 
+func TestGJ04ReplayBindsRepositoryLaneGitAuthorityAndTimeAcrossRestore(t *testing.T) {
+	git := newFakeGit(t)
+	journal := newJournalFixture()
+	core := mustService(t, journal, git)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	authority, _ := core.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "gj04-digest", now))
+	request := workspaceRequest(authority, "gj04-digest", now.Add(time.Second))
+	if _, err := core.EnsureWorkspace(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	assertMutants := func(t *testing.T, target *service) {
+		t.Helper()
+		mutants := []func(*WorkspaceRequest){
+			func(r *WorkspaceRequest) { r.RepositoryID = "repository-other" }, func(r *WorkspaceRequest) { r.LaneID = "lane-other" },
+			func(r *WorkspaceRequest) { r.OwnedBranch = "runs/other" }, func(r *WorkspaceRequest) { r.PinnedBase = "base-other" },
+			func(r *WorkspaceRequest) { r.WorkspaceID = "workspace-other" }, func(r *WorkspaceRequest) { r.Authority.FenceToken++ },
+			func(r *WorkspaceRequest) { r.Authority.RuntimeEpochID = "epoch-other" }, func(r *WorkspaceRequest) { r.Authority.AuthorityHeadRecordRevision++ },
+			func(r *WorkspaceRequest) { r.Now = r.Now.Add(time.Nanosecond) },
+		}
+		for index, mutate := range mutants {
+			changed := request
+			mutate(&changed)
+			if _, err := target.EnsureWorkspace(t.Context(), changed); err == nil {
+				t.Fatalf("workspace replay mutant %d survived", index)
+			}
+		}
+	}
+	assertMutants(t, core)
+	events, _ := EventRegistryV1()
+	reducers, _ := ReducerRegistryV1()
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	restored, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{Reader: journal, Source: checkpoint.SourceIdentityV1{ProjectID: "project-m1", MissionID: "mission-m1", RunID: "run-m1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: checkpoint.RestoreBindingV1{DatabaseID: "database-gj04-digest", HostInstanceID: "host-gj04-digest"}, EventRegistry: events, Reducers: reducers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := restoreValidated(t.Context(), testConfig(t), journal, git, journal, restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMutants(t, fresh)
+	replayed, err := fresh.EnsureWorkspace(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.RepositoryID != request.RepositoryID || replayed.LaneID != request.LaneID || replayed.OwnedBranch != request.OwnedBranch || replayed.PinnedBase != request.PinnedBase {
+		t.Fatalf("durable replay changed binding: %+v", replayed)
+	}
+}
+
 func TestReconcileWorkspaceManualMovementAndMissingRegistrationFailClosed(t *testing.T) {
 	git := newFakeGit(t)
 	service := mustService(t, &recordingApplier{}, git)

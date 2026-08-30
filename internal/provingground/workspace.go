@@ -3,6 +3,7 @@ package provingground
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
@@ -31,6 +32,7 @@ var _ GitWorkspace = (*gitrepo.Repository)(nil)
 type Runtime struct {
 	core      *service
 	execution *execution.Service
+	authority *executionAuthorityRepository
 }
 
 type WorkspaceSpec struct {
@@ -60,7 +62,7 @@ func NewRuntime(config Config, app *application.Service, repository *gitrepo.Rep
 		return nil, err
 	}
 	authority := &executionAuthorityRepository{core: core}
-	return &Runtime{core: core, execution: execution.NewService(authority, identities, clock)}, nil
+	return &Runtime{core: core, execution: execution.NewService(authority, identities, clock), authority: authority}, nil
 }
 
 // RestoreRuntimeValidated is the restart counterpart to NewRuntime. It keeps
@@ -75,7 +77,7 @@ func RestoreRuntimeValidated(ctx context.Context, config Config, app *applicatio
 		return nil, err
 	}
 	authority := &executionAuthorityRepository{core: core}
-	return &Runtime{core: core, execution: execution.NewService(authority, identities, clock)}, nil
+	return &Runtime{core: core, execution: execution.NewService(authority, identities, clock), authority: authority}, nil
 }
 
 func (r *Runtime) StartWorkspace(ctx context.Context, start execution.StartRequest, spec WorkspaceSpec) (Delivery, error) {
@@ -95,20 +97,24 @@ func (r *Runtime) StartWorkspace(ctx context.Context, start execution.StartReque
 	if err != nil {
 		return Delivery{}, err
 	}
-	run.RepositoryID, run.LaneID, run.WorkspaceID = spec.RepositoryID, spec.LaneID, ids.WorkspaceID(binding.WorkspaceID)
+	run.RepositoryID, run.LaneID, run.WorkspaceID = binding.RepositoryID, binding.LaneID, ids.WorkspaceID(binding.WorkspaceID)
 	run.WorkspacePath, run.OwnedBranch, run.VerifiedBase = binding.CanonicalPath, binding.OwnedBranch, binding.PinnedBase
 	run.GitDir, run.IndexPath, run.WorkspaceStage = binding.GitDir, binding.IndexPath, workspace.StageReady
-	capsule, err := controljournal.NewAuthorityCapsuleV1(controljournal.AuthorityCapsuleV1{
+	capsule, err := authorityCapsule(authority, binding)
+	if err != nil {
+		return Delivery{}, refusal(OutcomeIndeterminate, "start-workspace", "durable binding could not form the frozen authority capsule")
+	}
+	return Delivery{Run: run, Authority: capsule}, nil
+}
+
+func authorityCapsule(authority Authority, binding WorkspaceBinding) (controljournal.AuthorityCapsuleV1, error) {
+	return controljournal.NewAuthorityCapsuleV1(controljournal.AuthorityCapsuleV1{
 		SchemaVersion: 1, ProjectID: authority.ProjectID, MissionID: authority.MissionID,
 		WorkRevisionID: authority.WorkRevisionID, ActorID: authority.ActorID, ProcessID: authority.ProcessID,
 		RunID: authority.RunID, LeaseID: authority.LeaseID, WorkspaceID: binding.WorkspaceID,
 		RuntimeEpochID: authority.RuntimeEpochID, LeaseGeneration: authority.Generation,
 		FenceToken: authority.FenceToken, AuthorityHeadRecordRevision: authority.AuthorityHeadRecordRevision,
 	})
-	if err != nil {
-		return Delivery{}, refusal(OutcomeIndeterminate, "start-workspace", "durable binding could not form the frozen authority capsule")
-	}
-	return Delivery{Run: run, Authority: capsule}, nil
 }
 
 // Authorize projects the exact frozen capsule back onto the current durable
@@ -119,6 +125,123 @@ func (r *Runtime) Authorize(capsule controljournal.AuthorityCapsuleV1, action st
 		return err
 	}
 	return r.core.Authorize(authority, action, now)
+}
+
+// Heartbeat refreshes retained execution authority and returns a new exact
+// frozen capsule carrying the journal's new authority-head revision.
+func (r *Runtime) Heartbeat(ctx context.Context, operationID controljournal.OperationID, capsule controljournal.AuthorityCapsuleV1, now time.Time, ttl time.Duration) (controljournal.AuthorityCapsuleV1, error) {
+	exact, err := r.authorityFromCapsule(capsule, "heartbeat")
+	if err != nil {
+		return controljournal.AuthorityCapsuleV1{}, err
+	}
+	release, err := r.bindExactAuthority(operationID, exact)
+	if err != nil {
+		return controljournal.AuthorityCapsuleV1{}, err
+	}
+	defer release()
+	_, err = r.execution.Heartbeat(ctx, execution.HeartbeatRequest{SchemaVersion: execution.ResultSchemaVersion, OperationID: ids.OperationID(operationID), ActorID: ids.ActorID(capsule.ActorID), ProcessID: ids.ProcessID(capsule.ProcessID), LeaseID: ids.LeaseID(capsule.LeaseID), Generation: int64(capsule.LeaseGeneration), Token: fmt.Sprint(capsule.FenceToken), Now: now, LeaseTTL: ttl})
+	if err != nil {
+		return controljournal.AuthorityCapsuleV1{}, err
+	}
+	binding, ok := r.core.Binding(capsule.WorkspaceID)
+	authority, current := r.core.Current(binding.WorkID)
+	if !ok || !current {
+		return controljournal.AuthorityCapsuleV1{}, refusal(OutcomeIndeterminate, "heartbeat", "refreshed authority lost its durable binding")
+	}
+	return authorityCapsule(authority, binding)
+}
+
+// Expire invalidates an exact frozen capsule through retained execution. An
+// exact same-operation retry remains valid after sealed process restoration.
+func (r *Runtime) Expire(ctx context.Context, operationID controljournal.OperationID, capsule controljournal.AuthorityCapsuleV1, now time.Time) error {
+	exact, err := r.authorityFromCapsuleForExpiry(operationID, capsule, "expire")
+	if err != nil {
+		return err
+	}
+	release, err := r.bindExactAuthority(operationID, exact)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return r.execution.Expire(ctx, execution.ExpireRequest{SchemaVersion: execution.ResultSchemaVersion, OperationID: ids.OperationID(operationID), ActorID: ids.ActorID(capsule.ActorID), ProcessID: ids.ProcessID(capsule.ProcessID), LeaseID: ids.LeaseID(capsule.LeaseID), Generation: int64(capsule.LeaseGeneration), Token: fmt.Sprint(capsule.FenceToken), Now: now})
+}
+
+func (r *Runtime) bindExactAuthority(operationID controljournal.OperationID, authority Authority) (func(), error) {
+	if r.authority == nil {
+		return nil, refusal(OutcomeIndeterminate, "authority", "runtime retained authority adapter is unavailable")
+	}
+	return r.authority.bindExact(operationID, authority)
+}
+
+// ReplaceWorkspace is the public lease-replacement lifecycle: expire the
+// predecessor capsule, then admit Process C into a fresh lease-scoped W3. It
+// never transfers the predecessor's mutable workspace.
+func (r *Runtime) ReplaceWorkspace(ctx context.Context, expireOperationID controljournal.OperationID, predecessor controljournal.AuthorityCapsuleV1, expiredAt time.Time, start execution.StartRequest, spec WorkspaceSpec) (Delivery, error) {
+	binding, bound := r.core.Binding(predecessor.WorkspaceID)
+	_, operationErr := controljournal.NewOperationID(string(expireOperationID))
+	_, bindingOperationErr := controljournal.NewOperationID(string(spec.OperationID))
+	_, workspaceErr := controljournal.NewWorkspaceID(string(spec.WorkspaceID))
+	_, repositoryErr := ids.ParseRepositoryID(spec.RepositoryID.String())
+	_, laneErr := ids.ParseLaneID(spec.LaneID.String())
+	if _, err := controljournal.NewAuthorityCapsuleV1(predecessor); err != nil || operationErr != nil || bindingOperationErr != nil || workspaceErr != nil || repositoryErr != nil || laneErr != nil ||
+		start.Validate() != nil || !bound || binding.Status != "active-bound" || spec.WorkspaceID == predecessor.WorkspaceID || spec.OwnedBranch == "" || spec.PinnedBase == "" || spec.Now.IsZero() || expiredAt.IsZero() ||
+		start.ProjectID.String() != string(predecessor.ProjectID) || start.MissionID.String() != string(predecessor.MissionID) || start.WorkRevisionID.String() != string(predecessor.WorkRevisionID) ||
+		start.WorkID.String() != string(binding.WorkID) || start.ActorID.String() != string(predecessor.ActorID) || start.ProcessID.String() != string(r.core.config.Actors.ProcessC) {
+		return Delivery{}, refusal(OutcomeInvalidCommand, "replace-workspace", "replacement request must prevalidate Actor A/Process C, the same work, and fresh complete workspace coordinates")
+	}
+	if err := r.Expire(ctx, expireOperationID, predecessor, expiredAt); err != nil {
+		return Delivery{}, err
+	}
+	delivery, err := r.StartWorkspace(ctx, start, spec)
+	if err != nil {
+		return Delivery{}, err
+	}
+	if delivery.Authority.ActorID != predecessor.ActorID || delivery.Authority.ProcessID != r.core.config.Actors.ProcessC || delivery.Authority.LeaseID == predecessor.LeaseID || delivery.Authority.WorkspaceID == predecessor.WorkspaceID {
+		return Delivery{}, refusal(OutcomeIndeterminate, "replace-workspace", "replacement did not produce Actor A/Process C with fresh lease and workspace coordinates")
+	}
+	return delivery, nil
+}
+
+// ReplaceOwner publishes the owner-restart invalidation using a concrete
+// application service admitted for the fresh epoch.
+func (r *Runtime) ReplaceOwner(ctx context.Context, operationID controljournal.OperationID, epoch controljournal.RuntimeEpochID, app *application.Service, now time.Time) error {
+	if app == nil {
+		return refusal(OutcomeInvalidCommand, "restart", "admitted application service is required")
+	}
+	return r.core.ReplaceRuntime(ctx, operationID, epoch, app, now)
+}
+
+func (r *Runtime) ReconcileWorkspace(ctx context.Context, id controljournal.WorkspaceID, physical workspace.Record) WorkspaceReconciliation {
+	return r.core.ReconcileWorkspace(ctx, id, physical)
+}
+
+func (r *Runtime) Binding(id controljournal.WorkspaceID) (WorkspaceBinding, bool) {
+	return r.core.Binding(id)
+}
+
+func (r *Runtime) authorityFromCapsuleForExpiry(operationID controljournal.OperationID, capsule controljournal.AuthorityCapsuleV1, action string) (Authority, error) {
+	if authority, err := r.authorityFromCapsule(capsule, action); err == nil {
+		return authority, nil
+	}
+	validated, err := controljournal.NewAuthorityCapsuleV1(capsule)
+	if err != nil {
+		return Authority{}, refusal(OutcomeInvalidCommand, action, "authority capsule is malformed")
+	}
+	r.core.commandMu.Lock()
+	receipt, ok := r.core.invalidations[operationID]
+	r.core.commandMu.Unlock()
+	binding, bound := r.core.Binding(validated.WorkspaceID)
+	if !ok || receipt.Kind != "lease_expired" || !bound || binding.Status != "quarantined" || !capsuleMatchesAuthority(validated, receipt.Authority, binding) {
+		return Authority{}, refusal(OutcomeStaleLease, action, "capsule no longer names the exact expired authority")
+	}
+	return receipt.Authority, nil
+}
+
+func capsuleMatchesAuthority(capsule controljournal.AuthorityCapsuleV1, authority Authority, binding WorkspaceBinding) bool {
+	return capsule.ProjectID == authority.ProjectID && capsule.MissionID == authority.MissionID && capsule.WorkRevisionID == authority.WorkRevisionID &&
+		capsule.ActorID == authority.ActorID && capsule.ProcessID == authority.ProcessID && capsule.RunID == authority.RunID && capsule.LeaseID == authority.LeaseID &&
+		capsule.WorkspaceID == binding.WorkspaceID && capsule.RuntimeEpochID == authority.RuntimeEpochID && capsule.LeaseGeneration == authority.Generation &&
+		capsule.FenceToken == authority.FenceToken && capsule.AuthorityHeadRecordRevision == authority.AuthorityHeadRecordRevision
 }
 
 func (r *Runtime) authorityFromCapsule(capsule controljournal.AuthorityCapsuleV1, action string) (Authority, error) {
@@ -140,7 +263,11 @@ func (r *Runtime) authorityFromCapsule(capsule controljournal.AuthorityCapsuleV1
 	return authority, nil
 }
 
-type executionAuthorityRepository struct{ core *service }
+type executionAuthorityRepository struct {
+	core    *service
+	exactMu sync.Mutex
+	exact   map[controljournal.OperationID]Authority
+}
 
 var _ execution.AuthorityRepository = (*executionAuthorityRepository)(nil)
 
@@ -156,21 +283,28 @@ func (r *executionAuthorityRepository) LookupStartOperation(_ context.Context, r
 }
 
 func (r *executionAuthorityRepository) Claim(ctx context.Context, request execution.StartRequest, runID ids.RunID, leaseID ids.LeaseID) (execution.RunCapsule, error) {
+	if runID.String() != string(r.core.config.RunID) {
+		return execution.RunCapsule{}, refusal(OutcomeInvalidCommand, "claim", "retained execution run identity must equal the admitted umbrella run")
+	}
 	state := r.core.works[controljournal.WorkID(request.WorkID.String())]
 	if state != nil {
 		state.mu.Lock()
 		prior, replay := state.operations[controljournal.OperationID(request.OperationID.String())]
 		state.mu.Unlock()
 		if replay {
+			if prior.WorkRevisionID != controljournal.WorkRevisionID(request.WorkRevisionID.String()) || prior.WorkID != controljournal.WorkID(request.WorkID.String()) ||
+				prior.ActorID != controljournal.ActorID(request.ActorID.String()) || prior.ProcessID != controljournal.ProcessID(request.ProcessID.String()) ||
+				prior.RunID != controljournal.RunID(runID.String()) || prior.RuntimeEpochID != r.core.currentEpoch() ||
+				prior.GovernanceContextID != request.GovernanceContext.ID().String() || prior.GovernanceContextAlgorithm != request.GovernanceContext.Aggregate().Algorithm() ||
+				prior.GovernanceContextDigest != request.GovernanceContext.Aggregate().Digest() || request.LeaseTTL != r.core.config.LeaseTTL || !prior.Deadline.Equal(request.Now.UTC().Add(r.core.config.LeaseTTL)) {
+				return execution.RunCapsule{}, refusal(OutcomeInvalidCommand, "claim", "operation identity was reused for a different retained start")
+			}
 			return executionRunCapsule(request, prior, true), nil
 		}
 	}
-	if runID.String() != string(r.core.config.RunID) {
-		return execution.RunCapsule{}, refusal(OutcomeInvalidCommand, "claim", "retained execution run identity must equal the admitted umbrella run")
-	}
 	authority, err := r.core.Claim(ctx, ClaimRequest{
 		OperationID: controljournal.OperationID(request.OperationID.String()), WorkRevisionID: controljournal.WorkRevisionID(request.WorkRevisionID.String()),
-		RuntimeEpochID: r.core.epoch, WorkID: controljournal.WorkID(request.WorkID.String()), ActorID: controljournal.ActorID(request.ActorID.String()),
+		RuntimeEpochID: r.core.currentEpoch(), WorkID: controljournal.WorkID(request.WorkID.String()), ActorID: controljournal.ActorID(request.ActorID.String()),
 		ProcessID: controljournal.ProcessID(request.ProcessID.String()), LeaseID: controljournal.LeaseID(leaseID.String()),
 		GovernanceContextID: request.GovernanceContext.ID().String(), GovernanceContextAlgorithm: request.GovernanceContext.Aggregate().Algorithm(), GovernanceContextDigest: request.GovernanceContext.Aggregate().Digest(), Now: request.Now,
 	})
@@ -192,29 +326,90 @@ func executionRunCapsule(request execution.StartRequest, authority Authority, re
 }
 
 func (r *executionAuthorityRepository) Heartbeat(ctx context.Context, request execution.HeartbeatRequest) (time.Time, error) {
-	authority, ok := r.find(request.LeaseID, request.Generation)
-	if !ok {
-		return time.Time{}, refusal(OutcomeStaleLease, "heartbeat", "retained execution lease is not current")
+	authority, exact := r.exactAuthority(controljournal.OperationID(request.OperationID.String()))
+	var err error
+	if exact {
+		err = validateRetainedCoordinates(authority, request.ActorID, request.ProcessID, request.LeaseID, request.Generation, request.Token, "heartbeat")
+	} else {
+		authority, err = r.find(request.ActorID, request.ProcessID, request.LeaseID, request.Generation, request.Token, "heartbeat")
+	}
+	if err != nil {
+		return time.Time{}, err
 	}
 	refreshed, err := r.core.Heartbeat(ctx, controljournal.OperationID(request.OperationID.String()), authority, request.Now)
 	return refreshed.Deadline, err
 }
 
 func (r *executionAuthorityRepository) Expire(ctx context.Context, request execution.ExpireRequest) error {
-	authority, ok := r.find(request.LeaseID, request.Generation)
-	if !ok {
-		return refusal(OutcomeStaleLease, "expire", "retained execution lease is not current")
+	authority, exact := r.exactAuthority(controljournal.OperationID(request.OperationID.String()))
+	var err error
+	if exact {
+		err = validateRetainedCoordinates(authority, request.ActorID, request.ProcessID, request.LeaseID, request.Generation, request.Token, "expire")
+	} else {
+		authority, err = r.find(request.ActorID, request.ProcessID, request.LeaseID, request.Generation, request.Token, "expire")
+	}
+	if err != nil {
+		r.core.commandMu.Lock()
+		receipt, replay := r.core.invalidations[controljournal.OperationID(request.OperationID.String())]
+		r.core.commandMu.Unlock()
+		if !replay || receipt.Kind != "lease_expired" {
+			return err
+		}
+		if coordinateErr := validateRetainedCoordinates(receipt.Authority, request.ActorID, request.ProcessID, request.LeaseID, request.Generation, request.Token, "expire"); coordinateErr != nil {
+			return coordinateErr
+		}
+		authority = receipt.Authority
 	}
 	return r.core.Expire(ctx, controljournal.OperationID(request.OperationID.String()), authority, request.Now)
 }
 
-func (r *executionAuthorityRepository) find(lease ids.LeaseID, generation int64) (Authority, bool) {
+func (r *executionAuthorityRepository) bindExact(operationID controljournal.OperationID, authority Authority) (func(), error) {
+	r.exactMu.Lock()
+	defer r.exactMu.Unlock()
+	if r.exact == nil {
+		r.exact = make(map[controljournal.OperationID]Authority)
+	}
+	if _, exists := r.exact[operationID]; exists {
+		return nil, refusal(OutcomeAuthorityConflict, "authority", "operation already has an exact capsule admission in flight")
+	}
+	r.exact[operationID] = authority
+	return func() {
+		r.exactMu.Lock()
+		delete(r.exact, operationID)
+		r.exactMu.Unlock()
+	}, nil
+}
+
+func (r *executionAuthorityRepository) exactAuthority(operationID controljournal.OperationID) (Authority, bool) {
+	r.exactMu.Lock()
+	defer r.exactMu.Unlock()
+	authority, ok := r.exact[operationID]
+	return authority, ok
+}
+
+func (r *executionAuthorityRepository) find(actor ids.ActorID, process ids.ProcessID, lease ids.LeaseID, generation int64, token, action string) (Authority, error) {
 	for _, workID := range r.core.config.WorkIDs {
 		if current, ok := r.core.Current(workID); ok && current.LeaseID == controljournal.LeaseID(lease.String()) && current.Generation == uint64(generation) {
-			return current, true
+			if err := validateRetainedCoordinates(current, actor, process, lease, generation, token, action); err != nil {
+				return Authority{}, err
+			}
+			return current, nil
 		}
 	}
-	return Authority{}, false
+	return Authority{}, refusal(OutcomeStaleLease, action, "retained execution lease is not current")
+}
+
+func validateRetainedCoordinates(authority Authority, actor ids.ActorID, process ids.ProcessID, lease ids.LeaseID, generation int64, token, action string) error {
+	if authority.ActorID != controljournal.ActorID(actor.String()) || authority.ProcessID != controljournal.ProcessID(process.String()) {
+		return refusal(OutcomeActorProcessMismatch, action, "retained execution actor/process coordinate is not current")
+	}
+	if authority.LeaseID != controljournal.LeaseID(lease.String()) || authority.Generation != uint64(generation) {
+		return refusal(OutcomeStaleLease, action, "retained execution lease coordinate is not current")
+	}
+	if fmt.Sprint(authority.FenceToken) != token {
+		return refusal(OutcomeStaleFence, action, "retained execution fence token is not current")
+	}
+	return nil
 }
 
 type WorkspaceRequest struct {
@@ -234,26 +429,79 @@ type WorkspacePhysical struct {
 }
 
 type WorkspaceBinding struct {
-	WorkspaceID      controljournal.WorkspaceID    `json:"workspace_id"`
-	CanonicalPath    string                        `json:"canonical_path"`
-	OwnedBranch      string                        `json:"owned_branch"`
-	PinnedBase       string                        `json:"pinned_base"`
-	GitDir           string                        `json:"git_dir"`
-	IndexPath        string                        `json:"index_path"`
-	ActorID          controljournal.ActorID        `json:"actor_id"`
-	ProcessID        controljournal.ProcessID      `json:"process_id"`
-	RunID            controljournal.RunID          `json:"run_id"`
-	LeaseID          controljournal.LeaseID        `json:"lease_id"`
-	Generation       uint64                        `json:"generation"`
-	FenceToken       uint64                        `json:"fence_token"`
-	WorkID           controljournal.WorkID         `json:"work_id"`
-	WorkRevisionID   controljournal.WorkRevisionID `json:"work_revision_id"`
-	RuntimeEpochID   controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
-	LogicalVersion   uint64                        `json:"logical_version"`
-	RecordRevision   uint64                        `json:"record_revision"`
-	Status           string                        `json:"status"`
-	QuarantineReason string                        `json:"quarantine_reason,omitempty"`
-	OperationID      controljournal.OperationID    `json:"operation_id"`
+	WorkspaceID                 controljournal.WorkspaceID    `json:"workspace_id"`
+	RepositoryID                ids.RepositoryID              `json:"repository_id"`
+	LaneID                      ids.LaneID                    `json:"lane_id"`
+	CanonicalPath               string                        `json:"canonical_path"`
+	OwnedBranch                 string                        `json:"owned_branch"`
+	PinnedBase                  string                        `json:"pinned_base"`
+	GitDir                      string                        `json:"git_dir"`
+	IndexPath                   string                        `json:"index_path"`
+	ActorID                     controljournal.ActorID        `json:"actor_id"`
+	ProcessID                   controljournal.ProcessID      `json:"process_id"`
+	RunID                       controljournal.RunID          `json:"run_id"`
+	LeaseID                     controljournal.LeaseID        `json:"lease_id"`
+	Generation                  uint64                        `json:"generation"`
+	FenceToken                  uint64                        `json:"fence_token"`
+	AuthorityHeadRecordRevision uint64                        `json:"authority_head_record_revision"`
+	WorkID                      controljournal.WorkID         `json:"work_id"`
+	WorkRevisionID              controljournal.WorkRevisionID `json:"work_revision_id"`
+	RuntimeEpochID              controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
+	LogicalVersion              uint64                        `json:"logical_version"`
+	RecordRevision              uint64                        `json:"record_revision"`
+	Status                      string                        `json:"status"`
+	QuarantineReason            string                        `json:"quarantine_reason,omitempty"`
+	OperationID                 controljournal.OperationID    `json:"operation_id"`
+	RequestedAt                 time.Time                     `json:"requested_at"`
+	CommandDigest               string                        `json:"command_digest"`
+}
+
+type workspaceReceipt struct {
+	CommandDigest            string
+	ApplicationRequestDigest [32]byte
+	CanonicalResult          []byte
+}
+
+type workspaceCommandIdentity struct {
+	OperationID                 controljournal.OperationID    `json:"operation_id"`
+	WorkspaceID                 controljournal.WorkspaceID    `json:"workspace_id"`
+	RepositoryID                ids.RepositoryID              `json:"repository_id"`
+	LaneID                      ids.LaneID                    `json:"lane_id"`
+	OwnedBranch                 string                        `json:"owned_branch"`
+	PinnedBase                  string                        `json:"pinned_base"`
+	ProjectID                   controljournal.ProjectID      `json:"project_id"`
+	MissionID                   controljournal.MissionID      `json:"mission_id"`
+	WorkRevisionID              controljournal.WorkRevisionID `json:"work_revision_id"`
+	WorkID                      controljournal.WorkID         `json:"work_id"`
+	ActorID                     controljournal.ActorID        `json:"actor_id"`
+	ProcessID                   controljournal.ProcessID      `json:"process_id"`
+	RunID                       controljournal.RunID          `json:"run_id"`
+	LeaseID                     controljournal.LeaseID        `json:"lease_id"`
+	RuntimeEpochID              controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
+	Generation                  uint64                        `json:"generation"`
+	FenceToken                  uint64                        `json:"fence_token"`
+	AuthorityHeadRecordRevision uint64                        `json:"authority_head_record_revision"`
+	RequestedAt                 time.Time                     `json:"requested_at"`
+}
+
+func workspaceCommandDigest(request WorkspaceRequest) (string, error) {
+	a := request.Authority
+	return canonicalCommandDigest(workspaceCommandIdentity{
+		OperationID: request.OperationID, WorkspaceID: request.WorkspaceID, RepositoryID: request.RepositoryID, LaneID: request.LaneID,
+		OwnedBranch: request.OwnedBranch, PinnedBase: request.PinnedBase, ProjectID: a.ProjectID, MissionID: a.MissionID,
+		WorkRevisionID: a.WorkRevisionID, WorkID: a.WorkID, ActorID: a.ActorID, ProcessID: a.ProcessID, RunID: a.RunID,
+		LeaseID: a.LeaseID, RuntimeEpochID: a.RuntimeEpochID, Generation: a.Generation, FenceToken: a.FenceToken,
+		AuthorityHeadRecordRevision: a.AuthorityHeadRecordRevision, RequestedAt: request.Now.UTC(),
+	})
+}
+
+func workspaceRequestFromBinding(config Config, binding WorkspaceBinding) WorkspaceRequest {
+	return WorkspaceRequest{OperationID: binding.OperationID, WorkspaceID: binding.WorkspaceID, RepositoryID: binding.RepositoryID, LaneID: binding.LaneID, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, Now: binding.RequestedAt, Authority: Authority{
+		ProjectID: config.ProjectID, MissionID: config.MissionID, WorkRevisionID: binding.WorkRevisionID, WorkID: binding.WorkID,
+		ActorID: binding.ActorID, ProcessID: binding.ProcessID, RunID: binding.RunID, LeaseID: binding.LeaseID,
+		RuntimeEpochID: binding.RuntimeEpochID, Generation: binding.Generation, FenceToken: binding.FenceToken,
+		AuthorityHeadRecordRevision: binding.AuthorityHeadRecordRevision,
+	}}
 }
 
 func (s *service) EnsureWorkspace(ctx context.Context, request WorkspaceRequest) (WorkspaceBinding, error) {
@@ -269,10 +517,16 @@ func (s *service) EnsureWorkspace(ctx context.Context, request WorkspaceRequest)
 	if _, err := controljournal.NewWorkspaceID(string(request.WorkspaceID)); err != nil {
 		return WorkspaceBinding{}, refusal(OutcomeInvalidCommand, "workspace", "workspace identity is invalid")
 	}
+	commandDigest, err := workspaceCommandDigest(request)
+	if err != nil || request.Now.IsZero() {
+		return WorkspaceBinding{}, refusal(OutcomeInvalidCommand, "workspace", "workspace command identity is invalid")
+	}
 	s.workspaceMu.RLock()
 	if replay, ok := s.workspaceOp[request.OperationID]; ok {
+		receipt := s.workspaceReceipts[request.OperationID]
 		s.workspaceMu.RUnlock()
-		if replay.LeaseID != request.Authority.LeaseID || replay.WorkspaceID != request.WorkspaceID {
+		applicationDigest, digestErr := applicationCommandDigest(s.config, request.OperationID, "workspace.bind", replay.RuntimeEpochID, receipt.CanonicalResult)
+		if replay.CommandDigest != commandDigest || receipt.CommandDigest != commandDigest || digestErr != nil || applicationDigest != receipt.ApplicationRequestDigest {
 			return WorkspaceBinding{}, refusal(OutcomeInvalidCommand, "workspace", "operation identity was reused for a different binding")
 		}
 		return replay, nil
@@ -333,9 +587,14 @@ func (s *service) EnsureWorkspace(ctx context.Context, request WorkspaceRequest)
 	}
 	s.workspaceMu.RLock()
 	if replay, ok := s.workspaceOp[request.OperationID]; ok {
+		receipt := s.workspaceReceipts[request.OperationID]
 		s.workspaceMu.RUnlock()
 		state.mu.Unlock()
 		s.epochMu.RUnlock()
+		applicationDigest, digestErr := applicationCommandDigest(s.config, request.OperationID, "workspace.bind", replay.RuntimeEpochID, receipt.CanonicalResult)
+		if replay.CommandDigest != commandDigest || receipt.CommandDigest != commandDigest || digestErr != nil || applicationDigest != receipt.ApplicationRequestDigest {
+			return WorkspaceBinding{}, refusal(OutcomeInvalidCommand, "workspace-bind", "operation identity was reused for a different binding")
+		}
 		return replay, nil
 	}
 	for _, current := range s.workspaces {
@@ -348,17 +607,24 @@ func (s *service) EnsureWorkspace(ctx context.Context, request WorkspaceRequest)
 	}
 	s.workspaceMu.RUnlock()
 	binding := WorkspaceBinding{
-		WorkspaceID: request.WorkspaceID, CanonicalPath: path, OwnedBranch: request.OwnedBranch, PinnedBase: request.PinnedBase,
+		WorkspaceID: request.WorkspaceID, RepositoryID: request.RepositoryID, LaneID: request.LaneID, CanonicalPath: path, OwnedBranch: request.OwnedBranch, PinnedBase: request.PinnedBase,
 		GitDir: probe.GitDir, IndexPath: probe.IndexPath, ActorID: request.Authority.ActorID, ProcessID: request.Authority.ProcessID,
 		RunID: request.Authority.RunID, LeaseID: request.Authority.LeaseID, Generation: request.Authority.Generation,
-		FenceToken: request.Authority.FenceToken, WorkID: request.Authority.WorkID, WorkRevisionID: request.Authority.WorkRevisionID,
+		FenceToken: request.Authority.FenceToken, AuthorityHeadRecordRevision: request.Authority.AuthorityHeadRecordRevision, WorkID: request.Authority.WorkID, WorkRevisionID: request.Authority.WorkRevisionID,
 		RuntimeEpochID: request.Authority.RuntimeEpochID, LogicalVersion: 1, Status: "active-bound", OperationID: request.OperationID,
+		RequestedAt: request.Now.UTC(), CommandDigest: commandDigest,
 	}
-	revision, err := s.publish(ctx, publication{
+	canonicalResult, canonicalErr := canonicalResultBytes(binding)
+	if canonicalErr != nil {
+		state.mu.Unlock()
+		s.epochMu.RUnlock()
+		return WorkspaceBinding{}, refusal(OutcomeInvalidCommand, "workspace-bind", "binding result cannot be canonicalized")
+	}
+	revision, applicationDigest, err := s.publishCommand(ctx, s.applier, s.epoch, request.OperationID, "workspace.bind", "workspace.bound", binding, []publication{{
 		operationID: request.OperationID, commandType: "workspace.bind", eventType: "workspace.bound",
 		aggregateKind: "workspace", aggregateID: controljournal.AggregateID(request.WorkspaceID), logical: 1,
 		authority: request.Authority, resultType: "workspace.bound", payload: binding,
-	})
+	}})
 	if err != nil {
 		state.mu.Unlock()
 		s.epochMu.RUnlock()
@@ -368,6 +634,7 @@ func (s *service) EnsureWorkspace(ctx context.Context, request WorkspaceRequest)
 	s.workspaceMu.Lock()
 	s.workspaces[request.WorkspaceID] = binding
 	s.workspaceOp[request.OperationID] = binding
+	s.workspaceReceipts[request.OperationID] = workspaceReceipt{CommandDigest: commandDigest, ApplicationRequestDigest: applicationDigest, CanonicalResult: canonicalResult}
 	s.workspaceMu.Unlock()
 	state.mu.Unlock()
 	s.epochMu.RUnlock()
