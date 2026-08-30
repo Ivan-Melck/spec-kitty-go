@@ -318,6 +318,59 @@ func TestDefaultPolicySeparatesJournalApplicationComposition(t *testing.T) {
 	assertExactViolation(t, policy, graph, RuleLocalDirection, pure, TierFoundation, adapter, TierAdapter)
 }
 
+func TestDefaultPolicyClassifiesProvingGroundCompositionExactly(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provingGround := module + "/internal/provingground"
+	tier, err := policy.Classify(provingGround)
+	if err != nil || tier.Name != TierComposition || !tier.Production {
+		t.Fatalf("proving-ground classification=%+v err=%v", tier, err)
+	}
+
+	for _, target := range []string{
+		module + "/internal/ids",
+		module + "/internal/execution",
+		module + "/internal/controlstore/gapdb",
+	} {
+		graph := fixtureGraph(
+			[]string{provingGround, target},
+			ImportEdge{SourcePackage: provingGround, TargetPackage: target, Kind: ImportModuleLocal},
+		)
+		graph.ModulePath = module
+		if err := policy.Check(graph); err != nil {
+			t.Fatalf("proving-ground composition rejected target=%s: %v", target, err)
+		}
+	}
+
+	nested := provingGround + "/unknown"
+	assertExactViolation(t, policy, fixtureGraph([]string{nested}), RuleUnknownPackage, nested, "", nested, "")
+
+	mutant := policy
+	mutant.Tiers = append([]Tier(nil), policy.Tiers...)
+	for index := range mutant.Tiers {
+		if mutant.Tiers[index].Name != TierComposition {
+			continue
+		}
+		mutant.Tiers[index].Packages = append([]PackagePattern(nil), mutant.Tiers[index].Packages...)
+		for patternIndex, pattern := range mutant.Tiers[index].Packages {
+			if pattern == ExactPackage(provingGround) {
+				mutant.Tiers[index].Packages = append(
+					mutant.Tiers[index].Packages[:patternIndex],
+					mutant.Tiers[index].Packages[patternIndex+1:]...,
+				)
+				break
+			}
+		}
+	}
+	graph := fixtureGraph([]string{provingGround})
+	graph.ModulePath = module
+	assertExactViolation(t, mutant, graph, RuleUnknownPackage, provingGround, "", provingGround, "")
+}
+
 func TestDefaultPolicyClassifiesGapDBAsExactProviderAdapter(t *testing.T) {
 	const module = "github.com/spec-kitty/go-kitty3"
 	policy, err := DefaultPolicy(module)
