@@ -27,6 +27,7 @@ var m1GapDBImportAllowlist = map[string]bool{
 // admitted deliberately rather than inheriting ambient I/O through a helper.
 var m1JournalPureImportAllowlist = map[string]bool{
 	"bytes":           true,
+	"context":         true,
 	"crypto/sha256":   true,
 	"encoding/binary": true,
 	"encoding/hex":    true,
@@ -202,6 +203,13 @@ func TestM1DependencyJournalPurityMutants(t *testing.T) {
 	})
 	if violations := inspectM1Sources(cleanPlayback); len(violations) != 0 {
 		t.Fatalf("clean recursively pure playback rejected: %v", violations)
+	}
+	cleanCheckpoint := append(m1ExactJournalFixture(), m1SourceFile{
+		Path:   "internal/controljournal/checkpoint/restore.go",
+		Source: []byte("package checkpoint\nimport (\"context\"; \"github.com/spec-kitty/go-kitty3/internal/controljournal\")\ntype Reader interface { Read(context.Context) controljournal.StoredEventV1 }\n"),
+	})
+	if violations := inspectM1Sources(cleanCheckpoint); len(violations) != 0 {
+		t.Fatalf("pure cancellation-aware checkpoint seam rejected: %v", violations)
 	}
 
 	for _, imported := range []string{
