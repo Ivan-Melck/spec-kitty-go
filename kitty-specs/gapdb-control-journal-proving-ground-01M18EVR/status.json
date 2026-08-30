@@ -19,7 +19,7 @@
   "work_packages": {
     "WP01": {
       "actor": "codex-capability-fix-2",
-      "agent": "reviewer-renata-capability",
+      "agent": "codex-capability-fix-2",
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 12,
@@ -33,7 +33,8 @@
         "Cycle 2 ready: source-bound contributor identity checks prevent falsified self-review; reducer imports are deny-by-default; production control-journal seams enforce revision/index/EventID ordering plus version, group, and digest refusal. Focused, mutant, full architecture, vet, staticcheck, gofmt, and diff checks pass. Repository-wide short suite not rerun because its existing 10-minute scenario timeout was already isolated and classified.",
         "Cycle 3 ready at 5467edb: replaced name/syntax journal guards with signature-discovered executable semantics. Black-box probes require three-way revision/index/EventID ordering; whole-group missing-index, duplicate, mixed-operation, and nonmonotonic refusal; enforced unknown envelope/event/schema/reducer refusal; and recomputed canonical digest mismatch refusal. Exact decorated comparator, single-event validator, nonempty digest, and ignored always-true version bypasses are killed. Arbitrarily renamed valid seams pass. Focused, mutant, full architecture, vet, staticcheck, gofmt, and diff checks pass. Known package-wide 10-minute scenario timeout not rerun.",
         "Arbiter-authorized structural repair after three valid review rejections by codex-arbiter-fix (commit a48643a). Replaced single scored/tie-broken seam selection with structural candidate ownership and independent semantic execution for every event-shaped production seam. Permanent controls cover decoy/broken seams in both lexical orders, arbitrary renaming, and clean multiple seams. Red reproduced before fix; focused, mutant, and full architecture tests, vet, staticcheck, gofmt, and diff checks pass. Known long scenario suite intentionally not rerun per arbiter direction.",
-        "Exact journal capability guard replaces heuristic semantic discovery; focused architecture gates pass at f47b033."
+        "Exact journal capability guard replaces heuristic semantic discovery; focused architecture gates pass at f47b033.",
+        "Cycle 5 repaired at bac5afb: resolved raw-event alias/variadic/receiver authority, anonymous revision owners, and alternate SQLite providers; reviewer mutants and architecture gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
