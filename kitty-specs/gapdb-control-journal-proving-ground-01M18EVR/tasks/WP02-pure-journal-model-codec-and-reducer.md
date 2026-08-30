@@ -120,9 +120,13 @@ code. Integrate to the mission branch, never directly to `main`.
 5. Defensively copy byte slices and collections at construction/access seams.
 6. Make zero/invalid values rejectable with typed, stable errors.
 7. Implement the exact frozen `StoredEventV1`, `EventVersionV1`,
-   `EventRegistryV1`, and `ValidatedJournalV1` root-package declarations and
-   their exact constructors/accessors. Keep validated events unexported and
-   allow only `ValidateJournalV1` to construct the capability.
+   `EventRegistryV1`, `validationSealV1`, `InvalidValidatedJournalError`, and
+   `ValidatedJournalV1` root-package declarations and their exact
+   constructors/error-returning accessors. Keep records and seal unexported;
+   only `ValidateJournalV1` may produce a usable sealed capability.
+8. Make the zero value explicitly invalid. `Len`, `At`, reducers, and playback
+   verify the integrity seal independently and return the typed invalid-journal
+   error before exposing records or changing state.
 
 **Tests**:
 
@@ -202,9 +206,11 @@ code. Integrate to the mission branch, never directly to `main`.
 5. Verify the canonical event digest from independently specified canonical
    envelope bytes excluding the digest field and `RecordRevision`. A mismatch
    returns no usable `ValidatedJournalV1`.
-6. Validate expected/new aggregate heads per touched aggregate.
-7. Permit unrelated aggregates to progress concurrently.
-8. Do not introduce a shared projection-head record or global CAS token.
+6. On success set seal version 1 and bind the exact immutable canonical records
+   with the seal digest. On failure return an unusable zero capability.
+7. Validate expected/new aggregate heads per touched aggregate.
+8. Permit unrelated aggregates to progress concurrently.
+9. Do not introduce a shared projection-head record or global CAS token.
 
 **Tests**:
 
@@ -214,6 +220,12 @@ code. Integrate to the mission branch, never directly to `main`.
   unknown version coordinate, and a nonempty-but-wrong digest fail closed.
 - Digest fixtures use hard-coded independently derived canonical bytes and
   digests; tests never ask production code to sign the fixture it verifies.
+- Zero values, pointers to zero, copied zero values, array/slice/embedded zero
+  values, externally returned zero values, and seal/content mismatches all fail
+  with `InvalidValidatedJournalError`. Valid sealed values survive ordinary
+  copies, and accessors cannot mutate their records.
+- Reducer and playback entry points refuse an invalid capability before any
+  reduction, publication, checkpoint, or other state change.
 - Two aggregates can advance from different expected heads independently.
 - A synthetic shared-head mutant is rejected.
 

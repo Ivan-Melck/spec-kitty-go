@@ -211,16 +211,21 @@ EventRegistryV1 {
 }
 
 ValidatedJournalV1 {
+  validation_seal_version
+  validation_seal_digest
   unexported_canonical_stored_events
 }
 ```
 
 Construction of `EventRegistryV1` validates and defensively copies its exact
-tuples. `ValidateJournalV1` is the sole constructor of
-`ValidatedJournalV1`; reducers and playback accept that capability instead of
-unvalidated stored-event slices. Its accessors return values without exposing
-mutable internal collections. This makes successful validation a structural
-precondition rather than a convention callers can bypass.
+tuples. `ValidateJournalV1` is the sole producer of usable
+`ValidatedJournalV1` values; reducers and playback accept that capability
+instead of unvalidated stored-event slices. Go zero values and manual
+same-package values may exist, but a missing or mismatched unexported integrity
+seal makes them unusable. Error-returning accessors verify the seal and return
+copied values without exposing mutable internal collections. This makes
+successful validation a runtime-enforced structural precondition rather than a
+check-then-use convention.
 
 `RecordRevision` belongs only to `StoredEventV1`; it is neither serialized in
 the event envelope nor included in the canonical event digest. Canonical order

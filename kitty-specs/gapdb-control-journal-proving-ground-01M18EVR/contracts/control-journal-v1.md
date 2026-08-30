@@ -125,20 +125,39 @@ type EventRegistryV1 struct { /* immutable unexported state */ }
 
 func NewEventRegistryV1([]EventVersionV1) (EventRegistryV1, error)
 
-type ValidatedJournalV1 struct { /* canonical events in unexported state */ }
+type validationSealV1 struct {
+    version uint8
+    digest  [32]byte
+}
+
+type ValidatedJournalV1 struct {
+    seal    validationSealV1
+    records []StoredEventV1
+}
+
+type InvalidValidatedJournalError struct{}
+
+func (InvalidValidatedJournalError) Error() string
 
 func ValidateJournalV1(
     EventRegistryV1,
     []StoredEventV1,
 ) (ValidatedJournalV1, error)
 
-func (ValidatedJournalV1) Len() int
-func (ValidatedJournalV1) At(int) (StoredEventV1, bool)
+func (ValidatedJournalV1) Len() (int, error)
+func (ValidatedJournalV1) At(int) (StoredEventV1, error)
 ```
 
 `ValidatedJournalV1` is the authority-bearing capability passed to playback and
-reducers. Only `ValidateJournalV1` may construct one. No other function or
-method below `internal/controljournal` may return it, accept a raw
+reducers. Go always permits the zero value of an exported concrete type, so the
+enforceable law is that only `ValidateJournalV1` may produce a *usable*
+capability. A zero, manually formed, partially copied, or seal/content-mismatched
+value is invalid. Every accessor and every reducer/playback entry point verifies
+the unexported seal independently and returns `InvalidValidatedJournalError`
+before reduction or publication; callers must not rely on check-then-use.
+
+No other function or method below `internal/controljournal` may return a usable
+capability, accept a raw
 `[]StoredEventV1` for ordering or validation, or recreate the capability by
 aliasing or embedding. `StoredEventV1` alone owns the direct `RecordRevision`
 field; a promoted or embedded field does not satisfy that ownership rule.
@@ -150,6 +169,15 @@ complete contract, including the exact root-package types and function
 signatures above. No filename has special status, and decorative types or
 unused comparator-shaped functions cannot satisfy or mask the authoritative
 seam.
+
+The capability representation is exact: `validationSealV1` has direct
+unexported `version uint8` and `digest [32]byte` fields, while
+`ValidatedJournalV1` has only direct unexported `seal validationSealV1` and
+`records []StoredEventV1` fields. Successful validation sets seal version 1 and
+binds the immutable canonical records with the seal digest. Accessors verify the
+seal, return copied values, and never treat a zero value as an empty valid
+journal. Ordinary copies of a valid value remain valid. Preventing legal Go
+zero-value declarations is explicitly not an architecture invariant.
 
 Validation canonicalizes shuffled input by
 `(RecordRevision, EventIndex, EventID)`. Each operation group has one positive
