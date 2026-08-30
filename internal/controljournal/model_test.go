@@ -175,6 +175,38 @@ func TestModelRegistryIsExactAndDefensivelyCopied(t *testing.T) {
 	}
 }
 
+func TestEventRegistryDigestIsCanonicalAndRejectsZeroOrTamperedState(t *testing.T) {
+	left, err := NewEventRegistryV1([]EventVersionV1{{EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}, {EventType: "mission.updated", EventSchemaVersion: 2, ReducerVersion: "mission-v2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := NewEventRegistryV1([]EventVersionV1{{EventType: "mission.updated", EventSchemaVersion: 2, ReducerVersion: "mission-v2"}, {EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftDigest, err := left.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightDigest, err := right.Digest()
+	if err != nil || leftDigest != rightDigest {
+		t.Fatalf("registry digest order drift left=%x right=%x err=%v", leftDigest, rightDigest, err)
+	}
+	if _, err := (EventRegistryV1{}).Digest(); err == nil {
+		t.Fatal("zero event registry exposed a digest")
+	}
+	tampered := left
+	tampered.digest[0] ^= 1
+	if _, err := tampered.Digest(); err == nil {
+		t.Fatal("tampered event registry digest accepted")
+	}
+	tampered, _ = NewEventRegistryV1([]EventVersionV1{{EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}, {EventType: "mission.updated", EventSchemaVersion: 2, ReducerVersion: "mission-v2"}})
+	delete(tampered.versions, eventVersionKey("mission.created", 1, "mission-v1"))
+	if _, err := tampered.Digest(); err == nil {
+		t.Fatal("tampered event registry contents accepted")
+	}
+}
+
 func TestOrderCanonicalizesAndGroupsAtomically(t *testing.T) {
 	registry := fixtureRegistry(t)
 	e0 := fixtureEnvelope(t, "event-a", "operation-1", 0, 2, "agg-1", 1)

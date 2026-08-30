@@ -486,6 +486,13 @@ func (r EventRegistryV1) valid() bool {
 	return sha256.Sum256(encoded.Bytes()) == r.digest
 }
 
+func (r EventRegistryV1) Digest() ([32]byte, error) {
+	if !r.valid() {
+		return [32]byte{}, ValidationError{Kind: RefusalInvalidValue, Field: "event_registry"}
+	}
+	return r.digest, nil
+}
+
 type validationSealV1 struct {
 	version uint8
 	digest  [32]byte

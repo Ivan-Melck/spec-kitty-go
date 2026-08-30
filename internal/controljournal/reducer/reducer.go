@@ -32,18 +32,24 @@ func NewStateV1(object []byte) (StateV1, error) {
 func (s StateV1) CanonicalBytes() []byte { return append([]byte(nil), s.canonical...) }
 func (s StateV1) Digest() [32]byte       { return sha256.Sum256(s.canonical) }
 
-type ReducerFuncV1 func(StateV1, controljournal.EventEnvelopeV1) (StateV1, error)
+// ReducerProgramV1 is a closed declarative reducer instruction. It is data,
+// not executable caller code: adding behavior requires adding and reviewing a
+// package-owned interpreter opcode.
+type ReducerProgramV1 string
+
+const ProgramReplaceWithCanonicalEventPayloadV1 ReducerProgramV1 = "replace_with_canonical_event_payload_v1"
 
 type EntryV1 struct {
 	AggregateKind      controljournal.AggregateKind
 	EventType          controljournal.EventType
 	EventSchemaVersion uint32
 	ReducerVersion     controljournal.ReducerVersion
-	Reduce             ReducerFuncV1
+	Program            ReducerProgramV1
 }
 
 type RegistryV1 struct {
-	reducers map[string]ReducerFuncV1
+	programs map[string]ReducerProgramV1
+	digest   [32]byte
 }
 
 type EventApplicationErrorV1 struct {
@@ -56,7 +62,7 @@ func (e EventApplicationErrorV1) Error() string {
 }
 
 func NewRegistryV1(entries []EntryV1) (RegistryV1, error) {
-	registry := RegistryV1{reducers: make(map[string]ReducerFuncV1, len(entries))}
+	registry := RegistryV1{programs: make(map[string]ReducerProgramV1, len(entries))}
 	if len(entries) == 0 {
 		return RegistryV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "reducer_registry"}
 	}
@@ -64,16 +70,50 @@ func NewRegistryV1(entries []EntryV1) (RegistryV1, error) {
 		if err := controljournal.ValidateReducerCoordinateV1(entry.AggregateKind, entry.EventType, entry.EventSchemaVersion, entry.ReducerVersion); err != nil {
 			return RegistryV1{}, err
 		}
-		if entry.Reduce == nil {
+		if entry.Program != ProgramReplaceWithCanonicalEventPayloadV1 {
 			return RegistryV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "reducer_entry"}
 		}
 		key := reducerKey(entry.AggregateKind, entry.EventType, entry.EventSchemaVersion, entry.ReducerVersion)
-		if _, duplicate := registry.reducers[key]; duplicate {
+		if _, duplicate := registry.programs[key]; duplicate {
 			return RegistryV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "reducer_duplicate"}
 		}
-		registry.reducers[key] = entry.Reduce
+		registry.programs[key] = entry.Program
 	}
+	registry.digest = registryDigest(registry.programs)
 	return registry, nil
+}
+
+func registryDigest(programs map[string]ReducerProgramV1) [32]byte {
+	keys := make([]string, 0, len(programs))
+	for key := range programs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var encoded bytes.Buffer
+	for _, key := range keys {
+		writeFoldPart(&encoded, []byte(key))
+		writeFoldPart(&encoded, []byte(programs[key]))
+	}
+	return sha256.Sum256(encoded.Bytes())
+}
+
+func (r RegistryV1) valid() bool {
+	if len(r.programs) == 0 || r.digest == [32]byte{} || registryDigest(r.programs) != r.digest {
+		return false
+	}
+	for _, program := range r.programs {
+		if program != ProgramReplaceWithCanonicalEventPayloadV1 {
+			return false
+		}
+	}
+	return true
+}
+
+func (r RegistryV1) Digest() ([32]byte, error) {
+	if !r.valid() {
+		return [32]byte{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "reducer_registry"}
+	}
+	return r.digest, nil
 }
 
 func reducerKey(kind controljournal.AggregateKind, eventType controljournal.EventType, schema uint32, version controljournal.ReducerVersion) string {
@@ -170,7 +210,7 @@ func ApplyV1(registry RegistryV1, initial ProjectionV1, journal controljournal.V
 	if err != nil {
 		return ProjectionV1{}, err
 	}
-	if len(registry.reducers) == 0 {
+	if !registry.valid() {
 		return ProjectionV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidValue, Field: "reducer_registry"}
 	}
 	working := ProjectionV1{states: make(map[AggregateKeyV1]StateV1, len(initial.states)), heads: make(map[AggregateKeyV1]uint64, len(initial.heads))}
@@ -191,15 +231,17 @@ func ApplyV1(registry RegistryV1, initial ProjectionV1, journal controljournal.V
 		if event.AggregateLogicalVersion != expectedVersion {
 			return ProjectionV1{}, EventApplicationErrorV1{EventOrdinal: index, Kind: controljournal.RefusalInvalidTransition}
 		}
-		reduce := registry.reducers[reducerKey(event.AggregateKind, event.EventType, event.EventSchemaVersion, event.ReducerVersion)]
-		if reduce == nil {
+		program := registry.programs[reducerKey(event.AggregateKind, event.EventType, event.EventSchemaVersion, event.ReducerVersion)]
+		if program == "" {
 			return ProjectionV1{}, EventApplicationErrorV1{EventOrdinal: index, Kind: controljournal.RefusalReducerMissing}
 		}
-		prior := working.states[key]
-		if len(prior.canonical) == 0 {
-			prior = StateV1{canonical: []byte("{}")}
+		var next StateV1
+		switch program {
+		case ProgramReplaceWithCanonicalEventPayloadV1:
+			next, err = NewStateV1(event.Payload())
+		default:
+			return ProjectionV1{}, EventApplicationErrorV1{EventOrdinal: index, Kind: controljournal.RefusalReducerMissing}
 		}
-		next, err := reduce(StateV1{canonical: prior.CanonicalBytes()}, event)
 		if err != nil {
 			return ProjectionV1{}, EventApplicationErrorV1{EventOrdinal: index, Kind: controljournal.RefusalInvalidTransition}
 		}

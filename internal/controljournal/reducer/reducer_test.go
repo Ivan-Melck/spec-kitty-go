@@ -60,13 +60,9 @@ func validated(t *testing.T, versions []controljournal.EventVersionV1, events ..
 	return journal
 }
 
-func replaceState(_ StateV1, event controljournal.EventEnvelopeV1) (StateV1, error) {
-	return NewStateV1(event.Payload())
-}
-
 func registry(t *testing.T) RegistryV1 {
 	t.Helper()
-	registry, err := NewRegistryV1([]EntryV1{{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Reduce: replaceState}})
+	registry, err := NewRegistryV1([]EntryV1{{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: ProgramReplaceWithCanonicalEventPayloadV1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +70,7 @@ func registry(t *testing.T) RegistryV1 {
 }
 
 func TestReducerRegistryRejectsInvalidRootCoordinates(t *testing.T) {
-	valid := EntryV1{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Reduce: replaceState}
+	valid := EntryV1{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: ProgramReplaceWithCanonicalEventPayloadV1}
 	invalidTokens := map[string]string{
 		"empty":               "",
 		"space":               "bad token",
@@ -105,10 +101,10 @@ func TestReducerRegistryRejectsInvalidRootCoordinates(t *testing.T) {
 	if _, err := NewRegistryV1([]EntryV1{zeroSchema}); err == nil {
 		t.Fatal("accepted zero event schema")
 	}
-	nilReducer := valid
-	nilReducer.Reduce = nil
-	if _, err := NewRegistryV1([]EntryV1{nilReducer}); err == nil {
-		t.Fatal("accepted nil reducer")
+	unknownProgram := valid
+	unknownProgram.Program = "external_callback"
+	if _, err := NewRegistryV1([]EntryV1{unknownProgram}); err == nil {
+		t.Fatal("accepted unknown reducer program")
 	}
 	if _, err := NewRegistryV1([]EntryV1{valid, valid}); err == nil {
 		t.Fatal("accepted duplicate reducer coordinate")
@@ -120,6 +116,42 @@ func TestReducerRegistryRejectsInvalidRootCoordinates(t *testing.T) {
 	atBoundary.ReducerVersion = controljournal.ReducerVersion(maxToken)
 	if _, err := NewRegistryV1([]EntryV1{atBoundary}); err != nil {
 		t.Fatalf("rejected 128-byte reducer coordinates: %v", err)
+	}
+}
+
+func TestReducerRegistryDigestIsCanonicalAndRejectsZeroOrTampering(t *testing.T) {
+	a := EntryV1{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: ProgramReplaceWithCanonicalEventPayloadV1}
+	b := EntryV1{AggregateKind: "work", EventType: "work.updated", EventSchemaVersion: 2, ReducerVersion: "work-v2", Program: ProgramReplaceWithCanonicalEventPayloadV1}
+	left, err := NewRegistryV1([]EntryV1{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := NewRegistryV1([]EntryV1{b, a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftDigest, err := left.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightDigest, err := right.Digest()
+	if err != nil || leftDigest != rightDigest {
+		t.Fatalf("reducer digest order drift left=%x right=%x err=%v", leftDigest, rightDigest, err)
+	}
+	if _, err := (RegistryV1{}).Digest(); err == nil {
+		t.Fatal("zero reducer registry exposed a digest")
+	}
+	tampered, _ := NewRegistryV1([]EntryV1{a})
+	tampered.digest[0] ^= 1
+	if _, err := tampered.Digest(); err == nil {
+		t.Fatal("tampered reducer digest accepted")
+	}
+	tampered, _ = NewRegistryV1([]EntryV1{a})
+	for key := range tampered.programs {
+		tampered.programs[key] = "external_callback"
+	}
+	if _, err := tampered.Digest(); err == nil {
+		t.Fatal("tampered reducer program accepted")
 	}
 }
 
@@ -234,11 +266,7 @@ func TestReducerUnknownEventReturnsNoPartialPublication(t *testing.T) {
 }
 
 func TestReducerInvalidCapabilityFailsBeforeReducerOrStateChange(t *testing.T) {
-	calls := 0
-	reg, err := NewRegistryV1([]EntryV1{{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Reduce: func(state StateV1, event controljournal.EventEnvelopeV1) (StateV1, error) { calls++; return state, nil }}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	reg := registry(t)
 	eventRegistry, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}})
 	if err != nil {
 		t.Fatal(err)
@@ -251,9 +279,6 @@ func TestReducerInvalidCapabilityFailsBeforeReducerOrStateChange(t *testing.T) {
 		if _, err := ApplyV1(reg, EmptyProjectionV1(), invalid); !errors.As(err, new(controljournal.InvalidValidatedJournalError)) {
 			t.Fatalf("invalid capability error = %T %v", err, err)
 		}
-	}
-	if calls != 0 {
-		t.Fatalf("invalid capability reached reducer %d times", calls)
 	}
 }
 
@@ -278,12 +303,10 @@ func TestReducerFailureDoesNotMutatePriorState(t *testing.T) {
 	prior, _ := NewStateV1([]byte(`{"value":"prior"}`))
 	key := AggregateKeyV1{Kind: "mission", ID: "agg-1"}
 	initial, _ := NewProjectionV1(map[AggregateKeyV1]StateV1{key: prior}, map[AggregateKeyV1]uint64{key: 1})
-	reg, _ := NewRegistryV1([]EntryV1{{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Reduce: func(StateV1, controljournal.EventEnvelopeV1) (StateV1, error) {
-		return StateV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "synthetic"}
-	}}})
-	journal := validated(t, []controljournal.EventVersionV1{{EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}}, controljournal.StoredEventV1{RecordRevision: 2, Envelope: event(t, "event-2", "operation-2", "mission.updated", "agg-1", 0, 1, 2, `{"value":"next"}`)})
+	reg := registry(t)
+	journal := validated(t, []controljournal.EventVersionV1{{EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}}, controljournal.StoredEventV1{RecordRevision: 2, Envelope: event(t, "event-2", "operation-2", "mission.updated", "agg-1", 0, 1, 3, `{"value":"next"}`)})
 	if _, err := ApplyV1(reg, initial, journal); err == nil {
-		t.Fatal("synthetic reducer failure accepted")
+		t.Fatal("logical-gap reducer failure accepted")
 	}
 	state, _ := initial.State(key)
 	if string(state.CanonicalBytes()) != `{"value":"prior"}` {

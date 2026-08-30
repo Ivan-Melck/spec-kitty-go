@@ -12,14 +12,9 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/reducer"
 )
 
-func playbackRegistry(t *testing.T, mutate bool) reducer.RegistryV1 {
+func playbackRegistry(t *testing.T) reducer.RegistryV1 {
 	t.Helper()
-	registry, err := reducer.NewRegistryV1([]reducer.EntryV1{{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Reduce: func(_ reducer.StateV1, event controljournal.EventEnvelopeV1) (reducer.StateV1, error) {
-		if mutate {
-			return reducer.NewStateV1([]byte(`{"mutated":true}`))
-		}
-		return reducer.NewStateV1(event.Payload())
-	}}})
+	registry, err := reducer.NewRegistryV1([]reducer.EntryV1{{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,6 +22,10 @@ func playbackRegistry(t *testing.T, mutate bool) reducer.RegistryV1 {
 }
 
 func playbackJournal(t *testing.T, count int) controljournal.ValidatedJournalV1 {
+	return playbackJournalOffset(t, count, 0)
+}
+
+func playbackJournalOffset(t *testing.T, count, offset int) controljournal.ValidatedJournalV1 {
 	t.Helper()
 	versions, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}})
 	if err != nil {
@@ -36,7 +35,7 @@ func playbackJournal(t *testing.T, count int) controljournal.ValidatedJournalV1 
 	for index := range records {
 		eventIndex, _ := controljournal.NewEventIndexV1(0)
 		eventCount, _ := controljournal.NewEventCountV1(1)
-		envelope, envelopeErr := controljournal.NewEventEnvelopeV1(controljournal.EventEnvelopeInputV1{EnvelopeVersion: 1, EventID: controljournal.EventID("event-" + decimal(index+1)), EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", ProjectID: "project-1", AggregateKind: "mission", AggregateID: "aggregate-1", AggregateLogicalVersion: uint64(index + 1), OperationID: controljournal.OperationID("operation-" + decimal(index+1)), RuntimeEpochID: "epoch-1", EventIndex: eventIndex, EventCount: eventCount, Payload: []byte(`{"value":` + decimal(index+1) + `}`)})
+		envelope, envelopeErr := controljournal.NewEventEnvelopeV1(controljournal.EventEnvelopeInputV1{EnvelopeVersion: 1, EventID: controljournal.EventID("event-" + decimal(index+1)), EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", ProjectID: "project-1", AggregateKind: "mission", AggregateID: "aggregate-1", AggregateLogicalVersion: uint64(index + 1), OperationID: controljournal.OperationID("operation-" + decimal(index+1)), RuntimeEpochID: "epoch-1", EventIndex: eventIndex, EventCount: eventCount, Payload: []byte(`{"value":` + decimal(index+1+offset) + `}`)})
 		if envelopeErr != nil {
 			t.Fatal(envelopeErr)
 		}
@@ -66,11 +65,11 @@ func decimal(value int) string {
 func TestPlaybackFullHistoryIsDeterministicAndZeroIO(t *testing.T) {
 	for count := 1; count <= 100; count++ {
 		journal := playbackJournal(t, count)
-		left, err := RunV1(InputV1{Journal: journal, Reducers: playbackRegistry(t, false)})
+		left, err := RunV1(InputV1{Journal: journal, Reducers: playbackRegistry(t)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		right, err := RunV1(InputV1{Journal: journal, Reducers: playbackRegistry(t, false)})
+		right, err := RunV1(InputV1{Journal: journal, Reducers: playbackRegistry(t)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -85,11 +84,11 @@ func TestPlaybackFullHistoryIsDeterministicAndZeroIO(t *testing.T) {
 
 func TestPlaybackReducerMutationCausesDigestMismatch(t *testing.T) {
 	journal := playbackJournal(t, 3)
-	restored, err := RunV1(InputV1{Journal: journal, Reducers: playbackRegistry(t, false)})
+	restored, err := RunV1(InputV1{Journal: journal, Reducers: playbackRegistry(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutated, err := RunV1(InputV1{Journal: journal, Reducers: playbackRegistry(t, true)})
+	mutated, err := RunV1(InputV1{Journal: playbackJournalOffset(t, 3, 100), Reducers: playbackRegistry(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +98,7 @@ func TestPlaybackReducerMutationCausesDigestMismatch(t *testing.T) {
 }
 
 func TestPlaybackRejectsZeroManualJournalBeforeReduction(t *testing.T) {
-	registry := playbackRegistry(t, false)
+	registry := playbackRegistry(t)
 	for _, journal := range []controljournal.ValidatedJournalV1{{}, *new(controljournal.ValidatedJournalV1)} {
 		if _, err := RunV1(InputV1{Journal: journal, Reducers: registry}); !reflect.TypeOf(err).AssignableTo(reflect.TypeOf(controljournal.InvalidValidatedJournalError{})) {
 			t.Fatalf("zero/manual journal error=%T %v", err, err)

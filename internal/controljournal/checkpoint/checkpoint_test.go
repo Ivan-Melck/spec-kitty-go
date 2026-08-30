@@ -29,9 +29,7 @@ func testEventRegistry(t *testing.T) controljournal.EventRegistryV1 {
 
 func testReducers(t *testing.T) reducer.RegistryV1 {
 	t.Helper()
-	registry, err := reducer.NewRegistryV1([]reducer.EntryV1{{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Reduce: func(_ reducer.StateV1, event controljournal.EventEnvelopeV1) (reducer.StateV1, error) {
-		return reducer.NewStateV1(event.Payload())
-	}}})
+	registry, err := reducer.NewRegistryV1([]reducer.EntryV1{{AggregateKind: "mission", EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1}})
 	if err != nil {
 		t.Fatal(err)
 	}
