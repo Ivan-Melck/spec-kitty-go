@@ -173,6 +173,9 @@
       "last_event_id": "01M19NR6XE57VXDH1ERQ2MNE8N",
       "last_transition_at": "2026-08-30T15:49:00.462730+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review: atomic one-call publication, honest epoch admission, bounded ordinary-read ambiguity reconciliation, GJ-01 census preservation, and real WP04 GJ-02 response-drop evidence all green."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 346017,
