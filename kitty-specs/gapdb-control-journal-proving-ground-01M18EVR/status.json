@@ -1,7 +1,7 @@
 {
-  "event_count": 128,
-  "last_event_id": "01M19P6CP4DMCRZ3H0WEXMDB1N",
-  "materialized_at": "2026-08-30T15:56:45.124807+00:00",
+  "event_count": 129,
+  "last_event_id": "01M19P9HM2GE25WFNGTXA0SDP4",
+  "materialized_at": "2026-08-30T15:58:28.482463+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
@@ -13,8 +13,8 @@
     "done": 0,
     "for_review": 1,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 4
+    "in_review": 0,
+    "planned": 5
   },
   "work_packages": {
     "WP01": {
@@ -164,19 +164,25 @@
       }
     },
     "WP05": {
-      "actor": "reviewer-renata-wp05",
+      "actor": "user",
       "agent": "reviewer-renata-wp05",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 1,
-      "lane": "in_review",
-      "last_event_id": "01M19NV1NBXN1BC3D39YJTV42Z",
-      "last_transition_at": "2026-08-30T15:50:33.387474+00:00",
+      "force_count": 2,
+      "lane": "planned",
+      "last_event_id": "01M19P9HM2GE25WFNGTXA0SDP4",
+      "last_transition_at": "2026-08-30T15:58:28.482463+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: atomic one-call publication, honest epoch admission, bounded ordinary-read ambiguity reconciliation, GJ-01 census preservation, and real WP04 GJ-02 response-drop evidence all green."
       ],
       "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP05-atomic-application-batch-and-ambiguity/review-cycle-1.md",
+        "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP05-atomic-application-batch-and-ambiguity/review-cycle-1.md",
+        "reviewer": "user",
+        "verdict": "changes_requested"
+      },
       "role": "reviewer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
