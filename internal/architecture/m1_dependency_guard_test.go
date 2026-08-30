@@ -103,6 +103,7 @@ func TestM1DependencyMutantControls(t *testing.T) {
 		{Path: "internal/controlstore/gapdb/client.go", Source: []byte("package gapdb\nimport _ \"github.com/spec-kitty/gapdb\"\n")},
 		{Path: "internal/controljournal/notes.go", Source: []byte("package controljournal\n// CurrentBatchRevision and internal/server are documentation only.\nvar note = \"sqlite fallback\"\n")},
 		{Path: "internal/controlstore/sqlite/store.go", Source: []byte("package sqlite\nimport _ \"modernc.org/sqlite\"\n")},
+		{Path: "internal/controlstore/sqlite/cgo.go", Source: []byte("package sqlite\nimport _ \"github.com/mattn/go-sqlite3\"\n")},
 	}...)
 	if violations := inspectM1Sources(clean); len(violations) != 0 {
 		t.Fatalf("clean controls rejected: %v", violations)
@@ -131,6 +132,11 @@ func TestM1DependencyMutantControls(t *testing.T) {
 		{
 			id:   "sqlite-fallback",
 			file: m1SourceFile{Path: "internal/provingground/runtime.go", Source: []byte("package provingground\nimport _ \"github.com/spec-kitty/go-kitty3/internal/controlstore/sqlite\"\nvar UseSQLiteFallback bool\n")},
+			kind: "sqlite-import",
+		},
+		{
+			id:   "sqlite-alternate-driver",
+			file: m1SourceFile{Path: "internal/provingground/runtime.go", Source: []byte("package provingground\nimport _ \"github.com/mattn/go-sqlite3\"\n")},
 			kind: "sqlite-import",
 		},
 		{
@@ -321,6 +327,55 @@ func TestM1DependencyJournalCapabilityMutants(t *testing.T) {
 			kind: "journal-raw-slice-authority",
 		},
 		{
+			name: "raw-slice-alias-competitor",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type RawEvents = []StoredEventV1\nfunc SortAliased(events RawEvents) { _ = events }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "raw-slice-variadic-competitor",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "func ValidateVariadic(events ...StoredEventV1) { _ = events }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "raw-slice-method-receiver",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type UnvalidatedEvents []StoredEventV1\nfunc (events UnvalidatedEvents) Sort() { _ = events }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "raw-slice-pointer-method-receiver",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "type UnvalidatedEventPointer []StoredEventV1\nfunc (events *UnvalidatedEventPointer) Validate() { _ = events }\n")
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "qualified-raw-slice-alias-competitor",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return append(cloneM1Fixture(files), m1SourceFile{
+					Path: "internal/controljournal/reducer/raw.go",
+					Source: []byte(`package reducer
+import journal "github.com/spec-kitty/go-kitty3/internal/controljournal"
+type RawEvents = []journal.StoredEventV1
+func ReduceRaw(events RawEvents) { _ = events }
+`),
+				})
+			},
+			kind: "journal-raw-slice-authority",
+		},
+		{
+			name: "anonymous-record-revision-owner",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return appendM1Fixture(files, "var revisionDecoy struct { RecordRevision uint64 }\n")
+			},
+			kind: "journal-record-revision-owner",
+		},
+		{
 			name: "wrong-registry-constructor-signature",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
 				return replaceM1Fixture(files, "func NewEventRegistryV1(versions []EventVersionV1) (EventRegistryV1, error)", "func NewEventRegistryV1(versions ...EventVersionV1) (EventRegistryV1, error)")
@@ -364,6 +419,26 @@ func TestM1DependencyJournalCapabilityMutants(t *testing.T) {
 				t.Fatalf("capability mutant survived %s: %v", mutant.kind, violations)
 			}
 		})
+	}
+}
+
+func TestM1DependencyJournalResolvedTypeCleanControls(t *testing.T) {
+	files := appendM1Fixture(m1ExactJournalFixture(), `
+type EventVersions []EventVersionV1
+func InspectVersions(versions EventVersions) { _ = versions }
+func (versions EventVersions) Len() int { return len(versions) }
+var revisionMetadata struct { Revision uint64 }
+`)
+	files = append(files, m1SourceFile{
+		Path: "internal/controljournal/reducer/versions.go",
+		Source: []byte(`package reducer
+import journal "github.com/spec-kitty/go-kitty3/internal/controljournal"
+type Versions = []journal.EventVersionV1
+func Inspect(versions Versions) { _ = versions }
+`),
+	})
+	if violations := inspectM1Sources(files); len(violations) != 0 {
+		t.Fatalf("non-authority slices and anonymous metadata rejected: %v", violations)
 	}
 }
 
@@ -575,6 +650,7 @@ func inspectM1Sources(files []m1SourceFile) []m1ArchitectureViolation {
 type m1ParsedJournalFile struct {
 	source m1SourceFile
 	file   *ast.File
+	info   *types.Info
 }
 
 func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation {
@@ -615,12 +691,14 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 		})
 	}
 
+	rootInfo := m1NewTypesInfo()
 	config := types.Config{Importer: importer.Default(), Error: func(error) {}}
-	pkg, _ := config.Check("github.com/spec-kitty/go-kitty3/internal/controljournal", fset, rootFiles, nil)
+	pkg, _ := config.Check("github.com/spec-kitty/go-kitty3/internal/controljournal", fset, rootFiles, rootInfo)
 	if pkg == nil {
 		violations = append(violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: "journal-contract-missing", Detail: "root package cannot be type checked"})
-		return append(violations, inspectM1JournalCompetitors(parsed)...)
+		return append(violations, inspectM1JournalCompetitors(parsed, nil)...)
 	}
+	m1ResolveJournalPackageTypes(fset, parsed, pkg, rootInfo)
 
 	stored := m1RequireNamedStruct(pkg, "StoredEventV1", "journal-stored-event", &violations)
 	envelope := m1RequireNamed(pkg, "EventEnvelopeV1", "journal-stored-event", &violations)
@@ -650,8 +728,63 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 		m1RequireMethod(validated, "Len", nil, []types.Type{types.Typ[types.Int]}, "journal-len-method", &violations)
 		m1RequireMethod(validated, "At", []types.Type{types.Typ[types.Int]}, []types.Type{stored, types.Typ[types.Bool]}, "journal-at-method", &violations)
 	}
-	violations = append(violations, inspectM1JournalCompetitors(parsed)...)
+	violations = append(violations, inspectM1JournalCompetitors(parsed, stored)...)
 	return violations
+}
+
+func m1NewTypesInfo() *types.Info {
+	return &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue),
+		Defs:  make(map[*ast.Ident]types.Object),
+		Uses:  make(map[*ast.Ident]types.Object),
+	}
+}
+
+type m1JournalImporter struct {
+	root     *types.Package
+	fallback types.Importer
+}
+
+func (i m1JournalImporter) Import(path string) (*types.Package, error) {
+	if path == i.root.Path() {
+		return i.root, nil
+	}
+	return i.fallback.Import(path)
+}
+
+func m1ResolveJournalPackageTypes(fset *token.FileSet, parsed []m1ParsedJournalFile, root *types.Package, rootInfo *types.Info) {
+	type group struct {
+		indices []int
+		files   []*ast.File
+	}
+	groups := make(map[string]*group)
+	for index := range parsed {
+		directory := filepath.ToSlash(filepath.Dir(parsed[index].source.Path))
+		if directory == "internal/controljournal" && parsed[index].file.Name.Name == "controljournal" {
+			parsed[index].info = rootInfo
+			continue
+		}
+		key := directory + "\x00" + parsed[index].file.Name.Name
+		current := groups[key]
+		if current == nil {
+			current = &group{}
+			groups[key] = current
+		}
+		current.indices = append(current.indices, index)
+		current.files = append(current.files, parsed[index].file)
+	}
+	for key, current := range groups {
+		directory, _, _ := strings.Cut(key, "\x00")
+		info := m1NewTypesInfo()
+		config := types.Config{
+			Importer: m1JournalImporter{root: root, fallback: importer.Default()},
+			Error:    func(error) {},
+		}
+		_, _ = config.Check("github.com/spec-kitty/go-kitty3/"+directory, fset, current.files, info)
+		for _, index := range current.indices {
+			parsed[index].info = info
+		}
+	}
 }
 
 type m1ExpectedField struct {
@@ -767,10 +900,11 @@ func m1TupleMatches(tuple *types.Tuple, expected []types.Type) bool {
 	return true
 }
 
-func inspectM1JournalCompetitors(files []m1ParsedJournalFile) []m1ArchitectureViolation {
+func inspectM1JournalCompetitors(files []m1ParsedJournalFile, stored *types.Named) []m1ArchitectureViolation {
 	var violations []m1ArchitectureViolation
 	for _, parsed := range files {
 		root := filepath.ToSlash(filepath.Dir(parsed.source.Path)) == "internal/controljournal" && parsed.file.Name.Name == "controljournal"
+		violations = append(violations, m1RecordRevisionOwnerViolations(parsed, root)...)
 		for _, declaration := range parsed.file.Decls {
 			switch value := declaration.(type) {
 			case *ast.GenDecl:
@@ -782,30 +916,89 @@ func inspectM1JournalCompetitors(files []m1ParsedJournalFile) []m1ArchitectureVi
 					if typeSpec.Name.Name != "ValidatedJournalV1" && m1ExprReferencesName(typeSpec.Type, "ValidatedJournalV1") {
 						violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-capability-recreation", Detail: typeSpec.Name.Name + " aliases, derives, or embeds ValidatedJournalV1"})
 					}
-					structure, ok := typeSpec.Type.(*ast.StructType)
-					if !ok {
-						continue
-					}
-					for _, field := range structure.Fields.List {
-						for _, name := range field.Names {
-							if name.Name == "RecordRevision" && !(root && typeSpec.Name.Name == "StoredEventV1") {
-								violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-record-revision-owner", Detail: typeSpec.Name.Name + " directly owns RecordRevision"})
-							}
-						}
-					}
 				}
 			case *ast.FuncDecl:
 				authoritative := root && value.Recv == nil && value.Name.Name == "ValidateJournalV1"
 				if !authoritative && m1FieldListReferencesName(value.Type.Results, "ValidatedJournalV1") {
 					violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-capability-producer", Detail: value.Name.Name + " is a competing ValidatedJournalV1 producer"})
 				}
-				if !authoritative && m1FieldListHasRawSlice(value.Type.Params, "StoredEventV1") {
+				if !authoritative && m1FunctionConsumesRawStoredEvents(value, parsed.info, stored) {
 					violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-raw-slice-authority", Detail: value.Name.Name + " accepts unvalidated []StoredEventV1"})
 				}
 			}
 		}
 	}
 	return violations
+}
+
+func m1RecordRevisionOwnerViolations(parsed m1ParsedJournalFile, root bool) []m1ArchitectureViolation {
+	var authorized *ast.StructType
+	if root {
+		for _, declaration := range parsed.file.Decls {
+			generic, ok := declaration.(*ast.GenDecl)
+			if !ok || generic.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range generic.Specs {
+				typeSpec := specification.(*ast.TypeSpec)
+				if typeSpec.Name.Name == "StoredEventV1" {
+					authorized, _ = typeSpec.Type.(*ast.StructType)
+				}
+			}
+		}
+	}
+
+	var violations []m1ArchitectureViolation
+	ast.Inspect(parsed.file, func(node ast.Node) bool {
+		structure, ok := node.(*ast.StructType)
+		if !ok || structure == authorized {
+			return true
+		}
+		for _, field := range structure.Fields.List {
+			for _, name := range field.Names {
+				if name.Name == "RecordRevision" {
+					violations = append(violations, m1ArchitectureViolation{
+						Path:   parsed.source.Path,
+						Kind:   "journal-record-revision-owner",
+						Detail: "anonymous or non-authorized struct directly owns RecordRevision",
+					})
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return violations
+}
+
+func m1FunctionConsumesRawStoredEvents(function *ast.FuncDecl, info *types.Info, stored *types.Named) bool {
+	if info != nil && stored != nil {
+		object, _ := info.Defs[function.Name].(*types.Func)
+		if object != nil {
+			signature, _ := object.Type().(*types.Signature)
+			if signature != nil {
+				for index := 0; index < signature.Params().Len(); index++ {
+					if m1TypeIsRawStoredEventSlice(signature.Params().At(index).Type(), stored) {
+						return true
+					}
+				}
+				if signature.Recv() != nil && m1TypeIsRawStoredEventSlice(signature.Recv().Type(), stored) {
+					return true
+				}
+			}
+		}
+	}
+	// Fail closed for the literal forms even when an unrelated package error
+	// prevents go/types from resolving a declaration.
+	return m1FieldListHasRawStoredSliceSyntax(function.Type.Params) || m1FieldListHasRawStoredSliceSyntax(function.Recv)
+}
+
+func m1TypeIsRawStoredEventSlice(typ types.Type, stored *types.Named) bool {
+	if pointer, ok := typ.(*types.Pointer); ok {
+		typ = pointer.Elem()
+	}
+	slice, ok := typ.Underlying().(*types.Slice)
+	return ok && types.Identical(slice.Elem(), stored)
 }
 
 func m1ExprReferencesName(expression ast.Expr, name string) bool {
@@ -833,14 +1026,20 @@ func m1FieldListReferencesName(fields *ast.FieldList, name string) bool {
 	return false
 }
 
-func m1FieldListHasRawSlice(fields *ast.FieldList, elementName string) bool {
+func m1FieldListHasRawStoredSliceSyntax(fields *ast.FieldList) bool {
 	if fields == nil {
 		return false
 	}
 	for _, field := range fields.List {
-		slice, ok := field.Type.(*ast.ArrayType)
-		if ok && slice.Len == nil && m1ExprReferencesName(slice.Elt, elementName) {
-			return true
+		switch expression := field.Type.(type) {
+		case *ast.ArrayType:
+			if expression.Len == nil && m1ExprReferencesName(expression.Elt, "StoredEventV1") {
+				return true
+			}
+		case *ast.Ellipsis:
+			if m1ExprReferencesName(expression.Elt, "StoredEventV1") {
+				return true
+			}
 		}
 	}
 	return false
@@ -867,7 +1066,33 @@ func isM1SourcePath(path string) bool {
 }
 
 func isSQLiteImport(path string) bool {
-	return path == "modernc.org/sqlite" || strings.HasSuffix(path, "/controlstore/sqlite")
+	for _, provider := range []string{
+		"modernc.org/sqlite",
+		"github.com/mattn/go-sqlite3",
+		"github.com/glebarez/go-sqlite",
+		"github.com/glebarez/sqlite",
+		"github.com/ncruces/go-sqlite3",
+		"github.com/tursodatabase/go-libsql",
+		"github.com/tursodatabase/libsql-client-go",
+		"github.com/uptrace/bun/driver/sqlitedialect",
+		"github.com/uptrace/bun/driver/sqliteshim",
+		"gorm.io/driver/sqlite",
+		"zombiezen.com/go/sqlite",
+		"crawshaw.io/sqlite",
+	} {
+		if path == provider || strings.HasPrefix(path, provider+"/") {
+			return true
+		}
+	}
+	// Provider names evolve faster than the frozen contract. Classify import
+	// path components, not source text, so a new SQLite driver fails closed
+	// without making comments or string literals architectural evidence.
+	for _, component := range strings.Split(strings.ToLower(path), "/") {
+		if strings.Contains(component, "sqlite") {
+			return true
+		}
+	}
+	return false
 }
 
 func containsM1Violation(violations []m1ArchitectureViolation, kind string) bool {
