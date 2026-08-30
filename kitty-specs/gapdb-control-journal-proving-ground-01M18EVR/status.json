@@ -199,6 +199,9 @@
       "last_event_id": "01M19P6CP4DMCRZ3H0WEXMDB1N",
       "last_transition_at": "2026-08-30T15:56:45.124807+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for review: canonical prior-prefix checkpoints, suffix-only bounded restore, terminal authority and epoch binding, and structurally zero-I/O playback; focused/repeated/race/fuzz/architecture/regression/static gates pass. Follow-up risk: approved ValidatedJournal Len/At independently rehash on every access, making large traversals O(n^2)."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 346017,
