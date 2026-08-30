@@ -207,6 +207,53 @@ func TestEventRegistryDigestIsCanonicalAndRejectsZeroOrTamperedState(t *testing.
 	}
 }
 
+func TestValidatedJournalCursorSealedOrderedAndCopyOnAccess(t *testing.T) {
+	registry := fixtureRegistry(t)
+	journal, err := ValidateJournalV1(registry, []StoredEventV1{
+		{RecordRevision: 2, Envelope: fixtureEnvelope(t, "event-2", "operation-2", 0, 1, "agg-1", 2)},
+		{RecordRevision: 1, Envelope: fixtureEnvelope(t, "event-1", "operation-1", 0, 1, "agg-1", 1)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := journal.CursorV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok, err := cursor.NextV1()
+	if err != nil || !ok || first.RecordRevision != 1 {
+		t.Fatalf("first cursor record=%+v ok=%v err=%v", first, ok, err)
+	}
+	first.Envelope.payload = []byte(`{"mutated":true}`)
+	second, ok, err := cursor.NextV1()
+	if err != nil || !ok || second.RecordRevision != 2 {
+		t.Fatalf("second cursor record=%+v ok=%v err=%v", second, ok, err)
+	}
+	if _, ok, err := cursor.NextV1(); err != nil || ok {
+		t.Fatalf("terminal cursor ok=%v err=%v", ok, err)
+	}
+	if _, _, err := (&JournalCursorV1{}).NextV1(); err == nil {
+		t.Fatal("zero cursor accepted")
+	}
+	for name, mutate := range map[string]func(*JournalCursorV1){
+		"version": func(value *JournalCursorV1) { value.seal.version++ },
+		"digest":  func(value *JournalCursorV1) { value.seal.journalDigest[0] ^= 1 },
+		"count":   func(value *JournalCursorV1) { value.seal.recordCount++ },
+		"index":   func(value *JournalCursorV1) { value.index = len(value.journal.records) + 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			value, cursorErr := journal.CursorV1()
+			if cursorErr != nil {
+				t.Fatal(cursorErr)
+			}
+			mutate(&value)
+			if _, _, err := value.NextV1(); err == nil {
+				t.Fatal("tampered cursor accepted")
+			}
+		})
+	}
+}
+
 func TestOrderCanonicalizesAndGroupsAtomically(t *testing.T) {
 	registry := fixtureRegistry(t)
 	e0 := fixtureEnvelope(t, "event-a", "operation-1", 0, 2, "agg-1", 1)

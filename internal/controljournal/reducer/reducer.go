@@ -206,7 +206,7 @@ func writeFoldPart(buffer *bytes.Buffer, value []byte) {
 // ApplyV1 verifies the capability before cloning or reducing any caller state.
 // It publishes no partial projection on any failure.
 func ApplyV1(registry RegistryV1, initial ProjectionV1, journal controljournal.ValidatedJournalV1) (ProjectionV1, error) {
-	length, err := journal.Len()
+	cursor, err := journal.CursorV1()
 	if err != nil {
 		return ProjectionV1{}, err
 	}
@@ -220,10 +220,13 @@ func ApplyV1(registry RegistryV1, initial ProjectionV1, journal controljournal.V
 	for key, head := range initial.heads {
 		working.heads[key] = head
 	}
-	for index := 0; index < length; index++ {
-		record, err := journal.At(index)
+	for index := 0; ; index++ {
+		record, ok, err := cursor.NextV1()
 		if err != nil {
 			return ProjectionV1{}, err
+		}
+		if !ok {
+			break
 		}
 		event := record.Envelope
 		key := AggregateKeyV1{Kind: event.AggregateKind, ID: event.AggregateID}
