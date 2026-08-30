@@ -28,7 +28,7 @@ subtasks:
 - T022
 - T023
 history: []
-agent_profile: implementer-ivan
+agent_profile: reviewer-renata
 authoritative_surface: internal/sidecar/gapdb/
 create_intent:
 - internal/sidecar/gapdb/provenance.go
@@ -46,7 +46,7 @@ owned_files:
 - internal/sidecar/gapdb/lifecycle_test.go
 - internal/sidecar/gapdb/proxy.go
 - internal/sidecar/gapdb/proxy_test.go
-role: implementer
+role: reviewer
 tags:
 - m1
 - sidecar
