@@ -1,7 +1,7 @@
 {
-  "event_count": 6,
-  "last_event_id": "01M18P6Q319CTKGDMP8AFCAM0S",
-  "materialized_at": "2026-08-30T06:37:41.345248+00:00",
+  "event_count": 7,
+  "last_event_id": "01M18P6TES9CB9BA0P1J8WMWJ1",
+  "materialized_at": "2026-08-30T06:37:44.793375+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
@@ -14,7 +14,7 @@
     "for_review": 0,
     "in_progress": 0,
     "in_review": 0,
-    "planned": 6
+    "planned": 7
   },
   "work_packages": {
     "WP01": {
@@ -58,6 +58,13 @@
       "lane": "planned",
       "last_event_id": "01M18P6Q319CTKGDMP8AFCAM0S",
       "last_transition_at": "2026-08-30T06:37:41.345248+00:00"
+    },
+    "WP07": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M18P6TES9CB9BA0P1J8WMWJ1",
+      "last_transition_at": "2026-08-30T06:37:44.793375+00:00"
     }
   }
 }
