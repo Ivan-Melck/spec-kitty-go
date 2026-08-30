@@ -1,7 +1,7 @@
 {
-  "event_count": 190,
-  "last_event_id": "01M1AFG2KA4C4FAPBHHHF7DXTK",
-  "materialized_at": "2026-08-30T23:18:56.867230+00:00",
+  "event_count": 191,
+  "last_event_id": "01M1AGTJKE7WDJ0J8RPMWKNPZM",
+  "materialized_at": "2026-08-30T23:42:09.518429+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
@@ -11,8 +11,8 @@
     "canceled": 0,
     "claimed": 0,
     "done": 0,
-    "for_review": 0,
-    "in_progress": 1,
+    "for_review": 1,
+    "in_progress": 0,
     "in_review": 0,
     "planned": 2
   },
@@ -268,14 +268,14 @@
       }
     },
     "WP08": {
-      "actor": "codex-wp08-implementer-cycle3",
+      "actor": "codex",
       "agent": null,
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
-      "force_count": 4,
-      "lane": "in_progress",
-      "last_event_id": "01M1AFG2KA4C4FAPBHHHF7DXTK",
-      "last_transition_at": "2026-08-30T23:18:56.867230+00:00",
+      "force_count": 5,
+      "lane": "for_review",
+      "last_event_id": "01M1AGTJKE7WDJ0J8RPMWKNPZM",
+      "last_transition_at": "2026-08-30T23:42:09.518429+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: durable GapDB effect intent/recovery, attribution-safe compensation, ActorID-independent review, immutable handoff refusals, and crash-fenced serialized Git integration qualified."
@@ -292,11 +292,11 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T042": "planned",
-        "T043": "planned",
-        "T044": "planned",
-        "T045": "planned",
-        "T046": "planned"
+        "T042": "done",
+        "T043": "done",
+        "T044": "done",
+        "T045": "done",
+        "T046": "done"
       }
     },
     "WP09": {
