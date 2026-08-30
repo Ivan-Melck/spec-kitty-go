@@ -237,6 +237,25 @@ func TestM1DependencyJournalPurityMutants(t *testing.T) {
 	}
 }
 
+func TestM1DependencyJournalApplicationIsImpureButSQLiteFree(t *testing.T) {
+	clean := append(m1ExactJournalFixture(), m1SourceFile{
+		Path: "internal/controljournal/application/service.go",
+		Source: []byte("package application\nimport (\"github.com/spec-kitty/go-kitty3/internal/controljournal\"; \"github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb\")\n" +
+			"var _ controljournal.ValidatedJournalV1\nvar _ gapdb.Port\n"),
+	})
+	if violations := inspectM1Sources(clean); len(violations) != 0 {
+		t.Fatalf("application composition rejected: %v", violations)
+	}
+
+	mutant := append(m1ExactJournalFixture(), m1SourceFile{
+		Path:   "internal/controljournal/application/service.go",
+		Source: []byte("package application\nimport _ \"modernc.org/sqlite\"\n"),
+	})
+	if violations := inspectM1Sources(mutant); !containsM1Violation(violations, "sqlite-import") {
+		t.Fatalf("application SQLite mutant survived: %v", violations)
+	}
+}
+
 func TestM1DependencyJournalCapabilityControls(t *testing.T) {
 	if violations := inspectM1Sources(nil); len(violations) != 0 {
 		t.Fatalf("absent controljournal tree must not activate the guard: %v", violations)
@@ -1001,7 +1020,7 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 	var production []m1SourceFile
 	for _, file := range files {
 		path := filepath.ToSlash(file.Path)
-		if strings.HasPrefix(path, "internal/controljournal/") && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+		if isM1FrozenJournalCapabilityPath(path) && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
 			production = append(production, file)
 		}
 	}
@@ -1742,10 +1761,17 @@ func isM1ProductionJournalKernelPath(path string) bool {
 
 func isM1ProductionJournalChildPath(path string) bool {
 	path = filepath.ToSlash(path)
-	return strings.HasPrefix(path, "internal/controljournal/") &&
-		filepath.ToSlash(filepath.Dir(path)) != "internal/controljournal" &&
-		!isM1ProductionReducerPath(path) &&
+	return (strings.HasPrefix(path, "internal/controljournal/checkpoint/") ||
+		strings.HasPrefix(path, "internal/controljournal/playback/")) &&
 		!strings.HasSuffix(path, "_test.go")
+}
+
+func isM1FrozenJournalCapabilityPath(path string) bool {
+	path = filepath.ToSlash(path)
+	return filepath.ToSlash(filepath.Dir(path)) == "internal/controljournal" ||
+		strings.HasPrefix(path, "internal/controljournal/checkpoint/") ||
+		strings.HasPrefix(path, "internal/controljournal/playback/") ||
+		strings.HasPrefix(path, "internal/controljournal/reducer/")
 }
 
 func isM1PureJournalImport(path string) bool {
