@@ -88,6 +88,7 @@ func newReviewFixture(t *testing.T, process controljournal.ProcessID) *reviewFix
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerWP08InvariantCleanup(t, wp08InvariantObservation{runtime: runtime, review: coordinator, repository: repository, requireWP08: true})
 	return &reviewFixture{journal: journal, runtime: runtime, capsule: capsule, repository: repository, coordinator: coordinator, root: root, base: base, candidate: candidate, branch: branch}
 }
 func gitRun(t *testing.T, dir string, args ...string) string {
@@ -243,6 +244,8 @@ func TestWorkflowRestoreRejectsTamperedOperationRequestAndResultIdentity(t *test
 			key := fixture.coordinator.journal.prefix() + "operations/operation-handoff"
 			fixture.journal.mu.Lock()
 			stored := fixture.journal.records[key]
+			original := stored
+			original.Value = append([]byte(nil), stored.Value...)
 			record, err := controljournal.DecodeOperationRecordV1(stored.Value)
 			if err != nil {
 				fixture.journal.mu.Unlock()
@@ -267,6 +270,9 @@ func TestWorkflowRestoreRejectsTamperedOperationRequestAndResultIdentity(t *test
 			if _, err := newReviewCoordinator(t.Context(), fixture.runtime, fixture.journal, fixture.journal, fixture.repository, testEligibility{}, map[ids.WorkID][]string{"work-b": {"criterion-build", "criterion-test"}}); err == nil {
 				t.Fatalf("%s operation identity survived restore", mutation)
 			}
+			fixture.journal.mu.Lock()
+			fixture.journal.records[key] = original
+			fixture.journal.mu.Unlock()
 		})
 	}
 }

@@ -3,6 +3,7 @@ package provingground
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,7 @@ func newTwoCandidateFixture(t *testing.T) *twoCandidateFixture {
 		}
 	}
 	integrationCoordinator, _ := NewIntegrationCoordinator(reviewCoordinator)
+	registerWP08InvariantCleanup(t, wp08InvariantObservation{runtime: runtime, review: reviewCoordinator, repository: repository, requireWP08: true})
 	return &twoCandidateFixture{journal: journal, runtime: runtime, review: reviewCoordinator, integration: integrationCoordinator, repository: repository, root: root, base: base, capsules: capsules, candidates: candidates, reviews: reviewIDs}
 }
 func fmtInt(v int) string {
@@ -430,18 +432,51 @@ func TestWP08FocusedCampaignHooksEnforceOneHundredRepetitions(t *testing.T) {
 }
 
 func TestWP08IntegrationCampaignRunsOneHundredRealScenariosWithAntiVacuity(t *testing.T) {
-	fixture := newTwoCandidateFixture(t)
-	item := fixture.item(0, "operation-campaign-exact")
-	competingTrials, competingCalls, violations := 0, 0, 0
+	competingTrials, competingCalls, publications, violations := 0, 0, 0, 0
+	planOperations := make(map[controljournal.OperationID]struct{}, 100)
 	err := CompetingIntegrationCampaign(t.Context(), 100, func(ctx context.Context, repetition int) error {
+		fixture := newTwoCandidateFixture(t)
+		item := fixture.item(0, fmt.Sprintf("operation-campaign-fresh-%03d", repetition))
+		fixture.review.store.mu.Lock()
+		_, alreadyIntegrated := fixture.review.store.integrations[item.Request.OperationID]
+		fixture.review.store.mu.Unlock()
+		if alreadyIntegrated {
+			return errors.New("fresh campaign operation was already durably completed")
+		}
+		before := gitRun(t, fixture.root, "rev-parse", "refs/heads/main")
 		results := make([]baseintegration.Record, 2)
 		errs := make([]error, 2)
-		var wg sync.WaitGroup
+		entered, release, start := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		fixture.integration.WithFaults(&callbackHook{cut: "IGP-01", fn: func() {
+			close(entered)
+			<-release
+		}})
+		var ready, wg sync.WaitGroup
+		ready.Add(2)
 		for i := range results {
 			wg.Add(1)
-			go func(i int) { defer wg.Done(); results[i], errs[i] = fixture.integration.Integrate(ctx, item) }(i)
+			go func(i int) {
+				defer wg.Done()
+				ready.Done()
+				<-start
+				results[i], errs[i] = fixture.integration.Integrate(ctx, item)
+			}(i)
 		}
+		ready.Wait()
+		close(start)
+		reachedPlanBoundary := false
+		select {
+		case <-entered:
+			reachedPlanBoundary = true
+		case <-ctx.Done():
+		case <-time.After(5 * time.Second):
+		}
+		close(release)
 		wg.Wait()
+		if !reachedPlanBoundary {
+			violations++
+			return errors.New("fresh contention trial never reached the plan boundary")
+		}
 		competingTrials++
 		competingCalls += 2
 		for i := range results {
@@ -454,23 +489,129 @@ func TestWP08IntegrationCampaignRunsOneHundredRealScenariosWithAntiVacuity(t *te
 			violations++
 			return errors.New("competing integrations observed different publications")
 		}
+		after := gitRun(t, fixture.root, "rev-parse", "refs/heads/main")
+		ancestor, ancestorErr := fixture.repository.IsAncestor(ctx, item.Request.Candidate, after)
+		if ancestorErr != nil || after == before || after != results[0].ResultCommit || !ancestor {
+			violations++
+			return errors.New("fresh contention trial did not produce exactly one new publication fact")
+		}
+		fixture.review.store.mu.Lock()
+		entry, exists := fixture.review.store.integrations[item.Request.OperationID]
+		authority := fixture.review.store.planAuthorities[planAuthorityAggregateID(item.Request.RepositoryID, item.Request.TargetRef)]
+		fixture.review.store.mu.Unlock()
+		if !exists || entry.Record.Status != baseintegration.StatusDone || authority.Status != planAuthorityCompleted || len(authority.Plan.ItemOperations) != 1 || authority.Plan.ItemOperations[0] != item.Request.OperationID {
+			violations++
+			return errors.New("fresh contention trial lacks one complete singleton plan authority")
+		}
+		if _, duplicate := planOperations[authority.Plan.OperationID]; duplicate {
+			violations++
+			return errors.New("campaign reused a completed integration plan")
+		}
+		planOperations[authority.Plan.OperationID] = struct{}{}
+		publications++
 		if _, restoreErr := fixture.review.journal.loadAggregateEvents(ctx, "integration"); restoreErr != nil {
 			return restoreErr
 		}
-		fixture.review.store.mu.Lock()
-		for _, authority := range fixture.review.store.planAuthorities {
-			if !authority.complete() {
-				fixture.review.store.mu.Unlock()
-				return errors.New("campaign exposed incomplete plan authority")
-			}
+		if inspectErr := (wp08InvariantObservation{runtime: fixture.runtime, review: fixture.review, repository: fixture.repository, requireWP08: true}).inspect(ctx); inspectErr != nil {
+			violations++
+			return inspectErr
 		}
-		fixture.review.store.mu.Unlock()
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if competingTrials != 100 || competingCalls != 200 || violations != 0 {
-		t.Fatalf("integration campaign census trials=%d calls=%d violations=%d", competingTrials, competingCalls, violations)
+	if competingTrials != 100 || competingCalls != 200 || publications != 100 || len(planOperations) != 100 || violations != 0 {
+		t.Fatalf("integration campaign census fresh_trials=%d calls=%d publications=%d unique_plans=%d violations=%d", competingTrials, competingCalls, publications, len(planOperations), violations)
+	}
+}
+
+func TestWP08WorkflowInvariantMutantsFailClosed(t *testing.T) {
+	fixture := newTwoCandidateFixture(t)
+	item := fixture.item(0, "operation-invariant-baseline")
+	if record, err := fixture.integration.Integrate(t.Context(), item); err != nil || record.Status != baseintegration.StatusDone {
+		t.Fatalf("establish completed integration: %#v %v", record, err)
+	}
+	observation := wp08InvariantObservation{runtime: fixture.runtime, review: fixture.review, repository: fixture.repository, requireWP08: true, liveWorkflow: true}
+	if err := observation.inspect(t.Context()); err != nil {
+		t.Fatalf("baseline invariant observation: %v", err)
+	}
+
+	reviewRecord, _ := fixture.review.Review(fixture.reviews[0])
+	handoffID := reviewRecord.HandoffID
+	t.Run("candidate-reservation-binding", func(t *testing.T) {
+		fixture.review.store.mu.Lock()
+		original := fixture.review.store.reservations[handoffID]
+		mutant := original
+		mutant.Binding.WorkID = "work-a"
+		fixture.review.store.reservations[handoffID] = mutant
+		fixture.review.store.mu.Unlock()
+		if err := observation.inspect(t.Context()); err == nil {
+			t.Fatal("candidate reservation/record binding mutant survived")
+		}
+		fixture.review.store.mu.Lock()
+		fixture.review.store.reservations[handoffID] = original
+		fixture.review.store.mu.Unlock()
+	})
+
+	t.Run("reviewer-contributor", func(t *testing.T) {
+		fixture.review.store.mu.Lock()
+		original := fixture.review.store.reviews[fixture.reviews[0]]
+		mutant := original
+		mutant.Record.ReviewerActorID = "actor-b"
+		fixture.review.store.reviews[fixture.reviews[0]] = mutant
+		fixture.review.store.mu.Unlock()
+		if err := observation.inspect(t.Context()); err == nil {
+			t.Fatal("same-ActorID review invariant mutant survived")
+		}
+		fixture.review.store.mu.Lock()
+		fixture.review.store.reviews[fixture.reviews[0]] = original
+		fixture.review.store.mu.Unlock()
+	})
+
+	t.Run("plan-singleton", func(t *testing.T) {
+		authorityID := planAuthorityAggregateID("repository-m1", "refs/heads/main")
+		fixture.review.store.mu.Lock()
+		original := fixture.review.store.planAuthorities[authorityID]
+		first := original
+		first.Status, first.CompletedTarget = planAuthorityActive, ""
+		fixture.review.store.planAuthorities[authorityID] = first
+		second := first
+		second.Plan.OperationID = "operation-plan-invariant-foreign"
+		second.Plan.TargetRef = "refs/heads/foreign"
+		second.Plan.PlanDigest = ""
+		second.Plan.PlanDigest = digestJSON(second.Plan)
+		secondID := planAuthorityAggregateID(second.Plan.RepositoryID, second.Plan.TargetRef)
+		fixture.review.store.plans[second.Plan.OperationID] = second.Plan
+		fixture.review.store.planAuthorities[secondID] = second
+		fixture.review.store.mu.Unlock()
+		if err := observation.inspect(t.Context()); err == nil {
+			t.Fatal("multiple active plan-authority mutant survived")
+		}
+		fixture.review.store.mu.Lock()
+		fixture.review.store.planAuthorities[authorityID] = original
+		delete(fixture.review.store.planAuthorities, secondID)
+		delete(fixture.review.store.plans, second.Plan.OperationID)
+		fixture.review.store.mu.Unlock()
+	})
+
+	t.Run("false-git-completion", func(t *testing.T) {
+		fixture.review.store.mu.Lock()
+		original := fixture.review.store.integrations[item.Request.OperationID]
+		mutant := original
+		mutant.Record.ResultCommit = fixture.base
+		mutant.Record.ObservedTarget = fixture.base
+		fixture.review.store.integrations[item.Request.OperationID] = mutant
+		fixture.review.store.mu.Unlock()
+		if err := observation.inspect(t.Context()); err == nil {
+			t.Fatal("false integration completion/Git fact mutant survived")
+		}
+		fixture.review.store.mu.Lock()
+		fixture.review.store.integrations[item.Request.OperationID] = original
+		fixture.review.store.mu.Unlock()
+	})
+
+	if err := observation.inspect(t.Context()); err != nil {
+		t.Fatalf("restored invariant observation: %v", err)
 	}
 }

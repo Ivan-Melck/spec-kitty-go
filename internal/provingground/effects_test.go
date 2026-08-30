@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,10 +22,241 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/playback"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
+	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	baseintegration "github.com/spec-kitty/go-kitty3/internal/integration"
+	basereview "github.com/spec-kitty/go-kitty3/internal/review"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 	trackerfake "github.com/spec-kitty/go-kitty3/internal/tracker/fake"
 )
+
+// wp08InvariantObservation is the focused T046 terminal-path observer. It is
+// intentionally smaller than WP09's aggregate evidence runner, but inability
+// to inspect any configured surface is always an error, never a vacuous pass.
+type wp08InvariantObservation struct {
+	runtime      *Runtime
+	effect       *EffectCoordinator
+	review       *ReviewCoordinator
+	repository   *gitrepo.Repository
+	requireWP08  bool
+	liveWorkflow bool // mutant-control seam; cleanup observes the sealed durable projection
+}
+
+func registerWP08InvariantCleanup(t *testing.T, observation wp08InvariantObservation) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := observation.inspect(context.Background()); err != nil {
+			t.Errorf("WP08 universal invariant cleanup: %v", err)
+		}
+	})
+}
+
+func (o wp08InvariantObservation) inspect(ctx context.Context) error {
+	if o.runtime == nil || o.runtime.core == nil {
+		return errors.New("runtime authority is unavailable for WP08 invariant observation")
+	}
+	for workID, state := range o.runtime.core.works {
+		if state == nil {
+			return fmt.Errorf("authority state %s is unavailable", workID)
+		}
+		state.mu.Lock()
+		current := state.current
+		if current != nil && (current.WorkID != workID || current.Status != "active" || current.Generation == 0 || current.FenceToken == 0 || current.AuthorityHeadRecordRevision == 0) {
+			state.mu.Unlock()
+			return fmt.Errorf("authority state %s is incoherent", workID)
+		}
+		state.mu.Unlock()
+	}
+	inspected := false
+	if o.effect != nil {
+		inspected = true
+		if err := o.inspectEffects(ctx); err != nil {
+			return err
+		}
+	}
+	if o.review != nil {
+		inspected = true
+		if err := o.inspectWorkflow(ctx); err != nil {
+			return err
+		}
+	}
+	if o.requireWP08 && !inspected {
+		return errors.New("no WP08 effect or workflow surface was inspectable")
+	}
+	return nil
+}
+
+func (o wp08InvariantObservation) inspectEffects(ctx context.Context) error {
+	if o.effect.journal == nil || o.effect.provider == nil {
+		return errors.New("effect journal or provider is unavailable")
+	}
+	// restore verifies the full intent bytes and every operation/event/effect
+	// membership before the semantic resolution checks below.
+	if err := o.effect.restore(ctx); err != nil {
+		return fmt.Errorf("effect restore invariant: %w", err)
+	}
+	events, err := o.effect.journal.loadAggregateEvents(ctx, "external-effect")
+	if err != nil {
+		return fmt.Errorf("effect journal invariant: %w", err)
+	}
+	latest := make(map[controljournal.EffectID]effectState)
+	intentSeen := make(map[controljournal.EffectID]bool)
+	for _, event := range events {
+		var state effectState
+		if json.Unmarshal(event.Payload(), &state) != nil || !completeEffectState(state) {
+			return errors.New("effect event has an incomplete attributable binding")
+		}
+		if event.EventType == "effect.intent_recorded" {
+			intentSeen[state.EffectID] = true
+		}
+		latest[state.EffectID] = state
+	}
+	for effectID, state := range latest {
+		if err := validateWP08EffectInvariant(effectID, state, intentSeen[effectID]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateWP08EffectInvariant(effectID controljournal.EffectID, state effectState, intentSeen bool) error {
+	if !intentSeen || !completeEffectState(state) {
+		return fmt.Errorf("effect %s has no complete attributable intent", effectID)
+	}
+	if state.Resolution == nil {
+		return nil
+	}
+	resolution := state.Resolution
+	if resolution.EffectID != effectID || resolution.IntentOperation != state.OperationID || resolution.Attempts < 1 || resolution.ObservedAt.IsZero() {
+		return fmt.Errorf("effect %s resolution identity is incoherent", effectID)
+	}
+	attributable := resolution.ProviderRevision != state.ExpectedRevision && resolution.ProviderValue == state.DesiredAssignee && resolution.ProviderMarker == state.Marker
+	switch resolution.Outcome {
+	case EffectApplied:
+		if state.DispatchID == "" || !attributable {
+			return fmt.Errorf("effect %s falsely claims application", effectID)
+		}
+	case EffectAbsent:
+		if state.DispatchID != "" || resolution.ProviderRevision != state.ExpectedRevision || resolution.ProviderValue != state.ExpectedAssignee || resolution.ProviderMarker != "" {
+			return fmt.Errorf("effect %s falsely claims absence", effectID)
+		}
+	case EffectAttributionLost:
+		if attributable {
+			return fmt.Errorf("effect %s discarded still-attributable state", effectID)
+		}
+	case EffectCompensated:
+		if resolution.ProviderRevision == 0 || resolution.ProviderValue != state.ExpectedAssignee || resolution.ProviderMarker != "" {
+			return fmt.Errorf("effect %s compensation fact is incoherent", effectID)
+		}
+	case EffectAmbiguous, EffectUnavailable, EffectCompensationUnsafe, EffectReconciliationLimit:
+	default:
+		return fmt.Errorf("effect %s has unknown resolution %s", effectID, resolution.Outcome)
+	}
+	return nil
+}
+
+func (o wp08InvariantObservation) inspectWorkflow(ctx context.Context) error {
+	if o.review.store == nil || o.review.journal == nil || o.review.repository == nil {
+		return errors.New("workflow store, journal, or repository is unavailable")
+	}
+	for _, kind := range []controljournal.AggregateKind{"candidate", "review", "integration"} {
+		if _, err := o.review.journal.loadAggregateEvents(ctx, kind); err != nil {
+			return fmt.Errorf("%s journal invariant: %w", kind, err)
+		}
+	}
+	live := o.review.store
+	live.mu.Lock()
+	criteria := make(map[ids.WorkID][]string, len(live.criteria))
+	for workID, values := range live.criteria {
+		criteria[workID] = append([]string(nil), values...)
+	}
+	eligibility := live.eligibility
+	reservations := make(map[ids.HandoffID]candidateReservation, len(live.reservations))
+	for handoffID, reservation := range live.reservations {
+		reservations[handoffID] = reservation
+	}
+	liveCandidates := make(map[ids.HandoffID]candidateJournalRecord, len(live.candidates))
+	for handoffID, candidate := range live.candidates {
+		liveCandidates[handoffID] = candidate
+	}
+	live.mu.Unlock()
+	restored, err := newReviewCoordinator(ctx, o.runtime, o.review.journal.app, o.review.journal.port, o.review.repository, eligibility, criteria)
+	if err != nil {
+		return fmt.Errorf("workflow durable projection is not inspectable: %w", err)
+	}
+	store := restored.store
+	if o.liveWorkflow {
+		store = live
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for handoffID, reservation := range reservations {
+		if reservation.RequestDigest == "" || reservation.Authority.RuntimeEpochID == "" || reservation.Binding.Status != "active-bound" || reservation.Binding.WorkID == "" || reservation.Binding.RepositoryID == "" || reservation.Binding.LaneID == "" {
+			return fmt.Errorf("candidate reservation %s is incomplete", handoffID)
+		}
+		if candidate, ok := liveCandidates[handoffID]; ok && (candidate.RequestDigest != reservation.RequestDigest || candidate.Authority != reservation.Authority || candidate.Record.WorkID != ids.WorkID(reservation.Binding.WorkID) || candidate.Record.RepositoryID != reservation.Binding.RepositoryID || candidate.Record.LaneID != reservation.Binding.LaneID) {
+			return fmt.Errorf("candidate %s differs from its immutable reservation", handoffID)
+		}
+	}
+	for handoffID, candidate := range store.candidates {
+		contributors, err := handoff.CanonicalContributors(candidate.Record.Contributors)
+		if err != nil || !reflect.DeepEqual(contributors, candidate.Record.Contributors) || candidate.Record.HandoffID != handoffID || candidate.Record.Candidate == "" || candidate.Record.Verification.Candidate != candidate.Record.Candidate || candidate.Record.Verification.ObservedBranchHead != candidate.Record.Candidate || candidate.Record.CriteriaDigest != digestJSON(candidate.Criteria) || candidate.CriteriaDigest != candidate.Record.CriteriaDigest || candidate.Authority.WorkRevisionID != controljournal.WorkRevisionID(candidate.Record.WorkRevisionID) || candidate.Authority.WorkspaceID != controljournal.WorkspaceID(candidate.Record.WorkspaceID) || candidate.Authority.LeaseID != controljournal.LeaseID(candidate.Record.LeaseID) || candidate.RuntimeEpochID != candidate.Authority.RuntimeEpochID {
+			return fmt.Errorf("candidate %s immutable evidence is incoherent", handoffID)
+		}
+	}
+	for reviewID, review := range store.reviews {
+		candidate, ok := store.candidates[review.Record.HandoffID]
+		if !ok || review.Record.ReviewID != reviewID || review.Record.Candidate != candidate.Record.Candidate || review.Record.WorkRevisionID != candidate.Record.WorkRevisionID || review.CandidateDigest != candidate.CandidateDigest || review.CriteriaDigest != candidate.CriteriaDigest {
+			return fmt.Errorf("review %s is not bound to its immutable candidate", reviewID)
+		}
+		for _, contributor := range candidate.Record.Contributors {
+			if contributor == review.Record.ReviewerActorID {
+				return fmt.Errorf("review %s is not ActorID-independent", reviewID)
+			}
+		}
+	}
+	activePlans := 0
+	for aggregateID, authority := range store.planAuthorities {
+		if !authority.complete() || aggregateID != planAuthorityAggregateID(authority.Plan.RepositoryID, authority.Plan.TargetRef) || !reflect.DeepEqual(store.plans[authority.Plan.OperationID], authority.Plan) {
+			return fmt.Errorf("integration plan authority %s is incoherent", aggregateID)
+		}
+		if authority.Status == planAuthorityActive {
+			activePlans++
+		}
+	}
+	if activePlans > 1 {
+		return fmt.Errorf("multiple active integration plan authorities observed: %d", activePlans)
+	}
+	repository := o.repository
+	if repository == nil {
+		repository = o.review.repository
+	}
+	target, err := repository.TargetHead(ctx)
+	if err != nil || target == "" {
+		return errors.New("real Git target is unavailable for integration invariants")
+	}
+	for operationID, integration := range store.integrations {
+		record := integration.Record
+		if record.OperationID != operationID || record.RepositoryID != repository.Binding().RepositoryID || record.TargetRef != repository.Binding().TargetRef {
+			return fmt.Errorf("integration %s coordinate is incoherent", operationID)
+		}
+		if record.Status != baseintegration.StatusDone {
+			continue
+		}
+		valid, verifyErr := repository.VerifyIntegrationResult(ctx, record.ResultCommit, record.PreflightTarget, record.Candidate)
+		ancestor, ancestorErr := repository.IsAncestor(ctx, record.ResultCommit, target)
+		if verifyErr != nil || ancestorErr != nil || !valid || (!ancestor && activePlans == 0) {
+			return fmt.Errorf("integration %s completion contradicts real Git facts", operationID)
+		}
+		review, ok := store.reviews[record.ReviewID]
+		if !ok || review.Record.HandoffID != record.HandoffID || review.Record.Candidate != record.Candidate || review.Record.Verdict != basereview.Approved {
+			return fmt.Errorf("integration %s is not backed by an approved review", operationID)
+		}
+	}
+	return nil
+}
 
 type wp08Store struct {
 	mu         sync.Mutex
@@ -57,6 +291,15 @@ func (p *restoreBoundMutantPort) Scan(_ context.Context, request storegapdb.Scan
 
 func newWP08Store() *wp08Store {
 	return &wp08Store{revision: 1, records: make(map[string]storegapdb.Record)}
+}
+
+func newObservedEffectCoordinator(t *testing.T, ctx context.Context, runtime *Runtime, app batchApplier, port workflowJournalPort, provider tracker.AssignmentProjection, maxAttempts int) (*EffectCoordinator, error) {
+	t.Helper()
+	coordinator, err := newEffectCoordinator(ctx, runtime, app, port, provider, maxAttempts)
+	if err == nil {
+		registerWP08InvariantCleanup(t, wp08InvariantObservation{runtime: runtime, effect: coordinator, requireWP08: true})
+	}
+	return coordinator, err
 }
 func (s *wp08Store) Apply(_ context.Context, batch application.ValidatedBatchV1) (application.ResultV1, error) {
 	product, err := batch.ProductBatch()
@@ -192,7 +435,7 @@ func TestEffectGJ05LeavesDiscoverableIntentAndRecoveryObservesWithoutRepeat(t *t
 	journal := newWP08Store()
 	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", string(make([]byte, 40)), "process-b")
 	providerStore, provider, ref := wp08Provider(t)
-	coordinator, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	coordinator, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +449,7 @@ func TestEffectGJ05LeavesDiscoverableIntentAndRecoveryObservesWithoutRepeat(t *t
 	if len(history) != 1 {
 		t.Fatalf("provider touched before observation: %#v", history)
 	}
-	restored, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	restored, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +473,7 @@ func TestEffectLostResponseRecoversAppliedFactAndSameOperationDoesNotRepeat(t *t
 	if err := providerStore.Inject(t.Context(), trackerfake.FailureTimeoutAfterApply); err != nil {
 		t.Fatal(err)
 	}
-	coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	intent := wp08Intent(capsule, ref)
 	if _, err := coordinator.PublishAssignment(t.Context(), intent); !tracker.IsKind(err, tracker.ErrorAmbiguous) {
 		t.Fatalf("want ambiguous: %v", err)
@@ -255,6 +498,39 @@ func TestEffectLostResponseRecoversAppliedFactAndSameOperationDoesNotRepeat(t *t
 	mutant.DesiredAssignee = "changed"
 	if _, err := coordinator.PublishAssignment(t.Context(), mutant); err == nil {
 		t.Fatal("changed-input replay survived")
+	}
+}
+
+func TestWP08EffectInvariantMutantsCannotFabricateBindingOrAttribution(t *testing.T) {
+	journal := newWP08Store()
+	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
+	_, provider, ref := wp08Provider(t)
+	coordinator, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref)); err != nil || result.Outcome != EffectApplied {
+		t.Fatalf("establish applied effect: %#v %v", result, err)
+	}
+	state, _ := coordinator.State("effect-assign")
+	if err := validateWP08EffectInvariant(state.EffectID, state, true); err != nil {
+		t.Fatal(err)
+	}
+	mutants := map[string]func(*effectState){
+		"binding":      func(s *effectState) { s.ProjectID = "" },
+		"revision":     func(s *effectState) { s.Resolution.ProviderRevision = s.ExpectedRevision },
+		"value-marker": func(s *effectState) { s.Resolution.ProviderMarker = "foreign-operation" },
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			mutant := state
+			resolution := *state.Resolution
+			mutant.Resolution = &resolution
+			mutate(&mutant)
+			if err := validateWP08EffectInvariant(mutant.EffectID, mutant, true); err == nil {
+				t.Fatal("effect invariant admitted falsified attribution")
+			}
+		})
 	}
 }
 
@@ -332,7 +608,7 @@ func TestEffectRestoreRejectsNonExactOperationMembership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3); err == nil {
+			if _, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3); err == nil {
 				t.Fatalf("%s operation membership survived restore", mutation)
 			}
 		})
@@ -362,7 +638,7 @@ func TestCompensationPreservesHumanReassignmentAndValidAttributionCompensatesOnc
 			journal := newWP08Store()
 			runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", string(make([]byte, 40)), "process-b")
 			providerStore, provider, ref := wp08Provider(t)
-			coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+			coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 			applied, err := coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref))
 			if err != nil || applied.Outcome != EffectApplied {
 				t.Fatalf("apply=%#v %v", applied, err)
@@ -413,12 +689,12 @@ func TestEffectDishonestAndUnavailableProviderCannotFabricateAttribution(t *test
 	journal := newWP08Store()
 	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", string(make([]byte, 40)), "process-b")
 	_, provider, ref := wp08Provider(t)
-	coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	hook := &effectCutHook{cut: "GJ-05", err: errors.New("cut")}
 	coordinator.WithFaults(hook)
 	_, _ = coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref))
 	wrong := tracker.AssignmentObservation{ExternalRef: ref, Assignee: "actor-b", OperationMarker: "operation-assign", Observation: tracker.ProviderObservation{ExternalID: "wrong", Revision: 2, ObservedAt: time.Now()}}
-	restored, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, dishonestProjection{AssignmentProjection: provider, observation: wrong}, 3)
+	restored, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, dishonestProjection{AssignmentProjection: provider, observation: wrong}, 3)
 	results, err := restored.RecoverUnresolved(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -432,7 +708,7 @@ func TestEffectStaleDesiredValueAndMarkerCannotFabricateAppliedFact(t *testing.T
 	journal := newWP08Store()
 	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
 	_, provider, ref := wp08Provider(t)
-	coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	coordinator.WithFaults(&effectCutHook{cut: "GJ-05", err: errors.New("cut")})
 	_, _ = coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref))
 	stale := tracker.AssignmentObservation{
@@ -440,7 +716,7 @@ func TestEffectStaleDesiredValueAndMarkerCannotFabricateAppliedFact(t *testing.T
 		Assignee:    "actor-b", OperationMarker: "operation-assign",
 		Observation: tracker.ProviderObservation{ExternalID: ref.ExternalID, Revision: 1, ObservedAt: time.Date(2026, 8, 30, 12, 3, 0, 0, time.UTC), Assignee: "actor-b", OperationMarker: "operation-assign"},
 	}
-	restored, err := newEffectCoordinator(t.Context(), runtime, journal, journal, dishonestProjection{AssignmentProjection: provider, observation: stale}, 3)
+	restored, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, dishonestProjection{AssignmentProjection: provider, observation: stale}, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,11 +755,11 @@ func TestConcurrentExactEffectDispatchNeverRecordsTerminalAbsent(t *testing.T) {
 	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
 	providerStore, provider, ref := wp08Provider(t)
 	blocked := &blockingMutationProjection{AssignmentProjection: provider, started: make(chan struct{}), release: make(chan struct{})}
-	first, err := newEffectCoordinator(t.Context(), runtime, journal, journal, blocked, 3)
+	first, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, blocked, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	second, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +784,7 @@ func TestConcurrentExactEffectDispatchNeverRecordsTerminalAbsent(t *testing.T) {
 	if err := <-firstErr; err != nil || winner.Outcome != EffectApplied {
 		t.Fatalf("dispatch winner=%#v err=%v", winner, err)
 	}
-	restored, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	restored, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,13 +802,13 @@ func TestCrashAfterDispatchReservationRemainsAmbiguousWithoutBlindRepeat(t *test
 	journal := newWP08Store()
 	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
 	providerStore, provider, ref := wp08Provider(t)
-	coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	crash := errors.New("crash after dispatch reservation")
 	coordinator.WithFaults(&effectCutHook{cut: "EF-01", err: crash})
 	if _, err := coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref)); !errors.Is(err, crash) {
 		t.Fatalf("want EF-01 crash: %v", err)
 	}
-	restored, err := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	restored, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,11 +837,11 @@ func TestEffectSlowAndUnavailableProviderRecoveryIsDeterministicAndBounded(t *te
 		journal := newWP08Store()
 		runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
 		store, provider, ref := wp08Provider(t)
-		coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+		coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 		coordinator.WithFaults(&effectCutHook{cut: "GJ-05", err: errors.New("cut")})
 		_, _ = coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref))
 		slow := &slowProjection{AssignmentProjection: provider, started: make(chan struct{}), release: make(chan struct{})}
-		restored, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, slow, 3)
+		restored, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, slow, 3)
 		result := make(chan []EffectResolution, 1)
 		errs := make(chan error, 1)
 		go func() {
@@ -589,11 +865,11 @@ func TestEffectSlowAndUnavailableProviderRecoveryIsDeterministicAndBounded(t *te
 		journal := newWP08Store()
 		runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
 		_, provider, ref := wp08Provider(t)
-		coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 2)
+		coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 2)
 		coordinator.WithFaults(&effectCutHook{cut: "GJ-05", err: errors.New("cut")})
 		_, _ = coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref))
 		unavailable := dishonestProjection{AssignmentProjection: provider, err: &tracker.Error{Kind: tracker.ErrorUnavailable, Message: "provider unavailable"}}
-		restored, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, unavailable, 2)
+		restored, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, unavailable, 2)
 		for attempt := 1; attempt <= 2; attempt++ {
 			values, err := restored.RecoverUnresolved(t.Context())
 			if err != nil || len(values) != 1 || values[0].Outcome != EffectUnavailable || values[0].Attempts != attempt {
@@ -604,7 +880,7 @@ func TestEffectSlowAndUnavailableProviderRecoveryIsDeterministicAndBounded(t *te
 		if err != nil || len(values) != 1 || values[0].Outcome != EffectReconciliationLimit || values[0].Attempts != 2 {
 			t.Fatalf("bounded recovery=%#v err=%v", values, err)
 		}
-		restarted, err := newEffectCoordinator(t.Context(), runtime, journal, journal, unavailable, 2)
+		restarted, err := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, unavailable, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -622,7 +898,7 @@ func TestCompensationStaleRevisionCannotFabricateAttribution(t *testing.T) {
 	journal := newWP08Store()
 	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
 	_, provider, ref := wp08Provider(t)
-	coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	if result, err := coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref)); err != nil || result.Outcome != EffectApplied {
 		t.Fatalf("apply=%#v err=%v", result, err)
 	}
@@ -652,7 +928,7 @@ func TestCompensationMissingAtomicGuardIsSafeUnsupported(t *testing.T) {
 	journal := newWP08Store()
 	runtime, capsule := wp08Runtime(t, journal, "/tmp", "lane-b", strings.Repeat("0", 40), "process-b")
 	_, provider, ref := wp08Provider(t)
-	coordinator, _ := newEffectCoordinator(t.Context(), runtime, journal, journal, provider, 3)
+	coordinator, _ := newObservedEffectCoordinator(t, t.Context(), runtime, journal, journal, provider, 3)
 	if result, err := coordinator.PublishAssignment(t.Context(), wp08Intent(capsule, ref)); err != nil || result.Outcome != EffectApplied {
 		t.Fatalf("apply=%#v %v", result, err)
 	}
@@ -676,7 +952,7 @@ func TestWP08AttributionCampaignRunsOneHundredRealScenariosWithAntiVacuity(t *te
 		if injectErr := providerStore.Inject(ctx, trackerfake.FailureTimeoutAfterApply); injectErr != nil {
 			return injectErr
 		}
-		coordinator, createErr := newEffectCoordinator(ctx, runtime, journal, journal, provider, 3)
+		coordinator, createErr := newObservedEffectCoordinator(t, ctx, runtime, journal, journal, provider, 3)
 		if createErr != nil {
 			return createErr
 		}
@@ -917,5 +1193,8 @@ func TestRealGapDBEffectIntentGJ05AndObservationRecovery(t *testing.T) {
 	history, _ := providerStore.History(t.Context())
 	if len(history) != 1 {
 		t.Fatalf("recovery repeated provider mutation: %#v", history)
+	}
+	if err := (wp08InvariantObservation{runtime: runtime, effect: restored, requireWP08: true}).inspect(t.Context()); err != nil {
+		t.Fatalf("external GapDB terminal invariants: %v", err)
 	}
 }
