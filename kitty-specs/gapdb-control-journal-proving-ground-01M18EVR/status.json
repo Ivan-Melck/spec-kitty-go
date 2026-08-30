@@ -96,7 +96,7 @@
     },
     "WP03": {
       "actor": "user",
-      "agent": "renata-wp03",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
@@ -108,6 +108,7 @@
         "Ready for independent review at 0977613: exact pinned public GapDB adapter, bounded atomic/CAS/scan/watch/inspect/authority ports, typed ambiguity and redacted diagnostics, and all 14 real external sidecar scenarios pass. Green: focused/full package tests; package and external race; M1 architecture guards; bounded fuzz; vet; staticcheck; go mod verify; exact go list dependency census; gofmt; git diff --check. Ruff diff-scoped check: no Python files changed, exit 0. Force records only the known protected-coordination metadata workaround after all implementation gates passed."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP03-public-gapdb-adapter-and-external-scenarios/review-cycle-1.md",
         "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP03-public-gapdb-adapter-and-external-scenarios/review-cycle-1.md",
@@ -115,15 +116,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T012": "done",
-        "T013": "done",
-        "T014": "done",
-        "T015": "done",
-        "T016": "done",
-        "T017": "done"
+        "T012": "planned",
+        "T013": "planned",
+        "T014": "planned",
+        "T015": "planned",
+        "T016": "planned",
+        "T017": "planned"
       }
     },
     "WP04": {
