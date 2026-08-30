@@ -261,9 +261,11 @@ func NewEventEnvelopeV1(input EventEnvelopeInputV1) (EventEnvelopeV1, error) {
 		ProfileRevision: input.ProfileRevision,
 	}
 	var err error
-	e.recordedObservations, err = canonicalJSONObject(input.RecordedObservations, "recorded_observations")
-	if err != nil {
-		return EventEnvelopeV1{}, err
+	if len(input.RecordedObservations) != 0 {
+		e.recordedObservations, err = canonicalJSONObject(input.RecordedObservations, "recorded_observations")
+		if err != nil {
+			return EventEnvelopeV1{}, err
+		}
 	}
 	e.payload, err = canonicalJSONObject(input.Payload, "payload")
 	if err != nil {
@@ -324,7 +326,7 @@ func (e EventEnvelopeV1) validate() error {
 	if (e.LeaseID == "") != (e.LeaseGeneration == 0 && e.FenceToken == 0) {
 		return ValidationError{Kind: RefusalInvalidValue, Field: "lease_authority"}
 	}
-	if len(e.payload) == 0 || !json.Valid(e.payload) || len(e.recordedObservations) == 0 || !json.Valid(e.recordedObservations) {
+	if len(e.payload) == 0 || !json.Valid(e.payload) || len(e.recordedObservations) != 0 && !json.Valid(e.recordedObservations) {
 		return ValidationError{Kind: RefusalInvalidValue, Field: "canonical_object"}
 	}
 	return nil
@@ -563,7 +565,11 @@ func ValidateJournalV1(registry EventRegistryV1, events []StoredEventV1) (Valida
 		}
 	}
 	journal := ValidatedJournalV1{records: canonical}
-	journal.seal = validationSealV1{version: 1, digest: journal.contentDigest()}
+	digest, err := journal.contentDigest()
+	if err != nil || digest == [32]byte{} {
+		return ValidatedJournalV1{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "validation_seal"}
+	}
+	journal.seal = validationSealV1{version: 1, digest: digest}
 	return journal, nil
 }
 
@@ -587,22 +593,36 @@ func (journal ValidatedJournalV1) At(index int) (StoredEventV1, error) {
 }
 
 func (journal ValidatedJournalV1) isValid() bool {
-	return journal.seal.version == 1 && journal.seal.digest == journal.contentDigest()
+	if journal.seal.version != 1 || journal.seal.digest == [32]byte{} {
+		return false
+	}
+	digest, err := journal.contentDigest()
+	return err == nil && digest != [32]byte{} && journal.seal.digest == digest
 }
 
-func (journal ValidatedJournalV1) contentDigest() [32]byte {
+func (journal ValidatedJournalV1) contentDigest() ([32]byte, error) {
 	var encoded bytes.Buffer
 	for _, record := range journal.records {
+		if record.RecordRevision == 0 {
+			return [32]byte{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "record_revision"}
+		}
+		if err := record.Envelope.validate(); err != nil {
+			return [32]byte{}, err
+		}
+		unsigned, err := record.Envelope.canonicalBytes(false)
+		if err != nil || sha256.Sum256(unsigned) != record.Envelope.digest {
+			return [32]byte{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "canonical_event_digest"}
+		}
 		var revision [8]byte
 		binary.BigEndian.PutUint64(revision[:], record.RecordRevision)
 		encoded.Write(revision[:])
 		payload, err := record.Envelope.canonicalBytes(true)
 		if err != nil {
-			return [32]byte{}
+			return [32]byte{}, err
 		}
 		writeLengthPrefixed(&encoded, payload)
 	}
-	return sha256.Sum256(encoded.Bytes())
+	return sha256.Sum256(encoded.Bytes()), nil
 }
 
 func writeLengthPrefixed(buffer *bytes.Buffer, value []byte) {
@@ -642,10 +662,19 @@ type ExpectedAggregateHeadV1 struct {
 type NewAggregateHeadV1 struct{ Head AggregateHeadV1 }
 
 func ValidateHeadTransition(expected ExpectedAggregateHeadV1, next NewAggregateHeadV1) error {
-	if expected.AggregateKind == "" || expected.AggregateID == "" || expected.ObservedHeadRevision == 0 {
+	if err := validateTokens(tokenField{"aggregate_kind", string(expected.AggregateKind)}, tokenField{"aggregate_id", string(expected.AggregateID)}); err != nil {
+		return err
+	}
+	if expected.ObservedHeadRevision == 0 || expected.LogicalVersion == ^uint64(0) {
 		return ValidationError{Kind: RefusalInvalidValue, Field: "expected_head"}
 	}
-	if next.Head.SchemaVersion != 1 || next.Head.AggregateKind != expected.AggregateKind || next.Head.AggregateID != expected.AggregateID || next.Head.LogicalVersion != expected.LogicalVersion+1 {
+	if next.Head.SchemaVersion != 1 {
+		return ValidationError{Kind: RefusalUnsupportedVersion, Field: "aggregate_head"}
+	}
+	if _, err := ConstructAggregateHeadV1(next.Head.AggregateKind, next.Head.AggregateID, next.Head.LogicalVersion, next.Head.RuntimeEpochID, next.Head.LastEventID, next.Head.StateDigest); err != nil {
+		return err
+	}
+	if next.Head.AggregateKind != expected.AggregateKind || next.Head.AggregateID != expected.AggregateID || next.Head.LogicalVersion != expected.LogicalVersion+1 {
 		return ValidationError{Kind: RefusalInvalidTransition, Field: "aggregate_head"}
 	}
 	return nil

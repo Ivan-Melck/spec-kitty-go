@@ -149,7 +149,15 @@ func TestReducerInvalidCapabilityFailsBeforeReducerOrStateChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range []controljournal.ValidatedJournalV1{{}, *new(controljournal.ValidatedJournalV1)} {
+	eventRegistry, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{EventType: "mission.updated", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed, validationErr := controljournal.ValidateJournalV1(eventRegistry, []controljournal.StoredEventV1{{RecordRevision: 0}})
+	if validationErr == nil {
+		t.Fatal("malformed record unexpectedly validated")
+	}
+	for _, invalid := range []controljournal.ValidatedJournalV1{{}, *new(controljournal.ValidatedJournalV1), malformed} {
 		if _, err := ApplyV1(reg, EmptyProjectionV1(), invalid); !errors.As(err, new(controljournal.InvalidValidatedJournalError)) {
 			t.Fatalf("invalid capability error = %T %v", err, err)
 		}

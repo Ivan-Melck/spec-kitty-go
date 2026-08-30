@@ -1,6 +1,7 @@
 package controljournal
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"reflect"
@@ -263,17 +264,75 @@ func TestModelZeroAndTamperedValidatedValuesFail(t *testing.T) {
 	}
 }
 
+func TestModelMalformedForgedCapabilityFailsClosed(t *testing.T) {
+	for _, forged := range []ValidatedJournalV1{
+		{seal: validationSealV1{version: 1}, records: []StoredEventV1{{RecordRevision: 1, Envelope: EventEnvelopeV1{payload: []byte("{")}}}},
+		{seal: validationSealV1{version: 1, digest: sha256.Sum256([]byte("forged"))}, records: []StoredEventV1{{RecordRevision: 1, Envelope: EventEnvelopeV1{payload: []byte("{")}}}},
+	} {
+		if length, err := forged.Len(); !errors.As(err, new(InvalidValidatedJournalError)) {
+			t.Fatalf("forged Len = %d, %T %v", length, err, err)
+		}
+		if record, err := forged.At(0); !errors.As(err, new(InvalidValidatedJournalError)) {
+			t.Fatalf("forged At = %#v, %T %v", record, err, err)
+		}
+	}
+}
+
 func TestHeadAggregateLocalTransitions(t *testing.T) {
 	expectedA := ExpectedAggregateHeadV1{AggregateKind: "mission", AggregateID: "a", LogicalVersion: 2, ObservedHeadRevision: 8}
 	expectedB := ExpectedAggregateHeadV1{AggregateKind: "mission", AggregateID: "b", LogicalVersion: 9, ObservedHeadRevision: 13}
-	if err := ValidateHeadTransition(expectedA, NewAggregateHeadV1{Head: AggregateHeadV1{SchemaVersion: 1, AggregateKind: "mission", AggregateID: "a", LogicalVersion: 3}}); err != nil {
+	headA, err := ConstructAggregateHeadV1("mission", "a", 3, "epoch-1", "event-a", sha256.Sum256([]byte("a")))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateHeadTransition(expectedB, NewAggregateHeadV1{Head: AggregateHeadV1{SchemaVersion: 1, AggregateKind: "mission", AggregateID: "b", LogicalVersion: 10}}); err != nil {
+	headB, err := ConstructAggregateHeadV1("mission", "b", 10, "epoch-1", "event-b", sha256.Sum256([]byte("b")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateHeadTransition(expectedA, NewAggregateHeadV1{Head: headA}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateHeadTransition(expectedB, NewAggregateHeadV1{Head: headB}); err != nil {
 		t.Fatal(err)
 	}
 	if reflect.DeepEqual(expectedA, expectedB) {
 		t.Fatal("unrelated heads conflated")
+	}
+}
+
+func TestHeadTransitionRejectsOverflowAndIncompleteNextHead(t *testing.T) {
+	digest := sha256.Sum256([]byte("state"))
+	valid, err := ConstructAggregateHeadV1("mission", "a", 3, "epoch-1", "event-3", digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateHeadTransition(ExpectedAggregateHeadV1{AggregateKind: "mission", AggregateID: "a", LogicalVersion: ^uint64(0), ObservedHeadRevision: 8}, NewAggregateHeadV1{Head: AggregateHeadV1{SchemaVersion: 1, AggregateKind: "mission", AggregateID: "a", LogicalVersion: 0, RuntimeEpochID: "epoch-1", LastEventID: "event-3", StateDigest: digest}}); err == nil {
+		t.Fatal("logical version wrapped")
+	}
+	mutants := map[string]AggregateHeadV1{
+		"missing epoch": valid,
+		"missing event": valid,
+		"zero digest":   valid,
+		"wrong schema":  valid,
+	}
+	mutant := mutants["missing epoch"]
+	mutant.RuntimeEpochID = ""
+	mutants["missing epoch"] = mutant
+	mutant = mutants["missing event"]
+	mutant.LastEventID = ""
+	mutants["missing event"] = mutant
+	mutant = mutants["zero digest"]
+	mutant.StateDigest = [32]byte{}
+	mutants["zero digest"] = mutant
+	mutant = mutants["wrong schema"]
+	mutant.SchemaVersion = 2
+	mutants["wrong schema"] = mutant
+	for name, head := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateHeadTransition(ExpectedAggregateHeadV1{AggregateKind: "mission", AggregateID: "a", LogicalVersion: 2, ObservedHeadRevision: 8}, NewAggregateHeadV1{Head: head}); err == nil {
+				t.Fatal("invalid next head accepted")
+			}
+		})
 	}
 }
 

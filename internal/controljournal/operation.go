@@ -179,13 +179,17 @@ func NewOperationRecordV1(input OperationRecordInputV1) (OperationRecordV1, erro
 		RequestDigest: input.RequestDigest, RuntimeEpochID: input.RuntimeEpochID,
 		ExpectedPreconditionsDigest: input.ExpectedPreconditionsDigest, Status: "accepted",
 		ResultType: input.ResultType, ResultSchemaVersion: input.ResultSchemaVersion,
-		canonicalResult: result, eventIDs: append([]EventID(nil), input.EventIDs...), effectIDs: append([]EffectID(nil), input.EffectIDs...),
+		canonicalResult: result, eventIDs: append(make([]EventID, 0, len(input.EventIDs)), input.EventIDs...), effectIDs: append(make([]EffectID, 0, len(input.EffectIDs)), input.EffectIDs...),
 	}, nil
 }
 
 func (r OperationRecordV1) CanonicalResult() []byte { return append([]byte(nil), r.canonicalResult...) }
-func (r OperationRecordV1) EventIDs() []EventID     { return append([]EventID(nil), r.eventIDs...) }
-func (r OperationRecordV1) EffectIDs() []EffectID   { return append([]EffectID(nil), r.effectIDs...) }
+func (r OperationRecordV1) EventIDs() []EventID {
+	return append(make([]EventID, 0, len(r.eventIDs)), r.eventIDs...)
+}
+func (r OperationRecordV1) EffectIDs() []EffectID {
+	return append(make([]EffectID, 0, len(r.effectIDs)), r.effectIDs...)
+}
 
 type EffectIntentV1 struct {
 	SchemaVersion    uint32
@@ -217,29 +221,59 @@ func NewEffectIntentV1(intentID IntentID, effectID EffectID, operationID Operati
 func (i EffectIntentV1) ExpectedValue() []byte { return append([]byte(nil), i.expectedValue...) }
 func (i EffectIntentV1) DesiredValue() []byte  { return append([]byte(nil), i.desiredValue...) }
 
+func (i EffectIntentV1) valid() bool {
+	if i.SchemaVersion != 1 {
+		return false
+	}
+	if err := validateTokens(tokenField{"intent_id", string(i.IntentID)}, tokenField{"effect_id", string(i.EffectID)}, tokenField{"operation_id", string(i.OperationID)}, tokenField{"provider", i.Provider}, tokenField{"expected_revision", i.ExpectedRevision}, tokenField{"operation_marker", i.OperationMarker}); err != nil {
+		return false
+	}
+	expected, err := canonicalJSONObject(i.expectedValue, "expected_value")
+	if err != nil || !bytes.Equal(expected, i.expectedValue) {
+		return false
+	}
+	desired, err := canonicalJSONObject(i.desiredValue, "desired_value")
+	return err == nil && bytes.Equal(desired, i.desiredValue)
+}
+
 type ProviderObservationV1 struct {
 	SchemaVersion   uint32
+	OperationID     OperationID
+	EffectID        EffectID
 	Provider        string
 	Revision        string
 	OperationMarker string
 	value           []byte
 }
 
-func NewProviderObservationV1(provider, revision, marker string, value []byte) (ProviderObservationV1, error) {
-	if err := validateTokens(tokenField{"provider", provider}, tokenField{"revision", revision}, tokenField{"operation_marker", marker}); err != nil {
+func NewProviderObservationV1(operationID OperationID, effectID EffectID, provider, revision, marker string, value []byte) (ProviderObservationV1, error) {
+	if err := validateTokens(tokenField{"operation_id", string(operationID)}, tokenField{"effect_id", string(effectID)}, tokenField{"provider", provider}, tokenField{"revision", revision}, tokenField{"operation_marker", marker}); err != nil {
 		return ProviderObservationV1{}, err
 	}
 	canonical, err := canonicalJSONObject(value, "provider_value")
 	if err != nil {
 		return ProviderObservationV1{}, err
 	}
-	return ProviderObservationV1{SchemaVersion: 1, Provider: provider, Revision: revision, OperationMarker: marker, value: canonical}, nil
+	return ProviderObservationV1{SchemaVersion: 1, OperationID: operationID, EffectID: effectID, Provider: provider, Revision: revision, OperationMarker: marker, value: canonical}, nil
 }
 
 func (o ProviderObservationV1) Value() []byte { return append([]byte(nil), o.value...) }
 
+func (o ProviderObservationV1) valid() bool {
+	if o.SchemaVersion != 1 {
+		return false
+	}
+	if err := validateTokens(tokenField{"operation_id", string(o.OperationID)}, tokenField{"effect_id", string(o.EffectID)}, tokenField{"provider", o.Provider}, tokenField{"revision", o.Revision}, tokenField{"operation_marker", o.OperationMarker}); err != nil {
+		return false
+	}
+	canonical, err := canonicalJSONObject(o.value, "provider_value")
+	return err == nil && bytes.Equal(canonical, o.value)
+}
+
 func CanCompensateEffectV1(intent EffectIntentV1, observation ProviderObservationV1) bool {
-	return intent.SchemaVersion == 1 && observation.SchemaVersion == 1 &&
+	return intent.valid() && observation.valid() &&
+		intent.OperationID == observation.OperationID &&
+		intent.EffectID == observation.EffectID &&
 		intent.Provider == observation.Provider &&
 		intent.ExpectedRevision == observation.Revision &&
 		intent.OperationMarker == observation.OperationMarker &&
@@ -274,7 +308,7 @@ func EncodeEffectIntentV1(intent EffectIntentV1) ([]byte, error) {
 }
 
 func DecodeEffectIntentV1(encoded []byte) (EffectIntentV1, error) {
-	canonical, err := canonicalJSONObject(encoded, "effect_intent")
+	canonical, err := decodeRequiredObject(encoded, "effect_intent", "desired_value", "effect_id", "expected_revision", "expected_value", "intent_id", "operation_id", "operation_marker", "provider", "schema_version")
 	if err != nil {
 		return EffectIntentV1{}, err
 	}
@@ -288,6 +322,8 @@ func DecodeEffectIntentV1(encoded []byte) (EffectIntentV1, error) {
 }
 
 type providerObservationWireV1 struct {
+	EffectID        string          `json:"effect_id"`
+	OperationID     string          `json:"operation_id"`
 	OperationMarker string          `json:"operation_marker"`
 	Provider        string          `json:"provider"`
 	Revision        string          `json:"revision"`
@@ -299,11 +335,11 @@ func EncodeProviderObservationV1(observation ProviderObservationV1) ([]byte, err
 	if observation.SchemaVersion != 1 {
 		return nil, ValidationError{Kind: RefusalUnsupportedVersion, Field: "provider_observation"}
 	}
-	validated, err := NewProviderObservationV1(observation.Provider, observation.Revision, observation.OperationMarker, observation.value)
+	validated, err := NewProviderObservationV1(observation.OperationID, observation.EffectID, observation.Provider, observation.Revision, observation.OperationMarker, observation.value)
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(providerObservationWireV1{OperationMarker: validated.OperationMarker, Provider: validated.Provider, Revision: validated.Revision, SchemaVersion: 1, Value: validated.Value()})
+	encoded, err := json.Marshal(providerObservationWireV1{EffectID: string(validated.EffectID), OperationID: string(validated.OperationID), OperationMarker: validated.OperationMarker, Provider: validated.Provider, Revision: validated.Revision, SchemaVersion: 1, Value: validated.Value()})
 	if err != nil || len(encoded) > MaxOrdinaryValueBytes {
 		return nil, ValidationError{Kind: RefusalBudgetExceeded, Field: "provider_observation"}
 	}
@@ -311,7 +347,7 @@ func EncodeProviderObservationV1(observation ProviderObservationV1) ([]byte, err
 }
 
 func DecodeProviderObservationV1(encoded []byte) (ProviderObservationV1, error) {
-	canonical, err := canonicalJSONObject(encoded, "provider_observation")
+	canonical, err := decodeRequiredObject(encoded, "provider_observation", "effect_id", "operation_id", "operation_marker", "provider", "revision", "schema_version", "value")
 	if err != nil {
 		return ProviderObservationV1{}, err
 	}
@@ -321,7 +357,7 @@ func DecodeProviderObservationV1(encoded []byte) (ProviderObservationV1, error) 
 	if err := decoder.Decode(&wire); err != nil || wire.SchemaVersion != 1 {
 		return ProviderObservationV1{}, ValidationError{Kind: RefusalUnsupportedVersion, Field: "provider_observation"}
 	}
-	return NewProviderObservationV1(wire.Provider, wire.Revision, wire.OperationMarker, wire.Value)
+	return NewProviderObservationV1(OperationID(wire.OperationID), EffectID(wire.EffectID), wire.Provider, wire.Revision, wire.OperationMarker, wire.Value)
 }
 
 type operationOutcomeWireV1 struct {
@@ -367,7 +403,7 @@ func EncodeOperationOutcomeV1(outcome OperationOutcomeV1) ([]byte, error) {
 }
 
 func DecodeOperationOutcomeV1(encoded []byte) (OperationOutcomeV1, error) {
-	canonical, err := canonicalJSONObject(encoded, "operation_outcome")
+	canonical, err := decodeRequiredObject(encoded, "operation_outcome", "delivery", "kind", "operation_id", "recovery", "result", "result_type", "schema_version")
 	if err != nil {
 		return OperationOutcomeV1{}, err
 	}
@@ -431,6 +467,8 @@ func EncodeOperationRecordV1(record OperationRecordV1) ([]byte, error) {
 	}
 	wire := operationRecordWireV1{
 		CanonicalResult: validated.CanonicalResult(), CommandType: validated.CommandType,
+		EffectIDs:                   make([]string, 0, len(validated.effectIDs)),
+		EventIDs:                    make([]string, 0, len(validated.eventIDs)),
 		ExpectedPreconditionsDigest: hex.EncodeToString(validated.ExpectedPreconditionsDigest[:]),
 		OperationID:                 string(validated.OperationID), RequestDigest: hex.EncodeToString(validated.RequestDigest[:]),
 		ResultSchemaVersion: validated.ResultSchemaVersion, ResultType: validated.ResultType,
@@ -450,7 +488,7 @@ func EncodeOperationRecordV1(record OperationRecordV1) ([]byte, error) {
 }
 
 func DecodeOperationRecordV1(encoded []byte) (OperationRecordV1, error) {
-	canonical, err := canonicalJSONObject(encoded, "operation_record")
+	canonical, err := decodeRequiredObject(encoded, "operation_record", "canonical_result", "command_type", "effect_ids", "event_ids", "expected_preconditions_digest", "operation_id", "request_digest", "result_schema_version", "result_type", "runtime_epoch_id", "schema_version", "status")
 	if err != nil {
 		return OperationRecordV1{}, err
 	}
@@ -460,17 +498,14 @@ func DecodeOperationRecordV1(encoded []byte) (OperationRecordV1, error) {
 	if err := decoder.Decode(&wire); err != nil || wire.SchemaVersion != 1 || wire.Status != "accepted" {
 		return OperationRecordV1{}, ValidationError{Kind: RefusalUnsupportedVersion, Field: "operation_record"}
 	}
-	request, err := hex.DecodeString(wire.RequestDigest)
-	if err != nil || len(request) != 32 {
-		return OperationRecordV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "request_digest"}
+	requestDigest, err := parseCanonicalSHA256("request_digest", wire.RequestDigest)
+	if err != nil {
+		return OperationRecordV1{}, err
 	}
-	preconditions, err := hex.DecodeString(wire.ExpectedPreconditionsDigest)
-	if err != nil || len(preconditions) != 32 {
-		return OperationRecordV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "expected_preconditions_digest"}
+	preconditionsDigest, err := parseCanonicalSHA256("expected_preconditions_digest", wire.ExpectedPreconditionsDigest)
+	if err != nil {
+		return OperationRecordV1{}, err
 	}
-	var requestDigest, preconditionsDigest [32]byte
-	copy(requestDigest[:], request)
-	copy(preconditionsDigest[:], preconditions)
 	events := make([]EventID, len(wire.EventIDs))
 	for i, id := range wire.EventIDs {
 		events[i] = EventID(id)

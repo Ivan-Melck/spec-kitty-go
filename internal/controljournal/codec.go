@@ -19,7 +19,7 @@ func CanonicalJSONObject(input []byte) ([]byte, error) {
 
 func canonicalJSONObject(input []byte, field string) ([]byte, error) {
 	if len(input) == 0 {
-		input = []byte("{}")
+		return nil, ValidationError{Kind: RefusalInvalidValue, Field: field}
 	}
 	if len(input) > MaxOrdinaryValueBytes || !utf8.Valid(input) || !json.Valid(input) {
 		return nil, ValidationError{Kind: RefusalInvalidValue, Field: field}
@@ -38,6 +38,47 @@ func canonicalJSONObject(input []byte, field string) ([]byte, error) {
 		return nil, ValidationError{Kind: RefusalBudgetExceeded, Field: field}
 	}
 	return canonical, nil
+}
+
+func decodeRequiredObject(encoded []byte, field string, required ...string) ([]byte, error) {
+	canonical, err := canonicalJSONObject(encoded, field)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(canonical, &fields); err != nil {
+		return nil, ValidationError{Kind: RefusalInvalidValue, Field: field}
+	}
+	for _, value := range fields {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return nil, ValidationError{Kind: RefusalInvalidValue, Field: field}
+		}
+	}
+	for _, name := range required {
+		_, present := fields[name]
+		if !present {
+			return nil, ValidationError{Kind: RefusalInvalidValue, Field: name}
+		}
+	}
+	return canonical, nil
+}
+
+func parseCanonicalSHA256(field, value string) ([sha256Size]byte, error) {
+	if len(value) != sha256Size*2 {
+		return [sha256Size]byte{}, ValidationError{Kind: RefusalInvalidValue, Field: field}
+	}
+	for i := 0; i < len(value); i++ {
+		if !(value[i] >= '0' && value[i] <= '9' || value[i] >= 'a' && value[i] <= 'f') {
+			return [sha256Size]byte{}, ValidationError{Kind: RefusalInvalidValue, Field: field}
+		}
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil {
+		return [sha256Size]byte{}, ValidationError{Kind: RefusalInvalidValue, Field: field}
+	}
+	var digest [sha256Size]byte
+	copy(digest[:], decoded)
+	return digest, nil
 }
 
 func decodeUniqueJSONValue(decoder *json.Decoder) (any, error) {
@@ -76,7 +117,7 @@ func decodeUniqueJSONValue(decoder *json.Decoder) (any, error) {
 		}
 		return object, nil
 	case '[':
-		var array []any
+		array := make([]any, 0)
 		for decoder.More() {
 			value, err := decodeUniqueJSONValue(decoder)
 			if err != nil {
@@ -113,7 +154,11 @@ func EncodeEventEnvelopeV1(envelope EventEnvelopeV1) ([]byte, error) {
 }
 
 func DecodeEventEnvelopeV1(encoded []byte) (EventEnvelopeV1, error) {
-	canonical, err := canonicalJSONObject(encoded, "event_envelope")
+	canonical, err := decodeRequiredObject(encoded, "event_envelope",
+		"envelope_version", "event_type", "event_schema_version", "reducer_version",
+		"event_id", "operation_id", "project_id", "aggregate_kind", "aggregate_id",
+		"aggregate_logical_version", "runtime_epoch_id", "event_index", "event_count",
+		"payload", "canonical_event_digest")
 	if err != nil {
 		return EventEnvelopeV1{}, err
 	}
@@ -123,9 +168,20 @@ func DecodeEventEnvelopeV1(encoded []byte) (EventEnvelopeV1, error) {
 	if err := decoder.Decode(&wire); err != nil {
 		return EventEnvelopeV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "event_envelope"}
 	}
-	digest, err := hex.DecodeString(wire.CanonicalEventDigest)
-	if err != nil || len(digest) != sha256Size {
-		return EventEnvelopeV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "canonical_event_digest"}
+	digest, err := parseCanonicalSHA256("canonical_event_digest", wire.CanonicalEventDigest)
+	if err != nil {
+		return EventEnvelopeV1{}, err
+	}
+	index, err := NewEventIndexV1(wire.EventIndex)
+	if err != nil {
+		return EventEnvelopeV1{}, err
+	}
+	count, err := NewEventCountV1(wire.EventCount)
+	if err != nil {
+		return EventEnvelopeV1{}, err
+	}
+	if uint16(index) >= uint16(count) {
+		return EventEnvelopeV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "event_position"}
 	}
 	input := EventEnvelopeInputV1{
 		EnvelopeVersion: wire.EnvelopeVersion, EventID: EventID(wire.EventID),
@@ -134,7 +190,7 @@ func DecodeEventEnvelopeV1(encoded []byte) (EventEnvelopeV1, error) {
 		AggregateKind: AggregateKind(wire.AggregateKind), AggregateID: AggregateID(wire.AggregateID),
 		AggregateLogicalVersion: wire.AggregateLogicalVersion,
 		OperationID:             OperationID(wire.OperationID), RuntimeEpochID: RuntimeEpochID(wire.RuntimeEpochID),
-		EventIndex: EventIndexV1(wire.EventIndex), EventCount: EventCountV1(wire.EventCount),
+		EventIndex: index, EventCount: count,
 		WorkRevisionID: WorkRevisionID(wire.WorkRevisionID), LeaseID: LeaseID(wire.LeaseID),
 		LeaseGeneration: wire.LeaseGeneration, FenceToken: wire.FenceToken,
 		PolicyRevision: wire.PolicyRevision, DoctrineRevision: wire.DoctrineRevision,
@@ -145,7 +201,7 @@ func DecodeEventEnvelopeV1(encoded []byte) (EventEnvelopeV1, error) {
 	if err != nil {
 		return EventEnvelopeV1{}, err
 	}
-	if !bytes.Equal(envelope.digest[:], digest) {
+	if envelope.digest != digest {
 		return EventEnvelopeV1{}, ValidationError{Kind: RefusalJournalCorrupt, Field: "canonical_event_digest"}
 	}
 	return envelope, nil
@@ -176,7 +232,7 @@ func EncodeAggregateHeadV1(head AggregateHeadV1) ([]byte, error) {
 }
 
 func DecodeAggregateHeadV1(encoded []byte) (AggregateHeadV1, error) {
-	canonical, err := canonicalJSONObject(encoded, "aggregate_head")
+	canonical, err := decodeRequiredObject(encoded, "aggregate_head", "aggregate_id", "aggregate_kind", "last_event_id", "logical_version", "runtime_epoch_id", "schema_version", "canonical_state_digest")
 	if err != nil {
 		return AggregateHeadV1{}, err
 	}
@@ -186,12 +242,10 @@ func DecodeAggregateHeadV1(encoded []byte) (AggregateHeadV1, error) {
 	if err := decoder.Decode(&wire); err != nil || wire.SchemaVersion != 1 {
 		return AggregateHeadV1{}, ValidationError{Kind: RefusalUnsupportedVersion, Field: "aggregate_head"}
 	}
-	digestBytes, err := hex.DecodeString(wire.StateDigest)
-	if err != nil || len(digestBytes) != sha256Size {
-		return AggregateHeadV1{}, ValidationError{Kind: RefusalInvalidValue, Field: "canonical_state_digest"}
+	digest, err := parseCanonicalSHA256("canonical_state_digest", wire.StateDigest)
+	if err != nil {
+		return AggregateHeadV1{}, err
 	}
-	var digest [sha256Size]byte
-	copy(digest[:], digestBytes)
 	return ConstructAggregateHeadV1(AggregateKind(wire.AggregateKind), AggregateID(wire.AggregateID), wire.LogicalVersion, RuntimeEpochID(wire.RuntimeEpochID), EventID(wire.LastEventID), digest)
 }
 
