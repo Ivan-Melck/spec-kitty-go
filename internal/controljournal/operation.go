@@ -139,10 +139,8 @@ func (o OperationOutcomeV1) validateInvariants() error {
 	if o.Recovery == RecoveryProductReady && o.Kind != OperationDurablyApplied && o.Resolution != OperationDurablyApplied {
 		return ValidationError{Kind: RefusalInvalidTransition, Field: "recovery"}
 	}
-	if o.ResultType != "" {
-		if err := validateToken("result_type", o.ResultType); err != nil {
-			return err
-		}
+	if err := validateToken("result_type", o.ResultType); err != nil {
+		return err
 	}
 	canonical, err := canonicalJSONObject(o.result, "operation_result")
 	if err != nil {
@@ -151,7 +149,8 @@ func (o OperationOutcomeV1) validateInvariants() error {
 	if !bytes.Equal(canonical, o.result) {
 		return ValidationError{Kind: RefusalInvalidValue, Field: "operation_result"}
 	}
-	return nil
+	_, err = marshalOperationOutcomeWireV1(o)
+	return err
 }
 
 func validOperationKind(kind OperationObservationKind) bool {
@@ -429,15 +428,26 @@ type operationOutcomeWireV1 struct {
 	SchemaVersion uint32                   `json:"schema_version"`
 }
 
+func marshalOperationOutcomeWireV1(outcome OperationOutcomeV1) ([]byte, error) {
+	encoded, err := json.Marshal(operationOutcomeWireV1{
+		Delivery: outcome.Delivery, Kind: outcome.Kind, OperationID: string(outcome.OperationID),
+		Recovery: outcome.Recovery, Resolution: outcome.Resolution, Result: outcome.Result(),
+		ResultType: outcome.ResultType, SchemaVersion: outcome.SchemaVersion,
+	})
+	if err != nil {
+		return nil, ValidationError{Kind: RefusalInvalidValue, Field: "operation_outcome"}
+	}
+	if len(encoded) > MaxOrdinaryValueBytes {
+		return nil, ValidationError{Kind: RefusalBudgetExceeded, Field: "operation_outcome"}
+	}
+	return encoded, nil
+}
+
 func EncodeOperationOutcomeV1(outcome OperationOutcomeV1) ([]byte, error) {
 	if err := outcome.validateInvariants(); err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(operationOutcomeWireV1{Delivery: outcome.Delivery, Kind: outcome.Kind, OperationID: string(outcome.OperationID), Recovery: outcome.Recovery, Resolution: outcome.Resolution, Result: outcome.Result(), ResultType: outcome.ResultType, SchemaVersion: 1})
-	if err != nil || len(encoded) > MaxOrdinaryValueBytes {
-		return nil, ValidationError{Kind: RefusalBudgetExceeded, Field: "operation_outcome"}
-	}
-	return encoded, nil
+	return marshalOperationOutcomeWireV1(outcome)
 }
 
 func DecodeOperationOutcomeV1(encoded []byte) (OperationOutcomeV1, error) {

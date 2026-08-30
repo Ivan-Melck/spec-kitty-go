@@ -176,6 +176,163 @@ func TestOperationOutcomeTransitionsReturnZeroOnInvalidRequest(t *testing.T) {
 	}
 }
 
+func TestOperationOutcomeRequiresValidNonemptyResultTypeAtEverySeam(t *testing.T) {
+	base, err := NewOperationOutcomeV1("operation-1", OperationAmbiguous, "command.result", []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeOperationOutcomeV1(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := map[string]string{
+		"empty":               "",
+		"space":               "bad type",
+		"leading punctuation": "-bad",
+		"invalid utf8":        string([]byte{0xff}),
+		"129 bytes":           strings.Repeat("a", 129),
+	}
+	for name, resultType := range invalid {
+		t.Run(name, func(t *testing.T) {
+			outcome, err := NewOperationOutcomeV1("operation-1", OperationAmbiguous, resultType, []byte(`{}`))
+			assertZeroOperationOutcomeError(t, outcome, err)
+
+			manual := base
+			manual.ResultType = resultType
+			wire, err := EncodeOperationOutcomeV1(manual)
+			if err == nil || wire != nil {
+				t.Fatalf("invalid result type encoded: %q", wire)
+			}
+			var validationError ValidationError
+			if !errors.As(err, &validationError) {
+				t.Fatalf("encode error = %T %v", err, err)
+			}
+			outcome, err = manual.WithDelivery(DeliveryReturned)
+			assertZeroOperationOutcomeError(t, outcome, err)
+			outcome, err = manual.WithRecovery(RecoveryBytesRestored)
+			assertZeroOperationOutcomeError(t, outcome, err)
+			outcome, err = ReconcileAmbiguousOperationV1(manual, OperationDurablyApplied)
+			assertZeroOperationOutcomeError(t, outcome, err)
+
+			decoded, err := DecodeOperationOutcomeV1(mutateObjectField(t, encoded, "result_type", []byte(`"`+resultType+`"`), false))
+			assertZeroOperationOutcomeError(t, decoded, err)
+		})
+	}
+
+	maxResultType := strings.Repeat("a", 128)
+	boundary, err := NewOperationOutcomeV1("operation-1", OperationAmbiguous, maxResultType, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("128-byte result type rejected: %v", err)
+	}
+	boundary, err = boundary.WithDelivery(DeliveryReturned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := EncodeOperationOutcomeV1(boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeOperationOutcomeV1(wire); err != nil {
+		t.Fatalf("128-byte result type did not round trip: %v", err)
+	}
+}
+
+func TestOperationOutcomeCompleteWireBudgetAtExactBoundary(t *testing.T) {
+	const prefix = `{"delivery":"not_attempted","kind":"ambiguous","operation_id":"operation-1","recovery":"bytes_unavailable","result":`
+	const suffix = `,"result_type":"command.result","schema_version":1}`
+	maxResultSize := MaxOrdinaryValueBytes - len(prefix) - len(suffix)
+	boundaryResult := operationResultOfSize(t, maxResultSize)
+	boundary, err := NewOperationOutcomeV1("operation-1", OperationAmbiguous, "command.result", boundaryResult)
+	if err != nil {
+		t.Fatalf("true complete-wire boundary rejected: %v", err)
+	}
+	encoded, err := EncodeOperationOutcomeV1(boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) != MaxOrdinaryValueBytes || !bytes.Equal(encoded, append(append([]byte(prefix), boundaryResult...), []byte(suffix)...)) {
+		t.Fatalf("boundary encoding length/content = %d", len(encoded))
+	}
+	if decoded, err := DecodeOperationOutcomeV1(encoded); err != nil || !bytes.Equal(decoded.Result(), boundaryResult) {
+		t.Fatalf("boundary did not round trip: %#v %v", decoded, err)
+	}
+
+	tooLargeResult := operationResultOfSize(t, maxResultSize+1)
+	rejected, err := NewOperationOutcomeV1("operation-1", OperationAmbiguous, "command.result", tooLargeResult)
+	assertZeroOperationOutcomeError(t, rejected, err)
+	innerBudgetResult := operationResultOfSize(t, MaxOrdinaryValueBytes)
+	rejected, err = NewOperationOutcomeV1("operation-1", OperationAmbiguous, "command.result", innerBudgetResult)
+	assertZeroOperationOutcomeError(t, rejected, err)
+
+	manualTooLarge := boundary
+	manualTooLarge.result = tooLargeResult
+	for name, transition := range map[string]func() (OperationOutcomeV1, error){
+		"delivery": func() (OperationOutcomeV1, error) { return manualTooLarge.WithDelivery(DeliveryReturned) },
+		"recovery": func() (OperationOutcomeV1, error) { return manualTooLarge.WithRecovery(RecoveryBytesRestored) },
+		"reconciliation": func() (OperationOutcomeV1, error) {
+			return ReconcileAmbiguousOperationV1(manualTooLarge, OperationDurablyApplied)
+		},
+	} {
+		t.Run("pre/"+name, func(t *testing.T) {
+			outcome, err := transition()
+			assertZeroOperationOutcomeError(t, outcome, err)
+		})
+	}
+
+	// Reconciliation adds both a longer kind and a resolution field. The base
+	// value is exactly encodable, but the enlarged candidate must not escape.
+	reconciled, err := ReconcileAmbiguousOperationV1(boundary, OperationDurablyApplied)
+	assertZeroOperationOutcomeError(t, reconciled, err)
+
+	const returnedPrefix = `{"delivery":"returned","kind":"ambiguous","operation_id":"operation-1","recovery":"bytes_unavailable","result":`
+	deliveryBoundary := boundary
+	deliveryBoundary.Delivery = DeliveryReturned
+	deliveryBoundary.result = operationResultOfSize(t, MaxOrdinaryValueBytes-len(returnedPrefix)-len(suffix))
+	if wire, err := EncodeOperationOutcomeV1(deliveryBoundary); err != nil || len(wire) != MaxOrdinaryValueBytes {
+		t.Fatalf("returned-delivery boundary = %d bytes, %v", len(wire), err)
+	}
+	deliveryEnlarged, err := deliveryBoundary.WithDelivery(DeliveryNotAttempted)
+	assertZeroOperationOutcomeError(t, deliveryEnlarged, err)
+
+	const restoredPrefix = `{"delivery":"not_attempted","kind":"ambiguous","operation_id":"operation-1","recovery":"bytes_restored","result":`
+	recoveryBoundary := boundary
+	recoveryBoundary.Recovery = RecoveryBytesRestored
+	recoveryBoundary.result = operationResultOfSize(t, MaxOrdinaryValueBytes-len(restoredPrefix)-len(suffix))
+	if wire, err := EncodeOperationOutcomeV1(recoveryBoundary); err != nil || len(wire) != MaxOrdinaryValueBytes {
+		t.Fatalf("restored-recovery boundary = %d bytes, %v", len(wire), err)
+	}
+	recoveryEnlarged, err := recoveryBoundary.WithRecovery(RecoveryBytesUnavailable)
+	assertZeroOperationOutcomeError(t, recoveryEnlarged, err)
+
+	for name, transition := range map[string]func() (OperationOutcomeV1, error){
+		"delivery": func() (OperationOutcomeV1, error) { return boundary.WithDelivery(DeliveryReturned) },
+		"recovery": func() (OperationOutcomeV1, error) { return boundary.WithRecovery(RecoveryBytesRestored) },
+	} {
+		t.Run("encodable/"+name, func(t *testing.T) {
+			outcome, err := transition()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := EncodeOperationOutcomeV1(outcome); err != nil {
+				t.Fatalf("successful transition returned unencodable outcome: %v", err)
+			}
+		})
+	}
+}
+
+func operationResultOfSize(t *testing.T, size int) []byte {
+	t.Helper()
+	const framing = `{"value":""}`
+	if size < len(framing) {
+		t.Fatalf("result size %d is below object framing", size)
+	}
+	result := []byte(`{"value":"` + strings.Repeat("a", size-len(framing)) + `"}`)
+	if len(result) != size {
+		t.Fatalf("result size = %d, want %d", len(result), size)
+	}
+	return result
+}
+
 func assertZeroOperationOutcomeError(t *testing.T, outcome OperationOutcomeV1, err error) {
 	t.Helper()
 	var validationError ValidationError
