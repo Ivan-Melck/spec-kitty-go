@@ -241,6 +241,118 @@ func TestExternalRestoreTranslatorProvesNonemptyHistoryAndBoundsPrefixIO(t *test
 	}
 }
 
+func TestExternalRestoreTranslatorRejectsUntrustedJournalMetadata(t *testing.T) {
+	encodeEvent := func(project controljournal.ProjectID, eventID controljournal.EventID) []byte {
+		t.Helper()
+		index, _ := controljournal.NewEventIndexV1(0)
+		count, _ := controljournal.NewEventCountV1(1)
+		event, err := controljournal.NewEventEnvelopeV1(controljournal.EventEnvelopeInputV1{
+			EnvelopeVersion: 1, EventID: eventID, EventType: "mission.advanced", EventSchemaVersion: 1,
+			ReducerVersion: "mission-v1", ProjectID: project, AggregateKind: "mission", AggregateID: "aggregate-provider-metadata",
+			AggregateLogicalVersion: 1, OperationID: "operation-provider-metadata", RuntimeEpochID: "epoch-provider-metadata",
+			EventIndex: index, EventCount: count, LeaseID: "lease-provider-metadata", LeaseGeneration: 1, FenceToken: 1,
+			Payload: []byte(`{"advanced":true}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := controljournal.EncodeEventEnvelopeV1(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+	prefix := "spk/v1/project/mission/journal/"
+	valid := storegapdb.Record{Key: prefix + "event-provider-metadata", Value: encodeEvent("project", "event-provider-metadata"), Revision: 7}
+	expires := time.Now().Add(time.Hour)
+	events, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{
+		EventType: "mission.advanced", EventSchemaVersion: 1, ReducerVersion: "mission-v1",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducers, err := reducer.NewRegistryV1([]reducer.EntryV1{{
+		AggregateKind: "mission", EventType: "mission.advanced", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	tests := map[string][]storegapdb.Record{
+		"wrong event-derived key": {{Key: prefix + "wrong-event", Value: valid.Value, Revision: 7}},
+		"out of prefix key":       {{Key: "spk/v1/other/mission/journal/event-provider-metadata", Value: valid.Value, Revision: 7}},
+		"cross-project envelope": {{
+			Key: prefix + "event-cross-project", Value: encodeEvent("other-project", "event-cross-project"), Revision: 7,
+		}},
+		"expiring record":  {{Key: valid.Key, Value: valid.Value, Revision: 7, ExpiresAt: &expires}},
+		"malformed record": {{Key: prefix + "event-malformed", Value: []byte(`{"corrupt":true}`), Revision: 7}},
+		"duplicate record": {valid, valid},
+	}
+	for name, records := range tests {
+		t.Run(name, func(t *testing.T) {
+			port := &restoreScanPortV1{records: map[string]storegapdb.Record{}, pages: []storegapdb.ScanPage{{ObservedRevision: 10, Records: records}}}
+			reader, err := NewRestoreReaderV1(port, "project", "mission")
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, restoreErr := journalcheckpoint.RestoreV1(t.Context(), journalcheckpoint.RestoreInputV1{
+				Reader: reader,
+				Source: journalcheckpoint.SourceIdentityV1{
+					ProjectID: "project", MissionID: "mission", RunID: "run-provider-metadata",
+					ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest,
+				},
+				Binding:       journalcheckpoint.RestoreBindingV1{DatabaseID: "database-provider-metadata", HostInstanceID: "host-provider-metadata"},
+				EventRegistry: events, Reducers: reducers,
+			})
+			var refusal journalcheckpoint.NotReadyErrorV1
+			if !errors.As(restoreErr, &refusal) || refusal.Kind != journalcheckpoint.NotReadyAuthorityClosed || result.Ready {
+				t.Fatalf("untrusted provider metadata restore=%+v refusal=%+v err=%v", result, refusal, restoreErr)
+			}
+			if admission, admissionErr := result.AdmissionV1(); admissionErr == nil {
+				t.Fatalf("untrusted provider metadata minted admission: %+v", admission)
+			}
+		})
+	}
+}
+
+func TestExternalRestoreTranslatorRejectsCheckpointKeyAndExpiryMetadata(t *testing.T) {
+	prefix := "spk/v1/project/mission/"
+	expires := time.Now().Add(time.Hour)
+	for name, record := range map[string]storegapdb.Record{
+		"head wrong key": {Key: prefix + "other-head", Value: []byte(`{}`), Revision: 8},
+		"head expiry":    {Key: prefix + "checkpoint-head", Value: []byte(`{}`), Revision: 8, ExpiresAt: &expires},
+	} {
+		t.Run(name, func(t *testing.T) {
+			port := &restoreScanPortV1{records: map[string]storegapdb.Record{prefix + "checkpoint-head": record}}
+			reader, err := NewRestoreReaderV1(port, "project", "mission")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if heads, err := reader.CheckpointHeadsV1(t.Context()); err == nil || len(heads) != 0 {
+				t.Fatalf("untrusted checkpoint head admitted heads=%+v err=%v", heads, err)
+			}
+		})
+	}
+	for name, record := range map[string]storegapdb.Record{
+		"blob wrong key": {Key: prefix + "checkpoints/other", Value: []byte(`{}`), Revision: 7},
+		"blob expiry":    {Key: prefix + "checkpoints/checkpoint-provider", Value: []byte(`{}`), Revision: 7, ExpiresAt: &expires},
+	} {
+		t.Run(name, func(t *testing.T) {
+			key := prefix + "checkpoints/checkpoint-provider"
+			port := &restoreScanPortV1{records: map[string]storegapdb.Record{key: record}}
+			reader, err := NewRestoreReaderV1(port, "project", "mission")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if blob, err := reader.CheckpointBlobV1(t.Context(), "checkpoint-provider"); err == nil || len(blob) != 0 {
+				t.Fatalf("untrusted checkpoint blob admitted bytes=%d err=%v", len(blob), err)
+			}
+		})
+	}
+}
+
 func TestExternalRestoreTranslatorClosesCheckpointAdmissionWithoutAfterRevisionAPI(t *testing.T) {
 	capability := checkpointCapabilityFixture(t, "project", "mission", "operation-checkpoint-prefix", "operation-checkpoint-forming")
 	record, err := capability.RecordV1()

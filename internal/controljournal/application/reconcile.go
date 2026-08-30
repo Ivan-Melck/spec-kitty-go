@@ -34,15 +34,16 @@ func NewRestoreReaderV1(port restoreReadPortV1, projectID controljournal.Project
 	if _, err := controljournal.NewMissionID(string(missionID)); err != nil {
 		return nil, refusal(OutcomeRefused, "restore mission identity is invalid")
 	}
-	return &adapterRestoreReaderV1{port: port, prefix: canonicalPrefix(projectID, missionID)}, nil
+	return &adapterRestoreReaderV1{port: port, projectID: projectID, prefix: canonicalPrefix(projectID, missionID)}, nil
 }
 
 type adapterRestoreReaderV1 struct {
-	mu       sync.Mutex
-	port     restoreReadPortV1
-	prefix   string
-	records  []controljournal.StoredEventV1
-	revision uint64
+	mu        sync.Mutex
+	port      restoreReadPortV1
+	projectID controljournal.ProjectID
+	prefix    string
+	records   []controljournal.StoredEventV1
+	revision  uint64
 }
 
 func (reader *adapterRestoreReaderV1) CheckpointHeadsV1(ctx context.Context) ([]journalcheckpoint.CheckpointHeadV1, error) {
@@ -50,7 +51,7 @@ func (reader *adapterRestoreReaderV1) CheckpointHeadsV1(ctx context.Context) ([]
 	if storegapdb.IsKind(err, storegapdb.OutcomeNotFound) {
 		return nil, nil
 	}
-	if err != nil || record.Key != reader.prefix+"checkpoint-head" || record.Revision == 0 {
+	if err != nil || record.Key != reader.prefix+"checkpoint-head" || record.Revision == 0 || record.ExpiresAt != nil {
 		return nil, fmt.Errorf("checkpoint selector read failed: %w", err)
 	}
 	head, err := journalcheckpoint.DecodeHeadV1(record.Value)
@@ -66,7 +67,7 @@ func (reader *adapterRestoreReaderV1) CheckpointBlobV1(ctx context.Context, id j
 	}
 	key := reader.prefix + "checkpoints/" + string(id)
 	record, err := reader.port.Get(ctx, key)
-	if err != nil || record.Key != key || record.Revision == 0 {
+	if err != nil || record.Key != key || record.Revision == 0 || record.ExpiresAt != nil {
 		return nil, fmt.Errorf("checkpoint record read failed: %w", err)
 	}
 	return append([]byte(nil), record.Value...), nil
@@ -120,6 +121,7 @@ func (reader *adapterRestoreReaderV1) refreshJournalV1(ctx context.Context, afte
 	var rawBytes uint64
 	providerPages := 0
 	records := make([]controljournal.StoredEventV1, 0, 512)
+	seen := make(map[controljournal.EventID]struct{}, 512)
 	for {
 		providerPages++
 		if providerPages > journalcheckpoint.MaxRestorePages {
@@ -139,9 +141,12 @@ func (reader *adapterRestoreReaderV1) refreshJournalV1(ctx context.Context, afte
 		observed = page.ObservedRevision
 		for _, record := range page.Records {
 			event, err := controljournal.DecodeEventEnvelopeV1(record.Value)
-			if err != nil || record.Revision == 0 {
+			expectedKey := reader.prefix + "journal/" + string(event.EventID)
+			_, duplicate := seen[event.EventID]
+			if err != nil || record.Revision == 0 || record.ExpiresAt != nil || record.Key != expectedKey || event.ProjectID != reader.projectID || duplicate {
 				return errors.New("stored journal record is invalid")
 			}
+			seen[event.EventID] = struct{}{}
 			if record.Revision > after.ThroughRecordRevision {
 				records = append(records, controljournal.StoredEventV1{RecordRevision: record.Revision, Envelope: event})
 				rawBytes += uint64(len(record.Value))

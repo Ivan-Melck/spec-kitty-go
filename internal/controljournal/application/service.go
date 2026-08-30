@@ -32,6 +32,7 @@ const (
 	OutcomeUnsupportedVersion         OutcomeKind = "unsupported_version"
 	OutcomeBudgetExceeded             OutcomeKind = "budget_exceeded"
 	OutcomeInvalidCheckpoint          OutcomeKind = "invalid_checkpoint"
+	OutcomeRestoreObservationStale    OutcomeKind = "restore_observation_stale"
 	OutcomeRefused                    OutcomeKind = "refused"
 )
 
@@ -94,6 +95,7 @@ type publicationPort interface {
 
 type epochAdmissionPort interface {
 	Get(context.Context, string) (storegapdb.Record, error)
+	Inspect(context.Context) (storegapdb.Inspection, error)
 	AdmitRuntimeEpoch(context.Context, storegapdb.RuntimeEpochBatch) (storegapdb.MutationResult, error)
 }
 
@@ -272,6 +274,11 @@ func admitRuntimeEpochFactsV1(ctx context.Context, port epochAdmissionPort, inpu
 	} else if !storegapdb.IsKind(readErr, storegapdb.OutcomeNotFound) {
 		return EpochAdmissionV1{}, mapReadError(input.OperationID, readErr), nil
 	}
+	if !restoreObservationIsCurrentV1(ctx, port, facts, restore) {
+		return EpochAdmissionV1{}, ResultV1{
+			Kind: OutcomeRestoreObservationStale, OperationID: input.OperationID, Recovery: RecoveryOperator,
+		}, nil
+	}
 	expectedHead, currentRevision, predecessor, predecessorResult := readRuntimePredecessor(ctx, port, input, prefix)
 	if predecessorResult.Kind != "" {
 		if predecessorResult.Kind == OutcomeAlreadyCommitted {
@@ -366,6 +373,19 @@ func admitRuntimeEpochFactsV1(ctx context.Context, port epochAdmissionPort, inpu
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeIndeterminate, "runtime epoch authority could not be activated")
 	}
 	return admission, ResultV1{Kind: OutcomeCommitted, OperationID: input.OperationID, CommittedRevision: result.Revision, Recovery: RecoveryNone}, nil
+}
+
+func restoreObservationIsCurrentV1(ctx context.Context, port epochAdmissionPort, startup sidecargapdb.OwnerStartupFactsV1, restore journalcheckpoint.RestoreAdmissionFactsV1) bool {
+	inspection, err := port.Inspect(ctx)
+	if err != nil {
+		return false
+	}
+	return inspection.DatabaseID == startup.DatabaseID &&
+		inspection.Lifecycle == "ready" && inspection.Healthy &&
+		inspection.OwnerPID == startup.Daemon.PID && inspection.OwnerStartedAt == startup.DaemonOwnerStartedAt &&
+		inspection.CurrentRevision == inspection.DurableThrough &&
+		inspection.CurrentRevision == restore.ObservedStoreRevision &&
+		(inspection.CurrentRevision != 0 || restore.Pristine)
 }
 
 func reconcileCurrentEpochAdmission(ctx context.Context, port epochAdmissionPort, input epochAdmissionRequestV1, operationID controljournal.OperationID) (EpochAdmissionV1, ResultV1, error) {
