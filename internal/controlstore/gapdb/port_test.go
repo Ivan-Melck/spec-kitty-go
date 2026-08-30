@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -196,6 +197,97 @@ func TestPortDiagnosticIsBoundedAndRedacted(t *testing.T) {
 	var typed *Error
 	if !errors.As(err, &typed) || typed.OperationID != operationID || typed.Recovery != RecoveryReconcile {
 		t.Fatalf("ambiguous recovery diagnostic=%+v", typed)
+	}
+}
+
+func TestMutatingTransportFailuresNeverRetryWithANewOperation(t *testing.T) {
+	routes := []struct {
+		name     string
+		mutation Mutation
+	}{
+		{"put", put("key", nil, ConditionAny, 0)},
+		{"put-if-absent", put("key", nil, ConditionAbsent, 0)},
+		{"compare-and-swap", put("key", nil, ConditionRevision, 7)},
+		{"delete", Mutation{Kind: MutationDelete, Key: "key", Condition: Condition{Kind: ConditionRevision, ExpectedRevision: 7}}},
+	}
+	for _, route := range routes {
+		for _, ambiguous := range []bool{false, true} {
+			label := "before-send"
+			recovery := RecoveryRetrySameOperation
+			kind := OutcomeUnavailable
+			if ambiguous {
+				label = "after-send"
+				recovery = RecoveryReconcile
+				kind = OutcomeAmbiguous
+			}
+			t.Run(route.name+"/"+label, func(t *testing.T) {
+				operationID := "original-operation"
+				var calls atomic.Int32
+				provider := mutationErrorProvider(&calls, &gapdbapi.TransportError{Operation: route.name, Ambiguous: ambiguous, Cause: errors.New(label)})
+				adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+				_, err := adapter.ConditionalMutate(context.Background(), operationID, route.mutation, AckDurable)
+				var typed *Error
+				if !IsKind(err, kind) || !errors.As(err, &typed) || typed.OperationID != operationID || typed.Recovery != recovery || calls.Load() != 1 {
+					t.Fatalf("error=%v typed=%+v calls=%d", err, typed, calls.Load())
+				}
+			})
+		}
+	}
+
+	for _, ambiguous := range []bool{false, true} {
+		t.Run("atomic-batch/"+map[bool]string{false: "before-send", true: "after-send"}[ambiguous], func(t *testing.T) {
+			var calls atomic.Int32
+			provider := &fakeProvider{batchFn: func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+				calls.Add(1)
+				return gapdbapi.MutationResult{}, &gapdbapi.TransportError{Operation: "atomic_batch", Ambiguous: ambiguous, Cause: errors.New("transport")}
+			}}
+			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+			_, err := adapter.AtomicBatch(context.Background(), minimalBatch())
+			var typed *Error
+			wantKind, wantRecovery := OutcomeUnavailable, RecoveryRetrySameOperation
+			if ambiguous {
+				wantKind, wantRecovery = OutcomeAmbiguous, RecoveryReconcile
+			}
+			if !IsKind(err, wantKind) || !errors.As(err, &typed) || typed.OperationID != "operation" || typed.Recovery != wantRecovery || calls.Load() != 1 {
+				t.Fatalf("error=%v typed=%+v calls=%d", err, typed, calls.Load())
+			}
+		})
+	}
+}
+
+func TestMutatingDeadlineIsBoundedAndReconciledWithOriginalOperation(t *testing.T) {
+	var calls atomic.Int32
+	provider := &fakeProvider{putFn: func(ctx context.Context, _ string, _ []byte, _ *time.Time, _ gapdbapi.AckMode) (gapdbapi.MutationResult, error) {
+		calls.Add(1)
+		<-ctx.Done()
+		return gapdbapi.MutationResult{}, ctx.Err()
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", 10*time.Millisecond)
+	_, err := adapter.ConditionalMutate(context.Background(), "deadline-operation", put("key", nil, ConditionAny, 0), AckDurable)
+	var typed *Error
+	if !IsKind(err, OutcomeDeadlineExceeded) || !errors.As(err, &typed) || typed.OperationID != "deadline-operation" || typed.Recovery != RecoveryReconcile || calls.Load() != 1 {
+		t.Fatalf("error=%v typed=%+v calls=%d", err, typed, calls.Load())
+	}
+}
+
+func mutationErrorProvider(calls *atomic.Int32, failure error) *fakeProvider {
+	respond := func() (gapdbapi.MutationResult, error) {
+		calls.Add(1)
+		return gapdbapi.MutationResult{}, failure
+	}
+	return &fakeProvider{
+		putFn: func(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error) {
+			return respond()
+		},
+		absentFn: func(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error) {
+			return respond()
+		},
+		casFn: func(context.Context, string, gapdbapi.Revision, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error) {
+			return respond()
+		},
+		deleteFn: func(context.Context, string, gapdbapi.Revision, gapdbapi.AckMode) (gapdbapi.MutationResult, error) {
+			return respond()
+		},
 	}
 }
 

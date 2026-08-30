@@ -194,7 +194,7 @@ func (a *Adapter) ConditionalMutate(ctx context.Context, operationID string, mut
 	if err != nil {
 		return MutationResult{}, translateError("conditional_mutate", operationID, err)
 	}
-	return convertMutationResult("conditional_mutate", operationID, result, 1)
+	return convertMutationResult("conditional_mutate", operationID, result, 1, providerAck)
 }
 
 func (a *Adapter) AtomicBatch(ctx context.Context, batch ProductBatch) (MutationResult, error) {
@@ -204,6 +204,12 @@ func (a *Adapter) AtomicBatch(ctx context.Context, batch ProductBatch) (Mutation
 	}
 	if rawBytes > MaxRawBatchBytes {
 		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, "raw batch byte budget exceeded", nil)
+	}
+	if err := validateMutationCount(len(providerBatch.Mutations)); err != nil {
+		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
+	}
+	if providerBatch.Ack != gapdbapi.AckDurable {
+		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, "atomic batch requires durable acknowledgement", nil)
 	}
 	wire := struct {
 		SchemaVersion uint64         `json:"schema_version"`
@@ -215,8 +221,8 @@ func (a *Adapter) AtomicBatch(ctx context.Context, batch ProductBatch) (Mutation
 	if err != nil {
 		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, "wire request cannot be encoded", err)
 	}
-	if len(encoded) > MaxWireFrameBytes {
-		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, "wire frame byte budget exceeded", nil)
+	if err := validateWireFrameSize(len(encoded)); err != nil {
+		return MutationResult{}, adapterError("atomic_batch", batch.OperationID, OutcomeInvalid, RecoveryFixRequest, err.Error(), err)
 	}
 	ctx, cancel := a.requestContext(ctx)
 	defer cancel()
@@ -225,7 +231,7 @@ func (a *Adapter) AtomicBatch(ctx context.Context, batch ProductBatch) (Mutation
 	if err != nil {
 		return MutationResult{}, translateError("atomic_batch", batch.OperationID, err)
 	}
-	return convertMutationResult("atomic_batch", batch.OperationID, result, len(providerBatch.Mutations))
+	return convertMutationResult("atomic_batch", batch.OperationID, result, len(providerBatch.Mutations), gapdbapi.AckDurable)
 }
 
 func (a *Adapter) Scan(ctx context.Context, request ScanRequest) (ScanPage, error) {
@@ -285,7 +291,12 @@ func convertScanPage(page gapdbapi.ScanPage, prefix string, limit int) (ScanPage
 		if err != nil {
 			return ScanPage{}, 0, adapterError("scan", "", OutcomeMalformedResponse, RecoveryOperator, "provider returned an invalid scan record", err)
 		}
-		pageBytes += len(convertedRecord.Key) + len(convertedRecord.Value)
+		// GapDB charges each scan record's key and value plus a 32-byte
+		// structural envelope, and another 8 bytes when expiry is present.
+		pageBytes += len(convertedRecord.Key) + len(convertedRecord.Value) + 32
+		if convertedRecord.ExpiresAt != nil {
+			pageBytes += 8
+		}
 		converted.Records[index] = convertedRecord
 		previous = record.Key
 	}
@@ -375,8 +386,7 @@ func (a *Adapter) authority(ctx context.Context, expected AuthorityNamespace, mu
 	if mutation.Namespace != expected || mutation.Codec != AuthorityCodec(expected) {
 		return MutationResult{}, adapterError("authority", mutation.OperationID, OutcomeInvalid, RecoveryFixRequest, "authority namespace or codec mismatch", nil)
 	}
-	segment := "/heads/" + string(expected) + "/"
-	if !strings.Contains(mutation.Mutation.Key, segment) {
+	if !isCanonicalAuthorityKey(mutation.Mutation.Key, expected) {
 		return MutationResult{}, adapterError("authority", mutation.OperationID, OutcomeInvalid, RecoveryFixRequest, "authority key crosses namespace", nil)
 	}
 	if mutation.Mutation.Condition.Kind == ConditionAny {
@@ -473,8 +483,8 @@ func encodeProductBatch(batch ProductBatch) (gapdbapi.Batch, int, error) {
 		mutations = append(mutations, *batch.Checkpoint, *batch.CheckpointHead)
 	}
 	mutations = append(mutations, batch.EffectIntents...)
-	if len(mutations) > MaxMutationsPerBatch {
-		return gapdbapi.Batch{}, 0, fmt.Errorf("mutation count exceeds %d", MaxMutationsPerBatch)
+	if err := validateMutationCount(len(mutations)); err != nil {
+		return gapdbapi.Batch{}, 0, err
 	}
 	provider := gapdbapi.Batch{Ack: gapdbapi.AckDurable, Mutations: make([]gapdbapi.Mutation, len(mutations))}
 	rawBytes := 0
@@ -575,11 +585,41 @@ func convertRecord(record gapdbapi.Record, expectedKey string) (Record, error) {
 	return Record{Key: record.Key, Value: append([]byte{}, record.Value...), Revision: uint64(record.Revision), ExpiresAt: cloneTime(record.ExpiresAt)}, nil
 }
 
-func convertMutationResult(operation, operationID string, result gapdbapi.MutationResult, expectedCount int) (MutationResult, error) {
-	if result.Revision == 0 || !result.Ack.Valid() || result.DurableThroughRevision > result.Revision || result.Ack == gapdbapi.AckDurable && result.DurableThroughRevision < result.Revision || expectedCount > 1 && result.MutationCount != expectedCount {
+func convertMutationResult(operation, operationID string, result gapdbapi.MutationResult, expectedCount int, expectedAck gapdbapi.AckMode) (MutationResult, error) {
+	if result.Revision == 0 || !result.Ack.Valid() || result.Ack != expectedAck ||
+		result.DurableThroughRevision > result.Revision ||
+		result.Ack == gapdbapi.AckDurable && result.DurableThroughRevision != result.Revision ||
+		expectedCount <= 0 || result.MutationCount != expectedCount {
 		return MutationResult{}, adapterError(operation, operationID, OutcomeMalformedResponse, RecoveryReconcile, "provider returned an invalid mutation acknowledgement", nil)
 	}
 	return MutationResult{Revision: uint64(result.Revision), Ack: AckMode(result.Ack), DurableThrough: uint64(result.DurableThroughRevision), MutationCount: result.MutationCount}, nil
+}
+
+func validateMutationCount(count int) error {
+	if count <= 0 || count > MaxMutationsPerBatch {
+		return fmt.Errorf("mutation count must contain 1-%d entries", MaxMutationsPerBatch)
+	}
+	return nil
+}
+
+func validateWireFrameSize(size int) error {
+	if size <= 0 || size > MaxWireFrameBytes {
+		return fmt.Errorf("wire frame must contain 1-%d bytes", MaxWireFrameBytes)
+	}
+	return nil
+}
+
+func isCanonicalAuthorityKey(key string, expected AuthorityNamespace) bool {
+	parts := strings.Split(key, "/")
+	if len(parts) != 7 || parts[0] != "spk" || parts[1] != "v1" || parts[4] != "heads" || parts[5] != string(expected) {
+		return false
+	}
+	for _, index := range []int{2, 3, 6} {
+		if parts[index] == "" || parts[index] == "." || parts[index] == ".." || strings.IndexByte(parts[index], 0) >= 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func translateError(operation, operationID string, err error) error {

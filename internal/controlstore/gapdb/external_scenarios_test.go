@@ -407,12 +407,31 @@ func scenarioScan(t *testing.T, h *externalHarness) {
 			t.Fatal(err)
 		}
 	}
+	first, err := h.adapter.Scan(t.Context(), ScanRequest{Prefix: "external/scan/", Limit: 2})
+	if err != nil || !first.Truncated || first.Cursor == "" || len(first.Records) != 2 || first.ObservedRevision == 0 {
+		t.Fatalf("first pinned scan page=%+v err=%v", first, err)
+	}
+	// Advance provider state after the cursor was issued. The old cursor must
+	// be rejected as SCAN_STALE rather than mixing two observed revisions.
+	if _, err := h.adapter.ConditionalMutate(t.Context(), "scan-d", put("external/scan/d", []byte("external/scan/d"), ConditionAny, 0), AckDurable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.adapter.Scan(t.Context(), ScanRequest{Prefix: "external/scan/", Limit: 2, Cursor: first.Cursor}); !IsKind(err, OutcomeConflict) {
+		t.Fatalf("stale scan cursor error=%v", err)
+	}
+
 	var records []Record
 	cursor := ""
+	var observed uint64
 	for {
 		page, err := h.adapter.Scan(t.Context(), ScanRequest{Prefix: "external/scan/", Limit: 2, Cursor: cursor})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if observed == 0 {
+			observed = page.ObservedRevision
+		} else if page.ObservedRevision != observed {
+			t.Fatalf("restarted scan mixed revisions: first=%d page=%d", observed, page.ObservedRevision)
 		}
 		records = append(records, page.Records...)
 		if !page.Truncated {
@@ -420,11 +439,14 @@ func scenarioScan(t *testing.T, h *externalHarness) {
 		}
 		cursor = page.Cursor
 	}
-	if len(records) != 3 {
+	if len(records) != 4 {
 		t.Fatalf("scan record count=%d records=%+v", len(records), records)
 	}
-	keys := []string{records[0].Key, records[1].Key, records[2].Key}
-	if !sort.StringsAreSorted(keys) {
+	keys := make([]string, len(records))
+	for index := range records {
+		keys[index] = records[index].Key
+	}
+	if !sort.StringsAreSorted(keys) || fmt.Sprint(keys) != "[external/scan/a external/scan/b external/scan/c external/scan/d]" {
 		t.Fatalf("scan=%v", keys)
 	}
 }
