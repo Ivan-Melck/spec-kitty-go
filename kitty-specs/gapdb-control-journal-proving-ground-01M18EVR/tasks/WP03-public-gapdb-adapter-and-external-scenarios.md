@@ -28,7 +28,7 @@ subtasks:
 - T016
 - T017
 history: []
-agent_profile: implementer-ivan
+agent_profile: reviewer-renata
 authoritative_surface: internal/controlstore/gapdb/
 create_intent:
 - internal/controlstore/gapdb/port.go
@@ -48,7 +48,7 @@ owned_files:
 - internal/controlstore/gapdb/adapter_test.go
 - internal/controlstore/gapdb/external_scenarios_test.go
 - internal/controlstore/gapdb/admission_test.go
-role: implementer
+role: reviewer
 tags:
 - m1
 - gapdb
