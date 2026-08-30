@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -13,23 +14,25 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
 type memoryPort struct {
-	mu              sync.Mutex
-	revision        uint64
-	records         map[string]storegapdb.Record
-	batchCalls      int
-	preflightCalls  int
-	getCalls        int
-	afterGet        func(string, *memoryPort)
-	beforeBatch     func(storegapdb.ProductBatch) error
-	ambiguousAfter  bool
-	malformedResult bool
-	preflightResult *storegapdb.BatchMeasurement
-	preflightErr    error
+	mu               sync.Mutex
+	revision         uint64
+	records          map[string]storegapdb.Record
+	batchCalls       int
+	preflightCalls   int
+	getCalls         int
+	afterGet         func(string, *memoryPort)
+	beforeBatch      func(storegapdb.ProductBatch) error
+	beforeEpochBatch func(storegapdb.RuntimeEpochBatch) error
+	ambiguousAfter   bool
+	malformedResult  bool
+	preflightResult  *storegapdb.BatchMeasurement
+	preflightErr     error
 }
 
 func (p *memoryPort) PreflightAtomicBatch(batch storegapdb.ProductBatch) (storegapdb.BatchMeasurement, error) {
@@ -119,6 +122,11 @@ func (p *memoryPort) AdmitRuntimeEpoch(_ context.Context, batch storegapdb.Runti
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.batchCalls++
+	if p.beforeEpochBatch != nil {
+		if err := p.beforeEpochBatch(batch); err != nil {
+			return storegapdb.MutationResult{}, err
+		}
+	}
 	mutations := []storegapdb.Mutation{batch.Operation, batch.Event, batch.AggregateHead, batch.EpochRecord, batch.CurrentBinding}
 	seen := make(map[string]struct{}, len(mutations))
 	for _, mutation := range mutations {
@@ -451,12 +459,15 @@ func TestEpochAdmissionOnlyAtOwnerRestart(t *testing.T) {
 	}
 	beforeRestart := port.snapshot()
 	secondInput := epochAdmissionFixture("owner-2")
+	secondInput.Startup.DatabaseID = "database-owner-1"
 	secondInput.Startup.HostInstanceID = "host-2"
 	secondInput.Startup.Daemon.PID = 43
 	secondInput.Startup.Daemon.StartTicks = 43
 	secondInput.Startup.ExecutableSHA256 = strings.Repeat("b", 64)
 	secondInput.Startup.AdmittedAt = "2026-08-30T12:01:00Z"
 	secondInput.Startup.DaemonOwnerStartedAt = "2026-08-30T12:01:00Z"
+	secondInput.Restore.Binding.DatabaseID = secondInput.Startup.DatabaseID
+	secondInput.Restore.Binding.HostInstanceID = secondInput.Startup.HostInstanceID
 	second, result, err := admitRuntimeEpochFactsV1(t.Context(), port, secondInput)
 	if err != nil || result.Kind != OutcomeCommitted {
 		t.Fatalf("restart admission=%+v err=%v", result, err)
@@ -481,6 +492,149 @@ func TestEpochAdmissionOnlyAtOwnerRestart(t *testing.T) {
 	if result, err := newService.Apply(t.Context(), batch); err != nil || result.Kind != OutcomeRuntimeEpochConflict {
 		t.Fatalf("predecessor epoch command result=%+v err=%v", result, err)
 	}
+	retained := batchForEpoch(t, "owner-retained", firstEpoch, "aggregate-retained")
+	copiedService := *service
+	beforeRetained := port.batchCalls
+	if result, err := service.Apply(t.Context(), retained); err != nil || result.Kind != OutcomeRuntimeEpochConflict || port.batchCalls != beforeRetained {
+		t.Fatalf("retained predecessor service result=%+v calls=%d err=%v", result, port.batchCalls-beforeRetained, err)
+	}
+	if _, found := port.snapshot()[retained.product.Operation.Key]; found {
+		t.Fatal("revoked predecessor service published untouched aggregate operation")
+	}
+	if result, err := copiedService.Apply(t.Context(), batchForEpoch(t, "owner-copied", firstEpoch, "aggregate-copied")); err != nil || result.Kind != OutcomeRuntimeEpochConflict {
+		t.Fatalf("copied predecessor service result=%+v err=%v", result, err)
+	}
+}
+
+func TestEpochReplacementLinearizesAgainstInFlightPredecessor(t *testing.T) {
+	for trial := 0; trial < 25; trial++ {
+		t.Run(fmt.Sprintf("replacement-first-%02d", trial), func(t *testing.T) {
+			suffix := fmt.Sprintf("race-replacement-%02d", trial)
+			port := newMemoryPort()
+			oldService, oldAdmission := admittedService(t, port, suffix)
+			oldEpoch, _ := oldAdmission.RuntimeEpochID()
+			next := replacementAdmissionFixture(suffix, port)
+			entered, release := make(chan struct{}), make(chan struct{})
+			port.beforeEpochBatch = func(storegapdb.RuntimeEpochBatch) error {
+				close(entered)
+				<-release
+				return nil
+			}
+			type admissionOutcome struct {
+				result ResultV1
+				err    error
+			}
+			admitted := make(chan admissionOutcome, 1)
+			go func() {
+				_, result, err := admitRuntimeEpochFactsV1(context.Background(), port, next)
+				admitted <- admissionOutcome{result: result, err: err}
+			}()
+			<-entered
+			oldBatch := batchForEpoch(t, suffix+"-old", oldEpoch, "aggregate-race-old")
+			oldResult := make(chan ResultV1, 1)
+			oldStarted := make(chan struct{})
+			go func() {
+				close(oldStarted)
+				result, _ := oldService.Apply(context.Background(), oldBatch)
+				oldResult <- result
+			}()
+			<-oldStarted
+			select {
+			case result := <-oldResult:
+				t.Fatalf("old operation crossed exclusive transition guard: %+v", result)
+			case <-time.After(10 * time.Millisecond):
+			}
+			close(release)
+			if outcome := <-admitted; outcome.err != nil || outcome.result.Kind != OutcomeCommitted {
+				t.Fatalf("replacement outcome=%+v err=%v", outcome.result, outcome.err)
+			}
+			if result := <-oldResult; result.Kind != OutcomeRuntimeEpochConflict {
+				t.Fatalf("post-replacement old result=%+v", result)
+			}
+		})
+
+		t.Run(fmt.Sprintf("operation-first-%02d", trial), func(t *testing.T) {
+			suffix := fmt.Sprintf("race-operation-%02d", trial)
+			port := newMemoryPort()
+			oldService, oldAdmission := admittedService(t, port, suffix)
+			oldEpoch, _ := oldAdmission.RuntimeEpochID()
+			oldBatch := batchForEpoch(t, suffix+"-old", oldEpoch, "aggregate-operation-first")
+			next := replacementAdmissionFixture(suffix, port)
+			entered, release := make(chan struct{}), make(chan struct{})
+			port.beforeBatch = func(storegapdb.ProductBatch) error {
+				close(entered)
+				<-release
+				return nil
+			}
+			oldResult := make(chan ResultV1, 1)
+			go func() {
+				result, _ := oldService.Apply(context.Background(), oldBatch)
+				oldResult <- result
+			}()
+			<-entered
+			type admissionOutcome struct {
+				result ResultV1
+				err    error
+			}
+			admitted := make(chan admissionOutcome, 1)
+			go func() {
+				_, result, err := admitRuntimeEpochFactsV1(context.Background(), port, next)
+				admitted <- admissionOutcome{result: result, err: err}
+			}()
+			close(release)
+			committed := <-oldResult
+			if committed.Kind != OutcomeCommitted {
+				t.Fatalf("pre-transition operation result=%+v", committed)
+			}
+			outcome := <-admitted
+			if outcome.err != nil || outcome.result.Kind != OutcomeCommitted || outcome.result.CommittedRevision <= committed.CommittedRevision {
+				t.Fatalf("replacement outcome=%+v old=%+v err=%v", outcome.result, committed, outcome.err)
+			}
+		})
+	}
+}
+
+func replacementAdmissionFixture(suffix string, port *memoryPort) epochAdmissionRequestV1 {
+	next := epochAdmissionFixture(suffix + "-replacement")
+	next.Startup.DatabaseID = "database-" + suffix
+	next.Startup.HostInstanceID = "host-replacement-" + suffix
+	next.Startup.Daemon.PID++
+	next.Startup.Daemon.StartTicks++
+	next.Startup.AdmittedAt = "2026-08-30T12:01:00Z"
+	next.Startup.DaemonOwnerStartedAt = "2026-08-30T12:01:00Z"
+	next.Restore.Binding.DatabaseID = next.Startup.DatabaseID
+	next.Restore.Binding.HostInstanceID = next.Startup.HostInstanceID
+	port.mu.Lock()
+	next.Restore.ObservedStoreRevision = max(uint64(1), port.revision)
+	port.mu.Unlock()
+	return next
+}
+
+func batchForEpoch(t *testing.T, suffix string, epoch controljournal.RuntimeEpochID, aggregate controljournal.AggregateID) ValidatedBatchV1 {
+	t.Helper()
+	input := batchInputFixture(t, suffix, 1, 1, 0)
+	var err error
+	input.Command, err = ValidateCommandEnvelopeV1(CommandEnvelopeInputV1{
+		SchemaVersion: 1, ProjectID: "project", MissionID: "mission", OperationID: controljournal.OperationID("operation-" + suffix),
+		CommandType: "mission.advance", RuntimeEpochID: epoch, Payload: []byte(`{"retained":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Events[0] = eventFixture(t, controljournal.EventID("event-"+suffix), 0, 1, input.Command.operationID, string(aggregate), epoch)
+	input.ExpectedHeads[0] = controljournal.ExpectedAggregateHeadV1{AggregateKind: "mission", AggregateID: aggregate}
+	digest := sha256.Sum256([]byte("state-" + suffix))
+	head, err := controljournal.ConstructAggregateHeadV1("mission", aggregate, 1, epoch, input.Events[0].EventID, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.NextHeads[0] = controljournal.NewAggregateHeadV1{Head: head}
+	input.ExpectedPreconditionsDigest = [32]byte{}
+	batch, err := NewValidatedBatchV1(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return batch
 }
 
 func TestEpochAdmissionValidatesCompleteAckAndThreadsReconcileContext(t *testing.T) {
@@ -512,6 +666,30 @@ func TestEpochAdmissionRequiresSealedOwnerStartupProof(t *testing.T) {
 	})
 	if outcomeOf(err) != OutcomeRefused || result.Kind != "" || port.batchCalls != 0 || port.getCalls != 0 {
 		t.Fatalf("unsealed admission result=%+v reads=%d mutations=%d err=%v", result, port.getCalls, port.batchCalls, err)
+	}
+}
+
+func TestEpochAdmissionRequiresMatchingMissionRestoreFactsBeforeReads(t *testing.T) {
+	for name, mutate := range map[string]func(*epochAdmissionRequestV1){
+		"project":  func(input *epochAdmissionRequestV1) { input.Restore.Source.ProjectID = "other-project" },
+		"mission":  func(input *epochAdmissionRequestV1) { input.Restore.Source.MissionID = "other-mission" },
+		"database": func(input *epochAdmissionRequestV1) { input.Restore.Binding.DatabaseID = "other-database" },
+		"host":     func(input *epochAdmissionRequestV1) { input.Restore.Binding.HostInstanceID = "other-host" },
+		"revision": func(input *epochAdmissionRequestV1) {
+			input.Restore.ObservedStoreRevision = 0
+			input.Restore.Pristine = false
+		},
+		"projection": func(input *epochAdmissionRequestV1) { input.Restore.CanonicalProjectionDigest = [32]byte{} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			port := newMemoryPort()
+			input := epochAdmissionFixture("restore-mismatch-" + name)
+			mutate(&input)
+			_, result, err := admitRuntimeEpochFactsV1(t.Context(), port, input)
+			if outcomeOf(err) != OutcomeRefused || result.Kind != "" || port.getCalls != 0 || port.batchCalls != 0 {
+				t.Fatalf("restore mismatch result=%+v reads=%d mutations=%d err=%v", result, port.getCalls, port.batchCalls, err)
+			}
+		})
 	}
 }
 
@@ -568,7 +746,12 @@ func TestEpochAdmissionDerivesAndProvesDurablePredecessor(t *testing.T) {
 			}
 			corrupt(t, port)
 			before := port.batchCalls
-			_, result, err := admitRuntimeEpochFactsV1(t.Context(), port, epochAdmissionFixture("lineage-next"))
+			next := epochAdmissionFixture("lineage-next")
+			next.Startup.DatabaseID = "database-lineage-first"
+			next.Startup.HostInstanceID = "host-lineage-next"
+			next.Restore.Binding.DatabaseID = next.Startup.DatabaseID
+			next.Restore.Binding.HostInstanceID = next.Startup.HostInstanceID
+			_, result, err := admitRuntimeEpochFactsV1(t.Context(), port, next)
 			if err != nil || result.Kind != OutcomeRefused || port.batchCalls != before {
 				t.Fatalf("lineage refusal result=%+v mutation_calls=%d err=%v", result, port.batchCalls-before, err)
 			}
@@ -625,16 +808,25 @@ func (p *contextAuditEpochPort) Get(ctx context.Context, key string) (storegapdb
 }
 
 func epochAdmissionFixture(suffix string) epochAdmissionRequestV1 {
-	return epochAdmissionRequestV1{
+	request := epochAdmissionRequestV1{
 		ProjectID: "project", MissionID: "mission", OperationID: controljournal.OperationID("admit-" + suffix), EventID: controljournal.EventID("epoch-event-" + suffix),
 		Startup: sidecargapdb.OwnerStartupFactsV1{
 			RuntimeEpochID: "epoch-" + controljournal.RuntimeEpochID(suffix), HostInstanceID: "host-1", SupervisorRunID: "run-1",
 			Supervisor:     sidecargapdb.ProcessIdentity{PID: 41, StartTicks: 41, Device: 1, Inode: 1, Size: 1, SHA256: strings.Repeat("c", 64)},
 			Daemon:         sidecargapdb.ProcessIdentity{PID: 42, StartTicks: 42, Device: 2, Inode: 2, Size: 2, SHA256: strings.Repeat("a", 64)},
-			ExecutablePath: "/opt/spec-kitty/gapdbd", ExecutableSHA256: strings.Repeat("a", 64), DatabaseID: "database-1",
+			ExecutablePath: "/opt/spec-kitty/gapdbd", ExecutableSHA256: strings.Repeat("a", 64), DatabaseID: "database-" + suffix,
 			DaemonOwnerStartedAt: "2026-08-30T12:00:00Z", AdmittedAt: "2026-08-30T12:00:00Z",
 		},
 	}
+	request.Restore = journalcheckpoint.RestoreAdmissionFactsV1{
+		Source: journalcheckpoint.SourceIdentityV1{
+			ProjectID: request.ProjectID, MissionID: request.MissionID, RunID: "run-restore-" + controljournal.RunID(suffix),
+			ReducerSetDigest: sha256.Sum256([]byte("reducers-" + suffix)), EventSchemaSetDigest: sha256.Sum256([]byte("events-" + suffix)),
+		},
+		Binding:               journalcheckpoint.RestoreBindingV1{DatabaseID: request.Startup.DatabaseID, HostInstanceID: request.Startup.HostInstanceID},
+		ObservedStoreRevision: 100, Pristine: true, CanonicalProjectionDigest: sha256.Sum256([]byte("projection-" + suffix)),
+	}
+	return request
 }
 
 func TestGJ01PreservesNonemptyCensusExactly(t *testing.T) {

@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
@@ -97,33 +99,84 @@ type epochAdmissionPort interface {
 
 // EpochAdmissionV1 proves that startup durably installed one explicit epoch.
 type EpochAdmissionV1 struct {
-	seal      [32]byte
-	projectID controljournal.ProjectID
-	missionID controljournal.MissionID
-	epochID   controljournal.RuntimeEpochID
-	revision  uint64
+	seal       [32]byte
+	projectID  controljournal.ProjectID
+	missionID  controljournal.MissionID
+	epochID    controljournal.RuntimeEpochID
+	revision   uint64
+	databaseID string
+	hostID     string
+	generation uint64
+	authority  *epochAuthorityStateV1
 }
 
 func (a EpochAdmissionV1) valid() bool {
-	if a.revision == 0 || a.projectID == "" || a.missionID == "" || a.epochID == "" {
-		return false
+	release, valid := a.operationGuard()
+	if release != nil {
+		release()
 	}
-	return a.seal == epochAdmissionDigest(a.projectID, a.missionID, a.epochID, a.revision)
+	return valid
 }
 
 func (a EpochAdmissionV1) RuntimeEpochID() (controljournal.RuntimeEpochID, error) {
-	if !a.valid() {
+	release, valid := a.operationGuard()
+	if !valid {
 		return "", refusal(OutcomeRefused, "runtime epoch admission capability is invalid")
 	}
+	defer release()
 	return a.epochID, nil
 }
 
+type epochAuthorityKeyV1 struct {
+	databaseID string
+	projectID  controljournal.ProjectID
+	missionID  controljournal.MissionID
+}
+
+type epochAuthorityStateV1 struct {
+	mu         sync.RWMutex
+	generation uint64
+	epochID    controljournal.RuntimeEpochID
+	hostID     string
+}
+
+var epochAuthorityRegistryV1 = struct {
+	sync.Mutex
+	states map[epochAuthorityKeyV1]*epochAuthorityStateV1
+}{states: make(map[epochAuthorityKeyV1]*epochAuthorityStateV1)}
+
+func authorityStateV1(databaseID string, projectID controljournal.ProjectID, missionID controljournal.MissionID) *epochAuthorityStateV1 {
+	key := epochAuthorityKeyV1{databaseID: databaseID, projectID: projectID, missionID: missionID}
+	epochAuthorityRegistryV1.Lock()
+	defer epochAuthorityRegistryV1.Unlock()
+	state := epochAuthorityRegistryV1.states[key]
+	if state == nil {
+		state = &epochAuthorityStateV1{}
+		epochAuthorityRegistryV1.states[key] = state
+	}
+	return state
+}
+
+func (a EpochAdmissionV1) operationGuard() (func(), bool) {
+	if a.authority == nil || a.revision == 0 || a.generation == 0 || a.projectID == "" || a.missionID == "" || a.epochID == "" || a.databaseID == "" || a.hostID == "" {
+		return nil, false
+	}
+	a.authority.mu.RLock()
+	if a.authority.generation != a.generation || a.authority.epochID != a.epochID || a.authority.hostID != a.hostID ||
+		a.seal != epochAdmissionDigest(a.projectID, a.missionID, a.epochID, a.revision, a.databaseID, a.hostID, a.generation) {
+		a.authority.mu.RUnlock()
+		return nil, false
+	}
+	return a.authority.mu.RUnlock, true
+}
+
 type EpochAdmissionInputV1 struct {
-	ProjectID    controljournal.ProjectID
-	MissionID    controljournal.MissionID
-	OperationID  controljournal.OperationID
-	EventID      controljournal.EventID
-	StartupProof sidecargapdb.OwnerStartupProofV1
+	ProjectID           controljournal.ProjectID
+	MissionID           controljournal.MissionID
+	OperationID         controljournal.OperationID
+	EventID             controljournal.EventID
+	StartupProof        sidecargapdb.OwnerStartupProofV1
+	ProductRestoreProof sidecargapdb.ProductRestoreProofV1
 }
 
 // epochAdmissionRequestV1 is an internal test seam. Production can obtain the
@@ -134,6 +187,8 @@ type epochAdmissionRequestV1 struct {
 	OperationID controljournal.OperationID
 	EventID     controljournal.EventID
 	Startup     sidecargapdb.OwnerStartupFactsV1
+	Restore     journalcheckpoint.RestoreAdmissionFactsV1
+	authority   *epochAuthorityStateV1
 }
 
 type epochAdmissionWireV1 struct {
@@ -167,9 +222,13 @@ func AdmitRuntimeEpochV1(ctx context.Context, port epochAdmissionPort, input Epo
 	if err != nil {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "owner startup proof is absent or invalid")
 	}
+	restore, err := input.ProductRestoreProof.Facts()
+	if err != nil {
+		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "product restore proof is absent or invalid")
+	}
 	return admitRuntimeEpochFactsV1(ctx, port, epochAdmissionRequestV1{
 		ProjectID: input.ProjectID, MissionID: input.MissionID, OperationID: input.OperationID,
-		EventID: input.EventID, Startup: facts,
+		EventID: input.EventID, Startup: facts, Restore: restore,
 	})
 }
 
@@ -195,6 +254,17 @@ func admitRuntimeEpochFactsV1(ctx context.Context, port epochAdmissionPort, inpu
 		facts.AdmittedAt == "" || facts.DaemonOwnerStartedAt == "" || facts.ExecutablePath == "" || !validSHA256(facts.ExecutableSHA256) {
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "runtime epoch provenance is incomplete")
 	}
+	restore := input.Restore
+	if restore.Source.ProjectID != input.ProjectID || restore.Source.MissionID != input.MissionID ||
+		restore.Binding.DatabaseID != facts.DatabaseID || restore.Binding.HostInstanceID != facts.HostInstanceID ||
+		restore.ObservedStoreRevision == 0 && !restore.Pristine || restore.CanonicalProjectionDigest == [32]byte{} ||
+		restore.TerminalWatermark.ThroughRecordRevision > restore.ObservedStoreRevision {
+		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeRefused, "product restore proof does not match runtime admission")
+	}
+	state := authorityStateV1(facts.DatabaseID, input.ProjectID, input.MissionID)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	input.authority = state
 	prefix := canonicalPrefix(input.ProjectID, input.MissionID)
 	operationKey := prefix + "operations/" + string(input.OperationID)
 	if stored, readErr := port.Get(ctx, operationKey); readErr == nil {
@@ -283,13 +353,18 @@ func admitRuntimeEpochFactsV1(ctx context.Context, port epochAdmissionPort, inpu
 	}
 	result, err := port.AdmitRuntimeEpoch(ctx, batch)
 	if err != nil {
+		revokeEpochAuthorityLockedV1(state)
 		mapped := mapMutationError(input.OperationID, err)
 		return EpochAdmissionV1{}, mapped, nil
 	}
 	if result.Ack != storegapdb.AckDurable || result.Revision == 0 || result.DurableThrough != result.Revision || result.MutationCount != 5 {
+		revokeEpochAuthorityLockedV1(state)
 		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeIndeterminate, "runtime epoch acknowledgement is malformed")
 	}
-	admission := newEpochAdmission(input.ProjectID, input.MissionID, facts.RuntimeEpochID, result.Revision)
+	admission, ok := activateEpochAdmissionLockedV1(input, result.Revision)
+	if !ok {
+		return EpochAdmissionV1{}, ResultV1{}, refusal(OutcomeIndeterminate, "runtime epoch authority could not be activated")
+	}
 	return admission, ResultV1{Kind: OutcomeCommitted, OperationID: input.OperationID, CommittedRevision: result.Revision, Recovery: RecoveryNone}, nil
 }
 
@@ -389,7 +464,10 @@ func reconcileExistingEpochAdmission(ctx context.Context, port epochAdmissionPor
 		head.LastEventID != input.EventID || head.LogicalVersion != event.AggregateLogicalVersion || head.StateDigest != sha256.Sum256(currentRecord.Value) {
 		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeIndeterminate, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
 	}
-	admission := newEpochAdmission(input.ProjectID, input.MissionID, input.Startup.RuntimeEpochID, operationRecord.Revision)
+	admission, ok := activateEpochAdmissionLockedV1(input, operationRecord.Revision)
+	if !ok {
+		return EpochAdmissionV1{}, ResultV1{Kind: OutcomeRuntimeEpochConflict, OperationID: input.OperationID, Recovery: RecoveryOperator}, nil
+	}
 	return admission, ResultV1{Kind: OutcomeAlreadyCommitted, OperationID: input.OperationID, CommittedRevision: operationRecord.Revision, Recovery: RecoveryNone}, nil
 }
 
@@ -434,10 +512,32 @@ func validRuntimeStatus(value string) bool {
 	}
 }
 
-func newEpochAdmission(project controljournal.ProjectID, mission controljournal.MissionID, epoch controljournal.RuntimeEpochID, revision uint64) EpochAdmissionV1 {
-	admission := EpochAdmissionV1{projectID: project, missionID: mission, epochID: epoch, revision: revision}
-	admission.seal = epochAdmissionDigest(project, mission, epoch, revision)
-	return admission
+func activateEpochAdmissionLockedV1(input epochAdmissionRequestV1, revision uint64) (EpochAdmissionV1, bool) {
+	state := input.authority
+	if state == nil || revision == 0 {
+		return EpochAdmissionV1{}, false
+	}
+	if state.epochID != input.Startup.RuntimeEpochID || state.generation == 0 {
+		state.generation++
+	}
+	state.epochID = input.Startup.RuntimeEpochID
+	state.hostID = input.Startup.HostInstanceID
+	admission := EpochAdmissionV1{
+		projectID: input.ProjectID, missionID: input.MissionID, epochID: input.Startup.RuntimeEpochID,
+		revision: revision, databaseID: input.Startup.DatabaseID, hostID: input.Startup.HostInstanceID,
+		generation: state.generation, authority: state,
+	}
+	admission.seal = epochAdmissionDigest(admission.projectID, admission.missionID, admission.epochID, admission.revision, admission.databaseID, admission.hostID, admission.generation)
+	return admission, true
+}
+
+func revokeEpochAuthorityLockedV1(state *epochAuthorityStateV1) {
+	if state == nil {
+		return
+	}
+	state.generation++
+	state.epochID = ""
+	state.hostID = ""
 }
 
 func validSHA256(value string) bool {
@@ -452,8 +552,8 @@ func validSHA256(value string) bool {
 	return true
 }
 
-func epochAdmissionDigest(project controljournal.ProjectID, mission controljournal.MissionID, epoch controljournal.RuntimeEpochID, revision uint64) [32]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("epoch-admission-v1\x00%s\x00%s\x00%s\x00%d", project, mission, epoch, revision)))
+func epochAdmissionDigest(project controljournal.ProjectID, mission controljournal.MissionID, epoch controljournal.RuntimeEpochID, revision uint64, databaseID, hostID string, generation uint64) [32]byte {
+	return sha256.Sum256([]byte(fmt.Sprintf("epoch-admission-v2\x00%s\x00%s\x00%s\x00%d\x00%s\x00%s\x00%d", project, mission, epoch, revision, databaseID, hostID, generation)))
 }
 
 // Service is pinned to one admitted owner lifetime. It has no method that can
@@ -464,18 +564,28 @@ type Service struct {
 }
 
 func NewService(port publicationPort, admission EpochAdmissionV1) (*Service, error) {
-	if port == nil || !admission.valid() {
+	if port == nil {
 		return nil, refusal(OutcomeRefused, "service requires a valid startup epoch admission")
 	}
+	release, valid := admission.operationGuard()
+	if !valid {
+		return nil, refusal(OutcomeRefused, "service requires a valid startup epoch admission")
+	}
+	release()
 	return &Service{port: port, admission: admission}, nil
 }
 
 // Apply publishes a validated batch at most once. It performs no automatic
 // mutation retry and never substitutes a new OperationID.
 func (s *Service) Apply(ctx context.Context, batch ValidatedBatchV1) (ResultV1, error) {
-	if s == nil || s.port == nil || !s.admission.valid() {
+	if s == nil || s.port == nil {
 		return ResultV1{}, refusal(OutcomeRefused, "service is not admitted")
 	}
+	release, valid := s.admission.operationGuard()
+	if !valid {
+		return ResultV1{Kind: OutcomeRuntimeEpochConflict, OperationID: batch.command.operationID, Recovery: RecoveryOperator}, nil
+	}
+	defer release()
 	if !batch.valid() {
 		return ResultV1{}, refusal(OutcomeRefused, "batch validation capability is invalid")
 	}

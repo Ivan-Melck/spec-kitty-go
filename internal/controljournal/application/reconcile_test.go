@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +15,8 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/reducer"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
@@ -134,6 +138,158 @@ func TestReconcileSameIDDifferentDigestRefuses(t *testing.T) {
 	}
 }
 
+type restoreScanPortV1 struct {
+	records   map[string]storegapdb.Record
+	pages     []storegapdb.ScanPage
+	scanCalls int
+}
+
+func (port *restoreScanPortV1) Get(_ context.Context, key string) (storegapdb.Record, error) {
+	record, found := port.records[key]
+	if !found {
+		return storegapdb.Record{}, &storegapdb.Error{Kind: storegapdb.OutcomeNotFound, Operation: "get", Recovery: storegapdb.RecoveryRead}
+	}
+	return record, nil
+}
+
+func (port *restoreScanPortV1) Scan(context.Context, storegapdb.ScanRequest) (storegapdb.ScanPage, error) {
+	if port.scanCalls >= len(port.pages) {
+		return storegapdb.ScanPage{}, errors.New("unexpected provider scan")
+	}
+	page := port.pages[port.scanCalls]
+	port.scanCalls++
+	return page, nil
+}
+
+func TestExternalRestoreTranslatorProvesNonemptyHistoryAndBoundsPrefixIO(t *testing.T) {
+	eventIndex, _ := controljournal.NewEventIndexV1(0)
+	eventCount, _ := controljournal.NewEventCountV1(1)
+	event, err := controljournal.NewEventEnvelopeV1(controljournal.EventEnvelopeInputV1{
+		EnvelopeVersion: 1, EventID: "event-restore-nonempty", EventType: "mission.advanced", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", ProjectID: "project", AggregateKind: "mission", AggregateID: "aggregate-restore",
+		AggregateLogicalVersion: 1, OperationID: "operation-restore-nonempty", RuntimeEpochID: "epoch-restore",
+		EventIndex: eventIndex, EventCount: eventCount, LeaseID: "lease-restore", LeaseGeneration: 1, FenceToken: 1,
+		Payload: []byte(`{"advanced":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := controljournal.EncodeEventEnvelopeV1(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := &restoreScanPortV1{records: map[string]storegapdb.Record{}, pages: []storegapdb.ScanPage{{
+		ObservedRevision: 10,
+		Records:          []storegapdb.Record{{Key: "spk/v1/project/mission/journal/event-restore-nonempty", Value: encoded, Revision: 7}},
+	}}}
+	reader, err := NewRestoreReaderV1(port, "project", "mission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{
+		EventType: "mission.advanced", EventSchemaVersion: 1, ReducerVersion: "mission-v1",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducers, err := reducer.NewRegistryV1([]reducer.EntryV1{{
+		AggregateKind: "mission", EventType: "mission.advanced", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	restored, err := journalcheckpoint.RestoreV1(t.Context(), journalcheckpoint.RestoreInputV1{
+		Reader: reader,
+		Source: journalcheckpoint.SourceIdentityV1{
+			ProjectID: "project", MissionID: "mission", RunID: "run-restore-nonempty",
+			ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest,
+		},
+		Binding:       journalcheckpoint.RestoreBindingV1{DatabaseID: "database-restore", HostInstanceID: "host-restore"},
+		EventRegistry: events, Reducers: reducers,
+	})
+	if err != nil || !restored.Ready || restored.Pristine || restored.TerminalWatermark.ThroughRecordRevision != 7 || restored.Observation.ObservedStoreRevision != 10 {
+		t.Fatalf("nonempty restore result=%+v err=%v", restored, err)
+	}
+	proof, err := restored.AdmissionV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts, err := proof.Facts(); err != nil || facts.Pristine || facts.TerminalWatermark.ThroughEventID != event.EventID {
+		t.Fatalf("nonempty restore facts=%+v err=%v", facts, err)
+	}
+
+	concrete := reader.(*adapterRestoreReaderV1)
+	before := port.scanCalls
+	if _, err := concrete.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{ThroughRecordRevision: 7, ThroughEventID: event.EventID}, ""); err == nil || port.scanCalls != before {
+		t.Fatalf("checkpoint suffix silently read full prefix scans=%d before=%d err=%v", port.scanCalls, before, err)
+	}
+
+	pages := make([]storegapdb.ScanPage, journalcheckpoint.MaxRestorePages)
+	for index := range pages {
+		pages[index] = storegapdb.ScanPage{ObservedRevision: 10, Truncated: true, Cursor: fmt.Sprintf("provider-%d", index+1)}
+	}
+	bounded := &restoreScanPortV1{records: map[string]storegapdb.Record{}, pages: pages}
+	boundedReader, err := NewRestoreReaderV1(bounded, "project", "mission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := boundedReader.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{}, ""); err == nil || bounded.scanCalls != journalcheckpoint.MaxRestorePages {
+		t.Fatalf("provider page boundary escaped calls=%d err=%v", bounded.scanCalls, err)
+	}
+}
+
+func TestExternalRestoreTranslatorClosesCheckpointAdmissionWithoutAfterRevisionAPI(t *testing.T) {
+	capability := checkpointCapabilityFixture(t, "project", "mission", "operation-checkpoint-prefix", "operation-checkpoint-forming")
+	record, err := capability.RecordV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication, err := capability.PublicationV1("operation-checkpoint-forming")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := "spk/v1/project/mission/"
+	port := &restoreScanPortV1{records: map[string]storegapdb.Record{
+		prefix + "checkpoint-head": {Key: prefix + "checkpoint-head", Value: publication.HeadBytes, Revision: 8},
+		prefix + "checkpoints/" + string(record.CheckpointID): {
+			Key: prefix + "checkpoints/" + string(record.CheckpointID), Value: publication.RecordBytes, Revision: 7,
+		},
+	}}
+	reader, err := NewRestoreReaderV1(port, "project", "mission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{
+		EventType: "mission.advanced", EventSchemaVersion: 1, ReducerVersion: "mission-v1",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducers, err := reducer.NewRegistryV1([]reducer.EntryV1{{
+		AggregateKind: "mission", EventType: "mission.advanced", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := journalcheckpoint.RestoreV1(t.Context(), journalcheckpoint.RestoreInputV1{
+		Reader: reader,
+		Source: journalcheckpoint.SourceIdentityV1{
+			ProjectID: record.ProjectID, MissionID: record.MissionID, RunID: record.Authority.RunID,
+			ReducerSetDigest: record.ReducerSetDigest, EventSchemaSetDigest: record.EventSchemaSetDigest,
+		},
+		Binding:       journalcheckpoint.RestoreBindingV1{DatabaseID: "database-checkpoint", HostInstanceID: "host-checkpoint"},
+		EventRegistry: events, Reducers: reducers,
+	})
+	var refusal journalcheckpoint.NotReadyErrorV1
+	if !errors.As(err, &refusal) || refusal.Kind != journalcheckpoint.NotReadyReplayBound || result.Ready || port.scanCalls != 0 {
+		t.Fatalf("checkpoint adapter limitation result=%+v scans=%d refusal=%+v err=%v", result, port.scanCalls, refusal, err)
+	}
+}
+
 // TestReconcileRealGJ02ResponseDrop is the admitted, wire-level fault path. It
 // never fabricates a timeout: WP04's proxy first consumes a complete durable
 // daemon response, records GJ-02, and closes the product connection before
@@ -163,16 +319,45 @@ func TestReconcileRealGJ02ResponseDrop(t *testing.T) {
 	}
 	defer directConnection.Close()
 	registry, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{
-		EventType: "mission.advance", EventSchemaVersion: 1, ReducerVersion: "mission-v1",
+		EventType: "mission.advanced", EventSchemaVersion: 1, ReducerVersion: "mission-v1",
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := controljournal.ValidateJournalV1(registry, nil)
+	reducers, err := reducer.NewRegistryV1([]reducer.EntryV1{{
+		AggregateKind: "mission", EventType: "mission.advanced", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1,
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lifecycle.MarkProductRecovered(restored); err != nil {
+	eventDigest, _ := registry.Digest()
+	reducerDigest, _ := reducers.Digest()
+	binding, err := lifecycle.ProductRestoreBindingV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreReader, err := NewRestoreReaderV1(directAdapter, "project", "mission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := journalcheckpoint.RestoreV1(t.Context(), journalcheckpoint.RestoreInputV1{
+		Reader: restoreReader,
+		Source: journalcheckpoint.SourceIdentityV1{
+			ProjectID: "project", MissionID: "mission", RunID: "run-application-gj02",
+			ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest,
+		},
+		Binding: binding, EventRegistry: registry, Reducers: reducers,
+	})
+	if err != nil || !restored.Ready || !restored.Pristine {
+		t.Fatalf("real product restore result=%+v err=%v", restored, err)
+	}
+	restoreAdmission, err := restored.AdmissionV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	productProof, err := lifecycle.MarkProductRecovered(restoreAdmission)
+	if err != nil {
 		t.Fatal(err)
 	}
 	startupProof, err := lifecycle.BindOwnerStartupEpochV1("epoch-real-gj02")
@@ -181,10 +366,20 @@ func TestReconcileRealGJ02ResponseDrop(t *testing.T) {
 	}
 	admission, result, err := AdmitRuntimeEpochV1(t.Context(), directAdapter, EpochAdmissionInputV1{
 		ProjectID: "project", MissionID: "mission", OperationID: "admit-real-gj02", EventID: "epoch-event-real-gj02",
-		StartupProof: startupProof,
+		StartupProof: startupProof, ProductRestoreProof: productProof,
 	})
 	if err != nil || result.Kind != OutcomeCommitted {
 		t.Fatalf("real admission result=%+v err=%v", result, err)
+	}
+	nonemptyJournal, err := directAdapter.Scan(t.Context(), storegapdb.ScanRequest{Prefix: "spk/v1/project/mission/journal/", Limit: 10})
+	if err != nil || len(nonemptyJournal.Records) == 0 {
+		t.Fatalf("runtime admission did not make the real store nonempty: records=%d err=%v", len(nonemptyJournal.Records), err)
+	}
+	if invented, inventedErr := (journalcheckpoint.RestoreResultV1{Ready: true, Pristine: true}).AdmissionV1(); inventedErr == nil {
+		t.Fatalf("caller-built empty history minted admission: %+v", invented)
+	}
+	if _, inventedErr := lifecycle.MarkProductRecovered(journalcheckpoint.RestoreAdmissionV1{}); !sidecargapdb.IsFailure(inventedErr, sidecargapdb.FailureReadiness) {
+		t.Fatalf("invented empty history promoted nonempty store readiness: %v", inventedErr)
 	}
 
 	proxyRoot := privateApplicationRoot(t)
