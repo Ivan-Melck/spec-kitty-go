@@ -285,6 +285,41 @@ func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
 	}
 }
 
+func TestDefaultPolicyClassifiesGapDBAsExactProviderAdapter(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := module + "/internal/controlstore/gapdb"
+	assertTier(t, policy, adapter, TierAdapter)
+
+	accepted := fixtureGraph(
+		[]string{adapter},
+		ImportEdge{SourcePackage: adapter, TargetPackage: "github.com/spec-kitty/gapdb", Kind: ImportExternal},
+	)
+	accepted.ModulePath = module
+	if err := policy.Check(accepted); err != nil {
+		t.Fatalf("exact public GapDB dependency rejected: %v", err)
+	}
+
+	lookalike := fixtureGraph(
+		[]string{adapter},
+		ImportEdge{SourcePackage: adapter, TargetPackage: "github.com/spec-kitty/gapdbx", Kind: ImportExternal},
+	)
+	lookalike.ModulePath = module
+	assertExactViolation(t, policy, lookalike, RuleExternalDirection, adapter, TierAdapter, "github.com/spec-kitty/gapdbx", "")
+
+	authority := module + "/internal/execution"
+	kernelImport := fixtureGraph(
+		[]string{authority, adapter},
+		ImportEdge{SourcePackage: authority, TargetPackage: adapter, Kind: ImportModuleLocal},
+	)
+	kernelImport.ModulePath = module
+	assertExactViolation(t, policy, kernelImport, RuleLocalDirection, authority, TierAuthority, adapter, TierAdapter)
+}
+
 // WP08 coordination guard: conformance is deliberately test-only quality
 // tooling. It may exercise the provider-neutral contract and adapters, but no
 // authority package may acquire it as a production dependency.
