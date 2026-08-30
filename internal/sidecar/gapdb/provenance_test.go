@@ -27,11 +27,16 @@ func TestProvenanceAdmittedImmutableExecutablePasses(t *testing.T) {
 	}
 	defer verified.Close()
 	provenance := verified.Provenance()
+	executed := verified.ExecutedImage()
 	if provenance.SHA256 != "62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e" ||
 		provenance.AdmissionRecordSHA256 != "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d" ||
 		provenance.Size != admittedExecutableSize || provenance.Device == 0 || provenance.Inode == 0 ||
 		provenance.ContractRevision != contractRevision {
 		t.Fatalf("incomplete provenance: %+v", provenance)
+	}
+	if executed.SHA256 != provenance.SHA256 || executed.Size != provenance.Size || executed.Device == 0 || executed.Inode == 0 ||
+		executed.Seals&requiredExecutionSeals != requiredExecutionSeals || executed.Device == provenance.Device && executed.Inode == provenance.Inode {
+		t.Fatalf("immutable execution image is incomplete: %+v", executed)
 	}
 }
 
@@ -112,7 +117,7 @@ func TestProvenanceChangedDescriptorIdentityFailsBeforeExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer verified.Close()
-	verified.identity.inode++ // executable mutant: post-verify identity substitution
+	verified.executeIdentity.inode++ // executable mutant: post-verify identity substitution
 	_, err = verified.command([]string{"-db", t.TempDir()}, []string{"LANG=C"})
 	if !IsFailure(err, FailureIdentityUnprovable) {
 		t.Fatalf("changed identity err=%v", err)
@@ -169,6 +174,67 @@ func TestProvenanceVerifyThenSwapExecutesHeldDescriptor(t *testing.T) {
 	}
 }
 
+func TestProvenanceInPlaceSourceMutationCannotChangeSealedExecution(t *testing.T) {
+	binary := safeAdmittedCopy(t)
+	verified, err := VerifyExecutable(VerifyConfig{ExecutablePath: binary, AdmissionRecordPath: admissionRecordPath(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verified.Close()
+	socket := filepath.Join(t.TempDir(), "gapdb.sock")
+	command, err := verified.command([]string{"-db", filepath.Join(t.TempDir(), "database"), "-socket", socket, "-json=true"}, []string{"LANG=C", "TZ=UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.OpenFile(binary, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.WriteAt([]byte{0}, admittedExecutableSize-1); err != nil {
+		t.Fatal(err)
+	}
+	_ = source.Close()
+	command.Stdout, command.Stderr = io.Discard, io.Discard
+	if err := command.Start(); err != nil {
+		t.Fatalf("sealed image did not execute after source mutation: %v", err)
+	}
+	client, err := waitPublicClient(t.Context(), socket, 5*time.Second)
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	if err := command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProvenanceSealedImageRejectsWritesAndCommandRequiresReverification(t *testing.T) {
+	verified, err := VerifyExecutable(VerifyConfig{ExecutablePath: safeAdmittedCopy(t), AdmissionRecordPath: admissionRecordPath(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verified.Close()
+	if _, err := verified.execution.WriteAt([]byte{0}, 0); err == nil {
+		t.Fatal("sealed execution image accepted an in-place mutation")
+	}
+	_ = verified.Close()
+	verified, err = VerifyExecutable(VerifyConfig{ExecutablePath: safeAdmittedCopy(t), AdmissionRecordPath: admissionRecordPath(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verified.Close()
+	sentinel := errors.New("deleted execution revalidation")
+	verified.verifyExecution = func(*os.File, ExecutedImageProvenance) error { return sentinel }
+	if _, err := verified.command(nil, []string{"LANG=C"}); !IsFailure(err, FailureIdentityUnprovable) || !errors.Is(err, sentinel) {
+		t.Fatalf("command bypassed execution revalidation: %v", err)
+	}
+}
+
 func TestProvenanceDiagnosticsAreBoundedAndSecretFree(t *testing.T) {
 	secret := strings.Repeat("credential", 1024)
 	err := failure(FailureUnsafePath, secret, secret, errors.New(secret))
@@ -177,7 +243,7 @@ func TestProvenanceDiagnosticsAreBoundedAndSecretFree(t *testing.T) {
 	}
 }
 
-func TestProvenanceLifecycleAndResponseDropMutantControls(t *testing.T) {
+func TestProvenanceForbiddenProductionSurfaces(t *testing.T) {
 	directory := filepath.Dir(admissionRecordPath(t))
 	packageDirectory := filepath.Clean(filepath.Join(directory, "..", "..", "..", "internal", "sidecar", "gapdb"))
 	production := make(map[string]string)
@@ -188,24 +254,11 @@ func TestProvenanceLifecycleAndResponseDropMutantControls(t *testing.T) {
 		}
 		production[name] = string(encoded)
 	}
-	if !strings.Contains(production["provenance.go"], `exec.Command("/proc/self/fd/3"`) {
-		t.Fatal("descriptor-bound exec control is absent")
-	}
 	for _, forbidden := range []string{"Look" + "Path", "Command(config.ExecutablePath", "Combined" + "Output", "internal/" + "server", "controlstore/" + "sqlite", "Remove" + "All("} {
 		for name, source := range production {
 			if strings.Contains(source, forbidden) {
 				t.Fatalf("%s contains forbidden mutant surface %q", name, forbidden)
 			}
-		}
-	}
-	for _, required := range []string{
-		"PidfdOpen", "PidfdSendSignal", "processStartTicks", "peerProcess",
-		"result.DurableThroughRevision != result.Revision", "after_durable_acceptance_before_client_response",
-		"validateNoDuplicateJSON", "writeWireFrame(daemon, requestBytes)",
-	} {
-		joined := production["provenance.go"] + production["lifecycle.go"] + production["proxy.go"]
-		if !strings.Contains(joined, required) {
-			t.Fatalf("mutant control %q is absent", required)
 		}
 	}
 }

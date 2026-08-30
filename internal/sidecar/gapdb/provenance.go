@@ -98,12 +98,29 @@ type ExecutableProvenance struct {
 	ContractRevision      string
 }
 
+// ExecutedImageProvenance identifies the private immutable image actually
+// passed to exec. The admitted source identity remains separately recorded in
+// ExecutableProvenance because a held source descriptor does not prevent its
+// owner from modifying that inode in place.
+type ExecutedImageProvenance struct {
+	SHA256 string
+	Size   int64
+	Device uint64
+	Inode  uint64
+	Mode   uint32
+	Seals  int
+}
+
 // VerifiedExecutable holds the exact descriptor whose bytes were verified.
 // It is consumed by Lifecycle.Start and is never resolved through PATH.
 type VerifiedExecutable struct {
-	file       *os.File
-	provenance ExecutableProvenance
-	identity   fileIdentity
+	source          *os.File
+	execution       *os.File
+	provenance      ExecutableProvenance
+	executed        ExecutedImageProvenance
+	sourceIdentity  fileIdentity
+	executeIdentity fileIdentity
+	verifyExecution func(*os.File, ExecutedImageProvenance) error
 }
 
 type fileIdentity struct {
@@ -192,14 +209,14 @@ func VerifyExecutable(config VerifyConfig) (*VerifiedExecutable, error) {
 	if err != nil {
 		return nil, failure(FailureUnsafePath, "verify", "executable cannot be opened without following links", err)
 	}
-	file := os.NewFile(uintptr(fd), "admitted-gapdbd")
-	verified := &VerifiedExecutable{file: file}
-	verified.identity, err = identityOf(file)
+	file := os.NewFile(uintptr(fd), "admitted-gapdbd-source")
+	verified := &VerifiedExecutable{source: file, verifyExecution: verifySealedExecution}
+	verified.sourceIdentity, err = identityOf(file)
 	if err != nil {
 		_ = file.Close()
 		return nil, failure(FailureIdentityUnprovable, "verify", "executable identity cannot be read", err)
 	}
-	if err := validateExecutableIdentity(verified.identity); err != nil {
+	if err := validateExecutableIdentity(verified.sourceIdentity); err != nil {
 		_ = file.Close()
 		return nil, failure(FailureUnsafePath, "verify", "executable metadata is not admitted", err)
 	}
@@ -214,11 +231,16 @@ func VerifyExecutable(config VerifyConfig) (*VerifiedExecutable, error) {
 	}
 	verified.provenance = ExecutableProvenance{
 		ExecutablePath: bounded(config.ExecutablePath, maxEvidencePathBytes), SHA256: digest,
-		Size: verified.identity.size, Device: verified.identity.device, Inode: verified.identity.inode,
-		OwnerUID: verified.identity.uid, OwnerGID: verified.identity.gid, Mode: verified.identity.mode,
+		Size: verified.sourceIdentity.size, Device: verified.sourceIdentity.device, Inode: verified.sourceIdentity.inode,
+		OwnerUID: verified.sourceIdentity.uid, OwnerGID: verified.sourceIdentity.gid, Mode: verified.sourceIdentity.mode,
 		SourceRevision: record.GapDBTuple.SourceRevision, SourceTree: record.GapDBTuple.SourceTree,
 		ModuleVersion: record.GapDBTuple.ModuleVersion, AdmissionRecordSHA256: recordDigest,
 		ContractRevision: contractRevision,
+	}
+	verified.execution, verified.executeIdentity, verified.executed, err = createSealedExecutionImage(file, digest)
+	if err != nil {
+		_ = verified.Close()
+		return nil, failure(FailureIdentityUnprovable, "verify", "immutable execution image cannot be established", err)
 	}
 	return verified, nil
 }
@@ -255,36 +277,110 @@ func (v *VerifiedExecutable) Provenance() ExecutableProvenance {
 	return v.provenance
 }
 
+// ExecutedImage returns a value copy of the immutable image identity.
+func (v *VerifiedExecutable) ExecutedImage() ExecutedImageProvenance {
+	if v == nil {
+		return ExecutedImageProvenance{}
+	}
+	return v.executed
+}
+
 // Close releases an unused verified capability. Start consumes it regardless
 // of whether process creation succeeds.
 func (v *VerifiedExecutable) Close() error {
-	if v == nil || v.file == nil {
+	if v == nil {
 		return nil
 	}
-	err := v.file.Close()
-	v.file = nil
-	return err
+	var closeErr error
+	if v.execution != nil {
+		closeErr = errors.Join(closeErr, v.execution.Close())
+		v.execution = nil
+	}
+	if v.source != nil {
+		closeErr = errors.Join(closeErr, v.source.Close())
+		v.source = nil
+	}
+	return closeErr
 }
 
 func (v *VerifiedExecutable) command(arguments, environment []string) (*exec.Cmd, error) {
-	if v == nil || v.file == nil {
+	if v == nil || v.execution == nil || v.verifyExecution == nil {
 		return nil, failure(FailureIdentityUnprovable, "exec", "verified descriptor is absent", nil)
 	}
-	current, err := identityOf(v.file)
-	if err != nil || !sameExecutableIdentity(current, v.identity) {
+	current, err := identityOf(v.execution)
+	if err != nil || !sameExecutableIdentity(current, v.executeIdentity) {
 		return nil, failure(FailureIdentityUnprovable, "exec", "verified descriptor identity changed", err)
 	}
-	digest, err := digestFile(v.file, admittedExecutableSize)
-	if err != nil || digest != v.provenance.SHA256 {
-		return nil, failure(FailureIdentityUnprovable, "exec", "verified descriptor bytes changed", err)
+	if err := v.verifyExecution(v.execution, v.executed); err != nil {
+		return nil, failure(FailureIdentityUnprovable, "exec", "sealed execution image changed", err)
 	}
 	// ExtraFiles maps the held file to child fd 3. The kernel resolves this
 	// descriptor path during exec, binding executed bytes to the verified file
 	// even if the configured pathname is concurrently renamed or replaced.
 	command := exec.Command("/proc/self/fd/3", arguments...)
-	command.ExtraFiles = []*os.File{v.file}
+	command.ExtraFiles = []*os.File{v.execution}
 	command.Env = append([]string(nil), environment...)
 	return command, nil
+}
+
+const requiredExecutionSeals = unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
+
+func createSealedExecutionImage(source *os.File, expectedDigest string) (*os.File, fileIdentity, ExecutedImageProvenance, error) {
+	fd, err := unix.MemfdCreate("spec-kitty-gapdbd", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
+	if err != nil {
+		return nil, fileIdentity{}, ExecutedImageProvenance{}, err
+	}
+	image := os.NewFile(uintptr(fd), "sealed-gapdbd")
+	fail := func(err error) (*os.File, fileIdentity, ExecutedImageProvenance, error) {
+		_ = image.Close()
+		return nil, fileIdentity{}, ExecutedImageProvenance{}, err
+	}
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return fail(err)
+	}
+	written, err := io.Copy(image, io.LimitReader(source, admittedExecutableSize+1))
+	if err != nil || written != admittedExecutableSize {
+		return fail(errors.Join(err, errors.New("execution image size differs")))
+	}
+	if err := unix.Fchmod(fd, 0o500); err != nil {
+		return fail(err)
+	}
+	if _, err := unix.FcntlInt(uintptr(fd), unix.F_ADD_SEALS, requiredExecutionSeals); err != nil {
+		return fail(err)
+	}
+	seals, err := unix.FcntlInt(uintptr(fd), unix.F_GET_SEALS, 0)
+	if err != nil || seals&requiredExecutionSeals != requiredExecutionSeals {
+		return fail(errors.Join(err, errors.New("execution image seals are incomplete")))
+	}
+	identity, err := identityOf(image)
+	if err != nil {
+		return fail(err)
+	}
+	executed := ExecutedImageProvenance{
+		SHA256: expectedDigest, Size: identity.size, Device: identity.device,
+		Inode: identity.inode, Mode: identity.mode, Seals: seals,
+	}
+	if err := verifySealedExecution(image, executed); err != nil {
+		return fail(err)
+	}
+	return image, identity, executed, nil
+}
+
+func verifySealedExecution(image *os.File, expected ExecutedImageProvenance) error {
+	identity, err := identityOf(image)
+	if err != nil || identity.device != expected.Device || identity.inode != expected.Inode ||
+		identity.size != expected.Size || identity.mode != expected.Mode {
+		return errors.Join(err, errors.New("execution image identity differs"))
+	}
+	seals, err := unix.FcntlInt(image.Fd(), unix.F_GET_SEALS, 0)
+	if err != nil || seals&requiredExecutionSeals != requiredExecutionSeals || seals != expected.Seals {
+		return errors.Join(err, errors.New("execution image seal set differs"))
+	}
+	digest, err := digestFile(image, expected.Size)
+	if err != nil || digest != expected.SHA256 {
+		return errors.Join(err, errors.New("execution image digest differs"))
+	}
+	return nil
 }
 
 func sameExecutableIdentity(first, second fileIdentity) bool {

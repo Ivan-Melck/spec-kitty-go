@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,6 +43,32 @@ type LifecycleConfig struct {
 	ProductPolicySHA256 string
 	StartTimeout        time.Duration
 	StopTimeout         time.Duration
+	filesystem          filesystemProbe
+	processes           processAPI
+	observationHook     func(string)
+	commandStarted      func(*os.Process)
+}
+
+type filesystemIdentity struct {
+	Type int64
+	FSID unix.Fsid
+}
+
+type filesystemProbe func(string) (filesystemIdentity, error)
+
+type processAPI struct {
+	startTicks  func(int) (uint64, error)
+	executable  func(int) (fileIdentity, string, error)
+	pidfdOpen   func(int, int) (int, error)
+	pidfdSignal func(int, unix.Signal, *unix.Siginfo, int) error
+	closeFD     func(int) error
+	poll        func([]unix.PollFd, int) (int, error)
+}
+
+var systemProcessAPI = processAPI{
+	startTicks: processStartTicks, executable: processExecutable,
+	pidfdOpen: unix.PidfdOpen, pidfdSignal: unix.PidfdSendSignal,
+	closeFD: unix.Close, poll: unix.Poll,
 }
 
 // ProcessIdentity is sufficient to reject PID reuse. PidFD is intentionally
@@ -80,6 +107,7 @@ type SidecarProvenance struct {
 	SupervisorRunID        string
 	AdmissionRecordSHA256  string
 	Executable             ExecutableProvenance
+	ExecutedImage          ExecutedImageProvenance
 	Process                ProcessIdentity
 	RuntimeDirectory       string
 	RuntimeDevice          uint64
@@ -208,6 +236,7 @@ type Lifecycle struct {
 	stdout     *boundedBuffer
 	stderr     *boundedBuffer
 	stopped    bool
+	processes  processAPI
 }
 
 // Start verifies and descriptor-executes the exact admitted sidecar, then
@@ -259,8 +288,9 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 
 	lifecycle := &Lifecycle{
 		config: config, pidfd: -1, runtimeID: runtimeID,
-		stdout: &boundedBuffer{maximum: maxDiagnosticBytes},
-		stderr: &boundedBuffer{maximum: maxDiagnosticBytes},
+		stdout:    &boundedBuffer{maximum: maxDiagnosticBytes},
+		stderr:    &boundedBuffer{maximum: maxDiagnosticBytes},
+		processes: config.processes,
 	}
 	// Record the creation identity before any fallible process operation so
 	// attribution-safe rollback can find this exact directory without parsing
@@ -284,20 +314,23 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 	}
 	startedAfter := time.Now().UTC()
 	lifecycle.command = command
-	lifecycle.exit = make(chan error, 1)
-	go func() { lifecycle.exit <- command.Wait() }()
+	if config.commandStarted != nil {
+		config.commandStarted(command.Process)
+	}
 
 	// Command.Start returns only after the child has completed exec; the parent
 	// descriptor can now close without weakening the already-executed image.
 	_ = verified.Close()
-	process, pidfd, err := observeStartedProcess(command.Process.Pid, verified.provenance)
+	process, pidfd, err := observeStartedProcess(config.processes, command.Process.Pid, verified.executed)
 	if err != nil {
-		if abortErr := lifecycle.abortStart(); abortErr != nil {
-			return nil, errors.Join(err, abortErr)
+		if abortErr := terminateUnobservedChild(command); abortErr != nil {
+			return nil, errors.Join(err, abortErr, lifecycle.cleanupRuntime(false))
 		}
-		return nil, err
+		return nil, errors.Join(err, lifecycle.cleanupRuntime(false))
 	}
 	lifecycle.process, lifecycle.pidfd = process, pidfd
+	lifecycle.exit = make(chan error, 1)
+	go func() { lifecycle.exit <- command.Wait() }()
 
 	deadline := time.Now().Add(config.StartTimeout)
 	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
@@ -314,7 +347,7 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 	lifecycle.provenance = SidecarProvenance{
 		SchemaVersion: 1, SupervisorRunID: config.SupervisorRunID,
 		AdmissionRecordSHA256: verified.provenance.AdmissionRecordSHA256,
-		Executable:            verified.provenance, Process: process,
+		Executable:            verified.provenance, ExecutedImage: verified.executed, Process: process,
 		RuntimeDirectory: runtimeDirectory, RuntimeDevice: runtimeID.device, RuntimeInode: runtimeID.inode,
 		DataDirectory:    config.DataDirectory,
 		ConfiguredSocket: socket, ConnectedSocket: socket,
@@ -382,14 +415,18 @@ func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvena
 	if err != nil || socketID.device != recorded.SocketDevice || socketID.inode != recorded.SocketInode {
 		return nil, failure(FailureOwnership, "attach", "recorded socket identity differs", err)
 	}
-	pidfd, err := acquireRecordedProcess(recorded.Process)
+	if recorded.ExecutedImage.Device != recorded.Process.Device || recorded.ExecutedImage.Inode != recorded.Process.Inode ||
+		recorded.ExecutedImage.Size != recorded.Process.Size || recorded.ExecutedImage.SHA256 != recorded.Process.SHA256 {
+		return nil, failure(FailureAdmissionMismatch, "attach", "recorded execution image does not match process", nil)
+	}
+	pidfd, err := acquireRecordedProcess(config.processes, recorded.Process)
 	if err != nil {
 		return nil, err
 	}
-	observation, err := observeAttachedComposite(ctx, recorded, config.StartTimeout)
+	observation, err := observeAttachedComposite(ctx, config, recorded)
 	if err != nil {
 		if pidfd >= 0 {
-			_ = unix.Close(pidfd)
+			_ = config.processes.closeFD(pidfd)
 		}
 		return nil, err
 	}
@@ -397,8 +434,9 @@ func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvena
 		config: config, pidfd: pidfd, process: recorded.Process,
 		runtimeID: runtimeID, socketID: socketID,
 		stdout: &boundedBuffer{maximum: maxDiagnosticBytes}, stderr: &boundedBuffer{maximum: maxDiagnosticBytes},
+		processes: config.processes,
 	}
-	lifecycle.exit = monitorRecordedProcess(pidfd, recorded.Process)
+	lifecycle.exit = monitorRecordedProcess(config.processes, pidfd, recorded.Process)
 	lifecycle.provenance = recorded
 	lifecycle.provenance.SupervisorRunID = config.SupervisorRunID
 	lifecycle.provenance.Observation = observation
@@ -410,37 +448,37 @@ func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvena
 	return lifecycle, nil
 }
 
-func acquireRecordedProcess(expected ProcessIdentity) (int, error) {
-	if err := validateProcessIdentity(expected); err != nil {
+func acquireRecordedProcess(processes processAPI, expected ProcessIdentity) (int, error) {
+	if err := validateProcessIdentityWith(processes, expected); err != nil {
 		return -1, err
 	}
-	pidfd, err := unix.PidfdOpen(expected.PID, 0)
+	pidfd, err := processes.pidfdOpen(expected.PID, 0)
 	if err != nil {
 		if !errors.Is(err, unix.ENOSYS) && !errors.Is(err, unix.EINVAL) {
 			return -1, failure(FailureIdentityUnprovable, "attach", "pidfd capability failed", err)
 		}
 		pidfd = -1
 	}
-	if err := validateProcessIdentity(expected); err != nil {
+	if err := validateProcessIdentityWith(processes, expected); err != nil {
 		if pidfd >= 0 {
-			_ = unix.Close(pidfd)
+			_ = processes.closeFD(pidfd)
 		}
 		return -1, err
 	}
 	return pidfd, nil
 }
 
-func monitorRecordedProcess(pidfd int, process ProcessIdentity) chan error {
+func monitorRecordedProcess(processes processAPI, pidfd int, process ProcessIdentity) chan error {
 	exit := make(chan error, 1)
 	go func() {
 		if pidfd >= 0 {
 			poll := []unix.PollFd{{Fd: int32(pidfd), Events: unix.POLLIN}}
-			_, err := unix.Poll(poll, -1)
+			_, err := processes.poll(poll, -1)
 			exit <- err
 			return
 		}
 		for {
-			start, err := processStartTicks(process.PID)
+			start, err := processes.startTicks(process.PID)
 			if err != nil || start != process.StartTicks {
 				exit <- err
 				return
@@ -451,37 +489,23 @@ func monitorRecordedProcess(pidfd int, process ProcessIdentity) chan error {
 	return exit
 }
 
-func observeAttachedComposite(ctx context.Context, recorded SidecarProvenance, timeout time.Duration) (CompositeObservation, error) {
-	peer, err := peerProcess(recorded.ConfiguredSocket, timeout)
-	if err != nil || peer != recorded.Process.PID {
-		return CompositeObservation{}, failure(FailureOwnership, "attach", "recorded socket peer differs", err)
-	}
-	client, err := gapdbapi.Dial(recorded.ConfiguredSocket, gapdbapi.ClientOptions{Timeout: min(timeout, time.Second)})
+func observeAttachedComposite(ctx context.Context, config LifecycleConfig, recorded SidecarProvenance) (CompositeObservation, error) {
+	before, health, configuration, after, databases, err := observeAllSurfaces(
+		ctx, config, recorded.ConfiguredSocket, recorded.socketIdentity(), recorded.Process,
+	)
 	if err != nil {
-		return CompositeObservation{}, failure(FailureProtocol, "attach", "public client cannot bind recorded endpoint", err)
-	}
-	defer client.Close()
-	before, err := client.Status(ctx)
-	if err != nil {
-		return CompositeObservation{}, failure(FailureProtocol, "attach_status", "strict status response unavailable", err)
-	}
-	health, err := client.Health(ctx)
-	if err != nil {
-		return CompositeObservation{}, failure(FailureProtocol, "attach_health", "strict health response unavailable", err)
-	}
-	configuration, err := client.DescribeConfig(ctx)
-	if err != nil {
-		return CompositeObservation{}, failure(FailureProtocol, "attach_config", "strict configuration response unavailable", err)
-	}
-	after, err := client.Status(ctx)
-	if err != nil {
-		return CompositeObservation{}, failure(FailureProtocol, "attach_status", "closing status response unavailable", err)
+		return CompositeObservation{}, err
 	}
 	if err := validateCompositeCore(before, after, health, configuration, recorded.Process); err != nil ||
-		after.DatabaseID != recorded.DatabaseID || after.OwnerStartedAt != recorded.Observation.Status.OwnerStartedAt {
+		after.DatabaseID != recorded.DatabaseID || after.OwnerStartedAt != recorded.Observation.Status.OwnerStartedAt ||
+		!allDatabaseIDsEqual(recorded.DatabaseID, databases) {
 		return CompositeObservation{}, failure(FailureReadiness, "attach", "recorded public attribution differs", err)
 	}
 	return CompositeObservation{Status: after, Health: health, DescribeConfig: configuration}, nil
+}
+
+func (p SidecarProvenance) socketIdentity() fileIdentity {
+	return fileIdentity{device: p.SocketDevice, inode: p.SocketInode, mode: uint32(syscall.S_IFSOCK)}
 }
 
 // Provenance returns a value copy with cloned public slices.
@@ -506,8 +530,8 @@ func (l *Lifecycle) Evidence() (ProvenanceEvidenceV1, error) {
 	return ProvenanceEvidenceV1{
 		SchemaVersion: 1, SupervisorRunID: provenance.SupervisorRunID,
 		AdmittedTupleSHA256: provenance.AdmissionRecordSHA256,
-		ExecutablePath:      provenance.Executable.ExecutablePath, ExecutableSHA256: provenance.Executable.SHA256,
-		ExecutableSize: provenance.Executable.Size, ExecutableDevice: provenance.Executable.Device, ExecutableInode: provenance.Executable.Inode,
+		ExecutablePath:      provenance.Executable.ExecutablePath, ExecutableSHA256: provenance.ExecutedImage.SHA256,
+		ExecutableSize: provenance.ExecutedImage.Size, ExecutableDevice: provenance.ExecutedImage.Device, ExecutableInode: provenance.ExecutedImage.Inode,
 		HostPID: provenance.Process.PID, HostProcessStartTicks: provenance.Process.StartTicks,
 		ConfiguredDaemonSocketPath: provenance.ConfiguredSocket, ConnectedDaemonSocketPath: provenance.ConnectedSocket,
 		Status: provenanceStatusV1{
@@ -559,7 +583,13 @@ func (l *Lifecycle) waitForComposite(ctx context.Context, socket string, started
 		if err := ctx.Err(); err != nil {
 			return CompositeObservation{}, fileIdentity{}, failure(FailureReadiness, "probe", "startup context ended", err)
 		}
-		observation, socketID, err := l.observeComposite(ctx, socket, startedBefore, startedAfter)
+		socketID, identityErr := socketPathIdentity(socket)
+		if identityErr != nil {
+			last = identityErr
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		observation, err := l.observeComposite(ctx, socket, socketID, startedBefore, startedAfter)
 		if err == nil {
 			return observation, socketID, nil
 		}
@@ -575,44 +605,188 @@ func (l *Lifecycle) waitForComposite(ctx context.Context, socket string, started
 	return CompositeObservation{}, fileIdentity{}, failure(FailureReadiness, "probe", "configured endpoint did not become attributable", last)
 }
 
-func (l *Lifecycle) observeComposite(ctx context.Context, socket string, startedBefore, startedAfter time.Time) (CompositeObservation, fileIdentity, error) {
-	peerPID, err := peerProcess(socket, l.config.StartTimeout)
-	if err != nil || peerPID != l.process.PID {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureOwnership, "probe", "socket peer is not the owned process", err)
-	}
-	client, err := gapdbapi.Dial(socket, gapdbapi.ClientOptions{Timeout: min(l.config.StartTimeout, time.Second)})
+func (l *Lifecycle) observeComposite(ctx context.Context, socket string, socketID fileIdentity, startedBefore, startedAfter time.Time) (CompositeObservation, error) {
+	statusBefore, health, config, statusAfter, databases, err := observeAllSurfaces(ctx, l.config, socket, socketID, l.process)
 	if err != nil {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureProtocol, "probe", "public client cannot bind configured endpoint", err)
-	}
-	defer client.Close()
-	statusBefore, err := client.Status(ctx)
-	if err != nil {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureProtocol, "status", "strict status response unavailable", err)
-	}
-	health, err := client.Health(ctx)
-	if err != nil {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureProtocol, "health", "strict health response unavailable", err)
-	}
-	config, err := client.DescribeConfig(ctx)
-	if err != nil {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureProtocol, "describe_config", "strict configuration response unavailable", err)
-	}
-	statusAfter, err := client.Status(ctx)
-	if err != nil {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureProtocol, "status", "closing status response unavailable", err)
+		return CompositeObservation{}, err
 	}
 	if err := validateComposite(statusBefore, statusAfter, health, config, l.process, startedBefore, startedAfter); err != nil {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureReadiness, "attribute", "public observations do not identify the owned instance", err)
+		return CompositeObservation{}, failure(FailureReadiness, "attribute", "public observations do not identify the owned instance", err)
 	}
-	socketInfo, err := os.Lstat(socket)
+	if !allDatabaseIDsEqual(statusAfter.DatabaseID, databases) {
+		return CompositeObservation{}, failure(FailureReadiness, "attribute", "response envelope database identities disagree", nil)
+	}
+	return CompositeObservation{Status: statusAfter, Health: health, DescribeConfig: config}, nil
+}
+
+func observeAllSurfaces(ctx context.Context, config LifecycleConfig, socket string, socketID fileIdentity, process ProcessIdentity) (gapdbapi.StatusResult, gapdbapi.HealthResult, gapdbapi.ConfigResult, gapdbapi.StatusResult, []string, error) {
+	var before, after gapdbapi.StatusResult
+	var health gapdbapi.HealthResult
+	var described gapdbapi.ConfigResult
+	values := []struct {
+		operation   string
+		destination any
+	}{
+		{"status", &before}, {"health", &health}, {"describe_config", &described}, {"status", &after},
+	}
+	databases := make([]string, 0, len(values))
+	for _, value := range values {
+		database, err := observeStrictUnary(ctx, config.processes, socket, socketID, process, value.operation, value.destination, config.StartTimeout)
+		if err != nil {
+			return before, health, described, after, nil, err
+		}
+		databases = append(databases, database)
+		if config.observationHook != nil {
+			config.observationHook(value.operation)
+		}
+	}
+	return before, health, described, after, databases, nil
+}
+
+func observeStrictUnary(ctx context.Context, processes processAPI, socket string, socketID fileIdentity, process ProcessIdentity, operation string, destination any, timeout time.Duration) (string, error) {
+	if err := verifySocketPathIdentity(socket, socketID); err != nil {
+		return "", failure(FailureOwnership, operation, "configured socket identity changed", err)
+	}
+	connection, err := (&net.Dialer{Timeout: min(timeout, time.Second)}).DialContext(ctx, "unix", socket)
 	if err != nil {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureOwnership, "attribute", "configured socket identity cannot be opened", err)
+		return "", failure(FailureProtocol, operation, "configured endpoint cannot be connected", err)
 	}
-	socketID, err := identityFromInfo(socketInfo)
-	if err != nil || socketID.mode&uint32(syscall.S_IFMT) != uint32(syscall.S_IFSOCK) {
-		return CompositeObservation{}, fileIdentity{}, failure(FailureOwnership, "attribute", "configured endpoint is not a socket", err)
+	defer connection.Close()
+	_ = connection.SetDeadline(time.Now().Add(min(timeout, time.Second)))
+	peer, err := peerProcessOfConnection(connection)
+	if err != nil || peer != process.PID {
+		return "", failure(FailureOwnership, operation, "response connection peer differs", err)
 	}
-	return CompositeObservation{Status: statusAfter, Health: health, DescribeConfig: config}, socketID, nil
+	if err := verifyConnectedEndpoint(connection, peer, socket, socketID); err != nil {
+		return "", failure(FailureOwnership, operation, "response connection endpoint differs", err)
+	}
+	if err := validateProcessIdentityWith(processes, process); err != nil {
+		return "", err
+	}
+	if err := verifySocketPathIdentity(socket, socketID); err != nil {
+		return "", failure(FailureOwnership, operation, "connected endpoint path changed", err)
+	}
+	requestID := "sidecar-observe-" + operation
+	request, err := json.Marshal(wireRequest{SchemaVersion: storegapdb.AdmittedWireVersion, RequestID: requestID, Operation: operation, Arguments: json.RawMessage(`{}`)})
+	if err != nil {
+		return "", failure(FailureProtocol, operation, "strict request cannot be encoded", err)
+	}
+	if err := writeWireFrame(connection, request); err != nil {
+		return "", failure(FailureProtocol, operation, "strict request cannot be published", err)
+	}
+	encoded, err := readWireFrame(connection, storegapdb.MaxWireFrameBytes)
+	if err != nil {
+		return "", failure(FailureProtocol, operation, "strict response frame is incomplete", err)
+	}
+	if err := validateNoDuplicateJSON(encoded); err != nil {
+		return "", failure(FailureProtocol, operation, "strict response contains duplicate JSON", err)
+	}
+	var response wireResponse
+	if err := decodeStrictJSON(encoded, &response); err != nil || response.SchemaVersion != storegapdb.AdmittedWireVersion ||
+		!response.OK || response.RequestID != requestID || response.Operation != operation || response.DatabaseID == "" || len(response.Result) == 0 {
+		return "", failure(FailureProtocol, operation, "strict response envelope differs", err)
+	}
+	if err := validateNoDuplicateJSON(response.Result); err != nil {
+		return "", failure(FailureProtocol, operation, "strict result contains duplicate JSON", err)
+	}
+	if err := requireObservationFields(operation, response.Result); err != nil {
+		return "", failure(FailureProtocol, operation, "strict result is incomplete", err)
+	}
+	if err := decodeStrictJSON(response.Result, destination); err != nil {
+		return "", failure(FailureProtocol, operation, "strict public result differs", err)
+	}
+	if err := validateProcessIdentityWith(processes, process); err != nil {
+		return "", err
+	}
+	if err := verifySocketPathIdentity(socket, socketID); err != nil {
+		return "", failure(FailureOwnership, operation, "response endpoint path changed", err)
+	}
+	return response.DatabaseID, nil
+}
+
+func peerPathOfConnection(connection net.Conn) (string, error) {
+	_, ok := connection.(*net.UnixConn)
+	if !ok {
+		return "", errors.New("endpoint is not a Unix connection")
+	}
+	address, ok := connection.RemoteAddr().(*net.UnixAddr)
+	if !ok {
+		return "", errors.New("peer address is not Unix")
+	}
+	return address.Name, nil
+}
+
+func verifyConnectedEndpoint(connection net.Conn, peerPID int, configured string, expected fileIdentity) error {
+	path, err := peerPathOfConnection(connection)
+	if err != nil {
+		return err
+	}
+	observedPath := path
+	const descriptorPrefix = "/proc/self/fd/"
+	if strings.HasPrefix(path, descriptorPrefix) {
+		observedPath = fmt.Sprintf("/proc/%d/fd/%s", peerPID, strings.TrimPrefix(path, descriptorPrefix))
+	} else if path != configured {
+		return errors.New("connected peer path differs from configured path")
+	}
+	info, err := os.Stat(observedPath)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return errors.Join(err, errors.New("connected peer endpoint is not a socket"))
+	}
+	identity, err := identityFromInfo(info)
+	if err != nil || identity.device != expected.device || identity.inode != expected.inode {
+		return errors.Join(err, errors.New("connected endpoint inode differs"))
+	}
+	return nil
+}
+
+func requireObservationFields(operation string, encoded []byte) error {
+	required := map[string][]string{
+		"status": {
+			"lifecycle", "database_id", "current_revision", "durable_through_revision", "reserved_revision_end",
+			"snapshot_revision", "active_wal_start", "earliest_watch_revision", "record_count", "watch_count",
+			"queue_depth", "active_clients", "limits", "owner_pid", "owner_started_at", "snapshot_in_progress", "backup_in_progress",
+		},
+		"health":          {"lifecycle", "healthy", "failing_subsystems", "safe_actions"},
+		"describe_config": {"effective", "source", "safe_ceilings", "restart_required"},
+	}[operation]
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return err
+	}
+	for _, name := range required {
+		if value, ok := fields[name]; !ok || bytes.Equal(value, []byte("null")) {
+			return fmt.Errorf("result field %q is required", name)
+		}
+	}
+	return nil
+}
+
+func socketPathIdentity(socket string) (fileIdentity, error) {
+	info, err := os.Lstat(socket)
+	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0 {
+		return fileIdentity{}, errors.Join(err, errors.New("configured endpoint is not a no-follow socket"))
+	}
+	return identityFromInfo(info)
+}
+
+func verifySocketPathIdentity(socket string, expected fileIdentity) error {
+	actual, err := socketPathIdentity(socket)
+	if err != nil || actual.device != expected.device || actual.inode != expected.inode {
+		return errors.Join(err, errors.New("socket identity differs"))
+	}
+	return nil
+}
+
+func allDatabaseIDsEqual(expected string, values []string) bool {
+	if expected == "" {
+		return false
+	}
+	for _, value := range values {
+		if value != expected {
+			return false
+		}
+	}
+	return true
 }
 
 func validateComposite(before, after gapdbapi.StatusResult, health gapdbapi.HealthResult, config gapdbapi.ConfigResult, process ProcessIdentity, startedBefore, startedAfter time.Time) error {
@@ -694,15 +868,97 @@ func normalizeLifecycleConfig(config *LifecycleConfig) error {
 	if config.StartTimeout <= 0 || config.StopTimeout <= 0 || config.StartTimeout > time.Minute || config.StopTimeout > time.Minute {
 		return failure(FailureInvalidConfiguration, "configure", "lifecycle timeout is outside bound", nil)
 	}
+	if config.filesystem == nil {
+		config.filesystem = statFilesystem
+	}
+	if config.processes.startTicks == nil {
+		config.processes = systemProcessAPI
+	}
+	if err := validateStorageTopology(*config); err != nil {
+		return failure(FailureUnsafePath, "configure", "runtime and data topology is not admitted", err)
+	}
 	return nil
+}
+
+func statFilesystem(path string) (filesystemIdentity, error) {
+	fd, err := openDirectoryNoFollow(path)
+	if err != nil {
+		return filesystemIdentity{}, err
+	}
+	defer unix.Close(fd)
+	var value unix.Statfs_t
+	if err := unix.Fstatfs(fd, &value); err != nil {
+		return filesystemIdentity{}, err
+	}
+	return filesystemIdentity{Type: value.Type, FSID: value.Fsid}, nil
+}
+
+func validateStorageTopology(config LifecycleConfig) error {
+	runtimePath := config.RuntimeRoot
+	dataPath := config.DataDirectory
+	if _, err := os.Lstat(dataPath); errors.Is(err, os.ErrNotExist) {
+		dataPath = filepath.Dir(dataPath)
+	} else if err != nil {
+		return err
+	}
+	for _, path := range []string{runtimePath, dataPath} {
+		if err := validatePathChain(path, false); err != nil {
+			return err
+		}
+		if err := rejectGitAncestor(path); err != nil {
+			return err
+		}
+	}
+	runtimeFS, err := config.filesystem(runtimePath)
+	if err != nil || !admittedLocalFilesystem(runtimeFS.Type) {
+		return errors.Join(err, errors.New("runtime filesystem is shared or unsupported"))
+	}
+	dataFS, err := config.filesystem(dataPath)
+	if err != nil || !admittedLocalFilesystem(dataFS.Type) {
+		return errors.Join(err, errors.New("data filesystem is shared or unsupported"))
+	}
+	if runtimeFS.Type != dataFS.Type || runtimeFS.FSID != dataFS.FSID {
+		return errors.New("runtime and data do not share one local filesystem authority")
+	}
+	return nil
+}
+
+func admittedLocalFilesystem(kind int64) bool {
+	switch kind {
+	case unix.EXT4_SUPER_MAGIC, unix.XFS_SUPER_MAGIC, unix.BTRFS_SUPER_MAGIC, unix.F2FS_SUPER_MAGIC:
+		return true
+	default:
+		return false
+	}
+}
+
+func rejectGitAncestor(path string) error {
+	for current := path; ; current = filepath.Dir(current) {
+		marker := filepath.Join(current, ".git")
+		if _, err := os.Lstat(marker); err == nil {
+			return errors.New("storage path is inside a Git repository or worktree")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+	}
 }
 
 func validatePrivateRoot(path string) error {
 	if err := validatePathChain(path, false); err != nil {
 		return err
 	}
-	info, err := os.Stat(path)
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+	fd, err := openDirectoryNoFollow(path)
+	if err != nil {
+		return errors.New("root must be an owner-only no-follow directory")
+	}
+	file := os.NewFile(uintptr(fd), "private-root")
+	identity, identityErr := identityOf(file)
+	_ = file.Close()
+	if identityErr != nil || identity.mode&uint32(syscall.S_IFMT) != uint32(syscall.S_IFDIR) || identity.mode&0o777 != 0o700 {
 		return errors.New("root must be an owner-only directory")
 	}
 	return nil
@@ -722,33 +978,49 @@ func preparePrivateDirectory(path string) error {
 	return validatePrivateRoot(path)
 }
 
-func observeStartedProcess(pid int, executable ExecutableProvenance) (ProcessIdentity, int, error) {
-	start, err := processStartTicks(pid)
+func observeStartedProcess(processes processAPI, pid int, executable ExecutedImageProvenance) (ProcessIdentity, int, error) {
+	start, err := processes.startTicks(pid)
 	if err != nil {
 		return ProcessIdentity{}, -1, failure(FailureIdentityUnprovable, "process", "process start identity unavailable", err)
 	}
-	identity, digest, err := processExecutable(pid)
-	if err != nil || identity.device != executable.Device || identity.inode != executable.Inode || digest != executable.SHA256 {
+	identity, digest, err := processes.executable(pid)
+	if err != nil || identity.device != executable.Device || identity.inode != executable.Inode || identity.size != executable.Size || digest != executable.SHA256 {
 		return ProcessIdentity{}, -1, failure(FailureIdentityUnprovable, "process", "running executable differs from admitted descriptor", err)
 	}
-	pidfd, err := unix.PidfdOpen(pid, 0)
+	pidfd, err := processes.pidfdOpen(pid, 0)
 	if err != nil {
 		if !errors.Is(err, unix.ENOSYS) && !errors.Is(err, unix.EINVAL) {
 			return ProcessIdentity{}, -1, failure(FailureIdentityUnprovable, "process", "pidfd capability failed", err)
 		}
 		pidfd = -1
 	}
-	secondStart, startErr := processStartTicks(pid)
-	secondIdentity, secondDigest, executableErr := processExecutable(pid)
+	secondStart, startErr := processes.startTicks(pid)
+	secondIdentity, secondDigest, executableErr := processes.executable(pid)
 	if startErr != nil || executableErr != nil || secondStart != start ||
 		secondIdentity.device != identity.device || secondIdentity.inode != identity.inode ||
 		secondIdentity.size != identity.size || secondDigest != digest {
 		if pidfd >= 0 {
-			_ = unix.Close(pidfd)
+			_ = processes.closeFD(pidfd)
 		}
 		return ProcessIdentity{}, -1, failure(FailureIdentityUnprovable, "process", "process identity changed around pidfd acquisition", errors.Join(startErr, executableErr))
 	}
 	return ProcessIdentity{PID: pid, StartTicks: start, Device: identity.device, Inode: identity.inode, Size: identity.size, SHA256: digest}, pidfd, nil
+}
+
+func terminateUnobservedChild(command *exec.Cmd) error {
+	if command == nil || command.Process == nil {
+		return errors.New("started child handle is absent")
+	}
+	killErr := command.Process.Kill()
+	waitErr := command.Wait()
+	if errors.Is(killErr, os.ErrProcessDone) {
+		killErr = nil
+	}
+	var exit *exec.ExitError
+	if errors.As(waitErr, &exit) {
+		waitErr = nil
+	}
+	return errors.Join(killErr, waitErr)
 }
 
 func processStartTicks(pid int) (uint64, error) {
@@ -826,7 +1098,8 @@ func (l *Lifecycle) InspectOwnership() OwnershipDiagnostic {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	diagnostic := OwnershipDiagnostic{Daemon: l.process, SocketPath: l.provenance.ConfiguredSocket}
-	start, err := processStartTicks(l.process.PID)
+	processes := l.hostProcesses()
+	start, err := processes.startTicks(l.process.PID)
 	if errors.Is(err, os.ErrNotExist) {
 		diagnostic.State = l.exitedArtifactStateLocked()
 		return diagnostic
@@ -841,7 +1114,7 @@ func (l *Lifecycle) InspectOwnership() OwnershipDiagnostic {
 		diagnostic.Recovery = operatorRecovery()
 		return diagnostic
 	}
-	identity, digest, err := processExecutable(l.process.PID)
+	identity, digest, err := processes.executable(l.process.PID)
 	if err != nil {
 		diagnostic.State = OwnershipIndeterminate
 		diagnostic.Recovery = operatorRecovery()
@@ -853,6 +1126,9 @@ func (l *Lifecycle) InspectOwnership() OwnershipDiagnostic {
 		return diagnostic
 	}
 	diagnostic.State = OwnershipOwnedLive
+	if l.pidfd < 0 {
+		diagnostic.Recovery = operatorRecovery()
+	}
 	return diagnostic
 }
 
@@ -917,7 +1193,8 @@ func (l *Lifecycle) Stop(ctx context.Context) error {
 
 func (l *Lifecycle) inspectOwnershipLocked() OwnershipDiagnostic {
 	diagnostic := OwnershipDiagnostic{Daemon: l.process, SocketPath: l.provenance.ConfiguredSocket}
-	start, err := processStartTicks(l.process.PID)
+	processes := l.hostProcesses()
+	start, err := processes.startTicks(l.process.PID)
 	if errors.Is(err, os.ErrNotExist) {
 		diagnostic.State = l.exitedArtifactStateLocked()
 		return diagnostic
@@ -930,7 +1207,7 @@ func (l *Lifecycle) inspectOwnershipLocked() OwnershipDiagnostic {
 		diagnostic.State = OwnershipForeignLive
 		return diagnostic
 	}
-	identity, digest, err := processExecutable(l.process.PID)
+	identity, digest, err := processes.executable(l.process.PID)
 	if err != nil {
 		diagnostic.State = OwnershipIndeterminate
 		return diagnostic
@@ -940,6 +1217,9 @@ func (l *Lifecycle) inspectOwnershipLocked() OwnershipDiagnostic {
 		return diagnostic
 	}
 	diagnostic.State = OwnershipOwnedLive
+	if l.pidfd < 0 {
+		diagnostic.Recovery = operatorRecovery()
+	}
 	return diagnostic
 }
 
@@ -978,19 +1258,25 @@ func (l *Lifecycle) CleanupStale() error {
 }
 
 func (l *Lifecycle) signalLocked(signal unix.Signal) error {
+	processes := l.hostProcesses()
 	if l.pidfd >= 0 {
-		return unix.PidfdSendSignal(l.pidfd, signal, nil, 0)
+		return processes.pidfdSignal(l.pidfd, signal, nil, 0)
 	}
-	// /proc start/executable identity was rechecked by the caller immediately
-	// before this fallback. PID alone is never used.
-	return unix.Kill(l.process.PID, signal)
+	return errors.New("pidfd signaling is unavailable; process is left untouched")
 }
 
 func (l *Lifecycle) closePidfd() {
 	if l.pidfd >= 0 {
-		_ = unix.Close(l.pidfd)
+		_ = l.hostProcesses().closeFD(l.pidfd)
 		l.pidfd = -1
 	}
+}
+
+func (l *Lifecycle) hostProcesses() processAPI {
+	if l.processes.startTicks == nil {
+		return systemProcessAPI
+	}
+	return l.processes
 }
 
 func (l *Lifecycle) abortStart() error {
@@ -1016,71 +1302,91 @@ func (l *Lifecycle) abortStart() error {
 func (l *Lifecycle) cleanupRuntime(requireSocketIdentity bool) error {
 	runtimePath := l.provenance.RuntimeDirectory
 	if runtimePath == "" {
-		// Before provenance publication the configured socket's parent is the
-		// only directory with the identity captured at creation.
-		if l.command != nil {
-			// command arguments are deliberately not parsed; find the unique child
-			// by identity under the private runtime root instead.
-			entries, _ := os.ReadDir(l.config.RuntimeRoot)
-			for _, entry := range entries {
-				candidate := filepath.Join(l.config.RuntimeRoot, entry.Name())
-				file, err := os.Open(candidate)
-				if err != nil {
-					continue
-				}
-				identity, identityErr := identityOf(file)
-				_ = file.Close()
-				if identityErr == nil && identity.device == l.runtimeID.device && identity.inode == l.runtimeID.inode {
-					runtimePath = candidate
-					break
-				}
-			}
-		}
-	}
-	if runtimePath == "" {
 		return nil
 	}
-	file, err := os.Open(runtimePath)
+	parentFD, err := openDirectoryNoFollow(filepath.Dir(runtimePath))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		return failure(FailureCleanup, "cleanup", "runtime parent cannot be opened without following links", err)
+	}
+	defer unix.Close(parentFD)
+	name := filepath.Base(runtimePath)
+	if err := verifyDirectoryEntry(parentFD, name, l.runtimeID); err != nil {
+		if errors.Is(err, unix.ENOENT) {
 			return nil
 		}
-		return failure(FailureCleanup, "cleanup", "runtime identity cannot be opened", err)
+		return failure(FailureCleanup, "cleanup", "runtime directory entry is no longer attributable", err)
 	}
-	identity, identityErr := identityOf(file)
-	_ = file.Close()
+	runtimeFD, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return failure(FailureCleanup, "cleanup", "runtime directory cannot be opened without following links", err)
+	}
+	runtimeFile := os.NewFile(uintptr(runtimeFD), "owned-runtime")
+	defer runtimeFile.Close()
+	identity, identityErr := identityOf(runtimeFile)
 	if identityErr != nil || identity.device != l.runtimeID.device || identity.inode != l.runtimeID.inode {
-		return failure(FailureCleanup, "cleanup", "runtime directory is no longer attributable", identityErr)
+		return failure(FailureCleanup, "cleanup", "opened runtime directory is no longer attributable", identityErr)
 	}
-	socket := filepath.Join(runtimePath, "gapdb.sock")
-	if info, statErr := os.Lstat(socket); statErr == nil {
-		if info.Mode()&os.ModeSocket == 0 {
+	var socketStat unix.Stat_t
+	statErr := unix.Fstatat(runtimeFD, "gapdb.sock", &socketStat, unix.AT_SYMLINK_NOFOLLOW)
+	if statErr == nil {
+		current := identityFromStat(socketStat)
+		if current.mode&uint32(syscall.S_IFMT) != uint32(syscall.S_IFSOCK) {
 			return failure(FailureCleanup, "cleanup", "runtime child is not the owned socket", nil)
 		}
 		if !requireSocketIdentity && l.socketID.inode == 0 {
 			return failure(FailureCleanup, "cleanup", "unattributed socket is preserved for inspection", nil)
 		}
-		current, currentErr := identityFromInfo(info)
-		if currentErr != nil || (requireSocketIdentity && (current.device != l.socketID.device || current.inode != l.socketID.inode)) {
-			return failure(FailureCleanup, "cleanup", "socket is no longer attributable", currentErr)
+		if requireSocketIdentity && (current.device != l.socketID.device || current.inode != l.socketID.inode) {
+			return failure(FailureCleanup, "cleanup", "socket is no longer attributable", nil)
 		}
-		if err := os.Remove(socket); err != nil {
+		if err := unix.Unlinkat(runtimeFD, "gapdb.sock", 0); err != nil {
 			return failure(FailureCleanup, "cleanup", "owned socket cannot be removed", err)
 		}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
+	} else if !errors.Is(statErr, unix.ENOENT) {
 		return failure(FailureCleanup, "cleanup", "socket state cannot be inspected", statErr)
 	}
-	entries, err := os.ReadDir(runtimePath)
+	entries, err := runtimeFile.ReadDir(-1)
 	if err != nil {
 		return failure(FailureCleanup, "cleanup", "runtime contents cannot be inspected", err)
 	}
 	if len(entries) != 0 {
 		return failure(FailureCleanup, "cleanup", "runtime contains foreign artifacts", nil)
 	}
-	if err := os.Remove(runtimePath); err != nil {
+	if err := verifyDirectoryEntry(parentFD, name, l.runtimeID); err != nil {
+		return failure(FailureCleanup, "cleanup", "runtime entry changed before removal", err)
+	}
+	if err := unix.Unlinkat(parentFD, name, unix.AT_REMOVEDIR); err != nil {
 		return failure(FailureCleanup, "cleanup", "owned runtime directory cannot be removed", err)
 	}
 	return nil
+}
+
+func openDirectoryNoFollow(path string) (int, error) {
+	return unix.Openat2(unix.AT_FDCWD, path, &unix.OpenHow{
+		Flags:   uint64(unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC | unix.O_NOFOLLOW),
+		Resolve: uint64(unix.RESOLVE_NO_SYMLINKS | unix.RESOLVE_NO_MAGICLINKS),
+	})
+}
+
+func verifyDirectoryEntry(parentFD int, name string, expected fileIdentity) error {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(parentFD, name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	actual := identityFromStat(stat)
+	if actual.mode&uint32(syscall.S_IFMT) != uint32(syscall.S_IFDIR) || actual.device != expected.device || actual.inode != expected.inode {
+		return errors.New("directory entry identity differs")
+	}
+	return nil
+}
+
+func identityFromStat(stat unix.Stat_t) fileIdentity {
+	return fileIdentity{
+		device: uint64(stat.Dev), inode: stat.Ino, size: stat.Size, mode: stat.Mode,
+		uid: stat.Uid, gid: stat.Gid, nlink: uint64(stat.Nlink),
+		mtimeNsec: stat.Mtim.Sec*1_000_000_000 + stat.Mtim.Nsec,
+		ctimeNsec: stat.Ctim.Sec*1_000_000_000 + stat.Ctim.Nsec,
+	}
 }
 
 func operatorRecovery() []string {

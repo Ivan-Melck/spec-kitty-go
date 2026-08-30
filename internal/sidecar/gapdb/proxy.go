@@ -22,31 +22,40 @@ import (
 // ResponseDropCut is emitted only after a complete, strict durable response
 // has been consumed and before any byte is written to the product connection.
 type ResponseDropCut struct {
-	FaultID       string
-	Cut           string
-	RequestID     string
-	Operation     string
-	DatabaseID    string
-	Revision      uint64
-	MutationCount int
-	DaemonSocket  string
-	ProductSocket string
-	DaemonPID     int
-	ProxyPID      int
-	SourceCommit  string
-	ProxySHA256   string
-	ObservedAt    time.Time
+	FaultID            string
+	Cut                string
+	RequestID          string
+	Operation          string
+	DatabaseID         string
+	Revision           uint64
+	MutationCount      int
+	ExpectedDatabaseID string
+	DaemonSocket       string
+	ProductSocket      string
+	DaemonPID          int
+	ProxyPID           int
+	SourceCommit       string
+	ProxySHA256        string
+	ObservedAt         time.Time
 }
 
 // ProxyConfig selects one request by stable protocol identity. The first exact
 // matching durable response is dropped; later traffic is ordinary pass-through.
 type ProxyConfig struct {
-	ProductSocket     string
-	DaemonSocket      string
-	ExpectedDaemon    ProcessIdentity
-	SelectedRequestID string
-	SourceCommit      string
-	ReadTimeout       time.Duration
+	ProductSocket      string
+	DaemonSocket       string
+	ExpectedDaemon     ProcessIdentity
+	ExpectedDatabaseID string
+	SelectedRequestID  string
+	SourceCommit       string
+	ReadTimeout        time.Duration
+}
+
+// ProxyEvidence binds the qualification proxy to the lifecycle database as
+// well as to its frozen artifact projection.
+type ProxyEvidence struct {
+	QualificationProxyEvidenceV1
+	ExpectedDatabaseID string `json:"expected_database_id"`
 }
 
 // ResponseDropProxy is a qualification-only, protocol-aware Unix proxy.
@@ -132,6 +141,9 @@ func normalizeProxyConfig(config *ProxyConfig) error {
 	if config.SelectedRequestID == "" || len(config.SelectedRequestID) > storegapdb.MaxOperationIDBytes {
 		return failure(FailureInvalidConfiguration, "proxy_configure", "selected request identity is invalid", nil)
 	}
+	if config.ExpectedDatabaseID == "" || len(config.ExpectedDatabaseID) > 128 {
+		return failure(FailureInvalidConfiguration, "proxy_configure", "expected database identity is invalid", nil)
+	}
 	if config.ExpectedDaemon.PID <= 0 || config.ExpectedDaemon.StartTicks == 0 || config.ExpectedDaemon.Device == 0 ||
 		config.ExpectedDaemon.Inode == 0 || config.ExpectedDaemon.Size <= 0 || len(config.ExpectedDaemon.SHA256) != 64 {
 		return failure(FailureInvalidConfiguration, "proxy_configure", "expected daemon identity is incomplete", nil)
@@ -177,11 +189,15 @@ func validateConnectedDaemon(connection net.Conn, expected ProcessIdentity) erro
 }
 
 func validateProcessIdentity(expected ProcessIdentity) error {
-	start, err := processStartTicks(expected.PID)
+	return validateProcessIdentityWith(systemProcessAPI, expected)
+}
+
+func validateProcessIdentityWith(processes processAPI, expected ProcessIdentity) error {
+	start, err := processes.startTicks(expected.PID)
 	if err != nil || start != expected.StartTicks {
 		return failure(FailureOwnership, "proxy_identity", "daemon process start differs", err)
 	}
-	identity, digest, err := processExecutable(expected.PID)
+	identity, digest, err := processes.executable(expected.PID)
 	if err != nil || identity.device != expected.Device || identity.inode != expected.Inode ||
 		identity.size != expected.Size || digest != expected.SHA256 {
 		return failure(FailureOwnership, "proxy_identity", "daemon executable identity differs", err)
@@ -207,12 +223,15 @@ func currentExecutableIdentity() (ProcessIdentity, error) {
 
 // Evidence returns the proxy identity projected into the frozen sidecar
 // provenance schema. The binary digest is derived from the running proxy.
-func (p *ResponseDropProxy) Evidence() QualificationProxyEvidenceV1 {
+func (p *ResponseDropProxy) Evidence() ProxyEvidence {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return QualificationProxyEvidenceV1{
-		ProductSocketPath: p.config.ProductSocket, DaemonSocketPath: p.config.DaemonSocket,
-		SourceCommit: p.config.SourceCommit, BinarySHA256: p.proxyIdentity.SHA256,
+	return ProxyEvidence{
+		QualificationProxyEvidenceV1: QualificationProxyEvidenceV1{
+			ProductSocketPath: p.config.ProductSocket, DaemonSocketPath: p.config.DaemonSocket,
+			SourceCommit: p.config.SourceCommit, BinarySHA256: p.proxyIdentity.SHA256,
+		},
+		ExpectedDatabaseID: p.config.ExpectedDatabaseID,
 	}
 }
 
@@ -264,11 +283,14 @@ func (p *ResponseDropProxy) handle(product *net.UnixConn) {
 		return
 	}
 	selected := false
+	selectedMutationCount := 0
 	if request.SchemaVersion == storegapdb.AdmittedWireVersion && request.Operation == "atomic_batch" && request.RequestID == p.config.SelectedRequestID {
-		if err := validateSelectedRequest(request); err != nil {
+		count, err := selectedRequestMutationCount(request)
+		if err != nil {
 			p.recordError(err)
 			return
 		}
+		selectedMutationCount = count
 		selected = p.reserveSelection()
 	}
 
@@ -295,7 +317,7 @@ func (p *ResponseDropProxy) handle(product *net.UnixConn) {
 		return
 	}
 	if selected {
-		response, result, err := decodeAcceptedMutationResponse(responseBytes, request)
+		response, result, err := decodeAcceptedMutationResponse(responseBytes, request, selectedMutationCount, p.config.ExpectedDatabaseID)
 		if err != nil {
 			p.recordError(err)
 			return
@@ -304,7 +326,7 @@ func (p *ResponseDropProxy) handle(product *net.UnixConn) {
 			FaultID: "GJ-02", Cut: "after_durable_acceptance_before_client_response",
 			RequestID: request.RequestID, Operation: request.Operation,
 			DatabaseID: response.DatabaseID, Revision: uint64(result.Revision),
-			MutationCount: result.MutationCount, DaemonSocket: p.config.DaemonSocket,
+			MutationCount: result.MutationCount, ExpectedDatabaseID: p.config.ExpectedDatabaseID, DaemonSocket: p.config.DaemonSocket,
 			ProductSocket: p.config.ProductSocket, DaemonPID: p.config.ExpectedDaemon.PID,
 			ProxyPID: os.Getpid(), SourceCommit: p.config.SourceCommit,
 			ProxySHA256: p.proxyIdentity.SHA256, ObservedAt: time.Now().UTC(),
@@ -352,20 +374,25 @@ func decodeWireRequest(encoded []byte) (wireRequest, error) {
 }
 
 func validateSelectedRequest(request wireRequest) error {
-	var batch gapdbapi.Batch
-	if err := decodeStrictJSON(request.Arguments, &batch); err != nil {
-		return failure(FailureProtocol, "proxy_request", "selected atomic batch is malformed", err)
-	}
-	if batch.Ack != gapdbapi.AckDurable || len(batch.Mutations) == 0 || len(batch.Mutations) > storegapdb.MaxMutationsPerBatch {
-		return failure(FailureProtocol, "proxy_request", "selected atomic batch is not a bounded durable mutation", nil)
-	}
-	if err := batch.Validate(gapdbapi.DefaultOptions().Limits); err != nil {
-		return failure(FailureProtocol, "proxy_request", "selected atomic batch violates protocol v1", err)
-	}
-	return nil
+	_, err := selectedRequestMutationCount(request)
+	return err
 }
 
-func decodeAcceptedMutationResponse(encoded []byte, request wireRequest) (wireResponse, gapdbapi.MutationResult, error) {
+func selectedRequestMutationCount(request wireRequest) (int, error) {
+	var batch gapdbapi.Batch
+	if err := decodeStrictJSON(request.Arguments, &batch); err != nil {
+		return 0, failure(FailureProtocol, "proxy_request", "selected atomic batch is malformed", err)
+	}
+	if batch.Ack != gapdbapi.AckDurable || len(batch.Mutations) == 0 || len(batch.Mutations) > storegapdb.MaxMutationsPerBatch {
+		return 0, failure(FailureProtocol, "proxy_request", "selected atomic batch is not a bounded durable mutation", nil)
+	}
+	if err := batch.Validate(gapdbapi.DefaultOptions().Limits); err != nil {
+		return 0, failure(FailureProtocol, "proxy_request", "selected atomic batch violates protocol v1", err)
+	}
+	return len(batch.Mutations), nil
+}
+
+func decodeAcceptedMutationResponse(encoded []byte, request wireRequest, expectedMutationCount int, expectedDatabaseID string) (wireResponse, gapdbapi.MutationResult, error) {
 	if err := validateNoDuplicateJSON(encoded); err != nil {
 		return wireResponse{}, gapdbapi.MutationResult{}, failure(FailureProtocol, "proxy_response", "response JSON is not unique", err)
 	}
@@ -374,7 +401,7 @@ func decodeAcceptedMutationResponse(encoded []byte, request wireRequest) (wireRe
 		return wireResponse{}, gapdbapi.MutationResult{}, failure(FailureProtocol, "proxy_response", "response envelope is malformed", err)
 	}
 	if response.SchemaVersion != storegapdb.AdmittedWireVersion || !response.OK || response.RequestID != request.RequestID ||
-		response.Operation != request.Operation || response.DatabaseID == "" || len(response.DatabaseID) > 128 || len(response.Result) == 0 {
+		response.Operation != request.Operation || response.DatabaseID != expectedDatabaseID || len(response.Result) == 0 {
 		return wireResponse{}, gapdbapi.MutationResult{}, failure(FailureProtocol, "proxy_response", "response does not match selected request", nil)
 	}
 	var result gapdbapi.MutationResult
@@ -382,7 +409,7 @@ func decodeAcceptedMutationResponse(encoded []byte, request wireRequest) (wireRe
 		return wireResponse{}, gapdbapi.MutationResult{}, failure(FailureProtocol, "proxy_response", "mutation result is malformed", err)
 	}
 	if result.Revision == 0 || result.Ack != gapdbapi.AckDurable ||
-		result.DurableThroughRevision != result.Revision || result.MutationCount <= 0 || result.MutationCount > storegapdb.MaxMutationsPerBatch {
+		result.DurableThroughRevision != result.Revision || result.MutationCount != expectedMutationCount || expectedMutationCount <= 0 {
 		return wireResponse{}, gapdbapi.MutationResult{}, failure(FailureProtocol, "proxy_response", "response is not exact durable acceptance", nil)
 	}
 	return response, result, nil

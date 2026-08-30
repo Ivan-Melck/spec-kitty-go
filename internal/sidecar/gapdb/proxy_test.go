@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -29,8 +30,9 @@ func TestResponseDropConsumesCompleteAcceptedResponseThenDrops(t *testing.T) {
 	productRoot := privateShortRoot(t)
 	proxy, err := StartResponseDropProxy(ProxyConfig{
 		ProductSocket: filepath.Join(productRoot, "product.sock"), DaemonSocket: daemon,
-		ExpectedDaemon:    currentProcessIdentity(t),
-		SelectedRequestID: requestID, SourceCommit: testProxySourceCommit, ReadTimeout: time.Second,
+		ExpectedDaemon:     currentProcessIdentity(t),
+		ExpectedDatabaseID: "database",
+		SelectedRequestID:  requestID, SourceCommit: testProxySourceCommit, ReadTimeout: time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +40,7 @@ func TestResponseDropConsumesCompleteAcceptedResponseThenDrops(t *testing.T) {
 	defer proxy.Close()
 	proxyEvidence := proxy.Evidence()
 	if proxyEvidence.ProductSocketPath != proxy.config.ProductSocket || proxyEvidence.DaemonSocketPath != daemon ||
-		proxyEvidence.SourceCommit != testProxySourceCommit || len(proxyEvidence.BinarySHA256) != 64 {
+		proxyEvidence.SourceCommit != testProxySourceCommit || len(proxyEvidence.BinarySHA256) != 64 || proxyEvidence.ExpectedDatabaseID != "database" {
 		t.Fatalf("proxy evidence=%+v", proxyEvidence)
 	}
 	selected := atomicBatchRequest(t, requestID)
@@ -80,6 +82,53 @@ func TestResponseDropConsumesCompleteAcceptedResponseThenDrops(t *testing.T) {
 	}
 }
 
+func TestResponseDropRequiresExactMutationCountAndDatabase(t *testing.T) {
+	tests := []struct {
+		name              string
+		requestMutations  int
+		responseMutations int
+		responseDatabase  string
+	}{
+		{"two-to-one-cardinality", 2, 1, "database"},
+		{"wrong-database", 1, 1, "lookalike-database"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			daemon, _ := startWireDaemon(t, func(request wireRequest) []byte {
+				return acceptedResponseDatabase(t, request, 7, test.responseMutations, test.responseDatabase)
+			})
+			root := privateShortRoot(t)
+			proxy, err := StartResponseDropProxy(ProxyConfig{
+				ProductSocket: filepath.Join(root, "p.sock"), DaemonSocket: daemon,
+				ExpectedDaemon: currentProcessIdentity(t), ExpectedDatabaseID: "database",
+				SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: 200 * time.Millisecond,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			connection := dialUnix(t, proxy.config.ProductSocket)
+			if err := writeWireFrame(connection, atomicBatchRequestWithCount(t, "selected", test.requestMutations)); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = readWireFrame(connection, 1024)
+			_ = connection.Close()
+			deadline := time.Now().Add(time.Second)
+			for len(proxy.Errors()) == 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if cut, ok := proxy.Cut(); ok {
+				t.Fatalf("mismatched response produced cut: %+v", cut)
+			}
+			if len(proxy.Errors()) == 0 {
+				t.Fatal("mismatched response produced no diagnostic")
+			}
+			if err := proxy.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestResponseDropPartialMalformedAndImpossibleResponsesAreNotGJ02(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -109,7 +158,7 @@ func TestResponseDropPartialMalformedAndImpossibleResponsesAreNotGJ02(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			daemon := startRawWireDaemon(t, test.response)
 			root := privateShortRoot(t)
-			proxy, err := StartResponseDropProxy(ProxyConfig{ProductSocket: filepath.Join(root, "p.sock"), DaemonSocket: daemon, ExpectedDaemon: currentProcessIdentity(t), SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: 200 * time.Millisecond})
+			proxy, err := StartResponseDropProxy(ProxyConfig{ProductSocket: filepath.Join(root, "p.sock"), DaemonSocket: daemon, ExpectedDaemon: currentProcessIdentity(t), ExpectedDatabaseID: "database", SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: 200 * time.Millisecond})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -159,6 +208,7 @@ func TestResponseDropLookalikeDaemonIdentityIsRefused(t *testing.T) {
 	_, err := StartResponseDropProxy(ProxyConfig{
 		ProductSocket: filepath.Join(root, "p.sock"), DaemonSocket: daemon,
 		ExpectedDaemon: identity, SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: time.Second,
+		ExpectedDatabaseID: "database",
 	})
 	if !IsFailure(err, FailureOwnership) {
 		t.Fatalf("lookalike daemon err=%v", err)
@@ -172,7 +222,7 @@ func TestResponseDropShutdownNeverDuplicatesMutatingRequest(t *testing.T) {
 		return acceptedResponse(t, request, 1, 1)
 	})
 	root := privateShortRoot(t)
-	proxy, err := StartResponseDropProxy(ProxyConfig{ProductSocket: filepath.Join(root, "p.sock"), DaemonSocket: daemon, ExpectedDaemon: currentProcessIdentity(t), SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: time.Second})
+	proxy, err := StartResponseDropProxy(ProxyConfig{ProductSocket: filepath.Join(root, "p.sock"), DaemonSocket: daemon, ExpectedDaemon: currentProcessIdentity(t), ExpectedDatabaseID: "database", SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +257,8 @@ func TestResponseDropCleanupRefusesReplacedProductSocket(t *testing.T) {
 	product := filepath.Join(root, "p.sock")
 	proxy, err := StartResponseDropProxy(ProxyConfig{
 		ProductSocket: product, DaemonSocket: daemon, ExpectedDaemon: currentProcessIdentity(t),
-		SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: time.Second,
+		ExpectedDatabaseID: "database",
+		SelectedRequestID:  "selected", SourceCommit: testProxySourceCommit, ReadTimeout: time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -233,8 +284,9 @@ func TestResponseDropRealAdmittedLifecycleAndReconcile(t *testing.T) {
 	productSocket := filepath.Join(root, "p.sock")
 	proxy, err := StartResponseDropProxy(ProxyConfig{
 		ProductSocket: productSocket, DaemonSocket: lifecycle.Provenance().ConfiguredSocket,
-		ExpectedDaemon:    lifecycle.Provenance().Process,
-		SelectedRequestID: "real-gj02", SourceCommit: testProxySourceCommit, ReadTimeout: 2 * time.Second,
+		ExpectedDaemon:     lifecycle.Provenance().Process,
+		ExpectedDatabaseID: lifecycle.Provenance().DatabaseID,
+		SelectedRequestID:  "real-gj02", SourceCommit: testProxySourceCommit, ReadTimeout: 2 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -270,10 +322,16 @@ func TestResponseDropRealAdmittedLifecycleAndReconcile(t *testing.T) {
 }
 
 func atomicBatchRequest(t *testing.T, requestID string) []byte {
+	return atomicBatchRequestWithCount(t, requestID, 1)
+}
+
+func atomicBatchRequestWithCount(t *testing.T, requestID string, count int) []byte {
 	t.Helper()
-	batch := gapdbapi.Batch{Ack: gapdbapi.AckDurable, Mutations: []gapdbapi.Mutation{
-		gapdbapi.NewPutMutation("key", []byte("value"), gapdbapi.Condition{Kind: gapdbapi.ConditionAbsent}, nil),
-	}}
+	mutations := make([]gapdbapi.Mutation, 0, count)
+	for index := 0; index < count; index++ {
+		mutations = append(mutations, gapdbapi.NewPutMutation(fmt.Sprintf("key-%d", index), []byte("value"), gapdbapi.Condition{Kind: gapdbapi.ConditionAbsent}, nil))
+	}
+	batch := gapdbapi.Batch{Ack: gapdbapi.AckDurable, Mutations: mutations}
 	encoded, err := json.Marshal(wireRequest{SchemaVersion: 1, RequestID: requestID, Operation: "atomic_batch", Arguments: mustJSON(t, batch)})
 	if err != nil {
 		t.Fatal(err)
@@ -291,9 +349,13 @@ func ordinaryRequest(t *testing.T, requestID, operation string) []byte {
 }
 
 func acceptedResponse(t *testing.T, request wireRequest, revision uint64, count int) []byte {
+	return acceptedResponseDatabase(t, request, revision, count, "database")
+}
+
+func acceptedResponseDatabase(t *testing.T, request wireRequest, revision uint64, count int, database string) []byte {
 	t.Helper()
 	result := gapdbapi.MutationResult{Revision: gapdbapi.Revision(revision), Ack: gapdbapi.AckDurable, DurableThroughRevision: gapdbapi.Revision(revision), MutationCount: count}
-	encoded, err := json.Marshal(wireResponse{SchemaVersion: 1, OK: true, RequestID: request.RequestID, DatabaseID: "database", Operation: request.Operation, Result: mustJSON(t, result)})
+	encoded, err := json.Marshal(wireResponse{SchemaVersion: 1, OK: true, RequestID: request.RequestID, DatabaseID: database, Operation: request.Operation, Result: mustJSON(t, result)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +450,7 @@ func FuzzResponseDropStrictWireDecoders(f *testing.F) {
 		request, err := decodeWireRequest(encoded)
 		if err == nil && request.Operation == "atomic_batch" {
 			_ = validateSelectedRequest(request)
-			_, _, _ = decodeAcceptedMutationResponse(encoded, request)
+			_, _, _ = decodeAcceptedMutationResponse(encoded, request, 1, "database")
 		}
 	})
 }

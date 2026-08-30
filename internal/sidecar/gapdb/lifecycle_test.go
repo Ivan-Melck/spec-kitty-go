@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +25,8 @@ func TestLifecycleExactBinaryStatusHealthAndConfig(t *testing.T) {
 	defer stopTestLifecycle(t, lifecycle)
 	provenance := lifecycle.Provenance()
 	if provenance.Executable.SHA256 == "" || provenance.Process.PID <= 0 || provenance.Process.StartTicks == 0 ||
-		provenance.Process.Device != provenance.Executable.Device || provenance.Process.Inode != provenance.Executable.Inode {
+		provenance.Process.Device != provenance.ExecutedImage.Device || provenance.Process.Inode != provenance.ExecutedImage.Inode ||
+		provenance.Process.SHA256 != provenance.ExecutedImage.SHA256 || provenance.ExecutedImage.Seals&requiredExecutionSeals != requiredExecutionSeals {
 		t.Fatalf("host provenance incomplete: %+v", provenance)
 	}
 	if provenance.WireVersion != 1 || provenance.StorageVersion != 1 || provenance.WireReferenceSHA256 == "" ||
@@ -264,6 +267,207 @@ func TestLifecycleCleanupPreservesForeignArtifacts(t *testing.T) {
 	}
 	if err := lifecycle.cleanupRuntime(true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLifecycleCleanupRefusesRenamedRuntimeSymlinkReplacement(t *testing.T) {
+	lifecycle := startTestLifecycle(t, "cleanup-symlink")
+	proof := lifecycle.Provenance()
+	moved := proof.RuntimeDirectory + ".moved"
+	if err := os.Rename(proof.RuntimeDirectory, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, proof.RuntimeDirectory); err != nil {
+		t.Fatal(err)
+	}
+	err := lifecycle.Stop(t.Context())
+	if !IsFailure(err, FailureCleanup) {
+		t.Fatalf("symlink replacement cleanup err=%v", err)
+	}
+	info, statErr := os.Lstat(proof.RuntimeDirectory)
+	if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("foreign runtime replacement was changed: %v %+v", statErr, info)
+	}
+	if _, statErr := os.Stat(moved); statErr != nil {
+		t.Fatalf("renamed runtime was removed: %v", statErr)
+	}
+	_ = os.Remove(proof.RuntimeDirectory)
+	_ = os.Remove(filepath.Join(moved, "gapdb.sock"))
+	_ = os.Remove(moved)
+}
+
+func TestLifecycleObservationRefusesSocketReplacementBetweenEvidenceCalls(t *testing.T) {
+	runtimeRoot := privateShortRoot(t)
+	config := testLifecycleConfig(t, runtimeRoot, "replace-between-calls")
+	config.StartTimeout = 250 * time.Millisecond
+	var replacement *net.UnixListener
+	replaced := false
+	config.observationHook = func(operation string) {
+		if replaced || operation != "status" {
+			return
+		}
+		replaced = true
+		entries, err := os.ReadDir(runtimeRoot)
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("runtime discovery: entries=%d err=%v", len(entries), err)
+		}
+		socket := filepath.Join(runtimeRoot, entries[0].Name(), "gapdb.sock")
+		if err := os.Rename(socket, socket+".owned"); err != nil {
+			t.Fatal(err)
+		}
+		listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		listener.SetUnlinkOnClose(false)
+		replacement = listener
+	}
+	_, err := Start(t.Context(), config)
+	if err == nil || !replaced {
+		t.Fatalf("socket replacement was admitted: replaced=%v err=%v", replaced, err)
+	}
+	if replacement != nil {
+		_ = replacement.Close()
+	}
+	entries, _ := os.ReadDir(runtimeRoot)
+	for _, entry := range entries {
+		directory := filepath.Join(runtimeRoot, entry.Name())
+		_ = os.Remove(filepath.Join(directory, "gapdb.sock"))
+		_ = os.Remove(filepath.Join(directory, "gapdb.sock.owned"))
+		_ = os.Remove(directory)
+	}
+}
+
+func TestLifecycleStorageTopologyRefusesGitSharedUnknownAndSplitAuthority(t *testing.T) {
+	t.Run("git-worktree", func(t *testing.T) {
+		repository := privateShortRoot(t)
+		if err := os.Mkdir(filepath.Join(repository, ".git"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		runtimeRoot := filepath.Join(repository, "runtime")
+		if err := os.Mkdir(runtimeRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		config := testLifecycleConfig(t, runtimeRoot, "git")
+		config.DataDirectory = filepath.Join(repository, "database")
+		if err := normalizeLifecycleConfig(&config); !IsFailure(err, FailureUnsafePath) {
+			t.Fatalf("Git storage topology err=%v", err)
+		}
+	})
+	for _, test := range []struct {
+		name string
+		kind int64
+	}{
+		{"shared", unix.NFS_SUPER_MAGIC}, {"unknown", 0x7fff1234},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := testLifecycleConfig(t, privateShortRoot(t), test.name)
+			config.filesystem = func(string) (filesystemIdentity, error) { return filesystemIdentity{Type: test.kind}, nil }
+			if err := normalizeLifecycleConfig(&config); !IsFailure(err, FailureUnsafePath) {
+				t.Fatalf("unsupported filesystem err=%v", err)
+			}
+		})
+	}
+	t.Run("split-authority", func(t *testing.T) {
+		config := testLifecycleConfig(t, privateShortRoot(t), "split")
+		calls := 0
+		config.filesystem = func(string) (filesystemIdentity, error) {
+			calls++
+			identity := filesystemIdentity{Type: unix.EXT4_SUPER_MAGIC}
+			identity.FSID.Val[0] = int32(calls)
+			return identity, nil
+		}
+		if err := normalizeLifecycleConfig(&config); !IsFailure(err, FailureUnsafePath) {
+			t.Fatalf("split filesystem authority err=%v", err)
+		}
+	})
+}
+
+func TestLifecyclePidfdObservationAndSignalingSeams(t *testing.T) {
+	executed := ExecutedImageProvenance{SHA256: strings.Repeat("a", 64), Size: 17, Device: 3, Inode: 5}
+	identity := fileIdentity{device: 3, inode: 5, size: 17}
+	base := systemProcessAPI
+	base.startTicks = func(int) (uint64, error) { return 11, nil }
+	base.executable = func(int) (fileIdentity, string, error) { return identity, executed.SHA256, nil }
+	base.closeFD = func(int) error { return nil }
+	t.Run("pidfd-success", func(t *testing.T) {
+		api := base
+		api.pidfdOpen = func(int, int) (int, error) { return 41, nil }
+		process, fd, err := observeStartedProcess(api, 7, executed)
+		if err != nil || fd != 41 || process.StartTicks != 11 {
+			t.Fatalf("process=%+v fd=%d err=%v", process, fd, err)
+		}
+	})
+	for _, errno := range []error{unix.ENOSYS, unix.EINVAL} {
+		t.Run("observation-fallback-"+errno.Error(), func(t *testing.T) {
+			api := base
+			api.pidfdOpen = func(int, int) (int, error) { return -1, errno }
+			_, fd, err := observeStartedProcess(api, 7, executed)
+			if err != nil || fd != -1 {
+				t.Fatalf("fd=%d err=%v", fd, err)
+			}
+		})
+	}
+	t.Run("pidfd-hard-error", func(t *testing.T) {
+		api := base
+		api.pidfdOpen = func(int, int) (int, error) { return -1, unix.EPERM }
+		if _, _, err := observeStartedProcess(api, 7, executed); !IsFailure(err, FailureIdentityUnprovable) {
+			t.Fatalf("hard pidfd error=%v", err)
+		}
+	})
+	t.Run("identity-change-around-pidfd", func(t *testing.T) {
+		api := base
+		calls := 0
+		api.startTicks = func(int) (uint64, error) {
+			calls++
+			return uint64(10 + calls), nil
+		}
+		api.pidfdOpen = func(int, int) (int, error) { return 42, nil }
+		if _, _, err := observeStartedProcess(api, 7, executed); !IsFailure(err, FailureIdentityUnprovable) {
+			t.Fatalf("identity drift err=%v", err)
+		}
+	})
+	t.Run("signal-fails-closed-without-pidfd", func(t *testing.T) {
+		called := false
+		api := base
+		api.pidfdSignal = func(int, unix.Signal, *unix.Siginfo, int) error { called = true; return nil }
+		lifecycle := &Lifecycle{
+			pidfd: -1, processes: api,
+			process: ProcessIdentity{PID: 7, StartTicks: 11, Device: 3, Inode: 5, Size: 17, SHA256: executed.SHA256},
+		}
+		if err := lifecycle.signalLocked(unix.SIGTERM); err == nil || called {
+			t.Fatalf("fallback signal err=%v called=%v", err, called)
+		}
+		if diagnostic := lifecycle.InspectOwnership(); diagnostic.State != OwnershipOwnedLive || len(diagnostic.Recovery) == 0 {
+			t.Fatalf("no-pidfd diagnostic=%+v", diagnostic)
+		}
+	})
+	t.Run("pidfd-signals-exact-capability", func(t *testing.T) {
+		called := false
+		api := base
+		api.pidfdSignal = func(fd int, signal unix.Signal, _ *unix.Siginfo, _ int) error {
+			called = fd == 43 && signal == unix.SIGTERM
+			return nil
+		}
+		lifecycle := &Lifecycle{pidfd: 43, processes: api}
+		if err := lifecycle.signalLocked(unix.SIGTERM); err != nil || !called {
+			t.Fatalf("pidfd signal err=%v called=%v", err, called)
+		}
+	})
+}
+
+func TestLifecyclePostStartObservationFailureTerminatesAndReapsChild(t *testing.T) {
+	config := testLifecycleConfig(t, privateShortRoot(t), "observe-fail")
+	config.processes = systemProcessAPI
+	config.processes.startTicks = func(int) (uint64, error) { return 0, errors.New("forced observation failure") }
+	pid := 0
+	config.commandStarted = func(process *os.Process) { pid = process.Pid }
+	_, err := Start(t.Context(), config)
+	if !IsFailure(err, FailureIdentityUnprovable) || pid <= 0 {
+		t.Fatalf("post-start observation err=%v pid=%d", err, pid)
+	}
+	if _, err := processStartTicks(pid); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unobserved child remained or was unreaped: %v", err)
 	}
 }
 
