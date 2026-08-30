@@ -2,6 +2,7 @@ package gapdb
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net"
@@ -70,6 +71,86 @@ func TestLifecycleProvenanceEvidenceConformsToFrozenSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertEvidenceConformsToFrozenSchema(t, evidence)
+}
+
+func TestLifecycleEvidenceIdentityGrammarRefusesBeforeStartSideEffects(t *testing.T) {
+	runtimeRoot := privateShortRoot(t)
+	dataRoot := privateRoot(t)
+	valid := LifecycleConfig{
+		ExecutablePath: "/definitely-not-opened/gapdbd", AdmissionRecordPath: "/definitely-not-opened/admission.json",
+		RuntimeRoot: runtimeRoot, DataDirectory: filepath.Join(dataRoot, "database"),
+		SupervisorRunID: "run-valid", ProductPolicySHA256: testPolicyDigest,
+		StartTimeout: time.Second, StopTimeout: time.Second,
+	}
+	tests := []struct {
+		name   string
+		runID  string
+		policy string
+	}{
+		{name: "empty-run-id", runID: "", policy: testPolicyDigest},
+		{name: "space-in-run-id", runID: "run invalid", policy: testPolicyDigest},
+		{name: "leading-punctuation-run-id", runID: ".invalid", policy: testPolicyDigest},
+		{name: "non-ascii-run-id", runID: "run-é", policy: testPolicyDigest},
+		{name: "overlong-run-id", runID: "r" + strings.Repeat("x", maxSchemaTokenBytes), policy: testPolicyDigest},
+		{name: "uppercase-policy", runID: "run-valid", policy: strings.Repeat("A", sha256.Size*2)},
+		{name: "nonhex-policy", runID: "run-valid", policy: strings.Repeat("g", sha256.Size*2)},
+		{name: "short-policy", runID: "run-valid", policy: strings.Repeat("a", sha256.Size*2-1)},
+		{name: "long-policy", runID: "run-valid", policy: strings.Repeat("a", sha256.Size*2+1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := valid
+			config.SupervisorRunID = test.runID
+			config.ProductPolicySHA256 = test.policy
+			if _, err := Start(t.Context(), config); !IsFailure(err, FailureInvalidConfiguration) {
+				t.Fatalf("invalid evidence identity reached executable verification: %v", err)
+			}
+			if _, err := os.Lstat(config.DataDirectory); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid configuration created data directory: %v", err)
+			}
+			entries, err := os.ReadDir(runtimeRoot)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("invalid configuration created runtime artifacts: entries=%v err=%v", entries, err)
+			}
+		})
+	}
+}
+
+func TestLifecycleEvidenceIdentityGrammarBoundaryValuesConform(t *testing.T) {
+	tests := []struct {
+		name   string
+		runID  string
+		policy string
+	}{
+		{name: "minimum-token", runID: "A", policy: strings.Repeat("0", sha256.Size*2)},
+		{name: "allowed-punctuation", runID: "R._:-z9", policy: strings.Repeat("f", sha256.Size*2)},
+		{name: "maximum-token", runID: "R" + strings.Repeat("a", maxSchemaTokenBytes-1), policy: "0123456789abcdef" + strings.Repeat("0", 48)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := testLifecycleConfig(t, privateShortRoot(t), test.name)
+			config.SupervisorRunID = test.runID
+			config.ProductPolicySHA256 = test.policy
+			lifecycle, err := Start(t.Context(), config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stopTestLifecycle(t, lifecycle)
+			evidence, err := lifecycle.Evidence()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if evidence.SupervisorRunID != test.runID || evidence.ProductPolicySHA256 != test.policy {
+				t.Fatalf("evidence identities differ: run=%q policy=%q", evidence.SupervisorRunID, evidence.ProductPolicySHA256)
+			}
+			assertEvidenceConformsToFrozenSchema(t, evidence)
+		})
+	}
+}
+
+func assertEvidenceConformsToFrozenSchema(t *testing.T, evidence ProvenanceEvidenceV1) {
+	t.Helper()
 	encoded, err := json.Marshal(evidence)
 	if err != nil {
 		t.Fatal(err)

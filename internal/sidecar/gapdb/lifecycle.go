@@ -29,6 +29,7 @@ const (
 	defaultStartTimeout = 5 * time.Second
 	defaultStopTimeout  = 5 * time.Second
 	maxSocketPathBytes  = 103
+	maxSchemaTokenBytes = 128
 )
 
 // LifecycleConfig contains explicit trusted roots. RuntimeRoot and
@@ -850,13 +851,10 @@ func normalizeLifecycleConfig(config *LifecycleConfig) error {
 			return failure(FailureInvalidConfiguration, "configure", field.name+" path is invalid", err)
 		}
 	}
-	if config.SupervisorRunID == "" || len(config.SupervisorRunID) > 128 {
+	if !isSchemaToken(config.SupervisorRunID, maxSchemaTokenBytes) {
 		return failure(FailureInvalidConfiguration, "configure", "supervisor run identity is invalid", nil)
 	}
-	if len(config.ProductPolicySHA256) != 64 {
-		return failure(FailureInvalidConfiguration, "configure", "product policy digest is invalid", nil)
-	}
-	if _, err := hex.DecodeString(config.ProductPolicySHA256); err != nil {
+	if !isLowerSHA256(config.ProductPolicySHA256) {
 		return failure(FailureInvalidConfiguration, "configure", "product policy digest is invalid", nil)
 	}
 	if config.StartTimeout == 0 {
@@ -878,6 +876,36 @@ func normalizeLifecycleConfig(config *LifecycleConfig) error {
 		return failure(FailureUnsafePath, "configure", "runtime and data topology is not admitted", err)
 	}
 	return nil
+}
+
+func isSchemaToken(value string, maximum int) bool {
+	if len(value) == 0 || len(value) > maximum || !isASCIIAlphanumeric(value[0]) {
+		return false
+	}
+	for index := 1; index < len(value); index++ {
+		character := value[index]
+		if !isASCIIAlphanumeric(character) && character != '.' && character != '_' && character != ':' && character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIAlphanumeric(character byte) bool {
+	return character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' || character >= '0' && character <= '9'
+}
+
+func isLowerSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if !(character >= '0' && character <= '9') && !(character >= 'a' && character <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func statFilesystem(path string) (filesystemIdentity, error) {
