@@ -225,14 +225,14 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			{
 				Name: TierAdapter, Production: true, ProviderAdapter: true,
 				Packages: []PackagePattern{
-					pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
+					pkg("internal/controlstore/gapdb"), pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
 				},
 				AllowedLocalTargets: []TierName{
 					TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority,
 					TierMissionAuthority, TierProviderContract, TierAdapter,
 				},
-				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
+				AllowedExternalPrefixes: []string{"github.com/spec-kitty/gapdb", "modernc.org/sqlite"},
 			},
 			{
 				Name: TierProjection, Production: true,
