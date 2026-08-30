@@ -542,60 +542,62 @@ func ReduceRaw(events RawEvents) { _ = events }
 			kind: "journal-validator-rebinding",
 		},
 		{
-			name: "side-effect-capability-construction",
+			name: "validation-seal-version-wrong-type",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func SideEffectConstruction() { _ = ValidatedJournalV1{} }\n")
+				return replaceM1Fixture(files, "version uint8", "version uint16")
 			},
-			kind: "journal-capability-construction",
+			kind: "journal-validation-seal",
 		},
 		{
-			name: "allocated-capability-construction",
+			name: "validation-seal-digest-wrong-shape",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func AllocateCapability() { _ = new(ValidatedJournalV1) }\n")
+				return replaceM1Fixture(files, "digest [32]byte", "digest []byte")
 			},
-			kind: "journal-capability-construction",
+			kind: "journal-validation-seal",
 		},
 		{
-			name: "zero-value-capability-construction",
+			name: "validation-seal-tagged-field",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "var emptyCapability ValidatedJournalV1\n")
+				return replaceM1Fixture(files, "digest [32]byte", "digest [32]byte `json:\"digest\"`")
 			},
-			kind: "journal-capability-construction",
+			kind: "journal-validation-seal",
 		},
 		{
-			name: "direct-capability-conversion",
+			name: "capability-missing-seal",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func ForgeByConversion() {\n\traw := struct{ events []StoredEventV1 }{}\n\t_ = ValidatedJournalV1(raw)\n}\n")
+				return replaceM1Fixture(files, "seal validationSealV1\n\trecords []StoredEventV1", "records []StoredEventV1")
 			},
-			kind: "journal-capability-construction",
+			kind: "journal-capability",
 		},
 		{
-			name: "interface-wrapped-capability-conversion",
+			name: "capability-records-wrong-type",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func ForgeInterfaceByConversion() any {\n\traw := struct{ events []StoredEventV1 }{}\n\treturn any(ValidatedJournalV1(raw))\n}\n")
+				return replaceM1Fixture(files, "records []StoredEventV1", "records []*StoredEventV1")
 			},
-			kind: "journal-capability-construction",
+			kind: "journal-capability",
 		},
 		{
-			name: "closure-capability-conversion",
+			name: "invalid-capability-error-has-state",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func ForgeClosureByConversion() any {\n\treturn func() any {\n\t\traw := struct{ events []StoredEventV1 }{}\n\t\treturn ValidatedJournalV1(raw)\n\t}()\n}\n")
+				return replaceM1Fixture(files, "type InvalidValidatedJournalError struct{}", "type InvalidValidatedJournalError struct { reason string }")
 			},
-			kind: "journal-capability-construction",
+			kind: "journal-invalid-capability-error",
 		},
 		{
-			name: "slice-elided-capability-literal",
+			name: "invalid-capability-error-pointer-receiver",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func consumeAny(any) {}\nfunc ForgeElidedSlice() {\n\tconsumeAny([]ValidatedJournalV1{{}}[0])\n}\n")
+				return replaceM1Fixture(files, "func (InvalidValidatedJournalError) Error() string", "func (*InvalidValidatedJournalError) Error() string")
 			},
-			kind: "journal-capability-construction",
+			kind: "journal-invalid-capability-error",
 		},
 		{
-			name: "map-elided-capability-literal",
+			name: "invalid-capability-error-wrong-result",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return appendM1Fixture(files, "func consumeMap(map[string]ValidatedJournalV1) {}\nfunc ForgeElidedMap() {\n\tconsumeMap(map[string]ValidatedJournalV1{\"x\": {}})\n}\n")
+				files = replaceM1Fixture(files, "func (InvalidValidatedJournalError) Error() string { return \"invalid validated journal\" }", "func (InvalidValidatedJournalError) Error() []byte { return nil }")
+				files = replaceM1Fixture(files, "return 0, &InvalidValidatedJournalError{}", "return 0, nil")
+				return replaceM1Fixture(files, "return StoredEventV1{}, &InvalidValidatedJournalError{}", "return StoredEventV1{}, nil")
 			},
-			kind: "journal-capability-construction",
+			kind: "journal-invalid-capability-error",
 		},
 		{
 			name: "wrong-registry-constructor-signature",
@@ -614,21 +616,35 @@ func ReduceRaw(events RawEvents) { _ = events }
 		{
 			name: "exported-capability-state",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return replaceM1Fixture(files, "events []StoredEventV1", "Events []StoredEventV1")
+				return replaceM1Fixture(files, "records []StoredEventV1", "Records []StoredEventV1")
 			},
 			kind: "journal-capability",
 		},
 		{
 			name: "len-pointer-receiver",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return replaceM1Fixture(files, "func (journal ValidatedJournalV1) Len() int", "func (journal *ValidatedJournalV1) Len() int")
+				return replaceM1Fixture(files, "func (journal ValidatedJournalV1) Len() (int, error)", "func (journal *ValidatedJournalV1) Len() (int, error)")
+			},
+			kind: "journal-len-method",
+		},
+		{
+			name: "len-missing-error-result",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return replaceM1Fixture(files, "func (journal ValidatedJournalV1) Len() (int, error) {\n\t_ = journal\n\treturn 0, &InvalidValidatedJournalError{}\n}", "func (journal ValidatedJournalV1) Len() int {\n\t_ = journal\n\treturn 0\n}")
 			},
 			kind: "journal-len-method",
 		},
 		{
 			name: "at-wrong-result",
 			mutate: func(files []m1SourceFile) []m1SourceFile {
-				return replaceM1Fixture(files, "func (journal ValidatedJournalV1) At(index int) (StoredEventV1, bool)", "func (journal ValidatedJournalV1) At(index int) (*StoredEventV1, bool)")
+				return replaceM1Fixture(files, "func (journal ValidatedJournalV1) At(index int) (StoredEventV1, error) {\n\t_, _ = journal, index\n\treturn StoredEventV1{}, &InvalidValidatedJournalError{}\n}", "func (journal ValidatedJournalV1) At(index int) (*StoredEventV1, error) {\n\t_, _ = journal, index\n\treturn nil, nil\n}")
+			},
+			kind: "journal-at-method",
+		},
+		{
+			name: "at-missing-error-result",
+			mutate: func(files []m1SourceFile) []m1SourceFile {
+				return replaceM1Fixture(files, "func (journal ValidatedJournalV1) At(index int) (StoredEventV1, error) {\n\t_, _ = journal, index\n\treturn StoredEventV1{}, &InvalidValidatedJournalError{}\n}", "func (journal ValidatedJournalV1) At(index int) StoredEventV1 {\n\t_, _ = journal, index\n\treturn StoredEventV1{}\n}")
 			},
 			kind: "journal-at-method",
 		},
@@ -662,11 +678,36 @@ func NewSink() Sink { return nil }
 type Consumer interface { Consume(ValidatedJournalV1) }
 func NewConsumer() Consumer { return nil }
 type ValidatedHolder struct { Journal ValidatedJournalV1 }
+var zeroJournal ValidatedJournalV1
+var zeroJournalArray [1]ValidatedJournalV1
+var zeroJournalHolder struct { Journal ValidatedJournalV1 }
+var nilJournalPointer *ValidatedJournalV1
+var nilJournalSlice []ValidatedJournalV1
+var nilJournalMap map[string]ValidatedJournalV1
 type OrdinaryValue struct { count int }
 func consumeAny(any) {}
 func consumeOrdinaryMap(map[string]OrdinaryValue) {}
 func NewOrdinaryValue() OrdinaryValue { return OrdinaryValue{} }
 func (value OrdinaryValue) Count() int { return value.count }
+func LegalJournalConstructions() {
+	_ = ValidatedJournalV1{}
+	_ = ValidatedJournalV1{
+		seal: validationSealV1{version: 99},
+		records: []StoredEventV1{{}},
+	}
+	raw := struct {
+		seal validationSealV1
+		records []StoredEventV1
+	}{}
+	_ = ValidatedJournalV1(raw)
+	_ = new(ValidatedJournalV1)
+	_ = []ValidatedJournalV1{{}}
+	_ = map[string]ValidatedJournalV1{"zero": {}}
+	_ = []*ValidatedJournalV1{{}}
+	_ = map[string]*ValidatedJournalV1{"zero": {}}
+	copyOfZero := zeroJournal
+	_ = copyOfZero
+}
 func CallValidatorDirectly() {
 	_, _ = ValidateJournalV1(EventRegistryV1{}, nil)
 	_, _ = (ValidateJournalV1)(EventRegistryV1{}, nil)
@@ -761,7 +802,15 @@ type EventVersionV1 struct {
 }
 
 type EventRegistryV1 struct { versions map[string]EventVersionV1 }
-type ValidatedJournalV1 struct { events []StoredEventV1 }
+type validationSealV1 struct {
+	version uint8
+	digest [32]byte
+}
+type ValidatedJournalV1 struct {
+	seal validationSealV1
+	records []StoredEventV1
+}
+type InvalidValidatedJournalError struct{}
 `),
 		},
 		{
@@ -776,19 +825,18 @@ func NewEventRegistryV1(versions []EventVersionV1) (EventRegistryV1, error) {
 
 func ValidateJournalV1(registry EventRegistryV1, events []StoredEventV1) (ValidatedJournalV1, error) {
 	_ = registry
-	raw := struct { events []StoredEventV1 }{events: append([]StoredEventV1(nil), events...)}
-	_ = ValidatedJournalV1(raw)
-	_ = any(ValidatedJournalV1(raw))
-	_ = func(value any) any { return value }(ValidatedJournalV1(raw))
-	_ = []ValidatedJournalV1{{}}[0]
-	_ = map[string]ValidatedJournalV1{"control": {}}["control"]
-	return ValidatedJournalV1{events: append([]StoredEventV1(nil), events...)}, nil
+	_ = events
+	return ValidatedJournalV1{}, nil
 }
 
-func (journal ValidatedJournalV1) Len() int { return len(journal.events) }
-func (journal ValidatedJournalV1) At(index int) (StoredEventV1, bool) {
-	if index < 0 || index >= len(journal.events) { return StoredEventV1{}, false }
-	return journal.events[index], true
+func (InvalidValidatedJournalError) Error() string { return "invalid validated journal" }
+func (journal ValidatedJournalV1) Len() (int, error) {
+	_ = journal
+	return 0, &InvalidValidatedJournalError{}
+}
+func (journal ValidatedJournalV1) At(index int) (StoredEventV1, error) {
+	_, _ = journal, index
+	return StoredEventV1{}, &InvalidValidatedJournalError{}
 }
 `),
 		},
@@ -1007,14 +1055,33 @@ func inspectM1JournalCapability(files []m1SourceFile) []m1ArchitectureViolation 
 	}
 
 	registry := m1RequireOpaqueStruct(pkg, "EventRegistryV1", "journal-registry", &violations)
-	validated := m1RequireOpaqueStruct(pkg, "ValidatedJournalV1", "journal-capability", &violations)
+	seal := m1RequireNamedStruct(pkg, "validationSealV1", "journal-validation-seal", &violations)
+	if seal != nil {
+		m1RequireExactStructFields(seal, []m1ExpectedField{
+			{name: "version", typ: types.Typ[types.Uint8]},
+			{name: "digest", typ: types.NewArray(types.Typ[types.Byte], 32)},
+		}, "journal-validation-seal", &violations)
+	}
+	validated := m1RequireNamedStruct(pkg, "ValidatedJournalV1", "journal-capability", &violations)
+	if validated != nil && seal != nil && stored != nil {
+		m1RequireExactStructFields(validated, []m1ExpectedField{
+			{name: "seal", typ: seal},
+			{name: "records", typ: types.NewSlice(stored)},
+		}, "journal-capability", &violations)
+	}
+	invalidJournal := m1RequireNamedStruct(pkg, "InvalidValidatedJournalError", "journal-invalid-capability-error", &violations)
+	if invalidJournal != nil {
+		m1RequireExactStructFields(invalidJournal, nil, "journal-invalid-capability-error", &violations)
+		m1RequireMethod(invalidJournal, "Error", nil, []types.Type{types.Typ[types.String]}, "journal-invalid-capability-error", &violations)
+	}
+	errorType := types.Universe.Lookup("error").Type()
 	if version != nil && registry != nil {
-		m1RequireFunction(pkg, "NewEventRegistryV1", []types.Type{types.NewSlice(version)}, []types.Type{registry, types.Universe.Lookup("error").Type()}, "journal-constructor", &violations)
+		m1RequireFunction(pkg, "NewEventRegistryV1", []types.Type{types.NewSlice(version)}, []types.Type{registry, errorType}, "journal-constructor", &violations)
 	}
 	if registry != nil && stored != nil && validated != nil {
-		m1RequireFunction(pkg, "ValidateJournalV1", []types.Type{registry, types.NewSlice(stored)}, []types.Type{validated, types.Universe.Lookup("error").Type()}, "journal-validator", &violations)
-		m1RequireMethod(validated, "Len", nil, []types.Type{types.Typ[types.Int]}, "journal-len-method", &violations)
-		m1RequireMethod(validated, "At", []types.Type{types.Typ[types.Int]}, []types.Type{stored, types.Typ[types.Bool]}, "journal-at-method", &violations)
+		m1RequireFunction(pkg, "ValidateJournalV1", []types.Type{registry, types.NewSlice(stored)}, []types.Type{validated, errorType}, "journal-validator", &violations)
+		m1RequireMethod(validated, "Len", nil, []types.Type{types.Typ[types.Int], errorType}, "journal-len-method", &violations)
+		m1RequireMethod(validated, "At", []types.Type{types.Typ[types.Int]}, []types.Type{stored, errorType}, "journal-at-method", &violations)
 	}
 	validator := m1ExactValidatorFunction(pkg, registry, stored, validated)
 	violations = append(violations, inspectM1JournalCompetitors(parsed, stored, validated, validator)...)
@@ -1242,8 +1309,8 @@ func m1RequireExactStructFields(named *types.Named, expected []m1ExpectedField, 
 	}
 	for index, field := range expected {
 		actual := structure.Field(index)
-		if actual.Name() != field.name || actual.Embedded() || !types.Identical(actual.Type(), field.typ) {
-			*violations = append(*violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: kind, Detail: named.Obj().Name() + " field " + field.name + " must be direct and have the exact frozen type"})
+		if actual.Name() != field.name || actual.Embedded() || structure.Tag(index) != "" || !types.Identical(actual.Type(), field.typ) {
+			*violations = append(*violations, m1ArchitectureViolation{Path: "internal/controljournal", Kind: kind, Detail: named.Obj().Name() + " field " + field.name + " must be direct, untagged, and have the exact frozen type"})
 		}
 	}
 }
@@ -1296,7 +1363,6 @@ func inspectM1JournalCompetitors(files []m1ParsedJournalFile, stored, validated 
 		violations = append(violations, m1RecordRevisionOwnerViolations(parsed, root)...)
 		violations = append(violations, m1CallableAuthorityViolations(parsed, stored, validated, validator)...)
 		violations = append(violations, m1ValidatorRebindingViolations(parsed, validator)...)
-		violations = append(violations, m1CapabilityConstructionViolations(parsed, validated, validator)...)
 		for _, declaration := range parsed.file.Decls {
 			generic, ok := declaration.(*ast.GenDecl)
 			if !ok || generic.Tok != token.TYPE {
@@ -1311,105 +1377,6 @@ func inspectM1JournalCompetitors(files []m1ParsedJournalFile, stored, validated 
 		}
 	}
 	return violations
-}
-
-func m1CapabilityConstructionViolations(parsed m1ParsedJournalFile, validated *types.Named, validator *types.Func) []m1ArchitectureViolation {
-	if parsed.info == nil || validated == nil {
-		return nil
-	}
-	parents := m1ASTParents(parsed.file)
-	var violations []m1ArchitectureViolation
-	appendViolation := func(node ast.Node, form string) {
-		if !m1NodeIsInsideExactValidator(node, parents, parsed.info, validator) {
-			violations = append(violations, m1ArchitectureViolation{Path: parsed.source.Path, Kind: "journal-capability-construction", Detail: "only ValidateJournalV1 may construct ValidatedJournalV1 via " + form})
-		}
-	}
-	ast.Inspect(parsed.file, func(node ast.Node) bool {
-		switch value := node.(type) {
-		case *ast.CompositeLit:
-			// Ask go/types for the literal expression rather than its optional
-			// syntax type. Nested literals in slices and maps may omit Type while
-			// still constructing an exact ValidatedJournalV1 value.
-			if m1TypeIsExactValidated(parsed.info.TypeOf(value), validated) {
-				appendViolation(value, "composite literal")
-			}
-		case *ast.CallExpr:
-			if m1CallConvertsToExactValidated(value, parsed.info, validated) {
-				appendViolation(value, "type conversion")
-				break
-			}
-			identifier, ok := value.Fun.(*ast.Ident)
-			builtin, isBuiltin := parsed.info.Uses[identifier].(*types.Builtin)
-			if ok && isBuiltin && builtin.Name() == "new" && len(value.Args) == 1 && m1TypeIsExactValidated(parsed.info.TypeOf(value.Args[0]), validated) {
-				appendViolation(value, "new allocation")
-			}
-		case *ast.ValueSpec:
-			if value.Type != nil && m1ValueSpecBindsStorage(value) && m1TypeIsExactValidated(parsed.info.TypeOf(value.Type), validated) {
-				appendViolation(value, "zero-value declaration")
-			}
-		}
-		return true
-	})
-	return violations
-}
-
-func m1CallConvertsToExactValidated(call *ast.CallExpr, info *types.Info, validated *types.Named) bool {
-	if call == nil || info == nil || validated == nil {
-		return false
-	}
-	if target, ok := info.Types[call.Fun]; ok && target.IsType() {
-		return m1TypeIsExactValidated(target.Type, validated)
-	}
-
-	// TypeAndValue is the authoritative discriminator. Keep the object lookup
-	// as a narrow fallback for partially populated, otherwise valid type-info
-	// maps: only an exact type name can denote a conversion here. A function or
-	// method returning the capability is therefore never mistaken for one.
-	target := call.Fun
-	for {
-		parenthesized, ok := target.(*ast.ParenExpr)
-		if !ok {
-			break
-		}
-		target = parenthesized.X
-	}
-	var object types.Object
-	switch expression := target.(type) {
-	case *ast.Ident:
-		object = info.Uses[expression]
-	case *ast.SelectorExpr:
-		object = info.Uses[expression.Sel]
-	}
-	typeName, ok := object.(*types.TypeName)
-	return ok && m1TypeIsExactValidated(typeName.Type(), validated)
-}
-
-func m1ValueSpecBindsStorage(specification *ast.ValueSpec) bool {
-	for _, name := range specification.Names {
-		if name.Name != "_" {
-			return true
-		}
-	}
-	return false
-}
-
-func m1TypeIsExactValidated(typ types.Type, validated *types.Named) bool {
-	return typ != nil && types.Identical(types.Unalias(typ), validated)
-}
-
-func m1NodeIsInsideExactValidator(node ast.Node, parents map[ast.Node]ast.Node, info *types.Info, validator *types.Func) bool {
-	if validator == nil {
-		return false
-	}
-	for current := parents[node]; current != nil; current = parents[current] {
-		switch value := current.(type) {
-		case *ast.FuncLit:
-			return false
-		case *ast.FuncDecl:
-			return info.Defs[value.Name] == validator
-		}
-	}
-	return false
 }
 
 func m1TypeRecreatesValidatedCapability(typeSpec *ast.TypeSpec, info *types.Info, validated *types.Named) bool {
