@@ -234,7 +234,7 @@
     },
     "WP07": {
       "actor": "user",
-      "agent": "reviewer-renata-wp07-cycle1",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -243,6 +243,7 @@
       "last_transition_at": "2026-08-30T19:51:43.155468+00:00",
       "model": "__resolved_model_absent__",
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP07-authority-workspace-and-zombie-composition/review-cycle-1.md",
         "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP07-authority-workspace-and-zombie-composition/review-cycle-1.md",
@@ -250,15 +251,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T036": "done",
-        "T037": "done",
-        "T038": "done",
-        "T039": "done",
-        "T040": "done",
-        "T041": "done"
+        "T036": "planned",
+        "T037": "planned",
+        "T038": "planned",
+        "T039": "planned",
+        "T040": "planned",
+        "T041": "planned"
       }
     },
     "WP08": {
