@@ -93,6 +93,8 @@ trackers, worktrees, SQLite, or evidence-file layout.
 6. Reducers are total for supported versions and fail closed for unknown ones.
 7. Stable digests derive from canonical product state, not Go map iteration.
 8. Pure reducers perform no clock, random, filesystem, network, or store calls.
+9. Playback and reducers consume `ValidatedJournalV1`; raw stored-event slices
+   cannot bypass the frozen validation capability.
 
 ## Branch and ownership
 
@@ -117,6 +119,10 @@ code. Integrate to the mission branch, never directly to `main`.
 4. Represent version and event index explicitly with validated ranges.
 5. Defensively copy byte slices and collections at construction/access seams.
 6. Make zero/invalid values rejectable with typed, stable errors.
+7. Implement the exact frozen `StoredEventV1`, `EventVersionV1`,
+   `EventRegistryV1`, and `ValidatedJournalV1` root-package declarations and
+   their exact constructors/accessors. Keep validated events unexported and
+   allow only `ValidateJournalV1` to construct the capability.
 
 **Tests**:
 
@@ -157,7 +163,8 @@ code. Integrate to the mission branch, never directly to `main`.
 **Implementation requirements**:
 
 1. Define a registry keyed by aggregate/event kind and supported version.
-2. Apply events to canonical aggregate state without external side effects.
+2. Apply events from `ValidatedJournalV1` to canonical aggregate state without
+   external side effects; reducers must not accept raw `[]StoredEventV1`.
 3. Reject missing reducers, unsupported versions, and invalid transitions.
 4. Compute per-aggregate digests from canonical encoded state.
 5. Compute the global projection digest by sorting aggregate identity and folding
@@ -179,17 +186,34 @@ code. Integrate to the mission branch, never directly to `main`.
 
 **Implementation requirements**:
 
-1. Provide a comparator for the exact three-part committed event order.
-2. Reject duplicate order tuples and non-monotonic committed record sequences.
-3. Validate event indexes are contiguous within each record from zero.
-4. Validate expected/new aggregate heads per touched aggregate.
-5. Permit unrelated aggregates to progress concurrently.
-6. Do not introduce a shared projection-head record or global CAS token.
+1. Implement `ValidateJournalV1` as the sole authority for canonicalizing the
+   exact three-part committed event order.
+2. Accept shuffled input and return order by
+   `(RecordRevision, EventIndex, EventID)`; reject duplicate/non-total order
+   tuples rather than treating scan enumeration order as authoritative.
+3. For every operation group, require one positive record revision, one
+   OperationID, one common event count in 1–128, distinct EventIDs, and exactly
+   the zero-based indexes `[0,event_count)`. Reject missing, duplicate,
+   out-of-range, mixed-revision, mixed-count, and mixed-operation groups
+   atomically.
+4. Require envelope version v1 and an exact immutable registry tuple of event
+   type, event schema version, and reducer version. Unknown versions, wildcard
+   matching, and best-effort skipping refuse.
+5. Verify the canonical event digest from independently specified canonical
+   envelope bytes excluding the digest field and `RecordRevision`. A mismatch
+   returns no usable `ValidatedJournalV1`.
+6. Validate expected/new aggregate heads per touched aggregate.
+7. Permit unrelated aggregates to progress concurrently.
+8. Do not introduce a shared projection-head record or global CAS token.
 
 **Tests**:
 
 - Shuffled input restores to canonical order.
 - Duplicate EventID and duplicate tuple fail.
+- Missing/duplicate indexes, mixed group metadata, counts zero and 129, every
+  unknown version coordinate, and a nonempty-but-wrong digest fail closed.
+- Digest fixtures use hard-coded independently derived canonical bytes and
+  digests; tests never ask production code to sign the fixture it verifies.
 - Two aggregates can advance from different expected heads independently.
 - A synthetic shared-head mutant is rejected.
 
