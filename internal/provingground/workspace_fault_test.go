@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 )
 
@@ -29,7 +30,8 @@ func (h *cutHook) Reach(_ context.Context, id string) error {
 
 func TestGJ03OrphanHasNoAuthorityAndCannotBePromoted(t *testing.T) {
 	git := newFakeGit(t)
-	service := mustService(t, &recordingApplier{}, git).WithFaults(&cutHook{id: "GJ-03", remaining: 1})
+	journal := newJournalFixture()
+	service := mustService(t, journal, git).WithFaults(&cutHook{id: "GJ-03", remaining: 1})
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	authority, _ := service.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "gj03", now))
 	request := workspaceRequest(authority, "gj03-w1", now.Add(time.Second))
@@ -40,15 +42,33 @@ func TestGJ03OrphanHasNoAuthorityAndCannotBePromoted(t *testing.T) {
 		t.Fatal("GJ-03 orphan became durable")
 	}
 	physical := git.records[idsWorkspace(request.WorkspaceID)]
-	if result := service.ReconcileWorkspace(t.Context(), request.WorkspaceID, physical); result.Class != WorkspaceOrphanUnbound {
+	// Discard all process-local state, then rebuild current authority from the
+	// sealed journal. Attribution must come from durable binding absence plus
+	// the exact reservation and registered Git facts, never an orphan map.
+	events, _ := EventRegistryV1()
+	reducers, _ := ReducerRegistryV1()
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	restored, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{
+		Reader: journal, Source: checkpoint.SourceIdentityV1{ProjectID: "project-m1", MissionID: "mission-m1", RunID: "run-m1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest},
+		Binding: checkpoint.RestoreBindingV1{DatabaseID: "database-gj03", HostInstanceID: "host-gj03"}, EventRegistry: events, Reducers: reducers,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshProcess, err := restoreValidated(t.Context(), testConfig(t), journal, git, journal, restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := freshProcess.ReconcileWorkspace(t.Context(), request.WorkspaceID, physical); result.Class != WorkspaceOrphanUnbound {
 		t.Fatalf("classification=%+v", result)
 	}
-	if _, err := service.EnsureWorkspace(t.Context(), request); !IsOutcome(err, OutcomeWorkspaceNotReady) {
+	if _, err := freshProcess.EnsureWorkspace(t.Context(), request); !IsOutcome(err, OutcomeWorkspaceNotReady) {
 		t.Fatalf("orphan-reuse mutant survived: %v", err)
 	}
 	fresh := request
 	fresh.WorkspaceID, fresh.OperationID, fresh.OwnedBranch, fresh.LaneID = "workspace-gj03-w3", "bind-gj03-w3", "runs/gj03-w3", "lane-gj03-w3"
-	if _, err := service.EnsureWorkspace(t.Context(), fresh); err != nil {
+	if _, err := freshProcess.EnsureWorkspace(t.Context(), fresh); err != nil {
 		t.Fatal(err)
 	}
 }

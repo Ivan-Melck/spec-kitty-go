@@ -3,14 +3,22 @@ package provingground
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/application"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
+	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
@@ -199,4 +207,252 @@ func TestWorkspaceReuseMutantSecondBindingForSameLeaseRefuses(t *testing.T) {
 	if len(service.Projection().Workspaces) != 1 {
 		t.Fatalf("durable workspace count=%d", len(service.Projection().Workspaces))
 	}
+}
+
+type fixedExecutionIdentities struct {
+	run   ids.RunID
+	lease ids.LeaseID
+}
+
+func (f fixedExecutionIdentities) RunID() (ids.RunID, error)     { return f.run, nil }
+func (f fixedExecutionIdentities) LeaseID() (ids.LeaseID, error) { return f.lease, nil }
+
+type fixedExecutionClock struct{ now time.Time }
+
+func (f fixedExecutionClock) Now() time.Time { return f.now }
+
+func TestRealGapDBExecutionGitGJ04AndExpireExactRetryAfterSealedRestart(t *testing.T) {
+	binary := os.Getenv("SPEC_KITTY_M1_GAPDBD")
+	if binary == "" {
+		t.Skip("set SPEC_KITTY_M1_GAPDBD to the exact admitted gapdbd")
+	}
+	binary = privateAdmittedBinary(t, binary)
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	runtimeRoot := privateProvingGroundRoot(t)
+	dataRoot := privateProvingGroundRoot(t)
+	lifecycle, err := sidecargapdb.Start(t.Context(), sidecargapdb.LifecycleConfig{
+		ExecutablePath: binary, AdmissionRecordPath: filepath.Join(repoRoot, "docs", "programs", "evidence", "m1-admission.json"),
+		RuntimeRoot: runtimeRoot, DataDirectory: filepath.Join(dataRoot, "database"), SupervisorRunID: "run-m1",
+		ProductPolicySHA256: strings.Repeat("a", 64), StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := lifecycle.Stop(context.Background()); err != nil {
+			t.Errorf("stop GapDB: %v", err)
+		}
+	}()
+	adapter, connection, err := storegapdb.Dial(lifecycle.Provenance().ConfiguredSocket, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	events, err := EventRegistryV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducers, err := ReducerRegistryV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	binding, err := lifecycle.ProductRestoreBindingV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := application.NewRestoreReaderV1(adapter, "project-m1", "mission-m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pristine, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{
+		Reader: reader, Source: checkpoint.SourceIdentityV1{ProjectID: "project-m1", MissionID: "mission-m1", RunID: "run-m1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest},
+		Binding: binding, EventRegistry: events, Reducers: reducers,
+	})
+	if err != nil || !pristine.Pristine {
+		t.Fatalf("pristine restore=%+v err=%v", pristine, err)
+	}
+	pristineAdmission, err := pristine.AdmissionV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	productProof, err := lifecycle.MarkProductRecovered(pristineAdmission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startupProof, err := lifecycle.BindOwnerStartupEpochV1("epoch-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochAdmission, result, err := application.AdmitRuntimeEpochV1(t.Context(), adapter, application.EpochAdmissionInputV1{
+		ProjectID: "project-m1", MissionID: "mission-m1", OperationID: "admit-proving-ground", EventID: "event-admit-proving-ground",
+		StartupProof: startupProof, ProductRestoreProof: productProof,
+	})
+	if err != nil || result.Kind != application.OutcomeCommitted {
+		t.Fatalf("epoch admission=%+v err=%v", result, err)
+	}
+	app, err := application.NewService(adapter, epochAdmission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary, base := newRealPrimary(t)
+	repository, err := gitrepo.Bind(t.Context(), gitrepo.Runner{}, "repository-m1", "project-m1", primary, filepath.Join(t.TempDir(), "workspaces"), "refs/heads/main", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.PrepareManagedRoot(); err != nil {
+		t.Fatal(err)
+	}
+	primaryBefore := repository.Binding().Primary
+	config := testConfig(t)
+	identities := fixedExecutionIdentities{run: "run-m1", lease: "lease-real-gj04"}
+	runtime, err := NewRuntime(config, app, repository, identities, fixedExecutionClock{now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.core.WithFaults(&cutHook{id: "GJ-04", remaining: 1})
+	governance := testGovernanceContext(t, now)
+	start := execution.StartRequest{CorrelationID: "real-gj04", OperationID: "claim-real-gj04", ProjectID: "project-m1", MissionID: "mission-m1", WorkRevisionID: "revision-one", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-a", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}
+	spec := WorkspaceSpec{OperationID: "bind-real-gj04", WorkspaceID: "workspace-real-gj04", RepositoryID: "repository-m1", LaneID: "lane-real-gj04", OwnedBranch: "runs/real-gj04", PinnedBase: base, Now: now.Add(time.Second)}
+	if _, err := runtime.StartWorkspace(t.Context(), start, spec); !IsOutcome(err, OutcomeAmbiguous) {
+		t.Fatalf("GJ-04 result=%v", err)
+	}
+	authority, ok := runtime.core.Current("work-a")
+	workspaceBinding, bound := runtime.core.Binding(spec.WorkspaceID)
+	if !ok || !bound {
+		t.Fatal("GJ-04 did not leave durable authority and binding")
+	}
+	wantCapsule, err := controljournal.NewAuthorityCapsuleV1(controljournal.AuthorityCapsuleV1{SchemaVersion: 1, ProjectID: authority.ProjectID, MissionID: authority.MissionID, WorkRevisionID: authority.WorkRevisionID, ActorID: authority.ActorID, ProcessID: authority.ProcessID, RunID: authority.RunID, LeaseID: authority.LeaseID, WorkspaceID: workspaceBinding.WorkspaceID, RuntimeEpochID: authority.RuntimeEpochID, LeaseGeneration: authority.Generation, FenceToken: authority.FenceToken, AuthorityHeadRecordRevision: authority.AuthorityHeadRecordRevision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreReader, _ := application.NewRestoreReaderV1(adapter, "project-m1", "mission-m1")
+	restored, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{
+		Reader: restoreReader, Source: checkpoint.SourceIdentityV1{ProjectID: "project-m1", MissionID: "mission-m1", RunID: "run-m1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest},
+		Binding: binding, EventRegistry: events, Reducers: reducers,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := RestoreRuntimeValidated(t.Context(), config, app, repository, adapter, restored, identities, fixedExecutionClock{now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := restarted.StartWorkspace(t.Context(), start, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := controljournal.EncodeAuthorityCapsuleV1(wantCapsule)
+	got, _ := controljournal.EncodeAuthorityCapsuleV1(delivery.Authority)
+	if string(got) != string(want) || !delivery.Run.Replayed {
+		t.Fatalf("GJ-04 capsule replay changed: replay=%v\nwant=%s\ngot=%s", delivery.Run.Replayed, want, got)
+	}
+	if err := restarted.core.Expire(t.Context(), "expire-real-restart", authority, authority.Deadline); err != nil {
+		t.Fatal(err)
+	}
+	postExpireReader, _ := application.NewRestoreReaderV1(adapter, "project-m1", "mission-m1")
+	postExpire, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{
+		Reader: postExpireReader, Source: checkpoint.SourceIdentityV1{ProjectID: "project-m1", MissionID: "mission-m1", RunID: "run-m1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest},
+		Binding: binding, EventRegistry: events, Reducers: reducers,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterProcessLoss, err := RestoreRuntimeValidated(t.Context(), config, app, repository, adapter, postExpire, restoredIdentities("run-m1", "lease-real-gj04"), fixedExecutionClock{now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := afterProcessLoss.core.Expire(t.Context(), "expire-real-restart", authority, authority.Deadline); err != nil {
+		t.Fatalf("committed expiry did not survive process reconstruction: %v", err)
+	}
+	if got, _ := afterProcessLoss.core.Binding(spec.WorkspaceID); got.Status != "quarantined" {
+		t.Fatalf("restored expiry lost quarantine: %+v", got)
+	}
+	if err := afterProcessLoss.Authorize(wantCapsule, "handoff", authority.Deadline.Add(time.Second)); !IsOutcome(err, OutcomeStaleLease) {
+		t.Fatalf("exact expired authority capsule survived sealed reconstruction: %v", err)
+	}
+	primaryAfter, err := repository.SnapshotPrimary(t.Context())
+	if err != nil || primaryAfter != primaryBefore {
+		t.Fatalf("primary checkout changed: before=%+v after=%+v err=%v", primaryBefore, primaryAfter, err)
+	}
+}
+
+func restoredIdentities(run ids.RunID, lease ids.LeaseID) fixedExecutionIdentities {
+	return fixedExecutionIdentities{run: run, lease: lease}
+}
+
+func testGovernanceContext(t *testing.T, now time.Time) governancecontext.Context {
+	t.Helper()
+	commitment, err := governancecontext.CommitSHA256([]byte("proving-ground-governance-v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := governancecontext.NewEntry(governancecontext.KindConfig, "proving-ground", "v1", commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := governancecontext.NewContext("context-proving-ground", governancecontext.SchemaVersion, []governancecontext.Entry{entry}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func newRealPrimary(t *testing.T) (string, string) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "primary")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runRealGit(t, root, "init", "-b", "main")
+	runRealGit(t, root, "config", "user.name", "Spec Kitty")
+	runRealGit(t, root, "config", "user.email", "spec-kitty@example.invalid")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("primary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runRealGit(t, root, "add", "README.md")
+	runRealGit(t, root, "commit", "-m", "initial")
+	return root, runRealGit(t, root, "rev-parse", "HEAD")
+}
+
+func runRealGit(t *testing.T, directory string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", directory}, args...)...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, output)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func privateProvingGroundRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "spk-proving-ground-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
+}
+
+func privateAdmittedBinary(t *testing.T, source string) string {
+	t.Helper()
+	content, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := privateProvingGroundRoot(t)
+	destination := filepath.Join(root, "gapdbd")
+	if err := os.WriteFile(destination, content, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	return destination
 }

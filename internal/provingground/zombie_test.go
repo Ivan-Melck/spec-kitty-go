@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
+	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 )
 
 func TestZombieMayWriteW1ButHasZeroGovernedAuthority(t *testing.T) {
@@ -75,19 +77,12 @@ func TestZombiePredecessorEpochRefusesIndependentlyOfLease(t *testing.T) {
 	if c.RuntimeEpochID != "epoch-two" || c.Generation != a.Generation+1 {
 		t.Fatalf("restart/replacement coordinates conflated: a=%+v c=%+v", a, c)
 	}
-	projection := service.Projection()
-	restoredConfig := testConfig(t)
-	restoredConfig.RuntimeEpochID = "epoch-two"
-	restored, err := Restore(restoredConfig, secondApplier, nil, projection)
-	if err != nil {
-		t.Fatal(err)
-	}
 	thirdApplier := &recordingApplier{}
-	if err := restored.ReplaceRuntime(t.Context(), "restart-two", "epoch-three", thirdApplier, now.Add(3*time.Second)); err != nil {
+	if err := service.ReplaceRuntime(t.Context(), "restart-two", "epoch-three", thirdApplier, now.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if got := restored.Projection().Runtime; got.RuntimeEpochID != "epoch-three" || got.PredecessorEpoch != "epoch-two" || got.LogicalVersion != projection.Runtime.LogicalVersion+1 {
-		t.Fatalf("restored restart projection=%+v prior=%+v", got, projection.Runtime)
+	if got := service.Projection().Runtime; got.RuntimeEpochID != "epoch-three" || got.PredecessorEpoch != "epoch-two" || got.LogicalVersion != 2 {
+		t.Fatalf("second restart projection=%+v", got)
 	}
 }
 
@@ -119,33 +114,18 @@ func TestZombieIsolationFocusedCampaign(t *testing.T) {
 	}
 }
 
-func TestRestoreRejectsMissingWorkAndDuplicateWorkspaceOperationMutants(t *testing.T) {
-	git := newFakeGit(t)
-	service := mustService(t, &recordingApplier{}, git)
-	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	a, err := service.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "restore-mutant", now))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.EnsureWorkspace(t.Context(), workspaceRequest(a, "restore-mutant-w1", now.Add(time.Second))); err != nil {
-		t.Fatal(err)
-	}
-	projection := service.Projection()
-	missing := projection
-	missing.Works = append([]WorkProjection(nil), projection.Works[:1]...)
-	if _, err := Restore(testConfig(t), &recordingApplier{}, git, missing); !IsOutcome(err, OutcomeInvalidCommand) {
-		t.Fatalf("missing work census restored: %v", err)
-	}
-	duplicateOperation := projection
-	copyBinding := projection.Workspaces[0]
-	copyBinding.WorkspaceID = "workspace-duplicate-op"
-	copyBinding.CanonicalPath += "-duplicate"
-	copyBinding.GitDir += "-duplicate"
-	copyBinding.IndexPath += "-duplicate"
-	copyBinding.Status = "quarantined"
-	copyBinding.QuarantineReason = "test stale copy"
-	duplicateOperation.Workspaces = append(append([]WorkspaceBinding(nil), projection.Workspaces...), copyBinding)
-	if _, err := Restore(testConfig(t), &recordingApplier{}, git, duplicateOperation); !IsOutcome(err, OutcomeInvalidCommand) {
-		t.Fatalf("duplicate workspace operation restored: %v", err)
+type emptyRestoreHeads struct{}
+
+func (emptyRestoreHeads) Get(context.Context, string) (storegapdb.Record, error) {
+	return storegapdb.Record{}, &storegapdb.Error{Kind: storegapdb.OutcomeNotFound}
+}
+func (emptyRestoreHeads) Scan(context.Context, storegapdb.ScanRequest) (storegapdb.ScanPage, error) {
+	return storegapdb.ScanPage{}, nil
+}
+
+func TestRestoreRejectsCallerBuiltCheckpointResult(t *testing.T) {
+	invented := checkpoint.RestoreResultV1{Ready: true, Pristine: true}
+	if _, err := restoreValidated(t.Context(), testConfig(t), &recordingApplier{}, newFakeGit(t), emptyRestoreHeads{}, invented); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("caller-built restore result granted authority: %v", err)
 	}
 }
