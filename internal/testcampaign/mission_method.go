@@ -23,7 +23,49 @@ const (
 	MissionAdversarialProfile  = "mission-adversarial"
 	MissionRealIdentityProfile = "mission-real-identity"
 	MissionFullCampaign        = "mission_full"
+	Phase3ArchitectureProfile  = "phase3-architecture"
 )
+
+var phase3ArchitectureTests = []string{
+	"TestBeadsDocumentationDeliveryClaims",
+	"TestBeadsDocumentationLinksMermaidAndCommands",
+	"TestCloseoutBinaryAndReviewPolicyDocumentation",
+	"TestCloseoutOrchestratorAPI13ProjectionContract",
+	"TestCurrentProductionGraphPassesClosedPolicy",
+	"TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority",
+	"TestDefaultPolicyPinsTrackerConformanceAsOneWayQualityTooling",
+	"TestDefaultPolicyRejectsAuthorityImportOfGitAdapter",
+	"TestDefaultReachabilityRegistryPassesCurrentRepository",
+	"TestDeferredRuntimeSurfaceDoesNotGrepMarkdownProse",
+	"TestDeferredRuntimeSurfaceDoesNotGuessAmbiguousMarkdownFlows",
+	"TestDeferredRuntimeSurfaceRejectsConstantAliasesAndDotImport",
+	"TestDeferredRuntimeSurfaceRejectsLocalShortDeclarationAlias",
+	"TestDeferredRuntimeSurfaceRejectsMarkdownAuthorityParsing",
+	"TestDeferredRuntimeSurfaceRejectsPackageAliasDeclaredInAnotherFile",
+	"TestDeferredRuntimeSurfaceRejectsProductionPythonButIgnoresTests",
+	"TestLoadGraphDistinguishesProductionAndTestImports",
+	"TestLoadGraphReturnsTypedAndBoundedFailures",
+	"TestLoadedUnknownRootCannotDisappearThroughGraphExemption",
+	"TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic",
+	"TestPhase2EvidenceDocumentationMutants",
+	"TestPhase2EvidenceIntegrity",
+	"TestPolicyAcceptsProviderOnlyFromClassifiedAdapter",
+	"TestPolicyRejectingFixturesNameExactRuleAndEdge",
+	"TestPolicyValidationConfinesProviderAllowancesToAdapters",
+	"TestReachabilityCallerPolicies",
+	"TestReachabilityHonorsActiveCustomBuildTags",
+	"TestReachabilityRejectsBuildExcludedCallers",
+	"TestReachabilityRejectsGuardCalledOnlyByTest",
+	"TestReachabilityRejectsMissingRegisteredTarget",
+	"TestReachabilityRejectsShadowedTargetCalls",
+	"TestReachabilityRejectsTargetSelfRecursion",
+	"TestReachabilityRejectsUnrootedMutualRecursion",
+	"TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture",
+	"TestRemovingRealAuthorityToContractRuleNamesRealEdge",
+	"TestTierRuleAndViolationValueValidation",
+	"TestTypedProductionSourceLoadFailuresAreTyped",
+	"TestTypedProductionSourceLoaderCancelsStalledGoList",
+}
 
 var missionProfiles = map[string]Profile{
 	MissionContractProfile: {
@@ -72,6 +114,15 @@ func init() {
 	if historical.Pattern == "" {
 		historical.Pattern = "^(" + strings.Join(historical.ExpectedTests, "|") + ")$"
 		profiles["full-scenario"] = historical
+	}
+	// The signed Phase 3 publication records the architecture census that ran
+	// at that point in time. Keep that historical selector immutable while the
+	// live architecture profile grows with later mission guards.
+	profiles[Phase3ArchitectureProfile] = Profile{
+		Name:          Phase3ArchitectureProfile,
+		Package:       "./internal/architecture",
+		Pattern:       "^(" + strings.Join(phase3ArchitectureTests, "|") + ")$",
+		ExpectedTests: append([]string(nil), phase3ArchitectureTests...),
 	}
 	for name, profile := range missionProfiles {
 		profiles[name] = profile
@@ -710,7 +761,7 @@ func validatePhase3Profiles(c phase3Census, schema int) error {
 	if len(c.Supporting) != 5 {
 		return fmt.Errorf("phase3 supporting profile census changed")
 	}
-	wantSupporting := map[string]string{"provider-portable": "provider-portable", "provider-adversarial": "provider-adversarial", "architecture": "architecture", "scope": "scope", "historical-full-scenario": "full-scenario"}
+	wantSupporting := map[string]string{"provider-portable": "provider-portable", "provider-adversarial": "provider-adversarial", "architecture": Phase3ArchitectureProfile, "scope": "scope", "historical-full-scenario": "full-scenario"}
 	for _, profile := range c.Supporting {
 		registryName, ok := wantSupporting[profile.Name]
 		if !ok {

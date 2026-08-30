@@ -461,8 +461,11 @@ func phase3UpgradeFixtureSchema(t *testing.T, root string) {
 		for _, raw := range record["supporting_profiles"].([]any) {
 			profile := raw.(map[string]any)
 			registryName := profile["name"].(string)
-			if registryName == "historical-full-scenario" {
+			switch registryName {
+			case "historical-full-scenario":
 				registryName = "full-scenario"
+			case "architecture":
+				registryName = Phase3ArchitectureProfile
 			}
 			registered, err := ProfileByName(registryName)
 			if err != nil {
@@ -599,6 +602,14 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 	historical, err := ProfileByName("full-scenario")
 	if err != nil || historical.Pattern == "" || strings.Contains(historical.Pattern, "TestMissionMethodSemanticDriftMutations1000") {
 		t.Fatalf("historical full-scenario census was not frozen independently: profile=%+v err=%v", historical, err)
+	}
+	phase3Architecture, err := ProfileByName(Phase3ArchitectureProfile)
+	if err != nil || phase3Architecture.Pattern == "" || len(phase3Architecture.ExpectedTests) != 38 || slices.Contains(phase3Architecture.ExpectedTests, "TestM1BudgetFrozenContract") || slices.Contains(phase3Architecture.ExpectedTests, "TestDefaultPolicyClassifiesGapDBAsExactProviderAdapter") {
+		t.Fatalf("historical Phase 3 architecture census was not frozen independently: profile=%+v err=%v", phase3Architecture, err)
+	}
+	liveArchitecture, err := ProfileByName("architecture")
+	if err != nil || len(liveArchitecture.ExpectedTests) <= len(phase3Architecture.ExpectedTests) || !slices.Contains(liveArchitecture.ExpectedTests, "TestM1BudgetFrozenContract") || !slices.Contains(liveArchitecture.ExpectedTests, "TestDefaultPolicyClassifiesGapDBAsExactProviderAdapter") {
+		t.Fatalf("live architecture census did not retain post-Phase-3 guards: profile=%+v err=%v", liveArchitecture, err)
 	}
 	for _, name := range []string{MissionContractProfile, MissionAcceptanceProfile, MissionAdversarialProfile, MissionRealIdentityProfile} {
 		profile, err := ProfileByName(name)
