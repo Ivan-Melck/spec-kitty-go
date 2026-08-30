@@ -165,9 +165,9 @@
     },
     "WP05": {
       "actor": "codex-wp05",
-      "agent": "reviewer-renata-wp05",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent": "codex-wp05",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 5,
       "lane": "for_review",
       "last_event_id": "01M19WZX50MF0XBQPT3CQ56TA6",
