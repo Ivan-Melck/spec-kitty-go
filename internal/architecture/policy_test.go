@@ -293,15 +293,19 @@ func TestDefaultPolicyClassifiesGapDBAsExactProviderAdapter(t *testing.T) {
 	}
 
 	adapter := module + "/internal/controlstore/gapdb"
+	sidecar := module + "/internal/sidecar/gapdb"
 	assertTier(t, policy, adapter, TierAdapter)
+	assertTier(t, policy, sidecar, TierAdapter)
 
-	accepted := fixtureGraph(
-		[]string{adapter},
-		ImportEdge{SourcePackage: adapter, TargetPackage: "github.com/spec-kitty/gapdb", Kind: ImportExternal},
-	)
-	accepted.ModulePath = module
-	if err := policy.Check(accepted); err != nil {
-		t.Fatalf("exact public GapDB dependency rejected: %v", err)
+	for _, source := range []string{adapter, sidecar} {
+		accepted := fixtureGraph(
+			[]string{source},
+			ImportEdge{SourcePackage: source, TargetPackage: "github.com/spec-kitty/gapdb", Kind: ImportExternal},
+		)
+		accepted.ModulePath = module
+		if err := policy.Check(accepted); err != nil {
+			t.Fatalf("exact public GapDB dependency rejected for %s: %v", source, err)
+		}
 	}
 
 	lookalike := fixtureGraph(
