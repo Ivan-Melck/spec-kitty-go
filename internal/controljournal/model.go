@@ -682,7 +682,10 @@ func ValidateHeadTransition(expected ExpectedAggregateHeadV1, next NewAggregateH
 	if err := validateTokens(tokenField{"aggregate_kind", string(expected.AggregateKind)}, tokenField{"aggregate_id", string(expected.AggregateID)}); err != nil {
 		return err
 	}
-	if expected.ObservedHeadRevision == 0 || expected.LogicalVersion == ^uint64(0) {
+	// Revision zero is the explicit absence proof for aggregate creation.  It is
+	// valid only with logical version zero; every existing head must carry the
+	// exact provider revision that the atomic batch will compare.
+	if (expected.ObservedHeadRevision == 0) != (expected.LogicalVersion == 0) || expected.LogicalVersion == ^uint64(0) {
 		return ValidationError{Kind: RefusalInvalidValue, Field: "expected_head"}
 	}
 	if next.Head.SchemaVersion != 1 {

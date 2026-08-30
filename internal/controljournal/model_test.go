@@ -332,6 +332,27 @@ func TestHeadAggregateLocalTransitions(t *testing.T) {
 	}
 }
 
+func TestHeadTransitionAcceptsOnlyExplicitAbsentCreationProof(t *testing.T) {
+	digest := sha256.Sum256([]byte("created-state"))
+	head, err := ConstructAggregateHeadV1("mission", "created", 1, "epoch-1", "event-1", digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateHeadTransition(ExpectedAggregateHeadV1{AggregateKind: "mission", AggregateID: "created"}, NewAggregateHeadV1{Head: head}); err != nil {
+		t.Fatalf("explicit absent creation proof refused: %v", err)
+	}
+	for name, expected := range map[string]ExpectedAggregateHeadV1{
+		"existing head without revision": {AggregateKind: "mission", AggregateID: "created", LogicalVersion: 1},
+		"absent head with revision":      {AggregateKind: "mission", AggregateID: "created", ObservedHeadRevision: 7},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateHeadTransition(expected, NewAggregateHeadV1{Head: head}); err == nil {
+				t.Fatal("incoherent absence proof accepted")
+			}
+		})
+	}
+}
+
 func TestHeadTransitionRejectsOverflowAndIncompleteNextHead(t *testing.T) {
 	digest := sha256.Sum256([]byte("state"))
 	valid, err := ConstructAggregateHeadV1("mission", "a", 3, "epoch-1", "event-3", digest)
