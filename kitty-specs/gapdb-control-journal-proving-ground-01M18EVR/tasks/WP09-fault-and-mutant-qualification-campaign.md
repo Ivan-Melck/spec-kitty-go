@@ -28,9 +28,9 @@ requirement_refs:
 - NFR-015
 - NFR-016
 - NFR-017
-planning_base_branch: main
-merge_target_branch: main
-branch_strategy: Planning artifacts for this mission were generated on main. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into main unless the human explicitly redirects the landing branch.
+planning_base_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
+merge_target_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
+branch_strategy: Planning artifacts for this mission were generated on kitty/mission-gapdb-control-journal-proving-ground-01M18EVR. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into the mission branch; only the accepted mission may merge to main.
 subtasks:
 - T047
 - T048
@@ -38,7 +38,7 @@ subtasks:
 - T050
 - T051
 history: []
-agent_profile: debugger-debbie
+agent_profile: implementer-ivan
 authoritative_surface: internal/testcampaign/m1/faults/
 create_intent:
 - internal/testcampaign/m1/faults/runner.go
@@ -60,7 +60,7 @@ owned_files:
 - internal/testcampaign/m1/mutants/catalog_test.go
 - internal/testcampaign/m1/invariants.go
 - internal/testcampaign/m1/invariants_test.go
-role: debugger
+role: implementer
 tags:
 - m1
 - fault
@@ -75,8 +75,8 @@ tracker_refs: []
 
 Use the `/ad-hoc-profile-load` skill to load the agent profile specified in the frontmatter, and behave according to its guidance before parsing the rest of this prompt.
 
-- **Profile**: `debugger-debbie`
-- **Role**: `debugger`
+- **Profile**: `implementer-ivan`
+- **Role**: `implementer`
 - **Agent/tool**: `codex`
 
 If no profile is specified, run `spec-kitty profiles list --json` and select the best match for this work package's task type and authoritative surface.

@@ -17,9 +17,9 @@ requirement_refs:
 - FR-039
 - NFR-014
 - NFR-016
-planning_base_branch: main
-merge_target_branch: main
-branch_strategy: Planning artifacts for this mission were generated on main. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into main unless the human explicitly redirects the landing branch.
+planning_base_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
+merge_target_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
+branch_strategy: Planning artifacts for this mission were generated on kitty/mission-gapdb-control-journal-proving-ground-01M18EVR. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into the mission branch; only the accepted mission may merge to main.
 subtasks:
 - T018
 - T019
@@ -149,10 +149,17 @@ Do not create a generic daemon manager or alter external system services.
 
 **Implementation requirements**:
 
-1. Query all three surfaces through the actual configured endpoint.
-2. Cross-check instance/process identity, durable mode, data path, socket path,
-   product budgets, and public API version.
-3. Refuse readiness when any surface disagrees or lacks provenance.
+1. Query all three surfaces through the actual configured endpoint and require
+   a strict protocol-v1 typed response envelope on that successful connection.
+2. Attribute public fields only to the surface that actually reports them:
+   Status supplies database ID, owner PID/start, revisions, limits, and
+   lifecycle; Health supplies subsystem health; DescribeConfig supplies
+   configuration and limits.
+3. Observe the socket from the successful configured connection; bind data
+   directory and executable identity through host lifecycle evidence; and bind
+   wire/storage versions through strict-envelope proof and pinned admission
+   facts. Refuse readiness when the composite provenance record is incomplete
+   or when overlapping reported observations disagree.
 4. Keep `healthy`, `configured`, `admitted`, and `ready for product recovery`
    as distinct predicates.
 5. Do not treat byte-level daemon recovery as product readiness.
@@ -161,7 +168,7 @@ Do not create a generic daemon manager or alter external system services.
 **Tests**:
 
 - A lookalike healthy endpoint with different config fails attribution.
-- Misreported public fields and stale status fail.
+- Misreported public fields, conflicting overlapping fields, and stale status fail.
 - Byte-recovered but unvalidated product state is not ready.
 
 **Exit evidence**: `go test ./internal/sidecar/gapdb -run 'Status|Health|Config'`.

@@ -12,9 +12,9 @@ requirement_refs:
 - FR-039
 - NFR-011
 - NFR-013
-planning_base_branch: main
-merge_target_branch: main
-branch_strategy: Planning artifacts for this mission were generated on main. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into main unless the human explicitly redirects the landing branch.
+planning_base_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
+merge_target_branch: kitty/mission-gapdb-control-journal-proving-ground-01M18EVR
+branch_strategy: Planning artifacts for this mission were generated on kitty/mission-gapdb-control-journal-proving-ground-01M18EVR. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into the mission branch; only the accepted mission may merge to main.
 subtasks:
 - T001
 - T002
@@ -22,7 +22,7 @@ subtasks:
 - T004
 - T005
 history: []
-agent_profile: architect-alphonso
+agent_profile: implementer-ivan
 authoritative_surface: internal/architecture/
 create_intent:
 - internal/architecture/m1_contracts_test.go
@@ -36,7 +36,7 @@ owned_files:
 - internal/architecture/m1_evidence_semantics_test.go
 - internal/architecture/m1_budget_contract_test.go
 - internal/architecture/m1_dependency_guard_test.go
-role: architect
+role: implementer
 tags:
 - m1
 - architecture
@@ -50,8 +50,8 @@ tracker_refs: []
 
 Use the `/ad-hoc-profile-load` skill to load the agent profile specified in the frontmatter, and behave according to its guidance before parsing the rest of this prompt.
 
-- **Profile**: `architect-alphonso`
-- **Role**: `architect`
+- **Profile**: `implementer-ivan`
+- **Role**: `implementer`
 - **Agent/tool**: `codex`
 
 If no profile is specified, run `spec-kitty profiles list --json` and select the best match for this work package's task type and authoritative surface.
