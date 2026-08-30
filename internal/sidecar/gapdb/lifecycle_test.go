@@ -15,7 +15,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
-	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	"golang.org/x/sys/unix"
 )
 
@@ -44,20 +44,10 @@ func TestLifecycleExactBinaryStatusHealthAndConfig(t *testing.T) {
 		!provenance.Readiness.Admitted || provenance.Readiness.ProductRecovered || provenance.Readiness.ReadyForProductRecovery {
 		t.Fatalf("byte recovery improperly became product readiness: %+v", provenance.Readiness)
 	}
-	if err := lifecycle.MarkProductRecovered(controljournal.ValidatedJournalV1{}); !IsFailure(err, FailureReadiness) {
-		t.Fatalf("zero journal promoted readiness: %v", err)
+	if _, err := lifecycle.MarkProductRecovered(journalcheckpoint.RestoreAdmissionV1{}); !IsFailure(err, FailureReadiness) {
+		t.Fatalf("zero restore admission promoted readiness: %v", err)
 	}
-	registry, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	journal, err := controljournal.ValidateJournalV1(registry, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := lifecycle.MarkProductRecovered(journal); err != nil {
-		t.Fatal(err)
-	}
+	_ = markTestProductRecovered(t, lifecycle, "project-lifecycle", "mission-lifecycle")
 	ready := lifecycle.Provenance().Readiness
 	if !ready.ProductRecovered || !ready.ReadyForProductRecovery {
 		t.Fatalf("product recovery was not recorded: %+v", ready)

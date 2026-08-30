@@ -2,6 +2,8 @@ package checkpoint
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"sort"
 
@@ -31,16 +33,18 @@ type RestoreReaderV1 interface {
 type RestoreInputV1 struct {
 	Reader        RestoreReaderV1
 	Source        SourceIdentityV1
+	Binding       RestoreBindingV1
 	EventRegistry controljournal.EventRegistryV1
 	Reducers      reducer.RegistryV1
 }
 
 type RestoreObservationV1 struct {
-	ScanRecords   uint64
-	ScanBytes     uint64
-	EventCount    uint64
-	ScanPages     uint32
-	StaleRestarts uint32
+	ObservedStoreRevision uint64
+	ScanRecords           uint64
+	ScanBytes             uint64
+	EventCount            uint64
+	ScanPages             uint32
+	StaleRestarts         uint32
 }
 
 type RestoreResultV1 struct {
@@ -53,6 +57,39 @@ type RestoreResultV1 struct {
 	TerminalWatermark         WatermarkV1
 	CanonicalProjectionDigest [32]byte
 	Observation               RestoreObservationV1
+	admission                 RestoreAdmissionV1
+}
+
+// AdmissionV1 returns the sealed mission-specific startup capability. Public
+// result fields remain useful for playback and diagnostics, but changing a
+// copy of any bound field invalidates admission.
+func (result RestoreResultV1) AdmissionV1() (RestoreAdmissionV1, error) {
+	facts, err := result.admission.Facts()
+	if err != nil || !result.Ready || result.CommandAdmissionOpen || result.Pristine != facts.Pristine ||
+		result.Observation.ObservedStoreRevision != facts.ObservedStoreRevision ||
+		result.TerminalWatermark != facts.TerminalWatermark ||
+		result.CanonicalProjectionDigest != facts.CanonicalProjectionDigest ||
+		!restoreCheckpointSelectionMatchesV1(result.SelectedCheckpoint, facts) {
+		return RestoreAdmissionV1{}, InvalidRestoreAdmissionErrorV1{}
+	}
+	return result.admission, nil
+}
+
+func restoreCheckpointSelectionMatchesV1(head *CheckpointHeadV1, facts RestoreAdmissionFactsV1) bool {
+	if head == nil {
+		return facts.SelectedCheckpointID == "" && facts.SelectedCheckpointDigest == [32]byte{}
+	}
+	return head.CheckpointID == facts.SelectedCheckpointID && head.CheckpointRecordDigest == facts.SelectedCheckpointDigest
+}
+
+// Facts returns a value copy only after revalidating the complete restore
+// binding. RestoreAdmissionFactsV1 contains no slices or mutable references.
+func (admission RestoreAdmissionV1) Facts() (RestoreAdmissionFactsV1, error) {
+	if admission.seal.version != 1 || admission.seal.digest == [32]byte{} ||
+		restoreAdmissionDigestV1(admission.facts) != admission.seal.digest {
+		return RestoreAdmissionFactsV1{}, InvalidRestoreAdmissionErrorV1{}
+	}
+	return admission.facts, nil
 }
 
 func RestoreV1(ctx context.Context, input RestoreInputV1) (RestoreResultV1, error) {
@@ -61,6 +98,9 @@ func RestoreV1(ctx context.Context, input RestoreInputV1) (RestoreResultV1, erro
 	}
 	if err := validateSource(input.Source); err != nil {
 		return RestoreResultV1{}, notReady(NotReadyAuthorityClosed, "source_identity", "repair the admitted source identity")
+	}
+	if !validRestoreBindingV1(input.Binding) {
+		return RestoreResultV1{}, notReady(NotReadyAuthorityClosed, "restore_binding", "bind restore to the admitted database and owner lifetime")
 	}
 	if err := validateRegistryBindings(input.Source, input.EventRegistry, input.Reducers); err != nil {
 		return RestoreResultV1{}, notReady(NotReadyAuthorityClosed, "registry_binding", "install the exact sealed event and reducer registries")
@@ -121,7 +161,7 @@ func RestoreV1(ctx context.Context, input RestoreInputV1) (RestoreResultV1, erro
 		if authorityErr != nil {
 			continue
 		}
-		return readyResult(&selected, restored, authority, terminal, observation), nil
+		return readyResult(input, &selected, restored, authority, terminal, observation), nil
 	}
 	return restoreFromOrigin(ctx, input, &staleRestarts, true)
 }
@@ -147,13 +187,13 @@ func restoreFromOrigin(ctx context.Context, input RestoreInputV1, staleRestarts 
 		return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "journal_reduction", "install the exact reducer set or restore compatible history")
 	}
 	if len(events) == 0 {
-		return readyPristineResult(projection, observation), nil
+		return readyPristineResult(input, projection, observation), nil
 	}
 	authority, err := deriveAuthority(input.Source.RunID, AuthoritySummaryV1{}, journal)
 	if err != nil {
 		return RestoreResultV1{}, notReady(NotReadyJournalCorrupt, "authority_summary", "inspect the authority event history")
 	}
-	return readyResult(nil, projection, authority, terminal, observation), nil
+	return readyResult(input, nil, projection, authority, terminal, observation), nil
 }
 
 func scanJournal(ctx context.Context, reader RestoreReaderV1, after WatermarkV1, staleRestarts *uint32) ([]controljournal.StoredEventV1, RestoreObservationV1, error) {
@@ -178,9 +218,15 @@ func scanJournal(ctx context.Context, reader RestoreReaderV1, after WatermarkV1,
 				break
 			}
 			if err != nil {
+				var refusal NotReadyErrorV1
+				if errors.As(err, &refusal) {
+					return nil, observation, refusal
+				}
 				return nil, observation, notReady(NotReadyAuthorityClosed, "journal_scan", "preserve the store and retry the bounded read")
 			}
-			if page.ObservedRevision == 0 || observed != 0 && page.ObservedRevision != observed {
+			pristineOrigin := after.ThroughRecordRevision == 0 && cursor == "" && page.ObservedRevision == 0 &&
+				page.RecordCount == 0 && !page.Truncated && page.Cursor == ""
+			if page.ObservedRevision == 0 && !pristineOrigin || observed != 0 && page.ObservedRevision != observed {
 				if *staleRestarts == MaxStaleRestarts {
 					return nil, observation, notReady(NotReadyStoreUnstable, "observed_revision", "hold command admission closed and stabilize the owner")
 				}
@@ -237,6 +283,7 @@ func scanJournal(ctx context.Context, reader RestoreReaderV1, after WatermarkV1,
 				if page.Cursor != "" {
 					return nil, observation, notReady(NotReadyJournalCorrupt, "terminal_cursor", "inspect the provider cursor response")
 				}
+				observation.ObservedStoreRevision = observed
 				return events, observation, nil
 			}
 			if page.Cursor == "" || page.Cursor == cursor {
@@ -269,12 +316,83 @@ func selectCheckpoint(ctx context.Context, input RestoreInputV1, head Checkpoint
 	return record, projection, nil
 }
 
-func readyResult(head *CheckpointHeadV1, projection reducer.ProjectionV1, authority AuthoritySummaryV1, watermark WatermarkV1, observation RestoreObservationV1) RestoreResultV1 {
-	return RestoreResultV1{Ready: true, CommandAdmissionOpen: false, SelectedCheckpoint: head, Projection: projection, Authority: authority, TerminalWatermark: watermark, CanonicalProjectionDigest: projection.GlobalDigest(), Observation: observation}
+func readyResult(input RestoreInputV1, head *CheckpointHeadV1, projection reducer.ProjectionV1, authority AuthoritySummaryV1, watermark WatermarkV1, observation RestoreObservationV1) RestoreResultV1 {
+	result := RestoreResultV1{Ready: true, CommandAdmissionOpen: false, SelectedCheckpoint: head, Projection: projection, Authority: authority, TerminalWatermark: watermark, CanonicalProjectionDigest: projection.GlobalDigest(), Observation: observation}
+	result.admission = newRestoreAdmissionV1(input, result)
+	return result
 }
 
-func readyPristineResult(projection reducer.ProjectionV1, observation RestoreObservationV1) RestoreResultV1 {
-	return RestoreResultV1{Ready: true, Pristine: true, CommandAdmissionOpen: false, Projection: projection, CanonicalProjectionDigest: projection.GlobalDigest(), Observation: observation}
+func readyPristineResult(input RestoreInputV1, projection reducer.ProjectionV1, observation RestoreObservationV1) RestoreResultV1 {
+	result := RestoreResultV1{Ready: true, Pristine: true, CommandAdmissionOpen: false, Projection: projection, CanonicalProjectionDigest: projection.GlobalDigest(), Observation: observation}
+	result.admission = newRestoreAdmissionV1(input, result)
+	return result
+}
+
+func newRestoreAdmissionV1(input RestoreInputV1, result RestoreResultV1) RestoreAdmissionV1 {
+	facts := RestoreAdmissionFactsV1{
+		Source: input.Source, Binding: input.Binding,
+		ObservedStoreRevision: result.Observation.ObservedStoreRevision,
+		TerminalWatermark:     result.TerminalWatermark, Pristine: result.Pristine,
+		CanonicalProjectionDigest: result.CanonicalProjectionDigest,
+	}
+	if result.SelectedCheckpoint != nil {
+		facts.SelectedCheckpointID = result.SelectedCheckpoint.CheckpointID
+		facts.SelectedCheckpointDigest = result.SelectedCheckpoint.CheckpointRecordDigest
+	}
+	return RestoreAdmissionV1{facts: facts, seal: restoreAdmissionSealV1{version: 1, digest: restoreAdmissionDigestV1(facts)}}
+}
+
+func validRestoreBindingV1(binding RestoreBindingV1) bool {
+	for _, value := range []string{binding.DatabaseID, binding.HostInstanceID} {
+		if len(value) == 0 || len(value) > 256 {
+			return false
+		}
+		for _, character := range value {
+			if character <= ' ' || character > '~' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func restoreAdmissionDigestV1(facts RestoreAdmissionFactsV1) [32]byte {
+	h := sha256.New()
+	writeRestorePartV1(h, []byte("restore-admission-v1"))
+	writeRestorePartV1(h, []byte(facts.Source.ProjectID))
+	writeRestorePartV1(h, []byte(facts.Source.MissionID))
+	writeRestorePartV1(h, []byte(facts.Source.RunID))
+	writeRestorePartV1(h, facts.Source.ReducerSetDigest[:])
+	writeRestorePartV1(h, facts.Source.EventSchemaSetDigest[:])
+	writeRestorePartV1(h, []byte(facts.Binding.DatabaseID))
+	writeRestorePartV1(h, []byte(facts.Binding.HostInstanceID))
+	writeRestoreUint64V1(h, facts.ObservedStoreRevision)
+	writeRestoreUint64V1(h, facts.TerminalWatermark.ThroughRecordRevision)
+	writeRestorePartV1(h, []byte(facts.TerminalWatermark.ThroughEventID))
+	writeRestoreUint64V1(h, facts.TerminalWatermark.EventCount)
+	writeRestorePartV1(h, facts.TerminalWatermark.EventPrefixDigest[:])
+	if facts.Pristine {
+		writeRestorePartV1(h, []byte{1})
+	} else {
+		writeRestorePartV1(h, []byte{0})
+	}
+	writeRestorePartV1(h, facts.CanonicalProjectionDigest[:])
+	writeRestorePartV1(h, []byte(facts.SelectedCheckpointID))
+	writeRestorePartV1(h, facts.SelectedCheckpointDigest[:])
+	var digest [32]byte
+	copy(digest[:], h.Sum(nil))
+	return digest
+}
+
+func writeRestorePartV1(writer interface{ Write([]byte) (int, error) }, value []byte) {
+	writeRestoreUint64V1(writer, uint64(len(value)))
+	_, _ = writer.Write(value)
+}
+
+func writeRestoreUint64V1(writer interface{ Write([]byte) (int, error) }, value uint64) {
+	var encoded [8]byte
+	binary.BigEndian.PutUint64(encoded[:], value)
+	_, _ = writer.Write(encoded[:])
 }
 
 func deriveAuthority(runID controljournal.RunID, initial AuthoritySummaryV1, journal controljournal.ValidatedJournalV1) (AuthoritySummaryV1, error) {

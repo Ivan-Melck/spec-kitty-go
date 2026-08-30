@@ -20,7 +20,7 @@ import (
 	"time"
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
-	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 	"golang.org/x/sys/unix"
 )
@@ -225,19 +225,20 @@ type OwnershipDiagnostic struct {
 
 // Lifecycle owns exactly one process, private runtime directory, and endpoint.
 type Lifecycle struct {
-	mu         sync.Mutex
-	config     LifecycleConfig
-	command    *exec.Cmd
-	exit       chan error
-	pidfd      int
-	process    ProcessIdentity
-	provenance SidecarProvenance
-	runtimeID  fileIdentity
-	socketID   fileIdentity
-	stdout     *boundedBuffer
-	stderr     *boundedBuffer
-	stopped    bool
-	processes  processAPI
+	mu              sync.Mutex
+	config          LifecycleConfig
+	command         *exec.Cmd
+	exit            chan error
+	pidfd           int
+	process         ProcessIdentity
+	provenance      SidecarProvenance
+	runtimeID       fileIdentity
+	socketID        fileIdentity
+	stdout          *boundedBuffer
+	stderr          *boundedBuffer
+	stopped         bool
+	processes       processAPI
+	productRestores map[string]ProductRestoreProofV1
 }
 
 // Start verifies and descriptor-executes the exact admitted sidecar, then
@@ -561,21 +562,59 @@ func (l *Lifecycle) Evidence() (ProvenanceEvidenceV1, error) {
 	}, nil
 }
 
-// MarkProductRecovered is a one-way admission step. A zero or manually
-// constructed journal cannot promote byte recovery; it must carry the sealed
-// capability produced by controljournal.ValidateJournalV1.
-func (l *Lifecycle) MarkProductRecovered(journal controljournal.ValidatedJournalV1) error {
-	if _, err := journal.Len(); err != nil {
-		return failure(FailureReadiness, "admit_product", "validated journal capability is absent", err)
+// ProductRestoreBindingV1 returns the copy-only database/owner identity that a
+// read-only RestoreV1 must bind. It does not itself promote product readiness.
+func (l *Lifecycle) ProductRestoreBindingV1() (journalcheckpoint.RestoreBindingV1, error) {
+	if l == nil {
+		return journalcheckpoint.RestoreBindingV1{}, failure(FailureReadiness, "restore_binding", "lifecycle is absent", nil)
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.stopped || !l.provenance.Readiness.Admitted || !l.provenance.Readiness.Healthy || !l.provenance.Readiness.Configured {
-		return failure(FailureReadiness, "admit_product", "sidecar is not admitted", nil)
+		l.mu.Unlock()
+		return journalcheckpoint.RestoreBindingV1{}, failure(FailureReadiness, "restore_binding", "sidecar is not admitted", nil)
+	}
+	provenance := l.provenance
+	l.mu.Unlock()
+	supervisor, err := currentExecutableIdentity()
+	if err != nil {
+		return journalcheckpoint.RestoreBindingV1{}, err
+	}
+	return journalcheckpoint.RestoreBindingV1{
+		DatabaseID:     provenance.DatabaseID,
+		HostInstanceID: hostInstanceIDV1(supervisor, provenance.Process, provenance.DatabaseID),
+	}, nil
+}
+
+// MarkProductRecovered is a one-way admission step. Only RestoreV1's sealed,
+// mission-specific admission can promote readiness; generic journals and
+// caller-built result structs have no compatible capability.
+func (l *Lifecycle) MarkProductRecovered(admission journalcheckpoint.RestoreAdmissionV1) (ProductRestoreProofV1, error) {
+	facts, err := admission.Facts()
+	if err != nil {
+		return ProductRestoreProofV1{}, failure(FailureReadiness, "admit_product", "restore admission capability is absent", err)
+	}
+	binding, err := l.ProductRestoreBindingV1()
+	if err != nil {
+		return ProductRestoreProofV1{}, err
+	}
+	if facts.Binding != binding || facts.ObservedStoreRevision == 0 && !facts.Pristine ||
+		facts.TerminalWatermark.ThroughRecordRevision > facts.ObservedStoreRevision ||
+		facts.CanonicalProjectionDigest == [32]byte{} {
+		return ProductRestoreProofV1{}, failure(FailureReadiness, "admit_product", "restore admission does not match the owned store", nil)
+	}
+	proof := newProductRestoreProofV1(facts)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.stopped || !l.provenance.Readiness.Admitted || l.provenance.DatabaseID != binding.DatabaseID {
+		return ProductRestoreProofV1{}, failure(FailureReadiness, "admit_product", "sidecar ownership changed during restore admission", nil)
 	}
 	l.provenance.Readiness.ProductRecovered = true
 	l.provenance.Readiness.ReadyForProductRecovery = true
-	return nil
+	if l.productRestores == nil {
+		l.productRestores = make(map[string]ProductRestoreProofV1)
+	}
+	l.productRestores[string(facts.Source.ProjectID)+"\x00"+string(facts.Source.MissionID)] = proof
+	return proof, nil
 }
 
 func (l *Lifecycle) waitForComposite(ctx context.Context, socket string, startedBefore, startedAfter, deadline time.Time) (CompositeObservation, fileIdentity, error) {

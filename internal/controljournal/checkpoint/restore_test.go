@@ -131,7 +131,66 @@ func encodedPage(t *testing.T, records []controljournal.StoredEventV1) JournalSc
 }
 
 func restoreInput(reader RestoreReaderV1, t *testing.T) RestoreInputV1 {
-	return RestoreInputV1{Reader: reader, Source: testSource(t), EventRegistry: testEventRegistry(t), Reducers: testReducers(t)}
+	return RestoreInputV1{
+		Reader: reader, Source: testSource(t),
+		Binding:       RestoreBindingV1{DatabaseID: "database-test", HostInstanceID: "host-test"},
+		EventRegistry: testEventRegistry(t), Reducers: testReducers(t),
+	}
+}
+
+func TestRestoreAdmissionIsConstructorSealedAndContentBound(t *testing.T) {
+	input := restoreInput(&restoreReader{pages: []JournalScanPageV1{encodedPage(t, nil)}}, t)
+	result, err := RestoreV1(t.Context(), input)
+	if err != nil || !result.Ready || !result.Pristine {
+		t.Fatalf("restore result=%+v err=%v", result, err)
+	}
+	proof, err := result.AdmissionV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := proof.Facts()
+	if err != nil || facts.Source != input.Source || facts.Binding != input.Binding || facts.ObservedStoreRevision != 100 || !facts.Pristine || facts.CanonicalProjectionDigest != result.CanonicalProjectionDigest {
+		t.Fatalf("facts=%+v err=%v", facts, err)
+	}
+	if _, err := (RestoreResultV1{Ready: true}).AdmissionV1(); err == nil {
+		t.Fatal("caller-built ready result minted restore admission")
+	}
+	if _, err := (RestoreAdmissionV1{}).Facts(); err == nil {
+		t.Fatal("zero restore admission exposed facts")
+	}
+	mutated := result
+	mutated.Pristine = false
+	if _, err := mutated.AdmissionV1(); err == nil {
+		t.Fatal("mutated restore result retained admission")
+	}
+	mutated = result
+	mutated.Observation.ObservedStoreRevision++
+	if _, err := mutated.AdmissionV1(); err == nil {
+		t.Fatal("mutated observed revision retained admission")
+	}
+}
+
+func TestRestorePristineOriginMayBindExactZeroStoreRevisionOnly(t *testing.T) {
+	input := restoreInput(&restoreReader{pages: []JournalScanPageV1{{ObservedRevision: 0}}}, t)
+	result, err := RestoreV1(t.Context(), input)
+	if err != nil || !result.Ready || !result.Pristine || result.Observation.ObservedStoreRevision != 0 {
+		t.Fatalf("zero-revision pristine restore=%+v err=%v", result, err)
+	}
+	proof, err := result.AdmissionV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts, err := proof.Facts(); err != nil || !facts.Pristine || facts.ObservedStoreRevision != 0 {
+		t.Fatalf("zero-revision pristine facts=%+v err=%v", facts, err)
+	}
+
+	event := testStoredEvent(t, 1, "event-zero-revision", "operation-zero-revision", "aggregate-a", 1, 0, 1, `{"value":1}`)
+	page := encodedPage(t, []controljournal.StoredEventV1{event})
+	page.ObservedRevision = 0
+	input.Reader = &restoreReader{pages: []JournalScanPageV1{page}}
+	if result, err := RestoreV1(t.Context(), input); err == nil || result.Ready {
+		t.Fatalf("nonempty zero-revision page admitted result=%+v err=%v", result, err)
+	}
 }
 
 func TestRestoreSuffixOnlyCheckpointOnlyAndCheckpointPlusSuffix(t *testing.T) {

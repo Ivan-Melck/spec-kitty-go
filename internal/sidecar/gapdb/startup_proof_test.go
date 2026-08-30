@@ -1,15 +1,29 @@
 package gapdb
 
 import (
+	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/reducer"
 )
 
 func TestOwnerStartupProofBindsOneEpochAcrossLifecycleAliases(t *testing.T) {
 	lifecycle := startupProofLifecycle("database-proof")
+	productProof := markTestProductRecovered(t, lifecycle, "project-proof", "mission-proof")
+	if facts, err := productProof.Facts(); err != nil || facts.Source.ProjectID != "project-proof" || facts.Binding.DatabaseID != "database-proof" {
+		t.Fatalf("product restore facts=%+v err=%v", facts, err)
+	}
+	productFacts, _ := productProof.Facts()
+	productFacts.Source.ProjectID = "forged-project"
+	if again, err := productProof.Facts(); err != nil || again.Source.ProjectID != "project-proof" {
+		t.Fatalf("product proof changed through facts copy: %+v err=%v", again, err)
+	}
 	proof, err := lifecycle.BindOwnerStartupEpochV1("epoch-one")
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +42,7 @@ func TestOwnerStartupProofBindsOneEpochAcrossLifecycleAliases(t *testing.T) {
 		t.Fatalf("same epoch retry refused: %v", err)
 	}
 	alias := startupProofLifecycle("database-proof")
+	_ = markTestProductRecovered(t, alias, "project-proof", "mission-proof")
 	if _, err := alias.BindOwnerStartupEpochV1("epoch-two"); !IsFailure(err, FailureOwnership) {
 		t.Fatalf("same host lifetime rebound: %v", err)
 	}
@@ -42,8 +57,6 @@ func TestOwnerStartupProofBindsOneEpochAcrossLifecycleAliases(t *testing.T) {
 
 func TestOwnerStartupProofRefusesUnadmittedStoppedAndManualValues(t *testing.T) {
 	unrecovered := startupProofLifecycle("database-unrecovered")
-	unrecovered.provenance.Readiness.ProductRecovered = false
-	unrecovered.provenance.Readiness.ReadyForProductRecovery = false
 	for name, lifecycle := range map[string]*Lifecycle{
 		"unadmitted":  {},
 		"stopped":     startupProofLifecycle("database-stopped"),
@@ -61,8 +74,36 @@ func TestOwnerStartupProofRefusesUnadmittedStoppedAndManualValues(t *testing.T) 
 	if _, err := (OwnerStartupProofV1{}).Facts(); !IsFailure(err, FailureOwnership) {
 		t.Fatalf("manual proof error=%v", err)
 	}
+	if _, err := (ProductRestoreProofV1{}).Facts(); !IsFailure(err, FailureOwnership) {
+		t.Fatalf("manual product restore proof error=%v", err)
+	}
 	if _, err := startupProofLifecycle("database-invalid-epoch").BindOwnerStartupEpochV1(""); err == nil {
 		t.Fatal("empty epoch bound")
+	}
+}
+
+func TestProductRestoreProofBindsExactDatabaseAndOwnerLifetime(t *testing.T) {
+	original := startupProofLifecycle("database-restore-binding")
+	admission := testRestoreAdmission(t, original, "project-binding", "mission-binding")
+	mismatch := startupProofLifecycle("database-restore-binding")
+	mismatch.process.PID++
+	mismatch.process.StartTicks++
+	mismatch.provenance.Process = mismatch.process
+	if _, err := mismatch.MarkProductRecovered(admission); !IsFailure(err, FailureReadiness) {
+		t.Fatalf("foreign owner lifetime accepted restore admission: %v", err)
+	}
+	otherDatabase := startupProofLifecycle("database-other")
+	if _, err := otherDatabase.MarkProductRecovered(admission); !IsFailure(err, FailureReadiness) {
+		t.Fatalf("foreign database accepted restore admission: %v", err)
+	}
+}
+
+func TestProductReadinessSurfaceAcceptsOnlySealedRestoreAdmission(t *testing.T) {
+	method, found := reflect.TypeOf((*Lifecycle)(nil)).MethodByName("MarkProductRecovered")
+	want := reflect.TypeOf(journalcheckpoint.RestoreAdmissionV1{})
+	if !found || method.Type.NumIn() != 2 || method.Type.In(1) != want || method.Type.NumOut() != 2 ||
+		method.Type.Out(0) != reflect.TypeOf(ProductRestoreProofV1{}) {
+		t.Fatalf("product readiness surface drifted: found=%t type=%v", found, method.Type)
 	}
 }
 
@@ -77,11 +118,71 @@ func startupProofLifecycle(databaseID string) *Lifecycle {
 			Observation: CompositeObservation{Status: statusWithOwnerStartedAt("2026-08-30T12:00:00Z")},
 			Readiness: ReadinessPredicates{
 				ByteRecovered: true, Healthy: true, Configured: true, Admitted: true,
-				ProductRecovered: true, ReadyForProductRecovery: true,
 			},
 			AdmittedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
 		},
 	}
+}
+
+type pristineRestoreReaderV1 struct{}
+
+func (pristineRestoreReaderV1) CheckpointHeadsV1(context.Context) ([]journalcheckpoint.CheckpointHeadV1, error) {
+	return nil, nil
+}
+func (pristineRestoreReaderV1) CheckpointBlobV1(context.Context, journalcheckpoint.CheckpointID) ([]byte, error) {
+	return nil, nil
+}
+func (pristineRestoreReaderV1) JournalPageV1(context.Context, journalcheckpoint.WatermarkV1, string) (journalcheckpoint.JournalScanPageV1, error) {
+	return journalcheckpoint.JournalScanPageV1{ObservedRevision: 100}, nil
+}
+
+func markTestProductRecovered(t *testing.T, lifecycle *Lifecycle, project, mission string) ProductRestoreProofV1 {
+	t.Helper()
+	admission := testRestoreAdmission(t, lifecycle, project, mission)
+	proof, err := lifecycle.MarkProductRecovered(admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proof
+}
+
+func testRestoreAdmission(t *testing.T, lifecycle *Lifecycle, project, mission string) journalcheckpoint.RestoreAdmissionV1 {
+	t.Helper()
+	binding, err := lifecycle.ProductRestoreBindingV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := controljournal.NewEventRegistryV1([]controljournal.EventVersionV1{{
+		EventType: "mission.created", EventSchemaVersion: 1, ReducerVersion: "mission-v1",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducers, err := reducer.NewRegistryV1([]reducer.EntryV1{{
+		AggregateKind: "mission", EventType: "mission.created", EventSchemaVersion: 1,
+		ReducerVersion: "mission-v1", Program: reducer.ProgramReplaceWithCanonicalEventPayloadV1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	restored, err := journalcheckpoint.RestoreV1(t.Context(), journalcheckpoint.RestoreInputV1{
+		Reader: pristineRestoreReaderV1{},
+		Source: journalcheckpoint.SourceIdentityV1{
+			ProjectID: controljournal.ProjectID(project), MissionID: controljournal.MissionID(mission), RunID: "run-restore",
+			ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest,
+		},
+		Binding: binding, EventRegistry: events, Reducers: reducers,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admission, err := restored.AdmissionV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return admission
 }
 
 func statusWithOwnerStartedAt(value string) gapdbapi.StatusResult {

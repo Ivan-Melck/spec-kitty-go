@@ -89,6 +89,44 @@ type SourceIdentityV1 struct {
 	EventSchemaSetDigest [32]byte
 }
 
+// RestoreBindingV1 identifies the admitted product store and owner lifetime
+// whose read-only contents are being restored. The checkpoint package binds
+// these values into its sealed result; the sidecar subsequently compares them
+// with its independently admitted lifecycle provenance.
+type RestoreBindingV1 struct {
+	DatabaseID     string
+	HostInstanceID string
+}
+
+// RestoreAdmissionFactsV1 is the copy-only evidence carried by a successful
+// restore. It contains no storage or mutation capability.
+type RestoreAdmissionFactsV1 struct {
+	Source                    SourceIdentityV1
+	Binding                   RestoreBindingV1
+	ObservedStoreRevision     uint64
+	TerminalWatermark         WatermarkV1
+	Pristine                  bool
+	CanonicalProjectionDigest [32]byte
+	SelectedCheckpointID      CheckpointID
+	SelectedCheckpointDigest  [32]byte
+}
+
+type restoreAdmissionSealV1 struct {
+	version uint8
+	digest  [32]byte
+}
+
+// RestoreAdmissionV1 is constructor-inaccessible evidence that RestoreV1
+// completed successfully over the exact frozen read seam.
+type RestoreAdmissionV1 struct {
+	facts RestoreAdmissionFactsV1
+	seal  restoreAdmissionSealV1
+}
+
+type InvalidRestoreAdmissionErrorV1 struct{}
+
+func (InvalidRestoreAdmissionErrorV1) Error() string { return "invalid restore admission" }
+
 type EpochBindingV1 struct {
 	RunID                controljournal.RunID
 	RuntimeEpochID       controljournal.RuntimeEpochID

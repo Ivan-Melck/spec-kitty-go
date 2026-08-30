@@ -8,7 +8,27 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 )
+
+// ProductRestoreProofV1 is mission-specific evidence that checkpoint.RestoreV1
+// completed against this admitted database and owner lifetime.
+type ProductRestoreProofV1 struct {
+	facts journalcheckpoint.RestoreAdmissionFactsV1
+	seal  [32]byte
+}
+
+func newProductRestoreProofV1(facts journalcheckpoint.RestoreAdmissionFactsV1) ProductRestoreProofV1 {
+	return ProductRestoreProofV1{facts: facts, seal: productRestoreSealV1(facts)}
+}
+
+// Facts returns a copy only after revalidating the sidecar binding seal.
+func (proof ProductRestoreProofV1) Facts() (journalcheckpoint.RestoreAdmissionFactsV1, error) {
+	if proof.seal == [32]byte{} || proof.seal != productRestoreSealV1(proof.facts) {
+		return journalcheckpoint.RestoreAdmissionFactsV1{}, failure(FailureOwnership, "product_restore_proof", "product restore proof is invalid", nil)
+	}
+	return proof.facts, nil
+}
 
 // OwnerStartupFactsV1 is a copy-only description of the exact supervisor and
 // admitted GapDB instance that constitute one product-host lifetime.
@@ -156,6 +176,38 @@ func ownerStartupSealV1(facts OwnerStartupFactsV1) [32]byte {
 	writeStartupPartV1(h, []byte(facts.DatabaseID))
 	writeStartupPartV1(h, []byte(facts.DaemonOwnerStartedAt))
 	writeStartupPartV1(h, []byte(facts.AdmittedAt))
+	var result [32]byte
+	copy(result[:], h.Sum(nil))
+	return result
+}
+
+func productRestoreSealV1(facts journalcheckpoint.RestoreAdmissionFactsV1) [32]byte {
+	h := sha256.New()
+	writeStartupPartV1(h, []byte("product-restore-proof-v1"))
+	writeStartupPartV1(h, []byte(facts.Source.ProjectID))
+	writeStartupPartV1(h, []byte(facts.Source.MissionID))
+	writeStartupPartV1(h, []byte(facts.Source.RunID))
+	writeStartupPartV1(h, facts.Source.ReducerSetDigest[:])
+	writeStartupPartV1(h, facts.Source.EventSchemaSetDigest[:])
+	writeStartupPartV1(h, []byte(facts.Binding.DatabaseID))
+	writeStartupPartV1(h, []byte(facts.Binding.HostInstanceID))
+	var numeric [8]byte
+	binary.BigEndian.PutUint64(numeric[:], facts.ObservedStoreRevision)
+	writeStartupPartV1(h, numeric[:])
+	binary.BigEndian.PutUint64(numeric[:], facts.TerminalWatermark.ThroughRecordRevision)
+	writeStartupPartV1(h, numeric[:])
+	writeStartupPartV1(h, []byte(facts.TerminalWatermark.ThroughEventID))
+	binary.BigEndian.PutUint64(numeric[:], facts.TerminalWatermark.EventCount)
+	writeStartupPartV1(h, numeric[:])
+	writeStartupPartV1(h, facts.TerminalWatermark.EventPrefixDigest[:])
+	if facts.Pristine {
+		writeStartupPartV1(h, []byte{1})
+	} else {
+		writeStartupPartV1(h, []byte{0})
+	}
+	writeStartupPartV1(h, facts.CanonicalProjectionDigest[:])
+	writeStartupPartV1(h, []byte(facts.SelectedCheckpointID))
+	writeStartupPartV1(h, facts.SelectedCheckpointDigest[:])
 	var result [32]byte
 	copy(result[:], h.Sum(nil))
 	return result
