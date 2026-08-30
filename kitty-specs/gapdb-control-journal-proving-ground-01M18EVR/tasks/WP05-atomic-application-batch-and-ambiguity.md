@@ -34,7 +34,7 @@ subtasks:
 - T028
 - T029
 history: []
-agent_profile: reviewer-renata
+agent_profile: implementer-ivan
 authoritative_surface: internal/controljournal/application/
 create_intent:
 - internal/controljournal/application/service.go
@@ -52,7 +52,7 @@ owned_files:
 - internal/controljournal/application/batch_test.go
 - internal/controljournal/application/reconcile.go
 - internal/controljournal/application/reconcile_test.go
-role: reviewer
+role: implementer
 tags:
 - m1
 - application
