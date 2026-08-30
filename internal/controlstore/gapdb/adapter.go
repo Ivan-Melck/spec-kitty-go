@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -135,6 +136,25 @@ func New(client *gapdbapi.Client, endpoint string) (*Adapter, error) {
 		return nil, adapterError("new", "", OutcomeCapabilityAbsent, RecoveryOperator, "public client capability is absent", nil)
 	}
 	return newAdapter(&publicProvider{client: client}, endpoint, DefaultRequestTimeout)
+}
+
+// Dial owns a public GapDB client behind the adapter boundary.  Callers receive
+// only the storage-neutral Adapter and an explicit closer; provider types do
+// not leak into application or qualification packages.
+func Dial(endpoint string, timeout time.Duration) (*Adapter, io.Closer, error) {
+	if endpoint == "" || timeout <= 0 {
+		return nil, nil, adapterError("dial", "", OutcomeInvalid, RecoveryFixRequest, "endpoint and positive timeout are required", nil)
+	}
+	client, err := gapdbapi.Dial(endpoint, gapdbapi.ClientOptions{Timeout: timeout})
+	if err != nil {
+		return nil, nil, translateError("dial", "", err)
+	}
+	adapter, err := newAdapter(&publicProvider{client: client}, endpoint, timeout)
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	return adapter, client, nil
 }
 
 func newAdapter(client provider, endpoint string, timeout time.Duration) (*Adapter, error) {

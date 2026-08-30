@@ -103,6 +103,15 @@ func TestRuntimeEpochBatchRejectsSemanticSlotMutantsBeforeProviderCall(t *testin
 	}
 }
 
+func TestDialRejectsInvalidConfigurationBeforeProviderAccess(t *testing.T) {
+	if _, _, err := Dial("", time.Second); !IsKind(err, OutcomeInvalid) {
+		t.Fatalf("empty endpoint error=%v", err)
+	}
+	if _, _, err := Dial("/not-contacted.sock", 0); !IsKind(err, OutcomeInvalid) {
+		t.Fatalf("zero timeout error=%v", err)
+	}
+}
+
 func TestBatchCountBoundaries(t *testing.T) {
 	tests := []struct {
 		name   string
