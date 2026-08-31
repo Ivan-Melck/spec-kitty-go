@@ -619,6 +619,75 @@ func TestReplaceRuntimeExactRetryAfterSealedProcessRestart(t *testing.T) {
 			t.Fatalf("restored restart lost %s quarantine: %+v", id, binding)
 		}
 	}
+	if err := fresh.ReplaceRuntime(t.Context(), "restart-sealed-second", "epoch-three", journal, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	restoredThird, err := checkpoint.RestoreV1(t.Context(), checkpoint.RestoreInputV1{
+		Reader: journal, Source: checkpoint.SourceIdentityV1{ProjectID: "project-m1", MissionID: "mission-m1", RunID: "run-m1", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest},
+		Binding: checkpoint.RestoreBindingV1{DatabaseID: "database-fixture", HostInstanceID: "host-fixture"}, EventRegistry: events, Reducers: reducers,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.RuntimeEpochID = "epoch-three"
+	if _, err := restoreValidated(t.Context(), config, journal, git, journal, restoredThird); err != nil {
+		t.Fatalf("historical quarantined workspaces did not survive two owner restarts: %v", err)
+	}
+
+	headKey := "spk/v1/project-m1/mission-m1/heads/workspace/workspace-sealed-restart-w1"
+	originalHeadRecord := journal.records[headKey]
+	head, err := controljournal.DecodeAggregateHeadV1(originalHeadRecord.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventKey := "spk/v1/project-m1/mission-m1/journal/" + string(head.LastEventID)
+	originalEventRecord := journal.records[eventKey]
+	event, err := controljournal.DecodeEventEnvelopeV1(originalEventRecord.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mutatedHead, err := controljournal.ConstructAggregateHeadV1(head.AggregateKind, head.AggregateID, head.LogicalVersion, "epoch-mutant", head.LastEventID, head.StateDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutatedHeadBytes, _ := controljournal.EncodeAggregateHeadV1(mutatedHead)
+	journal.records[headKey] = storegapdb.Record{Key: headKey, Value: mutatedHeadBytes, Revision: originalHeadRecord.Revision}
+	if _, err := restoreValidated(t.Context(), config, journal, git, journal, restoredThird); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("workspace head epoch mutant survived: %v", err)
+	}
+	journal.records[headKey] = originalHeadRecord
+
+	var foreignEvent []byte
+	for key, record := range journal.records {
+		if strings.Contains(key, "/journal/") && key != eventKey {
+			foreignEvent = record.Value
+			break
+		}
+	}
+	journal.records[eventKey] = storegapdb.Record{Key: eventKey, Value: foreignEvent, Revision: originalEventRecord.Revision}
+	if _, err := restoreValidated(t.Context(), config, journal, git, journal, restoredThird); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("terminal event ID mutant survived: %v", err)
+	}
+	journal.records[eventKey] = originalEventRecord
+
+	mutatedEvent, err := controljournal.NewEventEnvelopeV1(controljournal.EventEnvelopeInputV1{
+		EnvelopeVersion: event.EnvelopeVersion, EventID: event.EventID, EventType: event.EventType, EventSchemaVersion: event.EventSchemaVersion,
+		ReducerVersion: event.ReducerVersion, ProjectID: event.ProjectID, AggregateKind: event.AggregateKind, AggregateID: event.AggregateID,
+		AggregateLogicalVersion: event.AggregateLogicalVersion, OperationID: event.OperationID, RuntimeEpochID: "epoch-mutant",
+		EventIndex: event.EventIndex, EventCount: event.EventCount, WorkRevisionID: event.WorkRevisionID, LeaseID: event.LeaseID,
+		LeaseGeneration: event.LeaseGeneration, FenceToken: event.FenceToken, PolicyRevision: event.PolicyRevision,
+		DoctrineRevision: event.DoctrineRevision, ProfileRevision: event.ProfileRevision, RecordedObservations: event.RecordedObservations(), Payload: event.Payload(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutatedEventBytes, _ := controljournal.EncodeEventEnvelopeV1(mutatedEvent)
+	journal.records[eventKey] = storegapdb.Record{Key: eventKey, Value: mutatedEventBytes, Revision: originalEventRecord.Revision}
+	if _, err := restoreValidated(t.Context(), config, journal, git, journal, restoredThird); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("terminal event epoch mutant survived: %v", err)
+	}
+	journal.records[eventKey] = originalEventRecord
 }
 
 func TestExpireExactDigestRetryAfterSealedProcessRestart(t *testing.T) {

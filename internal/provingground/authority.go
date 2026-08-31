@@ -408,7 +408,7 @@ func restoreValidated(ctx context.Context, config Config, applier batchApplier, 
 		if !present {
 			continue
 		}
-		record, head, err := readRestoredHead(ctx, reader, prefix, key, logical, config.RuntimeEpochID, state.Digest(), journalBound, facts.ObservedStoreRevision)
+		record, head, err := readRestoredHead(ctx, reader, prefix, key, logical, "", state.Digest(), journalBound, facts.ObservedStoreRevision)
 		if err != nil {
 			return nil, err
 		}
@@ -423,7 +423,7 @@ func restoreValidated(ctx context.Context, config Config, applier batchApplier, 
 		}
 		ws.logical, ws.headRevision, ws.lastGen, ws.lastFence = head.LogicalVersion, record.Revision, authority.Generation, authority.FenceToken
 		if authority.Status == "active" {
-			if authority.RuntimeEpochID != config.RuntimeEpochID {
+			if authority.RuntimeEpochID != config.RuntimeEpochID || head.RuntimeEpochID != config.RuntimeEpochID {
 				return nil, refusal(OutcomeStaleEpoch, "restore", "active authority belongs to a predecessor epoch")
 			}
 			authority.AuthorityHeadRecordRevision = record.Revision
@@ -516,7 +516,7 @@ func validateAuthorityCensus(ctx context.Context, reader restoreHeadReader, pref
 				return refusal(OutcomeInvalidCommand, "restore", "durable authority census contains a duplicate")
 			}
 			seen[id] = struct{}{}
-			if _, _, err := readRestoredHead(ctx, reader, prefix, key, logical, config.RuntimeEpochID, state.Digest(), journalBound, observedBound); err != nil {
+			if _, _, err := readRestoredHead(ctx, reader, prefix, key, logical, "", state.Digest(), journalBound, observedBound); err != nil {
 				return err
 			}
 		}
@@ -595,8 +595,18 @@ func readRestoredHead(ctx context.Context, reader restoreHeadReader, prefix stri
 		return storegapdb.Record{}, controljournal.AggregateHeadV1{}, refusal(OutcomeIndeterminate, "restore", "durable aggregate head is unavailable")
 	}
 	head, err := controljournal.DecodeAggregateHeadV1(record.Value)
-	if err != nil || head.AggregateKind != key.Kind || head.AggregateID != key.ID || head.LogicalVersion != logical || head.RuntimeEpochID != epoch || head.StateDigest != digest {
+	if err != nil || head.AggregateKind != key.Kind || head.AggregateID != key.ID || head.LogicalVersion != logical || epoch != "" && head.RuntimeEpochID != epoch || head.StateDigest != digest {
 		return storegapdb.Record{}, controljournal.AggregateHeadV1{}, refusal(OutcomeInvalidCommand, "restore", fmt.Sprintf("durable aggregate head contradicts sealed playback at %s/%s", key.Kind, key.ID))
+	}
+	base := strings.TrimSuffix(prefix, "heads/")
+	eventRecord, err := reader.Get(ctx, base+"journal/"+string(head.LastEventID))
+	if err != nil || eventRecord.Revision != record.Revision || eventRecord.Revision > journalBound || eventRecord.Revision > observedBound {
+		return storegapdb.Record{}, controljournal.AggregateHeadV1{}, refusal(OutcomeIndeterminate, "restore", "durable aggregate head lacks its exact terminal event")
+	}
+	event, err := controljournal.DecodeEventEnvelopeV1(eventRecord.Value)
+	payloadDigest := sha256.Sum256(event.Payload())
+	if err != nil || event.EventID != head.LastEventID || event.AggregateKind != head.AggregateKind || event.AggregateID != head.AggregateID || event.AggregateLogicalVersion != head.LogicalVersion || event.RuntimeEpochID != head.RuntimeEpochID || payloadDigest != head.StateDigest {
+		return storegapdb.Record{}, controljournal.AggregateHeadV1{}, refusal(OutcomeInvalidCommand, "restore", fmt.Sprintf("durable aggregate head does not bind terminal event at %s/%s", key.Kind, key.ID))
 	}
 	return record, head, nil
 }
@@ -790,7 +800,7 @@ func restoreWorkspaceCensus(ctx context.Context, service *service, reader restor
 			if !present || !hasHead || id == "" {
 				return refusal(OutcomeInvalidCommand, "restore", "durable workspace census contradicts sealed playback")
 			}
-			_, _, err := readRestoredHead(ctx, reader, prefix, key, logical, service.epoch, state.Digest(), journalBound, observedBound)
+			_, head, err := readRestoredHead(ctx, reader, prefix, key, logical, "", state.Digest(), journalBound, observedBound)
 			if err != nil {
 				return err
 			}
@@ -814,7 +824,7 @@ func restoreWorkspaceCensus(ctx context.Context, service *service, reader restor
 			binding.RecordRevision = record.Revision
 			if binding.Status == "active-bound" {
 				work := service.works[binding.WorkID]
-				if work == nil || work.current == nil || work.current.LeaseID != binding.LeaseID || work.current.Generation != binding.Generation || work.current.FenceToken != binding.FenceToken || binding.RuntimeEpochID != service.epoch {
+				if work == nil || work.current == nil || work.current.LeaseID != binding.LeaseID || work.current.Generation != binding.Generation || work.current.FenceToken != binding.FenceToken || binding.RuntimeEpochID != service.epoch || head.RuntimeEpochID != service.epoch {
 					return refusal(OutcomeInvalidCommand, "restore", "active workspace lacks exact current authority")
 				}
 			} else if binding.QuarantineReason == "" {
