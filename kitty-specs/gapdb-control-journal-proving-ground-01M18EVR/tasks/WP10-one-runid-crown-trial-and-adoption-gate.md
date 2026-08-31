@@ -86,6 +86,8 @@ owned_files:
 - internal/testcampaign/m1/faults/crown.go
 - internal/testcampaign/m1/faults/crown_test.go
 - internal/testcampaign/m1/faults/runner.go
+- internal/provingground/effects.go
+- internal/provingground/effects_test.go
 - internal/testcampaign/m1/focused/campaign.go
 - internal/testcampaign/m1/focused/campaign_test.go
 - internal/testcampaign/m1/mutants/catalog.go
@@ -350,3 +352,12 @@ passed but were rejected as unexpected top-level events. WP10 therefore also
 owns `internal/testcampaign/manifest.go` and
 `internal/testcampaign/census_test.go` solely to add those exact test names and
 mutant controls; wildcard census relaxation remains forbidden.
+
+The composed 8x100 crown then exposed a product restore defect after a valid
+owner restart: the workflow journal rejected the sealed predecessor epoch's
+historical events merely because they differed from the current epoch. WP10
+therefore owns `internal/provingground/effects.go` and `effects_test.go` only
+for the narrow repair and regression. Restore must derive the admissible
+current-to-predecessor epoch lineage from sealed runtime-composition history;
+arbitrary, unlinked, malformed, or foreign-RunID epoch events must still fail
+closed. The campaign may not filter or delete predecessor history.
