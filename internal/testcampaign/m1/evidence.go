@@ -353,7 +353,6 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 	seenKind := make(map[string]int, len(manifest.Artifacts))
 	seenDigest := make(map[string]int, len(manifest.Artifacts))
 	var crownBytes []byte
-	var crownDigest string
 	for _, artifact := range manifest.Artifacts {
 		if !cleanArtifactPath(artifact.Path) {
 			return Verification{}, manifest, fmt.Errorf("artifact path %q is unsafe", artifact.Path)
@@ -369,7 +368,7 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 		}
 		seenDigest[artifact.SHA256]++
 		if artifact.Kind == "crown-ledger" {
-			crownBytes, crownDigest = append([]byte(nil), contents...), artifact.SHA256
+			crownBytes = append([]byte(nil), contents...)
 		}
 	}
 	for _, kind := range []string{"source-binding", "sidecar-provenance", "proving-binary", "contracts", "budgets", "crown-ledger"} {
@@ -389,10 +388,9 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 	if err := ValidateCrownArtifact(crown); err != nil {
 		return Verification{}, manifest, fmt.Errorf("crown ledger is invalid: %w", err)
 	}
-	if crown.Trial.ArtifactSHA256 != "" || manifest.OrderedTrial.ArtifactSHA256 != crownDigest {
+	if manifest.OrderedTrial.ArtifactSHA256 != crown.Trial.ArtifactSHA256 {
 		return Verification{}, manifest, fmt.Errorf("ordered trial does not bind the exact crown ledger artifact")
 	}
-	crown.Trial.ArtifactSHA256 = crownDigest
 	if !reflect.DeepEqual(crown.Trial, manifest.OrderedTrial) {
 		return Verification{}, manifest, fmt.Errorf("crown ledger differs from manifest ordered trial")
 	}
@@ -428,7 +426,7 @@ func referencedArtifactDigests(manifest EvidenceManifest) []string {
 	for _, item := range manifest.MutantResults {
 		result = append(result, item.ArtifactSHA256)
 	}
-	result = append(result, manifest.OrderedTrial.ArtifactSHA256, manifest.IndependentReview.ArtifactSHA256)
+	result = append(result, manifest.IndependentReview.ArtifactSHA256)
 	return result
 }
 

@@ -108,14 +108,11 @@ func validEvidence(t *testing.T, runID string) (EvidenceManifest, []ArtifactInpu
 	source := SourceBinding{Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), WorktreeTree: strings.Repeat("2", 40), WorktreeStatusSHA256: emptySHA256, AdmittedTupleSHA256: AdmittedTupleSHA256, SidecarProvenanceSHA256: strings.Repeat("3", 64), SidecarExecutableSHA256: AdmittedSidecarSHA256, DatabaseID: "database-one", OwnerPID: 123}
 	source.seal = sourceSeal(source)
 	crown := validCrownArtifact(t, runID)
-	crown.Trial.ArtifactSHA256 = ""
 	crownBytes, err := CanonicalJSON(crown)
 	if err != nil {
 		t.Fatal(err)
 	}
-	crownDigest := SHA256Hex(crownBytes)
 	trial := crown.Trial
-	trial.ArtifactSHA256 = crownDigest
 	inputs := []ArtifactInput{
 		{Kind: "source-binding", Data: mustJSON(t, source)}, {Kind: "sidecar-provenance", Data: []byte("{\"schema_version\":1}\n")},
 		{Kind: "proving-binary", Data: []byte("synthetic proving binary")}, {Kind: "contracts", Data: []byte("contracts-v1")},

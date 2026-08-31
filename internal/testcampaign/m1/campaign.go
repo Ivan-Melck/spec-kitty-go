@@ -6,15 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 )
 
 const OrderedTrialID = "m1-ordered-torture-trial"
 
 var CrownSegmentIDs = []string{
 	"admission", "external-14", "concurrent-a-a-w1-b-b-w2",
-	"gj-01", "gj-02", "expire-quarantine-w1", "replace-a-c-w3",
-	"zombie-write-refusal", "gj-03", "gj-04", "candidate-w2",
+	"gj-01", "gj-02", "expire-quarantine-w1", "gj-03", "gj-04",
+	"replace-a-c-w3", "zombie-write-refusal", "candidate-w2",
 	"candidate-w3", "review-w2", "review-w3", "integrate-w2",
 	"integrate-w3", "gj-05", "owner-restart", "restore-new-epoch",
 	"predecessor-refusal", "playback-equality", "focused-8x100",
@@ -131,18 +130,40 @@ func ValidateCrownArtifact(artifact CrownArtifact) error {
 			return fmt.Errorf("crown segment %d/%s is missing, reordered, foreign, or non-pass", i+1, want)
 		}
 	}
-	trial := artifact.Trial
-	if trial.ArtifactSHA256 == "" {
-		trial.ArtifactSHA256 = strings.Repeat("0", 64)
+	wantDigest, err := CrownLedgerDigest(artifact)
+	if err != nil || artifact.Trial.ArtifactSHA256 != wantDigest {
+		return fmt.Errorf("ordered trial does not bind the canonical crown ledger: %w", err)
 	}
-	return ValidateOrderedTrial(trial, artifact.RunID)
+	return ValidateOrderedTrial(artifact.Trial, artifact.RunID)
+}
+
+// CrownLedgerDigest binds the ordered trial to the complete canonical ledger
+// without a circular file hash. The digest field itself is the only excluded
+// byte range; every segment, durable position, identity, and result is bound.
+func CrownLedgerDigest(artifact CrownArtifact) (string, error) {
+	copy := artifact
+	copy.Trial.ArtifactSHA256 = ""
+	encoded, err := CanonicalJSON(copy)
+	if err != nil {
+		return "", err
+	}
+	return SHA256Hex(encoded), nil
+}
+
+func SealCrownArtifact(artifact CrownArtifact) (CrownArtifact, error) {
+	digest, err := CrownLedgerDigest(artifact)
+	if err != nil {
+		return CrownArtifact{}, err
+	}
+	artifact.Trial.ArtifactSHA256 = digest
+	return artifact, nil
 }
 
 func ValidateOrderedTrial(trial OrderedTrial, runID string) error {
 	if trial.SchemaVersion != 1 || trial.RunID != runID || trial.TrialID != OrderedTrialID || !trial.Started || !trial.Terminal || trial.Outcome != "pass" || !trial.FR044Satisfied || !trial.SC013Satisfied || !isSHA256String(trial.ArtifactSHA256) {
 		return fmt.Errorf("ordered trial is not a complete pass for the umbrella RunID")
 	}
-	if trial.Identities.ImplementationA != (CrownParticipant{"A", "A", "W1"}) || trial.Identities.ImplementationB != (CrownParticipant{"B", "B", "W2"}) || trial.Identities.ReplacementC != (CrownParticipant{"A", "C", "W3"}) {
+	if trial.Identities.ImplementationA != (CrownParticipant{"actor-a", "process-a", "workspace-crown-w1"}) || trial.Identities.ImplementationB != (CrownParticipant{"actor-b", "process-b", "workspace-crown-w2"}) || trial.Identities.ReplacementC != (CrownParticipant{"actor-a", "process-c", "workspace-crown-w3"}) {
 		return fmt.Errorf("ordered trial participant identities are not A/A/W1, B/B/W2, A/C/W3")
 	}
 	if !trial.WorkspaceIsolation.W1Quarantined || !trial.WorkspaceIsolation.W2Preserved || !trial.WorkspaceIsolation.W3Fresh || trial.WorkspaceIsolation.ZombieAuthoritySuccesses != 0 {

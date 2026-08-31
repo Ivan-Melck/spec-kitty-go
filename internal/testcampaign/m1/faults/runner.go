@@ -839,7 +839,7 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 	if environment.closer != nil {
 		_ = environment.closer.Close()
 	}
-	next, err := predecessorLifecycle.RestartOwned(ctx, mode, "focused-owner-"+input.AttemptID)
+	next, err := predecessorLifecycle.RestartOwned(ctx, mode, environment.runID)
 	if err != nil {
 		return nil, nil, err
 	}
