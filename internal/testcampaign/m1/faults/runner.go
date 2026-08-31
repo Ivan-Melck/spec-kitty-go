@@ -1910,7 +1910,11 @@ func (p *composedObservationPort) ProbeStaleAuthority(_ context.Context) (m1.Sta
 	}
 	err := p.environment.runtime.Authorize(stale, "qualification-stale-probe", time.Now().UTC())
 	after := p.environment.runtime.QualificationSnapshot()
-	if !provingground.IsOutcome(err, provingground.OutcomeStaleLease) {
+	want := provingground.OutcomeStaleLease
+	if epochStale {
+		want = provingground.OutcomeStaleEpoch
+	}
+	if !provingground.IsOutcome(err, want) {
 		return m1.StaleProbe{}, fmt.Errorf("composed stale capsule was not refused: %w", err)
 	}
 	authorityChanges, workspaceChanges := uint64(0), uint64(0)
