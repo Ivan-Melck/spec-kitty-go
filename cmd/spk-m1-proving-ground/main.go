@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
@@ -36,7 +38,19 @@ type envelope struct {
 	Diagnostic    string `json:"diagnostic,omitempty"`
 }
 
-func main() { os.Exit(execute(context.Background(), os.Args[1:], os.Stdout)) }
+func main() {
+	ctx, stop := commandContext(context.Background())
+	code := execute(ctx, os.Args[1:], os.Stdout)
+	stop()
+	os.Exit(code)
+}
+
+// commandContext turns an operator or supervisor stop request into ordinary
+// cancellation. The crown runner can then publish its durable, verifiable
+// incomplete record before the process returns.
+func commandContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+}
 
 func execute(ctx context.Context, arguments []string, output io.Writer) int {
 	if len(arguments) == 0 {

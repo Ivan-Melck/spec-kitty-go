@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +44,21 @@ func TestCommandsEmitOneStableJSONEnvelopeAndExitCodes(t *testing.T) {
 				t.Fatalf("unstable envelope: %+v", got)
 			}
 		})
+	}
+}
+
+func TestCommandContextPropagatesCancellationToTheCrownRunner(t *testing.T) {
+	parent, cancel := context.WithCancel(t.Context())
+	ctx, stop := commandContext(parent)
+	t.Cleanup(stop)
+	cancel()
+	select {
+	case <-ctx.Done():
+		if !errors.Is(context.Cause(ctx), context.Canceled) {
+			t.Fatalf("command cancellation cause=%v", context.Cause(ctx))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("command context did not propagate cancellation")
 	}
 }
 
