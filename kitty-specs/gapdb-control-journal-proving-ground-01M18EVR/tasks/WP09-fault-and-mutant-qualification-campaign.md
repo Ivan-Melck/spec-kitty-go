@@ -109,8 +109,10 @@ observations; it does not decide production adoption.
 
 ## Branch and ownership
 
-Begin from accepted WP06–WP08. Edit only the eight testcampaign files listed.
-Call production hooks without changing their packages. WP10 owns aggregate
+Begin from accepted WP06–WP08. Edit only the eight testcampaign files and two
+additive proving-ground qualification seam files listed. The seam may expose
+read-only production facts and existing fault hooks; it must not add a
+testcampaign dependency or a test-only mutation path. WP10 owns aggregate
 campaign/evidence/CLI files; do not create them here.
 
 ## T047: Implement five deterministic fault-cut runners
