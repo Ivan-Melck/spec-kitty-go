@@ -46,6 +46,13 @@ const (
 	OutcomePass       Outcome = "pass"
 	OutcomeFail       Outcome = "fail"
 	OutcomeIncomplete Outcome = "incomplete"
+
+	// qualificationLeaseTTL is the explicit budget for the longest single
+	// admitted qualification operation between renewals. The crown command's
+	// 12-hour context remains the outer campaign budget. This is an authority
+	// policy, not a wall-clock pass predicate; explicit expiry and zombie trials
+	// still advance to this exact deadline.
+	qualificationLeaseTTL = 30 * time.Minute
 )
 
 type Definition struct {
@@ -520,7 +527,7 @@ func executeFocusedClaims(ctx context.Context, input FocusedInput, environment *
 			if participant == 1 {
 				actor, process, work = "actor-a", "process-c", "work-a"
 			}
-			delivery, startErr := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: work, ActorID: actor, ProcessID: process, Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-claim-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-claim-" + short), OwnedBranch: "runs/claim-" + short, PinnedBase: base, Now: now.Add(time.Duration(participant+1) * time.Millisecond)})
+			delivery, startErr := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: work, ActorID: actor, ProcessID: process, Now: now, LeaseTTL: qualificationLeaseTTL, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-claim-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-claim-" + short), OwnedBranch: "runs/claim-" + short, PinnedBase: base, Now: now.Add(time.Duration(participant+1) * time.Millisecond)})
 			entry := claimResult{Participant: participant, Delivery: delivery}
 			if startErr != nil {
 				entry.Err = startErr.Error()
@@ -656,7 +663,7 @@ func ensureFocusedWorkA(ctx context.Context, input FocusedInput, environment *pr
 	if len(short) > 16 {
 		short = short[:16]
 	}
-	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-prime-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-c", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-prime-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-prime-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-prime-" + short), OwnedBranch: "runs/prime-" + short, PinnedBase: base, Now: now.Add(time.Millisecond)})
+	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-prime-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-a", ActorID: "actor-a", ProcessID: "process-c", Now: now, LeaseTTL: qualificationLeaseTTL, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-prime-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-prime-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-prime-" + short), OwnedBranch: "runs/prime-" + short, PinnedBase: base, Now: now.Add(time.Millisecond)})
 	if err != nil {
 		return err
 	}
@@ -689,12 +696,12 @@ func heartbeatFocusedDelivery(ctx context.Context, input FocusedInput, environme
 		return fmt.Errorf("focused %s delivery is absent", label)
 	}
 	now := time.Now().UTC()
-	refreshed, err := environment.runtime.Heartbeat(ctx, controljournal.OperationID("focused-heartbeat-"+label+"-"+input.AttemptID), delivery.Authority, now, time.Minute)
+	refreshed, err := environment.runtime.Heartbeat(ctx, controljournal.OperationID("focused-heartbeat-"+label+"-"+input.AttemptID), delivery.Authority, now, qualificationLeaseTTL)
 	if err != nil {
 		return err
 	}
 	delivery.Authority = refreshed
-	delivery.Run.Deadline = now.Add(time.Minute)
+	delivery.Run.Deadline = now.Add(qualificationLeaseTTL)
 	return nil
 }
 
@@ -759,7 +766,7 @@ func prepareFocusedIntegration(ctx context.Context, input FocusedInput, environm
 	if err != nil {
 		return provingground.IntegrationItem{}, m1.ReviewObservation{}, "", err
 	}
-	item := provingground.IntegrationItem{Capsule: delivery.Authority, Request: baseintegration.Request{SchemaVersion: 1, CorrelationID: "focused-integration", OperationID: "focused-integrate-placeholder", ReviewID: reviewID, RepositoryID: "repository-qualification", TargetRef: "refs/heads/main", ActorID: "integrator-focused", ProcessID: "integrator-process-focused", Candidate: candidate, LeaseTTL: time.Minute, StartedAt: now.Add(2 * time.Nanosecond), ExpectedEligibility: integrationFact}}
+	item := provingground.IntegrationItem{Capsule: delivery.Authority, Request: baseintegration.Request{SchemaVersion: 1, CorrelationID: "focused-integration", OperationID: "focused-integrate-placeholder", ReviewID: reviewID, RepositoryID: "repository-qualification", TargetRef: "refs/heads/main", ActorID: "integrator-focused", ProcessID: "integrator-process-focused", Candidate: candidate, LeaseTTL: qualificationLeaseTTL, StartedAt: now.Add(2 * time.Nanosecond), ExpectedEligibility: integrationFact}}
 	observation := m1.ReviewObservation{CandidateID: candidate, ContributorIDs: []string{string(delivery.Authority.ActorID)}, ReviewerActorID: reviewRequest.ActorID.String(), Verdict: string(reviewRequest.Verdict), CandidateImmutable: true}
 	return item, observation, before, nil
 }
@@ -910,7 +917,7 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 		closer.Close()
 		return nil, nil, err
 	}
-	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: controljournal.RunID(environment.runID), RuntimeEpochID: admitted, Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute}
+	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: controljournal.RunID(environment.runID), RuntimeEpochID: admitted, Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: qualificationLeaseTTL}
 	freshRuntime, err := provingground.RestoreRuntimeValidated(ctx, config, app, environment.repository, port, postTransition, &qualificationIdentities{runID: ids.RunID(environment.runID)}, execution.SystemClock{})
 	if err != nil {
 		closer.Close()
@@ -931,7 +938,7 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 	if len(short) > 16 {
 		short = short[:16]
 	}
-	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-restart-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-b", ProcessID: "process-b", Now: now.Add(time.Nanosecond), LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-restart-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-restart-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-restart-" + short), OwnedBranch: "runs/restart-" + short, PinnedBase: base, Now: now.Add(2 * time.Nanosecond)})
+	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-restart-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-b", ProcessID: "process-b", Now: now.Add(time.Nanosecond), LeaseTTL: qualificationLeaseTTL, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-restart-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-restart-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-restart-" + short), OwnedBranch: "runs/restart-" + short, PinnedBase: base, Now: now.Add(2 * time.Nanosecond)})
 	if err != nil {
 		closer.Close()
 		return nil, nil, err
@@ -999,7 +1006,7 @@ func executeFocusedZombie(ctx context.Context, input FocusedInput, environment *
 	if len(short) > 16 {
 		short = short[:16]
 	}
-	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-a", ProcessID: "process-a", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-focused-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-focused-" + short), OwnedBranch: "runs/focused-" + short, PinnedBase: base, Now: now.Add(time.Millisecond)})
+	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-a", ProcessID: "process-a", Now: now, LeaseTTL: qualificationLeaseTTL, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-focused-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-focused-" + short), OwnedBranch: "runs/focused-" + short, PinnedBase: base, Now: now.Add(time.Millisecond)})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1445,7 +1452,7 @@ func (p *ProductionExecutor) productionEnvironment(ctx context.Context, requeste
 		os.RemoveAll(root)
 		return nil, err
 	}
-	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: controljournal.RunID(runID), RuntimeEpochID: "epoch-qualification", Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute}
+	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: controljournal.RunID(runID), RuntimeEpochID: "epoch-qualification", Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: qualificationLeaseTTL}
 	identities := &qualificationIdentities{runID: ids.RunID(runID)}
 	runtime, err := provingground.NewRuntime(config, app, repository, identities, execution.SystemClock{})
 	if err != nil {
@@ -1470,7 +1477,7 @@ func ensureBaseline(ctx context.Context, environment *productionEnvironment) err
 	if err != nil {
 		return err
 	}
-	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: "claim-baseline", ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-b", ProcessID: "process-b", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: "bind-baseline", WorkspaceID: "workspace-baseline", RepositoryID: "repository-qualification", LaneID: "lane-baseline", OwnedBranch: "runs/baseline", PinnedBase: base, Now: now.Add(time.Millisecond)})
+	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: "claim-baseline", ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-b", ProcessID: "process-b", Now: now, LeaseTTL: qualificationLeaseTTL, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: "bind-baseline", WorkspaceID: "workspace-baseline", RepositoryID: "repository-qualification", LaneID: "lane-baseline", OwnedBranch: "runs/baseline", PinnedBase: base, Now: now.Add(time.Millisecond)})
 	if err != nil {
 		return err
 	}
@@ -1632,7 +1639,7 @@ func executeComposedGJ02(ctx context.Context, attempt Attempt, lifecycle *sideca
 	}
 	beforeAuthority := target.Authority
 	heartbeatAt := time.Now().UTC()
-	_, firstErr := proxyRuntime.Heartbeat(ctx, controljournal.OperationID(requestID), target.Authority, heartbeatAt, time.Minute)
+	_, firstErr := proxyRuntime.Heartbeat(ctx, controljournal.OperationID(requestID), target.Authority, heartbeatAt, qualificationLeaseTTL)
 	if !provingground.IsOutcome(firstErr, provingground.OutcomeAmbiguous) {
 		return Facts{}, nil, fmt.Errorf("GJ-02 heartbeat did not report ambiguous durable acceptance: %w", firstErr)
 	}
@@ -1645,7 +1652,7 @@ func executeComposedGJ02(ctx context.Context, attempt Attempt, lifecycle *sideca
 	if hookErr := attempt.Hook.Reach(ctx, "GJ-02"); !errors.Is(hookErr, productfaults.ErrCrashRequested) {
 		return Facts{}, nil, fmt.Errorf("GJ-02 cut acknowledgement: %w", hookErr)
 	}
-	refreshed, err := proxyRuntime.Heartbeat(ctx, controljournal.OperationID(requestID), target.Authority, heartbeatAt, time.Minute)
+	refreshed, err := proxyRuntime.Heartbeat(ctx, controljournal.OperationID(requestID), target.Authority, heartbeatAt, qualificationLeaseTTL)
 	if err != nil || refreshed.AuthorityHeadRecordRevision != cut.Revision {
 		return Facts{}, nil, fmt.Errorf("GJ-02 exact heartbeat retry revision=%d cut=%+v: %w", refreshed.AuthorityHeadRecordRevision, cut, err)
 	}
@@ -1659,7 +1666,7 @@ func executeComposedGJ02(ctx context.Context, attempt Attempt, lifecycle *sideca
 	}
 	environment.runtime = directRuntime
 	target.Authority = refreshed
-	target.Run.Deadline = heartbeatAt.Add(time.Minute)
+	target.Run.Deadline = heartbeatAt.Add(qualificationLeaseTTL)
 	environment.baseline = target
 	headIDs, err := authorityHeadIDs(ctx, environment.port)
 	if err != nil {
@@ -1686,7 +1693,7 @@ func restoreQualificationRuntime(ctx context.Context, environment *productionEnv
 		ProjectID: "project-qualification", MissionID: "mission-qualification",
 		WorkRevisionID: "revision-qualification", RunID: controljournal.RunID(environment.runID),
 		RuntimeEpochID: environment.runtime.QualificationSnapshot().RuntimeEpochID,
-		Actors:         actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute,
+		Actors:         actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: qualificationLeaseTTL,
 	}
 	return provingground.RestoreRuntimeValidated(ctx, config, app, environment.repository, port, restored, environment.identities, execution.SystemClock{})
 }
@@ -1743,7 +1750,7 @@ func executeComposedWorkspaceFault(ctx context.Context, attempt Attempt, environ
 	if err != nil {
 		return Facts{}, nil, err
 	}
-	start := execution.StartRequest{OperationID: ids.OperationID("claim-" + label), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: workID, ActorID: actor, ProcessID: process, Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}
+	start := execution.StartRequest{OperationID: ids.OperationID("claim-" + label), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: workID, ActorID: actor, ProcessID: process, Now: now, LeaseTTL: qualificationLeaseTTL, GovernanceContext: governance}
 	spec := provingground.WorkspaceSpec{OperationID: controljournal.OperationID("bind-" + label), WorkspaceID: controljournal.WorkspaceID("workspace-" + label), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-" + label), OwnedBranch: "runs/" + label, PinnedBase: base, Now: now.Add(time.Millisecond)}
 	environment.runtime.WithFaults(mappedHook{boundary: attempt.Definition.ID, faultID: attempt.Definition.ID, delegate: attempt.Hook})
 	_, cutErr := environment.runtime.StartWorkspace(ctx, start, spec)

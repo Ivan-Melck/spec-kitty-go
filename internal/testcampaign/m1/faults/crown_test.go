@@ -95,6 +95,27 @@ func TestProductionOrderedCrownTrialValidatesFromActualExecution(t *testing.T) {
 	if !focused.Facts["one_target_authority"] || !focused.Facts["one_candidate_publication"] {
 		t.Fatalf("post-restart integration did not restore sealed predecessor history and serialize publication: %v", focused.Facts)
 	}
+	current := executor.environment.workA
+	if current == nil {
+		t.Fatal("focused qualification authority is absent after integration")
+	}
+	issuedAt := current.Run.Deadline.Add(-qualificationLeaseTTL)
+	afterFormerLimit := issuedAt.Add(2 * time.Minute)
+	refreshed, err := executor.environment.runtime.Heartbeat(
+		t.Context(),
+		"post-minute-qualification-heartbeat",
+		current.Authority,
+		afterFormerLimit,
+		qualificationLeaseTTL,
+	)
+	if err != nil {
+		t.Fatalf("qualification operation crossing the former one-minute limit was refused: %v", err)
+	}
+	current.Authority = refreshed
+	current.Run.Deadline = afterFormerLimit.Add(qualificationLeaseTTL)
+	if err := executor.environment.runtime.Authorize(refreshed, "qualification-deadline-probe", current.Run.Deadline); !provingground.IsOutcome(err, provingground.OutcomeStaleLease) {
+		t.Fatalf("qualification authority was not refused at its exact declared deadline: %v", err)
+	}
 }
 
 func TestOrderedCrownRejectsMissingImmutableIdentityBeforeProductAccess(t *testing.T) {

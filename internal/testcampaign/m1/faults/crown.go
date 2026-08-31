@@ -451,7 +451,7 @@ func startCrownClaims(ctx context.Context, environment *productionEnvironment) (
 	for i, req := range requests {
 		go func(index int, req request) {
 			<-start
-			delivery, runErr := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("crown-claim-" + req.label), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: ids.WorkID(req.work), ActorID: ids.ActorID(req.actor), ProcessID: ids.ProcessID(req.process), Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("crown-bind-" + req.label), WorkspaceID: controljournal.WorkspaceID(req.workspaceID), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-crown-" + req.label), OwnedBranch: req.branch, PinnedBase: base, Now: now.Add(time.Duration(index+1) * time.Millisecond)})
+			delivery, runErr := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("crown-claim-" + req.label), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: ids.WorkID(req.work), ActorID: ids.ActorID(req.actor), ProcessID: ids.ProcessID(req.process), Now: now, LeaseTTL: qualificationLeaseTTL, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("crown-bind-" + req.label), WorkspaceID: controljournal.WorkspaceID(req.workspaceID), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-crown-" + req.label), OwnedBranch: req.branch, PinnedBase: base, Now: now.Add(time.Duration(index+1) * time.Millisecond)})
 			responses <- response{req.label, delivery, runErr}
 		}(i, req)
 	}
@@ -481,7 +481,7 @@ func startCrownWorkspace(ctx context.Context, environment *productionEnvironment
 	if err != nil {
 		return provingground.Delivery{}, err
 	}
-	return environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID(claimOp), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: ids.WorkID(work), ActorID: ids.ActorID(actor), ProcessID: ids.ProcessID(process), Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID(bindOp), WorkspaceID: controljournal.WorkspaceID(workspaceID), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-" + workspaceID), OwnedBranch: branch, PinnedBase: base, Now: now.Add(time.Millisecond)})
+	return environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID(claimOp), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: ids.WorkID(work), ActorID: ids.ActorID(actor), ProcessID: ids.ProcessID(process), Now: now, LeaseTTL: qualificationLeaseTTL, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID(bindOp), WorkspaceID: controljournal.WorkspaceID(workspaceID), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-" + workspaceID), OwnedBranch: branch, PinnedBase: base, Now: now.Add(time.Millisecond)})
 }
 
 type crownEligibility struct{}
@@ -614,12 +614,12 @@ func newCrownReviewRequest(label, candidate, reviewer, candidateEvidenceDigest s
 func prepareCrownCandidate(ctx context.Context, environment *productionEnvironment, reviews *provingground.ReviewCoordinator, delivery provingground.Delivery, label, reviewer, sourceCommit string) (crownCandidate, error) {
 	result := crownCandidate{}
 	now := time.Now().UTC()
-	refreshed, err := environment.runtime.Heartbeat(ctx, controljournal.OperationID("crown-heartbeat-"+label), delivery.Authority, now, time.Minute)
+	refreshed, err := environment.runtime.Heartbeat(ctx, controljournal.OperationID("crown-heartbeat-"+label), delivery.Authority, now, qualificationLeaseTTL)
 	if err != nil {
 		return result, err
 	}
 	delivery.Authority = refreshed
-	delivery.Run.Deadline = now.Add(time.Minute)
+	delivery.Run.Deadline = now.Add(qualificationLeaseTTL)
 	if delivery.Authority.WorkspaceID == environment.baseline.Authority.WorkspaceID {
 		environment.baseline = delivery
 	}
@@ -678,7 +678,7 @@ func prepareCrownCandidate(ctx context.Context, environment *productionEnvironme
 	if err != nil {
 		return result, err
 	}
-	result.Item = provingground.IntegrationItem{Capsule: delivery.Authority, Request: baseintegration.Request{SchemaVersion: 1, CorrelationID: "crown-integration-" + label, OperationID: ids.OperationID("crown-integrate-" + label), ReviewID: reviewID, RepositoryID: "repository-qualification", TargetRef: "refs/heads/main", ActorID: "integrator-crown", ProcessID: "integrator-crown-process", Candidate: candidate, LeaseTTL: time.Minute, StartedAt: now.Add(2 * time.Nanosecond), ExpectedEligibility: integrationFact}}
+	result.Item = provingground.IntegrationItem{Capsule: delivery.Authority, Request: baseintegration.Request{SchemaVersion: 1, CorrelationID: "crown-integration-" + label, OperationID: ids.OperationID("crown-integrate-" + label), ReviewID: reviewID, RepositoryID: "repository-qualification", TargetRef: "refs/heads/main", ActorID: "integrator-crown", ProcessID: "integrator-crown-process", Candidate: candidate, LeaseTTL: qualificationLeaseTTL, StartedAt: now.Add(2 * time.Nanosecond), ExpectedEligibility: integrationFact}}
 	contributors := []string{string(delivery.Authority.ActorID)}
 	independent := reviewer != string(delivery.Authority.ActorID)
 	result.Observation = m1.ReviewObservation{CandidateID: candidate, ContributorIDs: contributors, ReviewerActorID: reviewer, Verdict: string(result.Review.Verdict), CandidateImmutable: result.Handoff.Verification.ObservedBranchHead == candidate}
