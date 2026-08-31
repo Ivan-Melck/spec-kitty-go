@@ -90,6 +90,8 @@ owned_files:
 - internal/testcampaign/m1/faults/runner.go
 - internal/provingground/effects.go
 - internal/provingground/effects_test.go
+- internal/controljournal/application/reconcile.go
+- internal/controljournal/application/reconcile_test.go
 - internal/testcampaign/m1/focused/campaign.go
 - internal/testcampaign/m1/focused/campaign_test.go
 - internal/testcampaign/m1/mutants/catalog.go
@@ -361,3 +363,16 @@ for the narrow repair and regression. Restore must derive the admissible
 current-to-predecessor epoch lineage from sealed runtime-composition history;
 arbitrary, unlinked, malformed, or foreign-RunID epoch events must still fail
 closed. The campaign may not filter or delete predecessor history.
+
+Exact qualification also exposed repeated full-history reads inside one focused
+attempt and repeated restore scans at an unchanged store-wide revision. WP10
+therefore owns `internal/controljournal/application/reconcile.go` and its test
+only for a proof-preserving scan repair. One attempt-local observation port may
+memoize its exact immutable observation and stale-probe result so the receipt
+and runner independently validate the same evidence; distinct attempts must
+never share that cache. The restore reader may reuse its complete immutable
+journal snapshot only after a provider probe reports the exact same nonzero
+store-wide `ObservedRevision`; a changed, stale, moving, zero, malformed, or
+cursor-inconsistent revision requires a complete rescan or fails closed. No
+assertion, repetition, event, checkpoint, authority, or playback check may be
+removed, filtered, synthesized, or weakened, and playback must remain zero-I/O.
