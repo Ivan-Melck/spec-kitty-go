@@ -566,7 +566,7 @@ func (c *EffectCoordinator) validateEffectPublication(ctx context.Context, event
 		OperationID controljournal.OperationID `json:"operation_id"`
 		Result      json.RawMessage            `json:"result"`
 	}{event.OperationID, canonicalResult})
-	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: c.journal.config.ProjectID, MissionID: c.journal.config.MissionID, OperationID: event.OperationID, CommandType: commandType, RuntimeEpochID: c.journal.config.RuntimeEpochID, Payload: commandPayload})
+	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: c.journal.config.ProjectID, MissionID: c.journal.config.MissionID, OperationID: event.OperationID, CommandType: commandType, RuntimeEpochID: event.RuntimeEpochID, Payload: commandPayload})
 	if err != nil {
 		return err
 	}
@@ -576,7 +576,7 @@ func (c *EffectCoordinator) validateEffectPublication(ctx context.Context, event
 		return refusal(OutcomeIndeterminate, "effect-restore", "effect operation is unavailable")
 	}
 	operation, err := controljournal.DecodeOperationRecordV1(stored.Value)
-	if err != nil || stored.Key != key || stored.Revision == 0 || operation.OperationID != event.OperationID || operation.CommandType != commandType || operation.RuntimeEpochID != c.journal.config.RuntimeEpochID || operation.RequestDigest != command.Digest() || operation.ResultType != resultType || !bytes.Equal(operation.CanonicalResult(), canonicalResult) || !reflectEventIDs(operation.EventIDs(), []controljournal.EventID{event.EventID}) || !reflectEffectIDs(operation.EffectIDs(), effects) {
+	if err != nil || stored.Key != key || stored.Revision == 0 || operation.OperationID != event.OperationID || operation.CommandType != commandType || operation.RuntimeEpochID != event.RuntimeEpochID || operation.RequestDigest != command.Digest() || operation.ResultType != resultType || !bytes.Equal(operation.CanonicalResult(), canonicalResult) || !reflectEventIDs(operation.EventIDs(), []controljournal.EventID{event.EventID}) || !reflectEffectIDs(operation.EffectIDs(), effects) {
 		return refusal(OutcomeIndeterminate, "effect-restore", "effect operation membership or canonical identity is contradictory")
 	}
 	return nil
@@ -745,7 +745,7 @@ func (j *workflowJournal) validateOperationIdentity(ctx context.Context, event c
 		OperationID controljournal.OperationID `json:"operation_id"`
 		Result      json.RawMessage            `json:"result"`
 	}{event.OperationID, result})
-	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: j.config.ProjectID, MissionID: j.config.MissionID, OperationID: event.OperationID, CommandType: commandType, RuntimeEpochID: j.config.RuntimeEpochID, Payload: commandPayload})
+	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: j.config.ProjectID, MissionID: j.config.MissionID, OperationID: event.OperationID, CommandType: commandType, RuntimeEpochID: event.RuntimeEpochID, Payload: commandPayload})
 	if err != nil {
 		return err
 	}
@@ -755,7 +755,7 @@ func (j *workflowJournal) validateOperationIdentity(ctx context.Context, event c
 		return refusal(OutcomeIndeterminate, "restore", "stored operation identity is unavailable")
 	}
 	operation, err := controljournal.DecodeOperationRecordV1(stored.Value)
-	if err != nil || stored.Key != key || stored.Revision == 0 || operation.OperationID != event.OperationID || operation.CommandType != commandType || operation.RuntimeEpochID != j.config.RuntimeEpochID || operation.RequestDigest != command.Digest() || operation.ResultType != resultType || operation.ResultSchemaVersion != 1 || !bytes.Equal(operation.CanonicalResult(), result) || !reflectEventIDs(operation.EventIDs(), []controljournal.EventID{event.EventID}) || !reflectEffectIDs(operation.EffectIDs(), effectIDs) {
+	if err != nil || stored.Key != key || stored.Revision == 0 || operation.OperationID != event.OperationID || operation.CommandType != commandType || operation.RuntimeEpochID != event.RuntimeEpochID || operation.RequestDigest != command.Digest() || operation.ResultType != resultType || operation.ResultSchemaVersion != 1 || !bytes.Equal(operation.CanonicalResult(), result) || !reflectEventIDs(operation.EventIDs(), []controljournal.EventID{event.EventID}) || !reflectEffectIDs(operation.EffectIDs(), effectIDs) {
 		return refusal(OutcomeIndeterminate, "restore", "stored operation command, result, or exact membership is contradictory")
 	}
 	return nil

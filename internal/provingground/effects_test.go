@@ -1006,7 +1006,7 @@ func TestWorkflowJournalExactReplayAfterLaterTransitionAndRestoreTamperGuards(t 
 			t.Fatalf("sealed predecessor lineage restore=%d err=%v events=%+v", len(events), err, events)
 		}
 	})
-	for _, mutation := range []string{"unlinked-epoch", "unlinked-first-predecessor", "foreign-run", "malformed-transition", "unsealed-head"} {
+	for _, mutation := range []string{"unlinked-epoch", "unlinked-first-predecessor", "foreign-run", "malformed-transition", "unsealed-head", "missing-current", "current-revision", "tampered-current"} {
 		t.Run(mutation, func(t *testing.T) {
 			publisher := workflowEpochLineageFixture(t, mutation)
 			if _, err := publisher.loadAggregateEvents(t.Context(), "external-effect"); err == nil {
@@ -1139,6 +1139,22 @@ func workflowEpochLineageFixture(t *testing.T, mutation string) *workflowJournal
 		head.StateDigest = sha256.Sum256([]byte("unsealed"))
 		record.Value, _ = controljournal.EncodeAggregateHeadV1(head)
 		journal.records[key] = record
+		journal.mu.Unlock()
+	}
+	if mutation == "missing-current" || mutation == "current-revision" || mutation == "tampered-current" {
+		key := currentPublisher.prefix() + "runtime/current"
+		journal.mu.Lock()
+		record := journal.records[key]
+		switch mutation {
+		case "missing-current":
+			delete(journal.records, key)
+		case "current-revision":
+			record.Revision--
+			journal.records[key] = record
+		case "tampered-current":
+			record.Value = []byte(`{"schema_version":1,"runtime_epoch_id":"epoch-foreign","created_operation_id":"operation-admit-current","host_instance_id":"host-current","status":"recovering"}`)
+			journal.records[key] = record
+		}
 		journal.mu.Unlock()
 	}
 	return currentPublisher
