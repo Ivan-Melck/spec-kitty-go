@@ -122,7 +122,7 @@ func TestPrimaryInvariantRejectsEveryUnderlyingGitFactMutation(t *testing.T) {
 	}
 }
 
-func TestObserveGitSourceRejectsTrackedUntrackedAndIgnoredExecutableBytes(t *testing.T) {
+func TestObserveGitSourceRejectsTrackedUntrackedAndArbitraryIgnoredBytes(t *testing.T) {
 	root := t.TempDir()
 	runGit(t, root, "init", "-q")
 	runGit(t, root, "config", "user.name", "Spec Kitty")
@@ -155,16 +155,77 @@ func TestObserveGitSourceRejectsTrackedUntrackedAndIgnoredExecutableBytes(t *tes
 	if err := os.Remove(untracked); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.go\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.cache\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, root, "add", ".gitignore")
 	runGit(t, root, "commit", "-qm", "ignore")
-	if err := os.WriteFile(filepath.Join(root, "ignored.go"), []byte("package main\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "ignored.cache"), []byte("arbitrary tool input\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, _, err := observeGitSource(t.Context(), root); err == nil {
-		t.Fatal("ignored executable mutation retained source binding")
+		t.Fatal("arbitrary ignored file retained source binding")
+	}
+}
+
+func TestObserveGitSourceRejectsIgnoredCgoAndEmbedInputs(t *testing.T) {
+	tests := []struct {
+		name           string
+		trackedSource  string
+		ignoredPath    string
+		ignoredContent string
+	}{
+		{
+			name: "cgo C++ source",
+			trackedSource: `package source
+/*
+int answer(void);
+*/
+import "C"
+
+func Answer() int { return int(C.answer()) }
+`,
+			ignoredPath:    "payload.cc",
+			ignoredContent: `extern "C" int answer(void) { return 42; }` + "\n",
+		},
+		{
+			name: "go embed payload",
+			trackedSource: `package source
+
+import _ "embed"
+
+//go:embed payload.txt
+var payload string
+`,
+			ignoredPath:    "payload.txt",
+			ignoredContent: "qualification executable input\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			runGit(t, root, "init", "-q")
+			runGit(t, root, "config", "user.name", "Spec Kitty")
+			runGit(t, root, "config", "user.email", "spec-kitty@example.invalid")
+			if err := os.WriteFile(filepath.Join(root, "source.go"), []byte(test.trackedSource), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(test.ignoredPath+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, root, "add", "source.go", ".gitignore")
+			runGit(t, root, "commit", "-qm", "pinned source")
+			if _, _, _, _, err := observeGitSource(t.Context(), root); err != nil {
+				t.Fatalf("clean pinned source rejected: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(root, test.ignoredPath), []byte(test.ignoredContent), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, _, err := observeGitSource(t.Context(), root); err == nil {
+				t.Fatalf("ignored %s could mint source binding", test.name)
+			}
+		})
 	}
 }
 

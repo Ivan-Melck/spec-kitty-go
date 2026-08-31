@@ -111,8 +111,9 @@ const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 
 // observeGitSource proves that the checkout Git will compile is exactly the
 // pinned HEAD tree. The ordinary status census detects tracked and untracked
-// bytes, while the ignored-source census closes the gap where an ignored Go,
-// assembly, C, or syso file would still be consumed by the toolchain.
+// bytes, while the ignored-file census rejects every ignored untracked file.
+// Qualification cannot know which arbitrary paths a compiler, generator, or
+// Go embed directive may consume, so an extension allowlist is not sound.
 func observeGitSource(ctx context.Context, root string) (commit, tree, worktreeTree, statusDigest string, err error) {
 	commit, err = gitObject(ctx, root, "HEAD")
 	if err != nil {
@@ -133,14 +134,14 @@ func observeGitSource(ctx context.Context, root string) (commit, tree, worktreeT
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("source status: %w", err)
 	}
-	ignoredExecutable, err := gitOutput(ctx, root, "ls-files", "--others", "--ignored", "--exclude-standard", "--", "*.go", "*.s", "*.c", "*.h", "*.syso")
+	ignoredFiles, err := gitOutput(ctx, root, "ls-files", "--others", "--ignored", "--exclude-standard")
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("ignored executable source census: %w", err)
+		return "", "", "", "", fmt.Errorf("ignored worktree file census: %w", err)
 	}
 	digest := sha256.Sum256([]byte(status))
 	statusDigest = hex.EncodeToString(digest[:])
-	if status != "" || ignoredExecutable != "" || worktreeTree != tree || statusDigest != emptySHA256 {
-		return "", "", "", "", fmt.Errorf("working tree does not match pinned HEAD source")
+	if status != "" || ignoredFiles != "" || worktreeTree != tree || statusDigest != emptySHA256 {
+		return "", "", "", "", fmt.Errorf("working tree contains bytes outside pinned HEAD tree")
 	}
 	return commit, tree, worktreeTree, statusDigest, nil
 }
