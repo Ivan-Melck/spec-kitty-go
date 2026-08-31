@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -192,18 +193,18 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 		return recorder.finish(result), err
 	}
 	environment.reviews, environment.integrator = reviews, integrator
-	w2, err := prepareCrownCandidate(ctx, environment, reviews, oldW2, "w2", "reviewer-w2")
+	w2, err := prepareCrownCandidate(ctx, environment, reviews, oldW2, "w2", "reviewer-w2", source.Commit)
 	if err != nil {
 		return recorder.finish(result), err
 	}
-	w3, err := prepareCrownCandidate(ctx, environment, reviews, finalW3, "w3", "reviewer-w3")
+	w3, err := prepareCrownCandidate(ctx, environment, reviews, finalW3, "w3", "reviewer-w3", source.Commit)
 	if err != nil {
 		return recorder.finish(result), err
 	}
 	for _, entry := range []struct {
 		id    string
 		value any
-	}{{"candidate-w2", w2.Handoff}, {"candidate-w3", w3.Handoff}, {"review-w2", w2.Review}, {"review-w3", w3.Review}} {
+	}{{"candidate-w2", crownHandoffArtifact{w2.Handoff, w2.HandoffEvidence}}, {"candidate-w3", crownHandoffArtifact{w3.Handoff, w3.HandoffEvidence}}, {"review-w2", crownReviewArtifact{w2.Review, w2.ReviewEvidence}}, {"review-w3", crownReviewArtifact{w3.Review, w3.ReviewEvidence}}} {
 		entry := entry
 		if err := recorder.capture(entry.id, func() (any, error) { return entry.value, nil }); err != nil {
 			return recorder.finish(result), err
@@ -503,14 +504,112 @@ func crownReviewComposition(ctx context.Context, environment *productionEnvironm
 }
 
 type crownCandidate struct {
-	Item        provingground.IntegrationItem `json:"item"`
-	Handoff     handoff.Record                `json:"handoff"`
-	Review      basereview.Record             `json:"review"`
-	Observation m1.ReviewObservation          `json:"observation"`
-	CrownReview m1.CrownReview                `json:"crown_review"`
+	Item            provingground.IntegrationItem `json:"item"`
+	Handoff         handoff.Record                `json:"handoff"`
+	HandoffEvidence crownCandidateEvidenceV1      `json:"handoff_evidence"`
+	Review          basereview.Record             `json:"review"`
+	ReviewEvidence  crownReviewEvidenceV1         `json:"review_evidence"`
+	Observation     m1.ReviewObservation          `json:"observation"`
+	CrownReview     m1.CrownReview                `json:"crown_review"`
 }
 
-func prepareCrownCandidate(ctx context.Context, environment *productionEnvironment, reviews *provingground.ReviewCoordinator, delivery provingground.Delivery, label, reviewer string) (crownCandidate, error) {
+type crownHandoffArtifact struct {
+	Record   handoff.Record           `json:"record"`
+	Evidence crownCandidateEvidenceV1 `json:"evidence"`
+}
+
+type crownReviewArtifact struct {
+	Record   basereview.Record     `json:"record"`
+	Evidence crownReviewEvidenceV1 `json:"evidence"`
+}
+
+type crownCandidateEvidenceV1 struct {
+	SchemaVersion   int    `json:"schema_version"`
+	Candidate       string `json:"candidate"`
+	WorkspaceID     string `json:"workspace_id"`
+	ActorID         string `json:"actor_id"`
+	ProcessID       string `json:"process_id"`
+	RunID           string `json:"run_id"`
+	WorkID          string `json:"work_id"`
+	SourceCommit    string `json:"source_commit"`
+	LeaseID         string `json:"lease_id"`
+	LeaseGeneration uint64 `json:"lease_generation"`
+}
+
+type crownReviewEvidenceV1 struct {
+	SchemaVersion           int                          `json:"schema_version"`
+	Candidate               string                       `json:"candidate"`
+	CandidateEvidenceSHA256 string                       `json:"candidate_evidence_sha256"`
+	ReviewerActorID         string                       `json:"reviewer_actor_id"`
+	ReviewerProcessID       string                       `json:"reviewer_process_id"`
+	Criteria                []basereview.CriterionResult `json:"criteria"`
+}
+
+func canonicalCrownEvidence(value any) (string, []byte, error) {
+	encoded, err := m1.CanonicalJSON(value)
+	if err != nil {
+		return "", nil, err
+	}
+	return m1.SHA256Hex(encoded), encoded, nil
+}
+
+func validateCrownHandoffArtifact(artifact crownHandoffArtifact, sourceCommit string) error {
+	digest, _, err := canonicalCrownEvidence(artifact.Evidence)
+	if err != nil {
+		return fmt.Errorf("canonicalize crown handoff evidence: %w", err)
+	}
+	contributors := artifact.Record.Contributors
+	if digest != artifact.Record.EvidenceDigest || artifact.Evidence.SourceCommit != sourceCommit ||
+		artifact.Evidence.Candidate != artifact.Record.Candidate || artifact.Evidence.WorkspaceID != artifact.Record.WorkspaceID.String() ||
+		artifact.Evidence.RunID != artifact.Record.RunID.String() || artifact.Evidence.WorkID != artifact.Record.WorkID.String() ||
+		artifact.Evidence.LeaseID != artifact.Record.LeaseID.String() || int64(artifact.Evidence.LeaseGeneration) != artifact.Record.LeaseGeneration ||
+		len(contributors) != 1 || artifact.Evidence.ActorID != contributors[0].String() {
+		return fmt.Errorf("crown handoff evidence does not bind its admitted record and source")
+	}
+	return nil
+}
+
+func validateCrownReviewArtifact(artifact crownReviewArtifact, candidateEvidenceDigest string) error {
+	digest, _, err := canonicalCrownEvidence(artifact.Evidence)
+	if err != nil {
+		return fmt.Errorf("canonicalize crown review evidence: %w", err)
+	}
+	if digest != artifact.Record.EvidenceDigest || artifact.Evidence.CandidateEvidenceSHA256 != candidateEvidenceDigest ||
+		artifact.Evidence.Candidate != artifact.Record.Candidate || artifact.Evidence.ReviewerActorID != artifact.Record.ReviewerActorID.String() ||
+		artifact.Evidence.ReviewerProcessID != artifact.Record.ReviewerProcessID.String() || !reflect.DeepEqual(artifact.Evidence.Criteria, artifact.Record.Criteria) {
+		return fmt.Errorf("crown review evidence does not bind its admitted record and candidate evidence")
+	}
+	return nil
+}
+
+func newCrownHandoffRequest(label, candidate, sourceCommit string, delivery provingground.Delivery, workID ids.WorkID, fact handoff.EligibilityFact, now time.Time) (handoff.Request, crownCandidateEvidenceV1, error) {
+	evidence := crownCandidateEvidenceV1{
+		SchemaVersion: 1, Candidate: candidate, WorkspaceID: string(delivery.Authority.WorkspaceID),
+		ActorID: string(delivery.Authority.ActorID), ProcessID: string(delivery.Authority.ProcessID),
+		RunID: string(delivery.Authority.RunID), WorkID: workID.String(), SourceCommit: sourceCommit,
+		LeaseID: string(delivery.Authority.LeaseID), LeaseGeneration: delivery.Authority.LeaseGeneration,
+	}
+	evidenceDigest, _, err := canonicalCrownEvidence(evidence)
+	if err != nil {
+		return handoff.Request{}, crownCandidateEvidenceV1{}, err
+	}
+	request := handoff.Request{SchemaVersion: 1, CorrelationID: "crown-handoff-" + label, OperationID: ids.OperationID("crown-handoff-op-" + label), HandoffID: ids.HandoffID("crown-handoff-" + label), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: workID, RunID: ids.RunID(delivery.Authority.RunID), WorkspaceID: ids.WorkspaceID(delivery.Authority.WorkspaceID), LeaseID: ids.LeaseID(delivery.Authority.LeaseID), LeaseGeneration: int64(delivery.Authority.LeaseGeneration), Token: fmt.Sprint(delivery.Authority.FenceToken), ActorID: ids.ActorID(delivery.Authority.ActorID), ProcessID: ids.ProcessID(delivery.Authority.ProcessID), Candidate: candidate, Contributors: []ids.ActorID{ids.ActorID(delivery.Authority.ActorID)}, EvidenceDigest: evidenceDigest, SubmittedAt: now, ExpectedEligibility: fact}
+	return request, evidence, nil
+}
+
+func newCrownReviewRequest(label, candidate, reviewer, candidateEvidenceDigest string, delivery provingground.Delivery, workID ids.WorkID, fact basereview.EligibilityFact, now time.Time) (basereview.Request, crownReviewEvidenceV1, error) {
+	criteria := []basereview.CriterionResult{{CriterionID: "criterion-crown", Status: basereview.Passed, Evidence: "exact crown candidate inspected"}}
+	reviewerProcess := reviewer + "-process"
+	evidence := crownReviewEvidenceV1{SchemaVersion: 1, Candidate: candidate, CandidateEvidenceSHA256: candidateEvidenceDigest, ReviewerActorID: reviewer, ReviewerProcessID: reviewerProcess, Criteria: criteria}
+	evidenceDigest, _, err := canonicalCrownEvidence(evidence)
+	if err != nil {
+		return basereview.Request{}, crownReviewEvidenceV1{}, err
+	}
+	request := basereview.Request{SchemaVersion: 1, CorrelationID: "crown-review-" + label, OperationID: ids.OperationID("crown-review-op-" + label), ReviewID: ids.ReviewID("crown-review-" + label), HandoffID: ids.HandoffID("crown-handoff-" + label), WorkRevisionID: "revision-qualification", WorkID: workID, LeaseID: ids.LeaseID(delivery.Authority.LeaseID), LeaseGeneration: int64(delivery.Authority.LeaseGeneration), Token: "crown-review-" + label, ActorID: ids.ActorID(reviewer), ProcessID: ids.ProcessID(reviewerProcess), Candidate: candidate, Verdict: basereview.Approved, Criteria: criteria, EvidenceDigest: evidenceDigest, SubmittedAt: now.Add(time.Nanosecond), ExpectedEligibility: fact}
+	return request, evidence, nil
+}
+
+func prepareCrownCandidate(ctx context.Context, environment *productionEnvironment, reviews *provingground.ReviewCoordinator, delivery provingground.Delivery, label, reviewer, sourceCommit string) (crownCandidate, error) {
 	result := crownCandidate{}
 	now := time.Now().UTC()
 	refreshed, err := environment.runtime.Heartbeat(ctx, controljournal.OperationID("crown-heartbeat-"+label), delivery.Authority, now, time.Minute)
@@ -544,20 +643,33 @@ func prepareCrownCandidate(ctx context.Context, environment *productionEnvironme
 	if err != nil {
 		return result, err
 	}
-	handoffID := ids.HandoffID("crown-handoff-" + label)
-	handoffRequest := handoff.Request{SchemaVersion: 1, CorrelationID: "crown-handoff-" + label, OperationID: ids.OperationID("crown-handoff-op-" + label), HandoffID: handoffID, ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: workID, RunID: ids.RunID(delivery.Authority.RunID), WorkspaceID: ids.WorkspaceID(delivery.Authority.WorkspaceID), LeaseID: ids.LeaseID(delivery.Authority.LeaseID), LeaseGeneration: int64(delivery.Authority.LeaseGeneration), Token: fmt.Sprint(delivery.Authority.FenceToken), ActorID: ids.ActorID(delivery.Authority.ActorID), ProcessID: ids.ProcessID(delivery.Authority.ProcessID), Candidate: candidate, Contributors: []ids.ActorID{ids.ActorID(delivery.Authority.ActorID)}, EvidenceDigest: strings.Repeat(label[:1], 64), SubmittedAt: now, ExpectedEligibility: handoffFact}
+	handoffRequest, handoffEvidence, err := newCrownHandoffRequest(label, candidate, sourceCommit, delivery, workID, handoffFact, now)
+	if err != nil {
+		return result, err
+	}
+	result.HandoffEvidence = handoffEvidence
 	result.Handoff, err = reviews.SubmitCandidate(ctx, delivery.Authority, handoffRequest)
 	if err != nil {
+		return result, err
+	}
+	if err := validateCrownHandoffArtifact(crownHandoffArtifact{result.Handoff, result.HandoffEvidence}, sourceCommit); err != nil {
 		return result, err
 	}
 	reviewFact, err := crownEligibility{}.WorkEligibilityFact(ctx, "revision-qualification", workID, workgraph.StatusHandedOff, workgraph.EligibilityReview)
 	if err != nil {
 		return result, err
 	}
-	reviewID := ids.ReviewID("crown-review-" + label)
-	reviewRequest := basereview.Request{SchemaVersion: 1, CorrelationID: "crown-review-" + label, OperationID: ids.OperationID("crown-review-op-" + label), ReviewID: reviewID, HandoffID: handoffID, WorkRevisionID: "revision-qualification", WorkID: workID, LeaseID: ids.LeaseID(delivery.Authority.LeaseID), LeaseGeneration: int64(delivery.Authority.LeaseGeneration), Token: "crown-review-" + label, ActorID: ids.ActorID(reviewer), ProcessID: ids.ProcessID(reviewer + "-process"), Candidate: candidate, Verdict: basereview.Approved, Criteria: []basereview.CriterionResult{{CriterionID: "criterion-crown", Status: basereview.Passed, Evidence: "exact crown candidate inspected"}}, EvidenceDigest: strings.Repeat("e", 64), SubmittedAt: now.Add(time.Nanosecond), ExpectedEligibility: reviewFact}
+	reviewRequest, reviewEvidence, err := newCrownReviewRequest(label, candidate, reviewer, handoffRequest.EvidenceDigest, delivery, workID, reviewFact, now)
+	if err != nil {
+		return result, err
+	}
+	result.ReviewEvidence = reviewEvidence
+	reviewID := reviewRequest.ReviewID
 	result.Review, err = reviews.SubmitReview(ctx, delivery.Authority, reviewRequest)
 	if err != nil {
+		return result, err
+	}
+	if err := validateCrownReviewArtifact(crownReviewArtifact{result.Review, result.ReviewEvidence}, handoffRequest.EvidenceDigest); err != nil {
 		return result, err
 	}
 	integrationFact, err := crownEligibility{}.WorkEligibilityFact(ctx, "revision-qualification", workID, workgraph.StatusApproved, workgraph.EligibilityIntegration)

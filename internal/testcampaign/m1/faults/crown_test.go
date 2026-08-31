@@ -4,11 +4,15 @@ import (
 	"context"
 	"os"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/provingground"
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 func TestCrownInternalSegmentOrderPreservesDefinitiveW3(t *testing.T) {
@@ -101,5 +105,55 @@ func TestGJ03ExactWorkspaceIdentityIgnoresOldWorkBindingAndRejectsRelabeling(t *
 	gj03.Facts.RecoveredWorkspaceID = gj03.Facts.PhysicalWorkspaceID
 	if err := validateCrownFaultWorkspaceIdentities(w1, w2, gj03, "workspace-crown-w3"); err == nil {
 		t.Fatal("GJ-03 orphan was relabeled as its recovered workspace")
+	}
+}
+
+func TestCrownCandidateAndReviewEvidenceAreCanonicalContentHashes(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	sourceCommit := strings.Repeat("1", 40)
+	for index, test := range []struct {
+		label, work, actor, process, workspace, lease, candidate, reviewer string
+	}{
+		{"w2", "work-baseline", "actor-b", "process-b", "workspace-crown-w2", "lease-crown-w2", strings.Repeat("2", 40), "reviewer-w2"},
+		{"w3", "work-a", "actor-a", "process-c", "workspace-crown-w3", "lease-crown-w3", strings.Repeat("3", 40), "reviewer-w3"},
+	} {
+		delivery := provingground.Delivery{Authority: controljournal.AuthorityCapsuleV1{RunID: "run-crown", WorkspaceID: controljournal.WorkspaceID(test.workspace), LeaseID: controljournal.LeaseID(test.lease), LeaseGeneration: 1, FenceToken: uint64(index + 17), ActorID: controljournal.ActorID(test.actor), ProcessID: controljournal.ProcessID(test.process)}}
+		workID := ids.WorkID(test.work)
+		handoffFact, err := crownEligibility{}.WorkEligibilityFact(t.Context(), "revision-qualification", workID, workgraph.StatusActive, workgraph.EligibilityHandoff)
+		if err != nil {
+			t.Fatal(err)
+		}
+		handoffRequest, handoffEvidence, err := newCrownHandoffRequest(test.label, test.candidate, sourceCommit, delivery, workID, handoffFact, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := handoffRequest.Validate(); err != nil {
+			t.Fatalf("%s exact handoff did not validate: %v", test.label, err)
+		}
+		handoffBytes, err := m1.CanonicalJSON(handoffEvidence)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if handoffRequest.EvidenceDigest != m1.SHA256Hex(handoffBytes) || handoffRequest.EvidenceDigest == strings.Repeat(test.label[:1], 64) || handoffEvidence.SourceCommit != sourceCommit || handoffEvidence.Candidate != test.candidate || handoffEvidence.WorkspaceID != test.workspace {
+			t.Fatalf("%s handoff evidence is not its canonical content hash", test.label)
+		}
+		reviewFact, err := crownEligibility{}.WorkEligibilityFact(t.Context(), "revision-qualification", workID, workgraph.StatusHandedOff, workgraph.EligibilityReview)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reviewRequest, reviewEvidence, err := newCrownReviewRequest(test.label, test.candidate, test.reviewer, handoffRequest.EvidenceDigest, delivery, workID, reviewFact, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := reviewRequest.Validate(); err != nil {
+			t.Fatalf("%s exact review did not validate: %v", test.label, err)
+		}
+		reviewBytes, err := m1.CanonicalJSON(reviewEvidence)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reviewRequest.EvidenceDigest != m1.SHA256Hex(reviewBytes) || reviewRequest.EvidenceDigest == strings.Repeat("e", 64) || reviewEvidence.CandidateEvidenceSHA256 != handoffRequest.EvidenceDigest || reviewEvidence.Candidate != test.candidate {
+			t.Fatalf("%s review evidence is not its canonical content hash", test.label)
+		}
 	}
 }
