@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -239,6 +241,56 @@ func TestFocusedSemanticCensusRejectsOmissionExtraAndRenameForEveryCampaign(t *t
 	}
 	if err := validateFocusedFactCensus("renamed-campaign", map[string]bool{}); err == nil {
 		t.Fatal("unknown campaign minted a semantic census")
+	}
+}
+
+func TestFocusedOwnerRestartRebuildsRuntimeAcrossConsecutiveLifetimes(t *testing.T) {
+	lifecycle := startFaultLifecycle(t)
+	executor := &ProductionExecutor{Root: faultModuleRoot(t), Lifecycle: lifecycle}
+	t.Cleanup(func() {
+		_ = executor.Close()
+		if executor.Lifecycle != nil {
+			_ = executor.Lifecycle.Stop(context.Background())
+		}
+	})
+	for index := 0; index < 2; index++ {
+		barrier := newTestFocusedBarrier(2)
+		attemptID := fmt.Sprintf("restart-regression-%d", index)
+		execution, err := executor.ExecuteFocused(t.Context(), FocusedInput{RunID: "run-restart-regression", CampaignID: "restart-epoch-nfr007", AttemptID: attemptID, Index: index, Seed: uint64(index + 1), Order: [2]int{index % 2, 1 - index%2}, Barrier: barrier})
+		if err != nil {
+			t.Fatalf("restart %d: %v", index, err)
+		}
+		if err := validateFocusedFactCensus("restart-epoch-nfr007", execution.Facts); err != nil {
+			t.Fatalf("restart %d fact census: %v facts=%v", index, err, execution.Facts)
+		}
+		if !m1.AssertUniversal(t.Context(), execution.Observation).Passed() {
+			t.Fatalf("restart %d universal observation failed", index)
+		}
+	}
+}
+
+type testFocusedBarrier struct {
+	mu        sync.Mutex
+	remaining int
+	release   chan struct{}
+}
+
+func newTestFocusedBarrier(participants int) *testFocusedBarrier {
+	return &testFocusedBarrier{remaining: participants, release: make(chan struct{})}
+}
+
+func (b *testFocusedBarrier) Arrive(ctx context.Context) error {
+	b.mu.Lock()
+	b.remaining--
+	if b.remaining == 0 {
+		close(b.release)
+	}
+	b.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-b.release:
+		return nil
 	}
 }
 
