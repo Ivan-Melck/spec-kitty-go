@@ -281,3 +281,9 @@ unlike evidence categories.
 - Universal invariants accompany all terminal observations.
 - Honest failure/incomplete evidence is retained.
 - Nothing here claims the combined trial passed.
+
+## Activity Log
+
+- 2026-08-31T01:40:08Z – codex-coordinator – Cycle 2 scope reconciliation: independent review proved composed GJ-03/GJ-04 fault injection and authority observation are package-private. Authorize two additive provingground qualification seam files (qualification.go and qualification_test.go) in WP09; preserve all existing ownership and do not modify existing provingground sources.
+- 2026-08-31T02:21:09Z – codex-wp09-implementer-cycle2 – Cycle 2 scope reconciliation: the admitted NFR-003 campaign found a real cross-process Git worktree metadata race between simultaneous Runtime.StartWorkspace calls. Authorize gitrepo worktree allocation/removal locking and direct concurrency regression tests in internal/gitrepo workspace, integration, and inspection files. The qualification campaign must remain concurrent and must prove the product fix; seeded serialization is not admissible.
+- 2026-08-31T03:36:16Z – codex-wp09-implementer-cycle2 – Cycle 2 scope reconciliation: the long-running NFR-004 campaign proved public heartbeat returns a current capsule that handoff rejects because exactCandidateBinding incorrectly treats the workspace's immutable claim-time authority-head revision as a mutable heartbeat coordinate. Authorize internal/provingground/review.go and review_test.go to retain Runtime.Authorize as the current-head guard, stop requiring the immutable binding to mirror heartbeat revision, and prove refreshed-capsule handoff succeeds while the pre-heartbeat capsule remains stale.
