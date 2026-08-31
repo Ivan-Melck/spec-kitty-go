@@ -1938,6 +1938,10 @@ func (p *ProductionExecutor) ExecuteFault(ctx context.Context, attempt Attempt) 
 	if err != nil {
 		return Execution{Source: source}, &IncompleteError{Reason: bounded(err.Error())}
 	}
+	primaryBefore, err := environment.repository.SnapshotPrimary(ctx)
+	if err != nil {
+		return Execution{Source: source}, &IncompleteError{Reason: bounded(err.Error())}
+	}
 	var facts Facts
 	var effects []m1.EffectObservation
 	var guardPackage, guardTest string
@@ -1964,7 +1968,11 @@ func (p *ProductionExecutor) ExecuteFault(ctx context.Context, attempt Attempt) 
 		}
 		return Execution{Source: source}, err
 	}
-	observation, err := observeComposedRuntime(ctx, environment, effects)
+	primaryAfter, err := environment.repository.SnapshotPrimary(ctx)
+	if err != nil {
+		return Execution{Source: source, Facts: facts}, &IncompleteError{Reason: bounded(err.Error())}
+	}
+	observation, err := observeComposedRuntimeWithOverlay(ctx, environment, effects, qualificationOverlay{primary: m1.PrimaryObservation{Inspectable: true, Before: gitSnapshotObservation(primaryBefore), After: gitSnapshotObservation(primaryAfter)}})
 	if err != nil {
 		return Execution{Source: source, Facts: facts}, &IncompleteError{Reason: bounded(err.Error())}
 	}
