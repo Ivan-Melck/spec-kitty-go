@@ -784,6 +784,22 @@ func executeFocusedRestorePlayback(ctx context.Context, input FocusedInput, envi
 }
 
 func restoreAndJournal(ctx context.Context, environment *productionEnvironment) (journalcheckpoint.RestoreResultV1, controljournal.ValidatedJournalV1, error) {
+	records, err := scanAllRecords(ctx, environment.port, "spk/v1/project-qualification/mission-qualification/journal/")
+	if err != nil {
+		return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, err
+	}
+	stored := make([]controljournal.StoredEventV1, 0, len(records))
+	for _, record := range records {
+		event, decodeErr := controljournal.DecodeEventEnvelopeV1(record.Value)
+		if decodeErr != nil {
+			return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, decodeErr
+		}
+		stored = append(stored, controljournal.StoredEventV1{RecordRevision: record.Revision, Envelope: event})
+	}
+	journal, err := controljournal.ValidateJournalV1(environment.events, stored)
+	if err != nil {
+		return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, fmt.Errorf("focused journal validation: %w", err)
+	}
 	eventDigest, err := environment.events.Digest()
 	if err != nil {
 		return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, err
@@ -796,26 +812,7 @@ func restoreAndJournal(ctx context.Context, environment *productionEnvironment) 
 	if err != nil || !restored.Ready {
 		return restored, controljournal.ValidatedJournalV1{}, fmt.Errorf("focused restore is not ready: %w", err)
 	}
-	records, err := scanAllRecords(ctx, environment.port, "spk/v1/project-qualification/mission-qualification/journal/")
-	if err != nil {
-		return restored, controljournal.ValidatedJournalV1{}, err
-	}
-	stored := make([]controljournal.StoredEventV1, 0, len(records))
-	for _, record := range records {
-		event, decodeErr := controljournal.DecodeEventEnvelopeV1(record.Value)
-		if decodeErr != nil {
-			return restored, controljournal.ValidatedJournalV1{}, decodeErr
-		}
-		stored = append(stored, controljournal.StoredEventV1{RecordRevision: record.Revision, Envelope: event})
-	}
-	sort.Slice(stored, func(i, j int) bool {
-		if stored[i].RecordRevision != stored[j].RecordRevision {
-			return stored[i].RecordRevision < stored[j].RecordRevision
-		}
-		return stored[i].Envelope.EventIndex < stored[j].Envelope.EventIndex
-	})
-	journal, err := controljournal.ValidateJournalV1(environment.events, stored)
-	return restored, journal, err
+	return restored, journal, nil
 }
 
 func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, error) {
