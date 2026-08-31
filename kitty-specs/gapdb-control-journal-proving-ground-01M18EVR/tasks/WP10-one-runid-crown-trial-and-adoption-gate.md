@@ -94,6 +94,8 @@ owned_files:
 - internal/architecture/policy.go
 - internal/architecture/policy_test.go
 - internal/architecture/m1_dependency_guard_test.go
+- internal/testcampaign/manifest.go
+- internal/testcampaign/census_test.go
 - kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/quickstart.md
 role: implementer
 tags:
@@ -341,3 +343,10 @@ admit the public GapDB client for that tier, and narrow the existing M1 GapDB
 allowlist to `internal/testcampaign/m1/external`. Mutant controls must prove
 neighboring testcampaign packages and look-alike providers remain rejected;
 kernel and runtime tiers gain no new provider edge.
+
+The exact repository-wide architecture campaign is itself a closed contract.
+Qualification exposed that the three newly authorized WP10 architecture tests
+passed but were rejected as unexpected top-level events. WP10 therefore also
+owns `internal/testcampaign/manifest.go` and
+`internal/testcampaign/census_test.go` solely to add those exact test names and
+mutant controls; wildcard census relaxation remains forbidden.
