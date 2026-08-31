@@ -59,6 +59,8 @@ create_intent:
 - internal/gitrepo/inspection_test.go
 - internal/provingground/review.go
 - internal/provingground/review_test.go
+- internal/provingground/workspace.go
+- internal/provingground/workspace_test.go
 - internal/sidecar/gapdb/lifecycle.go
 - internal/sidecar/gapdb/lifecycle_test.go
 execution_mode: code_change
@@ -82,6 +84,8 @@ owned_files:
 - internal/gitrepo/inspection_test.go
 - internal/provingground/review.go
 - internal/provingground/review_test.go
+- internal/provingground/workspace.go
+- internal/provingground/workspace_test.go
 - internal/sidecar/gapdb/lifecycle.go
 - internal/sidecar/gapdb/lifecycle_test.go
 role: implementer
@@ -292,3 +296,4 @@ unlike evidence categories.
 - 2026-08-31T02:21:09Z – codex-wp09-implementer-cycle2 – Cycle 2 scope reconciliation: the admitted NFR-003 campaign found a real cross-process Git worktree metadata race between simultaneous Runtime.StartWorkspace calls. Authorize gitrepo worktree allocation/removal locking and direct concurrency regression tests in internal/gitrepo workspace, integration, and inspection files. The qualification campaign must remain concurrent and must prove the product fix; seeded serialization is not admissible.
 - 2026-08-31T03:36:16Z – codex-wp09-implementer-cycle2 – Cycle 2 scope reconciliation: the long-running NFR-004 campaign proved public heartbeat returns a current capsule that handoff rejects because exactCandidateBinding incorrectly treats the workspace's immutable claim-time authority-head revision as a mutable heartbeat coordinate. Authorize internal/provingground/review.go and review_test.go to retain Runtime.Authorize as the current-head guard, stop requiring the immutable binding to mirror heartbeat revision, and prove refreshed-capsule handoff succeeds while the pre-heartbeat capsule remains stale.
 - 2026-08-31T05:12:42Z – codex-root – Cycle 3 scope reconciliation: authorize internal/sidecar/gapdb/lifecycle.go and lifecycle_test.go for a narrow production RestartOwned clean/unclean owner-lifetime seam required to execute NFR-007 through public APIs; the campaign must rebuild and restore the runtime and refuse predecessor capsules.
+- 2026-08-31T05:30:00Z – codex-root – Cycle 3 scope reconciliation: authorize internal/provingground/workspace.go and workspace_test.go to classify a validated predecessor-runtime capsule as stale epoch before current workspace/lease status, while preserving stale-lease refusal for a quarantined capsule from the current epoch.
