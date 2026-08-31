@@ -49,6 +49,8 @@ create_intent:
 - internal/testcampaign/m1/mutants/catalog_test.go
 - internal/testcampaign/m1/invariants.go
 - internal/testcampaign/m1/invariants_test.go
+- internal/provingground/qualification.go
+- internal/provingground/qualification_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -60,6 +62,8 @@ owned_files:
 - internal/testcampaign/m1/mutants/catalog_test.go
 - internal/testcampaign/m1/invariants.go
 - internal/testcampaign/m1/invariants_test.go
+- internal/provingground/qualification.go
+- internal/provingground/qualification_test.go
 role: implementer
 tags:
 - m1
