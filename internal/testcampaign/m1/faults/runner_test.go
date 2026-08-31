@@ -263,8 +263,9 @@ func TestRestartTwice(t *testing.T) {
 		if err := validateFocusedFactCensus("restart-epoch-nfr007", execution.Facts); err != nil {
 			t.Fatalf("restart %d fact census: %v facts=%v", index, err, execution.Facts)
 		}
-		if !m1.AssertUniversal(t.Context(), execution.Observation).Passed() {
-			t.Fatalf("restart %d universal observation failed", index)
+		invariants := m1.AssertUniversal(t.Context(), execution.Observation)
+		if !invariants.Passed() {
+			t.Fatalf("restart %d universal observation failed: %+v", index, invariants)
 		}
 	}
 }
