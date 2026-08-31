@@ -268,7 +268,7 @@ func TestExternalRestoreTranslatorProvesNonemptyHistoryAndBoundsPrefixIO(t *test
 			"zero revision":                    {{ObservedRevision: 0}},
 			"regressed revision":               {{ObservedRevision: 9, Records: firstProviderPage.Records}},
 			"same revision changed bytes":      {{ObservedRevision: 10, Records: []storegapdb.Record{{Key: firstProviderPage.Records[0].Key, Value: []byte(`{"changed":true}`), Revision: 7}}}},
-			"same revision changed cursor":     {{ObservedRevision: 10, Records: firstProviderPage.Records, Truncated: true, Cursor: "foreign-cursor"}},
+			"same revision terminal cursor":    {{ObservedRevision: 10, Records: firstProviderPage.Records, Cursor: "impossible-terminal"}},
 			"changed revision terminal cursor": {{ObservedRevision: 11, Records: firstProviderPage.Records, Cursor: "impossible-terminal"}},
 			"changed revision moving observation": {
 				{ObservedRevision: 11, Records: firstProviderPage.Records, Truncated: true, Cursor: "next"},
@@ -288,6 +288,13 @@ func TestExternalRestoreTranslatorProvesNonemptyHistoryAndBoundsPrefixIO(t *test
 					t.Fatal("provider revision/cursor anomaly reused or replaced a trusted snapshot")
 				}
 			})
+		}
+		firstOpaque := firstProviderPage
+		firstOpaque.Truncated, firstOpaque.Cursor = true, "opaque-snapshot-one"
+		secondOpaque := cloneRestoreProbePageV1(firstOpaque)
+		secondOpaque.Cursor = "opaque-snapshot-two"
+		if !sameRestoreProbePageV1(secondOpaque, firstOpaque) {
+			t.Fatal("fresh opaque cursor at identical revision/page prevented reuse")
 		}
 	})
 }

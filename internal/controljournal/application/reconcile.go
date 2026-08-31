@@ -211,7 +211,13 @@ func cloneRestoreProbePageV1(page storegapdb.ScanPage) storegapdb.ScanPage {
 }
 
 func sameRestoreProbePageV1(got, want storegapdb.ScanPage) bool {
-	if got.ObservedRevision == 0 || got.ObservedRevision != want.ObservedRevision || got.Cursor != want.Cursor || got.Truncated != want.Truncated || len(got.Records) != len(want.Records) {
+	// Provider cursors are opaque capabilities for one particular scan and may
+	// be freshly sealed even when the store-wide revision and page are identical.
+	// Their progression is validated inside a full traversal; cache reuse binds
+	// to the immutable revision, page shape, and exact records instead.
+	if got.ObservedRevision == 0 || got.ObservedRevision != want.ObservedRevision ||
+		got.Truncated != (got.Cursor != "") || want.Truncated != (want.Cursor != "") ||
+		got.Truncated != want.Truncated || len(got.Records) != len(want.Records) {
 		return false
 	}
 	for index := range got.Records {
