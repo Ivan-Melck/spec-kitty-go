@@ -57,6 +57,8 @@ create_intent:
 - internal/gitrepo/integration_test.go
 - internal/gitrepo/inspection.go
 - internal/gitrepo/inspection_test.go
+- internal/provingground/review.go
+- internal/provingground/review_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -76,6 +78,8 @@ owned_files:
 - internal/gitrepo/integration_test.go
 - internal/gitrepo/inspection.go
 - internal/gitrepo/inspection_test.go
+- internal/provingground/review.go
+- internal/provingground/review_test.go
 role: implementer
 tags:
 - m1
@@ -122,12 +126,15 @@ observations; it does not decide production adoption.
 ## Branch and ownership
 
 Begin from accepted WP06–WP08. Edit only the eight testcampaign files, two
-additive proving-ground qualification seam files, and six Git-repository files
-listed. The seam may expose read-only production facts and existing fault
-hooks; it must not add a testcampaign dependency or a test-only mutation path.
-The Git files own the cross-process worktree-metadata lock and its direct
-regressions discovered by the NFR-003 campaign. WP10 owns aggregate
-campaign/evidence/CLI files; do not create them here.
+additive proving-ground qualification seam files, six Git-repository files,
+and two proving-ground review files listed. The seam may expose read-only
+production facts and existing fault hooks; it must not add a testcampaign
+dependency or a test-only mutation path. The Git files own the cross-process
+worktree-metadata lock and its direct regressions discovered by the NFR-003
+campaign. The review files preserve current-head validation through
+`Runtime.Authorize` while allowing a heartbeat-refreshed capsule to retain its
+immutable lease-scoped workspace binding. WP10 owns aggregate campaign/evidence/CLI
+files; do not create them here.
 
 ## T047: Implement five deterministic fault-cut runners
 
