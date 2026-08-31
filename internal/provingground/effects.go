@@ -855,17 +855,34 @@ func (j *workflowJournal) loadAggregateEventsWithBudget(ctx context.Context, kin
 	byAggregate := map[controljournal.AggregateID][]controljournal.EventEnvelopeV1{}
 	byOperation := map[controljournal.OperationID][]controljournal.EventEnvelopeV1{}
 	operationRevisions := map[controljournal.OperationID]uint64{}
+	operationEpochs := map[controljournal.OperationID]controljournal.RuntimeEpochID{}
+	decoded := make([]workflowStoredEvent, 0, len(journalRecords))
 	for _, stored := range journalRecords {
 		event, decodeErr := controljournal.DecodeEventEnvelopeV1(stored.Value)
 		wp08Kind := event.AggregateKind == "external-effect" || event.AggregateKind == "candidate" || event.AggregateKind == "review" || event.AggregateKind == "integration"
-		if decodeErr != nil || stored.Key != j.prefix()+"journal/"+string(event.EventID) || stored.Revision == 0 || stored.Revision > bound || event.ProjectID != j.config.ProjectID || event.RuntimeEpochID != j.config.RuntimeEpochID || wp08Kind && event.WorkRevisionID != j.config.WorkRevisionID {
+		if decodeErr != nil || stored.Key != j.prefix()+"journal/"+string(event.EventID) || stored.Revision == 0 || stored.Revision > bound || event.ProjectID != j.config.ProjectID || wp08Kind && event.WorkRevisionID != j.config.WorkRevisionID {
 			return nil, refusal(OutcomeIndeterminate, "restore", "journal contains a malformed event")
 		}
+		decoded = append(decoded, workflowStoredEvent{record: stored, event: event})
+	}
+	admissibleEpochs, err := j.admissibleRuntimeEpochs(ctx, decoded, bound, budget)
+	if err != nil {
+		return nil, err
+	}
+	for _, stored := range decoded {
+		event := stored.event
+		if !admissibleEpochs[event.RuntimeEpochID] {
+			return nil, refusal(OutcomeIndeterminate, "restore", "journal event runtime epoch is not linked to the sealed owner history")
+		}
 		byOperation[event.OperationID] = append(byOperation[event.OperationID], event)
-		if revision, exists := operationRevisions[event.OperationID]; exists && revision != stored.Revision {
+		if revision, exists := operationRevisions[event.OperationID]; exists && revision != stored.record.Revision {
 			return nil, refusal(OutcomeIndeterminate, "restore", "operation event group spans durable revisions")
 		}
-		operationRevisions[event.OperationID] = stored.Revision
+		if epoch, exists := operationEpochs[event.OperationID]; exists && epoch != event.RuntimeEpochID {
+			return nil, refusal(OutcomeIndeterminate, "restore", "operation event group spans runtime epochs")
+		}
+		operationRevisions[event.OperationID] = stored.record.Revision
+		operationEpochs[event.OperationID] = event.RuntimeEpochID
 		if event.AggregateKind == kind {
 			byAggregate[event.AggregateID] = append(byAggregate[event.AggregateID], event)
 		}
@@ -889,7 +906,7 @@ func (j *workflowJournal) loadAggregateEventsWithBudget(ctx context.Context, kin
 			return nil, refusal(OutcomeIndeterminate, "restore", "event operation is unavailable within the bounded observation")
 		}
 		operation, opErr := controljournal.DecodeOperationRecordV1(operationStored.Value)
-		if opErr != nil || operation.OperationID != operationID || operation.RuntimeEpochID != j.config.RuntimeEpochID || !reflectEventIDs(operation.EventIDs(), ids) {
+		if opErr != nil || operation.OperationID != operationID || operation.RuntimeEpochID != operationEpochs[operationID] || !reflectEventIDs(operation.EventIDs(), ids) {
 			return nil, refusal(OutcomeIndeterminate, "restore", "operation event membership is not exact")
 		}
 	}
@@ -911,7 +928,7 @@ func (j *workflowJournal) loadAggregateEventsWithBudget(ctx context.Context, kin
 		}
 		head, ok := heads[id]
 		last := events[len(events)-1]
-		if !ok || head.LogicalVersion != last.AggregateLogicalVersion || head.LastEventID != last.EventID || head.RuntimeEpochID != j.config.RuntimeEpochID || head.StateDigest != sha256.Sum256(last.Payload()) {
+		if !ok || head.LogicalVersion != last.AggregateLogicalVersion || head.LastEventID != last.EventID || head.RuntimeEpochID != last.RuntimeEpochID || !admissibleEpochs[head.RuntimeEpochID] || head.StateDigest != sha256.Sum256(last.Payload()) {
 			return nil, refusal(OutcomeIndeterminate, "restore", "aggregate head contradicts terminal journal state")
 		}
 		ordered = append(ordered, events...)
@@ -928,6 +945,114 @@ func (j *workflowJournal) loadAggregateEventsWithBudget(ctx context.Context, kin
 		return ordered[i].AggregateLogicalVersion < ordered[j].AggregateLogicalVersion
 	})
 	return ordered, nil
+}
+
+type workflowStoredEvent struct {
+	record storegapdb.Record
+	event  controljournal.EventEnvelopeV1
+}
+
+// admissibleRuntimeEpochs derives the complete epoch set from the sealed
+// runtime-composition aggregate. Historical events remain readable only when
+// an exact owner-restart chain links them to the currently admitted epoch.
+func (j *workflowJournal) admissibleRuntimeEpochs(ctx context.Context, events []workflowStoredEvent, bound uint64, budget *restoreBudget) (map[controljournal.RuntimeEpochID]bool, error) {
+	restarts := make([]controljournal.EventEnvelopeV1, 0)
+	for _, stored := range events {
+		event := stored.event
+		if event.EventType != "runtime.owner_restarted" {
+			continue
+		}
+		if event.AggregateKind != "runtime-composition" || event.AggregateID != controljournal.AggregateID(j.config.RunID) || event.WorkRevisionID != j.config.WorkRevisionID {
+			return nil, refusal(OutcomeIndeterminate, "restore", "owner restart event is foreign to the configured run")
+		}
+		restarts = append(restarts, event)
+	}
+	headRecords, _, err := j.scanPrefixAt(ctx, j.prefix()+"heads/runtime-composition/", bound, budget, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(restarts) == 0 {
+		if len(headRecords) != 0 {
+			return nil, refusal(OutcomeIndeterminate, "restore", "runtime-composition head has no sealed restart history")
+		}
+		return map[controljournal.RuntimeEpochID]bool{j.config.RuntimeEpochID: true}, nil
+	}
+	if len(headRecords) != 1 || headRecords[0].Key != j.prefix()+"heads/runtime-composition/"+string(j.config.RunID) || headRecords[0].Revision == 0 || headRecords[0].Revision > bound {
+		return nil, refusal(OutcomeIndeterminate, "restore", "runtime-composition head is absent, duplicated, or foreign")
+	}
+	sort.Slice(restarts, func(i, k int) bool { return restarts[i].AggregateLogicalVersion < restarts[k].AggregateLogicalVersion })
+	admissible := make(map[controljournal.RuntimeEpochID]bool, len(restarts)+1)
+	var previous controljournal.RuntimeEpochID
+	for index, event := range restarts {
+		var state ownerRestartState
+		if json.Unmarshal(event.Payload(), &state) != nil || state.OperationID != event.OperationID || state.RunID != j.config.RunID || state.PredecessorEpoch == "" || state.RuntimeEpochID == "" || state.RuntimeEpochID != event.RuntimeEpochID || state.RuntimeEpochID == state.PredecessorEpoch || state.OccurredAt.IsZero() || state.CommandDigest == "" || event.AggregateLogicalVersion != uint64(index+1) {
+			return nil, refusal(OutcomeIndeterminate, "restore", "runtime-composition history contains a malformed owner transition")
+		}
+		digest, digestErr := ownerRestartCommandDigest(state.OperationID, state.RunID, state.PredecessorEpoch, state.RuntimeEpochID, state.OccurredAt)
+		if digestErr != nil || digest != state.CommandDigest || index > 0 && state.PredecessorEpoch != previous || admissible[state.RuntimeEpochID] {
+			return nil, refusal(OutcomeIndeterminate, "restore", "runtime-composition history is unsealed, discontinuous, or cyclic")
+		}
+		admissible[state.PredecessorEpoch] = true
+		admissible[state.RuntimeEpochID] = true
+		previous = state.RuntimeEpochID
+	}
+	last := restarts[len(restarts)-1]
+	head, decodeErr := controljournal.DecodeAggregateHeadV1(headRecords[0].Value)
+	if decodeErr != nil || previous != j.config.RuntimeEpochID || head.AggregateKind != "runtime-composition" || head.AggregateID != controljournal.AggregateID(j.config.RunID) || head.LogicalVersion != last.AggregateLogicalVersion || head.LastEventID != last.EventID || head.RuntimeEpochID != j.config.RuntimeEpochID || head.StateDigest != sha256.Sum256(last.Payload()) {
+		return nil, refusal(OutcomeIndeterminate, "restore", "runtime-composition terminal head does not seal the admitted epoch lineage")
+	}
+	if err := j.validateRuntimeEpochAdmissions(ctx, events, admissible, bound, budget); err != nil {
+		return nil, err
+	}
+	return admissible, nil
+}
+
+func (j *workflowJournal) validateRuntimeEpochAdmissions(ctx context.Context, events []workflowStoredEvent, lineage map[controljournal.RuntimeEpochID]bool, bound uint64, budget *restoreBudget) error {
+	admissions := make([]controljournal.EventEnvelopeV1, 0, len(lineage))
+	for _, stored := range events {
+		event := stored.event
+		if event.EventType != "runtime.epoch_admitted" {
+			continue
+		}
+		if event.AggregateKind != "runtime" || event.AggregateID != "host-runtime" {
+			return refusal(OutcomeIndeterminate, "restore", "runtime admission event has a foreign aggregate identity")
+		}
+		var payload struct {
+			RuntimeEpochID controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
+		}
+		if json.Unmarshal(event.Payload(), &payload) != nil || payload.RuntimeEpochID == "" || payload.RuntimeEpochID != event.RuntimeEpochID {
+			return refusal(OutcomeIndeterminate, "restore", "runtime admission event does not bind its epoch")
+		}
+		admissions = append(admissions, event)
+	}
+	sort.Slice(admissions, func(i, k int) bool {
+		return admissions[i].AggregateLogicalVersion < admissions[k].AggregateLogicalVersion
+	})
+	admitted := make(map[controljournal.RuntimeEpochID]bool, len(admissions))
+	for index, event := range admissions {
+		if event.AggregateLogicalVersion != uint64(index+1) || admitted[event.RuntimeEpochID] {
+			return refusal(OutcomeIndeterminate, "restore", "runtime admission history is non-contiguous or duplicated")
+		}
+		admitted[event.RuntimeEpochID] = true
+	}
+	for epoch := range lineage {
+		if !admitted[epoch] {
+			return refusal(OutcomeIndeterminate, "restore", "owner history names an epoch without sealed runtime admission")
+		}
+	}
+	headRecords, _, err := j.scanPrefixAt(ctx, j.prefix()+"heads/runtime/", bound, budget, false)
+	if err != nil {
+		return err
+	}
+	if len(admissions) == 0 || len(headRecords) != 1 || headRecords[0].Key != j.prefix()+"heads/runtime/host-runtime" || headRecords[0].Revision == 0 || headRecords[0].Revision > bound {
+		return refusal(OutcomeIndeterminate, "restore", "runtime admission head is absent, duplicated, or foreign")
+	}
+	last := admissions[len(admissions)-1]
+	head, decodeErr := controljournal.DecodeAggregateHeadV1(headRecords[0].Value)
+	if decodeErr != nil || head.AggregateKind != "runtime" || head.AggregateID != "host-runtime" || head.LogicalVersion != last.AggregateLogicalVersion || head.LastEventID != last.EventID || head.RuntimeEpochID != j.config.RuntimeEpochID || last.RuntimeEpochID != j.config.RuntimeEpochID || head.StateDigest != sha256.Sum256(last.Payload()) {
+		return refusal(OutcomeIndeterminate, "restore", "runtime admission head does not seal the current lineage terminal")
+	}
+	return nil
 }
 func reflectEventIDs(a, b []controljournal.EventID) bool {
 	if len(a) != len(b) {

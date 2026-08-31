@@ -81,6 +81,20 @@ func TestProductionOrderedCrownTrialValidatesFromActualExecution(t *testing.T) {
 	if !focused.Facts["gj01_cut_once"] {
 		t.Fatalf("post-restart GJ-01 did not reach the real pre-publication cut exactly once: %v", focused.Facts)
 	}
+	for index, campaignID := range []string{"lost-response-idempotency-nfr002", "concurrent-claims-nfr003", "competing-integrations-nfr004"} {
+		barrier = newTestFocusedBarrier(2)
+		focused, err = executor.ExecuteFocused(t.Context(), FocusedInput{
+			RunID: executor.RunID, CampaignID: campaignID,
+			AttemptID: "post-ordered-crown-" + campaignID, Index: index + 1, Seed: uint64(7201 + index),
+			Order: [2]int{index % 2, 1 - index%2}, Barrier: barrier,
+		})
+		if err != nil {
+			t.Fatalf("focused %s after ordered-crown owner restart: %v", campaignID, err)
+		}
+	}
+	if !focused.Facts["one_target_authority"] || !focused.Facts["one_candidate_publication"] {
+		t.Fatalf("post-restart integration did not restore sealed predecessor history and serialize publication: %v", focused.Facts)
+	}
 }
 
 func TestOrderedCrownRejectsMissingImmutableIdentityBeforeProductAccess(t *testing.T) {

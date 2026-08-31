@@ -995,6 +995,26 @@ func TestWP08AttributionCampaignRunsOneHundredRealScenariosWithAntiVacuity(t *te
 }
 
 func TestWorkflowJournalExactReplayAfterLaterTransitionAndRestoreTamperGuards(t *testing.T) {
+	t.Run("sealed predecessor epoch lineage", func(t *testing.T) {
+		publisher := workflowEpochLineageFixture(t, "")
+		events, err := publisher.loadAggregateEvents(t.Context(), "external-effect")
+		epochs := map[controljournal.RuntimeEpochID]bool{}
+		for _, event := range events {
+			epochs[event.RuntimeEpochID] = true
+		}
+		if err != nil || len(events) != 2 || !epochs["epoch-predecessor"] || !epochs[publisher.config.RuntimeEpochID] {
+			t.Fatalf("sealed predecessor lineage restore=%d err=%v events=%+v", len(events), err, events)
+		}
+	})
+	for _, mutation := range []string{"unlinked-epoch", "unlinked-first-predecessor", "foreign-run", "malformed-transition", "unsealed-head"} {
+		t.Run(mutation, func(t *testing.T) {
+			publisher := workflowEpochLineageFixture(t, mutation)
+			if _, err := publisher.loadAggregateEvents(t.Context(), "external-effect"); err == nil {
+				t.Fatalf("%s runtime epoch lineage mutant survived", mutation)
+			}
+		})
+	}
+
 	journal := newWP08Store()
 	config := testConfig(t)
 	publisher := newWorkflowJournal(config, journal, journal)
@@ -1035,6 +1055,84 @@ func TestWorkflowJournalExactReplayAfterLaterTransitionAndRestoreTamperGuards(t 
 	if _, err := publisher.loadAggregateEvents(t.Context(), "external-effect"); err == nil {
 		t.Fatal("tampered terminal head survived restore")
 	}
+}
+
+func workflowEpochLineageFixture(t *testing.T, mutation string) *workflowJournal {
+	t.Helper()
+	journal := newWP08Store()
+	current := testConfig(t)
+	predecessor := current
+	predecessor.RuntimeEpochID = "epoch-predecessor"
+	oldPublisher := newWorkflowJournal(predecessor, journal, journal)
+	if _, err := oldPublisher.publish(t.Context(), journalPublication{OperationID: "operation-admit-predecessor", CommandType: "runtime.epoch_admit", ResultType: "runtime.epoch_admitted", AggregateKind: "runtime", AggregateID: "host-runtime", EventType: "runtime.epoch_admitted", Payload: map[string]any{"runtime_epoch_id": predecessor.RuntimeEpochID}, Result: map[string]any{"runtime_epoch_id": predecessor.RuntimeEpochID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := oldPublisher.publish(t.Context(), journalPublication{OperationID: "operation-old-effect", CommandType: "effect.test", ResultType: "test-v1", AggregateKind: "external-effect", AggregateID: "effect-old", EventType: "effect.observed", Payload: map[string]any{"epoch": "predecessor"}, Result: map[string]any{"epoch": "predecessor"}}); err != nil {
+		t.Fatal(err)
+	}
+	if mutation == "unlinked-epoch" {
+		foreign := current
+		foreign.RuntimeEpochID = "epoch-unlinked"
+		if _, err := newWorkflowJournal(foreign, journal, journal).publish(t.Context(), journalPublication{OperationID: "operation-unlinked-effect", CommandType: "effect.test", ResultType: "test-v1", AggregateKind: "external-effect", AggregateID: "effect-unlinked", EventType: "effect.observed", Payload: map[string]any{"epoch": "unlinked"}, Result: map[string]any{"epoch": "unlinked"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	currentPublisher := newWorkflowJournal(current, journal, journal)
+	runtimeHeadKey := currentPublisher.prefix() + "heads/runtime/host-runtime"
+	runtimeHeadRecord, err := journal.Get(t.Context(), runtimeHeadKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := currentPublisher.publish(t.Context(), journalPublication{OperationID: "operation-admit-current", CommandType: "runtime.epoch_admit", ResultType: "runtime.epoch_admitted", AggregateKind: "runtime", AggregateID: "host-runtime", EventType: "runtime.epoch_admitted", Payload: map[string]any{"runtime_epoch_id": current.RuntimeEpochID}, Result: map[string]any{"runtime_epoch_id": current.RuntimeEpochID}, ExpectedLogical: 1, ExpectedRevision: runtimeHeadRecord.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	operationID := controljournal.OperationID("operation-owner-restart")
+	runID := current.RunID
+	aggregateID := controljournal.AggregateID(runID)
+	restartPredecessor := predecessor.RuntimeEpochID
+	if mutation == "unlinked-first-predecessor" {
+		restartPredecessor = "epoch-forged-predecessor"
+	}
+	if mutation == "foreign-run" {
+		runID = "run-foreign"
+		aggregateID = controljournal.AggregateID(runID)
+	}
+	digest, err := ownerRestartCommandDigest(operationID, runID, restartPredecessor, current.RuntimeEpochID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutation == "malformed-transition" {
+		digest = strings.Repeat("0", 64)
+	}
+	restart := ownerRestartState{OperationID: operationID, RunID: runID, PredecessorEpoch: restartPredecessor, RuntimeEpochID: current.RuntimeEpochID, OccurredAt: now, CommandDigest: digest}
+	if _, err := currentPublisher.publish(t.Context(), journalPublication{OperationID: operationID, CommandType: "runtime.owner_restart", ResultType: "runtime.owner_restarted", AggregateKind: "runtime-composition", AggregateID: aggregateID, EventType: "runtime.owner_restarted", Payload: restart, Result: restart}); err != nil {
+		t.Fatal(err)
+	}
+	if mutation == "foreign-run" {
+		digest, err = ownerRestartCommandDigest("operation-owner-restart-current", current.RunID, predecessor.RuntimeEpochID, current.RuntimeEpochID, now.Add(time.Nanosecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+		restart = ownerRestartState{OperationID: "operation-owner-restart-current", RunID: current.RunID, PredecessorEpoch: predecessor.RuntimeEpochID, RuntimeEpochID: current.RuntimeEpochID, OccurredAt: now.Add(time.Nanosecond), CommandDigest: digest}
+		if _, err := currentPublisher.publish(t.Context(), journalPublication{OperationID: restart.OperationID, CommandType: "runtime.owner_restart", ResultType: "runtime.owner_restarted", AggregateKind: "runtime-composition", AggregateID: controljournal.AggregateID(current.RunID), EventType: "runtime.owner_restarted", Payload: restart, Result: restart}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := currentPublisher.publish(t.Context(), journalPublication{OperationID: "operation-current-effect", CommandType: "effect.test", ResultType: "test-v1", AggregateKind: "external-effect", AggregateID: "effect-current", EventType: "effect.observed", Payload: map[string]any{"epoch": "current"}, Result: map[string]any{"epoch": "current"}}); err != nil {
+		t.Fatal(err)
+	}
+	if mutation == "unsealed-head" {
+		key := currentPublisher.prefix() + "heads/runtime-composition/" + string(current.RunID)
+		journal.mu.Lock()
+		record := journal.records[key]
+		head, _ := controljournal.DecodeAggregateHeadV1(record.Value)
+		head.StateDigest = sha256.Sum256([]byte("unsealed"))
+		record.Value, _ = controljournal.EncodeAggregateHeadV1(head)
+		journal.records[key] = record
+		journal.mu.Unlock()
+	}
+	return currentPublisher
 }
 
 func TestM1RegistriesCoverEveryWP08ProductionPublication(t *testing.T) {
