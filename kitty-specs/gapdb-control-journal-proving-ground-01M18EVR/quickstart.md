@@ -23,18 +23,19 @@ From the repository root:
 
 ```bash
 M1_REPO_PATH="$(realpath "$(git rev-parse --show-toplevel)")"
-M1_RUNTIME_PATH="$(mktemp -d /tmp/spk-m1.XXXXXXXX)"
-M1_BIN_PATH="$M1_RUNTIME_PATH/bin"
-M1_DATA_PATH="$M1_RUNTIME_PATH/data"
-M1_EVIDENCE_PATH="$M1_RUNTIME_PATH/evidence"
+M1_SCRATCH_PATH="$(mktemp -d /tmp/spk-m1.XXXXXXXX)"
+M1_RUNTIME_PATH="$M1_SCRATCH_PATH/runtime"
+M1_BIN_PATH="$M1_SCRATCH_PATH/bin"
+M1_DATA_PATH="$M1_SCRATCH_PATH/data"
+M1_EVIDENCE_PATH="$M1_SCRATCH_PATH/evidence"
 M1_SIDECAR_PATH="$M1_BIN_PATH/gapdbd"
 M1_COMMAND_PATH="$M1_BIN_PATH/spk-m1-proving-ground"
 M1_ADMISSION_PATH="$M1_REPO_PATH/docs/programs/evidence/m1-admission.json"
 M1_POLICY_PATH="$M1_REPO_PATH/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/contracts/m1-product-budgets-v1.json"
 M1_RUN_ID="m1-crown-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 M1_SEED=104729
-mkdir -p "$M1_BIN_PATH" "$M1_DATA_PATH" "$M1_EVIDENCE_PATH"
-chmod 0700 "$M1_RUNTIME_PATH" "$M1_BIN_PATH" "$M1_DATA_PATH" "$M1_EVIDENCE_PATH"
+mkdir -p "$M1_RUNTIME_PATH" "$M1_BIN_PATH" "$M1_DATA_PATH" "$M1_EVIDENCE_PATH"
+chmod 0700 "$M1_SCRATCH_PATH" "$M1_RUNTIME_PATH" "$M1_BIN_PATH" "$M1_DATA_PATH" "$M1_EVIDENCE_PATH"
 ```
 
 Every value ending in `_PATH` above is absolute. Do not add `$M1_BIN_PATH` to
@@ -214,7 +215,7 @@ be retained, the authority runtime kept closed, and M2 left unadmitted.
 
 ## 9. Cleanup
 
-Preserve `$M1_RUNTIME_PATH` until evidence review and the human decision are
+Preserve `$M1_SCRATCH_PATH` until evidence review and the human decision are
 complete. Afterward, remove only that exact temporary directory using the
 operator's normal recoverable cleanup procedure. The qualification command
 never deletes an ambiguous store or process.

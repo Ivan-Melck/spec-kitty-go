@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
 )
@@ -19,6 +21,85 @@ func TestPreflightRefusesImplicitOrRelativeAuthority(t *testing.T) {
 	_, err = Preflight(Config{})
 	if err == nil {
 		t.Fatal("missing immutable RunID/seed/repetition census was accepted")
+	}
+}
+
+func TestPreflightMutantsRejectPolicyBinaryDirtyIgnoredAndOverlappingRoots(t *testing.T) {
+	root := t.TempDir()
+	contractRoot := filepath.Join(root, "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts")
+	if err := os.MkdirAll(contractRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	policy := filepath.Join(contractRoot, "m1-product-budgets-v1.json")
+	if err := os.WriteFile(policy, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := fileSHA(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProductPolicy(root, policy, digest); err == nil {
+		t.Fatal("arbitrary policy bytes were accepted")
+	}
+	foreign := filepath.Join(root, "foreign-binary")
+	if err := os.WriteFile(foreign, []byte("foreign"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProvingBinary(foreign, "head"); err == nil {
+		t.Fatal("foreign proving binary was accepted")
+	}
+	a, b, c := filepath.Join(root, "runtime"), filepath.Join(root, "runtime", "data"), filepath.Join(root, "evidence")
+	for _, path := range []string{a, b, c} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := validateExclusiveRoots(a, b, c); err == nil {
+		t.Fatal("overlapping execution roots were accepted")
+	}
+
+	repository := filepath.Join(root, "repository")
+	if err := os.Mkdir(repository, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init"}, {"config", "user.email", "test@example.invalid"}, {"config", "user.name", "Test"}} {
+		command := exec.Command("git", append([]string{"-C", repository}, args...)...)
+		if output, commandErr := command.CombinedOutput(); commandErr != nil {
+			t.Fatalf("git %v: %s: %v", args, output, commandErr)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repository, ".gitignore"), []byte("ignored\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "tracked.go"), []byte("package fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("git", "-C", repository, "add", ".gitignore", "tracked.go")
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	command = exec.Command("git", "-C", repository, "commit", "-m", "fixture")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("commit: %s: %v", output, err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "ignored"), []byte("dirty"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cleanRepositoryHead(repository); err == nil {
+		t.Fatal("dirty ignored source was accepted")
+	}
+	if err := os.Remove(filepath.Join(repository, "ignored")); err != nil {
+		t.Fatal(err)
+	}
+	command = exec.Command("git", "-C", repository, "update-index", "--assume-unchanged", "tracked.go")
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "tracked.go"), []byte("package fixture\nvar changed = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cleanRepositoryHead(repository); err == nil {
+		t.Fatal("assume-unchanged compiler input was accepted")
 	}
 }
 
@@ -98,5 +179,24 @@ func TestCancellationPublishesVerifiableIncompleteEvidenceWithoutPassSignature(t
 	}
 	if _, err := os.Stat(filepath.Join(publication.Directory, m1.TechnicalPassName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("technical pass signature exists: %v", err)
+	}
+}
+
+func TestProgressSnapshotIsAtomicReadOnlyDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	started := time.Now().UTC().Add(-time.Minute)
+	want := newProgress("run-progress", "focused/concurrent-claims-nfr003", 21, "running", started, "")
+	if err := writeProgress(root, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadProgress(root, want.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RunID != want.RunID || got.Phase != want.Phase || got.Completed != want.Completed || got.Outcome != "running" || !got.StartedAt.Equal(started) {
+		t.Fatalf("progress changed: got=%+v want=%+v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(root, want.RunID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("progress created authoritative run directory: %v", err)
 	}
 }

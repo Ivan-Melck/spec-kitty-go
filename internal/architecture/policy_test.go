@@ -259,6 +259,33 @@ func TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority(t *t
 	}
 }
 
+func TestDefaultPolicyClassifiesM1CommandAndBoundsExternalGapDBDirection(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := module + "/cmd/spk-m1-proving-ground"
+	tier, err := policy.Classify(command)
+	if err != nil || tier.Name != TierQuality || tier.Production {
+		t.Fatalf("M1 command classification=%+v err=%v", tier, err)
+	}
+	externalRunner := module + "/internal/testcampaign/m1/external"
+	provider := "github.com/spec-kitty/gapdb/gapdb"
+	graph := fixtureGraph([]string{externalRunner}, ImportEdge{SourcePackage: externalRunner, TargetPackage: provider, Kind: ImportExternal})
+	graph.ModulePath = module
+	if err := policy.Check(graph); err != nil {
+		t.Fatalf("M1 public-client runner rejected: %v", err)
+	}
+	kernel := module + "/internal/execution"
+	graph = fixtureGraph([]string{kernel}, ImportEdge{SourcePackage: kernel, TargetPackage: provider, Kind: ImportExternal})
+	graph.ModulePath = module
+	violations := policy.Evaluate(graph)
+	if len(violations) != 1 || violations[0].Rule != RuleExternalDirection || violations[0].SourcePackage != kernel {
+		t.Fatalf("kernel GapDB mutant escaped: %+v", violations)
+	}
+}
+
 func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
 	const module = "github.com/spec-kitty/go-kitty3"
 	policy, err := DefaultPolicy(module)

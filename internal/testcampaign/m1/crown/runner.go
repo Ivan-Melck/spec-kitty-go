@@ -4,10 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -22,6 +26,7 @@ import (
 )
 
 const DefaultRepetitions = 100
+const admittedProductPolicySHA256 = "dce7f209a705ea77420ee249a571c182d7d5969eb5e96e0414356baf63ae4c1b"
 
 type Config struct {
 	RunID               string
@@ -66,6 +71,18 @@ type PreflightResult struct {
 	Ready                 bool   `json:"ready"`
 }
 
+type Progress struct {
+	SchemaVersion  int       `json:"schema_version"`
+	RunID          string    `json:"run_id"`
+	Phase          string    `json:"phase"`
+	Completed      int       `json:"completed_segments"`
+	Total          int       `json:"total_segments"`
+	Outcome        string    `json:"outcome"`
+	StartedAt      time.Time `json:"started_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	LastDiagnostic string    `json:"last_diagnostic,omitempty"`
+}
+
 func Preflight(config Config) (PreflightResult, error) {
 	result := PreflightResult{RunID: config.RunID, RepositoryRoot: config.RepositoryRoot}
 	if config.Repetitions == 0 {
@@ -79,7 +96,25 @@ func Preflight(config Config) (PreflightResult, error) {
 			return result, fmt.Errorf("%s path must be absolute", name)
 		}
 	}
-	var err error
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		return result, fmt.Errorf("M1 proving ground requires linux/amd64")
+	}
+	resolvedRoots, err := validateExclusiveRoots(config.RuntimeRoot, config.DataRoot, config.EvidenceRoot)
+	if err != nil {
+		return result, err
+	}
+	_ = resolvedRoots
+	for _, reserved := range []string{filepath.Join(config.EvidenceRoot, config.RunID), filepath.Join(config.EvidenceRoot, ".run-"+config.RunID+".lock"), progressPath(config.EvidenceRoot, config.RunID)} {
+		if _, statErr := os.Lstat(reserved); statErr == nil {
+			return result, fmt.Errorf("RunID output already exists: %s", reserved)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return result, statErr
+		}
+	}
+	head, err := cleanRepositoryHead(config.RepositoryRoot)
+	if err != nil {
+		return result, err
+	}
 	if result.GapDBDSHA256, err = fileSHA(config.GapDBDPath); err != nil {
 		return result, err
 	}
@@ -95,7 +130,13 @@ func Preflight(config Config) (PreflightResult, error) {
 	if result.ProductPolicySHA256, err = fileSHA(config.ProductPolicyPath); err != nil {
 		return result, err
 	}
+	if err := validateProductPolicy(config.RepositoryRoot, config.ProductPolicyPath, result.ProductPolicySHA256); err != nil {
+		return result, err
+	}
 	if result.ProvingBinarySHA256, err = fileSHA(config.ProvingBinaryPath); err != nil {
+		return result, err
+	}
+	if err := validateProvingBinary(config.ProvingBinaryPath, head); err != nil {
 		return result, err
 	}
 	if stat, statErr := os.Stat(config.RepositoryRoot); statErr != nil || !stat.IsDir() {
@@ -103,6 +144,135 @@ func Preflight(config Config) (PreflightResult, error) {
 	}
 	result.Ready = true
 	return result, nil
+}
+
+func validateProductPolicy(repositoryRoot, policyPath, digest string) error {
+	want := filepath.Join(repositoryRoot, "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts", "m1-product-budgets-v1.json")
+	actualResolved, err := filepath.EvalSymlinks(policyPath)
+	if err != nil {
+		return err
+	}
+	wantResolved, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		return err
+	}
+	if actualResolved != wantResolved || digest != admittedProductPolicySHA256 {
+		return fmt.Errorf("product policy is not the frozen source-bound M1 budget contract")
+	}
+	return nil
+}
+
+func validateProvingBinary(path, sourceHead string) error {
+	actual, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	actualInfo, err := os.Stat(actual)
+	if err != nil {
+		return err
+	}
+	providedInfo, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(actualInfo, providedInfo) {
+		return fmt.Errorf("proving binary path does not identify the executing image")
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return fmt.Errorf("executing proving binary lacks Go build information")
+	}
+	revision, modified := "", ""
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			revision = setting.Value
+		}
+		if setting.Key == "vcs.modified" {
+			modified = setting.Value
+		}
+	}
+	if revision != sourceHead || modified != "false" {
+		return fmt.Errorf("proving binary VCS binding differs from clean source HEAD")
+	}
+	return nil
+}
+
+func cleanRepositoryHead(root string) (string, error) {
+	if stat, err := os.Stat(root); err != nil || !stat.IsDir() {
+		return "", fmt.Errorf("repository root is unavailable: %w", err)
+	}
+	head, err := gitOutput(root, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	status, err := gitOutput(root, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return "", err
+	}
+	ignored, err := gitOutput(root, "ls-files", "--others", "--ignored", "--exclude-standard")
+	if err != nil {
+		return "", err
+	}
+	if status != "" || ignored != "" {
+		return "", fmt.Errorf("repository contains tracked, untracked, or ignored bytes outside clean HEAD")
+	}
+	tracked, err := gitOutput(root, "ls-files", "-v")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(tracked, "\n") {
+		if line != "" && (len(line) < 3 || line[0] != 'H' || line[1] != ' ') {
+			return "", fmt.Errorf("repository contains assume-unchanged, skip-worktree, or unexpected tracked index state")
+		}
+	}
+	return head, nil
+}
+
+func gitOutput(root string, arguments ...string) (string, error) {
+	command := exec.Command("git", append([]string{"-C", root}, arguments...)...)
+	output, err := command.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func validateExclusiveRoots(paths ...string) ([]string, error) {
+	resolved := make([]string, len(paths))
+	for i, path := range paths {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, fmt.Errorf("exclusive root %q is unavailable: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return nil, fmt.Errorf("exclusive root %q must be a real directory", path)
+		}
+		resolved[i], err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for i := range resolved {
+		for j := i + 1; j < len(resolved); j++ {
+			if pathsOverlap(resolved[i], resolved[j]) {
+				return nil, fmt.Errorf("runtime, data, and evidence roots must not overlap")
+			}
+		}
+	}
+	return resolved, nil
+}
+
+func pathsOverlap(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	rel, err := filepath.Rel(a, b)
+	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return true
+	}
+	rel, err = filepath.Rel(b, a)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func Run(ctx context.Context, config Config) (result Result, runErr error) {
@@ -127,6 +297,17 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 		if err := os.Chmod(directory, 0o700); err != nil {
 			return result, err
 		}
+	}
+	lockPath := filepath.Join(config.EvidenceRoot, ".run-"+config.RunID+".lock")
+	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return result, fmt.Errorf("acquire exclusive RunID execution: %w", err)
+	}
+	_ = lock.Close()
+	defer os.Remove(lockPath)
+	startedAt := time.Now().UTC()
+	if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "starting", 0, "running", startedAt, "")); err != nil {
+		return result, err
 	}
 	lifecycle, err := sidecargapdb.Start(ctx, sidecargapdb.LifecycleConfig{ExecutablePath: config.GapDBDPath, AdmissionRecordPath: config.AdmissionRecordPath, RuntimeRoot: config.RuntimeRoot, DataDirectory: filepath.Join(config.DataRoot, "database"), SupervisorRunID: config.RunID, ProductPolicySHA256: preflight.ProductPolicySHA256, StartTimeout: config.StartTimeout, StopTimeout: config.StopTimeout})
 	if err != nil {
@@ -156,6 +337,14 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 			return
 		}
 		result.Verification = verification
+		completed := len(state.Ordered.Segments)
+		if state.InitialProvenance.SupervisorRunID != "" {
+			completed++
+		}
+		if len(state.External.Records) == len(m1.ScenarioIDs) {
+			completed++
+		}
+		_ = writeProgress(config.EvidenceRoot, newProgress(config.RunID, "terminal", completed, result.Verification.Outcome, startedAt, bounded(runErr.Error())))
 	}()
 
 	initialSource, err := m1.ObserveSource(ctx, config.RepositoryRoot, lifecycle)
@@ -165,6 +354,9 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 	state.Source = initialSource
 	initialProvenance := lifecycle.Provenance()
 	state.InitialProvenance = initialProvenance
+	if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "admission", 1, "running", startedAt, "")); err != nil {
+		return result, err
+	}
 	externalResult, err := external.Run(ctx, config.RunID, lifecycle)
 	state.External = externalResult
 	if externalResult.Lifecycle != nil {
@@ -173,9 +365,15 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 	if err != nil {
 		return result, err
 	}
+	if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "external-14", 2, "running", startedAt, "")); err != nil {
+		return result, err
+	}
 	ordered, err := executor.RunOrderedCrown(ctx, faultcampaign.CrownInput{RunID: config.RunID, Seed: config.Seed})
 	state.Ordered = ordered
 	if err != nil {
+		return result, err
+	}
+	if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "ordered-crown", 21, "running", startedAt, "")); err != nil {
 		return result, err
 	}
 
@@ -209,6 +407,9 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 		if !summary.Admissible() {
 			return result, fmt.Errorf("focused campaign %s is not admissible: %s", definition.ID, summary.FirstDiagnostic)
 		}
+		if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "focused/"+definition.ID, 21, "running", startedAt, "")); err != nil {
+			return result, err
+		}
 	}
 	afterFocused, err := currentRevision(ctx, executor)
 	if err != nil {
@@ -217,6 +418,9 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 	focusedAggregate, _ := m1.CanonicalJSON(focusedSummaries)
 	segments = append(segments, observedSegment(config.RunID, "focused-8x100", beforeFocused, afterFocused, focusedAggregate))
 	segmentArtifacts = append(segmentArtifacts, m1.ArtifactInput{Kind: "crown-segment", Data: focusedAggregate})
+	if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "focused-8x100", 22, "running", startedAt, "")); err != nil {
+		return result, err
+	}
 
 	mutantResults := (mutants.Runner{Root: config.RepositoryRoot}).RunAll(ctx, config.RunID)
 	state.Mutants = mutantResults
@@ -230,9 +434,15 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 	mutantAggregate, _ := m1.CanonicalJSON(mutantResults)
 	segments = append(segments, observedSegment(config.RunID, "mutants-19", afterFocused, afterFocused, mutantAggregate))
 	segmentArtifacts = append(segmentArtifacts, m1.ArtifactInput{Kind: "crown-segment", Data: mutantAggregate})
+	if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "mutants-19", 23, "running", startedAt, "")); err != nil {
+		return result, err
+	}
 	terminalArtifact, _ := m1.CanonicalJSON(ordered.Invariants)
 	segments = append(segments, observedSegment(config.RunID, "terminal-universals", afterFocused, afterFocused, terminalArtifact))
 	segmentArtifacts = append(segmentArtifacts, m1.ArtifactInput{Kind: "crown-segment", Data: terminalArtifact})
+	if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "terminal-universals", 24, "running", startedAt, "")); err != nil {
+		return result, err
+	}
 	for i := range segments {
 		segments[i].Sequence = i + 1
 	}
@@ -309,7 +519,53 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 		return result, err
 	}
 	result.Outcome, result.Publication, result.Verification, result.Manifest = "pass", publication, verification, verifiedManifest
+	if err := writeProgress(config.EvidenceRoot, newProgress(config.RunID, "terminal", 24, "pass", startedAt, "")); err != nil {
+		return result, err
+	}
 	return result, nil
+}
+
+func ReadProgress(evidenceRoot, runID string) (Progress, error) {
+	if !filepath.IsAbs(evidenceRoot) || runID == "" {
+		return Progress{}, fmt.Errorf("absolute evidence root and RunID are required")
+	}
+	contents, err := os.ReadFile(progressPath(evidenceRoot, runID))
+	if err != nil {
+		return Progress{}, err
+	}
+	var progress Progress
+	if err := json.Unmarshal(contents, &progress); err != nil {
+		return Progress{}, err
+	}
+	validOutcome := progress.Outcome == "running" || progress.Outcome == "pass" || progress.Outcome == "fail" || progress.Outcome == "incomplete"
+	if progress.SchemaVersion != 1 || progress.RunID != runID || progress.Total != len(m1.CrownSegmentIDs) || progress.Completed < 0 || progress.Completed > progress.Total || progress.Phase == "" || !validOutcome || progress.StartedAt.IsZero() || progress.UpdatedAt.Before(progress.StartedAt) {
+		return Progress{}, fmt.Errorf("progress record is invalid")
+	}
+	return progress, nil
+}
+
+func newProgress(runID, phase string, completed int, outcome string, startedAt time.Time, diagnostic string) Progress {
+	return Progress{SchemaVersion: 1, RunID: runID, Phase: phase, Completed: completed, Total: len(m1.CrownSegmentIDs), Outcome: outcome, StartedAt: startedAt, UpdatedAt: time.Now().UTC(), LastDiagnostic: diagnostic}
+}
+
+func writeProgress(evidenceRoot string, progress Progress) error {
+	contents, err := m1.CanonicalJSON(progress)
+	if err != nil {
+		return err
+	}
+	target := progressPath(evidenceRoot, progress.RunID)
+	temporary := target + ".tmp"
+	if err := os.WriteFile(temporary, contents, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, target); err != nil {
+		return err
+	}
+	return nil
+}
+
+func progressPath(evidenceRoot, runID string) string {
+	return filepath.Join(evidenceRoot, ".status-"+runID+".json")
 }
 
 func currentRevision(ctx context.Context, executor *faultcampaign.ProductionExecutor) (uint64, error) {
@@ -420,9 +676,93 @@ func publishNonPass(ctx context.Context, config Config, preflight PreflightResul
 		manifest.MutantResults = append(manifest.MutantResults, m1.MutantResult{ID: mutant.ID, RunID: mutant.RunID, Outcome: string(mutant.Outcome), ArtifactSHA256: mutant.ArtifactSHA256})
 		inputs = append(inputs, m1.ArtifactInput{Kind: "mutant", Data: mutant.Artifact})
 	}
+	manifest.ScenarioResults, inputs = completeScenarioCensus(config, manifest.ScenarioResults, inputs, outcome)
+	manifest.FaultResults, inputs = completeFaultCensus(config, manifest.FaultResults, inputs, outcome)
+	manifest.FocusedSubtrialSummaries, inputs = completeFocusedCensus(config, manifest.FocusedSubtrialSummaries, inputs)
+	manifest.MutantResults, inputs = completeMutantCensus(config, manifest.MutantResults, inputs)
 	inputs = append(inputs, segmentInputs...)
 	publication, err := m1.PublishEvidence(config.EvidenceRoot, manifest, inputs)
 	return publication, manifest, err
+}
+
+func completeScenarioCensus(config Config, existing []m1.ScenarioResult, inputs []m1.ArtifactInput, outcome string) ([]m1.ScenarioResult, []m1.ArtifactInput) {
+	byID := make(map[string]m1.ScenarioResult, len(existing))
+	for _, record := range existing {
+		byID[record.ScenarioID] = record
+	}
+	result := make([]m1.ScenarioResult, 0, len(m1.ScenarioIDs))
+	for index, id := range m1.ScenarioIDs {
+		if record, ok := byID[id]; ok {
+			result = append(result, record)
+			continue
+		}
+		artifact, _ := m1.CanonicalJSON(struct {
+			RunID, ScenarioID, Outcome string
+			Started, Terminal          bool
+		}{config.RunID, id, outcome, false, true})
+		record := m1.ScenarioResult{ScenarioID: id, RunID: config.RunID, Seed: config.Seed + uint64(index), Terminal: true, Outcome: outcome, ArtifactSHA256: m1.SHA256Hex(artifact)}
+		result, inputs = append(result, record), append(inputs, m1.ArtifactInput{Kind: "scenario", Data: artifact})
+	}
+	return result, inputs
+}
+
+func completeFaultCensus(config Config, existing []m1.FaultResult, inputs []m1.ArtifactInput, outcome string) ([]m1.FaultResult, []m1.ArtifactInput) {
+	byID := make(map[string]m1.FaultResult, len(existing))
+	for _, record := range existing {
+		byID[record.FaultID] = record
+	}
+	result := make([]m1.FaultResult, 0, len(m1.FaultIDs))
+	for index, id := range m1.FaultIDs {
+		if record, ok := byID[id]; ok {
+			result = append(result, record)
+			continue
+		}
+		artifact, _ := m1.CanonicalJSON(struct {
+			RunID, FaultID, Cut, Outcome string
+			Started, Terminal            bool
+		}{config.RunID, id, m1.FaultCuts[index], outcome, false, true})
+		record := m1.FaultResult{FaultID: id, RunID: config.RunID, Seed: config.Seed + uint64(index), Cut: m1.FaultCuts[index], Terminal: true, Outcome: outcome, ArtifactSHA256: m1.SHA256Hex(artifact)}
+		result, inputs = append(result, record), append(inputs, m1.ArtifactInput{Kind: "fault", Data: artifact})
+	}
+	return result, inputs
+}
+
+func completeFocusedCensus(config Config, existing []m1.FocusedSummary, inputs []m1.ArtifactInput) ([]m1.FocusedSummary, []m1.ArtifactInput) {
+	byID := make(map[string]m1.FocusedSummary, len(existing))
+	for _, record := range existing {
+		byID[record.ID] = record
+	}
+	result := make([]m1.FocusedSummary, 0, len(m1.FocusedIDs))
+	for _, id := range m1.FocusedIDs {
+		if record, ok := byID[id]; ok {
+			result = append(result, record)
+			continue
+		}
+		artifact, _ := m1.CanonicalJSON(struct {
+			RunID, ID, Outcome string
+		}{config.RunID, id, "not_run"})
+		record := m1.FocusedSummary{ID: id, RunID: config.RunID, ArtifactSHA256: m1.SHA256Hex(artifact)}
+		result, inputs = append(result, record), append(inputs, m1.ArtifactInput{Kind: "focused-summary", Data: artifact})
+	}
+	return result, inputs
+}
+
+func completeMutantCensus(config Config, existing []m1.MutantResult, inputs []m1.ArtifactInput) ([]m1.MutantResult, []m1.ArtifactInput) {
+	byID := make(map[string]m1.MutantResult, len(existing))
+	for _, record := range existing {
+		byID[record.ID] = record
+	}
+	result := make([]m1.MutantResult, 0, len(m1.MutantIDs))
+	for _, id := range m1.MutantIDs {
+		if record, ok := byID[id]; ok {
+			result = append(result, record)
+			continue
+		}
+		artifact, _ := m1.CanonicalJSON(struct{ RunID, ID, Outcome string }{config.RunID, id, "not_run"})
+		record := m1.MutantResult{ID: id, RunID: config.RunID, Outcome: "not_run", ArtifactSHA256: m1.SHA256Hex(artifact)}
+		result, inputs = append(result, record), append(inputs, m1.ArtifactInput{Kind: "mutant", Data: artifact})
+	}
+	return result, inputs
 }
 
 func bounded(value string) string {

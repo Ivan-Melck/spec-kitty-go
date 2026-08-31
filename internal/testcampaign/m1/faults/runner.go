@@ -2062,19 +2062,20 @@ type IncompleteError struct{ Reason string }
 func (e *IncompleteError) Error() string { return "incomplete fault attempt: " + e.Reason }
 
 type Record struct {
-	FaultID    string              `json:"fault_id"`
-	RunID      string              `json:"run_id"`
-	Seed       uint64              `json:"seed"`
-	Cut        string              `json:"cut"`
-	Started    bool                `json:"started"`
-	Terminal   bool                `json:"terminal"`
-	Outcome    Outcome             `json:"outcome"`
-	Source     SourceBinding       `json:"source"`
-	Receipt    ProductionReceipt   `json:"production_receipt"`
-	Facts      Facts               `json:"product_facts"`
-	Invariants m1.InvariantSummary `json:"invariants"`
-	Artifacts  []Artifact          `json:"artifacts"`
-	Diagnostic string              `json:"diagnostic,omitempty"`
+	FaultID    string                 `json:"fault_id"`
+	RunID      string                 `json:"run_id"`
+	Seed       uint64                 `json:"seed"`
+	Cut        string                 `json:"cut"`
+	Started    bool                   `json:"started"`
+	Terminal   bool                   `json:"terminal"`
+	Outcome    Outcome                `json:"outcome"`
+	Source     SourceBinding          `json:"source"`
+	Receipt    ProductionReceipt      `json:"production_receipt"`
+	Facts      Facts                  `json:"product_facts"`
+	Invariants m1.InvariantSummary    `json:"invariants"`
+	Artifacts  []Artifact             `json:"artifacts"`
+	Effects    []m1.EffectObservation `json:"effect_observations,omitempty"`
+	Diagnostic string                 `json:"diagnostic,omitempty"`
 }
 
 type Runner struct {
@@ -2106,6 +2107,11 @@ func (r Runner) Run(ctx context.Context, faultID string) (record Record) {
 		execution, err = r.Executor.ExecuteFault(ctx, Attempt{RunID: r.RunID, Seed: r.Seed, Definition: definition, Hook: ack})
 	}()
 	record.Facts, record.Artifacts, record.Source, record.Receipt = execution.Facts, boundedArtifacts(execution.Artifacts), execution.Source, execution.Receipt
+	if execution.Observation != nil {
+		if observed, observeErr := execution.Observation.ObserveM1(ctx); observeErr == nil {
+			record.Effects = append([]m1.EffectObservation(nil), observed.Effects...)
+		}
+	}
 	record.Invariants = m1.AssertUniversal(ctx, execution.Observation)
 	var incomplete *IncompleteError
 	if errors.As(err, &incomplete) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

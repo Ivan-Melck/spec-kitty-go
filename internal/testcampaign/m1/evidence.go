@@ -343,6 +343,11 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 		if !options.ExpectedSource.Valid() || options.ExpectedSource.Commit != manifest.SourceCommit || options.ExpectedSource.Tree != manifest.SourceTree || options.ExpectedSource.SidecarProvenanceSHA256 != manifest.SidecarProvenanceSHA256 {
 			return Verification{}, manifest, fmt.Errorf("expected source binding differs from manifest")
 		}
+	} else if options.RepositoryRoot != "" && options.Lifecycle == nil {
+		commit, tree, worktreeTree, statusDigest, observeErr := observeGitSource(ctx, options.RepositoryRoot)
+		if observeErr != nil || commit != manifest.SourceCommit || tree != manifest.SourceTree || worktreeTree != tree || statusDigest != emptySHA256 {
+			return Verification{}, manifest, fmt.Errorf("reobserve Git source binding: %w", observeErr)
+		}
 	} else if options.RepositoryRoot != "" || options.Lifecycle != nil {
 		observed, observeErr := ObserveSource(ctx, options.RepositoryRoot, options.Lifecycle)
 		if observeErr != nil || observed.Commit != manifest.SourceCommit || observed.Tree != manifest.SourceTree || observed.SidecarProvenanceSHA256 != manifest.SidecarProvenanceSHA256 {
@@ -353,6 +358,7 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 	seenKind := make(map[string]int, len(manifest.Artifacts))
 	seenDigest := make(map[string]int, len(manifest.Artifacts))
 	var crownBytes []byte
+	var sourceBytes, provenanceBytes []byte
 	for _, artifact := range manifest.Artifacts {
 		if !cleanArtifactPath(artifact.Path) {
 			return Verification{}, manifest, fmt.Errorf("artifact path %q is unsafe", artifact.Path)
@@ -370,10 +376,36 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 		if artifact.Kind == "crown-ledger" {
 			crownBytes = append([]byte(nil), contents...)
 		}
+		if artifact.Kind == "source-binding" {
+			sourceBytes = append([]byte(nil), contents...)
+		}
+		if artifact.Kind == "sidecar-provenance" {
+			provenanceBytes = append([]byte(nil), contents...)
+		}
 	}
 	for _, kind := range []string{"source-binding", "sidecar-provenance", "proving-binary", "contracts", "budgets", "crown-ledger"} {
 		if seenKind[kind] != 1 {
 			return Verification{}, manifest, fmt.Errorf("mandatory artifact kind %q count=%d want=1", kind, seenKind[kind])
+		}
+	}
+	var sourceArtifact struct {
+		Commit                  string `json:"commit"`
+		Tree                    string `json:"tree"`
+		WorktreeTree            string `json:"worktree_tree"`
+		WorktreeStatusSHA256    string `json:"worktree_status_sha256"`
+		AdmittedTupleSHA256     string `json:"admitted_tuple_sha256"`
+		SidecarProvenanceSHA256 string `json:"sidecar_provenance_sha256"`
+		SidecarExecutableSHA256 string `json:"sidecar_executable_sha256"`
+		DatabaseID              string `json:"database_id"`
+		OwnerPID                int    `json:"owner_pid"`
+	}
+	if err := jsonUnmarshalStrict(sourceBytes, &sourceArtifact); err != nil {
+		return Verification{}, manifest, fmt.Errorf("decode source-binding artifact: %w", err)
+	}
+	provenanceCanonical := bytes.TrimSuffix(provenanceBytes, []byte{'\n'})
+	if sourceArtifact.Commit != manifest.SourceCommit || sourceArtifact.Tree != manifest.SourceTree || sourceArtifact.WorktreeTree != manifest.SourceTree || sourceArtifact.WorktreeStatusSHA256 != emptySHA256 || sourceArtifact.AdmittedTupleSHA256 != manifest.AdmittedTupleSHA256 || sourceArtifact.SidecarProvenanceSHA256 != manifest.SidecarProvenanceSHA256 || SHA256Hex(provenanceCanonical) != manifest.SidecarProvenanceSHA256 || sourceArtifact.SidecarExecutableSHA256 != AdmittedSidecarSHA256 || sourceArtifact.DatabaseID == "" || sourceArtifact.OwnerPID <= 0 {
+		if manifest.Outcome == "pass" {
+			return Verification{}, manifest, fmt.Errorf("source/provenance artifact binding is invalid")
 		}
 	}
 	for _, digest := range referencedArtifactDigests(manifest) {

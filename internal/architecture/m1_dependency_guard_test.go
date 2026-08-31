@@ -19,8 +19,9 @@ import (
 const m1GapDBModule = "github.com/spec-kitty/gapdb"
 
 var m1GapDBImportAllowlist = map[string]bool{
-	"internal/controlstore/gapdb": true,
-	"internal/sidecar/gapdb":      true,
+	"internal/controlstore/gapdb":       true,
+	"internal/sidecar/gapdb":            true,
+	"internal/testcampaign/m1/external": true,
 }
 
 // Pure journal code has a closed import surface. New capabilities must be
@@ -102,6 +103,7 @@ func TestM1DependencyBoundaries(t *testing.T) {
 func TestM1DependencyMutantControls(t *testing.T) {
 	clean := append(m1ExactJournalFixture(), []m1SourceFile{
 		{Path: "internal/controlstore/gapdb/client.go", Source: []byte("package gapdb\nimport _ \"github.com/spec-kitty/gapdb\"\n")},
+		{Path: "internal/testcampaign/m1/external/runner.go", Source: []byte("package external\nimport _ \"github.com/spec-kitty/gapdb/gapdb\"\n")},
 		{Path: "internal/controljournal/notes.go", Source: []byte("package controljournal\n// CurrentBatchRevision and internal/server are documentation only.\nvar note = \"sqlite fallback\"\n")},
 		{Path: "internal/controlstore/sqlite/store.go", Source: []byte("package sqlite\nimport _ \"modernc.org/sqlite\"\n")},
 		{Path: "internal/controlstore/sqlite/cgo.go", Source: []byte("package sqlite\nimport _ \"github.com/mattn/go-sqlite3\"\n")},
@@ -123,6 +125,11 @@ func TestM1DependencyMutantControls(t *testing.T) {
 		{
 			id:   "gapdb-import-neutral-package",
 			file: m1SourceFile{Path: "internal/neutral/client_test.go", Source: []byte("package neutral\nimport _ \"github.com/spec-kitty/gapdb/client\"\n")},
+			kind: "gapdb-import-allowlist",
+		},
+		{
+			id:   "gapdb-import-external-lookalike",
+			file: m1SourceFile{Path: "internal/testcampaign/m1/externalish/runner.go", Source: []byte("package externalish\nimport _ \"github.com/spec-kitty/gapdb/gapdb\"\n")},
 			kind: "gapdb-import-allowlist",
 		},
 		{

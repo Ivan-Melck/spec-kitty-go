@@ -201,20 +201,25 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 	}
 	var integrations []baseintegration.Record
 	if err := recorder.capture("integrate-w2", func() (any, error) {
-		var integrateErr error
-		integrations, integrateErr = integrator.IntegrateApproved(ctx, []provingground.IntegrationItem{w2.Item, w3.Item})
-		if integrateErr != nil || len(integrations) != 2 {
-			return integrations, fmt.Errorf("two-candidate integration: %w", integrateErr)
+		record, integrateErr := integrator.Integrate(ctx, w2.Item)
+		if integrateErr != nil {
+			return record, integrateErr
 		}
-		return integrations[0], nil
+		integrations = append(integrations, record)
+		return record, nil
 	}); err != nil {
 		return recorder.finish(result), err
 	}
 	if err := recorder.capture("integrate-w3", func() (any, error) {
-		if len(integrations) != 2 || integrations[1].Status != baseintegration.StatusDone {
-			return integrations, fmt.Errorf("second serialized publication is absent")
+		record, integrateErr := integrator.Integrate(ctx, w3.Item)
+		if integrateErr != nil {
+			return record, integrateErr
 		}
-		return integrations[1], nil
+		integrations = append(integrations, record)
+		if record.Status != baseintegration.StatusDone {
+			return record, fmt.Errorf("second serialized publication is absent")
+		}
+		return record, nil
 	}); err != nil {
 		return recorder.finish(result), err
 	}
@@ -304,7 +309,10 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 	for _, record := range integrations {
 		integrationObservations = append(integrationObservations, m1.IntegrationObservation{RepositoryID: record.RepositoryID.String(), TargetRef: record.TargetRef, ActiveAuthorities: 0, CandidateID: record.Candidate, SuccessfulPublishes: 1, GitExpectedOld: record.PreflightTarget, GitObservedOld: record.PreflightTarget, GitResult: record.ResultCommit, JournalResult: record.ResultCommit})
 	}
-	effects := []m1.EffectObservation{{EffectID: "effect-crown-gj05", OperationID: "operation-crown-gj05", ExpectedRevision: "1", AppliedRevision: "2", ExpectedMarker: "operation-crown-gj05", AppliedMarker: "operation-crown-gj05", Dispatches: 1, Attributable: true}}
+	effects := append([]m1.EffectObservation(nil), fault.Effects...)
+	if len(effects) != 1 {
+		return recorder.finish(result), fmt.Errorf("GJ-05 exact effect observation census=%d want=1", len(effects))
+	}
 	overlay := qualificationOverlay{reviews: reviewObservations, integration: integrationObservations, primary: m1.PrimaryObservation{Inspectable: true, Before: gitSnapshotObservation(primaryBefore), After: gitSnapshotObservation(primaryAfter)}}
 	observation, err := observeComposedRuntimeWithOverlay(ctx, environment, effects, overlay)
 	if err != nil {

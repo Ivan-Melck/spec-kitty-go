@@ -1,6 +1,7 @@
 package m1
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -105,7 +106,9 @@ func TestEvidenceNonPassNeverPublishesTechnicalSignature(t *testing.T) {
 
 func validEvidence(t *testing.T, runID string) (EvidenceManifest, []ArtifactInput, SourceBinding) {
 	t.Helper()
-	source := SourceBinding{Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), WorktreeTree: strings.Repeat("2", 40), WorktreeStatusSHA256: emptySHA256, AdmittedTupleSHA256: AdmittedTupleSHA256, SidecarProvenanceSHA256: strings.Repeat("3", 64), SidecarExecutableSHA256: AdmittedSidecarSHA256, DatabaseID: "database-one", OwnerPID: 123}
+	provenance := []byte("{\"schema_version\":1}\n")
+	provenanceDigest := SHA256Hex(bytes.TrimSuffix(provenance, []byte{'\n'}))
+	source := SourceBinding{Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), WorktreeTree: strings.Repeat("2", 40), WorktreeStatusSHA256: emptySHA256, AdmittedTupleSHA256: AdmittedTupleSHA256, SidecarProvenanceSHA256: provenanceDigest, SidecarExecutableSHA256: AdmittedSidecarSHA256, DatabaseID: "database-one", OwnerPID: 123}
 	source.seal = sourceSeal(source)
 	crown := validCrownArtifact(t, runID)
 	crownBytes, err := CanonicalJSON(crown)
@@ -114,7 +117,7 @@ func validEvidence(t *testing.T, runID string) (EvidenceManifest, []ArtifactInpu
 	}
 	trial := crown.Trial
 	inputs := []ArtifactInput{
-		{Kind: "source-binding", Data: mustJSON(t, source)}, {Kind: "sidecar-provenance", Data: []byte("{\"schema_version\":1}\n")},
+		{Kind: "source-binding", Data: mustJSON(t, source)}, {Kind: "sidecar-provenance", Data: provenance},
 		{Kind: "proving-binary", Data: []byte("synthetic proving binary")}, {Kind: "contracts", Data: []byte("contracts-v1")},
 		{Kind: "budgets", Data: []byte("budgets-v1")}, {Kind: "crown-ledger", Data: crownBytes},
 	}
@@ -146,6 +149,42 @@ func validEvidence(t *testing.T, runID string) (EvidenceManifest, []ArtifactInpu
 	inputs = append(inputs, ArtifactInput{Kind: "independent-review", Data: reviewArtifact})
 	manifest.IndependentReview = IndependentReview{"campaign-reviewer", "campaign-review-process", "pass", SHA256Hex(reviewArtifact)}
 	return manifest, inputs, source
+}
+
+func TestEvidenceCanonicalFixtures(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		outcome         string
+		semanticPass    bool
+		orderedTerminal string
+	}{
+		{name: "pass", outcome: "pass", semanticPass: true, orderedTerminal: "pass"},
+		{name: "incomplete", outcome: "incomplete", semanticPass: false, orderedTerminal: "incomplete"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join("testdata", "evidence", test.name+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest EvidenceManifest
+			if err := jsonUnmarshalStrict(contents, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			canonical, err := CanonicalJSON(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(contents, canonical) {
+				t.Fatal("fixture is not canonical JSON")
+			}
+			if manifest.Outcome != test.outcome || manifest.OrderedTrial.Outcome != test.orderedTerminal {
+				t.Fatalf("fixture outcomes manifest=%q trial=%q", manifest.Outcome, manifest.OrderedTrial.Outcome)
+			}
+			if err := SemanticOutcome(manifest); (err == nil) != test.semanticPass {
+				t.Fatalf("semantic pass=%t error=%v", err == nil, err)
+			}
+		})
+	}
 }
 
 func mustJSON(t *testing.T, value any) []byte {
