@@ -1,19 +1,19 @@
 {
-  "event_count": 212,
-  "last_event_id": "01M1BHM8PMV27QKP565TVV6EBA",
-  "materialized_at": "2026-08-31T09:15:25.780448+00:00",
+  "event_count": 213,
+  "last_event_id": "01M1BJ4CJP3KTYD5FPBWE1YTZM",
+  "materialized_at": "2026-08-31T09:24:14.038204+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 8,
+    "approved": 9,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
+    "in_review": 0,
     "planned": 1
   },
   "work_packages": {
@@ -300,26 +300,30 @@
       }
     },
     "WP09": {
-      "actor": "codex-wp09-arbiter-final",
+      "actor": "user",
       "agent": "codex-wp09-arbiter-final",
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
-      "force_count": 7,
-      "lane": "in_review",
-      "last_event_id": "01M1BHM8PMV27QKP565TVV6EBA",
-      "last_transition_at": "2026-08-31T09:15:25.780448+00:00",
+      "force_count": 8,
+      "lane": "approved",
+      "last_event_id": "01M1BJ4CJP3KTYD5FPBWE1YTZM",
+      "last_transition_at": "2026-08-31T09:24:14.038204+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review at b0b1c54: exact M1 census is 5 GJ fault runners, 8 focused campaigns (>=100 attempts), 19 production-bound executable mutants, and 8 universal invariants. Scoped count/race/external-sidecar/vet/staticcheck/scope/diff/no-SQLite gates pass. External GapDB SHA 62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e. Honest qualification record: go test ./... -short is non-admissible because internal/scenario exceeded default 10m timeout; isolated go test ./internal/scenario -short -timeout 20m passes in 1164.924s, diagnosing timeout-budget rather than assertion failure. Force used only because planning main contains the already-untracked mission directory and protected-branch coordination topology prohibits canonical auto-commit; no mission artifacts were committed by implementer.",
         "Cycle 2 ready for independent review: commit 7134aef; admitted fault 5/5; focused 800/800 source-bound; mutants 19/19; universal invariants green; broad short, race, vet, staticcheck, scope, no-SQLite gates pass"
       ],
       "provider": "__resolved_provider_absent__",
-      "review": null,
+      "review": {
+        "actor": "operator",
+        "at": "2026-08-31T09:24:12Z",
+        "reason": "Arbiter decision: Approved after 3 review cycles at implementation commit 3d57bfc05871291cc3fa3e974818033b5a2acde4. The cycle-3 SourceBinding blocker is closed by rejecting the complete Git ignored-untracked census, not an extension allowlist. Regressions cover arbitrary ignored files, cgo C++ payload.cc, and go:embed payload.txt. Independent dirty-input mutation added an ignored .cc to the qualification checkout: the production fault path terminated incomplete with no source or receipt and all eight invariants false; after removal the exact-source production receipt passed. Evidence: root source-bound focused campaign 800/800 in 2921.29s; ObserveGitSource tests count=20 plus race count=5; exact production fault receipts; unbound-source and literal-fixture negatives; all 19 executable mutants under race; architecture guard, vet, staticcheck, gofmt, and diff checks pass. Anti-patterns: dead code PASS; synthetic fixture PASS; silent empty return PASS; FR coverage PASS; frozen surface PASS; locked decisions PASS; shared ownership PASS via recorded reconciliations; production fragility PASS. No-auto-commit is used only for the known protected-coordination activity_log false positive.",
+        "wp_id": "WP09"
+      },
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP09-fault-and-mutant-qualification-campaign/review-cycle-3.md",
-        "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP09-fault-and-mutant-qualification-campaign/review-cycle-3.md",
-        "reviewer": "user",
-        "verdict": "changes_requested"
+        "reference": "Arbiter decision: Approved after 3 review cycles at implementation commit 3d57bfc05871291cc3fa3e974818033b5a2acde4. The cycle-3 SourceBinding blocker is closed by rejecting the complete Git ignored-untracked census, not an extension allowlist. Regressions cover arbitrary ignored files, cgo C++ payload.cc, and go:embed payload.txt. Independent dirty-input mutation added an ignored .cc to the qualification checkout: the production fault path terminated incomplete with no source or receipt and all eight invariants false; after removal the exact-source production receipt passed. Evidence: root source-bound focused campaign 800/800 in 2921.29s; ObserveGitSource tests count=20 plus race count=5; exact production fault receipts; unbound-source and literal-fixture negatives; all 19 executable mutants under race; architecture guard, vet, staticcheck, gofmt, and diff checks pass. Anti-patterns: dead code PASS; synthetic fixture PASS; silent empty return PASS; FR coverage PASS; frozen surface PASS; locked decisions PASS; shared ownership PASS via recorded reconciliations; production fragility PASS. No-auto-commit is used only for the known protected-coordination activity_log false positive.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
       },
       "role": "reviewer",
       "shell_pid": 346017,
