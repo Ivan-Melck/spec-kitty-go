@@ -1083,9 +1083,18 @@ func workflowEpochLineageFixture(t *testing.T, mutation string) *workflowJournal
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := currentPublisher.publish(t.Context(), journalPublication{OperationID: "operation-admit-current", CommandType: "runtime.epoch_admit", ResultType: "runtime.epoch_admitted", AggregateKind: "runtime", AggregateID: "host-runtime", EventType: "runtime.epoch_admitted", Payload: map[string]any{"runtime_epoch_id": current.RuntimeEpochID}, Result: map[string]any{"runtime_epoch_id": current.RuntimeEpochID}, ExpectedLogical: 1, ExpectedRevision: runtimeHeadRecord.Revision}); err != nil {
+	currentBinding := map[string]any{"schema_version": 1, "runtime_epoch_id": current.RuntimeEpochID, "predecessor_epoch_id": predecessor.RuntimeEpochID, "created_operation_id": "operation-admit-current", "host_instance_id": "host-current", "status": "recovering"}
+	if _, err := currentPublisher.publish(t.Context(), journalPublication{OperationID: "operation-admit-current", CommandType: "runtime.epoch_admit", ResultType: "runtime.epoch_admitted", AggregateKind: "runtime", AggregateID: "host-runtime", EventType: "runtime.epoch_admitted", Payload: currentBinding, Result: currentBinding, ExpectedLogical: 1, ExpectedRevision: runtimeHeadRecord.Revision}); err != nil {
 		t.Fatal(err)
 	}
+	currentBytes, err := json.Marshal(currentBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.mu.Lock()
+	runtimeHeadRecord = journal.records[runtimeHeadKey]
+	journal.records[currentPublisher.prefix()+"runtime/current"] = storegapdb.Record{Key: currentPublisher.prefix() + "runtime/current", Value: currentBytes, Revision: runtimeHeadRecord.Revision}
+	journal.mu.Unlock()
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	operationID := controljournal.OperationID("operation-owner-restart")
 	runID := current.RunID

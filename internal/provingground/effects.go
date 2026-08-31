@@ -1049,7 +1049,21 @@ func (j *workflowJournal) validateRuntimeEpochAdmissions(ctx context.Context, ev
 	}
 	last := admissions[len(admissions)-1]
 	head, decodeErr := controljournal.DecodeAggregateHeadV1(headRecords[0].Value)
-	if decodeErr != nil || head.AggregateKind != "runtime" || head.AggregateID != "host-runtime" || head.LogicalVersion != last.AggregateLogicalVersion || head.LastEventID != last.EventID || head.RuntimeEpochID != j.config.RuntimeEpochID || last.RuntimeEpochID != j.config.RuntimeEpochID || head.StateDigest != sha256.Sum256(last.Payload()) {
+	currentKey := j.prefix() + "runtime/current"
+	currentRecord, currentErr := j.port.Get(ctx, currentKey)
+	budget.bytes += len(currentKey) + len(currentRecord.Value)
+	var current struct {
+		SchemaVersion      uint32                        `json:"schema_version"`
+		RuntimeEpochID     controljournal.RuntimeEpochID `json:"runtime_epoch_id"`
+		PredecessorEpochID controljournal.RuntimeEpochID `json:"predecessor_epoch_id"`
+		CreatedOperationID controljournal.OperationID    `json:"created_operation_id"`
+		HostInstanceID     string                        `json:"host_instance_id"`
+		Status             string                        `json:"status"`
+	}
+	if currentErr != nil || budget.bytes > maxWorkflowRestoreBytes || currentRecord.Key != currentKey || currentRecord.Revision == 0 || currentRecord.Revision != headRecords[0].Revision || currentRecord.Revision > bound || json.Unmarshal(currentRecord.Value, &current) != nil || current.SchemaVersion != 1 || current.RuntimeEpochID != j.config.RuntimeEpochID || current.CreatedOperationID != last.OperationID || current.HostInstanceID == "" || current.Status != "recovering" {
+		return refusal(OutcomeIndeterminate, "restore", "runtime current binding does not match the sealed admission terminal")
+	}
+	if decodeErr != nil || head.AggregateKind != "runtime" || head.AggregateID != "host-runtime" || head.LogicalVersion != last.AggregateLogicalVersion || head.LastEventID != last.EventID || head.RuntimeEpochID != j.config.RuntimeEpochID || last.RuntimeEpochID != j.config.RuntimeEpochID || head.StateDigest != sha256.Sum256(currentRecord.Value) {
 		return refusal(OutcomeIndeterminate, "restore", "runtime admission head does not seal the current lineage terminal")
 	}
 	return nil
