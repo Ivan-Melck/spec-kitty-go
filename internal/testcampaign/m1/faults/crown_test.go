@@ -69,6 +69,18 @@ func TestProductionOrderedCrownTrialValidatesFromActualExecution(t *testing.T) {
 	if err := m1.ValidateCrownArtifact(artifact); err != nil {
 		t.Fatalf("actual driver trial did not validate: %v", err)
 	}
+	barrier := newTestFocusedBarrier(2)
+	focused, err := executor.ExecuteFocused(t.Context(), FocusedInput{
+		RunID: executor.RunID, CampaignID: "atomic-publication-nfr001",
+		AttemptID: "post-ordered-crown-atomic", Index: 0, Seed: 7200,
+		Order: [2]int{0, 1}, Barrier: barrier,
+	})
+	if err != nil {
+		t.Fatalf("focused atomic execution after ordered-crown owner restart: %v", err)
+	}
+	if !focused.Facts["gj01_cut_once"] {
+		t.Fatalf("post-restart GJ-01 did not reach the real pre-publication cut exactly once: %v", focused.Facts)
+	}
 }
 
 func TestOrderedCrownRejectsMissingImmutableIdentityBeforeProductAccess(t *testing.T) {

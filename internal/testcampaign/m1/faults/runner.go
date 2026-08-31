@@ -447,7 +447,7 @@ func executeFocusedLostResponse(ctx context.Context, input FocusedInput, lifecyc
 		return artifact, nil, err
 	}
 	changedPayload := []byte(fmt.Sprintf(`{"attempt":%q,"seed":%d,"changed":true}`, productionAttemptID(attempt), attempt.Seed))
-	changed, err := qualificationBatchPayload(attempt, "gj02", changedPayload)
+	changed, err := qualificationBatchPayload(attempt, "gj02", environment.runtime.QualificationSnapshot().RuntimeEpochID, changedPayload)
 	if err != nil {
 		return artifact, nil, err
 	}
@@ -1533,7 +1533,7 @@ func executeComposedGJ01(ctx context.Context, attempt Attempt, environment *prod
 	if err != nil || len(before) == 0 {
 		return Facts{}, nil, fmt.Errorf("GJ-01 preexisting product census unavailable: %w", err)
 	}
-	batch, err := qualificationBatch(attempt, "gj01")
+	batch, err := qualificationBatch(attempt, "gj01", environment.runtime.QualificationSnapshot().RuntimeEpochID)
 	if err != nil {
 		return Facts{}, nil, err
 	}
@@ -1559,16 +1559,15 @@ func executeComposedGJ01(ctx context.Context, attempt Attempt, environment *prod
 	return Facts{PreexistingBefore: before, PreexistingAfter: after}, encoded, nil
 }
 
-func qualificationBatch(attempt Attempt, label string) (application.ValidatedBatchV1, error) {
+func qualificationBatch(attempt Attempt, label string, epoch controljournal.RuntimeEpochID) (application.ValidatedBatchV1, error) {
 	identity := productionAttemptID(attempt)
 	payload := []byte(fmt.Sprintf(`{"attempt":%q,"seed":%d}`, identity, attempt.Seed))
-	return qualificationBatchPayload(attempt, label, payload)
+	return qualificationBatchPayload(attempt, label, epoch, payload)
 }
 
-func qualificationBatchPayload(attempt Attempt, label string, payload []byte) (application.ValidatedBatchV1, error) {
+func qualificationBatchPayload(attempt Attempt, label string, epoch controljournal.RuntimeEpochID, payload []byte) (application.ValidatedBatchV1, error) {
 	identity := productionAttemptID(attempt)
 	operation := controljournal.OperationID("operation-" + label + "-" + identity)
-	epoch := controljournal.RuntimeEpochID("epoch-qualification")
 	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: "project-qualification", MissionID: "mission-qualification", OperationID: operation, CommandType: "qualification.observe", RuntimeEpochID: epoch, Payload: payload})
 	if err != nil {
 		return application.ValidatedBatchV1{}, err
