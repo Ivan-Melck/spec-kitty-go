@@ -156,8 +156,12 @@ func (f ExecutorFunc) ExecuteFault(ctx context.Context, attempt Attempt) (Execut
 // same source, process, database, and sidecar provenance as the resulting
 // Record. The returned receipt is inseparable from those observations.
 type ProductionExecutor struct {
-	Root        string
-	Lifecycle   *sidecargapdb.Lifecycle
+	Root      string
+	Lifecycle *sidecargapdb.Lifecycle
+	// RunID, when set, is the immutable umbrella identity for every durable
+	// product fact produced by this executor. Calls carrying a different RunID
+	// fail closed instead of silently assembling evidence across runs.
+	RunID       string
 	Observation m1.ObservationPort
 	mu          sync.Mutex
 	environment *productionEnvironment
@@ -165,6 +169,7 @@ type ProductionExecutor struct {
 
 type productionEnvironment struct {
 	root        string
+	runID       string
 	port        storegapdb.Port
 	closer      interface{ Close() error }
 	app         *application.Service
@@ -247,8 +252,11 @@ func (p *ProductionExecutor) Prepare(ctx context.Context) (ProductionAccess, err
 	if err != nil {
 		return ProductionAccess{}, err
 	}
-	environment, err := p.productionEnvironment(ctx)
+	environment, err := p.productionEnvironment(ctx, p.RunID)
 	if err != nil {
+		return ProductionAccess{}, err
+	}
+	if err := ensureBaseline(ctx, environment); err != nil {
 		return ProductionAccess{}, err
 	}
 	observation, err := observeComposedRuntime(ctx, environment, nil)
@@ -269,8 +277,11 @@ func (p *ProductionExecutor) ExecuteFocused(ctx context.Context, input FocusedIn
 	if err != nil {
 		return FocusedExecution{}, err
 	}
-	environment, err := p.productionEnvironment(ctx)
+	environment, err := p.productionEnvironment(ctx, input.RunID)
 	if err != nil {
+		return FocusedExecution{Source: source}, err
+	}
+	if err := ensureBaseline(ctx, environment); err != nil {
 		return FocusedExecution{Source: source}, err
 	}
 	primaryBefore, err := environment.repository.SnapshotPrimary(ctx)
@@ -804,7 +815,7 @@ func restoreAndJournal(ctx context.Context, environment *productionEnvironment) 
 	if err != nil {
 		return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, err
 	}
-	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: environment.reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: "run-qualification", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: environment.binding, EventRegistry: environment.events, Reducers: environment.reducers})
+	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: environment.reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: controljournal.RunID(environment.runID), ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: environment.binding, EventRegistry: environment.events, Reducers: environment.reducers})
 	if err != nil || !restored.Ready {
 		return restored, controljournal.ValidatedJournalV1{}, fmt.Errorf("focused restore is not ready: %w", err)
 	}
@@ -849,7 +860,7 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 	}
 	eventDigest, _ := environment.events.Digest()
 	reducerDigest, _ := environment.reducers.Digest()
-	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: "run-qualification", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: binding, EventRegistry: environment.events, Reducers: environment.reducers})
+	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: controljournal.RunID(environment.runID), ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: binding, EventRegistry: environment.events, Reducers: environment.reducers})
 	if err != nil || !restored.Ready {
 		closer.Close()
 		return nil, nil, fmt.Errorf("restart restore ready=%v: %w", restored.Ready, err)
@@ -885,7 +896,7 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 		closer.Close()
 		return nil, nil, err
 	}
-	postTransition, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: "run-qualification", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: binding, EventRegistry: environment.events, Reducers: environment.reducers})
+	postTransition, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: controljournal.RunID(environment.runID), ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: binding, EventRegistry: environment.events, Reducers: environment.reducers})
 	if err != nil || !postTransition.Ready {
 		closer.Close()
 		return nil, nil, fmt.Errorf("post-transition restore ready=%v: %w", postTransition.Ready, err)
@@ -895,8 +906,8 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 		closer.Close()
 		return nil, nil, err
 	}
-	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: "run-qualification", RuntimeEpochID: admitted, Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute}
-	freshRuntime, err := provingground.RestoreRuntimeValidated(ctx, config, app, environment.repository, port, postTransition, &qualificationIdentities{}, execution.SystemClock{})
+	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: controljournal.RunID(environment.runID), RuntimeEpochID: admitted, Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute}
+	freshRuntime, err := provingground.RestoreRuntimeValidated(ctx, config, app, environment.repository, port, postTransition, &qualificationIdentities{runID: ids.RunID(environment.runID)}, execution.SystemClock{})
 	if err != nil {
 		closer.Close()
 		return nil, nil, err
@@ -1300,17 +1311,40 @@ func executeFocusedAttribution(ctx context.Context, input FocusedInput, environm
 	return artifact, facts, evidence, []m1.EffectObservation{effectObservation}, nil
 }
 
-type qualificationIdentities struct{ next atomic.Uint64 }
+type qualificationIdentities struct {
+	runID ids.RunID
+	next  atomic.Uint64
+}
 
-func (*qualificationIdentities) RunID() (ids.RunID, error) { return "run-qualification", nil }
+func (i *qualificationIdentities) RunID() (ids.RunID, error) {
+	if i == nil || i.runID == "" {
+		return "", fmt.Errorf("qualification RunID is absent")
+	}
+	return i.runID, nil
+}
 func (i *qualificationIdentities) LeaseID() (ids.LeaseID, error) {
 	return ids.LeaseID(fmt.Sprintf("lease-qualification-%d", i.next.Add(1))), nil
 }
 
-func (p *ProductionExecutor) productionEnvironment(ctx context.Context) (*productionEnvironment, error) {
+func (p *ProductionExecutor) productionEnvironment(ctx context.Context, requestedRunID ...string) (*productionEnvironment, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	runID := p.RunID
+	if len(requestedRunID) > 0 && requestedRunID[0] != "" {
+		if runID != "" && runID != requestedRunID[0] {
+			return nil, fmt.Errorf("production executor RunID mismatch: configured=%q requested=%q", runID, requestedRunID[0])
+		}
+		runID = requestedRunID[0]
+	}
+	if runID == "" {
+		// Compatibility for direct diagnostic Prepare calls. Every fault and
+		// focused runner supplies its own immutable RunID.
+		runID = "run-qualification"
+	}
 	if p.environment != nil {
+		if p.environment.runID != runID {
+			return nil, fmt.Errorf("production environment is already bound to RunID %q", p.environment.runID)
+		}
 		return p.environment, nil
 	}
 	port, closer, err := storegapdb.Dial(p.Lifecycle.Provenance().ConfiguredSocket, 2*time.Second)
@@ -1339,7 +1373,7 @@ func (p *ProductionExecutor) productionEnvironment(ctx context.Context) (*produc
 		closer.Close()
 		return nil, err
 	}
-	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: "run-qualification", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: binding, EventRegistry: events, Reducers: reducers})
+	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: controljournal.RunID(runID), ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: binding, EventRegistry: events, Reducers: reducers})
 	if err != nil || !restored.Ready {
 		closer.Close()
 		return nil, fmt.Errorf("restore proving ground: ready=%v: %w", restored.Ready, err)
@@ -1402,35 +1436,37 @@ func (p *ProductionExecutor) productionEnvironment(ctx context.Context) (*produc
 		os.RemoveAll(root)
 		return nil, err
 	}
-	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: "run-qualification", RuntimeEpochID: "epoch-qualification", Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute}
-	identities := &qualificationIdentities{}
+	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: controljournal.RunID(runID), RuntimeEpochID: "epoch-qualification", Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute}
+	identities := &qualificationIdentities{runID: ids.RunID(runID)}
 	runtime, err := provingground.NewRuntime(config, app, repository, identities, execution.SystemClock{})
 	if err != nil {
 		closer.Close()
 		os.RemoveAll(root)
 		return nil, err
 	}
+	p.environment = &productionEnvironment{root: root, runID: runID, port: port, closer: closer, app: app, admission: admission, runtime: runtime, repository: repository, identities: identities, events: events, reducers: reducers, binding: binding, reader: reader}
+	return p.environment, nil
+}
+
+func ensureBaseline(ctx context.Context, environment *productionEnvironment) error {
+	if environment.baseline.Authority.LeaseID != "" {
+		return nil
+	}
 	now := time.Now().UTC()
 	governance, err := qualificationGovernance(now)
 	if err != nil {
-		closer.Close()
-		os.RemoveAll(root)
-		return nil, err
+		return err
 	}
-	base, err := repository.TargetHead(ctx)
+	base, err := environment.repository.TargetHead(ctx)
 	if err != nil {
-		closer.Close()
-		os.RemoveAll(root)
-		return nil, err
+		return err
 	}
-	baseline, err := runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: "claim-baseline", ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-b", ProcessID: "process-b", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: "bind-baseline", WorkspaceID: "workspace-baseline", RepositoryID: "repository-qualification", LaneID: "lane-baseline", OwnedBranch: "runs/baseline", PinnedBase: base, Now: now.Add(time.Millisecond)})
+	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: "claim-baseline", ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-b", ProcessID: "process-b", Now: now, LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: "bind-baseline", WorkspaceID: "workspace-baseline", RepositoryID: "repository-qualification", LaneID: "lane-baseline", OwnedBranch: "runs/baseline", PinnedBase: base, Now: now.Add(time.Millisecond)})
 	if err != nil {
-		closer.Close()
-		os.RemoveAll(root)
-		return nil, err
+		return err
 	}
-	p.environment = &productionEnvironment{root: root, port: port, closer: closer, app: app, admission: admission, runtime: runtime, repository: repository, baseline: baseline, identities: identities, events: events, reducers: reducers, binding: binding, reader: reader}
-	return p.environment, nil
+	environment.baseline = delivery
+	return nil
 }
 
 func qualificationGovernance(now time.Time) (governancecontext.Context, error) {
@@ -1931,8 +1967,11 @@ func (p *ProductionExecutor) ExecuteFault(ctx context.Context, attempt Attempt) 
 	if err != nil {
 		return Execution{}, &IncompleteError{Reason: bounded(err.Error())}
 	}
-	environment, err := p.productionEnvironment(ctx)
+	environment, err := p.productionEnvironment(ctx, attempt.RunID)
 	if err != nil {
+		return Execution{Source: source}, &IncompleteError{Reason: bounded(err.Error())}
+	}
+	if err := ensureBaseline(ctx, environment); err != nil {
 		return Execution{Source: source}, &IncompleteError{Reason: bounded(err.Error())}
 	}
 	primaryBefore, err := environment.repository.SnapshotPrimary(ctx)
