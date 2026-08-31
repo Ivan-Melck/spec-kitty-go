@@ -404,10 +404,6 @@ func executeFocusedAtomic(ctx context.Context, input FocusedInput, lifecycle *si
 	return artifact, facts, nil
 }
 
-type crashAtEveryHook struct{}
-
-func (crashAtEveryHook) Reach(context.Context, string) error { return productfaults.ErrCrashRequested }
-
 type countedCrashHook struct{ calls atomic.Int32 }
 
 func (h *countedCrashHook) Reach(context.Context, string) error {
