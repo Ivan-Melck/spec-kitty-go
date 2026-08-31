@@ -104,6 +104,56 @@ func TestCleanupRequiresKnownRegistrationAndPreservesOwnedCommit(t *testing.T) {
 	}
 }
 
+func TestNormalCleanupWaitsForCommonWorktreeMetadataLock(t *testing.T) {
+	repository, base := newRepository(t)
+	managed := filepath.Join(t.TempDir(), "workspaces")
+	holder, err := Bind(context.Background(), Runner{}, "repository-1", "project-1", repository, managed, "refs/heads/main", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiter, err := Bind(context.Background(), Runner{}, "repository-1", "project-1", repository, managed, "refs/heads/main", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.PrepareManagedRoot(); err != nil {
+		t.Fatal(err)
+	}
+	record := workspaceRecord(t, waiter, "workspace-cleanup-lock", "runs/cleanup-lock", base)
+	if err := waiter.Create(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := waiter.Probe(context.Background(), record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.DependencyHead, record.ObservedHead, record.GitDir, record.IndexPath = base, base, probe.GitDir, probe.IndexPath
+	record.Stage, record.Status, record.Registered = workspace.StageReady, "ready", true
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- holder.withWorktreeMetadataLock(context.Background(), func() error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = waiter.Cleanup(ctx, record, "expired")
+	if !workspace.IsKind(err, workspace.KindGitFailure) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled cleanup metadata wait error=%v", err)
+	}
+	if _, statErr := os.Stat(record.CanonicalPath); statErr != nil {
+		t.Fatalf("canceled cleanup removed workspace: %v", statErr)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateCleanupAggregatesEveryRefusalReason(t *testing.T) {
 	inspection := Inspection{
 		Known: false, Registered: false, Clean: false, RecordedBranch: "runs/expected", ObservedBranch: "runs/other",

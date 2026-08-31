@@ -17,9 +17,54 @@ import (
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
+	faultcampaign "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1/faults"
 )
 
-func TestEightFocusedCampaignsExecuteOneHundredObservedAttempts(t *testing.T) {
+func TestEightFocusedProductionCampaignsMintOneHundredExactAttempts(t *testing.T) {
+	source := os.Getenv("SPEC_KITTY_M1_GAPDBD")
+	if source == "" {
+		t.Skip("exact admitted external gapdbd not supplied")
+	}
+	for definitionIndex, definition := range Definitions() {
+		t.Run(definition.ID, func(t *testing.T) {
+			root := privateRoot(t)
+			executable := filepath.Join(root, "gapdbd-62219cf")
+			copyExecutable(t, source, executable)
+			lifecycle, err := sidecargapdb.Start(t.Context(), sidecargapdb.LifecycleConfig{ExecutablePath: executable, AdmissionRecordPath: admissionRecord(t), RuntimeRoot: shortRoot(t), DataDirectory: filepath.Join(shortRoot(t), "database"), SupervisorRunID: "run-focused-" + definition.Requirement, ProductPolicySHA256: strings.Repeat("a", 64), StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := lifecycle.Stop(context.Background()); err != nil {
+					t.Errorf("stop sidecar: %v", err)
+				}
+			}()
+			executor := &faultcampaign.ProductionExecutor{Root: repositoryRoot(t), Lifecycle: lifecycle}
+			defer func() {
+				if err := executor.Close(); err != nil {
+					t.Errorf("close production executor: %v", err)
+				}
+			}()
+			scenario := &ProductionScenario{Executor: executor}
+			summary := (Runner{RunID: "run-focused-production", Seed: uint64(1000 + definitionIndex), Repetitions: MinimumRepetitions, Scenario: scenario}).Run(t.Context(), definition.ID)
+			if !summary.Admissible() || summary.RepetitionsStarted != MinimumRepetitions || summary.RepetitionsTerminal != MinimumRepetitions || summary.RepetitionsPassed != MinimumRepetitions || len(summary.Attempts) != MinimumRepetitions {
+				t.Fatalf("production campaign is not admissible: %+v", summary)
+			}
+			seen := make(map[string]struct{}, MinimumRepetitions)
+			for _, attempt := range summary.Attempts {
+				if attempt.AttemptID == "" || !attempt.Invariants.Passed() {
+					t.Fatalf("attempt lacks causal receipt/invariants: %+v", attempt)
+				}
+				if _, duplicate := seen[attempt.AttemptID]; duplicate {
+					t.Fatalf("attempt receipt reused: %s", attempt.AttemptID)
+				}
+				seen[attempt.AttemptID] = struct{}{}
+			}
+		})
+	}
+}
+
+func TestLiteralFocusedFactsCannotMintOneHundredProductionAttempts(t *testing.T) {
 	for _, definition := range Definitions() {
 		t.Run(definition.ID, func(t *testing.T) {
 			var mu sync.Mutex
@@ -31,11 +76,11 @@ func TestEightFocusedCampaignsExecuteOneHundredObservedAttempts(t *testing.T) {
 				return cleanExecution(providerState(attempt.Index)), nil
 			})}
 			summary := runner.Run(t.Context(), definition.ID)
-			if !summary.Admissible() || len(summary.Attempts) != 100 || len(seen) != 100 {
-				t.Fatalf("campaign is not a 100-attempt proof: %+v seen=%d", summary, len(seen))
+			if summary.Admissible() || len(summary.Attempts) != 100 || len(seen) != 100 || summary.RepetitionsFailed != 100 {
+				t.Fatalf("literal campaign minted production proof: %+v seen=%d", summary, len(seen))
 			}
 			for index, attempt := range summary.Attempts {
-				if attempt.Index != index || attempt.Seed == 0 || !attempt.Invariants.Passed() {
+				if attempt.Index != index || attempt.Seed == 0 || attempt.AttemptID != "" {
 					t.Fatalf("attempt %d lacks deterministic evidence: %+v", index, attempt)
 				}
 			}
@@ -112,8 +157,35 @@ func TestAttributionCampaignRequiresSlowUnavailableWrongStaleAndHumanModified(t 
 	adversarial := Runner{RunID: "run", Seed: 4, Repetitions: 100, Scenario: ScenarioFunc(func(_ context.Context, attempt Attempt) (Execution, error) {
 		return cleanExecution(providerState(attempt.Index)), nil
 	})}
-	if summary := adversarial.Run(t.Context(), id); !summary.Admissible() {
-		t.Fatalf("complete adversary campaign failed: %+v", summary)
+	if summary := adversarial.Run(t.Context(), id); summary.Admissible() {
+		t.Fatalf("synthetic adversary labels minted production proof: %+v", summary)
+	}
+}
+
+func TestFirstEmptyFailureArtifactPreservesLiteralFirstDiagnostic(t *testing.T) {
+	summary := Summary{ProviderStates: make(map[ProviderState]int)}
+	summary.record(AttemptResult{Started: true, Terminal: true, Outcome: OutcomeFail, Diagnostic: "literal first failure"}, nil)
+	summary.record(AttemptResult{Started: true, Terminal: true, Outcome: OutcomeFail, Diagnostic: "later failure"}, []byte("later"))
+	if summary.FirstDiagnostic != "literal first failure" || summary.FirstFailure != nil {
+		t.Fatalf("first diagnostic was overwritten after an empty artifact: %q", summary.FirstDiagnostic)
+	}
+}
+
+func TestSecondaryFailClosedChecksPreserveLiteralExecutionDiagnostic(t *testing.T) {
+	for _, campaignID := range []string{"atomic-publication-nfr001", "attribution-reassignment-nfr015"} {
+		t.Run(campaignID, func(t *testing.T) {
+			summary := (Runner{RunID: "run-literal-diagnostic", Seed: 71, Repetitions: MinimumRepetitions, Scenario: ScenarioFunc(func(context.Context, Attempt) (Execution, error) {
+				return Execution{Started: false, Terminal: false, Outcome: OutcomeFail}, errors.New("literal product failure")
+			})}).Run(t.Context(), campaignID)
+			if summary.FirstDiagnostic != "literal product failure" {
+				t.Fatalf("secondary check overwrote product diagnostic: %q", summary.FirstDiagnostic)
+			}
+			for _, attempt := range summary.Attempts {
+				if attempt.Diagnostic != "literal product failure" {
+					t.Fatalf("attempt diagnostic was overwritten: %+v", attempt)
+				}
+			}
+		})
 	}
 }
 
@@ -152,7 +224,7 @@ func TestExternalReceiptCrossesAdmittedSidecarPublicInspection(t *testing.T) {
 	root := privateRoot(t)
 	executable := filepath.Join(root, "gapdbd-62219cf")
 	copyExecutable(t, source, executable)
-	runtimeRoot, dataRoot := privateRoot(t), privateRoot(t)
+	runtimeRoot, dataRoot := shortRoot(t), shortRoot(t)
 	lifecycle, err := sidecargapdb.Start(t.Context(), sidecargapdb.LifecycleConfig{
 		ExecutablePath: executable, AdmissionRecordPath: admissionRecord(t), RuntimeRoot: runtimeRoot,
 		DataDirectory: filepath.Join(dataRoot, "database"), SupervisorRunID: "run-focused-external",
@@ -193,6 +265,19 @@ func privateRoot(t *testing.T) string {
 	return root
 }
 
+func shortRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "spk-f-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
+}
+
 func copyExecutable(t *testing.T, source, target string) {
 	t.Helper()
 	input, err := os.Open(source)
@@ -220,6 +305,15 @@ func admissionRecord(t *testing.T) string {
 		t.Fatal("runtime caller unavailable")
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", "..", "..", "docs", "programs", "evidence", "m1-admission.json"))
+}
+
+func repositoryRoot(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime caller unavailable")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", "..", ".."))
 }
 
 type unavailablePort struct{}

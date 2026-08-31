@@ -3,15 +3,19 @@ package focused
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"sync"
 
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 	"github.com/spec-kitty/go-kitty3/internal/provingground"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
+	faultcampaign "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1/faults"
 )
 
 const MinimumRepetitions = 100
@@ -134,6 +138,20 @@ type Execution struct {
 	ProviderTrace ProviderTrace
 	Artifact      []byte
 	Diagnostic    string
+	Source        m1.SourceBinding
+	Receipt       ProductionReceipt
+}
+
+type ProductionReceipt struct {
+	RunID, CampaignID, AttemptID string
+	Index                        int
+	Seed                         uint64
+	Order                        [2]int
+	FactSHA256                   string
+	InvariantSHA256              string
+	ExternalSHA256               string
+	Source                       m1.SourceBinding
+	seal                         [32]byte
 }
 
 type Scenario interface {
@@ -146,6 +164,44 @@ func (f ScenarioFunc) RunFocused(ctx context.Context, attempt Attempt) (Executio
 	return f(ctx, attempt)
 }
 
+// ProductionScenario is the only focused scenario capable of minting a pass
+// receipt. Its executor returns same-attempt public production observations;
+// this type merely binds them to the runner-owned schedule and census.
+type ProductionScenario struct {
+	Executor *faultcampaign.ProductionExecutor
+}
+
+func (p *ProductionScenario) RunFocused(ctx context.Context, attempt Attempt) (Execution, error) {
+	if p == nil || p.Executor == nil || attempt.Schedule.Barrier == nil {
+		return Execution{}, fmt.Errorf("focused production scenario is incomplete")
+	}
+	attemptID := productionAttemptID(attempt)
+	production, err := p.Executor.ExecuteFocused(ctx, faultcampaign.FocusedInput{RunID: attempt.RunID, CampaignID: attempt.CampaignID, AttemptID: attemptID, Index: attempt.Index, Seed: attempt.Schedule.Seed, Order: attempt.Schedule.Order, Barrier: attempt.Schedule.Barrier})
+	if err != nil {
+		return Execution{Started: true, Terminal: true, Outcome: OutcomeFail, Observation: production.Observation, Artifact: production.Artifact, Diagnostic: err.Error(), Source: production.Source}, err
+	}
+	access, err := p.Executor.Prepare(ctx)
+	if err != nil {
+		return Execution{Started: true, Terminal: true, Outcome: OutcomeIncomplete, Observation: production.Observation, Artifact: production.Artifact, Source: production.Source}, err
+	}
+	external, err := ObserveExternal(ctx, access.Port, access.Provenance)
+	if err != nil {
+		return Execution{Started: true, Terminal: true, Outcome: OutcomeIncomplete, Observation: production.Observation, Artifact: production.Artifact, Source: production.Source}, err
+	}
+	execution := Execution{Started: true, Terminal: true, Outcome: OutcomePass, Observation: production.Observation, External: external, Artifact: append([]byte(nil), production.Artifact...), Source: production.Source}
+	if attempt.CampaignID == "attribution-reassignment-nfr015" {
+		execution.ProviderState = ProviderState(production.Provider.State)
+		execution.ProviderTrace = ProviderTrace{State: execution.ProviderState, MutationAttempts: production.Provider.MutationAttempts, ObservationAttempts: production.Provider.ObservationAttempts, RevisionBefore: production.Provider.RevisionBefore, RevisionAfter: production.Provider.RevisionAfter, IdentityMatched: production.Provider.IdentityMatched, IdentityInspected: production.Provider.IdentityInspected, CancellationObserved: production.Provider.CancellationObserved, TypedUnavailable: production.Provider.TypedUnavailable, AppliedRecorded: production.Provider.AppliedRecorded, BlindRepeats: production.Provider.BlindRepeats, CompensationApplied: production.Provider.CompensationApplied, HumanValuePreserved: production.Provider.HumanValuePreserved}
+	} else {
+		execution.ProviderState = ProviderNormal
+	}
+	invariants := m1.AssertUniversal(ctx, execution.Observation)
+	receipt := ProductionReceipt{RunID: attempt.RunID, CampaignID: attempt.CampaignID, AttemptID: attemptID, Index: attempt.Index, Seed: attempt.Schedule.Seed, Order: attempt.Schedule.Order, FactSHA256: bytesDigest(execution.Artifact), InvariantSHA256: invariantDigest(invariants), ExternalSHA256: externalDigest(external), Source: execution.Source}
+	receipt.seal = focusedReceiptSeal(receipt)
+	execution.Receipt = receipt
+	return execution, nil
+}
+
 type AttemptResult struct {
 	Index         int
 	Seed          uint64
@@ -155,6 +211,7 @@ type AttemptResult struct {
 	Invariants    m1.InvariantSummary
 	ProviderState ProviderState
 	Diagnostic    string
+	AttemptID     string
 }
 
 type Summary struct {
@@ -170,6 +227,7 @@ type Summary struct {
 	FirstDiagnostic       string                `json:"first_diagnostic,omitempty"`
 	ProviderStates        map[ProviderState]int `json:"provider_states"`
 	Attempts              []AttemptResult       `json:"-"`
+	firstFailureCaptured  bool
 }
 
 func (s Summary) Admissible() bool {
@@ -194,6 +252,7 @@ func (r Runner) Run(ctx context.Context, campaignID string) Summary {
 		return summary
 	}
 	summary.Attempts = make([]AttemptResult, 0, r.Repetitions)
+	seenAttemptIDs := make(map[string]struct{}, r.Repetitions)
 	runErr := provingground.RunFocusedCampaign(ctx, r.Repetitions, func(trialCtx context.Context, index int) error {
 		seed := derivedSeed(r.Seed, uint64(index))
 		random := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
@@ -217,20 +276,42 @@ func (r Runner) Run(ctx context.Context, campaignID string) Summary {
 		}
 		if !execution.Started || !execution.Terminal {
 			result.Outcome = OutcomeIncomplete
-			result.Diagnostic = bounded("attempt did not publish started and terminal evidence")
+			if result.Diagnostic == "" {
+				result.Diagnostic = bounded("attempt did not publish started and terminal evidence")
+			}
 		}
 		if definition.RequiresExternal && !execution.External.valid() {
 			result.Outcome = OutcomeIncomplete
-			result.Diagnostic = bounded("admitted external sidecar/public-client provenance was not observed")
+			if result.Diagnostic == "" {
+				result.Diagnostic = bounded("admitted external sidecar/public-client provenance was not observed")
+			}
+		}
+		if result.Outcome == OutcomePass {
+			if receiptErr := validateProductionReceipt(attempt, execution, result.Invariants); receiptErr != nil {
+				result.Outcome = OutcomeFail
+				result.Diagnostic = bounded(receiptErr.Error())
+			} else {
+				result.AttemptID = execution.Receipt.AttemptID
+				if _, duplicate := seenAttemptIDs[result.AttemptID]; duplicate {
+					result.Outcome = OutcomeFail
+					result.Diagnostic = bounded("focused production receipt reused an AttemptID")
+				} else {
+					seenAttemptIDs[result.AttemptID] = struct{}{}
+				}
+			}
 		}
 		if !result.Invariants.Passed() {
 			result.Outcome = OutcomeFail
-			result.Diagnostic = bounded("universal invariant failed")
+			if result.Diagnostic == "" {
+				result.Diagnostic = bounded("universal invariant failed")
+			}
 		}
 		if definition.ProviderAdversary {
 			if traceErr := validateProviderTrace(execution.ProviderState, execution.ProviderTrace); traceErr != nil {
 				result.Outcome = OutcomeFail
-				result.Diagnostic = bounded(traceErr.Error())
+				if result.Diagnostic == "" {
+					result.Diagnostic = bounded(traceErr.Error())
+				}
 			}
 		}
 		if result.Outcome != OutcomePass && result.Diagnostic == "" {
@@ -315,13 +396,40 @@ func (s *Summary) record(result AttemptResult, artifact []byte) {
 	default:
 		s.RepetitionsFailed++
 	}
-	if result.Outcome != OutcomePass && s.FirstFailure == nil {
+	if result.Outcome != OutcomePass && !s.firstFailureCaptured {
+		s.firstFailureCaptured = true
 		if len(artifact) > 64<<10 {
 			artifact = artifact[:64<<10]
 		}
 		s.FirstFailure = append([]byte(nil), artifact...)
 		s.FirstDiagnostic = bounded(result.Diagnostic)
 	}
+}
+
+func validateProductionReceipt(attempt Attempt, execution Execution, invariants m1.InvariantSummary) error {
+	receipt := execution.Receipt
+	if receipt.RunID != attempt.RunID || receipt.CampaignID != attempt.CampaignID || receipt.Index != attempt.Index || receipt.Seed != attempt.Schedule.Seed || receipt.Order != attempt.Schedule.Order || receipt.AttemptID == "" || !execution.Source.Valid() || receipt.Source != execution.Source ||
+		receipt.FactSHA256 != bytesDigest(execution.Artifact) || receipt.InvariantSHA256 != invariantDigest(invariants) || receipt.ExternalSHA256 != externalDigest(execution.External) || receipt.seal != focusedReceiptSeal(receipt) {
+		return fmt.Errorf("focused attempt lacks exact production/run/schedule/fact receipt")
+	}
+	return nil
+}
+
+func bytesDigest(value []byte) string { sum := sha256.Sum256(value); return hex.EncodeToString(sum[:]) }
+func productionAttemptID(attempt Attempt) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%d\x00%d", attempt.RunID, attempt.CampaignID, attempt.Index, attempt.Schedule.Seed, attempt.Schedule.Order[0], attempt.Schedule.Order[1])))
+	return hex.EncodeToString(sum[:16])
+}
+func invariantDigest(value m1.InvariantSummary) string {
+	encoded, _ := json.Marshal(value)
+	return bytesDigest(encoded)
+}
+func externalDigest(value ExternalObservation) string {
+	encoded, _ := json.Marshal(value)
+	return bytesDigest(encoded)
+}
+func focusedReceiptSeal(r ProductionReceipt) [32]byte {
+	return sha256.Sum256([]byte(strings.Join([]string{r.RunID, r.CampaignID, r.AttemptID, fmt.Sprint(r.Index), fmt.Sprint(r.Seed), fmt.Sprint(r.Order), r.FactSHA256, r.InvariantSHA256, r.ExternalSHA256, r.Source.Commit, r.Source.SidecarProvenanceSHA256}, "\x00")))
 }
 
 func definitionByID(id string) (Definition, error) {

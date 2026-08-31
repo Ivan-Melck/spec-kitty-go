@@ -7,9 +7,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
+	"time"
+
+	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
 const (
@@ -27,6 +33,100 @@ var InvariantIDs = []string{
 	InvariantOneAuthority, InvariantWorkspaceImmutable, InvariantStaleRefused,
 	InvariantPrimaryIsolation, InvariantReviewIndependent,
 	InvariantIntegrationSerial, InvariantEffectAttribution, InvariantJournalComplete,
+}
+
+// SourceBinding is minted from the checkout Git object identities and an
+// admitted, live external sidecar observation. The private seal prevents a
+// caller from turning well-shaped hexadecimal strings into qualification
+// provenance.
+type SourceBinding struct {
+	Commit                  string `json:"commit"`
+	Tree                    string `json:"tree"`
+	AdmittedTupleSHA256     string `json:"admitted_tuple_sha256"`
+	SidecarProvenanceSHA256 string `json:"sidecar_provenance_sha256"`
+	SidecarExecutableSHA256 string `json:"sidecar_executable_sha256"`
+	DatabaseID              string `json:"database_id"`
+	OwnerPID                int    `json:"owner_pid"`
+	seal                    [32]byte
+}
+
+// ObserveSource crosses both inspectable authorities used by M1 evidence: Git
+// for the candidate source and the admitted public GapDB adapter for the
+// sidecar process. A stopped, foreign, skewed, or caller-invented lifecycle
+// cannot mint a binding.
+func ObserveSource(ctx context.Context, root string, lifecycle *sidecargapdb.Lifecycle) (SourceBinding, error) {
+	if strings.TrimSpace(root) == "" || lifecycle == nil {
+		return SourceBinding{}, fmt.Errorf("source root and admitted sidecar lifecycle are required")
+	}
+	commit, err := gitObject(ctx, root, "HEAD")
+	if err != nil {
+		return SourceBinding{}, fmt.Errorf("observe source commit: %w", err)
+	}
+	tree, err := gitObject(ctx, root, "HEAD^{tree}")
+	if err != nil {
+		return SourceBinding{}, fmt.Errorf("observe source tree: %w", err)
+	}
+	evidence, err := lifecycle.Evidence()
+	if err != nil {
+		return SourceBinding{}, fmt.Errorf("observe admitted sidecar evidence: %w", err)
+	}
+	provenance := lifecycle.Provenance()
+	adapter, closer, err := storegapdb.Dial(provenance.ConfiguredSocket, 2*time.Second)
+	if err != nil {
+		return SourceBinding{}, fmt.Errorf("dial admitted sidecar: %w", err)
+	}
+	defer closer.Close()
+	inspection, err := adapter.Inspect(ctx)
+	if err != nil {
+		return SourceBinding{}, fmt.Errorf("inspect admitted sidecar: %w", err)
+	}
+	if !inspection.Healthy || inspection.DatabaseID == "" || inspection.DatabaseID != evidence.Status.DatabaseID || inspection.OwnerPID <= 0 || inspection.OwnerPID != evidence.HostPID ||
+		evidence.AdmittedTupleSHA256 != storegapdb.AdmittedTupleSHA256 || evidence.ExecutableSHA256 != storegapdb.AdmittedSidecarSHA256 || evidence.HostProcessStartTicks == 0 {
+		return SourceBinding{}, fmt.Errorf("git/sidecar source authorities are incomplete, foreign, or unadmitted")
+	}
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		return SourceBinding{}, fmt.Errorf("encode sidecar provenance: %w", err)
+	}
+	provenanceDigest := sha256.Sum256(encoded)
+	binding := SourceBinding{
+		Commit: commit, Tree: tree, AdmittedTupleSHA256: evidence.AdmittedTupleSHA256,
+		SidecarProvenanceSHA256: hex.EncodeToString(provenanceDigest[:]), SidecarExecutableSHA256: evidence.ExecutableSHA256,
+		DatabaseID: inspection.DatabaseID, OwnerPID: inspection.OwnerPID,
+	}
+	binding.seal = sourceSeal(binding)
+	return binding, nil
+}
+
+func (s SourceBinding) Valid() bool {
+	return hexSized(s.Commit, 40) && hexSized(s.Tree, 40) && s.AdmittedTupleSHA256 == storegapdb.AdmittedTupleSHA256 &&
+		hexSized(s.SidecarProvenanceSHA256, 64) && s.SidecarExecutableSHA256 == storegapdb.AdmittedSidecarSHA256 &&
+		s.DatabaseID != "" && s.OwnerPID > 0 && s.seal == sourceSeal(s)
+}
+
+func sourceSeal(source SourceBinding) [32]byte {
+	return sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d", source.Commit, source.Tree, source.AdmittedTupleSHA256, source.SidecarProvenanceSHA256, source.SidecarExecutableSHA256, source.DatabaseID, source.OwnerPID)))
+}
+
+func gitObject(ctx context.Context, root, revision string) (string, error) {
+	command := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--verify", revision)
+	encoded, err := command.Output()
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(encoded))
+	if !hexSized(value, 40) {
+		return "", fmt.Errorf("git object identity has invalid shape")
+	}
+	return value, nil
+}
+
+func hexSized(value string, size int) bool {
+	if len(value) != size {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 // ObservationPort is the only state seam used by qualification assertions.
@@ -341,6 +441,12 @@ func assertEpochAndStale(observation Observation, probe StaleProbe, probeErr err
 	if !probe.Attempted || !probe.Refused || (!probe.LeaseStale && !probe.EpochStale) {
 		return fmt.Errorf("required stale lease/epoch capsule probe did not refuse")
 	}
+	if observation.Epoch.Predecessor != "" && !probe.EpochStale {
+		return fmt.Errorf("predecessor runtime epoch was not exercised by an epoch-stale capsule probe")
+	}
+	if observation.Epoch.Predecessor == "" && !probe.LeaseStale {
+		return fmt.Errorf("lease replacement was not exercised by a lease-stale capsule probe")
+	}
 	if probe.AuthorityChanges != 0 || probe.WorkspaceChanges != 0 {
 		return fmt.Errorf("stale probe mutated authority=%d workspace=%d", probe.AuthorityChanges, probe.WorkspaceChanges)
 	}
@@ -450,7 +556,9 @@ func assertJournalAndPlayback(observation Observation) error {
 		heads[head.AggregateKey] = head
 	}
 	seenOperations := make(map[string]struct{})
+	seenEvents := make(map[string]struct{})
 	latest := make(map[string]JournalEvent)
+	var priorOperationRevision uint64
 	for _, operation := range observation.Journal.Operations {
 		if operation.OperationID == "" || operation.RequestDigest == "" || operation.ResultDigest == "" || operation.RecordRevision == 0 || !operation.Terminal || operation.EventCount <= 0 || operation.EventCount != len(operation.Events) {
 			return fmt.Errorf("operation record is incomplete or nonterminal")
@@ -459,6 +567,10 @@ func assertJournalAndPlayback(observation Observation) error {
 			return fmt.Errorf("duplicate operation record %s", operation.OperationID)
 		}
 		seenOperations[operation.OperationID] = struct{}{}
+		if operation.RecordRevision <= priorOperationRevision {
+			return fmt.Errorf("operation %s record revision is duplicate or nonmonotonic", operation.OperationID)
+		}
+		priorOperationRevision = operation.RecordRevision
 		resultDigest := sha256.Sum256(operation.CanonicalResult)
 		if hex.EncodeToString(resultDigest[:]) != operation.ResultDigest {
 			return fmt.Errorf("operation %s canonical result digest mismatch", operation.OperationID)
@@ -473,10 +585,22 @@ func assertJournalAndPlayback(observation Observation) error {
 			if _, exists := seenAggregate[event.AggregateKey]; exists {
 				return fmt.Errorf("operation %s repeats aggregate %s", operation.OperationID, event.AggregateKey)
 			}
-			seenAggregate[event.AggregateKey] = struct{}{}
-			if prior, exists := latest[event.AggregateKey]; !exists || event.LogicalVersion > prior.LogicalVersion {
-				latest[event.AggregateKey] = event
+			if _, exists := seenEvents[event.EventID]; exists {
+				return fmt.Errorf("duplicate event ID %s across journal operations", event.EventID)
 			}
+			seenEvents[event.EventID] = struct{}{}
+			seenAggregate[event.AggregateKey] = struct{}{}
+			if prior, exists := latest[event.AggregateKey]; exists {
+				if event.LogicalVersion != prior.LogicalVersion+1 {
+					return fmt.Errorf("aggregate %s logical version is duplicate or nonmonotonic", event.AggregateKey)
+				}
+				if event.RecordRevision <= prior.RecordRevision {
+					return fmt.Errorf("aggregate %s record revision is duplicate or nonmonotonic", event.AggregateKey)
+				}
+			} else if event.LogicalVersion != 1 {
+				return fmt.Errorf("aggregate %s first observed logical version is not one", event.AggregateKey)
+			}
+			latest[event.AggregateKey] = event
 		}
 		eventKeys := make([]string, 0, len(seenAggregate))
 		for key := range seenAggregate {

@@ -34,6 +34,14 @@ func (r *Repository) withIntegrationFenceLock(ctx context.Context, publish func(
 	return r.withRepositoryLock(ctx, "spec-kitty-integration-fence-"+key+".lock", "integration-fence acquisition", publish)
 }
 
+// withWorktreeMetadataLock serializes every cooperating mutation of Git's
+// shared worktrees/ metadata. A file lock, rather than an in-process mutex,
+// covers independent agent processes and independently bound Repository
+// values that share the same Git common directory.
+func (r *Repository) withWorktreeMetadataLock(ctx context.Context, mutate func() error) error {
+	return r.withRepositoryLock(ctx, "spec-kitty-worktree-metadata.lock", "worktree-metadata mutation", mutate)
+}
+
 func (r *Repository) withRepositoryLock(ctx context.Context, name, purpose string, publish func() error) error {
 	lockPath := filepath.Join(r.binding.CommonDir, name)
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
@@ -102,6 +110,10 @@ func (r *Repository) WorkspacePath(workspaceID string) (string, error) {
 }
 
 func (r *Repository) Create(ctx context.Context, record workspace.Record) error {
+	return r.withWorktreeMetadataLock(ctx, func() error { return r.createLocked(ctx, record) })
+}
+
+func (r *Repository) createLocked(ctx context.Context, record workspace.Record) error {
 	path, err := r.WorkspacePath(record.WorkspaceID.String())
 	if err != nil {
 		return err

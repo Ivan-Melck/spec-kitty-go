@@ -6,17 +6,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/application"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	basereview "github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 type testEligibility struct{ disposition workgraph.Disposition }
@@ -142,6 +146,201 @@ func TestReviewActorIDIndependenceAndImmutableCandidateEvidence(t *testing.T) {
 	if persisted.Candidate != fixture.candidate || digestAfter != digestBefore {
 		t.Fatal("external branch movement mutated immutable candidate evidence")
 	}
+}
+
+type reviewBindingGit struct {
+	mu      sync.Mutex
+	root    string
+	created bool
+}
+
+type candidateBlockingJournal struct {
+	*wp08Store
+	gateMu  sync.Mutex
+	armed   bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newCandidateBlockingJournal() *candidateBlockingJournal {
+	return &candidateBlockingJournal{wp08Store: newWP08Store(), entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (j *candidateBlockingJournal) arm() {
+	j.gateMu.Lock()
+	j.armed = true
+	j.gateMu.Unlock()
+}
+
+func (j *candidateBlockingJournal) Apply(ctx context.Context, batch application.ValidatedBatchV1) (application.ResultV1, error) {
+	j.gateMu.Lock()
+	armed := j.armed
+	if armed {
+		j.armed = false
+	}
+	j.gateMu.Unlock()
+	if armed {
+		close(j.entered)
+		select {
+		case <-j.release:
+		case <-ctx.Done():
+			return application.ResultV1{}, ctx.Err()
+		}
+	}
+	return j.wp08Store.Apply(ctx, batch)
+}
+
+func (g *reviewBindingGit) WorkspacePath(string) (string, error) { return g.root, nil }
+func (g *reviewBindingGit) Create(context.Context, workspace.Record) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.created = true
+	return nil
+}
+func (g *reviewBindingGit) Probe(_ context.Context, record workspace.Record) (workspace.Probe, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.created {
+		return workspace.Probe{}, nil
+	}
+	return workspace.Probe{Registered: true, Clean: true, Head: record.PinnedBase, Branch: record.OwnedBranch, GitDir: filepath.Join(record.CanonicalPath, ".git"), IndexPath: filepath.Join(record.CanonicalPath, ".git", "index")}, nil
+}
+func (*reviewBindingGit) Inspect(_ context.Context, record workspace.Record) (gitrepo.Inspection, error) {
+	return gitrepo.Inspection{Known: true, Registered: true, Clean: true, CanonicalPath: record.CanonicalPath, RecordedBranch: record.OwnedBranch, ObservedBranch: record.OwnedBranch, RecordedHead: record.PinnedBase, ObservedHead: record.PinnedBase}, nil
+}
+
+func TestCandidateAcceptsHeartbeatRefreshedAuthorityWithoutRebindingWorkspace(t *testing.T) {
+	fixture := newReviewFixture(t, "process-c")
+	now := time.Date(2026, 8, 30, 11, 58, 0, 0, time.UTC)
+	journal := newWP08Store()
+	core, err := newService(testConfig(t), journal, &reviewBindingGit{root: fixture.root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := core.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-c", "heartbeat-handoff", now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := core.EnsureWorkspace(t.Context(), WorkspaceRequest{OperationID: "bind-heartbeat-handoff", Authority: claimed, WorkspaceID: "workspace-heartbeat-handoff", RepositoryID: "repository-m1", LaneID: "lane-c", OwnedBranch: fixture.branch, PinnedBase: fixture.base, Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capsule, err := authorityCapsule(claimed, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := &executionAuthorityRepository{core: core}
+	runtime := &Runtime{core: core, authority: authority, execution: execution.NewService(authority, fixedExecutionIdentities{}, fixedExecutionClock{})}
+	coordinator, err := newReviewCoordinator(t.Context(), runtime, journal, journal, fixture.repository, testEligibility{}, map[ids.WorkID][]string{"work-a": {"criterion-build", "criterion-test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, ok := runtime.Binding(capsule.WorkspaceID)
+	if !ok {
+		t.Fatal("fixture workspace binding is absent")
+	}
+
+	heartbeatAt := now.Add(2 * time.Second)
+	refreshed, err := runtime.Heartbeat(t.Context(), "heartbeat-before-handoff", capsule, heartbeatAt, runtime.core.config.LeaseTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.AuthorityHeadRecordRevision == capsule.AuthorityHeadRecordRevision {
+		t.Fatal("heartbeat did not mint a refreshed exact authority head")
+	}
+	request := fixture.handoffRequest()
+	request.OperationID, request.HandoffID = "operation-heartbeat-handoff", "handoff-heartbeat"
+	request.WorkID, request.WorkspaceID, request.LeaseID = "work-a", "workspace-heartbeat-handoff", ids.LeaseID(capsule.LeaseID)
+	request.LeaseGeneration, request.Token = int64(capsule.LeaseGeneration), "1"
+	request.ActorID, request.ProcessID, request.SubmittedAt = "actor-a", "process-c", now.Add(3*time.Second)
+	request.ExpectedEligibility = completeTestFact("work-a", workgraph.StatusActive, workgraph.EligibilityHandoff)
+	if _, err := coordinator.SubmitCandidate(t.Context(), capsule, request); !IsOutcome(err, OutcomeStaleLease) {
+		t.Fatalf("pre-heartbeat capsule reached handoff: %v", err)
+	}
+	if _, ok := coordinator.Candidate(request.HandoffID); ok {
+		t.Fatal("pre-heartbeat capsule published candidate evidence")
+	}
+	if _, err := coordinator.SubmitCandidate(t.Context(), refreshed, request); err != nil {
+		t.Fatalf("refreshed exact capsule was refused: %v", err)
+	}
+	after, ok := runtime.Binding(capsule.WorkspaceID)
+	if !ok || !reflect.DeepEqual(after, before) {
+		t.Fatalf("heartbeat transferred or rewrote immutable workspace binding: before=%+v after=%+v", before, after)
+	}
+	assertAuthorityInvariants(t, core)
+}
+
+func TestCandidatePublicationAndHeartbeatLinearizeOnOneOwner(t *testing.T) {
+	fixture := newReviewFixture(t, "process-c")
+	now := time.Date(2026, 8, 30, 11, 58, 0, 0, time.UTC)
+	journal := newCandidateBlockingJournal()
+	core, err := newService(testConfig(t), journal, &reviewBindingGit{root: fixture.root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := core.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-c", "candidate-linearize", now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := core.EnsureWorkspace(t.Context(), WorkspaceRequest{OperationID: "bind-candidate-linearize", Authority: claimed, WorkspaceID: "workspace-candidate-linearize", RepositoryID: "repository-m1", LaneID: "lane-c", OwnedBranch: fixture.branch, PinnedBase: fixture.base, Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capsule, err := authorityCapsule(claimed, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := &executionAuthorityRepository{core: core}
+	runtime := &Runtime{core: core, authority: authority, execution: execution.NewService(authority, fixedExecutionIdentities{}, fixedExecutionClock{})}
+	coordinator, err := newReviewCoordinator(t.Context(), runtime, journal, journal, fixture.repository, testEligibility{}, map[ids.WorkID][]string{"work-a": {"criterion-build", "criterion-test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := fixture.handoffRequest()
+	request.OperationID, request.HandoffID = "operation-candidate-linearize", "handoff-candidate-linearize"
+	request.WorkID, request.WorkspaceID, request.LeaseID = "work-a", "workspace-candidate-linearize", ids.LeaseID(capsule.LeaseID)
+	request.LeaseGeneration, request.Token = int64(capsule.LeaseGeneration), "1"
+	request.ActorID, request.ProcessID, request.SubmittedAt = "actor-a", "process-c", now.Add(3*time.Second)
+	request.ExpectedEligibility = completeTestFact("work-a", workgraph.StatusActive, workgraph.EligibilityHandoff)
+
+	journal.arm()
+	candidateDone := make(chan error, 1)
+	go func() {
+		_, submitErr := coordinator.SubmitCandidate(t.Context(), capsule, request)
+		candidateDone <- submitErr
+	}()
+	<-journal.entered
+	state := core.works["work-a"]
+	if state.mu.TryLock() {
+		state.mu.Unlock()
+		close(journal.release)
+		t.Fatal("candidate publication did not hold the authority linearization lock")
+	}
+	heartbeatStarted := make(chan struct{})
+	heartbeatDone := make(chan error, 1)
+	go func() {
+		close(heartbeatStarted)
+		_, heartbeatErr := runtime.Heartbeat(t.Context(), "heartbeat-after-candidate-validation", capsule, now.Add(4*time.Second), runtime.core.config.LeaseTTL)
+		heartbeatDone <- heartbeatErr
+	}()
+	<-heartbeatStarted
+	select {
+	case heartbeatErr := <-heartbeatDone:
+		close(journal.release)
+		t.Fatalf("heartbeat crossed candidate's final authority boundary: %v", heartbeatErr)
+	default:
+	}
+	close(journal.release)
+	if err := <-candidateDone; err != nil {
+		t.Fatalf("candidate that linearized first failed: %v", err)
+	}
+	if err := <-heartbeatDone; err != nil {
+		t.Fatalf("heartbeat did not linearize after candidate publication: %v", err)
+	}
+	if _, ok := coordinator.Candidate(request.HandoffID); !ok {
+		t.Fatal("linearized candidate publication is absent")
+	}
+	assertAuthorityInvariants(t, core)
 }
 
 func TestReviewRejectsW1StaleChangedCandidateMissingEvidenceAndChangedReplay(t *testing.T) {

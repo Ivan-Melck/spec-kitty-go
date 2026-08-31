@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,7 +11,48 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/integration"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
+
+func TestIntegrationWorkspaceWaitsForCommonWorktreeMetadataLock(t *testing.T) {
+	repository, base := newRepository(t)
+	candidate := commitOnBranch(t, repository, "lane-metadata-lock", "candidate.txt", "candidate\n")
+	runGit(t, repository, "checkout", "--detach", "main")
+	managed := filepath.Join(t.TempDir(), "managed")
+	holder, err := Bind(context.Background(), Runner{}, "repository-integration", "project-1", repository, managed, "refs/heads/main", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiter, err := Bind(context.Background(), Runner{}, "repository-integration", "project-1", repository, managed, "refs/heads/main", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- holder.withWorktreeMetadataLock(context.Background(), func() error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = waiter.EnsureIntegrationWorkspace(ctx, "operation-metadata-lock", base, candidate)
+	if !workspace.IsKind(err, workspace.KindGitFailure) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled integration metadata wait error=%v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(managed, "integration-"+operationSuffix("operation-metadata-lock"))
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("integration waiter mutated worktree path: %v", statErr)
+	}
+}
 
 func TestDetachedIntegrationWorkspaceUsesExpectedOldAndPreservesPrimary(t *testing.T) {
 	repository, base := newRepository(t)

@@ -184,7 +184,7 @@ func exactCandidateBinding(repository *gitrepo.Repository, binding WorkspaceBind
 		return false
 	}
 	repositoryBinding := repository.Binding()
-	return binding.Status == "active-bound" && binding.CanonicalPath != "" && binding.OwnedBranch != "" && binding.LaneID != "" && binding.WorkspaceID == capsule.WorkspaceID && string(binding.WorkspaceID) == request.WorkspaceID.String() && string(binding.WorkID) == request.WorkID.String() && binding.RepositoryID == repositoryBinding.RepositoryID && binding.ActorID == capsule.ActorID && string(binding.ActorID) == request.ActorID.String() && binding.ProcessID == capsule.ProcessID && string(binding.ProcessID) == request.ProcessID.String() && binding.RunID == capsule.RunID && string(binding.RunID) == request.RunID.String() && binding.LeaseID == capsule.LeaseID && string(binding.LeaseID) == request.LeaseID.String() && binding.Generation == capsule.LeaseGeneration && int64(binding.Generation) == request.LeaseGeneration && binding.FenceToken == capsule.FenceToken && request.Token == fmt.Sprint(binding.FenceToken) && binding.AuthorityHeadRecordRevision == capsule.AuthorityHeadRecordRevision && binding.WorkRevisionID == capsule.WorkRevisionID && string(binding.WorkRevisionID) == request.WorkRevisionID.String() && binding.RuntimeEpochID == capsule.RuntimeEpochID
+	return binding.Status == "active-bound" && binding.CanonicalPath != "" && binding.OwnedBranch != "" && binding.LaneID != "" && binding.WorkspaceID == capsule.WorkspaceID && string(binding.WorkspaceID) == request.WorkspaceID.String() && string(binding.WorkID) == request.WorkID.String() && binding.RepositoryID == repositoryBinding.RepositoryID && binding.ActorID == capsule.ActorID && string(binding.ActorID) == request.ActorID.String() && binding.ProcessID == capsule.ProcessID && string(binding.ProcessID) == request.ProcessID.String() && binding.RunID == capsule.RunID && string(binding.RunID) == request.RunID.String() && binding.LeaseID == capsule.LeaseID && string(binding.LeaseID) == request.LeaseID.String() && binding.Generation == capsule.LeaseGeneration && int64(binding.Generation) == request.LeaseGeneration && binding.FenceToken == capsule.FenceToken && request.Token == fmt.Sprint(binding.FenceToken) && binding.WorkRevisionID == capsule.WorkRevisionID && string(binding.WorkRevisionID) == request.WorkRevisionID.String() && binding.RuntimeEpochID == capsule.RuntimeEpochID
 }
 
 func (s *workflowStore) reserveCandidate(request handoff.Request, authority authorityEvidence, binding WorkspaceBinding) error {
@@ -321,9 +321,32 @@ func (s *workflowStore) CommitHandoff(ctx context.Context, r handoff.Request, e 
 	authority := reservation.Authority
 	contributors, _ := handoff.CanonicalContributors(r.Contributors)
 	criteria := append([]string(nil), s.criteria[r.WorkID]...)
-	binding, bound := s.runtime.Binding(controljournal.WorkspaceID(r.WorkspaceID))
 	capsule, capsuleErr := authority.capsule()
-	if !bound || capsuleErr != nil || !reflect.DeepEqual(binding, reservation.Binding) || !exactCandidateBinding(s.repository, binding, capsule, r) || e.PinnedBase != binding.PinnedBase || e.OwnedBranch != binding.OwnedBranch || e.ObservedBranchHead != r.Candidate {
+	if capsuleErr != nil {
+		return handoff.Record{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "candidate commit authority is malformed"}
+	}
+	exact, exactErr := s.runtime.authorityFromCapsule(capsule, "candidate-commit")
+	if exactErr != nil {
+		return handoff.Record{}, exactErr
+	}
+	core := s.runtime.core
+	state := core.works[exact.WorkID]
+	if state == nil {
+		return handoff.Record{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "candidate work authority is absent"}
+	}
+	// This is the one-owner/runtime linearization boundary. Heartbeat and expiry
+	// take the same epoch/read + work-state lock order, so the final authority
+	// check, durable candidate publication, and local projection are indivisible
+	// with respect to authority-head movement on this control-store owner.
+	core.epochMu.RLock()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	defer core.epochMu.RUnlock()
+	if err := core.authorizeLocked(state, exact, "candidate-commit", r.SubmittedAt, core.epoch); err != nil {
+		return handoff.Record{}, err
+	}
+	binding, bound := s.runtime.Binding(controljournal.WorkspaceID(r.WorkspaceID))
+	if !bound || !reflect.DeepEqual(binding, reservation.Binding) || !exactCandidateBinding(s.repository, binding, capsule, r) || e.PinnedBase != binding.PinnedBase || e.OwnedBranch != binding.OwnedBranch || e.ObservedBranchHead != r.Candidate {
 		return handoff.Record{}, &handoff.Error{Kind: handoff.KindStaleAuthority, Message: "candidate commit authority differs from the exact inspected reservation"}
 	}
 	record := handoff.Record{HandoffID: r.HandoffID, HandoffGeneration: 1, ProjectID: r.ProjectID, MissionID: r.MissionID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID, RunID: r.RunID, WorkspaceID: r.WorkspaceID, RepositoryID: s.repository.Binding().RepositoryID, LeaseID: r.LeaseID, LeaseGeneration: r.LeaseGeneration, LaneID: binding.LaneID, Candidate: r.Candidate, PinnedBase: e.PinnedBase, Contributors: contributors, ContributorDigest: digestJSON(contributors), CriteriaDigest: digestJSON(criteria), EvidenceDigest: r.EvidenceDigest, Verification: e, SubmittedAt: r.SubmittedAt.UTC()}

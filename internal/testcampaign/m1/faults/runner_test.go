@@ -5,60 +5,55 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	productfaults "github.com/spec-kitty/go-kitty3/internal/faults"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
-	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m1/mutants"
 )
 
 type cleanPort struct{}
 
 func (cleanPort) ObserveM1(context.Context) (m1.Observation, error) { return validObservation(), nil }
 func (cleanPort) ProbeStaleAuthority(context.Context) (m1.StaleProbe, error) {
-	return m1.StaleProbe{Attempted: true, Refused: true, EpochStale: true}, nil
+	return m1.StaleProbe{Attempted: true, Refused: true, LeaseStale: true, EpochStale: true}, nil
 }
 
-func TestFaultRecordSemanticsRequireExactFiveCutsOnceAndTerminal(t *testing.T) {
-	for index, definition := range Definitions() {
-		t.Run(definition.ID, func(t *testing.T) {
-			runner := cleanRunner(uint64(index+1), func(ctx context.Context, attempt Attempt) (Execution, error) {
-				if err := attempt.Hook.Reach(ctx, definition.ID); !errors.Is(err, productfaults.ErrCrashRequested) {
-					t.Fatalf("production hook acknowledgement=%v", err)
-				}
-				return Execution{Facts: validFacts(definition.ID), Observation: cleanPort{}, Artifacts: validArtifacts()}, nil
-			})
-			record := runner.Run(t.Context(), definition.ID)
-			if !record.Started || !record.Terminal || record.Outcome != OutcomePass || record.Cut != definition.Cut || !record.Invariants.Passed() {
-				t.Fatalf("fault did not pass honestly: %+v", record)
-			}
-		})
+func TestLiteralFaultFactsAndHooksCannotMintPassingRecord(t *testing.T) {
+	for _, definition := range Definitions() {
+		runner := Runner{RunID: "run-m1", Seed: 1, Executor: ExecutorFunc(func(ctx context.Context, attempt Attempt) (Execution, error) {
+			_ = attempt.Hook.Reach(ctx, definition.ID)
+			return Execution{Facts: validFacts(definition.ID), Observation: cleanPort{}, Artifacts: validArtifacts()}, nil
+		})}
+		if record := runner.Run(t.Context(), definition.ID); record.Outcome == OutcomePass || !record.Terminal || len(record.Invariants.Assertions) != len(m1.InvariantIDs) {
+			t.Fatalf("literal fault fixture minted pass for %s: %+v", definition.ID, record)
+		}
 	}
 }
 
-func TestFiveFaultCutsHaveExecutableProductionGuards(t *testing.T) {
+func TestProductionFaultRecordsAreMintedByExactExecutionReceipts(t *testing.T) {
+	lifecycle := startFaultLifecycle(t)
 	root := faultModuleRoot(t)
-	guards := []mutants.Entry{
-		{ID: "GJ-01", Package: "./internal/controljournal/application", Test: "TestGJ01PreservesNonemptyCensusExactly", Guard: "application pre-publication"},
-		{ID: "GJ-02", Package: "./internal/controljournal/application", Test: "TestReconcileRealGJ02ResponseDrop", Guard: "external response-drop proxy"},
-		{ID: "GJ-03", Package: "./internal/provingground", Test: "TestGJ03OrphanHasNoAuthorityAndCannotBePromoted", Guard: "workspace physical-before-binding"},
-		{ID: "GJ-04", Package: "./internal/provingground", Test: "TestGJ04RetryReturnsSameBindingWithoutDuplicateWorkspace", Guard: "binding-before-capsule"},
-		{ID: "GJ-05", Package: "./internal/provingground", Test: "TestEffectGJ05LeavesDiscoverableIntentAndRecoveryObservesWithoutRepeat", Guard: "effect intent-before-observation"},
-	}
-	executor := mutants.GoTestExecutor{Root: root}
-	for _, guard := range guards {
-		if guard.ID == "GJ-02" && os.Getenv("SPEC_KITTY_M1_GAPDBD") == "" {
-			continue // exact external gate runs when the admitted artifact is supplied
+	executor := &ProductionExecutor{Root: root, Lifecycle: lifecycle}
+	t.Cleanup(func() { _ = executor.Close() })
+	seenAttempts := make(map[string]struct{}, len(Definitions()))
+	for index, definition := range Definitions() {
+		record := (Runner{RunID: "run-m1-production", Seed: uint64(index + 1), Executor: executor}).Run(t.Context(), definition.ID)
+		if !record.Started || !record.Terminal || record.Outcome != OutcomePass || record.Cut != definition.Cut || !record.Invariants.Passed() || !record.Source.Valid() || record.Receipt.seal == [32]byte{} {
+			t.Fatalf("production fault did not mint an admissible record: %+v", record)
 		}
-		observation, err := executor.ExecuteGuard(t.Context(), guard)
-		if err != nil || !observation.NamedTestStarted || !observation.NamedTestPassed {
-			t.Fatalf("production fault guard %s did not execute: observation=%+v err=%v", guard.ID, observation, err)
+		if record.Receipt.Source != record.Source || record.Receipt.FactSHA256 != factsDigest(record.Facts) || record.Receipt.InvariantSHA256 != invariantDigest(record.Invariants) {
+			t.Fatalf("record/receipt binding drifted: %+v", record)
 		}
+		if _, duplicate := seenAttempts[record.Receipt.AttemptID]; duplicate {
+			t.Fatalf("production receipt was reused: %s", record.Receipt.AttemptID)
+		}
+		seenAttempts[record.Receipt.AttemptID] = struct{}{}
 	}
 }
 
@@ -81,10 +76,9 @@ func faultModuleRoot(t *testing.T) string {
 }
 
 func TestFaultRunnerRejectsUnboundSourceEvidence(t *testing.T) {
-	base := cleanRunner(1, func(ctx context.Context, attempt Attempt) (Execution, error) {
-		_ = attempt.Hook.Reach(ctx, attempt.Definition.ID)
-		return cleanExecution(attempt.Definition.ID), nil
-	})
+	lifecycle := startFaultLifecycle(t)
+	base := &ProductionExecutor{Root: faultModuleRoot(t), Lifecycle: lifecycle}
+	t.Cleanup(func() { _ = base.Close() })
 	mutants := []func(*SourceBinding){
 		func(s *SourceBinding) { s.Commit = "not-a-commit" },
 		func(s *SourceBinding) { s.Tree = "" },
@@ -92,8 +86,11 @@ func TestFaultRunnerRejectsUnboundSourceEvidence(t *testing.T) {
 		func(s *SourceBinding) { s.SidecarProvenanceSHA256 = "bad" },
 	}
 	for index, mutate := range mutants {
-		runner := base
-		mutate(&runner.Source)
+		runner := Runner{RunID: "run-source-mutant", Seed: uint64(index + 100), Executor: ExecutorFunc(func(ctx context.Context, attempt Attempt) (Execution, error) {
+			execution, err := base.ExecuteFault(ctx, attempt)
+			mutate(&execution.Source)
+			return execution, err
+		})}
 		if result := runner.Run(t.Context(), "GJ-01"); result.Outcome != OutcomeFail || result.Diagnostic == "" {
 			t.Fatalf("source mutant %d passed: %+v", index, result)
 		}
@@ -155,10 +152,31 @@ func TestFaultRunnerFailureIncompleteAndPanicRemainTerminalAndSchemaShaped(t *te
 			if !record.Started || !record.Terminal || record.Outcome != test.want || record.FaultID == "" || record.RunID == "" || record.Cut == "" || record.Diagnostic == "" {
 				t.Fatalf("non-pass evidence malformed: %+v", record)
 			}
-			if test.name != "killed runner" && len(record.Invariants.Assertions) != len(m1.InvariantIDs) {
+			if len(record.Invariants.Assertions) != len(m1.InvariantIDs) {
 				t.Fatalf("terminal path omitted universal invariants: %+v", record.Invariants)
 			}
 		})
+	}
+}
+
+func TestFaultRunnerEarlyTerminalPathsCarryEightFailedInvariants(t *testing.T) {
+	for _, runnerAndID := range []struct {
+		runner Runner
+		id     string
+	}{
+		{Runner{RunID: "run", Executor: ExecutorFunc(func(context.Context, Attempt) (Execution, error) { return Execution{}, nil })}, "unknown"},
+		{Runner{RunID: "run"}, "GJ-01"},
+		{Runner{Executor: ExecutorFunc(func(context.Context, Attempt) (Execution, error) { return Execution{}, nil })}, "GJ-01"},
+	} {
+		record := runnerAndID.runner.Run(t.Context(), runnerAndID.id)
+		if !record.Started || !record.Terminal || record.Outcome == OutcomePass || len(record.Invariants.Assertions) != 8 {
+			t.Fatalf("early terminal evidence malformed: %+v", record)
+		}
+		for _, assertion := range record.Invariants.Assertions {
+			if assertion.Passed {
+				t.Fatalf("uninspectable early invariant passed: %+v", record.Invariants)
+			}
+		}
 	}
 }
 
@@ -185,7 +203,65 @@ func (badPort) ProbeStaleAuthority(context.Context) (m1.StaleProbe, error) {
 }
 
 func cleanRunner(seed uint64, executor ExecutorFunc) Runner {
-	return Runner{RunID: "run-m1", Seed: seed, Source: SourceBinding{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40), AdmittedTupleSHA256: "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d", SidecarProvenanceSHA256: strings.Repeat("d", 64)}, Executor: executor}
+	return Runner{RunID: "run-m1", Seed: seed, Executor: executor}
+}
+
+func startFaultLifecycle(t *testing.T) *sidecargapdb.Lifecycle {
+	t.Helper()
+	source := os.Getenv("SPEC_KITTY_M1_GAPDBD")
+	if source == "" {
+		t.Skip("exact admitted external gapdbd not supplied")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(root, "gapdbd-62219cf")
+	input, err := os.Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	output, err := os.OpenFile(executable, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(output, input); err != nil {
+		_ = output.Close()
+		t.Fatal(err)
+	}
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot, dataRoot := t.TempDir(), t.TempDir()
+	if err := os.Chmod(runtimeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := sidecargapdb.Start(t.Context(), sidecargapdb.LifecycleConfig{
+		ExecutablePath: executable, AdmissionRecordPath: faultAdmissionRecord(t), RuntimeRoot: runtimeRoot, DataDirectory: filepath.Join(dataRoot, "database"),
+		SupervisorRunID: "run-fault-production", ProductPolicySHA256: strings.Repeat("a", 64), StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := lifecycle.Stop(context.Background()); err != nil {
+			t.Errorf("stop sidecar: %v", err)
+		}
+	})
+	return lifecycle
+}
+
+func faultAdmissionRecord(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime caller unavailable")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", "..", "..", "docs", "programs", "evidence", "m1-admission.json"))
 }
 
 func cleanExecution(id string) Execution {

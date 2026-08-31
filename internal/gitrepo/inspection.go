@@ -75,6 +75,10 @@ func (r *Repository) Inspect(ctx context.Context, record workspace.Record) (Insp
 // Cleanup removes only a known, clean, inactive, non-quarantined worktree.
 // It never deletes the owned branch, so the exact commit remains reachable.
 func (r *Repository) Cleanup(ctx context.Context, record workspace.Record, leaseStatus string) error {
+	return r.withWorktreeMetadataLock(ctx, func() error { return r.cleanupLocked(ctx, record, leaseStatus) })
+}
+
+func (r *Repository) cleanupLocked(ctx context.Context, record workspace.Record, leaseStatus string) error {
 	inspection, err := r.Inspect(ctx, record)
 	if err != nil {
 		return err

@@ -19,6 +19,16 @@ import (
 // worktree. Replacement mutation leases never reuse another operation's
 // mutable filesystem, even when they integrate the same candidate.
 func (r *Repository) EnsureIntegrationWorkspace(ctx context.Context, operationID, target, candidate string) (integration.WorkspaceFacts, error) {
+	var facts integration.WorkspaceFacts
+	err := r.withWorktreeMetadataLock(ctx, func() error {
+		var innerErr error
+		facts, innerErr = r.ensureIntegrationWorkspaceLocked(ctx, operationID, target, candidate)
+		return innerErr
+	})
+	return facts, err
+}
+
+func (r *Repository) ensureIntegrationWorkspaceLocked(ctx context.Context, operationID, target, candidate string) (integration.WorkspaceFacts, error) {
 	if !isObjectID(target) || !isObjectID(candidate) {
 		return integration.WorkspaceFacts{}, &integration.Error{Kind: integration.KindInvalid, Message: "integration target and candidate must be full object IDs"}
 	}
@@ -352,6 +362,10 @@ func (r *Repository) VerifyIntegrationResult(ctx context.Context, result, target
 // CleanupIntegrationWorkspace intentionally refuses dirty or conflicted
 // workspaces. Repair evidence is more important than eager cleanup.
 func (r *Repository) CleanupIntegrationWorkspace(ctx context.Context, record integration.Record) error {
+	return r.withWorktreeMetadataLock(ctx, func() error { return r.cleanupIntegrationWorkspaceLocked(ctx, record) })
+}
+
+func (r *Repository) cleanupIntegrationWorkspaceLocked(ctx context.Context, record integration.Record) error {
 	expectedPath := filepath.Join(r.binding.ManagedRoot, "integration-"+operationSuffix(record.OperationID.String()))
 	if record.Status != integration.StatusDone || (record.CleanupStatus != integration.CleanupEligible && record.CleanupStatus != integration.CleanupComplete) || record.OperationID == "" || record.WorkspacePath != expectedPath || record.Candidate == "" || record.ResultCommit == "" || record.ObservedTarget == "" {
 		return &integration.Error{Kind: integration.KindRepairRequired, Message: "refuse cleanup without a terminal durable integration binding", Observed: map[string]string{"workspace": record.WorkspacePath, "status": string(record.Status)}, Expected: map[string]string{"workspace": expectedPath, "status": string(integration.StatusDone)}}

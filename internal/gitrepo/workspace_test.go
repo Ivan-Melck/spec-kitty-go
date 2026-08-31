@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,84 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
+
+func TestSimultaneousCreatesAcrossRepositoryInstancesSerializeWorktreeMetadata(t *testing.T) {
+	repository, base := newRepository(t)
+	managed := filepath.Join(t.TempDir(), "workspaces")
+	first, err := Bind(context.Background(), Runner{}, "repository-1", "project-1", repository, managed, "refs/heads/main", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Bind(context.Background(), Runner{}, "repository-1", "project-1", repository, managed, "refs/heads/main", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.PrepareManagedRoot(); err != nil {
+		t.Fatal(err)
+	}
+	records := []workspace.Record{workspaceRecord(t, first, "workspace-concurrent-a", "runs/concurrent-a", base), workspaceRecord(t, second, "workspace-concurrent-b", "runs/concurrent-b", base)}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for index, adapter := range []*Repository{first, second} {
+		index, adapter := index, adapter
+		go func() {
+			<-start
+			errs <- adapter.Create(context.Background(), records[index])
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, adapter := range []*Repository{first, second} {
+		probe, err := adapter.Probe(context.Background(), records[index])
+		if err != nil || !probe.Registered || probe.Branch != records[index].OwnedBranch || probe.Head != base {
+			t.Fatalf("workspace %d probe=%+v err=%v", index, probe, err)
+		}
+	}
+}
+
+func TestWorktreeMetadataLockWaitHonorsContextCancellation(t *testing.T) {
+	repository, base := newRepository(t)
+	managed := filepath.Join(t.TempDir(), "workspaces")
+	holder, err := Bind(context.Background(), Runner{}, "repository-1", "project-1", repository, managed, "refs/heads/main", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiter, err := Bind(context.Background(), Runner{}, "repository-1", "project-1", repository, managed, "refs/heads/main", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.PrepareManagedRoot(); err != nil {
+		t.Fatal(err)
+	}
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- holder.withWorktreeMetadataLock(context.Background(), func() error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = waiter.Create(ctx, workspaceRecord(t, waiter, "workspace-canceled", "runs/canceled", base))
+	if !workspace.IsKind(err, workspace.KindGitFailure) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled worktree lock error=%v", err)
+	}
+	close(release)
+	if err := <-holderDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(filepath.Join(managed, "workspace-canceled")); !os.IsNotExist(statErr) {
+		t.Fatalf("canceled waiter mutated workspace path: %v", statErr)
+	}
+}
 
 func TestRepositoryBindingRejectsManagedRootAndStoreEscapes(t *testing.T) {
 	t.Parallel()
