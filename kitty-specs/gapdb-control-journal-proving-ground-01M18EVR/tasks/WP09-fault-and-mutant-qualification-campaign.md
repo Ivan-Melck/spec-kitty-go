@@ -51,6 +51,12 @@ create_intent:
 - internal/testcampaign/m1/invariants_test.go
 - internal/provingground/qualification.go
 - internal/provingground/qualification_test.go
+- internal/gitrepo/workspace.go
+- internal/gitrepo/workspace_test.go
+- internal/gitrepo/integration.go
+- internal/gitrepo/integration_test.go
+- internal/gitrepo/inspection.go
+- internal/gitrepo/inspection_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -64,6 +70,12 @@ owned_files:
 - internal/testcampaign/m1/invariants_test.go
 - internal/provingground/qualification.go
 - internal/provingground/qualification_test.go
+- internal/gitrepo/workspace.go
+- internal/gitrepo/workspace_test.go
+- internal/gitrepo/integration.go
+- internal/gitrepo/integration_test.go
+- internal/gitrepo/inspection.go
+- internal/gitrepo/inspection_test.go
 role: implementer
 tags:
 - m1
@@ -109,10 +121,12 @@ observations; it does not decide production adoption.
 
 ## Branch and ownership
 
-Begin from accepted WP06–WP08. Edit only the eight testcampaign files and two
-additive proving-ground qualification seam files listed. The seam may expose
-read-only production facts and existing fault hooks; it must not add a
-testcampaign dependency or a test-only mutation path. WP10 owns aggregate
+Begin from accepted WP06–WP08. Edit only the eight testcampaign files, two
+additive proving-ground qualification seam files, and six Git-repository files
+listed. The seam may expose read-only production facts and existing fault
+hooks; it must not add a testcampaign dependency or a test-only mutation path.
+The Git files own the cross-process worktree-metadata lock and its direct
+regressions discovered by the NFR-003 campaign. WP10 owns aggregate
 campaign/evidence/CLI files; do not create them here.
 
 ## T047: Implement five deterministic fault-cut runners
