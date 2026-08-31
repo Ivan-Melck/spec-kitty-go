@@ -59,6 +59,13 @@ create_intent:
 - internal/testcampaign/m1/testdata/evidence/incomplete.json
 - cmd/spk-m1-proving-ground/main.go
 - cmd/spk-m1-proving-ground/main_test.go
+- internal/testcampaign/m1/crown/runner.go
+- internal/testcampaign/m1/crown/runner_test.go
+- internal/testcampaign/m1/external/runner.go
+- internal/testcampaign/m1/external/runner_test.go
+- internal/testcampaign/m1/faults/crown.go
+- internal/testcampaign/m1/faults/crown_test.go
+- internal/architecture/m1_crown_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -72,6 +79,17 @@ owned_files:
 - internal/testcampaign/m1/testdata/evidence/incomplete.json
 - cmd/spk-m1-proving-ground/main.go
 - cmd/spk-m1-proving-ground/main_test.go
+- internal/testcampaign/m1/crown/runner.go
+- internal/testcampaign/m1/crown/runner_test.go
+- internal/testcampaign/m1/external/runner.go
+- internal/testcampaign/m1/external/runner_test.go
+- internal/testcampaign/m1/faults/crown.go
+- internal/testcampaign/m1/faults/crown_test.go
+- internal/testcampaign/m1/faults/runner.go
+- internal/testcampaign/m1/focused/campaign.go
+- internal/testcampaign/m1/focused/campaign_test.go
+- internal/architecture/m1_crown_test.go
+- kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/quickstart.md
 role: implementer
 tags:
 - m1
@@ -285,3 +303,22 @@ presented as human approval.
 - Failure/incomplete paths are honest and fail closed.
 - M1 completion and human production adoption remain separate decisions.
 - No M2 work begins automatically.
+
+## Scope reconciliation — 2026-08-31
+
+Pre-implementation architecture review found that the original ten-file scope
+could not execute the required trial honestly. The parent `m1` package cannot
+import `m1/faults`, `m1/focused`, and `m1/mutants` because those packages already
+import `m1`; a sibling `m1/crown` orchestrator is therefore required. The
+fourteen external scenarios also need a reusable production runner instead of
+invoking `_test.go` through a subprocess, and the focused executor must accept
+the immutable umbrella RunID instead of its historical `run-qualification`
+constant. The added files above authorize those narrow seams and one
+architecture guard proving the crown command has no SQLite dependency.
+
+The executable order is also clarified: W2 and W3 are handed off, independently
+reviewed, and serialized while their authority is current; owner restart,
+restore, new-epoch admission, predecessor-capsule refusal, and playback equality
+then occur before terminal evaluation. Restarting first would invalidate the
+very W2/W3 capsules the accepted story requires as candidates. Canonical CLI
+verbs are `run` and `verify`; quickstart wording may be corrected accordingly.
