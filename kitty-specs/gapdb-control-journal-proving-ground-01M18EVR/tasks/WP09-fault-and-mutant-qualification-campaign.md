@@ -51,6 +51,8 @@ create_intent:
 - internal/testcampaign/m1/invariants_test.go
 - internal/provingground/qualification.go
 - internal/provingground/qualification_test.go
+- internal/provingground/authority.go
+- internal/provingground/authority_test.go
 - internal/gitrepo/workspace.go
 - internal/gitrepo/workspace_test.go
 - internal/gitrepo/integration.go
@@ -76,6 +78,8 @@ owned_files:
 - internal/testcampaign/m1/invariants_test.go
 - internal/provingground/qualification.go
 - internal/provingground/qualification_test.go
+- internal/provingground/authority.go
+- internal/provingground/authority_test.go
 - internal/gitrepo/workspace.go
 - internal/gitrepo/workspace_test.go
 - internal/gitrepo/integration.go
@@ -297,3 +301,4 @@ unlike evidence categories.
 - 2026-08-31T03:36:16Z – codex-wp09-implementer-cycle2 – Cycle 2 scope reconciliation: the long-running NFR-004 campaign proved public heartbeat returns a current capsule that handoff rejects because exactCandidateBinding incorrectly treats the workspace's immutable claim-time authority-head revision as a mutable heartbeat coordinate. Authorize internal/provingground/review.go and review_test.go to retain Runtime.Authorize as the current-head guard, stop requiring the immutable binding to mirror heartbeat revision, and prove refreshed-capsule handoff succeeds while the pre-heartbeat capsule remains stale.
 - 2026-08-31T05:12:42Z – codex-root – Cycle 3 scope reconciliation: authorize internal/sidecar/gapdb/lifecycle.go and lifecycle_test.go for a narrow production RestartOwned clean/unclean owner-lifetime seam required to execute NFR-007 through public APIs; the campaign must rebuild and restore the runtime and refuse predecessor capsules.
 - 2026-08-31T05:30:00Z – codex-root – Cycle 3 scope reconciliation: authorize internal/provingground/workspace.go and workspace_test.go to classify a validated predecessor-runtime capsule as stale epoch before current workspace/lease status, while preserving stale-lease refusal for a quarantined capsule from the current epoch.
+- 2026-08-31T05:45:00Z – codex-root – Cycle 3 scope reconciliation: authorize internal/provingground/authority.go and authority_test.go because repeated real owner restarts exposed restoreWorkspaceCensus forcing historical quarantined workspace heads into the newest epoch. Bind historical heads to their exact terminal workspace event/head epoch; active-bound workspaces must still use the current epoch.
