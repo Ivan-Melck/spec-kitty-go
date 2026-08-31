@@ -1,0 +1,534 @@
+// Package m1 contains the observation-only qualification contracts for the M1
+// proving ground. It deliberately owns no product state and cannot mutate the
+// control journal, Git repository, tracker, or GapDB.
+package m1
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+const (
+	InvariantOneAuthority       = "one_valid_authority_per_work_revision"
+	InvariantWorkspaceImmutable = "workspace_binding_immutable"
+	InvariantStaleRefused       = "stale_authority_refused"
+	InvariantPrimaryIsolation   = "primary_isolation"
+	InvariantReviewIndependent  = "reviewer_actor_independence"
+	InvariantIntegrationSerial  = "serialized_target_authority"
+	InvariantEffectAttribution  = "effect_attribution"
+	InvariantJournalComplete    = "journal_complete"
+)
+
+var InvariantIDs = []string{
+	InvariantOneAuthority, InvariantWorkspaceImmutable, InvariantStaleRefused,
+	InvariantPrimaryIsolation, InvariantReviewIndependent,
+	InvariantIntegrationSerial, InvariantEffectAttribution, InvariantJournalComplete,
+}
+
+// ObservationPort is the only state seam used by qualification assertions.
+// Implementations must inspect public product facts. A port that cannot inspect
+// a required fact returns an error; the evaluator records false, never true.
+type ObservationPort interface {
+	ObserveM1(context.Context) (Observation, error)
+	ProbeStaleAuthority(context.Context) (StaleProbe, error)
+}
+
+type Observation struct {
+	Capabilities CapabilityObservation
+	Journal      JournalObservation
+	Authorities  []AuthorityObservation
+	Workspaces   []WorkspaceObservation
+	Epoch        EpochObservation
+	Reviews      []ReviewObservation
+	Integration  []IntegrationObservation
+	Effects      []EffectObservation
+	Playback     PlaybackObservation
+}
+
+// CapabilityObservation distinguishes an inspected empty domain from a domain
+// the runner could not inspect. Absence of capability always fails closed.
+type CapabilityObservation struct {
+	Authority   bool
+	Workspace   bool
+	Review      bool
+	Integration bool
+	Effects     bool
+}
+
+type JournalObservation struct {
+	Inspectable bool
+	Operations  []JournalOperation
+	Heads       []JournalHead
+}
+
+type JournalOperation struct {
+	OperationID      string
+	RequestDigest    string
+	ResultDigest     string
+	RecordRevision   uint64
+	EventCount       int
+	Events           []JournalEvent
+	Terminal         bool
+	CanonicalResult  []byte
+	ObservedHeadKeys []string
+}
+
+type JournalEvent struct {
+	EventID        string
+	Index          int
+	Count          int
+	RecordRevision uint64
+	AggregateKey   string
+	LogicalVersion uint64
+	PayloadDigest  string
+}
+
+type JournalHead struct {
+	AggregateKey   string
+	LogicalVersion uint64
+	RecordRevision uint64
+	LastEventID    string
+	PayloadDigest  string
+}
+
+type AuthorityObservation struct {
+	WorkRevisionID string
+	WorkID         string
+	ActorID        string
+	ProcessID      string
+	LeaseID        string
+	RuntimeEpochID string
+	Generation     uint64
+	FenceToken     uint64
+	Current        bool
+	Expired        bool
+}
+
+type WorkspaceObservation struct {
+	WorkspaceID    string
+	WorkRevisionID string
+	WorkID         string
+	LeaseID        string
+	RuntimeEpochID string
+	Generation     uint64
+	CanonicalPath  string
+	OwnedBranch    string
+	Status         string
+	PrimaryPath    string
+	Head           string
+	Transferred    bool
+	Registered     bool
+}
+
+type EpochObservation struct {
+	Inspectable      bool
+	Current          string
+	Predecessor      string
+	EveryCurrentUses bool
+}
+
+type ReviewObservation struct {
+	CandidateID        string
+	ContributorIDs     []string
+	ReviewerActorID    string
+	Verdict            string
+	CandidateImmutable bool
+}
+
+type IntegrationObservation struct {
+	RepositoryID        string
+	TargetRef           string
+	ActiveAuthorities   int
+	CandidateID         string
+	SuccessfulPublishes int
+	GitExpectedOld      string
+	GitObservedOld      string
+	GitResult           string
+	JournalResult       string
+}
+
+type EffectObservation struct {
+	EffectID              string
+	OperationID           string
+	ExpectedRevision      string
+	AppliedRevision       string
+	ExpectedValue         string
+	AppliedValue          string
+	ExpectedMarker        string
+	AppliedMarker         string
+	CurrentRevision       string
+	CurrentValue          string
+	CurrentMarker         string
+	Dispatches            int
+	CompensationAttempted bool
+	CompensationApplied   bool
+	Attributable          bool
+	HumanValuePreserved   bool
+}
+
+type PlaybackObservation struct {
+	Inspectable     bool
+	RestoreDigest   string
+	PlaybackDigest  string
+	AdapterCalls    uint64
+	DurableWrites   uint64
+	StableCanonical bool
+}
+
+type StaleProbe struct {
+	Attempted        bool
+	Refused          bool
+	LeaseStale       bool
+	EpochStale       bool
+	AuthorityChanges uint64
+	WorkspaceChanges uint64
+}
+
+type Assertion struct {
+	ID         string `json:"id"`
+	Passed     bool   `json:"passed"`
+	Diagnostic string `json:"diagnostic"`
+}
+
+type InvariantSummary struct {
+	OneValidAuthorityPerWorkRevision bool        `json:"one_valid_authority_per_work_revision"`
+	WorkspaceBindingImmutable        bool        `json:"workspace_binding_immutable"`
+	StaleAuthorityRefused            bool        `json:"stale_authority_refused"`
+	PrimaryIsolation                 bool        `json:"primary_isolation"`
+	ReviewerActorIndependence        bool        `json:"reviewer_actor_independence"`
+	SerializedTargetAuthority        bool        `json:"serialized_target_authority"`
+	EffectAttribution                bool        `json:"effect_attribution"`
+	JournalComplete                  bool        `json:"journal_complete"`
+	Assertions                       []Assertion `json:"assertions"`
+}
+
+func (s InvariantSummary) Passed() bool {
+	return s.OneValidAuthorityPerWorkRevision && s.WorkspaceBindingImmutable &&
+		s.StaleAuthorityRefused && s.PrimaryIsolation && s.ReviewerActorIndependence &&
+		s.SerializedTargetAuthority && s.EffectAttribution && s.JournalComplete
+}
+
+// AssertUniversal evaluates every invariant even if observation or a previous
+// invariant fails. This makes failure evidence complete and prevents a missing
+// inspection capability from becoming a vacuous pass.
+func AssertUniversal(ctx context.Context, port ObservationPort) InvariantSummary {
+	if port == nil {
+		return failedSummary("observation port is absent")
+	}
+	observation, observeErr := port.ObserveM1(ctx)
+	probe, probeErr := port.ProbeStaleAuthority(ctx)
+	checks := []struct {
+		id string
+		fn func() error
+	}{
+		{InvariantOneAuthority, func() error { return assertAuthority(observation) }},
+		{InvariantWorkspaceImmutable, func() error { return assertWorkspace(observation) }},
+		{InvariantStaleRefused, func() error { return assertEpochAndStale(observation, probe, probeErr) }},
+		{InvariantPrimaryIsolation, func() error { return assertPrimary(observation) }},
+		{InvariantReviewIndependent, func() error { return assertReview(observation) }},
+		{InvariantIntegrationSerial, func() error { return assertIntegration(observation) }},
+		{InvariantEffectAttribution, func() error { return assertEffects(observation) }},
+		{InvariantJournalComplete, func() error { return assertJournalAndPlayback(observation) }},
+	}
+	result := InvariantSummary{Assertions: make([]Assertion, 0, len(checks))}
+	for _, check := range checks {
+		err := observeErr
+		if err == nil {
+			err = check.fn()
+		}
+		assertion := Assertion{ID: check.id, Passed: err == nil}
+		if err != nil {
+			assertion.Diagnostic = boundedDiagnostic(err.Error())
+		}
+		result.Assertions = append(result.Assertions, assertion)
+		setSummary(&result, check.id, assertion.Passed)
+	}
+	return result
+}
+
+func failedSummary(reason string) InvariantSummary {
+	result := InvariantSummary{Assertions: make([]Assertion, 0, len(InvariantIDs))}
+	for _, id := range InvariantIDs {
+		result.Assertions = append(result.Assertions, Assertion{ID: id, Diagnostic: boundedDiagnostic(reason)})
+	}
+	return result
+}
+
+func setSummary(result *InvariantSummary, id string, value bool) {
+	switch id {
+	case InvariantOneAuthority:
+		result.OneValidAuthorityPerWorkRevision = value
+	case InvariantWorkspaceImmutable:
+		result.WorkspaceBindingImmutable = value
+	case InvariantStaleRefused:
+		result.StaleAuthorityRefused = value
+	case InvariantPrimaryIsolation:
+		result.PrimaryIsolation = value
+	case InvariantReviewIndependent:
+		result.ReviewerActorIndependence = value
+	case InvariantIntegrationSerial:
+		result.SerializedTargetAuthority = value
+	case InvariantEffectAttribution:
+		result.EffectAttribution = value
+	case InvariantJournalComplete:
+		result.JournalComplete = value
+	}
+}
+
+func assertAuthority(observation Observation) error {
+	if !observation.Capabilities.Authority {
+		return fmt.Errorf("authority facts are not inspectable")
+	}
+	seen := make(map[string]AuthorityObservation)
+	for _, authority := range observation.Authorities {
+		if authority.WorkRevisionID == "" || authority.WorkID == "" || authority.LeaseID == "" || authority.RuntimeEpochID == "" || authority.Generation == 0 || authority.FenceToken == 0 {
+			return fmt.Errorf("authority observation is incomplete")
+		}
+		if !authority.Current {
+			continue
+		}
+		key := authority.WorkRevisionID + "\x00" + authority.WorkID
+		if prior, exists := seen[key]; exists {
+			return fmt.Errorf("multiple current authorities work_revision=%s work=%s leases=%s,%s", authority.WorkRevisionID, authority.WorkID, prior.LeaseID, authority.LeaseID)
+		}
+		seen[key] = authority
+	}
+	return nil
+}
+
+func assertWorkspace(observation Observation) error {
+	if !observation.Capabilities.Workspace {
+		return fmt.Errorf("workspace facts are not inspectable")
+	}
+	seenID := make(map[string]WorkspaceObservation)
+	seenLease := make(map[string]string)
+	for _, workspace := range observation.Workspaces {
+		if workspace.WorkspaceID == "" || workspace.WorkRevisionID == "" || workspace.WorkID == "" || workspace.LeaseID == "" || workspace.RuntimeEpochID == "" || workspace.Generation == 0 || workspace.CanonicalPath == "" || workspace.OwnedBranch == "" || workspace.Status == "" {
+			return fmt.Errorf("workspace observation is incomplete")
+		}
+		if workspace.Transferred {
+			return fmt.Errorf("workspace %s was transferred across lease authority", workspace.WorkspaceID)
+		}
+		if prior, exists := seenID[workspace.WorkspaceID]; exists && (prior.LeaseID != workspace.LeaseID || prior.RuntimeEpochID != workspace.RuntimeEpochID || prior.Generation != workspace.Generation || prior.CanonicalPath != workspace.CanonicalPath) {
+			return fmt.Errorf("workspace %s has multiple authority bindings", workspace.WorkspaceID)
+		}
+		seenID[workspace.WorkspaceID] = workspace
+		if workspace.Status == "active-bound" {
+			key := workspace.LeaseID + "\x00" + fmt.Sprint(workspace.Generation) + "\x00" + workspace.RuntimeEpochID
+			if prior, exists := seenLease[key]; exists && prior != workspace.WorkspaceID {
+				return fmt.Errorf("lease authority is bound to workspaces %s and %s", prior, workspace.WorkspaceID)
+			}
+			seenLease[key] = workspace.WorkspaceID
+		}
+	}
+	return nil
+}
+
+func assertEpochAndStale(observation Observation, probe StaleProbe, probeErr error) error {
+	if !observation.Epoch.Inspectable || observation.Epoch.Current == "" || !observation.Epoch.EveryCurrentUses {
+		return fmt.Errorf("current runtime epoch is not fully inspectable or consistent")
+	}
+	if observation.Epoch.Predecessor != "" && observation.Epoch.Predecessor == observation.Epoch.Current {
+		return fmt.Errorf("runtime predecessor equals current epoch")
+	}
+	if probeErr != nil {
+		return fmt.Errorf("stale probe unavailable: %w", probeErr)
+	}
+	if !probe.Attempted || !probe.Refused || (!probe.LeaseStale && !probe.EpochStale) {
+		return fmt.Errorf("required stale lease/epoch capsule probe did not refuse")
+	}
+	if probe.AuthorityChanges != 0 || probe.WorkspaceChanges != 0 {
+		return fmt.Errorf("stale probe mutated authority=%d workspace=%d", probe.AuthorityChanges, probe.WorkspaceChanges)
+	}
+	return nil
+}
+
+func assertPrimary(observation Observation) error {
+	if !observation.Capabilities.Workspace {
+		return fmt.Errorf("workspace/primary facts are not inspectable")
+	}
+	for _, workspace := range observation.Workspaces {
+		if workspace.PrimaryPath == "" {
+			return fmt.Errorf("workspace %s omits primary path observation", workspace.WorkspaceID)
+		}
+		if workspace.CanonicalPath == workspace.PrimaryPath {
+			return fmt.Errorf("workspace %s aliases the primary checkout", workspace.WorkspaceID)
+		}
+		if workspace.Status == "active-bound" && !workspace.Registered {
+			return fmt.Errorf("active workspace %s is not registered", workspace.WorkspaceID)
+		}
+	}
+	return nil
+}
+
+func assertReview(observation Observation) error {
+	if !observation.Capabilities.Review {
+		return fmt.Errorf("review facts are not inspectable")
+	}
+	for _, review := range observation.Reviews {
+		if review.CandidateID == "" || review.ReviewerActorID == "" || len(review.ContributorIDs) == 0 || !review.CandidateImmutable {
+			return fmt.Errorf("review observation is incomplete or candidate mutable")
+		}
+		for _, actor := range review.ContributorIDs {
+			if actor == "" || actor == review.ReviewerActorID {
+				return fmt.Errorf("candidate %s reviewer is not actor-independent", review.CandidateID)
+			}
+		}
+	}
+	return nil
+}
+
+func assertIntegration(observation Observation) error {
+	if !observation.Capabilities.Integration {
+		return fmt.Errorf("integration facts are not inspectable")
+	}
+	publication := make(map[string]map[string]int)
+	for _, integration := range observation.Integration {
+		if integration.RepositoryID == "" || integration.TargetRef == "" || integration.CandidateID == "" {
+			return fmt.Errorf("integration observation is incomplete")
+		}
+		if integration.ActiveAuthorities < 0 || integration.ActiveAuthorities > 1 || integration.SuccessfulPublishes < 0 || integration.SuccessfulPublishes > 1 {
+			return fmt.Errorf("integration authority/publication is not serialized")
+		}
+		if integration.SuccessfulPublishes == 1 && (integration.GitExpectedOld == "" || integration.GitObservedOld != integration.GitExpectedOld || integration.GitResult == "" || integration.GitResult != integration.JournalResult) {
+			return fmt.Errorf("integration Git facts disagree with journal result")
+		}
+		key := integration.RepositoryID + "\x00" + integration.TargetRef
+		if publication[key] == nil {
+			publication[key] = make(map[string]int)
+		}
+		publication[key][integration.CandidateID] += integration.SuccessfulPublishes
+		if publication[key][integration.CandidateID] > 1 {
+			return fmt.Errorf("candidate %s integrated more than once", integration.CandidateID)
+		}
+	}
+	return nil
+}
+
+func assertEffects(observation Observation) error {
+	if !observation.Capabilities.Effects {
+		return fmt.Errorf("effect facts are not inspectable")
+	}
+	for _, effect := range observation.Effects {
+		if effect.EffectID == "" || effect.OperationID == "" || effect.ExpectedRevision == "" || effect.ExpectedMarker == "" {
+			return fmt.Errorf("effect observation is incomplete")
+		}
+		if effect.Dispatches < 0 || effect.Dispatches > 1 {
+			return fmt.Errorf("effect %s dispatched %d times", effect.EffectID, effect.Dispatches)
+		}
+		if effect.CompensationApplied {
+			if !effect.CompensationAttempted || !effect.Attributable || effect.CurrentRevision == effect.AppliedRevision || effect.CurrentValue != effect.ExpectedValue || effect.CurrentMarker != effect.ExpectedMarker {
+				return fmt.Errorf("effect %s compensation is not compare-before-compensate attributable", effect.EffectID)
+			}
+		}
+		if effect.CompensationAttempted && !effect.CompensationApplied && !effect.HumanValuePreserved {
+			return fmt.Errorf("effect %s failed to preserve a human reassignment", effect.EffectID)
+		}
+		if effect.AppliedRevision != "" && effect.AppliedRevision == effect.ExpectedRevision {
+			return fmt.Errorf("effect %s fabricated application from stale revision", effect.EffectID)
+		}
+	}
+	return nil
+}
+
+func assertJournalAndPlayback(observation Observation) error {
+	if !observation.Journal.Inspectable {
+		return fmt.Errorf("journal is not inspectable")
+	}
+	heads := make(map[string]JournalHead, len(observation.Journal.Heads))
+	for _, head := range observation.Journal.Heads {
+		if head.AggregateKey == "" || head.LogicalVersion == 0 || head.RecordRevision == 0 || head.LastEventID == "" || !isSHA256(head.PayloadDigest) {
+			return fmt.Errorf("aggregate head is incomplete")
+		}
+		if _, exists := heads[head.AggregateKey]; exists {
+			return fmt.Errorf("duplicate aggregate head %s", head.AggregateKey)
+		}
+		heads[head.AggregateKey] = head
+	}
+	seenOperations := make(map[string]struct{})
+	latest := make(map[string]JournalEvent)
+	for _, operation := range observation.Journal.Operations {
+		if operation.OperationID == "" || operation.RequestDigest == "" || operation.ResultDigest == "" || operation.RecordRevision == 0 || !operation.Terminal || operation.EventCount <= 0 || operation.EventCount != len(operation.Events) {
+			return fmt.Errorf("operation record is incomplete or nonterminal")
+		}
+		if _, exists := seenOperations[operation.OperationID]; exists {
+			return fmt.Errorf("duplicate operation record %s", operation.OperationID)
+		}
+		seenOperations[operation.OperationID] = struct{}{}
+		resultDigest := sha256.Sum256(operation.CanonicalResult)
+		if hex.EncodeToString(resultDigest[:]) != operation.ResultDigest {
+			return fmt.Errorf("operation %s canonical result digest mismatch", operation.OperationID)
+		}
+		seenAggregate := make(map[string]struct{})
+		observedKeys := append([]string(nil), operation.ObservedHeadKeys...)
+		sort.Strings(observedKeys)
+		for index, event := range operation.Events {
+			if event.EventID == "" || event.Index != index || event.Count != operation.EventCount || event.RecordRevision != operation.RecordRevision || event.AggregateKey == "" || event.LogicalVersion == 0 || !isSHA256(event.PayloadDigest) {
+				return fmt.Errorf("operation %s event group is non-atomic or unordered", operation.OperationID)
+			}
+			if _, exists := seenAggregate[event.AggregateKey]; exists {
+				return fmt.Errorf("operation %s repeats aggregate %s", operation.OperationID, event.AggregateKey)
+			}
+			seenAggregate[event.AggregateKey] = struct{}{}
+			if prior, exists := latest[event.AggregateKey]; !exists || event.LogicalVersion > prior.LogicalVersion {
+				latest[event.AggregateKey] = event
+			}
+		}
+		eventKeys := make([]string, 0, len(seenAggregate))
+		for key := range seenAggregate {
+			eventKeys = append(eventKeys, key)
+		}
+		sort.Strings(eventKeys)
+		if len(observedKeys) != len(eventKeys) {
+			return fmt.Errorf("operation %s observed-head membership differs from event membership", operation.OperationID)
+		}
+		for index := range eventKeys {
+			if observedKeys[index] != eventKeys[index] {
+				return fmt.Errorf("operation %s observed-head membership differs from event membership", operation.OperationID)
+			}
+		}
+	}
+	if len(latest) != len(heads) {
+		return fmt.Errorf("aggregate head census differs from terminal event census")
+	}
+	for key, event := range latest {
+		head, ok := heads[key]
+		if !ok || head.LogicalVersion != event.LogicalVersion || head.RecordRevision != event.RecordRevision || head.LastEventID != event.EventID || head.PayloadDigest != event.PayloadDigest {
+			return fmt.Errorf("aggregate %s head does not bind its exact terminal event", key)
+		}
+	}
+	if !observation.Playback.Inspectable || !observation.Playback.StableCanonical || observation.Playback.RestoreDigest == "" || observation.Playback.RestoreDigest != observation.Playback.PlaybackDigest || observation.Playback.AdapterCalls != 0 || observation.Playback.DurableWrites != 0 {
+		return fmt.Errorf("restore/playback digest or zero-I/O semantics failed")
+	}
+	return nil
+}
+
+func isSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func boundedDiagnostic(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 512 {
+		value = value[:512]
+	}
+	return value
+}
+
+// SortedAssertionIDs provides a stable anti-vacuity census to evidence code.
+func SortedAssertionIDs(summary InvariantSummary) []string {
+	ids := make([]string, 0, len(summary.Assertions))
+	for _, assertion := range summary.Assertions {
+		ids = append(ids, assertion.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}
