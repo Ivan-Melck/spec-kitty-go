@@ -42,6 +42,8 @@ var InvariantIDs = []string{
 type SourceBinding struct {
 	Commit                  string `json:"commit"`
 	Tree                    string `json:"tree"`
+	WorktreeTree            string `json:"worktree_tree"`
+	WorktreeStatusSHA256    string `json:"worktree_status_sha256"`
 	AdmittedTupleSHA256     string `json:"admitted_tuple_sha256"`
 	SidecarProvenanceSHA256 string `json:"sidecar_provenance_sha256"`
 	SidecarExecutableSHA256 string `json:"sidecar_executable_sha256"`
@@ -58,13 +60,9 @@ func ObserveSource(ctx context.Context, root string, lifecycle *sidecargapdb.Lif
 	if strings.TrimSpace(root) == "" || lifecycle == nil {
 		return SourceBinding{}, fmt.Errorf("source root and admitted sidecar lifecycle are required")
 	}
-	commit, err := gitObject(ctx, root, "HEAD")
+	commit, tree, worktreeTree, statusDigest, err := observeGitSource(ctx, root)
 	if err != nil {
-		return SourceBinding{}, fmt.Errorf("observe source commit: %w", err)
-	}
-	tree, err := gitObject(ctx, root, "HEAD^{tree}")
-	if err != nil {
-		return SourceBinding{}, fmt.Errorf("observe source tree: %w", err)
+		return SourceBinding{}, fmt.Errorf("observe executable source: %w", err)
 	}
 	evidence, err := lifecycle.Evidence()
 	if err != nil {
@@ -90,7 +88,8 @@ func ObserveSource(ctx context.Context, root string, lifecycle *sidecargapdb.Lif
 	}
 	provenanceDigest := sha256.Sum256(encoded)
 	binding := SourceBinding{
-		Commit: commit, Tree: tree, AdmittedTupleSHA256: evidence.AdmittedTupleSHA256,
+		Commit: commit, Tree: tree, WorktreeTree: worktreeTree, WorktreeStatusSHA256: statusDigest,
+		AdmittedTupleSHA256:     evidence.AdmittedTupleSHA256,
 		SidecarProvenanceSHA256: hex.EncodeToString(provenanceDigest[:]), SidecarExecutableSHA256: evidence.ExecutableSHA256,
 		DatabaseID: inspection.DatabaseID, OwnerPID: inspection.OwnerPID,
 	}
@@ -99,26 +98,71 @@ func ObserveSource(ctx context.Context, root string, lifecycle *sidecargapdb.Lif
 }
 
 func (s SourceBinding) Valid() bool {
-	return hexSized(s.Commit, 40) && hexSized(s.Tree, 40) && s.AdmittedTupleSHA256 == storegapdb.AdmittedTupleSHA256 &&
+	return hexSized(s.Commit, 40) && hexSized(s.Tree, 40) && s.WorktreeTree == s.Tree && s.WorktreeStatusSHA256 == emptySHA256 && s.AdmittedTupleSHA256 == storegapdb.AdmittedTupleSHA256 &&
 		hexSized(s.SidecarProvenanceSHA256, 64) && s.SidecarExecutableSHA256 == storegapdb.AdmittedSidecarSHA256 &&
 		s.DatabaseID != "" && s.OwnerPID > 0 && s.seal == sourceSeal(s)
 }
 
 func sourceSeal(source SourceBinding) [32]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d", source.Commit, source.Tree, source.AdmittedTupleSHA256, source.SidecarProvenanceSHA256, source.SidecarExecutableSHA256, source.DatabaseID, source.OwnerPID)))
+	return sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d", source.Commit, source.Tree, source.WorktreeTree, source.WorktreeStatusSHA256, source.AdmittedTupleSHA256, source.SidecarProvenanceSHA256, source.SidecarExecutableSHA256, source.DatabaseID, source.OwnerPID)))
+}
+
+const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// observeGitSource proves that the checkout Git will compile is exactly the
+// pinned HEAD tree. The ordinary status census detects tracked and untracked
+// bytes, while the ignored-source census closes the gap where an ignored Go,
+// assembly, C, or syso file would still be consumed by the toolchain.
+func observeGitSource(ctx context.Context, root string) (commit, tree, worktreeTree, statusDigest string, err error) {
+	commit, err = gitObject(ctx, root, "HEAD")
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("source commit: %w", err)
+	}
+	tree, err = gitObject(ctx, root, "HEAD^{tree}")
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("source tree: %w", err)
+	}
+	worktreeTree, err = gitOutput(ctx, root, "write-tree")
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("source index tree is unavailable: %w", err)
+	}
+	if !hexSized(worktreeTree, 40) {
+		return "", "", "", "", fmt.Errorf("source index tree has invalid shape")
+	}
+	status, err := gitOutput(ctx, root, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("source status: %w", err)
+	}
+	ignoredExecutable, err := gitOutput(ctx, root, "ls-files", "--others", "--ignored", "--exclude-standard", "--", "*.go", "*.s", "*.c", "*.h", "*.syso")
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("ignored executable source census: %w", err)
+	}
+	digest := sha256.Sum256([]byte(status))
+	statusDigest = hex.EncodeToString(digest[:])
+	if status != "" || ignoredExecutable != "" || worktreeTree != tree || statusDigest != emptySHA256 {
+		return "", "", "", "", fmt.Errorf("working tree does not match pinned HEAD source")
+	}
+	return commit, tree, worktreeTree, statusDigest, nil
 }
 
 func gitObject(ctx context.Context, root, revision string) (string, error) {
-	command := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--verify", revision)
-	encoded, err := command.Output()
+	value, err := gitOutput(ctx, root, "rev-parse", "--verify", revision)
 	if err != nil {
 		return "", err
 	}
-	value := strings.TrimSpace(string(encoded))
 	if !hexSized(value, 40) {
 		return "", fmt.Errorf("git object identity has invalid shape")
 	}
 	return value, nil
+}
+
+func gitOutput(ctx context.Context, root string, arguments ...string) (string, error) {
+	command := exec.CommandContext(ctx, "git", append([]string{"-C", root}, arguments...)...)
+	encoded, err := command.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(encoded)), nil
 }
 
 func hexSized(value string, size int) bool {
@@ -147,6 +191,7 @@ type Observation struct {
 	Integration  []IntegrationObservation
 	Effects      []EffectObservation
 	Playback     PlaybackObservation
+	Primary      PrimaryObservation
 }
 
 // CapabilityObservation distinguishes an inspected empty domain from a domain
@@ -222,6 +267,18 @@ type WorkspaceObservation struct {
 	Head           string
 	Transferred    bool
 	Registered     bool
+}
+
+type GitSnapshotObservation struct {
+	Head        string
+	IndexDigest string
+	TreeDigest  string
+}
+
+type PrimaryObservation struct {
+	Inspectable bool
+	Before      GitSnapshotObservation
+	After       GitSnapshotObservation
 }
 
 type EpochObservation struct {
@@ -456,6 +513,14 @@ func assertEpochAndStale(observation Observation, probe StaleProbe, probeErr err
 func assertPrimary(observation Observation) error {
 	if !observation.Capabilities.Workspace {
 		return fmt.Errorf("workspace/primary facts are not inspectable")
+	}
+	before, after := observation.Primary.Before, observation.Primary.After
+	if !observation.Primary.Inspectable || !hexSized(before.Head, 40) || !isSHA256(before.IndexDigest) || !isSHA256(before.TreeDigest) ||
+		!hexSized(after.Head, 40) || !isSHA256(after.IndexDigest) || !isSHA256(after.TreeDigest) {
+		return fmt.Errorf("primary HEAD/index/tree observations are incomplete")
+	}
+	if before != after {
+		return fmt.Errorf("primary HEAD/index/tree changed during campaign attempt")
 	}
 	for _, workspace := range observation.Workspaces {
 		if workspace.PrimaryPath == "" {

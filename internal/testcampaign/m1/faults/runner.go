@@ -1,6 +1,7 @@
 package faults
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -163,22 +164,23 @@ type ProductionExecutor struct {
 }
 
 type productionEnvironment struct {
-	root       string
-	port       storegapdb.Port
-	closer     interface{ Close() error }
-	app        *application.Service
-	admission  application.EpochAdmissionV1
-	runtime    *provingground.Runtime
-	repository *gitrepo.Repository
-	baseline   provingground.Delivery
-	workA      *provingground.Delivery
-	identities *qualificationIdentities
-	events     controljournal.EventRegistryV1
-	reducers   reducer.RegistryV1
-	binding    journalcheckpoint.RestoreBindingV1
-	reader     journalcheckpoint.RestoreReaderV1
-	reviews    *provingground.ReviewCoordinator
-	integrator *provingground.IntegrationCoordinator
+	root        string
+	port        storegapdb.Port
+	closer      interface{ Close() error }
+	app         *application.Service
+	admission   application.EpochAdmissionV1
+	runtime     *provingground.Runtime
+	repository  *gitrepo.Repository
+	baseline    provingground.Delivery
+	workA       *provingground.Delivery
+	identities  *qualificationIdentities
+	events      controljournal.EventRegistryV1
+	reducers    reducer.RegistryV1
+	binding     journalcheckpoint.RestoreBindingV1
+	reader      journalcheckpoint.RestoreReaderV1
+	reviews     *provingground.ReviewCoordinator
+	integrator  *provingground.IntegrationCoordinator
+	predecessor *controljournal.AuthorityCapsuleV1
 }
 
 // ProductionAccess exposes only the public production ports and observation
@@ -271,6 +273,10 @@ func (p *ProductionExecutor) ExecuteFocused(ctx context.Context, input FocusedIn
 	if err != nil {
 		return FocusedExecution{Source: source}, err
 	}
+	primaryBefore, err := environment.repository.SnapshotPrimary(ctx)
+	if err != nil {
+		return FocusedExecution{Source: source}, err
+	}
 	var artifact []byte
 	var facts map[string]bool
 	var provider FocusedProviderEvidence
@@ -278,7 +284,7 @@ func (p *ProductionExecutor) ExecuteFocused(ctx context.Context, input FocusedIn
 	var overlay qualificationOverlay
 	switch input.CampaignID {
 	case "atomic-publication-nfr001":
-		artifact, facts, err = executeFocusedAtomic(ctx, input, environment)
+		artifact, facts, err = executeFocusedAtomic(ctx, input, p.Lifecycle, source, environment)
 	case "lost-response-idempotency-nfr002":
 		artifact, facts, err = executeFocusedLostResponse(ctx, input, p.Lifecycle, source, environment)
 	case "concurrent-claims-nfr003":
@@ -288,7 +294,7 @@ func (p *ProductionExecutor) ExecuteFocused(ctx context.Context, input FocusedIn
 	case "restore-playback-nfr005":
 		artifact, facts, err = executeFocusedRestorePlayback(ctx, input, environment)
 	case "restart-epoch-nfr007":
-		artifact, facts, err = executeFocusedEpoch(ctx, input, environment)
+		artifact, facts, err = p.executeFocusedEpoch(ctx, input, environment)
 	case "zombie-isolation-nfr008":
 		artifact, facts, err = executeFocusedZombie(ctx, input, environment)
 	case "attribution-reassignment-nfr015":
@@ -299,16 +305,56 @@ func (p *ProductionExecutor) ExecuteFocused(ctx context.Context, input FocusedIn
 	if err != nil {
 		return FocusedExecution{Source: source, Artifact: artifact, Facts: facts, Provider: provider}, err
 	}
-	for name, passed := range facts {
-		if name == "" || !passed {
-			return FocusedExecution{Source: source, Artifact: artifact, Facts: facts, Provider: provider}, fmt.Errorf("focused production fact %q failed", name)
-		}
+	if err := validateFocusedFactCensus(input.CampaignID, facts); err != nil {
+		return FocusedExecution{Source: source, Artifact: artifact, Facts: facts, Provider: provider}, err
 	}
+	// A restart changes the executable owner provenance. Bind the receipt to
+	// the owner that actually completed the attempt, not its predecessor.
+	source, err = m1.ObserveSource(ctx, p.Root, p.Lifecycle)
+	if err != nil {
+		return FocusedExecution{Artifact: artifact, Facts: facts, Provider: provider}, err
+	}
+	primaryAfter, err := environment.repository.SnapshotPrimary(ctx)
+	if err != nil {
+		return FocusedExecution{Source: source, Artifact: artifact, Facts: facts, Provider: provider}, err
+	}
+	overlay.primary = m1.PrimaryObservation{Inspectable: true, Before: gitSnapshotObservation(primaryBefore), After: gitSnapshotObservation(primaryAfter)}
 	observation, err := observeComposedRuntimeWithOverlay(ctx, environment, effects, overlay)
 	if err != nil {
 		return FocusedExecution{Source: source, Artifact: artifact, Facts: facts, Provider: provider}, err
 	}
 	return FocusedExecution{Source: source, Observation: observation, Artifact: artifact, Facts: facts, Provider: provider}, nil
+}
+
+var focusedFactCensus = map[string][]string{
+	"atomic-publication-nfr001":        {"gj01_cut_once", "gj01_no_partial_batch", "gj01_preexisting_preserved", "gj02_cut_once", "gj02_complete_response", "gj02_durable_acceptance", "gj02_one_operation_result", "schedule_consumed"},
+	"lost-response-idempotency-nfr002": {"changed_digest_no_publication", "changed_digest_refused", "equal_retry_durable_acceptance", "equal_retry_one_operation", "equal_retry_same_revision", "exact_proxy_source", "schedule_consumed", "zero_blind_effect_repeats"},
+	"concurrent-claims-nfr003":         {"both_items_progress", "distinct_authorities", "participant_one", "participant_zero"},
+	"competing-integrations-nfr004":    {"both_participants", "git_target_moved_once", "one_candidate_publication", "one_target_authority"},
+	"restore-playback-nfr005":          {"digest_equal", "history_materialized", "playback_zero_io", "restore_ready", "schedule_consumed"},
+	"restart-epoch-nfr007":             {"current_epoch_accepted", "fresh_owner_process", "fresh_private_endpoint", "fresh_runtime_instance", "new_epoch_unique", "predecessor_refused", "ready_new_lifetime", "restart_mode_observed", "same_durable_database", "schedule_consumed"},
+	"zombie-isolation-nfr008":          {"fresh_content_unchanged", "fresh_head_unchanged", "fresh_index_unchanged", "fresh_tree_unchanged", "old_workspace_posix_mutated", "replacement_lease_differs", "replacement_workspace_differs", "schedule_consumed", "stale_authority_refused"},
+	"attribution-reassignment-nfr015":  {"effect_intent_durable", "one_typed_attempt", "provider_state_observed", "schedule_consumed", "zero_blind_repeats"},
+}
+
+func validateFocusedFactCensus(campaignID string, facts map[string]bool) error {
+	required, ok := focusedFactCensus[campaignID]
+	if !ok {
+		return fmt.Errorf("focused semantic census is undefined for %q", campaignID)
+	}
+	if len(facts) != len(required) {
+		return fmt.Errorf("focused %s semantic census=%d want=%d", campaignID, len(facts), len(required))
+	}
+	for _, name := range required {
+		if passed, exists := facts[name]; !exists || !passed {
+			return fmt.Errorf("focused %s required semantic fact %q is absent or false", campaignID, name)
+		}
+	}
+	return nil
+}
+
+func gitSnapshotObservation(snapshot workspace.PrimarySnapshot) m1.GitSnapshotObservation {
+	return m1.GitSnapshotObservation{Head: snapshot.Head, IndexDigest: snapshot.IndexDigest, TreeDigest: snapshot.TreeDigest}
 }
 
 func validFocusedOrder(order [2]int) bool {
@@ -319,37 +365,42 @@ func focusedAttempt(input FocusedInput, label string) Attempt {
 	return Attempt{RunID: input.RunID + "-" + input.AttemptID, Seed: input.Seed, Definition: Definition{ID: label}}
 }
 
-func executeFocusedAtomic(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, error) {
+func executeFocusedAtomic(ctx context.Context, input FocusedInput, lifecycle *sidecargapdb.Lifecycle, source SourceBinding, environment *productionEnvironment) ([]byte, map[string]bool, error) {
 	if err := consumeFocusedSchedule(ctx, input); err != nil {
 		return nil, nil, err
 	}
-	batch, err := qualificationBatch(focusedAttempt(input, "nfr001"), "nfr001")
+	gj01Hook := &countedCrashHook{}
+	gj01 := focusedAttempt(input, "GJ-01")
+	gj01.Definition = Definition{ID: "GJ-01", Cut: "before_request_publication"}
+	gj01.Hook = gj01Hook
+	gj01Facts, gj01Artifact, err := executeComposedGJ01(ctx, gj01, environment)
 	if err != nil {
-		return nil, nil, err
+		return gj01Artifact, nil, err
 	}
-	product, err := batch.ProductBatch()
+	gj02Hook := &countedCrashHook{}
+	gj02 := focusedAttempt(input, "GJ-02")
+	gj02.Definition = Definition{ID: "GJ-02", Cut: "after_durable_acceptance_before_client_response"}
+	gj02.Hook = gj02Hook
+	gj02Facts, gj02Artifact, err := executeComposedGJ02(ctx, gj02, lifecycle, source, environment)
 	if err != nil {
-		return nil, nil, err
+		return gj02Artifact, nil, err
 	}
-	result, err := environment.app.Apply(ctx, batch)
-	if err != nil {
-		return nil, nil, err
-	}
-	operation, operationErr := environment.port.Get(ctx, product.Operation.Key)
-	event, eventErr := environment.port.Get(ctx, product.Events[0].Key)
-	head, headErr := environment.port.Get(ctx, product.AggregateHeads[0].Key)
 	facts := map[string]bool{
-		"committed":            result.Kind == application.OutcomeCommitted,
-		"one_operation_result": operationErr == nil && operation.Revision == result.CommittedRevision,
-		"atomic_event":         eventErr == nil && event.Revision == result.CommittedRevision,
-		"atomic_head":          headErr == nil && head.Revision == result.CommittedRevision,
-		"schedule_consumed":    input.Order[0] != input.Order[1],
+		"gj01_cut_once":              gj01Hook.calls.Load() == 1,
+		"gj01_no_partial_batch":      gj01Facts.OperationRecords == 0 && gj01Facts.OperationResults == 0,
+		"gj01_preexisting_preserved": equalProductFacts(gj01Facts.PreexistingBefore, gj01Facts.PreexistingAfter),
+		"gj02_cut_once":              gj02Hook.calls.Load() == 1,
+		"gj02_durable_acceptance":    gj02Facts.DurableAccepted,
+		"gj02_complete_response":     gj02Facts.DaemonResponseComplete && gj02Facts.ProxyConsumedCompleteResponse,
+		"gj02_one_operation_result":  gj02Facts.OperationRecords == 1 && gj02Facts.OperationResults == 1,
+		"schedule_consumed":          input.Order[0] != input.Order[1],
 	}
 	artifact, _ := json.Marshal(struct {
-		Input  FocusedInput         `json:"input"`
-		Result application.ResultV1 `json:"result"`
-		Facts  map[string]bool      `json:"facts"`
-	}{input, result, facts})
+		Input FocusedInput    `json:"input"`
+		GJ01  json.RawMessage `json:"gj01"`
+		GJ02  json.RawMessage `json:"gj02"`
+		Facts map[string]bool `json:"facts"`
+	}{input, gj01Artifact, gj02Artifact, facts})
 	return artifact, facts, nil
 }
 
@@ -357,29 +408,65 @@ type crashAtEveryHook struct{}
 
 func (crashAtEveryHook) Reach(context.Context, string) error { return productfaults.ErrCrashRequested }
 
+type countedCrashHook struct{ calls atomic.Int32 }
+
+func (h *countedCrashHook) Reach(context.Context, string) error {
+	h.calls.Add(1)
+	return productfaults.ErrCrashRequested
+}
+
 func executeFocusedLostResponse(ctx context.Context, input FocusedInput, lifecycle *sidecargapdb.Lifecycle, source SourceBinding, environment *productionEnvironment) ([]byte, map[string]bool, error) {
 	if err := consumeFocusedSchedule(ctx, input); err != nil {
 		return nil, nil, err
 	}
 	attempt := focusedAttempt(input, "GJ-02")
 	attempt.Definition = Definition{ID: "GJ-02", Cut: "after_durable_acceptance_before_client_response"}
-	attempt.Hook = crashAtEveryHook{}
+	hook := &countedCrashHook{}
+	attempt.Hook = hook
 	faultFacts, artifact, err := executeComposedGJ02(ctx, attempt, lifecycle, source, environment)
 	if err != nil {
 		return artifact, nil, err
 	}
+	prefix := "spk/v1/project-qualification/mission-qualification/"
+	before, err := productCensus(ctx, environment.port, prefix)
+	if err != nil {
+		return artifact, nil, err
+	}
+	effectsBefore, err := productCensus(ctx, environment.port, prefix+"effects/")
+	if err != nil {
+		return artifact, nil, err
+	}
+	changedPayload := []byte(fmt.Sprintf(`{"attempt":%q,"seed":%d,"changed":true}`, productionAttemptID(attempt), attempt.Seed))
+	changed, err := qualificationBatchPayload(attempt, "gj02", changedPayload)
+	if err != nil {
+		return artifact, nil, err
+	}
+	changedResult, changedErr := environment.app.Apply(ctx, changed)
+	after, censusErr := productCensus(ctx, environment.port, prefix)
+	if censusErr != nil {
+		return artifact, nil, censusErr
+	}
+	effectsAfter, err := productCensus(ctx, environment.port, prefix+"effects/")
+	if err != nil {
+		return artifact, nil, err
+	}
 	facts := map[string]bool{
-		"durable_acceptance":   faultFacts.DurableAccepted,
-		"complete_response":    faultFacts.DaemonResponseComplete && faultFacts.ProxyConsumedCompleteResponse,
-		"one_operation_result": faultFacts.OperationRecords == 1 && faultFacts.OperationResults == 1,
-		"exact_proxy_source":   faultFacts.ProxyCut != nil && faultFacts.ProxyCut.SourceCommit == source.Commit && faultFacts.SidecarProvenanceSHA256 == source.SidecarProvenanceSHA256,
-		"schedule_consumed":    input.Order[0] != input.Order[1],
+		"equal_retry_durable_acceptance": faultFacts.DurableAccepted && faultFacts.DaemonResponseComplete && faultFacts.ProxyConsumedCompleteResponse,
+		"equal_retry_one_operation":      faultFacts.OperationRecords == 1 && faultFacts.OperationResults == 1,
+		"equal_retry_same_revision":      faultFacts.ProxyCut != nil && faultFacts.ProxyCut.Revision > 0,
+		"changed_digest_refused":         changedErr == nil && changedResult.Kind == application.OutcomeOperationIdentityCollision,
+		"changed_digest_no_publication":  equalProductFacts(before, after),
+		"zero_blind_effect_repeats":      equalProductFactsAllowEmpty(effectsBefore, effectsAfter),
+		"exact_proxy_source":             hook.calls.Load() == 1 && faultFacts.ProxyCut != nil && faultFacts.ProxyCut.SourceCommit == source.Commit && faultFacts.SidecarProvenanceSHA256 == source.SidecarProvenanceSHA256,
+		"schedule_consumed":              input.Order[0] != input.Order[1],
 	}
 	encoded, _ := json.Marshal(struct {
-		Input FocusedInput    `json:"input"`
-		Cut   json.RawMessage `json:"cut"`
-		Facts map[string]bool `json:"facts"`
-	}{input, artifact, facts})
+		Input         FocusedInput         `json:"input"`
+		Cut           json.RawMessage      `json:"cut"`
+		ChangedResult application.ResultV1 `json:"changed_result"`
+		Before, After map[string]ProductFact
+		Facts         map[string]bool `json:"facts"`
+	}{input, artifact, changedResult, before, after, facts})
 	return encoded, facts, nil
 }
 
@@ -490,12 +577,10 @@ func executeFocusedIntegrations(ctx context.Context, input FocusedInput, environ
 	}
 	got := []integrationResult{<-results, <-results}
 	participants := map[int]bool{}
-	var winning baseintegration.Record
 	uniqueResults := map[string]struct{}{}
 	for _, result := range got {
 		participants[result.Participant] = true
 		if result.Err == "" && result.Record.Status == baseintegration.StatusDone {
-			winning = result.Record
 			uniqueResults[result.Record.ResultCommit] = struct{}{}
 		}
 	}
@@ -503,15 +588,44 @@ func executeFocusedIntegrations(ctx context.Context, input FocusedInput, environ
 	if headErr != nil {
 		return nil, nil, qualificationOverlay{}, headErr
 	}
-	facts := map[string]bool{"one_target_authority": len(uniqueResults) == 1, "one_candidate_publication": winning.ResultCommit != "" && after == winning.ResultCommit, "both_participants": participants[0] && participants[1], "git_target_moved_once": before != after}
-	overlay := qualificationOverlay{reviews: []m1.ReviewObservation{reviewObservation}, integration: []m1.IntegrationObservation{{RepositoryID: "repository-qualification", TargetRef: "refs/heads/main", ActiveAuthorities: 1, CandidateID: item.Request.Candidate, SuccessfulPublishes: 1, GitExpectedOld: winning.PreflightTarget, GitObservedOld: winning.PreflightTarget, GitResult: after, JournalResult: winning.ResultCommit}}}
+	durable := environment.integrator.QualificationSnapshot()
+	authorityCount, activeAuthorityCount := 0, 0
+	var durableRecord baseintegration.Record
+	publicationCount := 0
+	for _, authority := range durable.Authorities {
+		if authority.RepositoryID == item.Request.RepositoryID && authority.TargetRef == item.Request.TargetRef {
+			authorityCount++
+			if authority.Status == "active" {
+				activeAuthorityCount++
+			}
+		}
+	}
+	for _, record := range durable.Records {
+		if record.RepositoryID == item.Request.RepositoryID && record.TargetRef == item.Request.TargetRef && record.Candidate == item.Request.Candidate && record.Status == baseintegration.StatusDone {
+			publicationCount++
+			durableRecord = record
+		}
+	}
+	facts := map[string]bool{
+		"one_target_authority":      authorityCount == 1 && activeAuthorityCount <= 1,
+		"one_candidate_publication": publicationCount == 1 && len(uniqueResults) == 1 && durableRecord.ResultCommit != "" && after == durableRecord.ResultCommit,
+		"both_participants":         participants[0] && participants[1],
+		"git_target_moved_once":     before != after && durableRecord.PreflightTarget == before,
+	}
+	overlay := qualificationOverlay{reviews: []m1.ReviewObservation{reviewObservation}, integration: []m1.IntegrationObservation{{
+		RepositoryID: string(durableRecord.RepositoryID), TargetRef: durableRecord.TargetRef,
+		ActiveAuthorities: activeAuthorityCount, CandidateID: durableRecord.Candidate,
+		SuccessfulPublishes: publicationCount, GitExpectedOld: durableRecord.PreflightTarget,
+		GitObservedOld: before, GitResult: after, JournalResult: durableRecord.ResultCommit,
+	}}}
 	artifact, _ := json.Marshal(struct {
-		Input   FocusedInput        `json:"input"`
-		Results []integrationResult `json:"results"`
-		Before  string              `json:"before"`
-		After   string              `json:"after"`
-		Facts   map[string]bool     `json:"facts"`
-	}{input, got, before, after, facts})
+		Input   FocusedInput                                   `json:"input"`
+		Results []integrationResult                            `json:"results"`
+		Before  string                                         `json:"before"`
+		After   string                                         `json:"after"`
+		Durable provingground.IntegrationQualificationSnapshot `json:"durable"`
+		Facts   map[string]bool                                `json:"facts"`
+	}{input, got, before, after, durable, facts})
 	return artifact, facts, overlay, nil
 }
 
@@ -704,44 +818,144 @@ func restoreAndJournal(ctx context.Context, environment *productionEnvironment) 
 	return restored, journal, err
 }
 
-func executeFocusedEpoch(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, error) {
+func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, error) {
 	if err := consumeFocusedSchedule(ctx, input); err != nil {
 		return nil, nil, err
 	}
-	restored, _, err := restoreAndJournal(ctx, environment)
-	if err != nil {
-		return nil, nil, err
-	}
-	predecessor := restored.Authority.RuntimeEpochID
-	if predecessor == "" || restored.Authority.DurableRevision == 0 {
-		return nil, nil, fmt.Errorf("restored authority lacks an epoch")
-	}
+	predecessorLifecycle := p.Lifecycle
+	predecessorProvenance := predecessorLifecycle.Provenance()
+	predecessor := environment.runtime.QualificationSnapshot().RuntimeEpochID
+	oldCapsule := environment.baseline.Authority
 	epochDigest := sha256.Sum256([]byte(input.AttemptID))
 	admitted := controljournal.RuntimeEpochID("epoch-focused-" + hex.EncodeToString(epochDigest[:8]))
-	binding, err := journalcheckpoint.BindRuntimeEpochV1(restored, restored.Authority.RunID, predecessor, admitted, restored.Authority.DurableRevision)
+	mode := sidecargapdb.RestartClean
+	if input.Index%2 == 1 {
+		mode = sidecargapdb.RestartUnclean
+	}
+	if environment.closer != nil {
+		_ = environment.closer.Close()
+	}
+	next, err := predecessorLifecycle.RestartOwned(ctx, mode, "focused-owner-"+input.AttemptID)
 	if err != nil {
 		return nil, nil, err
 	}
-	oldCapsule := environment.baseline.Authority
-	oldCapsule.RunID = restored.Authority.RunID
-	oldCapsule.RuntimeEpochID = predecessor
-	oldCapsule.AuthorityHeadRecordRevision = restored.Authority.DurableRevision
-	currentCapsule := oldCapsule
-	currentCapsule.RuntimeEpochID = admitted
-	oldErr := journalcheckpoint.ValidateCapsuleEpochV1(binding, oldCapsule)
-	currentErr := journalcheckpoint.ValidateCapsuleEpochV1(binding, currentCapsule)
+	p.Lifecycle = next
+	port, closer, err := storegapdb.Dial(next.Provenance().ConfiguredSocket, 2*time.Second)
+	if err != nil {
+		return nil, nil, err
+	}
+	binding, err := next.ProductRestoreBindingV1()
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	reader, err := application.NewRestoreReaderV1(port, "project-qualification", "mission-qualification")
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	eventDigest, _ := environment.events.Digest()
+	reducerDigest, _ := environment.reducers.Digest()
+	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: "run-qualification", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: binding, EventRegistry: environment.events, Reducers: environment.reducers})
+	if err != nil || !restored.Ready {
+		closer.Close()
+		return nil, nil, fmt.Errorf("restart restore ready=%v: %w", restored.Ready, err)
+	}
+	restoreAdmission, err := restored.AdmissionV1()
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	productProof, err := next.MarkProductRecovered(restoreAdmission)
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	startupProof, err := next.BindOwnerStartupEpochV1(admitted)
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	admission, admissionResult, err := application.AdmitRuntimeEpochV1(ctx, port, application.EpochAdmissionInputV1{ProjectID: "project-qualification", MissionID: "mission-qualification", OperationID: controljournal.OperationID("focused-admit-" + input.AttemptID), EventID: controljournal.EventID("focused-admit-event-" + input.AttemptID), StartupProof: startupProof, ProductRestoreProof: productProof})
+	if err != nil || admissionResult.Kind != application.OutcomeCommitted {
+		closer.Close()
+		return nil, nil, fmt.Errorf("restart epoch admission=%+v: %w", admissionResult, err)
+	}
+	app, err := application.NewService(port, admission)
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	now := time.Now().UTC()
+	predecessorRuntime := environment.runtime
+	if err := predecessorRuntime.ReplaceOwner(ctx, controljournal.OperationID("focused-owner-restart-"+input.AttemptID), admitted, app, now); err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	postTransition, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: "run-qualification", ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: binding, EventRegistry: environment.events, Reducers: environment.reducers})
+	if err != nil || !postTransition.Ready {
+		closer.Close()
+		return nil, nil, fmt.Errorf("post-transition restore ready=%v: %w", postTransition.Ready, err)
+	}
+	actors, err := controljournal.NewTrialImplementationActorsV1("actor-a", "actor-b", "process-a", "process-b", "process-c")
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	config := provingground.Config{ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", RunID: "run-qualification", RuntimeEpochID: admitted, Actors: actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute}
+	freshRuntime, err := provingground.RestoreRuntimeValidated(ctx, config, app, environment.repository, port, postTransition, &qualificationIdentities{}, execution.SystemClock{})
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	environment.runtime = freshRuntime
+	governance, err := qualificationGovernance(now)
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	base, err := environment.repository.TargetHead(ctx)
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	short := input.AttemptID
+	if len(short) > 16 {
+		short = short[:16]
+	}
+	delivery, err := environment.runtime.StartWorkspace(ctx, execution.StartRequest{OperationID: ids.OperationID("focused-restart-claim-" + short), ProjectID: "project-qualification", MissionID: "mission-qualification", WorkRevisionID: "revision-qualification", WorkID: "work-baseline", ActorID: "actor-b", ProcessID: "process-b", Now: now.Add(time.Nanosecond), LeaseTTL: time.Minute, GovernanceContext: governance}, provingground.WorkspaceSpec{OperationID: controljournal.OperationID("focused-restart-bind-" + short), WorkspaceID: controljournal.WorkspaceID("workspace-restart-" + short), RepositoryID: "repository-qualification", LaneID: ids.LaneID("lane-restart-" + short), OwnedBranch: "runs/restart-" + short, PinnedBase: base, Now: now.Add(2 * time.Nanosecond)})
+	if err != nil {
+		closer.Close()
+		return nil, nil, err
+	}
+	environment.port, environment.closer, environment.app = port, closer, app
+	environment.admission, environment.binding, environment.reader = admission, binding, reader
+	environment.baseline, environment.workA = delivery, nil
+	predecessorCapsule := oldCapsule
+	environment.predecessor = &predecessorCapsule
+	environment.reviews, environment.integrator = nil, nil
+	oldErr := freshRuntime.Authorize(oldCapsule, "focused-predecessor-probe", now.Add(3*time.Nanosecond))
+	currentErr := freshRuntime.Authorize(delivery.Authority, "focused-current-probe", now.Add(3*time.Nanosecond))
+	fresh := next.Provenance()
 	facts := map[string]bool{
-		"new_epoch_unique":         admitted != predecessor,
-		"predecessor_refused":      oldErr != nil,
-		"current_epoch_accepted":   currentErr == nil,
-		"lease_expiry_no_rotation": journalcheckpoint.LeaseExpiredV1(binding) == binding,
-		"schedule_consumed":        input.Order[0] != input.Order[1],
+		"new_epoch_unique":       admitted != predecessor && environment.runtime.QualificationSnapshot().RuntimeEpochID == admitted,
+		"predecessor_refused":    provingground.IsOutcome(oldErr, provingground.OutcomeStaleEpoch),
+		"current_epoch_accepted": currentErr == nil,
+		"fresh_owner_process":    fresh.Process != predecessorProvenance.Process,
+		"fresh_private_endpoint": fresh.ConfiguredSocket != predecessorProvenance.ConfiguredSocket && fresh.RuntimeDirectory != predecessorProvenance.RuntimeDirectory,
+		"fresh_runtime_instance": freshRuntime != predecessorRuntime,
+		"same_durable_database":  fresh.DatabaseID == predecessorProvenance.DatabaseID && fresh.DataDirectory == predecessorProvenance.DataDirectory,
+		"ready_new_lifetime":     restored.Ready && fresh.Readiness.ProductRecovered,
+		"restart_mode_observed":  mode == sidecargapdb.RestartClean || mode == sidecargapdb.RestartUnclean,
+		"schedule_consumed":      input.Order[0] != input.Order[1],
 	}
 	artifact, _ := json.Marshal(struct {
-		Input   FocusedInput                     `json:"input"`
-		Binding journalcheckpoint.EpochBindingV1 `json:"binding"`
-		Facts   map[string]bool                  `json:"facts"`
-	}{input, binding, facts})
+		Input              FocusedInput             `json:"input"`
+		Mode               sidecargapdb.RestartMode `json:"mode"`
+		Predecessor, Fresh sidecargapdb.SidecarProvenance
+		Restore            journalcheckpoint.RestoreObservationV1 `json:"restore"`
+		Facts              map[string]bool                        `json:"facts"`
+	}{input, mode, predecessorProvenance, fresh, restored.Observation, facts})
 	return artifact, facts, nil
 }
 
@@ -754,11 +968,6 @@ func executeFocusedZombie(ctx context.Context, input FocusedInput, environment *
 	oldBinding, ok := workspaceBindingByID(oldSnapshot, old.Authority.WorkspaceID)
 	if !ok {
 		return nil, nil, fmt.Errorf("current workspace binding is not observable")
-	}
-	oldRecord := workspace.Record{Reservation: workspace.Reservation{WorkspaceID: ids.WorkspaceID(oldBinding.WorkspaceID), OwnedBranch: oldBinding.OwnedBranch, PinnedBase: oldBinding.PinnedBase}, CanonicalPath: oldBinding.CanonicalPath, DependencyHead: oldBinding.PinnedBase}
-	before, err := environment.repository.Probe(ctx, oldRecord)
-	if err != nil {
-		return nil, nil, err
 	}
 	expiredAt := old.Run.Deadline
 	if err := environment.runtime.Expire(ctx, controljournal.OperationID("focused-expire-"+input.AttemptID), old.Authority, expiredAt); err != nil {
@@ -781,26 +990,107 @@ func executeFocusedZombie(ctx context.Context, input FocusedInput, environment *
 	if err != nil {
 		return nil, nil, err
 	}
+	newSnapshot := environment.runtime.QualificationSnapshot()
+	newBinding, ok := workspaceBindingByID(newSnapshot, delivery.Authority.WorkspaceID)
+	if !ok {
+		return nil, nil, fmt.Errorf("replacement workspace binding is not observable")
+	}
+	freshBefore, err := observeWorktreeContent(ctx, newBinding.CanonicalPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	zombiePath := filepath.Join(oldBinding.CanonicalPath, "zombie-"+short+".txt")
+	zombieBytes := []byte("stale writer " + input.AttemptID + "\n")
+	if err := os.WriteFile(zombiePath, zombieBytes, 0o600); err != nil {
+		return nil, nil, err
+	}
+	observedZombie, err := os.ReadFile(zombiePath)
+	if err != nil {
+		return nil, nil, err
+	}
 	staleErr := environment.runtime.Authorize(old.Authority, "focused-zombie-write", now.Add(2*time.Millisecond))
-	after, probeErr := environment.repository.Probe(ctx, oldRecord)
-	if probeErr != nil {
-		return nil, nil, probeErr
+	freshAfter, err := observeWorktreeContent(ctx, newBinding.CanonicalPath)
+	if err != nil {
+		return nil, nil, err
 	}
 	environment.baseline = delivery
 	facts := map[string]bool{
 		"replacement_lease_differs":     delivery.Authority.LeaseID != old.Authority.LeaseID,
 		"replacement_workspace_differs": delivery.Authority.WorkspaceID != old.Authority.WorkspaceID,
 		"stale_authority_refused":       provingground.IsOutcome(staleErr, provingground.OutcomeStaleLease),
-		"old_workspace_unchanged":       before.Registered == after.Registered && before.Head == after.Head && before.GitDir == after.GitDir && before.IndexPath == after.IndexPath,
+		"old_workspace_posix_mutated":   bytes.Equal(observedZombie, zombieBytes),
+		"fresh_head_unchanged":          freshBefore.Head == freshAfter.Head,
+		"fresh_index_unchanged":         freshBefore.IndexDigest == freshAfter.IndexDigest,
+		"fresh_tree_unchanged":          freshBefore.TreeDigest == freshAfter.TreeDigest,
+		"fresh_content_unchanged":       freshBefore.ContentDigest == freshAfter.ContentDigest,
 		"schedule_consumed":             input.Order[0] != input.Order[1],
 	}
 	artifact, _ := json.Marshal(struct {
-		Input       FocusedInput `json:"input"`
-		Old, New    controljournal.AuthorityCapsuleV1
-		Before, End workspace.Probe
-		Facts       map[string]bool `json:"facts"`
-	}{input, old.Authority, delivery.Authority, before, after, facts})
+		Input                   FocusedInput `json:"input"`
+		Old, New                controljournal.AuthorityCapsuleV1
+		FreshBefore, FreshAfter worktreeContentObservation
+		ZombiePath              string          `json:"zombie_path"`
+		Facts                   map[string]bool `json:"facts"`
+	}{input, old.Authority, delivery.Authority, freshBefore, freshAfter, zombiePath, facts})
 	return artifact, facts, nil
+}
+
+type worktreeContentObservation struct {
+	Head, IndexDigest, TreeDigest, ContentDigest string
+}
+
+func observeWorktreeContent(ctx context.Context, root string) (worktreeContentObservation, error) {
+	head, err := gitOutputAt(ctx, root, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return worktreeContentObservation{}, err
+	}
+	tree, err := gitOutputAt(ctx, root, "write-tree")
+	if err != nil {
+		return worktreeContentObservation{}, err
+	}
+	gitDir, err := gitOutputAt(ctx, root, "rev-parse", "--git-dir")
+	if err != nil {
+		return worktreeContentObservation{}, err
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	indexBytes, err := os.ReadFile(filepath.Join(filepath.Clean(gitDir), "index"))
+	if err != nil {
+		return worktreeContentObservation{}, err
+	}
+	indexDigest := sha256.Sum256(indexBytes)
+	command := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	listed, err := command.Output()
+	if err != nil {
+		return worktreeContentObservation{}, err
+	}
+	paths := bytes.Split(bytes.TrimSuffix(listed, []byte{0}), []byte{0})
+	sort.Slice(paths, func(i, j int) bool { return bytes.Compare(paths[i], paths[j]) < 0 })
+	content := sha256.New()
+	for _, encodedPath := range paths {
+		if len(encodedPath) == 0 {
+			continue
+		}
+		path := filepath.Join(root, string(encodedPath))
+		value, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return worktreeContentObservation{}, readErr
+		}
+		content.Write(encodedPath)
+		content.Write([]byte{0})
+		content.Write(value)
+		content.Write([]byte{0})
+	}
+	return worktreeContentObservation{Head: head, IndexDigest: hex.EncodeToString(indexDigest[:]), TreeDigest: tree, ContentDigest: hex.EncodeToString(content.Sum(nil))}, nil
+}
+
+func gitOutputAt(ctx context.Context, root string, args ...string) (string, error) {
+	output, err := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %s: %w", strings.Join(args, " "), bounded(string(output)), err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func workspaceBindingByID(snapshot provingground.QualificationSnapshot, id controljournal.WorkspaceID) (provingground.WorkspaceBinding, bool) {
@@ -1233,9 +1523,14 @@ func executeComposedGJ01(ctx context.Context, attempt Attempt, environment *prod
 
 func qualificationBatch(attempt Attempt, label string) (application.ValidatedBatchV1, error) {
 	identity := productionAttemptID(attempt)
+	payload := []byte(fmt.Sprintf(`{"attempt":%q,"seed":%d}`, identity, attempt.Seed))
+	return qualificationBatchPayload(attempt, label, payload)
+}
+
+func qualificationBatchPayload(attempt Attempt, label string, payload []byte) (application.ValidatedBatchV1, error) {
+	identity := productionAttemptID(attempt)
 	operation := controljournal.OperationID("operation-" + label + "-" + identity)
 	epoch := controljournal.RuntimeEpochID("epoch-qualification")
-	payload := []byte(fmt.Sprintf(`{"attempt":%q,"seed":%d}`, identity, attempt.Seed))
 	command, err := application.ValidateCommandEnvelopeV1(application.CommandEnvelopeInputV1{SchemaVersion: 1, ProjectID: "project-qualification", MissionID: "mission-qualification", OperationID: operation, CommandType: "qualification.observe", RuntimeEpochID: epoch, Payload: payload})
 	if err != nil {
 		return application.ValidatedBatchV1{}, err
@@ -1467,6 +1762,7 @@ type qualificationOverlay struct {
 	authorities []m1.AuthorityObservation
 	reviews     []m1.ReviewObservation
 	integration []m1.IntegrationObservation
+	primary     m1.PrimaryObservation
 }
 
 func observeComposedRuntime(_ context.Context, environment *productionEnvironment, effects []m1.EffectObservation) (m1.ObservationPort, error) {
@@ -1477,7 +1773,7 @@ func observeComposedRuntimeWithOverlay(_ context.Context, environment *productio
 	if environment == nil || environment.runtime == nil || environment.port == nil || environment.repository == nil {
 		return nil, fmt.Errorf("composed runtime observation is unavailable")
 	}
-	copyOverlay := qualificationOverlay{authorities: append([]m1.AuthorityObservation(nil), overlay.authorities...), reviews: append([]m1.ReviewObservation(nil), overlay.reviews...), integration: append([]m1.IntegrationObservation(nil), overlay.integration...)}
+	copyOverlay := qualificationOverlay{authorities: append([]m1.AuthorityObservation(nil), overlay.authorities...), reviews: append([]m1.ReviewObservation(nil), overlay.reviews...), integration: append([]m1.IntegrationObservation(nil), overlay.integration...), primary: overlay.primary}
 	return &composedObservationPort{environment: environment, effects: append([]m1.EffectObservation(nil), effects...), overlay: copyOverlay}, nil
 }
 
@@ -1509,7 +1805,7 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 			event  controljournal.EventEnvelopeV1
 		}{record, event}
 	}
-	observation := m1.Observation{Capabilities: m1.CapabilityObservation{Authority: true, Workspace: true, Review: true, Integration: true, Effects: true}, Journal: m1.JournalObservation{Inspectable: true}, Effects: append([]m1.EffectObservation(nil), p.effects...), Reviews: append([]m1.ReviewObservation(nil), p.overlay.reviews...), Integration: append([]m1.IntegrationObservation(nil), p.overlay.integration...)}
+	observation := m1.Observation{Capabilities: m1.CapabilityObservation{Authority: true, Workspace: true, Review: true, Integration: true, Effects: true}, Journal: m1.JournalObservation{Inspectable: true}, Effects: append([]m1.EffectObservation(nil), p.effects...), Reviews: append([]m1.ReviewObservation(nil), p.overlay.reviews...), Integration: append([]m1.IntegrationObservation(nil), p.overlay.integration...), Primary: p.overlay.primary}
 	sort.Slice(operationRecords, func(i, j int) bool { return operationRecords[i].Revision < operationRecords[j].Revision })
 	for _, stored := range operationRecords {
 		record, decodeErr := controljournal.DecodeOperationRecordV1(stored.Value)
@@ -1567,15 +1863,22 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 		}
 		observation.Workspaces = append(observation.Workspaces, m1.WorkspaceObservation{WorkspaceID: string(binding.WorkspaceID), WorkRevisionID: string(binding.WorkRevisionID), WorkID: string(binding.WorkID), LeaseID: string(binding.LeaseID), RuntimeEpochID: string(binding.RuntimeEpochID), Generation: binding.Generation, CanonicalPath: binding.CanonicalPath, OwnedBranch: binding.OwnedBranch, Status: binding.Status, PrimaryPath: p.environment.repository.Binding().PrimaryPath, Registered: probe.Registered})
 	}
-	// The same canonical decoded record set is replayed twice without adapter
-	// access; equal digests prove zero-I/O deterministic playback of this read.
-	canonical, _ := json.Marshal(struct {
-		Operations []m1.JournalOperation
-		Heads      []m1.JournalHead
-	}{observation.Journal.Operations, observation.Journal.Heads})
-	digest := sha256.Sum256(canonical)
-	stable := hex.EncodeToString(digest[:])
-	observation.Playback = m1.PlaybackObservation{Inspectable: true, RestoreDigest: stable, PlaybackDigest: stable, StableCanonical: true}
+	restored, journal, err := restoreAndJournal(ctx, p.environment)
+	if err != nil {
+		return m1.Observation{}, err
+	}
+	played, err := journalplayback.RunV1(journalplayback.InputV1{Journal: journal, Reducers: p.environment.reducers})
+	if err != nil {
+		return m1.Observation{}, err
+	}
+	observation.Playback = m1.PlaybackObservation{
+		Inspectable:     true,
+		RestoreDigest:   hex.EncodeToString(restored.CanonicalProjectionDigest[:]),
+		PlaybackDigest:  hex.EncodeToString(played.CanonicalProjectionDigest[:]),
+		AdapterCalls:    played.Observation.AdapterCalls,
+		DurableWrites:   played.Observation.DurableWrites,
+		StableCanonical: journalplayback.CompareDigestV1(restored.CanonicalProjectionDigest, played) == nil,
+	}
 	return observation, nil
 }
 
@@ -1601,7 +1904,13 @@ func scanAllRecords(ctx context.Context, port storegapdb.Port, prefix string) ([
 func (p *composedObservationPort) ProbeStaleAuthority(_ context.Context) (m1.StaleProbe, error) {
 	before := p.environment.runtime.QualificationSnapshot()
 	stale := p.environment.baseline.Authority
-	stale.LeaseID = "lease-stale-qualification"
+	epochStale := false
+	if before.PredecessorEpoch != "" && p.environment.predecessor != nil {
+		stale = *p.environment.predecessor
+		epochStale = stale.RuntimeEpochID == before.PredecessorEpoch && stale.RuntimeEpochID != before.RuntimeEpochID
+	} else {
+		stale.LeaseID = "lease-stale-qualification"
+	}
 	err := p.environment.runtime.Authorize(stale, "qualification-stale-probe", time.Now().UTC())
 	after := p.environment.runtime.QualificationSnapshot()
 	if !provingground.IsOutcome(err, provingground.OutcomeStaleLease) {
@@ -1614,7 +1923,7 @@ func (p *composedObservationPort) ProbeStaleAuthority(_ context.Context) (m1.Sta
 	if len(after.Workspaces) != len(before.Workspaces) {
 		workspaceChanges = 1
 	}
-	return m1.StaleProbe{Attempted: true, Refused: true, LeaseStale: true, AuthorityChanges: authorityChanges, WorkspaceChanges: workspaceChanges}, nil
+	return m1.StaleProbe{Attempted: true, Refused: true, LeaseStale: !epochStale, EpochStale: epochStale, AuthorityChanges: authorityChanges, WorkspaceChanges: workspaceChanges}, nil
 }
 
 func (p *ProductionExecutor) ExecuteFault(ctx context.Context, attempt Attempt) (Execution, error) {
@@ -1915,6 +2224,18 @@ func hexValue(value string, size int) bool {
 }
 
 func equalProductFacts(left, right map[string]ProductFact) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if value.Digest == "" || value.Revision == 0 || right[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func equalProductFactsAllowEmpty(left, right map[string]ProductFact) bool {
 	if len(left) != len(right) {
 		return false
 	}

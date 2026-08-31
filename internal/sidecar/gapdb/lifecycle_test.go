@@ -277,6 +277,54 @@ func TestLifecycleRestartUsesFreshEndpointAndPreservesDatabase(t *testing.T) {
 	}
 }
 
+func TestRestartOwnedCleanAndUncleanPreserveDataAndMintFreshOwner(t *testing.T) {
+	for _, mode := range []RestartMode{RestartClean, RestartUnclean} {
+		t.Run(string(mode), func(t *testing.T) {
+			first := startTestLifecycle(t, "restart-owned-"+string(mode))
+			before := first.Provenance()
+			next, err := first.RestartOwned(t.Context(), mode, "run-restart-owned-"+string(mode)+"-next")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stopTestLifecycle(t, next)
+			after := next.Provenance()
+			if before.DatabaseID == "" || after.DatabaseID != before.DatabaseID || after.DataDirectory != before.DataDirectory {
+				t.Fatalf("durable database changed across %s restart: before=%+v after=%+v", mode, before, after)
+			}
+			if after.RuntimeDirectory == before.RuntimeDirectory || after.ConfiguredSocket == before.ConfiguredSocket || after.Process == before.Process || after.SupervisorRunID == before.SupervisorRunID {
+				t.Fatalf("%s restart reused owner lifetime: before=%+v after=%+v", mode, before, after)
+			}
+			if diagnostic := first.InspectOwnership(); diagnostic.State != OwnershipOwnedExited {
+				t.Fatalf("predecessor remained live after %s restart: %+v", mode, diagnostic)
+			}
+			if diagnostic := next.InspectOwnership(); diagnostic.State != OwnershipOwnedLive {
+				t.Fatalf("replacement is not exact owned live process: %+v", diagnostic)
+			}
+		})
+	}
+}
+
+func TestRestartOwnedRefusesInvalidModeOrIdentityBeforeSignalling(t *testing.T) {
+	lifecycle := startTestLifecycle(t, "restart-owned-refuse")
+	defer stopTestLifecycle(t, lifecycle)
+	before := lifecycle.Provenance()
+	for _, test := range []struct {
+		mode  RestartMode
+		runID string
+	}{
+		{mode: "unknown", runID: "run-valid-next"},
+		{mode: RestartClean, runID: before.SupervisorRunID},
+		{mode: RestartUnclean, runID: "invalid run id"},
+	} {
+		if _, err := lifecycle.RestartOwned(t.Context(), test.mode, test.runID); err == nil {
+			t.Fatalf("invalid restart request survived: %+v", test)
+		}
+		if diagnostic := lifecycle.InspectOwnership(); diagnostic.State != OwnershipOwnedLive || diagnostic.Daemon != before.Process {
+			t.Fatalf("invalid restart signalled owner: %+v", diagnostic)
+		}
+	}
+}
+
 func TestLifecycleAttachReconcilesExactLiveOwnerAfterSupervisorCrash(t *testing.T) {
 	runtimeRoot := privateShortRoot(t)
 	config := testLifecycleConfig(t, runtimeRoot, "attach")

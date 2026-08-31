@@ -213,6 +213,15 @@ const (
 	OwnershipIndeterminate OwnershipState = "indeterminate"
 )
 
+// RestartMode names the two owner-loss paths qualification and the supervisor
+// can distinguish without guessing from process timing.
+type RestartMode string
+
+const (
+	RestartClean   RestartMode = "clean"
+	RestartUnclean RestartMode = "unclean"
+)
+
 // OwnershipDiagnostic keeps daemon and proxy identities distinct. ProxyPID is
 // populated by the proxy, never inferred from daemon status.
 type OwnershipDiagnostic struct {
@@ -1197,6 +1206,93 @@ func (l *Lifecycle) InspectOwnership() OwnershipDiagnostic {
 		diagnostic.Recovery = operatorRecovery()
 	}
 	return diagnostic
+}
+
+// RestartOwned replaces only an exactly attributed owned sidecar. Both modes
+// preserve the configured durable data directory and admitted binary while
+// Start creates a fresh private runtime directory, socket, and process
+// provenance. Invalid requests are fully validated before the predecessor is
+// signalled.
+func (l *Lifecycle) RestartOwned(ctx context.Context, mode RestartMode, supervisorRunID string) (*Lifecycle, error) {
+	if l == nil {
+		return nil, failure(FailureOwnership, "restart", "lifecycle is absent", nil)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	l.mu.Lock()
+	config := l.config
+	predecessor := l.provenance
+	l.mu.Unlock()
+	if mode != RestartClean && mode != RestartUnclean {
+		return nil, failure(FailureInvalidConfiguration, "restart", "restart mode is invalid", nil)
+	}
+	if supervisorRunID == predecessor.SupervisorRunID {
+		return nil, failure(FailureInvalidConfiguration, "restart", "replacement supervisor run identity must be fresh", nil)
+	}
+	config.SupervisorRunID = supervisorRunID
+	if err := normalizeLifecycleConfig(&config); err != nil {
+		return nil, err
+	}
+	var err error
+	if mode == RestartClean {
+		err = l.Stop(ctx)
+	} else {
+		err = l.stopOwnedUnclean(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	next, err := Start(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	fresh := next.Provenance()
+	if fresh.DatabaseID != predecessor.DatabaseID || fresh.DataDirectory != predecessor.DataDirectory ||
+		fresh.RuntimeDirectory == predecessor.RuntimeDirectory || fresh.ConfiguredSocket == predecessor.ConfiguredSocket ||
+		fresh.Process == predecessor.Process || fresh.SupervisorRunID == predecessor.SupervisorRunID {
+		_ = next.Stop(context.Background())
+		return nil, failure(FailureOwnership, "restart", "replacement did not preserve data with a fresh owner lifetime", nil)
+	}
+	return next, nil
+}
+
+func (l *Lifecycle) stopOwnedUnclean(ctx context.Context) error {
+	l.mu.Lock()
+	if l.stopped {
+		l.mu.Unlock()
+		return failure(FailureOwnership, "restart_unclean", "predecessor lifecycle is already stopped", nil)
+	}
+	if diagnostic := l.inspectOwnershipLocked(); diagnostic.State != OwnershipOwnedLive {
+		l.mu.Unlock()
+		return failure(FailureOwnership, "restart_unclean", "process ownership is not provable", nil)
+	}
+	if err := l.signalLocked(unix.SIGKILL); err != nil {
+		l.mu.Unlock()
+		return failure(FailureOwnership, "restart_unclean", "owned process could not be terminated", err)
+	}
+	exit := l.exit
+	timeout := l.config.StopTimeout
+	l.mu.Unlock()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return failure(FailureStart, "restart_unclean", "restart context ended", ctx.Err())
+	case <-timer.C:
+		return failure(FailureStart, "restart_unclean", "owned process did not exit", nil)
+	case <-exit:
+	}
+	l.mu.Lock()
+	state := l.inspectOwnershipLocked().State
+	if state != OwnershipOwnedExited && state != OwnershipStaleArtifact {
+		l.mu.Unlock()
+		return failure(FailureOwnership, "restart_unclean", "ownership changed during termination", nil)
+	}
+	l.stopped = true
+	l.closePidfd()
+	l.mu.Unlock()
+	return l.cleanupRuntime(true)
 }
 
 // Stop is idempotent and signals only the revalidated exact process.

@@ -252,9 +252,14 @@ func (r *Runtime) authorityFromCapsule(capsule controljournal.AuthorityCapsuleV1
 	if err != nil {
 		return Authority{}, refusal(OutcomeInvalidCommand, action, "authority capsule is malformed")
 	}
+	if validated.ProjectID != r.core.config.ProjectID || validated.MissionID != r.core.config.MissionID || validated.WorkRevisionID != r.core.config.WorkRevisionID {
+		return Authority{}, refusal(OutcomeStaleWorkRevision, action, "capsule belongs to another project, mission, or work revision")
+	}
+	if validated.RuntimeEpochID != r.core.currentEpoch() {
+		return Authority{}, refusal(OutcomeStaleEpoch, action, "capsule belongs to a predecessor runtime epoch")
+	}
 	binding, ok := r.core.Binding(validated.WorkspaceID)
-	if !ok || binding.Status != "active-bound" || r.core.config.ProjectID != validated.ProjectID || r.core.config.MissionID != validated.MissionID ||
-		binding.WorkRevisionID != validated.WorkRevisionID || binding.ActorID != validated.ActorID || binding.ProcessID != validated.ProcessID ||
+	if !ok || binding.Status != "active-bound" || binding.WorkRevisionID != validated.WorkRevisionID || binding.ActorID != validated.ActorID || binding.ProcessID != validated.ProcessID ||
 		binding.RunID != validated.RunID || binding.LeaseID != validated.LeaseID || binding.RuntimeEpochID != validated.RuntimeEpochID ||
 		binding.Generation != validated.LeaseGeneration || binding.FenceToken != validated.FenceToken {
 		return Authority{}, refusal(OutcomeStaleLease, action, "capsule no longer matches its durable workspace binding")

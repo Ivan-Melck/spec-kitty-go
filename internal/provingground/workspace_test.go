@@ -106,6 +106,45 @@ func TestWorkspaceW1W2DistinctAndDurablyBound(t *testing.T) {
 	assertAuthorityInvariants(t, service)
 }
 
+func TestPublicCapsuleRefusalClassifiesEpochBeforeQuarantinedLease(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	service := mustService(t, &recordingApplier{}, newFakeGit(t))
+	authority, err := service.Claim(t.Context(), claimRequest("work-a", "actor-a", "process-a", "epoch-order", now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := service.EnsureWorkspace(t.Context(), workspaceRequest(authority, "epoch-order", now.Add(time.Second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capsule, err := authorityCapsule(authority, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReplaceRuntime(t.Context(), "restart-epoch-order", "epoch-two", &recordingApplier{}, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &Runtime{core: service}
+	if err := runtime.Authorize(capsule, "predecessor", now.Add(3*time.Second)); !IsOutcome(err, OutcomeStaleEpoch) {
+		t.Fatalf("predecessor quarantined capsule classification=%v", err)
+	}
+	sameEpoch := capsule
+	sameEpoch.RuntimeEpochID = "epoch-two"
+	if err := runtime.Authorize(sameEpoch, "quarantined", now.Add(3*time.Second)); !IsOutcome(err, OutcomeStaleLease) {
+		t.Fatalf("same-epoch quarantined capsule classification=%v", err)
+	}
+	foreignRevision := sameEpoch
+	foreignRevision.WorkRevisionID = "revision-foreign"
+	if err := runtime.Authorize(foreignRevision, "foreign-revision", now.Add(3*time.Second)); !IsOutcome(err, OutcomeStaleWorkRevision) {
+		t.Fatalf("foreign revision classification=%v", err)
+	}
+	malformed := capsule
+	malformed.SchemaVersion = 0
+	if err := runtime.Authorize(malformed, "malformed", now.Add(3*time.Second)); !IsOutcome(err, OutcomeInvalidCommand) {
+		t.Fatalf("malformed capsule classification=%v", err)
+	}
+}
+
 func TestReplacementActorAProcessCReceivesFreshW3WhileBContinues(t *testing.T) {
 	git := newFakeGit(t)
 	service := mustService(t, &recordingApplier{}, git)

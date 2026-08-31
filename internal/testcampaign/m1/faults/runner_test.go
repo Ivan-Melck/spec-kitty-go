@@ -193,6 +193,55 @@ func TestFaultRunnerInvariantViolationCannotPass(t *testing.T) {
 	}
 }
 
+func TestFocusedSemanticCensusRejectsOmissionExtraAndRenameForEveryCampaign(t *testing.T) {
+	expected := map[string][]string{
+		"atomic-publication-nfr001":        {"gj01_cut_once", "gj01_no_partial_batch", "gj01_preexisting_preserved", "gj02_cut_once", "gj02_complete_response", "gj02_durable_acceptance", "gj02_one_operation_result", "schedule_consumed"},
+		"lost-response-idempotency-nfr002": {"changed_digest_no_publication", "changed_digest_refused", "equal_retry_durable_acceptance", "equal_retry_one_operation", "equal_retry_same_revision", "exact_proxy_source", "schedule_consumed", "zero_blind_effect_repeats"},
+		"concurrent-claims-nfr003":         {"both_items_progress", "distinct_authorities", "participant_one", "participant_zero"},
+		"competing-integrations-nfr004":    {"both_participants", "git_target_moved_once", "one_candidate_publication", "one_target_authority"},
+		"restore-playback-nfr005":          {"digest_equal", "history_materialized", "playback_zero_io", "restore_ready", "schedule_consumed"},
+		"restart-epoch-nfr007":             {"current_epoch_accepted", "fresh_owner_process", "fresh_private_endpoint", "fresh_runtime_instance", "new_epoch_unique", "predecessor_refused", "ready_new_lifetime", "restart_mode_observed", "same_durable_database", "schedule_consumed"},
+		"zombie-isolation-nfr008":          {"fresh_content_unchanged", "fresh_head_unchanged", "fresh_index_unchanged", "fresh_tree_unchanged", "old_workspace_posix_mutated", "replacement_lease_differs", "replacement_workspace_differs", "schedule_consumed", "stale_authority_refused"},
+		"attribution-reassignment-nfr015":  {"effect_intent_durable", "one_typed_attempt", "provider_state_observed", "schedule_consumed", "zero_blind_repeats"},
+	}
+	if len(focusedFactCensus) != len(expected) {
+		t.Fatalf("campaign semantic census size=%d want=%d", len(focusedFactCensus), len(expected))
+	}
+	for campaignID, required := range expected {
+		actual, exists := focusedFactCensus[campaignID]
+		if !exists || strings.Join(actual, "\x00") != strings.Join(required, "\x00") {
+			t.Fatalf("campaign %s semantic census drifted: got=%v want=%v", campaignID, actual, required)
+		}
+		t.Run(campaignID, func(t *testing.T) {
+			clean := make(map[string]bool, len(required))
+			for _, name := range required {
+				clean[name] = true
+			}
+			if err := validateFocusedFactCensus(campaignID, clean); err != nil {
+				t.Fatalf("exact census rejected: %v", err)
+			}
+			for _, mutation := range []func(map[string]bool){
+				func(facts map[string]bool) { delete(facts, required[0]) },
+				func(facts map[string]bool) { facts["unexpected"] = true },
+				func(facts map[string]bool) { delete(facts, required[0]); facts[required[0]+"-renamed"] = true },
+				func(facts map[string]bool) { facts[required[0]] = false },
+			} {
+				defect := make(map[string]bool, len(clean)+1)
+				for name, passed := range clean {
+					defect[name] = passed
+				}
+				mutation(defect)
+				if err := validateFocusedFactCensus(campaignID, defect); err == nil {
+					t.Fatalf("semantic census mutant survived: %v", defect)
+				}
+			}
+		})
+	}
+	if err := validateFocusedFactCensus("renamed-campaign", map[string]bool{}); err == nil {
+		t.Fatal("unknown campaign minted a semantic census")
+	}
+}
+
 type badPort struct{}
 
 func (badPort) ObserveM1(context.Context) (m1.Observation, error) {
@@ -305,6 +354,9 @@ func validObservation() m1.Observation {
 		Integration:  []m1.IntegrationObservation{{RepositoryID: "repo", TargetRef: "main", ActiveAuthorities: 1, CandidateID: "candidate"}},
 		Effects:      []m1.EffectObservation{{EffectID: "effect", OperationID: "effect-op", ExpectedRevision: "r1", AppliedRevision: "r2", ExpectedMarker: "m1", AppliedMarker: "m2", Dispatches: 1}},
 		Playback:     m1.PlaybackObservation{Inspectable: true, RestoreDigest: stable, PlaybackDigest: stable, StableCanonical: true},
+		Primary: m1.PrimaryObservation{Inspectable: true,
+			Before: m1.GitSnapshotObservation{Head: strings.Repeat("a", 40), IndexDigest: strings.Repeat("b", 64), TreeDigest: strings.Repeat("c", 64)},
+			After:  m1.GitSnapshotObservation{Head: strings.Repeat("a", 40), IndexDigest: strings.Repeat("b", 64), TreeDigest: strings.Repeat("c", 64)}},
 	}
 }
 

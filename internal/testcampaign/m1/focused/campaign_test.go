@@ -34,12 +34,12 @@ func TestEightFocusedProductionCampaignsMintOneHundredExactAttempts(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
+			executor := &faultcampaign.ProductionExecutor{Root: repositoryRoot(t), Lifecycle: lifecycle}
 			defer func() {
-				if err := lifecycle.Stop(context.Background()); err != nil {
+				if err := executor.Lifecycle.Stop(context.Background()); err != nil {
 					t.Errorf("stop sidecar: %v", err)
 				}
 			}()
-			executor := &faultcampaign.ProductionExecutor{Root: repositoryRoot(t), Lifecycle: lifecycle}
 			defer func() {
 				if err := executor.Close(); err != nil {
 					t.Errorf("close production executor: %v", err)
@@ -377,6 +377,9 @@ func campaignObservation() m1.Observation {
 		Integration:  []m1.IntegrationObservation{{RepositoryID: "repo", TargetRef: "main", ActiveAuthorities: 1, CandidateID: "candidate"}},
 		Effects:      []m1.EffectObservation{{EffectID: "effect", OperationID: "effect-op", ExpectedRevision: "r1", AppliedRevision: "r2", ExpectedMarker: "m1", AppliedMarker: "m2", Dispatches: 1}},
 		Playback:     m1.PlaybackObservation{Inspectable: true, RestoreDigest: stable, PlaybackDigest: stable, StableCanonical: true},
+		Primary: m1.PrimaryObservation{Inspectable: true,
+			Before: m1.GitSnapshotObservation{Head: strings.Repeat("a", 40), IndexDigest: strings.Repeat("b", 64), TreeDigest: strings.Repeat("c", 64)},
+			After:  m1.GitSnapshotObservation{Head: strings.Repeat("a", 40), IndexDigest: strings.Repeat("b", 64), TreeDigest: strings.Repeat("c", 64)}},
 	}
 }
 

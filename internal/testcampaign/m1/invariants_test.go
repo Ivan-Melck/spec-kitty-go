@@ -5,8 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -94,6 +98,81 @@ func TestInvariantMutantsEachKillTheirNamedAssertion(t *testing.T) {
 				t.Fatalf("mutant not represented: %+v", result)
 			}
 		})
+	}
+}
+
+func TestPrimaryInvariantRejectsEveryUnderlyingGitFactMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*PrimaryObservation)
+	}{
+		{"missing observation", func(p *PrimaryObservation) { p.Inspectable = false }},
+		{"head", func(p *PrimaryObservation) { p.After.Head = strings.Repeat("b", 40) }},
+		{"index", func(p *PrimaryObservation) { p.After.IndexDigest = strings.Repeat("d", 64) }},
+		{"tree", func(p *PrimaryObservation) { p.After.TreeDigest = strings.Repeat("b", 64) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			port := validObservationPort()
+			test.mutate(&port.observation.Primary)
+			if result := AssertUniversal(t.Context(), port); result.PrimaryIsolation {
+				t.Fatalf("primary %s mutant survived", test.name)
+			}
+		})
+	}
+}
+
+func TestObserveGitSourceRejectsTrackedUntrackedAndIgnoredExecutableBytes(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init", "-q")
+	runGit(t, root, "config", "user.name", "Spec Kitty")
+	runGit(t, root, "config", "user.email", "spec-kitty@example.invalid")
+	tracked := filepath.Join(root, "main.go")
+	if err := os.WriteFile(tracked, []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "main.go")
+	runGit(t, root, "commit", "-qm", "initial")
+	if _, _, _, _, err := observeGitSource(t.Context(), root); err != nil {
+		t.Fatalf("clean source rejected: %v", err)
+	}
+	if err := os.WriteFile(tracked, []byte("package main\nvar changed = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := observeGitSource(t.Context(), root); err == nil {
+		t.Fatal("tracked executable mutation retained source binding")
+	}
+	if err := os.WriteFile(tracked, []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	untracked := filepath.Join(root, "extra.go")
+	if err := os.WriteFile(untracked, []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := observeGitSource(t.Context(), root); err == nil {
+		t.Fatal("untracked executable mutation retained source binding")
+	}
+	if err := os.Remove(untracked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.go\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", ".gitignore")
+	runGit(t, root, "commit", "-qm", "ignore")
+	if err := os.WriteFile(filepath.Join(root, "ignored.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := observeGitSource(t.Context(), root); err == nil {
+		t.Fatal("ignored executable mutation retained source binding")
+	}
+}
+
+func runGit(t *testing.T, root string, arguments ...string) {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", root}, arguments...)...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %s: %v", arguments, output, err)
 	}
 }
 
@@ -233,5 +312,8 @@ func validObservation() Observation {
 		Integration: []IntegrationObservation{{RepositoryID: "repo-1", TargetRef: "refs/heads/main", ActiveAuthorities: 1, CandidateID: "candidate-a", SuccessfulPublishes: 1, GitExpectedOld: "abc", GitObservedOld: "abc", GitResult: "def", JournalResult: "def"}},
 		Effects:     []EffectObservation{{EffectID: "effect-1", OperationID: "operation-effect", ExpectedRevision: "provider-1", AppliedRevision: "provider-2", ExpectedValue: "human", AppliedValue: "agent", ExpectedMarker: "marker-before", AppliedMarker: "marker-operation", CurrentRevision: "provider-3", CurrentValue: "human", CurrentMarker: "marker-before", Dispatches: 1, CompensationAttempted: true, CompensationApplied: true, Attributable: true, HumanValuePreserved: true}},
 		Playback:    PlaybackObservation{Inspectable: true, RestoreDigest: hex.EncodeToString(restore[:]), PlaybackDigest: hex.EncodeToString(restore[:]), StableCanonical: true},
+		Primary: PrimaryObservation{Inspectable: true,
+			Before: GitSnapshotObservation{Head: strings.Repeat("a", 40), IndexDigest: strings.Repeat("b", 64), TreeDigest: strings.Repeat("c", 64)},
+			After:  GitSnapshotObservation{Head: strings.Repeat("a", 40), IndexDigest: strings.Repeat("b", 64), TreeDigest: strings.Repeat("c", 64)}},
 	}
 }
