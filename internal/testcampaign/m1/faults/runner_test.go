@@ -244,7 +244,7 @@ func TestFocusedSemanticCensusRejectsOmissionExtraAndRenameForEveryCampaign(t *t
 	}
 }
 
-func TestFocusedOwnerRestartRebuildsRuntimeAcrossConsecutiveLifetimes(t *testing.T) {
+func TestRestartTwice(t *testing.T) {
 	lifecycle := startFaultLifecycle(t)
 	executor := &ProductionExecutor{Root: faultModuleRoot(t), Lifecycle: lifecycle}
 	t.Cleanup(func() {
