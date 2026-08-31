@@ -1321,12 +1321,12 @@ func (p *ProductionExecutor) productionEnvironment(ctx context.Context) (*produc
 	if err != nil {
 		return nil, err
 	}
-	events, err := provingground.EventRegistryV1()
+	events, err := provingground.M1EventRegistryV1()
 	if err != nil {
 		closer.Close()
 		return nil, err
 	}
-	reducers, err := provingground.ReducerRegistryV1()
+	reducers, err := provingground.M1ReducerRegistryV1()
 	if err != nil {
 		closer.Close()
 		return nil, err
