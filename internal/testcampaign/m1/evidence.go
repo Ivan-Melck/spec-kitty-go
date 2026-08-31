@@ -385,8 +385,17 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 	if err := jsonUnmarshalStrict(crownBytes, &crown); err != nil {
 		return Verification{}, manifest, fmt.Errorf("decode crown ledger: %w", err)
 	}
-	if err := ValidateCrownArtifact(crown); err != nil {
-		return Verification{}, manifest, fmt.Errorf("crown ledger is invalid: %w", err)
+	if manifest.Outcome == "pass" {
+		if err := ValidateCrownArtifact(crown); err != nil {
+			return Verification{}, manifest, fmt.Errorf("crown ledger is invalid: %w", err)
+		}
+	} else if crown.SchemaVersion != 1 || crown.RunID != manifest.RunID || crown.Trial.RunID != manifest.RunID || crown.Trial.Outcome == "pass" {
+		return Verification{}, manifest, fmt.Errorf("incomplete crown ledger identity/outcome is invalid")
+	}
+	for _, segment := range crown.Segments {
+		if seenDigest[segment.ArtifactSHA256] != 1 {
+			return Verification{}, manifest, fmt.Errorf("crown segment %q artifact %s count=%d want=1", segment.ID, segment.ArtifactSHA256, seenDigest[segment.ArtifactSHA256])
+		}
 	}
 	if manifest.OrderedTrial.ArtifactSHA256 != crown.Trial.ArtifactSHA256 {
 		return Verification{}, manifest, fmt.Errorf("ordered trial does not bind the exact crown ledger artifact")
@@ -426,7 +435,9 @@ func referencedArtifactDigests(manifest EvidenceManifest) []string {
 	for _, item := range manifest.MutantResults {
 		result = append(result, item.ArtifactSHA256)
 	}
-	result = append(result, manifest.IndependentReview.ArtifactSHA256)
+	if manifest.IndependentReview.ArtifactSHA256 != "" {
+		result = append(result, manifest.IndependentReview.ArtifactSHA256)
+	}
 	return result
 }
 

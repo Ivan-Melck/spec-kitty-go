@@ -48,6 +48,7 @@ type CrownExecution struct {
 	Trial       m1.OrderedTrial
 	Invariants  m1.InvariantSummary
 	Observation m1.ObservationPort
+	Reviews     []basereview.Record
 }
 
 // RunOrderedCrown executes the product-owned middle of the decisive trial.
@@ -332,6 +333,7 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 		RestorePlayback:    m1.CrownRestorePlayback{RestoreDigest: restoreDigest, PlaybackDigest: playbackDigest, DigestsEqual: restoreDigest == playbackDigest, PlaybackAdapterCalls: playbackCalls, PlaybackDurableWrites: playbackWrites},
 		Reviews:            []m1.CrownReview{w2.CrownReview, w3.CrownReview}, Integration: m1.CrownIntegration{TargetRef: integrations[0].TargetRef, CandidateIDs: []string{w2.Handoff.Candidate, w3.Handoff.Candidate}, PublicationOrder: publicationOrder, CompetingAttempts: len([]provingground.IntegrationItem{w2.Item, w3.Item}), Serialized: serialized, SuccessfulPublications: len(integrations), FalseCompletions: 0}}
 	result.Invariants, result.Observation = invariants, observation
+	result.Reviews = []basereview.Record{w2.Review, w3.Review}
 	_ = restartArtifact
 	finished := recorder.finish(result)
 	if len(finished.Segments) != len(crownInternalSegmentIDs) {

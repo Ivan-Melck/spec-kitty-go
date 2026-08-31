@@ -118,6 +118,9 @@ func validEvidence(t *testing.T, runID string) (EvidenceManifest, []ArtifactInpu
 		{Kind: "proving-binary", Data: []byte("synthetic proving binary")}, {Kind: "contracts", Data: []byte("contracts-v1")},
 		{Kind: "budgets", Data: []byte("budgets-v1")}, {Kind: "crown-ledger", Data: crownBytes},
 	}
+	for _, id := range CrownSegmentIDs {
+		inputs = append(inputs, ArtifactInput{Kind: "crown-segment", Data: crownSegmentFixture(id)})
+	}
 	manifest := EvidenceManifest{SchemaVersion: 1, ProgramID: "production-runtime", MissionID: "M1", RunID: runID, SourceCommit: source.Commit, SourceTree: source.Tree, AdmittedTupleSHA256: AdmittedTupleSHA256, SidecarProvenanceSHA256: source.SidecarProvenanceSHA256, OrderedTrial: trial, InvariantSummary: EvidenceInvariantSummary{true, true, true, true, true, true, true, true}, Outcome: "pass"}
 	for i, id := range ScenarioIDs {
 		artifact := mustJSON(t, map[string]any{"run_id": runID, "scenario_id": id, "sequence": i + 1})

@@ -53,7 +53,7 @@ func validCrownArtifact(t *testing.T, runID string) CrownArtifact {
 	}
 	segments := make([]CrownSegment, len(CrownSegmentIDs))
 	for i, id := range CrownSegmentIDs {
-		segments[i] = CrownSegment{RunID: runID, Sequence: i + 1, ID: id, BeforeDurableRevision: uint64(i), AfterDurableRevision: uint64(i + 1), Started: true, Terminal: true, Outcome: "pass", ArtifactSHA256: strings.Repeat("c", 64)}
+		segments[i] = CrownSegment{RunID: runID, Sequence: i + 1, ID: id, BeforeDurableRevision: uint64(i), AfterDurableRevision: uint64(i + 1), Started: true, Terminal: true, Outcome: "pass", ArtifactSHA256: SHA256Hex(crownSegmentFixture(id))}
 	}
 	artifact, err := SealCrownArtifact(CrownArtifact{SchemaVersion: 1, RunID: runID, Segments: segments, Trial: trial})
 	if err != nil {
@@ -61,6 +61,8 @@ func validCrownArtifact(t *testing.T, runID string) CrownArtifact {
 	}
 	return artifact
 }
+
+func crownSegmentFixture(id string) []byte { return []byte("crown-segment-v1\x00" + id) }
 
 func cloneCrown(t *testing.T, input CrownArtifact) CrownArtifact {
 	t.Helper()

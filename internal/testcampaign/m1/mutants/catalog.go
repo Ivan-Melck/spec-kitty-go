@@ -36,6 +36,7 @@ type Result struct {
 	Test           string  `json:"test"`
 	ArtifactSHA256 string  `json:"artifact_sha256"`
 	Reason         string  `json:"reason"`
+	Artifact       []byte  `json:"-"`
 }
 
 var catalog = []Entry{
@@ -78,7 +79,8 @@ func (r Runner) Run(ctx context.Context, runID string, entry Entry) Result {
 	result := Result{ID: entry.ID, RunID: runID, Guard: entry.Guard, Package: entry.Package, Test: entry.Test, Outcome: OutcomeNotRun}
 	if runID == "" || entry.ID == "" || entry.Package == "" || entry.Test == "" || entry.Guard == "" {
 		result.Reason = "mutant entry or RunID is incomplete"
-		result.ArtifactSHA256 = artifactDigest(result, nil)
+		result.Artifact = artifactBytes(result, nil)
+		result.ArtifactSHA256 = digestBytes(result.Artifact)
 		return result
 	}
 	executor := r.Executor
@@ -89,7 +91,8 @@ func (r Runner) Run(ctx context.Context, runID string, entry Entry) Result {
 			root, err = moduleRoot()
 			if err != nil {
 				result.Reason = bounded(err.Error())
-				result.ArtifactSHA256 = artifactDigest(result, nil)
+				result.Artifact = artifactBytes(result, nil)
+				result.ArtifactSHA256 = digestBytes(result.Artifact)
 				return result
 			}
 		}
@@ -112,7 +115,8 @@ func (r Runner) Run(ctx context.Context, runID string, entry Entry) Result {
 		result.Outcome = OutcomeKilled
 		result.Reason = "clean control and defect fixture passed the named product guard test"
 	}
-	result.ArtifactSHA256 = artifactDigest(result, observation.Output)
+	result.Artifact = artifactBytes(result, observation.Output)
+	result.ArtifactSHA256 = digestBytes(result.Artifact)
 	return result
 }
 
@@ -178,11 +182,23 @@ func moduleRoot() (string, error) {
 	return filepath.Dir(path), nil
 }
 
-func artifactDigest(result Result, output []byte) string {
-	digest := sha256.New()
-	_, _ = fmt.Fprintf(digest, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s", result.ID, result.RunID, result.Outcome, result.Package, result.Test, result.Guard, result.Reason)
-	_, _ = digest.Write(output)
-	return hex.EncodeToString(digest.Sum(nil))
+func artifactBytes(result Result, output []byte) []byte {
+	encoded, _ := json.Marshal(struct {
+		SchemaVersion uint64  `json:"schema_version"`
+		ID            string  `json:"id"`
+		RunID         string  `json:"run_id"`
+		Outcome       Outcome `json:"outcome"`
+		Guard         string  `json:"guard"`
+		Package       string  `json:"package"`
+		Test          string  `json:"test"`
+		Reason        string  `json:"reason"`
+		Output        []byte  `json:"structured_go_test_events"`
+	}{1, result.ID, result.RunID, result.Outcome, result.Guard, result.Package, result.Test, result.Reason, output})
+	return append(encoded, '\n')
+}
+func digestBytes(value []byte) string {
+	digest := sha256.Sum256(value)
+	return hex.EncodeToString(digest[:])
 }
 func bounded(value string) string {
 	value = strings.TrimSpace(value)
