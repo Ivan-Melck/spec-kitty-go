@@ -255,7 +255,7 @@ func TestRestartTwice(t *testing.T) {
 	})
 	for index := 0; index < 2; index++ {
 		barrier := newTestFocusedBarrier(2)
-		attemptID := fmt.Sprintf("restart-regression-%d", index)
+		attemptID := fmt.Sprintf("restart-%d-regression", index)
 		execution, err := executor.ExecuteFocused(t.Context(), FocusedInput{RunID: "run-restart-regression", CampaignID: "restart-epoch-nfr007", AttemptID: attemptID, Index: index, Seed: uint64(index + 1), Order: [2]int{index % 2, 1 - index%2}, Barrier: barrier})
 		if err != nil {
 			t.Fatalf("restart %d: %v", index, err)
