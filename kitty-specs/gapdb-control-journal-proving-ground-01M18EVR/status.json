@@ -327,7 +327,7 @@
         "reviewer": "codex-wp09-arbiter-final",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
       "subtasks": {
