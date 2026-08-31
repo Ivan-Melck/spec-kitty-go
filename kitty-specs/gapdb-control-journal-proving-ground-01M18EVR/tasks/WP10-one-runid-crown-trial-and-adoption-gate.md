@@ -88,6 +88,8 @@ owned_files:
 - internal/testcampaign/m1/faults/runner.go
 - internal/testcampaign/m1/focused/campaign.go
 - internal/testcampaign/m1/focused/campaign_test.go
+- internal/testcampaign/m1/mutants/catalog.go
+- internal/testcampaign/m1/mutants/catalog_test.go
 - internal/architecture/m1_crown_test.go
 - kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/quickstart.md
 role: implementer
@@ -322,3 +324,9 @@ restore, new-epoch admission, predecessor-capsule refusal, and playback equality
 then occur before terminal evaluation. Restarting first would invalidate the
 very W2/W3 capsules the accepted story requires as candidates. Canonical CLI
 verbs are `run` and `verify`; quickstart wording may be corrected accordingly.
+
+Composition also requires the existing mutant runner to return the canonical
+structured guard artifact whose digest it already records. WP10 therefore owns
+the two mutant catalog files solely for additive artifact-byte exposure and its
+regression; the nineteen stable IDs, executable guards, and kill semantics stay
+frozen.
