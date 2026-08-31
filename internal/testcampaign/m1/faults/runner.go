@@ -842,7 +842,8 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 	if environment.closer != nil {
 		_ = environment.closer.Close()
 	}
-	next, err := predecessorLifecycle.RestartOwned(ctx, mode, environment.runID)
+	nextSupervisorRunID := replacementSupervisorRunID(environment.runID, input.AttemptID, predecessorProvenance.SupervisorRunID)
+	next, err := predecessorLifecycle.RestartOwned(ctx, mode, nextSupervisorRunID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -948,7 +949,7 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 		"new_epoch_unique":       admitted != predecessor && environment.runtime.QualificationSnapshot().RuntimeEpochID == admitted,
 		"predecessor_refused":    provingground.IsOutcome(oldErr, provingground.OutcomeStaleEpoch),
 		"current_epoch_accepted": currentErr == nil,
-		"fresh_owner_process":    fresh.Process != predecessorProvenance.Process,
+		"fresh_owner_process":    fresh.Process != predecessorProvenance.Process && fresh.SupervisorRunID == nextSupervisorRunID && fresh.SupervisorRunID != predecessorProvenance.SupervisorRunID,
 		"fresh_private_endpoint": fresh.ConfiguredSocket != predecessorProvenance.ConfiguredSocket && fresh.RuntimeDirectory != predecessorProvenance.RuntimeDirectory,
 		"fresh_runtime_instance": freshRuntime != predecessorRuntime,
 		"same_durable_database":  fresh.DatabaseID == predecessorProvenance.DatabaseID && fresh.DataDirectory == predecessorProvenance.DataDirectory,
@@ -964,6 +965,11 @@ func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input Focu
 		Facts              map[string]bool                        `json:"facts"`
 	}{input, mode, predecessorProvenance, fresh, restored.Observation, facts})
 	return artifact, facts, nil
+}
+
+func replacementSupervisorRunID(runID, attemptID, predecessor string) string {
+	digest := sha256.Sum256([]byte(runID + "\x00" + attemptID + "\x00" + predecessor))
+	return "owner-" + hex.EncodeToString(digest[:16])
 }
 
 func executeFocusedZombie(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, error) {

@@ -247,6 +247,7 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 	}
 
 	predecessorEpoch := string(environment.runtime.QualificationSnapshot().RuntimeEpochID)
+	predecessorUmbrellaRunID := environment.runID
 	predecessorSupervisorRunID := p.Lifecycle.Provenance().SupervisorRunID
 	predecessorCapsule := environment.baseline.Authority
 	var restartArtifact []byte
@@ -265,6 +266,7 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 		return recorder.finish(result), err
 	}
 	freshEpoch := string(environment.runtime.QualificationSnapshot().RuntimeEpochID)
+	freshUmbrellaRunID := environment.runID
 	freshSupervisorRunID := p.Lifecycle.Provenance().SupervisorRunID
 	if err := recorder.capture("restore-new-epoch", func() (any, error) {
 		restored, _, restoreErr := restoreAndJournal(ctx, environment)
@@ -347,7 +349,7 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 	result.Trial = m1.OrderedTrial{SchemaVersion: 1, RunID: input.RunID, TrialID: m1.OrderedTrialID, Started: len(recorder.segments) > 0, Terminal: len(recorder.segments) == len(crownInternalSegmentIDs), Outcome: "pass", FR044Satisfied: fr044, SC013Satisfied: sc013,
 		Identities:         m1.CrownIdentities{ImplementationA: crownParticipant(oldW1), ImplementationB: crownParticipant(oldW2), ReplacementC: crownParticipant(finalW3)},
 		WorkspaceIsolation: m1.CrownWorkspaceIsolation{W1Quarantined: oldW1Known && oldW1Binding.Status == "quarantined", W2Preserved: w2CandidateSameWorkspace, W3Fresh: w3CandidateSameWorkspace && finalW3.Authority.WorkspaceID != oldW1.Authority.WorkspaceID, ZombieAuthoritySuccesses: zombieAuthoritySuccesses},
-		OwnerRestart:       m1.CrownOwnerRestart{SameUmbrellaRun: predecessorSupervisorRunID == input.RunID && freshSupervisorRunID == input.RunID, BeforeRuntimeEpochID: predecessorEpoch, AfterRuntimeEpochID: freshEpoch, NewEpochAdmitted: freshEpoch != predecessorEpoch},
+		OwnerRestart:       m1.CrownOwnerRestart{SameUmbrellaRun: predecessorUmbrellaRunID == input.RunID && freshUmbrellaRunID == input.RunID && predecessorSupervisorRunID != freshSupervisorRunID, BeforeRuntimeEpochID: predecessorEpoch, AfterRuntimeEpochID: freshEpoch, NewEpochAdmitted: freshEpoch != predecessorEpoch},
 		OldCapsule:         m1.CrownOldCapsule{PredecessorRuntimeEpochID: predecessorEpoch, Refused: predecessorRefused, ReasonKind: predecessorReasonKind},
 		RestorePlayback:    m1.CrownRestorePlayback{RestoreDigest: restoreDigest, PlaybackDigest: playbackDigest, DigestsEqual: restoreDigest == playbackDigest, PlaybackAdapterCalls: playbackCalls, PlaybackDurableWrites: playbackWrites},
 		Reviews:            []m1.CrownReview{w2.CrownReview, w3.CrownReview}, Integration: m1.CrownIntegration{TargetRef: integrations[0].TargetRef, CandidateIDs: []string{w2.Handoff.Candidate, w3.Handoff.Candidate}, PublicationOrder: publicationOrder, CompetingAttempts: len([]provingground.IntegrationItem{w2.Item, w3.Item}), Serialized: serialized, SuccessfulPublications: len(integrations), FalseCompletions: 0}}
