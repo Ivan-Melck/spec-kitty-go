@@ -43,6 +43,16 @@ func TestProductionOrderedCrownTrialValidatesFromActualExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(execution.Faults) < 2 || execution.Faults[1].FaultID != "GJ-02" {
+		t.Fatalf("ordered crown did not retain its GJ-02 execution: %+v", execution.Faults)
+	}
+	gj02 := execution.Faults[1]
+	if gj02.Facts.HeartbeatWorkID != "work-baseline" || !slices.Equal(gj02.Facts.AuthorityHeadIDs, []string{"work-a", "work-baseline"}) {
+		t.Fatalf("GJ-02 did not use one configured authority or polluted its durable census: %+v", gj02.Facts)
+	}
+	if snapshot := executor.environment.runtime.QualificationSnapshot(); snapshot.PredecessorEpoch == "" || len(snapshot.Authorities) != 1 || snapshot.Authorities[0].WorkID != "work-baseline" {
+		t.Fatalf("GJ-02 followed by owner replacement and validated restore did not retain the configured authority census: %+v", snapshot)
+	}
 	segments := make([]m1.CrownSegment, 0, len(m1.CrownSegmentIDs))
 	for i, id := range m1.CrownSegmentIDs {
 		segment := m1.CrownSegment{RunID: executor.RunID, Sequence: i + 1, ID: id, Started: true, Terminal: true, Outcome: "pass", ArtifactSHA256: m1.SHA256Hex([]byte(id))}
@@ -105,6 +115,24 @@ func TestGJ03ExactWorkspaceIdentityIgnoresOldWorkBindingAndRejectsRelabeling(t *
 	gj03.Facts.RecoveredWorkspaceID = gj03.Facts.PhysicalWorkspaceID
 	if err := validateCrownFaultWorkspaceIdentities(w1, w2, gj03, "workspace-crown-w3"); err == nil {
 		t.Fatal("GJ-03 orphan was relabeled as its recovered workspace")
+	}
+
+	for _, test := range []struct {
+		name     string
+		headIDs  []string
+		required string
+		want     bool
+	}{
+		{"baseline-only", []string{"work-baseline"}, "work-baseline", true},
+		{"ordered-crown", []string{"work-a", "work-baseline"}, "work-baseline", true},
+		{"missing-target", []string{"work-a"}, "work-baseline", false},
+		{"foreign-qualification-probe", []string{"qualification-gj02-mutant", "work-a", "work-baseline"}, "work-baseline", false},
+	} {
+		t.Run("gj02-authority-census-"+test.name, func(t *testing.T) {
+			if got := authorityHeadCensusIsConfigured(test.headIDs, test.required); got != test.want {
+				t.Fatalf("authority census result=%v want=%v heads=%v", got, test.want, test.headIDs)
+			}
+		})
 	}
 }
 

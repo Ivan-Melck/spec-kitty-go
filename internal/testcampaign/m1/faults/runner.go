@@ -81,6 +81,9 @@ type Facts struct {
 	ProxyConsumedCompleteResponse bool                          `json:"proxy_consumed_complete_response"`
 	ProxyCut                      *sidecargapdb.ResponseDropCut `json:"proxy_cut,omitempty"`
 	SidecarProvenanceSHA256       string                        `json:"sidecar_provenance_sha256,omitempty"`
+	HeartbeatOperationID          string                        `json:"heartbeat_operation_id,omitempty"`
+	HeartbeatWorkID               string                        `json:"heartbeat_work_id,omitempty"`
+	AuthorityHeadIDs              []string                      `json:"authority_head_ids,omitempty"`
 
 	PhysicalWorkspaceCreated bool   `json:"physical_workspace_created"`
 	PhysicalWorkspaceID      string `json:"physical_workspace_id,omitempty"`
@@ -1593,10 +1596,6 @@ func executeComposedGJ02(ctx context.Context, attempt Attempt, lifecycle *sideca
 	if err := os.Chmod(root, 0o700); err != nil {
 		return Facts{}, nil, err
 	}
-	batch, err := qualificationBatch(attempt, "gj02")
-	if err != nil {
-		return Facts{}, nil, err
-	}
 	requestID := "operation-gj02-" + productionAttemptID(attempt)
 	productSocket := filepath.Join(root, "p.sock")
 	provenance := lifecycle.Provenance()
@@ -1610,13 +1609,27 @@ func executeComposedGJ02(ctx context.Context, attempt Attempt, lifecycle *sideca
 		return Facts{}, nil, err
 	}
 	defer closer.Close()
-	service, err := application.NewService(proxyPort, environment.admission)
+	proxyApp, err := application.NewService(proxyPort, environment.admission)
 	if err != nil {
 		return Facts{}, nil, err
 	}
-	result, err := service.Apply(ctx, batch)
-	if err != nil || result.Kind != application.OutcomeAmbiguousResponse {
-		return Facts{}, nil, fmt.Errorf("GJ-02 application result=%+v: %w", result, err)
+	restoredBefore, _, err := restoreAndJournal(ctx, environment)
+	if err != nil {
+		return Facts{}, nil, err
+	}
+	proxyRuntime, err := restoreQualificationRuntime(ctx, environment, proxyApp, environment.port, restoredBefore)
+	if err != nil {
+		return Facts{}, nil, fmt.Errorf("GJ-02 restore proxy-bound runtime: %w", err)
+	}
+	target := environment.baseline
+	if target.Run.WorkID == "" || target.Authority.WorkspaceID == "" {
+		return Facts{}, nil, fmt.Errorf("GJ-02 requires an existing configured workspace authority")
+	}
+	beforeAuthority := target.Authority
+	heartbeatAt := time.Now().UTC()
+	_, firstErr := proxyRuntime.Heartbeat(ctx, controljournal.OperationID(requestID), target.Authority, heartbeatAt, time.Minute)
+	if !provingground.IsOutcome(firstErr, provingground.OutcomeAmbiguous) {
+		return Facts{}, nil, fmt.Errorf("GJ-02 heartbeat did not report ambiguous durable acceptance: %w", firstErr)
 	}
 	cutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -1627,15 +1640,79 @@ func executeComposedGJ02(ctx context.Context, attempt Attempt, lifecycle *sideca
 	if hookErr := attempt.Hook.Reach(ctx, "GJ-02"); !errors.Is(hookErr, productfaults.ErrCrashRequested) {
 		return Facts{}, nil, fmt.Errorf("GJ-02 cut acknowledgement: %w", hookErr)
 	}
-	reconciled, err := environment.app.Reconcile(ctx, batch, application.ReconcileConfigV1{Attempts: 4, Deadline: 2 * time.Second})
-	if err != nil || reconciled.Kind != application.OutcomeAlreadyCommitted || reconciled.CommittedRevision != cut.Revision {
-		return Facts{}, nil, fmt.Errorf("GJ-02 reconcile=%+v cut=%+v: %w", reconciled, cut, err)
+	refreshed, err := proxyRuntime.Heartbeat(ctx, controljournal.OperationID(requestID), target.Authority, heartbeatAt, time.Minute)
+	if err != nil || refreshed.AuthorityHeadRecordRevision != cut.Revision {
+		return Facts{}, nil, fmt.Errorf("GJ-02 exact heartbeat retry revision=%d cut=%+v: %w", refreshed.AuthorityHeadRecordRevision, cut, err)
 	}
+	restoredAfter, _, err := restoreAndJournal(ctx, environment)
+	if err != nil {
+		return Facts{}, nil, err
+	}
+	directRuntime, err := restoreQualificationRuntime(ctx, environment, environment.app, environment.port, restoredAfter)
+	if err != nil {
+		return Facts{}, nil, fmt.Errorf("GJ-02 restore reconciled runtime: %w", err)
+	}
+	environment.runtime = directRuntime
+	target.Authority = refreshed
+	target.Run.Deadline = heartbeatAt.Add(time.Minute)
+	environment.baseline = target
+	headIDs, err := authorityHeadIDs(ctx, environment.port)
+	if err != nil {
+		return Facts{}, nil, err
+	}
+	if !authorityHeadCensusIsConfigured(headIDs, target.Run.WorkID.String()) {
+		return Facts{}, nil, fmt.Errorf("GJ-02 authority head census contains non-configured work: %v", headIDs)
+	}
+	completeResponse := cut.RequestID == requestID && cut.Revision > 0 && cut.MutationCount > 0
 	encoded, _ := json.Marshal(struct {
-		Cut    sidecargapdb.ResponseDropCut `json:"cut"`
-		Result application.ResultV1         `json:"result"`
-	}{cut, reconciled})
-	return Facts{OperationRecords: 1, OperationResults: 1, DurableAccepted: true, DaemonResponseComplete: true, ProxyConsumedCompleteResponse: true, ProxyCut: &cut, SidecarProvenanceSHA256: source.SidecarProvenanceSHA256}, encoded, nil
+		Cut              sidecargapdb.ResponseDropCut `json:"cut"`
+		Before, After    controljournal.AuthorityCapsuleV1
+		AuthorityHeadIDs []string `json:"authority_head_ids"`
+	}{cut, beforeAuthority, refreshed, headIDs})
+	return Facts{OperationRecords: 1, OperationResults: 1, DurableAccepted: refreshed.AuthorityHeadRecordRevision == cut.Revision, DaemonResponseComplete: completeResponse, ProxyConsumedCompleteResponse: completeResponse, ProxyCut: &cut, SidecarProvenanceSHA256: source.SidecarProvenanceSHA256, HeartbeatOperationID: requestID, HeartbeatWorkID: target.Run.WorkID.String(), AuthorityHeadIDs: headIDs}, encoded, nil
+}
+
+func restoreQualificationRuntime(ctx context.Context, environment *productionEnvironment, app *application.Service, port storegapdb.Port, restored journalcheckpoint.RestoreResultV1) (*provingground.Runtime, error) {
+	actors, err := controljournal.NewTrialImplementationActorsV1("actor-a", "actor-b", "process-a", "process-b", "process-c")
+	if err != nil {
+		return nil, err
+	}
+	config := provingground.Config{
+		ProjectID: "project-qualification", MissionID: "mission-qualification",
+		WorkRevisionID: "revision-qualification", RunID: controljournal.RunID(environment.runID),
+		RuntimeEpochID: environment.runtime.QualificationSnapshot().RuntimeEpochID,
+		Actors:         actors, WorkIDs: []controljournal.WorkID{"work-baseline", "work-a"}, LeaseTTL: time.Minute,
+	}
+	return provingground.RestoreRuntimeValidated(ctx, config, app, environment.repository, port, restored, environment.identities, execution.SystemClock{})
+}
+
+func authorityHeadIDs(ctx context.Context, port storegapdb.Port) ([]string, error) {
+	const prefix = "spk/v1/project-qualification/mission-qualification/heads/authority/"
+	records, err := scanAllRecords(ctx, port, prefix)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(records))
+	for _, record := range records {
+		id := strings.TrimPrefix(record.Key, prefix)
+		if id == "" || id == record.Key || strings.Contains(id, "/") {
+			return nil, fmt.Errorf("invalid authority head coordinate %q", record.Key)
+		}
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func authorityHeadCensusIsConfigured(headIDs []string, required string) bool {
+	foundRequired := false
+	for _, id := range headIDs {
+		if id != "work-a" && id != "work-baseline" {
+			return false
+		}
+		foundRequired = foundRequired || id == required
+	}
+	return foundRequired
 }
 
 func executeComposedWorkspaceFault(ctx context.Context, attempt Attempt, environment *productionEnvironment) (Facts, []byte, error) {
@@ -2210,7 +2287,7 @@ func validateFacts(id string, facts Facts, source SourceBinding) error {
 		}
 	case "GJ-02":
 		cut := facts.ProxyCut
-		if !facts.DurableAccepted || !facts.DaemonResponseComplete || !facts.ProxyConsumedCompleteResponse || facts.OperationRecords != 1 || facts.OperationResults != 1 || cut == nil || cut.FaultID != "GJ-02" || cut.Cut != "after_durable_acceptance_before_client_response" || cut.RequestID == "" || cut.DatabaseID == "" || cut.DatabaseID != source.DatabaseID || cut.Revision == 0 || cut.MutationCount < 1 || cut.DaemonSocket == "" || cut.ProductSocket == "" || cut.DaemonPID != source.OwnerPID || cut.ProxyPID <= 0 || cut.SourceCommit != source.Commit || !hexValue(cut.ProxySHA256, 64) || facts.SidecarProvenanceSHA256 != source.SidecarProvenanceSHA256 || cut.ObservedAt.IsZero() {
+		if !facts.DurableAccepted || !facts.DaemonResponseComplete || !facts.ProxyConsumedCompleteResponse || facts.OperationRecords != 1 || facts.OperationResults != 1 || cut == nil || cut.FaultID != "GJ-02" || cut.Cut != "after_durable_acceptance_before_client_response" || cut.RequestID == "" || cut.RequestID != facts.HeartbeatOperationID || facts.HeartbeatWorkID == "" || !authorityHeadCensusIsConfigured(facts.AuthorityHeadIDs, facts.HeartbeatWorkID) || cut.DatabaseID == "" || cut.DatabaseID != source.DatabaseID || cut.Revision == 0 || cut.MutationCount < 1 || cut.DaemonSocket == "" || cut.ProductSocket == "" || cut.DaemonPID != source.OwnerPID || cut.ProxyPID <= 0 || cut.SourceCommit != source.Commit || !hexValue(cut.ProxySHA256, 64) || facts.SidecarProvenanceSHA256 != source.SidecarProvenanceSHA256 || cut.ObservedAt.IsZero() {
 			return fmt.Errorf("GJ-02 lacks one durable result and a proxy-consumed complete daemon response")
 		}
 	case "GJ-03":

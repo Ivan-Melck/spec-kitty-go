@@ -379,7 +379,7 @@ func validFacts(id string) Facts {
 	case "GJ-01":
 		return Facts{PreexistingBefore: map[string]ProductFact{"existing": {Revision: 7, Digest: strings.Repeat("a", 64)}}, PreexistingAfter: map[string]ProductFact{"existing": {Revision: 7, Digest: strings.Repeat("a", 64)}}}
 	case "GJ-02":
-		return Facts{OperationRecords: 1, OperationResults: 1, DurableAccepted: true, DaemonResponseComplete: true, ProxyConsumedCompleteResponse: true, ProxyCut: &sidecargapdb.ResponseDropCut{FaultID: "GJ-02", Cut: "after_durable_acceptance_before_client_response", RequestID: "operation", Operation: "batch", DatabaseID: "database", Revision: 7, MutationCount: 3, DaemonSocket: "/private/daemon.sock", ProductSocket: "/private/product.sock", DaemonPID: 11, ProxyPID: 12, SourceCommit: strings.Repeat("a", 40), ProxySHA256: strings.Repeat("b", 64), ObservedAt: time.Unix(1, 0).UTC()}}
+		return Facts{OperationRecords: 1, OperationResults: 1, DurableAccepted: true, DaemonResponseComplete: true, ProxyConsumedCompleteResponse: true, HeartbeatOperationID: "operation", HeartbeatWorkID: "work-baseline", AuthorityHeadIDs: []string{"work-baseline"}, ProxyCut: &sidecargapdb.ResponseDropCut{FaultID: "GJ-02", Cut: "after_durable_acceptance_before_client_response", RequestID: "operation", Operation: "batch", DatabaseID: "database", Revision: 7, MutationCount: 3, DaemonSocket: "/private/daemon.sock", ProductSocket: "/private/product.sock", DaemonPID: 11, ProxyPID: 12, SourceCommit: strings.Repeat("a", 40), ProxySHA256: strings.Repeat("b", 64), ObservedAt: time.Unix(1, 0).UTC()}}
 	case "GJ-03":
 		return Facts{PhysicalWorkspaceCreated: true, PhysicalWorkspaceID: "W1-orphan", RecoveredWorkspaceID: "W3-fresh", DurableWorkspaceCount: 1}
 	case "GJ-04":
