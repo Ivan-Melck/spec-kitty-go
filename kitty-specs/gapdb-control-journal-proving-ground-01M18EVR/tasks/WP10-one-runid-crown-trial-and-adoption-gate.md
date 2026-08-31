@@ -91,6 +91,9 @@ owned_files:
 - internal/testcampaign/m1/mutants/catalog.go
 - internal/testcampaign/m1/mutants/catalog_test.go
 - internal/architecture/m1_crown_test.go
+- internal/architecture/policy.go
+- internal/architecture/policy_test.go
+- internal/architecture/m1_dependency_guard_test.go
 - kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/quickstart.md
 role: implementer
 tags:
@@ -330,3 +333,11 @@ structured guard artifact whose digest it already records. WP10 therefore owns
 the two mutant catalog files solely for additive artifact-byte exposure and its
 regression; the nineteen stable IDs, executable guards, and kill semantics stay
 frozen.
+
+The closed repository graph must also classify the new proving command and its
+real external scenario runner. WP10 owns the three architecture-policy files
+only to classify `cmd/spk-m1-proving-ground` as non-production quality tooling,
+admit the public GapDB client for that tier, and narrow the existing M1 GapDB
+allowlist to `internal/testcampaign/m1/external`. Mutant controls must prove
+neighboring testcampaign packages and look-alike providers remain rejected;
+kernel and runtime tiers gain no new provider edge.
