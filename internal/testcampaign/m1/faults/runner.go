@@ -247,11 +247,13 @@ type FocusedProviderEvidence struct {
 // completed. Facts are exact predicates derived from public results, never
 // caller assertions or test names.
 type FocusedExecution struct {
-	Source      m1.SourceBinding
-	Observation m1.ObservationPort
-	Artifact    []byte
-	Facts       map[string]bool
-	Provider    FocusedProviderEvidence
+	Source             m1.SourceBinding
+	Observation        m1.ObservationPort
+	ExternalInspection storegapdb.Inspection
+	ExternalProvenance sidecargapdb.SidecarProvenance
+	Artifact           []byte
+	Facts              map[string]bool
+	Provider           FocusedProviderEvidence
 }
 
 func (p *ProductionExecutor) Prepare(ctx context.Context) (ProductionAccess, error) {
@@ -344,7 +346,11 @@ func (p *ProductionExecutor) ExecuteFocused(ctx context.Context, input FocusedIn
 	if err != nil {
 		return FocusedExecution{Source: source, Artifact: artifact, Facts: facts, Provider: provider}, err
 	}
-	return FocusedExecution{Source: source, Observation: observation, Artifact: artifact, Facts: facts, Provider: provider}, nil
+	externalInspection, err := environment.port.Inspect(ctx)
+	if err != nil {
+		return FocusedExecution{Source: source, Observation: observation, Artifact: artifact, Facts: facts, Provider: provider}, err
+	}
+	return FocusedExecution{Source: source, Observation: observation, ExternalInspection: externalInspection, ExternalProvenance: p.Lifecycle.Provenance(), Artifact: artifact, Facts: facts, Provider: provider}, nil
 }
 
 var focusedFactCensus = map[string][]string{
@@ -1881,6 +1887,16 @@ type composedObservationPort struct {
 	overlay     qualificationOverlay
 }
 
+type attemptObservationPort struct {
+	source           m1.ObservationPort
+	observationOnce  sync.Once
+	observationBytes []byte
+	observationErr   error
+	probeOnce        sync.Once
+	probe            m1.StaleProbe
+	probeErr         error
+}
+
 type qualificationOverlay struct {
 	authorities []m1.AuthorityObservation
 	reviews     []m1.ReviewObservation
@@ -1897,7 +1913,46 @@ func observeComposedRuntimeWithOverlay(_ context.Context, environment *productio
 		return nil, fmt.Errorf("composed runtime observation is unavailable")
 	}
 	copyOverlay := qualificationOverlay{authorities: append([]m1.AuthorityObservation(nil), overlay.authorities...), reviews: append([]m1.ReviewObservation(nil), overlay.reviews...), integration: append([]m1.IntegrationObservation(nil), overlay.integration...), primary: overlay.primary}
-	return &composedObservationPort{environment: environment, effects: append([]m1.EffectObservation(nil), effects...), overlay: copyOverlay}, nil
+	source := &composedObservationPort{environment: environment, effects: append([]m1.EffectObservation(nil), effects...), overlay: copyOverlay}
+	return newAttemptObservationPort(source), nil
+}
+
+func newAttemptObservationPort(source m1.ObservationPort) m1.ObservationPort {
+	return &attemptObservationPort{source: source}
+}
+
+func (p *attemptObservationPort) ObserveM1(ctx context.Context) (m1.Observation, error) {
+	p.observationOnce.Do(func() {
+		if p.source == nil {
+			p.observationErr = fmt.Errorf("attempt observation source is absent")
+			return
+		}
+		observed, err := p.source.ObserveM1(ctx)
+		if err != nil {
+			p.observationErr = err
+			return
+		}
+		p.observationBytes, p.observationErr = json.Marshal(observed)
+	})
+	if p.observationErr != nil {
+		return m1.Observation{}, p.observationErr
+	}
+	var observed m1.Observation
+	if err := json.Unmarshal(p.observationBytes, &observed); err != nil {
+		return m1.Observation{}, fmt.Errorf("clone attempt observation: %w", err)
+	}
+	return observed, nil
+}
+
+func (p *attemptObservationPort) ProbeStaleAuthority(ctx context.Context) (m1.StaleProbe, error) {
+	p.probeOnce.Do(func() {
+		if p.source == nil {
+			p.probeErr = fmt.Errorf("attempt observation source is absent")
+			return
+		}
+		p.probe, p.probeErr = p.source.ProbeStaleAuthority(ctx)
+	})
+	return p.probe, p.probeErr
 }
 
 func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation, error) {

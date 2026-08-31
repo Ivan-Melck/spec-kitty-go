@@ -249,6 +249,19 @@ func TestExternalReceiptCrossesAdmittedSidecarPublicInspection(t *testing.T) {
 			t.Fatalf("attempt %d external receipt=%+v err=%v", index, receipt, err)
 		}
 	}
+	inspection, err := adapter.Inspect(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused, err := observeExternalInspection(inspection, lifecycle.Provenance())
+	if err != nil || !reused.valid() {
+		t.Fatalf("same-attempt inspection could not be reused without another provider call: receipt=%+v err=%v", reused, err)
+	}
+	tampered := inspection
+	tampered.DatabaseID = "foreign"
+	if _, err := observeExternalInspection(tampered, lifecycle.Provenance()); err == nil {
+		t.Fatal("tampered carried inspection was sealed")
+	}
 	wrong := lifecycle.Provenance()
 	wrong.DatabaseID = "foreign"
 	if _, err := ObserveExternal(t.Context(), adapter, wrong); err == nil {

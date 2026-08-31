@@ -79,6 +79,10 @@ func ObserveExternal(ctx context.Context, port storegapdb.Port, provenance sidec
 	if err != nil {
 		return ExternalObservation{}, err
 	}
+	return observeExternalInspection(inspection, provenance)
+}
+
+func observeExternalInspection(inspection storegapdb.Inspection, provenance sidecargapdb.SidecarProvenance) (ExternalObservation, error) {
 	if !inspection.Healthy || inspection.DatabaseID == "" || inspection.EndpointID == "" || inspection.OwnerPID <= 0 || inspection.DurableThrough < inspection.CurrentRevision ||
 		!provenance.Readiness.Admitted || !provenance.Readiness.Healthy || !provenance.Readiness.Configured || provenance.DatabaseID != inspection.DatabaseID || provenance.Process.PID != inspection.OwnerPID ||
 		provenance.ExecutedImage.SHA256 != storegapdb.AdmittedSidecarSHA256 || provenance.Executable.SHA256 != provenance.ExecutedImage.SHA256 || provenance.ConfiguredSocket == "" {
@@ -180,11 +184,11 @@ func (p *ProductionScenario) RunFocused(ctx context.Context, attempt Attempt) (E
 	if err != nil {
 		return Execution{Started: true, Terminal: true, Outcome: OutcomeFail, Observation: production.Observation, Artifact: production.Artifact, Diagnostic: err.Error(), Source: production.Source}, err
 	}
-	access, err := p.Executor.Prepare(ctx)
-	if err != nil {
+	if production.ExternalInspection.DatabaseID == "" || production.ExternalProvenance.SupervisorRunID == "" {
+		err := fmt.Errorf("focused production execution omitted its same-attempt external evidence")
 		return Execution{Started: true, Terminal: true, Outcome: OutcomeIncomplete, Observation: production.Observation, Artifact: production.Artifact, Source: production.Source}, err
 	}
-	external, err := ObserveExternal(ctx, access.Port, access.Provenance)
+	external, err := observeExternalInspection(production.ExternalInspection, production.ExternalProvenance)
 	if err != nil {
 		return Execution{Started: true, Terminal: true, Outcome: OutcomeIncomplete, Observation: production.Observation, Artifact: production.Artifact, Source: production.Source}, err
 	}

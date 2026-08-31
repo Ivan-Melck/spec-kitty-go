@@ -26,6 +26,22 @@ func (cleanPort) ProbeStaleAuthority(context.Context) (m1.StaleProbe, error) {
 	return m1.StaleProbe{Attempted: true, Refused: true, LeaseStale: true, EpochStale: true}, nil
 }
 
+type countingAttemptPort struct {
+	observationCalls int
+	probeCalls       int
+	observation      m1.Observation
+}
+
+func (p *countingAttemptPort) ObserveM1(context.Context) (m1.Observation, error) {
+	p.observationCalls++
+	return p.observation, nil
+}
+
+func (p *countingAttemptPort) ProbeStaleAuthority(context.Context) (m1.StaleProbe, error) {
+	p.probeCalls++
+	return m1.StaleProbe{Attempted: true, Refused: true, LeaseStale: true, EpochStale: true}, nil
+}
+
 func TestLiteralFaultFactsAndHooksCannotMintPassingRecord(t *testing.T) {
 	for _, definition := range Definitions() {
 		runner := Runner{RunID: "run-m1", Seed: 1, Executor: ExecutorFunc(func(ctx context.Context, attempt Attempt) (Execution, error) {
@@ -242,6 +258,36 @@ func TestFocusedSemanticCensusRejectsOmissionExtraAndRenameForEveryCampaign(t *t
 	if err := validateFocusedFactCensus("renamed-campaign", map[string]bool{}); err == nil {
 		t.Fatal("unknown campaign minted a semantic census")
 	}
+
+	t.Run("attempt-local-observation-is-exactly-once-and-defensively-copied", func(t *testing.T) {
+		source := &countingAttemptPort{observation: validObservation()}
+		firstAttempt := newAttemptObservationPort(source)
+		first, err := firstAttempt.ObserveM1(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		first.Authorities[0].ActorID = "caller-mutated"
+		second, err := firstAttempt.ObserveM1(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if second.Authorities[0].ActorID == "caller-mutated" {
+			t.Fatal("attempt observation cache exposed mutable backing state")
+		}
+		if one, two := m1.AssertUniversal(t.Context(), firstAttempt), m1.AssertUniversal(t.Context(), firstAttempt); !one.Passed() || !two.Passed() {
+			t.Fatalf("memoized exact observation did not independently validate: one=%+v two=%+v", one, two)
+		}
+		if source.observationCalls != 1 || source.probeCalls != 1 {
+			t.Fatalf("one attempt performed repeated product observation calls: observation=%d probe=%d", source.observationCalls, source.probeCalls)
+		}
+		secondAttempt := newAttemptObservationPort(source)
+		if summary := m1.AssertUniversal(t.Context(), secondAttempt); !summary.Passed() {
+			t.Fatalf("distinct attempt observation failed: %+v", summary)
+		}
+		if source.observationCalls != 2 || source.probeCalls != 2 {
+			t.Fatalf("distinct attempts shared an observation cache: observation=%d probe=%d", source.observationCalls, source.probeCalls)
+		}
+	})
 }
 
 func TestRestartTwice(t *testing.T) {

@@ -44,6 +44,8 @@ type adapterRestoreReaderV1 struct {
 	prefix    string
 	records   []controljournal.StoredEventV1
 	revision  uint64
+	loaded    bool
+	firstPage storegapdb.ScanPage
 }
 
 func (reader *adapterRestoreReaderV1) CheckpointHeadsV1(ctx context.Context) ([]journalcheckpoint.CheckpointHeadV1, error) {
@@ -122,6 +124,7 @@ func (reader *adapterRestoreReaderV1) refreshJournalV1(ctx context.Context, afte
 	providerPages := 0
 	records := make([]controljournal.StoredEventV1, 0, 512)
 	seen := make(map[controljournal.EventID]struct{}, 512)
+	var firstPage storegapdb.ScanPage
 	for {
 		providerPages++
 		if providerPages > journalcheckpoint.MaxRestorePages {
@@ -134,6 +137,20 @@ func (reader *adapterRestoreReaderV1) refreshJournalV1(ctx context.Context, afte
 		if err != nil {
 			return err
 		}
+		if providerPages == 1 {
+			if reader.loaded && reader.revision != 0 {
+				if page.ObservedRevision == 0 || page.ObservedRevision < reader.revision {
+					return journalcheckpoint.ErrStaleScanV1
+				}
+				if page.ObservedRevision == reader.revision {
+					if !sameRestoreProbePageV1(page, reader.firstPage) {
+						return journalcheckpoint.ErrStaleScanV1
+					}
+					return nil
+				}
+			}
+			firstPage = cloneRestoreProbePageV1(page)
+		}
 		if page.ObservedRevision == 0 && (providerPages != 1 || len(page.Records) != 0 || page.Truncated || page.Cursor != "") ||
 			observed != 0 && observed != page.ObservedRevision {
 			return journalcheckpoint.ErrStaleScanV1
@@ -143,7 +160,7 @@ func (reader *adapterRestoreReaderV1) refreshJournalV1(ctx context.Context, afte
 			event, err := controljournal.DecodeEventEnvelopeV1(record.Value)
 			expectedKey := reader.prefix + "journal/" + string(event.EventID)
 			_, duplicate := seen[event.EventID]
-			if err != nil || record.Revision == 0 || record.ExpiresAt != nil || record.Key != expectedKey || event.ProjectID != reader.projectID || duplicate {
+			if err != nil || record.Revision == 0 || record.Revision > observed || record.ExpiresAt != nil || record.Key != expectedKey || event.ProjectID != reader.projectID || duplicate {
 				return errors.New("stored journal record is invalid")
 			}
 			seen[event.EventID] = struct{}{}
@@ -151,12 +168,15 @@ func (reader *adapterRestoreReaderV1) refreshJournalV1(ctx context.Context, afte
 				records = append(records, controljournal.StoredEventV1{RecordRevision: record.Revision, Envelope: event})
 				rawBytes += uint64(len(record.Value))
 				if len(records) > journalcheckpoint.MaxRestoreEvents || rawBytes > journalcheckpoint.MaxRestoreBytes {
-					reader.installJournalSnapshotV1(records, observed)
+					reader.installJournalSnapshotV1(records, observed, firstPage, false)
 					return nil
 				}
 			}
 		}
 		if !page.Truncated {
+			if page.Cursor != "" {
+				return errors.New("terminal provider scan returned a cursor")
+			}
 			break
 		}
 		if page.Cursor == "" || page.Cursor == providerCursor {
@@ -164,14 +184,50 @@ func (reader *adapterRestoreReaderV1) refreshJournalV1(ctx context.Context, afte
 		}
 		providerCursor = page.Cursor
 	}
-	reader.installJournalSnapshotV1(records, observed)
+	reader.installJournalSnapshotV1(records, observed, firstPage, true)
 	return nil
 }
 
-func (reader *adapterRestoreReaderV1) installJournalSnapshotV1(records []controljournal.StoredEventV1, observed uint64) {
+func (reader *adapterRestoreReaderV1) installJournalSnapshotV1(records []controljournal.StoredEventV1, observed uint64, firstPage storegapdb.ScanPage, complete bool) {
 	sort.Slice(records, func(i, j int) bool { return records[i].RecordRevision < records[j].RecordRevision })
 	reader.records = records
 	reader.revision = observed
+	reader.loaded = complete
+	reader.firstPage = cloneRestoreProbePageV1(firstPage)
+}
+
+func cloneRestoreProbePageV1(page storegapdb.ScanPage) storegapdb.ScanPage {
+	clone := page
+	clone.Records = make([]storegapdb.Record, len(page.Records))
+	for index, record := range page.Records {
+		clone.Records[index] = record
+		clone.Records[index].Value = append([]byte(nil), record.Value...)
+		if record.ExpiresAt != nil {
+			expires := *record.ExpiresAt
+			clone.Records[index].ExpiresAt = &expires
+		}
+	}
+	return clone
+}
+
+func sameRestoreProbePageV1(got, want storegapdb.ScanPage) bool {
+	if got.ObservedRevision == 0 || got.ObservedRevision != want.ObservedRevision || got.Cursor != want.Cursor || got.Truncated != want.Truncated || len(got.Records) != len(want.Records) {
+		return false
+	}
+	for index := range got.Records {
+		left, right := got.Records[index], want.Records[index]
+		if left.Key != right.Key || left.Revision != right.Revision || !bytes.Equal(left.Value, right.Value) || !sameExpiryV1(left.ExpiresAt, right.ExpiresAt) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameExpiryV1(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
 }
 
 const maxReconcileAttemptsV1 = 16

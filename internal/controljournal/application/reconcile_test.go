@@ -221,6 +221,29 @@ func TestExternalRestoreTranslatorProvesNonemptyHistoryAndBoundsPrefixIO(t *test
 		t.Fatalf("nonempty restore facts=%+v err=%v", facts, err)
 	}
 
+	// The first exact nonzero revision probe may reuse the complete immutable
+	// snapshot. A changed revision must perform a new complete traversal even
+	// when the journal prefix itself did not change.
+	firstProviderPage := port.pages[0]
+	port.pages = append(port.pages, firstProviderPage)
+	beforeStable := port.scanCalls
+	if _, err := concreteRestore(t, reader, events, reducers, "run-restore-nonempty"); err != nil {
+		t.Fatalf("same-revision restore did not reuse its exact immutable snapshot: %v", err)
+	}
+	if calls := port.scanCalls - beforeStable; calls != 1 {
+		t.Fatalf("same-revision restore provider scans=%d want=1", calls)
+	}
+	changedPage := firstProviderPage
+	changedPage.ObservedRevision++
+	port.pages = append(port.pages, changedPage)
+	beforeChanged := port.scanCalls
+	if changed, err := concreteRestore(t, reader, events, reducers, "run-restore-nonempty"); err != nil || changed.Observation.ObservedStoreRevision != changedPage.ObservedRevision {
+		t.Fatalf("changed-revision restore did not rescan result=%+v err=%v", changed, err)
+	}
+	if calls := port.scanCalls - beforeChanged; calls != 1 {
+		t.Fatalf("changed-revision terminal traversal scans=%d want=1", calls)
+	}
+
 	concrete := reader.(*adapterRestoreReaderV1)
 	before := port.scanCalls
 	if _, err := concrete.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{ThroughRecordRevision: 7, ThroughEventID: event.EventID}, ""); err == nil || port.scanCalls != before {
@@ -239,6 +262,49 @@ func TestExternalRestoreTranslatorProvesNonemptyHistoryAndBoundsPrefixIO(t *test
 	if _, err := boundedReader.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{}, ""); err == nil || bounded.scanCalls != journalcheckpoint.MaxRestorePages {
 		t.Fatalf("provider page boundary escaped calls=%d err=%v", bounded.scanCalls, err)
 	}
+
+	t.Run("same-revision-and-cursor-anomalies-fail-closed", func(t *testing.T) {
+		for name, anomaly := range map[string][]storegapdb.ScanPage{
+			"zero revision":                    {{ObservedRevision: 0}},
+			"regressed revision":               {{ObservedRevision: 9, Records: firstProviderPage.Records}},
+			"same revision changed bytes":      {{ObservedRevision: 10, Records: []storegapdb.Record{{Key: firstProviderPage.Records[0].Key, Value: []byte(`{"changed":true}`), Revision: 7}}}},
+			"same revision changed cursor":     {{ObservedRevision: 10, Records: firstProviderPage.Records, Truncated: true, Cursor: "foreign-cursor"}},
+			"changed revision terminal cursor": {{ObservedRevision: 11, Records: firstProviderPage.Records, Cursor: "impossible-terminal"}},
+			"changed revision moving observation": {
+				{ObservedRevision: 11, Records: firstProviderPage.Records, Truncated: true, Cursor: "next"},
+				{ObservedRevision: 12},
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				fixture := &restoreScanPortV1{records: map[string]storegapdb.Record{}, pages: append([]storegapdb.ScanPage{firstProviderPage}, anomaly...)}
+				candidate, err := NewRestoreReaderV1(fixture, "project", "mission")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := candidate.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{}, ""); err != nil {
+					t.Fatalf("prime exact snapshot: %v", err)
+				}
+				if _, err := candidate.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{}, ""); err == nil {
+					t.Fatal("provider revision/cursor anomaly reused or replaced a trusted snapshot")
+				}
+			})
+		}
+	})
+}
+
+func concreteRestore(t *testing.T, reader journalcheckpoint.RestoreReaderV1, events controljournal.EventRegistryV1, reducers reducer.RegistryV1, runID controljournal.RunID) (journalcheckpoint.RestoreResultV1, error) {
+	t.Helper()
+	eventDigest, _ := events.Digest()
+	reducerDigest, _ := reducers.Digest()
+	return journalcheckpoint.RestoreV1(t.Context(), journalcheckpoint.RestoreInputV1{
+		Reader: reader,
+		Source: journalcheckpoint.SourceIdentityV1{
+			ProjectID: "project", MissionID: "mission", RunID: runID,
+			ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest,
+		},
+		Binding:       journalcheckpoint.RestoreBindingV1{DatabaseID: "database-restore", HostInstanceID: "host-restore"},
+		EventRegistry: events, Reducers: reducers,
+	})
 }
 
 func TestExternalRestoreTranslatorRejectsUntrustedJournalMetadata(t *testing.T) {
