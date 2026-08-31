@@ -301,7 +301,7 @@
     },
     "WP09": {
       "actor": "codex-wp09-implementer-cycle2",
-      "agent": null,
+      "agent": "codex-wp09-implementer-cycle2",
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 3,
@@ -310,7 +310,8 @@
       "last_transition_at": "2026-08-31T04:51:43.368844+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review at b0b1c54: exact M1 census is 5 GJ fault runners, 8 focused campaigns (>=100 attempts), 19 production-bound executable mutants, and 8 universal invariants. Scoped count/race/external-sidecar/vet/staticcheck/scope/diff/no-SQLite gates pass. External GapDB SHA 62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e. Honest qualification record: go test ./... -short is non-admissible because internal/scenario exceeded default 10m timeout; isolated go test ./internal/scenario -short -timeout 20m passes in 1164.924s, diagnosing timeout-budget rather than assertion failure. Force used only because planning main contains the already-untracked mission directory and protected-branch coordination topology prohibits canonical auto-commit; no mission artifacts were committed by implementer."
+        "Ready for independent review at b0b1c54: exact M1 census is 5 GJ fault runners, 8 focused campaigns (>=100 attempts), 19 production-bound executable mutants, and 8 universal invariants. Scoped count/race/external-sidecar/vet/staticcheck/scope/diff/no-SQLite gates pass. External GapDB SHA 62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e. Honest qualification record: go test ./... -short is non-admissible because internal/scenario exceeded default 10m timeout; isolated go test ./internal/scenario -short -timeout 20m passes in 1164.924s, diagnosing timeout-budget rather than assertion failure. Force used only because planning main contains the already-untracked mission directory and protected-branch coordination topology prohibits canonical auto-commit; no mission artifacts were committed by implementer.",
+        "Cycle 2 ready for independent review: commit 7134aef; admitted fault 5/5; focused 800/800 source-bound; mutants 19/19; universal invariants green; broad short, race, vet, staticcheck, scope, no-SQLite gates pass"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
