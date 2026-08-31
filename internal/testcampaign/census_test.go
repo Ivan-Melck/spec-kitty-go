@@ -153,6 +153,9 @@ func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
 		t.Fatalf("architecture mutant census=%+v err=%v", architecture, err)
 	}
 	for _, name := range []string{
+		"TestDefaultPolicyClassifiesM1CommandAndBoundsExternalGapDBDirection",
+		"TestM1CrownSourceBoundaries",
+		"TestM1CrownSourceMutantControls",
 		"TestBeadsDocumentationDeliveryClaims",
 		"TestBeadsDocumentationLinksMermaidAndCommands",
 		"TestPhase2EvidenceDocumentationMutants",
@@ -257,12 +260,15 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 	}
 
 	for _, name := range []string{
+		"TestDefaultPolicyClassifiesM1CommandAndBoundsExternalGapDBDirection",
+		"TestM1CrownSourceBoundaries",
+		"TestM1CrownSourceMutantControls",
 		"TestBeadsDocumentationDeliveryClaims",
 		"TestBeadsDocumentationLinksMermaidAndCommands",
 		"TestPhase2EvidenceDocumentationMutants",
 		"TestPhase2EvidenceIntegrity",
 	} {
-		t.Run("WP11 architecture removal "+name, func(t *testing.T) {
+		t.Run("architecture removal "+name, func(t *testing.T) {
 			mutant := architecture
 			mutant.ExpectedTests = slices.DeleteFunc(append([]string(nil), architecture.ExpectedTests...), func(candidate string) bool {
 				return candidate == name

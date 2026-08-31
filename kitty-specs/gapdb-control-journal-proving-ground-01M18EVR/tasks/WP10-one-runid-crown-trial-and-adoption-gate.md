@@ -66,6 +66,8 @@ create_intent:
 - internal/testcampaign/m1/faults/crown.go
 - internal/testcampaign/m1/faults/crown_test.go
 - internal/architecture/m1_crown_test.go
+- internal/testcampaign/manifest.go
+- internal/testcampaign/census_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -94,6 +96,8 @@ owned_files:
 - internal/architecture/policy.go
 - internal/architecture/policy_test.go
 - internal/architecture/m1_dependency_guard_test.go
+- internal/testcampaign/manifest.go
+- internal/testcampaign/census_test.go
 - kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/quickstart.md
 role: implementer
 tags:
@@ -341,3 +345,8 @@ admit the public GapDB client for that tier, and narrow the existing M1 GapDB
 allowlist to `internal/testcampaign/m1/external`. Mutant controls must prove
 neighboring testcampaign packages and look-alike providers remain rejected;
 kernel and runtime tiers gain no new provider edge.
+
+Exact-source qualification exposed that the closed architecture test profile
+must enumerate the three WP10 top-level controls. WP10 therefore owns the
+campaign manifest and census test only to add those exact names and
+removal-mutant coverage; the profile remains a sorted, closed census.
