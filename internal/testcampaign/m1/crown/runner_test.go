@@ -163,7 +163,9 @@ func TestCancellationPublishesVerifiableIncompleteEvidenceWithoutPassSignature(t
 		}
 	}
 	config := Config{RunID: "run-incomplete", RepositoryRoot: root, ProductPolicyPath: filepath.Join(contracts, "m1-product-budgets-v1.json"), EvidenceRoot: filepath.Join(root, "evidence"), ProvingBinaryPath: filepath.Join(root, "proving-binary")}
-	publication, manifest, err := publishNonPass(context.Background(), config, PreflightResult{AdmissionRecordSHA256: m1.AdmittedTupleSHA256}, nil, &runEvidenceState{}, context.Canceled)
+	state := &runEvidenceState{}
+	state.InitialProvenance.SupervisorRunID = config.RunID
+	publication, manifest, err := publishNonPass(context.Background(), config, PreflightResult{AdmissionRecordSHA256: m1.AdmittedTupleSHA256}, nil, state, context.Canceled)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +178,18 @@ func TestCancellationPublishesVerifiableIncompleteEvidenceWithoutPassSignature(t
 	}
 	if verification.Outcome != "incomplete" || verification.AdoptionEligible || verified.Outcome != "incomplete" {
 		t.Fatalf("incomplete verification was promoted: %+v", verification)
+	}
+	digestCounts := make(map[string]int, len(verified.Artifacts))
+	for _, artifact := range verified.Artifacts {
+		digestCounts[artifact.SHA256]++
+	}
+	if len(verified.OrderedTrial.ArtifactSHA256) == 0 {
+		t.Fatal("incomplete evidence did not bind its crown ledger")
+	}
+	for _, artifact := range verified.Artifacts {
+		if digestCounts[artifact.SHA256] != 1 {
+			t.Fatalf("artifact digest %s was published %d times", artifact.SHA256, digestCounts[artifact.SHA256])
+		}
 	}
 	if _, err := os.Stat(filepath.Join(publication.Directory, m1.TechnicalPassName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("technical pass signature exists: %v", err)

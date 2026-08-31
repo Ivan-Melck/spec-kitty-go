@@ -506,7 +506,7 @@ func Run(ctx context.Context, config Config) (result Result, runErr error) {
 		return result, err
 	}
 	manifest.IndependentReview = independentReview
-	inputs = append(inputs, segmentArtifacts...)
+	inputs = appendUniqueSegmentArtifacts(inputs, segmentArtifacts)
 	inputs = append(inputs, focusedInputs...)
 	inputs = append(inputs, mutantInputs...)
 	inputs = append(inputs, m1.ArtifactInput{Kind: "independent-review", Data: reviewArtifact})
@@ -680,9 +680,25 @@ func publishNonPass(ctx context.Context, config Config, preflight PreflightResul
 	manifest.FaultResults, inputs = completeFaultCensus(config, manifest.FaultResults, inputs, outcome)
 	manifest.FocusedSubtrialSummaries, inputs = completeFocusedCensus(config, manifest.FocusedSubtrialSummaries, inputs)
 	manifest.MutantResults, inputs = completeMutantCensus(config, manifest.MutantResults, inputs)
-	inputs = append(inputs, segmentInputs...)
+	inputs = appendUniqueSegmentArtifacts(inputs, segmentInputs)
 	publication, err := m1.PublishEvidence(config.EvidenceRoot, manifest, inputs)
 	return publication, manifest, err
+}
+
+func appendUniqueSegmentArtifacts(inputs, segments []m1.ArtifactInput) []m1.ArtifactInput {
+	seen := make(map[string]struct{}, len(inputs)+len(segments))
+	for _, input := range inputs {
+		seen[m1.SHA256Hex(input.Data)] = struct{}{}
+	}
+	for _, segment := range segments {
+		digest := m1.SHA256Hex(segment.Data)
+		if _, duplicate := seen[digest]; duplicate {
+			continue
+		}
+		seen[digest] = struct{}{}
+		inputs = append(inputs, segment)
+	}
+	return inputs
 }
 
 func completeScenarioCensus(config Config, existing []m1.ScenarioResult, inputs []m1.ArtifactInput, outcome string) ([]m1.ScenarioResult, []m1.ArtifactInput) {

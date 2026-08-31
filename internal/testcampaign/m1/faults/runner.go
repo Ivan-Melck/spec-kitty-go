@@ -1710,11 +1710,7 @@ func executeComposedWorkspaceFault(ctx context.Context, attempt Attempt, environ
 		}
 	}
 	if attempt.Definition.ID == "GJ-03" {
-		for _, binding := range cutSnapshot.Workspaces {
-			if binding.WorkID == controljournal.WorkID(workID) {
-				facts.DurableBinding = true
-			}
-		}
+		facts.DurableBinding = snapshotHasWorkspaceBinding(cutSnapshot, spec.WorkspaceID)
 	}
 	encoded, _ := json.Marshal(struct {
 		Cut, After provingground.QualificationSnapshot
@@ -1722,6 +1718,15 @@ func executeComposedWorkspaceFault(ctx context.Context, attempt Attempt, environ
 		Facts      Facts
 	}{cutSnapshot, after, probe, facts})
 	return facts, encoded, nil
+}
+
+func snapshotHasWorkspaceBinding(snapshot provingground.QualificationSnapshot, workspaceID controljournal.WorkspaceID) bool {
+	for _, binding := range snapshot.Workspaces {
+		if binding.WorkspaceID == workspaceID {
+			return true
+		}
+	}
+	return false
 }
 
 func executeComposedGJ05(ctx context.Context, attempt Attempt, environment *productionEnvironment) (Facts, []m1.EffectObservation, []byte, error) {

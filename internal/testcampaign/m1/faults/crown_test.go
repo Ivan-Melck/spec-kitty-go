@@ -76,3 +76,30 @@ func TestCrownParticipantUsesExactAuthorityIdentity(t *testing.T) {
 		t.Fatalf("participant identity was translated instead of observed: %+v", got)
 	}
 }
+
+func TestGJ03ExactWorkspaceIdentityIgnoresOldWorkBindingAndRejectsRelabeling(t *testing.T) {
+	snapshot := provingground.QualificationSnapshot{Workspaces: []provingground.WorkspaceBinding{{WorkspaceID: "workspace-crown-w1", WorkID: "work-a", Status: "quarantined"}}}
+	if snapshotHasWorkspaceBinding(snapshot, "workspace-gj03") {
+		t.Fatal("an old binding for the same WorkID contaminated the GJ-03 exact workspace probe")
+	}
+	snapshot.Workspaces = append(snapshot.Workspaces, provingground.WorkspaceBinding{WorkspaceID: "workspace-gj03", WorkID: "work-a", Status: "active-bound"})
+	if !snapshotHasWorkspaceBinding(snapshot, "workspace-gj03") {
+		t.Fatal("the exact cut-created workspace binding was not detected")
+	}
+
+	w1 := provingground.Delivery{Authority: controljournal.AuthorityCapsuleV1{WorkspaceID: "workspace-crown-w1"}}
+	w2 := provingground.Delivery{Authority: controljournal.AuthorityCapsuleV1{WorkspaceID: "workspace-crown-w2"}}
+	gj03 := Record{Outcome: OutcomePass, Facts: Facts{PhysicalWorkspaceID: "workspace-gj03", RecoveredWorkspaceID: "workspace-gj03-recovered"}}
+	if err := validateCrownFaultWorkspaceIdentities(w1, w2, gj03, "workspace-crown-w3"); err != nil {
+		t.Fatal(err)
+	}
+	for _, collision := range []controljournal.WorkspaceID{"workspace-gj03", "workspace-gj03-recovered", "workspace-crown-w1", "workspace-crown-w2"} {
+		if err := validateCrownFaultWorkspaceIdentities(w1, w2, gj03, collision); err == nil {
+			t.Fatalf("definitive W3 relabeling %q was accepted", collision)
+		}
+	}
+	gj03.Facts.RecoveredWorkspaceID = gj03.Facts.PhysicalWorkspaceID
+	if err := validateCrownFaultWorkspaceIdentities(w1, w2, gj03, "workspace-crown-w3"); err == nil {
+		t.Fatal("GJ-03 orphan was relabeled as its recovered workspace")
+	}
+}

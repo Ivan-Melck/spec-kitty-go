@@ -109,6 +109,7 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 	// The GJ-03/GJ-04 attempts are deliberately completed before W3 exists.
 	// They may allocate fault-attempt workspaces, but those identities are never
 	// relabelled as W3 and can never become the definitive candidate workspace.
+	var gj03 Record
 	for index, faultID := range []string{"GJ-03", "GJ-04"} {
 		fault := (Runner{RunID: input.RunID, Seed: input.Seed + uint64(index+2), Executor: p}).Run(ctx, faultID)
 		result.Faults = append(result.Faults, fault)
@@ -119,6 +120,12 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 			return fault, nil
 		}); err != nil {
 			return recorder.finish(result), err
+		}
+		if faultID == "GJ-03" {
+			gj03 = fault
+			if err := validateCrownFaultWorkspaceIdentities(oldW1, oldW2, gj03, ""); err != nil {
+				return recorder.finish(result), err
+			}
 		}
 	}
 	if environment.workA != nil {
@@ -136,6 +143,9 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 		}
 		if finalW3.Authority.LeaseID == oldW1.Authority.LeaseID || finalW3.Authority.WorkspaceID == oldW1.Authority.WorkspaceID || finalW3.Authority.ActorID != "actor-a" || finalW3.Authority.ProcessID != "process-c" {
 			return finalW3, fmt.Errorf("replacement authority was not Actor A/Process C in a fresh workspace")
+		}
+		if identityErr := validateCrownFaultWorkspaceIdentities(oldW1, oldW2, gj03, finalW3.Authority.WorkspaceID); identityErr != nil {
+			return finalW3, identityErr
 		}
 		environment.workA = &finalW3
 		return finalW3, nil
@@ -353,6 +363,20 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 		}
 	}
 	return finished, nil
+}
+
+func validateCrownFaultWorkspaceIdentities(oldW1, oldW2 provingground.Delivery, gj03 Record, definitiveW3 controljournal.WorkspaceID) error {
+	orphan := controljournal.WorkspaceID(gj03.Facts.PhysicalWorkspaceID)
+	recovered := controljournal.WorkspaceID(gj03.Facts.RecoveredWorkspaceID)
+	if gj03.Outcome != OutcomePass || orphan == "" || recovered == "" || orphan == recovered ||
+		orphan == oldW1.Authority.WorkspaceID || orphan == oldW2.Authority.WorkspaceID ||
+		recovered == oldW1.Authority.WorkspaceID || recovered == oldW2.Authority.WorkspaceID {
+		return fmt.Errorf("GJ-03 orphan and recovered workspace identities are not distinct from W1/W2")
+	}
+	if definitiveW3 != "" && (definitiveW3 == orphan || definitiveW3 == recovered || definitiveW3 == oldW1.Authority.WorkspaceID || definitiveW3 == oldW2.Authority.WorkspaceID) {
+		return fmt.Errorf("definitive W3 reused an existing or GJ-03 fault-attempt workspace")
+	}
+	return nil
 }
 
 type crownRecorder struct {
