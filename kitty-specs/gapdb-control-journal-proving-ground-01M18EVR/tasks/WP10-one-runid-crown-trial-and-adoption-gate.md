@@ -66,8 +66,6 @@ create_intent:
 - internal/testcampaign/m1/faults/crown.go
 - internal/testcampaign/m1/faults/crown_test.go
 - internal/architecture/m1_crown_test.go
-- internal/testcampaign/manifest.go
-- internal/testcampaign/census_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -350,10 +348,12 @@ allowlist to `internal/testcampaign/m1/external`. Mutant controls must prove
 neighboring testcampaign packages and look-alike providers remain rejected;
 kernel and runtime tiers gain no new provider edge.
 
-Exact-source qualification exposed that the closed architecture test profile
-must enumerate the three WP10 top-level controls. WP10 therefore owns the
-campaign manifest and census test only to add those exact names and
-removal-mutant coverage; the profile remains a sorted, closed census.
+The exact repository-wide architecture campaign is itself a closed contract.
+Qualification exposed that the three newly authorized WP10 architecture tests
+passed but were rejected as unexpected top-level events. WP10 therefore also
+owns `internal/testcampaign/manifest.go` and
+`internal/testcampaign/census_test.go` solely to add those exact test names and
+mutant controls; wildcard census relaxation remains forbidden.
 
 The composed 8x100 crown then exposed a product restore defect after a valid
 owner restart: the workflow journal rejected the sealed predecessor epoch's
