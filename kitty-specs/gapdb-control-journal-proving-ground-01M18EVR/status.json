@@ -341,8 +341,8 @@
     "WP10": {
       "actor": "codex-wp10-reviewer-final",
       "agent": "codex-wp10-reviewer-final",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "assignee": "codex-wp10-implementer",
       "force_count": 2,
       "lane": "planned",
@@ -350,22 +350,23 @@
       "last_transition_at": "2026-09-01T22:14:09.316955+00:00",
       "model": "__resolved_model_absent__",
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP10-one-runid-crown-trial-and-adoption-gate/review-cycle-1.md",
         "reference": "review-cycle://gapdb-control-journal-proving-ground-01M18EVR/WP10-one-runid-crown-trial-and-adoption-gate/review-cycle-1.md",
         "reviewer": "codex-wp10-reviewer-final",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T052": "done",
-        "T053": "done",
-        "T054": "done",
-        "T055": "done",
-        "T056": "done",
-        "T057": "done"
+        "T052": "planned",
+        "T053": "planned",
+        "T054": "planned",
+        "T055": "planned",
+        "T056": "planned",
+        "T057": "planned"
       }
     }
   }
