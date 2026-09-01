@@ -185,6 +185,142 @@ func (r *Repository) Probe(ctx context.Context, record workspace.Record) (worksp
 	return workspace.Probe{Registered: true, Head: head, Branch: branch, GitDir: gitDir, IndexPath: indexPath, Clean: status == ""}, nil
 }
 
+// RegistrationCensus is an immutable, attempt-scoped observation of the Git
+// worktree registry. Repository.RegistrationCensus constructs a fresh value on
+// every call; it is deliberately not cached on Repository because a later
+// observation attempt must see later registrations.
+type RegistrationCensus struct {
+	primaryPath string
+	managedRoot string
+	paths       map[string]struct{}
+}
+
+// Registered reports whether canonicalPath was present in the exact Git
+// registry snapshot used to construct the census. The query is canonicalized
+// again so a path replaced by a symlink after the snapshot cannot inherit the
+// old path's registration fact.
+func (c RegistrationCensus) Registered(canonicalPath string) (bool, error) {
+	absolute, err := filepath.Abs(canonicalPath)
+	if err != nil {
+		return false, unsafe("workspace census query cannot be made absolute", err)
+	}
+	absolute = filepath.Clean(absolute)
+	path, err := canonicalProspective(canonicalPath)
+	if err != nil {
+		return false, unsafe("workspace census query cannot be canonicalized", err)
+	}
+	if path != absolute {
+		return false, unsafe("workspace census query is not canonical", nil)
+	}
+	if path != c.primaryPath && !within(path, c.managedRoot) {
+		return false, unsafe("workspace census query escaped the repository binding", nil)
+	}
+	_, registered := c.paths[path]
+	return registered, nil
+}
+
+// RegistrationCensus reads Git's complete worktree registry exactly once and
+// returns a defensively encapsulated snapshot suitable for one observation
+// attempt. Mutation paths continue to use Probe, which validates the complete
+// workspace identity and filesystem state.
+func (r *Repository) RegistrationCensus(ctx context.Context) (RegistrationCensus, error) {
+	output, err := r.runner.Run(ctx, r.binding.CommonDir, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return RegistrationCensus{}, &workspace.Error{Kind: workspace.KindGitFailure, Message: "list Git worktrees for registration census", Cause: err}
+	}
+	return parseRegistrationCensus(r.binding, output)
+}
+
+func parseRegistrationCensus(binding workspace.RepositoryBinding, output string) (RegistrationCensus, error) {
+	malformed := func(message string) (RegistrationCensus, error) {
+		return RegistrationCensus{}, &workspace.Error{Kind: workspace.KindGitFailure, Message: "malformed Git worktree census: " + message}
+	}
+	if output == "" || !strings.HasSuffix(output, "\x00\x00") {
+		return malformed("registry is empty or lacks its terminal record delimiter")
+	}
+	fields := strings.Split(output, "\x00")
+	fields = fields[:len(fields)-1]
+	paths := make(map[string]struct{})
+	recordOpen := false
+	attributes := make(map[string]struct{})
+	for _, field := range fields {
+		if field == "" {
+			if !recordOpen {
+				return malformed("empty record has no worktree path")
+			}
+			if _, present := attributes["HEAD"]; !present {
+				return malformed("worktree record omits HEAD")
+			}
+			identityKinds := 0
+			for _, kind := range []string{"branch", "detached", "bare"} {
+				if _, present := attributes[kind]; present {
+					identityKinds++
+				}
+			}
+			if identityKinds != 1 {
+				return malformed("worktree record must have one branch, detached, or bare identity")
+			}
+			recordOpen = false
+			attributes = make(map[string]struct{})
+			continue
+		}
+		if strings.HasPrefix(field, "worktree ") {
+			if recordOpen {
+				return malformed("worktree records are not separated")
+			}
+			rawPath := strings.TrimPrefix(field, "worktree ")
+			if rawPath == "" {
+				return malformed("worktree path is empty")
+			}
+			path, err := canonicalExistingDirectory(rawPath)
+			if err != nil {
+				return malformed("worktree path is not an existing canonical directory")
+			}
+			if path != binding.PrimaryPath && !within(path, binding.ManagedRoot) {
+				return RegistrationCensus{}, unsafe("Git worktree census escaped the repository binding", nil)
+			}
+			if _, duplicate := paths[path]; duplicate {
+				return malformed("duplicate canonical worktree path")
+			}
+			paths[path] = struct{}{}
+			recordOpen = true
+			continue
+		}
+		kind, valid := worktreeCensusAttributeKind(field)
+		if !recordOpen || !valid {
+			return malformed("record contains an unexpected attribute")
+		}
+		if _, duplicate := attributes[kind]; duplicate {
+			return malformed("record contains a duplicate attribute")
+		}
+		attributes[kind] = struct{}{}
+	}
+	if recordOpen {
+		return malformed("last worktree record is not terminated")
+	}
+	if _, present := paths[binding.PrimaryPath]; !present {
+		return malformed("primary checkout is absent")
+	}
+	return RegistrationCensus{primaryPath: binding.PrimaryPath, managedRoot: binding.ManagedRoot, paths: paths}, nil
+}
+
+func worktreeCensusAttributeKind(field string) (string, bool) {
+	switch {
+	case strings.HasPrefix(field, "HEAD "):
+		return "HEAD", isObjectID(strings.TrimPrefix(field, "HEAD "))
+	case strings.HasPrefix(field, "branch "):
+		return "branch", strings.TrimPrefix(field, "branch ") != ""
+	case field == "detached", field == "bare", field == "locked", field == "prunable":
+		return field, true
+	case strings.HasPrefix(field, "locked "):
+		return "locked", strings.TrimSpace(strings.SplitN(field, " ", 2)[1]) != ""
+	case strings.HasPrefix(field, "prunable "):
+		return "prunable", strings.TrimSpace(strings.SplitN(field, " ", 2)[1]) != ""
+	default:
+		return "", false
+	}
+}
+
 func (r *Repository) PrepareDependencies(ctx context.Context, record workspace.Record, dependencies []workspace.Dependency) (string, error) {
 	ordered, err := workspace.CanonicalDependencies(dependencies)
 	if err != nil {

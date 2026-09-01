@@ -18,6 +18,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
 	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/provingground"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
 )
@@ -44,6 +45,20 @@ type fixedRevisionInspector struct {
 	inspection storegapdb.Inspection
 	err        error
 	calls      int
+}
+
+type fixedRegistrationCensus struct {
+	registered map[string]bool
+	err        error
+	calls      int
+}
+
+func (c *fixedRegistrationCensus) Registered(path string) (bool, error) {
+	c.calls++
+	if c.err != nil {
+		return false, c.err
+	}
+	return c.registered[path], nil
 }
 
 func (p *fixedRevisionInspector) Inspect(context.Context) (storegapdb.Inspection, error) {
@@ -336,6 +351,35 @@ func TestFocusedSemanticCensusRejectsOmissionExtraAndRenameForEveryCampaign(t *t
 		}
 		if source.observationCalls != 2 || source.probeCalls != 2 {
 			t.Fatalf("distinct attempts shared an observation cache: observation=%d probe=%d", source.observationCalls, source.probeCalls)
+		}
+	})
+
+	t.Run("registration-census-preserves-workspace-evidence-and-missing-active-fails", func(t *testing.T) {
+		binding := provingground.WorkspaceBinding{WorkspaceID: "W1", WorkRevisionID: "wr", WorkID: "work", LeaseID: "lease", RuntimeEpochID: "epoch", Generation: 1, CanonicalPath: "/repo/W1", OwnedBranch: "lane", Status: "active-bound"}
+		present := &fixedRegistrationCensus{registered: map[string]bool{binding.CanonicalPath: true}}
+		observed, err := workspaceRegistrationObservations([]provingground.WorkspaceBinding{binding}, "/repo", present)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := m1.WorkspaceObservation{WorkspaceID: "W1", WorkRevisionID: "wr", WorkID: "work", LeaseID: "lease", RuntimeEpochID: "epoch", Generation: 1, CanonicalPath: "/repo/W1", OwnedBranch: "lane", Status: "active-bound", PrimaryPath: "/repo", Registered: true}
+		if present.calls != 1 || len(observed) != 1 || observed[0] != expected {
+			t.Fatalf("workspace evidence changed: calls=%d observed=%+v want=%+v", present.calls, observed, expected)
+		}
+
+		missing := &fixedRegistrationCensus{registered: map[string]bool{}}
+		observed, err = workspaceRegistrationObservations([]provingground.WorkspaceBinding{binding}, "/repo", missing)
+		if err != nil || len(observed) != 1 || observed[0].Registered {
+			t.Fatalf("missing registration was not preserved: observed=%+v err=%v", observed, err)
+		}
+		observation := validObservation()
+		observation.Workspaces = observed
+		if summary := m1.AssertUniversal(t.Context(), &countingAttemptPort{observation: observation}); summary.Passed() || summary.PrimaryIsolation {
+			t.Fatalf("missing active registration passed universals: %+v", summary)
+		}
+
+		lookupFailure := errors.New("census malformed")
+		if _, err := workspaceRegistrationObservations([]provingground.WorkspaceBinding{binding}, "/repo", &fixedRegistrationCensus{err: lookupFailure}); !errors.Is(err, lookupFailure) {
+			t.Fatalf("census failure was hidden: %v", err)
 		}
 	})
 

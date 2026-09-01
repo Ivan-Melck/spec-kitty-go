@@ -2178,14 +2178,15 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 		observation.Authorities = append(observation.Authorities, m1.AuthorityObservation{WorkRevisionID: string(authority.WorkRevisionID), WorkID: string(authority.WorkID), ActorID: string(authority.ActorID), ProcessID: string(authority.ProcessID), LeaseID: string(authority.LeaseID), RuntimeEpochID: string(authority.RuntimeEpochID), Generation: authority.Generation, FenceToken: authority.FenceToken, Current: authority.Status == "active"})
 	}
 	observation.Authorities = append(observation.Authorities, p.overlay.authorities...)
-	for _, binding := range snapshot.Workspaces {
-		record := workspace.Record{Reservation: workspace.Reservation{WorkspaceID: ids.WorkspaceID(binding.WorkspaceID), OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase}, CanonicalPath: binding.CanonicalPath, DependencyHead: binding.PinnedBase}
-		probe, probeErr := p.environment.repository.Probe(ctx, record)
-		if probeErr != nil {
-			return m1.Observation{}, probeErr
-		}
-		observation.Workspaces = append(observation.Workspaces, m1.WorkspaceObservation{WorkspaceID: string(binding.WorkspaceID), WorkRevisionID: string(binding.WorkRevisionID), WorkID: string(binding.WorkID), LeaseID: string(binding.LeaseID), RuntimeEpochID: string(binding.RuntimeEpochID), Generation: binding.Generation, CanonicalPath: binding.CanonicalPath, OwnedBranch: binding.OwnedBranch, Status: binding.Status, PrimaryPath: p.environment.repository.Binding().PrimaryPath, Registered: probe.Registered})
+	census, censusErr := p.environment.repository.RegistrationCensus(ctx)
+	if censusErr != nil {
+		return m1.Observation{}, censusErr
 	}
+	workspaces, workspaceErr := workspaceRegistrationObservations(snapshot.Workspaces, p.environment.repository.Binding().PrimaryPath, census)
+	if workspaceErr != nil {
+		return m1.Observation{}, workspaceErr
+	}
+	observation.Workspaces = append(observation.Workspaces, workspaces...)
 	if p.overlay.playback != nil {
 		observation.Playback = *p.overlay.playback
 	} else {
@@ -2196,6 +2197,25 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 		observation.Playback = playbackObservation(restored, played)
 	}
 	return observation, nil
+}
+
+type workspaceRegistrationLookup interface {
+	Registered(string) (bool, error)
+}
+
+func workspaceRegistrationObservations(bindings []provingground.WorkspaceBinding, primaryPath string, census workspaceRegistrationLookup) ([]m1.WorkspaceObservation, error) {
+	if census == nil {
+		return nil, fmt.Errorf("workspace registration census is unavailable")
+	}
+	result := make([]m1.WorkspaceObservation, 0, len(bindings))
+	for _, binding := range bindings {
+		registered, err := census.Registered(binding.CanonicalPath)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, m1.WorkspaceObservation{WorkspaceID: string(binding.WorkspaceID), WorkRevisionID: string(binding.WorkRevisionID), WorkID: string(binding.WorkID), LeaseID: string(binding.LeaseID), RuntimeEpochID: string(binding.RuntimeEpochID), Generation: binding.Generation, CanonicalPath: binding.CanonicalPath, OwnedBranch: binding.OwnedBranch, Status: binding.Status, PrimaryPath: primaryPath, Registered: registered})
+	}
+	return result, nil
 }
 
 type storeRevisionInspector interface {

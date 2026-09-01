@@ -3,6 +3,7 @@ package gitrepo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -266,6 +267,158 @@ func TestRealWorktreeProbeAndDependencyPreparationAreIsolatedAndAtomic(t *testin
 	after, err := adapter.SnapshotPrimary(context.Background())
 	if err != nil || after != before {
 		t.Fatalf("primary checkout changed: before=%+v after=%+v err=%v", before, after, err)
+	}
+	exerciseRegistrationCensus(t, adapter, record, base)
+}
+
+func exerciseRegistrationCensus(t *testing.T, adapter *Repository, existing workspace.Record, base string) {
+	t.Helper()
+	countPath := filepath.Join(t.TempDir(), "worktree-list.count")
+	wrapperPath := filepath.Join(t.TempDir(), "git-census-wrapper")
+	wrapper := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "-C" ] && [ "$3" = "worktree" ] && [ "$4" = "list" ] && [ "$5" = "--porcelain" ] && [ "$6" = "-z" ]; then
+  printf x >> %q
+fi
+exec git "$@"
+`, countPath)
+	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	counting := &Repository{runner: Runner{Executable: wrapperPath}, binding: adapter.binding}
+
+	t.Run("one-real-list-has-probe-parity-and-no-cross-attempt-cache", func(t *testing.T) {
+		first, err := counting.RegistrationCensus(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertWorktreeListCalls(t, countPath, 1)
+		registered, err := first.Registered(existing.CanonicalPath)
+		if err != nil || !registered {
+			t.Fatalf("existing registration=%t err=%v", registered, err)
+		}
+		probe, err := adapter.Probe(t.Context(), existing)
+		if err != nil || registered != probe.Registered {
+			t.Fatalf("census/probe parity registered=%t probe=%+v err=%v", registered, probe, err)
+		}
+		primary, err := first.Registered(adapter.binding.PrimaryPath)
+		if err != nil || !primary {
+			t.Fatalf("primary registration=%t err=%v", primary, err)
+		}
+
+		later := workspaceRecord(t, adapter, "workspace-census-later", "runs/census-later", base)
+		registered, err = first.Registered(later.CanonicalPath)
+		if err != nil || registered {
+			t.Fatalf("future registration before create=%t err=%v", registered, err)
+		}
+		missingProbe, err := adapter.Probe(t.Context(), later)
+		if err != nil || registered != missingProbe.Registered {
+			t.Fatalf("missing census/probe parity registered=%t probe=%+v err=%v", registered, missingProbe, err)
+		}
+		if err := adapter.Create(t.Context(), later); err != nil {
+			t.Fatal(err)
+		}
+		if registered, err := first.Registered(later.CanonicalPath); err != nil || registered {
+			t.Fatalf("immutable first census changed after create: registered=%t err=%v", registered, err)
+		}
+		second, err := counting.RegistrationCensus(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertWorktreeListCalls(t, countPath, 2)
+		if registered, err := second.Registered(later.CanonicalPath); err != nil || !registered {
+			t.Fatalf("fresh census omitted new registration=%t err=%v", registered, err)
+		}
+		runGit(t, adapter.binding.CommonDir, "worktree", "remove", "--force", later.CanonicalPath)
+		if registered, err := second.Registered(later.CanonicalPath); err != nil || !registered {
+			t.Fatalf("immutable second census changed after removal: registered=%t err=%v", registered, err)
+		}
+		third, err := counting.RegistrationCensus(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertWorktreeListCalls(t, countPath, 3)
+		if registered, err := third.Registered(later.CanonicalPath); err != nil || registered {
+			t.Fatalf("fresh census retained removed registration=%t err=%v", registered, err)
+		}
+	})
+
+	record := func(path string) string {
+		return "worktree " + path + "\x00HEAD " + base + "\x00branch refs/heads/main\x00\x00"
+	}
+	t.Run("malformed-duplicate-and-escaping-registries-fail-closed", func(t *testing.T) {
+		managedEntry := filepath.Join(adapter.binding.ManagedRoot, "parser-entry")
+		if err := os.MkdirAll(managedEntry, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		escape := t.TempDir()
+		alias := filepath.Join(t.TempDir(), "primary-alias")
+		if err := os.Symlink(adapter.binding.PrimaryPath, alias); err != nil {
+			t.Fatal(err)
+		}
+		cases := []struct {
+			name   string
+			output string
+			kind   workspace.ErrorKind
+		}{
+			{name: "missing-terminal-record-delimiter", output: strings.TrimSuffix(record(adapter.binding.PrimaryPath), "\x00"), kind: workspace.KindGitFailure},
+			{name: "missing-head", output: "worktree " + adapter.binding.PrimaryPath + "\x00branch refs/heads/main\x00\x00", kind: workspace.KindGitFailure},
+			{name: "duplicate-head", output: "worktree " + adapter.binding.PrimaryPath + "\x00HEAD " + base + "\x00HEAD " + base + "\x00branch refs/heads/main\x00\x00", kind: workspace.KindGitFailure},
+			{name: "ambiguous-identity", output: "worktree " + adapter.binding.PrimaryPath + "\x00HEAD " + base + "\x00branch refs/heads/main\x00detached\x00\x00", kind: workspace.KindGitFailure},
+			{name: "unexpected-attribute", output: "worktree " + adapter.binding.PrimaryPath + "\x00surprise value\x00\x00", kind: workspace.KindGitFailure},
+			{name: "records-not-separated", output: "worktree " + adapter.binding.PrimaryPath + "\x00HEAD " + base + "\x00worktree " + managedEntry + "\x00\x00", kind: workspace.KindGitFailure},
+			{name: "missing-path", output: record(filepath.Join(adapter.binding.ManagedRoot, "absent")), kind: workspace.KindGitFailure},
+			{name: "missing-primary", output: record(managedEntry), kind: workspace.KindGitFailure},
+			{name: "duplicate-literal", output: record(adapter.binding.PrimaryPath) + record(adapter.binding.PrimaryPath), kind: workspace.KindGitFailure},
+			{name: "duplicate-canonical-alias", output: record(adapter.binding.PrimaryPath) + record(alias), kind: workspace.KindGitFailure},
+			{name: "escape", output: record(adapter.binding.PrimaryPath) + record(escape), kind: workspace.KindPathUnsafe},
+		}
+		for _, test := range cases {
+			t.Run(test.name, func(t *testing.T) {
+				_, err := parseRegistrationCensus(adapter.binding, test.output)
+				if !workspace.IsKind(err, test.kind) {
+					t.Fatalf("error=%v want kind=%s", err, test.kind)
+				}
+			})
+		}
+	})
+
+	t.Run("query-escape-and-path-replacement-fail-closed", func(t *testing.T) {
+		census, err := adapter.RegistrationCensus(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := census.Registered(t.TempDir()); !workspace.IsKind(err, workspace.KindPathUnsafe) {
+			t.Fatalf("escaping query error=%v", err)
+		}
+		replaced := filepath.Join(adapter.binding.ManagedRoot, "replaced-after-census")
+		if err := os.Mkdir(replaced, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		output := record(adapter.binding.PrimaryPath) + record(replaced)
+		before, err := parseRegistrationCensus(adapter.binding, output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(replaced); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(adapter.binding.PrimaryPath, replaced); err != nil {
+			t.Fatal(err)
+		}
+		if registered, err := before.Registered(replaced); registered || !workspace.IsKind(err, workspace.KindPathUnsafe) {
+			t.Fatalf("replaced path inherited stale registration=%t err=%v", registered, err)
+		}
+	})
+}
+
+func assertWorktreeListCalls(t *testing.T, path string, want int) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != want {
+		t.Fatalf("real worktree-list calls=%d want=%d", len(content), want)
 	}
 }
 
