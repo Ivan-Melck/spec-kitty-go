@@ -95,6 +95,18 @@ func TestProductionOrderedCrownTrialValidatesFromActualExecution(t *testing.T) {
 	if !focused.Facts["one_target_authority"] || !focused.Facts["one_candidate_publication"] {
 		t.Fatalf("post-restart integration did not restore sealed predecessor history and serialize publication: %v", focused.Facts)
 	}
+	barrier = newTestFocusedBarrier(2)
+	focused, err = executor.ExecuteFocused(t.Context(), FocusedInput{
+		RunID: executor.RunID, CampaignID: "restore-playback-nfr005",
+		AttemptID: "post-ordered-crown-restore-playback", Index: 5, Seed: 7205,
+		Order: [2]int{1, 0}, Barrier: barrier,
+	})
+	if err != nil {
+		t.Fatalf("focused restore/playback after accumulated ordered history: %v", err)
+	}
+	if !focused.Facts["restore_ready"] || !focused.Facts["digest_equal"] || !focused.Facts["playback_zero_io"] || !m1.AssertUniversal(t.Context(), focused.Observation).Passed() {
+		t.Fatalf("accumulated-history restore/playback did not retain exact evidence: facts=%v", focused.Facts)
+	}
 	current := executor.environment.workA
 	if current == nil {
 		t.Fatal("focused qualification authority is absent after integration")
