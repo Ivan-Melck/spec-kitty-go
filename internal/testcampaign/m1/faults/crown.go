@@ -346,8 +346,20 @@ func (p *ProductionExecutor) RunOrderedCrown(ctx context.Context, input CrownInp
 	serialized := len(integrations) == 2 && integrations[0].DoneAt.Before(integrations[1].DoneAt) && integrations[0].ResultCommit == integrations[1].PreflightTarget
 	fr044 := oldW1Known && oldW1Binding.Status == "quarantined" && w2CandidateSameWorkspace && w3CandidateSameWorkspace && zombieAuthoritySuccesses == 0
 	sc013 := fr044 && reviewsIndependent && serialized && invariants.Passed() && restoreDigest == playbackDigest && playbackCalls == 0 && playbackWrites == 0
+	implementationA, err := crownParticipant(oldW1)
+	if err != nil {
+		return recorder.finish(result), err
+	}
+	implementationB, err := crownParticipant(oldW2)
+	if err != nil {
+		return recorder.finish(result), err
+	}
+	replacementC, err := crownParticipant(finalW3)
+	if err != nil {
+		return recorder.finish(result), err
+	}
 	result.Trial = m1.OrderedTrial{SchemaVersion: 1, RunID: input.RunID, TrialID: m1.OrderedTrialID, Started: len(recorder.segments) > 0, Terminal: len(recorder.segments) == len(crownInternalSegmentIDs), Outcome: "pass", FR044Satisfied: fr044, SC013Satisfied: sc013,
-		Identities:         m1.CrownIdentities{ImplementationA: crownParticipant(oldW1), ImplementationB: crownParticipant(oldW2), ReplacementC: crownParticipant(finalW3)},
+		Identities:         m1.CrownIdentities{ImplementationA: implementationA, ImplementationB: implementationB, ReplacementC: replacementC},
 		WorkspaceIsolation: m1.CrownWorkspaceIsolation{W1Quarantined: oldW1Known && oldW1Binding.Status == "quarantined", W2Preserved: w2CandidateSameWorkspace, W3Fresh: w3CandidateSameWorkspace && finalW3.Authority.WorkspaceID != oldW1.Authority.WorkspaceID, ZombieAuthoritySuccesses: zombieAuthoritySuccesses},
 		OwnerRestart:       m1.CrownOwnerRestart{SameUmbrellaRun: predecessorUmbrellaRunID == input.RunID && freshUmbrellaRunID == input.RunID && predecessorSupervisorRunID != freshSupervisorRunID, BeforeRuntimeEpochID: predecessorEpoch, AfterRuntimeEpochID: freshEpoch, NewEpochAdmitted: freshEpoch != predecessorEpoch},
 		OldCapsule:         m1.CrownOldCapsule{PredecessorRuntimeEpochID: predecessorEpoch, Refused: predecessorRefused, ReasonKind: predecessorReasonKind},
@@ -686,8 +698,20 @@ func prepareCrownCandidate(ctx context.Context, environment *productionEnvironme
 	return result, nil
 }
 
-func crownParticipant(delivery provingground.Delivery) m1.CrownParticipant {
-	return m1.CrownParticipant{ActorID: string(delivery.Authority.ActorID), ProcessID: string(delivery.Authority.ProcessID), WorkspaceID: string(delivery.Authority.WorkspaceID)}
+func crownParticipant(delivery provingground.Delivery) (m1.CrownParticipant, error) {
+	observed := struct {
+		actor, process, workspace string
+	}{string(delivery.Authority.ActorID), string(delivery.Authority.ProcessID), string(delivery.Authority.WorkspaceID)}
+	switch observed {
+	case struct{ actor, process, workspace string }{"actor-a", "process-a", "workspace-crown-w1"}:
+		return m1.CrownParticipant{ActorID: "A", ProcessID: "A", WorkspaceID: "W1"}, nil
+	case struct{ actor, process, workspace string }{"actor-b", "process-b", "workspace-crown-w2"}:
+		return m1.CrownParticipant{ActorID: "B", ProcessID: "B", WorkspaceID: "W2"}, nil
+	case struct{ actor, process, workspace string }{"actor-a", "process-c", "workspace-crown-w3"}:
+		return m1.CrownParticipant{ActorID: "A", ProcessID: "C", WorkspaceID: "W3"}, nil
+	default:
+		return m1.CrownParticipant{}, fmt.Errorf("observed crown authority does not match a frozen evidence participant")
+	}
 }
 
 type crownBarrier struct {

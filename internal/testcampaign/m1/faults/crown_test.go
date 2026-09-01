@@ -143,10 +143,28 @@ func TestOrderedCrownRejectsMissingImmutableIdentityBeforeProductAccess(t *testi
 }
 
 func TestCrownParticipantUsesExactAuthorityIdentity(t *testing.T) {
-	delivery := provingground.Delivery{Authority: controljournal.AuthorityCapsuleV1{ActorID: "actor-exact", ProcessID: "process-exact", WorkspaceID: "workspace-exact"}}
-	got := crownParticipant(delivery)
-	if got.ActorID != "actor-exact" || got.ProcessID != "process-exact" || got.WorkspaceID != "workspace-exact" {
-		t.Fatalf("participant identity was translated instead of observed: %+v", got)
+	for _, test := range []struct {
+		actor, process, workspace string
+		want                      m1.CrownParticipant
+	}{
+		{"actor-a", "process-a", "workspace-crown-w1", m1.CrownParticipant{ActorID: "A", ProcessID: "A", WorkspaceID: "W1"}},
+		{"actor-b", "process-b", "workspace-crown-w2", m1.CrownParticipant{ActorID: "B", ProcessID: "B", WorkspaceID: "W2"}},
+		{"actor-a", "process-c", "workspace-crown-w3", m1.CrownParticipant{ActorID: "A", ProcessID: "C", WorkspaceID: "W3"}},
+	} {
+		delivery := provingground.Delivery{Authority: controljournal.AuthorityCapsuleV1{ActorID: controljournal.ActorID(test.actor), ProcessID: controljournal.ProcessID(test.process), WorkspaceID: controljournal.WorkspaceID(test.workspace)}}
+		got, err := crownParticipant(delivery)
+		if err != nil || got != test.want {
+			t.Fatalf("observed %s/%s/%s projected=%+v err=%v want=%+v", test.actor, test.process, test.workspace, got, err, test.want)
+		}
+	}
+	for _, delivery := range []provingground.Delivery{
+		{Authority: controljournal.AuthorityCapsuleV1{ActorID: "actor-a", ProcessID: "process-a", WorkspaceID: "workspace-crown-w2"}},
+		{Authority: controljournal.AuthorityCapsuleV1{ActorID: "A", ProcessID: "A", WorkspaceID: "W1"}},
+		{Authority: controljournal.AuthorityCapsuleV1{ActorID: "actor-exact", ProcessID: "process-exact", WorkspaceID: "workspace-exact"}},
+	} {
+		if _, err := crownParticipant(delivery); err == nil {
+			t.Fatalf("foreign or pre-projected identity was accepted: %+v", delivery.Authority)
+		}
 	}
 }
 

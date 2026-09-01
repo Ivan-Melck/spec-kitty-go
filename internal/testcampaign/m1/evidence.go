@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
@@ -24,6 +25,11 @@ const (
 	TechnicalPassDomain   = "spec-kitty.m1.machine-pass.v1"
 	AdmittedTupleSHA256   = "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
 	AdmittedSidecarSHA256 = "62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e"
+
+	evidenceManifestSchemaID     = "https://spec-kitty.local/contracts/evidence-manifest-v1.schema.json"
+	orderedTrialSchemaID         = "https://spec-kitty.local/contracts/ordered-trial-v1.schema.json"
+	evidenceManifestSchemaSHA256 = "ad94828f0e175f120c194135124a0290d24e4aeb79fea3a5217ef5756fa6b5fd"
+	orderedTrialSchemaSHA256     = "db78bdb59d45fc91c6bf3c0f9fcf6bce85d5d2c3366a0d317be991541c00ea3d"
 )
 
 var ScenarioIDs = []string{
@@ -260,6 +266,7 @@ func PublishEvidence(outputRoot string, manifest EvidenceManifest, inputs []Arti
 	}
 	manifest.Artifacts = nil
 	seenKinds := make(map[string]int)
+	var contractsBytes []byte
 	for _, input := range inputs {
 		if input.Kind == "" || len(input.Data) > 16<<20 {
 			return Publication{}, fmt.Errorf("artifact kind is absent or artifact exceeds 16 MiB")
@@ -271,20 +278,26 @@ func PublishEvidence(outputRoot string, manifest EvidenceManifest, inputs []Arti
 			return Publication{}, err
 		}
 		manifest.Artifacts = append(manifest.Artifacts, EvidenceArtifact{Kind: input.Kind, Path: relative, SHA256: SHA256Hex(input.Data), SizeBytes: int64(len(input.Data))})
+		if input.Kind == "contracts" {
+			contractsBytes = append([]byte(nil), input.Data...)
+		}
 	}
 	for _, kind := range []string{"source-binding", "sidecar-provenance", "proving-binary", "contracts", "budgets", "crown-ledger"} {
 		if seenKinds[kind] != 1 {
 			return Publication{}, fmt.Errorf("mandatory artifact kind %q count=%d want=1", kind, seenKinds[kind])
 		}
 	}
+	manifestBytes, err := CanonicalJSON(manifest)
+	if err != nil {
+		return Publication{}, err
+	}
+	if err := validateEvidenceManifestSchema(manifestBytes, contractsBytes); err != nil {
+		return Publication{}, fmt.Errorf("manifest violates frozen schema: %w", err)
+	}
 	if manifest.Outcome == "pass" {
 		if err := SemanticOutcome(manifest); err != nil {
 			return Publication{}, err
 		}
-	}
-	manifestBytes, err := CanonicalJSON(manifest)
-	if err != nil {
-		return Publication{}, err
 	}
 	manifestDigest := SHA256Hex(manifestBytes)
 	if err := durableWrite(filepath.Join(temporary, EvidenceManifestName), manifestBytes, 0o400); err != nil {
@@ -357,7 +370,7 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 	seenPath := make(map[string]struct{}, len(manifest.Artifacts))
 	seenKind := make(map[string]int, len(manifest.Artifacts))
 	seenDigest := make(map[string]int, len(manifest.Artifacts))
-	var crownBytes []byte
+	var crownBytes, contractsBytes []byte
 	var sourceBytes, provenanceBytes []byte
 	for _, artifact := range manifest.Artifacts {
 		if !cleanArtifactPath(artifact.Path) {
@@ -382,11 +395,17 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 		if artifact.Kind == "sidecar-provenance" {
 			provenanceBytes = append([]byte(nil), contents...)
 		}
+		if artifact.Kind == "contracts" {
+			contractsBytes = append([]byte(nil), contents...)
+		}
 	}
 	for _, kind := range []string{"source-binding", "sidecar-provenance", "proving-binary", "contracts", "budgets", "crown-ledger"} {
 		if seenKind[kind] != 1 {
 			return Verification{}, manifest, fmt.Errorf("mandatory artifact kind %q count=%d want=1", kind, seenKind[kind])
 		}
+	}
+	if err := validateEvidenceManifestSchema(manifestBytes, contractsBytes); err != nil {
+		return Verification{}, manifest, fmt.Errorf("manifest violates frozen schema: %w", err)
 	}
 	var sourceArtifact struct {
 		Commit                  string `json:"commit"`
@@ -451,6 +470,72 @@ func VerifyEvidence(ctx context.Context, directory string, options VerifyOptions
 		}
 	}
 	return Verification{Outcome: manifest.Outcome, RunID: manifest.RunID, ManifestSHA256: manifestDigest, TechnicalPass: strings.TrimSpace(string(technicalBytes)), AdoptionEligible: manifest.Outcome == "pass" && semanticErr == nil}, manifest, nil
+}
+
+type evidenceContractBundleV1 struct {
+	SchemaVersion int `json:"schema_version"`
+	Entries       []struct {
+		Path     string `json:"path"`
+		SHA256   string `json:"sha256"`
+		Contents []byte `json:"contents"`
+	} `json:"entries"`
+}
+
+func validateEvidenceManifestSchema(manifestBytes, contractsBytes []byte) error {
+	var bundle evidenceContractBundleV1
+	if err := jsonUnmarshalStrict(contractsBytes, &bundle); err != nil {
+		return fmt.Errorf("decode contract bundle: %w", err)
+	}
+	if bundle.SchemaVersion != 1 || len(bundle.Entries) == 0 {
+		return fmt.Errorf("contract bundle header or census is invalid")
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	seenPath := make(map[string]struct{}, len(bundle.Entries))
+	seenID := make(map[string]string)
+	for _, entry := range bundle.Entries {
+		if !cleanArtifactPath(entry.Path) || !isSHA256String(entry.SHA256) || SHA256Hex(entry.Contents) != entry.SHA256 {
+			return fmt.Errorf("contract bundle entry %q is unsafe or has changed bytes", entry.Path)
+		}
+		if _, duplicate := seenPath[entry.Path]; duplicate {
+			return fmt.Errorf("contract bundle entry %q is duplicated", entry.Path)
+		}
+		seenPath[entry.Path] = struct{}{}
+		if !strings.HasSuffix(entry.Path, ".schema.json") {
+			continue
+		}
+		var document any
+		if err := json.Unmarshal(entry.Contents, &document); err != nil {
+			return fmt.Errorf("decode contract schema %q: %w", entry.Path, err)
+		}
+		object, ok := document.(map[string]any)
+		id, idOK := object["$id"].(string)
+		if !ok || !idOK || id != "https://spec-kitty.local/contracts/"+filepath.Base(entry.Path) {
+			return fmt.Errorf("contract schema %q has a foreign ID", entry.Path)
+		}
+		if _, duplicate := seenID[id]; duplicate {
+			return fmt.Errorf("contract schema ID %q is duplicated", id)
+		}
+		seenID[id] = entry.SHA256
+		if err := compiler.AddResource(id, document); err != nil {
+			return fmt.Errorf("register contract schema %q: %w", id, err)
+		}
+	}
+	if seenID[evidenceManifestSchemaID] != evidenceManifestSchemaSHA256 || seenID[orderedTrialSchemaID] != orderedTrialSchemaSHA256 {
+		return fmt.Errorf("frozen evidence or ordered-trial schema is absent or changed")
+	}
+	compiled, err := compiler.Compile(evidenceManifestSchemaID)
+	if err != nil {
+		return fmt.Errorf("compile frozen evidence schema: %w", err)
+	}
+	var manifest any
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return fmt.Errorf("decode exact manifest for schema validation: %w", err)
+	}
+	if err := compiled.Validate(manifest); err != nil {
+		return fmt.Errorf("validate exact manifest bytes: %w", err)
+	}
+	return nil
 }
 
 func referencedArtifactDigests(manifest EvidenceManifest) []string {

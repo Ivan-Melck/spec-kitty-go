@@ -3,10 +3,14 @@ package m1
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func TestEvidencePublishesAndIndependentlyVerifiesExactCensus(t *testing.T) {
@@ -15,12 +19,70 @@ func TestEvidencePublishesAndIndependentlyVerifiesExactCensus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	manifestBytes, err := os.ReadFile(publication.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exactManifest any
+	if err := json.Unmarshal(manifestBytes, &exactManifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := compileCheckedInEvidenceSchema(t).Validate(exactManifest); err != nil {
+		t.Fatalf("exact production-published manifest violates the frozen schema: %v", err)
+	}
 	verified, got, err := VerifyEvidence(t.Context(), publication.Directory, VerifyOptions{ExpectedSource: &source})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !verified.AdoptionEligible || verified.Outcome != "pass" || verified.ManifestSHA256 != publication.ManifestSHA256 || verified.TechnicalPass != publication.TechnicalPass || got.RunID != manifest.RunID {
 		t.Fatalf("verification=%+v manifest=%+v", verified, got)
+	}
+	want := CrownIdentities{CrownParticipant{"A", "A", "W1"}, CrownParticipant{"B", "B", "W2"}, CrownParticipant{"A", "C", "W3"}}
+	if got.OrderedTrial.Identities != want {
+		t.Fatalf("published participant vocabulary=%+v want=%+v", got.OrderedTrial.Identities, want)
+	}
+
+	t.Run("publisher and verifier reject frozen schema drift", testEvidencePublisherAndVerifierRejectFrozenSchemaDrift)
+}
+
+func testEvidencePublisherAndVerifierRejectFrozenSchemaDrift(t *testing.T) {
+	manifest, inputs, _ := validEvidence(t, "run schema drift")
+	if _, err := PublishEvidence(filepath.Join(t.TempDir(), "evidence"), manifest, inputs); err == nil || !strings.Contains(err.Error(), "schema") {
+		t.Fatalf("schema-invalid RunID was published: %v", err)
+	}
+
+	manifest, inputs, _ = validEvidence(t, "run-schema-verifier")
+	publication, err := PublishEvidence(filepath.Join(t.TempDir(), "evidence"), manifest, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishedBytes, err := os.ReadFile(publication.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jsonUnmarshalStrict(publishedBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.SourceCommit = strings.Repeat("A", 40) // SemanticOutcome accepts hex; the frozen schema requires lowercase Git IDs.
+	manifestBytes, err := CanonicalJSON(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(publication.ManifestPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(publication.ManifestPath, manifestBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signaturePath := filepath.Join(publication.Directory, TechnicalPassName)
+	if err := os.Chmod(signaturePath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(signaturePath, []byte(TechnicalSignature(SHA256Hex(manifestBytes))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := VerifyEvidence(t.Context(), publication.Directory, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "schema") {
+		t.Fatalf("exact schema-invalid manifest passed independent verification: %v", err)
 	}
 }
 
@@ -118,7 +180,7 @@ func validEvidence(t *testing.T, runID string) (EvidenceManifest, []ArtifactInpu
 	trial := crown.Trial
 	inputs := []ArtifactInput{
 		{Kind: "source-binding", Data: mustJSON(t, source)}, {Kind: "sidecar-provenance", Data: provenance},
-		{Kind: "proving-binary", Data: []byte("synthetic proving binary")}, {Kind: "contracts", Data: []byte("contracts-v1")},
+		{Kind: "proving-binary", Data: []byte("synthetic proving binary")}, {Kind: "contracts", Data: testContractsBundle(t)},
 		{Kind: "budgets", Data: []byte("budgets-v1")}, {Kind: "crown-ledger", Data: crownBytes},
 	}
 	for _, id := range CrownSegmentIDs {
@@ -149,6 +211,63 @@ func validEvidence(t *testing.T, runID string) (EvidenceManifest, []ArtifactInpu
 	inputs = append(inputs, ArtifactInput{Kind: "independent-review", Data: reviewArtifact})
 	manifest.IndependentReview = IndependentReview{"campaign-reviewer", "campaign-review-process", "pass", SHA256Hex(reviewArtifact)}
 	return manifest, inputs, source
+}
+
+func testContractsBundle(t *testing.T) []byte {
+	t.Helper()
+	contractRoot := filepath.Join("..", "..", "..", "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts")
+	paths, err := filepath.Glob(filepath.Join(contractRoot, "*.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type entry struct {
+		Path     string `json:"path"`
+		SHA256   string `json:"sha256"`
+		Contents []byte `json:"contents"`
+	}
+	bundle := struct {
+		SchemaVersion int     `json:"schema_version"`
+		Entries       []entry `json:"entries"`
+	}{SchemaVersion: 1}
+	for _, path := range paths {
+		contents, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		bundle.Entries = append(bundle.Entries, entry{Path: filepath.ToSlash(filepath.Join("kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts", filepath.Base(path))), SHA256: SHA256Hex(contents), Contents: contents})
+	}
+	sort.Slice(bundle.Entries, func(i, j int) bool { return bundle.Entries[i].Path < bundle.Entries[j].Path })
+	return mustJSON(t, bundle)
+}
+
+func compileCheckedInEvidenceSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	contractRoot := filepath.Join("..", "..", "..", "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts")
+	paths, err := filepath.Glob(filepath.Join(contractRoot, "*.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		contents, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var document any
+		if err := json.Unmarshal(contents, &document); err != nil {
+			t.Fatal(err)
+		}
+		id := document.(map[string]any)["$id"].(string)
+		if err := compiler.AddResource(id, document); err != nil {
+			t.Fatal(err)
+		}
+	}
+	schema, err := compiler.Compile(evidenceManifestSchemaID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema
 }
 
 func TestEvidenceCanonicalFixtures(t *testing.T) {

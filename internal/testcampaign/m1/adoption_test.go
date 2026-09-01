@@ -4,6 +4,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +32,91 @@ func TestAdoptionRequiresVerifiedPassAndSeparateAuthorizedHumanSignature(t *test
 	verdict, err := VerifyAdoption(record, TrustedSigner{Signer: AccountableSigner, PublicKey: public}, verification, manifest, RecoveryState{true, true, true, true, true})
 	if err != nil || verdict.State != AdoptionAdopted || verdict.Decision != "adopt" {
 		t.Fatalf("verdict=%+v err=%v", verdict, err)
+	}
+	mixed := TrustedSigner{Signer: AccountableSigner, PublicKey: public, LocalApprovals: []TrustedLocalApproval{{Reference: "foreign", SigningBytesSHA256: strings.Repeat("a", 64)}}}
+	if verdict, err := VerifyAdoption(record, mixed, verification, manifest, RecoveryState{true, true, true, true, true}); err == nil || verdict.State != AdoptionNotAdopted {
+		t.Fatalf("mixed detached/local trust adopted: verdict=%+v err=%v", verdict, err)
+	}
+
+	t.Run("approved local reference requires exact operator trust binding", testAdoptionApprovedLocalReferenceRequiresExactOperatorTrustBinding)
+	t.Run("signature kinds mirror frozen schema closed set", testAdoptionSignatureKindsMirrorFrozenSchemaClosedSet)
+}
+
+func testAdoptionApprovedLocalReferenceRequiresExactOperatorTrustBinding(t *testing.T) {
+	verification, manifest := adoptionFixture()
+	record := adoptionRecord(verification, manifest)
+	record.Signature = AdoptionSignature{Kind: "approved-local-reference", Value: "local-approval-2026-08-31"}
+	message, err := AdoptionSigningBytes(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := TrustedLocalApproval{Reference: record.Signature.Value, SigningBytesSHA256: SHA256Hex(message)}
+	trusted := TrustedSigner{Signer: AccountableSigner, LocalApprovals: []TrustedLocalApproval{approval}}
+	ready := RecoveryState{true, true, true, true, true}
+	verdict, err := VerifyAdoption(record, trusted, verification, manifest, ready)
+	if err != nil || verdict.State != AdoptionAdopted || verdict.Signer != AccountableSigner {
+		t.Fatalf("local-reference verdict=%+v err=%v", verdict, err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*AdoptionRecord, *TrustedSigner)
+	}{
+		{"trust absent", func(_ *AdoptionRecord, trust *TrustedSigner) { trust.LocalApprovals = nil }},
+		{"foreign reference", func(candidate *AdoptionRecord, _ *TrustedSigner) {
+			candidate.Signature.Value = "foreign-local-approval"
+		}},
+		{"foreign envelope", func(_ *AdoptionRecord, trust *TrustedSigner) {
+			trust.LocalApprovals[0].SigningBytesSHA256 = strings.Repeat("9", 64)
+		}},
+		{"duplicate trust", func(_ *AdoptionRecord, trust *TrustedSigner) {
+			trust.LocalApprovals = append(trust.LocalApprovals, trust.LocalApprovals[0])
+		}},
+		{"mixed detached trust", func(_ *AdoptionRecord, trust *TrustedSigner) {
+			trust.PublicKey = make(ed25519.PublicKey, ed25519.PublicKeySize)
+		}},
+		{"post-approval rationale", func(candidate *AdoptionRecord, _ *TrustedSigner) { candidate.Rationale += " changed" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := record
+			candidateTrust := trusted
+			candidateTrust.LocalApprovals = append([]TrustedLocalApproval(nil), trusted.LocalApprovals...)
+			test.mutate(&candidate, &candidateTrust)
+			verdict, err := VerifyAdoption(candidate, candidateTrust, verification, manifest, ready)
+			if err == nil || verdict.State != AdoptionNotAdopted {
+				t.Fatalf("untrusted local reference adopted: verdict=%+v err=%v", verdict, err)
+			}
+		})
+	}
+}
+
+func testAdoptionSignatureKindsMirrorFrozenSchemaClosedSet(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "..", "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts", "adoption-record-v1.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(contents, &document); err != nil {
+		t.Fatal(err)
+	}
+	properties := document["properties"].(map[string]any)
+	signature := properties["signature"].(map[string]any)
+	signatureProperties := signature["properties"].(map[string]any)
+	kind := signatureProperties["kind"].(map[string]any)
+	values := kind["enum"].([]any)
+	got := make([]string, len(values))
+	for i := range values {
+		got[i] = values[i].(string)
+	}
+	if !slices.Equal(got, adoptionSignatureKinds) {
+		t.Fatalf("verifier signature kinds=%v schema=%v", adoptionSignatureKinds, got)
+	}
+
+	verification, manifest := adoptionFixture()
+	record := adoptionRecord(verification, manifest)
+	record.Signature = AdoptionSignature{Kind: "unratified-reference", Value: "some-value"}
+	if verdict, err := VerifyAdoption(record, TrustedSigner{Signer: AccountableSigner}, verification, manifest, RecoveryState{true, true, true, true, true}); err == nil || verdict.State != AdoptionNotAdopted {
+		t.Fatalf("schema-foreign signature kind adopted: verdict=%+v err=%v", verdict, err)
 	}
 }
 

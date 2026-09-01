@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,12 +145,27 @@ func TestContractBundleIsDeterministicAndSeparatesBudget(t *testing.T) {
 	}
 }
 
+func writeFrozenEvidenceSchemas(t *testing.T, destination string) {
+	t.Helper()
+	source := filepath.Join("..", "..", "..", "..", "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts")
+	for _, name := range []string{"evidence-manifest-v1.schema.json", "ordered-trial-v1.schema.json"} {
+		contents, err := os.ReadFile(filepath.Join(source, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(destination, name), contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestCancellationPublishesVerifiableIncompleteEvidenceWithoutPassSignature(t *testing.T) {
 	root := t.TempDir()
 	contracts := filepath.Join(root, "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts")
 	if err := os.MkdirAll(contracts, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	writeFrozenEvidenceSchemas(t, contracts)
 	files := map[string][]byte{
 		filepath.Join(root, "go.mod"):                          []byte("module example.test/crown\n"),
 		filepath.Join(root, "go.sum"):                          []byte("sum\n"),
@@ -163,7 +179,7 @@ func TestCancellationPublishesVerifiableIncompleteEvidenceWithoutPassSignature(t
 		}
 	}
 	config := Config{RunID: "run-incomplete", RepositoryRoot: root, ProductPolicyPath: filepath.Join(contracts, "m1-product-budgets-v1.json"), EvidenceRoot: filepath.Join(root, "evidence"), ProvingBinaryPath: filepath.Join(root, "proving-binary")}
-	state := &runEvidenceState{}
+	state := &runEvidenceState{Source: m1.SourceBinding{Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), SidecarProvenanceSHA256: strings.Repeat("3", 64)}}
 	state.InitialProvenance.SupervisorRunID = config.RunID
 	publication, manifest, err := publishNonPass(context.Background(), config, PreflightResult{AdmissionRecordSHA256: m1.AdmittedTupleSHA256}, nil, state, context.Canceled)
 	if err != nil {

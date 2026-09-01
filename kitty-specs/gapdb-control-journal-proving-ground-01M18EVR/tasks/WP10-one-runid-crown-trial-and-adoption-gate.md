@@ -46,7 +46,7 @@ subtasks:
 - T056
 - T057
 history: []
-agent_profile: implementer-ivan
+agent_profile: reviewer-renata
 authoritative_surface: internal/testcampaign/m1/campaign.go
 create_intent:
 - internal/testcampaign/m1/campaign.go
@@ -101,7 +101,7 @@ owned_files:
 - internal/testcampaign/manifest.go
 - internal/testcampaign/census_test.go
 - kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/quickstart.md
-role: implementer
+role: reviewer
 tags:
 - m1
 - crown-trial

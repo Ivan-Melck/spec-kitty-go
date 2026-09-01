@@ -14,6 +14,8 @@ const (
 	AdoptionAdopted       = "adopted"
 )
 
+var adoptionSignatureKinds = []string{"detached", "approved-local-reference"}
+
 type RecoveryState struct {
 	ByteRecovered    bool `json:"byte_recovered"`
 	ProductRestored  bool `json:"product_restored"`
@@ -65,8 +67,17 @@ type UnsignedAdoptionTemplate struct {
 }
 
 type TrustedSigner struct {
-	Signer    string
-	PublicKey ed25519.PublicKey
+	Signer         string
+	PublicKey      ed25519.PublicKey
+	LocalApprovals []TrustedLocalApproval
+}
+
+// TrustedLocalApproval is an operator-supplied binding between one local
+// approval reference and the exact canonical adoption envelope it approves.
+// A bare reference is never sufficient authority.
+type TrustedLocalApproval struct {
+	Reference          string `json:"reference"`
+	SigningBytesSHA256 string `json:"signing_bytes_sha256"`
 }
 
 type AdoptionVerdict struct {
@@ -115,22 +126,46 @@ func VerifyAdoption(record AdoptionRecord, trusted TrustedSigner, verification V
 	if record.EvidenceManifestSHA256 != verification.ManifestSHA256 || record.SourceCommit != manifest.SourceCommit || record.SourceTree != manifest.SourceTree || record.AdmittedTupleSHA256 != manifest.AdmittedTupleSHA256 || record.SidecarSHA256 != AdmittedSidecarSHA256 {
 		return refused, fmt.Errorf("adoption tuple is stale or foreign")
 	}
-	if trusted.Signer != AccountableSigner || record.Signer != trusted.Signer || len(trusted.PublicKey) != ed25519.PublicKeySize {
+	if trusted.Signer != AccountableSigner || record.Signer != trusted.Signer {
 		return refused, fmt.Errorf("trusted signer configuration is absent or unauthorized")
-	}
-	if record.Signature.Kind != "detached" || record.Signature.Value == "" {
-		return refused, fmt.Errorf("detached Ed25519 signature is absent")
-	}
-	signature, err := base64.RawURLEncoding.DecodeString(record.Signature.Value)
-	if err != nil || len(signature) != ed25519.SignatureSize {
-		return refused, fmt.Errorf("detached Ed25519 signature is malformed")
 	}
 	message, err := AdoptionSigningBytes(record)
 	if err != nil {
 		return refused, err
 	}
-	if !ed25519.Verify(trusted.PublicKey, message, signature) {
-		return refused, fmt.Errorf("detached Ed25519 signature is invalid")
+	switch record.Signature.Kind {
+	case "detached":
+		if record.Signature.Value == "" || len(trusted.PublicKey) != ed25519.PublicKeySize || len(trusted.LocalApprovals) != 0 {
+			return refused, fmt.Errorf("detached Ed25519 signature or trusted public key is absent")
+		}
+		signature, decodeErr := base64.RawURLEncoding.DecodeString(record.Signature.Value)
+		if decodeErr != nil || len(signature) != ed25519.SignatureSize {
+			return refused, fmt.Errorf("detached Ed25519 signature is malformed")
+		}
+		if !ed25519.Verify(trusted.PublicKey, message, signature) {
+			return refused, fmt.Errorf("detached Ed25519 signature is invalid")
+		}
+	case "approved-local-reference":
+		if record.Signature.Value == "" || len(trusted.PublicKey) != 0 {
+			return refused, fmt.Errorf("approved local signature reference is absent")
+		}
+		messageDigest := SHA256Hex(message)
+		matches := 0
+		approved := false
+		for _, local := range trusted.LocalApprovals {
+			if local.Reference == "" || !isSHA256String(local.SigningBytesSHA256) {
+				return refused, fmt.Errorf("approved local reference trust configuration is malformed")
+			}
+			if local.Reference == record.Signature.Value {
+				matches++
+				approved = local.SigningBytesSHA256 == messageDigest
+			}
+		}
+		if matches != 1 || !approved {
+			return refused, fmt.Errorf("approved local reference is absent, ambiguous, or bound to another adoption envelope")
+		}
+	default:
+		return refused, fmt.Errorf("adoption signature kind is outside the frozen closed set")
 	}
 	state := AdoptionNotAdopted
 	if record.Decision == "adopt" {

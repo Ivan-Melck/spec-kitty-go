@@ -91,13 +91,13 @@ type OrderedTrial struct {
 	Outcome            string                  `json:"outcome"`
 	FR044Satisfied     bool                    `json:"fr_044_satisfied,omitempty"`
 	SC013Satisfied     bool                    `json:"sc_013_satisfied,omitempty"`
-	Identities         CrownIdentities         `json:"identities,omitempty"`
-	WorkspaceIsolation CrownWorkspaceIsolation `json:"workspace_isolation,omitempty"`
-	OwnerRestart       CrownOwnerRestart       `json:"owner_restart,omitempty"`
-	OldCapsule         CrownOldCapsule         `json:"old_capsule,omitempty"`
-	RestorePlayback    CrownRestorePlayback    `json:"restore_playback,omitempty"`
+	Identities         CrownIdentities         `json:"identities,omitempty,omitzero"`
+	WorkspaceIsolation CrownWorkspaceIsolation `json:"workspace_isolation,omitempty,omitzero"`
+	OwnerRestart       CrownOwnerRestart       `json:"owner_restart,omitempty,omitzero"`
+	OldCapsule         CrownOldCapsule         `json:"old_capsule,omitempty,omitzero"`
+	RestorePlayback    CrownRestorePlayback    `json:"restore_playback,omitempty,omitzero"`
 	Reviews            []CrownReview           `json:"reviews,omitempty"`
-	Integration        CrownIntegration        `json:"integration,omitempty"`
+	Integration        CrownIntegration        `json:"integration,omitempty,omitzero"`
 	ArtifactSHA256     string                  `json:"artifact_sha256,omitempty"`
 }
 
@@ -163,7 +163,7 @@ func ValidateOrderedTrial(trial OrderedTrial, runID string) error {
 	if trial.SchemaVersion != 1 || trial.RunID != runID || trial.TrialID != OrderedTrialID || !trial.Started || !trial.Terminal || trial.Outcome != "pass" || !trial.FR044Satisfied || !trial.SC013Satisfied || !isSHA256String(trial.ArtifactSHA256) {
 		return fmt.Errorf("ordered trial is not a complete pass for the umbrella RunID")
 	}
-	if trial.Identities.ImplementationA != (CrownParticipant{"actor-a", "process-a", "workspace-crown-w1"}) || trial.Identities.ImplementationB != (CrownParticipant{"actor-b", "process-b", "workspace-crown-w2"}) || trial.Identities.ReplacementC != (CrownParticipant{"actor-a", "process-c", "workspace-crown-w3"}) {
+	if trial.Identities.ImplementationA != (CrownParticipant{"A", "A", "W1"}) || trial.Identities.ImplementationB != (CrownParticipant{"B", "B", "W2"}) || trial.Identities.ReplacementC != (CrownParticipant{"A", "C", "W3"}) {
 		return fmt.Errorf("ordered trial participant identities are not A/A/W1, B/B/W2, A/C/W3")
 	}
 	if !trial.WorkspaceIsolation.W1Quarantined || !trial.WorkspaceIsolation.W2Preserved || !trial.WorkspaceIsolation.W3Fresh || trial.WorkspaceIsolation.ZombieAuthoritySuccesses != 0 {

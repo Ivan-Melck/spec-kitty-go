@@ -284,6 +284,35 @@ func TestDefaultPolicyClassifiesM1CommandAndBoundsExternalGapDBDirection(t *test
 	if len(violations) != 1 || violations[0].Rule != RuleExternalDirection || violations[0].SourcePackage != kernel {
 		t.Fatalf("kernel GapDB mutant escaped: %+v", violations)
 	}
+
+	t.Run("frozen schema compiler is quality tooling only", func(t *testing.T) {
+		const schemaCompiler = "github.com/santhosh-tekuri/jsonschema/v6"
+		verifier := module + "/internal/testcampaign/m1"
+		qualityGraph := fixtureGraph([]string{verifier}, ImportEdge{SourcePackage: verifier, TargetPackage: schemaCompiler, Kind: ImportExternal})
+		qualityGraph.ModulePath = module
+		if err := policy.Check(qualityGraph); err != nil {
+			t.Fatalf("M1 frozen-schema verifier dependency rejected: %v", err)
+		}
+
+		lookalike := schemaCompiler + "x"
+		lookalikeGraph := fixtureGraph([]string{verifier}, ImportEdge{SourcePackage: verifier, TargetPackage: lookalike, Kind: ImportExternal})
+		lookalikeGraph.ModulePath = module
+		assertExactViolation(t, policy, lookalikeGraph, RuleExternalDirection, verifier, TierQuality, lookalike, "")
+
+		kernelGraph := fixtureGraph([]string{kernel}, ImportEdge{SourcePackage: kernel, TargetPackage: schemaCompiler, Kind: ImportExternal})
+		kernelGraph.ModulePath = module
+		assertExactViolation(t, policy, kernelGraph, RuleExternalDirection, kernel, TierAuthority, schemaCompiler, "")
+
+		mutant := policy
+		mutant.Tiers = append([]Tier(nil), policy.Tiers...)
+		for index := range mutant.Tiers {
+			if mutant.Tiers[index].Name != TierQuality {
+				continue
+			}
+			mutant.Tiers[index].AllowedExternalPrefixes = []string{"modernc.org/sqlite", "github.com/spec-kitty/gapdb"}
+		}
+		assertExactViolation(t, mutant, qualityGraph, RuleExternalDirection, verifier, TierQuality, schemaCompiler, "")
+	})
 }
 
 func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {

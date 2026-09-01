@@ -208,6 +208,24 @@ verify them through explicit absolute paths:
   --public-key "$M1_RUNTIME_PATH/accountable-human.ed25519.pub"
 ```
 
+The frozen record also permits an operator-approved local reference. That
+reference is authority only when the operator supplies both the exact value in
+`signature.value` and the SHA-256 of the canonical
+`spec-kitty.m1.adoption.v1` signing envelope approved by the local system:
+
+```bash
+"$M1_COMMAND_PATH" adoption-verify \
+  --evidence-dir "$M1_EVIDENCE_PATH/$M1_RUN_ID" \
+  --record "$M1_RUNTIME_PATH/adoption-record.json" \
+  --trusted-signer "github:lynncoleart" \
+  --approved-local-reference "$M1_LOCAL_APPROVAL_REFERENCE" \
+  --approved-local-envelope-sha256 "$M1_LOCAL_APPROVAL_ENVELOPE_SHA256"
+```
+
+A bare local reference, a reference for another canonical envelope, a mixed
+public-key/local configuration, or more than one matching approval fails
+closed.
+
 Either `adopt` or `refuse` is a valid mission artifact. The verifier only
 validates the signed decision and its exact source/evidence binding; it does
 not edit backend selection or start M2. A failed or incomplete campaign must

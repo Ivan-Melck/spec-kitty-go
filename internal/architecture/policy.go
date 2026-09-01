@@ -257,7 +257,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 					pkg("internal/architecture"), pkg("internal/scenario"), pkg("internal/tracker/conformance"), PackagePrefix(modulePath + "/internal/testcampaign"), pkg("cmd/spk-m1-proving-ground"),
 				},
 				AllowedLocalTargets:     append(append([]TierName(nil), allRuntime...), TierQuality),
-				AllowedExternalPrefixes: []string{"modernc.org/sqlite", "github.com/spec-kitty/gapdb"},
+				AllowedExternalPrefixes: []string{"modernc.org/sqlite", "github.com/spec-kitty/gapdb", "github.com/santhosh-tekuri/jsonschema/v6"},
 			},
 		},
 		ForbiddenLocalDirections: []ForbiddenLocalDirection{

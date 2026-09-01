@@ -10,6 +10,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,8 +95,23 @@ func TestStatusRecomputesTerminalOutcomeFromImmutableEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	crownBytes, _ := m1.CanonicalJSON(crownArtifact)
-	manifest := m1.EvidenceManifest{SchemaVersion: 1, ProgramID: "production-runtime", MissionID: "M1", RunID: trial.RunID, AdmittedTupleSHA256: m1.AdmittedTupleSHA256, OrderedTrial: crownArtifact.Trial, IndependentReview: m1.IndependentReview{Verdict: "fail"}, Outcome: "incomplete"}
-	inputs := []m1.ArtifactInput{{Kind: "source-binding", Data: []byte("{}\n")}, {Kind: "sidecar-provenance", Data: []byte("{}\n")}, {Kind: "proving-binary", Data: []byte("binary")}, {Kind: "contracts", Data: []byte("contracts")}, {Kind: "budgets", Data: []byte("budgets")}, {Kind: "crown-ledger", Data: crownBytes}}
+	manifest := m1.EvidenceManifest{SchemaVersion: 1, ProgramID: "production-runtime", MissionID: "M1", RunID: trial.RunID, SourceCommit: strings.Repeat("1", 40), SourceTree: strings.Repeat("2", 40), AdmittedTupleSHA256: m1.AdmittedTupleSHA256, SidecarProvenanceSHA256: strings.Repeat("3", 64), ScenarioResults: []m1.ScenarioResult{}, FaultResults: []m1.FaultResult{}, OrderedTrial: crownArtifact.Trial, FocusedSubtrialSummaries: []m1.FocusedSummary{}, MutantResults: []m1.MutantResult{}, IndependentReview: m1.IndependentReview{Verdict: "fail"}, Outcome: "incomplete"}
+	inputs := []m1.ArtifactInput{{Kind: "source-binding", Data: []byte("{}\n")}, {Kind: "sidecar-provenance", Data: []byte("{}\n")}, {Kind: "proving-binary", Data: []byte("binary")}, {Kind: "contracts", Data: testM1ContractsBundle(t)}, {Kind: "budgets", Data: []byte("budgets")}, {Kind: "crown-ledger", Data: crownBytes}}
+	for i, id := range m1.ScenarioIDs {
+		artifact := []byte("incomplete-scenario:" + id)
+		manifest.ScenarioResults = append(manifest.ScenarioResults, m1.ScenarioResult{ScenarioID: id, RunID: trial.RunID, Seed: uint64(i + 1), Started: i == 0, Terminal: true, Outcome: "incomplete", ArtifactSHA256: m1.SHA256Hex(artifact)})
+		inputs = append(inputs, m1.ArtifactInput{Kind: "scenario", Data: artifact})
+	}
+	for i, id := range m1.FaultIDs {
+		artifact := []byte("incomplete-fault:" + id)
+		manifest.FaultResults = append(manifest.FaultResults, m1.FaultResult{FaultID: id, RunID: trial.RunID, Seed: uint64(i + 1), Cut: m1.FaultCuts[i], Terminal: true, Outcome: "incomplete", ArtifactSHA256: m1.SHA256Hex(artifact)})
+		inputs = append(inputs, m1.ArtifactInput{Kind: "fault", Data: artifact})
+	}
+	for _, id := range m1.MutantIDs {
+		artifact := []byte("incomplete-mutant:" + id)
+		manifest.MutantResults = append(manifest.MutantResults, m1.MutantResult{ID: id, RunID: trial.RunID, Outcome: "not_run", ArtifactSHA256: m1.SHA256Hex(artifact)})
+		inputs = append(inputs, m1.ArtifactInput{Kind: "mutant", Data: artifact})
+	}
 	if _, err := m1.PublishEvidence(root, manifest, inputs); err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +126,37 @@ func TestStatusRecomputesTerminalOutcomeFromImmutableEvidence(t *testing.T) {
 	if got.Outcome != "incomplete" {
 		t.Fatalf("terminal outcome was not recomputed: %+v", got)
 	}
+}
+
+func testM1ContractsBundle(t *testing.T) []byte {
+	t.Helper()
+	contractRoot := filepath.Join("..", "..", "kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts")
+	paths, err := filepath.Glob(filepath.Join(contractRoot, "*.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type entry struct {
+		Path     string `json:"path"`
+		SHA256   string `json:"sha256"`
+		Contents []byte `json:"contents"`
+	}
+	bundle := struct {
+		SchemaVersion int     `json:"schema_version"`
+		Entries       []entry `json:"entries"`
+	}{SchemaVersion: 1}
+	for _, path := range paths {
+		contents, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		bundle.Entries = append(bundle.Entries, entry{Path: filepath.ToSlash(filepath.Join("kitty-specs", "gapdb-control-journal-proving-ground-01M18EVR", "contracts", filepath.Base(path))), SHA256: m1.SHA256Hex(contents), Contents: contents})
+	}
+	sort.Slice(bundle.Entries, func(i, j int) bool { return bundle.Entries[i].Path < bundle.Entries[j].Path })
+	encoded, err := m1.CanonicalJSON(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func TestPublicKeyRequiresExplicitEd25519Bytes(t *testing.T) {
@@ -129,6 +177,45 @@ func TestPublicKeyRequiresExplicitEd25519Bytes(t *testing.T) {
 	}
 	if _, err := readPublicKey(path); err == nil {
 		t.Fatal("malformed public key was accepted")
+	}
+
+	t.Run("trust configuration is exact for each frozen signature kind", testAdoptionTrustConfigurationIsExactForEachFrozenSignatureKind)
+}
+
+func testAdoptionTrustConfigurationIsExactForEachFrozenSignatureKind(t *testing.T) {
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "human.pub")
+	if err := os.WriteFile(keyPath, []byte(base64.RawURLEncoding.EncodeToString(public)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	detached := m1.AdoptionRecord{Signature: m1.AdoptionSignature{Kind: "detached", Value: "signature"}}
+	trusted, err := trustedAdoptionSigner(detached, m1.AccountableSigner, keyPath, "", "")
+	if err != nil || !bytes.Equal(trusted.PublicKey, public) || len(trusted.LocalApprovals) != 0 {
+		t.Fatalf("detached trust=%+v err=%v", trusted, err)
+	}
+
+	local := m1.AdoptionRecord{Signature: m1.AdoptionSignature{Kind: "approved-local-reference", Value: "local-approval-1"}}
+	digest := strings.Repeat("a", 64)
+	trusted, err = trustedAdoptionSigner(local, m1.AccountableSigner, "", local.Signature.Value, digest)
+	if err != nil || len(trusted.PublicKey) != 0 || len(trusted.LocalApprovals) != 1 || trusted.LocalApprovals[0].Reference != local.Signature.Value || trusted.LocalApprovals[0].SigningBytesSHA256 != digest {
+		t.Fatalf("local trust=%+v err=%v", trusted, err)
+	}
+	for _, test := range []struct {
+		name, key, reference, digest string
+	}{
+		{"missing reference", "", "", digest},
+		{"different reference", "", "other", digest},
+		{"malformed digest", "", local.Signature.Value, "not-a-digest"},
+		{"mixed public key", keyPath, local.Signature.Value, digest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := trustedAdoptionSigner(local, m1.AccountableSigner, test.key, test.reference, test.digest); err == nil {
+				t.Fatal("unsafe local trust configuration passed")
+			}
+		})
 	}
 }
 

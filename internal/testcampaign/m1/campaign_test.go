@@ -43,7 +43,7 @@ func validCrownArtifact(t *testing.T, runID string) CrownArtifact {
 	t.Helper()
 	trial := OrderedTrial{
 		SchemaVersion: 1, RunID: runID, TrialID: OrderedTrialID, Started: true, Terminal: true, Outcome: "pass", FR044Satisfied: true, SC013Satisfied: true,
-		Identities:         CrownIdentities{CrownParticipant{"actor-a", "process-a", "workspace-crown-w1"}, CrownParticipant{"actor-b", "process-b", "workspace-crown-w2"}, CrownParticipant{"actor-a", "process-c", "workspace-crown-w3"}},
+		Identities:         CrownIdentities{CrownParticipant{"A", "A", "W1"}, CrownParticipant{"B", "B", "W2"}, CrownParticipant{"A", "C", "W3"}},
 		WorkspaceIsolation: CrownWorkspaceIsolation{true, true, true, 0},
 		OwnerRestart:       CrownOwnerRestart{true, "epoch-before", "epoch-after", true},
 		OldCapsule:         CrownOldCapsule{"epoch-before", true, "runtime_epoch_conflict"},

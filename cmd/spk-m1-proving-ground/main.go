@@ -186,17 +186,19 @@ func execute(ctx context.Context, arguments []string, output io.Writer) int {
 			outcome, code = "pass", exitPass
 		}
 	case "adoption-verify":
-		var evidenceDir, recordPath, signer, publicKeyPath string
+		var evidenceDir, recordPath, signer, publicKeyPath, localReference, localEnvelopeSHA256 string
 		fs := newFlagSet(command)
 		fs.StringVar(&evidenceDir, "evidence-dir", "", "absolute immutable evidence directory")
 		fs.StringVar(&recordPath, "record", "", "absolute signed adoption record")
 		fs.StringVar(&signer, "trusted-signer", "", "explicit trusted signer identity")
-		fs.StringVar(&publicKeyPath, "public-key", "", "absolute Ed25519 public key")
+		fs.StringVar(&publicKeyPath, "public-key", "", "absolute Ed25519 public key for a detached signature")
+		fs.StringVar(&localReference, "approved-local-reference", "", "explicit operator-approved local reference")
+		fs.StringVar(&localEnvelopeSHA256, "approved-local-envelope-sha256", "", "SHA-256 of the exact canonical adoption envelope approved by the local reference")
 		if err = parseExact(fs, arguments[1:]); err != nil {
 			break
 		}
-		if !filepath.IsAbs(evidenceDir) || !filepath.IsAbs(recordPath) || !filepath.IsAbs(publicKeyPath) || signer == "" {
-			err = errors.New("absolute evidence/record/key paths and trusted signer are required")
+		if !filepath.IsAbs(evidenceDir) || !filepath.IsAbs(recordPath) || signer == "" {
+			err = errors.New("absolute evidence/record paths and trusted signer are required")
 			break
 		}
 		code = exitFail
@@ -210,14 +212,14 @@ func execute(ctx context.Context, arguments []string, output io.Writer) int {
 		if err = decodeStrictFile(recordPath, &record); err != nil {
 			break
 		}
-		var key ed25519.PublicKey
-		key, err = readPublicKey(publicKeyPath)
+		var trusted m1.TrustedSigner
+		trusted, err = trustedAdoptionSigner(record, signer, publicKeyPath, localReference, localEnvelopeSHA256)
 		if err != nil {
 			break
 		}
 		recovery := recoveryFrom(manifest, verification)
 		var verdict m1.AdoptionVerdict
-		verdict, err = m1.VerifyAdoption(record, m1.TrustedSigner{Signer: signer, PublicKey: key}, verification, manifest, recovery)
+		verdict, err = m1.VerifyAdoption(record, trusted, verification, manifest, recovery)
 		value = verdict
 		if err == nil {
 			outcome, code = "pass", exitPass
@@ -232,6 +234,37 @@ func execute(ctx context.Context, arguments []string, output io.Writer) int {
 		return emit(output, envelope{1, command, outcome, value, bounded(err.Error())}, code)
 	}
 	return emit(output, envelope{1, command, outcome, value, ""}, code)
+}
+
+func trustedAdoptionSigner(record m1.AdoptionRecord, signer, publicKeyPath, localReference, localEnvelopeSHA256 string) (m1.TrustedSigner, error) {
+	trusted := m1.TrustedSigner{Signer: signer}
+	switch record.Signature.Kind {
+	case "detached":
+		if !filepath.IsAbs(publicKeyPath) || localReference != "" || localEnvelopeSHA256 != "" {
+			return m1.TrustedSigner{}, errors.New("detached adoption requires one absolute public-key path and no local-reference trust")
+		}
+		key, err := readPublicKey(publicKeyPath)
+		if err != nil {
+			return m1.TrustedSigner{}, err
+		}
+		trusted.PublicKey = key
+	case "approved-local-reference":
+		if publicKeyPath != "" || localReference == "" || localReference != record.Signature.Value || !isSHA256(localEnvelopeSHA256) {
+			return m1.TrustedSigner{}, errors.New("local-reference adoption requires the exact reference and canonical envelope SHA-256, with no public key")
+		}
+		trusted.LocalApprovals = []m1.TrustedLocalApproval{{Reference: localReference, SigningBytesSHA256: localEnvelopeSHA256}}
+	default:
+		return m1.TrustedSigner{}, errors.New("adoption signature kind is outside the frozen closed set")
+	}
+	return trusted, nil
+}
+
+func isSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func parseQualification(command string, arguments []string, requireProving bool) (crown.Config, error) {
