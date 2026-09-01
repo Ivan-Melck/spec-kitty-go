@@ -115,6 +115,26 @@ func TestCampaignRunsInvariantsAfterPassFailAndIncomplete(t *testing.T) {
 			t.Fatalf("terminal attempt omitted invariants: %+v", attempt)
 		}
 	}
+
+	t.Run("operator-cancellation-remains-incomplete-and-stops-active-campaign", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		calls := 0
+		summary := (Runner{RunID: "run-canceled", Seed: 29, Repetitions: MinimumRepetitions, Scenario: ScenarioFunc(func(context.Context, Attempt) (Execution, error) {
+			calls++
+			cancel()
+			return Execution{Started: true, Terminal: true}, context.Canceled
+		})}).Run(ctx, Definitions()[6].ID)
+		if calls != 1 || len(summary.Attempts) != 1 {
+			t.Fatalf("canceled active campaign continued: calls=%d attempts=%d", calls, len(summary.Attempts))
+		}
+		attempt := summary.Attempts[0]
+		if attempt.Outcome != OutcomeIncomplete || summary.RepetitionsIncomplete != 1 || summary.RepetitionsFailed != 0 {
+			t.Fatalf("operator cancellation was reclassified as an invariant failure: attempt=%+v summary=%+v", attempt, summary)
+		}
+		if len(attempt.Invariants.Assertions) != len(m1.InvariantIDs) || attempt.Diagnostic != context.Canceled.Error() || summary.FirstDiagnostic != context.Canceled.Error() {
+			t.Fatalf("cancellation evidence is incomplete or mislabeled: attempt=%+v summary=%+v", attempt, summary)
+		}
+	})
 }
 
 func TestCampaignUnavailableExternalAndInvariantViolationFailClosed(t *testing.T) {

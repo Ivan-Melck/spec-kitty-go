@@ -315,7 +315,13 @@ func (p *ProductionExecutor) ExecuteFocused(ctx context.Context, input FocusedIn
 	case "competing-integrations-nfr004":
 		artifact, facts, overlay, err = executeFocusedIntegrations(ctx, input, environment)
 	case "restore-playback-nfr005":
-		artifact, facts, err = executeFocusedRestorePlayback(ctx, input, environment)
+		var playback m1.PlaybackObservation
+		var journal controljournal.ValidatedJournalV1
+		artifact, facts, playback, journal, err = executeFocusedRestorePlayback(ctx, input, environment)
+		if err == nil {
+			overlay.playback = &playback
+			overlay.journal = &journal
+		}
 	case "restart-epoch-nfr007":
 		artifact, facts, err = p.executeFocusedEpoch(ctx, input, environment)
 	case "zombie-isolation-nfr008":
@@ -777,19 +783,20 @@ func prepareFocusedIntegration(ctx context.Context, input FocusedInput, environm
 	return item, observation, before, nil
 }
 
-func executeFocusedRestorePlayback(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, error) {
+func executeFocusedRestorePlayback(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, m1.PlaybackObservation, controljournal.ValidatedJournalV1, error) {
 	if err := consumeFocusedSchedule(ctx, input); err != nil {
-		return nil, nil, err
+		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, err
 	}
 	restored, journal, err := restoreAndJournal(ctx, environment)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, err
 	}
 	played, err := journalplayback.RunV1(journalplayback.InputV1{Journal: journal, Reducers: environment.reducers})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, err
 	}
 	compareErr := journalplayback.CompareDigestV1(restored.CanonicalProjectionDigest, played)
+	playback := playbackObservation(restored, played)
 	facts := map[string]bool{
 		"restore_ready":        restored.Ready,
 		"digest_equal":         compareErr == nil,
@@ -803,26 +810,10 @@ func executeFocusedRestorePlayback(ctx context.Context, input FocusedInput, envi
 		Playback journalplayback.ResultV1               `json:"playback"`
 		Facts    map[string]bool                        `json:"facts"`
 	}{input, restored.Observation, played, facts})
-	return artifact, facts, nil
+	return artifact, facts, playback, journal, nil
 }
 
 func restoreAndJournal(ctx context.Context, environment *productionEnvironment) (journalcheckpoint.RestoreResultV1, controljournal.ValidatedJournalV1, error) {
-	records, err := scanAllRecords(ctx, environment.port, "spk/v1/project-qualification/mission-qualification/journal/")
-	if err != nil {
-		return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, err
-	}
-	stored := make([]controljournal.StoredEventV1, 0, len(records))
-	for _, record := range records {
-		event, decodeErr := controljournal.DecodeEventEnvelopeV1(record.Value)
-		if decodeErr != nil {
-			return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, decodeErr
-		}
-		stored = append(stored, controljournal.StoredEventV1{RecordRevision: record.Revision, Envelope: event})
-	}
-	journal, err := controljournal.ValidateJournalV1(environment.events, stored)
-	if err != nil {
-		return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, fmt.Errorf("focused journal validation: %w", err)
-	}
 	eventDigest, err := environment.events.Digest()
 	if err != nil {
 		return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, err
@@ -831,11 +822,110 @@ func restoreAndJournal(ctx context.Context, environment *productionEnvironment) 
 	if err != nil {
 		return journalcheckpoint.RestoreResultV1{}, controljournal.ValidatedJournalV1{}, err
 	}
-	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: environment.reader, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: controljournal.RunID(environment.runID), ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: environment.binding, EventRegistry: environment.events, Reducers: environment.reducers})
+	capture := &restoreCaptureReader{source: environment.reader}
+	restored, err := journalcheckpoint.RestoreV1(ctx, journalcheckpoint.RestoreInputV1{Reader: capture, Source: journalcheckpoint.SourceIdentityV1{ProjectID: "project-qualification", MissionID: "mission-qualification", RunID: controljournal.RunID(environment.runID), ReducerSetDigest: reducerDigest, EventSchemaSetDigest: eventDigest}, Binding: environment.binding, EventRegistry: environment.events, Reducers: environment.reducers})
 	if err != nil || !restored.Ready {
 		return restored, controljournal.ValidatedJournalV1{}, fmt.Errorf("focused restore is not ready: %w", err)
 	}
+	stored, err := capture.completeOriginRecords(restored)
+	if err != nil && (restored.SelectedCheckpoint != nil || restored.Pristine) {
+		stored, err = scanJournalRecords(ctx, environment.port)
+	}
+	if err != nil {
+		return restored, controljournal.ValidatedJournalV1{}, err
+	}
+	journal, err := controljournal.ValidateJournalV1(environment.events, stored)
+	if err != nil {
+		return restored, controljournal.ValidatedJournalV1{}, fmt.Errorf("focused journal validation: %w", err)
+	}
 	return restored, journal, nil
+}
+
+func scanJournalRecords(ctx context.Context, port storegapdb.Port) ([]controljournal.StoredEventV1, error) {
+	records, err := scanAllRecords(ctx, port, "spk/v1/project-qualification/mission-qualification/journal/")
+	if err != nil {
+		return nil, err
+	}
+	stored := make([]controljournal.StoredEventV1, 0, len(records))
+	for _, record := range records {
+		event, decodeErr := controljournal.DecodeEventEnvelopeV1(record.Value)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		stored = append(stored, controljournal.StoredEventV1{RecordRevision: record.Revision, Envelope: event})
+	}
+	return stored, nil
+}
+
+// restoreCaptureReader retains only the exact pages consumed by one RestoreV1
+// call. It lets playback validate the identical immutable bytes without a
+// second provider scan or any cache shared with another focused attempt.
+type restoreCaptureReader struct {
+	source   journalcheckpoint.RestoreReaderV1
+	after    journalcheckpoint.WatermarkV1
+	revision uint64
+	records  []controljournal.StoredEventV1
+	terminal bool
+	failed   bool
+}
+
+func (r *restoreCaptureReader) CheckpointHeadsV1(ctx context.Context) ([]journalcheckpoint.CheckpointHeadV1, error) {
+	return r.source.CheckpointHeadsV1(ctx)
+}
+
+func (r *restoreCaptureReader) CheckpointBlobV1(ctx context.Context, id journalcheckpoint.CheckpointID) ([]byte, error) {
+	return r.source.CheckpointBlobV1(ctx, id)
+}
+
+func (r *restoreCaptureReader) JournalPageV1(ctx context.Context, after journalcheckpoint.WatermarkV1, cursor string) (journalcheckpoint.JournalScanPageV1, error) {
+	if cursor == "" {
+		r.after = after
+		r.revision = 0
+		r.records = r.records[:0]
+		r.terminal = false
+		r.failed = false
+	}
+	page, err := r.source.JournalPageV1(ctx, after, cursor)
+	if err != nil {
+		r.failed = true
+		return page, err
+	}
+	if r.revision == 0 {
+		r.revision = page.ObservedRevision
+	} else if page.ObservedRevision != r.revision {
+		r.failed = true
+	}
+	if page.RecordCount > journalcheckpoint.MaxScanPageRecords {
+		r.failed = true
+		return page, nil
+	}
+	for index := uint16(0); index < page.RecordCount; index++ {
+		r.records = append(r.records, page.Records[index])
+	}
+	if !page.Truncated {
+		r.terminal = true
+	}
+	return page, nil
+}
+
+func (r *restoreCaptureReader) completeOriginRecords(restored journalcheckpoint.RestoreResultV1) ([]controljournal.StoredEventV1, error) {
+	if r == nil || !restored.Ready || r.failed || !r.terminal || r.after != (journalcheckpoint.WatermarkV1{}) || restored.SelectedCheckpoint != nil || r.revision == 0 || r.revision != restored.Observation.ObservedStoreRevision || uint64(len(r.records)) != restored.Observation.EventCount {
+		return nil, fmt.Errorf("focused restore did not expose one complete nonzero-revision origin journal")
+	}
+	records := make([]controljournal.StoredEventV1, len(r.records))
+	copy(records, r.records)
+	return records, nil
+}
+
+func playbackObservation(restored journalcheckpoint.RestoreResultV1, played journalplayback.ResultV1) m1.PlaybackObservation {
+	return m1.PlaybackObservation{
+		Inspectable:     true,
+		RestoreDigest:   hex.EncodeToString(restored.CanonicalProjectionDigest[:]),
+		PlaybackDigest:  hex.EncodeToString(played.CanonicalProjectionDigest[:]),
+		AdapterCalls:    played.Observation.AdapterCalls,
+		DurableWrites:   played.Observation.DurableWrites,
+		StableCanonical: journalplayback.CompareDigestV1(restored.CanonicalProjectionDigest, played) == nil,
+	}
 }
 
 func (p *ProductionExecutor) executeFocusedEpoch(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, error) {
@@ -1902,6 +1992,8 @@ type qualificationOverlay struct {
 	reviews     []m1.ReviewObservation
 	integration []m1.IntegrationObservation
 	primary     m1.PrimaryObservation
+	playback    *m1.PlaybackObservation
+	journal     *controljournal.ValidatedJournalV1
 }
 
 func observeComposedRuntime(_ context.Context, environment *productionEnvironment, effects []m1.EffectObservation) (m1.ObservationPort, error) {
@@ -1913,6 +2005,14 @@ func observeComposedRuntimeWithOverlay(_ context.Context, environment *productio
 		return nil, fmt.Errorf("composed runtime observation is unavailable")
 	}
 	copyOverlay := qualificationOverlay{authorities: append([]m1.AuthorityObservation(nil), overlay.authorities...), reviews: append([]m1.ReviewObservation(nil), overlay.reviews...), integration: append([]m1.IntegrationObservation(nil), overlay.integration...), primary: overlay.primary}
+	if overlay.playback != nil {
+		playback := *overlay.playback
+		copyOverlay.playback = &playback
+	}
+	if overlay.journal != nil {
+		journal := *overlay.journal
+		copyOverlay.journal = &journal
+	}
 	source := &composedObservationPort{environment: environment, effects: append([]m1.EffectObservation(nil), effects...), overlay: copyOverlay}
 	return newAttemptObservationPort(source), nil
 }
@@ -1961,27 +2061,37 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 	if err != nil {
 		return m1.Observation{}, err
 	}
-	journalRecords, err := scanAllRecords(ctx, p.environment.port, prefix+"journal/")
-	if err != nil {
-		return m1.Observation{}, err
-	}
 	headRecords, err := scanAllRecords(ctx, p.environment.port, prefix+"heads/")
 	if err != nil {
 		return m1.Observation{}, err
 	}
-	events := make(map[controljournal.EventID]struct {
-		record storegapdb.Record
-		event  controljournal.EventEnvelopeV1
-	}, len(journalRecords))
-	for _, record := range journalRecords {
-		event, decodeErr := controljournal.DecodeEventEnvelopeV1(record.Value)
-		if decodeErr != nil {
-			return m1.Observation{}, decodeErr
+	var restored journalcheckpoint.RestoreResultV1
+	var journal controljournal.ValidatedJournalV1
+	if p.overlay.journal != nil && p.overlay.playback != nil {
+		journal = *p.overlay.journal
+	} else {
+		restored, journal, err = restoreAndJournal(ctx, p.environment)
+		if err != nil {
+			return m1.Observation{}, err
 		}
-		events[event.EventID] = struct {
-			record storegapdb.Record
-			event  controljournal.EventEnvelopeV1
-		}{record, event}
+	}
+	journalLength, err := journal.Len()
+	if err != nil {
+		return m1.Observation{}, err
+	}
+	events := make(map[controljournal.EventID]struct {
+		revision uint64
+		event    controljournal.EventEnvelopeV1
+	}, journalLength)
+	for index := 0; index < journalLength; index++ {
+		record, recordErr := journal.At(index)
+		if recordErr != nil {
+			return m1.Observation{}, recordErr
+		}
+		events[record.Envelope.EventID] = struct {
+			revision uint64
+			event    controljournal.EventEnvelopeV1
+		}{record.RecordRevision, record.Envelope}
 	}
 	observation := m1.Observation{Capabilities: m1.CapabilityObservation{Authority: true, Workspace: true, Review: true, Integration: true, Effects: true}, Journal: m1.JournalObservation{Inspectable: true}, Effects: append([]m1.EffectObservation(nil), p.effects...), Reviews: append([]m1.ReviewObservation(nil), p.overlay.reviews...), Integration: append([]m1.IntegrationObservation(nil), p.overlay.integration...), Primary: p.overlay.primary}
 	sort.Slice(operationRecords, func(i, j int) bool { return operationRecords[i].Revision < operationRecords[j].Revision })
@@ -1995,14 +2105,14 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 		op := m1.JournalOperation{OperationID: string(record.OperationID), RequestDigest: hex.EncodeToString(record.RequestDigest[:]), ResultDigest: hex.EncodeToString(resultDigest[:]), RecordRevision: stored.Revision, EventCount: len(record.EventIDs()), Terminal: record.Status == "accepted", CanonicalResult: canonical}
 		for _, id := range record.EventIDs() {
 			storedEvent, ok := events[id]
-			if !ok || storedEvent.record.Revision != stored.Revision {
+			if !ok || storedEvent.revision != stored.Revision {
 				return m1.Observation{}, fmt.Errorf("operation %s lacks atomic event %s", record.OperationID, id)
 			}
 			event := storedEvent.event
 			payloadDigest := sha256.Sum256(event.Payload())
 			key := string(event.AggregateKind) + "/" + string(event.AggregateID)
 			op.ObservedHeadKeys = append(op.ObservedHeadKeys, key)
-			op.Events = append(op.Events, m1.JournalEvent{EventID: string(event.EventID), Index: int(event.EventIndex), Count: int(event.EventCount), RecordRevision: storedEvent.record.Revision, AggregateKey: key, LogicalVersion: event.AggregateLogicalVersion, PayloadDigest: hex.EncodeToString(payloadDigest[:])})
+			op.Events = append(op.Events, m1.JournalEvent{EventID: string(event.EventID), Index: int(event.EventIndex), Count: int(event.EventCount), RecordRevision: storedEvent.revision, AggregateKey: key, LogicalVersion: event.AggregateLogicalVersion, PayloadDigest: hex.EncodeToString(payloadDigest[:])})
 		}
 		observation.Journal.Operations = append(observation.Journal.Operations, op)
 	}
@@ -2041,21 +2151,14 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 		}
 		observation.Workspaces = append(observation.Workspaces, m1.WorkspaceObservation{WorkspaceID: string(binding.WorkspaceID), WorkRevisionID: string(binding.WorkRevisionID), WorkID: string(binding.WorkID), LeaseID: string(binding.LeaseID), RuntimeEpochID: string(binding.RuntimeEpochID), Generation: binding.Generation, CanonicalPath: binding.CanonicalPath, OwnedBranch: binding.OwnedBranch, Status: binding.Status, PrimaryPath: p.environment.repository.Binding().PrimaryPath, Registered: probe.Registered})
 	}
-	restored, journal, err := restoreAndJournal(ctx, p.environment)
-	if err != nil {
-		return m1.Observation{}, err
-	}
-	played, err := journalplayback.RunV1(journalplayback.InputV1{Journal: journal, Reducers: p.environment.reducers})
-	if err != nil {
-		return m1.Observation{}, err
-	}
-	observation.Playback = m1.PlaybackObservation{
-		Inspectable:     true,
-		RestoreDigest:   hex.EncodeToString(restored.CanonicalProjectionDigest[:]),
-		PlaybackDigest:  hex.EncodeToString(played.CanonicalProjectionDigest[:]),
-		AdapterCalls:    played.Observation.AdapterCalls,
-		DurableWrites:   played.Observation.DurableWrites,
-		StableCanonical: journalplayback.CompareDigestV1(restored.CanonicalProjectionDigest, played) == nil,
+	if p.overlay.playback != nil {
+		observation.Playback = *p.overlay.playback
+	} else {
+		played, playbackErr := journalplayback.RunV1(journalplayback.InputV1{Journal: journal, Reducers: p.environment.reducers})
+		if playbackErr != nil {
+			return m1.Observation{}, playbackErr
+		}
+		observation.Playback = playbackObservation(restored, played)
 	}
 	return observation, nil
 }

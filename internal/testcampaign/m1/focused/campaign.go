@@ -266,17 +266,22 @@ func (r Runner) Run(ctx context.Context, campaignID string) Summary {
 		}
 		attempt := Attempt{RunID: r.RunID, CampaignID: campaignID, Index: index, Schedule: Schedule{Seed: seed, Order: order, Barrier: NewBarrier(2)}}
 		execution, executeErr := executeAttempt(trialCtx, r.Scenario, attempt)
+		operatorCanceled := errors.Is(executeErr, context.Canceled) || errors.Is(executeErr, context.DeadlineExceeded) ||
+			errors.Is(context.Cause(trialCtx), context.Canceled) || errors.Is(context.Cause(trialCtx), context.DeadlineExceeded)
 		// The runner owns the attempt envelope. Once RunFocused is invoked, even a
 		// panic is a started attempt and recovery emits one terminal record.
 		result := AttemptResult{Index: index, Seed: seed, Started: true, Terminal: true, Outcome: execution.Outcome, ProviderState: execution.ProviderState}
 		result.Invariants = m1.AssertUniversal(trialCtx, execution.Observation)
 		if executeErr != nil {
-			if errors.Is(executeErr, context.Canceled) || errors.Is(executeErr, context.DeadlineExceeded) {
+			if operatorCanceled {
 				result.Outcome = OutcomeIncomplete
 			} else {
 				result.Outcome = OutcomeFail
 			}
 			result.Diagnostic = bounded(executeErr.Error())
+		} else if operatorCanceled {
+			result.Outcome = OutcomeIncomplete
+			result.Diagnostic = bounded(context.Cause(trialCtx).Error())
 		}
 		if !execution.Started || !execution.Terminal {
 			result.Outcome = OutcomeIncomplete
@@ -304,7 +309,7 @@ func (r Runner) Run(ctx context.Context, campaignID string) Summary {
 				}
 			}
 		}
-		if !result.Invariants.Passed() {
+		if !result.Invariants.Passed() && !operatorCanceled {
 			result.Outcome = OutcomeFail
 			if result.Diagnostic == "" {
 				result.Diagnostic = bounded("universal invariant failed")
@@ -312,7 +317,9 @@ func (r Runner) Run(ctx context.Context, campaignID string) Summary {
 		}
 		if definition.ProviderAdversary {
 			if traceErr := validateProviderTrace(execution.ProviderState, execution.ProviderTrace); traceErr != nil {
-				result.Outcome = OutcomeFail
+				if !operatorCanceled {
+					result.Outcome = OutcomeFail
+				}
 				if result.Diagnostic == "" {
 					result.Diagnostic = bounded(traceErr.Error())
 				}

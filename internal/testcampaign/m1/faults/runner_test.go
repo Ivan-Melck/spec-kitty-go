@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spec-kitty/go-kitty3/internal/controljournal"
+	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
 )
@@ -30,6 +32,28 @@ type countingAttemptPort struct {
 	observationCalls int
 	probeCalls       int
 	observation      m1.Observation
+}
+
+type countingRestoreReader struct {
+	pages map[string]journalcheckpoint.JournalScanPageV1
+	calls int
+}
+
+func (*countingRestoreReader) CheckpointHeadsV1(context.Context) ([]journalcheckpoint.CheckpointHeadV1, error) {
+	return nil, nil
+}
+
+func (*countingRestoreReader) CheckpointBlobV1(context.Context, journalcheckpoint.CheckpointID) ([]byte, error) {
+	return nil, errors.New("checkpoint blob is unavailable")
+}
+
+func (r *countingRestoreReader) JournalPageV1(_ context.Context, _ journalcheckpoint.WatermarkV1, cursor string) (journalcheckpoint.JournalScanPageV1, error) {
+	r.calls++
+	page, ok := r.pages[cursor]
+	if !ok {
+		return journalcheckpoint.JournalScanPageV1{}, errors.New("unexpected cursor")
+	}
+	return page, nil
 }
 
 func (p *countingAttemptPort) ObserveM1(context.Context) (m1.Observation, error) {
@@ -286,6 +310,40 @@ func TestFocusedSemanticCensusRejectsOmissionExtraAndRenameForEveryCampaign(t *t
 		}
 		if source.observationCalls != 2 || source.probeCalls != 2 {
 			t.Fatalf("distinct attempts shared an observation cache: observation=%d probe=%d", source.observationCalls, source.probeCalls)
+		}
+	})
+
+	t.Run("one-restore-captures-exact-pages-without-cross-attempt-sharing", func(t *testing.T) {
+		firstRecord := controljournal.StoredEventV1{RecordRevision: 7}
+		secondRecord := controljournal.StoredEventV1{RecordRevision: 8}
+		source := &countingRestoreReader{pages: map[string]journalcheckpoint.JournalScanPageV1{
+			"":            {ObservedRevision: 11, Records: [journalcheckpoint.MaxScanPageRecords]controljournal.StoredEventV1{firstRecord}, RecordCount: 1, Truncated: true, Cursor: "opaque-next"},
+			"opaque-next": {ObservedRevision: 11, Records: [journalcheckpoint.MaxScanPageRecords]controljournal.StoredEventV1{secondRecord}, RecordCount: 1},
+		}}
+		capture := &restoreCaptureReader{source: source}
+		first, err := capture.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := capture.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{}, first.Cursor); err != nil {
+			t.Fatal(err)
+		}
+		restored := journalcheckpoint.RestoreResultV1{Ready: true, Observation: journalcheckpoint.RestoreObservationV1{ObservedStoreRevision: 11, EventCount: 2}}
+		records, err := capture.completeOriginRecords(restored)
+		if err != nil || len(records) != 2 || records[0].RecordRevision != 7 || records[1].RecordRevision != 8 || source.calls != 2 {
+			t.Fatalf("one restore did not retain its exact pages: records=%+v calls=%d err=%v", records, source.calls, err)
+		}
+		records[0].RecordRevision = 99
+		again, err := capture.completeOriginRecords(restored)
+		if err != nil || again[0].RecordRevision != 7 {
+			t.Fatalf("capture exposed mutable record backing: records=%+v err=%v", again, err)
+		}
+		if _, err := capture.completeOriginRecords(journalcheckpoint.RestoreResultV1{Ready: true, Observation: journalcheckpoint.RestoreObservationV1{ObservedStoreRevision: 12, EventCount: 2}}); err == nil {
+			t.Fatal("foreign restored revision reused captured bytes")
+		}
+		secondAttempt := &restoreCaptureReader{source: source}
+		if _, err := secondAttempt.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{}, ""); err != nil || source.calls != 3 {
+			t.Fatalf("distinct attempts shared a capture: calls=%d err=%v", source.calls, err)
 		}
 	})
 }
