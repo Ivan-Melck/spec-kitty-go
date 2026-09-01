@@ -17,6 +17,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/controljournal"
 	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
+	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	m1 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m1"
 )
@@ -37,6 +38,31 @@ type countingAttemptPort struct {
 type countingRestoreReader struct {
 	pages map[string]journalcheckpoint.JournalScanPageV1
 	calls int
+}
+
+type fixedRevisionInspector struct {
+	inspection storegapdb.Inspection
+	err        error
+	calls      int
+}
+
+func (p *fixedRevisionInspector) Inspect(context.Context) (storegapdb.Inspection, error) {
+	p.calls++
+	return p.inspection, p.err
+}
+
+type sequenceJournalScanner struct {
+	pages []storegapdb.ScanPage
+	calls int
+}
+
+func (p *sequenceJournalScanner) Scan(context.Context, storegapdb.ScanRequest) (storegapdb.ScanPage, error) {
+	if p.calls >= len(p.pages) {
+		return storegapdb.ScanPage{}, errors.New("unexpected scan")
+	}
+	page := p.pages[p.calls]
+	p.calls++
+	return page, nil
 }
 
 func (*countingRestoreReader) CheckpointHeadsV1(context.Context) ([]journalcheckpoint.CheckpointHeadV1, error) {
@@ -344,6 +370,58 @@ func TestFocusedSemanticCensusRejectsOmissionExtraAndRenameForEveryCampaign(t *t
 		secondAttempt := &restoreCaptureReader{source: source}
 		if _, err := secondAttempt.JournalPageV1(t.Context(), journalcheckpoint.WatermarkV1{}, ""); err != nil || source.calls != 3 {
 			t.Fatalf("distinct attempts shared a capture: calls=%d err=%v", source.calls, err)
+		}
+	})
+
+	t.Run("same-attempt-overlay-requires-current-exact-durable-revision", func(t *testing.T) {
+		exact := &fixedRevisionInspector{inspection: storegapdb.Inspection{Healthy: true, CurrentRevision: 11, DurableThrough: 11}}
+		if err := requireExactStoreRevision(t.Context(), exact, 11); err != nil || exact.calls != 1 {
+			t.Fatalf("exact public revision probe failed: calls=%d err=%v", exact.calls, err)
+		}
+		for name, fixture := range map[string]struct {
+			expected   uint64
+			inspection storegapdb.Inspection
+		}{
+			"zero expected":    {inspection: storegapdb.Inspection{Healthy: true, CurrentRevision: 11, DurableThrough: 11}},
+			"zero current":     {expected: 11, inspection: storegapdb.Inspection{Healthy: true}},
+			"changed current":  {expected: 11, inspection: storegapdb.Inspection{Healthy: true, CurrentRevision: 12, DurableThrough: 12}},
+			"stale durability": {expected: 11, inspection: storegapdb.Inspection{Healthy: true, CurrentRevision: 11, DurableThrough: 10}},
+			"unhealthy":        {expected: 11, inspection: storegapdb.Inspection{CurrentRevision: 11, DurableThrough: 11}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				probe := &fixedRevisionInspector{inspection: fixture.inspection}
+				if err := requireExactStoreRevision(t.Context(), probe, fixture.expected); err == nil {
+					t.Fatal("non-current restore overlay was reused")
+				}
+			})
+		}
+	})
+
+	t.Run("fallback-journal-scan-binds-every-page-to-restored-revision", func(t *testing.T) {
+		exact := &sequenceJournalScanner{pages: []storegapdb.ScanPage{
+			{ObservedRevision: 11, Truncated: true, Cursor: "opaque-next"},
+			{ObservedRevision: 11},
+		}}
+		if records, err := scanJournalRecords(t.Context(), exact, 11); err != nil || len(records) != 0 || exact.calls != 2 {
+			t.Fatalf("stable exact fallback scan failed: records=%d calls=%d err=%v", len(records), exact.calls, err)
+		}
+		for name, fixture := range map[string]struct {
+			expected uint64
+			pages    []storegapdb.ScanPage
+		}{
+			"zero expected":      {pages: []storegapdb.ScanPage{{ObservedRevision: 11}}},
+			"zero page":          {expected: 11, pages: []storegapdb.ScanPage{{}}},
+			"moving revision":    {expected: 11, pages: []storegapdb.ScanPage{{ObservedRevision: 11, Truncated: true, Cursor: "next"}, {ObservedRevision: 12}}},
+			"terminal cursor":    {expected: 11, pages: []storegapdb.ScanPage{{ObservedRevision: 11, Cursor: "impossible"}}},
+			"cursor no progress": {expected: 11, pages: []storegapdb.ScanPage{{ObservedRevision: 11, Truncated: true, Cursor: ""}}},
+			"future record":      {expected: 11, pages: []storegapdb.ScanPage{{ObservedRevision: 11, Records: []storegapdb.Record{{Revision: 12}}}}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				scanner := &sequenceJournalScanner{pages: fixture.pages}
+				if _, err := scanJournalRecords(t.Context(), scanner, fixture.expected); err == nil {
+					t.Fatal("fallback scan revision/cursor anomaly was accepted")
+				}
+			})
 		}
 	})
 }

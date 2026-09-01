@@ -317,10 +317,12 @@ func (p *ProductionExecutor) ExecuteFocused(ctx context.Context, input FocusedIn
 	case "restore-playback-nfr005":
 		var playback m1.PlaybackObservation
 		var journal controljournal.ValidatedJournalV1
-		artifact, facts, playback, journal, err = executeFocusedRestorePlayback(ctx, input, environment)
+		var observedRevision uint64
+		artifact, facts, playback, journal, observedRevision, err = executeFocusedRestorePlayback(ctx, input, environment)
 		if err == nil {
 			overlay.playback = &playback
 			overlay.journal = &journal
+			overlay.observedRevision = observedRevision
 		}
 	case "restart-epoch-nfr007":
 		artifact, facts, err = p.executeFocusedEpoch(ctx, input, environment)
@@ -783,17 +785,17 @@ func prepareFocusedIntegration(ctx context.Context, input FocusedInput, environm
 	return item, observation, before, nil
 }
 
-func executeFocusedRestorePlayback(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, m1.PlaybackObservation, controljournal.ValidatedJournalV1, error) {
+func executeFocusedRestorePlayback(ctx context.Context, input FocusedInput, environment *productionEnvironment) ([]byte, map[string]bool, m1.PlaybackObservation, controljournal.ValidatedJournalV1, uint64, error) {
 	if err := consumeFocusedSchedule(ctx, input); err != nil {
-		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, err
+		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, 0, err
 	}
 	restored, journal, err := restoreAndJournal(ctx, environment)
 	if err != nil {
-		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, err
+		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, 0, err
 	}
 	played, err := journalplayback.RunV1(journalplayback.InputV1{Journal: journal, Reducers: environment.reducers})
 	if err != nil {
-		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, err
+		return nil, nil, m1.PlaybackObservation{}, controljournal.ValidatedJournalV1{}, 0, err
 	}
 	compareErr := journalplayback.CompareDigestV1(restored.CanonicalProjectionDigest, played)
 	playback := playbackObservation(restored, played)
@@ -810,7 +812,7 @@ func executeFocusedRestorePlayback(ctx context.Context, input FocusedInput, envi
 		Playback journalplayback.ResultV1               `json:"playback"`
 		Facts    map[string]bool                        `json:"facts"`
 	}{input, restored.Observation, played, facts})
-	return artifact, facts, playback, journal, nil
+	return artifact, facts, playback, journal, restored.Observation.ObservedStoreRevision, nil
 }
 
 func restoreAndJournal(ctx context.Context, environment *productionEnvironment) (journalcheckpoint.RestoreResultV1, controljournal.ValidatedJournalV1, error) {
@@ -829,7 +831,7 @@ func restoreAndJournal(ctx context.Context, environment *productionEnvironment) 
 	}
 	stored, err := capture.completeOriginRecords(restored)
 	if err != nil && (restored.SelectedCheckpoint != nil || restored.Pristine) {
-		stored, err = scanJournalRecords(ctx, environment.port)
+		stored, err = scanJournalRecords(ctx, environment.port, restored.Observation.ObservedStoreRevision)
 	}
 	if err != nil {
 		return restored, controljournal.ValidatedJournalV1{}, err
@@ -841,20 +843,46 @@ func restoreAndJournal(ctx context.Context, environment *productionEnvironment) 
 	return restored, journal, nil
 }
 
-func scanJournalRecords(ctx context.Context, port storegapdb.Port) ([]controljournal.StoredEventV1, error) {
-	records, err := scanAllRecords(ctx, port, "spk/v1/project-qualification/mission-qualification/journal/")
-	if err != nil {
-		return nil, err
+type journalScanPort interface {
+	Scan(context.Context, storegapdb.ScanRequest) (storegapdb.ScanPage, error)
+}
+
+func scanJournalRecords(ctx context.Context, port journalScanPort, expectedRevision uint64) ([]controljournal.StoredEventV1, error) {
+	if port == nil || expectedRevision == 0 {
+		return nil, fmt.Errorf("focused journal scan requires one exact nonzero restored revision")
 	}
-	stored := make([]controljournal.StoredEventV1, 0, len(records))
-	for _, record := range records {
-		event, decodeErr := controljournal.DecodeEventEnvelopeV1(record.Value)
-		if decodeErr != nil {
-			return nil, decodeErr
+	const prefix = "spk/v1/project-qualification/mission-qualification/journal/"
+	var stored []controljournal.StoredEventV1
+	cursor := ""
+	for {
+		page, err := port.Scan(ctx, storegapdb.ScanRequest{Prefix: prefix, Limit: storegapdb.MaxScanRecords, MaxBytes: storegapdb.MaxScanBytes, Cursor: cursor})
+		if err != nil {
+			return nil, err
 		}
-		stored = append(stored, controljournal.StoredEventV1{RecordRevision: record.Revision, Envelope: event})
+		if page.ObservedRevision == 0 || page.ObservedRevision != expectedRevision {
+			return nil, fmt.Errorf("focused journal scan revision differs from restored revision")
+		}
+		for _, record := range page.Records {
+			if record.Revision == 0 || record.Revision > expectedRevision {
+				return nil, fmt.Errorf("focused journal record revision is outside the restored snapshot")
+			}
+			event, decodeErr := controljournal.DecodeEventEnvelopeV1(record.Value)
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			stored = append(stored, controljournal.StoredEventV1{RecordRevision: record.Revision, Envelope: event})
+		}
+		if !page.Truncated {
+			if page.Cursor != "" {
+				return nil, fmt.Errorf("focused journal terminal page returned a cursor")
+			}
+			return stored, nil
+		}
+		if page.Cursor == "" || page.Cursor == cursor {
+			return nil, fmt.Errorf("focused journal scan cursor made no progress")
+		}
+		cursor = page.Cursor
 	}
-	return stored, nil
 }
 
 // restoreCaptureReader retains only the exact pages consumed by one RestoreV1
@@ -1988,12 +2016,13 @@ type attemptObservationPort struct {
 }
 
 type qualificationOverlay struct {
-	authorities []m1.AuthorityObservation
-	reviews     []m1.ReviewObservation
-	integration []m1.IntegrationObservation
-	primary     m1.PrimaryObservation
-	playback    *m1.PlaybackObservation
-	journal     *controljournal.ValidatedJournalV1
+	authorities      []m1.AuthorityObservation
+	reviews          []m1.ReviewObservation
+	integration      []m1.IntegrationObservation
+	primary          m1.PrimaryObservation
+	playback         *m1.PlaybackObservation
+	journal          *controljournal.ValidatedJournalV1
+	observedRevision uint64
 }
 
 func observeComposedRuntime(_ context.Context, environment *productionEnvironment, effects []m1.EffectObservation) (m1.ObservationPort, error) {
@@ -2013,6 +2042,7 @@ func observeComposedRuntimeWithOverlay(_ context.Context, environment *productio
 		journal := *overlay.journal
 		copyOverlay.journal = &journal
 	}
+	copyOverlay.observedRevision = overlay.observedRevision
 	source := &composedObservationPort{environment: environment, effects: append([]m1.EffectObservation(nil), effects...), overlay: copyOverlay}
 	return newAttemptObservationPort(source), nil
 }
@@ -2068,7 +2098,12 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 	var restored journalcheckpoint.RestoreResultV1
 	var journal controljournal.ValidatedJournalV1
 	if p.overlay.journal != nil && p.overlay.playback != nil {
+		if err := requireExactStoreRevision(ctx, p.environment.port, p.overlay.observedRevision); err != nil {
+			return m1.Observation{}, err
+		}
 		journal = *p.overlay.journal
+	} else if p.overlay.journal != nil || p.overlay.playback != nil || p.overlay.observedRevision != 0 {
+		return m1.Observation{}, fmt.Errorf("same-attempt restore overlay is incomplete")
 	} else {
 		restored, journal, err = restoreAndJournal(ctx, p.environment)
 		if err != nil {
@@ -2161,6 +2196,24 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 		observation.Playback = playbackObservation(restored, played)
 	}
 	return observation, nil
+}
+
+type storeRevisionInspector interface {
+	Inspect(context.Context) (storegapdb.Inspection, error)
+}
+
+func requireExactStoreRevision(ctx context.Context, inspector storeRevisionInspector, expected uint64) error {
+	if inspector == nil || expected == 0 {
+		return fmt.Errorf("same-attempt restore overlay lacks a nonzero observed revision")
+	}
+	inspection, err := inspector.Inspect(ctx)
+	if err != nil {
+		return err
+	}
+	if !inspection.Healthy || inspection.CurrentRevision == 0 || inspection.CurrentRevision != expected || inspection.DurableThrough < inspection.CurrentRevision {
+		return fmt.Errorf("same-attempt restore overlay revision is no longer current and durable")
+	}
+	return nil
 }
 
 func scanAllRecords(ctx context.Context, port storegapdb.Port, prefix string) ([]storegapdb.Record, error) {
