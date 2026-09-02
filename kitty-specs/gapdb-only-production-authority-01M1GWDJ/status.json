@@ -40,7 +40,8 @@
         "Cycle-7 repair be233e38 structurally closes renamed Fetch/Parcel side seams; mutant census 103 and all focused/race/architecture/helper/compile/vet/static/format gates pass.",
         "Cycle 8 rejects exported named/alias function recovery side seams; inspect TypeName object signatures and bind both exact mutants.",
         "Cycle-8 repair 15808e66 closes exported named and alias function-type side seams; sealed census 105 and all architecture/tooling gates pass.",
-        "Cycle 9 requires complete semantic type traversal for generic constraints, unions, type parameters, and transitive defined-wrapper provenance."
+        "Cycle 9 requires complete semantic type traversal for generic constraints, unions, type parameters, and transitive defined-wrapper provenance.",
+        "Terminal type-graph repair 053ea420 covers generic constraints, unions, transitive wrappers, every exported callable seam, and 116 sealed mutants; all required gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
