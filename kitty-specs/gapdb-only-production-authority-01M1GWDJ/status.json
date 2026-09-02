@@ -1,7 +1,7 @@
 {
-  "event_count": 36,
-  "last_event_id": "01M1HAFNPH5NEFR1KWK6Y1SAQ8",
-  "materialized_at": "2026-09-02T15:06:01.809468+00:00",
+  "event_count": 47,
+  "last_event_id": "01M1HD1W6J6RQVS3M1N7NKH3Q7",
+  "materialized_at": "2026-09-02T15:50:55.436411+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,52 +12,78 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
-    "in_review": 1,
-    "planned": 16
+    "in_progress": 2,
+    "in_review": 0,
+    "planned": 15
   },
   "work_packages": {
     "WP01": {
-      "actor": "wp01-arbiter",
+      "actor": "codex-wp01-repair",
       "agent": "wp01-arbiter",
-      "agent_profile": "reviewer-renata",
+      "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
-      "force_count": 3,
-      "lane": "in_review",
-      "last_event_id": "01M1HAFNPH5NEFR1KWK6Y1SAQ8",
-      "last_transition_at": "2026-09-02T15:06:01.809468+00:00",
+      "force_count": 5,
+      "lane": "in_progress",
+      "last_event_id": "01M1HD1W6J6RQVS3M1N7NKH3Q7",
+      "last_transition_at": "2026-09-02T15:50:55.436411+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
         "Ready for review cycle 2: exact M1-tuple-bound legacy exemptions with frozen census; direct and transitive policy probes prevent legacy SQLite from masking later capability violations; independently digest-pinned typed eligibility contract rejects value, rename, composed-key, wrapper, and adapter mutations; pure-journal ambient I/O, exact GapDB callers, and tracker authority are closed with positive fixtures; event families validate exact owner/name/schema/reducer tuples; one frozen 50-case executable mutant table drives census and deletion controls. Evidence: go test ./internal/architecture -run 'TestM2' -count=3; go test -race ./internal/architecture -run 'TestM2' -count=1; go test ./internal/architecture -count=1; go vet ./internal/architecture; staticcheck ./internal/architecture; gofmt and git diff --check all pass. Ruff diff-scoped check: no changed Python files, exit 0.",
         "Cycle 3 ready at 32c48eb: per-seam eligibility evidence, independently anchored exact keyspace, typed raw-key/god-store denial, GapDB private-internal denial, and 79 fixture-digested real-validator observations; TestM2 x3, race, full architecture, vet, staticcheck, gofmt, and diff checks pass.",
-        "Arbiter-directed repair ready at ac476e8: all five closed contract probes pass; TestM2 x3, race TestM2, full architecture, vet, staticcheck, gofmt, and diff checks pass. Terminal arbitration required; no ordinary review cycle."
+        "Arbiter-directed repair ready at ac476e8: all five closed contract probes pass; TestM2 x3, race TestM2, full architecture, vet, staticcheck, gofmt, and diff checks pass. Terminal arbitration required; no ordinary review cycle.",
+        "Arbiter decision: Approved after terminal bounded repair ac476e8. All five closed contract items pass: per-seam eligibility evidence, nested GapDB private-path denial, payload-independent raw-store denial, consumed-material mutant binding, and execution-bound terminal evidence. Exact focused x3, race, full architecture, vet, staticcheck, diff, and ownership gates pass. Max-cycle arbitration is terminal; no ordinary cycle 4."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-3.md",
-        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-3.md",
+        "reference": "Arbiter decision: Approved after terminal bounded repair ac476e8. All five closed contract items pass: per-seam eligibility evidence, nested GapDB private-path denial, payload-independent raw-store denial, consumed-material mutant binding, and execution-bound terminal evidence. Exact focused x3, race, full architecture, vet, staticcheck, diff, and ownership gates pass. Max-cycle arbitration is terminal; no ordinary cycle 4.",
+        "reviewer": "lynncoleart",
+        "verdict": "approved"
+      },
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
+      "subtasks": {
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned"
+      }
+    },
+    "WP02": {
+      "actor": "user",
+      "agent": null,
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
+      "force_count": 1,
+      "lane": "planned",
+      "last_event_id": "01M1HCQTT925CERRFWNFWXY4HZ",
+      "last_transition_at": "2026-09-02T15:45:26.345665+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP02-global-operations-and-authority-journal-v2/review-cycle-1.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP02-global-operations-and-authority-journal-v2/review-cycle-1.md",
         "reviewer": "user",
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
+        "T006": "planned",
+        "T007": "planned",
+        "T008": "planned",
+        "T009": "planned",
+        "T010": "planned",
+        "T011": "planned"
       }
-    },
-    "WP02": {
-      "actor": "finalize-tasks",
-      "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0FSEZ4P94NQP0XSY70YNC",
-      "last_transition_at": "2026-09-02T12:11:19.903220+00:00"
     },
     "WP03": {
       "actor": "finalize-tasks",
@@ -123,11 +149,19 @@
       "last_transition_at": "2026-09-02T12:11:52.377445+00:00"
     },
     "WP12": {
-      "actor": "finalize-tasks",
+      "actor": "codex-wp12",
+      "agent": "codex-wp12",
+      "agent_profile": "implementer-ivan",
+      "agent_profile_version": "1.0",
       "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0GWJW807D7Q6ER820RNRC",
-      "last_transition_at": "2026-09-02T12:11:55.868129+00:00"
+      "lane": "in_progress",
+      "last_event_id": "01M1HAY2X1J4B54T230W5Q0ZEF",
+      "last_transition_at": "2026-09-02T15:13:54.081216+00:00",
+      "model": "__resolved_model_absent__",
+      "provider": "__resolved_provider_absent__",
+      "role": "implementer",
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
     },
     "WP13": {
       "actor": "finalize-tasks",
