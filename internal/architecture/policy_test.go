@@ -259,6 +259,104 @@ func TestDefaultPolicyClassifiesCampaignToolsWithoutExposingThemToAuthority(t *t
 	}
 }
 
+func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	journal := module + "/internal/controljournal"
+	reducer := journal + "/reducer"
+	checkpoint := journal + "/checkpoint"
+	playback := journal + "/playback"
+	for _, packagePath := range []string{journal, reducer, checkpoint, playback} {
+		tier, classifyErr := policy.Classify(packagePath)
+		if classifyErr != nil || tier.Name != TierFoundation || !tier.Production {
+			t.Fatalf("control journal classification path=%s tier=%+v err=%v", packagePath, tier, classifyErr)
+		}
+	}
+
+	graph := fixtureGraph(
+		[]string{journal, reducer},
+		ImportEdge{SourcePackage: reducer, TargetPackage: journal, Kind: ImportModuleLocal},
+	)
+	graph.ModulePath = module
+	if err := policy.Check(graph); err != nil {
+		t.Fatalf("pure control-journal sibling edge rejected: %v", err)
+	}
+}
+
+func TestDefaultPolicySeparatesJournalApplicationComposition(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	application := module + "/internal/controljournal/application"
+	adapter := module + "/internal/controlstore/gapdb"
+	sidecar := module + "/internal/sidecar/gapdb"
+	assertTier(t, policy, application, TierComposition)
+	for _, target := range []string{module + "/internal/controljournal", adapter, sidecar} {
+		graph := fixtureGraph(
+			[]string{application, target},
+			ImportEdge{SourcePackage: application, TargetPackage: target, Kind: ImportModuleLocal},
+		)
+		graph.ModulePath = module
+		if err := policy.Check(graph); err != nil {
+			t.Fatalf("application composition rejected target=%s: %v", target, err)
+		}
+	}
+
+	pure := module + "/internal/controljournal/playback"
+	graph := fixtureGraph(
+		[]string{pure, adapter},
+		ImportEdge{SourcePackage: pure, TargetPackage: adapter, Kind: ImportModuleLocal},
+	)
+	graph.ModulePath = module
+	assertExactViolation(t, policy, graph, RuleLocalDirection, pure, TierFoundation, adapter, TierAdapter)
+}
+
+func TestDefaultPolicyClassifiesGapDBAsExactProviderAdapter(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := module + "/internal/controlstore/gapdb"
+	sidecar := module + "/internal/sidecar/gapdb"
+	assertTier(t, policy, adapter, TierAdapter)
+	assertTier(t, policy, sidecar, TierAdapter)
+
+	for _, source := range []string{adapter, sidecar} {
+		accepted := fixtureGraph(
+			[]string{source},
+			ImportEdge{SourcePackage: source, TargetPackage: "github.com/spec-kitty/gapdb", Kind: ImportExternal},
+		)
+		accepted.ModulePath = module
+		if err := policy.Check(accepted); err != nil {
+			t.Fatalf("exact public GapDB dependency rejected for %s: %v", source, err)
+		}
+	}
+
+	lookalike := fixtureGraph(
+		[]string{adapter},
+		ImportEdge{SourcePackage: adapter, TargetPackage: "github.com/spec-kitty/gapdbx", Kind: ImportExternal},
+	)
+	lookalike.ModulePath = module
+	assertExactViolation(t, policy, lookalike, RuleExternalDirection, adapter, TierAdapter, "github.com/spec-kitty/gapdbx", "")
+
+	authority := module + "/internal/execution"
+	kernelImport := fixtureGraph(
+		[]string{authority, adapter},
+		ImportEdge{SourcePackage: authority, TargetPackage: adapter, Kind: ImportModuleLocal},
+	)
+	kernelImport.ModulePath = module
+	assertExactViolation(t, policy, kernelImport, RuleLocalDirection, authority, TierAuthority, adapter, TierAdapter)
+}
+
 // WP08 coordination guard: conformance is deliberately test-only quality
 // tooling. It may exercise the provider-neutral contract and adapters, but no
 // authority package may acquire it as a production dependency.
