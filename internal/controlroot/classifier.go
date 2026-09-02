@@ -38,6 +38,12 @@ type fileObservation struct {
 	PrefixSHA256 string
 }
 
+type directoryObservation struct {
+	RelativePath string
+	Identity     fileIdentity
+	Names        []string
+}
+
 type inspectionSource interface {
 	Lstat(string) (fileIdentity, error)
 	ReadDirectory(string, fileIdentity, int) ([]string, error)
@@ -164,6 +170,7 @@ type inspectionState struct {
 	rootIdentity      *fileIdentity
 	rootAbsent        bool
 	entries           []fileObservation
+	directories       []directoryObservation
 	findings          []Finding
 	entryCount        int
 	readBytes         int64
@@ -195,6 +202,7 @@ func (c *Classifier) Classify(ctx context.Context, root string) (Disposition, er
 	rootIdentity, err := c.source.Lstat(root)
 	if errors.Is(err, os.ErrNotExist) {
 		state.rootAbsent = true
+		c.revalidateAbsentRoot(root, state)
 		return c.finish(state), nil
 	}
 	if err != nil {
@@ -216,7 +224,41 @@ func (c *Classifier) Classify(ctx context.Context, root string) (Disposition, er
 	if !state.findingsExhausted {
 		_ = c.walk(inspectionCtx, ctx, root, "", rootIdentity, 0, state)
 	}
+	c.revalidateDirectories(inspectionCtx, ctx, root, state)
 	return c.finish(state), nil
+}
+
+func (c *Classifier) revalidateAbsentRoot(root string, state *inspectionState) {
+	if _, err := c.source.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		state.ambiguous = true
+		state.add(c.budgets, Finding{Kind: FindingConcurrent, DetailCode: "ROOT_APPEARED_DURING_INSPECTION"})
+	}
+}
+
+func (c *Classifier) revalidateDirectories(ctx, caller context.Context, root string, state *inspectionState) {
+	for _, observed := range state.directories {
+		if c.contextStopped(ctx, caller, state) {
+			return
+		}
+		path := root
+		if observed.RelativePath != "" {
+			path = filepath.Join(root, filepath.FromSlash(observed.RelativePath))
+		}
+		identity, err := c.source.Lstat(path)
+		if err != nil || !identity.Mode.IsDir() || !sameIdentity(identity, observed.Identity) {
+			state.addSourceError(c.budgets, observed.RelativePath, "TERMINAL_DIRECTORY", errIdentityChanged)
+			continue
+		}
+		names, err := c.source.ReadDirectory(path, observed.Identity, len(observed.Names)+1)
+		if err != nil {
+			state.addSourceError(c.budgets, observed.RelativePath, "TERMINAL_DIRECTORY", err)
+			continue
+		}
+		if !slices.Equal(names, observed.Names) {
+			state.ambiguous = true
+			state.add(c.budgets, Finding{Kind: FindingConcurrent, RelativePath: observed.RelativePath, DetailCode: "DIRECTORY_MEMBERSHIP_CHANGED"})
+		}
+	}
 }
 
 func (c *Classifier) inspectAncestorChain(root string, state *inspectionState) bool {
@@ -289,6 +331,11 @@ func (c *Classifier) walk(ctx, caller context.Context, root, relative string, di
 		state.add(c.budgets, Finding{Kind: FindingBudget, RelativePath: relative, DetailCode: "ENTRY_BUDGET_EXCEEDED"})
 		return errInspectionStopped
 	}
+	state.directories = append(state.directories, directoryObservation{
+		RelativePath: relative,
+		Identity:     directory,
+		Names:        slices.Clone(names),
+	})
 	for _, name := range names {
 		if c.contextStopped(ctx, caller, state) {
 			return errInspectionStopped
@@ -307,10 +354,13 @@ func (c *Classifier) walk(ctx, caller context.Context, root, relative string, di
 			continue
 		}
 		if identity.Mode&os.ModeSymlink != 0 {
+			state.entries = append(state.entries, fileObservation{RelativePath: childRelative, Identity: identity})
 			state.unsafe = true
 			state.add(c.budgets, Finding{Kind: FindingPath, RelativePath: childRelative, DetailCode: "ENTRY_SYMLINK"})
 			continue
 		}
+		observationIndex := len(state.entries)
+		state.entries = append(state.entries, fileObservation{RelativePath: childRelative, Identity: identity})
 		if identity.Device != directory.Device {
 			state.unsafe = true
 			state.add(c.budgets, Finding{Kind: FindingFilesystem, RelativePath: childRelative, DetailCode: "DEVICE_BOUNDARY_CROSSED"})
@@ -357,7 +407,8 @@ func (c *Classifier) walk(ctx, caller context.Context, root, relative string, di
 		}
 		state.readBytes += int64(len(prefix))
 		digest := sha256.Sum256(prefix)
-		state.entries = append(state.entries, fileObservation{RelativePath: childRelative, Identity: identity, Prefix: prefix, PrefixSHA256: hex.EncodeToString(digest[:])})
+		state.entries[observationIndex].Prefix = prefix
+		state.entries[observationIndex].PrefixSHA256 = hex.EncodeToString(digest[:])
 	}
 	return nil
 }
@@ -462,12 +513,48 @@ func (c *Classifier) finish(state *inspectionState) Disposition {
 func (c *Classifier) analyze(state *inspectionState) (historical bool, currentGroups int, malformedCurrent bool, uncertain bool) {
 	groups := make(map[string]map[string]fileObservation)
 	historicalBases := make(map[string]bool)
+	knownContainers := make(map[string]bool)
+	for _, entry := range state.entries {
+		if !entry.Identity.Mode.IsRegular() {
+			continue
+		}
+		base, companion := historicalName(entry.RelativePath)
+		if !allowedUnrelatedPath(entry.RelativePath) && !hasSQLiteHeader(entry.Prefix) && !base && !companion && !isCurrentMarkerName(filepath.Base(entry.RelativePath)) {
+			continue
+		}
+		for parent := filepath.ToSlash(filepath.Dir(entry.RelativePath)); parent != "." && parent != ""; parent = filepath.ToSlash(filepath.Dir(parent)) {
+			knownContainers[parent] = true
+		}
+	}
 	for _, entry := range state.entries {
 		dir, name := filepath.ToSlash(filepath.Dir(entry.RelativePath)), filepath.Base(entry.RelativePath)
 		if dir == "." {
 			dir = ""
 		}
 		base, companion := historicalName(entry.RelativePath)
+		regular := entry.Identity.Mode.IsRegular()
+		if allowedUnrelatedPath(entry.RelativePath) {
+			continue
+		}
+		if !regular {
+			if isCurrentMarkerName(name) {
+				if groups[dir] == nil {
+					groups[dir] = make(map[string]fileObservation)
+				}
+				groups[dir][name] = entry
+				continue
+			}
+			if base || companion {
+				state.unsafe = true
+				state.add(c.budgets, Finding{Kind: FindingFilesystem, RelativePath: entry.RelativePath, DetailCode: "HISTORICAL_MARKER_WRONG_TYPE"})
+				continue
+			}
+			if entry.Identity.Mode.IsDir() && !knownContainers[entry.RelativePath] {
+				uncertain = true
+				state.add(c.budgets, Finding{Kind: FindingUncertain, RelativePath: entry.RelativePath, DetailCode: "UNKNOWN_CONTROL_ROOT_DIRECTORY"})
+			}
+			continue
+		}
 		sqlite := hasSQLiteHeader(entry.Prefix)
 		if sqlite {
 			historical = true
@@ -512,6 +599,11 @@ func (c *Classifier) analyze(state *inspectionState) (historical bool, currentGr
 			path = gapIdentityName
 		}
 		if err != nil {
+			if errors.Is(err, errCurrentEvidenceIncomplete) {
+				uncertain = true
+				state.add(c.budgets, Finding{Kind: FindingBudget, RelativePath: path, DetailCode: "CURRENT_LAYOUT_EVIDENCE_INCOMPLETE"})
+				continue
+			}
 			malformedCurrent = true
 			state.add(c.budgets, Finding{Kind: FindingMalformed, RelativePath: path, DetailCode: "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"})
 			continue
