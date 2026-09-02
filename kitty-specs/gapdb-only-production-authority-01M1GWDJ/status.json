@@ -1,7 +1,7 @@
 {
-  "event_count": 130,
-  "last_event_id": "01M1J2T2Z4VMRMDBXPPGX62WZY",
-  "materialized_at": "2026-09-02T22:11:08.893208+00:00",
+  "event_count": 132,
+  "last_event_id": "01M1J4XZ1122QGH2NGX6EE6E2F",
+  "materialized_at": "2026-09-02T22:48:13.089491+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 1,
-    "in_review": 0,
+    "in_progress": 0,
+    "in_review": 1,
     "planned": 13
   },
   "work_packages": {
@@ -70,14 +70,14 @@
       }
     },
     "WP02": {
-      "actor": "wp02-foundation-repair",
-      "agent": "wp02-budget-terminal-reviewer",
+      "actor": "wp02-foundation-independent-reviewer",
+      "agent": "wp02-foundation-independent-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 6,
-      "lane": "in_progress",
-      "last_event_id": "01M1J2T2Z4VMRMDBXPPGX62WZY",
-      "last_transition_at": "2026-09-02T22:11:08.893208+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1J4XZ1122QGH2NGX6EE6E2F",
+      "last_transition_at": "2026-09-02T22:48:13.089491+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -87,7 +87,8 @@
         "Terminal persistence review rejected c3a0c6c5: sealed records exceed frozen ordinary-value, raw-batch, head, and effect cardinality budgets. Structural projection invariants otherwise pass.",
         "Budget-closure repair committed at d9407b0d; sealed plan now closes over frozen record/cardinality/raw bounds and all regression gates pass.",
         "Independent terminal budget review approved d9407b0d. Reproduced former 350165-byte ordinary event and 9341911-byte projection now refuse before registry access; max operation/aggregate values, 32 heads, 16 effects, 256 records, 256 KiB ordinary, 4 MiB checkpoint, conservative 1 KiB keys and 6 MiB raw closure pass. Structural projection and all prior WP02 invariants, repeated/race/architecture/helper/compile/vet/static/format/diff gates pass. Reviewer actor: wp02-budget-terminal-reviewer.",
-        "Post-approval defect 2: add foundation recovery contracts, semantic visibility, operation event reconstruction, registry/reducer identities, stateless Apply, durable acknowledgement coordinator, projection tracker, and rolling-prefix seal before WP04 can resume."
+        "Post-approval defect 2: add foundation recovery contracts, semantic visibility, operation event reconstruction, registry/reducer identities, stateless Apply, durable acknowledgement coordinator, projection tracker, and rolling-prefix seal before WP04 can resume.",
+        "Expanded WP02 correction implemented by wp02-foundation-repair at 5beb9a09: provider-neutral recovery, operation 2/2 reconstruction, descriptor-bound stateless reducers, durable publication acknowledgement, ambiguity-safe coordination, provider-revision-ordered projection prefix, and >=10k bounded ledger; focused repeated/race/architecture/compile/vet/staticcheck/format gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -96,16 +97,16 @@
         "reviewer": "wp02-budget-terminal-reviewer",
         "verdict": "approved"
       },
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
       "subtasks": {
-        "T006": "planned",
-        "T007": "planned",
-        "T008": "planned",
-        "T009": "planned",
-        "T010": "planned",
-        "T011": "planned"
+        "T006": "done",
+        "T007": "done",
+        "T008": "done",
+        "T009": "done",
+        "T010": "done",
+        "T011": "done"
       }
     },
     "WP03": {
