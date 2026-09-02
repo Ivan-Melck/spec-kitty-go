@@ -1,0 +1,398 @@
+work_packages:
+  - id: WP01
+    title: "M2 Contracts and Permanent Architecture Guards"
+    dependencies: []
+    owned_files:
+      - "internal/architecture/m2_contracts_test.go"
+      - "internal/architecture/m2_dependency_guard_test.go"
+      - "internal/architecture/m2_mutant_control_test.go"
+      - "internal/architecture/m2_registry_test.go"
+    create_intent:
+      - "internal/architecture/m2_contracts_test.go"
+      - "internal/architecture/m2_dependency_guard_test.go"
+      - "internal/architecture/m2_mutant_control_test.go"
+      - "internal/architecture/m2_registry_test.go"
+    requirement_refs: [FR-001, FR-023, FR-031, FR-033, FR-035, NFR-013, NFR-014, NFR-015, C-001, C-004, C-005, C-006]
+    plan_concern_refs: [IC-01]
+    subtasks: [T001, T002, T003, T004, T005]
+    prompt_file: "tasks/WP01-m2-contracts-and-permanent-architecture-guards.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP02
+    title: "Global Operations and Authority Journal v2"
+    dependencies: [WP01]
+    owned_files:
+      - "internal/controljournal/v2/model.go"
+      - "internal/controljournal/v2/codec.go"
+      - "internal/controljournal/v2/commit_plan.go"
+      - "internal/controljournal/v2/operation.go"
+      - "internal/controljournal/v2/journal_test.go"
+    create_intent:
+      - "internal/controljournal/v2/model.go"
+      - "internal/controljournal/v2/codec.go"
+      - "internal/controljournal/v2/commit_plan.go"
+      - "internal/controljournal/v2/operation.go"
+      - "internal/controljournal/v2/journal_test.go"
+    requirement_refs: [FR-002, FR-004, FR-005, FR-006, FR-017, FR-022, FR-025, FR-033, NFR-001, NFR-002, NFR-012, NFR-013, C-002, C-004, C-005, C-013]
+    plan_concern_refs: [IC-02]
+    subtasks: [T006, T007, T008, T009, T010, T011]
+    prompt_file: "tasks/WP02-global-operations-and-authority-journal-v2.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP03
+    title: "GapDB v2 Committer and Key Codec"
+    dependencies: [WP01, WP02]
+    owned_files:
+      - "internal/controlstore/gapdb/v2_codec.go"
+      - "internal/controlstore/gapdb/v2_committer.go"
+      - "internal/controlstore/gapdb/v2_reader.go"
+      - "internal/controlstore/gapdb/v2_ambiguity.go"
+      - "internal/controlstore/gapdb/v2_adapter_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/v2_codec.go"
+      - "internal/controlstore/gapdb/v2_committer.go"
+      - "internal/controlstore/gapdb/v2_reader.go"
+      - "internal/controlstore/gapdb/v2_ambiguity.go"
+      - "internal/controlstore/gapdb/v2_adapter_test.go"
+    requirement_refs: [FR-001, FR-003, FR-004, FR-005, FR-006, FR-020, FR-021, FR-025, FR-034, NFR-001, NFR-002, NFR-008, NFR-012, C-001, C-003, C-005]
+    plan_concern_refs: [IC-02]
+    subtasks: [T012, T013, T014, T015, T016]
+    prompt_file: "tasks/WP03-gapdb-v2-committer-and-key-codec.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP04
+    title: "Bounded Checkpoints Suffix Restore and Pure Playback"
+    dependencies: [WP02, WP03]
+    owned_files:
+      - "internal/controljournal/v2/checkpoint/model.go"
+      - "internal/controljournal/v2/checkpoint/checkpoint.go"
+      - "internal/controljournal/v2/checkpoint/checkpoint_test.go"
+      - "internal/controljournal/v2/playback/playback.go"
+      - "internal/controljournal/v2/playback/playback_test.go"
+      - "internal/controljournal/v2/restore/restore.go"
+      - "internal/controljournal/v2/restore/restore_test.go"
+    create_intent:
+      - "internal/controljournal/v2/checkpoint/model.go"
+      - "internal/controljournal/v2/checkpoint/checkpoint.go"
+      - "internal/controljournal/v2/checkpoint/checkpoint_test.go"
+      - "internal/controljournal/v2/playback/playback.go"
+      - "internal/controljournal/v2/playback/playback_test.go"
+      - "internal/controljournal/v2/restore/restore.go"
+      - "internal/controljournal/v2/restore/restore_test.go"
+    requirement_refs: [FR-003, FR-019, FR-020, FR-021, FR-022, FR-025, FR-034, NFR-005, NFR-006, NFR-007, NFR-008, NFR-009, NFR-012, NFR-013, C-002, C-013]
+    plan_concern_refs: [IC-02]
+    subtasks: [T017, T018, T019, T020, T021, T022]
+    prompt_file: "tasks/WP04-bounded-checkpoints-suffix-restore-and-pure-playback.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP05
+    title: "Mission Lifecycle Decisions and Decomposition Authority"
+    dependencies: [WP04]
+    owned_files:
+      - "internal/mission/**"
+      - "internal/controlstore/gapdb/mission_authority.go"
+      - "internal/controlstore/gapdb/mission_authority_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/mission_authority.go"
+      - "internal/controlstore/gapdb/mission_authority_test.go"
+    requirement_refs: [FR-007, FR-017, FR-018, FR-023, FR-024, FR-025, FR-033, NFR-001, NFR-004, NFR-016, C-004, C-005, C-009]
+    plan_concern_refs: [IC-03, IC-06]
+    subtasks: [T023, T024, T025, T026, T027]
+    prompt_file: "tasks/WP05-mission-lifecycle-decisions-and-decomposition-authority.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP06
+    title: "Artifact and WorkRevision Authority"
+    dependencies: [WP04]
+    owned_files:
+      - "internal/artifact/**"
+      - "internal/workgraph/**"
+      - "internal/controlstore/gapdb/artifact_authority.go"
+      - "internal/controlstore/gapdb/artifact_authority_test.go"
+      - "internal/controlstore/gapdb/workgraph_authority.go"
+      - "internal/controlstore/gapdb/workgraph_authority_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/artifact_authority.go"
+      - "internal/controlstore/gapdb/artifact_authority_test.go"
+      - "internal/controlstore/gapdb/workgraph_authority.go"
+      - "internal/controlstore/gapdb/workgraph_authority_test.go"
+    requirement_refs: [FR-008, FR-009, FR-010, FR-023, FR-024, FR-025, FR-033, FR-036, NFR-001, NFR-004, NFR-005, NFR-016, C-004, C-005]
+    plan_concern_refs: [IC-03]
+    subtasks: [T028, T029, T030, T031, T032, T033]
+    prompt_file: "tasks/WP06-artifact-and-workrevision-authority.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP07
+    title: "Run Lease Epoch and External-Effect Authority"
+    dependencies: [WP04, WP06]
+    owned_files:
+      - "internal/execution/**"
+      - "internal/governancecontext/**"
+      - "internal/controlstore/gapdb/execution_authority.go"
+      - "internal/controlstore/gapdb/execution_authority_test.go"
+      - "internal/controlstore/gapdb/effect_authority.go"
+      - "internal/controlstore/gapdb/effect_authority_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/execution_authority.go"
+      - "internal/controlstore/gapdb/execution_authority_test.go"
+      - "internal/controlstore/gapdb/effect_authority.go"
+      - "internal/controlstore/gapdb/effect_authority_test.go"
+    requirement_refs: [FR-011, FR-017, FR-018, FR-020, FR-023, FR-024, FR-025, FR-034, NFR-001, NFR-002, NFR-003, NFR-004, NFR-007, NFR-016, C-004, C-005]
+    plan_concern_refs: [IC-04, IC-06]
+    subtasks: [T034, T035, T036, T037, T038, T039]
+    prompt_file: "tasks/WP07-run-lease-epoch-and-external-effect-authority.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP08
+    title: "Lease-Scoped Workspace Authority"
+    dependencies: [WP04, WP07]
+    owned_files:
+      - "internal/workspace/**"
+      - "internal/controlstore/gapdb/workspace_authority.go"
+      - "internal/controlstore/gapdb/workspace_authority_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/workspace_authority.go"
+      - "internal/controlstore/gapdb/workspace_authority_test.go"
+    requirement_refs: [FR-012, FR-020, FR-023, FR-024, FR-025, NFR-001, NFR-003, NFR-004, NFR-007, NFR-016, C-004, C-005, C-011]
+    plan_concern_refs: [IC-04]
+    subtasks: [T040, T041, T042, T043]
+    prompt_file: "tasks/WP08-lease-scoped-workspace-authority.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP09
+    title: "Candidate Handoff and Independent Review Authority"
+    dependencies: [WP05, WP06, WP07, WP08]
+    owned_files:
+      - "internal/handoff/**"
+      - "internal/review/**"
+      - "internal/controlstore/gapdb/handoff_authority.go"
+      - "internal/controlstore/gapdb/handoff_authority_test.go"
+      - "internal/controlstore/gapdb/review_authority.go"
+      - "internal/controlstore/gapdb/review_authority_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/handoff_authority.go"
+      - "internal/controlstore/gapdb/handoff_authority_test.go"
+      - "internal/controlstore/gapdb/review_authority.go"
+      - "internal/controlstore/gapdb/review_authority_test.go"
+    requirement_refs: [FR-013, FR-014, FR-023, FR-024, FR-025, NFR-001, NFR-002, NFR-004, NFR-005, NFR-016, C-004, C-005, C-012]
+    plan_concern_refs: [IC-05]
+    subtasks: [T044, T045, T046, T047, T048]
+    prompt_file: "tasks/WP09-candidate-handoff-and-independent-review-authority.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP10
+    title: "Acceptance and Serialized Integration Authority"
+    dependencies: [WP06, WP07, WP09]
+    owned_files:
+      - "internal/integration/**"
+      - "internal/controlstore/gapdb/acceptance_authority.go"
+      - "internal/controlstore/gapdb/acceptance_authority_test.go"
+      - "internal/controlstore/gapdb/integration_authority.go"
+      - "internal/controlstore/gapdb/integration_authority_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/acceptance_authority.go"
+      - "internal/controlstore/gapdb/acceptance_authority_test.go"
+      - "internal/controlstore/gapdb/integration_authority.go"
+      - "internal/controlstore/gapdb/integration_authority_test.go"
+    requirement_refs: [FR-015, FR-016, FR-023, FR-024, FR-025, NFR-001, NFR-002, NFR-004, NFR-005, NFR-016, C-004, C-005, C-010, C-012]
+    plan_concern_refs: [IC-05]
+    subtasks: [T049, T050, T051, T052, T053]
+    prompt_file: "tasks/WP10-acceptance-and-serialized-integration-authority.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP11
+    title: "Outbox Query Projections and Capability Conformance"
+    dependencies: [WP05, WP06, WP07, WP08, WP09, WP10]
+    owned_files:
+      - "internal/controlstore/store.go"
+      - "internal/projection/**"
+      - "internal/controlstore/gapdb/outbox_authority.go"
+      - "internal/controlstore/gapdb/outbox_authority_test.go"
+      - "internal/controlstore/gapdb/projection_authority.go"
+      - "internal/controlstore/gapdb/projection_authority_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/outbox_authority.go"
+      - "internal/controlstore/gapdb/outbox_authority_test.go"
+      - "internal/controlstore/gapdb/projection_authority.go"
+      - "internal/controlstore/gapdb/projection_authority_test.go"
+    requirement_refs: [FR-002, FR-019, FR-023, FR-024, FR-025, FR-034, FR-036, NFR-005, NFR-010, NFR-015, NFR-016, C-004, C-005, C-009, C-010]
+    plan_concern_refs: [IC-06, IC-07]
+    subtasks: [T054, T055, T056, T057, T058]
+    prompt_file: "tasks/WP11-outbox-query-projections-and-capability-conformance.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP12
+    title: "Historical Control-Root Classification and Refusal"
+    dependencies: [WP01]
+    owned_files:
+      - "internal/controlroot/classifier.go"
+      - "internal/controlroot/model.go"
+      - "internal/controlroot/signatures.go"
+      - "internal/controlroot/classifier_test.go"
+    create_intent:
+      - "internal/controlroot/classifier.go"
+      - "internal/controlroot/model.go"
+      - "internal/controlroot/signatures.go"
+      - "internal/controlroot/classifier_test.go"
+    requirement_refs: [FR-026, FR-027, FR-028, FR-029, FR-030, FR-034, NFR-012, NFR-014, C-007, C-008, C-017]
+    plan_concern_refs: [IC-08]
+    subtasks: [T059, T060, T061, T062, T063]
+    prompt_file: "tasks/WP12-historical-control-root-classification-and-refusal.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP13
+    title: "Single-Owner Production Runtime and Memory-Primary Progress"
+    dependencies: [WP11, WP12]
+    owned_files:
+      - "internal/productionruntime/host.go"
+      - "internal/productionruntime/composition.go"
+      - "internal/productionruntime/progress.go"
+      - "internal/productionruntime/recovery.go"
+      - "internal/productionruntime/host_test.go"
+      - "internal/sidecar/gapdb/**"
+    create_intent:
+      - "internal/productionruntime/host.go"
+      - "internal/productionruntime/composition.go"
+      - "internal/productionruntime/progress.go"
+      - "internal/productionruntime/recovery.go"
+      - "internal/productionruntime/host_test.go"
+    requirement_refs: [FR-002, FR-003, FR-019, FR-020, FR-021, FR-022, FR-026, FR-027, FR-029, FR-030, FR-034, FR-036, NFR-005, NFR-006, NFR-007, NFR-010, C-002, C-003, C-013, C-014]
+    plan_concern_refs: [IC-07, IC-08]
+    subtasks: [T064, T065, T066, T067, T068, T069]
+    prompt_file: "tasks/WP13-single-owner-production-runtime-and-memory-primary-progress.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP14
+    title: "Portable Scenario Harness and Behavior Parity"
+    dependencies: [WP13]
+    owned_files:
+      - "internal/scenario/**"
+    requirement_refs: [FR-007, FR-008, FR-009, FR-010, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-018, FR-023, FR-024, FR-025, NFR-001, NFR-002, NFR-003, NFR-004, NFR-015, NFR-016, C-009, C-010, C-011, C-012]
+    plan_concern_refs: [IC-03, IC-04, IC-05, IC-06, IC-07]
+    subtasks: [T070, T071, T072, T073, T074]
+    prompt_file: "tasks/WP14-portable-scenario-harness-and-behavior-parity.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP15
+    title: "Production Composition and Native Command Surface"
+    dependencies: [WP13]
+    owned_files:
+      - "internal/helpercmd/**"
+      - "cmd/spk-phase1-helper/**"
+      - "cmd/spec-kitty/main.go"
+      - "cmd/spec-kitty/main_test.go"
+    create_intent:
+      - "cmd/spec-kitty/main.go"
+      - "cmd/spec-kitty/main_test.go"
+    requirement_refs: [FR-002, FR-019, FR-020, FR-026, FR-027, FR-029, FR-030, FR-034, FR-036, NFR-010, NFR-014, C-002, C-003, C-007, C-014, C-015, C-016]
+    plan_concern_refs: [IC-07, IC-08]
+    subtasks: [T075, T076, T077, T078, T079]
+    prompt_file: "tasks/WP15-production-composition-and-native-command-surface.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP16
+    title: "Structural SQLite Eradication and Absence Proof"
+    dependencies: [WP14, WP15]
+    owned_files:
+      - "internal/controlstore/sqlite/**"
+      - "internal/architecture/m2_absence_test.go"
+      - "internal/architecture/m2_absence_mutants_test.go"
+      - "scripts/m2-absence/inspect.sh"
+      - "scripts/m2-absence/mutants.sh"
+      - "go.mod"
+      - "go.sum"
+    create_intent:
+      - "internal/architecture/m2_absence_test.go"
+      - "internal/architecture/m2_absence_mutants_test.go"
+      - "scripts/m2-absence/inspect.sh"
+      - "scripts/m2-absence/mutants.sh"
+    requirement_refs: [FR-026, FR-027, FR-028, FR-029, FR-030, FR-031, FR-032, FR-033, FR-035, NFR-014, NFR-017, C-004, C-006, C-007, C-008, C-017, C-018]
+    plan_concern_refs: [IC-09]
+    subtasks: [T080, T081, T082, T083, T084, T085]
+    prompt_file: "tasks/WP16-structural-sqlite-eradication-and-absence-proof.md"
+    agent_profile: randy-reducer
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP17
+    title: "M2 Crown Campaign Evidence and Successor Contract"
+    dependencies: [WP16]
+    owned_files:
+      - "internal/testcampaign/m2/manifest.go"
+      - "internal/testcampaign/m2/runner.go"
+      - "internal/testcampaign/m2/runner_test.go"
+      - "cmd/spk-m2-qualification/main.go"
+      - "cmd/spk-m2-qualification/main_test.go"
+      - "Makefile"
+      - ".github/workflows/quality.yml"
+      - ".github/workflows/m2-qualification.yml"
+      - "README.md"
+      - "docs/PRODUCTION_RUNTIME_PROGRAM.md"
+      - "docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md"
+      - "docs/programs/evidence/m2-qualification.json"
+      - "docs/programs/evidence/m2-acceptance-matrix.json"
+      - "docs/programs/evidence/m2-independent-review-input.md"
+    create_intent:
+      - "internal/testcampaign/m2/manifest.go"
+      - "internal/testcampaign/m2/runner.go"
+      - "internal/testcampaign/m2/runner_test.go"
+      - "cmd/spk-m2-qualification/main.go"
+      - "cmd/spk-m2-qualification/main_test.go"
+      - ".github/workflows/m2-qualification.yml"
+      - "docs/programs/evidence/m2-qualification.json"
+      - "docs/programs/evidence/m2-acceptance-matrix.json"
+      - "docs/programs/evidence/m2-independent-review-input.md"
+    requirement_refs: [FR-001, FR-003, FR-019, FR-020, FR-021, FR-022, FR-023, FR-024, FR-025, FR-026, FR-031, FR-032, FR-035, FR-036, NFR-001, NFR-002, NFR-003, NFR-005, NFR-006, NFR-007, NFR-008, NFR-009, NFR-010, NFR-011, NFR-012, NFR-013, NFR-014, NFR-015, NFR-016, NFR-017, NFR-018, C-001, C-018]
+    plan_concern_refs: [IC-10]
+    subtasks: [T086, T087, T088, T089, T090, T091, T092]
+    prompt_file: "tasks/WP17-m2-crown-campaign-evidence-and-successor-contract.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""

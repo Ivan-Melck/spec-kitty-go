@@ -1,0 +1,422 @@
+{
+  "version": 1,
+  "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
+  "mission_id": "01M1GWDJV8MMEF5VJJMD3AD0QE",
+  "mission_branch": "kitty/mission-gapdb-only-production-authority-01M1GWDJ",
+  "target_branch": "feat/gapdb-only-production-authority",
+  "lanes": [
+    {
+      "lane_id": "lane-a",
+      "wp_ids": [
+        "WP01"
+      ],
+      "write_scope": [
+        "internal/architecture/m2_contracts_test.go",
+        "internal/architecture/m2_dependency_guard_test.go",
+        "internal/architecture/m2_mutant_control_test.go",
+        "internal/architecture/m2_registry_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "app-shell",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-b",
+      "wp_ids": [
+        "WP02"
+      ],
+      "write_scope": [
+        "internal/controljournal/v2/codec.go",
+        "internal/controljournal/v2/commit_plan.go",
+        "internal/controljournal/v2/journal_test.go",
+        "internal/controljournal/v2/model.go",
+        "internal/controljournal/v2/operation.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-l",
+      "wp_ids": [
+        "WP12"
+      ],
+      "write_scope": [
+        "internal/controlroot/classifier.go",
+        "internal/controlroot/classifier_test.go",
+        "internal/controlroot/model.go",
+        "internal/controlroot/signatures.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "app-shell",
+        "legacy-cleanup",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-c",
+      "wp_ids": [
+        "WP03"
+      ],
+      "write_scope": [
+        "internal/controlstore/gapdb/v2_adapter_test.go",
+        "internal/controlstore/gapdb/v2_ambiguity.go",
+        "internal/controlstore/gapdb/v2_codec.go",
+        "internal/controlstore/gapdb/v2_committer.go",
+        "internal/controlstore/gapdb/v2_reader.go"
+      ],
+      "predicted_surfaces": [
+        "api"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b"
+      ],
+      "parallel_group": 2
+    },
+    {
+      "lane_id": "lane-d",
+      "wp_ids": [
+        "WP04"
+      ],
+      "write_scope": [
+        "internal/controljournal/v2/checkpoint/checkpoint.go",
+        "internal/controljournal/v2/checkpoint/checkpoint_test.go",
+        "internal/controljournal/v2/checkpoint/model.go",
+        "internal/controljournal/v2/playback/playback.go",
+        "internal/controljournal/v2/playback/playback_test.go",
+        "internal/controljournal/v2/restore/restore.go",
+        "internal/controljournal/v2/restore/restore_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-b",
+        "lane-c"
+      ],
+      "parallel_group": 3
+    },
+    {
+      "lane_id": "lane-e",
+      "wp_ids": [
+        "WP05"
+      ],
+      "write_scope": [
+        "internal/controlstore/gapdb/mission_authority.go",
+        "internal/controlstore/gapdb/mission_authority_test.go",
+        "internal/mission/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-d"
+      ],
+      "parallel_group": 4
+    },
+    {
+      "lane_id": "lane-f",
+      "wp_ids": [
+        "WP06"
+      ],
+      "write_scope": [
+        "internal/artifact/**",
+        "internal/controlstore/gapdb/artifact_authority.go",
+        "internal/controlstore/gapdb/artifact_authority_test.go",
+        "internal/controlstore/gapdb/workgraph_authority.go",
+        "internal/controlstore/gapdb/workgraph_authority_test.go",
+        "internal/workgraph/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-d"
+      ],
+      "parallel_group": 4
+    },
+    {
+      "lane_id": "lane-g",
+      "wp_ids": [
+        "WP07"
+      ],
+      "write_scope": [
+        "internal/controlstore/gapdb/effect_authority.go",
+        "internal/controlstore/gapdb/effect_authority_test.go",
+        "internal/controlstore/gapdb/execution_authority.go",
+        "internal/controlstore/gapdb/execution_authority_test.go",
+        "internal/execution/**",
+        "internal/governancecontext/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-d",
+        "lane-f"
+      ],
+      "parallel_group": 5
+    },
+    {
+      "lane_id": "lane-h",
+      "wp_ids": [
+        "WP08"
+      ],
+      "write_scope": [
+        "internal/controlstore/gapdb/workspace_authority.go",
+        "internal/controlstore/gapdb/workspace_authority_test.go",
+        "internal/workspace/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-d",
+        "lane-g"
+      ],
+      "parallel_group": 6
+    },
+    {
+      "lane_id": "lane-i",
+      "wp_ids": [
+        "WP09"
+      ],
+      "write_scope": [
+        "internal/controlstore/gapdb/handoff_authority.go",
+        "internal/controlstore/gapdb/handoff_authority_test.go",
+        "internal/controlstore/gapdb/review_authority.go",
+        "internal/controlstore/gapdb/review_authority_test.go",
+        "internal/handoff/**",
+        "internal/review/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-e",
+        "lane-f",
+        "lane-g",
+        "lane-h"
+      ],
+      "parallel_group": 7
+    },
+    {
+      "lane_id": "lane-j",
+      "wp_ids": [
+        "WP10"
+      ],
+      "write_scope": [
+        "internal/controlstore/gapdb/acceptance_authority.go",
+        "internal/controlstore/gapdb/acceptance_authority_test.go",
+        "internal/controlstore/gapdb/integration_authority.go",
+        "internal/controlstore/gapdb/integration_authority_test.go",
+        "internal/integration/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-f",
+        "lane-g",
+        "lane-i"
+      ],
+      "parallel_group": 8
+    },
+    {
+      "lane_id": "lane-k",
+      "wp_ids": [
+        "WP11"
+      ],
+      "write_scope": [
+        "internal/controlstore/gapdb/outbox_authority.go",
+        "internal/controlstore/gapdb/outbox_authority_test.go",
+        "internal/controlstore/gapdb/projection_authority.go",
+        "internal/controlstore/gapdb/projection_authority_test.go",
+        "internal/controlstore/store.go",
+        "internal/projection/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-e",
+        "lane-f",
+        "lane-g",
+        "lane-h",
+        "lane-i",
+        "lane-j"
+      ],
+      "parallel_group": 9
+    },
+    {
+      "lane_id": "lane-m",
+      "wp_ids": [
+        "WP13"
+      ],
+      "write_scope": [
+        "internal/productionruntime/composition.go",
+        "internal/productionruntime/host.go",
+        "internal/productionruntime/host_test.go",
+        "internal/productionruntime/progress.go",
+        "internal/productionruntime/recovery.go",
+        "internal/sidecar/gapdb/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup"
+      ],
+      "depends_on_lanes": [
+        "lane-k",
+        "lane-l"
+      ],
+      "parallel_group": 10
+    },
+    {
+      "lane_id": "lane-n",
+      "wp_ids": [
+        "WP14"
+      ],
+      "write_scope": [
+        "internal/scenario/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-m"
+      ],
+      "parallel_group": 11
+    },
+    {
+      "lane_id": "lane-o",
+      "wp_ids": [
+        "WP15"
+      ],
+      "write_scope": [
+        "cmd/spec-kitty/main.go",
+        "cmd/spec-kitty/main_test.go",
+        "cmd/spk-phase1-helper/**",
+        "internal/helpercmd/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tests",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-m"
+      ],
+      "parallel_group": 11
+    },
+    {
+      "lane_id": "lane-p",
+      "wp_ids": [
+        "WP16"
+      ],
+      "write_scope": [
+        "go.mod",
+        "go.sum",
+        "internal/architecture/m2_absence_mutants_test.go",
+        "internal/architecture/m2_absence_test.go",
+        "internal/controlstore/sqlite/**",
+        "scripts/m2-absence/inspect.sh",
+        "scripts/m2-absence/mutants.sh"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup"
+      ],
+      "depends_on_lanes": [
+        "lane-n",
+        "lane-o"
+      ],
+      "parallel_group": 12
+    },
+    {
+      "lane_id": "lane-q",
+      "wp_ids": [
+        "WP17"
+      ],
+      "write_scope": [
+        ".github/workflows/m2-qualification.yml",
+        ".github/workflows/quality.yml",
+        "Makefile",
+        "README.md",
+        "cmd/spk-m2-qualification/main.go",
+        "cmd/spk-m2-qualification/main_test.go",
+        "docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md",
+        "docs/PRODUCTION_RUNTIME_PROGRAM.md",
+        "docs/programs/evidence/m2-acceptance-matrix.json",
+        "docs/programs/evidence/m2-independent-review-input.md",
+        "docs/programs/evidence/m2-qualification.json",
+        "internal/testcampaign/m2/manifest.go",
+        "internal/testcampaign/m2/runner.go",
+        "internal/testcampaign/m2/runner_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-p"
+      ],
+      "parallel_group": 13
+    }
+  ],
+  "computed_at": "2026-09-02T12:12:15.531555+00:00",
+  "computed_from": "dependency_graph+ownership",
+  "planning_artifact_wps": [],
+  "planning_commit_sha": "e640621cadc78f803bb8e2bba5c1715f6179aca3"
+}
