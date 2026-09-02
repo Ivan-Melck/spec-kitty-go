@@ -59,6 +59,13 @@ create_intent:
 - internal/testcampaign/m1/testdata/evidence/incomplete.json
 - cmd/spk-m1-proving-ground/main.go
 - cmd/spk-m1-proving-ground/main_test.go
+- internal/testcampaign/m1/crown/runner.go
+- internal/testcampaign/m1/crown/runner_test.go
+- internal/testcampaign/m1/external/runner.go
+- internal/testcampaign/m1/external/runner_test.go
+- internal/testcampaign/m1/faults/crown.go
+- internal/testcampaign/m1/faults/crown_test.go
+- internal/architecture/m1_crown_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -72,6 +79,28 @@ owned_files:
 - internal/testcampaign/m1/testdata/evidence/incomplete.json
 - cmd/spk-m1-proving-ground/main.go
 - cmd/spk-m1-proving-ground/main_test.go
+- internal/testcampaign/m1/crown/runner.go
+- internal/testcampaign/m1/crown/runner_test.go
+- internal/testcampaign/m1/external/runner.go
+- internal/testcampaign/m1/external/runner_test.go
+- internal/testcampaign/m1/faults/crown.go
+- internal/testcampaign/m1/faults/crown_test.go
+- internal/testcampaign/m1/faults/runner.go
+- internal/provingground/effects.go
+- internal/provingground/effects_test.go
+- internal/controljournal/application/reconcile.go
+- internal/controljournal/application/reconcile_test.go
+- internal/testcampaign/m1/focused/campaign.go
+- internal/testcampaign/m1/focused/campaign_test.go
+- internal/testcampaign/m1/mutants/catalog.go
+- internal/testcampaign/m1/mutants/catalog_test.go
+- internal/architecture/m1_crown_test.go
+- internal/architecture/policy.go
+- internal/architecture/policy_test.go
+- internal/architecture/m1_dependency_guard_test.go
+- internal/testcampaign/manifest.go
+- internal/testcampaign/census_test.go
+- kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/quickstart.md
 role: implementer
 tags:
 - m1
@@ -285,3 +314,65 @@ presented as human approval.
 - Failure/incomplete paths are honest and fail closed.
 - M1 completion and human production adoption remain separate decisions.
 - No M2 work begins automatically.
+
+## Scope reconciliation — 2026-08-31
+
+Pre-implementation architecture review found that the original ten-file scope
+could not execute the required trial honestly. The parent `m1` package cannot
+import `m1/faults`, `m1/focused`, and `m1/mutants` because those packages already
+import `m1`; a sibling `m1/crown` orchestrator is therefore required. The
+fourteen external scenarios also need a reusable production runner instead of
+invoking `_test.go` through a subprocess, and the focused executor must accept
+the immutable umbrella RunID instead of its historical `run-qualification`
+constant. The added files above authorize those narrow seams and one
+architecture guard proving the crown command has no SQLite dependency.
+
+The executable order is also clarified: W2 and W3 are handed off, independently
+reviewed, and serialized while their authority is current; owner restart,
+restore, new-epoch admission, predecessor-capsule refusal, and playback equality
+then occur before terminal evaluation. Restarting first would invalidate the
+very W2/W3 capsules the accepted story requires as candidates. Canonical CLI
+verbs are `run` and `verify`; quickstart wording may be corrected accordingly.
+
+Composition also requires the existing mutant runner to return the canonical
+structured guard artifact whose digest it already records. WP10 therefore owns
+the two mutant catalog files solely for additive artifact-byte exposure and its
+regression; the nineteen stable IDs, executable guards, and kill semantics stay
+frozen.
+
+The closed repository graph must also classify the new proving command and its
+real external scenario runner. WP10 owns the three architecture-policy files
+only to classify `cmd/spk-m1-proving-ground` as non-production quality tooling,
+admit the public GapDB client for that tier, and narrow the existing M1 GapDB
+allowlist to `internal/testcampaign/m1/external`. Mutant controls must prove
+neighboring testcampaign packages and look-alike providers remain rejected;
+kernel and runtime tiers gain no new provider edge.
+
+The exact repository-wide architecture campaign is itself a closed contract.
+Qualification exposed that the three newly authorized WP10 architecture tests
+passed but were rejected as unexpected top-level events. WP10 therefore also
+owns `internal/testcampaign/manifest.go` and
+`internal/testcampaign/census_test.go` solely to add those exact test names and
+mutant controls; wildcard census relaxation remains forbidden.
+
+The composed 8x100 crown then exposed a product restore defect after a valid
+owner restart: the workflow journal rejected the sealed predecessor epoch's
+historical events merely because they differed from the current epoch. WP10
+therefore owns `internal/provingground/effects.go` and `effects_test.go` only
+for the narrow repair and regression. Restore must derive the admissible
+current-to-predecessor epoch lineage from sealed runtime-composition history;
+arbitrary, unlinked, malformed, or foreign-RunID epoch events must still fail
+closed. The campaign may not filter or delete predecessor history.
+
+Exact qualification also exposed repeated full-history reads inside one focused
+attempt and repeated restore scans at an unchanged store-wide revision. WP10
+therefore owns `internal/controljournal/application/reconcile.go` and its test
+only for a proof-preserving scan repair. One attempt-local observation port may
+memoize its exact immutable observation and stale-probe result so the receipt
+and runner independently validate the same evidence; distinct attempts must
+never share that cache. The restore reader may reuse its complete immutable
+journal snapshot only after a provider probe reports the exact same nonzero
+store-wide `ObservedRevision`; a changed, stale, moving, zero, malformed, or
+cursor-inconsistent revision requires a complete rescan or fails closed. No
+assertion, repetition, event, checkpoint, authority, or playback check may be
+removed, filtered, synthesized, or weakened, and playback must remain zero-I/O.
