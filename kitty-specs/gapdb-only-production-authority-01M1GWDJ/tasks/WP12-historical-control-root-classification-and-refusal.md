@@ -92,7 +92,7 @@ Every returned disposition has `current_mutation_count: 0`. Findings are
 bounded, canonical, stable-code evidence. Human prose may explain them but must
 not be the machine decision surface.
 
-Stay inside the five owned paths. In particular, do not import the SQLite
+Stay inside the four owned paths. In particular, do not import the SQLite
 driver, open a database, start `gapdbd`, create a socket/directory/lock, alter
 the root, add a converter, or edit startup composition from this lane.
 
