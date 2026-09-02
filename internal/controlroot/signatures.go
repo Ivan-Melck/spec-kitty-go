@@ -2,6 +2,7 @@ package controlroot
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -9,9 +10,11 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const SQLiteHeader = "SQLite format 3\x00"
@@ -34,6 +37,8 @@ const (
 )
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
+
+var errCurrentEvidenceIncomplete = errors.New("bounded inspection cannot prove current authority")
 
 // HistoricalSignatureNames returns the exact closed legacy layout census.
 func HistoricalSignatureNames() []string {
@@ -145,12 +150,17 @@ func decodeGapManifest(value []byte) (gapManifest, error) {
 	if err := ensureJSONEOF(decoder); err != nil {
 		return gapManifest{}, err
 	}
+	canonical, err := json.Marshal(manifest)
+	if err != nil || !bytes.Equal(canonical, value[header:len(value)-trailer]) {
+		return gapManifest{}, errors.New("manifest payload is not canonical field-ordered JSON")
+	}
 	if len(manifest.DatabaseID) != 32 || strings.ToLower(manifest.DatabaseID) != manifest.DatabaseID || !isLowerHex(manifest.DatabaseID) || manifest.Generation == 0 || !isLowerHexDigest(manifest.SnapshotSHA256) {
 		return gapManifest{}, errors.New("manifest authority fields are invalid")
 	}
 	snapshotRevision, snapshotOK := parseRevisionFilename(manifest.SnapshotFile, "snapshot-")
 	walRevision, walOK := parseRevisionFilename(manifest.WALFile, "wal-")
-	if !snapshotOK || !walOK || snapshotRevision != manifest.SnapshotRevision || walRevision != manifest.WALStartRevision || manifest.WALStartRevision == 0 {
+	if !snapshotOK || !walOK || snapshotRevision != manifest.SnapshotRevision || walRevision != manifest.WALStartRevision ||
+		manifest.SnapshotRevision == math.MaxUint64 || manifest.WALStartRevision != manifest.SnapshotRevision+1 {
 		return gapManifest{}, errors.New("manifest filenames and revisions disagree")
 	}
 	return manifest, nil
@@ -164,12 +174,55 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 	return nil
 }
 
-func validateGapSnapshotHeader(value []byte, identity [16]byte, revision uint64) error {
-	if len(value) < gapHeaderSize || string(value[:8]) != "GAPSNAP1" || binary.BigEndian.Uint16(value[8:10]) != gapVersion || binary.BigEndian.Uint16(value[10:12]) != gapHeaderSize {
+func validateGapSnapshot(value []byte, identity [16]byte, revision uint64, expectedDigest string) error {
+	const itemHeader = 40
+	const trailer = sha256.Size
+	if len(value) < gapHeaderSize+trailer || string(value[:8]) != "GAPSNAP1" || binary.BigEndian.Uint16(value[8:10]) != gapVersion || binary.BigEndian.Uint16(value[10:12]) != gapHeaderSize {
 		return errors.New("snapshot header is invalid")
 	}
 	if !bytes.Equal(value[12:28], identity[:]) || binary.BigEndian.Uint64(value[28:36]) != revision || !allZero(value[52:64]) {
 		return errors.New("snapshot authority fields disagree")
+	}
+	count := binary.BigEndian.Uint64(value[36:44])
+	payloadBytes := binary.BigEndian.Uint64(value[44:52])
+	if payloadBytes > uint64(len(value)) || payloadBytes+gapHeaderSize+trailer != uint64(len(value)) || count > payloadBytes/itemHeader {
+		return errors.New("snapshot count or payload length is invalid")
+	}
+	digest := sha256.Sum256(value[:len(value)-trailer])
+	if !bytes.Equal(digest[:], value[len(value)-trailer:]) || hex.EncodeToString(digest[:]) != expectedDigest {
+		return errors.New("snapshot digest is invalid")
+	}
+	offset := gapHeaderSize
+	payloadEnd := len(value) - trailer
+	previousKey := ""
+	for index := uint64(0); index < count; index++ {
+		if offset > payloadEnd-itemHeader {
+			return errors.New("snapshot record header is truncated")
+		}
+		keyBytes := uint64(binary.BigEndian.Uint32(value[offset : offset+4]))
+		valueBytes := uint64(binary.BigEndian.Uint32(value[offset+4 : offset+8]))
+		recordRevision := binary.BigEndian.Uint64(value[offset+8 : offset+16])
+		flags := value[offset+16]
+		expires := binary.BigEndian.Uint64(value[offset+24 : offset+32])
+		if flags&^byte(1) != 0 || !allZero(value[offset+17:offset+24]) || !allZero(value[offset+32:offset+40]) || (flags == 0 && expires != 0) {
+			return errors.New("snapshot record flags or reserved bytes are invalid")
+		}
+		offset += itemHeader
+		remaining := uint64(payloadEnd - offset)
+		if keyBytes == 0 || keyBytes > remaining || valueBytes > remaining-keyBytes {
+			return errors.New("snapshot record sizes are invalid")
+		}
+		keyEnd := offset + int(keyBytes)
+		valueEnd := keyEnd + int(valueBytes)
+		key := string(value[offset:keyEnd])
+		if !utf8.ValidString(key) || recordRevision == 0 || recordRevision > revision || (index > 0 && previousKey >= key) {
+			return errors.New("snapshot records are invalid or not strictly sorted")
+		}
+		previousKey = key
+		offset = valueEnd
+	}
+	if offset != payloadEnd {
+		return errors.New("snapshot payload contains trailing bytes")
 	}
 	return nil
 }
@@ -190,6 +243,12 @@ func coherentCurrentGroup(files map[string]fileObservation) (string, error) {
 	if !identityOK || !manifestOK {
 		return "", errors.New("identity and manifest must both exist")
 	}
+	if !identityFile.Identity.Mode.IsRegular() || !manifestFile.Identity.Mode.IsRegular() {
+		return "", errors.New("identity and manifest must be regular files")
+	}
+	if int64(len(identityFile.Prefix)) != identityFile.Identity.Size || int64(len(manifestFile.Prefix)) != manifestFile.Identity.Size {
+		return "", errCurrentEvidenceIncomplete
+	}
 	identity, err := decodeGapIdentity(identityFile.Prefix)
 	if err != nil {
 		return "", err
@@ -206,7 +265,13 @@ func coherentCurrentGroup(files map[string]fileObservation) (string, error) {
 	if !snapshotOK || !walOK {
 		return "", errors.New("manifest-referenced snapshot and WAL must exist")
 	}
-	if err := validateGapSnapshotHeader(snapshot.Prefix, identity.DatabaseID, manifest.SnapshotRevision); err != nil {
+	if !snapshot.Identity.Mode.IsRegular() || !wal.Identity.Mode.IsRegular() {
+		return "", errors.New("snapshot and WAL must be regular files")
+	}
+	if int64(len(snapshot.Prefix)) != snapshot.Identity.Size {
+		return "", errCurrentEvidenceIncomplete
+	}
+	if err := validateGapSnapshot(snapshot.Prefix, identity.DatabaseID, manifest.SnapshotRevision, manifest.SnapshotSHA256); err != nil {
 		return "", err
 	}
 	if err := validateGapWALHeader(wal.Prefix, identity.DatabaseID, manifest.WALStartRevision, manifest.Generation); err != nil {

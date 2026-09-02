@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/crc32"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -399,6 +401,167 @@ func TestFilesystemFaultsFailClosed(t *testing.T) {
 	})
 }
 
+func TestTerminalDirectoryRevalidationFailsClosed(t *testing.T) {
+	t.Run("root-insertion", func(t *testing.T) {
+		root := t.TempDir()
+		calls := 0
+		source := faultSource{base: osInspectionSource{}}
+		source.readDirectory = func(path string, identity fileIdentity, limit int) ([]string, error) {
+			names, err := source.base.ReadDirectory(path, identity, limit)
+			if err == nil && path == root && calls == 0 {
+				calls++
+				writeFile(t, filepath.Join(root, "control.db"), sqliteBytes())
+			}
+			return names, err
+		}
+		disposition, _ := classifierWithSource(t, source).Classify(t.Context(), root)
+		if disposition.Action != OfflineDispositionRequired || disposition.Classification != Ambiguous || !hasDetail(disposition, "TERMINAL_DIRECTORY_IDENTITY_CHANGED") {
+			t.Fatalf("post-enumeration insertion was admitted: %+v", disposition)
+		}
+	})
+
+	t.Run("nested-removal", func(t *testing.T) {
+		root := t.TempDir()
+		nested := filepath.Join(root, "old")
+		note := filepath.Join(nested, "control.db")
+		writeFile(t, note, sqliteBytes())
+		calls := 0
+		source := faultSource{base: osInspectionSource{}}
+		source.readPrefix = func(path string, identity fileIdentity, maximum int64) ([]byte, error) {
+			value, err := source.base.ReadPrefix(path, identity, maximum)
+			if err == nil && path == note && calls == 0 {
+				calls++
+				if removeErr := os.Remove(note); removeErr != nil {
+					t.Fatal(removeErr)
+				}
+			}
+			return value, err
+		}
+		disposition, _ := classifierWithSource(t, source).Classify(t.Context(), root)
+		if disposition.Action != OfflineDispositionRequired || disposition.Classification != Ambiguous || !hasDetail(disposition, "TERMINAL_DIRECTORY_IDENTITY_CHANGED") {
+			t.Fatalf("nested removal was admitted: %+v", disposition)
+		}
+	})
+
+	t.Run("nested-rename-to-symlink", func(t *testing.T) {
+		root := t.TempDir()
+		nested := filepath.Join(root, "docs")
+		writeFile(t, filepath.Join(nested, "note.md"), []byte("safe"))
+		lstats := 0
+		source := faultSource{base: osInspectionSource{}}
+		source.lstat = func(path string) (fileIdentity, error) {
+			if path == nested {
+				lstats++
+				if lstats == 2 {
+					moved := filepath.Join(root, "docs-moved")
+					if err := os.Rename(nested, moved); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(moved, nested); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			return source.base.Lstat(path)
+		}
+		disposition, _ := classifierWithSource(t, source).Classify(t.Context(), root)
+		if disposition.Action != OfflineDispositionRequired || disposition.Classification != Ambiguous || !hasDetail(disposition, "TERMINAL_DIRECTORY_IDENTITY_CHANGED") {
+			t.Fatalf("directory symlink substitution was admitted: %+v", disposition)
+		}
+	})
+}
+
+func TestEveryEntryTypeParticipatesInDispositionAndDigest(t *testing.T) {
+	fixedRoot := fileIdentity{Mode: fs.ModeDir | 0o700, Device: 1, Inode: 1, Links: 1, UID: 1, GID: 1}
+	emptyState := &inspectionState{rootIdentity: &fixedRoot}
+	withDirectory := &inspectionState{rootIdentity: &fixedRoot, entries: []fileObservation{{
+		RelativePath: "unknown-authority",
+		Identity:     fileIdentity{Mode: fs.ModeDir | 0o700, Device: 1, Inode: 2, Links: 1, UID: 1, GID: 1},
+	}}}
+	if digestRoot(emptyState, nil) == digestRoot(withDirectory, nil) {
+		t.Fatal("directory observation did not alter canonical root digest")
+	}
+	cases := []struct {
+		name   string
+		want   Classification
+		detail string
+	}{
+		{"IDENTITY", Malformed, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"control.db", Unsafe, "HISTORICAL_MARKER_WRONG_TYPE"},
+		{"unknown-authority", Ambiguous, "UNKNOWN_CONTROL_ROOT_DIRECTORY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, tc.name), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			disposition, _ := testClassifier(t).Classify(t.Context(), root)
+			if disposition.Classification != tc.want || disposition.Action != OfflineDispositionRequired || !hasDetail(disposition, tc.detail) {
+				t.Fatalf("wrong-type/unknown directory was admitted: %+v", disposition)
+			}
+		})
+	}
+}
+
+func TestGapDBV1CurrentAuthorityRequiresCompleteCoherence(t *testing.T) {
+	mutants := []struct {
+		name   string
+		mutate func(*testing.T, string)
+	}{
+		{"snapshot-header-only", func(t *testing.T, root string) {
+			writeFile(t, filepath.Join(root, snapshotFilename(0)), mustReadFile(t, filepath.Join(root, snapshotFilename(0)))[:64])
+		}},
+		{"manifest-snapshot-digest", func(t *testing.T, root string) {
+			mutateManifest(t, root, func(manifest *gapManifest) { manifest.SnapshotSHA256 = strings.Repeat("f", 64) })
+		}},
+		{"manifest-noncanonical", func(t *testing.T, root string) {
+			manifest := mustDecodeManifest(t, root)
+			payload := []byte(`{"generation":1,"database_id":"` + manifest.DatabaseID + `","snapshot_file":"` + manifest.SnapshotFile + `","snapshot_revision":0,"snapshot_sha256":"` + manifest.SnapshotSHA256 + `","wal_file":"` + manifest.WALFile + `","wal_start_revision":1}`)
+			writeFile(t, filepath.Join(root, gapManifestName), encodeManifestPayload(payload))
+		}},
+		{"snapshot-count", func(t *testing.T, root string) {
+			mutateSnapshotAndBindManifest(t, root, func(snapshot []byte) { binary.BigEndian.PutUint64(snapshot[36:44], 1) })
+		}},
+		{"snapshot-payload-size", func(t *testing.T, root string) {
+			mutateSnapshotAndBindManifest(t, root, func(snapshot []byte) { binary.BigEndian.PutUint64(snapshot[44:52], 1) })
+		}},
+		{"snapshot-trailer", func(t *testing.T, root string) {
+			path := filepath.Join(root, snapshotFilename(0))
+			snapshot := mustReadFile(t, path)
+			snapshot[len(snapshot)-1] ^= 0xff
+			writeFile(t, path, snapshot)
+		}},
+		{"wal-not-consecutive", func(t *testing.T, root string) {
+			mutateManifest(t, root, func(manifest *gapManifest) {
+				manifest.WALStartRevision = 2
+				manifest.WALFile = snapshotFilenameFor("wal-", 2)
+			})
+		}},
+	}
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeCurrentRoot(t, root, 0x81)
+			mutant.mutate(t, root)
+			disposition, _ := testClassifier(t).Classify(t.Context(), root)
+			if disposition.Classification == CurrentSupported || disposition.Action == Recover {
+				t.Fatalf("incoherent GapDB authority was admitted: %+v", disposition)
+			}
+		})
+	}
+
+	t.Run("snapshot-exceeds-evidence-budget", func(t *testing.T) {
+		root := t.TempDir()
+		writeCurrentRoot(t, root, 0x82)
+		writeLargeValidSnapshot(t, root, 9<<10)
+		disposition, _ := testClassifier(t).Classify(t.Context(), root)
+		if disposition.Classification != Ambiguous || disposition.Action != OfflineDispositionRequired || !hasDetail(disposition, "CURRENT_LAYOUT_EVIDENCE_INCOMPLETE") {
+			t.Fatalf("partially inspected snapshot was admitted: %+v", disposition)
+		}
+	})
+}
+
 func TestOfflineGateRefusesBeforeMutation(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "control.db"), sqliteBytes())
@@ -642,6 +805,132 @@ func TestFixtureAndMutantCensusIsClosed(t *testing.T) {
 	}
 }
 
+func TestCycleOneFixtureAndMutantEvidenceIsSourceBound(t *testing.T) {
+	type evidenceCase struct {
+		ID             string         `json:"id"`
+		Construction   string         `json:"construction"`
+		Classification Classification `json:"classification"`
+		Action         Action         `json:"action"`
+		Detail         string         `json:"detail"`
+	}
+	cases := []evidenceCase{
+		{"fixture-gapdb-v1", "current:v1:empty-snapshot:revision-0:wal-start-1", CurrentSupported, Recover, "CURRENT_AUTHORITY_COHERENT"},
+		{"fixture-identity-directory", "directory:IDENTITY", Malformed, OfflineDispositionRequired, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"fixture-control-db-directory", "directory:control.db", Unsafe, OfflineDispositionRequired, "HISTORICAL_MARKER_WRONG_TYPE"},
+		{"fixture-unknown-directory", "directory:unknown-authority", Ambiguous, OfflineDispositionRequired, "UNKNOWN_CONTROL_ROOT_DIRECTORY"},
+		{"mutant-root-post-list-insertion", "concurrent:root-insert:control.db:sqlite-header", Ambiguous, OfflineDispositionRequired, "TERMINAL_DIRECTORY_IDENTITY_CHANGED"},
+		{"mutant-snapshot-truncated", "current-mutant:snapshot:first-64-bytes", Malformed, OfflineDispositionRequired, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"mutant-manifest-digest", "current-mutant:manifest:snapshot-sha256=ff*32:recrc", Malformed, OfflineDispositionRequired, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"mutant-manifest-order", "current-mutant:manifest:generation-before-database-id:recrc", Malformed, OfflineDispositionRequired, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"mutant-snapshot-count", "current-mutant:snapshot:count=1:payload=0:redigest:rebind", Malformed, OfflineDispositionRequired, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"mutant-snapshot-payload", "current-mutant:snapshot:payload-bytes=1:redigest:rebind", Malformed, OfflineDispositionRequired, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"mutant-snapshot-trailer", "current-mutant:snapshot:trailer-last-byte-xor-ff", Malformed, OfflineDispositionRequired, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"mutant-wal-continuity", "current-mutant:manifest:wal-start=2:wal-file=2:recrc", Malformed, OfflineDispositionRequired, "CURRENT_LAYOUT_INCOMPLETE_OR_INVALID"},
+		{"mutant-evidence-budget", "current:v1:snapshot-record-value=9216:max-signature=8192", Ambiguous, OfflineDispositionRequired, "CURRENT_LAYOUT_EVIDENCE_INCOMPLETE"},
+	}
+	encoded, err := json.Marshal(cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantEvidenceSHA256 = "613fea9485fb5e68f241b0392d1953528c833b7102f2c9ada2c1fef8c9da09a8"
+	digest := sha256.Sum256(encoded)
+	gotDigest := hex.EncodeToString(digest[:])
+	if gotDigest != wantEvidenceSHA256 {
+		t.Fatalf("cycle-one evidence census changed: count=%d sha=%s", len(cases), gotDigest)
+	}
+	withoutOne, _ := json.Marshal(cases[:len(cases)-1])
+	if sha256.Sum256(withoutOne) == digest {
+		t.Fatal("fixture deletion did not alter evidence census")
+	}
+	substituted := slices.Clone(cases)
+	substituted[0].Construction = "current:v1:decoy"
+	substitutedBytes, _ := json.Marshal(substituted)
+	if sha256.Sum256(substitutedBytes) == digest {
+		t.Fatal("fixture construction substitution did not alter evidence census")
+	}
+	substituted = slices.Clone(cases)
+	substituted[0].Action = Initialize
+	substitutedBytes, _ = json.Marshal(substituted)
+	if sha256.Sum256(substitutedBytes) == digest {
+		t.Fatal("expected-outcome substitution did not alter evidence census")
+	}
+	for _, candidate := range cases {
+		t.Run(candidate.ID, func(t *testing.T) {
+			disposition := executeCycleOneEvidence(t, candidate.Construction)
+			if disposition.Classification != candidate.Classification || disposition.Action != candidate.Action || !hasDetail(disposition, candidate.Detail) {
+				t.Fatalf("construction %q produced %+v", candidate.Construction, disposition)
+			}
+		})
+	}
+}
+
+func executeCycleOneEvidence(t *testing.T, construction string) Disposition {
+	t.Helper()
+	root := t.TempDir()
+	writeCurrent := func() { writeCurrentRoot(t, root, 0x91) }
+	classifier := testClassifier(t)
+	switch construction {
+	case "current:v1:empty-snapshot:revision-0:wal-start-1":
+		writeCurrent()
+	case "directory:IDENTITY", "directory:control.db", "directory:unknown-authority":
+		if err := os.Mkdir(filepath.Join(root, strings.TrimPrefix(construction, "directory:")), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	case "concurrent:root-insert:control.db:sqlite-header":
+		calls := 0
+		source := faultSource{base: osInspectionSource{}}
+		source.readDirectory = func(path string, identity fileIdentity, limit int) ([]string, error) {
+			names, err := source.base.ReadDirectory(path, identity, limit)
+			if err == nil && path == root && calls == 0 {
+				calls++
+				writeFile(t, filepath.Join(root, "control.db"), sqliteBytes())
+			}
+			return names, err
+		}
+		classifier = classifierWithSource(t, source)
+	case "current-mutant:snapshot:first-64-bytes":
+		writeCurrent()
+		path := filepath.Join(root, snapshotFilename(0))
+		writeFile(t, path, mustReadFile(t, path)[:64])
+	case "current-mutant:manifest:snapshot-sha256=ff*32:recrc":
+		writeCurrent()
+		mutateManifest(t, root, func(manifest *gapManifest) { manifest.SnapshotSHA256 = strings.Repeat("f", 64) })
+	case "current-mutant:manifest:generation-before-database-id:recrc":
+		writeCurrent()
+		manifest := mustDecodeManifest(t, root)
+		payload := []byte(`{"generation":1,"database_id":"` + manifest.DatabaseID + `","snapshot_file":"` + manifest.SnapshotFile + `","snapshot_revision":0,"snapshot_sha256":"` + manifest.SnapshotSHA256 + `","wal_file":"` + manifest.WALFile + `","wal_start_revision":1}`)
+		writeFile(t, filepath.Join(root, gapManifestName), encodeManifestPayload(payload))
+	case "current-mutant:snapshot:count=1:payload=0:redigest:rebind":
+		writeCurrent()
+		mutateSnapshotAndBindManifest(t, root, func(snapshot []byte) { binary.BigEndian.PutUint64(snapshot[36:44], 1) })
+	case "current-mutant:snapshot:payload-bytes=1:redigest:rebind":
+		writeCurrent()
+		mutateSnapshotAndBindManifest(t, root, func(snapshot []byte) { binary.BigEndian.PutUint64(snapshot[44:52], 1) })
+	case "current-mutant:snapshot:trailer-last-byte-xor-ff":
+		writeCurrent()
+		path := filepath.Join(root, snapshotFilename(0))
+		snapshot := mustReadFile(t, path)
+		snapshot[len(snapshot)-1] ^= 0xff
+		writeFile(t, path, snapshot)
+	case "current-mutant:manifest:wal-start=2:wal-file=2:recrc":
+		writeCurrent()
+		mutateManifest(t, root, func(manifest *gapManifest) {
+			manifest.WALStartRevision = 2
+			manifest.WALFile = snapshotFilenameFor("wal-", 2)
+		})
+	case "current:v1:snapshot-record-value=9216:max-signature=8192":
+		writeCurrent()
+		writeLargeValidSnapshot(t, root, 9<<10)
+	default:
+		t.Fatalf("unbound evidence construction %q", construction)
+	}
+	disposition, err := classifier.Classify(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return disposition
+}
+
 func assertSourceAbsent(t *testing.T, source, forbidden string) {
 	t.Helper()
 	if strings.Contains(source, forbidden) {
@@ -756,6 +1045,107 @@ func writeCurrentRoot(t *testing.T, root string, seed byte) {
 	writeFile(t, filepath.Join(root, "CURRENT"), manifest)
 	writeFile(t, filepath.Join(root, snapshotName), snapshot)
 	writeFile(t, filepath.Join(root, walName), wal)
+}
+
+func snapshotFilename(revision uint64) string {
+	return snapshotFilenameFor("snapshot-", revision)
+}
+
+func snapshotFilenameFor(prefix string, revision uint64) string {
+	return fmt.Sprintf("%s%020d.gdb", prefix, revision)
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	value, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func mustDecodeManifest(t *testing.T, root string) gapManifest {
+	t.Helper()
+	manifest, err := decodeGapManifest(mustReadFile(t, filepath.Join(root, gapManifestName)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manifest
+}
+
+func encodeManifestPayload(payload []byte) []byte {
+	manifest := make([]byte, 16+len(payload)+4)
+	copy(manifest, "GAPCUR01")
+	binary.BigEndian.PutUint16(manifest[8:10], 1)
+	binary.BigEndian.PutUint32(manifest[12:16], uint32(len(payload)))
+	copy(manifest[16:], payload)
+	binary.BigEndian.PutUint32(manifest[len(manifest)-4:], crc32.Checksum(manifest[:len(manifest)-4], crc32.MakeTable(crc32.Castagnoli)))
+	return manifest
+}
+
+func mutateManifest(t *testing.T, root string, mutate func(*gapManifest)) {
+	t.Helper()
+	manifest := mustDecodeManifest(t, root)
+	mutate(&manifest)
+	payload, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, gapManifestName), encodeManifestPayload(payload))
+}
+
+func mutateSnapshotAndBindManifest(t *testing.T, root string, mutate func([]byte)) {
+	t.Helper()
+	path := filepath.Join(root, snapshotFilename(0))
+	snapshot := mustReadFile(t, path)
+	mutate(snapshot)
+	digest := sha256.Sum256(snapshot[:len(snapshot)-sha256.Size])
+	copy(snapshot[len(snapshot)-sha256.Size:], digest[:])
+	writeFile(t, path, snapshot)
+	mutateManifest(t, root, func(manifest *gapManifest) { manifest.SnapshotSHA256 = hex.EncodeToString(digest[:]) })
+}
+
+func writeLargeValidSnapshot(t *testing.T, root string, valueBytes int) {
+	t.Helper()
+	identity := mustReadFile(t, filepath.Join(root, gapIdentityName))
+	const itemHeader = 40
+	payloadBytes := itemHeader + 1 + valueBytes
+	snapshot := make([]byte, gapHeaderSize+payloadBytes+sha256.Size)
+	copy(snapshot, "GAPSNAP1")
+	binary.BigEndian.PutUint16(snapshot[8:10], gapVersion)
+	binary.BigEndian.PutUint16(snapshot[10:12], gapHeaderSize)
+	copy(snapshot[12:28], identity[12:28])
+	binary.BigEndian.PutUint64(snapshot[28:36], 1)
+	binary.BigEndian.PutUint64(snapshot[36:44], 1)
+	binary.BigEndian.PutUint64(snapshot[44:52], uint64(payloadBytes))
+	offset := gapHeaderSize
+	binary.BigEndian.PutUint32(snapshot[offset:offset+4], 1)
+	binary.BigEndian.PutUint32(snapshot[offset+4:offset+8], uint32(valueBytes))
+	binary.BigEndian.PutUint64(snapshot[offset+8:offset+16], 1)
+	offset += itemHeader
+	snapshot[offset] = 'a'
+	digest := sha256.Sum256(snapshot[:len(snapshot)-sha256.Size])
+	copy(snapshot[len(snapshot)-sha256.Size:], digest[:])
+	snapshotName := snapshotFilename(1)
+	writeFile(t, filepath.Join(root, snapshotName), snapshot)
+
+	walName := snapshotFilenameFor("wal-", 2)
+	wal := make([]byte, gapHeaderSize)
+	copy(wal, "GAPWAL01")
+	binary.BigEndian.PutUint16(wal[8:10], gapVersion)
+	binary.BigEndian.PutUint16(wal[10:12], gapHeaderSize)
+	copy(wal[12:28], identity[12:28])
+	binary.BigEndian.PutUint64(wal[28:36], 2)
+	binary.BigEndian.PutUint64(wal[36:44], 1)
+	binary.BigEndian.PutUint32(wal[60:64], crc32.Checksum(wal[:60], crc32.MakeTable(crc32.Castagnoli)))
+	writeFile(t, filepath.Join(root, walName), wal)
+	mutateManifest(t, root, func(manifest *gapManifest) {
+		manifest.SnapshotFile = snapshotName
+		manifest.SnapshotRevision = 1
+		manifest.SnapshotSHA256 = hex.EncodeToString(digest[:])
+		manifest.WALFile = walName
+		manifest.WALStartRevision = 2
+	})
 }
 func hasDetail(d Disposition, code string) bool {
 	for _, f := range d.Findings {
