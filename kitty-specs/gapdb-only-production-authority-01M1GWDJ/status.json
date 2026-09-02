@@ -71,7 +71,8 @@
         "Bounded post-approval persistence-projection repair committed at c3a0c6c5; all focused/repeated/race/architecture/compile/vet/static/format/diff gates pass.",
         "Terminal persistence review rejected c3a0c6c5: sealed records exceed frozen ordinary-value, raw-batch, head, and effect cardinality budgets. Structural projection invariants otherwise pass.",
         "Budget-closure repair committed at d9407b0d; sealed plan now closes over frozen record/cardinality/raw bounds and all regression gates pass.",
-        "Independent terminal budget review approved d9407b0d. Reproduced former 350165-byte ordinary event and 9341911-byte projection now refuse before registry access; max operation/aggregate values, 32 heads, 16 effects, 256 records, 256 KiB ordinary, 4 MiB checkpoint, conservative 1 KiB keys and 6 MiB raw closure pass. Structural projection and all prior WP02 invariants, repeated/race/architecture/helper/compile/vet/static/format/diff gates pass. Reviewer actor: wp02-budget-terminal-reviewer."
+        "Independent terminal budget review approved d9407b0d. Reproduced former 350165-byte ordinary event and 9341911-byte projection now refuse before registry access; max operation/aggregate values, 32 heads, 16 effects, 256 records, 256 KiB ordinary, 4 MiB checkpoint, conservative 1 KiB keys and 6 MiB raw closure pass. Structural projection and all prior WP02 invariants, repeated/race/architecture/helper/compile/vet/static/format/diff gates pass. Reviewer actor: wp02-budget-terminal-reviewer.",
+        "Post-approval defect 2: add foundation recovery contracts, semantic visibility, operation event reconstruction, registry/reducer identities, stateless Apply, durable acknowledgement coordinator, projection tracker, and rolling-prefix seal before WP04 can resume."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -81,15 +82,15 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T006": "done",
-        "T007": "done",
-        "T008": "done",
-        "T009": "done",
-        "T010": "done",
-        "T011": "done"
+        "T006": "planned",
+        "T007": "planned",
+        "T008": "planned",
+        "T009": "planned",
+        "T010": "planned",
+        "T011": "planned"
       }
     },
     "WP03": {
