@@ -328,34 +328,6 @@ func m2ClosedPolicyValue(module string) (Policy, error) {
 		return Policy{}, err
 	}
 	policy = cloneM2Policy(policy)
-	add := func(tierName TierName, patterns ...PackagePattern) error {
-		for index := range policy.Tiers {
-			if policy.Tiers[index].Name == tierName {
-				policy.Tiers[index].Packages = append(policy.Tiers[index].Packages, patterns...)
-				return nil
-			}
-		}
-		return fmt.Errorf("M2 policy missing tier %s", tierName)
-	}
-	if err := add(TierFoundation,
-		PackagePrefix(module+"/internal/controljournal/v2"),
-		PackagePrefix(module+"/internal/controlroot"),
-	); err != nil {
-		return Policy{}, err
-	}
-	for _, addition := range []struct {
-		tier     TierName
-		patterns []PackagePattern
-	}{
-		{TierAuthority, []PackagePattern{PackagePrefix(module + "/internal/acceptance")}},
-		{TierAdapter, []PackagePattern{PackagePrefix(module + "/internal/controlstore/gapdb"), PackagePrefix(module + "/internal/sidecar/gapdb")}},
-		{TierComposition, []PackagePattern{PackagePrefix(module + "/internal/productionruntime"), PackagePrefix(module + "/cmd/spec-kitty")}},
-		{TierQuality, []PackagePattern{PackagePrefix(module + "/cmd/spk-m2-qualification")}},
-	} {
-		if err := add(addition.tier, addition.patterns...); err != nil {
-			return Policy{}, err
-		}
-	}
 	for _, prefix := range m2SQLProviderPrefixes {
 		if !slices.Contains(policy.ForbiddenImportPrefixes, prefix) {
 			policy.ForbiddenImportPrefixes = append(policy.ForbiddenImportPrefixes, prefix)
