@@ -2,7 +2,7 @@
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_number": "",
   "mission_type": "software-dev",
-  "overall_verdict": "pending",
+  "overall_verdict": "pass",
   "criteria": [
     {
       "criterion_id": "FR-001",
@@ -438,10 +438,10 @@
       "criterion_id": "FR-044",
       "description": "One source-bound end-to-end trial executes the complete ordered M1 torture chamber and simultaneously proves authority uniqueness, W1 quarantine and fresh W3, epoch replacement, old-capsule refusal, restore/playback equality with zero I/O, actor-independent review, and serialized integration.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "WP10 review-cycle-2; RunID m1-crown-e05a5e4-20260901T224500Z; manifest sha256 397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309; independent verify pass at e05a5e46feb3e65ff42c4544c16678c440ef3818",
+      "pass_fail": "pass",
+      "verified_by": "codex-acceptance",
+      "verified_at": "2026-09-02T09:02:34.803046+00:00",
       "notes": "Run m1-crown-e05a5e4-20260901T224500Z passed as one combined evidence record; focused tests did not substitute for it."
     }
   ],
