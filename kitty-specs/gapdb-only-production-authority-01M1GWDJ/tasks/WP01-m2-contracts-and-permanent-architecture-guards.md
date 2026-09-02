@@ -32,8 +32,6 @@ create_intent:
 - internal/architecture/m2_dependency_guard_test.go
 - internal/architecture/m2_mutant_control_test.go
 - internal/architecture/m2_registry_test.go
-- internal/architecture/policy.go
-- internal/architecture/policy_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -41,6 +39,8 @@ owned_files:
 - internal/architecture/m2_dependency_guard_test.go
 - internal/architecture/m2_mutant_control_test.go
 - internal/architecture/m2_registry_test.go
+- internal/architecture/policy.go
+- internal/architecture/policy_test.go
 role: implementer
 tags: []
 tracker_refs: []
