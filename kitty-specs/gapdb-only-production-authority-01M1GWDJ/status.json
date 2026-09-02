@@ -28,7 +28,8 @@
       "last_transition_at": "2026-09-02T13:27:18.333363+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass."
+        "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
+        "Ready for review cycle 2: exact M1-tuple-bound legacy exemptions with frozen census; direct and transitive policy probes prevent legacy SQLite from masking later capability violations; independently digest-pinned typed eligibility contract rejects value, rename, composed-key, wrapper, and adapter mutations; pure-journal ambient I/O, exact GapDB callers, and tracker authority are closed with positive fixtures; event families validate exact owner/name/schema/reducer tuples; one frozen 50-case executable mutant table drives census and deletion controls. Evidence: go test ./internal/architecture -run 'TestM2' -count=3; go test -race ./internal/architecture -run 'TestM2' -count=1; go test ./internal/architecture -count=1; go vet ./internal/architecture; staticcheck ./internal/architecture; gofmt and git diff --check all pass. Ruff diff-scoped check: no changed Python files, exit 0."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
