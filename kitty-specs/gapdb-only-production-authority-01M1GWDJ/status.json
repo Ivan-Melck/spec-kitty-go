@@ -138,7 +138,8 @@
       "last_transition_at": "2026-09-02T19:46:31.381686+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Workspace allocation blocker resolved: approved WP02 and WP03 lane histories are now merged cleanly into lane-d; resuming the original implementation action."
+        "Workspace allocation blocker resolved: approved WP02 and WP03 lane histories are now merged cleanly into lane-d; resuming the original implementation action.",
+        "Dependency contract blocker: WP04 cannot legally express revision-pinned restore or sealed acknowledged checkpoints until WP02/WP03 expose the provider-neutral capabilities recorded in dependency-contract-blocker-1.md. No WP04 files changed."
       ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
