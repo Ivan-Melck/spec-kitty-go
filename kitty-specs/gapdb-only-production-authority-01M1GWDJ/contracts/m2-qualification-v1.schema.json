@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.dev/contracts/m2-qualification-v1.schema.json",
+  "title": "Spec Kitty M2 Qualification Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version","program_id","mission_id","run_id","source","m1_admission","census","performance","artifacts","verdict"],
+  "properties": {
+    "schema_version":{"const":1},
+    "program_id":{"const":"production-runtime"},
+    "mission_id":{"const":"M2"},
+    "run_id":{"type":"string","minLength":1,"maxLength":128},
+    "source":{"$ref":"#/$defs/source"},
+    "m1_admission":{"$ref":"#/$defs/m1"},
+    "census":{"$ref":"#/$defs/census"},
+    "performance":{"$ref":"#/$defs/performance"},
+    "artifacts":{"type":"array","minItems":1,"maxItems":2048,"items":{"$ref":"#/$defs/artifact"}},
+    "verdict":{"enum":["pass","fail","incomplete","non_admissible"]}
+  },
+  "$defs": {
+    "digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "source":{"type":"object","additionalProperties":false,"required":["commit","tree","go_version","go_mod_sha256","go_sum_sha256"],"properties":{"commit":{"type":"string","pattern":"^[0-9a-f]{40}$"},"tree":{"type":"string","pattern":"^[0-9a-f]{40}$"},"go_version":{"type":"string","minLength":1,"maxLength":64},"go_mod_sha256":{"$ref":"#/$defs/digest"},"go_sum_sha256":{"$ref":"#/$defs/digest"}}},
+    "m1":{"type":"object","additionalProperties":false,"required":["adoption_sha256","evidence_manifest_sha256","admitted_tuple_sha256","sidecar_sha256"],"properties":{"adoption_sha256":{"$ref":"#/$defs/digest"},"evidence_manifest_sha256":{"$ref":"#/$defs/digest"},"admitted_tuple_sha256":{"$ref":"#/$defs/digest"},"sidecar_sha256":{"$ref":"#/$defs/digest"}}},
+    "census":{"type":"object","additionalProperties":false,"required":["authority_families_total","authority_families_passed","behaviors_total","behaviors_passed","fault_cuts_total","fault_cuts_passed","mutants_total","mutants_killed","sqlite_edges"],"properties":{"authority_families_total":{"type":"integer","minimum":1},"authority_families_passed":{"type":"integer","minimum":0},"behaviors_total":{"type":"integer","minimum":1},"behaviors_passed":{"type":"integer","minimum":0},"fault_cuts_total":{"type":"integer","minimum":1},"fault_cuts_passed":{"type":"integer","minimum":0},"mutants_total":{"type":"integer","minimum":1},"mutants_killed":{"type":"integer","minimum":0},"sqlite_edges":{"type":"integer","minimum":0,"maximum":0}}},
+    "performance":{"type":"object","additionalProperties":false,"required":["recovery_operations","recovery_runs","recovery_p95_ms","query_observations","query_p95_ms","mutation_observations","mutation_p95_ms"],"properties":{"recovery_operations":{"type":"integer","minimum":10000},"recovery_runs":{"type":"integer","minimum":30},"recovery_p95_ms":{"type":"number","minimum":0,"maximum":2000},"query_observations":{"type":"integer","minimum":10000},"query_p95_ms":{"type":"number","minimum":0,"maximum":2},"mutation_observations":{"type":"integer","minimum":10000},"mutation_p95_ms":{"type":"number","minimum":0,"maximum":8}}},
+    "artifact":{"type":"object","additionalProperties":false,"required":["path","sha256","kind"],"properties":{"path":{"type":"string","minLength":1,"maxLength":1024},"sha256":{"$ref":"#/$defs/digest"},"kind":{"type":"string","pattern":"^[a-z][a-z0-9_.-]{0,63}$"}}}
+  }
+}
