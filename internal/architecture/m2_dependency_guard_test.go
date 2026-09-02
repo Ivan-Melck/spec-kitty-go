@@ -25,10 +25,7 @@ var m2SQLProviderPrefixes = []string{
 	"zombiezen.com/go/sqlite",
 }
 
-var m2GapDBPrivatePrefixes = []string{
-	"github.com/spec-kitty/gapdb/internal",
-	"github.com/spec-kitty/gapdb/server",
-}
+var m2GapDBPrivateSegments = []string{"internal", "private", "private-server", "server", "server-private"}
 
 var m2PureJournalStandardLibrary = []PackagePattern{
 	ExactPackage("bytes"),
@@ -180,16 +177,26 @@ func TestM2DependencyPolicyRejectsForbiddenEdges(t *testing.T) {
 			}
 		})
 	}
-	for _, prefix := range m2GapDBPrivatePrefixes {
-		t.Run("gapdb-private-"+strings.NewReplacer("/", "-", ".", "-").Replace(prefix), func(t *testing.T) {
+	for _, target := range []string{
+		"github.com/spec-kitty/gapdb/internal/authority",
+		"github.com/spec-kitty/gapdb/server/authority",
+		"github.com/spec-kitty/gapdb/gapdb/internal/authority",
+		"github.com/spec-kitty/gapdb/gapdb/private-server/authority",
+	} {
+		t.Run("gapdb-private-"+strings.NewReplacer("/", "-", ".", "-").Replace(target), func(t *testing.T) {
 			source := m2ModulePath + "/internal/controlstore/gapdb"
-			graph := fixtureGraph([]string{source}, ImportEdge{SourcePackage: source, TargetPackage: prefix + "/authority", Kind: ImportExternal})
+			graph := fixtureGraph([]string{source}, ImportEdge{SourcePackage: source, TargetPackage: target, Kind: ImportExternal})
 			graph.ModulePath = m2ModulePath
 			violations := m2EvaluateClosedGraph(policy, graph)
 			if len(violations) == 0 || violations[0].Rule != RuleDeferredSurface {
-				t.Fatalf("evidence=GAPDB-PRIVATE-DENIAL provider=%s observed=%v expected=deferred-surface", prefix, violations)
+				t.Fatalf("evidence=GAPDB-PRIVATE-DENIAL provider=%s observed=%v expected=deferred-surface", target, violations)
 			}
 		})
+	}
+	for _, target := range []string{"github.com/spec-kitty/gapdb/gapdb", "github.com/spec-kitty/gapdb/gapdbapi", "github.com/spec-kitty/gapdb/gapdb/internalized", "github.com/spec-kitty/gapdb/gapdb/serverless"} {
+		if m2IsGapDBPrivatePath(target) {
+			t.Fatalf("evidence=GAPDB-PRIVATE-DENIAL public-or-lookalike=%s observed=private", target)
+		}
 	}
 }
 
@@ -308,28 +315,47 @@ func TestM2PolicyDeletionMutantsFailClosed(t *testing.T) {
 
 func m2ClosedPolicy(t *testing.T, module string) Policy {
 	t.Helper()
-	policy, err := DefaultPolicy(module)
+	policy, err := m2ClosedPolicyValue(module)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return policy
+}
+
+func m2ClosedPolicyValue(module string) (Policy, error) {
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		return Policy{}, err
+	}
 	policy = cloneM2Policy(policy)
-	add := func(tierName TierName, patterns ...PackagePattern) {
+	add := func(tierName TierName, patterns ...PackagePattern) error {
 		for index := range policy.Tiers {
 			if policy.Tiers[index].Name == tierName {
 				policy.Tiers[index].Packages = append(policy.Tiers[index].Packages, patterns...)
-				return
+				return nil
 			}
 		}
-		t.Fatalf("M2 policy missing tier %s", tierName)
+		return fmt.Errorf("M2 policy missing tier %s", tierName)
 	}
-	add(TierFoundation,
+	if err := add(TierFoundation,
 		PackagePrefix(module+"/internal/controljournal/v2"),
 		PackagePrefix(module+"/internal/controlroot"),
-	)
-	add(TierAuthority, PackagePrefix(module+"/internal/acceptance"))
-	add(TierAdapter, PackagePrefix(module+"/internal/controlstore/gapdb"), PackagePrefix(module+"/internal/sidecar/gapdb"))
-	add(TierComposition, PackagePrefix(module+"/internal/productionruntime"), PackagePrefix(module+"/cmd/spec-kitty"))
-	add(TierQuality, PackagePrefix(module+"/cmd/spk-m2-qualification"))
+	); err != nil {
+		return Policy{}, err
+	}
+	for _, addition := range []struct {
+		tier     TierName
+		patterns []PackagePattern
+	}{
+		{TierAuthority, []PackagePattern{PackagePrefix(module + "/internal/acceptance")}},
+		{TierAdapter, []PackagePattern{PackagePrefix(module + "/internal/controlstore/gapdb"), PackagePrefix(module + "/internal/sidecar/gapdb")}},
+		{TierComposition, []PackagePattern{PackagePrefix(module + "/internal/productionruntime"), PackagePrefix(module + "/cmd/spec-kitty")}},
+		{TierQuality, []PackagePattern{PackagePrefix(module + "/cmd/spk-m2-qualification")}},
+	} {
+		if err := add(addition.tier, addition.patterns...); err != nil {
+			return Policy{}, err
+		}
+	}
 	for _, prefix := range m2SQLProviderPrefixes {
 		if !slices.Contains(policy.ForbiddenImportPrefixes, prefix) {
 			policy.ForbiddenImportPrefixes = append(policy.ForbiddenImportPrefixes, prefix)
@@ -341,9 +367,9 @@ func m2ClosedPolicy(t *testing.T, module string) Policy {
 		}
 	}
 	if err := validateM2PolicyShape(policy); err != nil {
-		t.Fatal(err)
+		return Policy{}, err
 	}
-	return policy
+	return policy, nil
 }
 
 func validateM2PolicyShape(policy Policy) error {
@@ -383,7 +409,7 @@ func m2EvaluateClosedGraph(policy Policy, graph Graph) Violations {
 		if matchesPrefix(edge.TargetPackage, m2SQLProviderPrefixes) {
 			violations = appendM2Violation(violations, violationForEdge(RuleDeferredSurface, edge, sourceTier.Name, ""))
 		}
-		if matchesPrefix(edge.TargetPackage, m2GapDBPrivatePrefixes) {
+		if m2IsGapDBPrivatePath(edge.TargetPackage) {
 			violations = appendM2Violation(violations, violationForEdge(RuleDeferredSurface, edge, sourceTier.Name, ""))
 		} else if matchesPrefix(edge.TargetPackage, []string{"github.com/spec-kitty/gapdb"}) && !forbidden(edge.SourcePackage, m2ExactGapDBCallers) {
 			violations = appendM2Violation(violations, violationForEdge(RuleExternalDirection, edge, sourceTier.Name, ""))
@@ -398,6 +424,19 @@ func m2EvaluateClosedGraph(policy Policy, graph Graph) Violations {
 	}
 	slices.SortFunc(violations, func(left, right Violation) int { return strings.Compare(left.Error(), right.Error()) })
 	return violations
+}
+
+func m2IsGapDBPrivatePath(target string) bool {
+	const root = "github.com/spec-kitty/gapdb"
+	if target != root && !strings.HasPrefix(target, root+"/") {
+		return false
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(target, root+"/"), "/") {
+		if slices.Contains(m2GapDBPrivateSegments, segment) {
+			return true
+		}
+	}
+	return false
 }
 
 func m2EvaluateIncrementalRepository(policy Policy, graph Graph) Violations {

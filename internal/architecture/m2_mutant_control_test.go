@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 79
-	m2MutantCensusSHA256 = "3da13e3ff4126f55f948109d9769789e21d3e605101b989a2f19514ddcd33dd9"
+	m2MutantCensusCount  = 88
+	m2MutantCensusSHA256 = "6663c7b49a50314e7f152774a25e0a6b8ab95f22486e43d8f465001a2d913bad"
 )
 
 const (
@@ -111,6 +111,55 @@ func TestM2MutantCensusRejectsDeletionAndSubstitution(t *testing.T) {
 	}
 }
 
+func TestM2ArbiterFixtureBindingProbe(t *testing.T) {
+	cases := m2ExecutableMutants()
+	find := func(validator, fixture string) m2MutantCase {
+		t.Helper()
+		for _, candidate := range cases {
+			if candidate.Validator == validator && candidate.Fixture == fixture {
+				return candidate
+			}
+		}
+		t.Fatalf("evidence=M2-MUTANT-CENSUS fixture=%s/%s observed=missing", validator, fixture)
+		return m2MutantCase{}
+	}
+	for _, swap := range []struct {
+		validator string
+		from      string
+		to        string
+	}{
+		{m2ValidatorPolicy, "CLASS", "GAPDB-CLASS"},
+		{m2ValidatorEvents, "RENAMED", "WRONG-OWNER"},
+	} {
+		candidate := find(swap.validator, swap.from)
+		candidate.Fixture = swap.to
+		if err := validateM2ExecutableMutants(replaceM2Mutant(cases, candidate.ID, candidate)); err == nil {
+			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s swap=%s->%s observed=accepted", swap.validator, swap.from, swap.to)
+		}
+		if observed := observeM2Mutant(t, candidate); observed == candidate.Expected {
+			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s swap=%s->%s observed=false-green", swap.validator, swap.from, swap.to)
+		}
+	}
+	for _, validator := range []string{m2ValidatorPolicy, m2ValidatorEvents, m2ValidatorLegacy} {
+		candidate := find(validator, map[string]string{m2ValidatorPolicy: "CLASS", m2ValidatorEvents: "RENAMED", m2ValidatorLegacy: "WORKGRAPH-SQLITE"}[validator])
+		candidate.Fixture = "NOOP"
+		if m2ExpectedFixtureDigest(candidate) != "" || observeM2Mutant(t, candidate) == candidate.Expected {
+			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s noop observed=accepted", validator)
+		}
+	}
+}
+
+func replaceM2Mutant(cases []m2MutantCase, id string, replacement m2MutantCase) []m2MutantCase {
+	result := slices.Clone(cases)
+	for index := range result {
+		if result[index].ID == id {
+			result[index] = replacement
+			return result
+		}
+	}
+	return result
+}
+
 func TestM2SemanticPositiveControls(t *testing.T) {
 	root := t.TempDir()
 	writeGoFixture(t, root, "go.mod", "module example.test/positive\n\ngo 1.26\n")
@@ -140,14 +189,14 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, fixture := range []string{"AMBIGUOUS", "GLOBAL-HEAD", "MISSION-OPERATION", "MIXED-V1", "RAW", "VARIABLE-VERSION", "SCOPE", "MUTABILITY", "SUFFIX", "BUDGET"} {
 		cases = append(cases, m2Case("M-KEY-"+fixture, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", fixture, ""))
 	}
-	for _, fixture := range []string{"ADAPTER", "DECOY-FIRST", "DECOY-LAST", "MULTI-BROKEN", "RUNTIME", "SPLIT-FILE", "UNCLASSIFIED", "VALUE", "WRAPPER"} {
+	for _, fixture := range []string{"ADAPTER", "DECOY-FIRST", "DECOY-LAST", "MULTI-BROKEN", "RUNTIME", "SAME-FILE-FIRST", "SAME-FILE-LAST", "SPLIT-FILE", "UNCLASSIFIED", "VALUE", "WRAPPER"} {
 		cases = append(cases, m2Case("M-ELIGIBILITY-"+fixture, m2ValidatorEligibility, fixture, "ELIGIBILITY_CONTRACT", fixture, ""))
 	}
 	for _, target := range []string{"crypto/rand", "math/rand", "net", "os", "os/exec", "path/filepath", "time"} {
 		cases = append(cases, m2DependencyCase("M-PURE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "PURE", m2ModulePath+"/internal/controljournal/v2", target, ImportStandardLibrary, string(RuleDeferredSurface)))
 	}
 	cases = append(cases, m2DependencyCase("M-GAPDB-SCENARIO-CALLER", "GAPDB-SCENARIO", m2ModulePath+"/internal/scenario", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, string(RuleExternalDirection)))
-	for _, target := range []string{"github.com/spec-kitty/gapdb/internal/server", "github.com/spec-kitty/gapdb/server"} {
+	for _, target := range []string{"github.com/spec-kitty/gapdb/internal/server", "github.com/spec-kitty/gapdb/server", "github.com/spec-kitty/gapdb/gapdb/internal/server", "github.com/spec-kitty/gapdb/gapdb/private-server"} {
 		cases = append(cases, m2DependencyCase("M-GAPDB-PRIVATE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "GAPDB-PRIVATE", m2ModulePath+"/internal/controlstore/gapdb", target, ImportExternal, string(RuleDeferredSurface)))
 	}
 	for _, target := range []string{"acceptance", "artifact", "execution", "gitrepo", "handoff", "integration", "mission", "review", "workspace"} {
@@ -157,7 +206,7 @@ func m2ExecutableMutants() []m2MutantCase {
 		cases = append(cases, m2Case("M-EVENT-"+fixture, m2ValidatorEvents, fixture, "EVENT_REGISTRY", fixture, ""))
 	}
 	cases = append(cases, m2Case("M-LEGACY-CANNOT-HIDE-WORKGRAPH", m2ValidatorLegacy, "WORKGRAPH-SQLITE", string(RuleDeferredSurface), m2ModulePath+"/internal/workgraph", "modernc.org/sqlite"))
-	for _, fixture := range []string{"ALIASES", "BUILD-VARIANT", "EMBEDDING", "FUNCTIONS", "GENERATED", "GENERICS", "INTERFACE", "WRAPPER"} {
+	for _, fixture := range []string{"ALIASES", "BUILD-VARIANT", "EMBEDDING", "FUNCTIONS", "GENERATED", "GENERIC-RECORD", "GENERICS", "INTERFACE", "RECORD-POINTER", "RECORD-VALUE", "SPLIT-METHODS", "STRUCT-FIELDS", "WRAPPER"} {
 		cases = append(cases, m2Case("M-RAW-"+fixture, m2ValidatorRawStore, fixture, "RAW_KEY_GOD_STORE", fixture, ""))
 	}
 	return cases
@@ -242,21 +291,8 @@ func observeM2ReachMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservat
 }
 
 func observeM2PolicyMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
-	policy := m2ClosedPolicy(t, m2ModulePath)
-	switch mutant.Fixture {
-	case "CLASS":
-		removeM2Pattern(&policy, m2ModulePath+"/internal/controljournal/v2")
-	case "DIRECTION":
-		for index := range policy.Tiers {
-			if policy.Tiers[index].Name == TierAuthority {
-				policy.Tiers[index].AllowedLocalTargets = append(policy.Tiers[index].AllowedLocalTargets, TierAdapter)
-			}
-		}
-	case "GAPDB-CLASS":
-		removeM2Pattern(&policy, m2ModulePath+"/internal/controlstore/gapdb")
-	case "PROVIDER":
-		policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
-	default:
+	policy, ok := m2PolicyFixture(mutant.Fixture)
+	if !ok {
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
 	}
 	if validateM2PolicyShape(policy) != nil {
@@ -324,21 +360,8 @@ func observeM2DependencyMutant(t *testing.T, mutant m2MutantCase) m2ViolationObs
 }
 
 func observeM2EventMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
-	registry := m2EventRegistry{SchemaVersion: 2, RegistryID: "spec-kitty.authority-event-families.v2", PublicationRule: "one_transition_event_per_aggregate_per_publication", Ordering: []string{"gapdb_record_revision", "event_index", "event_id"}, Families: m2ExpectedEventFamilies()}
-	switch mutant.Fixture {
-	case "MISSING":
-		registry.Families = registry.Families[1:]
-	case "REDUCER-VERSION":
-		registry.Families[0].Reducer = 2
-	case "RENAMED":
-		registry.Families[0].Family = "runtime"
-	case "UNEXPECTED":
-		registry.Families[len(registry.Families)-1].Family = "unexpected"
-	case "VERSION":
-		registry.Families[0].EventSchema = 2
-	case "WRONG-OWNER":
-		registry.Families[0].Owner = "internal/mission"
-	default:
+	registry, ok := m2EventFixture(mutant.Fixture)
+	if !ok {
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
 	}
 	payload, err := json.Marshal(registry)
@@ -352,9 +375,11 @@ func observeM2EventMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservat
 }
 
 func observeM2LegacyMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	if mutant.Fixture != "WORKGRAPH-SQLITE" {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
 	policy := m2ClosedPolicy(t, m2ModulePath)
-	graph := fixtureGraph([]string{m2ModulePath + "/internal/controlstore/sqlite", m2ModulePath + "/internal/workgraph"}, ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/sqlite", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal}, ImportEdge{SourcePackage: m2ModulePath + "/internal/workgraph", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal})
-	graph.ModulePath = m2ModulePath
+	graph := m2LegacyFixture()
 	for _, violation := range m2EvaluateIncrementalRepository(policy, graph) {
 		if violation.SourcePackage == m2ModulePath+"/internal/workgraph" && violation.TargetPackage == "modernc.org/sqlite" {
 			return m2ViolationObservation{Validator: mutant.Validator, Code: string(violation.Rule), Source: violation.SourcePackage, Target: violation.TargetPackage}
@@ -427,8 +452,23 @@ func m2FixtureDigest(validator, fixture string) string {
 		material = m2SQLImportSource(fixture)
 	case m2ValidatorReach:
 		material = m2ReachFixture(fixture)
-	case m2ValidatorPolicy, m2ValidatorEvents, m2ValidatorLegacy:
-		material = fixture
+	case m2ValidatorPolicy:
+		value, ok := m2PolicyFixture(fixture)
+		if !ok {
+			return ""
+		}
+		material = value
+	case m2ValidatorEvents:
+		value, ok := m2EventFixture(fixture)
+		if !ok {
+			return ""
+		}
+		material = value
+	case m2ValidatorLegacy:
+		if fixture != "WORKGRAPH-SQLITE" {
+			return ""
+		}
+		material = m2LegacyFixture()
 	case m2ValidatorKeyspace:
 		registry := slices.Clone(m2KeyspaceRegistry())
 		if strings.HasPrefix(fixture, "PATH-") {
@@ -449,6 +489,61 @@ func m2FixtureDigest(validator, fixture string) string {
 		return ""
 	}
 	return m2DigestJSON(material)
+}
+
+func m2PolicyFixture(fixture string) (Policy, bool) {
+	policy, err := m2ClosedPolicyValue(m2ModulePath)
+	if err != nil {
+		return Policy{}, false
+	}
+	switch fixture {
+	case "CLASS":
+		removeM2Pattern(&policy, m2ModulePath+"/internal/controljournal/v2")
+	case "DIRECTION":
+		for index := range policy.Tiers {
+			if policy.Tiers[index].Name == TierAuthority {
+				policy.Tiers[index].AllowedLocalTargets = append(policy.Tiers[index].AllowedLocalTargets, TierAdapter)
+			}
+		}
+	case "GAPDB-CLASS":
+		removeM2Pattern(&policy, m2ModulePath+"/internal/controlstore/gapdb")
+	case "PROVIDER":
+		policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
+	default:
+		return Policy{}, false
+	}
+	return policy, true
+}
+
+func m2EventFixture(fixture string) (m2EventRegistry, bool) {
+	registry := m2EventRegistry{SchemaVersion: 2, RegistryID: "spec-kitty.authority-event-families.v2", PublicationRule: "one_transition_event_per_aggregate_per_publication", Ordering: []string{"gapdb_record_revision", "event_index", "event_id"}, Families: m2ExpectedEventFamilies()}
+	registry.Ordering = slices.Clone(registry.Ordering)
+	registry.Families = slices.Clone(registry.Families)
+	switch fixture {
+	case "MISSING":
+		registry.Families = registry.Families[1:]
+	case "REDUCER-VERSION":
+		registry.Families[0].Reducer = 2
+	case "RENAMED":
+		registry.Families[0].Family = "runtime"
+	case "UNEXPECTED":
+		registry.Families[len(registry.Families)-1].Family = "unexpected"
+	case "VERSION":
+		registry.Families[0].EventSchema = 2
+	case "WRONG-OWNER":
+		registry.Families[0].Owner = "internal/mission"
+	default:
+		return m2EventRegistry{}, false
+	}
+	return registry, true
+}
+
+func m2LegacyFixture() Graph {
+	graph := fixtureGraph([]string{m2ModulePath + "/internal/controlstore/sqlite", m2ModulePath + "/internal/workgraph"},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/sqlite", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/workgraph", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal})
+	graph.ModulePath = m2ModulePath
+	return graph
 }
 
 func m2DigestJSON(value any) string {
@@ -567,6 +662,10 @@ func m2EligibilityFixture(fixture string) map[string]string {
 		return map[string]string{"internal/workgraph/a.go": m2EligibilitySource("workgraph", "exact"), "internal/workgraph/z.go": m2EligibilitySource("workgraph", "wrong")}
 	case "RUNTIME":
 		return map[string]string{"internal/workgraph/e.go": m2EligibilitySource("workgraph", "runtime")}
+	case "SAME-FILE-FIRST":
+		return map[string]string{"internal/workgraph/e.go": m2EligibilityPairedSource("workgraph", true, false)}
+	case "SAME-FILE-LAST":
+		return map[string]string{"internal/workgraph/e.go": m2EligibilityPairedSource("workgraph", false, true)}
 	case "SPLIT-FILE":
 		return map[string]string{"internal/workgraph/evidence.go": m2EligibilityDecoy("workgraph"), "internal/workgraph/codec.go": "package workgraph\nfunc Compose(missionID, shardID string) string { return decoyTemplate }\n"}
 	case "UNCLASSIFIED":
@@ -594,8 +693,18 @@ func m2RawFixture(fixture string) map[string]string {
 		return map[string]string{"internal/mission/generated.go": "// Code generated by guard-test. DO NOT EDIT.\npackage mission\ntype Store interface { Read(string)([]byte,error); Write(string,[]byte)error }\n"}
 	case "GENERICS":
 		return map[string]string{"internal/mission/store.go": "package mission\ntype Store[K ~string, V ~[]byte] interface { Read(K)(V,error); Write(K,V)error }\n"}
+	case "GENERIC-RECORD":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Store[K ~string, R any] interface { Get(K)(R,error); Put(K,R)error }\n"}
 	case "INTERFACE":
 		return map[string]string{"internal/mission/store.go": "package mission\ntype Store interface { Read(string)([]byte,error); Write(string,[]byte)error }\n"}
+	case "RECORD-POINTER":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Record struct{ N int }; type Store interface { Get(string)(*Record,error); Put(string,*Record)error }\n"}
+	case "RECORD-VALUE":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Record struct{ N int }; type Store interface { Get(string)(Record,error); Put(string,Record)error }\n"}
+	case "SPLIT-METHODS":
+		return map[string]string{"internal/mission/read.go": "package mission\ntype Record struct{ N int }; type Store struct{}; func(Store)Get(string)(Record,error){return Record{},nil}\n", "internal/mission/write.go": "package mission\nfunc(*Store)Put(string,Record)error{return nil}\n"}
+	case "STRUCT-FIELDS":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Record struct{ N int }; type Store struct { Get func(string)(Record,error); Put func(string,Record)error }\n"}
 	case "WRAPPER":
 		return map[string]string{"internal/mission/store.go": "package mission\ntype Client struct{}\nfunc(Client)Read(string)([]byte,error){return nil,nil}\nfunc(Client)Write(string,[]byte)error{return nil}\ntype Wrapper struct{Client}\n"}
 	default:
