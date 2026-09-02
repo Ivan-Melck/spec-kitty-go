@@ -1,7 +1,7 @@
 {
-  "event_count": 17,
-  "last_event_id": "01M1H0HDQAY35H2AR7691DS0ES",
-  "materialized_at": "2026-09-02T12:12:13.418890+00:00",
+  "event_count": 19,
+  "last_event_id": "01M1H0VH2HTVZXB3FMTS2D3G6Q",
+  "materialized_at": "2026-09-02T12:17:44.528851+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,17 +12,20 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
-    "planned": 17
+    "planned": 16
   },
   "work_packages": {
     "WP01": {
-      "actor": "finalize-tasks",
+      "actor": "codex",
+      "agent": "codex",
       "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0FNP6J0AT00179ZXDG0BR",
-      "last_transition_at": "2026-09-02T12:11:16.038089+00:00"
+      "lane": "in_progress",
+      "last_event_id": "01M1H0VH2HTVZXB3FMTS2D3G6Q",
+      "last_transition_at": "2026-09-02T12:17:44.528851+00:00",
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
     },
     "WP02": {
       "actor": "finalize-tasks",
