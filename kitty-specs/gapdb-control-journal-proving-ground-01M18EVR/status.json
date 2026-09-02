@@ -1,7 +1,7 @@
 {
-  "event_count": 221,
-  "last_event_id": "01M1FGQMRFG3M8G6BY9V02WZBH",
-  "materialized_at": "2026-09-01T22:16:45.575080+00:00",
+  "event_count": 223,
+  "last_event_id": "01M1GMSEF37774114FPYR5JKYD",
+  "materialized_at": "2026-09-02T08:46:53.411815+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 1,
-    "in_review": 0,
+    "in_progress": 0,
+    "in_review": 1,
     "planned": 0
   },
   "work_packages": {
@@ -339,15 +339,15 @@
       }
     },
     "WP10": {
-      "actor": "codex",
-      "agent": "codex-wp10-reviewer-final",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
+      "actor": "codex-wp10-review-cycle2",
+      "agent": "codex-wp10-review-cycle2",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
       "assignee": "codex-wp10-implementer",
       "force_count": 2,
-      "lane": "in_progress",
-      "last_event_id": "01M1FGQMRFG3M8G6BY9V02WZBH",
-      "last_transition_at": "2026-09-01T22:16:45.575080+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1GMSEF37774114FPYR5JKYD",
+      "last_transition_at": "2026-09-02T08:46:53.411815+00:00",
       "model": "__resolved_model_absent__",
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -357,16 +357,16 @@
         "reviewer": "codex-wp10-reviewer-final",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27",
       "subtasks": {
-        "T052": "planned",
-        "T053": "planned",
-        "T054": "planned",
-        "T055": "planned",
-        "T056": "planned",
-        "T057": "planned"
+        "T052": "done",
+        "T053": "done",
+        "T054": "done",
+        "T055": "done",
+        "T056": "done",
+        "T057": "done"
       }
     }
   }
