@@ -37,7 +37,8 @@
         "Post-approval defect 2 requires the ratified global head keyspace, operation event tuple, recovery seam, and reachability mutants to become executable contracts before WP02/WP03 repair.",
         "Post-approval defect-2 guard repair committed at 4919caf6; exact key/tuple/digest contracts, typed recovery ownership, dependency denials, and 102 executed mutants pass all focused/race/architecture/helper/compile/vet/static/format gates.",
         "Cycle 7 rejects callable-name-gated ownership inspection; structurally detect renamed adapter-local recovery/publication side seams and bind the exact Fetch/Parcel mutant.",
-        "Cycle-7 repair be233e38 structurally closes renamed Fetch/Parcel side seams; mutant census 103 and all focused/race/architecture/helper/compile/vet/static/format gates pass."
+        "Cycle-7 repair be233e38 structurally closes renamed Fetch/Parcel side seams; mutant census 103 and all focused/race/architecture/helper/compile/vet/static/format gates pass.",
+        "Cycle 8 rejects exported named/alias function recovery side seams; inspect TypeName object signatures and bind both exact mutants."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -47,15 +48,15 @@
         "reviewer": "wp01-cycle8-reviewer",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned"
       }
     },
     "WP02": {
