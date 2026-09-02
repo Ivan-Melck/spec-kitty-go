@@ -418,10 +418,10 @@
       "criterion_id": "FR-042",
       "description": "The technical signer accepts only complete frozen evidence for the exact tested tuple after every machine gate and the combined FR-044 trial pass.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "WP10 review-cycle-2; RunID m1-crown-e05a5e4-20260901T224500Z; manifest sha256 397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309; independent verify pass at e05a5e46feb3e65ff42c4544c16678c440ef3818",
+      "pass_fail": "pass",
+      "verified_by": "codex-acceptance",
+      "verified_at": "2026-09-02T09:02:27.264079+00:00",
       "notes": "Independent verifier reproduced the exact manifest SHA and technical-pass signature."
     },
     {
