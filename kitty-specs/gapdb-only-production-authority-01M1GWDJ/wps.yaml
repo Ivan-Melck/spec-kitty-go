@@ -7,6 +7,8 @@ work_packages:
       - "internal/architecture/m2_dependency_guard_test.go"
       - "internal/architecture/m2_mutant_control_test.go"
       - "internal/architecture/m2_registry_test.go"
+      - "internal/architecture/policy.go"
+      - "internal/architecture/policy_test.go"
     create_intent:
       - "internal/architecture/m2_contracts_test.go"
       - "internal/architecture/m2_dependency_guard_test.go"
@@ -342,6 +344,8 @@ work_packages:
       - "internal/controlstore/sqlite/**"
       - "internal/architecture/m2_absence_test.go"
       - "internal/architecture/m2_absence_mutants_test.go"
+      - "internal/architecture/policy.go"
+      - "internal/architecture/policy_test.go"
       - "scripts/m2-absence/inspect.sh"
       - "scripts/m2-absence/mutants.sh"
       - "go.mod"
