@@ -69,7 +69,8 @@
         "Post-approval consumer-contract defect: sealed plan is not persistence-complete for WP03. Reopen one bounded integration repair with fresh independent terminal review; preserve prior arbitration evidence.",
         "Bounded post-approval persistence-projection repair committed at c3a0c6c5; all focused/repeated/race/architecture/compile/vet/static/format/diff gates pass.",
         "Terminal persistence review rejected c3a0c6c5: sealed records exceed frozen ordinary-value, raw-batch, head, and effect cardinality budgets. Structural projection invariants otherwise pass.",
-        "Budget-closure repair committed at d9407b0d; sealed plan now closes over frozen record/cardinality/raw bounds and all regression gates pass."
+        "Budget-closure repair committed at d9407b0d; sealed plan now closes over frozen record/cardinality/raw bounds and all regression gates pass.",
+        "Independent terminal budget review approved d9407b0d. Reproduced former 350165-byte ordinary event and 9341911-byte projection now refuse before registry access; max operation/aggregate values, 32 heads, 16 effects, 256 records, 256 KiB ordinary, 4 MiB checkpoint, conservative 1 KiB keys and 6 MiB raw closure pass. Structural projection and all prior WP02 invariants, repeated/race/architecture/helper/compile/vet/static/format/diff gates pass. Reviewer actor: wp02-budget-terminal-reviewer."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -78,7 +79,7 @@
         "reviewer": "wp02-budget-terminal-reviewer",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
       "subtasks": {
