@@ -4,7 +4,8 @@
 **Branch**: `feat/gapdb-only-production-authority`  
 **Date**: 2026-09-02  
 **Spec**: [spec.md](spec.md)  
-**Status**: Ready for work-package decomposition
+**Status**: Post-approval correction ratified; WP01–WP03 require ordered
+reapproval before WP04 resumes
 
 ## Summary
 
@@ -79,19 +80,25 @@ flowchart LR
     Host --> Cap[Capability service]
     Cap --> Decide[Pure decision and reducer]
     Decide --> Commit[Sealed commit plan]
-    Commit --> Adapter[GapDB public adapter]
+    Commit --> Coordinator[Publication coordinator]
+    Coordinator --> Adapter[GapDB public adapter]
     Adapter --> Daemon[Verified gapdbd sidecar]
     Daemon --> Durable[(Journal, heads, checkpoints)]
-    Adapter --> Projection[In-memory projections]
+    Adapter --> Ack[Durable observation or reconciliation]
+    Ack --> Coordinator
+    Coordinator --> Projection[In-memory projections]
     Durable --> Restore[Bounded restore and playback]
     Restore --> Projection
     Projection --> Query[Query and progress views]
 ```
 
 The host is the sole production composition root. Domain packages own meaning;
-the common journal owns canonical publication mechanics; the GapDB adapter owns
-provider translation; the sidecar supervisor owns process and database
-identity. Callers cannot construct repositories or open the store.
+the common journal owns canonical publication mechanics and the acknowledged
+projection coordinator; the GapDB adapter owns provider translation; the
+sidecar supervisor owns process and database identity. Callers cannot
+construct repositories or open the store. Capability packages may reach the
+foundation coordinator but direct capability-to-adapter reachability is a
+permanent architecture violation.
 
 ### Command publication and operation identity
 
@@ -138,6 +145,23 @@ budgets, expected logical versions, expected provider revisions, event-family
 registration, and one-provider-call publication. It interprets no mission,
 review, integration, or provider policy. Every affected aggregate emits exactly
 one transition event and increments once per publication.
+
+The required operation event uses the closed operation event schema 2/reducer
+2 tuple. Its payload is the canonical OperationState transition preimage,
+excluding only the PublicationID that sealing derives. The final envelope
+supplies that PublicationID, so historical operation progress and exact
+event/effect membership can be reconstructed from immutable journal material.
+The incomplete operation `1/1` tuple is rejected rather than treated as an
+alias.
+
+A foundation publication coordinator registers each sealed plan before
+delivery. It accepts only a durable exact acknowledgement or complete
+same-identity reconciliation and advances projection state only afterward.
+Its bounded revision-keyed acknowledgement ledger supports at least 10,000
+publications between seals. At a quiescent checkpoint barrier it orders
+acknowledgements by provider revision and folds the prior prefix with revision,
+PublicationID, plan digest, and sealed record-set digest. Unresolved ambiguity
+blocks the seal without serializing unrelated durable commits.
 
 ### Capability-owned authority
 
@@ -188,20 +212,34 @@ sequenceDiagram
     E-->>H: ready; predecessor capsules are stale
 ```
 
+Aggregate heads are globally enumerable at
+`spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>`. Immutable events retain
+the scope-first journal layout. The former
+`spk/v2/scopes/<scope>/heads/...` spelling is rejected, not read as a
+compatibility alias. Host-global operation binding/head records form a second
+bounded census under `spk/v2/operations/`.
+
 Restore command admission remains closed while it:
 
-1. captures stable store revision `R`;
+1. captures a positive durable store coordinate `(DatabaseID, R)`;
 2. selects the newest valid compatible bounded checkpoint;
-3. scans a complete aggregate-head census pinned to `R`, restarting the whole
-   attempt on stale cursor or revision disagreement;
+3. requires the initial aggregate-head and operation-census pages to report
+   `R`, then uses their provider-pinned continuation cursors;
 4. enumerates exact event versions after each checkpointed aggregate version;
 5. reads them with bounded concurrency and byte/count limits;
-6. validates global binding/state and complete same-revision operation
-   membership;
+6. requires every record revision to be positive and no greater than `R`, and
+   reconstructs historical OperationState from operation events;
 7. sorts the union by `(Record.Revision, EventIndex, EventID)`;
 8. reduces without external or persistence capabilities;
 9. matches every terminal head and whole-product digest; and
-10. rechecks revision `R` before admitting a fresh epoch.
+10. rechecks the same DatabaseID and exactly `R` before admitting a fresh
+    epoch.
+
+The frozen GapDB API has no as-of `Get` and does not accept a requested
+revision on the first prefix-scan page; the design makes no such claim. Equal
+capture/final coordinates, first-page `R`, cursor staleness, and record
+revision bounds form the enforceable stable-attempt proof. Any movement or
+replacement discards all material collected by that attempt.
 
 No checkpoint falls back to a watch stream. With no compatible checkpoint, a
 bounded complete head/event reconstruction is allowed. Missing versions,
@@ -214,6 +252,21 @@ capability and a rolling digest; it does not re-reduce the full origin. A
 bounded retained candidate ring permits fallback from a corrupt latest
 checkpoint to an earlier compatible one and rejects contradictory candidates
 at the same watermark.
+
+Registry compatibility seals the exact registry ID/version, publication rule,
+ordering tuple, and sorted family/schema/reducer/owner census. Reducer
+compatibility also seals a declared implementation digest. Runtime reduction
+is a stateless `Apply`; bounded repeated-call determinism qualification is a
+separate concern and cannot cap a 10,000-operation replay at 256 observations.
+
+The provider-neutral recovery vocabulary belongs to the journal foundation:
+closed semantic record addresses/scan targets, store revision coordinates,
+immutable records/pages, typed recovery errors, and canonical aggregate
+comparators. Event, head, binding, and OperationState values expose every
+semantic field required for validation through defensive accessors. GapDB keys
+and public client values remain adapter-private translations. Checkpoints store
+a compact operation summary of counts and fixed-size leaf digests rather than
+copying every terminal result.
 
 ### Refusal parity and external effects
 
