@@ -97,8 +97,8 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27",
       "subtasks": {
         "T006": "planned",
         "T007": "planned",
