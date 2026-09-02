@@ -18,6 +18,7 @@ const (
 	EnvelopeVersion          = uint32(2)
 	MaxIdentityBytes         = 128
 	MaxCanonicalPayloadBytes = 256 * 1024
+	MaxCheckpointValueBytes  = 4 * 1024 * 1024
 	MaxEventEnvelopeBytes    = 1024 * 1024
 	MaxMembers               = 256
 	MaxEventsPerPublication  = 128
@@ -25,7 +26,7 @@ const (
 	MaxConditionsPerPlan     = 256
 	MaxCheckpointsPerPlan    = 32
 	MaxReductionObservations = 256
-	MaxCommitPlanBytes       = 4 * 1024 * 1024
+	MaxCommitPlanBytes       = 12 * 1024 * 1024
 	publicationDomain        = "spec-kitty.publication.v2"
 	canonicalEventDomain     = "spec-kitty.event.v2"
 	canonicalIntentDomain    = "spec-kitty.intent.v2"
@@ -82,21 +83,24 @@ func IsKind(err error, kind ErrorKind) bool {
 func invalid(kind ErrorKind, field string) error { return &Error{Kind: kind, Field: field} }
 
 type (
-	HostAuthorityID string
-	ProjectID       string
-	MissionID       string
-	RepositoryID    string
-	WorkRevisionID  string
-	WorkID          string
-	OperationID     string
-	PublicationID   string
-	RuntimeEpochID  string
-	EventID         string
-	EffectID        string
-	ActorID         string
-	ProcessID       string
-	AggregateKind   string
-	AggregateID     string
+	HostAuthorityID    string
+	ProjectID          string
+	MissionID          string
+	RepositoryID       string
+	WorkRevisionID     string
+	WorkID             string
+	OperationID        string
+	PublicationID      string
+	RuntimeEpochID     string
+	EventID            string
+	EffectID           string
+	EligibilityShardID string
+	CheckpointID       string
+	CheckpointSlotID   string
+	ActorID            string
+	ProcessID          string
+	AggregateKind      string
+	AggregateID        string
 )
 
 func identity[T ~string](field, value string) (T, error) {
@@ -122,8 +126,17 @@ func NewOperationID(v string) (OperationID, error) { return identity[OperationID
 func NewRuntimeEpochID(v string) (RuntimeEpochID, error) {
 	return identity[RuntimeEpochID]("runtime_epoch_id", v)
 }
-func NewEventID(v string) (EventID, error)     { return identity[EventID]("event_id", v) }
-func NewEffectID(v string) (EffectID, error)   { return identity[EffectID]("effect_id", v) }
+func NewEventID(v string) (EventID, error)   { return identity[EventID]("event_id", v) }
+func NewEffectID(v string) (EffectID, error) { return identity[EffectID]("effect_id", v) }
+func NewEligibilityShardID(v string) (EligibilityShardID, error) {
+	return identity[EligibilityShardID]("eligibility_shard_id", v)
+}
+func NewCheckpointID(v string) (CheckpointID, error) {
+	return identity[CheckpointID]("checkpoint_id", v)
+}
+func NewCheckpointSlotID(v string) (CheckpointSlotID, error) {
+	return identity[CheckpointSlotID]("checkpoint_slot_id", v)
+}
 func NewActorID(v string) (ActorID, error)     { return identity[ActorID]("actor_id", v) }
 func NewProcessID(v string) (ProcessID, error) { return identity[ProcessID]("process_id", v) }
 func NewAggregateKind(v string) (AggregateKind, error) {
