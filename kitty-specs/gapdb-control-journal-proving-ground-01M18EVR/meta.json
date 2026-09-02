@@ -1,4 +1,22 @@
 {
+  "acceptance_history": [
+    {
+      "acceptance_mode": "local",
+      "accepted_at": "2026-09-02T09:03:49.242230+00:00",
+      "accepted_by": "codex-acceptance",
+      "accepted_from_commit": "a7a45c4ee1433db2889f4b83708aad601693358f"
+    },
+    {
+      "acceptance_mode": "local",
+      "accepted_at": "2026-09-02T09:04:18.047384+00:00",
+      "accepted_by": "codex-acceptance",
+      "accepted_from_commit": "a7a45c4ee1433db2889f4b83708aad601693358f"
+    }
+  ],
+  "acceptance_mode": "local",
+  "accepted_at": "2026-09-02T09:04:18.047384+00:00",
+  "accepted_by": "codex-acceptance",
+  "accepted_from_commit": "a7a45c4ee1433db2889f4b83708aad601693358f",
   "coordination_branch": "kitty/mission-gapdb-control-journal-proving-ground-01M18EVR",
   "created_at": "2026-08-30T04:29:22.337346+00:00",
   "flattened": false,
