@@ -55,9 +55,9 @@
     },
     "WP02": {
       "actor": "codex-wp02",
-      "agent": null,
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
+      "agent": "codex-wp02",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
       "lane": "for_review",
       "last_event_id": "01M1HJGFF85ZJ2AF8KK3YY7AWY",
@@ -75,8 +75,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 898319,
+      "shell_pid_created_at": "1788369971.09",
       "subtasks": {
         "T006": "done",
         "T007": "done",
