@@ -39,6 +39,8 @@ owned_files:
 - internal/architecture/m2_dependency_guard_test.go
 - internal/architecture/m2_mutant_control_test.go
 - internal/architecture/m2_registry_test.go
+- internal/architecture/policy.go
+- internal/architecture/policy_test.go
 role: implementer
 tags: []
 tracker_refs: []
@@ -90,11 +92,14 @@ host-global OperationID identity; the closed `spk/v2/` keyspace; fail-closed
 package classification; semantic rather than spelling-based inspection; and
 non-production, path-scoped treatment of historical evidence.
 
-The four files in `owned_files` are the complete writable surface for this WP.
-Do not edit `policy.go`, `reachability.go`, contracts, program evidence, module
-files, or production packages. If the existing reusable architecture API is
-insufficient, stop and report the exact missing primitive instead of smuggling
-production behavior into a test helper or expanding ownership silently.
+The six files in `owned_files` are the complete writable surface for this WP.
+The permanent `DefaultPolicy` must classify every closed M2 capability package
+with exact or slash-bounded entries before downstream packages appear; a
+test-only overlay is not repository admission. Do not edit `reachability.go`,
+contracts, program evidence, module files, or production packages. If the
+existing reusable architecture API is insufficient, stop and report the exact
+missing primitive instead of smuggling production behavior into a test helper
+or expanding ownership silently.
 
 ## Branch Strategy
 
@@ -104,7 +109,7 @@ production behavior into a test helper or expanding ownership silently.
   `kitty-specs/gapdb-only-production-authority-01M1GWDJ/lanes.json`.
 - Do not assume WP01 receives a dedicated branch name or fixed worktree path.
   Use the worktree and branch reported by the runtime action capsule.
-- Keep every commit limited to the four owned architecture test files. Other
+- Keep every commit limited to the six owned architecture policy/test files. Other
   lanes may be changing shared mission or production surfaces concurrently.
 
 Start or resume implementation with:
