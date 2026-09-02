@@ -41,7 +41,8 @@
         "Cycle 8 rejects exported named/alias function recovery side seams; inspect TypeName object signatures and bind both exact mutants.",
         "Cycle-8 repair 15808e66 closes exported named and alias function-type side seams; sealed census 105 and all architecture/tooling gates pass.",
         "Cycle 9 requires complete semantic type traversal for generic constraints, unions, type parameters, and transitive defined-wrapper provenance.",
-        "Terminal type-graph repair 053ea420 covers generic constraints, unions, transitive wrappers, every exported callable seam, and 116 sealed mutants; all required gates pass."
+        "Terminal type-graph repair 053ea420 covers generic constraints, unions, transitive wrappers, every exported callable seam, and 116 sealed mutants; all required gates pass.",
+        "Terminal arbiter directs one final repair: recursively inspect the complete type graph reachable from every exported package object, including composite values and unexported receiver types exposed publicly."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -51,15 +52,15 @@
         "reviewer": "wp01-typegraph-arbiter",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned"
       }
     },
     "WP02": {
