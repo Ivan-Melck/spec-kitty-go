@@ -38,6 +38,12 @@ create_intent:
 - internal/controljournal/v2/codec.go
 - internal/controljournal/v2/commit_plan.go
 - internal/controljournal/v2/operation.go
+- internal/controljournal/v2/recovery.go
+- internal/controljournal/v2/recovery_test.go
+- internal/controljournal/v2/publication.go
+- internal/controljournal/v2/publication_test.go
+- internal/controljournal/v2/projection.go
+- internal/controljournal/v2/projection_test.go
 - internal/controljournal/v2/journal_test.go
 execution_mode: code_change
 model: ''
@@ -46,6 +52,12 @@ owned_files:
 - internal/controljournal/v2/codec.go
 - internal/controljournal/v2/commit_plan.go
 - internal/controljournal/v2/operation.go
+- internal/controljournal/v2/recovery.go
+- internal/controljournal/v2/recovery_test.go
+- internal/controljournal/v2/publication.go
+- internal/controljournal/v2/publication_test.go
+- internal/controljournal/v2/projection.go
+- internal/controljournal/v2/projection_test.go
 - internal/controljournal/v2/journal_test.go
 role: implementer
 tags: []
@@ -71,9 +83,11 @@ the resolved profile revision in the governed invocation before editing code.
 ## Objective
 
 Create the provider-independent Authority Journal v2 kernel: canonical identity
-and scope types, immutable host-global operation bindings, revisioned operation
-progress, deterministic publication identities, sealed commit plans, registered
-event envelopes, and pure reducer contracts.
+and scope types, immutable host-global operation bindings, reconstructible
+revisioned operation progress, deterministic publication identities, sealed
+commit plans, registered event envelopes, provider-neutral recovery contracts,
+durable acknowledgement coordination, acknowledged projection/prefix seals,
+and pure reducer contracts.
 
 Implementation command:
 
@@ -87,11 +101,82 @@ spec-kitty agent action implement WP02 --agent codex
 - Use only the Spec Kitty lane worktree allocated for WP02.
 - Treat `lanes.json` as the source of truth for the dependency-qualified base,
   lane branch, worktree, and integration target.
-- Edit only the five files listed in `owned_files` and `create_intent`.
+- Edit only the eleven files listed in `owned_files` and `create_intent`.
 - Do not modify mission contracts, `wps.yaml`, GapDB adapters, module files, or
   any capability-owned package from this WP.
 - You are not alone in the repository. Preserve unrelated edits and never
   revert, rewrite, or absorb another lane's work.
+
+## Post-approval correction: foundation contracts required by WP04
+
+This package was reopened because its first approved surface left recovery
+types in the adapter and could not produce the acknowledgement-derived seal
+required by checkpoints. Read `post-approval-defect-2.md` before editing. The
+following correction is normative and belongs inside this WP.
+
+### Recovery vocabulary (`recovery.go`, `recovery_test.go`)
+
+Define closed provider-neutral `StoreRevisionV2`, `RecordAddressV2`,
+`ScanTargetV2`, `ReadRequestV2`, `ScanRequestV2`, `RecoveryRecordV2`, and
+`RecoveryPageV2` values. Smart constructors admit only semantic targets for
+aggregate heads, journal events, operation binding/head, checkpoint
+slot/record, the complete aggregate-head scan, complete operation-record scan,
+and checkpoint-slot scan. No type exposes or accepts a raw persistence key.
+
+`StoreRevisionV2` binds store/database identity, positive current revision,
+and durable-through revision. Recovery records preserve semantic address,
+copied canonical bytes, positive record revision, and expiry. Pages preserve
+observed revision, as-of time, copied records, opaque cursor, and truncation.
+Closed errors distinguish not-found, revision-moved, stale-cursor, malformed,
+unavailable/canceled, and budget-exceeded outcomes. All construction validates
+budgets before allocation and every returned byte slice is defensive.
+
+Expose complete immutable semantic accessors for `EventEnvelopeV2`,
+`AggregateHeadV2`, `OperationBindingV2`, and `OperationStateV2`, including all
+schema/reducer/provenance/result/head fields required by playback. Add a
+foundation-owned canonical aggregate-coordinate comparator/byte identity so
+restore never parses private wire JSON or recreates canonical order.
+
+### Publication acknowledgement (`publication.go`, `publication_test.go`)
+
+Define foundation-owned `CommitObservationV2`,
+`AcknowledgedPublicationV2`, `DurablePublicationPortV2`, and
+`PublicationCoordinatorV2`. The coordinator registers the sealed plan before
+delivery, accepts only a positive durable observation with exact
+PublicationID and mutation count or the same proof from complete
+reconciliation, and validates the exact plan and sealed-record-set digests.
+Zero values and field-copied forged acknowledgements fail.
+
+No projection change may occur before acknowledgement. Unresolved ambiguity
+remains registered and blocks checkpoint sealing. The coordinator permits
+unrelated durable calls concurrently; it serializes only acknowledgement
+application/checkpoint barriers. Capability packages receive this coordinator,
+never the durable adapter. Architecture tests must reject direct or wrapped
+capability-to-adapter commit reachability.
+
+### Acknowledged projection (`projection.go`, `projection_test.go`)
+
+Define `ProjectionTrackerV2`, compact `OperationSummaryV2`, and opaque
+`SealedProjectionPrefixV2`. The tracker applies only acknowledged sealed plans,
+uses the closed reducers to compare resulting state with every planned head,
+and updates only changed projection entries. It maintains prior watermark,
+registry/reducer/codec identities, rolling prefix, and a bounded
+revision-keyed acknowledgement ledger admitting at least 10,000 publications
+between seals.
+
+At a quiescent barrier, sort acknowledgements by provider revision and fold
+the prior prefix with provider revision, PublicationID, plan digest, and sealed
+record-set digest. Reject duplicate/conflicting revisions, regressions,
+unresolved in-flight attempts, and ledger overflow. Snapshotting may copy the
+complete current projection but may not replay origin history. Operation
+summary uses bounded counts/status counts and sorted fixed-size leaf digests
+binding operation identity/version/publication/result and membership digests;
+it does not embed every terminal result.
+
+Sealed projection/prefix values use private fields and internal digest
+validation. “Unforgeable” means zero values and ordinary cross-package field
+construction cannot pass; it does not claim protection from code inside the
+owning package or Go `unsafe`.
 
 ## T006: Define canonical v2 identities, scopes, and key model
 
@@ -224,6 +309,11 @@ identity or rewriting immutable terminal evidence.
    absent; it may transition only through the declared reconciliation path.
 9. Expose pure transition validation and construction. Do not add persistence,
    clock, provider, side-effect, or current-epoch calls.
+10. Define canonical operation-event payload encoding from OperationState with
+    `LastPublicationID` excluded, and reconstruction from the completed event
+    envelope. The sealer must reject any operation event whose payload differs
+    from its declared state transition. Use the closed operation event schema
+    2/reducer 2 tuple; tuple `1/1` is incompatible.
 
 **Required tests**:
 
@@ -234,6 +324,10 @@ identity or rewriting immutable terminal evidence.
   growth while accepting canonical monotonic membership.
 - Prove typed semantic refusal replays exactly.
 - Prove ambiguous state cannot be treated as proven absence or automatic retry.
+- Round-trip every operation stage through its immutable event payload and
+  reconstruct the exact result and cumulative event/effect membership.
+- Reject payload/state substitution, missing membership, wrong envelope
+  PublicationID, and the obsolete operation tuple.
 
 **Exit evidence**:
 
@@ -297,6 +391,10 @@ unit that WP03 can translate into exactly one conditional GapDB batch.
     conditions. Bind every target and canonical byte into the plan preimage;
     reject missing, extra, duplicate, aliased, substituted, zero-revision, and
     post-seal-mutated members before adapter access.
+16. Expose the plan and sealed record-set digests needed to validate a durable
+    CommitObservation without parsing canonical bytes. Only an
+    AcknowledgedPublication produced from the exact plan may enter the
+    projection tracker.
 
 **Required tests**:
 
@@ -346,29 +444,45 @@ playback seam before capability implementations add their event payloads.
 5. Seed or validate the exact family ownership declared by
    `event-family-registry-v2.json` without importing those owner packages and
    without creating dependency cycles.
-6. Define reducer contracts as pure functions over prior state bytes/value plus
+6. Define canonical immutable registry descriptors/digests. Event compatibility
+   includes registry ID/version, publication rule, exact ordering tuple, and
+   sorted family/schema/reducer/owner tuples. Reducer compatibility requires a
+   complete one-to-one registration and additionally binds an explicit owner
+   and declared implementation digest; never derive identity from a Go function
+   pointer.
+7. Define reducer contracts as pure functions over prior state bytes/value plus
    validated event data. The interface must offer no context containing
    repositories, clocks, network clients, filesystems, agents, or effect ports.
-7. Require deterministic output and digest validation. Same prior state plus
-   same event must produce byte-identical output across repeated runs.
-8. Treat recorded external observations as inert payload data. Reducers may
+8. Runtime `Apply` is stateless and retains no replay-wide observation cache.
+   Determinism qualification is a separate bounded repeated-call helper. More
+   than 10,000 distinct replay inputs must not hit the former 256-observation
+   ceiling.
+9. Require deterministic output and digest validation. Same prior state plus
+   same event must produce byte-identical output across repeated qualification
+   runs.
+10. Treat recorded external observations as inert payload data. Reducers may
    interpret their declared schema but cannot fetch, refresh, compensate, or
    persist anything.
-9. Fail unknown envelope, event schema, reducer, ordering, or digest versions
-   closed before changing a projection.
-10. Keep actual capability reducers out of this WP; later owner packages
+11. Fail unknown envelope, event schema, reducer, ordering, implementation, or
+    digest versions closed before changing a projection.
+12. Keep actual capability reducers out of this WP; later owner packages
     register implementations through the inward-owned contract.
 
 **Required tests**:
 
 - Registry accepts every declared family/version tuple exactly once.
 - Duplicate, missing, unknown, and ownership-mismatched registry mutants fail.
+- Mutating registry ID/version, publication rule, ordering, owner, event
+  schema, reducer version, or reducer implementation digest changes the
+  compatibility digest and refuses an incompatible checkpoint.
 - Event index gaps, duplicates, count mismatches, cross-publication mixing, and
   multiple events for one aggregate fail.
 - A deliberately nondeterministic or digest-mismatched reducer is detected.
 - A compile-time/API-shape test proves reducer calls cannot receive an external
   or persistence adapter through the journal contract.
 - Repeated reduction of canonical fixtures is byte-identical.
+- At least 10,000 distinct stateless applications succeed without retained
+  observation growth; an alternating reducer fails the separate qualification.
 
 **Exit evidence**:
 
@@ -381,8 +495,8 @@ go test ./internal/controljournal/v2 -run 'Event|Registry|Reducer|Playback|Diges
 **Purpose**: Attack the shared semantics before every later capability relies
 on them, including the critical retry-after-restart ordering rule.
 
-**Files**: `journal_test.go`, with production corrections limited to the other
-four WP02-owned files.
+**Files**: all four focused test files, with production corrections limited to
+the seven non-test WP02-owned files.
 
 **Required campaigns**:
 
@@ -399,6 +513,17 @@ four WP02-owned files.
    unbounded allocation, truncated equality, or accidental acceptance.
 7. Run all pure decisions concurrently under the race detector; shared
    registries must be immutable after construction or synchronize correctly.
+8. Exercise provider-neutral recovery addresses, records, pages, revision
+   coordinates, semantic accessors, canonical comparators, and closed error
+   kinds without importing the GapDB adapter.
+9. Exercise durable acknowledgement and projection sequencing: wrong plan,
+   publication, record set, mutation count, revision, or durability cannot
+   advance state; ambiguity and zero/forged seals cannot advance or snapshot.
+10. Complete disjoint durable calls in reverse response order and prove the
+    same provider-revision-ordered rolling prefix. A checkpoint barrier waits
+    for or refuses unresolved registered calls without serializing delivery.
+11. Seal at least 10,000 acknowledged publications within the ledger budget
+    and reject the first over-budget observation before unbounded allocation.
 
 **Mandatory replay-before-epoch validation**:
 
@@ -430,7 +555,16 @@ resolution must fail deterministically.
 - Two events target one aggregate in one publication.
 - Event indices are non-consecutive or disagree on total count.
 - Unknown reducer/version silently selects latest.
+- Registry digest omits ID, publication rule, ordering, owner, schema, reducer,
+  or implementation identity.
+- Stateful reducer observation caching reintroduces the 256-input ceiling.
 - Reducer receives an adapter-capable dependency.
+- Projection advances before durable acknowledgement or after ambiguity.
+- Acknowledgement accepts a wrong plan, record set, publication, mutation
+  count, zero revision, or non-durable observation.
+- Rolling prefix follows response completion rather than provider revision.
+- Checkpoint seal ignores an unresolved registered publication.
+- Operation event payload differs from the declared OperationState transition.
 - Semantic refusal creates a naked reservation before its result.
 - Existing-operation resolution occurs after current-epoch validation.
 
@@ -457,7 +591,7 @@ in their census.
 
 ## Definition of Done
 
-- All five declared files exist and no undeclared file was modified.
+- All eleven declared files exist and no undeclared file was modified.
 - The package is provider-neutral and passes WP01 architecture guards.
 - Canonical identity/scope/key encodings are bounded, injective, and stable.
 - OperationID binding is host-global, immutable, and collision-complete.
@@ -466,7 +600,13 @@ in their census.
 - OperationState supports only the declared monotonic staged transitions.
 - PublicationID and sealed CommitPlan are deterministic and immutable.
 - Event/head membership enforces one event per aggregate per publication.
-- Registry and reducer contracts fail unknown versions closed.
+- Operation events reconstruct exact historical OperationState and membership.
+- Foundation-owned recovery contracts expose no raw/provider key type.
+- Registry/reducer descriptors and implementation digests fail unknown or
+  incomplete versions closed; runtime Apply has no 256-input session limit.
+- Projection and rolling-prefix state advance only from an exact durable
+  acknowledgement; the bounded ledger supports at least 10,000 publications.
+- Zero/forged acknowledgement and projection seals fail validation.
 - Reducer APIs cannot perform persistence or external effects.
 - Unit, property, fault, race, and controlled-mutant tests pass.
 - All six subtasks are recorded `done` in the canonical event log.
@@ -516,9 +656,18 @@ The independent reviewer must explicitly verify:
 8. exact operation/event/head/effect membership and budgets;
 9. one event per aggregate and consecutive publication ordering;
 10. fail-closed unknown versions and capability-free reducers;
-11. real mutant controls that fail semantically, not grep-only assertions;
-12. no provider, SQLite/SQL, Beads, Git, filesystem, transport, or clock edge.
+11. complete provider-neutral recovery types and semantic accessors without a
+    raw-key or adapter dependency;
+12. operation event payload/state equality and historical reconstruction;
+13. canonical event/reducer descriptors whose digests cover every compatibility
+    coordinate and declared implementation identity;
+14. stateless runtime Apply beyond 10,000 distinct inputs;
+15. acknowledgement-derived projection/prefix behavior, out-of-order durable
+    response handling, ambiguity blocking, ledger budgets, and forged seals;
+16. real mutant controls that fail semantically, not grep-only assertions;
+17. no provider, SQLite/SQL, Beads, Git, filesystem, transport, or clock edge.
 
 Reject the WP if passing tests depend on map iteration order, wall-clock values,
 random identifiers, current runtime epoch in stable intent, storage provider
-behavior, test-only alternate implementations, or implicit fallback decoding.
+behavior, test-only alternate implementations, direct capability-to-adapter
+reachability, optimistic projection, or implicit fallback decoding.
