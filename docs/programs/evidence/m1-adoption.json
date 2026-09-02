@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "mission_id": "M1",
+  "decision": "adopt",
+  "evidence_manifest_sha256": "397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309",
+  "admitted_tuple_sha256": "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d",
+  "source_commit": "e05a5e46feb3e65ff42c4544c16678c440ef3818",
+  "source_tree": "c7b932b3d85833beee1a84d8a1ae7f4e4a75ec73",
+  "sidecar_sha256": "62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e",
+  "signer": "github:lynncoleart",
+  "rationale": "Human approval supplied in-session: \"yes! that would be awesome. please continue\" in direct response to the proposed exact-evidence GapDB adoption decision followed by M2.",
+  "signed_at": "2026-09-02T10:46:41Z",
+  "signature": {
+    "kind": "approved-local-reference",
+    "value": "conversation-approval:2026-09-02T10:46:41Z"
+  }
+}

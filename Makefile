@@ -16,7 +16,7 @@ OFFLINE_ENFORCED ?=
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all
+.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -69,7 +69,17 @@ scope: ## Run architecture, reachability, and rejecting-mutant guards.
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile architecture -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile scope -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 
-race: ## Run the authority-critical packages under the race detector.
+race-m1: ## Run the bounded concurrency-sensitive M1 package census under the race detector.
+	$(GO) test -race -p=1 -count=1 -timeout=4m \
+		-run '^(TestOperationAmbiguousReconciliation|TestServiceAggregateConcurrencyIsPerHeadNotGlobal|TestEpochBindingRefusesPredecessorAndLeaseExpiryDoesNotRotate|TestPlaybackFullHistoryIsDeterministicAndZeroIO|TestReducerRepeatedHistoryIsByteIdentical|TestCASCompetingUpdatesHaveExactlyOneWinner|TestLifecyclePidfdObservationAndSignalingSeams|TestRetainedClaimAndOwnerRestartAreRaceFree|TestEvidenceSemanticMutantsCannotMintPass|TestProgressSnapshotIsAtomicReadOnlyDiagnostic|TestRunWithRuntimeBindsOrderedTerminalArtifactsToUmbrellaRun|TestRestartTwice|TestBarrierUsesAcknowledgementRatherThanSleep|TestExactNineteenMutantsBindDistinctNamedProductGuards|TestStatusReportsActiveProgressWithoutMintingReadiness)$$' \
+		./internal/controljournal/... \
+		./internal/controlstore/gapdb \
+		./internal/sidecar/gapdb \
+		./internal/provingground \
+		./internal/testcampaign/m1/... \
+		./cmd/spk-m1-proving-ground
+
+race: race-m1 ## Run the authority-critical packages under the race detector.
 	$(GO) test -race -p=1 -count=1 ./internal/mission ./internal/artifact ./internal/workgraph ./internal/governancecontext ./internal/tracker/fake ./internal/controlstore/sqlite ./internal/execution ./internal/helpercmd ./internal/testcampaign
 
 static: ## Run vet and staticcheck over all packages.
