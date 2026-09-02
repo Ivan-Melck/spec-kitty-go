@@ -171,11 +171,11 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T059": "planned",
-        "T060": "planned",
-        "T061": "planned",
-        "T062": "planned",
-        "T063": "planned"
+        "T059": "done",
+        "T060": "done",
+        "T061": "done",
+        "T062": "done",
+        "T063": "done"
       }
     },
     "WP13": {
