@@ -1,12 +1,11 @@
 package architecture
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
+	"go/constant"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,14 +13,21 @@ import (
 )
 
 const (
-	m2EligibilityPolicyVersion       = "spk.workgraph.eligibility-shards.v1"
-	m2EligibilityShardCount          = 64
-	m2EligibilityHashAlgorithm       = "sha256-length-prefixed-mission-work-v1"
-	m2EligibilityMaxEntriesPerShard  = 256
-	m2EligibilityContentionWriters   = 32
-	m2EligibilityContentionTrials    = 100
 	m2EligibilityPersistentKeyMarker = "spk/v2/workgraphs/"
+	m2EligibilityContractJSON        = `{"contention":{"max_parallel_writers":32,"required_trials":100},"hash_algorithm":"sha256-length-prefixed-mission-work-v1","max_entries_per_shard":256,"policy_version":"spk.workgraph.eligibility-shards.v1","shard_count":64}`
+	m2EligibilityContractSHA256      = "896a5e6e77fb779a06831cbb29246e7a09e1d33371f6fd95016aa488cda99127"
 )
+
+type m2EligibilityContract struct {
+	Contention struct {
+		MaxParallelWriters int `json:"max_parallel_writers"`
+		RequiredTrials     int `json:"required_trials"`
+	} `json:"contention"`
+	HashAlgorithm      string `json:"hash_algorithm"`
+	MaxEntriesPerShard int    `json:"max_entries_per_shard"`
+	PolicyVersion      string `json:"policy_version"`
+	ShardCount         int    `json:"shard_count"`
+}
 
 type m2KeyEntry struct {
 	ID       string
@@ -101,54 +107,52 @@ func TestM2KeyspaceRegistryIsClosed(t *testing.T) {
 }
 
 func TestM2EligibilityGuardPolicyIsFrozenBeforePersistence(t *testing.T) {
-	want := map[string]string{
-		"EligibilityPolicyVersionV1":      strconv.Quote(m2EligibilityPolicyVersion),
-		"EligibilityShardCountV1":         strconv.Itoa(m2EligibilityShardCount),
-		"EligibilityHashAlgorithmV1":      strconv.Quote(m2EligibilityHashAlgorithm),
-		"EligibilityMaxEntriesPerShardV1": strconv.Itoa(m2EligibilityMaxEntriesPerShard),
-		"EligibilityContentionWritersV1":  strconv.Itoa(m2EligibilityContentionWriters),
-		"EligibilityContentionTrialsV1":   strconv.Itoa(m2EligibilityContentionTrials),
-	}
-	if m2EligibilityShardCount&(m2EligibilityShardCount-1) != 0 || m2EligibilityShardCount*m2EligibilityMaxEntriesPerShard < 10_000 {
-		t.Fatal("evidence=ELIGIBILITY-POLICY law=bounded-10k-capacity observed=invalid")
-	}
-	if m2EligibilityContentionWriters <= 1 || m2EligibilityContentionTrials < 100 {
-		t.Fatal("evidence=ELIGIBILITY-POLICY law=contention-budget observed=invalid")
-	}
-
-	root := filepath.Join(m2RepositoryRoot(t), "internal", "workgraph")
-	values, persistencePresent, err := inspectM2EligibilityPolicy(root)
+	contract, err := loadM2EligibilityContract()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !persistencePresent {
-		return
-	}
-	for name, expected := range want {
-		if values[name] != expected {
-			t.Fatalf("evidence=ELIGIBILITY-POLICY law=frozen-tuple field=%s observed=%q expected=%q", name, values[name], expected)
-		}
+	if err := inspectM2EligibilityModule(t.Context(), m2RepositoryRoot(t), m2ModulePath, contract); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestM2EligibilityPolicyMutantsAreRejected(t *testing.T) {
-	base := map[string]string{
-		"EligibilityPolicyVersionV1":      strconv.Quote(m2EligibilityPolicyVersion),
-		"EligibilityShardCountV1":         strconv.Itoa(m2EligibilityShardCount),
-		"EligibilityHashAlgorithmV1":      strconv.Quote(m2EligibilityHashAlgorithm),
-		"EligibilityMaxEntriesPerShardV1": strconv.Itoa(m2EligibilityMaxEntriesPerShard),
-		"EligibilityContentionWritersV1":  strconv.Itoa(m2EligibilityContentionWriters),
-		"EligibilityContentionTrialsV1":   strconv.Itoa(m2EligibilityContentionTrials),
+	contract, err := loadM2EligibilityContract()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, name := range []string{"EligibilityPolicyVersionV1", "EligibilityShardCountV1", "EligibilityHashAlgorithmV1", "EligibilityMaxEntriesPerShardV1", "EligibilityContentionWritersV1", "EligibilityContentionTrialsV1"} {
-		t.Run(name, func(t *testing.T) {
-			mutant := make(map[string]string, len(base))
-			for key, value := range base {
-				mutant[key] = value
+	fixtures := []struct {
+		name      string
+		files     map[string]string
+		wantError bool
+	}{
+		{"exact-workgraph", map[string]string{"internal/workgraph/eligibility.go": m2EligibilitySource("policy", 64, false)}, false},
+		{"value-change", map[string]string{"internal/workgraph/eligibility.go": m2EligibilitySource("policy", 128, false)}, true},
+		{"arbitrary-rename", map[string]string{"internal/workgraph/eligibility.go": m2EligibilitySource("renamed", 128, false)}, true},
+		{"composed-key", map[string]string{"internal/workgraph/eligibility.go": m2EligibilitySource("policy", 128, true)}, true},
+		{"adapter-owned", map[string]string{"internal/controlstore/gapdb/eligibility.go": strings.Replace(m2EligibilitySource("policy", 128, true), "package workgraph", "package gapdb", 1)}, true},
+		{
+			"reachable-wrapper",
+			map[string]string{
+				"internal/workgraph/eligibility.go": "package workgraph\nimport wrapper \"example.test/eligibility/internal/keybuilder\"\nvar _ = wrapper.EligibilityKey\n",
+				"internal/keybuilder/key.go":        strings.Replace(m2EligibilitySource("renamed", 128, true), "package workgraph", "package keybuilder", 1),
+			},
+			true,
+		},
+		{"unclassified-owner", map[string]string{"internal/unowned/eligibility.go": strings.Replace(m2EligibilitySource("policy", 64, true), "package workgraph", "package unowned", 1)}, true},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeGoFixture(t, root, "go.mod", "module example.test/eligibility\n\ngo 1.26\n")
+			for path, source := range fixture.files {
+				writeGoFixture(t, root, path, source)
 			}
-			delete(mutant, name)
-			if m2EligibilityValuesMatch(mutant) {
-				t.Fatalf("evidence=ELIGIBILITY-POLICY-MUTANT mutant=%s observed=accepted expected=rejected", name)
+			setIsolatedGoPaths(t)
+			t.Setenv("GOPROXY", "off")
+			err := inspectM2EligibilityModule(t.Context(), root, "example.test/eligibility", contract)
+			if (err != nil) != fixture.wantError {
+				t.Fatalf("evidence=ELIGIBILITY-POLICY-MUTANT fixture=%s observed-error=%v expected-error=%t", fixture.name, err, fixture.wantError)
 			}
 		})
 	}
@@ -269,70 +273,139 @@ func validateM2KeyspaceRegistry(entries []m2KeyEntry) error {
 	return nil
 }
 
-func inspectM2EligibilityPolicy(root string) (map[string]string, bool, error) {
-	values := make(map[string]string)
-	persistent := false
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+func loadM2EligibilityContract() (m2EligibilityContract, error) {
+	digest := sha256.Sum256([]byte(m2EligibilityContractJSON))
+	if hex.EncodeToString(digest[:]) != m2EligibilityContractSHA256 {
+		return m2EligibilityContract{}, fmt.Errorf("evidence=ELIGIBILITY-POLICY law=independent-contract-digest observed=%s expected=%s", hex.EncodeToString(digest[:]), m2EligibilityContractSHA256)
+	}
+	var contract m2EligibilityContract
+	if err := decodeM2Strict([]byte(m2EligibilityContractJSON), &contract); err != nil {
+		return contract, fmt.Errorf("evidence=ELIGIBILITY-POLICY law=typed-contract: %w", err)
+	}
+	if contract.PolicyVersion == "" || contract.HashAlgorithm == "" || contract.ShardCount <= 0 || contract.ShardCount&(contract.ShardCount-1) != 0 ||
+		contract.MaxEntriesPerShard <= 0 || contract.ShardCount*contract.MaxEntriesPerShard < 10_000 ||
+		contract.Contention.MaxParallelWriters <= 1 || contract.Contention.RequiredTrials < 100 {
+		return contract, fmt.Errorf("evidence=ELIGIBILITY-POLICY law=typed-bounds observed=%+v", contract)
+	}
+	return contract, nil
+}
+
+func inspectM2EligibilityModule(ctx context.Context, root, module string, contract m2EligibilityContract) error {
+	graph, err := LoadGraph(ctx, root)
+	if err != nil {
+		return err
+	}
+	sources, err := loadTypedProductionSources(ctx, root, module, runGraphCommand)
+	if err != nil {
+		return err
+	}
+	reachable := m2EligibilityOwnerClosure(graph, module)
+	seams := make(map[string]bool)
+	ownedValues := make(map[string]bool)
+	for _, source := range sources {
+		values := m2TypedConstantValues(source)
+		for _, value := range values {
+			if strings.Contains(value, m2EligibilityPersistentKeyMarker) && strings.Contains(value, "/eligibility/") {
+				seams[source.importPath] = true
+			}
+			if reachable[source.importPath] {
+				ownedValues[value] = true
+			}
 		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
+	}
+	if len(seams) == 0 {
+		return nil
+	}
+	for owner := range seams {
+		if !reachable[owner] {
+			return fmt.Errorf("evidence=ELIGIBILITY-POLICY law=typed-owner observed=%s expected=workgraph-or-gapdb-reachable", owner)
 		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
+	}
+	required := []string{
+		contract.PolicyVersion,
+		contract.HashAlgorithm,
+		strconv.Itoa(contract.ShardCount),
+		strconv.Itoa(contract.MaxEntriesPerShard),
+		strconv.Itoa(contract.Contention.MaxParallelWriters),
+		strconv.Itoa(contract.Contention.RequiredTrials),
+	}
+	for _, value := range required {
+		if !ownedValues[value] {
+			return fmt.Errorf("evidence=ELIGIBILITY-POLICY law=frozen-typed-coordinate observed=missing expected=%q seam=%v", value, sortedM2MapKeys(seams))
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), path, content, 0)
-		if err != nil {
-			return err
+	}
+	return nil
+}
+
+func m2EligibilityOwnerClosure(graph Graph, module string) map[string]bool {
+	reachable := make(map[string]bool)
+	queue := make([]string, 0)
+	for _, pkg := range graph.Packages {
+		if matchesPrefix(pkg.ImportPath, []string{module + "/internal/workgraph", module + "/internal/controlstore/gapdb"}) {
+			reachable[pkg.ImportPath] = true
+			queue = append(queue, pkg.ImportPath)
 		}
-		for _, literal := range file.Decls {
-			declaration, ok := literal.(*ast.GenDecl)
-			if !ok || declaration.Tok != token.CONST {
+	}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, edge := range graph.Edges {
+			if edge.SourcePackage != current || edge.Kind != ImportModuleLocal || reachable[edge.TargetPackage] {
 				continue
 			}
-			for _, spec := range declaration.Specs {
-				valueSpec := spec.(*ast.ValueSpec)
-				for index, name := range valueSpec.Names {
-					if index < len(valueSpec.Values) {
-						values[name.Name] = string(content[valueSpec.Values[index].Pos()-file.Pos() : valueSpec.Values[index].End()-file.Pos()])
-					}
-				}
-			}
+			reachable[edge.TargetPackage] = true
+			queue = append(queue, edge.TargetPackage)
 		}
-		if bytesContainStringLiteral(file, m2EligibilityPersistentKeyMarker) {
-			persistent = true
-		}
-		return nil
-	})
-	if os.IsNotExist(err) {
-		return values, false, nil
 	}
-	return values, persistent, err
+	return reachable
 }
 
-func bytesContainStringLiteral(file *ast.File, needle string) bool {
-	found := false
-	ast.Inspect(file, func(node ast.Node) bool {
-		literal, ok := node.(*ast.BasicLit)
-		if !ok || literal.Kind != token.STRING {
-			return true
+func m2TypedConstantValues(source *productionSourcePackage) []string {
+	values := make(map[string]bool)
+	for _, typeAndValue := range source.info.Types {
+		if typeAndValue.Value == nil {
+			continue
 		}
-		value, err := strconv.Unquote(literal.Value)
-		if err == nil && strings.Contains(value, needle) {
-			found = true
+		switch typeAndValue.Value.Kind() {
+		case constant.String:
+			values[constant.StringVal(typeAndValue.Value)] = true
+		case constant.Int:
+			values[typeAndValue.Value.ExactString()] = true
 		}
-		return !found
-	})
-	return found
+	}
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	slices.Sort(result)
+	return result
 }
 
-func m2EligibilityValuesMatch(values map[string]string) bool {
-	return values["EligibilityPolicyVersionV1"] == strconv.Quote(m2EligibilityPolicyVersion) &&
-		values["EligibilityShardCountV1"] == strconv.Itoa(m2EligibilityShardCount) &&
-		values["EligibilityHashAlgorithmV1"] == strconv.Quote(m2EligibilityHashAlgorithm) &&
-		values["EligibilityMaxEntriesPerShardV1"] == strconv.Itoa(m2EligibilityMaxEntriesPerShard) &&
-		values["EligibilityContentionWritersV1"] == strconv.Itoa(m2EligibilityContentionWriters) &&
-		values["EligibilityContentionTrialsV1"] == strconv.Itoa(m2EligibilityContentionTrials)
+func sortedM2MapKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func m2EligibilitySource(prefix string, shardCount int, composed bool) string {
+	key := `const EligibilityKey = "spk/v2/workgraphs/mission/eligibility/00"`
+	if composed {
+		key = `const root = "spk/v2/"
+const category = "workgraphs/mission/eligibility/00"
+const EligibilityKey = root + category`
+	}
+	return fmt.Sprintf(`package workgraph
+const (
+    %sVersion = "spk.workgraph.eligibility-shards.v1"
+    %sHash = "sha256-length-prefixed-mission-work-v1"
+    %sShards = %d
+    %sEntries = 256
+    %sWriters = 32
+    %sTrials = 100
+)
+%s
+`, prefix, prefix, prefix, shardCount, prefix, prefix, prefix, key)
 }

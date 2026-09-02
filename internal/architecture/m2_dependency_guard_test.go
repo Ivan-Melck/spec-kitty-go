@@ -2,6 +2,8 @@ package architecture
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"strings"
@@ -11,6 +13,8 @@ import (
 
 const m2ModulePath = "github.com/spec-kitty/go-kitty3"
 
+const m2LegacyExemptionSHA256 = "dc09c98815fb900c0806b76b830d87b7895981875796e136d0c9742d13d6f400"
+
 var m2SQLProviderPrefixes = []string{
 	"database/sql",
 	"github.com/glebarez/sqlite",
@@ -19,6 +23,68 @@ var m2SQLProviderPrefixes = []string{
 	"github.com/ncruces/go-sqlite3",
 	"modernc.org/sqlite",
 	"zombiezen.com/go/sqlite",
+}
+
+var m2PureJournalStandardLibrary = []PackagePattern{
+	ExactPackage("bytes"),
+	ExactPackage("context"),
+	ExactPackage("crypto/sha256"),
+	PackagePrefix("encoding"),
+	ExactPackage("errors"),
+	ExactPackage("fmt"),
+	ExactPackage("hash"),
+	ExactPackage("sort"),
+	ExactPackage("strconv"),
+	ExactPackage("strings"),
+	PackagePrefix("sync"),
+	PackagePrefix("unicode"),
+}
+
+var m2ExactGapDBCallers = []PackagePattern{
+	ExactPackage(m2ModulePath + "/internal/controlstore/gapdb"),
+	ExactPackage(m2ModulePath + "/internal/sidecar/gapdb"),
+	ExactPackage(m2ModulePath + "/internal/testcampaign/m2/external"),
+}
+
+var m2TrackerForbiddenTargets = []PackagePattern{
+	PackagePrefix(m2ModulePath + "/internal/artifact"),
+	PackagePrefix(m2ModulePath + "/internal/mission"),
+	PackagePrefix(m2ModulePath + "/internal/execution"),
+	PackagePrefix(m2ModulePath + "/internal/workspace"),
+	PackagePrefix(m2ModulePath + "/internal/handoff"),
+	PackagePrefix(m2ModulePath + "/internal/review"),
+	PackagePrefix(m2ModulePath + "/internal/acceptance"),
+	PackagePrefix(m2ModulePath + "/internal/integration"),
+	PackagePrefix(m2ModulePath + "/internal/gitrepo"),
+}
+
+type m2LegacyExemption struct {
+	Source          string
+	Target          string
+	Kind            ImportKind
+	AdmissionTuple  string
+	RemovalBoundary string
+}
+
+func m2LegacyExemptions(module string) []m2LegacyExemption {
+	return []m2LegacyExemption{
+		{module + "/internal/controlstore/sqlite", "database/sql", ImportStandardLibrary, m2TupleSHA, "WP16"},
+		{module + "/internal/controlstore/sqlite", "modernc.org/sqlite", ImportExternal, m2TupleSHA, "WP16"},
+		{module + "/internal/controlstore/sqlite", "database/sql", ImportTestOnly, m2TupleSHA, "WP16"},
+		{module + "/internal/controlstore/sqlite", "modernc.org/sqlite", ImportTestOnly, m2TupleSHA, "WP16"},
+		{module + "/internal/helpercmd", module + "/internal/controlstore/sqlite", ImportModuleLocal, m2TupleSHA, "WP15"},
+		{module + "/internal/scenario", "database/sql", ImportTestOnly, m2TupleSHA, "WP14"},
+		{module + "/internal/scenario", module + "/internal/controlstore/sqlite", ImportTestOnly, m2TupleSHA, "WP14"},
+		{module + "/internal/scenario", "modernc.org/sqlite", ImportTestOnly, m2TupleSHA, "WP14"},
+		{module + "/internal/scenario", "database/sql", ImportStandardLibrary, m2TupleSHA, "WP14"},
+		{module + "/internal/scenario", "modernc.org/sqlite", ImportExternal, m2TupleSHA, "WP14"},
+		{module + "/internal/testcampaign/m1/external", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, m2TupleSHA, "WP17"},
+		{module + "/internal/tracker/beads", module + "/internal/controlstore/sqlite", ImportTestOnly, m2TupleSHA, "WP14"},
+		{module + "/internal/tracker/beads", module + "/internal/artifact", ImportTestOnly, m2TupleSHA, "WP14"},
+		{module + "/internal/tracker/beads", module + "/internal/execution", ImportTestOnly, m2TupleSHA, "WP14"},
+		{module + "/internal/tracker/beads", module + "/internal/mission", ImportTestOnly, m2TupleSHA, "WP14"},
+		{module + "/internal/tracker/beads", module + "/internal/workspace", ImportTestOnly, m2TupleSHA, "WP14"},
+	}
 }
 
 func TestM2DependencyPolicyAcceptsOnlyBoundedProviderComposition(t *testing.T) {
@@ -42,6 +108,28 @@ func TestM2DependencyPolicyAcceptsOnlyBoundedProviderComposition(t *testing.T) {
 	graph.ModulePath = m2ModulePath
 	if err := policy.Check(graph); err != nil {
 		t.Fatalf("evidence=PACKAGE-DIRECTIONS legal M2 composition rejected: %v", err)
+	}
+}
+
+func TestM2DependencyPositiveBoundaries(t *testing.T) {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	legal := fixtureGraph(
+		[]string{
+			m2ModulePath + "/internal/controljournal/v2",
+			m2ModulePath + "/internal/controlstore/gapdb",
+			m2ModulePath + "/internal/sidecar/gapdb",
+			m2ModulePath + "/internal/testcampaign/m2/external",
+		},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/controljournal/v2", TargetPackage: "context", Kind: ImportStandardLibrary},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/controljournal/v2", TargetPackage: "encoding/json", Kind: ImportStandardLibrary},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/controljournal/v2", TargetPackage: "crypto/sha256", Kind: ImportStandardLibrary},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/gapdb", TargetPackage: "github.com/spec-kitty/gapdb/gapdb", Kind: ImportExternal},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/sidecar/gapdb", TargetPackage: "github.com/spec-kitty/gapdb/gapdbapi", Kind: ImportExternal},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/testcampaign/m2/external", TargetPackage: "github.com/spec-kitty/gapdb/gapdb", Kind: ImportExternal},
+	)
+	legal.ModulePath = m2ModulePath
+	if violations := m2EvaluateClosedGraph(policy, legal); len(violations) != 0 {
+		t.Fatalf("evidence=PURE-KERNEL-IMPORTS legal provider-neutral/provider callers rejected:\n%s", violations.Error())
 	}
 }
 
@@ -121,6 +209,52 @@ func TestM2CurrentRepositoryActivatesCompleteGuard(t *testing.T) {
 	violations := m2EvaluateIncrementalRepository(policy, graph)
 	if len(violations) != 0 {
 		t.Fatalf("evidence=PACKAGE-DIRECTIONS current M2 surface violations:\n%s", violations.Error())
+	}
+}
+
+func TestM2LaterCapabilityCannotHideBehindLegacySQLite(t *testing.T) {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	graph := fixtureGraph(
+		[]string{m2ModulePath + "/internal/controlstore/sqlite", m2ModulePath + "/internal/workgraph"},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/sqlite", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/workgraph", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal},
+	)
+	graph.ModulePath = m2ModulePath
+	violations := m2EvaluateIncrementalRepository(policy, graph)
+	if len(violations) != 1 || violations[0].SourcePackage != m2ModulePath+"/internal/workgraph" || violations[0].TargetPackage != "modernc.org/sqlite" {
+		t.Fatalf("evidence=SQLITE-SQL-DENIAL reviewer-probe observed=%v expected=workgraph SQLite violation", violations)
+	}
+}
+
+func TestM2LegacyExemptionsAreExactAndProvenanceBound(t *testing.T) {
+	exemptions := m2LegacyExemptions(m2ModulePath)
+	if err := validateM2LegacyExemptions(exemptions); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool, len(exemptions))
+	for _, exemption := range exemptions {
+		key := fmt.Sprintf("%s|%s|%s", exemption.Source, exemption.Target, exemption.Kind)
+		if seen[key] || exemption.AdmissionTuple != m2TupleSHA || exemption.RemovalBoundary == "" {
+			t.Fatalf("evidence=SQLITE-SQL-DENIAL invalid legacy exemption=%+v", exemption)
+		}
+		seen[key] = true
+	}
+	mutants := []struct {
+		candidate m2LegacyExemption
+		list      []m2LegacyExemption
+	}{
+		{m2LegacyExemption{m2ModulePath + "/internal/workgraph", "modernc.org/sqlite", ImportExternal, m2TupleSHA, "WP16"}, exemptions},
+		{m2LegacyExemption{m2ModulePath + "/internal/controlstore/sqlite", "modernc.org/sqlite/lib", ImportExternal, m2TupleSHA, "WP16"}, exemptions},
+		{exemptions[0], func() []m2LegacyExemption {
+			values := slices.Clone(exemptions)
+			values[0].AdmissionTuple = "mutable"
+			return values
+		}()},
+	}
+	for _, mutant := range mutants {
+		if m2IsLegacyExempt(mutant.candidate.Source, mutant.candidate.Target, mutant.candidate.Kind, mutant.list) {
+			t.Fatalf("evidence=SQLITE-SQL-DENIAL broad legacy mutant accepted=%+v", mutant.candidate)
+		}
 	}
 }
 
@@ -228,19 +362,19 @@ func validateM2PolicyShape(policy Policy) error {
 func m2EvaluateClosedGraph(policy Policy, graph Graph) Violations {
 	violations := policy.Evaluate(graph)
 	for _, edge := range graph.Edges {
-		if edge.Kind == ImportTestOnly || !matchesPrefix(edge.TargetPackage, m2SQLProviderPrefixes) {
-			continue
-		}
 		sourceTier, _ := policy.Classify(edge.SourcePackage)
-		violation := violationForEdge(RuleDeferredSurface, edge, sourceTier.Name, "")
-		found := false
-		for _, existing := range violations {
-			if existing == violation {
-				found = true
-			}
+		if matchesPrefix(edge.TargetPackage, m2SQLProviderPrefixes) {
+			violations = appendM2Violation(violations, violationForEdge(RuleDeferredSurface, edge, sourceTier.Name, ""))
 		}
-		if !found {
-			violations = append(violations, violation)
+		if matchesPrefix(edge.TargetPackage, []string{"github.com/spec-kitty/gapdb"}) && !forbidden(edge.SourcePackage, m2ExactGapDBCallers) {
+			violations = appendM2Violation(violations, violationForEdge(RuleExternalDirection, edge, sourceTier.Name, ""))
+		}
+		if edge.Kind != ImportTestOnly && matchesPrefix(edge.SourcePackage, []string{policy.ModulePath + "/internal/controljournal/v2"}) && edge.Kind == ImportStandardLibrary && !forbidden(edge.TargetPackage, m2PureJournalStandardLibrary) {
+			violations = appendM2Violation(violations, violationForEdge(RuleDeferredSurface, edge, sourceTier.Name, ""))
+		}
+		if sourceTier.Name == TierAdapter && matchesPrefix(edge.SourcePackage, []string{policy.ModulePath + "/internal/tracker"}) && forbidden(edge.TargetPackage, m2TrackerForbiddenTargets) {
+			targetTier, _ := policy.Classify(edge.TargetPackage)
+			violations = appendM2Violation(violations, violationForEdge(RuleLocalDirection, edge, sourceTier.Name, targetTier.Name))
 		}
 	}
 	slices.SortFunc(violations, func(left, right Violation) int { return strings.Compare(left.Error(), right.Error()) })
@@ -248,32 +382,54 @@ func m2EvaluateClosedGraph(policy Policy, graph Graph) Violations {
 }
 
 func m2EvaluateIncrementalRepository(policy Policy, graph Graph) Violations {
-	all := m2EvaluateClosedGraph(policy, graph)
-	legacySQLitePresent := false
-	for _, pkg := range graph.Packages {
-		if pkg.ImportPath == graph.ModulePath+"/internal/controlstore/sqlite" {
-			legacySQLitePresent = true
-			break
+	exemptions := m2LegacyExemptions(graph.ModulePath)
+	filtered := graph
+	filtered.Edges = make([]ImportEdge, 0, len(graph.Edges))
+	for _, edge := range graph.Edges {
+		if m2IsLegacyExempt(edge.SourcePackage, edge.TargetPackage, edge.Kind, exemptions) {
+			continue
 		}
+		filtered.Edges = append(filtered.Edges, edge)
 	}
-	filtered := make(Violations, 0, len(all))
-	for _, violation := range all {
-		if !legacySQLitePresent || matchesPrefix(violation.SourcePackage, m2ActivatedSourcePrefixes(graph.ModulePath)) {
-			filtered = append(filtered, violation)
-		}
-	}
-	return filtered
+	return m2EvaluateClosedGraph(policy, filtered)
 }
 
-func m2ActivatedSourcePrefixes(module string) []string {
-	return []string{
-		module + "/internal/controljournal/v2",
-		module + "/internal/acceptance",
-		module + "/internal/productionruntime",
-		module + "/internal/controlroot",
-		module + "/cmd/spec-kitty",
-		module + "/cmd/spk-m2-qualification",
+func appendM2Violation(values Violations, candidate Violation) Violations {
+	for _, existing := range values {
+		if existing == candidate {
+			return values
+		}
 	}
+	return append(values, candidate)
+}
+
+func m2IsLegacyExempt(source, target string, kind ImportKind, exemptions []m2LegacyExemption) bool {
+	for _, exemption := range exemptions {
+		if exemption.AdmissionTuple == m2TupleSHA && exemption.Source == source && exemption.Target == target && exemption.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func validateM2LegacyExemptions(exemptions []m2LegacyExemption) error {
+	identities := make([]string, 0, len(exemptions))
+	seen := make(map[string]bool, len(exemptions))
+	for _, exemption := range exemptions {
+		identity := fmt.Sprintf("%s|%s|%s|%s|%s", exemption.Source, exemption.Target, exemption.Kind, exemption.AdmissionTuple, exemption.RemovalBoundary)
+		if exemption.AdmissionTuple != m2TupleSHA || exemption.RemovalBoundary == "" || seen[identity] {
+			return fmt.Errorf("evidence=SQLITE-SQL-DENIAL law=legacy-exemption-provenance observed=%+v", exemption)
+		}
+		seen[identity] = true
+		identities = append(identities, identity)
+	}
+	slices.Sort(identities)
+	digest := sha256.Sum256([]byte(strings.Join(identities, "\n")))
+	got := hex.EncodeToString(digest[:])
+	if got != m2LegacyExemptionSHA256 {
+		return fmt.Errorf("evidence=SQLITE-SQL-DENIAL law=legacy-exemption-census observed-sha256=%s expected=%s", got, m2LegacyExemptionSHA256)
+	}
+	return nil
 }
 
 func cloneM2Policy(policy Policy) Policy {

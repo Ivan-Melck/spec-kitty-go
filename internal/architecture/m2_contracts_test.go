@@ -198,13 +198,12 @@ func TestM2ContractEventFamilyRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{
-		"acceptance@internal/integration", "artifact_catalog@internal/artifact", "artifact_revision@internal/artifact",
-		"execution_slot@internal/execution", "external_effect@internal/execution", "handoff_slot@internal/handoff",
-		"integration_attempt@internal/integration", "integration_target@internal/integration", "mission@internal/mission",
-		"operation@internal/controljournal/application", "outbox@internal/controlstore", "review_slot@internal/review",
-		"runtime_host@internal/productionruntime", "workgraph@internal/workgraph", "workspace@internal/workspace",
+	wantFamilies := m2ExpectedEventFamilies()
+	want := make([]string, 0, len(wantFamilies))
+	for _, family := range wantFamilies {
+		want = append(want, family.Family+"@"+family.Owner)
 	}
+	slices.Sort(want)
 	got := make([]string, 0, len(registry.Families))
 	for _, family := range registry.Families {
 		got = append(got, family.Family+"@"+family.Owner)
@@ -222,6 +221,14 @@ func TestM2ContractEventFamilyRegistry(t *testing.T) {
 		{"zero-reducer", func(v *m2EventRegistry) { v.Families[0].Reducer = 0 }},
 		{"wrong-order", func(v *m2EventRegistry) { v.Ordering[0] = "global_sequence" }},
 		{"unnormalized-owner", func(v *m2EventRegistry) { v.Families[0].Owner += "/" }},
+		{"wrong-normalized-owner", func(v *m2EventRegistry) { v.Families[0].Owner = "internal/mission" }},
+		{"renamed-family", func(v *m2EventRegistry) { v.Families[0].Family = "runtime" }},
+		{"missing-family", func(v *m2EventRegistry) { v.Families = v.Families[1:] }},
+		{"unexpected-family", func(v *m2EventRegistry) {
+			v.Families[len(v.Families)-1] = m2EventFamily{Family: "unexpected", EventSchema: 1, Reducer: 1, Owner: "internal/controlstore"}
+		}},
+		{"event-version-change", func(v *m2EventRegistry) { v.Families[0].EventSchema = 2 }},
+		{"reducer-version-change", func(v *m2EventRegistry) { v.Families[0].Reducer = 2 }},
 		{"open-publication", func(v *m2EventRegistry) { v.PublicationRule = "many_events_per_aggregate" }},
 	}
 	for _, mutant := range mutants {
@@ -382,10 +389,34 @@ func validateM2EventRegistry(payload []byte) (m2EventRegistry, error) {
 		}
 		seen[family.Family] = true
 	}
-	if len(registry.Families) != 15 {
-		return registry, fmt.Errorf("contract=C-M2-EVENT-REGISTRY law=family-count observed=%d expected=15", len(registry.Families))
+	want := m2ExpectedEventFamilies()
+	got := slices.Clone(registry.Families)
+	slices.SortFunc(got, func(left, right m2EventFamily) int { return strings.Compare(left.Family, right.Family) })
+	slices.SortFunc(want, func(left, right m2EventFamily) int { return strings.Compare(left.Family, right.Family) })
+	if !slices.Equal(got, want) {
+		return registry, fmt.Errorf("contract=C-M2-EVENT-REGISTRY law=closed-family-tuples observed=%+v expected=%+v", got, want)
 	}
 	return registry, nil
+}
+
+func m2ExpectedEventFamilies() []m2EventFamily {
+	return []m2EventFamily{
+		{Family: "runtime_host", EventSchema: 1, Reducer: 1, Owner: "internal/productionruntime"},
+		{Family: "operation", EventSchema: 1, Reducer: 1, Owner: "internal/controljournal/application"},
+		{Family: "mission", EventSchema: 1, Reducer: 1, Owner: "internal/mission"},
+		{Family: "artifact_catalog", EventSchema: 1, Reducer: 1, Owner: "internal/artifact"},
+		{Family: "artifact_revision", EventSchema: 1, Reducer: 1, Owner: "internal/artifact"},
+		{Family: "workgraph", EventSchema: 1, Reducer: 1, Owner: "internal/workgraph"},
+		{Family: "execution_slot", EventSchema: 1, Reducer: 1, Owner: "internal/execution"},
+		{Family: "workspace", EventSchema: 1, Reducer: 1, Owner: "internal/workspace"},
+		{Family: "handoff_slot", EventSchema: 1, Reducer: 1, Owner: "internal/handoff"},
+		{Family: "review_slot", EventSchema: 1, Reducer: 1, Owner: "internal/review"},
+		{Family: "acceptance", EventSchema: 1, Reducer: 1, Owner: "internal/integration"},
+		{Family: "integration_target", EventSchema: 1, Reducer: 1, Owner: "internal/integration"},
+		{Family: "integration_attempt", EventSchema: 1, Reducer: 1, Owner: "internal/integration"},
+		{Family: "external_effect", EventSchema: 1, Reducer: 1, Owner: "internal/execution"},
+		{Family: "outbox", EventSchema: 1, Reducer: 1, Owner: "internal/controlstore"},
+	}
 }
 
 func validateM2Adoption(payload []byte) (m2Adoption, error) {
