@@ -288,10 +288,10 @@
       "criterion_id": "FR-029",
       "description": "GJ-01 through GJ-05 execute at the actual external boundary and produce their required terminal evidence.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "WP10 review-cycle-2; RunID m1-crown-e05a5e4-20260901T224500Z; manifest sha256 397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309; independent verify pass at e05a5e46feb3e65ff42c4544c16678c440ef3818",
+      "pass_fail": "pass",
+      "verified_by": "codex-acceptance",
+      "verified_at": "2026-09-02T09:01:36.137289+00:00",
       "notes": "Crown census is exactly 5/5 named fault cuts."
     },
     {
