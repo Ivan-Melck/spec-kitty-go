@@ -20,8 +20,8 @@
     "WP01": {
       "actor": "wp01-arbiter",
       "agent": "wp01-arbiter",
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 5,
       "lane": "for_review",
       "last_event_id": "01M1HDMH8XDN94FE6PWHXBMTB6",
@@ -42,8 +42,8 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 610502,
+      "shell_pid_created_at": "1788364861.03",
       "subtasks": {
         "T001": "done",
         "T002": "done",
