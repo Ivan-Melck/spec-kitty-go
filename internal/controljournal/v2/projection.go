@@ -12,23 +12,29 @@ const (
 )
 
 type projectionEntryV2 struct {
-	coordinate AggregateCoordinate
-	canonical  []byte
-	digest     Digest
-	version    LogicalVersion
+	coordinate  AggregateCoordinate
+	canonical   []byte
+	digest      Digest
+	version     LogicalVersion
+	lastEventID EventID
+	tombstone   bool
 }
 
 type ProjectionEntryV2 struct {
-	coordinate AggregateCoordinate
-	canonical  []byte
-	digest     Digest
-	version    LogicalVersion
+	coordinate  AggregateCoordinate
+	canonical   []byte
+	digest      Digest
+	version     LogicalVersion
+	lastEventID EventID
+	tombstone   bool
 }
 
 func (e ProjectionEntryV2) Coordinate() AggregateCoordinate { return e.coordinate }
 func (e ProjectionEntryV2) CanonicalState() []byte          { return append([]byte(nil), e.canonical...) }
 func (e ProjectionEntryV2) StateDigest() Digest             { return e.digest }
 func (e ProjectionEntryV2) LogicalVersion() LogicalVersion  { return e.version }
+func (e ProjectionEntryV2) LastEventID() EventID            { return e.lastEventID }
+func (e ProjectionEntryV2) Tombstone() bool                 { return e.tombstone }
 
 type OperationSummaryV2 struct {
 	total        uint64
@@ -123,6 +129,13 @@ func (t *ProjectionTrackerV2) applyAcknowledged(ack AcknowledgedPublicationV2) e
 	for _, head := range plan.heads {
 		headByCoordinate[head.Coordinate.canonical()] = head
 	}
+	var durableOperationHead []byte
+	for _, record := range plan.records {
+		if record.role == RecordOperationHead {
+			durableOperationHead = append([]byte(nil), record.canonical...)
+			break
+		}
+	}
 	for _, event := range plan.events {
 		key := event.input.Coordinate.canonical()
 		head, ok := headByCoordinate[key]
@@ -135,7 +148,7 @@ func (t *ProjectionTrackerV2) applyAcknowledged(ack AcknowledgedPublicationV2) e
 		}
 		var output []byte
 		var stateDigest Digest
-		output, stateDigest, err := t.reducers.Apply(event.input.Family, event.input.EventSchemaVersion, event.input.ReducerVersion, prior, event.payload)
+		output, stateDigest, err := t.reducers.Apply(prior, event)
 		if err != nil {
 			return err
 		}
@@ -146,16 +159,18 @@ func (t *ProjectionTrackerV2) applyAcknowledged(ack AcknowledgedPublicationV2) e
 			}
 			reconstructed, encodeErr := EncodeOperationStateV2(state)
 			planned, plannedErr := EncodeOperationStateV2(plan.operationState)
-			if encodeErr != nil || plannedErr != nil || !bytes.Equal(reconstructed, planned) {
+			if encodeErr != nil || plannedErr != nil || !bytes.Equal(reconstructed, planned) ||
+				!bytes.Equal(output, durableOperationHead) || !bytes.Equal(output, planned) {
 				return invalid(ErrorInvalidTransition, "operation_projection")
 			}
 			changedOperations[state.operationID] = state
-		}
-		if stateDigest != head.CanonicalStateDigest {
+		} else if stateDigest != head.CanonicalStateDigest {
 			return invalid(ErrorInvalidDigest, "projection_state_digest")
 		}
-		if current, exists := t.states[key]; !exists || !bytes.Equal(current.canonical, output) || current.version != event.input.AggregateLogicalVersion {
-			changedStates[key] = projectionEntryV2{coordinate: event.input.Coordinate, canonical: append([]byte(nil), output...), digest: stateDigest, version: event.input.AggregateLogicalVersion}
+		if current, exists := t.states[key]; !exists || !bytes.Equal(current.canonical, output) || current.version != event.input.AggregateLogicalVersion ||
+			current.lastEventID != head.EventID || current.tombstone != head.Tombstone {
+			changedStates[key] = projectionEntryV2{coordinate: event.input.Coordinate, canonical: append([]byte(nil), output...), digest: stateDigest,
+				version: event.input.AggregateLogicalVersion, lastEventID: head.EventID, tombstone: head.Tombstone}
 		}
 	}
 
@@ -187,6 +202,20 @@ func (t *ProjectionTrackerV2) LedgerSize() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.ledger)
+}
+
+// CurrentProjection returns one defensive live projection entry. Operation
+// entries contain the exact durable OperationState head; checkpoint seals
+// compact them into OperationSummaryV2 instead of retaining result bytes.
+func (t *ProjectionTrackerV2) CurrentProjection(coordinate AggregateCoordinate) (ProjectionEntryV2, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	entry, ok := t.states[coordinate.canonical()]
+	if !ok {
+		return ProjectionEntryV2{}, false
+	}
+	return ProjectionEntryV2{coordinate: entry.coordinate, canonical: append([]byte(nil), entry.canonical...), digest: entry.digest,
+		version: entry.version, lastEventID: entry.lastEventID, tombstone: entry.tombstone}, true
 }
 
 type SealedProjectionPrefixV2 struct {
@@ -294,14 +323,18 @@ func (t *ProjectionTrackerV2) sealPrefix() (SealedProjectionPrefixV2, error) {
 
 func snapshotProjectionEntries(states map[string]projectionEntryV2) []ProjectionEntryV2 {
 	keys := make([]string, 0, len(states))
-	for key := range states {
+	for key, value := range states {
+		if value.coordinate.Kind == AggregateKind("operation") {
+			continue
+		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	result := make([]ProjectionEntryV2, len(keys))
 	for index, key := range keys {
 		value := states[key]
-		result[index] = ProjectionEntryV2{coordinate: value.coordinate, canonical: append([]byte(nil), value.canonical...), digest: value.digest, version: value.version}
+		result[index] = ProjectionEntryV2{coordinate: value.coordinate, canonical: append([]byte(nil), value.canonical...), digest: value.digest,
+			version: value.version, lastEventID: value.lastEventID, tombstone: value.tombstone}
 	}
 	return result
 }
@@ -310,15 +343,20 @@ func digestProjectionEntries(entries []ProjectionEntryV2) (Digest, error) {
 	type wire struct {
 		Coordinate  AggregateCoordinate `json:"coordinate"`
 		Version     uint64              `json:"version"`
+		LastEventID string              `json:"last_event_id"`
+		Tombstone   bool                `json:"tombstone"`
 		State       []byte              `json:"state"`
 		StateSHA256 string              `json:"state_sha256"`
 	}
 	values := make([]wire, len(entries))
 	for index, entry := range entries {
-		if entry.version == 0 || entry.digest.IsZero() || digest("spec-kitty.reducer-state.v2", entry.canonical) != entry.digest {
+		if _, err := NewAggregateCoordinate(entry.coordinate.Kind, entry.coordinate.ID, entry.coordinate.Scope); err != nil ||
+			entry.coordinate.Kind == AggregateKind("operation") || entry.version == 0 || validateIdentity("last_event_id", string(entry.lastEventID)) != nil ||
+			entry.digest.IsZero() || digest("spec-kitty.reducer-state.v2", entry.canonical) != entry.digest {
 			return Digest{}, invalid(ErrorInvalidDigest, "projection_entry")
 		}
-		values[index] = wire{entry.coordinate, uint64(entry.version), append([]byte(nil), entry.canonical...), entry.digest.String()}
+		values[index] = wire{entry.coordinate, uint64(entry.version), string(entry.lastEventID), entry.tombstone,
+			append([]byte(nil), entry.canonical...), entry.digest.String()}
 	}
 	canonical, err := marshalCanonical(values, MaxCommitPlanBytes)
 	if err != nil {

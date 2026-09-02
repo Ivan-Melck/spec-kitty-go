@@ -1287,11 +1287,12 @@ func TestEventRegistryReducerPlaybackAndDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, digest, err := reducers.Reduce("mission", 1, 1, []byte(`{"prior":1}`), []byte(`{"state":"ready"}`))
+	event := fixtureMissionEnvelope(t, []byte(`{"state":"ready"}`))
+	result, digest, err := reducers.Reduce([]byte(`{"prior":1}`), event)
 	if err != nil || digest.IsZero() || !bytes.Equal(result, []byte(`{"state":"ready"}`)) {
 		t.Fatalf("reducer result=%s digest=%s err=%v", result, digest, err)
 	}
-	if _, _, err := reducers.Reduce("mission", 2, 1, []byte(`{}`), []byte(`{}`)); !IsKind(err, ErrorUnknownEventTuple) {
+	if _, err := registry.Resolve("mission", 2, 1); !IsKind(err, ErrorUnknownEventTuple) {
 		t.Fatal("unknown event tuple fell back")
 	}
 	reducerDescriptor, err := reducers.Descriptor()
@@ -1299,17 +1300,17 @@ func TestEventRegistryReducerPlaybackAndDigest(t *testing.T) {
 		t.Fatalf("reducer descriptor invalid: %v", err)
 	}
 	toggle := false
-	nondeterministic, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(func(_, _ []byte) ([]byte, error) {
+	nondeterministic, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(func(_ []byte, _ EventEnvelopeV2) ([]byte, error) {
 		toggle = !toggle
 		if toggle {
 			return []byte(`{"n":1}`), nil
 		}
 		return []byte(`{"n":2}`), nil
 	}))
-	if _, _, err := nondeterministic.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{}`)); err != nil {
+	if _, _, err := nondeterministic.Reduce([]byte(`{}`), event); err != nil {
 		t.Fatalf("stateless runtime application rejected: %v", err)
 	}
-	if err := nondeterministic.QualifyDeterminismV2("mission", 1, 1, []byte(`{}`), []byte(`{}`), 4); !IsKind(err, ErrorNondeterministic) {
+	if err := nondeterministic.QualifyDeterminismV2([]byte(`{}`), event, 4); !IsKind(err, ErrorNondeterministic) {
 		t.Fatalf("qualification accepted alternating reducer: %v", err)
 	}
 }
@@ -1387,7 +1388,7 @@ func TestReducerRegistryIsCompleteAndImplementationDigestIsDeclared(t *testing.T
 		t.Fatal("declared implementation digest did not affect compatibility identity")
 	}
 	functionOnly := append([]ReducerRegistration(nil), registrations...)
-	functionOnly[0].Reduce = func(_, _ []byte) ([]byte, error) { return []byte(`{"different":"function"}`), nil }
+	functionOnly[0].Reduce = func(_ []byte, _ EventEnvelopeV2) ([]byte, error) { return []byte(`{"different":"function"}`), nil }
 	sameIdentity, err := NewReducerSetV2(registry, functionOnly)
 	if err != nil {
 		t.Fatal(err)
@@ -1401,25 +1402,28 @@ func TestReducerRegistryIsCompleteAndImplementationDigestIsDeclared(t *testing.T
 func TestStatelessReductionIsolationConcurrencyAndQualification(t *testing.T) {
 	registry := DefaultEventRegistryV2()
 	prior := []byte(`{"prior":1}`)
-	event := []byte(`{"event":1}`)
-	isolation, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(func(priorCopy, eventCopy []byte) ([]byte, error) {
-		priorCopy[0], eventCopy[0] = 'x', 'x'
+	event := fixtureMissionEnvelope(t, []byte(`{"event":1}`))
+	isolation, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(func(priorCopy []byte, envelope EventEnvelopeV2) ([]byte, error) {
+		priorCopy[0] = 'x'
+		eventCopy := envelope.Payload()
+		eventCopy[0] = 'x'
 		return []byte(`{"stable":true}`), nil
 	}))
-	output, _, err := isolation.Reduce("mission", 1, 1, prior, event)
-	if err != nil || !bytes.Equal(prior, []byte(`{"prior":1}`)) || !bytes.Equal(event, []byte(`{"event":1}`)) {
-		t.Fatalf("reducer aliased caller input: prior=%s event=%s err=%v", prior, event, err)
+	output, _, err := isolation.Reduce(prior, event)
+	if err != nil || !bytes.Equal(prior, []byte(`{"prior":1}`)) || !bytes.Equal(event.Payload(), []byte(`{"event":1}`)) {
+		t.Fatalf("reducer aliased caller input: prior=%s event=%s err=%v", prior, event.Payload(), err)
 	}
 	output[0] = 'x'
-	second, _, err := isolation.Reduce("mission", 1, 1, prior, event)
+	second, _, err := isolation.Reduce(prior, event)
 	if err != nil || !bytes.Equal(second, []byte(`{"stable":true}`)) {
 		t.Fatalf("returned buffer aliased subsequent application: output=%s err=%v", second, err)
 	}
 
 	freshA, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(nil))
 	freshB, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(nil))
-	left, leftDigest, leftErr := freshA.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{"fresh":true}`))
-	right, rightDigest, rightErr := freshB.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{"fresh":true}`))
+	freshEvent := fixtureMissionEnvelope(t, []byte(`{"fresh":true}`))
+	left, leftDigest, leftErr := freshA.Reduce([]byte(`{}`), freshEvent)
+	right, rightDigest, rightErr := freshB.Reduce([]byte(`{}`), freshEvent)
 	if leftErr != nil || rightErr != nil || !bytes.Equal(left, right) || leftDigest != rightDigest {
 		t.Fatalf("fresh sessions disagree: left=%s right=%s errors=%v/%v", left, right, leftErr, rightErr)
 	}
@@ -1430,7 +1434,7 @@ func TestStatelessReductionIsolationConcurrencyAndQualification(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if _, _, err := concurrent.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{"same":true}`)); err != nil {
+			if _, _, err := concurrent.Reduce([]byte(`{"same":true}`), freshEvent); err != nil {
 				t.Errorf("concurrent identical reduction failed: %v", err)
 			}
 		}()
@@ -1438,32 +1442,52 @@ func TestStatelessReductionIsolationConcurrencyAndQualification(t *testing.T) {
 	wait.Wait()
 	bounded, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(nil))
 	for index := 0; index < 10_001; index++ {
-		payload := []byte(fmt.Sprintf(`{"index":%d}`, index))
-		if _, _, err := bounded.Reduce("mission", 1, 1, []byte(`{}`), payload); err != nil {
+		priorInput := []byte(fmt.Sprintf(`{"index":%d}`, index))
+		if _, _, err := bounded.Reduce(priorInput, freshEvent); err != nil {
 			t.Fatalf("stateless application index=%d rejected: %v", index, err)
 		}
 	}
-	if err := bounded.QualifyDeterminismV2("mission", 1, 1, []byte(`{}`), []byte(`{"index":1}`), MaxQualificationRuns+1); !IsKind(err, ErrorBudgetExceeded) {
+	if err := bounded.QualifyDeterminismV2([]byte(`{}`), freshEvent, MaxQualificationRuns+1); !IsKind(err, ErrorBudgetExceeded) {
 		t.Fatalf("qualification run budget not enforced: %v", err)
 	}
 }
 
 func fixtureReducerRegistrations(mission Reducer) []ReducerRegistration {
 	if mission == nil {
-		mission = func(_, event []byte) ([]byte, error) { return append([]byte(nil), event...), nil }
+		mission = func(_ []byte, event EventEnvelopeV2) ([]byte, error) { return event.Payload(), nil }
 	}
 	registrations := make([]ReducerRegistration, 0, len(ExpectedEventTuples()))
 	for _, tuple := range ExpectedEventTuples() {
-		reducer := Reducer(func(_, event []byte) ([]byte, error) { return append([]byte(nil), event...), nil })
+		reducer := Reducer(func(_ []byte, event EventEnvelopeV2) ([]byte, error) { return event.Payload(), nil })
 		if tuple.Family == "mission" {
 			reducer = mission
 		}
+		if tuple.Family == "operation" {
+			reducer = ReduceOperationStateV2
+		}
+		implementationDigest := digest("test.reducer.implementation", []byte(tuple.Family))
+		if tuple.Family == "operation" {
+			implementationDigest = OperationReducerImplementationDigestV2()
+		}
 		registrations = append(registrations, ReducerRegistration{
 			Family: tuple.Family, EventSchemaVersion: tuple.EventSchemaVersion, ReducerVersion: tuple.ReducerVersion,
-			Owner: tuple.Owner, ImplementationDigest: digest("test.reducer.implementation", []byte(tuple.Family)), Reduce: reducer,
+			Owner: tuple.Owner, ImplementationDigest: implementationDigest, Reduce: reducer,
 		})
 	}
 	return registrations
+}
+
+func fixtureMissionEnvelope(t *testing.T, payload []byte) EventEnvelopeV2 {
+	t.Helper()
+	coordinate, _ := NewAggregateCoordinate("mission", "mission-01", fixtureScope())
+	envelope, err := NewEventEnvelopeV2(EventEnvelopeInput{EventID: "event-reducer", EventType: "mission.changed", Family: "mission",
+		EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: coordinate, AggregateLogicalVersion: 1,
+		OperationID: "operation-reducer", OperationLogicalVersion: 1, PublicationID: testPublicationID("reducer"),
+		CommittedRuntimeEpochID: "epoch-01", EventIndex: 0, EventCount: 1, Payload: payload}, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return envelope
 }
 
 func TestPureDecisionsAreRaceSafeAndIdempotent(t *testing.T) {

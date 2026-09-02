@@ -850,7 +850,50 @@ func DecodeAggregateHeadV2(encoded []byte) (AggregateHeadV2, error) {
 	return head, nil
 }
 
-type Reducer func(priorCanonicalState, canonicalEventPayload []byte) ([]byte, error)
+// Reducer receives one already-validated immutable event envelope. This keeps
+// playback pure while making envelope-owned semantics such as PublicationID
+// available to reducers whose durable state depends on them.
+type Reducer func(priorCanonicalState []byte, event EventEnvelopeV2) ([]byte, error)
+
+// ReduceOperationStateV2 is the closed operation-family reducer. The payload
+// supplies the transition preimage and the validated envelope supplies the
+// PublicationID excluded during plan sealing.
+func ReduceOperationStateV2(prior []byte, event EventEnvelopeV2) ([]byte, error) {
+	if event.input.Family != "operation" || event.input.EventSchemaVersion != 2 || event.input.ReducerVersion != 2 {
+		return nil, invalid(ErrorUnknownEventTuple, "operation_reducer")
+	}
+	state, err := ReconstructOperationStateV2(event.payload, event.input.PublicationID)
+	if err != nil {
+		return nil, err
+	}
+	if len(prior) == 0 || bytes.Equal(prior, []byte(`{}`)) {
+		if state.logicalVersion != 1 {
+			return nil, invalid(ErrorInvalidTransition, "operation_reducer_initial_version")
+		}
+	} else {
+		previous, decodeErr := DecodeOperationStateV2(prior)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		expected, advanceErr := AdvanceOperationState(previous, OperationTransition{ExpectedVersion: previous.logicalVersion,
+			NextVersion: state.logicalVersion, Status: state.status, ResultKind: state.resultKind,
+			ResultSchemaVersion: state.resultSchemaVersion, CanonicalResult: state.canonicalResult,
+			EventIDs: state.eventIDs, EffectIDs: state.effectIDs, LastPublicationID: state.lastPublicationID})
+		if advanceErr != nil {
+			return nil, advanceErr
+		}
+		expectedBytes, expectedErr := EncodeOperationStateV2(expected)
+		stateBytes, stateErr := EncodeOperationStateV2(state)
+		if expectedErr != nil || stateErr != nil || !bytes.Equal(expectedBytes, stateBytes) {
+			return nil, invalid(ErrorInvalidTransition, "operation_reducer_transition")
+		}
+	}
+	return EncodeOperationStateV2(state)
+}
+
+func OperationReducerImplementationDigestV2() Digest {
+	return digest("spec-kitty.reducer-implementation.v2", []byte("operation-state-2/2-envelope-publication"))
+}
 
 type ReducerRegistration struct {
 	Family               string
@@ -932,11 +975,14 @@ func NewReducerSetV2(registry EventRegistryV2, registrations []ReducerRegistrati
 	}}, nil
 }
 
-func (r ReducerSetV2) Apply(family string, eventSchemaVersion, reducerVersion uint32, prior, event []byte) ([]byte, Digest, error) {
-	if _, err := r.registry.Resolve(family, eventSchemaVersion, reducerVersion); err != nil {
+func (r ReducerSetV2) Apply(prior []byte, event EventEnvelopeV2) ([]byte, Digest, error) {
+	if _, err := EncodeEventEnvelopeV2(event); err != nil {
 		return nil, Digest{}, err
 	}
-	call := r.reducers[eventTupleKey(family, eventSchemaVersion, reducerVersion)]
+	if _, err := r.registry.Resolve(event.input.Family, event.input.EventSchemaVersion, event.input.ReducerVersion); err != nil {
+		return nil, Digest{}, err
+	}
+	call := r.reducers[eventTupleKey(event.input.Family, event.input.EventSchemaVersion, event.input.ReducerVersion)]
 	if call == nil {
 		return nil, Digest{}, invalid(ErrorUnknownEventTuple, "reducer")
 	}
@@ -944,11 +990,7 @@ func (r ReducerSetV2) Apply(family string, eventSchemaVersion, reducerVersion ui
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	canonicalEvent, err := CanonicalObject(event)
-	if err != nil {
-		return nil, Digest{}, err
-	}
-	output, err := call(append([]byte(nil), canonicalPrior...), append([]byte(nil), canonicalEvent...))
+	output, err := call(append([]byte(nil), canonicalPrior...), event)
 	if err != nil {
 		return nil, Digest{}, err
 	}
@@ -962,8 +1004,8 @@ func (r ReducerSetV2) Apply(family string, eventSchemaVersion, reducerVersion ui
 
 // Reduce is retained as the stateless runtime spelling used by existing
 // consumers. It delegates to Apply and retains no observations.
-func (r ReducerSetV2) Reduce(family string, eventSchemaVersion, reducerVersion uint32, prior, event []byte) ([]byte, Digest, error) {
-	return r.Apply(family, eventSchemaVersion, reducerVersion, prior, event)
+func (r ReducerSetV2) Reduce(prior []byte, event EventEnvelopeV2) ([]byte, Digest, error) {
+	return r.Apply(prior, event)
 }
 
 func (r ReducerSetV2) Descriptor() (ReducerRegistryDescriptorV2, error) {
@@ -976,16 +1018,16 @@ func (r ReducerSetV2) Descriptor() (ReducerRegistryDescriptorV2, error) {
 
 // QualifyDeterminismV2 detects unstable implementations in a bounded,
 // deliberately separate qualification call. It never changes runtime state.
-func (r ReducerSetV2) QualifyDeterminismV2(family string, eventSchemaVersion, reducerVersion uint32, prior, event []byte, runs int) error {
+func (r ReducerSetV2) QualifyDeterminismV2(prior []byte, event EventEnvelopeV2, runs int) error {
 	if runs < 2 || runs > MaxQualificationRuns {
 		return invalid(ErrorBudgetExceeded, "qualification_runs")
 	}
-	want, wantDigest, err := r.Apply(family, eventSchemaVersion, reducerVersion, prior, event)
+	want, wantDigest, err := r.Apply(prior, event)
 	if err != nil {
 		return err
 	}
 	for index := 1; index < runs; index++ {
-		got, gotDigest, applyErr := r.Apply(family, eventSchemaVersion, reducerVersion, prior, event)
+		got, gotDigest, applyErr := r.Apply(prior, event)
 		if applyErr != nil {
 			return applyErr
 		}

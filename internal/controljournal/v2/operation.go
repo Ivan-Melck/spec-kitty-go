@@ -371,8 +371,12 @@ func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
 	if !state.resultDigest.IsZero() {
 		resultDigest = state.resultDigest.String()
 	}
-	return marshalCanonical(operationStateWire{SchemaVersion, string(state.operationID), uint64(state.logicalVersion), state.status, state.resultKind,
+	encoded, err := marshalCanonical(operationStateWire{SchemaVersion, string(state.operationID), uint64(state.logicalVersion), state.status, state.resultKind,
 		state.resultSchemaVersion, append([]byte(nil), state.canonicalResult...), resultDigest, events, effects, string(state.lastPublicationID)}, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return nil, err
+	}
+	return CanonicalObject(encoded)
 }
 
 func DecodeOperationStateV2(encoded []byte) (OperationStateV2, error) {
