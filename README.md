@@ -386,17 +386,20 @@ git diff --check
 ## Adoption boundary
 
 The architecture decision is settled: GapDB (also written “Gapdb” in older
-records) is the target and SQLite is not a production fallback. Adoption is
-still evidence-gated because replacing a qualified authority implementation
-requires proof rather than confidence.
+records) is the target and SQLite is not a production fallback. M1 qualified a
+pinned GapDB source, `gapdbd` binary, public client/protocol, lifecycle policy,
+platform/filesystem boundary, and evidence manifest through the two-agent
+zombie/recovery/playback experiment and all 14 external adoption scenarios. The
+exact tuple is now accepted by the attributable human
+[adoption record](docs/programs/evidence/m1-adoption.json); its complete evidence
+tree is retained in the content-addressed
+[`m1-gapdb-evidence-v1`](https://github.com/spec-kitty/spec-kitty-redesign/releases/tag/m1-gapdb-evidence-v1)
+release.
 
-M1 must qualify a pinned tuple containing the GapDB source revision, `gapdbd`
-binary digest, public client version/digest, protocol version, lifecycle policy,
-platform/filesystem boundary, evidence digest, and signed human adoption record.
-It must reproduce the two-agent zombie/recovery/playback experiment and the 14
-GapDB adoption scenarios. Only then may M2 replace every authority capability
-and prove SQLite absent from source, module graph, SBOM, binaries, install,
-configuration, fallback, and migration paths. There is no dual-write interval.
+That decision admits M2 to replace every authority capability and prove SQLite
+absent from source, module graph, SBOM, binaries, install, configuration,
+fallback, and migration paths. It does not claim that replacement has already
+shipped. There is no dual-write interval.
 
 This is a gated implementation sequence, not uncertainty about the target.
 Until M2 passes, SQLite remains only the current Phase 1–3 implementation and
@@ -404,16 +407,17 @@ historical evidence boundary.
 
 ## What happens next
 
-The next proposed mission is M1, **Qualify the GapDB journal boundary and
-resumable authority proof**. Its primary falsification target is simple: a
-pinned public `gapdbd` lifecycle must preserve one durable authority history and
-produce identical restore/playback digests with zero adapter calls during
-playback, even when the stale writer resumes.
+M1 is complete and adopted. The next mission is M2, **GapDB-Only Production
+Authority**. Its falsification target is deliberately stronger than “the new
+adapter works”: every authority capability must preserve its behavioral and
+refusal contract on the M1 event/CAS substrate while SQLite disappears from
+every production surface.
 
-Stop the production program if M1 cannot preserve the authority and playback
-digest. Do not begin the large M2 replacement and do not silently fall back to
-SQLite. The complete dependency graph, exit evidence, rollback rules, and
-parallelism are in the production runtime program.
+If M2 cannot prove complete authority behavior and structural SQLite absence,
+the unshipped M2 branch is rejected as a unit. It may not introduce dual write,
+read fallback, automatic legacy import, or a runtime backend-selection escape
+hatch. The complete dependency graph, exit evidence, and rollback rules are in
+the production runtime program.
 
 ## Evidence
 

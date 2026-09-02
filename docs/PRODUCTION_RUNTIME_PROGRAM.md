@@ -1,6 +1,6 @@
 # Production Runtime Program
 
-Status: **proposed implementation program**
+Status: **active implementation program — M1 accepted; M2 next**
 
 Program ID: `production-runtime`
 
@@ -14,18 +14,22 @@ Machine contracts:
 - [Mission-source program manifest](../kitty-specs/production-runtime-architecture-01M16GVA/program-manifest.json)
 - [Program manifest schema](../kitty-specs/production-runtime-architecture-01M16GVA/contracts/program-manifest.schema.json)
 
-This roadmap turns the proposed production architecture into seven bounded,
-dependency-ordered implementation missions. It does not create, admit, start,
-or complete those missions. Every mission remains subject to its own Spec Kitty
-specify, plan, tasks, implement/review, accept, merge, mission-review, and
-retrospective gates.
+This roadmap turns the production architecture into seven bounded,
+dependency-ordered implementation missions. M1 has completed every mission gate
+and its exact evidence tuple is adopted. The roadmap itself does not silently
+create or complete successors: every remaining mission remains subject to its
+own Spec Kitty specify, plan, tasks, implement/review, accept, merge,
+mission-review, and retrospective gates.
 
 ## 1. Program status
 
-All seven entries are **proposed**. The current documentation mission publishes
-the program and its admission rules; it does not transfer the historical Phase
-1–3 qualification to GapDB, a production host, API 2.0, neutral acceptance, or
-MCP.
+M1 is **accepted** at the exact identities recorded in
+[`programs/evidence/m1-adoption.json`](programs/evidence/m1-adoption.json) and
+its [adoption closeout](programs/evidence/m1-adoption-closeout.md). M2 is the
+next proposed mission and is now eligible for admission. M3–M7 remain proposed
+and dependency-blocked. This execution status does not transfer M1's narrow
+journal proof to the full authority store, production host, API 2.0, neutral
+acceptance, or MCP.
 
 The program is intentionally not a mega-mission:
 
@@ -155,7 +159,8 @@ architecture.
 
 ### M1 — GapDB Control Journal Proving Ground
 
-**Status:** proposed
+**Status:** accepted at the exact source, sidecar, evidence-manifest, archive,
+and human-approval identities in `programs/evidence/m1-adoption.json`.
 
 **Outcome:** Prove a narrow durable authority and recovery slice over a pinned
 `gapdbd` sidecar.
