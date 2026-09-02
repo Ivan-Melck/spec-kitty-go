@@ -141,7 +141,9 @@
         "Workspace allocation blocker resolved: approved WP02 and WP03 lane histories are now merged cleanly into lane-d; resuming the original implementation action."
       ],
       "provider": "__resolved_provider_absent__",
-      "role": "implementer"
+      "role": "implementer",
+      "shell_pid": 346017,
+      "shell_pid_created_at": "1787989271.27"
     },
     "WP05": {
       "actor": "finalize-tasks",
