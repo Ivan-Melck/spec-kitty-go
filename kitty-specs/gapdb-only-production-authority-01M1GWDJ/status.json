@@ -103,7 +103,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
-        "Implementation committed at 721890a3; focused, repeated, race, compile, vet, staticcheck, formatting, and structural checks pass. External sidecar qualification remains explicitly non-admissible without its binary/data-root prerequisites."
+        "Implementation committed at 721890a3; focused, repeated, race, compile, vet, staticcheck, formatting, and structural checks pass. External sidecar qualification remains explicitly non-admissible without its binary/data-root prerequisites.",
+        "Cycle 2 requested three bounded repairs: eliminate scoped operation aliases, fail closed on partial exact membership, and reject empty truncated scan pages."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -113,15 +114,15 @@
         "reviewer": "wp03-cycle2-reviewer",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T012": "done",
-        "T013": "done",
-        "T014": "done",
-        "T015": "done",
-        "T016": "done"
+        "T012": "planned",
+        "T013": "planned",
+        "T014": "planned",
+        "T015": "planned",
+        "T016": "planned"
       }
     },
     "WP04": {
