@@ -1,0 +1,496 @@
+---
+work_package_id: WP02
+title: Global Operations and Authority Journal v2
+dependencies:
+- WP01
+requirement_refs:
+- FR-002
+- FR-004
+- FR-005
+- FR-006
+- FR-017
+- FR-022
+- FR-025
+- FR-033
+- NFR-001
+- NFR-002
+- NFR-012
+- NFR-013
+- C-002
+- C-004
+- C-005
+- C-013
+planning_base_branch: feat/gapdb-only-production-authority
+merge_target_branch: feat/gapdb-only-production-authority
+branch_strategy: Planning artifacts for this mission were generated on feat/gapdb-only-production-authority. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/gapdb-only-production-authority unless the human explicitly redirects the landing branch.
+subtasks:
+- T006
+- T007
+- T008
+- T009
+- T010
+- T011
+history: []
+agent_profile: implementer-ivan
+authoritative_surface: internal/controljournal/v2/
+create_intent:
+- internal/controljournal/v2/model.go
+- internal/controljournal/v2/codec.go
+- internal/controljournal/v2/commit_plan.go
+- internal/controljournal/v2/operation.go
+- internal/controljournal/v2/journal_test.go
+execution_mode: code_change
+model: ''
+owned_files:
+- internal/controljournal/v2/model.go
+- internal/controljournal/v2/codec.go
+- internal/controljournal/v2/commit_plan.go
+- internal/controljournal/v2/operation.go
+- internal/controljournal/v2/journal_test.go
+role: implementer
+tags: []
+tracker_refs: []
+---
+
+# Work Package Prompt: WP02 - Global Operations and Authority Journal v2
+
+## ⚡ Do This First: Load Agent Profile
+
+Use the `/ad-hoc-profile-load` skill to load the agent profile specified in the
+frontmatter, and behave according to its guidance before parsing the rest of
+this prompt.
+
+- **Profile**: `implementer-ivan`
+- **Role**: `implementer`
+- **Agent/tool**: `codex`
+
+If no profile is available, run `spec-kitty agent profile list` and select the
+closest implementation profile for the declared authoritative surface. Record
+the resolved profile revision in the governed invocation before editing code.
+
+## Objective
+
+Create the provider-independent Authority Journal v2 kernel: canonical identity
+and scope types, immutable host-global operation bindings, revisioned operation
+progress, deterministic publication identities, sealed commit plans, registered
+event envelopes, and pure reducer contracts.
+
+Implementation command:
+
+```bash
+spec-kitty agent action implement WP02 --agent codex
+```
+
+## Branch strategy and file ownership
+
+- Planning and merge target: `feat/gapdb-only-production-authority`.
+- Use only the Spec Kitty lane worktree allocated for WP02.
+- Treat `lanes.json` as the source of truth for the dependency-qualified base,
+  lane branch, worktree, and integration target.
+- Edit only the five files listed in `owned_files` and `create_intent`.
+- Do not modify mission contracts, `wps.yaml`, GapDB adapters, module files, or
+  any capability-owned package from this WP.
+- You are not alone in the repository. Preserve unrelated edits and never
+  revert, rewrite, or absorb another lane's work.
+
+## T006: Define canonical v2 identities, scopes, and key model
+
+**Purpose**: Give every later authority adapter one unambiguous vocabulary and
+one bounded canonical representation without importing provider semantics.
+
+**Files**: `model.go`, `codec.go`, and `journal_test.go`.
+
+**Implementation requirements**:
+
+1. Define distinct value types for at least `HostAuthorityID`, `ProjectID`,
+   `MissionID`, `OperationID`, `PublicationID`, `RuntimeEpochID`, `EventID`,
+   `AggregateKind`, `AggregateID`, and positive logical versions.
+2. Define `AggregateCoordinate` as versioned aggregate kind, typed scope, and
+   opaque aggregate identity. Do not infer identity from paths, display names,
+   provider revisions, PIDs, branch names, array positions, or clocks.
+3. Define the closed scope-kind set `host`, `project`, `mission`, `repository`,
+   `work_revision`, and `work`, with exact required/forbidden components for
+   each kind. A structurally possible but semantically ambiguous scope refuses.
+4. Implement a slash-safe, injective canonical key-component codec suitable
+   for the normative `spk/v2/` keyspace. Reject non-canonical alternate
+   spellings rather than normalizing them into aliases.
+5. Represent logical event versions as positive integers and encode them as
+   exactly 16 lowercase hexadecimal characters where storage-key material is
+   required. Zero, overflow, uppercase, short, and overlong forms refuse.
+6. Define typed bounded errors or diagnostics for invalid identity, scope,
+   version, key component, canonical bytes, digest, and budget violations.
+7. Keep raw keys and provider revisions out of capability-facing model types.
+   Provider record revision may appear only as explicit observed metadata where
+   the contract requires ordering, never as an aggregate version.
+8. Establish named, reviewable limits for identity lengths, canonical payload
+   sizes, list membership, event count, and plan size. Validate before copying
+   or sorting attacker-controlled unbounded collections.
+
+**Required tests**:
+
+- Round-trip every identity and scope kind through canonical encoding.
+- Prove two distinct valid components never share a canonical encoding across
+  the bounded generated/property corpus.
+- Reject slash, escape, Unicode-normalization, case, empty, zero-version,
+  overlong, and scope-component ambiguity mutants.
+- Prove map iteration and input insertion order cannot change canonical bytes.
+- Prove errors are typed, bounded, deterministic, and contain no raw payload.
+
+**Exit evidence**:
+
+```bash
+go test ./internal/controljournal/v2 -run 'Identity|Scope|Codec|Key|Budget' -count=10
+```
+
+## T007: Implement global immutable OperationBinding and collision rules
+
+**Purpose**: Preserve the historical global idempotency law while allowing an
+exact committed result to survive owner restart.
+
+**Files**: `operation.go`, `codec.go`, and `journal_test.go`.
+
+**Implementation requirements**:
+
+1. Model `OperationBindingV2` with exactly the normative semantic coordinates:
+   schema version, OperationID, command kind/schema, canonical intent digest,
+   typed scope, optional ActorID/ProcessID, optional doctrine/profile/policy
+   revisions, originating epoch provenance, and observed creation time.
+2. Define stable intent canonicalization explicitly. It must include all
+   caller-controlled command meaning and exclude RuntimeEpochID, provider
+   revisions, retry timestamps, transport metadata, and response metadata.
+3. Keep collision equality stricter than stable intent equality. Every bound
+   field from the operation-binding contract participates except derived
+   canonical bytes/digests that are recomputed during validation.
+4. Require the binding storage coordinate to be host-global:
+   `spk/v2/operations/<operation-id>/binding`. Do not prefix it with project,
+   mission, repository, work revision, work item, or command family.
+5. Provide a pure resolution decision for `absent`, `exact`, `conflict`, and
+   `malformed-existing`. Exact returns replay/resume eligibility; conflict
+   returns typed `IDEMPOTENCY_CONFLICT`; malformed existing state closes.
+6. Preserve originating epoch in exact equality and audit representation while
+   excluding it from stable request intent. This distinction must be visible
+   in tests and API naming.
+7. Do not perform epoch-currentness checks inside binding resolution. The
+   caller must be able to resolve an existing exact binding/result first.
+8. Validate the JSON-schema contract semantically in Go without making generic
+   JSON maps the domain model.
+
+**Collision matrix tests**:
+
+- Same OperationID and byte-identical binding: exact replay/resume.
+- Same ID, different intent digest: idempotency conflict.
+- Same ID, different command kind or schema: conflict.
+- Same ID, different scope kind or component: conflict.
+- Same ID, different ActorID or ProcessID: conflict.
+- Same ID, different doctrine/profile/policy revision: conflict.
+- Same ID, different originating epoch provenance: conflict.
+- Same semantic request retried after epoch rotation: stable intent digest is
+  unchanged and the existing binding is resolved before epoch validation.
+- Same OperationID in two missions, projects, or command families: conflict,
+  proving host-global uniqueness.
+- Malformed or unknown-version persisted binding: closed typed corruption, not
+  absence and not a newly claimable ID.
+
+**Exit evidence**:
+
+```bash
+go test ./internal/controljournal/v2 -run 'OperationBinding|Collision|Intent|Global' -count=20
+```
+
+## T008: Implement revisioned OperationState and staged transitions
+
+**Purpose**: Represent real multi-stage commands without weakening exactly-once
+identity or rewriting immutable terminal evidence.
+
+**Files**: `model.go`, `operation.go`, and `journal_test.go`.
+
+**Implementation requirements**:
+
+1. Model states `accepted`, `in_progress`, `resolved`, `refused`, `ambiguous`,
+   and `reconciliation_required` with positive logical versions.
+2. Encode the allowed transition graph explicitly. Do not accept arbitrary
+   enum changes or use ordinal comparisons as transition policy.
+3. Require every transition to advance the operation logical version exactly
+   by one and cite the prior version it expects.
+4. Store canonical typed result bytes, result kind/schema, and SHA-256 where a
+   result exists. Recompute and compare the digest during construction/read.
+5. Make terminal result bytes immutable. Repeated resolution returns the exact
+   original bytes and may not append different events/effects.
+6. Keep event/effect membership cumulative, canonical, duplicate-free, and
+   bounded. A later stage cannot silently discard earlier membership.
+7. Allow a typed semantic refusal to be the first meaningful bound and
+   terminal state so its retry is deterministic.
+8. Model ambiguity honestly. `ambiguous` does not mean failed, retryable, or
+   absent; it may transition only through the declared reconciliation path.
+9. Expose pure transition validation and construction. Do not add persistence,
+   clock, provider, side-effect, or current-epoch calls.
+
+**Required tests**:
+
+- Table-test every allowed and forbidden edge in the transition graph.
+- Reject zero, skipped, repeated, and regressed logical versions.
+- Reject result mutation after `resolved` or `refused`.
+- Reject event/effect loss, duplication, reordering aliases, and over-budget
+  growth while accepting canonical monotonic membership.
+- Prove typed semantic refusal replays exactly.
+- Prove ambiguous state cannot be treated as proven absence or automatic retry.
+
+**Exit evidence**:
+
+```bash
+go test ./internal/controljournal/v2 -run 'OperationState|Transition|Terminal|Ambiguous' -count=20
+```
+
+## T009: Derive PublicationID and validate sealed CommitPlan
+
+**Purpose**: Make an accepted operation stage a complete immutable publication
+unit that WP03 can translate into exactly one conditional GapDB batch.
+
+**Files**: `commit_plan.go`, `codec.go`, and `journal_test.go`.
+
+**Implementation requirements**:
+
+1. Represent a builder or unsealed input separately from the sealed plan type.
+   The persistence-facing method must accept only the sealed type.
+2. Canonicalize and validate the complete plan before deriving identity.
+3. Derive `PublicationID` from the domain separator
+   `spec-kitty.publication.v2`, OperationID, next operation logical version,
+   and canonical sealed-plan digest. Avoid recursive hashing by excluding the
+   derived PublicationID field from its own digest preimage.
+4. Require exactly one OperationState transition and at least one meaningful
+   capability/operation event per accepted publication.
+5. Allow the absent immutable OperationBinding only on the first publication;
+   later stages reference but never rewrite it.
+6. Validate exact event/head membership, event ordering, expected logical
+   versions, effect-intent membership, eligibility guards, optional checkpoint
+   records, provider conditions, canonical digests, and all budgets.
+7. Require every affected aggregate head to have exactly one matching event
+   and every event to have exactly one matching head transition.
+8. Reject duplicate aggregate coordinates, keys, EventIDs, EffectIDs,
+   conditions, membership entries, and semantically equivalent aliases.
+9. Deep-copy caller-owned mutable bytes/slices/maps during sealing or use
+   immutable value representations. Mutation after sealing must not change
+   canonical bytes, digest, PublicationID, membership, or conditions.
+10. Expose a deterministic canonical serialization for adapters and evidence.
+    It must not expose writable internals or depend on Go map iteration.
+11. Do not translate to provider mutations in this package. GapDB-specific
+    revision/condition encoding belongs to WP03.
+
+**Required tests**:
+
+- Identical semantic plans in different input orders seal to identical bytes,
+  plan digest, and PublicationID.
+- Any semantic change changes the digest and PublicationID.
+- Caller mutation after seal leaves the plan unchanged.
+- Missing/extra/duplicate event-head membership refuses.
+- First/later binding misuse refuses.
+- Split-publication and two-events-for-one-aggregate mutants are killed.
+- Every boundary maximum passes and each maximum-plus-one refuses before an
+  adapter call or excessive allocation.
+
+**Exit evidence**:
+
+```bash
+go test ./internal/controljournal/v2 -run 'Publication|CommitPlan|Seal|Membership' -count=20
+```
+
+## T010: Implement event registry and pure reducer contracts
+
+**Purpose**: Establish a closed semantic event universe and mechanically pure
+playback seam before capability implementations add their event payloads.
+
+**Files**: `model.go`, `codec.go`, and `journal_test.go`.
+
+**Implementation requirements**:
+
+1. Model the normative `EventEnvelopeV2` fields, including event/envelope/
+   reducer versions, aggregate coordinate/version, operation coordinates,
+   PublicationID, committed epoch provenance, event index/count, optional
+   governance/work coordinates, observations, typed payload, and event digest.
+2. Enforce one transition event per aggregate coordinate in one publication.
+   Capability packages must combine multiple facts about one aggregate into one
+   semantic transition rather than emit several same-version events.
+3. Require a positive next aggregate logical version, immutable EventID,
+   consistent operation version, one PublicationID, consecutive event indices,
+   and identical event count across the publication.
+4. Define a closed registry API keyed by family, event schema, and reducer
+   version. Duplicate registrations and unknown tuples refuse deterministically.
+5. Seed or validate the exact family ownership declared by
+   `event-family-registry-v2.json` without importing those owner packages and
+   without creating dependency cycles.
+6. Define reducer contracts as pure functions over prior state bytes/value plus
+   validated event data. The interface must offer no context containing
+   repositories, clocks, network clients, filesystems, agents, or effect ports.
+7. Require deterministic output and digest validation. Same prior state plus
+   same event must produce byte-identical output across repeated runs.
+8. Treat recorded external observations as inert payload data. Reducers may
+   interpret their declared schema but cannot fetch, refresh, compensate, or
+   persist anything.
+9. Fail unknown envelope, event schema, reducer, ordering, or digest versions
+   closed before changing a projection.
+10. Keep actual capability reducers out of this WP; later owner packages
+    register implementations through the inward-owned contract.
+
+**Required tests**:
+
+- Registry accepts every declared family/version tuple exactly once.
+- Duplicate, missing, unknown, and ownership-mismatched registry mutants fail.
+- Event index gaps, duplicates, count mismatches, cross-publication mixing, and
+  multiple events for one aggregate fail.
+- A deliberately nondeterministic or digest-mismatched reducer is detected.
+- A compile-time/API-shape test proves reducer calls cannot receive an external
+  or persistence adapter through the journal contract.
+- Repeated reduction of canonical fixtures is byte-identical.
+
+**Exit evidence**:
+
+```bash
+go test ./internal/controljournal/v2 -run 'Event|Registry|Reducer|Playback|Digest' -count=20
+```
+
+## T011: Prove journal invariants with property, fault, and mutant tests
+
+**Purpose**: Attack the shared semantics before every later capability relies
+on them, including the critical retry-after-restart ordering rule.
+
+**Files**: `journal_test.go`, with production corrections limited to the other
+four WP02-owned files.
+
+**Required campaigns**:
+
+1. Generate bounded valid identities, scopes, bindings, states, events, heads,
+   and plans; round-trip canonical bytes and verify stable SHA-256 digests.
+2. Generate one-field binding changes and prove every collision-matrix field
+   refuses under one reused host-global OperationID.
+3. Generate legal staged operations and prove monotonic state, immutable
+   terminal result, cumulative membership, and deterministic PublicationIDs.
+4. Generate invalid event/head memberships and prove sealing rejects them.
+5. Generate unknown schema/reducer/ordering versions and prove fail-closed
+   results rather than fallback decoding.
+6. Exercise maximum budgets and maximum-plus-one inputs without panic,
+   unbounded allocation, truncated equality, or accidental acceptance.
+7. Run all pure decisions concurrently under the race detector; shared
+   registries must be immutable after construction or synchronize correctly.
+
+**Mandatory replay-before-epoch validation**:
+
+Build a focused pure decision harness with the following observable order:
+
+1. canonicalize and validate the retry request;
+2. look up and compare the host-global OperationBinding;
+3. return the exact recorded terminal result for an exact binding;
+4. only when the binding is absent, evaluate current RuntimeEpochID and new
+   capability preconditions.
+
+The harness must prove that an exact operation committed under epoch 17 returns
+its byte-identical result after epoch 18 is current. It must also prove that an
+absent new request carrying epoch-17 authority refuses before capability reads
+or effects. A mutant that moves epoch validation before existing-operation
+resolution must fail deterministically.
+
+**Required fault and mutant controls**:
+
+- Runtime epoch included in stable intent digest.
+- Operation key scoped below mission or project.
+- Collision equality omits one binding field.
+- Binding can be overwritten after the first stage.
+- Terminal result bytes can change.
+- Operation logical version can skip or repeat.
+- PublicationID uses a random value, timestamp, or retry counter.
+- Sealed plan aliases caller-owned bytes.
+- Plan omits one head, event, effect intent, or condition.
+- Two events target one aggregate in one publication.
+- Event indices are non-consecutive or disagree on total count.
+- Unknown reducer/version silently selects latest.
+- Reducer receives an adapter-capable dependency.
+- Semantic refusal creates a naked reservation before its result.
+- Existing-operation resolution occurs after current-epoch validation.
+
+Each mutant test must demonstrate that the unmutated fixture passes and the
+controlled mutation fails for the intended typed reason. Assertions on source
+text alone do not count as a killed semantic mutant.
+
+**Validation commands**:
+
+```bash
+go test ./internal/controljournal/v2 -count=20
+go test -race ./internal/controljournal/v2 -count=5
+go vet ./internal/controljournal/v2
+staticcheck ./internal/controljournal/v2
+go test ./internal/architecture -count=1
+go test ./... -run '^$' -count=1
+gofmt -d internal/controljournal/v2
+git diff --check
+```
+
+Do not run the full M2 crown campaign from this lane. WP02 supplies deterministic
+hooks and exact tests that later capability and qualification packages include
+in their census.
+
+## Definition of Done
+
+- All five declared files exist and no undeclared file was modified.
+- The package is provider-neutral and passes WP01 architecture guards.
+- Canonical identity/scope/key encodings are bounded, injective, and stable.
+- OperationID binding is host-global, immutable, and collision-complete.
+- Stable intent excludes runtime epoch while binding retains epoch provenance.
+- Existing committed results resolve before current-epoch admission.
+- OperationState supports only the declared monotonic staged transitions.
+- PublicationID and sealed CommitPlan are deterministic and immutable.
+- Event/head membership enforces one event per aggregate per publication.
+- Registry and reducer contracts fail unknown versions closed.
+- Reducer APIs cannot perform persistence or external effects.
+- Unit, property, fault, race, and controlled-mutant tests pass.
+- All six subtasks are recorded `done` in the canonical event log.
+- The WP is committed and handed to an independent reviewer; implementation
+  does not mark itself approved or merge itself outside Spec Kitty.
+
+After every subtask and all validations are genuinely complete, record status:
+
+```bash
+spec-kitty agent tasks mark-status T006 T007 T008 T009 T010 T011 \
+  --status done \
+  --mission gapdb-only-production-authority-01M1GWDJ \
+  --json
+```
+
+## Risks and mitigations
+
+| Risk | Required mitigation |
+|---|---|
+| Mission-scoped operation keys recreate a silent collision hole | Assert one host-global coordinate and cross-mission collision mutants. |
+| Epoch provenance contaminates stable caller intent | Separate intent equality, binding equality, and epoch admission in names and tests. |
+| A one-record receipt cannot describe sagas | Use immutable binding plus revisioned monotonic OperationState. |
+| Plan digest recursively includes derived PublicationID | Specify and test the preimage independently from derived fields. |
+| Sealing is cosmetic because slices/maps alias callers | Deep-copy or use immutable values; mutate all caller inputs after seal in tests. |
+| Generic events hide capability laws | Require registered family/schema/reducer tuples and typed payload ownership. |
+| Multiple same-aggregate events create ambiguous ordering | Enforce exactly one transition event per coordinate per publication. |
+| Provider concepts leak into the kernel | Run WP01 dependency guards and reject raw provider key/revision APIs. |
+| Replay can accidentally perform I/O | Keep reducer signatures capability-free and add compile-time/API mutant probes. |
+| Budget checks occur after allocation/sort | Validate declared counts and byte bounds before expensive canonicalization. |
+
+## Reviewer guidance
+
+Review this WP as a semantic foundation, not merely a set of serializable Go
+structs. Trace each public constructor to a required invariant and reject dead
+or convenience APIs without a production consumer planned by WP03 or WP04.
+
+The independent reviewer must explicitly verify:
+
+1. the exact requirement and contract round-trip for all six subtasks;
+2. global rather than mission-scoped OperationID behavior;
+3. distinction between stable intent equality and full binding collision
+   equality, especially RuntimeEpochID;
+4. replay of a committed epoch-17 result after epoch 18 becomes current;
+5. refusal of an absent epoch-17 request before any capability read/effect;
+6. deterministic PublicationID preimage without recursive/self-reference;
+7. sealed-plan immutability after adversarial caller mutation;
+8. exact operation/event/head/effect membership and budgets;
+9. one event per aggregate and consecutive publication ordering;
+10. fail-closed unknown versions and capability-free reducers;
+11. real mutant controls that fail semantically, not grep-only assertions;
+12. no provider, SQLite/SQL, Beads, Git, filesystem, transport, or clock edge.
+
+Reject the WP if passing tests depend on map iteration order, wall-clock values,
+random identifiers, current runtime epoch in stable intent, storage provider
+behavior, test-only alternate implementations, or implicit fallback decoding.
