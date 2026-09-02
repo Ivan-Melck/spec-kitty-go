@@ -89,10 +89,8 @@ type SealedCommitPlanV2 struct {
 }
 
 func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCommitPlanV2, error) {
-	if len(input.Events) == 0 || len(input.Events) > MaxEventsPerPublication || len(input.Heads) != len(input.Events) ||
-		len(input.EffectIntents) > MaxEffectsPerPublication || len(input.EligibilityGuards) > MaxMembers ||
-		len(input.Checkpoints) > MaxCheckpointsPerPlan || len(input.Conditions) > MaxConditionsPerPlan {
-		return SealedCommitPlanV2{}, invalid(ErrorBudgetExceeded, "commit_plan_members")
+	if err := preflightCommitPlan(input); err != nil {
+		return SealedCommitPlanV2{}, err
 	}
 	if input.OperationState.logicalVersion == 0 || input.OperationState.lastPublicationID != "" {
 		return SealedCommitPlanV2{}, invalid(ErrorInvalidTransition, "operation_transition")
@@ -104,6 +102,14 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	if input.OperationBinding != nil && input.OperationBinding.operationID != input.OperationState.operationID {
 		return SealedCommitPlanV2{}, invalid(ErrorInvalidTransition, "operation_binding_membership")
 	}
+	for _, event := range input.Events {
+		if _, err := registry.Resolve(event.Family, event.EventSchemaVersion, event.ReducerVersion); err != nil {
+			return SealedCommitPlanV2{}, err
+		}
+		if err := validateEventAggregateAuthority(event.Family, event.Coordinate, input.OperationState.operationID, input.OperationState.logicalVersion, event.AggregateLogicalVersion); err != nil {
+			return SealedCommitPlanV2{}, err
+		}
+	}
 
 	drafts := cloneEventDrafts(input.Events)
 	heads := append([]HeadTransitionV2(nil), input.Heads...)
@@ -112,9 +118,6 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	checkpoints := cloneCheckpoints(input.Checkpoints)
 	conditions := append([]ProviderCondition(nil), input.Conditions...)
 	for index := range drafts {
-		if _, err := registry.Resolve(drafts[index].Family, drafts[index].EventSchemaVersion, drafts[index].ReducerVersion); err != nil {
-			return SealedCommitPlanV2{}, err
-		}
 		payload, err := CanonicalObject(drafts[index].Payload)
 		if err != nil {
 			return SealedCommitPlanV2{}, err
@@ -194,12 +197,11 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 			return invalid(ErrorInvalidTransition, "duplicate_event")
 		}
 		eventCoordinates[coordinate], eventIDs[event.EventID] = event, true
-		if event.Family == "operation" {
+		if event.Coordinate.Kind == AggregateKind("operation") {
 			operationEvents++
-			if event.Coordinate.Kind != AggregateKind("operation") || event.Coordinate.Scope != (Scope{Kind: ScopeHost}) ||
-				event.Coordinate.ID != AggregateID(state.operationID) || event.AggregateLogicalVersion != state.logicalVersion {
-				return invalid(ErrorInvalidTransition, "operation_event")
-			}
+		}
+		if err := validateEventAggregateAuthority(event.Family, event.Coordinate, state.operationID, state.logicalVersion, event.AggregateLogicalVersion); err != nil {
+			return err
 		}
 	}
 	if operationEvents != 1 {
@@ -232,6 +234,47 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 	}
 	if err := uniqueNamedDigests(eligibility, checkpoints, conditions); err != nil {
 		return err
+	}
+	return nil
+}
+
+func preflightCommitPlan(input CommitPlanInput) error {
+	if len(input.Events) == 0 || len(input.Events) > MaxEventsPerPublication || len(input.Heads) != len(input.Events) ||
+		len(input.EffectIntents) > MaxEffectsPerPublication || len(input.EligibilityGuards) > MaxMembers ||
+		len(input.Checkpoints) > MaxCheckpointsPerPlan || len(input.Conditions) > MaxConditionsPerPlan {
+		return invalid(ErrorBudgetExceeded, "commit_plan_members")
+	}
+	nestedBytes := 0
+	add := func(field string, size, maximum int) error {
+		if size > maximum {
+			return invalid(ErrorBudgetExceeded, field)
+		}
+		if size > MaxCommitPlanBytes-nestedBytes {
+			return invalid(ErrorBudgetExceeded, "commit_plan_bytes")
+		}
+		nestedBytes += size
+		return nil
+	}
+	for _, event := range input.Events {
+		if err := preflightGovernanceRevisions(event.GovernanceRevisions); err != nil {
+			return err
+		}
+		for _, revision := range event.GovernanceRevisions {
+			if err := add("governance_revisions", len(revision), MaxIdentityBytes); err != nil {
+				return err
+			}
+		}
+		if err := add("event_payload", len(event.Payload), MaxCanonicalPayloadBytes); err != nil {
+			return err
+		}
+		if err := add("event_observations", len(event.Observations), MaxCanonicalPayloadBytes); err != nil {
+			return err
+		}
+	}
+	for _, checkpoint := range input.Checkpoints {
+		if err := add("checkpoint_payload", len(checkpoint.Canonical), MaxCanonicalPayloadBytes); err != nil {
+			return err
+		}
 	}
 	return nil
 }

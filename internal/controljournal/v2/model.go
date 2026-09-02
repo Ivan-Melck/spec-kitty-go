@@ -17,6 +17,7 @@ const (
 	EnvelopeVersion          = uint32(2)
 	MaxIdentityBytes         = 128
 	MaxCanonicalPayloadBytes = 256 * 1024
+	MaxEventEnvelopeBytes    = 1024 * 1024
 	MaxMembers               = 256
 	MaxEventsPerPublication  = 128
 	MaxEffectsPerPublication = 64
@@ -422,7 +423,39 @@ type EventEnvelopeV2 struct {
 	digest       Digest
 }
 
+func preflightGovernanceRevisions(revisions []string) error {
+	if len(revisions) > MaxMembers {
+		return invalid(ErrorBudgetExceeded, "governance_revisions")
+	}
+	for _, revision := range revisions {
+		if len(revision) > MaxIdentityBytes {
+			return invalid(ErrorBudgetExceeded, "governance_revision")
+		}
+	}
+	return nil
+}
+
+func validateEventAggregateAuthority(family string, coordinate AggregateCoordinate, operationID OperationID, operationVersion, aggregateVersion LogicalVersion) error {
+	if coordinate.Kind == AggregateKind("operation") && (coordinate.Scope != (Scope{Kind: ScopeHost}) ||
+		coordinate.ID != AggregateID(operationID) || aggregateVersion != operationVersion) {
+		return invalid(ErrorInvalidTransition, "operation_event")
+	}
+	if string(coordinate.Kind) != family {
+		return invalid(ErrorInvalidTransition, "event_family_aggregate")
+	}
+	return nil
+}
+
 func NewEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2) (EventEnvelopeV2, error) {
+	if err := preflightGovernanceRevisions(input.GovernanceRevisions); err != nil {
+		return EventEnvelopeV2{}, err
+	}
+	if len(input.Payload) > MaxCanonicalPayloadBytes {
+		return EventEnvelopeV2{}, invalid(ErrorBudgetExceeded, "event_payload")
+	}
+	if len(input.Observations) > MaxCanonicalPayloadBytes {
+		return EventEnvelopeV2{}, invalid(ErrorBudgetExceeded, "event_observations")
+	}
 	if validateIdentity("event_id", string(input.EventID)) != nil || validateIdentity("event_type", input.EventType) != nil ||
 		validateIdentity("operation_id", string(input.OperationID)) != nil || validateIdentity("publication_id", string(input.PublicationID)) != nil ||
 		validateIdentity("runtime_epoch_id", string(input.CommittedRuntimeEpochID)) != nil || input.AggregateLogicalVersion == 0 || input.OperationLogicalVersion == 0 {
@@ -434,6 +467,9 @@ func NewEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2) (Eve
 	if _, err := registry.Resolve(input.Family, input.EventSchemaVersion, input.ReducerVersion); err != nil {
 		return EventEnvelopeV2{}, err
 	}
+	if err := validateEventAggregateAuthority(input.Family, input.Coordinate, input.OperationID, input.OperationLogicalVersion, input.AggregateLogicalVersion); err != nil {
+		return EventEnvelopeV2{}, err
+	}
 	if input.EventCount == 0 || input.EventCount > MaxEventsPerPublication || input.EventIndex >= input.EventCount {
 		return EventEnvelopeV2{}, invalid(ErrorInvalidVersion, "event_position")
 	}
@@ -443,7 +479,7 @@ func NewEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2) (Eve
 		}
 	}
 	governance := append([]string(nil), input.GovernanceRevisions...)
-	if len(governance) > MaxMembers || !sort.StringsAreSorted(governance) {
+	if !sort.StringsAreSorted(governance) {
 		return EventEnvelopeV2{}, invalid(ErrorInvalidCanonicalData, "governance_revisions")
 	}
 	for index, revision := range governance {
@@ -517,7 +553,7 @@ func (e EventEnvelopeV2) canonical(includeDigest bool) ([]byte, error) {
 	if includeDigest {
 		wire.CanonicalEventSHA256 = e.digest.String()
 	}
-	return marshalCanonical(wire, MaxCanonicalPayloadBytes)
+	return marshalCanonical(wire, MaxEventEnvelopeBytes)
 }
 
 func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
@@ -530,7 +566,7 @@ func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
 
 func DecodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2) (EventEnvelopeV2, error) {
 	var wire eventEnvelopeWire
-	if err := decodeStrict(encoded, MaxCanonicalPayloadBytes, &wire); err != nil || wire.EnvelopeVersion != EnvelopeVersion {
+	if err := decodeStrict(encoded, MaxEventEnvelopeBytes, &wire); err != nil || wire.EnvelopeVersion != EnvelopeVersion {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
 	}
 	want, err := ParseDigest("canonical_event_sha256", wire.CanonicalEventSHA256)

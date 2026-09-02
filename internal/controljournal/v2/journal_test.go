@@ -286,6 +286,16 @@ func TestOperationBindingRFC3339CalendarBoundaries(t *testing.T) {
 			t.Fatalf("invalid date accepted=%s err=%v", invalidDate, err)
 		}
 	}
+	const canonical = "2026-09-02T12:34:56Z"
+	for _, index := range []int{0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18} {
+		mutant := []byte(canonical)
+		mutant[index] = 'a'
+		input := fixtureBindingInput(t, "epoch-17")
+		input.ObservedCreatedAt = string(mutant)
+		if _, err := NewOperationBindingV2(input); !IsKind(err, ErrorInvalidCanonicalData) {
+			t.Fatalf("non-digit accepted at numeric position=%d value=%q err=%v", index, mutant, err)
+		}
+	}
 }
 
 func TestReplayBeforeEpochValidation(t *testing.T) {
@@ -458,6 +468,54 @@ func TestCommitPlanExactFirstAndCumulativeLaterMembership(t *testing.T) {
 	}
 }
 
+func TestCommitPlanRejectsFamilyAggregateAuthorityAliases(t *testing.T) {
+	registry := DefaultEventRegistryV2()
+	for name, mutate := range map[string]func(*CommitPlanInput){
+		"family_kind_mismatch": func(v *CommitPlanInput) {
+			v.Events[1].Coordinate.Kind = "artifact_catalog"
+			v.Heads[1].Coordinate = v.Events[1].Coordinate
+		},
+		"disguised_mission_scoped_operation": func(v *CommitPlanInput) {
+			v.Events[1].Coordinate = AggregateCoordinate{Kind: "operation", ID: "operation-shadow", Scope: fixtureScope()}
+			v.Heads[1].Coordinate = v.Events[1].Coordinate
+		},
+		"disguised_wrong_operation_id": func(v *CommitPlanInput) {
+			v.Events[1].Family = "operation"
+			v.Events[1].EventType = "operation.changed"
+			v.Events[1].Coordinate = AggregateCoordinate{Kind: "operation", ID: "operation-shadow", Scope: Scope{Kind: ScopeHost}}
+			v.Heads[1].Coordinate = v.Events[1].Coordinate
+		},
+		"disguised_wrong_operation_version": func(v *CommitPlanInput) {
+			v.Events[1].Family = "operation"
+			v.Events[1].EventType = "operation.changed"
+			v.Events[1].Coordinate = AggregateCoordinate{Kind: "operation", ID: "operation-01", Scope: Scope{Kind: ScopeHost}}
+			v.Events[1].AggregateLogicalVersion = 2
+			v.Heads[1].Coordinate = v.Events[1].Coordinate
+			v.Heads[1].NextLogicalVersion = 2
+			v.Heads[1].ExpectedLogicalVersion = 1
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := fixturePlanInput(t)
+			mutate(&candidate)
+			if _, err := SealCommitPlanV2(candidate, registry); !IsKind(err, ErrorInvalidTransition) {
+				t.Fatalf("aggregate authority alias accepted: %v", err)
+			}
+		})
+	}
+	sealed, err := SealCommitPlanV2(fixturePlanInput(t), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disguisedEnvelope := sealed.events[0].input
+	disguisedEnvelope.Family = "mission"
+	disguisedEnvelope.Payload = []byte(`{"status":"accepted"}`)
+	disguisedEnvelope.Observations = []byte(`{"source":"test"}`)
+	if _, err := NewEventEnvelopeV2(disguisedEnvelope, registry); !IsKind(err, ErrorInvalidTransition) {
+		t.Fatalf("direct event envelope family/aggregate alias accepted: %v", err)
+	}
+}
+
 func TestCollectionBudgetBoundaries(t *testing.T) {
 	events := make([]EventID, MaxMembers)
 	for index := range events {
@@ -515,6 +573,85 @@ func TestCollectionBudgetBoundaries(t *testing.T) {
 	}
 	if _, err := SealCommitPlanV2(maximumMetadata, DefaultEventRegistryV2()); err != nil {
 		t.Fatalf("maximum metadata collections rejected: %v", err)
+	}
+}
+
+func TestNestedCollectionAndByteBudgetBoundaries(t *testing.T) {
+	canonicalObjectAt := func(size int) []byte {
+		t.Helper()
+		if size < len(`{"x":""}`) {
+			t.Fatalf("invalid canonical object fixture size=%d", size)
+		}
+		return []byte(`{"x":"` + strings.Repeat("x", size-len(`{"x":""}`)) + `"}`)
+	}
+	governanceAt := func(count int) []string {
+		result := make([]string, count)
+		for index := range result {
+			result[index] = fmt.Sprintf("revision-%03d", index)
+		}
+		return result
+	}
+
+	maximumGovernance := fixturePlanInput(t)
+	maximumGovernance.Events[0].GovernanceRevisions = governanceAt(MaxMembers)
+	if _, err := SealCommitPlanV2(maximumGovernance, DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("maximum nested governance membership rejected: %v", err)
+	}
+	overGovernance := fixturePlanInput(t)
+	overGovernance.Events[0].GovernanceRevisions = governanceAt(MaxMembers + 1)
+	if _, err := SealCommitPlanV2(overGovernance, DefaultEventRegistryV2()); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("maximum-plus-one nested governance membership returned %v", err)
+	}
+
+	for name, setBytes := range map[string]func(*CommitPlanInput, []byte){
+		"event_payload":      func(v *CommitPlanInput, payload []byte) { v.Events[0].Payload = payload },
+		"event_observations": func(v *CommitPlanInput, payload []byte) { v.Events[0].Observations = payload },
+		"checkpoint_payload": func(v *CommitPlanInput, payload []byte) { v.Checkpoints[0].Canonical = payload },
+	} {
+		t.Run(name, func(t *testing.T) {
+			maximum := fixturePlanInput(t)
+			setBytes(&maximum, canonicalObjectAt(MaxCanonicalPayloadBytes))
+			if _, err := SealCommitPlanV2(maximum, DefaultEventRegistryV2()); err != nil {
+				t.Fatalf("maximum nested bytes rejected: %v", err)
+			}
+			over := fixturePlanInput(t)
+			setBytes(&over, canonicalObjectAt(MaxCanonicalPayloadBytes+1))
+			if _, err := SealCommitPlanV2(over, DefaultEventRegistryV2()); !IsKind(err, ErrorBudgetExceeded) {
+				t.Fatalf("maximum-plus-one nested bytes returned %v", err)
+			}
+		})
+	}
+
+	sealed, err := SealCommitPlanV2(fixturePlanInput(t), DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prototype := sealed.events[0].input
+	prototype.Payload = []byte(`{"status":"accepted"}`)
+	prototype.Observations = []byte(`{"source":"test"}`)
+	for name, setInput := range map[string]func(*EventEnvelopeInput, int){
+		"envelope_governance": func(v *EventEnvelopeInput, amount int) { v.GovernanceRevisions = governanceAt(amount) },
+		"envelope_payload":    func(v *EventEnvelopeInput, amount int) { v.Payload = canonicalObjectAt(amount) },
+		"envelope_observation": func(v *EventEnvelopeInput, amount int) {
+			v.Observations = canonicalObjectAt(amount)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			maximumAmount, overAmount := MaxCanonicalPayloadBytes, MaxCanonicalPayloadBytes+1
+			if name == "envelope_governance" {
+				maximumAmount, overAmount = MaxMembers, MaxMembers+1
+			}
+			maximum := prototype
+			setInput(&maximum, maximumAmount)
+			if _, err := NewEventEnvelopeV2(maximum, DefaultEventRegistryV2()); err != nil {
+				t.Fatalf("maximum direct envelope input rejected: %v", err)
+			}
+			over := prototype
+			setInput(&over, overAmount)
+			if _, err := NewEventEnvelopeV2(over, DefaultEventRegistryV2()); !IsKind(err, ErrorBudgetExceeded) {
+				t.Fatalf("maximum-plus-one direct envelope input returned %v", err)
+			}
+		})
 	}
 }
 

@@ -116,10 +116,12 @@ func canonicalUTCSecond(value string) bool {
 	if len(value) != 20 || value[4] != '-' || value[7] != '-' || value[10] != 'T' || value[13] != ':' || value[16] != ':' || value[19] != 'Z' {
 		return false
 	}
-	digit := func(index int) int {
+	for _, index := range [...]int{0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18} {
 		if value[index] < '0' || value[index] > '9' {
-			return -100
+			return false
 		}
+	}
+	digit := func(index int) int {
 		return int(value[index] - '0')
 	}
 	number := func(a, b int) int { return digit(a)*10 + digit(b) }
