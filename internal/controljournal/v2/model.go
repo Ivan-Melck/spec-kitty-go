@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"unicode/utf8"
 )
 
@@ -26,7 +25,7 @@ const (
 	MaxEffectsPerPublication = 16
 	MaxConditionsPerPlan     = 256
 	MaxCheckpointsPerPlan    = 32
-	MaxReductionObservations = 256
+	MaxQualificationRuns     = 1024
 	MaxProductKeyBytes       = 1024
 	MaxProductRawBatchBytes  = 6 * 1024 * 1024
 	MaxCommitPlanBytes       = 12 * 1024 * 1024
@@ -50,6 +49,13 @@ const (
 	ErrorInvalidTransition    ErrorKind = "INVALID_TRANSITION"
 	ErrorUnknownEventTuple    ErrorKind = "UNKNOWN_EVENT_TUPLE"
 	ErrorNondeterministic     ErrorKind = "NONDETERMINISTIC_REDUCER"
+	ErrorNotFound             ErrorKind = "NOT_FOUND"
+	ErrorRevisionMoved        ErrorKind = "REVISION_MOVED"
+	ErrorStaleCursor          ErrorKind = "STALE_CURSOR"
+	ErrorMalformed            ErrorKind = "MALFORMED"
+	ErrorUnavailable          ErrorKind = "UNAVAILABLE"
+	ErrorCanceled             ErrorKind = "CANCELED"
+	ErrorAmbiguous            ErrorKind = "AMBIGUOUS"
 )
 
 // Error is bounded machine-readable diagnostic evidence. It never includes a
@@ -322,6 +328,35 @@ func (c AggregateCoordinate) canonical() string {
 	return scope + "/" + string(c.Kind) + "/" + string(c.ID)
 }
 
+// CompareAggregateCoordinates orders semantic coordinates without exposing or
+// reconstructing an adapter's persistence keys.
+func CompareAggregateCoordinates(left, right AggregateCoordinate) (int, error) {
+	leftCanonical, err := CanonicalAggregateCoordinate(left)
+	if err != nil {
+		return 0, err
+	}
+	rightCanonical, err := CanonicalAggregateCoordinate(right)
+	if err != nil {
+		return 0, err
+	}
+	return bytes.Compare(leftCanonical, rightCanonical), nil
+}
+
+// CanonicalAggregateCoordinate returns the stable semantic byte identity used
+// by recovery, projection, and checkpoint code. The returned slice is owned by
+// the caller and is not a persistence key.
+func CanonicalAggregateCoordinate(coordinate AggregateCoordinate) ([]byte, error) {
+	validated, err := NewAggregateCoordinate(coordinate.Kind, coordinate.ID, coordinate.Scope)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := marshalCanonical(validated, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), encoded...), nil
+}
+
 func canonicalIDs[T ~string](field string, values []T, limit int) ([]T, error) {
 	if len(values) > limit {
 		return nil, invalid(ErrorBudgetExceeded, field)
@@ -353,7 +388,7 @@ type EventTuple struct {
 func ExpectedEventTuples() []EventTuple {
 	return []EventTuple{
 		{"runtime_host", 1, 1, "internal/productionruntime"},
-		{"operation", 1, 1, "internal/controljournal/application"},
+		{"operation", 2, 2, "internal/controljournal/application"},
 		{"mission", 1, 1, "internal/mission"},
 		{"artifact_catalog", 1, 1, "internal/artifact"},
 		{"artifact_revision", 1, 1, "internal/artifact"},
@@ -370,7 +405,28 @@ func ExpectedEventTuples() []EventTuple {
 	}
 }
 
-type EventRegistryV2 struct{ tuples map[string]EventTuple }
+const (
+	EventRegistryIDV2      = "spec-kitty.authority-event-families.v2"
+	EventRegistryVersionV2 = uint32(2)
+	PublicationRuleV2      = "one_transition_event_per_aggregate_per_publication"
+)
+
+var eventOrderingV2 = [...]string{"gapdb_record_revision", "event_index", "event_id"}
+
+type EventRegistryDescriptorV2 struct {
+	canonical []byte
+	digest    Digest
+}
+
+func (d EventRegistryDescriptorV2) CanonicalBytes() []byte {
+	return append([]byte(nil), d.canonical...)
+}
+func (d EventRegistryDescriptorV2) Digest() Digest { return d.digest }
+
+type EventRegistryV2 struct {
+	tuples     map[string]EventTuple
+	descriptor EventRegistryDescriptorV2
+}
 
 func NewEventRegistryV2(tuples []EventTuple) (EventRegistryV2, error) {
 	if len(tuples) != len(ExpectedEventTuples()) || len(tuples) > MaxMembers {
@@ -388,7 +444,25 @@ func NewEventRegistryV2(tuples []EventTuple) (EventRegistryV2, error) {
 		}
 		got[key] = tuple
 	}
-	return EventRegistryV2{tuples: got}, nil
+	sorted := append([]EventTuple(nil), tuples...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return eventTupleKey(sorted[i].Family, sorted[i].EventSchemaVersion, sorted[i].ReducerVersion) <
+			eventTupleKey(sorted[j].Family, sorted[j].EventSchemaVersion, sorted[j].ReducerVersion)
+	})
+	canonical, err := marshalCanonical(struct {
+		RegistryID      string       `json:"registry_id"`
+		RegistryVersion uint32       `json:"registry_version"`
+		PublicationRule string       `json:"publication_rule"`
+		Ordering        []string     `json:"ordering"`
+		Families        []EventTuple `json:"families"`
+	}{EventRegistryIDV2, EventRegistryVersionV2, PublicationRuleV2, append([]string(nil), eventOrderingV2[:]...), sorted}, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return EventRegistryV2{}, err
+	}
+	return EventRegistryV2{tuples: got, descriptor: EventRegistryDescriptorV2{
+		canonical: canonical,
+		digest:    digest("spec-kitty.event-registry-descriptor.v2", canonical),
+	}}, nil
 }
 
 func DefaultEventRegistryV2() EventRegistryV2 {
@@ -405,6 +479,14 @@ func (r EventRegistryV2) Resolve(family string, eventSchemaVersion, reducerVersi
 		return EventTuple{}, invalid(ErrorUnknownEventTuple, "event_tuple")
 	}
 	return tuple, nil
+}
+
+func (r EventRegistryV2) Descriptor() (EventRegistryDescriptorV2, error) {
+	if len(r.tuples) != len(ExpectedEventTuples()) || len(r.descriptor.canonical) == 0 || r.descriptor.digest.IsZero() ||
+		digest("spec-kitty.event-registry-descriptor.v2", r.descriptor.canonical) != r.descriptor.digest {
+		return EventRegistryDescriptorV2{}, invalid(ErrorUnknownEventTuple, "event_registry_descriptor")
+	}
+	return EventRegistryDescriptorV2{canonical: append([]byte(nil), r.descriptor.canonical...), digest: r.descriptor.digest}, nil
 }
 
 func eventTupleKey(family string, eventSchemaVersion, reducerVersion uint32) string {
@@ -530,6 +612,11 @@ func NewEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2) (Eve
 }
 
 func (e EventEnvelopeV2) EventID() EventID                 { return e.input.EventID }
+func (e EventEnvelopeV2) EnvelopeVersion() uint32          { return EnvelopeVersion }
+func (e EventEnvelopeV2) EventType() string                { return e.input.EventType }
+func (e EventEnvelopeV2) Family() string                   { return e.input.Family }
+func (e EventEnvelopeV2) EventSchemaVersion() uint32       { return e.input.EventSchemaVersion }
+func (e EventEnvelopeV2) ReducerVersion() uint32           { return e.input.ReducerVersion }
 func (e EventEnvelopeV2) Coordinate() AggregateCoordinate  { return e.input.Coordinate }
 func (e EventEnvelopeV2) LogicalVersion() LogicalVersion   { return e.input.AggregateLogicalVersion }
 func (e EventEnvelopeV2) OperationID() OperationID         { return e.input.OperationID }
@@ -537,9 +624,19 @@ func (e EventEnvelopeV2) OperationVersion() LogicalVersion { return e.input.Oper
 func (e EventEnvelopeV2) PublicationID() PublicationID     { return e.input.PublicationID }
 func (e EventEnvelopeV2) EventIndex() uint16               { return e.input.EventIndex }
 func (e EventEnvelopeV2) EventCount() uint16               { return e.input.EventCount }
-func (e EventEnvelopeV2) Payload() []byte                  { return append([]byte(nil), e.payload...) }
-func (e EventEnvelopeV2) Observations() []byte             { return append([]byte(nil), e.observations...) }
-func (e EventEnvelopeV2) CanonicalDigest() Digest          { return e.digest }
+func (e EventEnvelopeV2) CommittedRuntimeEpochID() RuntimeEpochID {
+	return e.input.CommittedRuntimeEpochID
+}
+func (e EventEnvelopeV2) ActorID() ActorID               { return e.input.ActorID }
+func (e EventEnvelopeV2) ProcessID() ProcessID           { return e.input.ProcessID }
+func (e EventEnvelopeV2) WorkRevisionID() WorkRevisionID { return e.input.WorkRevisionID }
+func (e EventEnvelopeV2) PolicyRevision() string         { return e.input.PolicyRevision }
+func (e EventEnvelopeV2) GovernanceRevisions() []string {
+	return append([]string(nil), e.input.GovernanceRevisions...)
+}
+func (e EventEnvelopeV2) Payload() []byte         { return append([]byte(nil), e.payload...) }
+func (e EventEnvelopeV2) Observations() []byte    { return append([]byte(nil), e.observations...) }
+func (e EventEnvelopeV2) CanonicalDigest() Digest { return e.digest }
 
 type eventEnvelopeWire struct {
 	EnvelopeVersion         uint32              `json:"envelope_version"`
@@ -672,9 +769,17 @@ func NewAggregateHeadV2(input AggregateHeadInput) (AggregateHeadV2, error) {
 	return AggregateHeadV2{input: input, authoritySummary: append([]byte(nil), summary...)}, nil
 }
 
-func (h AggregateHeadV2) Coordinate() AggregateCoordinate { return h.input.Coordinate }
-func (h AggregateHeadV2) LogicalVersion() LogicalVersion  { return h.input.LogicalVersion }
-func (h AggregateHeadV2) AuthoritySummary() []byte        { return append([]byte(nil), h.authoritySummary...) }
+func (h AggregateHeadV2) Coordinate() AggregateCoordinate  { return h.input.Coordinate }
+func (h AggregateHeadV2) LogicalVersion() LogicalVersion   { return h.input.LogicalVersion }
+func (h AggregateHeadV2) SchemaVersion() uint32            { return SchemaVersion }
+func (h AggregateHeadV2) LastEventID() EventID             { return h.input.LastEventID }
+func (h AggregateHeadV2) LastPublicationID() PublicationID { return h.input.LastPublicationID }
+func (h AggregateHeadV2) CommittedRuntimeEpochID() RuntimeEpochID {
+	return h.input.CommittedRuntimeEpochID
+}
+func (h AggregateHeadV2) CanonicalStateDigest() Digest { return h.input.CanonicalStateDigest }
+func (h AggregateHeadV2) AuthoritySummary() []byte     { return append([]byte(nil), h.authoritySummary...) }
+func (h AggregateHeadV2) Tombstone() bool              { return h.input.Tombstone }
 
 func ValidateOperationPublicationHeadV2(state OperationStateV2, event EventEnvelopeV2, head AggregateHeadV2) error {
 	publicationID := state.lastPublicationID
@@ -745,59 +850,139 @@ func DecodeAggregateHeadV2(encoded []byte) (AggregateHeadV2, error) {
 	return head, nil
 }
 
-type Reducer func(priorCanonicalState, canonicalEventPayload []byte) ([]byte, error)
+// Reducer receives one already-validated immutable event envelope. This keeps
+// playback pure while making envelope-owned semantics such as PublicationID
+// available to reducers whose durable state depends on them.
+type Reducer func(priorCanonicalState []byte, event EventEnvelopeV2) ([]byte, error)
+
+// ReduceOperationStateV2 is the closed operation-family reducer. The payload
+// supplies the transition preimage and the validated envelope supplies the
+// PublicationID excluded during plan sealing.
+func ReduceOperationStateV2(prior []byte, event EventEnvelopeV2) ([]byte, error) {
+	if event.input.Family != "operation" || event.input.EventSchemaVersion != 2 || event.input.ReducerVersion != 2 {
+		return nil, invalid(ErrorUnknownEventTuple, "operation_reducer")
+	}
+	state, err := ReconstructOperationStateV2(event.payload, event.input.PublicationID)
+	if err != nil {
+		return nil, err
+	}
+	if len(prior) == 0 || bytes.Equal(prior, []byte(`{}`)) {
+		if state.logicalVersion != 1 {
+			return nil, invalid(ErrorInvalidTransition, "operation_reducer_initial_version")
+		}
+	} else {
+		previous, decodeErr := DecodeOperationStateV2(prior)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		expected, advanceErr := AdvanceOperationState(previous, OperationTransition{ExpectedVersion: previous.logicalVersion,
+			NextVersion: state.logicalVersion, Status: state.status, ResultKind: state.resultKind,
+			ResultSchemaVersion: state.resultSchemaVersion, CanonicalResult: state.canonicalResult,
+			EventIDs: state.eventIDs, EffectIDs: state.effectIDs, LastPublicationID: state.lastPublicationID})
+		if advanceErr != nil {
+			return nil, advanceErr
+		}
+		expectedBytes, expectedErr := EncodeOperationStateV2(expected)
+		stateBytes, stateErr := EncodeOperationStateV2(state)
+		if expectedErr != nil || stateErr != nil || !bytes.Equal(expectedBytes, stateBytes) {
+			return nil, invalid(ErrorInvalidTransition, "operation_reducer_transition")
+		}
+	}
+	return EncodeOperationStateV2(state)
+}
+
+func OperationReducerImplementationDigestV2() Digest {
+	return digest("spec-kitty.reducer-implementation.v2", []byte("operation-state-2/2-envelope-publication"))
+}
 
 type ReducerRegistration struct {
-	Family             string
-	EventSchemaVersion uint32
-	ReducerVersion     uint32
-	Reduce             Reducer
+	Family               string
+	EventSchemaVersion   uint32
+	ReducerVersion       uint32
+	Owner                string
+	ImplementationDigest Digest
+	Reduce               Reducer
 }
 
-// ReducerSetV2 is one bounded reduction-observation session. Registrations are
-// immutable after construction and observations are append-only. It detects
-// disagreement within this session; durable replay verification belongs to
-// the restore boundary that has recorded terminal digests.
+type ReducerRegistryDescriptorV2 struct {
+	canonical []byte
+	digest    Digest
+}
+
+func (d ReducerRegistryDescriptorV2) CanonicalBytes() []byte {
+	return append([]byte(nil), d.canonical...)
+}
+func (d ReducerRegistryDescriptorV2) Digest() Digest { return d.digest }
+
+// ReducerSetV2 is immutable after construction. Runtime application is
+// stateless; repeated-call determinism checks belong to QualifyDeterminismV2.
 type ReducerSetV2 struct {
-	registry EventRegistryV2
-	reducers map[string]Reducer
-	session  *reductionSession
-}
-
-type reductionObservation struct {
-	input  []byte
-	output []byte
-	digest Digest
-}
-
-type reductionSession struct {
-	mu           sync.Mutex
-	observations map[string]reductionObservation
+	registry   EventRegistryV2
+	reducers   map[string]Reducer
+	descriptor ReducerRegistryDescriptorV2
 }
 
 func NewReducerSetV2(registry EventRegistryV2, registrations []ReducerRegistration) (ReducerSetV2, error) {
 	if len(registrations) > MaxMembers {
 		return ReducerSetV2{}, invalid(ErrorBudgetExceeded, "reducers")
 	}
+	if len(registrations) != len(ExpectedEventTuples()) {
+		return ReducerSetV2{}, invalid(ErrorUnknownEventTuple, "reducers")
+	}
 	reducers := make(map[string]Reducer, len(registrations))
+	descriptors := make([]struct {
+		Family               string `json:"family"`
+		EventSchemaVersion   uint32 `json:"event_schema_version"`
+		ReducerVersion       uint32 `json:"reducer_version"`
+		Owner                string `json:"owner"`
+		ImplementationSHA256 string `json:"implementation_sha256"`
+	}, 0, len(registrations))
 	for _, registration := range registrations {
 		key := eventTupleKey(registration.Family, registration.EventSchemaVersion, registration.ReducerVersion)
-		if registration.Reduce == nil || reducers[key] != nil {
+		if registration.Reduce == nil || reducers[key] != nil || registration.ImplementationDigest.IsZero() {
 			return ReducerSetV2{}, invalid(ErrorUnknownEventTuple, "reducers")
 		}
-		if _, err := registry.Resolve(registration.Family, registration.EventSchemaVersion, registration.ReducerVersion); err != nil {
-			return ReducerSetV2{}, err
+		tuple, err := registry.Resolve(registration.Family, registration.EventSchemaVersion, registration.ReducerVersion)
+		if err != nil || tuple.Owner != registration.Owner {
+			return ReducerSetV2{}, invalid(ErrorUnknownEventTuple, "reducer_owner")
 		}
 		reducers[key] = registration.Reduce
+		descriptors = append(descriptors, struct {
+			Family               string `json:"family"`
+			EventSchemaVersion   uint32 `json:"event_schema_version"`
+			ReducerVersion       uint32 `json:"reducer_version"`
+			Owner                string `json:"owner"`
+			ImplementationSHA256 string `json:"implementation_sha256"`
+		}{registration.Family, registration.EventSchemaVersion, registration.ReducerVersion, registration.Owner, registration.ImplementationDigest.String()})
 	}
-	return ReducerSetV2{registry: registry, reducers: reducers, session: &reductionSession{observations: make(map[string]reductionObservation)}}, nil
+	sort.Slice(descriptors, func(i, j int) bool {
+		return eventTupleKey(descriptors[i].Family, descriptors[i].EventSchemaVersion, descriptors[i].ReducerVersion) <
+			eventTupleKey(descriptors[j].Family, descriptors[j].EventSchemaVersion, descriptors[j].ReducerVersion)
+	})
+	eventDescriptor, err := registry.Descriptor()
+	if err != nil {
+		return ReducerSetV2{}, err
+	}
+	canonical, err := marshalCanonical(struct {
+		EventRegistrySHA256 string `json:"event_registry_sha256"`
+		Reducers            any    `json:"reducers"`
+	}{eventDescriptor.Digest().String(), descriptors}, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return ReducerSetV2{}, err
+	}
+	return ReducerSetV2{registry: registry, reducers: reducers, descriptor: ReducerRegistryDescriptorV2{
+		canonical: canonical, digest: digest("spec-kitty.reducer-registry-descriptor.v2", canonical),
+	}}, nil
 }
 
-func (r ReducerSetV2) Reduce(family string, eventSchemaVersion, reducerVersion uint32, prior, event []byte) ([]byte, Digest, error) {
-	if _, err := r.registry.Resolve(family, eventSchemaVersion, reducerVersion); err != nil {
+func (r ReducerSetV2) Apply(prior []byte, event EventEnvelopeV2) ([]byte, Digest, error) {
+	if _, err := EncodeEventEnvelopeV2(event); err != nil {
 		return nil, Digest{}, err
 	}
-	call := r.reducers[eventTupleKey(family, eventSchemaVersion, reducerVersion)]
+	if _, err := r.registry.Resolve(event.input.Family, event.input.EventSchemaVersion, event.input.ReducerVersion); err != nil {
+		return nil, Digest{}, err
+	}
+	call := r.reducers[eventTupleKey(event.input.Family, event.input.EventSchemaVersion, event.input.ReducerVersion)]
 	if call == nil {
 		return nil, Digest{}, invalid(ErrorUnknownEventTuple, "reducer")
 	}
@@ -805,29 +990,7 @@ func (r ReducerSetV2) Reduce(family string, eventSchemaVersion, reducerVersion u
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	canonicalEvent, err := CanonicalObject(event)
-	if err != nil {
-		return nil, Digest{}, err
-	}
-	inputBytes, err := marshalCanonical(struct {
-		Tuple string `json:"tuple"`
-		Prior []byte `json:"prior"`
-		Event []byte `json:"event"`
-	}{eventTupleKey(family, eventSchemaVersion, reducerVersion), canonicalPrior, canonicalEvent}, MaxEventEnvelopeBytes)
-	if err != nil {
-		return nil, Digest{}, err
-	}
-	inputKey := digest("spec-kitty.reducer-input.v2", inputBytes).String()
-	r.session.mu.Lock()
-	defer r.session.mu.Unlock()
-	priorObservation, observed := r.session.observations[inputKey]
-	if observed && !bytes.Equal(priorObservation.input, inputBytes) {
-		return nil, Digest{}, invalid(ErrorJournalCorrupt, "reduction_observation")
-	}
-	if !observed && len(r.session.observations) >= MaxReductionObservations {
-		return nil, Digest{}, invalid(ErrorBudgetExceeded, "reduction_observations")
-	}
-	output, err := call(append([]byte(nil), canonicalPrior...), append([]byte(nil), canonicalEvent...))
+	output, err := call(append([]byte(nil), canonicalPrior...), event)
 	if err != nil {
 		return nil, Digest{}, err
 	}
@@ -836,11 +999,41 @@ func (r ReducerSetV2) Reduce(family string, eventSchemaVersion, reducerVersion u
 		return nil, Digest{}, err
 	}
 	outputDigest := digest("spec-kitty.reducer-state.v2", output)
-	if observed && (!bytes.Equal(priorObservation.output, output) || priorObservation.digest != outputDigest) {
-		return nil, Digest{}, invalid(ErrorNondeterministic, "reducer")
-	}
-	if !observed {
-		r.session.observations[inputKey] = reductionObservation{input: append([]byte(nil), inputBytes...), output: append([]byte(nil), output...), digest: outputDigest}
-	}
 	return append([]byte(nil), output...), outputDigest, nil
+}
+
+// Reduce is retained as the stateless runtime spelling used by existing
+// consumers. It delegates to Apply and retains no observations.
+func (r ReducerSetV2) Reduce(prior []byte, event EventEnvelopeV2) ([]byte, Digest, error) {
+	return r.Apply(prior, event)
+}
+
+func (r ReducerSetV2) Descriptor() (ReducerRegistryDescriptorV2, error) {
+	if len(r.reducers) != len(ExpectedEventTuples()) || len(r.descriptor.canonical) == 0 || r.descriptor.digest.IsZero() ||
+		digest("spec-kitty.reducer-registry-descriptor.v2", r.descriptor.canonical) != r.descriptor.digest {
+		return ReducerRegistryDescriptorV2{}, invalid(ErrorUnknownEventTuple, "reducer_registry_descriptor")
+	}
+	return ReducerRegistryDescriptorV2{canonical: append([]byte(nil), r.descriptor.canonical...), digest: r.descriptor.digest}, nil
+}
+
+// QualifyDeterminismV2 detects unstable implementations in a bounded,
+// deliberately separate qualification call. It never changes runtime state.
+func (r ReducerSetV2) QualifyDeterminismV2(prior []byte, event EventEnvelopeV2, runs int) error {
+	if runs < 2 || runs > MaxQualificationRuns {
+		return invalid(ErrorBudgetExceeded, "qualification_runs")
+	}
+	want, wantDigest, err := r.Apply(prior, event)
+	if err != nil {
+		return err
+	}
+	for index := 1; index < runs; index++ {
+		got, gotDigest, applyErr := r.Apply(prior, event)
+		if applyErr != nil {
+			return applyErr
+		}
+		if !bytes.Equal(want, got) || wantDigest != gotDigest {
+			return invalid(ErrorNondeterministic, "reducer")
+		}
+	}
+	return nil
 }

@@ -206,18 +206,19 @@ type CommitPlanInput struct {
 }
 
 type SealedCommitPlanV2 struct {
-	publicationID  PublicationID
-	digest         Digest
-	binding        *OperationBindingV2
-	operationState OperationStateV2
-	events         []EventEnvelopeV2
-	heads          []HeadTransitionV2
-	effects        []EffectIntentReference
-	eligibility    []EligibilityGuardTransition
-	checkpoints    []CheckpointRecord
-	conditions     []ProviderCondition
-	records        []SealedRecordV2
-	canonical      []byte
+	publicationID   PublicationID
+	digest          Digest
+	recordSetDigest Digest
+	binding         *OperationBindingV2
+	operationState  OperationStateV2
+	events          []EventEnvelopeV2
+	heads           []HeadTransitionV2
+	effects         []EffectIntentReference
+	eligibility     []EligibilityGuardTransition
+	checkpoints     []CheckpointRecord
+	conditions      []ProviderCondition
+	records         []SealedRecordV2
+	canonical       []byte
 }
 
 func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCommitPlanV2, error) {
@@ -242,7 +243,6 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 			return SealedCommitPlanV2{}, err
 		}
 	}
-
 	drafts := cloneEventDrafts(input.Events)
 	heads := cloneHeadTransitions(input.Heads)
 	effects := cloneEffectIntents(input.EffectIntents)
@@ -264,6 +264,18 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 			}
 		}
 		sort.Strings(drafts[index].GovernanceRevisions)
+	}
+	operationPayload, err := EncodeOperationStateEventPayloadV2(input.OperationState)
+	if err != nil {
+		return SealedCommitPlanV2{}, err
+	}
+	for _, event := range drafts {
+		if event.Family != "operation" {
+			continue
+		}
+		if event.EventSchemaVersion != 2 || event.ReducerVersion != 2 || !bytes.Equal(event.Payload, operationPayload) {
+			return SealedCommitPlanV2{}, invalid(ErrorInvalidTransition, "operation_event_payload")
+		}
 	}
 	for index := range heads {
 		canonical, err := requireCanonicalValue("authority_summary", heads[index].AuthoritySummary, MaxCanonicalPayloadBytes)
@@ -351,12 +363,64 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	if _, err := validateSealedRecordBudget(records); err != nil {
 		return SealedCommitPlanV2{}, err
 	}
-	plan := SealedCommitPlanV2{publicationID, planDigest, cloneBinding(input.OperationBinding), state, events, heads, effects, eligibility, checkpoints, conditions, records, nil}
+	recordSetDigest, err := sealedRecordSetDigest(records)
+	if err != nil {
+		return SealedCommitPlanV2{}, err
+	}
+	plan := SealedCommitPlanV2{publicationID: publicationID, digest: planDigest, recordSetDigest: recordSetDigest,
+		binding: cloneBinding(input.OperationBinding), operationState: state, events: events, heads: heads, effects: effects,
+		eligibility: eligibility, checkpoints: checkpoints, conditions: conditions, records: records}
 	plan.canonical, err = plan.finalBytes()
 	if err != nil {
 		return SealedCommitPlanV2{}, err
 	}
 	return plan, nil
+}
+
+func sealedRecordSetDigest(records []SealedRecordV2) (Digest, error) {
+	type recordDigestWire struct {
+		Role       SealedRecordRole       `json:"role"`
+		Target     string                 `json:"target"`
+		ValueClass SealedRecordValueClass `json:"value_class"`
+		Condition  ConditionKind          `json:"condition"`
+		Revision   uint64                 `json:"revision,omitempty"`
+		Value      []byte                 `json:"value"`
+	}
+	values := make([]recordDigestWire, len(records))
+	for index, record := range records {
+		values[index] = recordDigestWire{record.role, sealedTargetIdentity(record.role, record.target), record.valueClass,
+			record.condition.kind, record.condition.observedRevision, append([]byte(nil), record.canonical...)}
+	}
+	sort.Slice(values, func(i, j int) bool {
+		return string(values[i].Role)+"\x00"+values[i].Target < string(values[j].Role)+"\x00"+values[j].Target
+	})
+	canonical, err := marshalCanonical(values, MaxCommitPlanBytes)
+	if err != nil {
+		return Digest{}, err
+	}
+	return digest("spec-kitty.sealed-record-set.v2", canonical), nil
+}
+
+func sealedTargetIdentity(role SealedRecordRole, target SealedRecordTargetV2) string {
+	switch role {
+	case RecordOperationBinding, RecordOperationHead:
+		return string(target.operationID)
+	case RecordJournalEvent:
+		version, _ := target.logicalVersion.Hex16()
+		return target.coordinate.canonical() + "/" + version
+	case RecordAggregateHead:
+		return target.coordinate.canonical()
+	case RecordEffectIntent:
+		return string(target.effectID)
+	case RecordEligibilityGuard:
+		return string(target.missionID) + "/" + string(target.shardID)
+	case RecordCheckpointRecord:
+		return string(target.checkpointID)
+	case RecordCheckpointSlot:
+		return string(target.checkpointSlotID)
+	default:
+		return ""
+	}
 }
 
 func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) error {
@@ -1402,21 +1466,24 @@ func (p SealedCommitPlanV2) finalBytes() ([]byte, error) {
 		events[index] = encoded
 	}
 	return marshalCanonical(struct {
-		PublicationID  string                       `json:"publication_id"`
-		PlanSHA256     string                       `json:"canonical_plan_sha256"`
-		Binding        *operationBindingWire        `json:"operation_binding_create,omitempty"`
-		OperationState []byte                       `json:"operation_state"`
-		Events         [][]byte                     `json:"events"`
-		Heads          []HeadTransitionV2           `json:"heads"`
-		Effects        []EffectIntentReference      `json:"effect_intents"`
-		Eligibility    []EligibilityGuardTransition `json:"eligibility_guards"`
-		Checkpoints    []CheckpointRecord           `json:"checkpoints"`
-		Conditions     []ProviderCondition          `json:"conditions"`
-	}{string(p.publicationID), p.digest.String(), binding, state, events, p.heads, p.effects, p.eligibility, p.checkpoints, p.conditions}, MaxCommitPlanBytes)
+		PublicationID   string                       `json:"publication_id"`
+		PlanSHA256      string                       `json:"canonical_plan_sha256"`
+		RecordSetSHA256 string                       `json:"sealed_record_set_sha256"`
+		Binding         *operationBindingWire        `json:"operation_binding_create,omitempty"`
+		OperationState  []byte                       `json:"operation_state"`
+		Events          [][]byte                     `json:"events"`
+		Heads           []HeadTransitionV2           `json:"heads"`
+		Effects         []EffectIntentReference      `json:"effect_intents"`
+		Eligibility     []EligibilityGuardTransition `json:"eligibility_guards"`
+		Checkpoints     []CheckpointRecord           `json:"checkpoints"`
+		Conditions      []ProviderCondition          `json:"conditions"`
+	}{string(p.publicationID), p.digest.String(), p.recordSetDigest.String(), binding, state, events, p.heads, p.effects, p.eligibility, p.checkpoints, p.conditions}, MaxCommitPlanBytes)
 }
 
 func (p SealedCommitPlanV2) PublicationID() PublicationID     { return p.publicationID }
 func (p SealedCommitPlanV2) Digest() Digest                   { return p.digest }
+func (p SealedCommitPlanV2) RecordSetDigest() Digest          { return p.recordSetDigest }
+func (p SealedCommitPlanV2) MutationCount() int               { return len(p.records) }
 func (p SealedCommitPlanV2) CanonicalBytes() []byte           { return append([]byte(nil), p.canonical...) }
 func (p SealedCommitPlanV2) OperationState() OperationStateV2 { return p.operationState }
 func (p SealedCommitPlanV2) Events() []EventEnvelopeV2 {
