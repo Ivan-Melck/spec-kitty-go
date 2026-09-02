@@ -54,7 +54,7 @@
     },
     "WP02": {
       "actor": "user",
-      "agent": "renata-wp02",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -66,6 +66,7 @@
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP02-global-operations-and-authority-journal-v2/review-cycle-1.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP02-global-operations-and-authority-journal-v2/review-cycle-1.md",
@@ -73,15 +74,15 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T006": "done",
-        "T007": "done",
-        "T008": "done",
-        "T009": "done",
-        "T010": "done",
-        "T011": "done"
+        "T006": "planned",
+        "T007": "planned",
+        "T008": "planned",
+        "T009": "planned",
+        "T010": "planned",
+        "T011": "planned"
       }
     },
     "WP03": {
