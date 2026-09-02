@@ -278,6 +278,11 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"named-callable-pointer", m2FoundationOwnershipFixture("NAMED-CALLABLE-POINTER"), true},
 		{"interface-method-pointer", m2FoundationOwnershipFixture("INTERFACE-METHOD-POINTER"), true},
 		{"receiver-generic-constraint", m2FoundationOwnershipFixture("RECEIVER-GENERIC-CONSTRAINT"), true},
+		{"anonymous-interface-variable", m2FoundationOwnershipFixture("ANONYMOUS-INTERFACE-VARIABLE"), true},
+		{"unexported-receiver-variable", m2FoundationOwnershipFixture("UNEXPORTED-RECEIVER-VARIABLE"), true},
+		{"anonymous-struct-function-field", m2FoundationOwnershipFixture("ANONYMOUS-STRUCT-FUNCTION-FIELD"), true},
+		{"function-returned-receiver", m2FoundationOwnershipFixture("FUNCTION-RETURNED-RECEIVER"), true},
+		{"exported-field-receiver", m2FoundationOwnershipFixture("EXPORTED-FIELD-RECEIVER"), true},
 		{"unrelated-public-adapter-api", m2FoundationOwnershipFixture("UNRELATED-PUBLIC"), false},
 		{"private-adapter-helper", m2FoundationOwnershipFixture("PRIVATE-HELPER"), false},
 		{"unrelated-named-function-type", m2FoundationOwnershipFixture("UNRELATED-NAMED-FUNCTION"), false},
@@ -289,6 +294,10 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"foundation-only-receiver", m2FoundationOwnershipFixture("FOUNDATION-ONLY-RECEIVER"), false},
 		{"private-generic-constraint", m2FoundationOwnershipFixture("PRIVATE-GENERIC-CONSTRAINT"), false},
 		{"private-field-wrapper", m2FoundationOwnershipFixture("PRIVATE-FIELD-WRAPPER"), false},
+		{"unrelated-composite", m2FoundationOwnershipFixture("UNRELATED-COMPOSITE"), false},
+		{"foundation-only-composite", m2FoundationOwnershipFixture("FOUNDATION-ONLY-COMPOSITE"), false},
+		{"private-unreachable-type", m2FoundationOwnershipFixture("PRIVATE-UNREACHABLE-TYPE"), false},
+		{"recursive-unrelated-composite", m2FoundationOwnershipFixture("RECURSIVE-UNRELATED-COMPOSITE"), false},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -567,7 +576,11 @@ func inspectM2FoundationContractOwnership(ctx context.Context, root, module stri
 				return fmt.Errorf("evidence=FOUNDATION-CONTRACT-OWNERSHIP law=no-adapter-recovery-contract owner=%s observed-type=%s expected-owner=%s", source.importPath, forbiddenName, foundationPath)
 			}
 		}
-		if function, ownedType := m2FirstAdapterOwnedRecoverySignature(source, foundationPath, adapterPath); function != "" {
+		function, ownedType, err := m2FirstAdapterOwnedRecoverySignature(source, foundationPath, adapterPath)
+		if err != nil {
+			return err
+		}
+		if function != "" {
 			return fmt.Errorf("evidence=FOUNDATION-CONTRACT-OWNERSHIP law=foundation-signatures owner=%s callable=%s observed-type=%s expected-owner=%s", source.importPath, function, ownedType, foundationPath)
 		}
 	}
@@ -610,7 +623,9 @@ type m2NamedTypeReference struct {
 	Name  string
 }
 
-func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, foundationPath, adapterPath string) (string, string) {
+const m2MaxExternallyReachableTypeNodes = 65_536
+
+func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, foundationPath, adapterPath string) (string, string, error) {
 	provenance := m2TypeDeclarationProvenance(source)
 	check := func(name string, candidate types.Type) (string, string) {
 		signature, _ := types.Unalias(candidate).Underlying().(*types.Signature)
@@ -638,55 +653,152 @@ func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, found
 		}
 		return "", ""
 	}
-	scope := source.typed.Scope()
-	for _, name := range scope.Names() {
-		switch object := scope.Lookup(name).(type) {
-		case *types.Func:
-			if !object.Exported() {
-				continue
+	seen := make(map[types.Type]bool)
+	visited := 0
+	var walk func(string, types.Type) (string, string, error)
+	walk = func(path string, candidate types.Type) (string, string, error) {
+		if candidate == nil || seen[candidate] {
+			return "", "", nil
+		}
+		seen[candidate] = true
+		visited++
+		if visited > m2MaxExternallyReachableTypeNodes {
+			return "", "", fmt.Errorf("evidence=FOUNDATION-CONTRACT-OWNERSHIP law=bounded-public-type-graph owner=%s observed-nodes>%d", source.importPath, m2MaxExternallyReachableTypeNodes)
+		}
+		if function, owner := check(path, candidate); function != "" {
+			return function, owner, nil
+		}
+		walkOne := func(suffix string, nested types.Type) (string, string, error) {
+			return walk(path+suffix, nested)
+		}
+		walkTuple := func(suffix string, tuple *types.Tuple) (string, string, error) {
+			for index := 0; tuple != nil && index < tuple.Len(); index++ {
+				if function, owner, err := walkOne(fmt.Sprintf(".%s[%d]", suffix, index), tuple.At(index).Type()); function != "" || err != nil {
+					return function, owner, err
+				}
 			}
-			if function, owner := check(object.Name(), object.Type()); function != "" {
-				return function, owner
+			return "", "", nil
+		}
+		walkParameters := func(suffix string, parameters *types.TypeParamList) (string, string, error) {
+			for index := 0; parameters != nil && index < parameters.Len(); index++ {
+				if function, owner, err := walkOne(fmt.Sprintf(".%s[%d]", suffix, index), parameters.At(index)); function != "" || err != nil {
+					return function, owner, err
+				}
 			}
-		case *types.Var:
-			if !object.Exported() {
-				continue
-			}
-			if function, owner := check(object.Name(), object.Type()); function != "" {
-				return function, owner
-			}
-		case *types.TypeName:
-			if !object.Exported() {
-				continue
-			}
-			if function, owner := check(object.Name(), object.Type()); function != "" {
-				return function, owner
-			}
-			for _, set := range []*types.MethodSet{types.NewMethodSet(object.Type()), types.NewMethodSet(types.NewPointer(object.Type()))} {
+			return "", "", nil
+		}
+		walkMethods := func(methodType types.Type) (string, string, error) {
+			for _, set := range []*types.MethodSet{types.NewMethodSet(methodType), types.NewMethodSet(types.NewPointer(methodType))} {
 				for index := 0; index < set.Len(); index++ {
 					method := set.At(index).Obj()
 					if !method.Exported() {
 						continue
 					}
-					if function, owner := check(method.Name(), method.Type()); function != "" {
-						return object.Name() + "." + function, owner
+					if function, owner, err := walkOne("."+method.Name(), method.Type()); function != "" || err != nil {
+						return function, owner, err
 					}
 				}
 			}
-			if structure, ok := types.Unalias(object.Type()).Underlying().(*types.Struct); ok {
-				for index := 0; index < structure.NumFields(); index++ {
-					field := structure.Field(index)
-					if !field.Exported() {
-						continue
-					}
-					if function, owner := check(object.Name()+"."+field.Name(), field.Type()); function != "" {
-						return function, owner
-					}
+			return "", "", nil
+		}
+		switch value := candidate.(type) {
+		case *types.Alias:
+			if function, owner, err := walkParameters("type-parameter", value.TypeParams()); function != "" || err != nil {
+				return function, owner, err
+			}
+			for index := 0; index < value.TypeArgs().Len(); index++ {
+				if function, owner, err := walkOne(fmt.Sprintf(".type-argument[%d]", index), value.TypeArgs().At(index)); function != "" || err != nil {
+					return function, owner, err
+				}
+			}
+			return walkOne(".alias", types.Unalias(value))
+		case *types.Named:
+			if function, owner, err := walkMethods(value); function != "" || err != nil {
+				return function, owner, err
+			}
+			if function, owner, err := walkParameters("type-parameter", value.TypeParams()); function != "" || err != nil {
+				return function, owner, err
+			}
+			for index := 0; index < value.TypeArgs().Len(); index++ {
+				if function, owner, err := walkOne(fmt.Sprintf(".type-argument[%d]", index), value.TypeArgs().At(index)); function != "" || err != nil {
+					return function, owner, err
+				}
+			}
+			return walkOne(".underlying", value.Underlying())
+		case *types.Pointer:
+			return walkOne(".element", value.Elem())
+		case *types.Array:
+			return walkOne(".element", value.Elem())
+		case *types.Slice:
+			return walkOne(".element", value.Elem())
+		case *types.Map:
+			if function, owner, err := walkOne(".key", value.Key()); function != "" || err != nil {
+				return function, owner, err
+			}
+			return walkOne(".element", value.Elem())
+		case *types.Chan:
+			return walkOne(".element", value.Elem())
+		case *types.Tuple:
+			return walkTuple("tuple", value)
+		case *types.Signature:
+			if function, owner, err := walkTuple("parameter", value.Params()); function != "" || err != nil {
+				return function, owner, err
+			}
+			if function, owner, err := walkTuple("result", value.Results()); function != "" || err != nil {
+				return function, owner, err
+			}
+			if function, owner, err := walkParameters("type-parameter", value.TypeParams()); function != "" || err != nil {
+				return function, owner, err
+			}
+			return walkParameters("receiver-type-parameter", value.RecvTypeParams())
+		case *types.TypeParam:
+			return walkOne(".constraint", value.Constraint())
+		case *types.Struct:
+			for index := 0; index < value.NumFields(); index++ {
+				field := value.Field(index)
+				if !field.Exported() && !field.Embedded() {
+					continue
+				}
+				if function, owner, err := walkOne("."+field.Name(), field.Type()); function != "" || err != nil {
+					return function, owner, err
+				}
+			}
+		case *types.Interface:
+			value.Complete()
+			for index := 0; index < value.NumMethods(); index++ {
+				method := value.Method(index)
+				if !method.Exported() {
+					continue
+				}
+				if function, owner, err := walkOne("."+method.Name(), method.Type()); function != "" || err != nil {
+					return function, owner, err
+				}
+			}
+			for index := 0; index < value.NumEmbeddeds(); index++ {
+				if function, owner, err := walkOne(fmt.Sprintf(".embedded[%d]", index), value.EmbeddedType(index)); function != "" || err != nil {
+					return function, owner, err
+				}
+			}
+		case *types.Union:
+			for index := 0; index < value.Len(); index++ {
+				if function, owner, err := walkOne(fmt.Sprintf(".term[%d]", index), value.Term(index).Type()); function != "" || err != nil {
+					return function, owner, err
 				}
 			}
 		}
+		return "", "", nil
 	}
-	return "", ""
+	scope := source.typed.Scope()
+	for _, name := range scope.Names() {
+		object := scope.Lookup(name)
+		if object == nil || !object.Exported() {
+			continue
+		}
+		if function, owner, err := walk(object.Name(), object.Type()); function != "" || err != nil {
+			return function, owner, err
+		}
+	}
+	return "", "", nil
 }
 
 func m2TypeDeclarationProvenance(source *productionSourcePackage) map[m2NamedTypeReference]map[m2NamedTypeReference]bool {
@@ -831,6 +943,9 @@ func m2FoundationOwnershipFixture(variant string) map[string]string {
 		"NAMED-CALLABLE-POINTER", "INTERFACE-METHOD-POINTER", "RECEIVER-GENERIC-CONSTRAINT",
 		"UNRELATED-GENERIC-CONSTRAINT", "FOUNDATION-ONLY-GENERIC", "UNRELATED-VARIABLE", "UNRELATED-FIELD",
 		"FOUNDATION-ONLY-RECEIVER", "PRIVATE-GENERIC-CONSTRAINT", "PRIVATE-FIELD-WRAPPER",
+		"ANONYMOUS-INTERFACE-VARIABLE", "UNEXPORTED-RECEIVER-VARIABLE", "ANONYMOUS-STRUCT-FUNCTION-FIELD",
+		"FUNCTION-RETURNED-RECEIVER", "EXPORTED-FIELD-RECEIVER", "UNRELATED-COMPOSITE",
+		"FOUNDATION-ONLY-COMPOSITE", "PRIVATE-UNREACHABLE-TYPE", "RECURSIVE-UNRELATED-COMPOSITE",
 		"UNRELATED-PUBLIC", "PRIVATE-HELPER",
 	}, variant) {
 		return nil
@@ -1021,6 +1136,71 @@ import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
 type Parcel struct{}
 type Request journalv2.ReadRequestV2
 type Adapter struct { fetch func(*Request) (*Parcel, error) }
+`
+	case "ANONYMOUS-INTERFACE-VARIABLE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+var Reader interface { Fetch(journalv2.ReadRequestV2) (Parcel, error) }
+`
+	case "UNEXPORTED-RECEIVER-VARIABLE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type service struct{}
+func (service) Fetch(journalv2.ReadRequestV2) (Parcel, error) { return Parcel{}, nil }
+var Reader service
+`
+	case "ANONYMOUS-STRUCT-FUNCTION-FIELD":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+var Reader struct { Fetch func(journalv2.ReadRequestV2) (Parcel, error) }
+`
+	case "FUNCTION-RETURNED-RECEIVER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type service struct{}
+func (service) Fetch(journalv2.ReadRequestV2) (Parcel, error) { return Parcel{}, nil }
+func Reader() service { return service{} }
+`
+	case "EXPORTED-FIELD-RECEIVER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type service struct{}
+func (service) Fetch(journalv2.ReadRequestV2) (Parcel, error) { return Parcel{}, nil }
+type Adapter struct { Reader service }
+`
+	case "UNRELATED-COMPOSITE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+type Diagnostic struct{}
+var Reader struct { Inspect func() (Diagnostic, error) }
+`
+	case "FOUNDATION-ONLY-COMPOSITE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+var Reader interface {
+    Read(journalv2.ReadRequestV2) (journalv2.RecoveryRecordV2, error)
+}
+`
+	case "PRIVATE-UNREACHABLE-TYPE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type service struct{}
+func (service) Fetch(journalv2.ReadRequestV2) (Parcel, error) { return Parcel{}, nil }
+var reader service
+`
+	case "RECURSIVE-UNRELATED-COMPOSITE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+type Diagnostic struct{}
+type node struct {
+    Next *node
+    Inspect func() (Diagnostic, error)
+}
+var Reader *node
 `
 	case "UNRELATED-PUBLIC":
 		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
