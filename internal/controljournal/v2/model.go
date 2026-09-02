@@ -22,10 +22,13 @@ const (
 	MaxEventEnvelopeBytes    = 1024 * 1024
 	MaxMembers               = 256
 	MaxEventsPerPublication  = 128
-	MaxEffectsPerPublication = 64
+	MaxHeadsPerPublication   = 32
+	MaxEffectsPerPublication = 16
 	MaxConditionsPerPlan     = 256
 	MaxCheckpointsPerPlan    = 32
 	MaxReductionObservations = 256
+	MaxProductKeyBytes       = 1024
+	MaxProductRawBatchBytes  = 6 * 1024 * 1024
 	MaxCommitPlanBytes       = 12 * 1024 * 1024
 	publicationDomain        = "spec-kitty.publication.v2"
 	canonicalEventDomain     = "spec-kitty.event.v2"

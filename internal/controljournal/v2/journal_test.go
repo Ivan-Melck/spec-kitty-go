@@ -396,6 +396,14 @@ func TestSealedRecordProjectionIsPersistenceCompleteAndImmutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	records := sealed.Records()
+	conservative, err := conservativeProductBatchSize(fixturePlanInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact, err := validateSealedRecordBudget(records)
+	if err != nil || conservative < exact {
+		t.Fatalf("preflight bound=%d exact=%d err=%v", conservative, exact, err)
+	}
 	roles := make(map[SealedRecordRole]int)
 	for _, record := range records {
 		roles[record.Role()]++
@@ -1013,10 +1021,10 @@ func TestNestedCollectionAndByteBudgetBoundaries(t *testing.T) {
 		"event_observations": func(v *CommitPlanInput, payload []byte) { v.Events[0].Observations = payload },
 	} {
 		t.Run(name, func(t *testing.T) {
-			maximum := fixturePlanInput(t)
-			setBytes(&maximum, canonicalObjectAt(MaxCanonicalPayloadBytes))
-			if _, err := SealCommitPlanV2(maximum, DefaultEventRegistryV2()); err != nil {
-				t.Fatalf("maximum nested bytes rejected: %v", err)
+			derivedOversize := fixturePlanInput(t)
+			setBytes(&derivedOversize, canonicalObjectAt(MaxCanonicalPayloadBytes))
+			if _, err := SealCommitPlanV2(derivedOversize, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
+				t.Fatalf("source-sized but derived-oversize event reached a later seam: %v", err)
 			}
 			over := fixturePlanInput(t)
 			setBytes(&over, canonicalObjectAt(MaxCanonicalPayloadBytes+1))
@@ -1080,6 +1088,134 @@ func TestCheckpointValueClassExactAndPlusOneBudget(t *testing.T) {
 	}
 }
 
+func TestSealedRecordFinalBudgetExactAndPlusOne(t *testing.T) {
+	canonicalAt := func(size int) []byte {
+		return []byte(`{"x":"` + strings.Repeat("x", size-len(`{"x":""}`)) + `"}`)
+	}
+	ordinary := []SealedRecordV2{{valueClass: RecordValueOrdinary, canonical: canonicalAt(MaxCanonicalPayloadBytes)}}
+	if _, err := validateSealedRecordBudget(ordinary); err != nil {
+		t.Fatalf("exact ordinary record rejected: %v", err)
+	}
+	ordinary[0].canonical = canonicalAt(MaxCanonicalPayloadBytes + 1)
+	if _, err := validateSealedRecordBudget(ordinary); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
+		t.Fatalf("ordinary record maximum-plus-one accepted: %v", err)
+	}
+	checkpoint := []SealedRecordV2{{valueClass: RecordValueCheckpoint, canonical: canonicalAt(MaxCheckpointValueBytes)}}
+	if _, err := validateSealedRecordBudget(checkpoint); err != nil {
+		t.Fatalf("exact checkpoint record rejected: %v", err)
+	}
+	checkpoint[0].canonical = canonicalAt(MaxCheckpointValueBytes + 1)
+	if _, err := validateSealedRecordBudget(checkpoint); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "checkpoint_record_value" {
+		t.Fatalf("checkpoint record maximum-plus-one accepted: %v", err)
+	}
+
+	const ordinaryRecords = 8
+	records := make([]SealedRecordV2, ordinaryRecords+1)
+	records[0] = SealedRecordV2{valueClass: RecordValueCheckpoint, canonical: canonicalAt(MaxCheckpointValueBytes)}
+	remaining := MaxProductRawBatchBytes - MaxCheckpointValueBytes - len(records)*MaxProductKeyBytes
+	for index := 1; index < len(records); index++ {
+		size := remaining / ordinaryRecords
+		if index <= remaining%ordinaryRecords {
+			size++
+		}
+		records[index] = SealedRecordV2{valueClass: RecordValueOrdinary, canonical: canonicalAt(size)}
+	}
+	if size, err := validateSealedRecordBudget(records); err != nil || size != MaxProductRawBatchBytes {
+		t.Fatalf("exact product raw batch rejected: size=%d err=%v", size, err)
+	}
+	last := len(records) - 1
+	records[last].canonical = canonicalAt(len(records[last].canonical) + 1)
+	if _, err := validateSealedRecordBudget(records); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "product_raw_batch_bytes" {
+		t.Fatalf("product raw batch maximum-plus-one accepted: %v", err)
+	}
+
+	const reproducedProjectionBytes = 9341911
+	reproduction := make([]SealedRecordV2, 22)
+	reproduction[0] = SealedRecordV2{valueClass: RecordValueCheckpoint, canonical: canonicalAt(MaxCheckpointValueBytes)}
+	reproductionValues := reproducedProjectionBytes - len(reproduction)*MaxProductKeyBytes - MaxCheckpointValueBytes
+	for index := 1; index < len(reproduction); index++ {
+		size := reproductionValues / (len(reproduction) - 1)
+		if index <= reproductionValues%(len(reproduction)-1) {
+			size++
+		}
+		reproduction[index] = SealedRecordV2{valueClass: RecordValueOrdinary, canonical: canonicalAt(size)}
+	}
+	if _, err := validateSealedRecordBudget(reproduction); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "product_raw_batch_bytes" {
+		t.Fatalf("9,341,911-byte projection reproduction escaped: %v", err)
+	}
+}
+
+func TestConservativeProductBatchBoundaryAndDerivedEventReproduction(t *testing.T) {
+	canonicalAt := func(size int) []byte {
+		return []byte(`{"x":"` + strings.Repeat("x", size-len(`{"x":""}`)) + `"}`)
+	}
+	oversizedEvent := fixturePlanInput(t)
+	oversizedEvent.Events[0].Payload = canonicalAt(MaxCanonicalPayloadBytes)
+	if _, err := conservativeProductBatchSize(oversizedEvent); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
+		t.Fatalf("derived ordinary-event overflow escaped preflight: %v", err)
+	}
+	if _, err := SealCommitPlanV2(oversizedEvent, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
+		t.Fatalf("derived ordinary-event overflow reached registry: %v", err)
+	}
+	prototype, err := SealCommitPlanV2(fixturePlanInput(t), DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventInput := prototype.events[0].input
+	eventInput.Payload = canonicalAt(MaxCanonicalPayloadBytes)
+	eventInput.Observations = prototype.events[0].Observations()
+	derived, err := NewEventEnvelopeV2(eventInput, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeEventEnvelopeV2(derived)
+	if err != nil || len(encoded) <= MaxCanonicalPayloadBytes {
+		t.Fatalf("350165-byte reproduction not established: size=%d err=%v", len(encoded), err)
+	}
+
+	exact := fixturePlanInput(t)
+	exact.Checkpoints = []CheckpointRecord{
+		{CheckpointID: "checkpoint-a", Canonical: []byte(`{}`), SlotID: "slot-a", SlotCanonical: []byte(`{}`)},
+		{CheckpointID: "checkpoint-b", Canonical: []byte(`{}`), SlotID: "slot-b", SlotCanonical: []byte(`{}`)},
+	}
+	exact.Conditions = persistenceConditions(t, exact.Heads, exact.EligibilityGuards, exact.Checkpoints)
+	base, err := conservativeProductBatchSize(exact)
+	if err != nil || base >= MaxProductRawBatchBytes {
+		t.Fatalf("invalid conservative-boundary base=%d err=%v", base, err)
+	}
+	increase := MaxProductRawBatchBytes - int(base)
+	firstIncrease := increase / 2
+	secondIncrease := increase - firstIncrease
+	exact.Checkpoints[0].Canonical = canonicalAt(len(exact.Checkpoints[0].Canonical) + firstIncrease)
+	exact.Checkpoints[1].Canonical = canonicalAt(len(exact.Checkpoints[1].Canonical) + secondIncrease)
+	if len(exact.Checkpoints[0].Canonical) > MaxCheckpointValueBytes || len(exact.Checkpoints[1].Canonical) > MaxCheckpointValueBytes {
+		t.Fatal("conservative boundary fixture exceeded checkpoint value class")
+	}
+	if size, err := conservativeProductBatchSize(exact); err != nil || size != MaxProductRawBatchBytes {
+		t.Fatalf("exact conservative product batch rejected: size=%d err=%v", size, err)
+	}
+	if _, err := SealCommitPlanV2(exact, DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("exact conservative product batch did not seal: %v", err)
+	}
+	over := exact
+	over.Checkpoints = cloneCheckpoints(exact.Checkpoints)
+	over.Checkpoints[1].Canonical = canonicalAt(len(over.Checkpoints[1].Canonical) + 1)
+	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "product_raw_batch_bytes" {
+		t.Fatalf("conservative product batch maximum-plus-one reached registry: %v", err)
+	}
+}
+
+func TestHeadCardinalityExactAndPlusOne(t *testing.T) {
+	exact := fixtureSizedPlan(t, MaxHeadsPerPublication, len(`{"x":""}`))
+	if _, err := SealCommitPlanV2(exact, DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("exact head cardinality rejected: %v", err)
+	}
+	over := fixtureSizedPlan(t, MaxHeadsPerPublication+1, len(`{"x":""}`))
+	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("head cardinality maximum-plus-one reached registry: %v", err)
+	}
+}
+
 func TestWholePlanProspectiveEncodingBudgetPrecedesLaterSeams(t *testing.T) {
 	const eventCount = 32
 	low, high := len(`{"x":""}`), MaxCanonicalPayloadBytes
@@ -1100,16 +1236,21 @@ func TestWholePlanProspectiveEncodingBudgetPrecedesLaterSeams(t *testing.T) {
 	if err != nil || size > MaxCommitPlanBytes {
 		t.Fatalf("largest admitted prospective plan rejected: size=%d err=%v", size, err)
 	}
-	if _, err := SealCommitPlanV2(exact, DefaultEventRegistryV2()); err != nil {
-		t.Fatalf("largest admitted whole plan did not seal: size=%d payload=%d err=%v", size, low, err)
+	if _, err := SealCommitPlanV2(fixturePlanInput(t), DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("ordinary plan did not seal: %v", err)
+	}
+	if _, err := SealCommitPlanV2(exact, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("consumer budget did not precede the evidence ceiling seam: size=%d payload=%d err=%v", size, low, err)
 	}
 	over := fixtureSizedPlan(t, eventCount, low+1)
 	if _, err := prospectiveEncodedPlanSize(over); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "commit_plan_bytes" {
 		t.Fatalf("prospective maximum-plus-one accepted: payload=%d err=%v", low+1, err)
 	}
 	// An empty registry would fail immediately if budget validation moved after
-	// registry resolution. The budget refusal must win at the public seal seam.
-	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "commit_plan_bytes" {
+	// registry resolution. The stricter consumer-record refusal must win at the
+	// public seal seam; prospectiveEncodedPlanSize above independently proves
+	// the 12 MiB evidence-envelope boundary.
+	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
 		t.Fatalf("maximum-plus-one reached a later seam: %v", err)
 	}
 }

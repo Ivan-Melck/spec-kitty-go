@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 type EventDraftV2 struct {
@@ -347,6 +348,9 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	if err != nil {
 		return SealedCommitPlanV2{}, err
 	}
+	if _, err := validateSealedRecordBudget(records); err != nil {
+		return SealedCommitPlanV2{}, err
+	}
 	plan := SealedCommitPlanV2{publicationID, planDigest, cloneBinding(input.OperationBinding), state, events, heads, effects, eligibility, checkpoints, conditions, records, nil}
 	plan.canonical, err = plan.finalBytes()
 	if err != nil {
@@ -416,7 +420,7 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 
 func preflightCommitPlan(input CommitPlanInput) error {
 	if len(input.Events) == 0 || len(input.Events) > MaxEventsPerPublication || len(input.Heads) != len(input.Events) ||
-		len(input.EffectIntents) > MaxEffectsPerPublication || len(input.EligibilityGuards) > MaxMembers ||
+		len(input.Heads) > MaxHeadsPerPublication || len(input.EffectIntents) > MaxEffectsPerPublication || len(input.EligibilityGuards) > MaxMembers ||
 		len(input.Checkpoints) > MaxCheckpointsPerPlan || len(input.Conditions) > MaxConditionsPerPlan {
 		return invalid(ErrorBudgetExceeded, "commit_plan_members")
 	}
@@ -472,8 +476,228 @@ func preflightCommitPlan(input CommitPlanInput) error {
 			return err
 		}
 	}
+	if _, err := conservativeProductBatchSize(input); err != nil {
+		return err
+	}
 	_, err := prospectiveEncodedPlanSize(input)
 	return err
+}
+
+// WP02 deliberately does not own the spk/v2 key codec. Before the adapter is
+// available, each projected target is therefore charged the full frozen 1 KiB
+// key ceiling. Value sizes are conservative bounds for the final canonical
+// records, so an admitted plan is guaranteed to fit the 6 MiB raw batch law.
+// WP03 repeats the check with actual encoded keys and provider wire framing.
+func conservativeProductBatchSize(input CommitPlanInput) (uint64, error) {
+	budget := productRawBudget{}
+	if input.OperationBinding != nil {
+		if err := budget.addRecord(conservativeBindingSize(*input.OperationBinding), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	stateSize := conservativeOperationStateSize(input.OperationState)
+	for _, event := range input.Events {
+		if err := budget.addRecord(conservativeEventEnvelopeSize(event, input.OperationState, len(input.Events)), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for _, head := range input.Heads {
+		valueSize := conservativeAggregateHeadSize(head)
+		if head.Coordinate.Kind == AggregateKind("operation") {
+			valueSize = stateSize
+		}
+		if err := budget.addRecord(valueSize, RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for _, effect := range input.EffectIntents {
+		if err := budget.addRecord(canonicalJSONSizeBound(effect.Canonical), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for _, guard := range input.EligibilityGuards {
+		if err := budget.addRecord(canonicalJSONSizeBound(guard.Canonical), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for _, checkpoint := range input.Checkpoints {
+		if err := budget.addRecord(canonicalJSONSizeBound(checkpoint.Canonical), RecordValueCheckpoint); err != nil {
+			return 0, err
+		}
+		if err := budget.addRecord(canonicalJSONSizeBound(checkpoint.SlotCanonical), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	return budget.value, nil
+}
+
+type productRawBudget struct{ value uint64 }
+
+func (b *productRawBudget) addRecord(value uint64, class SealedRecordValueClass) error {
+	maximum, field := uint64(MaxCanonicalPayloadBytes), "ordinary_record_value"
+	if class == RecordValueCheckpoint {
+		maximum, field = uint64(MaxCheckpointValueBytes), "checkpoint_record_value"
+	}
+	if value > maximum {
+		return invalid(ErrorBudgetExceeded, field)
+	}
+	recordBytes := uint64(MaxProductKeyBytes) + value
+	if recordBytes > uint64(MaxProductRawBatchBytes)-b.value {
+		return invalid(ErrorBudgetExceeded, "product_raw_batch_bytes")
+	}
+	b.value += recordBytes
+	return nil
+}
+
+func conservativeBindingSize(binding OperationBindingV2) uint64 {
+	fields := []uint64{
+		jsonFieldSize("schema_version", uintJSONSize(SchemaVersion)),
+		jsonFieldSize("operation_id", jsonStringSizeBound(string(binding.operationID))),
+		jsonFieldSize("command_kind", jsonStringSizeBound(binding.commandKind)),
+		jsonFieldSize("command_schema_version", uintJSONSize(binding.commandSchemaVersion)),
+		jsonFieldSize("canonical_intent_sha256", jsonStringSizeBound(strings.Repeat("0", 64))),
+		jsonFieldSize("scope", scopeJSONSizeBound(binding.scope)),
+	}
+	fields = appendOptionalStringField(fields, "actor_id", string(binding.actorID))
+	fields = appendOptionalStringField(fields, "process_id", string(binding.processID))
+	fields = appendOptionalStringField(fields, "doctrine_revision", binding.doctrineRevision)
+	fields = appendOptionalStringField(fields, "profile_revision", binding.profileRevision)
+	fields = appendOptionalStringField(fields, "policy_revision", binding.policyRevision)
+	fields = append(fields,
+		jsonFieldSize("originating_runtime_epoch_id", jsonStringSizeBound(string(binding.originatingRuntimeEpochID))),
+		jsonFieldSize("observed_created_at", jsonStringSizeBound(binding.observedCreatedAt)),
+	)
+	return jsonObjectSize(fields)
+}
+
+func conservativeOperationStateSize(state OperationStateV2) uint64 {
+	fields := []uint64{
+		jsonFieldSize("schema_version", uintJSONSize(SchemaVersion)),
+		jsonFieldSize("operation_id", jsonStringSizeBound(string(state.operationID))),
+		jsonFieldSize("logical_version", uintJSONSize(uint64(state.logicalVersion))),
+		jsonFieldSize("status", jsonStringSizeBound(string(state.status))),
+	}
+	fields = appendOptionalStringField(fields, "result_kind", state.resultKind)
+	if state.resultSchemaVersion != 0 {
+		fields = append(fields, jsonFieldSize("result_schema_version", uintJSONSize(state.resultSchemaVersion)))
+	}
+	if len(state.canonicalResult) != 0 {
+		fields = append(fields, jsonFieldSize("canonical_result", base64JSONSizeBound(uint64(len(state.canonicalResult)))))
+	}
+	if !state.resultDigest.IsZero() {
+		fields = append(fields, jsonFieldSize("result_sha256", jsonStringSizeBound(strings.Repeat("0", 64))))
+	}
+	fields = append(fields,
+		jsonFieldSize("event_ids", stringArrayJSONSize(state.eventIDs)),
+		jsonFieldSize("effect_ids", stringArrayJSONSize(state.effectIDs)),
+		jsonFieldSize("last_publication_id", jsonStringSizeBound(strings.Repeat("0", 64))),
+	)
+	return jsonObjectSize(fields)
+}
+
+func conservativeEventEnvelopeSize(event EventDraftV2, state OperationStateV2, eventCount int) uint64 {
+	observationSize := canonicalJSONSizeBound(event.Observations)
+	if len(event.Observations) == 0 {
+		observationSize = 2
+	}
+	fields := []uint64{
+		jsonFieldSize("envelope_version", uintJSONSize(EnvelopeVersion)),
+		jsonFieldSize("event_id", jsonStringSizeBound(string(event.EventID))),
+		jsonFieldSize("event_type", jsonStringSizeBound(event.EventType)),
+		jsonFieldSize("family", jsonStringSizeBound(event.Family)),
+		jsonFieldSize("event_schema_version", uintJSONSize(event.EventSchemaVersion)),
+		jsonFieldSize("reducer_version", uintJSONSize(event.ReducerVersion)),
+		jsonFieldSize("coordinate", coordinateJSONSizeBound(event.Coordinate)),
+		jsonFieldSize("aggregate_logical_version", uintJSONSize(uint64(event.AggregateLogicalVersion))),
+		jsonFieldSize("operation_id", jsonStringSizeBound(string(state.operationID))),
+		jsonFieldSize("operation_logical_version", uintJSONSize(uint64(state.logicalVersion))),
+		jsonFieldSize("publication_id", jsonStringSizeBound(strings.Repeat("0", 64))),
+		jsonFieldSize("committed_runtime_epoch_id", jsonStringSizeBound(string(event.CommittedRuntimeEpochID))),
+		jsonFieldSize("event_index", uintJSONSize(uint64(eventCount-1))),
+		jsonFieldSize("event_count", uintJSONSize(uint64(eventCount))),
+	}
+	fields = appendOptionalStringField(fields, "actor_id", string(event.ActorID))
+	fields = appendOptionalStringField(fields, "process_id", string(event.ProcessID))
+	fields = appendOptionalStringField(fields, "work_revision_id", string(event.WorkRevisionID))
+	fields = appendOptionalStringField(fields, "policy_revision", event.PolicyRevision)
+	if len(event.GovernanceRevisions) != 0 {
+		fields = append(fields, jsonFieldSize("governance_revisions", stringArrayJSONSize(event.GovernanceRevisions)))
+	}
+	fields = append(fields,
+		jsonFieldSize("observations", base64JSONSizeBound(observationSize)),
+		jsonFieldSize("payload", base64JSONSizeBound(canonicalJSONSizeBound(event.Payload))),
+		jsonFieldSize("canonical_event_sha256", jsonStringSizeBound(strings.Repeat("0", 64))),
+	)
+	return jsonObjectSize(fields)
+}
+
+func conservativeAggregateHeadSize(head HeadTransitionV2) uint64 {
+	return jsonObjectSize([]uint64{
+		jsonFieldSize("schema_version", uintJSONSize(SchemaVersion)),
+		jsonFieldSize("coordinate", coordinateJSONSizeBound(head.Coordinate)),
+		jsonFieldSize("logical_version", uintJSONSize(uint64(head.NextLogicalVersion))),
+		jsonFieldSize("last_event_id", jsonStringSizeBound(string(head.EventID))),
+		jsonFieldSize("last_publication_id", jsonStringSizeBound(strings.Repeat("0", 64))),
+		jsonFieldSize("committed_runtime_epoch_id", jsonStringSizeBound(string(head.CommittedRuntimeEpochID))),
+		jsonFieldSize("canonical_state_sha256", jsonStringSizeBound(strings.Repeat("0", 64))),
+		jsonFieldSize("authority_summary", base64JSONSizeBound(canonicalJSONSizeBound(head.AuthoritySummary))),
+		jsonFieldSize("tombstone", 5),
+	})
+}
+
+func jsonFieldSize(name string, value uint64) uint64 {
+	return jsonStringSizeBound(name) + 1 + value
+}
+
+func jsonObjectSize(fields []uint64) uint64 {
+	size := uint64(2)
+	for index, field := range fields {
+		size += field
+		if index > 0 {
+			size++
+		}
+	}
+	return size
+}
+
+func uintJSONSize[T ~uint16 | ~uint32 | ~uint64](value T) uint64 {
+	return uint64(len(strconv.FormatUint(uint64(value), 10)))
+}
+
+func stringArrayJSONSize[T ~string](values []T) uint64 {
+	size := uint64(2)
+	for index, value := range values {
+		size += jsonStringSizeBound(string(value))
+		if index > 0 {
+			size++
+		}
+	}
+	return size
+}
+
+func appendOptionalStringField(fields []uint64, name, value string) []uint64 {
+	if value == "" {
+		return fields
+	}
+	return append(fields, jsonFieldSize(name, jsonStringSizeBound(value)))
+}
+
+func scopeJSONSizeBound(scope Scope) uint64 {
+	fields := []uint64{jsonFieldSize("kind", jsonStringSizeBound(string(scope.Kind)))}
+	fields = appendOptionalStringField(fields, "project_id", string(scope.ProjectID))
+	fields = appendOptionalStringField(fields, "mission_id", string(scope.MissionID))
+	fields = appendOptionalStringField(fields, "repository_id", string(scope.RepositoryID))
+	fields = appendOptionalStringField(fields, "work_revision_id", string(scope.WorkRevisionID))
+	fields = appendOptionalStringField(fields, "work_id", string(scope.WorkID))
+	return jsonObjectSize(fields)
+}
+
+func coordinateJSONSizeBound(coordinate AggregateCoordinate) uint64 {
+	return jsonObjectSize([]uint64{
+		jsonFieldSize("kind", jsonStringSizeBound(string(coordinate.Kind))),
+		jsonFieldSize("id", jsonStringSizeBound(string(coordinate.ID))),
+		jsonFieldSize("scope", scopeJSONSizeBound(coordinate.Scope)),
+	})
 }
 
 type checkedPlanSize struct{ value uint64 }
@@ -1043,6 +1267,25 @@ func deriveSealedRecords(binding *OperationBindingV2, state OperationStateV2, ev
 	}
 	sort.Slice(records, func(i, j int) bool { return sealedRecordOrderKey(records[i]) < sealedRecordOrderKey(records[j]) })
 	return records, nil
+}
+
+// validateSealedRecordBudget is the exact value-side closure check. Targets
+// retain the conservative 1 KiB charge because canonical provider keys belong
+// to WP03; values and membership are exact because projection is now sealed.
+func validateSealedRecordBudget(records []SealedRecordV2) (uint64, error) {
+	if len(records) > MaxMembers {
+		return 0, invalid(ErrorBudgetExceeded, "sealed_record_projection")
+	}
+	budget := productRawBudget{}
+	for _, record := range records {
+		if len(record.canonical) == 0 {
+			return 0, invalid(ErrorInvalidCanonicalData, "sealed_record_value")
+		}
+		if err := budget.addRecord(uint64(len(record.canonical)), record.valueClass); err != nil {
+			return 0, err
+		}
+	}
+	return budget.value, nil
 }
 
 func boolInt(value bool) int {
