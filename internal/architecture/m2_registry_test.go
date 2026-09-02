@@ -264,6 +264,9 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"missing-foundation-member", m2FoundationOwnershipFixture("MISSING"), true},
 		{"adapter-owned-v2-record", m2FoundationOwnershipFixture("ADAPTER-OWNED"), true},
 		{"renamed-adapter-contract-in-read-signature", m2FoundationOwnershipFixture("RENAMED-ADAPTER"), true},
+		{"renamed-callable-beside-valid-read", m2FoundationOwnershipFixture("RENAMED-CALLABLE"), true},
+		{"unrelated-public-adapter-api", m2FoundationOwnershipFixture("UNRELATED-PUBLIC"), false},
+		{"private-adapter-helper", m2FoundationOwnershipFixture("PRIVATE-HELPER"), false},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -542,7 +545,7 @@ func inspectM2FoundationContractOwnership(ctx context.Context, root, module stri
 				return fmt.Errorf("evidence=FOUNDATION-CONTRACT-OWNERSHIP law=no-adapter-recovery-contract owner=%s observed-type=%s expected-owner=%s", source.importPath, forbiddenName, foundationPath)
 			}
 		}
-		if function, ownedType := m2FirstAdapterOwnedRecoverySignature(source, adapterPath); function != "" {
+		if function, ownedType := m2FirstAdapterOwnedRecoverySignature(source, foundationPath, adapterPath); function != "" {
 			return fmt.Errorf("evidence=FOUNDATION-CONTRACT-OWNERSHIP law=foundation-signatures owner=%s callable=%s observed-type=%s expected-owner=%s", source.importPath, function, ownedType, foundationPath)
 		}
 	}
@@ -580,22 +583,35 @@ func m2AdapterOwnedRecoveryTypeNames() []string {
 	return []string{"V2Key", "V2Prefix", "V2Record", "V2ScanRequest", "V2ScanPage", "V2Page", "V2CommitResult", "V2RecoveryError"}
 }
 
-func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, adapterPath string) (string, string) {
+type m2NamedTypeReference struct {
+	Owner string
+	Name  string
+}
+
+func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, foundationPath, adapterPath string) (string, string) {
 	check := func(name string, candidate types.Type) (string, string) {
-		if !slices.Contains([]string{"CaptureRevisionV2", "VerifyRevisionV2", "ReadV2", "ScanV2", "CommitV2"}, name) {
-			return "", ""
-		}
 		signature, _ := types.Unalias(candidate).Underlying().(*types.Signature)
 		if signature == nil {
 			return "", ""
 		}
-		owners := make(map[string]bool)
-		m2CollectNamedTypeOwners(signature.Params(), owners, make(map[types.Type]bool))
-		m2CollectNamedTypeOwners(signature.Results(), owners, make(map[types.Type]bool))
-		for owner := range owners {
-			if matchesPrefix(owner, []string{adapterPath, "github.com/spec-kitty/gapdb"}) {
-				return name, owner
+		references := make(map[m2NamedTypeReference]bool)
+		m2CollectNamedTypeReferences(signature.Params(), references, make(map[types.Type]bool))
+		m2CollectNamedTypeReferences(signature.Results(), references, make(map[types.Type]bool))
+		foundationContract := false
+		owned := ""
+		for reference := range references {
+			if reference.Owner == foundationPath && slices.Contains(m2FoundationContractTypeNames(), reference.Name) {
+				foundationContract = true
 			}
+			if matchesPrefix(reference.Owner, []string{adapterPath, "github.com/spec-kitty/gapdb"}) {
+				candidate := reference.Owner + "." + reference.Name
+				if owned == "" || candidate < owned {
+					owned = candidate
+				}
+			}
+		}
+		if foundationContract && owned != "" {
+			return name, owned
 		}
 		return "", ""
 	}
@@ -603,15 +619,42 @@ func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, adapt
 	for _, name := range scope.Names() {
 		switch object := scope.Lookup(name).(type) {
 		case *types.Func:
+			if !object.Exported() {
+				continue
+			}
+			if function, owner := check(object.Name(), object.Type()); function != "" {
+				return function, owner
+			}
+		case *types.Var:
+			if !object.Exported() {
+				continue
+			}
 			if function, owner := check(object.Name(), object.Type()); function != "" {
 				return function, owner
 			}
 		case *types.TypeName:
+			if !object.Exported() {
+				continue
+			}
 			for _, set := range []*types.MethodSet{types.NewMethodSet(object.Type()), types.NewMethodSet(types.NewPointer(object.Type()))} {
 				for index := 0; index < set.Len(); index++ {
 					method := set.At(index).Obj()
+					if !method.Exported() {
+						continue
+					}
 					if function, owner := check(method.Name(), method.Type()); function != "" {
 						return object.Name() + "." + function, owner
+					}
+				}
+			}
+			if structure, ok := types.Unalias(object.Type()).Underlying().(*types.Struct); ok {
+				for index := 0; index < structure.NumFields(); index++ {
+					field := structure.Field(index)
+					if !field.Exported() {
+						continue
+					}
+					if function, owner := check(object.Name()+"."+field.Name(), field.Type()); function != "" {
+						return function, owner
 					}
 				}
 			}
@@ -620,7 +663,7 @@ func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, adapt
 	return "", ""
 }
 
-func m2CollectNamedTypeOwners(candidate types.Type, owners map[string]bool, seen map[types.Type]bool) {
+func m2CollectNamedTypeReferences(candidate types.Type, references map[m2NamedTypeReference]bool, seen map[types.Type]bool) {
 	if candidate == nil || seen[candidate] {
 		return
 	}
@@ -628,40 +671,54 @@ func m2CollectNamedTypeOwners(candidate types.Type, owners map[string]bool, seen
 	switch value := candidate.(type) {
 	case *types.Alias:
 		if object := value.Obj(); object != nil && object.Pkg() != nil {
-			owners[object.Pkg().Path()] = true
+			references[m2NamedTypeReference{Owner: object.Pkg().Path(), Name: object.Name()}] = true
 		}
-		m2CollectNamedTypeOwners(types.Unalias(value), owners, seen)
+		m2CollectNamedTypeReferences(types.Unalias(value), references, seen)
 	case *types.Named:
 		if object := value.Obj(); object != nil && object.Pkg() != nil {
-			owners[object.Pkg().Path()] = true
+			references[m2NamedTypeReference{Owner: object.Pkg().Path(), Name: object.Name()}] = true
 		}
 		for index := 0; index < value.TypeArgs().Len(); index++ {
-			m2CollectNamedTypeOwners(value.TypeArgs().At(index), owners, seen)
+			m2CollectNamedTypeReferences(value.TypeArgs().At(index), references, seen)
 		}
+		m2CollectNamedTypeReferences(value.Underlying(), references, seen)
 	case *types.Pointer:
-		m2CollectNamedTypeOwners(value.Elem(), owners, seen)
+		m2CollectNamedTypeReferences(value.Elem(), references, seen)
 	case *types.Array:
-		m2CollectNamedTypeOwners(value.Elem(), owners, seen)
+		m2CollectNamedTypeReferences(value.Elem(), references, seen)
 	case *types.Slice:
-		m2CollectNamedTypeOwners(value.Elem(), owners, seen)
+		m2CollectNamedTypeReferences(value.Elem(), references, seen)
 	case *types.Map:
-		m2CollectNamedTypeOwners(value.Key(), owners, seen)
-		m2CollectNamedTypeOwners(value.Elem(), owners, seen)
+		m2CollectNamedTypeReferences(value.Key(), references, seen)
+		m2CollectNamedTypeReferences(value.Elem(), references, seen)
 	case *types.Chan:
-		m2CollectNamedTypeOwners(value.Elem(), owners, seen)
+		m2CollectNamedTypeReferences(value.Elem(), references, seen)
 	case *types.Tuple:
 		for index := 0; index < value.Len(); index++ {
-			m2CollectNamedTypeOwners(value.At(index).Type(), owners, seen)
+			m2CollectNamedTypeReferences(value.At(index).Type(), references, seen)
 		}
 	case *types.Signature:
-		m2CollectNamedTypeOwners(value.Params(), owners, seen)
-		m2CollectNamedTypeOwners(value.Results(), owners, seen)
+		m2CollectNamedTypeReferences(value.Params(), references, seen)
+		m2CollectNamedTypeReferences(value.Results(), references, seen)
 	case *types.TypeParam:
-		m2CollectNamedTypeOwners(value.Constraint(), owners, seen)
+		m2CollectNamedTypeReferences(value.Constraint(), references, seen)
+	case *types.Struct:
+		for index := 0; index < value.NumFields(); index++ {
+			m2CollectNamedTypeReferences(value.Field(index).Type(), references, seen)
+		}
+	case *types.Interface:
+		for index := 0; index < value.NumMethods(); index++ {
+			m2CollectNamedTypeReferences(value.Method(index).Type(), references, seen)
+		}
 	}
 }
 
 func m2FoundationOwnershipFixture(variant string) map[string]string {
+	if !slices.Contains([]string{
+		"COMPLETE", "MISSING", "ADAPTER-OWNED", "RENAMED-ADAPTER", "RENAMED-CALLABLE", "UNRELATED-PUBLIC", "PRIVATE-HELPER",
+	}, variant) {
+		return nil
+	}
 	names := m2FoundationContractTypeNames()
 	if variant == "MISSING" {
 		names = names[:len(names)-1]
@@ -690,6 +747,33 @@ import (
 type Adapter struct{}
 type Parcel struct{}
 func (Adapter) ReadV2(context.Context, journalv2.ReadRequestV2) (Parcel, error) { return Parcel{}, nil }
+`
+	case "RENAMED-CALLABLE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import (
+    "context"
+    journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+)
+type Adapter struct{}
+type Parcel struct{}
+func (Adapter) ReadV2(context.Context, journalv2.ReadRequestV2) (journalv2.RecoveryRecordV2, error) {
+    return journalv2.RecoveryRecordV2{}, nil
+}
+func (Adapter) Fetch(context.Context, journalv2.ReadRequestV2) (Parcel, error) { return Parcel{}, nil }
+`
+	case "UNRELATED-PUBLIC":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import "context"
+type Adapter struct{}
+type Diagnostic struct{}
+func (Adapter) Inspect(context.Context) (Diagnostic, error) { return Diagnostic{}, nil }
+`
+	case "PRIVATE-HELPER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Adapter struct{}
+type Parcel struct{}
+func (Adapter) decode(journalv2.ReadRequestV2) (Parcel, error) { return Parcel{}, nil }
 `
 	}
 	return files

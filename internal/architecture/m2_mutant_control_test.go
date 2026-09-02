@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 102
-	m2MutantCensusSHA256 = "a483bf9cf1045223af0fbbcec0e7b7666f89262792045273373180554e9722f7"
+	m2MutantCensusCount  = 103
+	m2MutantCensusSHA256 = "17cacc7ab0ac0d229e7afe48c1749ebd9ac5455bfe06b1f92ce592e9cc38a9bb"
 )
 
 const (
@@ -132,6 +132,7 @@ func TestM2ArbiterFixtureBindingProbe(t *testing.T) {
 	}{
 		{m2ValidatorPolicy, "CLASS", "GAPDB-CLASS"},
 		{m2ValidatorEvents, "RENAMED", "WRONG-OWNER"},
+		{m2ValidatorRecovery, "RENAMED-CALLABLE", "UNRELATED-PUBLIC"},
 	} {
 		candidate := find(swap.validator, swap.from)
 		candidate.Fixture = swap.to
@@ -142,11 +143,14 @@ func TestM2ArbiterFixtureBindingProbe(t *testing.T) {
 			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s swap=%s->%s observed=false-green", swap.validator, swap.from, swap.to)
 		}
 	}
-	for _, validator := range []string{m2ValidatorPolicy, m2ValidatorEvents, m2ValidatorLegacy} {
-		candidate := find(validator, map[string]string{m2ValidatorPolicy: "CLASS", m2ValidatorEvents: "RENAMED", m2ValidatorLegacy: "WORKGRAPH-SQLITE"}[validator])
+	for _, validator := range []string{m2ValidatorPolicy, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRecovery} {
+		candidate := find(validator, map[string]string{m2ValidatorPolicy: "CLASS", m2ValidatorEvents: "RENAMED", m2ValidatorLegacy: "WORKGRAPH-SQLITE", m2ValidatorRecovery: "RENAMED-CALLABLE"}[validator])
 		candidate.Fixture = "NOOP"
-		if m2ExpectedFixtureDigest(candidate) != "" || observeM2Mutant(t, candidate) == candidate.Expected {
-			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s noop observed=accepted", validator)
+		if digest := m2ExpectedFixtureDigest(candidate); digest != "" {
+			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s noop observed-digest=%s expected=empty", validator, digest)
+		}
+		if observed := observeM2Mutant(t, candidate); observed == candidate.Expected {
+			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s noop observed=%+v expected=different-from=%+v", validator, observed, candidate.Expected)
 		}
 	}
 }
@@ -214,7 +218,7 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, fixture := range []string{"ALIASES", "BUILD-VARIANT", "EMBEDDING", "FUNCTIONS", "GENERATED", "GENERIC-RECORD", "GENERICS", "INTERFACE", "RECORD-POINTER", "RECORD-VALUE", "SPLIT-METHODS", "STRUCT-FIELDS", "WRAPPER"} {
 		cases = append(cases, m2Case("M-RAW-"+fixture, m2ValidatorRawStore, fixture, "RAW_KEY_GOD_STORE", fixture, ""))
 	}
-	for _, fixture := range []string{"ADAPTER-OWNED", "MISSING", "RENAMED-ADAPTER", "WEAKENED-CENSUS"} {
+	for _, fixture := range []string{"ADAPTER-OWNED", "MISSING", "RENAMED-ADAPTER", "RENAMED-CALLABLE", "WEAKENED-CENSUS"} {
 		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
 	}
 	return cases
@@ -542,7 +546,11 @@ func m2FixtureDigest(validator, fixture string) string {
 			names := m2FoundationContractTypeNames()
 			material = names[:len(names)-1]
 		} else {
-			material = m2FoundationOwnershipFixture(fixture)
+			fixtureMaterial := m2FoundationOwnershipFixture(fixture)
+			if fixtureMaterial == nil {
+				return ""
+			}
+			material = fixtureMaterial
 		}
 	case m2ValidatorCapReach:
 		graph, ok := m2CapabilityReachFixture(fixture)
