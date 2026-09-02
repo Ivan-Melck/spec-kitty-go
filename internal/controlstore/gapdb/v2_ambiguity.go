@@ -40,7 +40,7 @@ func (a *Adapter) ReconcileV2(ctx context.Context, plan journalv2.SealedCommitPl
 	}
 	ctx, cancel := a.requestContext(ctx)
 	defer cancel()
-	committed, sharedMatch, precondition, moved := 0, 0, 0, 0
+	exactMembers, precondition, moved := 0, 0, 0
 	var commonRevision uint64
 	for index, key := range encoded.keys {
 		record, readErr := a.client.Get(ctx, key.String())
@@ -75,21 +75,20 @@ func (a *Adapter) ReconcileV2(ctx context.Context, plan journalv2.SealedCommitPl
 		} else if commonRevision != converted.revision {
 			return V2ReconcileResult{}, corruptV2Publication("publication readback has mixed revisions", encoded.operationID)
 		}
-		if v2MovableConflictRole(encoded.roles[index], key) {
-			sharedMatch++
-		} else {
-			committed++
-		}
+		exactMembers++
 	}
-	if committed+sharedMatch == len(encoded.keys) && precondition == 0 && moved == 0 && commonRevision > 0 {
+	if exactMembers == len(encoded.keys) && precondition == 0 && moved == 0 && commonRevision > 0 {
 		return V2ReconcileResult{disposition: V2ReconcileCommitted, publicationID: encoded.publicationID, revision: commonRevision,
 			operationState: plan.OperationState(), mutationCount: len(encoded.keys)}, nil
 	}
-	if precondition == len(encoded.keys) && committed == 0 {
+	if precondition == len(encoded.keys) && exactMembers == 0 {
 		return V2ReconcileResult{disposition: V2ReconcileRetrySamePublication, publicationID: encoded.publicationID,
 			operationState: plan.OperationState(), mutationCount: len(encoded.keys)}, nil
 	}
-	if committed == 0 && moved+sharedMatch > 0 && moved+sharedMatch+precondition == len(encoded.keys) {
+	if exactMembers > 0 {
+		return V2ReconcileResult{}, corruptV2Publication("publication membership is partial", encoded.operationID)
+	}
+	if moved > 0 && moved+precondition == len(encoded.keys) {
 		return V2ReconcileResult{}, adapterError("v2_reconcile", string(encoded.operationID), OutcomeConflict, RecoveryRead, "sealed conditions moved before publication", nil)
 	}
 	return V2ReconcileResult{}, corruptV2Publication("publication membership is partial", encoded.operationID)

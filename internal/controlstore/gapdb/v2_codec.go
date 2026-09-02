@@ -108,7 +108,7 @@ func V2EffectIntentKey(id journalv2.EffectID) (V2Key, error) {
 
 func V2AggregateHeadKey(coordinate journalv2.AggregateCoordinate) (V2Key, error) {
 	validated, err := journalv2.NewAggregateCoordinate(coordinate.Kind, coordinate.ID, coordinate.Scope)
-	if err != nil {
+	if err != nil || validated.Kind == journalv2.AggregateKind("operation") {
 		return V2Key{}, v2CodecError("aggregate_head")
 	}
 	scope, _ := validated.Scope.CanonicalComponent()
@@ -120,7 +120,7 @@ func V2AggregateHeadKey(coordinate journalv2.AggregateCoordinate) (V2Key, error)
 
 func V2JournalEventKey(coordinate journalv2.AggregateCoordinate, version journalv2.LogicalVersion) (V2Key, error) {
 	validated, err := journalv2.NewAggregateCoordinate(coordinate.Kind, coordinate.ID, coordinate.Scope)
-	if err != nil {
+	if err != nil || validated.Kind == journalv2.AggregateKind("operation") && validated.Scope.Kind != journalv2.ScopeHost {
 		return V2Key{}, v2CodecError("journal_event")
 	}
 	versionHex, err := version.Hex16()

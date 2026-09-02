@@ -133,7 +133,7 @@ func equalV2Expiry(left, right *time.Time) bool {
 func convertV2ScanPage(page gapdbapi.ScanPage, prefix V2Prefix, limit int) (V2ScanPage, int, error) {
 	asOf := page.AsOf.UTC().Round(0)
 	if page.ObservedRevision == 0 || !validV2Instant(asOf) || len(page.Records) > limit || len(page.Records) > MaxScanRecords ||
-		len(page.Cursor) > MaxCursorBytes || page.Truncated != (page.Cursor != "") {
+		len(page.Cursor) > MaxCursorBytes || page.Truncated != (page.Cursor != "") || page.Truncated && len(page.Records) == 0 {
 		return V2ScanPage{}, 0, malformedV2Read("provider returned malformed scan metadata")
 	}
 	result := V2ScanPage{observedRevision: uint64(page.ObservedRevision), asOf: asOf, cursor: page.Cursor, truncated: page.Truncated, records: make([]V2Record, len(page.Records))}

@@ -94,6 +94,59 @@ func TestV2KeyOperationIdentityIsHostGlobal(t *testing.T) {
 	}
 }
 
+func TestV2KeyOperationAggregatePlacementHasNoScopedAliases(t *testing.T) {
+	t.Parallel()
+	kind, _ := journalv2.EncodeKeyComponent("operation")
+	id, _ := journalv2.EncodeKeyComponent("operation-1")
+	version, _ := journalv2.LogicalVersion(1).Hex16()
+
+	canonicalHead, err := V2OperationHeadKey("operation-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed, err := ParseV2Key(canonicalHead.String()); err != nil || parsed.String() != canonicalHead.String() {
+		t.Fatalf("canonical operation head rejected: parsed=%q err=%v", parsed.String(), err)
+	}
+
+	for _, test := range []struct {
+		name  string
+		scope journalv2.Scope
+		host  bool
+	}{
+		{name: "host", scope: journalv2.Scope{Kind: journalv2.ScopeHost}, host: true},
+		{name: "project", scope: journalv2.Scope{Kind: journalv2.ScopeProject, ProjectID: "project-1"}},
+		{name: "mission", scope: journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: "project-1", MissionID: "mission-1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			coordinate, err := journalv2.NewAggregateCoordinate("operation", "operation-1", test.scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope, _ := test.scope.CanonicalComponent()
+			headAlias := strings.Join([]string{"spk", "v2", "scopes", scope, "heads", kind, id}, "/")
+			if _, err := V2AggregateHeadKey(coordinate); !IsKind(err, OutcomeInvalid) {
+				t.Fatalf("generic operation head constructor accepted %s scope: %v", test.name, err)
+			}
+			if _, err := ParseV2Key(headAlias); !IsKind(err, OutcomeInvalid) {
+				t.Fatalf("generic operation head parser accepted %s alias %q: %v", test.name, headAlias, err)
+			}
+
+			eventAlias := strings.Join([]string{"spk", "v2", "scopes", scope, "journal", kind, id, version}, "/")
+			event, constructErr := V2JournalEventKey(coordinate, 1)
+			parsed, parseErr := ParseV2Key(eventAlias)
+			if test.host {
+				if constructErr != nil || parseErr != nil || event.String() != eventAlias || parsed.String() != eventAlias {
+					t.Fatalf("canonical host operation event rejected: event=%q parsed=%q construct=%v parse=%v", event.String(), parsed.String(), constructErr, parseErr)
+				}
+				return
+			}
+			if !IsKind(constructErr, OutcomeInvalid) || !IsKind(parseErr, OutcomeInvalid) {
+				t.Fatalf("scoped operation event alias accepted: construct=%v parse=%v key=%q", constructErr, parseErr, eventAlias)
+			}
+		})
+	}
+}
+
 func TestV2KeyRejectsAliasesAndMalformedVersions(t *testing.T) {
 	t.Parallel()
 	valid, err := V2OperationBindingKey("operation-1")
@@ -278,12 +331,13 @@ func TestV2ReaderScanRejectsMetadataMutantsAndUnstableRepage(t *testing.T) {
 	keyB, _ := V2CheckpointRecordKey("checkpoint-b")
 	now := time.Date(2026, 9, 2, 1, 2, 3, 0, time.UTC)
 	mutants := map[string]gapdbapi.ScanPage{
-		"zero-observed": {AsOf: now},
-		"zero-asof":     {ObservedRevision: 2},
-		"cursor-lie":    {ObservedRevision: 2, AsOf: now, Cursor: "cursor"},
-		"unsorted":      {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyB.String(), nil, 1, nil), gapdbapi.NewRecord(keyA.String(), nil, 1, nil)}},
-		"future-record": {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyA.String(), nil, 3, nil)}},
-		"foreign":       {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord("spk/v2/runtime/current", nil, 1, nil)}},
+		"zero-observed":   {AsOf: now},
+		"zero-asof":       {ObservedRevision: 2},
+		"cursor-lie":      {ObservedRevision: 2, AsOf: now, Cursor: "cursor"},
+		"truncated-empty": {ObservedRevision: 2, AsOf: now, Cursor: "cursor", Truncated: true},
+		"unsorted":        {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyB.String(), nil, 1, nil), gapdbapi.NewRecord(keyA.String(), nil, 1, nil)}},
+		"future-record":   {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyA.String(), nil, 3, nil)}},
+		"foreign":         {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord("spk/v2/runtime/current", nil, 1, nil)}},
 	}
 	for name, response := range mutants {
 		t.Run(name, func(t *testing.T) {
@@ -294,9 +348,17 @@ func TestV2ReaderScanRejectsMetadataMutantsAndUnstableRepage(t *testing.T) {
 			}
 		})
 	}
+	provider := &fakeProvider{scanFn: func(context.Context, string, int, string) (gapdbapi.ScanPage, error) {
+		return gapdbapi.ScanPage{ObservedRevision: 2, AsOf: now}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	terminal, err := adapter.ScanV2(t.Context(), V2ScanRequest{Prefix: prefix, Limit: 2})
+	if err != nil || len(terminal.Records()) != 0 || terminal.Truncated() || terminal.Cursor() != "" {
+		t.Fatalf("valid empty terminal page rejected: page=%+v err=%v", terminal, err)
+	}
 
 	var calls atomic.Int32
-	provider := &fakeProvider{scanFn: func(_ context.Context, _ string, limit int, _ string) (gapdbapi.ScanPage, error) {
+	provider = &fakeProvider{scanFn: func(_ context.Context, _ string, limit int, _ string) (gapdbapi.ScanPage, error) {
 		call := calls.Add(1)
 		value := make([]byte, 100)
 		page := gapdbapi.ScanPage{ObservedRevision: gapdbapi.Revision(call), AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyA.String(), value, 1, nil), gapdbapi.NewRecord(keyB.String(), value, 1, nil)}, Cursor: "next", Truncated: true}
@@ -305,7 +367,7 @@ func TestV2ReaderScanRejectsMetadataMutantsAndUnstableRepage(t *testing.T) {
 		}
 		return page, nil
 	}}
-	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	adapter, _ = newAdapter(provider, "/explicit/socket", time.Second)
 	if _, err := adapter.ScanV2(t.Context(), V2ScanRequest{Prefix: prefix, Limit: 2, MaxBytes: len(keyA.String()) + 100 + 32}); !IsKind(err, OutcomeMalformedResponse) || calls.Load() != 2 {
 		t.Fatalf("unstable repage err=%v calls=%d", err, calls.Load())
 	}
@@ -781,15 +843,17 @@ func TestV2AmbiguityAbsenceAndExactPreconditionsPermitOnlySamePublication(t *tes
 			t.Fatal(err)
 		}
 		conditions := make(map[string]gapdbapi.Condition, len(encoded.keys))
+		values := make(map[string][]byte, len(encoded.keys))
 		for index, key := range encoded.keys {
 			conditions[key.String()] = encoded.batch.Mutations[index].Condition
+			values[key.String()] = encoded.values[index]
 		}
 		provider := &fakeProvider{getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
 			condition := conditions[key]
 			if condition.Kind == gapdbapi.ConditionAbsent {
 				return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
 			}
-			return gapdbapi.NewRecord(key, []byte(`{"prior":true}`), condition.ExpectedRevision, nil), nil
+			return gapdbapi.NewRecord(key, values[key], condition.ExpectedRevision, nil), nil
 		}}
 		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
 		result, err := adapter.ReconcileV2(t.Context(), plan)
@@ -836,6 +900,56 @@ func TestV2AmbiguityPartialMixedAndContradictoryMembershipCloseAuthority(t *test
 				t.Fatalf("authority remained open: %v", err)
 			}
 		})
+	}
+}
+
+func TestV2AmbiguityEverySingletonExactMutableMemberClosesAuthority(t *testing.T) {
+	plan := v2LaterTestPlan(t)
+	probe, _ := newAdapter(&fakeProvider{}, "/explicit/socket", time.Second)
+	encoded, err := probe.encodeV2Plan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	covered := make(map[journalv2.SealedRecordRole]int)
+	for target, mutation := range encoded.batch.Mutations {
+		if mutation.Condition.Kind != gapdbapi.ConditionRevision {
+			continue
+		}
+		role := encoded.roles[target]
+		covered[role]++
+		t.Run(fmt.Sprintf("%s-%d", role, target), func(t *testing.T) {
+			indexByKey := make(map[string]int, len(encoded.keys))
+			for index, key := range encoded.keys {
+				indexByKey[key.String()] = index
+			}
+			provider := &fakeProvider{getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+				index := indexByKey[key]
+				condition := encoded.batch.Mutations[index].Condition
+				switch {
+				case index == target:
+					return gapdbapi.NewRecord(key, encoded.values[index], condition.ExpectedRevision+100, nil), nil
+				case condition.Kind == gapdbapi.ConditionAbsent:
+					return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
+				default:
+					return gapdbapi.NewRecord(key, []byte(`{"unchanged":true}`), condition.ExpectedRevision, nil), nil
+				}
+			}}
+			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+			if _, err := adapter.ReconcileV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) {
+				t.Fatalf("singleton exact %s member did not close authority: %v", role, err)
+			}
+		})
+	}
+	for _, role := range []journalv2.SealedRecordRole{
+		journalv2.RecordOperationHead,
+		journalv2.RecordAggregateHead,
+		journalv2.RecordEligibilityGuard,
+		journalv2.RecordCheckpointSlot,
+	} {
+		if covered[role] == 0 {
+			t.Fatalf("fixture omitted mutable role %s", role)
+		}
 	}
 }
 
@@ -898,7 +1012,7 @@ func v2TryNamedTestPlan(t *testing.T, operationLabel, missionLabel string, effec
 		{Coordinate: operationCoordinate, NextLogicalVersion: 1, EventID: operationEventID, CommittedRuntimeEpochID: "epoch-1", CanonicalStateDigest: v2TestDigest("operation-state-" + operationLabel), AuthoritySummary: []byte(`{"status":"accepted"}`)},
 		{Coordinate: missionCoordinate, NextLogicalVersion: 1, EventID: missionEventID, CommittedRuntimeEpochID: "epoch-1", CanonicalStateDigest: v2TestDigest("mission-state-" + operationLabel), AuthoritySummary: []byte(`{"status":"planned"}`)},
 	}
-	guards := []journalv2.EligibilityGuardTransition{{MissionID: missionID, ShardID: journalv2.EligibilityShardID("shard-" + missionLabel), Canonical: []byte(`{"eligible":true}`)}}
+	guards := []journalv2.EligibilityGuardTransition{{MissionID: missionID, ShardID: journalv2.EligibilityShardID("shard-" + missionLabel), Canonical: []byte(fmt.Sprintf(`{"eligible":true,"operation":%q}`, operationID))}}
 	checkpointID := journalv2.CheckpointID("checkpoint-" + operationLabel)
 	checkpoints := []journalv2.CheckpointRecord{{CheckpointID: checkpointID, Canonical: checkpointCanonical, SlotID: journalv2.CheckpointSlotID("slot-" + operationLabel), SlotCanonical: []byte(fmt.Sprintf(`{"checkpoint_id":%q}`, checkpointID))}}
 	conditions := v2TestConditions(t, heads, guards, checkpoints)
