@@ -1,0 +1,62 @@
+{
+  "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
+  "snapshot_id": "d7947d45-2e3a-48f8-9d71-2cf99b3c5278",
+  "total_artifacts": 3,
+  "required_artifacts": 0,
+  "required_present": 0,
+  "required_missing": 0,
+  "optional_artifacts": 3,
+  "optional_present": 3,
+  "completeness_status": "complete",
+  "parity_hash_sha256": "sha256:1d9bb85ba343bfa9caa51b31517015db7f2f6b98f4b2a19b5c808adc473a57ea",
+  "parity_hash_components": [
+    "0015e69b52d4e0d1fc04395effa61fc042cd1aa0555bcb21347fb8c1437128af",
+    "0bb3930ee1aa9baab7627a976389fadc67e8ebdc91933ac6b513dc797ea1e8ee",
+    "8eae90cc37376979a798cff2500d94263b0161163d5833311463712f0df46118"
+  ],
+  "artifact_summaries": [
+    {
+      "artifact_key": "artifact.acceptance-matrix",
+      "artifact_class": "output",
+      "relative_path": "acceptance-matrix.json",
+      "content_hash_sha256": "8eae90cc37376979a798cff2500d94263b0161163d5833311463712f0df46118",
+      "size_bytes": 11220,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T12:17:46.663567+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.status",
+      "artifact_class": "output",
+      "relative_path": "status.json",
+      "content_hash_sha256": "0bb3930ee1aa9baab7627a976389fadc67e8ebdc91933ac6b513dc797ea1e8ee",
+      "size_bytes": 4281,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T12:17:46.658641+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.status.events",
+      "artifact_class": "output",
+      "relative_path": "status.events.jsonl",
+      "content_hash_sha256": "0015e69b52d4e0d1fc04395effa61fc042cd1aa0555bcb21347fb8c1437128af",
+      "size_bytes": 8103,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T12:17:46.668049+00:00",
+      "provenance": null
+    }
+  ],
+  "computed_at": "2026-09-02 12:17:46.718159+00:00"
+}

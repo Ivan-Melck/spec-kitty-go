@@ -30,7 +30,14 @@
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27"
+      "shell_pid_created_at": "1787989271.27",
+      "subtasks": {
+        "T001": "done",
+        "T002": "done",
+        "T003": "done",
+        "T004": "done",
+        "T005": "done"
+      }
     },
     "WP02": {
       "actor": "finalize-tasks",
