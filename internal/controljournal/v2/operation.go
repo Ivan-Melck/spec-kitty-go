@@ -123,8 +123,16 @@ func canonicalUTCSecond(value string) bool {
 		return int(value[index] - '0')
 	}
 	number := func(a, b int) int { return digit(a)*10 + digit(b) }
+	year := digit(0)*1000 + digit(1)*100 + digit(2)*10 + digit(3)
 	month, day, hour, minute, second := number(5, 6), number(8, 9), number(11, 12), number(14, 15), number(17, 18)
-	return month >= 1 && month <= 12 && day >= 1 && day <= 31 && hour <= 23 && minute <= 59 && second <= 59
+	if year < 1 || month < 1 || month > 12 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 {
+		return false
+	}
+	days := [...]int{0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	if month == 2 && (year%400 == 0 || year%4 == 0 && year%100 != 0) {
+		days[2] = 29
+	}
+	return day >= 1 && day <= days[month]
 }
 
 func (b OperationBindingV2) OperationID() OperationID         { return b.operationID }
@@ -394,7 +402,7 @@ func AdvanceOperationState(prior OperationStateV2, transition OperationTransitio
 	if prior.status == StatusResolved || prior.status == StatusRefused {
 		return OperationStateV2{}, invalid(ErrorInvalidTransition, "terminal_state")
 	}
-	if !hasPrefixIDs(prior.eventIDs, transition.EventIDs) || !hasPrefixIDs(prior.effectIDs, transition.EffectIDs) {
+	if !containsAllIDs(prior.eventIDs, transition.EventIDs) || !containsAllIDs(prior.effectIDs, transition.EffectIDs) {
 		return OperationStateV2{}, invalid(ErrorInvalidTransition, "operation_membership")
 	}
 	return NewOperationStateV2(OperationStateInput{prior.operationID, transition.NextVersion, transition.Status, transition.ResultKind,
@@ -416,16 +424,20 @@ func allowedOperationTransition(from, to OperationStatus) bool {
 	}
 }
 
-func hasPrefixIDs[T ~string](prior, next []T) bool {
-	if len(next) < len(prior) {
-		return false
-	}
-	for index := range prior {
-		if prior[index] != next[index] {
+func containsAllIDs[T ~string](prior, next []T) bool {
+	priorIndex, nextIndex := 0, 0
+	for priorIndex < len(prior) && nextIndex < len(next) {
+		switch {
+		case next[nextIndex] < prior[priorIndex]:
+			nextIndex++
+		case next[nextIndex] == prior[priorIndex]:
+			priorIndex++
+			nextIndex++
+		default:
 			return false
 		}
 	}
-	return true
+	return priorIndex == len(prior)
 }
 
 type RetryDecision string

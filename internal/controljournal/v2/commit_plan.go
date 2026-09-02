@@ -63,14 +63,15 @@ type ProviderCondition struct {
 }
 
 type CommitPlanInput struct {
-	OperationBinding  *OperationBindingV2
-	OperationState    OperationStateV2
-	Events            []EventDraftV2
-	Heads             []HeadTransitionV2
-	EffectIntents     []EffectIntentReference
-	EligibilityGuards []EligibilityGuardTransition
-	Checkpoints       []CheckpointRecord
-	Conditions        []ProviderCondition
+	OperationBinding    *OperationBindingV2
+	PriorOperationState *OperationStateV2
+	OperationState      OperationStateV2
+	Events              []EventDraftV2
+	Heads               []HeadTransitionV2
+	EffectIntents       []EffectIntentReference
+	EligibilityGuards   []EligibilityGuardTransition
+	Checkpoints         []CheckpointRecord
+	Conditions          []ProviderCondition
 }
 
 type SealedCommitPlanV2 struct {
@@ -96,7 +97,8 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	if input.OperationState.logicalVersion == 0 || input.OperationState.lastPublicationID != "" {
 		return SealedCommitPlanV2{}, invalid(ErrorInvalidTransition, "operation_transition")
 	}
-	if input.OperationState.logicalVersion == 1 && input.OperationBinding == nil || input.OperationState.logicalVersion > 1 && input.OperationBinding != nil {
+	if input.OperationState.logicalVersion == 1 && (input.OperationBinding == nil || input.PriorOperationState != nil) ||
+		input.OperationState.logicalVersion > 1 && (input.OperationBinding != nil || input.PriorOperationState == nil) {
 		return SealedCommitPlanV2{}, invalid(ErrorInvalidTransition, "operation_binding_create")
 	}
 	if input.OperationBinding != nil && input.OperationBinding.operationID != input.OperationState.operationID {
@@ -136,10 +138,10 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	sort.Slice(eligibility, func(i, j int) bool { return eligibility[i].GuardID < eligibility[j].GuardID })
 	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i].CheckpointID < checkpoints[j].CheckpointID })
 	sort.Slice(conditions, func(i, j int) bool { return conditions[i].ConditionID < conditions[j].ConditionID })
-	if err := validatePlanMembers(input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions); err != nil {
+	if err := validatePlanMembers(input.PriorOperationState, input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions); err != nil {
 		return SealedCommitPlanV2{}, err
 	}
-	preimage, err := planPreimage(input.OperationBinding, input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions)
+	preimage, err := planPreimage(input.OperationBinding, input.PriorOperationState, input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions)
 	if err != nil {
 		return SealedCommitPlanV2{}, err
 	}
@@ -179,7 +181,7 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	return plan, nil
 }
 
-func validatePlanMembers(state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) error {
+func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) error {
 	eventCoordinates := make(map[string]EventDraftV2, len(events))
 	eventIDs := make(map[EventID]bool, len(events))
 	operationEvents := 0
@@ -194,7 +196,8 @@ func validatePlanMembers(state OperationStateV2, events []EventDraftV2, heads []
 		eventCoordinates[coordinate], eventIDs[event.EventID] = event, true
 		if event.Family == "operation" {
 			operationEvents++
-			if event.Coordinate.ID != AggregateID(state.operationID) || event.AggregateLogicalVersion != state.logicalVersion {
+			if event.Coordinate.Kind != AggregateKind("operation") || event.Coordinate.Scope != (Scope{Kind: ScopeHost}) ||
+				event.Coordinate.ID != AggregateID(state.operationID) || event.AggregateLogicalVersion != state.logicalVersion {
 				return invalid(ErrorInvalidTransition, "operation_event")
 			}
 		}
@@ -212,12 +215,19 @@ func validatePlanMembers(state OperationStateV2, events []EventDraftV2, heads []
 		}
 		headCoordinates[coordinate] = true
 	}
+	currentEventIDs := make([]EventID, 0, len(eventIDs))
 	for eventID := range eventIDs {
-		if !containsID(state.eventIDs, eventID) {
-			return invalid(ErrorInvalidTransition, "operation_event_membership")
-		}
+		currentEventIDs = append(currentEventIDs, eventID)
 	}
-	if err := uniqueEffects(state, effects); err != nil {
+	sort.Slice(currentEventIDs, func(i, j int) bool { return currentEventIDs[i] < currentEventIDs[j] })
+	currentEffectIDs := make([]EffectID, len(effects))
+	for index, effect := range effects {
+		currentEffectIDs[index] = effect.EffectID
+	}
+	if err := exactPublicationMembership(prior, state, currentEventIDs, currentEffectIDs); err != nil {
+		return err
+	}
+	if err := uniqueEffects(effects); err != nil {
 		return err
 	}
 	if err := uniqueNamedDigests(eligibility, checkpoints, conditions); err != nil {
@@ -226,15 +236,64 @@ func validatePlanMembers(state OperationStateV2, events []EventDraftV2, heads []
 	return nil
 }
 
-func uniqueEffects(state OperationStateV2, effects []EffectIntentReference) error {
+func uniqueEffects(effects []EffectIntentReference) error {
 	seen := make(map[EffectID]bool, len(effects))
 	for _, effect := range effects {
-		if validateIdentity("effect_id", string(effect.EffectID)) != nil || effect.Digest.IsZero() || seen[effect.EffectID] || !containsID(state.effectIDs, effect.EffectID) {
+		if validateIdentity("effect_id", string(effect.EffectID)) != nil || effect.Digest.IsZero() || seen[effect.EffectID] {
 			return invalid(ErrorInvalidTransition, "effect_membership")
 		}
 		seen[effect.EffectID] = true
 	}
 	return nil
+}
+
+func exactPublicationMembership(prior *OperationStateV2, state OperationStateV2, events []EventID, effects []EffectID) error {
+	if prior == nil {
+		if !equalIDs(state.eventIDs, events) || !equalIDs(state.effectIDs, effects) {
+			return invalid(ErrorInvalidTransition, "first_publication_membership")
+		}
+		return nil
+	}
+	if prior.operationID != state.operationID || prior.logicalVersion+1 != state.logicalVersion || !containsAllIDs(prior.eventIDs, state.eventIDs) || !containsAllIDs(prior.effectIDs, state.effectIDs) {
+		return invalid(ErrorInvalidTransition, "prior_operation_membership")
+	}
+	rebuilt, err := AdvanceOperationState(*prior, OperationTransition{prior.logicalVersion, state.logicalVersion, state.status, state.resultKind,
+		state.resultSchemaVersion, state.canonicalResult, state.eventIDs, state.effectIDs, state.lastPublicationID})
+	rebuiltBytes, _ := marshalCanonical(operationStatePreimage(rebuilt, false), MaxCanonicalPayloadBytes)
+	stateBytes, _ := marshalCanonical(operationStatePreimage(state, false), MaxCanonicalPayloadBytes)
+	if err != nil || !bytes.Equal(rebuiltBytes, stateBytes) {
+		return invalid(ErrorInvalidTransition, "prior_operation_transition")
+	}
+	if !equalIDs(addedIDs(prior.eventIDs, state.eventIDs), events) || !equalIDs(addedIDs(prior.effectIDs, state.effectIDs), effects) {
+		return invalid(ErrorInvalidTransition, "later_publication_membership")
+	}
+	return nil
+}
+
+func addedIDs[T ~string](prior, current []T) []T {
+	result := make([]T, 0, len(current))
+	priorIndex := 0
+	for _, value := range current {
+		for priorIndex < len(prior) && prior[priorIndex] < value {
+			priorIndex++
+		}
+		if priorIndex == len(prior) || prior[priorIndex] != value {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func equalIDs[T ~string](left, right []T) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func uniqueNamedDigests(guards []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) error {
@@ -264,11 +323,6 @@ func uniqueNamedDigests(guards []EligibilityGuardTransition, checkpoints []Check
 	return nil
 }
 
-func containsID[T ~string](values []T, target T) bool {
-	index := sort.Search(len(values), func(index int) bool { return values[index] >= target })
-	return index < len(values) && values[index] == target
-}
-
 func cloneEventDrafts(values []EventDraftV2) []EventDraftV2 {
 	result := append([]EventDraftV2(nil), values...)
 	for index := range result {
@@ -295,25 +349,54 @@ func cloneBinding(value *OperationBindingV2) *OperationBindingV2 {
 	return &copy
 }
 
-func planPreimage(binding *OperationBindingV2, state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) ([]byte, error) {
+func planPreimage(binding *OperationBindingV2, prior *OperationStateV2, state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) ([]byte, error) {
 	var bindingWire *operationBindingWire
 	if binding != nil {
 		value := binding.wire()
 		bindingWire = &value
 	}
+	var priorWire *operationStatePreimageWire
+	if prior != nil {
+		value := operationStatePreimage(*prior, true)
+		priorWire = &value
+	}
 	return marshalCanonical(struct {
 		Binding     *operationBindingWire        `json:"operation_binding_create,omitempty"`
-		OperationID string                       `json:"operation_id"`
-		Version     uint64                       `json:"operation_logical_version"`
-		Status      OperationStatus              `json:"operation_status"`
-		Result      []byte                       `json:"canonical_result,omitempty"`
+		PriorState  *operationStatePreimageWire  `json:"prior_operation_state,omitempty"`
+		State       operationStatePreimageWire   `json:"operation_state"`
 		Events      []EventDraftV2               `json:"events"`
 		Heads       []HeadTransitionV2           `json:"heads"`
 		Effects     []EffectIntentReference      `json:"effect_intents"`
 		Eligibility []EligibilityGuardTransition `json:"eligibility_guards"`
 		Checkpoints []CheckpointRecord           `json:"checkpoints"`
 		Conditions  []ProviderCondition          `json:"conditions"`
-	}{bindingWire, string(state.operationID), uint64(state.logicalVersion), state.status, append([]byte(nil), state.canonicalResult...), events, heads, effects, eligibility, checkpoints, conditions}, MaxCommitPlanBytes)
+	}{bindingWire, priorWire, operationStatePreimage(state, false), events, heads, effects, eligibility, checkpoints, conditions}, MaxCommitPlanBytes)
+}
+
+type operationStatePreimageWire struct {
+	OperationID         string          `json:"operation_id"`
+	LogicalVersion      uint64          `json:"logical_version"`
+	Status              OperationStatus `json:"status"`
+	ResultKind          string          `json:"result_kind,omitempty"`
+	ResultSchemaVersion uint32          `json:"result_schema_version,omitempty"`
+	CanonicalResult     []byte          `json:"canonical_result,omitempty"`
+	ResultSHA256        string          `json:"result_sha256,omitempty"`
+	EventIDs            []EventID       `json:"event_ids"`
+	EffectIDs           []EffectID      `json:"effect_ids"`
+	LastPublicationID   string          `json:"last_publication_id,omitempty"`
+}
+
+func operationStatePreimage(state OperationStateV2, includePublication bool) operationStatePreimageWire {
+	resultDigest := ""
+	if !state.resultDigest.IsZero() {
+		resultDigest = state.resultDigest.String()
+	}
+	publicationID := ""
+	if includePublication {
+		publicationID = string(state.lastPublicationID)
+	}
+	return operationStatePreimageWire{string(state.operationID), uint64(state.logicalVersion), state.status, state.resultKind, state.resultSchemaVersion,
+		append([]byte(nil), state.canonicalResult...), resultDigest, append([]EventID(nil), state.eventIDs...), append([]EffectID(nil), state.effectIDs...), publicationID}
 }
 
 func (p SealedCommitPlanV2) finalBytes() ([]byte, error) {
