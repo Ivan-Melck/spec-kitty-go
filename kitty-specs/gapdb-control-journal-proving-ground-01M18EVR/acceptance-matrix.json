@@ -398,10 +398,10 @@
       "criterion_id": "FR-040",
       "description": "One immutable manifest binds tested source/tree, admission tuple, environment, scenario units, repetitions, artifacts, results, digests, and adapter-call census.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "WP10 review-cycle-2; RunID m1-crown-e05a5e4-20260901T224500Z; manifest sha256 397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309; independent verify pass at e05a5e46feb3e65ff42c4544c16678c440ef3818",
+      "pass_fail": "pass",
+      "verified_by": "codex-acceptance",
+      "verified_at": "2026-09-02T09:02:19.458348+00:00",
       "notes": "Manifest SHA256 397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309."
     },
     {
