@@ -138,11 +138,18 @@ func canonicalUTCSecond(value string) bool {
 }
 
 func (b OperationBindingV2) OperationID() OperationID         { return b.operationID }
+func (b OperationBindingV2) SchemaVersion() uint32            { return SchemaVersion }
 func (b OperationBindingV2) IntentDigest() Digest             { return b.canonicalIntentDigest }
 func (b OperationBindingV2) OriginatingEpoch() RuntimeEpochID { return b.originatingRuntimeEpochID }
 func (b OperationBindingV2) Scope() Scope                     { return b.scope }
 func (b OperationBindingV2) CommandKind() string              { return b.commandKind }
 func (b OperationBindingV2) CommandSchemaVersion() uint32     { return b.commandSchemaVersion }
+func (b OperationBindingV2) ActorID() ActorID                 { return b.actorID }
+func (b OperationBindingV2) ProcessID() ProcessID             { return b.processID }
+func (b OperationBindingV2) DoctrineRevision() string         { return b.doctrineRevision }
+func (b OperationBindingV2) ProfileRevision() string          { return b.profileRevision }
+func (b OperationBindingV2) PolicyRevision() string           { return b.policyRevision }
+func (b OperationBindingV2) ObservedCreatedAt() string        { return b.observedCreatedAt }
 
 type operationBindingWire struct {
 	SchemaVersion             uint32 `json:"schema_version"`
@@ -318,8 +325,11 @@ func validOperationStatus(value OperationStatus) bool {
 }
 
 func (s OperationStateV2) OperationID() OperationID         { return s.operationID }
+func (s OperationStateV2) SchemaVersion() uint32            { return SchemaVersion }
 func (s OperationStateV2) LogicalVersion() LogicalVersion   { return s.logicalVersion }
 func (s OperationStateV2) Status() OperationStatus          { return s.status }
+func (s OperationStateV2) ResultKind() string               { return s.resultKind }
+func (s OperationStateV2) ResultSchemaVersion() uint32      { return s.resultSchemaVersion }
 func (s OperationStateV2) Result() []byte                   { return append([]byte(nil), s.canonicalResult...) }
 func (s OperationStateV2) ResultDigest() Digest             { return s.resultDigest }
 func (s OperationStateV2) EventIDs() []EventID              { return append([]EventID(nil), s.eventIDs...) }
@@ -389,6 +399,59 @@ func DecodeOperationStateV2(encoded []byte) (OperationStateV2, error) {
 	canonical, _ := EncodeOperationStateV2(state)
 	if !bytes.Equal(canonical, encoded) {
 		return OperationStateV2{}, invalid(ErrorJournalCorrupt, "operation_state")
+	}
+	return state, nil
+}
+
+// EncodeOperationStateEventPayloadV2 returns the exact immutable operation
+// event payload. Publication identity is excluded because the sealer derives
+// it from the plan containing this payload.
+func EncodeOperationStateEventPayloadV2(state OperationStateV2) ([]byte, error) {
+	if state.logicalVersion == 0 || state.lastPublicationID != "" {
+		return nil, invalid(ErrorInvalidTransition, "operation_event_payload")
+	}
+	encoded, err := marshalCanonical(operationStatePreimage(state, false), MaxCanonicalPayloadBytes)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := CanonicalObject(encoded)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), canonical...), nil
+}
+
+// ReconstructOperationStateV2 combines the operation transition preimage with
+// the publication identity supplied by its validated final event envelope.
+func ReconstructOperationStateV2(payload []byte, publicationID PublicationID) (OperationStateV2, error) {
+	if _, err := DecodePublicationID(string(publicationID)); err != nil {
+		return OperationStateV2{}, err
+	}
+	var wire operationStatePreimageWire
+	if err := decodeStrict(payload, MaxCanonicalPayloadBytes, &wire); err != nil || wire.LastPublicationID != "" {
+		return OperationStateV2{}, invalid(ErrorJournalCorrupt, "operation_event_payload")
+	}
+	resultDigest := Digest{}
+	if wire.ResultSHA256 != "" {
+		parsed, err := ParseDigest("result_sha256", wire.ResultSHA256)
+		if err != nil {
+			return OperationStateV2{}, invalid(ErrorJournalCorrupt, "operation_event_payload")
+		}
+		resultDigest = parsed
+	}
+	state, err := NewOperationStateV2(OperationStateInput{
+		OperationID: OperationID(wire.OperationID), LogicalVersion: LogicalVersion(wire.LogicalVersion), Status: wire.Status,
+		ResultKind: wire.ResultKind, ResultSchemaVersion: wire.ResultSchemaVersion, CanonicalResult: wire.CanonicalResult,
+		EventIDs: wire.EventIDs, EffectIDs: wire.EffectIDs, LastPublicationID: publicationID,
+	})
+	if err != nil || state.resultDigest != resultDigest {
+		return OperationStateV2{}, invalid(ErrorJournalCorrupt, "operation_event_payload")
+	}
+	withoutPublication := state
+	withoutPublication.lastPublicationID = ""
+	canonical, _ := EncodeOperationStateEventPayloadV2(withoutPublication)
+	if !bytes.Equal(canonical, payload) {
+		return OperationStateV2{}, invalid(ErrorJournalCorrupt, "operation_event_payload")
 	}
 	return state, nil
 }
