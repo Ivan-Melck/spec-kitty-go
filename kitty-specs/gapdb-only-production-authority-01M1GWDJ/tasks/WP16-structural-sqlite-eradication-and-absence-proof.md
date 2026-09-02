@@ -38,6 +38,8 @@ authoritative_surface: internal/controlstore/sqlite/
 create_intent:
 - internal/architecture/m2_absence_test.go
 - internal/architecture/m2_absence_mutants_test.go
+- internal/architecture/policy.go
+- internal/architecture/policy_test.go
 - scripts/m2-absence/inspect.sh
 - scripts/m2-absence/mutants.sh
 execution_mode: code_change
@@ -93,8 +95,11 @@ spec-kitty agent action implement WP16 --agent codex
 - Use only the Spec Kitty-created lane worktree; do not create one manually.
 - Edit or delete only `internal/controlstore/sqlite/**`,
   `internal/architecture/m2_absence_test.go`,
-  `internal/architecture/m2_absence_mutants_test.go`, `scripts/m2-absence/**`,
-  `go.mod`, and `go.sum`.
+  `internal/architecture/m2_absence_mutants_test.go`,
+  `internal/architecture/policy.go`, `internal/architecture/policy_test.go`,
+  `scripts/m2-absence/**`, `go.mod`, and `go.sum`. The permanent policy files
+  are re-owned here only to remove SQLite package/import allowances after the
+  implementation is deleted; fail-closed classification must remain intact.
 - Preserve other agents' concurrent edits and never revert unrelated changes.
 - Do not delete SQLite until WP14 behavior parity and WP15 historical-state
   diagnosis prove every production consumer has a supported replacement.
