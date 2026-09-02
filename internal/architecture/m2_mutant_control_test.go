@@ -17,18 +17,48 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 50
-	m2MutantCensusSHA256 = "513225fad1c00d23bdba621819ac7d679d6c8765201cd2b44b3d2ac91d671786"
+	m2MutantCensusCount  = 79
+	m2MutantCensusSHA256 = "3da13e3ff4126f55f948109d9769789e21d3e605101b989a2f19514ddcd33dd9"
 )
 
+const (
+	m2ValidatorImport      = "all-go-imports-v1"
+	m2ValidatorReach       = "production-reachability-v1"
+	m2ValidatorPolicy      = "closed-policy-v2"
+	m2ValidatorKeyspace    = "keyspace-contract-v2"
+	m2ValidatorEligibility = "eligibility-seams-v1"
+	m2ValidatorDependency  = "dependency-graph-v2"
+	m2ValidatorEvents      = "event-registry-v2"
+	m2ValidatorLegacy      = "legacy-edge-filter-v1"
+	m2ValidatorRawStore    = "raw-store-census-v1"
+)
+
+type m2ViolationObservation struct {
+	Validator string `json:"validator"`
+	Code      string `json:"code"`
+	Source    string `json:"source"`
+	Target    string `json:"target,omitempty"`
+}
+
 type m2MutantCase struct {
-	ID, Rule string
-	Run      func(*testing.T) string
+	ID            string                 `json:"id"`
+	Validator     string                 `json:"validator"`
+	Fixture       string                 `json:"fixture"`
+	FixtureSHA256 string                 `json:"fixture_sha256"`
+	Source        string                 `json:"source,omitempty"`
+	Target        string                 `json:"target,omitempty"`
+	Kind          ImportKind             `json:"kind,omitempty"`
+	Expected      m2ViolationObservation `json:"expected"`
 }
 
 type m2ImportObservation struct{ Source, Target string }
 
 func TestM2MutantsAreKilledByOneExecutableCensus(t *testing.T) {
+	verifyM2ExecutableMutants(t)
+}
+
+func verifyM2ExecutableMutants(t *testing.T) int {
+	t.Helper()
 	cases := m2ExecutableMutants()
 	if err := validateM2ExecutableMutants(cases); err != nil {
 		t.Fatal(err)
@@ -36,28 +66,48 @@ func TestM2MutantsAreKilledByOneExecutableCensus(t *testing.T) {
 	for _, mutant := range cases {
 		mutant := mutant
 		t.Run(mutant.ID, func(t *testing.T) {
-			if got := mutant.Run(t); got != mutant.Rule {
-				t.Fatalf("mutant=%s observed-rule=%q expected-rule=%q", mutant.ID, got, mutant.Rule)
+			observed := observeM2Mutant(t, mutant)
+			if observed != mutant.Expected {
+				t.Fatalf("mutant=%s observed=%+v expected=%+v", mutant.ID, observed, mutant.Expected)
 			}
 		})
 	}
+	return len(cases)
 }
 
-func TestM2MutantCensusDeletionControlsExecutedTable(t *testing.T) {
+func TestM2MutantCensusRejectsDeletionAndSubstitution(t *testing.T) {
 	cases := m2ExecutableMutants()
 	if err := validateM2ExecutableMutants(cases); err != nil {
 		t.Fatal(err)
 	}
-	mutations := [][]m2MutantCase{
-		cases[1:],
-		append(slices.Clone(cases), cases[0]),
-		func() []m2MutantCase { v := slices.Clone(cases); v[0].Run = nil; return v }(),
-		func() []m2MutantCase { v := slices.Clone(cases); v[0].Rule = ""; return v }(),
+	mutations := []struct {
+		name   string
+		mutate func([]m2MutantCase) []m2MutantCase
+	}{
+		{"delete", func(v []m2MutantCase) []m2MutantCase { return v[1:] }},
+		{"duplicate", func(v []m2MutantCase) []m2MutantCase { return append(v, v[0]) }},
+		{"fixture-substitution", func(v []m2MutantCase) []m2MutantCase { v[0].Fixture = v[1].Fixture; return v }},
+		{"validator-substitution", func(v []m2MutantCase) []m2MutantCase { v[0].Validator = m2ValidatorEvents; return v }},
+		{"expected-substitution", func(v []m2MutantCase) []m2MutantCase { v[0].Expected.Code = "SELF_REPORTED"; return v }},
+		{"noop-validator", func(v []m2MutantCase) []m2MutantCase { v[0].Validator = "noop"; return v }},
 	}
-	for index, mutant := range mutations {
-		if err := validateM2ExecutableMutants(mutant); err == nil {
-			t.Fatalf("evidence=M2-MUTANT-CENSUS deletion-control=%d observed=accepted", index)
-		}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			mutant := mutation.mutate(slices.Clone(cases))
+			if err := validateM2ExecutableMutants(mutant); err == nil {
+				t.Fatalf("evidence=M2-MUTANT-CENSUS mutation=%s observed=accepted", mutation.name)
+			}
+		})
+	}
+	swapped := cases[0]
+	swapped.Fixture = cases[1].Fixture
+	if observed := observeM2Mutant(t, swapped); observed == swapped.Expected {
+		t.Fatal("evidence=M2-MUTANT-CENSUS mutation=swapped-fixture observed=false-green")
+	}
+	noop := cases[0]
+	noop.Validator = "noop"
+	if observed := observeM2Mutant(t, noop); observed == noop.Expected {
+		t.Fatal("evidence=M2-MUTANT-CENSUS mutation=noop-validator observed=false-green")
 	}
 }
 
@@ -72,230 +122,264 @@ func TestM2SemanticPositiveControls(t *testing.T) {
 }
 
 func m2ExecutableMutants() []m2MutantCase {
-	cases := make([]m2MutantCase, 0, m2MutantCensusCount)
-	imports := map[string]string{
-		"DIRECT": `import "modernc.org/sqlite"`, "ALIAS": `import driver "modernc.org/sqlite/lib"`,
-		"BLANK": `import _ "github.com/mattn/go-sqlite3"`, "DOT": `import . "github.com/ncruces/go-sqlite3"`,
-		"GENERATED": "// Code generated. DO NOT EDIT.\nimport _ \"zombiezen.com/go/sqlite\"",
-		"BUILD-TAG": "//go:build never_enabled\n\nimport _ \"github.com/glebarez/sqlite\"",
+	var cases []m2MutantCase
+	for _, fixture := range []string{"ALIAS", "BLANK", "BUILD-TAG", "DIRECT", "DOT", "GENERATED"} {
+		target := m2SQLExpectedTarget(fixture)
+		cases = append(cases, m2Case("M-IMPORT-"+fixture, m2ValidatorImport, fixture, "SQL_PROVIDER", "example.test/import/internal/mission", target))
 	}
-	for _, name := range sortedM2StringKeys(imports) {
-		source := "package mission\n" + imports[name] + "\n"
-		cases = append(cases, m2ImportMutant("M-IMPORT-"+name, source))
+	for _, fixture := range []string{"CONSTRUCTOR-VAR", "EMBED", "GENERIC", "INTERFACE", "METHOD-VALUE", "RENAME"} {
+		cases = append(cases, m2Case("M-REACH-"+fixture, m2ValidatorReach, fixture, "FORBIDDEN_REACHABILITY", "example.test/reach/internal/mission", "example.test/reach/internal/controlstore/gapdb"))
 	}
-	reach := map[string]string{
-		"RENAME":          "type Harmless = provider.Provider\nfunc New() any { return provider.Open() }",
-		"EMBED":           "type Holder struct{ provider.Provider }\nfunc New() any { return Holder{} }",
-		"INTERFACE":       "type Port interface{ Identity() string }\nfunc New() Port { return provider.Open() }",
-		"CONSTRUCTOR-VAR": "var New = provider.Open", "METHOD-VALUE": "var New = provider.Provider.Identity",
-		"GENERIC": "func hold[T any](v T) T { return v }\nfunc New() any { return hold(provider.Open()) }",
+	for _, fixture := range []string{"CLASS", "DIRECTION", "GAPDB-CLASS", "PROVIDER"} {
+		cases = append(cases, m2Case("M-POLICY-"+fixture, m2ValidatorPolicy, fixture, "POLICY_SHAPE", fixture, ""))
 	}
-	for _, name := range sortedM2StringKeys(reach) {
-		expression := reach[name]
-		cases = append(cases, m2ReachMutant("M-REACH-"+name, expression))
+	for index, entryID := range m2CanonicalKeyIDs() {
+		fixture := "PATH-" + strconv.Itoa(index)
+		cases = append(cases, m2Case("M-KEY-PATH-"+entryID, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", entryID, ""))
 	}
-	policyMutants := []struct {
-		id string
-		fn func(*Policy)
-	}{
-		{"CLASS", func(p *Policy) { removeM2Pattern(p, m2ModulePath+"/internal/controljournal/v2") }},
-		{"DIRECTION", func(p *Policy) {
-			for i := range p.Tiers {
-				if p.Tiers[i].Name == TierAuthority {
-					p.Tiers[i].AllowedLocalTargets = append(p.Tiers[i].AllowedLocalTargets, TierAdapter)
-				}
-			}
-		}},
-		{"PROVIDER", func(p *Policy) {
-			p.ForbiddenImportPrefixes = removeM2String(p.ForbiddenImportPrefixes, "modernc.org/sqlite")
-		}},
-		{"GAPDB-CLASS", func(p *Policy) { removeM2Pattern(p, m2ModulePath+"/internal/controlstore/gapdb") }},
+	for _, fixture := range []string{"AMBIGUOUS", "GLOBAL-HEAD", "MISSION-OPERATION", "MIXED-V1", "RAW", "VARIABLE-VERSION", "SCOPE", "MUTABILITY", "SUFFIX", "BUDGET"} {
+		cases = append(cases, m2Case("M-KEY-"+fixture, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", fixture, ""))
 	}
-	for _, spec := range policyMutants {
-		cases = append(cases, m2PolicyShapeMutant("M-GUARD-DELETE-"+spec.id, spec.fn))
+	for _, fixture := range []string{"ADAPTER", "DECOY-FIRST", "DECOY-LAST", "MULTI-BROKEN", "RUNTIME", "SPLIT-FILE", "UNCLASSIFIED", "VALUE", "WRAPPER"} {
+		cases = append(cases, m2Case("M-ELIGIBILITY-"+fixture, m2ValidatorEligibility, fixture, "ELIGIBILITY_CONTRACT", fixture, ""))
 	}
-	keyMutants := []struct {
-		id string
-		fn func([]m2KeyEntry) []m2KeyEntry
-	}{
-		{"MISSION-OPERATION", func(v []m2KeyEntry) []m2KeyEntry {
-			v[3].Template = "spk/v2/missions/<mission-id>/operations/<operation-id>/binding"
-			return v
-		}},
-		{"VARIABLE-VERSION", func(v []m2KeyEntry) []m2KeyEntry {
-			v[6].Template = strings.Replace(v[6].Template, "hex16", "decimal", 1)
-			return v
-		}},
-		{"AMBIGUOUS", func(v []m2KeyEntry) []m2KeyEntry {
-			v[5].Template = strings.Replace(v[5].Template, "<scope>", "<raw-scope>", 1)
-			return v
-		}},
-		{"RAW", func(v []m2KeyEntry) []m2KeyEntry { return append(v, m2KeyEntry{ID: "K-RAW", Template: "<caller-key>"}) }},
-		{"MIXED-V1", func(v []m2KeyEntry) []m2KeyEntry { v[0].Template = "spk/v1/authority/binding"; return v }},
-		{"GLOBAL-HEAD", func(v []m2KeyEntry) []m2KeyEntry {
-			return append(v, m2KeyEntry{ID: "K-GLOBAL", Template: "spk/v2/journal/head"})
-		}},
+	for _, target := range []string{"crypto/rand", "math/rand", "net", "os", "os/exec", "path/filepath", "time"} {
+		cases = append(cases, m2DependencyCase("M-PURE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "PURE", m2ModulePath+"/internal/controljournal/v2", target, ImportStandardLibrary, string(RuleDeferredSurface)))
 	}
-	for _, spec := range keyMutants {
-		cases = append(cases, m2KeyMutant("M-KEY-"+spec.id, spec.fn))
+	cases = append(cases, m2DependencyCase("M-GAPDB-SCENARIO-CALLER", "GAPDB-SCENARIO", m2ModulePath+"/internal/scenario", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, string(RuleExternalDirection)))
+	for _, target := range []string{"github.com/spec-kitty/gapdb/internal/server", "github.com/spec-kitty/gapdb/server"} {
+		cases = append(cases, m2DependencyCase("M-GAPDB-PRIVATE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "GAPDB-PRIVATE", m2ModulePath+"/internal/controlstore/gapdb", target, ImportExternal, string(RuleDeferredSurface)))
 	}
-	eligibility := map[string]map[string]string{
-		"VALUE":    {"internal/workgraph/e.go": m2EligibilitySource("policy", 128, false)},
-		"RENAMED":  {"internal/workgraph/e.go": m2EligibilitySource("arbitrary", 128, false)},
-		"COMPOSED": {"internal/workgraph/e.go": m2EligibilitySource("policy", 128, true)},
-		"ADAPTER":  {"internal/controlstore/gapdb/e.go": strings.Replace(m2EligibilitySource("policy", 128, true), "package workgraph", "package gapdb", 1)},
-		"WRAPPER":  {"internal/workgraph/e.go": "package workgraph\nimport k \"example.test/eligibility/internal/keybuilder\"\nvar _ = k.EligibilityKey\n", "internal/keybuilder/k.go": strings.Replace(m2EligibilitySource("renamed", 128, true), "package workgraph", "package keybuilder", 1)},
+	for _, target := range []string{"acceptance", "artifact", "execution", "gitrepo", "handoff", "integration", "mission", "review", "workspace"} {
+		cases = append(cases, m2DependencyCase("M-TRACKER-"+strings.ToUpper(target), "TRACKER", m2ModulePath+"/internal/tracker/beads", m2ModulePath+"/internal/"+target, ImportModuleLocal, string(RuleLocalDirection)))
 	}
-	for _, name := range sortedM2EligibilityKeys(eligibility) {
-		cases = append(cases, m2EligibilityCase("M-ELIGIBILITY-"+name, eligibility[name]))
+	for _, fixture := range []string{"MISSING", "REDUCER-VERSION", "RENAMED", "UNEXPECTED", "VERSION", "WRONG-OWNER"} {
+		cases = append(cases, m2Case("M-EVENT-"+fixture, m2ValidatorEvents, fixture, "EVENT_REGISTRY", fixture, ""))
 	}
-	for _, target := range []string{"os", "time", "math/rand", "crypto/rand", "net", "os/exec", "path/filepath"} {
-		cases = append(cases, m2EdgeMutant("M-PURE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "PURE", m2ModulePath+"/internal/controljournal/v2", target, ImportStandardLibrary))
+	cases = append(cases, m2Case("M-LEGACY-CANNOT-HIDE-WORKGRAPH", m2ValidatorLegacy, "WORKGRAPH-SQLITE", string(RuleDeferredSurface), m2ModulePath+"/internal/workgraph", "modernc.org/sqlite"))
+	for _, fixture := range []string{"ALIASES", "BUILD-VARIANT", "EMBEDDING", "FUNCTIONS", "GENERATED", "GENERICS", "INTERFACE", "WRAPPER"} {
+		cases = append(cases, m2Case("M-RAW-"+fixture, m2ValidatorRawStore, fixture, "RAW_KEY_GOD_STORE", fixture, ""))
 	}
-	cases = append(cases, m2EdgeMutant("M-GAPDB-SCENARIO-CALLER", "GAPDB", m2ModulePath+"/internal/scenario", "github.com/spec-kitty/gapdb/gapdb", ImportExternal))
-	for _, target := range []string{"artifact", "mission", "execution", "gitrepo", "workspace", "handoff", "review", "acceptance", "integration"} {
-		cases = append(cases, m2EdgeMutant("M-TRACKER-"+strings.ToUpper(target), "TRACKER", m2ModulePath+"/internal/tracker/beads", m2ModulePath+"/internal/"+target, ImportModuleLocal))
-	}
-	events := map[string]func(*m2EventRegistry){
-		"WRONG-OWNER": func(v *m2EventRegistry) { v.Families[0].Owner = "internal/mission" },
-		"RENAMED":     func(v *m2EventRegistry) { v.Families[0].Family = "runtime" },
-		"MISSING":     func(v *m2EventRegistry) { v.Families = v.Families[1:] },
-		"UNEXPECTED":  func(v *m2EventRegistry) { v.Families[len(v.Families)-1].Family = "unexpected" },
-		"VERSION":     func(v *m2EventRegistry) { v.Families[0].EventSchema = 2 },
-	}
-	for _, name := range sortedM2EventKeys(events) {
-		cases = append(cases, m2EventCase("M-EVENT-"+name, events[name]))
-	}
-	cases = append(cases, m2LegacyWorkgraphMutant())
 	return cases
 }
 
-func m2ImportMutant(id, source string) m2MutantCase {
-	return m2MutantCase{ID: id, Rule: "SQL", Run: func(t *testing.T) string {
-		root := t.TempDir()
-		writeGoFixture(t, root, "go.mod", "module example.test/import\n\ngo 1.26\n")
-		writeGoFixture(t, root, "internal/mission/m.go", source)
-		imports, err := scanM2AllGoImports(root, "example.test/import")
-		if err != nil {
-			return "PARSE"
+func m2Case(id, validator, fixture, code, source, target string) m2MutantCase {
+	return m2MutantCase{ID: id, Validator: validator, Fixture: fixture, FixtureSHA256: m2FixtureDigest(validator, fixture), Expected: m2ViolationObservation{Validator: validator, Code: code, Source: source, Target: target}}
+}
+
+func m2DependencyCase(id, fixture, source, target string, kind ImportKind, code string) m2MutantCase {
+	value := m2Case(id, m2ValidatorDependency, fixture, code, source, target)
+	value.Source, value.Target, value.Kind = source, target, kind
+	value.FixtureSHA256 = m2DigestJSON(struct {
+		Fixture string
+		Source  string
+		Target  string
+		Kind    ImportKind
+	}{fixture, source, target, kind})
+	return value
+}
+
+func observeM2Mutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	t.Helper()
+	switch mutant.Validator {
+	case m2ValidatorImport:
+		return observeM2ImportMutant(t, mutant)
+	case m2ValidatorReach:
+		return observeM2ReachMutant(t, mutant)
+	case m2ValidatorPolicy:
+		return observeM2PolicyMutant(t, mutant)
+	case m2ValidatorKeyspace:
+		return observeM2KeyspaceMutant(mutant)
+	case m2ValidatorEligibility:
+		return observeM2EligibilityMutant(t, mutant)
+	case m2ValidatorDependency:
+		return observeM2DependencyMutant(t, mutant)
+	case m2ValidatorEvents:
+		return observeM2EventMutant(t, mutant)
+	case m2ValidatorLegacy:
+		return observeM2LegacyMutant(t, mutant)
+	case m2ValidatorRawStore:
+		return observeM2RawStoreMutant(t, mutant)
+	default:
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "HARNESS_UNKNOWN_VALIDATOR", Source: mutant.Fixture}
+	}
+}
+
+func observeM2ImportMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	const module = "example.test/import"
+	root := t.TempDir()
+	writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
+	writeGoFixture(t, root, "internal/mission/m.go", "package mission\n"+m2SQLImportSource(mutant.Fixture)+"\n")
+	imports, err := scanM2AllGoImports(root, module)
+	if err != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "PARSE_FAILURE", Source: mutant.Fixture}
+	}
+	for _, edge := range imports {
+		if matchesPrefix(edge.Target, m2SQLProviderPrefixes) {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "SQL_PROVIDER", Source: edge.Source, Target: edge.Target}
 		}
-		for _, edge := range imports {
-			if matchesPrefix(edge.Target, m2SQLProviderPrefixes) {
-				return "SQL"
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+}
+
+func observeM2ReachMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	const module = "example.test/reach"
+	root := t.TempDir()
+	writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
+	writeGoFixture(t, root, "internal/controlstore/gapdb/p.go", "package gapdb\ntype Provider struct{}\nfunc Open() Provider{return Provider{}}\nfunc(Provider) Identity()string{return \"x\"}\n")
+	writeGoFixture(t, root, "internal/wrapper/w.go", "package wrapper\nimport provider \""+module+"/internal/controlstore/gapdb\"\n"+m2ReachFixture(mutant.Fixture)+"\n")
+	writeGoFixture(t, root, "internal/mission/m.go", "package mission\nimport w \""+module+"/internal/wrapper\"\nvar _=w.New\n")
+	setIsolatedGoPaths(t)
+	t.Setenv("GOPROXY", "off")
+	graph, err := LoadGraph(t.Context(), root)
+	if err != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "LOAD_FAILURE", Source: mutant.Fixture}
+	}
+	if len(m2ForbiddenPaths(graph, module+"/internal/mission", []string{module + "/internal/controlstore/gapdb"})) != 0 {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "FORBIDDEN_REACHABILITY", Source: module + "/internal/mission", Target: module + "/internal/controlstore/gapdb"}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+}
+
+func observeM2PolicyMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	switch mutant.Fixture {
+	case "CLASS":
+		removeM2Pattern(&policy, m2ModulePath+"/internal/controljournal/v2")
+	case "DIRECTION":
+		for index := range policy.Tiers {
+			if policy.Tiers[index].Name == TierAuthority {
+				policy.Tiers[index].AllowedLocalTargets = append(policy.Tiers[index].AllowedLocalTargets, TierAdapter)
 			}
 		}
-		return ""
-	}}
+	case "GAPDB-CLASS":
+		removeM2Pattern(&policy, m2ModulePath+"/internal/controlstore/gapdb")
+	case "PROVIDER":
+		policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
+	default:
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	if validateM2PolicyShape(policy) != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "POLICY_SHAPE", Source: mutant.Fixture}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 }
 
-func m2ReachMutant(id, body string) m2MutantCase {
-	return m2MutantCase{ID: id, Rule: "REACH", Run: func(t *testing.T) string {
-		const module = "example.test/reach"
-		root := t.TempDir()
-		writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
-		writeGoFixture(t, root, "internal/controlstore/gapdb/p.go", "package gapdb\ntype Provider struct{}\nfunc Open() Provider{return Provider{}}\nfunc(Provider) Identity()string{return \"x\"}\n")
-		writeGoFixture(t, root, "internal/wrapper/w.go", "package wrapper\nimport provider \""+module+"/internal/controlstore/gapdb\"\n"+body+"\n")
-		writeGoFixture(t, root, "internal/mission/m.go", "package mission\nimport w \""+module+"/internal/wrapper\"\nvar _=w.New\n")
-		setIsolatedGoPaths(t)
-		t.Setenv("GOPROXY", "off")
-		graph, err := LoadGraph(t.Context(), root)
-		if err != nil {
-			return "LOAD"
+func observeM2KeyspaceMutant(mutant m2MutantCase) m2ViolationObservation {
+	registry := slices.Clone(m2KeyspaceRegistry())
+	observedSource := mutant.Fixture
+	if strings.HasPrefix(mutant.Fixture, "PATH-") {
+		index, err := strconv.Atoi(strings.TrimPrefix(mutant.Fixture, "PATH-"))
+		if err != nil || index < 0 || index >= len(registry) {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
 		}
-		if len(m2ForbiddenPaths(graph, module+"/internal/mission", []string{module + "/internal/controlstore/gapdb"})) > 0 {
-			return "REACH"
-		}
-		return ""
-	}}
+		observedSource = registry[index].ID
+		registry[index].Template = strings.Replace(registry[index].Template, "spk/v2/", "spk/v2/alternate/", 1)
+	} else if !mutateM2Keyspace(mutant.Fixture, &registry) {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	if validateM2KeyspaceRegistry(registry) != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "KEYSPACE_CONTRACT", Source: observedSource}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 }
 
-func m2PolicyShapeMutant(id string, mutate func(*Policy)) m2MutantCase {
-	return m2MutantCase{ID: id, Rule: "POLICY", Run: func(t *testing.T) string {
-		p := m2ClosedPolicy(t, m2ModulePath)
-		mutate(&p)
-		if validateM2PolicyShape(p) != nil {
-			return "POLICY"
-		}
-		return ""
-	}}
-}
-
-func m2KeyMutant(id string, mutate func([]m2KeyEntry) []m2KeyEntry) m2MutantCase {
-	return m2MutantCase{ID: id, Rule: "KEY", Run: func(*testing.T) string {
-		if validateM2KeyspaceRegistry(mutate(slices.Clone(m2KeyspaceRegistry()))) != nil {
-			return "KEY"
-		}
-		return ""
-	}}
-}
-
-func m2EligibilityCase(id string, files map[string]string) m2MutantCase {
-	return m2MutantCase{ID: id, Rule: "ELIGIBILITY", Run: func(t *testing.T) string {
-		const module = "example.test/eligibility"
-		root := t.TempDir()
-		writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
-		for path, source := range files {
-			writeGoFixture(t, root, path, source)
-		}
-		setIsolatedGoPaths(t)
-		t.Setenv("GOPROXY", "off")
-		contract, err := loadM2EligibilityContract()
-		if err != nil {
-			return "CONTRACT"
-		}
+func observeM2EligibilityMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	const module = "example.test/eligibility"
+	root := t.TempDir()
+	writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
+	files := m2EligibilityFixture(mutant.Fixture)
+	if files == nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	for path, source := range files {
+		writeGoFixture(t, root, path, source)
+	}
+	setIsolatedGoPaths(t)
+	t.Setenv("GOPROXY", "off")
+	contract, err := loadM2EligibilityContract()
+	if err == nil {
 		err = inspectM2EligibilityModule(t.Context(), root, module, contract)
-		if err != nil && strings.Contains(err.Error(), "evidence=ELIGIBILITY-POLICY") {
-			return "ELIGIBILITY"
-		}
-		return ""
-	}}
+	}
+	if err != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "ELIGIBILITY_CONTRACT", Source: mutant.Fixture}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 }
 
-func m2EdgeMutant(id, rule, source, target string, kind ImportKind) m2MutantCase {
-	return m2MutantCase{ID: id, Rule: rule, Run: func(t *testing.T) string {
-		p := m2ClosedPolicy(t, m2ModulePath)
-		packages := []string{source}
-		if kind == ImportModuleLocal {
-			packages = append(packages, target)
+func observeM2DependencyMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	packages := []string{mutant.Source}
+	if mutant.Kind == ImportModuleLocal {
+		packages = append(packages, mutant.Target)
+	}
+	graph := fixtureGraph(packages, ImportEdge{SourcePackage: mutant.Source, TargetPackage: mutant.Target, Kind: mutant.Kind})
+	graph.ModulePath = m2ModulePath
+	for _, violation := range m2EvaluateClosedGraph(policy, graph) {
+		if violation.SourcePackage == mutant.Source && violation.TargetPackage == mutant.Target {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: string(violation.Rule), Source: violation.SourcePackage, Target: violation.TargetPackage}
 		}
-		g := fixtureGraph(packages, ImportEdge{SourcePackage: source, TargetPackage: target, Kind: kind})
-		g.ModulePath = m2ModulePath
-		for _, violation := range m2EvaluateClosedGraph(p, g) {
-			if violation.SourcePackage == source && violation.TargetPackage == target {
-				return rule
-			}
-		}
-		return ""
-	}}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Source, Target: mutant.Target}
 }
 
-func m2EventCase(id string, mutate func(*m2EventRegistry)) m2MutantCase {
-	return m2MutantCase{ID: id, Rule: "EVENT", Run: func(t *testing.T) string {
-		v := m2EventRegistry{SchemaVersion: 2, RegistryID: "spec-kitty.authority-event-families.v2", PublicationRule: "one_transition_event_per_aggregate_per_publication", Ordering: []string{"gapdb_record_revision", "event_index", "event_id"}, Families: m2ExpectedEventFamilies()}
-		mutate(&v)
-		payload, err := json.Marshal(v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := validateM2EventRegistry(payload); err != nil {
-			return "EVENT"
-		}
-		return ""
-	}}
+func observeM2EventMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	registry := m2EventRegistry{SchemaVersion: 2, RegistryID: "spec-kitty.authority-event-families.v2", PublicationRule: "one_transition_event_per_aggregate_per_publication", Ordering: []string{"gapdb_record_revision", "event_index", "event_id"}, Families: m2ExpectedEventFamilies()}
+	switch mutant.Fixture {
+	case "MISSING":
+		registry.Families = registry.Families[1:]
+	case "REDUCER-VERSION":
+		registry.Families[0].Reducer = 2
+	case "RENAMED":
+		registry.Families[0].Family = "runtime"
+	case "UNEXPECTED":
+		registry.Families[len(registry.Families)-1].Family = "unexpected"
+	case "VERSION":
+		registry.Families[0].EventSchema = 2
+	case "WRONG-OWNER":
+		registry.Families[0].Owner = "internal/mission"
+	default:
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	payload, err := json.Marshal(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateM2EventRegistry(payload); err != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "EVENT_REGISTRY", Source: mutant.Fixture}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 }
 
-func m2LegacyWorkgraphMutant() m2MutantCase {
-	return m2MutantCase{ID: "M-LEGACY-CANNOT-HIDE-WORKGRAPH", Rule: "SQL", Run: func(t *testing.T) string {
-		p := m2ClosedPolicy(t, m2ModulePath)
-		g := fixtureGraph([]string{m2ModulePath + "/internal/controlstore/sqlite", m2ModulePath + "/internal/workgraph"}, ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/sqlite", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal}, ImportEdge{SourcePackage: m2ModulePath + "/internal/workgraph", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal})
-		g.ModulePath = m2ModulePath
-		for _, v := range m2EvaluateIncrementalRepository(p, g) {
-			if v.SourcePackage == m2ModulePath+"/internal/workgraph" {
-				return "SQL"
-			}
+func observeM2LegacyMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	graph := fixtureGraph([]string{m2ModulePath + "/internal/controlstore/sqlite", m2ModulePath + "/internal/workgraph"}, ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/sqlite", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal}, ImportEdge{SourcePackage: m2ModulePath + "/internal/workgraph", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal})
+	graph.ModulePath = m2ModulePath
+	for _, violation := range m2EvaluateIncrementalRepository(policy, graph) {
+		if violation.SourcePackage == m2ModulePath+"/internal/workgraph" && violation.TargetPackage == "modernc.org/sqlite" {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: string(violation.Rule), Source: violation.SourcePackage, Target: violation.TargetPackage}
 		}
-		return ""
-	}}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+}
+
+func observeM2RawStoreMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	const module = "example.test/raw"
+	root := t.TempDir()
+	writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
+	files := m2RawFixture(mutant.Fixture)
+	if files == nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	for path, source := range files {
+		writeGoFixture(t, root, path, source)
+	}
+	setIsolatedGoPaths(t)
+	t.Setenv("GOPROXY", "off")
+	if err := inspectM2RawStorageModule(t.Context(), root, module); err != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "RAW_KEY_GOD_STORE", Source: mutant.Fixture}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 }
 
 func validateM2ExecutableMutants(cases []m2MutantCase) error {
@@ -304,12 +388,16 @@ func validateM2ExecutableMutants(cases []m2MutantCase) error {
 	}
 	identities := make([]string, 0, len(cases))
 	seen := make(map[string]bool, len(cases))
-	for _, c := range cases {
-		if c.ID == "" || c.Rule == "" || c.Run == nil || seen[c.ID] {
-			return fmt.Errorf("evidence=M2-MUTANT-CENSUS invalid=%s", c.ID)
+	for _, candidate := range cases {
+		if candidate.ID == "" || candidate.Fixture == "" || !m2KnownValidator(candidate.Validator) || seen[candidate.ID] || candidate.Expected.Validator != candidate.Validator || candidate.Expected.Code == "" || candidate.Expected.Source == "" || candidate.FixtureSHA256 != m2ExpectedFixtureDigest(candidate) {
+			return fmt.Errorf("evidence=M2-MUTANT-CENSUS invalid=%+v", candidate)
 		}
-		seen[c.ID] = true
-		identities = append(identities, c.ID+"|"+c.Rule)
+		seen[candidate.ID] = true
+		payload, err := json.Marshal(candidate)
+		if err != nil {
+			return err
+		}
+		identities = append(identities, string(payload))
 	}
 	slices.Sort(identities)
 	digest := sha256.Sum256([]byte(strings.Join(identities, "\n")))
@@ -320,8 +408,203 @@ func validateM2ExecutableMutants(cases []m2MutantCase) error {
 	return nil
 }
 
+func m2ExpectedFixtureDigest(candidate m2MutantCase) string {
+	if candidate.Validator == m2ValidatorDependency {
+		return m2DigestJSON(struct {
+			Fixture string
+			Source  string
+			Target  string
+			Kind    ImportKind
+		}{candidate.Fixture, candidate.Source, candidate.Target, candidate.Kind})
+	}
+	return m2FixtureDigest(candidate.Validator, candidate.Fixture)
+}
+
+func m2FixtureDigest(validator, fixture string) string {
+	var material any
+	switch validator {
+	case m2ValidatorImport:
+		material = m2SQLImportSource(fixture)
+	case m2ValidatorReach:
+		material = m2ReachFixture(fixture)
+	case m2ValidatorPolicy, m2ValidatorEvents, m2ValidatorLegacy:
+		material = fixture
+	case m2ValidatorKeyspace:
+		registry := slices.Clone(m2KeyspaceRegistry())
+		if strings.HasPrefix(fixture, "PATH-") {
+			index, err := strconv.Atoi(strings.TrimPrefix(fixture, "PATH-"))
+			if err != nil || index < 0 || index >= len(registry) {
+				return ""
+			}
+			registry[index].Template = strings.Replace(registry[index].Template, "spk/v2/", "spk/v2/alternate/", 1)
+		} else if !mutateM2Keyspace(fixture, &registry) {
+			return ""
+		}
+		material = registry
+	case m2ValidatorEligibility:
+		material = m2EligibilityFixture(fixture)
+	case m2ValidatorRawStore:
+		material = m2RawFixture(fixture)
+	default:
+		return ""
+	}
+	return m2DigestJSON(material)
+}
+
+func m2DigestJSON(value any) string {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:])
+}
+
+func m2KnownValidator(value string) bool {
+	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore}, value)
+}
+
+func m2SQLImportSource(fixture string) string {
+	switch fixture {
+	case "ALIAS":
+		return `import driver "modernc.org/sqlite/lib"`
+	case "BLANK":
+		return `import _ "github.com/mattn/go-sqlite3"`
+	case "BUILD-TAG":
+		return "//go:build never_enabled\n\nimport _ \"github.com/glebarez/sqlite\""
+	case "DIRECT":
+		return `import "modernc.org/sqlite"`
+	case "DOT":
+		return `import . "github.com/ncruces/go-sqlite3"`
+	case "GENERATED":
+		return "// Code generated. DO NOT EDIT.\nimport _ \"zombiezen.com/go/sqlite\""
+	default:
+		return ""
+	}
+}
+
+func m2SQLExpectedTarget(fixture string) string {
+	switch fixture {
+	case "ALIAS":
+		return "modernc.org/sqlite/lib"
+	case "BLANK":
+		return "github.com/mattn/go-sqlite3"
+	case "BUILD-TAG":
+		return "github.com/glebarez/sqlite"
+	case "DIRECT":
+		return "modernc.org/sqlite"
+	case "DOT":
+		return "github.com/ncruces/go-sqlite3"
+	case "GENERATED":
+		return "zombiezen.com/go/sqlite"
+	default:
+		return "unknown"
+	}
+}
+
+func m2CanonicalKeyIDs() []string {
+	return []string{"K-AUTHORITY-BINDING", "K-RUNTIME-CURRENT", "K-RUNTIME-EPOCH", "K-OPERATION-BINDING", "K-OPERATION-HEAD", "K-AGGREGATE-HEAD", "K-AGGREGATE-EVENT", "K-CHECKPOINT-SLOT", "K-CHECKPOINT-RECORD", "K-WORKGRAPH-ELIGIBILITY"}
+}
+
+func m2ReachFixture(fixture string) string {
+	switch fixture {
+	case "CONSTRUCTOR-VAR":
+		return "var New = provider.Open"
+	case "EMBED":
+		return "type Holder struct{ provider.Provider }\nfunc New() any { return Holder{} }"
+	case "GENERIC":
+		return "func hold[T any](v T) T { return v }\nfunc New() any { return hold(provider.Open()) }"
+	case "INTERFACE":
+		return "type Port interface{ Identity() string }\nfunc New() Port { return provider.Open() }"
+	case "METHOD-VALUE":
+		return "var New = provider.Provider.Identity"
+	case "RENAME":
+		return "type Harmless = provider.Provider\nfunc New() any { return provider.Open() }"
+	default:
+		return ""
+	}
+}
+
+func mutateM2Keyspace(fixture string, registry *[]m2KeyEntry) bool {
+	values := *registry
+	switch fixture {
+	case "AMBIGUOUS":
+		values[5].Template = strings.Replace(values[5].Template, "<scope>", "<raw-scope>", 1)
+	case "GLOBAL-HEAD":
+		values = append(values, m2KeyEntry{ID: "K-GLOBAL", Template: "spk/v2/journal/head"})
+	case "MISSION-OPERATION":
+		values[3].Template = "spk/v2/missions/<mission-id>/operations/<operation-id>/binding"
+	case "MIXED-V1":
+		values[0].Template = "spk/v1/authority/binding"
+	case "RAW":
+		values = append(values, m2KeyEntry{ID: "K-RAW", Template: "<caller-key>"})
+	case "VARIABLE-VERSION":
+		values[6].Template = strings.Replace(values[6].Template, "hex16", "decimal", 1)
+	case "SCOPE":
+		values[0].Scope = "mission"
+	case "MUTABILITY":
+		values[0].Mutable = true
+	case "SUFFIX":
+		values[6].SuffixRule = "decimal"
+	case "BUDGET":
+		values[0].MaxKeyBytes++
+	default:
+		return false
+	}
+	*registry = values
+	return true
+}
+
+func m2EligibilityFixture(fixture string) map[string]string {
+	switch fixture {
+	case "ADAPTER":
+		return map[string]string{"internal/controlstore/gapdb/codec.go": m2EligibilitySource("gapdb", "wrong")}
+	case "DECOY-FIRST":
+		return map[string]string{"internal/workgraph/a_decoy.go": m2EligibilityDecoy("workgraph"), "internal/controlstore/gapdb/z_codec.go": m2EligibilitySource("gapdb", "wrong")}
+	case "DECOY-LAST":
+		return map[string]string{"internal/workgraph/z_decoy.go": m2EligibilityDecoy("workgraph"), "internal/controlstore/gapdb/a_codec.go": m2EligibilitySource("gapdb", "wrong")}
+	case "MULTI-BROKEN":
+		return map[string]string{"internal/workgraph/a.go": m2EligibilitySource("workgraph", "exact"), "internal/workgraph/z.go": m2EligibilitySource("workgraph", "wrong")}
+	case "RUNTIME":
+		return map[string]string{"internal/workgraph/e.go": m2EligibilitySource("workgraph", "runtime")}
+	case "SPLIT-FILE":
+		return map[string]string{"internal/workgraph/evidence.go": m2EligibilityDecoy("workgraph"), "internal/workgraph/codec.go": "package workgraph\nfunc Compose(missionID, shardID string) string { return decoyTemplate }\n"}
+	case "UNCLASSIFIED":
+		return map[string]string{"internal/unowned/e.go": m2EligibilitySource("unowned", "exact")}
+	case "VALUE":
+		return map[string]string{"internal/workgraph/e.go": m2EligibilitySource("workgraph", "wrong")}
+	case "WRAPPER":
+		return map[string]string{"internal/workgraph/e.go": "package workgraph\nimport k \"example.test/eligibility/internal/keybuilder\"\nvar Build = k.EligibilityCodec{}.Compose\n", "internal/keybuilder/k.go": m2EligibilitySource("keybuilder", "wrong")}
+	default:
+		return nil
+	}
+}
+
+func m2RawFixture(fixture string) map[string]string {
+	switch fixture {
+	case "ALIASES":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Key = string\ntype Bytes = []byte\ntype Store interface { Read(Key)(Bytes,error); Write(Key,Bytes)error }\n"}
+	case "BUILD-VARIANT":
+		return map[string]string{"internal/mission/normal.go": "package mission\nconst Present = true\n", "internal/mission/variant.go": "//go:build never_guard_variant\n\npackage mission\ntype Store interface { Read(string)([]byte,error); Write(string,[]byte)error }\n"}
+	case "EMBEDDING":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Raw interface { Read(string)([]byte,error); Write(string,[]byte)error }\ntype Store interface { Raw }\n"}
+	case "FUNCTIONS":
+		return map[string]string{"internal/mission/store.go": "package mission\nfunc Access(string,[]byte)([]byte,error){return nil,nil}\n"}
+	case "GENERATED":
+		return map[string]string{"internal/mission/generated.go": "// Code generated by guard-test. DO NOT EDIT.\npackage mission\ntype Store interface { Read(string)([]byte,error); Write(string,[]byte)error }\n"}
+	case "GENERICS":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Store[K ~string, V ~[]byte] interface { Read(K)(V,error); Write(K,V)error }\n"}
+	case "INTERFACE":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Store interface { Read(string)([]byte,error); Write(string,[]byte)error }\n"}
+	case "WRAPPER":
+		return map[string]string{"internal/mission/store.go": "package mission\ntype Client struct{}\nfunc(Client)Read(string)([]byte,error){return nil,nil}\nfunc(Client)Write(string,[]byte)error{return nil}\ntype Wrapper struct{Client}\n"}
+	default:
+		return nil
+	}
+}
+
 func scanM2AllGoImports(root, module string) ([]m2ImportObservation, error) {
-	result := make([]m2ImportObservation, 0)
+	var result []m2ImportObservation
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -333,13 +616,13 @@ func scanM2AllGoImports(root, module string) ([]m2ImportObservation, error) {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, filepath.Dir(path))
+		relative, err := filepath.Rel(root, filepath.Dir(path))
 		if err != nil {
 			return err
 		}
 		source := module
-		if rel != "." {
-			source += "/" + filepath.ToSlash(rel)
+		if relative != "." {
+			source += "/" + filepath.ToSlash(relative)
 		}
 		for _, declaration := range file.Imports {
 			target, err := strconv.Unquote(declaration.Path.Value)
@@ -377,32 +660,6 @@ func m2ForbiddenPaths(graph Graph, source string, targets []string) []string {
 		}
 	}
 	return nil
-}
-
-func sortedM2StringKeys(values map[string]string) []string {
-	result := make([]string, 0, len(values))
-	for key := range values {
-		result = append(result, key)
-	}
-	slices.Sort(result)
-	return result
-}
-func sortedM2EventKeys(values map[string]func(*m2EventRegistry)) []string {
-	result := make([]string, 0, len(values))
-	for key := range values {
-		result = append(result, key)
-	}
-	slices.Sort(result)
-	return result
-}
-
-func sortedM2EligibilityKeys(values map[string]map[string]string) []string {
-	result := make([]string, 0, len(values))
-	for key := range values {
-		result = append(result, key)
-	}
-	slices.Sort(result)
-	return result
 }
 
 func TestM2MalformedSourceFailsClosedAndBounded(t *testing.T) {

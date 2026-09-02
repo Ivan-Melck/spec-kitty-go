@@ -25,6 +25,11 @@ var m2SQLProviderPrefixes = []string{
 	"zombiezen.com/go/sqlite",
 }
 
+var m2GapDBPrivatePrefixes = []string{
+	"github.com/spec-kitty/gapdb/internal",
+	"github.com/spec-kitty/gapdb/server",
+}
+
 var m2PureJournalStandardLibrary = []PackagePattern{
 	ExactPackage("bytes"),
 	ExactPackage("context"),
@@ -102,6 +107,7 @@ func TestM2DependencyPolicyAcceptsOnlyBoundedProviderComposition(t *testing.T) {
 		ImportEdge{SourcePackage: m2ModulePath + "/internal/controljournal/v2", TargetPackage: m2ModulePath + "/internal/ids", Kind: ImportModuleLocal},
 		ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/gapdb", TargetPackage: m2ModulePath + "/internal/controljournal/v2", Kind: ImportModuleLocal},
 		ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/gapdb", TargetPackage: "github.com/spec-kitty/gapdb/gapdb", Kind: ImportExternal},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/gapdb", TargetPackage: "github.com/spec-kitty/gapdb/gapdbapi", Kind: ImportExternal},
 		ImportEdge{SourcePackage: m2ModulePath + "/internal/sidecar/gapdb", TargetPackage: "github.com/spec-kitty/gapdb/gapdbapi", Kind: ImportExternal},
 		ImportEdge{SourcePackage: m2ModulePath + "/internal/productionruntime", TargetPackage: m2ModulePath + "/internal/controlstore/gapdb", Kind: ImportModuleLocal},
 	)
@@ -171,6 +177,17 @@ func TestM2DependencyPolicyRejectsForbiddenEdges(t *testing.T) {
 			violations := m2EvaluateClosedGraph(policy, graph)
 			if len(violations) != 1 || violations[0].Rule != RuleDeferredSurface {
 				t.Fatalf("evidence=SQLITE-SQL-DENIAL provider=%s observed=%v expected=deferred-surface", prefix, violations)
+			}
+		})
+	}
+	for _, prefix := range m2GapDBPrivatePrefixes {
+		t.Run("gapdb-private-"+strings.NewReplacer("/", "-", ".", "-").Replace(prefix), func(t *testing.T) {
+			source := m2ModulePath + "/internal/controlstore/gapdb"
+			graph := fixtureGraph([]string{source}, ImportEdge{SourcePackage: source, TargetPackage: prefix + "/authority", Kind: ImportExternal})
+			graph.ModulePath = m2ModulePath
+			violations := m2EvaluateClosedGraph(policy, graph)
+			if len(violations) == 0 || violations[0].Rule != RuleDeferredSurface {
+				t.Fatalf("evidence=GAPDB-PRIVATE-DENIAL provider=%s observed=%v expected=deferred-surface", prefix, violations)
 			}
 		})
 	}
@@ -366,7 +383,9 @@ func m2EvaluateClosedGraph(policy Policy, graph Graph) Violations {
 		if matchesPrefix(edge.TargetPackage, m2SQLProviderPrefixes) {
 			violations = appendM2Violation(violations, violationForEdge(RuleDeferredSurface, edge, sourceTier.Name, ""))
 		}
-		if matchesPrefix(edge.TargetPackage, []string{"github.com/spec-kitty/gapdb"}) && !forbidden(edge.SourcePackage, m2ExactGapDBCallers) {
+		if matchesPrefix(edge.TargetPackage, m2GapDBPrivatePrefixes) {
+			violations = appendM2Violation(violations, violationForEdge(RuleDeferredSurface, edge, sourceTier.Name, ""))
+		} else if matchesPrefix(edge.TargetPackage, []string{"github.com/spec-kitty/gapdb"}) && !forbidden(edge.SourcePackage, m2ExactGapDBCallers) {
 			violations = appendM2Violation(violations, violationForEdge(RuleExternalDirection, edge, sourceTier.Name, ""))
 		}
 		if edge.Kind != ImportTestOnly && matchesPrefix(edge.SourcePackage, []string{policy.ModulePath + "/internal/controljournal/v2"}) && edge.Kind == ImportStandardLibrary && !forbidden(edge.TargetPackage, m2PureJournalStandardLibrary) {
