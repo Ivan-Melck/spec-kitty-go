@@ -1,7 +1,7 @@
 {
-  "event_count": 57,
-  "last_event_id": "01M1HFCEENKPA5MFPQ5YHNB3PQ",
-  "materialized_at": "2026-09-02T16:31:38.965702+00:00",
+  "event_count": 59,
+  "last_event_id": "01M1HFEDQ9XNF32AXRXGW486GE",
+  "materialized_at": "2026-09-02T16:32:43.746787+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,9 +12,9 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 1,
-    "planned": 15
+    "planned": 14
   },
   "work_packages": {
     "WP01": {
@@ -150,14 +150,14 @@
       "last_transition_at": "2026-09-02T12:11:52.377445+00:00"
     },
     "WP12": {
-      "actor": "user",
+      "actor": "codex-wp12",
       "agent": null,
-      "agent_profile": "reviewer-renata",
+      "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 1,
-      "lane": "planned",
-      "last_event_id": "01M1HF7Q820MW9ZHZAFCGYJN87",
-      "last_transition_at": "2026-09-02T16:29:04.130603+00:00",
+      "lane": "in_progress",
+      "last_event_id": "01M1HFEDQ9XNF32AXRXGW486GE",
+      "last_transition_at": "2026-09-02T16:32:43.746787+00:00",
       "model": "__resolved_model_absent__",
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -167,7 +167,7 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
