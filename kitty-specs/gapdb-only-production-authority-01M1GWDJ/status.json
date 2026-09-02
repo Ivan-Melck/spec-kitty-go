@@ -96,10 +96,21 @@
       "last_event_id": "01M1HKP29WFZ59K4HEYYQ7JDJM",
       "last_transition_at": "2026-09-02T17:46:48.508984+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved."
+      ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "role": "implementer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27"
+      "shell_pid": null,
+      "shell_pid_created_at": null,
+      "subtasks": {
+        "T012": "planned",
+        "T013": "planned",
+        "T014": "planned",
+        "T015": "planned",
+        "T016": "planned"
+      }
     },
     "WP04": {
       "actor": "finalize-tasks",
