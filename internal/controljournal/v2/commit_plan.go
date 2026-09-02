@@ -3,6 +3,8 @@ package v2
 import (
 	"bytes"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 type EventDraftV2 struct {
@@ -24,28 +26,36 @@ type EventDraftV2 struct {
 }
 
 type HeadTransitionV2 struct {
-	Coordinate             AggregateCoordinate `json:"coordinate"`
-	ExpectedLogicalVersion LogicalVersion      `json:"expected_logical_version"`
-	NextLogicalVersion     LogicalVersion      `json:"next_logical_version"`
-	EventID                EventID             `json:"event_id"`
-	ExpectedRecordRevision uint64              `json:"expected_record_revision,omitempty"`
-	CanonicalStateDigest   Digest              `json:"canonical_state_digest"`
-	Tombstone              bool                `json:"tombstone"`
+	Coordinate              AggregateCoordinate `json:"coordinate"`
+	ExpectedLogicalVersion  LogicalVersion      `json:"expected_logical_version"`
+	NextLogicalVersion      LogicalVersion      `json:"next_logical_version"`
+	EventID                 EventID             `json:"event_id"`
+	ExpectedRecordRevision  uint64              `json:"expected_record_revision,omitempty"`
+	CommittedRuntimeEpochID RuntimeEpochID      `json:"committed_runtime_epoch_id"`
+	CanonicalStateDigest    Digest              `json:"canonical_state_digest"`
+	AuthoritySummary        []byte              `json:"authority_summary"`
+	Tombstone               bool                `json:"tombstone"`
 }
 
 type EffectIntentReference struct {
-	EffectID EffectID `json:"effect_id"`
-	Digest   Digest   `json:"digest"`
+	EffectID  EffectID `json:"effect_id"`
+	Digest    Digest   `json:"digest"`
+	Canonical []byte   `json:"canonical"`
 }
 
 type EligibilityGuardTransition struct {
-	GuardID string `json:"guard_id"`
-	Digest  Digest `json:"digest"`
+	MissionID              MissionID          `json:"mission_id"`
+	ShardID                EligibilityShardID `json:"shard_id"`
+	Canonical              []byte             `json:"canonical"`
+	ExpectedRecordRevision uint64             `json:"expected_record_revision,omitempty"`
 }
 
 type CheckpointRecord struct {
-	CheckpointID string
-	Canonical    []byte
+	CheckpointID               CheckpointID     `json:"checkpoint_id"`
+	Canonical                  []byte           `json:"canonical"`
+	SlotID                     CheckpointSlotID `json:"slot_id"`
+	SlotCanonical              []byte           `json:"slot_canonical"`
+	ExpectedSlotRecordRevision uint64           `json:"expected_slot_record_revision,omitempty"`
 }
 
 type ConditionKind string
@@ -57,11 +67,18 @@ const (
 
 type ConditionTargetKind string
 
-const ConditionTargetAggregateHead ConditionTargetKind = "aggregate_head"
+const (
+	ConditionTargetAggregateHead    ConditionTargetKind = "aggregate_head"
+	ConditionTargetEligibilityGuard ConditionTargetKind = "eligibility_guard"
+	ConditionTargetCheckpointSlot   ConditionTargetKind = "checkpoint_slot"
+)
 
 type ConditionTarget struct {
-	Kind       ConditionTargetKind `json:"kind"`
-	Coordinate AggregateCoordinate `json:"coordinate"`
+	Kind             ConditionTargetKind `json:"kind"`
+	Coordinate       AggregateCoordinate `json:"coordinate,omitempty"`
+	MissionID        MissionID           `json:"mission_id,omitempty"`
+	ShardID          EligibilityShardID  `json:"shard_id,omitempty"`
+	CheckpointSlotID CheckpointSlotID    `json:"checkpoint_slot_id,omitempty"`
 }
 
 type ProviderCondition struct {
@@ -87,6 +104,95 @@ func ConditionForHeadTransitionV2(head HeadTransitionV2) (ProviderCondition, err
 	return condition, nil
 }
 
+func ConditionForEligibilityGuardTransitionV2(guard EligibilityGuardTransition) (ProviderCondition, error) {
+	if validateIdentity("mission_id", string(guard.MissionID)) != nil || validateIdentity("eligibility_shard_id", string(guard.ShardID)) != nil {
+		return ProviderCondition{}, invalid(ErrorInvalidTransition, "condition_target")
+	}
+	return conditionFromObservedRevision(ConditionTarget{Kind: ConditionTargetEligibilityGuard, MissionID: guard.MissionID, ShardID: guard.ShardID}, guard.ExpectedRecordRevision), nil
+}
+
+func ConditionForCheckpointRecordV2(checkpoint CheckpointRecord) (ProviderCondition, error) {
+	if validateIdentity("checkpoint_slot_id", string(checkpoint.SlotID)) != nil {
+		return ProviderCondition{}, invalid(ErrorInvalidTransition, "condition_target")
+	}
+	return conditionFromObservedRevision(ConditionTarget{Kind: ConditionTargetCheckpointSlot, CheckpointSlotID: checkpoint.SlotID}, checkpoint.ExpectedSlotRecordRevision), nil
+}
+
+func conditionFromObservedRevision(target ConditionTarget, revision uint64) ProviderCondition {
+	if revision == 0 {
+		return ProviderCondition{Target: target, Kind: ConditionAbsent}
+	}
+	return ProviderCondition{Target: target, Kind: ConditionRecordRevision, ObservedRevision: revision}
+}
+
+type SealedRecordRole string
+
+const (
+	RecordOperationBinding SealedRecordRole = "operation_binding"
+	RecordJournalEvent     SealedRecordRole = "journal_event"
+	RecordOperationHead    SealedRecordRole = "operation_head"
+	RecordAggregateHead    SealedRecordRole = "aggregate_head"
+	RecordEffectIntent     SealedRecordRole = "effect_intent"
+	RecordEligibilityGuard SealedRecordRole = "eligibility_guard"
+	RecordCheckpointRecord SealedRecordRole = "checkpoint_record"
+	RecordCheckpointSlot   SealedRecordRole = "checkpoint_slot"
+)
+
+type SealedRecordValueClass string
+
+const (
+	RecordValueOrdinary   SealedRecordValueClass = "ordinary"
+	RecordValueCheckpoint SealedRecordValueClass = "checkpoint"
+)
+
+// SealedRecordTargetV2 is a closed semantic address. It deliberately exposes
+// no raw persistence key; adapters must map the role-specific identity through
+// their own admitted key codec.
+type SealedRecordTargetV2 struct {
+	operationID      OperationID
+	effectID         EffectID
+	coordinate       AggregateCoordinate
+	logicalVersion   LogicalVersion
+	missionID        MissionID
+	shardID          EligibilityShardID
+	checkpointID     CheckpointID
+	checkpointSlotID CheckpointSlotID
+}
+
+func (t SealedRecordTargetV2) OperationID() OperationID           { return t.operationID }
+func (t SealedRecordTargetV2) EffectID() EffectID                 { return t.effectID }
+func (t SealedRecordTargetV2) Coordinate() AggregateCoordinate    { return t.coordinate }
+func (t SealedRecordTargetV2) LogicalVersion() LogicalVersion     { return t.logicalVersion }
+func (t SealedRecordTargetV2) MissionID() MissionID               { return t.missionID }
+func (t SealedRecordTargetV2) ShardID() EligibilityShardID        { return t.shardID }
+func (t SealedRecordTargetV2) CheckpointID() CheckpointID         { return t.checkpointID }
+func (t SealedRecordTargetV2) CheckpointSlotID() CheckpointSlotID { return t.checkpointSlotID }
+
+type SealedRecordConditionV2 struct {
+	kind             ConditionKind
+	observedRevision uint64
+}
+
+func (c SealedRecordConditionV2) Kind() ConditionKind      { return c.kind }
+func (c SealedRecordConditionV2) ObservedRevision() uint64 { return c.observedRevision }
+
+// SealedRecordV2 can only be produced by SealCommitPlanV2. Its fields are
+// immutable by construction and form the complete membership consumed by a
+// persistence adapter and response-ambiguity reconciliation.
+type SealedRecordV2 struct {
+	role       SealedRecordRole
+	target     SealedRecordTargetV2
+	valueClass SealedRecordValueClass
+	condition  SealedRecordConditionV2
+	canonical  []byte
+}
+
+func (r SealedRecordV2) Role() SealedRecordRole             { return r.role }
+func (r SealedRecordV2) Target() SealedRecordTargetV2       { return r.target }
+func (r SealedRecordV2) ValueClass() SealedRecordValueClass { return r.valueClass }
+func (r SealedRecordV2) Condition() SealedRecordConditionV2 { return r.condition }
+func (r SealedRecordV2) CanonicalValue() []byte             { return append([]byte(nil), r.canonical...) }
+
 type CommitPlanInput struct {
 	OperationBinding    *OperationBindingV2
 	PriorOperationState *OperationStateV2
@@ -110,6 +216,7 @@ type SealedCommitPlanV2 struct {
 	eligibility    []EligibilityGuardTransition
 	checkpoints    []CheckpointRecord
 	conditions     []ProviderCondition
+	records        []SealedRecordV2
 	canonical      []byte
 }
 
@@ -137,9 +244,9 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	}
 
 	drafts := cloneEventDrafts(input.Events)
-	heads := append([]HeadTransitionV2(nil), input.Heads...)
-	effects := append([]EffectIntentReference(nil), input.EffectIntents...)
-	eligibility := append([]EligibilityGuardTransition(nil), input.EligibilityGuards...)
+	heads := cloneHeadTransitions(input.Heads)
+	effects := cloneEffectIntents(input.EffectIntents)
+	eligibility := cloneEligibilityGuards(input.EligibilityGuards)
 	checkpoints := cloneCheckpoints(input.Checkpoints)
 	conditions := append([]ProviderCondition(nil), input.Conditions...)
 	for index := range drafts {
@@ -158,12 +265,46 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 		}
 		sort.Strings(drafts[index].GovernanceRevisions)
 	}
+	for index := range heads {
+		canonical, err := requireCanonicalValue("authority_summary", heads[index].AuthoritySummary, MaxCanonicalPayloadBytes)
+		if err != nil {
+			return SealedCommitPlanV2{}, err
+		}
+		heads[index].AuthoritySummary = canonical
+	}
+	for index := range effects {
+		canonical, err := requireCanonicalValue("effect_intent", effects[index].Canonical, MaxCanonicalPayloadBytes)
+		if err != nil {
+			return SealedCommitPlanV2{}, err
+		}
+		effects[index].Canonical = canonical
+	}
+	for index := range eligibility {
+		canonical, err := requireCanonicalValue("eligibility_guard", eligibility[index].Canonical, MaxCanonicalPayloadBytes)
+		if err != nil {
+			return SealedCommitPlanV2{}, err
+		}
+		eligibility[index].Canonical = canonical
+	}
+	for index := range checkpoints {
+		record, err := requireCanonicalValue("checkpoint_record", checkpoints[index].Canonical, MaxCheckpointValueBytes)
+		if err != nil {
+			return SealedCommitPlanV2{}, err
+		}
+		slot, err := requireCanonicalValue("checkpoint_slot", checkpoints[index].SlotCanonical, MaxCanonicalPayloadBytes)
+		if err != nil {
+			return SealedCommitPlanV2{}, err
+		}
+		checkpoints[index].Canonical, checkpoints[index].SlotCanonical = record, slot
+	}
 	sort.Slice(drafts, func(i, j int) bool {
 		return drafts[i].Coordinate.canonical()+"/"+string(drafts[i].EventID) < drafts[j].Coordinate.canonical()+"/"+string(drafts[j].EventID)
 	})
 	sort.Slice(heads, func(i, j int) bool { return heads[i].Coordinate.canonical() < heads[j].Coordinate.canonical() })
 	sort.Slice(effects, func(i, j int) bool { return effects[i].EffectID < effects[j].EffectID })
-	sort.Slice(eligibility, func(i, j int) bool { return eligibility[i].GuardID < eligibility[j].GuardID })
+	sort.Slice(eligibility, func(i, j int) bool {
+		return string(eligibility[i].MissionID)+"/"+string(eligibility[i].ShardID) < string(eligibility[j].MissionID)+"/"+string(eligibility[j].ShardID)
+	})
 	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i].CheckpointID < checkpoints[j].CheckpointID })
 	sort.Slice(conditions, func(i, j int) bool {
 		return conditionTargetKey(conditions[i].Target) < conditionTargetKey(conditions[j].Target)
@@ -203,7 +344,14 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	if err := ValidatePublicationEventsV2(events); err != nil {
 		return SealedCommitPlanV2{}, err
 	}
-	plan := SealedCommitPlanV2{publicationID, planDigest, cloneBinding(input.OperationBinding), state, events, heads, effects, eligibility, checkpoints, conditions, nil}
+	records, err := deriveSealedRecords(input.OperationBinding, state, events, heads, effects, eligibility, checkpoints, conditions)
+	if err != nil {
+		return SealedCommitPlanV2{}, err
+	}
+	if _, err := validateSealedRecordBudget(records); err != nil {
+		return SealedCommitPlanV2{}, err
+	}
+	plan := SealedCommitPlanV2{publicationID, planDigest, cloneBinding(input.OperationBinding), state, events, heads, effects, eligibility, checkpoints, conditions, records, nil}
 	plan.canonical, err = plan.finalBytes()
 	if err != nil {
 		return SealedCommitPlanV2{}, err
@@ -239,7 +387,9 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 		coordinate := head.Coordinate.canonical()
 		event, ok := eventCoordinates[coordinate]
 		if !ok || headCoordinates[coordinate] || head.EventID != event.EventID || head.NextLogicalVersion != event.AggregateLogicalVersion ||
-			head.NextLogicalVersion == 0 || head.ExpectedLogicalVersion+1 != head.NextLogicalVersion || head.CanonicalStateDigest.IsZero() {
+			head.NextLogicalVersion == 0 || head.ExpectedLogicalVersion+1 != head.NextLogicalVersion || head.CanonicalStateDigest.IsZero() ||
+			validateIdentity("committed_runtime_epoch_id", string(head.CommittedRuntimeEpochID)) != nil ||
+			head.CommittedRuntimeEpochID != event.CommittedRuntimeEpochID || len(head.AuthoritySummary) == 0 {
 			return invalid(ErrorInvalidTransition, "event_head_membership")
 		}
 		headCoordinates[coordinate] = true
@@ -259,10 +409,10 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 	if err := uniqueEffects(effects); err != nil {
 		return err
 	}
-	if err := uniqueNamedDigests(eligibility, checkpoints); err != nil {
+	if err := validatePersistenceMembers(eligibility, checkpoints); err != nil {
 		return err
 	}
-	if err := validateExactConditions(heads, conditions); err != nil {
+	if err := validateExactConditions(heads, eligibility, checkpoints, conditions); err != nil {
 		return err
 	}
 	return nil
@@ -270,19 +420,21 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 
 func preflightCommitPlan(input CommitPlanInput) error {
 	if len(input.Events) == 0 || len(input.Events) > MaxEventsPerPublication || len(input.Heads) != len(input.Events) ||
-		len(input.EffectIntents) > MaxEffectsPerPublication || len(input.EligibilityGuards) > MaxMembers ||
+		len(input.Heads) > MaxHeadsPerPublication || len(input.EffectIntents) > MaxEffectsPerPublication || len(input.EligibilityGuards) > MaxMembers ||
 		len(input.Checkpoints) > MaxCheckpointsPerPlan || len(input.Conditions) > MaxConditionsPerPlan {
 		return invalid(ErrorBudgetExceeded, "commit_plan_members")
 	}
-	nestedBytes := 0
+	projectedRecords := len(input.Events) + len(input.Heads) + len(input.EffectIntents) + len(input.EligibilityGuards) + 2*len(input.Checkpoints)
+	if input.OperationBinding != nil {
+		projectedRecords++
+	}
+	if projectedRecords > MaxMembers {
+		return invalid(ErrorBudgetExceeded, "sealed_record_projection")
+	}
 	add := func(field string, size, maximum int) error {
 		if size > maximum {
 			return invalid(ErrorBudgetExceeded, field)
 		}
-		if size > MaxCommitPlanBytes-nestedBytes {
-			return invalid(ErrorBudgetExceeded, "commit_plan_bytes")
-		}
-		nestedBytes += size
 		return nil
 	}
 	for _, event := range input.Events {
@@ -301,13 +453,251 @@ func preflightCommitPlan(input CommitPlanInput) error {
 			return err
 		}
 	}
-	for _, checkpoint := range input.Checkpoints {
-		if err := add("checkpoint_payload", len(checkpoint.Canonical), MaxCanonicalPayloadBytes); err != nil {
+	for _, head := range input.Heads {
+		if err := add("authority_summary", len(head.AuthoritySummary), MaxCanonicalPayloadBytes); err != nil {
 			return err
 		}
 	}
+	for _, effect := range input.EffectIntents {
+		if err := add("effect_intent", len(effect.Canonical), MaxCanonicalPayloadBytes); err != nil {
+			return err
+		}
+	}
+	for _, guard := range input.EligibilityGuards {
+		if err := add("eligibility_guard", len(guard.Canonical), MaxCanonicalPayloadBytes); err != nil {
+			return err
+		}
+	}
+	for _, checkpoint := range input.Checkpoints {
+		if err := add("checkpoint_payload", len(checkpoint.Canonical), MaxCheckpointValueBytes); err != nil {
+			return err
+		}
+		if err := add("checkpoint_slot", len(checkpoint.SlotCanonical), MaxCanonicalPayloadBytes); err != nil {
+			return err
+		}
+	}
+	if _, err := conservativeProductBatchSize(input); err != nil {
+		return err
+	}
 	_, err := prospectiveEncodedPlanSize(input)
 	return err
+}
+
+// WP02 deliberately does not own the spk/v2 key codec. Before the adapter is
+// available, each projected target is therefore charged the full frozen 1 KiB
+// key ceiling. Value sizes are conservative bounds for the final canonical
+// records, so an admitted plan is guaranteed to fit the 6 MiB raw batch law.
+// WP03 repeats the check with actual encoded keys and provider wire framing.
+func conservativeProductBatchSize(input CommitPlanInput) (uint64, error) {
+	budget := productRawBudget{}
+	if input.OperationBinding != nil {
+		if err := budget.addRecord(conservativeBindingSize(*input.OperationBinding), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	stateSize := conservativeOperationStateSize(input.OperationState)
+	for _, event := range input.Events {
+		if err := budget.addRecord(conservativeEventEnvelopeSize(event, input.OperationState, len(input.Events)), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for _, head := range input.Heads {
+		valueSize := conservativeAggregateHeadSize(head)
+		if head.Coordinate.Kind == AggregateKind("operation") {
+			valueSize = stateSize
+		}
+		if err := budget.addRecord(valueSize, RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for _, effect := range input.EffectIntents {
+		if err := budget.addRecord(canonicalJSONSizeBound(effect.Canonical), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for _, guard := range input.EligibilityGuards {
+		if err := budget.addRecord(canonicalJSONSizeBound(guard.Canonical), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for _, checkpoint := range input.Checkpoints {
+		if err := budget.addRecord(canonicalJSONSizeBound(checkpoint.Canonical), RecordValueCheckpoint); err != nil {
+			return 0, err
+		}
+		if err := budget.addRecord(canonicalJSONSizeBound(checkpoint.SlotCanonical), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	return budget.value, nil
+}
+
+type productRawBudget struct{ value uint64 }
+
+func (b *productRawBudget) addRecord(value uint64, class SealedRecordValueClass) error {
+	maximum, field := uint64(MaxCanonicalPayloadBytes), "ordinary_record_value"
+	if class == RecordValueCheckpoint {
+		maximum, field = uint64(MaxCheckpointValueBytes), "checkpoint_record_value"
+	}
+	if value > maximum {
+		return invalid(ErrorBudgetExceeded, field)
+	}
+	recordBytes := uint64(MaxProductKeyBytes) + value
+	if recordBytes > uint64(MaxProductRawBatchBytes)-b.value {
+		return invalid(ErrorBudgetExceeded, "product_raw_batch_bytes")
+	}
+	b.value += recordBytes
+	return nil
+}
+
+func conservativeBindingSize(binding OperationBindingV2) uint64 {
+	fields := []uint64{
+		jsonFieldSize("schema_version", uintJSONSize(SchemaVersion)),
+		jsonFieldSize("operation_id", jsonStringSizeBound(string(binding.operationID))),
+		jsonFieldSize("command_kind", jsonStringSizeBound(binding.commandKind)),
+		jsonFieldSize("command_schema_version", uintJSONSize(binding.commandSchemaVersion)),
+		jsonFieldSize("canonical_intent_sha256", jsonStringSizeBound(strings.Repeat("0", 64))),
+		jsonFieldSize("scope", scopeJSONSizeBound(binding.scope)),
+	}
+	fields = appendOptionalStringField(fields, "actor_id", string(binding.actorID))
+	fields = appendOptionalStringField(fields, "process_id", string(binding.processID))
+	fields = appendOptionalStringField(fields, "doctrine_revision", binding.doctrineRevision)
+	fields = appendOptionalStringField(fields, "profile_revision", binding.profileRevision)
+	fields = appendOptionalStringField(fields, "policy_revision", binding.policyRevision)
+	fields = append(fields,
+		jsonFieldSize("originating_runtime_epoch_id", jsonStringSizeBound(string(binding.originatingRuntimeEpochID))),
+		jsonFieldSize("observed_created_at", jsonStringSizeBound(binding.observedCreatedAt)),
+	)
+	return jsonObjectSize(fields)
+}
+
+func conservativeOperationStateSize(state OperationStateV2) uint64 {
+	fields := []uint64{
+		jsonFieldSize("schema_version", uintJSONSize(SchemaVersion)),
+		jsonFieldSize("operation_id", jsonStringSizeBound(string(state.operationID))),
+		jsonFieldSize("logical_version", uintJSONSize(uint64(state.logicalVersion))),
+		jsonFieldSize("status", jsonStringSizeBound(string(state.status))),
+	}
+	fields = appendOptionalStringField(fields, "result_kind", state.resultKind)
+	if state.resultSchemaVersion != 0 {
+		fields = append(fields, jsonFieldSize("result_schema_version", uintJSONSize(state.resultSchemaVersion)))
+	}
+	if len(state.canonicalResult) != 0 {
+		fields = append(fields, jsonFieldSize("canonical_result", base64JSONSizeBound(uint64(len(state.canonicalResult)))))
+	}
+	if !state.resultDigest.IsZero() {
+		fields = append(fields, jsonFieldSize("result_sha256", jsonStringSizeBound(strings.Repeat("0", 64))))
+	}
+	fields = append(fields,
+		jsonFieldSize("event_ids", stringArrayJSONSize(state.eventIDs)),
+		jsonFieldSize("effect_ids", stringArrayJSONSize(state.effectIDs)),
+		jsonFieldSize("last_publication_id", jsonStringSizeBound(strings.Repeat("0", 64))),
+	)
+	return jsonObjectSize(fields)
+}
+
+func conservativeEventEnvelopeSize(event EventDraftV2, state OperationStateV2, eventCount int) uint64 {
+	observationSize := canonicalJSONSizeBound(event.Observations)
+	if len(event.Observations) == 0 {
+		observationSize = 2
+	}
+	fields := []uint64{
+		jsonFieldSize("envelope_version", uintJSONSize(EnvelopeVersion)),
+		jsonFieldSize("event_id", jsonStringSizeBound(string(event.EventID))),
+		jsonFieldSize("event_type", jsonStringSizeBound(event.EventType)),
+		jsonFieldSize("family", jsonStringSizeBound(event.Family)),
+		jsonFieldSize("event_schema_version", uintJSONSize(event.EventSchemaVersion)),
+		jsonFieldSize("reducer_version", uintJSONSize(event.ReducerVersion)),
+		jsonFieldSize("coordinate", coordinateJSONSizeBound(event.Coordinate)),
+		jsonFieldSize("aggregate_logical_version", uintJSONSize(uint64(event.AggregateLogicalVersion))),
+		jsonFieldSize("operation_id", jsonStringSizeBound(string(state.operationID))),
+		jsonFieldSize("operation_logical_version", uintJSONSize(uint64(state.logicalVersion))),
+		jsonFieldSize("publication_id", jsonStringSizeBound(strings.Repeat("0", 64))),
+		jsonFieldSize("committed_runtime_epoch_id", jsonStringSizeBound(string(event.CommittedRuntimeEpochID))),
+		jsonFieldSize("event_index", uintJSONSize(uint64(eventCount-1))),
+		jsonFieldSize("event_count", uintJSONSize(uint64(eventCount))),
+	}
+	fields = appendOptionalStringField(fields, "actor_id", string(event.ActorID))
+	fields = appendOptionalStringField(fields, "process_id", string(event.ProcessID))
+	fields = appendOptionalStringField(fields, "work_revision_id", string(event.WorkRevisionID))
+	fields = appendOptionalStringField(fields, "policy_revision", event.PolicyRevision)
+	if len(event.GovernanceRevisions) != 0 {
+		fields = append(fields, jsonFieldSize("governance_revisions", stringArrayJSONSize(event.GovernanceRevisions)))
+	}
+	fields = append(fields,
+		jsonFieldSize("observations", base64JSONSizeBound(observationSize)),
+		jsonFieldSize("payload", base64JSONSizeBound(canonicalJSONSizeBound(event.Payload))),
+		jsonFieldSize("canonical_event_sha256", jsonStringSizeBound(strings.Repeat("0", 64))),
+	)
+	return jsonObjectSize(fields)
+}
+
+func conservativeAggregateHeadSize(head HeadTransitionV2) uint64 {
+	return jsonObjectSize([]uint64{
+		jsonFieldSize("schema_version", uintJSONSize(SchemaVersion)),
+		jsonFieldSize("coordinate", coordinateJSONSizeBound(head.Coordinate)),
+		jsonFieldSize("logical_version", uintJSONSize(uint64(head.NextLogicalVersion))),
+		jsonFieldSize("last_event_id", jsonStringSizeBound(string(head.EventID))),
+		jsonFieldSize("last_publication_id", jsonStringSizeBound(strings.Repeat("0", 64))),
+		jsonFieldSize("committed_runtime_epoch_id", jsonStringSizeBound(string(head.CommittedRuntimeEpochID))),
+		jsonFieldSize("canonical_state_sha256", jsonStringSizeBound(strings.Repeat("0", 64))),
+		jsonFieldSize("authority_summary", base64JSONSizeBound(canonicalJSONSizeBound(head.AuthoritySummary))),
+		jsonFieldSize("tombstone", 5),
+	})
+}
+
+func jsonFieldSize(name string, value uint64) uint64 {
+	return jsonStringSizeBound(name) + 1 + value
+}
+
+func jsonObjectSize(fields []uint64) uint64 {
+	size := uint64(2)
+	for index, field := range fields {
+		size += field
+		if index > 0 {
+			size++
+		}
+	}
+	return size
+}
+
+func uintJSONSize[T ~uint16 | ~uint32 | ~uint64](value T) uint64 {
+	return uint64(len(strconv.FormatUint(uint64(value), 10)))
+}
+
+func stringArrayJSONSize[T ~string](values []T) uint64 {
+	size := uint64(2)
+	for index, value := range values {
+		size += jsonStringSizeBound(string(value))
+		if index > 0 {
+			size++
+		}
+	}
+	return size
+}
+
+func appendOptionalStringField(fields []uint64, name, value string) []uint64 {
+	if value == "" {
+		return fields
+	}
+	return append(fields, jsonFieldSize(name, jsonStringSizeBound(value)))
+}
+
+func scopeJSONSizeBound(scope Scope) uint64 {
+	fields := []uint64{jsonFieldSize("kind", jsonStringSizeBound(string(scope.Kind)))}
+	fields = appendOptionalStringField(fields, "project_id", string(scope.ProjectID))
+	fields = appendOptionalStringField(fields, "mission_id", string(scope.MissionID))
+	fields = appendOptionalStringField(fields, "repository_id", string(scope.RepositoryID))
+	fields = appendOptionalStringField(fields, "work_revision_id", string(scope.WorkRevisionID))
+	fields = appendOptionalStringField(fields, "work_id", string(scope.WorkID))
+	return jsonObjectSize(fields)
+}
+
+func coordinateJSONSizeBound(coordinate AggregateCoordinate) uint64 {
+	return jsonObjectSize([]uint64{
+		jsonFieldSize("kind", jsonStringSizeBound(string(coordinate.Kind))),
+		jsonFieldSize("id", jsonStringSizeBound(string(coordinate.ID))),
+		jsonFieldSize("scope", scopeJSONSizeBound(coordinate.Scope)),
+	})
 }
 
 type checkedPlanSize struct{ value uint64 }
@@ -370,7 +760,7 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 				return err
 			}
 		}
-		return size.addTimes(uint64(len(state.canonicalResult)), 2)
+		return size.add(doubleBase64JSONSizeBound(uint64(len(state.canonicalResult))))
 	}
 	if input.OperationBinding != nil {
 		if err := size.add(4 * 1024); err != nil {
@@ -418,7 +808,10 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 		if len(event.Observations) == 0 {
 			observationSize = 2
 		}
-		if err := size.addTimes(payloadSize+observationSize, 2); err != nil {
+		if err := size.add(doubleBase64JSONSizeBound(payloadSize)); err != nil {
+			return 0, err
+		}
+		if err := size.add(doubleBase64JSONSizeBound(observationSize)); err != nil {
 			return 0, err
 		}
 	}
@@ -438,6 +831,12 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 		if err := size.addString(string(head.EventID)); err != nil {
 			return 0, err
 		}
+		if err := size.addString(string(head.CommittedRuntimeEpochID)); err != nil {
+			return 0, err
+		}
+		if err := size.add(base64JSONSizeBound(canonicalJSONSizeBound(head.AuthoritySummary))); err != nil {
+			return 0, err
+		}
 	}
 	for _, effect := range input.EffectIntents {
 		if err := size.add(512); err != nil {
@@ -446,12 +845,21 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 		if err := size.addString(string(effect.EffectID)); err != nil {
 			return 0, err
 		}
+		if err := size.add(base64JSONSizeBound(canonicalJSONSizeBound(effect.Canonical))); err != nil {
+			return 0, err
+		}
 	}
 	for _, guard := range input.EligibilityGuards {
 		if err := size.add(512); err != nil {
 			return 0, err
 		}
-		if err := size.addString(guard.GuardID); err != nil {
+		if err := size.addString(string(guard.MissionID)); err != nil {
+			return 0, err
+		}
+		if err := size.addString(string(guard.ShardID)); err != nil {
+			return 0, err
+		}
+		if err := size.add(base64JSONSizeBound(canonicalJSONSizeBound(guard.Canonical))); err != nil {
 			return 0, err
 		}
 	}
@@ -459,10 +867,16 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 		if err := size.add(512); err != nil {
 			return 0, err
 		}
-		if err := size.addString(checkpoint.CheckpointID); err != nil {
+		if err := size.addString(string(checkpoint.CheckpointID)); err != nil {
 			return 0, err
 		}
-		if err := size.addTimes(canonicalJSONSizeBound(checkpoint.Canonical), 2); err != nil {
+		if err := size.addString(string(checkpoint.SlotID)); err != nil {
+			return 0, err
+		}
+		if err := size.add(base64JSONSizeBound(canonicalJSONSizeBound(checkpoint.Canonical))); err != nil {
+			return 0, err
+		}
+		if err := size.add(base64JSONSizeBound(canonicalJSONSizeBound(checkpoint.SlotCanonical))); err != nil {
 			return 0, err
 		}
 	}
@@ -470,7 +884,8 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 		if err := size.add(1024); err != nil {
 			return 0, err
 		}
-		for _, value := range []string{string(condition.Target.Kind), string(condition.Target.Coordinate.Kind), string(condition.Target.Coordinate.ID), string(condition.Kind)} {
+		for _, value := range []string{string(condition.Target.Kind), string(condition.Target.Coordinate.Kind), string(condition.Target.Coordinate.ID),
+			string(condition.Target.MissionID), string(condition.Target.ShardID), string(condition.Target.CheckpointSlotID), string(condition.Kind)} {
 			if err := size.addString(value); err != nil {
 				return 0, err
 			}
@@ -480,6 +895,14 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 		}
 	}
 	return size.value, nil
+}
+
+func base64JSONSizeBound(value uint64) uint64 {
+	return 2 + 4*((value+2)/3)
+}
+
+func doubleBase64JSONSizeBound(value uint64) uint64 {
+	return base64JSONSizeBound(base64JSONSizeBound(value))
 }
 
 func jsonStringSizeBound(value string) uint64 {
@@ -598,35 +1021,45 @@ func equalIDs[T ~string](left, right []T) bool {
 	return true
 }
 
-func uniqueNamedDigests(guards []EligibilityGuardTransition, checkpoints []CheckpointRecord) error {
+func validatePersistenceMembers(guards []EligibilityGuardTransition, checkpoints []CheckpointRecord) error {
 	seen := make(map[string]bool, len(guards)+len(checkpoints))
 	for _, guard := range guards {
-		if validateIdentity("guard_id", guard.GuardID) != nil || guard.Digest.IsZero() || seen["guard:"+guard.GuardID] {
+		key := string(guard.MissionID) + "/" + string(guard.ShardID)
+		if validateIdentity("mission_id", string(guard.MissionID)) != nil || validateIdentity("eligibility_shard_id", string(guard.ShardID)) != nil ||
+			len(guard.Canonical) == 0 || seen["guard:"+key] {
 			return invalid(ErrorInvalidTransition, "eligibility_guards")
 		}
-		seen["guard:"+guard.GuardID] = true
+		seen["guard:"+key] = true
 	}
 	for _, checkpoint := range checkpoints {
-		if validateIdentity("checkpoint_id", checkpoint.CheckpointID) != nil || seen["checkpoint:"+checkpoint.CheckpointID] {
+		if validateIdentity("checkpoint_id", string(checkpoint.CheckpointID)) != nil || validateIdentity("checkpoint_slot_id", string(checkpoint.SlotID)) != nil ||
+			seen["checkpoint:"+string(checkpoint.CheckpointID)] || seen["slot:"+string(checkpoint.SlotID)] {
 			return invalid(ErrorInvalidTransition, "checkpoints")
 		}
-		if canonical, err := CanonicalObject(checkpoint.Canonical); err != nil || !bytes.Equal(canonical, checkpoint.Canonical) {
-			return invalid(ErrorInvalidCanonicalData, "checkpoint")
-		}
-		seen["checkpoint:"+checkpoint.CheckpointID] = true
+		seen["checkpoint:"+string(checkpoint.CheckpointID)] = true
+		seen["slot:"+string(checkpoint.SlotID)] = true
 	}
 	return nil
 }
 
 func conditionTargetKey(target ConditionTarget) string {
-	return string(target.Kind) + "/" + target.Coordinate.canonical()
+	switch target.Kind {
+	case ConditionTargetAggregateHead:
+		return string(target.Kind) + "/" + target.Coordinate.canonical()
+	case ConditionTargetEligibilityGuard:
+		return string(target.Kind) + "/" + string(target.MissionID) + "/" + string(target.ShardID)
+	case ConditionTargetCheckpointSlot:
+		return string(target.Kind) + "/" + string(target.CheckpointSlotID)
+	default:
+		return string(target.Kind)
+	}
 }
 
-func validateExactConditions(heads []HeadTransitionV2, conditions []ProviderCondition) error {
-	if len(conditions) != len(heads) {
+func validateExactConditions(heads []HeadTransitionV2, guards []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) error {
+	if len(conditions) != len(heads)+len(guards)+len(checkpoints) {
 		return invalid(ErrorInvalidTransition, "condition_membership")
 	}
-	expected := make(map[string]ProviderCondition, len(heads))
+	expected := make(map[string]ProviderCondition, len(heads)+len(guards)+len(checkpoints))
 	for _, head := range heads {
 		condition, err := ConditionForHeadTransitionV2(head)
 		if err != nil {
@@ -638,12 +1071,31 @@ func validateExactConditions(heads []HeadTransitionV2, conditions []ProviderCond
 		}
 		expected[key] = condition
 	}
+	for _, guard := range guards {
+		condition, err := ConditionForEligibilityGuardTransitionV2(guard)
+		if err != nil {
+			return err
+		}
+		key := conditionTargetKey(condition.Target)
+		if _, exists := expected[key]; exists {
+			return invalid(ErrorInvalidTransition, "condition_membership")
+		}
+		expected[key] = condition
+	}
+	for _, checkpoint := range checkpoints {
+		condition, err := ConditionForCheckpointRecordV2(checkpoint)
+		if err != nil {
+			return err
+		}
+		key := conditionTargetKey(condition.Target)
+		if _, exists := expected[key]; exists {
+			return invalid(ErrorInvalidTransition, "condition_membership")
+		}
+		expected[key] = condition
+	}
 	seen := make(map[string]bool, len(conditions))
 	for _, condition := range conditions {
-		if condition.Target.Kind != ConditionTargetAggregateHead {
-			return invalid(ErrorInvalidTransition, "condition_target")
-		}
-		if _, err := NewAggregateCoordinate(condition.Target.Coordinate.Kind, condition.Target.Coordinate.ID, condition.Target.Coordinate.Scope); err != nil {
+		if err := validateConditionTarget(condition.Target); err != nil {
 			return invalid(ErrorInvalidTransition, "condition_target")
 		}
 		key := conditionTargetKey(condition.Target)
@@ -652,6 +1104,30 @@ func validateExactConditions(heads []HeadTransitionV2, conditions []ProviderCond
 			return invalid(ErrorInvalidTransition, "condition_membership")
 		}
 		seen[key] = true
+	}
+	return nil
+}
+
+func validateConditionTarget(target ConditionTarget) error {
+	emptyCoordinate := target.Coordinate == (AggregateCoordinate{})
+	switch target.Kind {
+	case ConditionTargetAggregateHead:
+		if target.MissionID != "" || target.ShardID != "" || target.CheckpointSlotID != "" {
+			return invalid(ErrorInvalidTransition, "condition_target")
+		}
+		_, err := NewAggregateCoordinate(target.Coordinate.Kind, target.Coordinate.ID, target.Coordinate.Scope)
+		return err
+	case ConditionTargetEligibilityGuard:
+		if !emptyCoordinate || target.CheckpointSlotID != "" || validateIdentity("mission_id", string(target.MissionID)) != nil ||
+			validateIdentity("eligibility_shard_id", string(target.ShardID)) != nil {
+			return invalid(ErrorInvalidTransition, "condition_target")
+		}
+	case ConditionTargetCheckpointSlot:
+		if !emptyCoordinate || target.MissionID != "" || target.ShardID != "" || validateIdentity("checkpoint_slot_id", string(target.CheckpointSlotID)) != nil {
+			return invalid(ErrorInvalidTransition, "condition_target")
+		}
+	default:
+		return invalid(ErrorInvalidTransition, "condition_target")
 	}
 	return nil
 }
@@ -666,12 +1142,187 @@ func cloneEventDrafts(values []EventDraftV2) []EventDraftV2 {
 	return result
 }
 
-func cloneCheckpoints(values []CheckpointRecord) []CheckpointRecord {
-	result := append([]CheckpointRecord(nil), values...)
+func cloneHeadTransitions(values []HeadTransitionV2) []HeadTransitionV2 {
+	result := append([]HeadTransitionV2(nil), values...)
+	for index := range result {
+		result[index].AuthoritySummary = append([]byte(nil), result[index].AuthoritySummary...)
+	}
+	return result
+}
+
+func cloneEffectIntents(values []EffectIntentReference) []EffectIntentReference {
+	result := append([]EffectIntentReference(nil), values...)
 	for index := range result {
 		result[index].Canonical = append([]byte(nil), result[index].Canonical...)
 	}
 	return result
+}
+
+func cloneEligibilityGuards(values []EligibilityGuardTransition) []EligibilityGuardTransition {
+	result := append([]EligibilityGuardTransition(nil), values...)
+	for index := range result {
+		result[index].Canonical = append([]byte(nil), result[index].Canonical...)
+	}
+	return result
+}
+
+func cloneCheckpoints(values []CheckpointRecord) []CheckpointRecord {
+	result := append([]CheckpointRecord(nil), values...)
+	for index := range result {
+		result[index].Canonical = append([]byte(nil), result[index].Canonical...)
+		result[index].SlotCanonical = append([]byte(nil), result[index].SlotCanonical...)
+	}
+	return result
+}
+
+func requireCanonicalValue(field string, value []byte, maximum int) ([]byte, error) {
+	canonical, err := canonicalObjectBounded(value, maximum)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(canonical, value) {
+		return nil, invalid(ErrorInvalidCanonicalData, field)
+	}
+	return append([]byte(nil), canonical...), nil
+}
+
+func deriveSealedRecords(binding *OperationBindingV2, state OperationStateV2, events []EventEnvelopeV2, heads []HeadTransitionV2,
+	effects []EffectIntentReference, guards []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition,
+) ([]SealedRecordV2, error) {
+	conditionByTarget := make(map[string]ProviderCondition, len(conditions))
+	for _, condition := range conditions {
+		conditionByTarget[conditionTargetKey(condition.Target)] = condition
+	}
+	records := make([]SealedRecordV2, 0, boolInt(binding != nil)+len(events)+len(heads)+len(effects)+len(guards)+2*len(checkpoints))
+	absent := SealedRecordConditionV2{kind: ConditionAbsent}
+	appendRecord := func(role SealedRecordRole, target SealedRecordTargetV2, class SealedRecordValueClass, condition SealedRecordConditionV2, canonical []byte) {
+		records = append(records, SealedRecordV2{role: role, target: target, valueClass: class, condition: condition, canonical: append([]byte(nil), canonical...)})
+	}
+	if binding != nil {
+		canonical, err := EncodeOperationBindingV2(*binding)
+		if err != nil {
+			return nil, err
+		}
+		appendRecord(RecordOperationBinding, SealedRecordTargetV2{operationID: binding.operationID}, RecordValueOrdinary, absent, canonical)
+	}
+	for _, event := range events {
+		canonical, err := EncodeEventEnvelopeV2(event)
+		if err != nil {
+			return nil, err
+		}
+		appendRecord(RecordJournalEvent, SealedRecordTargetV2{coordinate: event.input.Coordinate, logicalVersion: event.input.AggregateLogicalVersion}, RecordValueOrdinary, absent, canonical)
+	}
+	eventByCoordinate := make(map[string]EventEnvelopeV2, len(events))
+	for _, event := range events {
+		eventByCoordinate[event.input.Coordinate.canonical()] = event
+	}
+	stateBytes, err := EncodeOperationStateV2(state)
+	if err != nil {
+		return nil, err
+	}
+	for _, transition := range heads {
+		providerCondition, ok := conditionByTarget[conditionTargetKey(ConditionTarget{Kind: ConditionTargetAggregateHead, Coordinate: transition.Coordinate})]
+		if !ok {
+			return nil, invalid(ErrorInvalidTransition, "sealed_record_condition")
+		}
+		condition := SealedRecordConditionV2{kind: providerCondition.Kind, observedRevision: providerCondition.ObservedRevision}
+		if transition.Coordinate.Kind == AggregateKind("operation") {
+			appendRecord(RecordOperationHead, SealedRecordTargetV2{operationID: state.operationID}, RecordValueOrdinary, condition, stateBytes)
+			continue
+		}
+		event := eventByCoordinate[transition.Coordinate.canonical()]
+		head, err := NewAggregateHeadV2(AggregateHeadInput{
+			Coordinate: transition.Coordinate, LogicalVersion: transition.NextLogicalVersion, LastEventID: transition.EventID,
+			LastPublicationID: state.lastPublicationID, CommittedRuntimeEpochID: transition.CommittedRuntimeEpochID,
+			CanonicalStateDigest: transition.CanonicalStateDigest, AuthoritySummary: transition.AuthoritySummary, Tombstone: transition.Tombstone,
+		})
+		if err != nil || event.input.EventID != transition.EventID || event.input.CommittedRuntimeEpochID != transition.CommittedRuntimeEpochID {
+			return nil, invalid(ErrorInvalidTransition, "aggregate_head_projection")
+		}
+		canonical, err := EncodeAggregateHeadV2(head)
+		if err != nil {
+			return nil, err
+		}
+		appendRecord(RecordAggregateHead, SealedRecordTargetV2{coordinate: transition.Coordinate}, RecordValueOrdinary, condition, canonical)
+	}
+	for _, effect := range effects {
+		appendRecord(RecordEffectIntent, SealedRecordTargetV2{effectID: effect.EffectID}, RecordValueOrdinary, absent, effect.Canonical)
+	}
+	for _, guard := range guards {
+		providerCondition, ok := conditionByTarget[conditionTargetKey(ConditionTarget{Kind: ConditionTargetEligibilityGuard, MissionID: guard.MissionID, ShardID: guard.ShardID})]
+		if !ok {
+			return nil, invalid(ErrorInvalidTransition, "sealed_record_condition")
+		}
+		condition := SealedRecordConditionV2{kind: providerCondition.Kind, observedRevision: providerCondition.ObservedRevision}
+		appendRecord(RecordEligibilityGuard, SealedRecordTargetV2{missionID: guard.MissionID, shardID: guard.ShardID}, RecordValueOrdinary, condition, guard.Canonical)
+	}
+	for _, checkpoint := range checkpoints {
+		appendRecord(RecordCheckpointRecord, SealedRecordTargetV2{checkpointID: checkpoint.CheckpointID}, RecordValueCheckpoint, absent, checkpoint.Canonical)
+		providerCondition, ok := conditionByTarget[conditionTargetKey(ConditionTarget{Kind: ConditionTargetCheckpointSlot, CheckpointSlotID: checkpoint.SlotID})]
+		if !ok {
+			return nil, invalid(ErrorInvalidTransition, "sealed_record_condition")
+		}
+		condition := SealedRecordConditionV2{kind: providerCondition.Kind, observedRevision: providerCondition.ObservedRevision}
+		appendRecord(RecordCheckpointSlot, SealedRecordTargetV2{checkpointSlotID: checkpoint.SlotID}, RecordValueOrdinary, condition, checkpoint.SlotCanonical)
+	}
+	sort.Slice(records, func(i, j int) bool { return sealedRecordOrderKey(records[i]) < sealedRecordOrderKey(records[j]) })
+	return records, nil
+}
+
+// validateSealedRecordBudget is the exact value-side closure check. Targets
+// retain the conservative 1 KiB charge because canonical provider keys belong
+// to WP03; values and membership are exact because projection is now sealed.
+func validateSealedRecordBudget(records []SealedRecordV2) (uint64, error) {
+	if len(records) > MaxMembers {
+		return 0, invalid(ErrorBudgetExceeded, "sealed_record_projection")
+	}
+	budget := productRawBudget{}
+	for _, record := range records {
+		if len(record.canonical) == 0 {
+			return 0, invalid(ErrorInvalidCanonicalData, "sealed_record_value")
+		}
+		if err := budget.addRecord(uint64(len(record.canonical)), record.valueClass); err != nil {
+			return 0, err
+		}
+	}
+	return budget.value, nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func sealedRecordOrderKey(record SealedRecordV2) string {
+	rank := sealedRecordRoleRank(record.role)
+	target := record.target
+	return rank + "/" + string(target.operationID) + "/" + target.coordinate.canonical() + "/" + strconv.FormatUint(uint64(target.logicalVersion), 10) + "/" +
+		string(target.effectID) + "/" + string(target.missionID) + "/" + string(target.shardID) + "/" + string(target.checkpointID) + "/" + string(target.checkpointSlotID)
+}
+
+func sealedRecordRoleRank(role SealedRecordRole) string {
+	switch role {
+	case RecordOperationBinding:
+		return "0"
+	case RecordJournalEvent:
+		return "1"
+	case RecordOperationHead:
+		return "2"
+	case RecordAggregateHead:
+		return "3"
+	case RecordEffectIntent:
+		return "4"
+	case RecordEligibilityGuard:
+		return "5"
+	case RecordCheckpointRecord:
+		return "6"
+	case RecordCheckpointSlot:
+		return "7"
+	default:
+		panic("unsealed record role")
+	}
 }
 
 func cloneBinding(value *OperationBindingV2) *OperationBindingV2 {
@@ -772,19 +1423,26 @@ func (p SealedCommitPlanV2) Events() []EventEnvelopeV2 {
 	return append([]EventEnvelopeV2(nil), p.events...)
 }
 func (p SealedCommitPlanV2) Heads() []HeadTransitionV2 {
-	return append([]HeadTransitionV2(nil), p.heads...)
+	return cloneHeadTransitions(p.heads)
 }
 func (p SealedCommitPlanV2) Conditions() []ProviderCondition {
 	return append([]ProviderCondition(nil), p.conditions...)
 }
 func (p SealedCommitPlanV2) BindingCreate() *OperationBindingV2 { return cloneBinding(p.binding) }
 func (p SealedCommitPlanV2) EffectIntents() []EffectIntentReference {
-	return append([]EffectIntentReference(nil), p.effects...)
+	return cloneEffectIntents(p.effects)
 }
 func (p SealedCommitPlanV2) EligibilityGuards() []EligibilityGuardTransition {
-	return append([]EligibilityGuardTransition(nil), p.eligibility...)
+	return cloneEligibilityGuards(p.eligibility)
 }
 func (p SealedCommitPlanV2) Checkpoints() []CheckpointRecord { return cloneCheckpoints(p.checkpoints) }
+func (p SealedCommitPlanV2) Records() []SealedRecordV2 {
+	result := append([]SealedRecordV2(nil), p.records...)
+	for index := range result {
+		result[index].canonical = append([]byte(nil), result[index].canonical...)
+	}
+	return result
+}
 
 func DecodePublicationID(value string) (PublicationID, error) {
 	if len(value) != 64 {

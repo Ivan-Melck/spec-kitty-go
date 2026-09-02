@@ -20,6 +20,10 @@ func TestIdentityScopeCodecAndKeyBudgets(t *testing.T) {
 		func(v string) error { _, err := NewOperationID(v); return err },
 		func(v string) error { _, err := NewRuntimeEpochID(v); return err },
 		func(v string) error { _, err := NewEventID(v); return err },
+		func(v string) error { _, err := NewEffectID(v); return err },
+		func(v string) error { _, err := NewEligibilityShardID(v); return err },
+		func(v string) error { _, err := NewCheckpointID(v); return err },
+		func(v string) error { _, err := NewCheckpointSlotID(v); return err },
 		func(v string) error { _, err := NewAggregateKind(v); return err },
 		func(v string) error { _, err := NewAggregateID(v); return err },
 	}
@@ -331,14 +335,32 @@ func TestCommitPlanPublicationSealMembershipAndImmutability(t *testing.T) {
 	if err != nil || first.PublicationID() != second.PublicationID() || first.Digest() != second.Digest() || !bytes.Equal(first.CanonicalBytes(), second.CanonicalBytes()) {
 		t.Fatalf("plan order changed identity: err=%v", err)
 	}
+	firstRecords, secondRecords := first.Records(), second.Records()
+	if len(firstRecords) != len(secondRecords) {
+		t.Fatal("plan order changed projected membership")
+	}
+	for index := range firstRecords {
+		left, right := firstRecords[index], secondRecords[index]
+		if left.Role() != right.Role() || left.Target() != right.Target() || left.ValueClass() != right.ValueClass() ||
+			left.Condition() != right.Condition() || !bytes.Equal(left.CanonicalValue(), right.CanonicalValue()) {
+			t.Fatalf("plan order changed projected record at %d", index)
+		}
+		if index > 0 && sealedRecordOrderKey(firstRecords[index-1]) >= sealedRecordOrderKey(left) {
+			t.Fatalf("projected membership is not canonically ordered at %d", index)
+		}
+	}
 	before := first.CanonicalBytes()
 	input.Events[0].Payload[0] = 'x'
 	input.Events[0].Observations[0] = 'x'
 	input.Events[0].GovernanceRevisions[0] = "changed"
 	input.Heads[0].EventID = "changed"
+	input.Heads[0].AuthoritySummary[0] = 'x'
 	input.EffectIntents[0].EffectID = "changed"
-	input.EligibilityGuards[0].GuardID = "changed"
+	input.EffectIntents[0].Canonical[0] = 'x'
+	input.EligibilityGuards[0].ShardID = "changed"
+	input.EligibilityGuards[0].Canonical[0] = 'x'
 	input.Checkpoints[0].Canonical[0] = 'x'
+	input.Checkpoints[0].SlotCanonical[0] = 'x'
 	input.Conditions[0].Target.Coordinate.ID = "changed"
 	if !bytes.Equal(before, first.CanonicalBytes()) {
 		t.Fatal("sealed plan aliases caller input")
@@ -365,6 +387,207 @@ func TestCommitPlanPublicationSealMembershipAndImmutability(t *testing.T) {
 		if err != nil || decoded.CanonicalDigest() != event.CanonicalDigest() {
 			t.Fatalf("event roundtrip err=%v", err)
 		}
+	}
+}
+
+func TestSealedRecordProjectionIsPersistenceCompleteAndImmutable(t *testing.T) {
+	sealed, err := SealCommitPlanV2(fixturePlanInput(t), DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := sealed.Records()
+	conservative, err := conservativeProductBatchSize(fixturePlanInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact, err := validateSealedRecordBudget(records)
+	if err != nil || conservative < exact {
+		t.Fatalf("preflight bound=%d exact=%d err=%v", conservative, exact, err)
+	}
+	roles := make(map[SealedRecordRole]int)
+	for _, record := range records {
+		roles[record.Role()]++
+		if len(record.CanonicalValue()) == 0 {
+			t.Fatalf("empty projected value for role %q", record.Role())
+		}
+		condition := record.Condition()
+		if condition.Kind() != ConditionAbsent && (condition.Kind() != ConditionRecordRevision || condition.ObservedRevision() == 0) {
+			t.Fatalf("invalid projected condition for role %q: %+v", record.Role(), condition)
+		}
+	}
+	wantRoles := map[SealedRecordRole]int{
+		RecordOperationBinding: 1, RecordJournalEvent: 2, RecordOperationHead: 1, RecordAggregateHead: 1,
+		RecordEffectIntent: 1, RecordEligibilityGuard: 1, RecordCheckpointRecord: 1, RecordCheckpointSlot: 1,
+	}
+	if len(records) != 9 || fmt.Sprint(roles) != fmt.Sprint(wantRoles) {
+		t.Fatalf("projected membership=%v roles=%v", len(records), roles)
+	}
+
+	var operationHead, aggregateHead, effect, eligibility, checkpointRecord, checkpointSlot SealedRecordV2
+	for _, record := range records {
+		switch record.Role() {
+		case RecordOperationHead:
+			operationHead = record
+		case RecordAggregateHead:
+			aggregateHead = record
+		case RecordEffectIntent:
+			effect = record
+		case RecordEligibilityGuard:
+			eligibility = record
+		case RecordCheckpointRecord:
+			checkpointRecord = record
+		case RecordCheckpointSlot:
+			checkpointSlot = record
+		}
+	}
+	state, err := DecodeOperationStateV2(operationHead.CanonicalValue())
+	if err != nil || state.LastPublicationID() != sealed.PublicationID() || operationHead.Target().OperationID() != "operation-01" {
+		t.Fatalf("operation head is not canonical OperationState: state=%+v err=%v", state, err)
+	}
+	head, err := DecodeAggregateHeadV2(aggregateHead.CanonicalValue())
+	if err != nil || head.input.LastPublicationID != sealed.PublicationID() || head.input.CommittedRuntimeEpochID != "epoch-17" {
+		t.Fatalf("aggregate head is not publication-complete: head=%+v err=%v", head, err)
+	}
+	if effect.Target().EffectID() != "effect-01" || string(effect.CanonicalValue()) != `{"intent":"one"}` || effect.Condition().Kind() != ConditionAbsent {
+		t.Fatalf("effect projection incomplete: %+v", effect)
+	}
+	if eligibility.Target().MissionID() != "mission" || eligibility.Target().ShardID() != "guard-01" || string(eligibility.CanonicalValue()) != `{"eligible":true}` {
+		t.Fatalf("eligibility projection incomplete: %+v", eligibility)
+	}
+	if checkpointRecord.Target().CheckpointID() != "checkpoint-01" || checkpointRecord.ValueClass() != RecordValueCheckpoint || checkpointRecord.Condition().Kind() != ConditionAbsent {
+		t.Fatalf("checkpoint record projection incomplete: %+v", checkpointRecord)
+	}
+	if checkpointSlot.Target().CheckpointSlotID() != "slot-01" || string(checkpointSlot.CanonicalValue()) != `{"checkpoint_id":"checkpoint-01"}` {
+		t.Fatalf("checkpoint slot projection incomplete: %+v", checkpointSlot)
+	}
+
+	firstValue := records[0].CanonicalValue()
+	firstValue[0] = 'x'
+	records[0] = SealedRecordV2{}
+	again := sealed.Records()
+	if len(again) != 9 || again[0].CanonicalValue()[0] == 'x' {
+		t.Fatal("sealed record projection aliases returned buffers")
+	}
+}
+
+func TestPersistenceCompleteMemberMutantsAndDigestBinding(t *testing.T) {
+	registry := DefaultEventRegistryV2()
+	for name, mutate := range map[string]func(*CommitPlanInput){
+		"head_missing_epoch":            func(v *CommitPlanInput) { v.Heads[1].CommittedRuntimeEpochID = "" },
+		"head_wrong_epoch":              func(v *CommitPlanInput) { v.Heads[1].CommittedRuntimeEpochID = "epoch-other" },
+		"head_noncanonical_summary":     func(v *CommitPlanInput) { v.Heads[1].AuthoritySummary = []byte(`{ "status":"planned"}`) },
+		"effect_missing_value":          func(v *CommitPlanInput) { v.EffectIntents[0].Canonical = nil },
+		"effect_noncanonical_value":     func(v *CommitPlanInput) { v.EffectIntents[0].Canonical = []byte(`{ "intent":"one"}`) },
+		"eligibility_missing_mission":   func(v *CommitPlanInput) { v.EligibilityGuards[0].MissionID = "" },
+		"eligibility_missing_shard":     func(v *CommitPlanInput) { v.EligibilityGuards[0].ShardID = "" },
+		"eligibility_missing_value":     func(v *CommitPlanInput) { v.EligibilityGuards[0].Canonical = nil },
+		"checkpoint_missing_id":         func(v *CommitPlanInput) { v.Checkpoints[0].CheckpointID = "" },
+		"checkpoint_missing_slot":       func(v *CommitPlanInput) { v.Checkpoints[0].SlotID = "" },
+		"checkpoint_missing_record":     func(v *CommitPlanInput) { v.Checkpoints[0].Canonical = nil },
+		"checkpoint_missing_slot_value": func(v *CommitPlanInput) { v.Checkpoints[0].SlotCanonical = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := fixturePlanInput(t)
+			mutate(&candidate)
+			if _, err := SealCommitPlanV2(candidate, registry); err == nil {
+				t.Fatal("persistence-incomplete member accepted")
+			}
+		})
+	}
+
+	duplicateEligibility := fixturePlanInput(t)
+	duplicateEligibility.EligibilityGuards = append(duplicateEligibility.EligibilityGuards, duplicateEligibility.EligibilityGuards[0])
+	duplicateEligibility.Conditions = persistenceConditions(t, duplicateEligibility.Heads, duplicateEligibility.EligibilityGuards, duplicateEligibility.Checkpoints)
+	if _, err := SealCommitPlanV2(duplicateEligibility, registry); !IsKind(err, ErrorInvalidTransition) {
+		t.Fatalf("duplicate eligibility target accepted: %v", err)
+	}
+	duplicateSlot := fixturePlanInput(t)
+	secondCheckpoint := duplicateSlot.Checkpoints[0]
+	secondCheckpoint.CheckpointID = "checkpoint-02"
+	duplicateSlot.Checkpoints = append(duplicateSlot.Checkpoints, secondCheckpoint)
+	duplicateSlot.Conditions = persistenceConditions(t, duplicateSlot.Heads, duplicateSlot.EligibilityGuards, duplicateSlot.Checkpoints)
+	if _, err := SealCommitPlanV2(duplicateSlot, registry); !IsKind(err, ErrorInvalidTransition) {
+		t.Fatalf("duplicate checkpoint slot accepted: %v", err)
+	}
+
+	baseline, err := SealCommitPlanV2(fixturePlanInput(t), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*CommitPlanInput){
+		"head_epoch": func(v *CommitPlanInput) {
+			v.Events[1].CommittedRuntimeEpochID = "epoch-18"
+			v.Heads[1].CommittedRuntimeEpochID = "epoch-18"
+		},
+		"head_summary": func(v *CommitPlanInput) { v.Heads[1].AuthoritySummary = []byte(`{"status":"active"}`) },
+		"effect_value": func(v *CommitPlanInput) { v.EffectIntents[0].Canonical = []byte(`{"intent":"two"}`) },
+		"eligibility_target": func(v *CommitPlanInput) {
+			v.EligibilityGuards[0].ShardID = "guard-02"
+			v.Conditions = persistenceConditions(t, v.Heads, v.EligibilityGuards, v.Checkpoints)
+		},
+		"eligibility_value":        func(v *CommitPlanInput) { v.EligibilityGuards[0].Canonical = []byte(`{"eligible":false}`) },
+		"checkpoint_record_target": func(v *CommitPlanInput) { v.Checkpoints[0].CheckpointID = "checkpoint-02" },
+		"checkpoint_record_value":  func(v *CommitPlanInput) { v.Checkpoints[0].Canonical = []byte(`{"head":2}`) },
+		"checkpoint_slot_target": func(v *CommitPlanInput) {
+			v.Checkpoints[0].SlotID = "slot-02"
+			v.Conditions = persistenceConditions(t, v.Heads, v.EligibilityGuards, v.Checkpoints)
+		},
+		"checkpoint_slot_value": func(v *CommitPlanInput) { v.Checkpoints[0].SlotCanonical = []byte(`{"checkpoint_id":"checkpoint-02"}`) },
+	} {
+		t.Run("digest_"+name, func(t *testing.T) {
+			candidate := fixturePlanInput(t)
+			mutate(&candidate)
+			sealed, err := SealCommitPlanV2(candidate, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sealed.Digest() == baseline.Digest() || sealed.PublicationID() == baseline.PublicationID() {
+				t.Fatal("persistence member was not bound into publication identity")
+			}
+		})
+	}
+}
+
+func TestMutableProjectedRecordConditionBijection(t *testing.T) {
+	valid := fixturePlanInput(t)
+	valid.EligibilityGuards[0].ExpectedRecordRevision = 17
+	valid.Checkpoints[0].ExpectedSlotRecordRevision = 23
+	valid.Conditions = persistenceConditions(t, valid.Heads, valid.EligibilityGuards, valid.Checkpoints)
+	sealed, err := SealCommitPlanV2(valid, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range sealed.Records() {
+		switch record.Role() {
+		case RecordEligibilityGuard:
+			if record.Condition().Kind() != ConditionRecordRevision || record.Condition().ObservedRevision() != 17 {
+				t.Fatalf("eligibility condition lost: %+v", record.Condition())
+			}
+		case RecordCheckpointSlot:
+			if record.Condition().Kind() != ConditionRecordRevision || record.Condition().ObservedRevision() != 23 {
+				t.Fatalf("checkpoint slot condition lost: %+v", record.Condition())
+			}
+		}
+	}
+	for name, mutate := range map[string]func(*CommitPlanInput){
+		"omission":             func(v *CommitPlanInput) { v.Conditions = v.Conditions[:len(v.Conditions)-1] },
+		"substitution":         func(v *CommitPlanInput) { v.Conditions[2].Target.ShardID = "guard-other" },
+		"duplicate":            func(v *CommitPlanInput) { v.Conditions[3] = v.Conditions[2] },
+		"extra":                func(v *CommitPlanInput) { v.Conditions = append(v.Conditions, v.Conditions[2]) },
+		"eligibility_revision": func(v *CommitPlanInput) { v.Conditions[2].ObservedRevision++ },
+		"checkpoint_revision":  func(v *CommitPlanInput) { v.Conditions[3].ObservedRevision++ },
+		"eligibility_wrong_kind": func(v *CommitPlanInput) {
+			v.Conditions[2].Kind, v.Conditions[2].ObservedRevision = ConditionAbsent, 0
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := valid
+			candidate.Conditions = append([]ProviderCondition(nil), valid.Conditions...)
+			mutate(&candidate)
+			if _, err := SealCommitPlanV2(candidate, DefaultEventRegistryV2()); !IsKind(err, ErrorInvalidTransition) {
+				t.Fatalf("condition bijection mutant accepted: %v", err)
+			}
+		})
 	}
 }
 
@@ -442,11 +665,12 @@ func TestCommitPlanExactFirstAndCumulativeLaterMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	coordinate, _ := NewAggregateCoordinate("operation", "operation-01", Scope{Kind: ScopeHost})
-	laterHead := HeadTransitionV2{Coordinate: coordinate, ExpectedLogicalVersion: 1, NextLogicalVersion: 2, EventID: "event-a", ExpectedRecordRevision: 7, CanonicalStateDigest: digest("state", []byte("next"))}
+	laterHead := HeadTransitionV2{Coordinate: coordinate, ExpectedLogicalVersion: 1, NextLogicalVersion: 2, EventID: "event-a", ExpectedRecordRevision: 7,
+		CommittedRuntimeEpochID: "epoch-18", CanonicalStateDigest: digest("state", []byte("next")), AuthoritySummary: []byte(`{"status":"in_progress"}`)}
 	later := CommitPlanInput{PriorOperationState: &prior, OperationState: next,
 		Events:        []EventDraftV2{{EventID: "event-a", EventType: "operation.progressed", Family: "operation", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: coordinate, AggregateLogicalVersion: 2, CommittedRuntimeEpochID: "epoch-18", Payload: []byte(`{"status":"in_progress"}`)}},
 		Heads:         []HeadTransitionV2{laterHead},
-		EffectIntents: []EffectIntentReference{{EffectID: "effect-a", Digest: digest("effect", []byte("a"))}},
+		EffectIntents: []EffectIntentReference{{EffectID: "effect-a", Digest: digest("effect", []byte("a")), Canonical: []byte(`{"intent":"a"}`)}},
 		Conditions:    []ProviderCondition{mustHeadCondition(t, laterHead)},
 	}
 	if _, err := SealCommitPlanV2(later, registry); err != nil {
@@ -560,7 +784,7 @@ func TestProviderConditionsExactlyMatchHeadMutations(t *testing.T) {
 	updated.Heads[1].ExpectedLogicalVersion = 1
 	updated.Heads[1].NextLogicalVersion = 2
 	updated.Heads[1].ExpectedRecordRevision = 7
-	updated.Conditions = headConditions(t, updated.Heads)
+	updated.Conditions = persistenceConditions(t, updated.Heads, updated.EligibilityGuards, updated.Checkpoints)
 	if _, err := SealCommitPlanV2(updated, registry); err != nil {
 		t.Fatalf("valid observed-revision update rejected: %v", err)
 	}
@@ -727,7 +951,7 @@ func TestCollectionBudgetBoundaries(t *testing.T) {
 	effectIDs := make([]EffectID, MaxEffectsPerPublication)
 	for index := range maximumEffects.EffectIntents {
 		id := EffectID(fmt.Sprintf("effect-%03d", index))
-		maximumEffects.EffectIntents[index] = EffectIntentReference{id, digest("effect", []byte(id))}
+		maximumEffects.EffectIntents[index] = EffectIntentReference{EffectID: id, Digest: digest("effect", []byte(id)), Canonical: []byte(fmt.Sprintf(`{"intent":"%s"}`, id))}
 		effectIDs[index] = id
 	}
 	maximumEffects.OperationState = mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 1, Status: StatusAccepted,
@@ -737,18 +961,31 @@ func TestCollectionBudgetBoundaries(t *testing.T) {
 	}
 
 	maximumMetadata := fixturePlanInput(t)
-	maximumMetadata.EligibilityGuards = make([]EligibilityGuardTransition, MaxMembers)
+	fixedProjectedRecords := 1 + len(maximumMetadata.Events) + len(maximumMetadata.Heads) + len(maximumMetadata.EffectIntents) + 2*MaxCheckpointsPerPlan
+	maximumMetadata.EligibilityGuards = make([]EligibilityGuardTransition, MaxMembers-fixedProjectedRecords)
 	for index := range maximumMetadata.EligibilityGuards {
 		id := fmt.Sprintf("guard-%03d", index)
-		maximumMetadata.EligibilityGuards[index] = EligibilityGuardTransition{id, digest("guard", []byte(id))}
+		maximumMetadata.EligibilityGuards[index] = EligibilityGuardTransition{MissionID: "mission", ShardID: EligibilityShardID(id), Canonical: []byte(fmt.Sprintf(`{"guard":"%s"}`, id))}
 	}
 	maximumMetadata.Checkpoints = make([]CheckpointRecord, MaxCheckpointsPerPlan)
 	for index := range maximumMetadata.Checkpoints {
-		maximumMetadata.Checkpoints[index] = CheckpointRecord{fmt.Sprintf("checkpoint-%03d", index), []byte(fmt.Sprintf(`{"index":%d}`, index))}
+		maximumMetadata.Checkpoints[index] = CheckpointRecord{CheckpointID: CheckpointID(fmt.Sprintf("checkpoint-%03d", index)), Canonical: []byte(fmt.Sprintf(`{"index":%d}`, index)),
+			SlotID: CheckpointSlotID(fmt.Sprintf("slot-%03d", index)), SlotCanonical: []byte(fmt.Sprintf(`{"index":%d}`, index))}
 	}
-	maximumMetadata.Conditions = headConditions(t, maximumMetadata.Heads)
-	if _, err := SealCommitPlanV2(maximumMetadata, DefaultEventRegistryV2()); err != nil {
+	maximumMetadata.Conditions = persistenceConditions(t, maximumMetadata.Heads, maximumMetadata.EligibilityGuards, maximumMetadata.Checkpoints)
+	sealedMetadata, err := SealCommitPlanV2(maximumMetadata, DefaultEventRegistryV2())
+	if err != nil {
 		t.Fatalf("maximum metadata collections rejected: %v", err)
+	}
+	if len(sealedMetadata.Records()) != MaxMembers {
+		t.Fatalf("sealed projection exact budget=%d", len(sealedMetadata.Records()))
+	}
+	overProjection := maximumMetadata
+	overProjection.EligibilityGuards = append([]EligibilityGuardTransition(nil), maximumMetadata.EligibilityGuards...)
+	overProjection.EligibilityGuards = append(overProjection.EligibilityGuards, EligibilityGuardTransition{MissionID: "mission", ShardID: "guard-extra", Canonical: []byte(`{"guard":"extra"}`)})
+	overProjection.Conditions = persistenceConditions(t, overProjection.Heads, overProjection.EligibilityGuards, overProjection.Checkpoints)
+	if _, err := SealCommitPlanV2(overProjection, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("sealed projection maximum-plus-one reached a later seam: %v", err)
 	}
 }
 
@@ -782,13 +1019,12 @@ func TestNestedCollectionAndByteBudgetBoundaries(t *testing.T) {
 	for name, setBytes := range map[string]func(*CommitPlanInput, []byte){
 		"event_payload":      func(v *CommitPlanInput, payload []byte) { v.Events[0].Payload = payload },
 		"event_observations": func(v *CommitPlanInput, payload []byte) { v.Events[0].Observations = payload },
-		"checkpoint_payload": func(v *CommitPlanInput, payload []byte) { v.Checkpoints[0].Canonical = payload },
 	} {
 		t.Run(name, func(t *testing.T) {
-			maximum := fixturePlanInput(t)
-			setBytes(&maximum, canonicalObjectAt(MaxCanonicalPayloadBytes))
-			if _, err := SealCommitPlanV2(maximum, DefaultEventRegistryV2()); err != nil {
-				t.Fatalf("maximum nested bytes rejected: %v", err)
+			derivedOversize := fixturePlanInput(t)
+			setBytes(&derivedOversize, canonicalObjectAt(MaxCanonicalPayloadBytes))
+			if _, err := SealCommitPlanV2(derivedOversize, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
+				t.Fatalf("source-sized but derived-oversize event reached a later seam: %v", err)
 			}
 			over := fixturePlanInput(t)
 			setBytes(&over, canonicalObjectAt(MaxCanonicalPayloadBytes+1))
@@ -831,8 +1067,157 @@ func TestNestedCollectionAndByteBudgetBoundaries(t *testing.T) {
 	}
 }
 
+func TestCheckpointValueClassExactAndPlusOneBudget(t *testing.T) {
+	canonicalAt := func(size int) []byte {
+		return []byte(`{"x":"` + strings.Repeat("x", size-len(`{"x":""}`)) + `"}`)
+	}
+	exact := fixturePlanInput(t)
+	exact.Checkpoints[0].Canonical = canonicalAt(MaxCheckpointValueBytes)
+	if _, err := SealCommitPlanV2(exact, DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("exact checkpoint budget rejected: %v", err)
+	}
+	over := fixturePlanInput(t)
+	over.Checkpoints[0].Canonical = canonicalAt(MaxCheckpointValueBytes + 1)
+	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("checkpoint maximum-plus-one reached a later seam: %v", err)
+	}
+	ordinaryOver := fixturePlanInput(t)
+	ordinaryOver.Checkpoints[0].SlotCanonical = canonicalAt(MaxCanonicalPayloadBytes + 1)
+	if _, err := SealCommitPlanV2(ordinaryOver, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("ordinary slot maximum-plus-one reached a later seam: %v", err)
+	}
+}
+
+func TestSealedRecordFinalBudgetExactAndPlusOne(t *testing.T) {
+	canonicalAt := func(size int) []byte {
+		return []byte(`{"x":"` + strings.Repeat("x", size-len(`{"x":""}`)) + `"}`)
+	}
+	ordinary := []SealedRecordV2{{valueClass: RecordValueOrdinary, canonical: canonicalAt(MaxCanonicalPayloadBytes)}}
+	if _, err := validateSealedRecordBudget(ordinary); err != nil {
+		t.Fatalf("exact ordinary record rejected: %v", err)
+	}
+	ordinary[0].canonical = canonicalAt(MaxCanonicalPayloadBytes + 1)
+	if _, err := validateSealedRecordBudget(ordinary); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
+		t.Fatalf("ordinary record maximum-plus-one accepted: %v", err)
+	}
+	checkpoint := []SealedRecordV2{{valueClass: RecordValueCheckpoint, canonical: canonicalAt(MaxCheckpointValueBytes)}}
+	if _, err := validateSealedRecordBudget(checkpoint); err != nil {
+		t.Fatalf("exact checkpoint record rejected: %v", err)
+	}
+	checkpoint[0].canonical = canonicalAt(MaxCheckpointValueBytes + 1)
+	if _, err := validateSealedRecordBudget(checkpoint); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "checkpoint_record_value" {
+		t.Fatalf("checkpoint record maximum-plus-one accepted: %v", err)
+	}
+
+	const ordinaryRecords = 8
+	records := make([]SealedRecordV2, ordinaryRecords+1)
+	records[0] = SealedRecordV2{valueClass: RecordValueCheckpoint, canonical: canonicalAt(MaxCheckpointValueBytes)}
+	remaining := MaxProductRawBatchBytes - MaxCheckpointValueBytes - len(records)*MaxProductKeyBytes
+	for index := 1; index < len(records); index++ {
+		size := remaining / ordinaryRecords
+		if index <= remaining%ordinaryRecords {
+			size++
+		}
+		records[index] = SealedRecordV2{valueClass: RecordValueOrdinary, canonical: canonicalAt(size)}
+	}
+	if size, err := validateSealedRecordBudget(records); err != nil || size != MaxProductRawBatchBytes {
+		t.Fatalf("exact product raw batch rejected: size=%d err=%v", size, err)
+	}
+	last := len(records) - 1
+	records[last].canonical = canonicalAt(len(records[last].canonical) + 1)
+	if _, err := validateSealedRecordBudget(records); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "product_raw_batch_bytes" {
+		t.Fatalf("product raw batch maximum-plus-one accepted: %v", err)
+	}
+
+	const reproducedProjectionBytes = 9341911
+	reproduction := make([]SealedRecordV2, 22)
+	reproduction[0] = SealedRecordV2{valueClass: RecordValueCheckpoint, canonical: canonicalAt(MaxCheckpointValueBytes)}
+	reproductionValues := reproducedProjectionBytes - len(reproduction)*MaxProductKeyBytes - MaxCheckpointValueBytes
+	for index := 1; index < len(reproduction); index++ {
+		size := reproductionValues / (len(reproduction) - 1)
+		if index <= reproductionValues%(len(reproduction)-1) {
+			size++
+		}
+		reproduction[index] = SealedRecordV2{valueClass: RecordValueOrdinary, canonical: canonicalAt(size)}
+	}
+	if _, err := validateSealedRecordBudget(reproduction); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "product_raw_batch_bytes" {
+		t.Fatalf("9,341,911-byte projection reproduction escaped: %v", err)
+	}
+}
+
+func TestConservativeProductBatchBoundaryAndDerivedEventReproduction(t *testing.T) {
+	canonicalAt := func(size int) []byte {
+		return []byte(`{"x":"` + strings.Repeat("x", size-len(`{"x":""}`)) + `"}`)
+	}
+	oversizedEvent := fixturePlanInput(t)
+	oversizedEvent.Events[0].Payload = canonicalAt(MaxCanonicalPayloadBytes)
+	if _, err := conservativeProductBatchSize(oversizedEvent); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
+		t.Fatalf("derived ordinary-event overflow escaped preflight: %v", err)
+	}
+	if _, err := SealCommitPlanV2(oversizedEvent, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
+		t.Fatalf("derived ordinary-event overflow reached registry: %v", err)
+	}
+	prototype, err := SealCommitPlanV2(fixturePlanInput(t), DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventInput := prototype.events[0].input
+	eventInput.Payload = canonicalAt(MaxCanonicalPayloadBytes)
+	eventInput.Observations = prototype.events[0].Observations()
+	derived, err := NewEventEnvelopeV2(eventInput, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeEventEnvelopeV2(derived)
+	if err != nil || len(encoded) <= MaxCanonicalPayloadBytes {
+		t.Fatalf("350165-byte reproduction not established: size=%d err=%v", len(encoded), err)
+	}
+
+	exact := fixturePlanInput(t)
+	exact.Checkpoints = []CheckpointRecord{
+		{CheckpointID: "checkpoint-a", Canonical: []byte(`{}`), SlotID: "slot-a", SlotCanonical: []byte(`{}`)},
+		{CheckpointID: "checkpoint-b", Canonical: []byte(`{}`), SlotID: "slot-b", SlotCanonical: []byte(`{}`)},
+	}
+	exact.Conditions = persistenceConditions(t, exact.Heads, exact.EligibilityGuards, exact.Checkpoints)
+	base, err := conservativeProductBatchSize(exact)
+	if err != nil || base >= MaxProductRawBatchBytes {
+		t.Fatalf("invalid conservative-boundary base=%d err=%v", base, err)
+	}
+	increase := MaxProductRawBatchBytes - int(base)
+	firstIncrease := increase / 2
+	secondIncrease := increase - firstIncrease
+	exact.Checkpoints[0].Canonical = canonicalAt(len(exact.Checkpoints[0].Canonical) + firstIncrease)
+	exact.Checkpoints[1].Canonical = canonicalAt(len(exact.Checkpoints[1].Canonical) + secondIncrease)
+	if len(exact.Checkpoints[0].Canonical) > MaxCheckpointValueBytes || len(exact.Checkpoints[1].Canonical) > MaxCheckpointValueBytes {
+		t.Fatal("conservative boundary fixture exceeded checkpoint value class")
+	}
+	if size, err := conservativeProductBatchSize(exact); err != nil || size != MaxProductRawBatchBytes {
+		t.Fatalf("exact conservative product batch rejected: size=%d err=%v", size, err)
+	}
+	if _, err := SealCommitPlanV2(exact, DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("exact conservative product batch did not seal: %v", err)
+	}
+	over := exact
+	over.Checkpoints = cloneCheckpoints(exact.Checkpoints)
+	over.Checkpoints[1].Canonical = canonicalAt(len(over.Checkpoints[1].Canonical) + 1)
+	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "product_raw_batch_bytes" {
+		t.Fatalf("conservative product batch maximum-plus-one reached registry: %v", err)
+	}
+}
+
+func TestHeadCardinalityExactAndPlusOne(t *testing.T) {
+	exact := fixtureSizedPlan(t, MaxHeadsPerPublication, len(`{"x":""}`))
+	if _, err := SealCommitPlanV2(exact, DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("exact head cardinality rejected: %v", err)
+	}
+	over := fixtureSizedPlan(t, MaxHeadsPerPublication+1, len(`{"x":""}`))
+	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("head cardinality maximum-plus-one reached registry: %v", err)
+	}
+}
+
 func TestWholePlanProspectiveEncodingBudgetPrecedesLaterSeams(t *testing.T) {
-	const eventCount = 8
+	const eventCount = 32
 	low, high := len(`{"x":""}`), MaxCanonicalPayloadBytes
 	for low < high {
 		middle := low + (high-low+1)/2
@@ -851,16 +1236,21 @@ func TestWholePlanProspectiveEncodingBudgetPrecedesLaterSeams(t *testing.T) {
 	if err != nil || size > MaxCommitPlanBytes {
 		t.Fatalf("largest admitted prospective plan rejected: size=%d err=%v", size, err)
 	}
-	if _, err := SealCommitPlanV2(exact, DefaultEventRegistryV2()); err != nil {
-		t.Fatalf("largest admitted whole plan did not seal: size=%d payload=%d err=%v", size, low, err)
+	if _, err := SealCommitPlanV2(fixturePlanInput(t), DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("ordinary plan did not seal: %v", err)
+	}
+	if _, err := SealCommitPlanV2(exact, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("consumer budget did not precede the evidence ceiling seam: size=%d payload=%d err=%v", size, low, err)
 	}
 	over := fixtureSizedPlan(t, eventCount, low+1)
 	if _, err := prospectiveEncodedPlanSize(over); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "commit_plan_bytes" {
 		t.Fatalf("prospective maximum-plus-one accepted: payload=%d err=%v", low+1, err)
 	}
 	// An empty registry would fail immediately if budget validation moved after
-	// registry resolution. The budget refusal must win at the public seal seam.
-	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "commit_plan_bytes" {
+	// registry resolution. The stricter consumer-record refusal must win at the
+	// public seal seam; prospectiveEncodedPlanSize above independently proves
+	// the 12 MiB evidence-envelope boundary.
+	if _, err := SealCommitPlanV2(over, EventRegistryV2{}); !IsKind(err, ErrorBudgetExceeded) || err.(*Error).Field != "ordinary_record_value" {
 		t.Fatalf("maximum-plus-one reached a later seam: %v", err)
 	}
 }
@@ -1078,14 +1468,16 @@ func fixturePlanInput(t *testing.T) CommitPlanInput {
 		{EventID: "event-mission", EventType: "mission.changed", Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: missionCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-17", Payload: []byte(`{"status":"planned"}`)},
 	}
 	heads := []HeadTransitionV2{
-		{Coordinate: operationCoordinate, ExpectedLogicalVersion: 0, NextLogicalVersion: 1, EventID: "event-operation", CanonicalStateDigest: digest("state", []byte("operation"))},
-		{Coordinate: missionCoordinate, ExpectedLogicalVersion: 0, NextLogicalVersion: 1, EventID: "event-mission", CanonicalStateDigest: digest("state", []byte("mission"))},
+		{Coordinate: operationCoordinate, ExpectedLogicalVersion: 0, NextLogicalVersion: 1, EventID: "event-operation", CommittedRuntimeEpochID: "epoch-17", CanonicalStateDigest: digest("state", []byte("operation")), AuthoritySummary: []byte(`{"status":"accepted"}`)},
+		{Coordinate: missionCoordinate, ExpectedLogicalVersion: 0, NextLogicalVersion: 1, EventID: "event-mission", CommittedRuntimeEpochID: "epoch-17", CanonicalStateDigest: digest("state", []byte("mission")), AuthoritySummary: []byte(`{"status":"planned"}`)},
 	}
-	return CommitPlanInput{OperationBinding: &binding, OperationState: state, Events: events, Heads: heads,
-		EffectIntents:     []EffectIntentReference{{EffectID: "effect-01", Digest: digest("effect", []byte("one"))}},
-		EligibilityGuards: []EligibilityGuardTransition{{GuardID: "guard-01", Digest: digest("guard", []byte("one"))}},
-		Checkpoints:       []CheckpointRecord{{CheckpointID: "checkpoint-01", Canonical: []byte(`{"head":1}`)}},
-		Conditions:        headConditions(t, heads)}
+	input := CommitPlanInput{OperationBinding: &binding, OperationState: state, Events: events, Heads: heads,
+		EffectIntents:     []EffectIntentReference{{EffectID: "effect-01", Digest: digest("effect", []byte("one")), Canonical: []byte(`{"intent":"one"}`)}},
+		EligibilityGuards: []EligibilityGuardTransition{{MissionID: "mission", ShardID: "guard-01", Canonical: []byte(`{"eligible":true}`)}},
+		Checkpoints:       []CheckpointRecord{{CheckpointID: "checkpoint-01", Canonical: []byte(`{"head":1}`), SlotID: "slot-01", SlotCanonical: []byte(`{"checkpoint_id":"checkpoint-01"}`)}},
+	}
+	input.Conditions = persistenceConditions(t, input.Heads, input.EligibilityGuards, input.Checkpoints)
+	return input
 }
 
 func fixtureSizedPlan(t *testing.T, eventCount, payloadSize int) CommitPlanInput {
@@ -1107,7 +1499,8 @@ func fixtureSizedPlan(t *testing.T, eventCount, payloadSize int) CommitPlanInput
 		}
 		events[index] = EventDraftV2{EventID: eventID, EventType: eventType, Family: family, EventSchemaVersion: 1, ReducerVersion: 1,
 			Coordinate: coordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-17", Observations: canonical, Payload: canonical}
-		heads[index] = HeadTransitionV2{Coordinate: coordinate, NextLogicalVersion: 1, EventID: eventID, CanonicalStateDigest: digest("state", []byte(eventID))}
+		heads[index] = HeadTransitionV2{Coordinate: coordinate, NextLogicalVersion: 1, EventID: eventID, CommittedRuntimeEpochID: "epoch-17",
+			CanonicalStateDigest: digest("state", []byte(eventID)), AuthoritySummary: []byte(`{"state":"current"}`)}
 		eventIDs[index] = eventID
 	}
 	state := mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 1, Status: StatusAccepted, EventIDs: eventIDs})
@@ -1128,6 +1521,26 @@ func headConditions(t *testing.T, heads []HeadTransitionV2) []ProviderCondition 
 	conditions := make([]ProviderCondition, len(heads))
 	for index, head := range heads {
 		conditions[index] = mustHeadCondition(t, head)
+	}
+	return conditions
+}
+
+func persistenceConditions(t *testing.T, heads []HeadTransitionV2, guards []EligibilityGuardTransition, checkpoints []CheckpointRecord) []ProviderCondition {
+	t.Helper()
+	conditions := headConditions(t, heads)
+	for _, guard := range guards {
+		condition, err := ConditionForEligibilityGuardTransitionV2(guard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conditions = append(conditions, condition)
+	}
+	for _, checkpoint := range checkpoints {
+		condition, err := ConditionForCheckpointRecordV2(checkpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conditions = append(conditions, condition)
 	}
 	return conditions
 }

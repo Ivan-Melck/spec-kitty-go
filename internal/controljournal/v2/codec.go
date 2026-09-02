@@ -57,9 +57,13 @@ func ParseLogicalVersion(value string) (LogicalVersion, error) {
 // CanonicalObject rejects duplicate object keys at every depth and returns a
 // stable JSON representation. It validates its byte budget before decoding.
 func CanonicalObject(input []byte) ([]byte, error) {
-	if len(input) == 0 || len(input) > MaxCanonicalPayloadBytes || !utf8.Valid(input) || !json.Valid(input) {
+	return canonicalObjectBounded(input, MaxCanonicalPayloadBytes)
+}
+
+func canonicalObjectBounded(input []byte, maximum int) ([]byte, error) {
+	if maximum <= 0 || len(input) == 0 || len(input) > maximum || !utf8.Valid(input) || !json.Valid(input) {
 		kind := ErrorInvalidCanonicalData
-		if len(input) > MaxCanonicalPayloadBytes {
+		if len(input) > maximum {
 			kind = ErrorBudgetExceeded
 		}
 		return nil, invalid(kind, "canonical_object")
@@ -77,7 +81,7 @@ func CanonicalObject(input []byte) ([]byte, error) {
 		return nil, invalid(ErrorInvalidCanonicalData, "canonical_object")
 	}
 	canonical, err := json.Marshal(value)
-	if err != nil || len(canonical) > MaxCanonicalPayloadBytes {
+	if err != nil || len(canonical) > maximum {
 		return nil, invalid(ErrorBudgetExceeded, "canonical_object")
 	}
 	return canonical, nil
