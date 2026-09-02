@@ -1,7 +1,7 @@
 {
-  "event_count": 75,
-  "last_event_id": "01M1HK2PV41F22XKX5A08FR517",
-  "materialized_at": "2026-09-02T17:36:14.179519+00:00",
+  "event_count": 89,
+  "last_event_id": "01M1HQ1D90Q22J0V0N996B31AS",
+  "materialized_at": "2026-09-02T18:45:25.914083+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -54,27 +54,32 @@
       }
     },
     "WP02": {
-      "actor": "user",
-      "agent": "wp02-terminal-arbiter",
+      "actor": "wp02-budget-terminal-reviewer",
+      "agent": "wp02-budget-terminal-reviewer",
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
-      "force_count": 3,
+      "force_count": 5,
       "lane": "approved",
-      "last_event_id": "01M1HK03JQBH991795048CRFA0",
-      "last_transition_at": "2026-09-02T17:34:48.919826+00:00",
+      "last_event_id": "01M1HQ02S926GQ6TBNZSX3NRPH",
+      "last_transition_at": "2026-09-02T18:44:42.409693+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
-        "Arbiter decision: terminal approval of repair 8af3028d. Verified exact attributable condition-target bijection and omission/substitution/extra/duplicate/absent/revision mutants; host-only standalone operation heads plus contextual OperationID/version/EventID/PublicationID checks; centralized lowercase-64-hex PublicationID grammar with derivation confined to sealed-plan context; synchronized bounded one-call reduction observations covering pair-stable mismatch, concurrency, caller-buffer isolation, fresh sessions, and exact budget exhaustion without a purity overclaim; and conservative whole-plan preflight before registry resolution, cloning, sorting, or canonicalization. Replayed cycle-one/two repairs, replay-before-epoch ordering, host-global binding collisions, immutable sealing, registry closure, provider-neutrality, and repeated/race/vet/static/architecture/helper/compile gates. Commit ownership remains within WP02's five-file contract. Reviewer actor: wp02-terminal-arbiter."
+        "Arbiter decision: terminal approval of repair 8af3028d. Verified exact attributable condition-target bijection and omission/substitution/extra/duplicate/absent/revision mutants; host-only standalone operation heads plus contextual OperationID/version/EventID/PublicationID checks; centralized lowercase-64-hex PublicationID grammar with derivation confined to sealed-plan context; synchronized bounded one-call reduction observations covering pair-stable mismatch, concurrency, caller-buffer isolation, fresh sessions, and exact budget exhaustion without a purity overclaim; and conservative whole-plan preflight before registry resolution, cloning, sorting, or canonicalization. Replayed cycle-one/two repairs, replay-before-epoch ordering, host-global binding collisions, immutable sealing, registry closure, provider-neutrality, and repeated/race/vet/static/architecture/helper/compile gates. Commit ownership remains within WP02's five-file contract. Reviewer actor: wp02-terminal-arbiter.",
+        "Post-approval consumer-contract defect: sealed plan is not persistence-complete for WP03. Reopen one bounded integration repair with fresh independent terminal review; preserve prior arbitration evidence.",
+        "Bounded post-approval persistence-projection repair committed at c3a0c6c5; all focused/repeated/race/architecture/compile/vet/static/format/diff gates pass.",
+        "Terminal persistence review rejected c3a0c6c5: sealed records exceed frozen ordinary-value, raw-batch, head, and effect cardinality budgets. Structural projection invariants otherwise pass.",
+        "Budget-closure repair committed at d9407b0d; sealed plan now closes over frozen record/cardinality/raw bounds and all regression gates pass.",
+        "Independent terminal budget review approved d9407b0d. Reproduced former 350165-byte ordinary event and 9341911-byte projection now refuse before registry access; max operation/aggregate values, 32 heads, 16 effects, 256 records, 256 KiB ordinary, 4 MiB checkpoint, conservative 1 KiB keys and 6 MiB raw closure pass. Structural projection and all prior WP02 invariants, repeated/race/architecture/helper/compile/vet/static/format/diff gates pass. Reviewer actor: wp02-budget-terminal-reviewer."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "reference": "Arbiter decision: terminal approval of repair 8af3028d. Verified exact attributable condition-target bijection and omission/substitution/extra/duplicate/absent/revision mutants; host-only standalone operation heads plus contextual OperationID/version/EventID/PublicationID checks; centralized lowercase-64-hex PublicationID grammar with derivation confined to sealed-plan context; synchronized bounded one-call reduction observations covering pair-stable mismatch, concurrency, caller-buffer isolation, fresh sessions, and exact budget exhaustion without a purity overclaim; and conservative whole-plan preflight before registry resolution, cloning, sorting, or canonicalization. Replayed cycle-one/two repairs, replay-before-epoch ordering, host-global binding collisions, immutable sealing, registry closure, provider-neutrality, and repeated/race/vet/static/architecture/helper/compile gates. Commit ownership remains within WP02's five-file contract. Reviewer actor: wp02-terminal-arbiter.",
-        "reviewer": "lynncoleart",
+        "reference": "d9407b0d4dc18f7e2517747a2a29e7fd1ac8b766",
+        "reviewer": "wp02-budget-terminal-reviewer",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 346017,
       "shell_pid_created_at": "1787989271.27",
       "subtasks": {
@@ -87,19 +92,30 @@
       }
     },
     "WP03": {
-      "actor": "codex-wp03",
+      "actor": "codex-wp03-gapdb-v2",
       "agent": "codex-wp03",
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
-      "force_count": 0,
+      "force_count": 1,
       "lane": "in_progress",
-      "last_event_id": "01M1HK2PV41F22XKX5A08FR517",
-      "last_transition_at": "2026-09-02T17:36:14.179519+00:00",
+      "last_event_id": "01M1HQ1D90Q22J0V0N996B31AS",
+      "last_transition_at": "2026-09-02T18:45:25.914083+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved."
+      ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "role": "implementer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27"
+      "shell_pid": null,
+      "shell_pid_created_at": null,
+      "subtasks": {
+        "T012": "planned",
+        "T013": "planned",
+        "T014": "planned",
+        "T015": "planned",
+        "T016": "planned"
+      }
     },
     "WP04": {
       "actor": "finalize-tasks",
