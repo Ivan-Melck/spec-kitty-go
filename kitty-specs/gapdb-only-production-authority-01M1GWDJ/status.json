@@ -102,7 +102,8 @@
       "last_transition_at": "2026-09-02T19:13:41.753884+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved."
+        "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
+        "Implementation committed at 721890a3; focused, repeated, race, compile, vet, staticcheck, formatting, and structural checks pass. External sidecar qualification remains explicitly non-admissible without its binary/data-root prerequisites."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
