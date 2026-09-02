@@ -315,6 +315,55 @@ func TestDefaultPolicyClassifiesM1CommandAndBoundsExternalGapDBDirection(t *test
 	})
 }
 
+func TestDefaultPolicyClassifiesCompleteM2SurfaceExactly(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		path string
+		tier TierName
+	}{
+		{module + "/internal/controljournal/v2", TierFoundation},
+		{module + "/internal/controljournal/v2/reducer", TierFoundation},
+		{module + "/internal/controlroot", TierFoundation},
+		{module + "/internal/controlroot/signatures", TierFoundation},
+		{module + "/internal/acceptance", TierAuthority},
+		{module + "/internal/acceptance/policy", TierAuthority},
+		{module + "/internal/controlstore/gapdb", TierAdapter},
+		{module + "/internal/controlstore/gapdb/mission", TierAdapter},
+		{module + "/internal/sidecar/gapdb", TierAdapter},
+		{module + "/internal/sidecar/gapdb/protocol", TierAdapter},
+		{module + "/internal/productionruntime", TierComposition},
+		{module + "/internal/productionruntime/progress", TierComposition},
+		{module + "/cmd/spec-kitty", TierComposition},
+		{module + "/cmd/spec-kitty/subcommands", TierComposition},
+		{module + "/cmd/spk-m2-qualification", TierQuality},
+		{module + "/cmd/spk-m2-qualification/reporter", TierQuality},
+	} {
+		t.Run(strings.TrimPrefix(test.path, module+"/"), func(t *testing.T) {
+			assertTier(t, policy, test.path, test.tier)
+		})
+	}
+
+	for _, path := range []string{
+		module + "/internal/controljournal/v2x",
+		module + "/internal/controlrooted",
+		module + "/internal/acceptancex",
+		module + "/internal/controlstore/gapdbx",
+		module + "/internal/sidecar/gapdbx",
+		module + "/internal/productionruntimex",
+		module + "/cmd/spec-kittyx",
+		module + "/cmd/spk-m2-qualificationx",
+	} {
+		t.Run("lookalike-"+strings.TrimPrefix(path, module+"/"), func(t *testing.T) {
+			assertExactViolation(t, policy, fixtureGraph([]string{path}), RuleUnknownPackage, path, "", path, "")
+		})
+	}
+}
+
 func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
 	const module = "github.com/spec-kitty/go-kitty3"
 	policy, err := DefaultPolicy(module)
