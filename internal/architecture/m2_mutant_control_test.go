@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 105
-	m2MutantCensusSHA256 = "a6a1426387e0e1187734e297e62ead91f1fc873e7939fcb5e69fb508a9fa911f"
+	m2MutantCensusCount  = 116
+	m2MutantCensusSHA256 = "35fe6501c1076601894bcc0db4b4cea1d300bc6249b7958b63b91f75839dc507"
 )
 
 const (
@@ -135,6 +135,17 @@ func TestM2ArbiterFixtureBindingProbe(t *testing.T) {
 		{m2ValidatorRecovery, "RENAMED-CALLABLE", "UNRELATED-PUBLIC"},
 		{m2ValidatorRecovery, "NAMED-FUNCTION-TYPE", "UNRELATED-NAMED-FUNCTION"},
 		{m2ValidatorRecovery, "ALIAS-FUNCTION-TYPE", "UNRELATED-ALIAS-FUNCTION"},
+		{m2ValidatorRecovery, "USED-GENERIC-CONSTRAINT", "UNRELATED-GENERIC-CONSTRAINT"},
+		{m2ValidatorRecovery, "UNUSED-GENERIC-CONSTRAINT", "FOUNDATION-ONLY-GENERIC"},
+		{m2ValidatorRecovery, "UNION-CONSTRAINT", "UNRELATED-GENERIC-CONSTRAINT"},
+		{m2ValidatorRecovery, "GENERIC-ALIAS", "UNRELATED-ALIAS-FUNCTION"},
+		{m2ValidatorRecovery, "DEFINED-REQUEST-WRAPPER", "UNRELATED-PUBLIC"},
+		{m2ValidatorRecovery, "TRANSITIVE-DEFINED-WRAPPER", "UNRELATED-PUBLIC"},
+		{m2ValidatorRecovery, "VARIABLE-WRAPPER-POINTER", "UNRELATED-VARIABLE"},
+		{m2ValidatorRecovery, "FIELD-WRAPPER-POINTER", "UNRELATED-FIELD"},
+		{m2ValidatorRecovery, "NAMED-CALLABLE-POINTER", "UNRELATED-NAMED-FUNCTION"},
+		{m2ValidatorRecovery, "INTERFACE-METHOD-POINTER", "PRIVATE-GENERIC-CONSTRAINT"},
+		{m2ValidatorRecovery, "RECEIVER-GENERIC-CONSTRAINT", "FOUNDATION-ONLY-RECEIVER"},
 	} {
 		candidate := find(swap.validator, swap.from)
 		candidate.Fixture = swap.to
@@ -220,7 +231,12 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, fixture := range []string{"ALIASES", "BUILD-VARIANT", "EMBEDDING", "FUNCTIONS", "GENERATED", "GENERIC-RECORD", "GENERICS", "INTERFACE", "RECORD-POINTER", "RECORD-VALUE", "SPLIT-METHODS", "STRUCT-FIELDS", "WRAPPER"} {
 		cases = append(cases, m2Case("M-RAW-"+fixture, m2ValidatorRawStore, fixture, "RAW_KEY_GOD_STORE", fixture, ""))
 	}
-	for _, fixture := range []string{"ADAPTER-OWNED", "ALIAS-FUNCTION-TYPE", "MISSING", "NAMED-FUNCTION-TYPE", "RENAMED-ADAPTER", "RENAMED-CALLABLE", "WEAKENED-CENSUS"} {
+	for _, fixture := range []string{
+		"ADAPTER-OWNED", "ALIAS-FUNCTION-TYPE", "DEFINED-REQUEST-WRAPPER", "FIELD-WRAPPER-POINTER", "GENERIC-ALIAS",
+		"INTERFACE-METHOD-POINTER", "MISSING", "NAMED-CALLABLE-POINTER", "NAMED-FUNCTION-TYPE", "RECEIVER-GENERIC-CONSTRAINT",
+		"RENAMED-ADAPTER", "RENAMED-CALLABLE", "TRANSITIVE-DEFINED-WRAPPER", "UNION-CONSTRAINT", "UNUSED-GENERIC-CONSTRAINT",
+		"USED-GENERIC-CONSTRAINT", "VARIABLE-WRAPPER-POINTER", "WEAKENED-CENSUS",
+	} {
 		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
 	}
 	return cases

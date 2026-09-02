@@ -267,10 +267,28 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"renamed-callable-beside-valid-read", m2FoundationOwnershipFixture("RENAMED-CALLABLE"), true},
 		{"named-function-type", m2FoundationOwnershipFixture("NAMED-FUNCTION-TYPE"), true},
 		{"alias-function-type", m2FoundationOwnershipFixture("ALIAS-FUNCTION-TYPE"), true},
+		{"used-generic-constraint", m2FoundationOwnershipFixture("USED-GENERIC-CONSTRAINT"), true},
+		{"unused-generic-constraint", m2FoundationOwnershipFixture("UNUSED-GENERIC-CONSTRAINT"), true},
+		{"union-constraint", m2FoundationOwnershipFixture("UNION-CONSTRAINT"), true},
+		{"generic-alias", m2FoundationOwnershipFixture("GENERIC-ALIAS"), true},
+		{"defined-request-wrapper", m2FoundationOwnershipFixture("DEFINED-REQUEST-WRAPPER"), true},
+		{"transitive-defined-request-wrapper", m2FoundationOwnershipFixture("TRANSITIVE-DEFINED-WRAPPER"), true},
+		{"variable-wrapper-pointer", m2FoundationOwnershipFixture("VARIABLE-WRAPPER-POINTER"), true},
+		{"field-wrapper-pointer", m2FoundationOwnershipFixture("FIELD-WRAPPER-POINTER"), true},
+		{"named-callable-pointer", m2FoundationOwnershipFixture("NAMED-CALLABLE-POINTER"), true},
+		{"interface-method-pointer", m2FoundationOwnershipFixture("INTERFACE-METHOD-POINTER"), true},
+		{"receiver-generic-constraint", m2FoundationOwnershipFixture("RECEIVER-GENERIC-CONSTRAINT"), true},
 		{"unrelated-public-adapter-api", m2FoundationOwnershipFixture("UNRELATED-PUBLIC"), false},
 		{"private-adapter-helper", m2FoundationOwnershipFixture("PRIVATE-HELPER"), false},
 		{"unrelated-named-function-type", m2FoundationOwnershipFixture("UNRELATED-NAMED-FUNCTION"), false},
 		{"unrelated-alias-function-type", m2FoundationOwnershipFixture("UNRELATED-ALIAS-FUNCTION"), false},
+		{"unrelated-generic-constraint", m2FoundationOwnershipFixture("UNRELATED-GENERIC-CONSTRAINT"), false},
+		{"foundation-only-generic", m2FoundationOwnershipFixture("FOUNDATION-ONLY-GENERIC"), false},
+		{"unrelated-variable", m2FoundationOwnershipFixture("UNRELATED-VARIABLE"), false},
+		{"unrelated-field", m2FoundationOwnershipFixture("UNRELATED-FIELD"), false},
+		{"foundation-only-receiver", m2FoundationOwnershipFixture("FOUNDATION-ONLY-RECEIVER"), false},
+		{"private-generic-constraint", m2FoundationOwnershipFixture("PRIVATE-GENERIC-CONSTRAINT"), false},
+		{"private-field-wrapper", m2FoundationOwnershipFixture("PRIVATE-FIELD-WRAPPER"), false},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -593,14 +611,15 @@ type m2NamedTypeReference struct {
 }
 
 func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, foundationPath, adapterPath string) (string, string) {
+	provenance := m2TypeDeclarationProvenance(source)
 	check := func(name string, candidate types.Type) (string, string) {
 		signature, _ := types.Unalias(candidate).Underlying().(*types.Signature)
 		if signature == nil {
 			return "", ""
 		}
 		references := make(map[m2NamedTypeReference]bool)
-		m2CollectNamedTypeReferences(signature.Params(), references, make(map[types.Type]bool))
-		m2CollectNamedTypeReferences(signature.Results(), references, make(map[types.Type]bool))
+		m2CollectNamedTypeReferences(signature, references, make(map[types.Type]bool))
+		m2ExpandTypeDeclarationProvenance(references, provenance)
 		foundationContract := false
 		owned := ""
 		for reference := range references {
@@ -670,6 +689,72 @@ func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, found
 	return "", ""
 }
 
+func m2TypeDeclarationProvenance(source *productionSourcePackage) map[m2NamedTypeReference]map[m2NamedTypeReference]bool {
+	provenance := make(map[m2NamedTypeReference]map[m2NamedTypeReference]bool)
+	for _, file := range source.files {
+		for _, declaration := range file.Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok || general.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range general.Specs {
+				typeSpec, ok := specification.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				owner, ok := source.info.Defs[typeSpec.Name].(*types.TypeName)
+				if !ok || owner.Pkg() == nil {
+					continue
+				}
+				origin := m2TypeNameReference(owner)
+				references := make(map[m2NamedTypeReference]bool)
+				collect := func(node ast.Node) bool {
+					identifier, ok := node.(*ast.Ident)
+					if !ok {
+						return true
+					}
+					referenced, ok := source.info.Uses[identifier].(*types.TypeName)
+					if ok && referenced.Pkg() != nil {
+						references[m2TypeNameReference(referenced)] = true
+					}
+					return true
+				}
+				if typeSpec.TypeParams != nil {
+					ast.Inspect(typeSpec.TypeParams, collect)
+				}
+				ast.Inspect(typeSpec.Type, collect)
+				delete(references, origin)
+				if len(references) != 0 {
+					provenance[origin] = references
+				}
+			}
+		}
+	}
+	return provenance
+}
+
+func m2TypeNameReference(object *types.TypeName) m2NamedTypeReference {
+	return m2NamedTypeReference{Owner: object.Pkg().Path(), Name: object.Name()}
+}
+
+func m2ExpandTypeDeclarationProvenance(references map[m2NamedTypeReference]bool, provenance map[m2NamedTypeReference]map[m2NamedTypeReference]bool) {
+	queue := make([]m2NamedTypeReference, 0, len(references))
+	for reference := range references {
+		queue = append(queue, reference)
+	}
+	for len(queue) != 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for referenced := range provenance[current] {
+			if references[referenced] {
+				continue
+			}
+			references[referenced] = true
+			queue = append(queue, referenced)
+		}
+	}
+}
+
 func m2CollectNamedTypeReferences(candidate types.Type, references map[m2NamedTypeReference]bool, seen map[types.Type]bool) {
 	if candidate == nil || seen[candidate] {
 		return
@@ -707,6 +792,16 @@ func m2CollectNamedTypeReferences(candidate types.Type, references map[m2NamedTy
 	case *types.Signature:
 		m2CollectNamedTypeReferences(value.Params(), references, seen)
 		m2CollectNamedTypeReferences(value.Results(), references, seen)
+		if parameters := value.TypeParams(); parameters != nil {
+			for index := 0; index < parameters.Len(); index++ {
+				m2CollectNamedTypeReferences(parameters.At(index), references, seen)
+			}
+		}
+		if parameters := value.RecvTypeParams(); parameters != nil {
+			for index := 0; index < parameters.Len(); index++ {
+				m2CollectNamedTypeReferences(parameters.At(index), references, seen)
+			}
+		}
 	case *types.TypeParam:
 		m2CollectNamedTypeReferences(value.Constraint(), references, seen)
 	case *types.Struct:
@@ -717,6 +812,13 @@ func m2CollectNamedTypeReferences(candidate types.Type, references map[m2NamedTy
 		for index := 0; index < value.NumMethods(); index++ {
 			m2CollectNamedTypeReferences(value.Method(index).Type(), references, seen)
 		}
+		for index := 0; index < value.NumEmbeddeds(); index++ {
+			m2CollectNamedTypeReferences(value.EmbeddedType(index), references, seen)
+		}
+	case *types.Union:
+		for index := 0; index < value.Len(); index++ {
+			m2CollectNamedTypeReferences(value.Term(index).Type(), references, seen)
+		}
 	}
 }
 
@@ -724,6 +826,11 @@ func m2FoundationOwnershipFixture(variant string) map[string]string {
 	if !slices.Contains([]string{
 		"COMPLETE", "MISSING", "ADAPTER-OWNED", "RENAMED-ADAPTER", "RENAMED-CALLABLE",
 		"NAMED-FUNCTION-TYPE", "ALIAS-FUNCTION-TYPE", "UNRELATED-NAMED-FUNCTION", "UNRELATED-ALIAS-FUNCTION",
+		"USED-GENERIC-CONSTRAINT", "UNUSED-GENERIC-CONSTRAINT", "UNION-CONSTRAINT", "GENERIC-ALIAS",
+		"DEFINED-REQUEST-WRAPPER", "TRANSITIVE-DEFINED-WRAPPER", "VARIABLE-WRAPPER-POINTER", "FIELD-WRAPPER-POINTER",
+		"NAMED-CALLABLE-POINTER", "INTERFACE-METHOD-POINTER", "RECEIVER-GENERIC-CONSTRAINT",
+		"UNRELATED-GENERIC-CONSTRAINT", "FOUNDATION-ONLY-GENERIC", "UNRELATED-VARIABLE", "UNRELATED-FIELD",
+		"FOUNDATION-ONLY-RECEIVER", "PRIVATE-GENERIC-CONSTRAINT", "PRIVATE-FIELD-WRAPPER",
 		"UNRELATED-PUBLIC", "PRIVATE-HELPER",
 	}, variant) {
 		return nil
@@ -793,6 +900,127 @@ type Inspect func(context.Context) (Diagnostic, error)
 import "context"
 type Diagnostic struct{}
 type Inspect = func(context.Context) (Diagnostic, error)
+`
+	case "USED-GENERIC-CONSTRAINT":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type RecoveryInput interface{ journalv2.ReadRequestV2 }
+func Fetch[T RecoveryInput](value T) (Parcel, error) { return Parcel{}, nil }
+`
+	case "UNUSED-GENERIC-CONSTRAINT":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+func Fetch[T interface{ journalv2.ReadRequestV2 }]() (Parcel, error) { return Parcel{}, nil }
+`
+	case "UNION-CONSTRAINT":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+func Fetch[T interface{ journalv2.ReadRequestV2 | journalv2.ScanRequestV2 }](value T) (*Parcel, error) {
+    return &Parcel{}, nil
+}
+`
+	case "GENERIC-ALIAS":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Fetch[T interface{ journalv2.ReadRequestV2 }] = func(T) (*Parcel, error)
+`
+	case "DEFINED-REQUEST-WRAPPER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Request journalv2.ReadRequestV2
+func Fetch(Request) (Parcel, error) { return Parcel{}, nil }
+`
+	case "TRANSITIVE-DEFINED-WRAPPER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type BaseRequest journalv2.ReadRequestV2
+type Request BaseRequest
+func Fetch(*Request) (Parcel, error) { return Parcel{}, nil }
+`
+	case "VARIABLE-WRAPPER-POINTER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Request journalv2.ReadRequestV2
+var Fetch func(*Request) (*Parcel, error)
+`
+	case "FIELD-WRAPPER-POINTER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Request journalv2.ReadRequestV2
+type Adapter struct { Fetch func(*Request) (*Parcel, error) }
+`
+	case "NAMED-CALLABLE-POINTER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Request journalv2.ReadRequestV2
+type Fetch func(*Request) (*Parcel, error)
+`
+	case "INTERFACE-METHOD-POINTER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Request journalv2.ReadRequestV2
+type Reader interface { Fetch(*Request) (*Parcel, error) }
+`
+	case "RECEIVER-GENERIC-CONSTRAINT":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Adapter[T interface{ journalv2.ReadRequestV2 }] struct{}
+func (Adapter[T]) Fetch() (Parcel, error) { return Parcel{}, nil }
+`
+	case "UNRELATED-GENERIC-CONSTRAINT":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+type Parcel struct{}
+type Input interface{ string | []byte }
+func Fetch[T Input](value T) (Parcel, error) { return Parcel{}, nil }
+`
+	case "FOUNDATION-ONLY-GENERIC":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+func Read[T interface{ journalv2.ReadRequestV2 }](value T) (journalv2.RecoveryRecordV2, error) {
+    return journalv2.RecoveryRecordV2{}, nil
+}
+`
+	case "UNRELATED-VARIABLE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+type Diagnostic struct{}
+var Inspect func() (Diagnostic, error)
+`
+	case "UNRELATED-FIELD":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+type Diagnostic struct{}
+type Adapter struct { Inspect func() (Diagnostic, error) }
+`
+	case "FOUNDATION-ONLY-RECEIVER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Adapter[T interface{ journalv2.ReadRequestV2 }] struct{}
+func (Adapter[T]) Read() (journalv2.RecoveryRecordV2, error) {
+    return journalv2.RecoveryRecordV2{}, nil
+}
+`
+	case "PRIVATE-GENERIC-CONSTRAINT":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+func fetch[T interface{ journalv2.ReadRequestV2 }]() (Parcel, error) { return Parcel{}, nil }
+`
+	case "PRIVATE-FIELD-WRAPPER":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Request journalv2.ReadRequestV2
+type Adapter struct { fetch func(*Request) (*Parcel, error) }
 `
 	case "UNRELATED-PUBLIC":
 		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
