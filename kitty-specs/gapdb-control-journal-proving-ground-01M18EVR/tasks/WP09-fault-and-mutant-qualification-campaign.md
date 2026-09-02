@@ -49,6 +49,22 @@ create_intent:
 - internal/testcampaign/m1/mutants/catalog_test.go
 - internal/testcampaign/m1/invariants.go
 - internal/testcampaign/m1/invariants_test.go
+- internal/provingground/qualification.go
+- internal/provingground/qualification_test.go
+- internal/provingground/authority.go
+- internal/provingground/authority_test.go
+- internal/gitrepo/workspace.go
+- internal/gitrepo/workspace_test.go
+- internal/gitrepo/integration.go
+- internal/gitrepo/integration_test.go
+- internal/gitrepo/inspection.go
+- internal/gitrepo/inspection_test.go
+- internal/provingground/review.go
+- internal/provingground/review_test.go
+- internal/provingground/workspace.go
+- internal/provingground/workspace_test.go
+- internal/sidecar/gapdb/lifecycle.go
+- internal/sidecar/gapdb/lifecycle_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -60,6 +76,22 @@ owned_files:
 - internal/testcampaign/m1/mutants/catalog_test.go
 - internal/testcampaign/m1/invariants.go
 - internal/testcampaign/m1/invariants_test.go
+- internal/provingground/qualification.go
+- internal/provingground/qualification_test.go
+- internal/provingground/authority.go
+- internal/provingground/authority_test.go
+- internal/gitrepo/workspace.go
+- internal/gitrepo/workspace_test.go
+- internal/gitrepo/integration.go
+- internal/gitrepo/integration_test.go
+- internal/gitrepo/inspection.go
+- internal/gitrepo/inspection_test.go
+- internal/provingground/review.go
+- internal/provingground/review_test.go
+- internal/provingground/workspace.go
+- internal/provingground/workspace_test.go
+- internal/sidecar/gapdb/lifecycle.go
+- internal/sidecar/gapdb/lifecycle_test.go
 role: implementer
 tags:
 - m1
@@ -105,9 +137,16 @@ observations; it does not decide production adoption.
 
 ## Branch and ownership
 
-Begin from accepted WP06–WP08. Edit only the eight testcampaign files listed.
-Call production hooks without changing their packages. WP10 owns aggregate
-campaign/evidence/CLI files; do not create them here.
+Begin from accepted WP06–WP08. Edit only the eight testcampaign files, two
+additive proving-ground qualification seam files, six Git-repository files,
+and two proving-ground review files listed. The seam may expose read-only
+production facts and existing fault hooks; it must not add a testcampaign
+dependency or a test-only mutation path. The Git files own the cross-process
+worktree-metadata lock and its direct regressions discovered by the NFR-003
+campaign. The review files preserve current-head validation through
+`Runtime.Authorize` while allowing a heartbeat-refreshed capsule to retain its
+immutable lease-scoped workspace binding. WP10 owns aggregate campaign/evidence/CLI
+files; do not create them here.
 
 ## T047: Implement five deterministic fault-cut runners
 
@@ -254,3 +293,12 @@ unlike evidence categories.
 - Universal invariants accompany all terminal observations.
 - Honest failure/incomplete evidence is retained.
 - Nothing here claims the combined trial passed.
+
+## Activity Log
+
+- 2026-08-31T01:40:08Z – codex-coordinator – Cycle 2 scope reconciliation: independent review proved composed GJ-03/GJ-04 fault injection and authority observation are package-private. Authorize two additive provingground qualification seam files (qualification.go and qualification_test.go) in WP09; preserve all existing ownership and do not modify existing provingground sources.
+- 2026-08-31T02:21:09Z – codex-wp09-implementer-cycle2 – Cycle 2 scope reconciliation: the admitted NFR-003 campaign found a real cross-process Git worktree metadata race between simultaneous Runtime.StartWorkspace calls. Authorize gitrepo worktree allocation/removal locking and direct concurrency regression tests in internal/gitrepo workspace, integration, and inspection files. The qualification campaign must remain concurrent and must prove the product fix; seeded serialization is not admissible.
+- 2026-08-31T03:36:16Z – codex-wp09-implementer-cycle2 – Cycle 2 scope reconciliation: the long-running NFR-004 campaign proved public heartbeat returns a current capsule that handoff rejects because exactCandidateBinding incorrectly treats the workspace's immutable claim-time authority-head revision as a mutable heartbeat coordinate. Authorize internal/provingground/review.go and review_test.go to retain Runtime.Authorize as the current-head guard, stop requiring the immutable binding to mirror heartbeat revision, and prove refreshed-capsule handoff succeeds while the pre-heartbeat capsule remains stale.
+- 2026-08-31T05:12:42Z – codex-root – Cycle 3 scope reconciliation: authorize internal/sidecar/gapdb/lifecycle.go and lifecycle_test.go for a narrow production RestartOwned clean/unclean owner-lifetime seam required to execute NFR-007 through public APIs; campaign must rebuild/restore runtime and refuse predecessor capsules.
+- 2026-08-31T05:30:00Z – codex-root – Cycle 3 scope reconciliation: authorize internal/provingground/workspace.go and workspace_test.go to classify a validated predecessor-runtime capsule as stale epoch before current workspace/lease status, while preserving stale-lease refusal for a quarantined capsule from the current epoch.
+- 2026-08-31T05:45:00Z – codex-root – Cycle 3 scope reconciliation: authorize internal/provingground/authority.go and authority_test.go because repeated real owner restarts exposed restoreWorkspaceCensus forcing historical quarantined workspace heads into the newest epoch. Bind historical heads to their exact terminal workspace event/head epoch; active-bound workspaces must still use the current epoch.
