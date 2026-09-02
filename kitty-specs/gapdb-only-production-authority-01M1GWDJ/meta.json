@@ -12,5 +12,7 @@
   "purpose_tldr": "Replace every production authority capability with GapDB and eliminate SQLite.",
   "slug": "gapdb-only-production-authority-01M1GWDJ",
   "target_branch": "feat/gapdb-only-production-authority",
-  "topology": "coord"
+  "topology": "coord",
+  "vcs": "git",
+  "vcs_locked_at": "2026-09-02T12:17:41.884993+00:00"
 }
