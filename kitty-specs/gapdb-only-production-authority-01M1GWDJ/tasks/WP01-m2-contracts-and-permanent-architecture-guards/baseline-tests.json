@@ -1,0 +1,13 @@
+{
+  "wp_id": "WP01",
+  "captured_at": "2026-09-02T12:17:55Z",
+  "base_branch": "feat/gapdb-only-production-authority",
+  "base_commit": "7df5e118785b3afdbd6f940579b73f147aeafbf4",
+  "test_runner": "pytest",
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "failures": [],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}
