@@ -200,6 +200,50 @@ func TestM2DependencyPolicyRejectsForbiddenEdges(t *testing.T) {
 	}
 }
 
+func TestM2CapabilityReachabilityStopsAtFoundationCoordinator(t *testing.T) {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	capability := m2ModulePath + "/internal/execution"
+	coordinator := m2ModulePath + "/internal/controljournal/v2"
+	adapter := m2ModulePath + "/internal/controlstore/gapdb"
+
+	legal := fixtureGraph(
+		[]string{capability, coordinator, adapter, m2ModulePath + "/internal/productionruntime"},
+		ImportEdge{SourcePackage: capability, TargetPackage: coordinator, Kind: ImportModuleLocal},
+		ImportEdge{SourcePackage: m2ModulePath + "/internal/productionruntime", TargetPackage: adapter, Kind: ImportModuleLocal},
+		ImportEdge{SourcePackage: adapter, TargetPackage: coordinator, Kind: ImportModuleLocal},
+	)
+	legal.ModulePath = m2ModulePath
+	if violations := m2CapabilityGapDBReachability(policy, legal); len(violations) != 0 {
+		t.Fatalf("evidence=PROVIDER-REACHABILITY legal coordinator/composition graph rejected: %v", violations)
+	}
+
+	for _, test := range []struct {
+		name  string
+		edges []ImportEdge
+	}{
+		{
+			name:  "direct",
+			edges: []ImportEdge{{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal}},
+		},
+		{
+			name: "wrapped-by-foundation",
+			edges: []ImportEdge{
+				{SourcePackage: capability, TargetPackage: coordinator, Kind: ImportModuleLocal},
+				{SourcePackage: coordinator, TargetPackage: adapter, Kind: ImportModuleLocal},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			graph := fixtureGraph([]string{capability, coordinator, adapter}, test.edges...)
+			graph.ModulePath = m2ModulePath
+			violations := m2CapabilityGapDBReachability(policy, graph)
+			if len(violations) != 1 || violations[0].Rule != RuleReachability || violations[0].SourcePackage != capability || violations[0].TargetPackage != adapter {
+				t.Fatalf("evidence=PROVIDER-REACHABILITY mutant=%s observed=%v expected=%s->%s", test.name, violations, capability, adapter)
+			}
+		})
+	}
+}
+
 func TestM2PackageClassificationActivatesOnPresence(t *testing.T) {
 	policy := m2ClosedPolicy(t, m2ModulePath)
 	want := map[string]TierName{
@@ -294,9 +338,17 @@ func TestM2PolicyDeletionMutantsFailClosed(t *testing.T) {
 			policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
 		}},
 		{"remove-gapdb-adapter-classification", func(policy *Policy) { removeM2Pattern(policy, m2ModulePath+"/internal/controlstore/gapdb") }},
+		{"remove-capability-gapdb-denial", func(policy *Policy) { policy.ForbiddenLocalDirections = policy.ForbiddenLocalDirections[1:] }},
 		{"remove-kernel-direction", func(policy *Policy) {
 			for index := range policy.Tiers {
 				if policy.Tiers[index].Name == TierAuthority {
+					policy.Tiers[index].AllowedLocalTargets = append(policy.Tiers[index].AllowedLocalTargets, TierAdapter)
+				}
+			}
+		}},
+		{"widen-foundation-to-adapter", func(policy *Policy) {
+			for index := range policy.Tiers {
+				if policy.Tiers[index].Name == TierFoundation {
 					policy.Tiers[index].AllowedLocalTargets = append(policy.Tiers[index].AllowedLocalTargets, TierAdapter)
 				}
 			}
@@ -364,6 +416,9 @@ func validateM2PolicyShape(policy Policy) error {
 		}
 	}
 	for _, tier := range policy.Tiers {
+		if tier.Name == TierFoundation && slices.Contains(tier.AllowedLocalTargets, TierAdapter) {
+			return fmt.Errorf("evidence=PROVIDER-REACHABILITY law=foundation-adapter observed=allowed expected=denied")
+		}
 		if tier.Name == TierAuthority && slices.Contains(tier.AllowedLocalTargets, TierAdapter) {
 			return fmt.Errorf("evidence=PACKAGE-DIRECTIONS law=kernel-adapter observed=allowed expected=denied")
 		}
@@ -371,7 +426,58 @@ func validateM2PolicyShape(policy Policy) error {
 			return fmt.Errorf("evidence=SQLITE-SQL-DENIAL law=external-allowance tier=%s observed=sqlite expected=absent", tier.Name)
 		}
 	}
+	if !m2HasCapabilityGapDBDenial(policy) {
+		return fmt.Errorf("evidence=PROVIDER-REACHABILITY law=capability-adapter-denial observed=missing")
+	}
 	return policy.Validate()
+}
+
+func m2HasCapabilityGapDBDenial(policy Policy) bool {
+	wantSources := m2CapabilitySourcePatterns(policy.ModulePath)
+	wantTarget := PackagePrefix(policy.ModulePath + "/internal/controlstore/gapdb")
+	for _, direction := range policy.ForbiddenLocalDirections {
+		if len(direction.TargetTiers) != 0 || len(direction.Targets) != 1 || direction.Targets[0] != wantTarget || len(direction.Sources) != len(wantSources) {
+			continue
+		}
+		if slices.Equal(direction.Sources, wantSources) {
+			return true
+		}
+	}
+	return false
+}
+
+func m2CapabilitySourcePatterns(module string) []PackagePattern {
+	return []PackagePattern{
+		ExactPackage(module + "/internal/artifact"),
+		ExactPackage(module + "/internal/mission"),
+		ExactPackage(module + "/internal/workgraph"),
+		ExactPackage(module + "/internal/execution"),
+		ExactPackage(module + "/internal/workspace"),
+		ExactPackage(module + "/internal/handoff"),
+		ExactPackage(module + "/internal/review"),
+		ExactPackage(module + "/internal/integration"),
+		PackagePrefix(module + "/internal/acceptance"),
+	}
+}
+
+func m2CapabilityGapDBReachability(policy Policy, graph Graph) Violations {
+	var violations Violations
+	target := policy.ModulePath + "/internal/controlstore/gapdb"
+	for _, pkg := range graph.Packages {
+		tier, err := policy.Classify(pkg.ImportPath)
+		if err != nil || !slices.Contains([]TierName{TierAuthority, TierArtifactAuthority, TierMissionAuthority}, tier.Name) {
+			continue
+		}
+		if len(m2ForbiddenPaths(graph, pkg.ImportPath, []string{target})) == 0 {
+			continue
+		}
+		violations = append(violations, Violation{
+			Rule: RuleReachability, SourcePackage: pkg.ImportPath, SourceTier: tier.Name,
+			TargetPackage: target, TargetTier: TierAdapter,
+		})
+	}
+	slices.SortFunc(violations, func(left, right Violation) int { return strings.Compare(left.Error(), right.Error()) })
+	return violations
 }
 
 func m2EvaluateClosedGraph(policy Policy, graph Graph) Violations {
@@ -421,7 +527,12 @@ func m2EvaluateIncrementalRepository(policy Policy, graph Graph) Violations {
 		}
 		filtered.Edges = append(filtered.Edges, edge)
 	}
-	return m2EvaluateClosedGraph(policy, filtered)
+	violations := m2EvaluateClosedGraph(policy, filtered)
+	for _, violation := range m2CapabilityGapDBReachability(policy, filtered) {
+		violations = appendM2Violation(violations, violation)
+	}
+	slices.SortFunc(violations, func(left, right Violation) int { return strings.Compare(left.Error(), right.Error()) })
+	return violations
 }
 
 func appendM2Violation(values Violations, candidate Violation) Violations {

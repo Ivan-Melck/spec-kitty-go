@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 88
-	m2MutantCensusSHA256 = "d49e81ad3829dd7ab2fb4c4a7129e52d310dc53b7992a5e55a30661b515c8199"
+	m2MutantCensusCount  = 102
+	m2MutantCensusSHA256 = "a483bf9cf1045223af0fbbcec0e7b7666f89262792045273373180554e9722f7"
 )
 
 const (
@@ -31,6 +31,8 @@ const (
 	m2ValidatorEvents      = "event-registry-v2"
 	m2ValidatorLegacy      = "legacy-edge-filter-v1"
 	m2ValidatorRawStore    = "raw-store-census-v1"
+	m2ValidatorRecovery    = "foundation-contract-ownership-v2"
+	m2ValidatorCapReach    = "capability-adapter-reachability-v2"
 )
 
 type m2ViolationObservation struct {
@@ -179,14 +181,14 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, fixture := range []string{"CONSTRUCTOR-VAR", "EMBED", "GENERIC", "INTERFACE", "METHOD-VALUE", "RENAME"} {
 		cases = append(cases, m2Case("M-REACH-"+fixture, m2ValidatorReach, fixture, "FORBIDDEN_REACHABILITY", "example.test/reach/internal/mission", "example.test/reach/internal/controlstore/gapdb"))
 	}
-	for _, fixture := range []string{"CLASS", "DIRECTION", "GAPDB-CLASS", "PROVIDER"} {
+	for _, fixture := range []string{"CLASS", "DIRECTION", "GAPDB-CLASS", "GAPDB-DENIAL", "PROVIDER"} {
 		cases = append(cases, m2Case("M-POLICY-"+fixture, m2ValidatorPolicy, fixture, "POLICY_SHAPE", fixture, ""))
 	}
 	for index, entryID := range m2CanonicalKeyIDs() {
 		fixture := "PATH-" + strconv.Itoa(index)
 		cases = append(cases, m2Case("M-KEY-PATH-"+entryID, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", entryID, ""))
 	}
-	for _, fixture := range []string{"AMBIGUOUS", "GLOBAL-HEAD", "MISSION-OPERATION", "MIXED-V1", "RAW", "VARIABLE-VERSION", "SCOPE", "MUTABILITY", "SUFFIX", "BUDGET"} {
+	for _, fixture := range []string{"AMBIGUOUS", "GLOBAL-HEAD", "MISSION-OPERATION", "MIXED-V1", "RAW", "SCOPE-FIRST-HEAD", "VARIABLE-VERSION", "SCOPE", "MUTABILITY", "SUFFIX", "BUDGET"} {
 		cases = append(cases, m2Case("M-KEY-"+fixture, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", fixture, ""))
 	}
 	for _, fixture := range []string{"ADAPTER", "DECOY-FIRST", "DECOY-LAST", "MULTI-BROKEN", "RUNTIME", "SAME-FILE-FIRST", "SAME-FILE-LAST", "SPLIT-FILE", "UNCLASSIFIED", "VALUE", "WRAPPER"} {
@@ -196,18 +198,24 @@ func m2ExecutableMutants() []m2MutantCase {
 		cases = append(cases, m2DependencyCase("M-PURE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "PURE", m2ModulePath+"/internal/controljournal/v2", target, ImportStandardLibrary, string(RuleDeferredSurface)))
 	}
 	cases = append(cases, m2DependencyCase("M-GAPDB-SCENARIO-CALLER", "GAPDB-SCENARIO", m2ModulePath+"/internal/scenario", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, string(RuleExternalDirection)))
+	for _, fixture := range []string{"DIRECT", "WRAPPER"} {
+		cases = append(cases, m2Case("M-CAPABILITY-REACH-"+fixture, m2ValidatorCapReach, fixture, string(RuleReachability), m2ModulePath+"/internal/execution", m2ModulePath+"/internal/controlstore/gapdb"))
+	}
 	for _, target := range []string{"github.com/spec-kitty/gapdb/internal/server", "github.com/spec-kitty/gapdb/server", "github.com/spec-kitty/gapdb/gapdb/internal/server", "github.com/spec-kitty/gapdb/gapdb/private-server"} {
 		cases = append(cases, m2DependencyCase("M-GAPDB-PRIVATE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "GAPDB-PRIVATE", m2ModulePath+"/internal/controlstore/gapdb", target, ImportExternal, string(RuleDeferredSurface)))
 	}
 	for _, target := range []string{"acceptance", "artifact", "execution", "gitrepo", "handoff", "integration", "mission", "review", "workspace"} {
 		cases = append(cases, m2DependencyCase("M-TRACKER-"+strings.ToUpper(target), "TRACKER", m2ModulePath+"/internal/tracker/beads", m2ModulePath+"/internal/"+target, ImportModuleLocal, string(RuleLocalDirection)))
 	}
-	for _, fixture := range []string{"MISSING", "REDUCER-VERSION", "RENAMED", "UNEXPECTED", "VERSION", "WRONG-OWNER"} {
+	for _, fixture := range []string{"MISSING", "OPERATION-REDUCER", "OPERATION-SCHEMA", "ORDERING", "PUBLICATION", "REDUCER-VERSION", "REGISTRY-ID", "REGISTRY-SCHEMA", "RENAMED", "UNEXPECTED", "VERSION", "WRONG-OWNER"} {
 		cases = append(cases, m2Case("M-EVENT-"+fixture, m2ValidatorEvents, fixture, "EVENT_REGISTRY", fixture, ""))
 	}
 	cases = append(cases, m2Case("M-LEGACY-CANNOT-HIDE-WORKGRAPH", m2ValidatorLegacy, "WORKGRAPH-SQLITE", string(RuleDeferredSurface), m2ModulePath+"/internal/workgraph", "modernc.org/sqlite"))
 	for _, fixture := range []string{"ALIASES", "BUILD-VARIANT", "EMBEDDING", "FUNCTIONS", "GENERATED", "GENERIC-RECORD", "GENERICS", "INTERFACE", "RECORD-POINTER", "RECORD-VALUE", "SPLIT-METHODS", "STRUCT-FIELDS", "WRAPPER"} {
 		cases = append(cases, m2Case("M-RAW-"+fixture, m2ValidatorRawStore, fixture, "RAW_KEY_GOD_STORE", fixture, ""))
+	}
+	for _, fixture := range []string{"ADAPTER-OWNED", "MISSING", "RENAMED-ADAPTER", "WEAKENED-CENSUS"} {
+		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
 	}
 	return cases
 }
@@ -249,6 +257,10 @@ func observeM2Mutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
 		return observeM2LegacyMutant(t, mutant)
 	case m2ValidatorRawStore:
 		return observeM2RawStoreMutant(t, mutant)
+	case m2ValidatorRecovery:
+		return observeM2RecoveryOwnershipMutant(t, mutant)
+	case m2ValidatorCapReach:
+		return observeM2CapabilityReachMutant(t, mutant)
 	default:
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "HARNESS_UNKNOWN_VALIDATOR", Source: mutant.Fixture}
 	}
@@ -407,6 +419,46 @@ func observeM2RawStoreMutant(t *testing.T, mutant m2MutantCase) m2ViolationObser
 	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 }
 
+func observeM2RecoveryOwnershipMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	if mutant.Fixture == "WEAKENED-CENSUS" {
+		names := m2FoundationContractTypeNames()
+		if err := validateM2FoundationContractTypeNames(names[:len(names)-1]); err != nil {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "FOUNDATION_CONTRACT_OWNERSHIP", Source: mutant.Fixture}
+		}
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+	}
+	const module = "example.test/recovery-ownership"
+	root := t.TempDir()
+	writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
+	files := m2FoundationOwnershipFixture(mutant.Fixture)
+	if files == nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	for path, source := range files {
+		writeGoFixture(t, root, path, source)
+	}
+	setIsolatedGoPaths(t)
+	t.Setenv("GOPROXY", "off")
+	if err := inspectM2FoundationContractOwnership(t.Context(), root, module); err != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "FOUNDATION_CONTRACT_OWNERSHIP", Source: mutant.Fixture}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+}
+
+func observeM2CapabilityReachMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	graph, ok := m2CapabilityReachFixture(mutant.Fixture)
+	if !ok {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	for _, violation := range m2CapabilityGapDBReachability(policy, graph) {
+		if violation.SourcePackage == mutant.Expected.Source && violation.TargetPackage == mutant.Expected.Target {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: string(violation.Rule), Source: violation.SourcePackage, Target: violation.TargetPackage}
+		}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+}
+
 func validateM2ExecutableMutants(cases []m2MutantCase) error {
 	if len(cases) != m2MutantCensusCount {
 		return fmt.Errorf("evidence=M2-MUTANT-CENSUS observed-count=%d expected=%d", len(cases), m2MutantCensusCount)
@@ -485,6 +537,19 @@ func m2FixtureDigest(validator, fixture string) string {
 		material = m2EligibilityFixture(fixture)
 	case m2ValidatorRawStore:
 		material = m2RawFixture(fixture)
+	case m2ValidatorRecovery:
+		if fixture == "WEAKENED-CENSUS" {
+			names := m2FoundationContractTypeNames()
+			material = names[:len(names)-1]
+		} else {
+			material = m2FoundationOwnershipFixture(fixture)
+		}
+	case m2ValidatorCapReach:
+		graph, ok := m2CapabilityReachFixture(fixture)
+		if !ok {
+			return ""
+		}
+		material = graph
 	default:
 		return ""
 	}
@@ -507,6 +572,8 @@ func m2PolicyFixture(fixture string) (Policy, bool) {
 		}
 	case "GAPDB-CLASS":
 		removeM2Pattern(&policy, m2ModulePath+"/internal/controlstore/gapdb")
+	case "GAPDB-DENIAL":
+		policy.ForbiddenLocalDirections = policy.ForbiddenLocalDirections[1:]
 	case "PROVIDER":
 		policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
 	default:
@@ -524,6 +591,18 @@ func m2EventFixture(fixture string) (m2EventRegistry, bool) {
 		registry.Families = registry.Families[1:]
 	case "REDUCER-VERSION":
 		registry.Families[0].Reducer = 2
+	case "OPERATION-REDUCER":
+		registry.Families[1].Reducer = 1
+	case "OPERATION-SCHEMA":
+		registry.Families[1].EventSchema = 1
+	case "ORDERING":
+		registry.Ordering[0] = "global_sequence"
+	case "PUBLICATION":
+		registry.PublicationRule = "many_events_per_aggregate"
+	case "REGISTRY-ID":
+		registry.RegistryID = "spec-kitty.authority-event-families"
+	case "REGISTRY-SCHEMA":
+		registry.SchemaVersion = 1
 	case "RENAMED":
 		registry.Families[0].Family = "runtime"
 	case "UNEXPECTED":
@@ -556,7 +635,7 @@ func m2DigestJSON(value any) string {
 }
 
 func m2KnownValidator(value string) bool {
-	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore}, value)
+	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore, m2ValidatorRecovery, m2ValidatorCapReach}, value)
 }
 
 func m2SQLImportSource(fixture string) string {
@@ -633,6 +712,8 @@ func mutateM2Keyspace(fixture string, registry *[]m2KeyEntry) bool {
 		values[0].Template = "spk/v1/authority/binding"
 	case "RAW":
 		values = append(values, m2KeyEntry{ID: "K-RAW", Template: "<caller-key>"})
+	case "SCOPE-FIRST-HEAD":
+		values[5].Template = "spk/v2/scopes/<scope>/heads/<aggregate-kind>/<aggregate-id>"
 	case "VARIABLE-VERSION":
 		values[6].Template = strings.Replace(values[6].Template, "hex16", "decimal", 1)
 	case "SCOPE":
@@ -648,6 +729,27 @@ func mutateM2Keyspace(fixture string, registry *[]m2KeyEntry) bool {
 	}
 	*registry = values
 	return true
+}
+
+func m2CapabilityReachFixture(fixture string) (Graph, bool) {
+	capability := m2ModulePath + "/internal/execution"
+	coordinator := m2ModulePath + "/internal/controljournal/v2"
+	adapter := m2ModulePath + "/internal/controlstore/gapdb"
+	var edges []ImportEdge
+	switch fixture {
+	case "DIRECT":
+		edges = []ImportEdge{{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal}}
+	case "WRAPPER":
+		edges = []ImportEdge{
+			{SourcePackage: capability, TargetPackage: coordinator, Kind: ImportModuleLocal},
+			{SourcePackage: coordinator, TargetPackage: adapter, Kind: ImportModuleLocal},
+		}
+	default:
+		return Graph{}, false
+	}
+	graph := fixtureGraph([]string{capability, coordinator, adapter}, edges...)
+	graph.ModulePath = m2ModulePath
+	return graph, true
 }
 
 func m2EligibilityFixture(fixture string) map[string]string {
