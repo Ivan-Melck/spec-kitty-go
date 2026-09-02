@@ -42,7 +42,8 @@
         "Cycle-8 repair 15808e66 closes exported named and alias function-type side seams; sealed census 105 and all architecture/tooling gates pass.",
         "Cycle 9 requires complete semantic type traversal for generic constraints, unions, type parameters, and transitive defined-wrapper provenance.",
         "Terminal type-graph repair 053ea420 covers generic constraints, unions, transitive wrappers, every exported callable seam, and 116 sealed mutants; all required gates pass.",
-        "Terminal arbiter directs one final repair: recursively inspect the complete type graph reachable from every exported package object, including composite values and unexported receiver types exposed publicly."
+        "Terminal arbiter directs one final repair: recursively inspect the complete type graph reachable from every exported package object, including composite values and unexported receiver types exposed publicly.",
+        "Arbiter-directed repair 6ba8ab68 starts at every exported object and walks the bounded public type graph; 121 sealed mutants and all gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
