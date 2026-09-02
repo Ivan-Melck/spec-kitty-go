@@ -42,7 +42,7 @@ Spec Kitty authority by themselves.
 | `CandidateID` | Immutable handoff evidence identity. |
 | `ReviewID` | One review attempt and terminal verdict. |
 | `IntegrationID` | One serialized repository publication attempt. |
-| `EffectID` | Stable external-effect intent and attribution identity. |
+| `EffectID` | Stable external-effect intent and attribution identity, unique in one host authority. |
 
 No identity is inferred from a branch, PID, path, ticket assignment, textual
 label, clock, provider revision, or array position.
@@ -60,6 +60,7 @@ spk/v2/runtime/epochs/<runtime-epoch-id>
 
 spk/v2/operations/<operation-id>/binding
 spk/v2/operations/<operation-id>/head
+spk/v2/effects/<effect-id>/intent
 
 spk/v2/scopes/<scope>/heads/<aggregate-kind>/<aggregate-id>
 spk/v2/scopes/<scope>/journal/<aggregate-kind>/<aggregate-id>/<version-hex16>
@@ -234,6 +235,7 @@ CommitPlanV2 {
   eligibility_guard_transitions[]
   checkpoint_records[]
   provider_conditions[]
+  sealed_record_projection[]
   canonical_plan_sha256
 }
 ```
@@ -242,6 +244,24 @@ Construction validates exact event/head membership, one event per aggregate,
 operation membership, expected revisions, budgets, event registry, and
 canonical digests. Only a sealed plan can reach the GapDB writer. The committer
 translates it to one `AtomicBatch` and understands no capability semantics.
+
+`sealed_record_projection` is derived internally after validation and has no
+public constructor. It is a closed set of semantic record roles and typed
+targets, not a raw key/value store. Every member includes exact canonical
+bytes, an ordinary-or-checkpoint value class, and either absence or a positive
+observed-record-revision condition. The operation head value is canonical
+OperationState. Other aggregate head values are canonical AggregateHeadV2
+records derived after PublicationID is known from the head transition's
+coordinate, logical version, event, committed epoch, state digest, authority
+summary, and tombstone.
+
+Effect intents are immutable host-global records keyed by EffectID and carry
+the complete canonical intent value owned by the effect capability. Eligibility
+guard transitions name their mission and fixed shard and carry the complete
+canonical shard value plus its exact create/update condition. Checkpoint
+transitions pair one immutable record with one retained-ring slot value and the
+slot's exact create/update condition. Every byte and target is included in the
+sealed plan digest preimage, except fields derived from PublicationID itself.
 
 ## Capability aggregates
 

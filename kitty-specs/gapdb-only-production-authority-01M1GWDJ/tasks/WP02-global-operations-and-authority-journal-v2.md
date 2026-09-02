@@ -275,6 +275,28 @@ unit that WP03 can translate into exactly one conditional GapDB batch.
     It must not expose writable internals or depend on Go map iteration.
 11. Do not translate to provider mutations in this package. GapDB-specific
     revision/condition encoding belongs to WP03.
+12. Expose a closed immutable record projection derived only during sealing.
+    It must cover binding, events, the canonical OperationState head, canonical
+    capability heads, full effect-intent values, full eligibility-shard values,
+    checkpoint records, and checkpoint-slot transitions. Projected members
+    carry typed semantic targets, canonical bytes, value class, and explicit
+    absent-or-positive-revision conditions; they expose no raw-key constructor,
+    delete, expiry, condition-any, or post-seal mutation path.
+13. Extend head-transition input with committed runtime epoch and bounded
+    canonical authority summary, then derive final head bytes only after
+    PublicationID exists. Operation coordinates project canonical
+    OperationState at the host-global operation-head target; other coordinates
+    project canonical AggregateHeadV2 values.
+14. Replace digest-only effect and guard placeholders with persistence-complete
+    typed inputs. Effect intents name a host-global EffectID and carry their
+    full canonical intent. Eligibility transitions name mission and shard,
+    carry the full canonical shard value, and declare its exact create/update
+    condition. Checkpoint transitions pair a canonical immutable record with a
+    canonical slot value and exact slot condition.
+15. Validate an exact bijection between mutable projected members and declared
+    conditions. Bind every target and canonical byte into the plan preimage;
+    reject missing, extra, duplicate, aliased, substituted, zero-revision, and
+    post-seal-mutated members before adapter access.
 
 **Required tests**:
 
@@ -287,6 +309,12 @@ unit that WP03 can translate into exactly one conditional GapDB batch.
 - Split-publication and two-events-for-one-aggregate mutants are killed.
 - Every boundary maximum passes and each maximum-plus-one refuses before an
   adapter call or excessive allocation.
+- A consumer test can enumerate the sealed record projection and obtain every
+  target/value/condition required for one AtomicBatch without parsing
+  `CanonicalBytes`, rebuilding a head, or consulting capability state.
+- Omission/substitution mutants for effect value, eligibility mission/shard/
+  value/revision, head epoch/summary/value, checkpoint record/slot/value/
+  revision, and projected role all fail closed.
 
 **Exit evidence**:
 
