@@ -218,10 +218,10 @@
       "criterion_id": "FR-022",
       "description": "Every clean or unclean host restart durably creates a different epoch before commands are admitted.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "WP10 review-cycle-2; RunID m1-crown-e05a5e4-20260901T224500Z; manifest sha256 397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309; independent verify pass at e05a5e46feb3e65ff42c4544c16678c440ef3818",
+      "pass_fail": "pass",
+      "verified_by": "codex-acceptance",
+      "verified_at": "2026-09-02T09:01:08.276973+00:00",
       "notes": "Restart-epoch campaign passed 100/100."
     },
     {
