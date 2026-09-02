@@ -265,8 +265,12 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"adapter-owned-v2-record", m2FoundationOwnershipFixture("ADAPTER-OWNED"), true},
 		{"renamed-adapter-contract-in-read-signature", m2FoundationOwnershipFixture("RENAMED-ADAPTER"), true},
 		{"renamed-callable-beside-valid-read", m2FoundationOwnershipFixture("RENAMED-CALLABLE"), true},
+		{"named-function-type", m2FoundationOwnershipFixture("NAMED-FUNCTION-TYPE"), true},
+		{"alias-function-type", m2FoundationOwnershipFixture("ALIAS-FUNCTION-TYPE"), true},
 		{"unrelated-public-adapter-api", m2FoundationOwnershipFixture("UNRELATED-PUBLIC"), false},
 		{"private-adapter-helper", m2FoundationOwnershipFixture("PRIVATE-HELPER"), false},
+		{"unrelated-named-function-type", m2FoundationOwnershipFixture("UNRELATED-NAMED-FUNCTION"), false},
+		{"unrelated-alias-function-type", m2FoundationOwnershipFixture("UNRELATED-ALIAS-FUNCTION"), false},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -636,6 +640,9 @@ func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, found
 			if !object.Exported() {
 				continue
 			}
+			if function, owner := check(object.Name(), object.Type()); function != "" {
+				return function, owner
+			}
 			for _, set := range []*types.MethodSet{types.NewMethodSet(object.Type()), types.NewMethodSet(types.NewPointer(object.Type()))} {
 				for index := 0; index < set.Len(); index++ {
 					method := set.At(index).Obj()
@@ -715,7 +722,9 @@ func m2CollectNamedTypeReferences(candidate types.Type, references map[m2NamedTy
 
 func m2FoundationOwnershipFixture(variant string) map[string]string {
 	if !slices.Contains([]string{
-		"COMPLETE", "MISSING", "ADAPTER-OWNED", "RENAMED-ADAPTER", "RENAMED-CALLABLE", "UNRELATED-PUBLIC", "PRIVATE-HELPER",
+		"COMPLETE", "MISSING", "ADAPTER-OWNED", "RENAMED-ADAPTER", "RENAMED-CALLABLE",
+		"NAMED-FUNCTION-TYPE", "ALIAS-FUNCTION-TYPE", "UNRELATED-NAMED-FUNCTION", "UNRELATED-ALIAS-FUNCTION",
+		"UNRELATED-PUBLIC", "PRIVATE-HELPER",
 	}, variant) {
 		return nil
 	}
@@ -760,6 +769,30 @@ func (Adapter) ReadV2(context.Context, journalv2.ReadRequestV2) (journalv2.Recov
     return journalv2.RecoveryRecordV2{}, nil
 }
 func (Adapter) Fetch(context.Context, journalv2.ReadRequestV2) (Parcel, error) { return Parcel{}, nil }
+`
+	case "NAMED-FUNCTION-TYPE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Fetch func(journalv2.ReadRequestV2) (Parcel, error)
+`
+	case "ALIAS-FUNCTION-TYPE":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Fetch = func(journalv2.ReadRequestV2) (Parcel, error)
+`
+	case "UNRELATED-NAMED-FUNCTION":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import "context"
+type Diagnostic struct{}
+type Inspect func(context.Context) (Diagnostic, error)
+`
+	case "UNRELATED-ALIAS-FUNCTION":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import "context"
+type Diagnostic struct{}
+type Inspect = func(context.Context) (Diagnostic, error)
 `
 	case "UNRELATED-PUBLIC":
 		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb

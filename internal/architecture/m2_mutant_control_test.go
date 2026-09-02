@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 103
-	m2MutantCensusSHA256 = "17cacc7ab0ac0d229e7afe48c1749ebd9ac5455bfe06b1f92ce592e9cc38a9bb"
+	m2MutantCensusCount  = 105
+	m2MutantCensusSHA256 = "a6a1426387e0e1187734e297e62ead91f1fc873e7939fcb5e69fb508a9fa911f"
 )
 
 const (
@@ -133,6 +133,8 @@ func TestM2ArbiterFixtureBindingProbe(t *testing.T) {
 		{m2ValidatorPolicy, "CLASS", "GAPDB-CLASS"},
 		{m2ValidatorEvents, "RENAMED", "WRONG-OWNER"},
 		{m2ValidatorRecovery, "RENAMED-CALLABLE", "UNRELATED-PUBLIC"},
+		{m2ValidatorRecovery, "NAMED-FUNCTION-TYPE", "UNRELATED-NAMED-FUNCTION"},
+		{m2ValidatorRecovery, "ALIAS-FUNCTION-TYPE", "UNRELATED-ALIAS-FUNCTION"},
 	} {
 		candidate := find(swap.validator, swap.from)
 		candidate.Fixture = swap.to
@@ -218,7 +220,7 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, fixture := range []string{"ALIASES", "BUILD-VARIANT", "EMBEDDING", "FUNCTIONS", "GENERATED", "GENERIC-RECORD", "GENERICS", "INTERFACE", "RECORD-POINTER", "RECORD-VALUE", "SPLIT-METHODS", "STRUCT-FIELDS", "WRAPPER"} {
 		cases = append(cases, m2Case("M-RAW-"+fixture, m2ValidatorRawStore, fixture, "RAW_KEY_GOD_STORE", fixture, ""))
 	}
-	for _, fixture := range []string{"ADAPTER-OWNED", "MISSING", "RENAMED-ADAPTER", "RENAMED-CALLABLE", "WEAKENED-CENSUS"} {
+	for _, fixture := range []string{"ADAPTER-OWNED", "ALIAS-FUNCTION-TYPE", "MISSING", "NAMED-FUNCTION-TYPE", "RENAMED-ADAPTER", "RENAMED-CALLABLE", "WEAKENED-CENSUS"} {
 		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
 	}
 	return cases
