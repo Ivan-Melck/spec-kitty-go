@@ -421,6 +421,66 @@ func TestDefaultPolicySeparatesJournalApplicationComposition(t *testing.T) {
 	)
 	graph.ModulePath = module
 	assertExactViolation(t, policy, graph, RuleLocalDirection, pure, TierFoundation, adapter, TierAdapter)
+
+	for _, foundation := range []string{
+		module + "/internal/controljournal",
+		module + "/internal/controljournal/checkpoint",
+		module + "/internal/controljournal/playback",
+		module + "/internal/controljournal/v2",
+	} {
+		graph := fixtureGraph(
+			[]string{foundation, adapter},
+			ImportEdge{SourcePackage: foundation, TargetPackage: adapter, Kind: ImportModuleLocal},
+		)
+		graph.ModulePath = module
+		assertExactViolation(t, policy, graph, RuleLocalDirection, foundation, TierFoundation, adapter, TierAdapter)
+	}
+}
+
+func TestDefaultPolicyPermanentlyDeniesCapabilityToGapDBAdapter(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := module + "/internal/controlstore/gapdb"
+	for _, capability := range []struct {
+		path string
+		tier TierName
+	}{
+		{module + "/internal/artifact", TierArtifactAuthority},
+		{module + "/internal/mission", TierMissionAuthority},
+		{module + "/internal/workgraph", TierAuthority},
+		{module + "/internal/execution", TierAuthority},
+		{module + "/internal/workspace", TierAuthority},
+		{module + "/internal/handoff", TierAuthority},
+		{module + "/internal/review", TierAuthority},
+		{module + "/internal/acceptance", TierAuthority},
+		{module + "/internal/integration", TierAuthority},
+	} {
+		t.Run(strings.TrimPrefix(capability.path, module+"/internal/"), func(t *testing.T) {
+			graph := fixtureGraph(
+				[]string{capability.path, adapter},
+				ImportEdge{SourcePackage: capability.path, TargetPackage: adapter, Kind: ImportModuleLocal},
+			)
+			graph.ModulePath = module
+			assertExactViolation(t, policy, graph, RuleLocalDirection, capability.path, capability.tier, adapter, TierAdapter)
+		})
+	}
+
+	mutant := policy
+	mutant.ForbiddenLocalDirections = append([]ForbiddenLocalDirection(nil), policy.ForbiddenLocalDirections[1:]...)
+	for index := range mutant.Tiers {
+		if mutant.Tiers[index].Name == TierAuthority {
+			mutant.Tiers[index].AllowedLocalTargets = append(mutant.Tiers[index].AllowedLocalTargets, TierAdapter)
+		}
+	}
+	capability := module + "/internal/execution"
+	graph := fixtureGraph([]string{capability, adapter}, ImportEdge{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal})
+	graph.ModulePath = module
+	if err := mutant.Check(graph); err != nil {
+		t.Fatalf("removing exact GapDB denial did not admit the controlled widened-tier mutant: %v", err)
+	}
 }
 
 func TestDefaultPolicyClassifiesProvingGroundCompositionExactly(t *testing.T) {
