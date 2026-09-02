@@ -249,3 +249,7 @@ fake timeout. Verify same-ID/different-command cannot be mistaken for a retry.
 - Ambiguity is real, visible, and safely reconcilable.
 - Epoch and revision coordinates remain separate.
 - GJ-01/GJ-02 hooks are suitable for the combined trial.
+
+## Activity Log
+
+- 2026-08-30T18:47:25Z – reviewer-renata-wp05-cycle3 – Attribution correction: the single cycle-4 changes-requested verdict is the independent review of reviewer-renata-wp05-cycle3; move-task serialized its actor as user despite the active reviewer lock. No second verdict is emitted.
