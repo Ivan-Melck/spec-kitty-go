@@ -172,7 +172,8 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				Name: TierFoundation, Production: true,
 				Packages: []PackagePattern{
 					pkg("internal/ids"), pkg("internal/faults"), pkg("internal/governancecontext"),
-					PackagePrefix(modulePath + "/internal/controljournal"),
+					pkg("internal/controljournal"), pkg("internal/controljournal/checkpoint"),
+					pkg("internal/controljournal/playback"), pkg("internal/controljournal/reducer"),
 				},
 				AllowedLocalTargets: []TierName{TierFoundation},
 			},
@@ -225,14 +226,14 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			{
 				Name: TierAdapter, Production: true, ProviderAdapter: true,
 				Packages: []PackagePattern{
-					pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
+					pkg("internal/controlstore/gapdb"), pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/sidecar/gapdb"), pkg("internal/tracker/fake"),
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
 				},
 				AllowedLocalTargets: []TierName{
 					TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority,
 					TierMissionAuthority, TierProviderContract, TierAdapter,
 				},
-				AllowedExternalPrefixes: []string{"modernc.org/sqlite"},
+				AllowedExternalPrefixes: []string{"github.com/spec-kitty/gapdb", "modernc.org/sqlite"},
 			},
 			{
 				Name: TierProjection, Production: true,
@@ -245,7 +246,9 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			},
 			{
 				Name: TierComposition, Production: true,
-				Packages:            []PackagePattern{pkg("internal/helpercmd"), pkg("cmd/spk-phase1-helper")},
+				Packages: []PackagePattern{
+					pkg("internal/controljournal/application"), pkg("internal/helpercmd"), pkg("cmd/spk-phase1-helper"),
+				},
 				AllowedLocalTargets: append(append([]TierName(nil), allRuntime...), TierQuality),
 			},
 			{
