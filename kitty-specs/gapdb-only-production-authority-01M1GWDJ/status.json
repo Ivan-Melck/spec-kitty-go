@@ -62,6 +62,9 @@
       "last_event_id": "01M1HC9ENVG7FZSA6244V18RTQ",
       "last_transition_at": "2026-09-02T15:37:35.163558+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 346017,
