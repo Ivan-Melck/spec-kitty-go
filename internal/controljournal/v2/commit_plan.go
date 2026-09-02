@@ -2,7 +2,6 @@ package v2
 
 import (
 	"bytes"
-	"encoding/hex"
 	"sort"
 )
 
@@ -56,10 +55,36 @@ const (
 	ConditionRecordRevision ConditionKind = "record_revision"
 )
 
+type ConditionTargetKind string
+
+const ConditionTargetAggregateHead ConditionTargetKind = "aggregate_head"
+
+type ConditionTarget struct {
+	Kind       ConditionTargetKind `json:"kind"`
+	Coordinate AggregateCoordinate `json:"coordinate"`
+}
+
 type ProviderCondition struct {
-	ConditionID      string        `json:"condition_id"`
-	Kind             ConditionKind `json:"kind"`
-	ObservedRevision uint64        `json:"observed_revision,omitempty"`
+	Target           ConditionTarget `json:"target"`
+	Kind             ConditionKind   `json:"kind"`
+	ObservedRevision uint64          `json:"observed_revision,omitempty"`
+}
+
+func ConditionForHeadTransitionV2(head HeadTransitionV2) (ProviderCondition, error) {
+	if _, err := NewAggregateCoordinate(head.Coordinate.Kind, head.Coordinate.ID, head.Coordinate.Scope); err != nil {
+		return ProviderCondition{}, invalid(ErrorInvalidTransition, "condition_target")
+	}
+	condition := ProviderCondition{Target: ConditionTarget{Kind: ConditionTargetAggregateHead, Coordinate: head.Coordinate}}
+	switch {
+	case head.ExpectedLogicalVersion == 0 && head.ExpectedRecordRevision == 0:
+		condition.Kind = ConditionAbsent
+	case head.ExpectedLogicalVersion > 0 && head.ExpectedRecordRevision > 0:
+		condition.Kind = ConditionRecordRevision
+		condition.ObservedRevision = head.ExpectedRecordRevision
+	default:
+		return ProviderCondition{}, invalid(ErrorInvalidTransition, "condition_revision")
+	}
+	return condition, nil
 }
 
 type CommitPlanInput struct {
@@ -140,7 +165,9 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	sort.Slice(effects, func(i, j int) bool { return effects[i].EffectID < effects[j].EffectID })
 	sort.Slice(eligibility, func(i, j int) bool { return eligibility[i].GuardID < eligibility[j].GuardID })
 	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i].CheckpointID < checkpoints[j].CheckpointID })
-	sort.Slice(conditions, func(i, j int) bool { return conditions[i].ConditionID < conditions[j].ConditionID })
+	sort.Slice(conditions, func(i, j int) bool {
+		return conditionTargetKey(conditions[i].Target) < conditionTargetKey(conditions[j].Target)
+	})
 	if err := validatePlanMembers(input.PriorOperationState, input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions); err != nil {
 		return SealedCommitPlanV2{}, err
 	}
@@ -232,7 +259,10 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 	if err := uniqueEffects(effects); err != nil {
 		return err
 	}
-	if err := uniqueNamedDigests(eligibility, checkpoints, conditions); err != nil {
+	if err := uniqueNamedDigests(eligibility, checkpoints); err != nil {
+		return err
+	}
+	if err := validateExactConditions(heads, conditions); err != nil {
 		return err
 	}
 	return nil
@@ -276,7 +306,236 @@ func preflightCommitPlan(input CommitPlanInput) error {
 			return err
 		}
 	}
+	_, err := prospectiveEncodedPlanSize(input)
+	return err
+}
+
+type checkedPlanSize struct{ value uint64 }
+
+func (s *checkedPlanSize) add(value uint64) error {
+	if value > uint64(MaxCommitPlanBytes)-s.value {
+		return invalid(ErrorBudgetExceeded, "commit_plan_bytes")
+	}
+	s.value += value
 	return nil
+}
+
+func (s *checkedPlanSize) addTimes(value uint64, multiplier uint64) error {
+	if value > uint64(MaxCommitPlanBytes)/multiplier {
+		return invalid(ErrorBudgetExceeded, "commit_plan_bytes")
+	}
+	return s.add(value * multiplier)
+}
+
+func (s *checkedPlanSize) addString(value string) error {
+	if len(value) > MaxIdentityBytes {
+		return invalid(ErrorBudgetExceeded, "commit_plan_identity")
+	}
+	return s.addTimes(jsonStringSizeBound(value), 2)
+}
+
+func (s *checkedPlanSize) addScope(scope Scope) error {
+	for _, value := range []string{string(scope.Kind), string(scope.ProjectID), string(scope.MissionID), string(scope.RepositoryID), string(scope.WorkRevisionID), string(scope.WorkID)} {
+		if err := s.addString(value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prospectiveEncodedPlanSize is a checked upper bound for both the digest
+// preimage and final plan wire form. The factor of two covers base64 framing
+// at the nested event/state layer and again at the final plan layer.
+func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
+	size := checkedPlanSize{}
+	if err := size.add(16 * 1024); err != nil { // plan fields, punctuation, and fixed digests
+		return 0, err
+	}
+	addState := func(state OperationStateV2) error {
+		if err := size.add(4 * 1024); err != nil {
+			return err
+		}
+		for _, value := range []string{string(state.operationID), string(state.status), state.resultKind, string(state.lastPublicationID)} {
+			if err := size.addString(value); err != nil {
+				return err
+			}
+		}
+		for _, value := range state.eventIDs {
+			if err := size.addString(string(value)); err != nil {
+				return err
+			}
+		}
+		for _, value := range state.effectIDs {
+			if err := size.addString(string(value)); err != nil {
+				return err
+			}
+		}
+		return size.addTimes(uint64(len(state.canonicalResult)), 2)
+	}
+	if input.OperationBinding != nil {
+		if err := size.add(4 * 1024); err != nil {
+			return 0, err
+		}
+		binding := input.OperationBinding
+		for _, value := range []string{string(binding.operationID), binding.commandKind, string(binding.actorID), string(binding.processID), binding.doctrineRevision,
+			binding.profileRevision, binding.policyRevision, string(binding.originatingRuntimeEpochID), binding.observedCreatedAt} {
+			if err := size.addString(value); err != nil {
+				return 0, err
+			}
+		}
+		if err := size.addScope(binding.scope); err != nil {
+			return 0, err
+		}
+	}
+	if input.PriorOperationState != nil {
+		if err := addState(*input.PriorOperationState); err != nil {
+			return 0, err
+		}
+	}
+	if err := addState(input.OperationState); err != nil {
+		return 0, err
+	}
+	for _, event := range input.Events {
+		if err := size.add(2 * 1024); err != nil {
+			return 0, err
+		}
+		for _, value := range []string{string(event.EventID), event.EventType, event.Family, string(event.Coordinate.Kind), string(event.Coordinate.ID),
+			string(event.CommittedRuntimeEpochID), string(event.ActorID), string(event.ProcessID), string(event.WorkRevisionID), event.PolicyRevision} {
+			if err := size.addString(value); err != nil {
+				return 0, err
+			}
+		}
+		if err := size.addScope(event.Coordinate.Scope); err != nil {
+			return 0, err
+		}
+		for _, revision := range event.GovernanceRevisions {
+			if err := size.addString(revision); err != nil {
+				return 0, err
+			}
+		}
+		payloadSize := canonicalJSONSizeBound(event.Payload)
+		observationSize := canonicalJSONSizeBound(event.Observations)
+		if len(event.Observations) == 0 {
+			observationSize = 2
+		}
+		if err := size.addTimes(payloadSize+observationSize, 2); err != nil {
+			return 0, err
+		}
+	}
+	for _, head := range input.Heads {
+		if err := size.add(1024); err != nil {
+			return 0, err
+		}
+		if err := size.addString(string(head.Coordinate.Kind)); err != nil {
+			return 0, err
+		}
+		if err := size.addString(string(head.Coordinate.ID)); err != nil {
+			return 0, err
+		}
+		if err := size.addScope(head.Coordinate.Scope); err != nil {
+			return 0, err
+		}
+		if err := size.addString(string(head.EventID)); err != nil {
+			return 0, err
+		}
+	}
+	for _, effect := range input.EffectIntents {
+		if err := size.add(512); err != nil {
+			return 0, err
+		}
+		if err := size.addString(string(effect.EffectID)); err != nil {
+			return 0, err
+		}
+	}
+	for _, guard := range input.EligibilityGuards {
+		if err := size.add(512); err != nil {
+			return 0, err
+		}
+		if err := size.addString(guard.GuardID); err != nil {
+			return 0, err
+		}
+	}
+	for _, checkpoint := range input.Checkpoints {
+		if err := size.add(512); err != nil {
+			return 0, err
+		}
+		if err := size.addString(checkpoint.CheckpointID); err != nil {
+			return 0, err
+		}
+		if err := size.addTimes(canonicalJSONSizeBound(checkpoint.Canonical), 2); err != nil {
+			return 0, err
+		}
+	}
+	for _, condition := range input.Conditions {
+		if err := size.add(1024); err != nil {
+			return 0, err
+		}
+		for _, value := range []string{string(condition.Target.Kind), string(condition.Target.Coordinate.Kind), string(condition.Target.Coordinate.ID), string(condition.Kind)} {
+			if err := size.addString(value); err != nil {
+				return 0, err
+			}
+		}
+		if err := size.addScope(condition.Target.Coordinate.Scope); err != nil {
+			return 0, err
+		}
+	}
+	return size.value, nil
+}
+
+func jsonStringSizeBound(value string) uint64 {
+	size := uint64(2)
+	for index := 0; index < len(value); index++ {
+		char := value[index]
+		switch {
+		case char < 0x20 || char == '<' || char == '>' || char == '&':
+			size += 6
+		case char == '\\' || char == '"':
+			size += 2
+		case char < 0x80:
+			size++
+		default:
+			// Invalid UTF-8 expands to a six-byte replacement escape; valid
+			// UTF-8 cannot expand beyond six bytes per source byte.
+			size += 6
+		}
+	}
+	return size
+}
+
+func canonicalJSONSizeBound(value []byte) uint64 {
+	size := uint64(0)
+	inString := false
+	for index := 0; index < len(value); index++ {
+		char := value[index]
+		if !inString {
+			if char == ' ' || char == '\t' || char == '\r' || char == '\n' {
+				continue
+			}
+			size++
+			inString = char == '"'
+			continue
+		}
+		switch {
+		case char == '"':
+			size++
+			inString = false
+		case char == '\\':
+			size += 6
+			if index+1 < len(value) {
+				index++
+				if value[index] == 'u' && index+4 < len(value) {
+					index += 4
+				}
+			}
+		case char < 0x20 || char == '<' || char == '>' || char == '&':
+			size += 6
+		case char < 0x80:
+			size++
+		default:
+			size += 6
+		}
+	}
+	return size
 }
 
 func uniqueEffects(effects []EffectIntentReference) error {
@@ -339,8 +598,8 @@ func equalIDs[T ~string](left, right []T) bool {
 	return true
 }
 
-func uniqueNamedDigests(guards []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) error {
-	seen := make(map[string]bool, len(guards)+len(checkpoints)+len(conditions))
+func uniqueNamedDigests(guards []EligibilityGuardTransition, checkpoints []CheckpointRecord) error {
+	seen := make(map[string]bool, len(guards)+len(checkpoints))
 	for _, guard := range guards {
 		if validateIdentity("guard_id", guard.GuardID) != nil || guard.Digest.IsZero() || seen["guard:"+guard.GuardID] {
 			return invalid(ErrorInvalidTransition, "eligibility_guards")
@@ -356,12 +615,43 @@ func uniqueNamedDigests(guards []EligibilityGuardTransition, checkpoints []Check
 		}
 		seen["checkpoint:"+checkpoint.CheckpointID] = true
 	}
-	for _, condition := range conditions {
-		if validateIdentity("condition_id", condition.ConditionID) != nil || seen["condition:"+condition.ConditionID] ||
-			condition.Kind != ConditionAbsent && condition.Kind != ConditionRecordRevision || condition.Kind == ConditionAbsent && condition.ObservedRevision != 0 || condition.Kind == ConditionRecordRevision && condition.ObservedRevision == 0 {
-			return invalid(ErrorInvalidTransition, "conditions")
+	return nil
+}
+
+func conditionTargetKey(target ConditionTarget) string {
+	return string(target.Kind) + "/" + target.Coordinate.canonical()
+}
+
+func validateExactConditions(heads []HeadTransitionV2, conditions []ProviderCondition) error {
+	if len(conditions) != len(heads) {
+		return invalid(ErrorInvalidTransition, "condition_membership")
+	}
+	expected := make(map[string]ProviderCondition, len(heads))
+	for _, head := range heads {
+		condition, err := ConditionForHeadTransitionV2(head)
+		if err != nil {
+			return err
 		}
-		seen["condition:"+condition.ConditionID] = true
+		key := conditionTargetKey(condition.Target)
+		if _, exists := expected[key]; exists {
+			return invalid(ErrorInvalidTransition, "condition_membership")
+		}
+		expected[key] = condition
+	}
+	seen := make(map[string]bool, len(conditions))
+	for _, condition := range conditions {
+		if condition.Target.Kind != ConditionTargetAggregateHead {
+			return invalid(ErrorInvalidTransition, "condition_target")
+		}
+		if _, err := NewAggregateCoordinate(condition.Target.Coordinate.Kind, condition.Target.Coordinate.ID, condition.Target.Coordinate.Scope); err != nil {
+			return invalid(ErrorInvalidTransition, "condition_target")
+		}
+		key := conditionTargetKey(condition.Target)
+		want, exists := expected[key]
+		if !exists || seen[key] || condition != want {
+			return invalid(ErrorInvalidTransition, "condition_membership")
+		}
+		seen[key] = true
 	}
 	return nil
 }
@@ -497,11 +787,11 @@ func (p SealedCommitPlanV2) EligibilityGuards() []EligibilityGuardTransition {
 func (p SealedCommitPlanV2) Checkpoints() []CheckpointRecord { return cloneCheckpoints(p.checkpoints) }
 
 func DecodePublicationID(value string) (PublicationID, error) {
-	if _, err := hex.DecodeString(value); err != nil || len(value) != 64 {
+	if len(value) != 64 {
 		return "", invalid(ErrorInvalidDigest, "publication_id")
 	}
 	for _, char := range []byte(value) {
-		if char >= 'A' && char <= 'F' {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
 			return "", invalid(ErrorInvalidDigest, "publication_id")
 		}
 	}

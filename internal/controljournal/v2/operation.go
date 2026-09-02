@@ -299,8 +299,10 @@ func NewOperationStateV2(input OperationStateInput) (OperationStateV2, error) {
 	} else if input.ResultKind != "" || input.ResultSchemaVersion != 0 || len(input.CanonicalResult) != 0 {
 		return OperationStateV2{}, invalid(ErrorInvalidTransition, "operation_result")
 	}
-	if input.LastPublicationID != "" && validateIdentity("last_publication_id", string(input.LastPublicationID)) != nil {
-		return OperationStateV2{}, invalid(ErrorInvalidIdentity, "last_publication_id")
+	if input.LastPublicationID != "" {
+		if _, err := DecodePublicationID(string(input.LastPublicationID)); err != nil {
+			return OperationStateV2{}, err
+		}
 	}
 	return OperationStateV2{input.OperationID, input.LogicalVersion, input.Status, input.ResultKind, input.ResultSchemaVersion,
 		append([]byte(nil), result...), resultDigest, events, effects, input.LastPublicationID}, nil
@@ -339,6 +341,9 @@ type operationStateWire struct {
 }
 
 func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
+	if state.lastPublicationID == "" {
+		return nil, invalid(ErrorInvalidDigest, "last_publication_id")
+	}
 	rebuilt, err := NewOperationStateV2(OperationStateInput{state.operationID, state.logicalVersion, state.status, state.resultKind,
 		state.resultSchemaVersion, state.canonicalResult, state.eventIDs, state.effectIDs, state.lastPublicationID})
 	if err != nil || rebuilt.resultDigest != state.resultDigest {
@@ -372,6 +377,9 @@ func DecodeOperationStateV2(encoded []byte) (OperationStateV2, error) {
 	effects := make([]EffectID, len(wire.EffectIDs))
 	for index, value := range wire.EffectIDs {
 		effects[index] = EffectID(value)
+	}
+	if _, err := DecodePublicationID(wire.LastPublicationID); err != nil {
+		return OperationStateV2{}, invalid(ErrorJournalCorrupt, "operation_state")
 	}
 	state, err := NewOperationStateV2(OperationStateInput{OperationID(wire.OperationID), LogicalVersion(wire.LogicalVersion), wire.Status,
 		wire.ResultKind, wire.ResultSchemaVersion, wire.CanonicalResult, events, effects, PublicationID(wire.LastPublicationID)})

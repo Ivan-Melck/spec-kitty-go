@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -23,6 +24,7 @@ const (
 	MaxEffectsPerPublication = 64
 	MaxConditionsPerPlan     = 256
 	MaxCheckpointsPerPlan    = 32
+	MaxReductionObservations = 256
 	MaxCommitPlanBytes       = 4 * 1024 * 1024
 	publicationDomain        = "spec-kitty.publication.v2"
 	canonicalEventDomain     = "spec-kitty.event.v2"
@@ -457,9 +459,12 @@ func NewEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2) (Eve
 		return EventEnvelopeV2{}, invalid(ErrorBudgetExceeded, "event_observations")
 	}
 	if validateIdentity("event_id", string(input.EventID)) != nil || validateIdentity("event_type", input.EventType) != nil ||
-		validateIdentity("operation_id", string(input.OperationID)) != nil || validateIdentity("publication_id", string(input.PublicationID)) != nil ||
+		validateIdentity("operation_id", string(input.OperationID)) != nil ||
 		validateIdentity("runtime_epoch_id", string(input.CommittedRuntimeEpochID)) != nil || input.AggregateLogicalVersion == 0 || input.OperationLogicalVersion == 0 {
 		return EventEnvelopeV2{}, invalid(ErrorInvalidIdentity, "event_envelope")
+	}
+	if _, err := DecodePublicationID(string(input.PublicationID)); err != nil {
+		return EventEnvelopeV2{}, err
 	}
 	if _, err := NewAggregateCoordinate(input.Coordinate.Kind, input.Coordinate.ID, input.Coordinate.Scope); err != nil {
 		return EventEnvelopeV2{}, err
@@ -633,9 +638,15 @@ func NewAggregateHeadV2(input AggregateHeadInput) (AggregateHeadV2, error) {
 	if _, err := NewAggregateCoordinate(input.Coordinate.Kind, input.Coordinate.ID, input.Coordinate.Scope); err != nil {
 		return AggregateHeadV2{}, err
 	}
+	if input.Coordinate.Kind == AggregateKind("operation") && input.Coordinate.Scope != (Scope{Kind: ScopeHost}) {
+		return AggregateHeadV2{}, invalid(ErrorInvalidScope, "operation_head")
+	}
 	if input.LogicalVersion == 0 || validateIdentity("last_event_id", string(input.LastEventID)) != nil ||
-		validateIdentity("last_publication_id", string(input.LastPublicationID)) != nil || validateIdentity("committed_runtime_epoch_id", string(input.CommittedRuntimeEpochID)) != nil || input.CanonicalStateDigest.IsZero() {
+		validateIdentity("committed_runtime_epoch_id", string(input.CommittedRuntimeEpochID)) != nil || input.CanonicalStateDigest.IsZero() {
 		return AggregateHeadV2{}, invalid(ErrorInvalidTransition, "aggregate_head")
+	}
+	if _, err := DecodePublicationID(string(input.LastPublicationID)); err != nil {
+		return AggregateHeadV2{}, err
 	}
 	summary, err := CanonicalObject(input.AuthoritySummary)
 	if err != nil {
@@ -648,6 +659,33 @@ func NewAggregateHeadV2(input AggregateHeadInput) (AggregateHeadV2, error) {
 func (h AggregateHeadV2) Coordinate() AggregateCoordinate { return h.input.Coordinate }
 func (h AggregateHeadV2) LogicalVersion() LogicalVersion  { return h.input.LogicalVersion }
 func (h AggregateHeadV2) AuthoritySummary() []byte        { return append([]byte(nil), h.authoritySummary...) }
+
+func ValidateOperationPublicationHeadV2(state OperationStateV2, event EventEnvelopeV2, head AggregateHeadV2) error {
+	publicationID := state.lastPublicationID
+	if _, err := DecodePublicationID(string(publicationID)); err != nil {
+		return invalid(ErrorInvalidTransition, "operation_head_context")
+	}
+	coordinate := head.input.Coordinate
+	eventInput := event.input
+	if coordinate.Kind != AggregateKind("operation") || coordinate.Scope != (Scope{Kind: ScopeHost}) ||
+		coordinate.ID != AggregateID(state.operationID) || eventInput.Family != "operation" || eventInput.Coordinate != coordinate ||
+		eventInput.OperationID != state.operationID || eventInput.OperationLogicalVersion != state.logicalVersion ||
+		eventInput.AggregateLogicalVersion != state.logicalVersion || head.input.LogicalVersion != state.logicalVersion ||
+		head.input.LastEventID != eventInput.EventID || eventInput.PublicationID != publicationID || head.input.LastPublicationID != publicationID {
+		return invalid(ErrorInvalidTransition, "operation_head_context")
+	}
+	found := false
+	for _, eventID := range state.eventIDs {
+		if eventID == eventInput.EventID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return invalid(ErrorInvalidTransition, "operation_head_context")
+	}
+	return nil
+}
 
 type aggregateHeadWire struct {
 	SchemaVersion           uint32              `json:"schema_version"`
@@ -700,9 +738,25 @@ type ReducerRegistration struct {
 	Reduce             Reducer
 }
 
+// ReducerSetV2 is one bounded reduction-observation session. Registrations are
+// immutable after construction and observations are append-only. It detects
+// disagreement within this session; durable replay verification belongs to
+// the restore boundary that has recorded terminal digests.
 type ReducerSetV2 struct {
 	registry EventRegistryV2
 	reducers map[string]Reducer
+	session  *reductionSession
+}
+
+type reductionObservation struct {
+	input  []byte
+	output []byte
+	digest Digest
+}
+
+type reductionSession struct {
+	mu           sync.Mutex
+	observations map[string]reductionObservation
 }
 
 func NewReducerSetV2(registry EventRegistryV2, registrations []ReducerRegistration) (ReducerSetV2, error) {
@@ -720,7 +774,7 @@ func NewReducerSetV2(registry EventRegistryV2, registrations []ReducerRegistrati
 		}
 		reducers[key] = registration.Reduce
 	}
-	return ReducerSetV2{registry: registry, reducers: reducers}, nil
+	return ReducerSetV2{registry: registry, reducers: reducers, session: &reductionSession{observations: make(map[string]reductionObservation)}}, nil
 }
 
 func (r ReducerSetV2) Reduce(family string, eventSchemaVersion, reducerVersion uint32, prior, event []byte) ([]byte, Digest, error) {
@@ -739,21 +793,38 @@ func (r ReducerSetV2) Reduce(family string, eventSchemaVersion, reducerVersion u
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	first, err := call(append([]byte(nil), canonicalPrior...), append([]byte(nil), canonicalEvent...))
+	inputBytes, err := marshalCanonical(struct {
+		Tuple string `json:"tuple"`
+		Prior []byte `json:"prior"`
+		Event []byte `json:"event"`
+	}{eventTupleKey(family, eventSchemaVersion, reducerVersion), canonicalPrior, canonicalEvent}, MaxEventEnvelopeBytes)
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	second, err := call(append([]byte(nil), canonicalPrior...), append([]byte(nil), canonicalEvent...))
+	inputKey := digest("spec-kitty.reducer-input.v2", inputBytes).String()
+	r.session.mu.Lock()
+	defer r.session.mu.Unlock()
+	priorObservation, observed := r.session.observations[inputKey]
+	if observed && !bytes.Equal(priorObservation.input, inputBytes) {
+		return nil, Digest{}, invalid(ErrorJournalCorrupt, "reduction_observation")
+	}
+	if !observed && len(r.session.observations) >= MaxReductionObservations {
+		return nil, Digest{}, invalid(ErrorBudgetExceeded, "reduction_observations")
+	}
+	output, err := call(append([]byte(nil), canonicalPrior...), append([]byte(nil), canonicalEvent...))
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	first, err = CanonicalObject(first)
+	output, err = CanonicalObject(output)
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	second, err = CanonicalObject(second)
-	if err != nil || !bytes.Equal(first, second) {
+	outputDigest := digest("spec-kitty.reducer-state.v2", output)
+	if observed && (!bytes.Equal(priorObservation.output, output) || priorObservation.digest != outputDigest) {
 		return nil, Digest{}, invalid(ErrorNondeterministic, "reducer")
 	}
-	return append([]byte(nil), first...), digest("spec-kitty.reducer-state.v2", first), nil
+	if !observed {
+		r.session.observations[inputKey] = reductionObservation{input: append([]byte(nil), inputBytes...), output: append([]byte(nil), output...), digest: outputDigest}
+	}
+	return append([]byte(nil), output...), outputDigest, nil
 }
