@@ -39,7 +39,8 @@
         "Cycle 7 rejects callable-name-gated ownership inspection; structurally detect renamed adapter-local recovery/publication side seams and bind the exact Fetch/Parcel mutant.",
         "Cycle-7 repair be233e38 structurally closes renamed Fetch/Parcel side seams; mutant census 103 and all focused/race/architecture/helper/compile/vet/static/format gates pass.",
         "Cycle 8 rejects exported named/alias function recovery side seams; inspect TypeName object signatures and bind both exact mutants.",
-        "Cycle-8 repair 15808e66 closes exported named and alias function-type side seams; sealed census 105 and all architecture/tooling gates pass."
+        "Cycle-8 repair 15808e66 closes exported named and alias function-type side seams; sealed census 105 and all architecture/tooling gates pass.",
+        "Cycle 9 requires complete semantic type traversal for generic constraints, unions, type parameters, and transitive defined-wrapper provenance."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -49,15 +50,15 @@
         "reviewer": "wp01-cycle9-reviewer",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned"
       }
     },
     "WP02": {
