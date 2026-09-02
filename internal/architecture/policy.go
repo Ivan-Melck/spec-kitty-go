@@ -174,6 +174,8 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 					pkg("internal/ids"), pkg("internal/faults"), pkg("internal/governancecontext"),
 					pkg("internal/controljournal"), pkg("internal/controljournal/checkpoint"),
 					pkg("internal/controljournal/playback"), pkg("internal/controljournal/reducer"),
+					PackagePrefix(modulePath + "/internal/controljournal/v2"),
+					PackagePrefix(modulePath + "/internal/controlroot"),
 				},
 				AllowedLocalTargets: []TierName{TierFoundation},
 			},
@@ -191,6 +193,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				Packages: []PackagePattern{
 					pkg("internal/execution"), pkg("internal/handoff"), pkg("internal/integration"),
 					pkg("internal/review"), pkg("internal/workgraph"), pkg("internal/workspace"),
+					PackagePrefix(modulePath + "/internal/acceptance"),
 				},
 				AllowedLocalTargets: []TierName{TierFoundation, TierAuthority, TierProviderContract},
 			},
@@ -226,7 +229,9 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			{
 				Name: TierAdapter, Production: true, ProviderAdapter: true,
 				Packages: []PackagePattern{
-					pkg("internal/controlstore/gapdb"), pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/sidecar/gapdb"), pkg("internal/tracker/fake"),
+					PackagePrefix(modulePath + "/internal/controlstore/gapdb"),
+					PackagePrefix(modulePath + "/internal/sidecar/gapdb"),
+					pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
 				},
 				AllowedLocalTargets: []TierName{
@@ -248,6 +253,8 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				Name: TierComposition, Production: true,
 				Packages: []PackagePattern{
 					pkg("internal/controljournal/application"), pkg("internal/helpercmd"), pkg("internal/provingground"), pkg("cmd/spk-phase1-helper"),
+					PackagePrefix(modulePath + "/internal/productionruntime"),
+					PackagePrefix(modulePath + "/cmd/spec-kitty"),
 				},
 				AllowedLocalTargets: append(append([]TierName(nil), allRuntime...), TierQuality),
 			},
@@ -255,6 +262,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				Name: TierQuality, Production: false,
 				Packages: []PackagePattern{
 					pkg("internal/architecture"), pkg("internal/scenario"), pkg("internal/tracker/conformance"), PackagePrefix(modulePath + "/internal/testcampaign"), pkg("cmd/spk-m1-proving-ground"),
+					PackagePrefix(modulePath + "/cmd/spk-m2-qualification"),
 				},
 				AllowedLocalTargets:     append(append([]TierName(nil), allRuntime...), TierQuality),
 				AllowedExternalPrefixes: []string{"modernc.org/sqlite", "github.com/spec-kitty/gapdb", "github.com/santhosh-tekuri/jsonschema/v6"},
