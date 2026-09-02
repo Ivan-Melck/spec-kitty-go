@@ -4,7 +4,7 @@
   "flattened": false,
   "friendly_name": "GapDB Control Journal Proving Ground",
   "mission_id": "01M18EVRH049KWZVZVSNBMQYMF",
-  "mission_number": null,
+  "mission_number": 3,
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
   "mission_type": "software-dev",
   "purpose_context": "Prove a narrow production-shaped GapDB external-sidecar journal, restart, playback, and two-agent authority slice before any broad authority-store migration is admitted.",
