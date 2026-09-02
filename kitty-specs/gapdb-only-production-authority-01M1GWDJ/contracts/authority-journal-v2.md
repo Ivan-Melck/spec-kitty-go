@@ -22,6 +22,9 @@ operation binding:
 operation head:
   spk/v2/operations/<operation-id>/head
 
+immutable effect intent:
+  spk/v2/effects/<effect-id>/intent
+
 aggregate head:
   spk/v2/scopes/<scope>/heads/<aggregate-kind>/<aggregate-id>
 
@@ -60,6 +63,29 @@ GapDB revision. It contains:
 - zero or more effect intents and eligibility-guard transitions; and
 - due checkpoint records/slot update when explicitly planned.
 
+The sealed plan also exposes one closed, immutable, provider-neutral record
+projection derived by the sealer from those typed members. Each projected
+record names one admitted semantic role and target, carries its exact canonical
+value, value class, and create-or-revision condition, and has no public
+constructor. It is not a generic mutation API: callers cannot supply a raw key,
+arbitrary role, provider mutation, delete, expiry, or condition-any. The GapDB
+adapter maps these closed targets to keys and conditions without rebuilding
+domain values or inventing membership.
+
+The admitted roles are operation binding, immutable journal event, operation
+head, aggregate head, immutable effect intent, eligibility guard, immutable
+checkpoint record, and checkpoint slot. EffectID is unique within one host
+authority, matching the host-global operation membership that names it.
+
+Head-transition input includes the committed runtime epoch and bounded
+canonical authority summary needed to derive the final AggregateHead value.
+After PublicationID derivation, sealing constructs each final head value. The
+operation head stores canonical OperationState; other aggregate heads store
+canonical AggregateHeadV2. Eligibility transitions name mission and shard and
+carry their canonical value plus exact observed revision. A checkpoint member
+names both its immutable record and mutable ring slot, with canonical values
+and the slot's create-or-revision condition.
+
 At most one event addresses an aggregate coordinate in a publication. Its
 logical version is exactly the prior head version plus one. Every event has the
 same OperationID, PublicationID, event count, provider revision, and distinct
@@ -79,6 +105,12 @@ OperationState, events, and heads:
 
 No ambiguity path allocates a new OperationID, calls an external adapter, or
 publishes a projection optimistically.
+
+Reconciliation enumerates the sealed record projection rather than
+reconstructing a second membership model. Complete means every projected key
+has the exact canonical value and one common positive commit revision. Proven
+absence means every projected key is absent. Any partial, foreign,
+mixed-revision, or contradictory observation closes authority.
 
 ## Restore law
 

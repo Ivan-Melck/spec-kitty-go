@@ -78,10 +78,10 @@ capability policy or alternate authority path.
 
 WP01 freezes the M2 contracts, registry, budgets, and architectural boundaries.
 WP02 owns provider-neutral journal values, immutable host-global operation
-binding, revisioned OperationState, canonical event/head bytes, and the only
-constructor for a sealed commit plan. This WP begins only after both are
-accepted and consumes their public contracts without weakening or duplicating
-their validation.
+binding, revisioned OperationState, canonical record bytes, and the only
+constructor for a sealed commit plan and its closed record projection. This WP
+begins only after both are accepted and consumes their public contracts without
+weakening or duplicating their validation.
 
 Capability packages own commands, event meaning, reducers, refusal precedence,
 and consumer ports. WP02 owns plan membership, digests, logical versions, and
@@ -144,6 +144,7 @@ mission-scoped operation identity.
    - `spk/v2/runtime/current` and
      `spk/v2/runtime/epochs/<runtime-epoch-id>`;
    - host-global `spk/v2/operations/<operation-id>/binding` and `/head`;
+   - host-global immutable `spk/v2/effects/<effect-id>/intent`;
    - scoped aggregate heads and version-addressed immutable events;
    - checkpoint slot/record keys; and
    - WorkRevision eligibility-shard keys.
@@ -251,10 +252,12 @@ semantics in the adapter.
    opaque/sealed commit-plan capability; do not accept a public struct or raw
    slice that callers can assemble after validation.
 
-2. Flatten the sealed plan's operation binding create, OperationState
-   event/head, capability events/heads, effect intents, eligibility guards,
-   and optional checkpoint records/slot transition in its canonical membership
-   order. Preserve exact keys and bytes supplied by the sealed plan.
+2. Flatten only the sealed plan's closed provider-neutral record projection in
+   its canonical membership order. Map each typed semantic target through this
+   WP's canonical key codec and preserve the exact canonical bytes, value class,
+   and condition supplied by the projection. Do not parse the plan's evidence
+   serialization, reconstruct heads, consult capability state, or maintain a
+   second membership model.
 
 3. Map immutable creates to `ConditionAbsent` and existing mutable heads/guards
    to `ConditionRevision` with a positive exact observed provider revision.
