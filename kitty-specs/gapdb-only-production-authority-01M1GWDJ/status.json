@@ -35,7 +35,8 @@
         "Arbiter decision: Approved after terminal bounded repair ac476e8. All five closed contract items pass: per-seam eligibility evidence, nested GapDB private-path denial, payload-independent raw-store denial, consumed-material mutant binding, and execution-bound terminal evidence. Exact focused x3, race, full architecture, vet, staticcheck, diff, and ownership gates pass. Max-cycle arbitration is terminal; no ordinary cycle 4.",
         "Review passed: terminal post-approval review of repair commit b4a10645 confirms permanent DefaultPolicy owns the exact slash-bounded closed M2 classifications, the test-only registration overlay is removed, unknown/lookalike and dependency-direction guards remain fail-closed, and the 88-case execution-bound evidence remains valid. Required focused x3, race, full architecture, vet, staticcheck, formatting, diff, and repository compile gates pass. Disposable combined-tree probes also admit current WP02 controljournal/v2 and WP12 controlroot packages through the ordinary architecture suite, helper architecture tests, helper architecture-check command, and package tests.",
         "Post-approval defect 2 requires the ratified global head keyspace, operation event tuple, recovery seam, and reachability mutants to become executable contracts before WP02/WP03 repair.",
-        "Post-approval defect-2 guard repair committed at 4919caf6; exact key/tuple/digest contracts, typed recovery ownership, dependency denials, and 102 executed mutants pass all focused/race/architecture/helper/compile/vet/static/format gates."
+        "Post-approval defect-2 guard repair committed at 4919caf6; exact key/tuple/digest contracts, typed recovery ownership, dependency denials, and 102 executed mutants pass all focused/race/architecture/helper/compile/vet/static/format gates.",
+        "Cycle 7 rejects callable-name-gated ownership inspection; structurally detect renamed adapter-local recovery/publication side seams and bind the exact Fetch/Parcel mutant."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -45,15 +46,15 @@
         "reviewer": "wp01-defect2-reviewer",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned"
       }
     },
     "WP02": {
