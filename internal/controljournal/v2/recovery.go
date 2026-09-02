@@ -1,7 +1,5 @@
 package v2
 
-import "time"
-
 const (
 	MaxRecoveryPageRecords = 500
 	MaxRecoveryPageBytes   = 8 * 1024 * 1024
@@ -200,10 +198,10 @@ type RecoveryRecordV2 struct {
 	address   RecordAddressV2
 	canonical []byte
 	revision  uint64
-	expiresAt *time.Time
+	expiresAt string
 }
 
-func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt *time.Time) (RecoveryRecordV2, error) {
+func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
 	if err := address.validate(); err != nil {
 		return RecoveryRecordV2{}, err
 	}
@@ -214,35 +212,27 @@ func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uin
 	if err != nil || len(value) != len(canonical) {
 		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
 	}
-	var expiry *time.Time
-	if expiresAt != nil {
-		copy := expiresAt.UTC()
-		expiry = &copy
+	if expiresAt != "" && !canonicalUTCSecond(expiresAt) {
+		return RecoveryRecordV2{}, invalid(ErrorInvalidCanonicalData, "recovery_record_expiry")
 	}
-	return RecoveryRecordV2{address: address, canonical: append([]byte(nil), value...), revision: revision, expiresAt: expiry}, nil
+	return RecoveryRecordV2{address: address, canonical: append([]byte(nil), value...), revision: revision, expiresAt: expiresAt}, nil
 }
 
 func (r RecoveryRecordV2) Address() RecordAddressV2 { return r.address }
 func (r RecoveryRecordV2) CanonicalValue() []byte   { return append([]byte(nil), r.canonical...) }
 func (r RecoveryRecordV2) RecordRevision() uint64   { return r.revision }
-func (r RecoveryRecordV2) ExpiresAt() *time.Time {
-	if r.expiresAt == nil {
-		return nil
-	}
-	copy := *r.expiresAt
-	return &copy
-}
+func (r RecoveryRecordV2) ExpiresAt() string        { return r.expiresAt }
 
 type RecoveryPageV2 struct {
 	observedRevision uint64
-	asOf             time.Time
+	asOf             string
 	records          []RecoveryRecordV2
 	cursor           []byte
 	truncated        bool
 }
 
-func NewRecoveryPageV2(observedRevision uint64, asOf time.Time, records []RecoveryRecordV2, cursor []byte, truncated bool) (RecoveryPageV2, error) {
-	if observedRevision == 0 || asOf.IsZero() || len(records) > MaxRecoveryPageRecords || len(cursor) > MaxRecoveryCursorBytes {
+func NewRecoveryPageV2(observedRevision uint64, asOf string, records []RecoveryRecordV2, cursor []byte, truncated bool) (RecoveryPageV2, error) {
+	if observedRevision == 0 || !canonicalUTCSecond(asOf) || len(records) > MaxRecoveryPageRecords || len(cursor) > MaxRecoveryCursorBytes {
 		return RecoveryPageV2{}, invalid(ErrorBudgetExceeded, "recovery_page")
 	}
 	if truncated != (len(cursor) != 0) {
@@ -260,21 +250,17 @@ func NewRecoveryPageV2(observedRevision uint64, asOf time.Time, records []Recove
 		}
 		copied[index] = cloneRecoveryRecord(record)
 	}
-	return RecoveryPageV2{observedRevision: observedRevision, asOf: asOf.UTC(), records: copied, cursor: append([]byte(nil), cursor...), truncated: truncated}, nil
+	return RecoveryPageV2{observedRevision: observedRevision, asOf: asOf, records: copied, cursor: append([]byte(nil), cursor...), truncated: truncated}, nil
 }
 
 func cloneRecoveryRecord(record RecoveryRecordV2) RecoveryRecordV2 {
 	copy := record
 	copy.canonical = append([]byte(nil), record.canonical...)
-	if record.expiresAt != nil {
-		expiry := *record.expiresAt
-		copy.expiresAt = &expiry
-	}
 	return copy
 }
 
 func (p RecoveryPageV2) ObservedRevision() uint64 { return p.observedRevision }
-func (p RecoveryPageV2) AsOf() time.Time          { return p.asOf }
+func (p RecoveryPageV2) AsOf() string             { return p.asOf }
 func (p RecoveryPageV2) Records() []RecoveryRecordV2 {
 	result := make([]RecoveryRecordV2, len(p.records))
 	for index := range p.records {

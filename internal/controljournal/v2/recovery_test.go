@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestRecoverySemanticAddressesAndScanTargets(t *testing.T) {
@@ -46,8 +45,8 @@ func TestRecoveryValuesAreBoundedAndDefensive(t *testing.T) {
 	}
 	address, _ := NewOperationHeadAddressV2("operation-01")
 	value := []byte(`{"status":"resolved"}`)
-	expiry := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	record, err := NewRecoveryRecordV2(address, value, 16, &expiry)
+	expiry := "2026-09-02T12:00:00Z"
+	record, err := NewRecoveryRecordV2(address, value, 16, expiry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +60,7 @@ func TestRecoveryValuesAreBoundedAndDefensive(t *testing.T) {
 		t.Fatal(err)
 	}
 	value[2], cursor[0] = 'x', 'x'
-	expiry = expiry.Add(time.Hour)
+	expiry = "2026-09-02T13:00:00Z"
 	gotRecords := page.Records()
 	gotValue, gotCursor, requestCursor := gotRecords[0].CanonicalValue(), page.Cursor(), request.Cursor()
 	if !bytes.Equal(gotValue, []byte(`{"status":"resolved"}`)) || string(gotCursor) != "opaque-provider-cursor" || string(requestCursor) != "opaque-provider-cursor" {
@@ -72,7 +71,7 @@ func TestRecoveryValuesAreBoundedAndDefensive(t *testing.T) {
 	if !bytes.Equal(page.Records()[0].CanonicalValue(), []byte(`{"status":"resolved"}`)) || string(page.Cursor()) != "opaque-provider-cursor" || string(request.Cursor()) != "opaque-provider-cursor" {
 		t.Fatal("recovery accessors exposed writable internals")
 	}
-	if page.Records()[0].ExpiresAt().Equal(expiry) {
+	if page.Records()[0].ExpiresAt() == expiry {
 		t.Fatal("expiry aliased caller time")
 	}
 	if request.AttemptRevision() != attempt || request.Target().Kind() != ScanAllOperationRecords {
@@ -81,7 +80,7 @@ func TestRecoveryValuesAreBoundedAndDefensive(t *testing.T) {
 	if _, err := NewScanRequestV2(OperationRecordScanTargetV2(), attempt, make([]byte, MaxRecoveryCursorBytes+1), 1, 1); !IsKind(err, ErrorBudgetExceeded) {
 		t.Fatalf("cursor maximum-plus-one accepted: %v", err)
 	}
-	if _, err := NewRecoveryRecordV2(address, []byte(strings.Repeat("x", MaxCheckpointValueBytes+1)), 1, nil); !IsKind(err, ErrorBudgetExceeded) {
+	if _, err := NewRecoveryRecordV2(address, []byte(strings.Repeat("x", MaxCheckpointValueBytes+1)), 1, ""); !IsKind(err, ErrorBudgetExceeded) {
 		t.Fatalf("record maximum-plus-one accepted: %v", err)
 	}
 }
@@ -90,8 +89,8 @@ func TestStableRecoveryAttemptRejectsEveryCoordinateMismatch(t *testing.T) {
 	capture, _ := NewStoreRevisionV2("database-01", 17, 17)
 	final, _ := NewStoreRevisionV2("database-01", 17, 19)
 	address, _ := NewOperationBindingAddressV2("operation-01")
-	record, _ := NewRecoveryRecordV2(address, []byte(`{"binding":true}`), 17, nil)
-	page, _ := NewRecoveryPageV2(17, time.Now().UTC(), []RecoveryRecordV2{record}, nil, false)
+	record, _ := NewRecoveryRecordV2(address, []byte(`{"binding":true}`), 17, "")
+	page, _ := NewRecoveryPageV2(17, "2026-09-02T12:00:00Z", []RecoveryRecordV2{record}, nil, false)
 	if err := ValidateStableRecoveryAttemptV2(capture, []RecoveryPageV2{page}, []RecoveryRecordV2{record}, final); err != nil {
 		t.Fatalf("stable attempt rejected: %v", err)
 	}
@@ -107,11 +106,11 @@ func TestStableRecoveryAttemptRejectsEveryCoordinateMismatch(t *testing.T) {
 			return ValidateStableRecoveryAttemptV2(capture, nil, nil, moved)
 		},
 		"page_not_capture_revision": func() error {
-			moved, _ := NewRecoveryPageV2(16, time.Now().UTC(), nil, nil, false)
+			moved, _ := NewRecoveryPageV2(16, "2026-09-02T12:00:00Z", nil, nil, false)
 			return ValidateStableRecoveryAttemptV2(capture, []RecoveryPageV2{moved}, nil, final)
 		},
 		"record_after_capture": func() error {
-			future, _ := NewRecoveryRecordV2(address, []byte(`{"binding":true}`), 18, nil)
+			future, _ := NewRecoveryRecordV2(address, []byte(`{"binding":true}`), 18, "")
 			return ValidateStableRecoveryAttemptV2(capture, nil, []RecoveryRecordV2{future}, final)
 		},
 	} {
