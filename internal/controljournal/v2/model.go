@@ -330,8 +330,16 @@ func (c AggregateCoordinate) canonical() string {
 
 // CompareAggregateCoordinates orders semantic coordinates without exposing or
 // reconstructing an adapter's persistence keys.
-func CompareAggregateCoordinates(left, right AggregateCoordinate) int {
-	return strings.Compare(left.canonical(), right.canonical())
+func CompareAggregateCoordinates(left, right AggregateCoordinate) (int, error) {
+	leftCanonical, err := CanonicalAggregateCoordinate(left)
+	if err != nil {
+		return 0, err
+	}
+	rightCanonical, err := CanonicalAggregateCoordinate(right)
+	if err != nil {
+		return 0, err
+	}
+	return bytes.Compare(leftCanonical, rightCanonical), nil
 }
 
 // CanonicalAggregateCoordinate returns the stable semantic byte identity used

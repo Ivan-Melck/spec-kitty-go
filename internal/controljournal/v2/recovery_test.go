@@ -38,6 +38,27 @@ func TestRecoverySemanticAddressesAndScanTargets(t *testing.T) {
 	}
 }
 
+func TestAggregateCoordinateIdentityAndComparatorAreCanonical(t *testing.T) {
+	left, _ := NewAggregateCoordinate("mission", "mission-01", Scope{Kind: ScopeMission, ProjectID: "project-01", MissionID: "mission-01"})
+	right, _ := NewAggregateCoordinate("mission", "mission-02", Scope{Kind: ScopeMission, ProjectID: "project-01", MissionID: "mission-02"})
+	comparison, err := CompareAggregateCoordinates(left, right)
+	if err != nil || comparison >= 0 {
+		t.Fatalf("canonical comparison failed: %d %v", comparison, err)
+	}
+	canonical, err := CanonicalAggregateCoordinate(left)
+	if err != nil || len(canonical) == 0 {
+		t.Fatalf("canonical coordinate failed: %v", err)
+	}
+	canonical[0] = 'x'
+	again, _ := CanonicalAggregateCoordinate(left)
+	if len(again) == 0 || again[0] == 'x' {
+		t.Fatal("canonical coordinate bytes were aliased")
+	}
+	if _, err := CompareAggregateCoordinates(left, AggregateCoordinate{}); err == nil {
+		t.Fatal("invalid coordinate compared as valid")
+	}
+}
+
 func TestRecoveryValuesAreBoundedAndDefensive(t *testing.T) {
 	attempt, err := NewStoreRevisionV2("database-01", 17, 17)
 	if err != nil {
