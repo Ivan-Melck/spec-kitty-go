@@ -17,6 +17,7 @@
   "accepted_at": "2026-09-02T09:04:18.047384+00:00",
   "accepted_by": "codex-acceptance",
   "accepted_from_commit": "a7a45c4ee1433db2889f4b83708aad601693358f",
+  "baseline_merge_commit": "8cac74ec3434625e06ca1114fdf52025bbd31181",
   "coordination_branch": "kitty/mission-gapdb-control-journal-proving-ground-01M18EVR",
   "created_at": "2026-08-30T04:29:22.337346+00:00",
   "flattened": false,
@@ -28,6 +29,7 @@
   "purpose_context": "Prove a narrow production-shaped GapDB external-sidecar journal, restart, playback, and two-agent authority slice before any broad authority-store migration is admitted.",
   "purpose_tldr": "Prove GapDB authority recovery before M2",
   "slug": "gapdb-control-journal-proving-ground-01M18EVR",
+  "status_phase": "1",
   "target_branch": "main",
   "topology": "lanes_with_coord"
 }
