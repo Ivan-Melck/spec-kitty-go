@@ -6,443 +6,443 @@
   "criteria": [
     {
       "criterion_id": "FR-001",
-      "description": "Verify FR-001 is satisfied",
+      "description": "The admitted architecture, source/tree, module, sidecar bytes, protocol, storage version, platform, lifecycle, harness, and signer are immutably bound.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "evidence": "WP10 review-cycle-2; RunID m1-crown-e05a5e4-20260901T224500Z; manifest sha256 397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309; independent verify pass at e05a5e46feb3e65ff42c4544c16678c440ef3818",
+      "pass_fail": "pass",
+      "verified_by": "codex-acceptance",
+      "verified_at": "2026-09-02T08:59:43.435617+00:00",
+      "notes": "Frozen admission tuple and source-bound crown evidence."
     },
     {
       "criterion_id": "FR-002",
-      "description": "Verify FR-002 is satisfied",
+      "description": "Only the configured external owner path and endpoint are eligible; ambient executable discovery is excluded from admission evidence.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Configured discovery is enforced by lifecycle and provenance guards."
     },
     {
       "criterion_id": "FR-003",
-      "description": "Verify FR-003 is satisfied",
+      "description": "Start, reconnect, shutdown, and orphan recovery require matching executable, process-start, socket, database, and lock observations.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Owner provenance is closed over the admitted sidecar identity."
     },
     {
       "criterion_id": "FR-004",
-      "description": "Verify FR-004 is satisfied",
+      "description": "Commands remain unavailable until recovery, protocol health, database binding, product restore, epoch creation, and effect reconciliation complete.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Readiness is a closed conjunction, not a best-effort signal."
     },
     {
       "criterion_id": "FR-005",
-      "description": "Verify FR-005 is satisfied",
+      "description": "Unknown, unhealthy, unsupported, or ambiguous owners produce typed refusal without takeover, unsafe signaling, or force-ready waiver.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Lifecycle faults fail closed."
     },
     {
       "criterion_id": "FR-006",
-      "description": "Verify FR-006 is satisfied",
+      "description": "All 14 declared qualification scenarios execute through the real external GapDB sidecar and public client.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Crown census is exactly 14/14 external scenarios."
     },
     {
       "criterion_id": "FR-007",
-      "description": "Verify FR-007 is satisfied",
+      "description": "Authority commands succeed only after durable acknowledgement or exact read proof of the same accepted operation.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Durable acknowledgement and reconciliation are production-wired."
     },
     {
       "criterion_id": "FR-008",
-      "description": "Verify FR-008 is satisfied",
+      "description": "Each command binds permanently to one operation ID, request digest, command type, preconditions, epoch, and typed result.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Canonical operation identity is immutable."
     },
     {
       "criterion_id": "FR-009",
-      "description": "Verify FR-009 is satisfied",
+      "description": "Retrying the same operation and digest returns the recorded result without repeating local mutation or blindly repeating a provider effect.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Lost-response and idempotency campaign passed 100/100."
     },
     {
       "criterion_id": "FR-010",
-      "description": "Verify FR-010 is satisfied",
+      "description": "Reusing an operation identity with changed content fails closed without state change.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Digest-conflict mutants and negative tests are killed."
     },
     {
       "criterion_id": "FR-011",
-      "description": "Verify FR-011 is satisfied",
+      "description": "One accepted command atomically publishes its complete events, result, heads, due checkpoint material, and new intents.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Atomic publication campaign passed 100/100."
     },
     {
       "criterion_id": "FR-012",
-      "description": "Verify FR-012 is satisfied",
+      "description": "Record absence and observed-head preconditions admit at most one winner for incompatible races.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Concurrent claim and integration campaigns prove conditional transition."
     },
     {
       "criterion_id": "FR-013",
-      "description": "Verify FR-013 is satisfied",
+      "description": "No projection, watcher result, capsule, or effect dispatch reports success before durable acceptance or exact read reconciliation.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Post-acceptance visibility is asserted at every fault boundary."
     },
     {
       "criterion_id": "FR-014",
-      "description": "Verify FR-014 is satisfied",
+      "description": "Commands exceeding a declared product budget fail before publication with no partial state.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Revision-pinned product budgets and oversize mutants fail closed."
     },
     {
       "criterion_id": "FR-015",
-      "description": "Verify FR-015 is satisfied",
+      "description": "Every event carries immutable identity, aggregate/operation/epoch, consecutive group position, explicit event/reducer versions, reduction inputs, and canonical digest.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Frozen journal schema and architecture guards enforce the complete envelope."
     },
     {
       "criterion_id": "FR-016",
-      "description": "Verify FR-016 is satisfied",
+      "description": "Unknown types or versions, incompatible reducers, malformed groups, and digest mismatches block recovery and are never skipped.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Closed registry and refusal fixtures pass."
     },
     {
       "criterion_id": "FR-017",
-      "description": "Verify FR-017 is satisfied",
+      "description": "Reduction consults only version-pinned recorded inputs and never current time, policy, Git, filesystem, tracker, agent, artifact, or other adapters.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Reducer purity is statically guarded and mutation-tested."
     },
     {
       "criterion_id": "FR-018",
-      "description": "Verify FR-018 is satisfied",
+      "description": "Active in-memory state can be discarded and rebuilt completely from accepted product history.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Restore/playback campaign passed 100/100 with equal canonical digest."
     },
     {
       "criterion_id": "FR-019",
-      "description": "Verify FR-019 is satisfied",
+      "description": "When due, checkpoint bytes and prefix/state/version evidence participate in the command's one durable batch.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Checkpoint publication is part of atomic application batches."
     },
     {
       "criterion_id": "FR-020",
-      "description": "Verify FR-020 is satisfied",
+      "description": "Startup selects the newest valid bounded checkpoint and suffix, then bounded full replay, otherwise remains degraded or closed without skipped history.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Restore precedence and invalid-latest fallback are covered."
     },
     {
       "criterion_id": "FR-021",
-      "description": "Verify FR-021 is satisfied",
+      "description": "Restore traverses every page at one observed revision and fully restarts after a stale cursor without omission or duplication.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Paged replay uses 2,001+ records with stale-cursor restart coverage."
     },
     {
       "criterion_id": "FR-022",
-      "description": "Verify FR-022 is satisfied",
+      "description": "Every clean or unclean host restart durably creates a different epoch before commands are admitted.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Restart-epoch campaign passed 100/100."
     },
     {
       "criterion_id": "FR-023",
-      "description": "Verify FR-023 is satisfied",
+      "description": "Epoch replacement makes predecessor leases non-current, quarantines their workspaces, and rejects old capsules.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Predecessor invalidation is present in the ordered crown and focused campaign."
     },
     {
       "criterion_id": "FR-024",
-      "description": "Verify FR-024 is satisfied",
+      "description": "Playback mutates no product state, allocates no authority, and invokes no external adapter.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "All playback observations report zero adapter calls and zero durable writes."
     },
     {
       "criterion_id": "FR-025",
-      "description": "Verify FR-025 is satisfied",
+      "description": "Live restore and independent playback over the same history produce byte-identical canonical state and digest.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Restore and playback digests are identical in the crown and 100/100 focused trials."
     },
     {
       "criterion_id": "FR-026",
-      "description": "Verify FR-026 is satisfied",
+      "description": "Every external action starts from a bounded attributable intent in an accepted command batch; no observation exists without intent.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Durable effect-intent ordering is asserted by GJ-05 and architecture guards."
     },
     {
       "criterion_id": "FR-027",
-      "description": "Verify FR-027 is satisfied",
+      "description": "Recovery of unfinished intent inspects current provider facts before dispatch, compensation, or decision and assumes no exactly-once provider behavior.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Observe-before-retry behavior is production-wired and fault-tested."
     },
     {
       "criterion_id": "FR-028",
-      "description": "Verify FR-028 is satisfied",
+      "description": "Compensation changes provider state only when revision, value, and operation marker still prove attribution.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Attribution/reassignment campaign passed 100/100."
     },
     {
       "criterion_id": "FR-029",
-      "description": "Verify FR-029 is satisfied",
+      "description": "GJ-01 through GJ-05 execute at the actual external boundary and produce their required terminal evidence.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Crown census is exactly 5/5 named fault cuts."
     },
     {
       "criterion_id": "FR-030",
-      "description": "Verify FR-030 is satisfied",
+      "description": "Actor A/Process A and Actor B/Process B receive distinct current runs, leases, workspaces, branches, directories, and indices without primary-checkout mutation.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Ordered crown records exact A/A/W1 and B/B/W2 identities."
     },
     {
       "criterion_id": "FR-031",
-      "description": "Verify FR-031 is satisfied",
+      "description": "A workspace's lease and epoch binding never changes after creation; expiry and TTL never transfer it.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Workspace binding immutability invariant is true."
     },
     {
       "criterion_id": "FR-032",
-      "description": "Verify FR-032 is satisfied",
+      "description": "Replacement Actor A/Process C receives a new lease and W3 after Process A expires; W1 is never transferred and no third implementation ActorID is created.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Ordered crown records exact A/C/W3 replacement identity."
     },
     {
       "criterion_id": "FR-033",
-      "description": "Verify FR-033 is satisfied",
+      "description": "Zombie A may write W1 directly but cannot heartbeat, publish effects, hand off, review, or integrate with stale authority.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Zombie-isolation campaign passed 100/100 with zero stale authority successes."
     },
     {
       "criterion_id": "FR-034",
-      "description": "Verify FR-034 is satisfied",
+      "description": "Stale output remains inspectable by exact identity but cannot be silently imported or made authoritative.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Quarantine evidence remains explicit and non-authoritative."
     },
     {
       "criterion_id": "FR-035",
-      "description": "Verify FR-035 is satisfied",
+      "description": "Handoff binds exact reachable candidate evidence to current work, actor/process, epoch, lease, and workspace.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Immutable handoff is exercised by the ordered crown."
     },
     {
       "criterion_id": "FR-036",
-      "description": "Verify FR-036 is satisfied",
+      "description": "A reviewer's ActorID differs from every implementation ActorID that contributed to the candidate; process separation alone is insufficient.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Reviewer actor independence invariant is true and mutation-tested."
     },
     {
       "criterion_id": "FR-037",
-      "description": "Verify FR-037 is satisfied",
+      "description": "Exactly one integration authority owns a repository target ref at a time and later candidates revalidate after movement.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Competing integration campaign passed 100/100."
     },
     {
       "criterion_id": "FR-038",
-      "description": "Verify FR-038 is satisfied",
+      "description": "Target movement or conflict produces no false completion and preserves target, candidate, conflict, and repair evidence.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Conflict-safe outcomes and manual movement are covered by the fault campaign."
     },
     {
       "criterion_id": "FR-039",
-      "description": "Verify FR-039 is satisfied",
+      "description": "Each named fault asserts applicable isolation, authority, reachability, attribution, and topology invariants with anti-vacuity controls.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "All eight universal invariants are true and invariant mutants are killed."
     },
     {
       "criterion_id": "FR-040",
-      "description": "Verify FR-040 is satisfied",
+      "description": "One immutable manifest binds tested source/tree, admission tuple, environment, scenario units, repetitions, artifacts, results, digests, and adapter-call census.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Manifest SHA256 397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309."
     },
     {
       "criterion_id": "FR-041",
-      "description": "Verify FR-041 is satisfied",
+      "description": "Top-level tests, catalog cases, crash cuts, repetitions, and external scenarios are reported separately without count conflation.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Census reports 14 scenarios, 5 faults, 8 focused campaigns, and 19 mutants separately."
     },
     {
       "criterion_id": "FR-042",
-      "description": "Verify FR-042 is satisfied",
+      "description": "The technical signer accepts only complete frozen evidence for the exact tested tuple after every machine gate and the combined FR-044 trial pass.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Independent verifier reproduced the exact manifest SHA and technical-pass signature."
     },
     {
       "criterion_id": "FR-043",
-      "description": "Verify FR-043 is satisfied",
+      "description": "Any critical proof failure, incomplete trial or campaign, unsupported boundary, adoption overclaim, or missing signature keeps M2 unadmitted.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "No human adoption record exists; state remains not_adopted and M2 is not started."
     },
     {
       "criterion_id": "FR-044",
-      "description": "Verify FR-044 is satisfied",
+      "description": "One source-bound end-to-end trial executes the complete ordered M1 torture chamber and simultaneously proves authority uniqueness, W1 quarantine and fresh W3, epoch replacement, old-capsule refusal, restore/playback equality with zero I/O, actor-independent review, and serialized integration.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Run m1-crown-e05a5e4-20260901T224500Z passed as one combined evidence record; focused tests did not substitute for it."
     }
   ],
   "negative_invariants": []
