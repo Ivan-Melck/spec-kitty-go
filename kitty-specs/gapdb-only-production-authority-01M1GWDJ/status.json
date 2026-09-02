@@ -38,7 +38,8 @@
         "Post-approval defect-2 guard repair committed at 4919caf6; exact key/tuple/digest contracts, typed recovery ownership, dependency denials, and 102 executed mutants pass all focused/race/architecture/helper/compile/vet/static/format gates.",
         "Cycle 7 rejects callable-name-gated ownership inspection; structurally detect renamed adapter-local recovery/publication side seams and bind the exact Fetch/Parcel mutant.",
         "Cycle-7 repair be233e38 structurally closes renamed Fetch/Parcel side seams; mutant census 103 and all focused/race/architecture/helper/compile/vet/static/format gates pass.",
-        "Cycle 8 rejects exported named/alias function recovery side seams; inspect TypeName object signatures and bind both exact mutants."
+        "Cycle 8 rejects exported named/alias function recovery side seams; inspect TypeName object signatures and bind both exact mutants.",
+        "Cycle-8 repair 15808e66 closes exported named and alias function-type side seams; sealed census 105 and all architecture/tooling gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
