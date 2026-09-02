@@ -1,89 +1,126 @@
 {
   "mission_slug": "gapdb-control-journal-proving-ground-01M18EVR",
-  "snapshot_id": "c3a49154-168b-45cc-9be7-978e0bb5ab50",
-  "total_artifacts": 60,
+  "snapshot_id": "c49ff9b7-5167-4823-8dc6-6d7fb02f28a4",
+  "total_artifacts": 97,
   "required_artifacts": 3,
   "required_present": 3,
   "required_missing": 0,
-  "optional_artifacts": 57,
-  "optional_present": 57,
+  "optional_artifacts": 94,
+  "optional_present": 94,
   "completeness_status": "complete",
-  "parity_hash_sha256": "sha256:68339c7090978fd0c38665802eab60e02f1b9a2d996edfaf89fd49c9468b1cab",
+  "parity_hash_sha256": "sha256:71ef29384c0bcff47cf100365e851c0a9ed1a9e45e2f4a904bf8db05b173efe7",
   "parity_hash_components": [
+    "000ec2988bb59513f0f9c93c6a0e7f4e8e6aa9ae35e9dbc930dcd8016d87330b",
     "035530336fa2b34f5b6ee448ff10ffffe5d0f308eadea7f32049b4c1ee168f67",
     "03dd06363ac7705c1f9325c898fbf672cf7f883dc05eb2dc5d22bc302fd46e80",
+    "04b06b5cf4b79e1764f5e18b59c133def12fc2179cfb1d91a309266767580727",
     "0cf367f821ddba8c87ec90bc6036fb96ec9a27525aef2a980fd6f5e27df18489",
+    "0eb1e0cadc36fb88413808ec784e9db419428d9862f9c57c792ee6df2d3d5ebe",
     "17bbaba57ca407950fefc6590796785d152a54049f79e98f88c74c0e19635a6d",
+    "17d3ed6138b9bdd45ce25b3b4ce65447cdc4fcbcfd7ec0cd46d446e2284389b3",
     "18b0bdd3880e2a0dd2fe69ad81618066e331c3a0abbfe8870f08bc7c45d35cdd",
     "19a0b4fdaa2a59e27718ada81418ca99853655d28529b902542443665d45586b",
+    "1a8dbbffd65eaa8ab5bf4df54f5edec6185bc9720a7e223f0899e9e9f81ff782",
     "1fef4e42bffedc63ecfa5642908ab4178354e7775c0a16c5e9469d56e801113b",
+    "22ce7b996e76663ba8194d68a8b8e56ce09fb955ebb596098bdbd7c9d2498b1e",
     "241657115f9fda1e8427a50bc55bba5ca98e252fffd177cd26535a6eee8c8fbb",
     "264ac1f06dc1978dc512ec7a57268aba85fa6dbe5b381f58b76fa061e4702215",
+    "2b5bc7bcd06c831a433a3bd477ef0e8a493e630601161fc47da1a2262bff7742",
     "2e4d81090d309ca22c4eb4e442bc51458ed8c60b25112b089695ae64305f3aa3",
-    "319dcf5eaf33c73829fe0e2800be3f7d0cadfbe5ec3ead027dbd37ae7bba1640",
+    "325a49abf60510058d8db8d8a682b075de16893adac5c279e87fa96710452eed",
+    "34f64ef1cdf577bb2d692aea65a318f7c038cbf61f64e722afd1e905c7ecf8c5",
     "34fa0635c181af95c41089eb2f632d8e0e61abeb17d88789fb5c93cb70297cf0",
     "3524f848b255d85120f4ce3b9e8cc3484ab7871da2d03b62327cbf403f0a1d60",
     "3af1302d7e86baac1ac791c3b427d5d92d0a628369eff9cd794ef786dd89fd2f",
     "3c9fd4a5455302ce58133d81228c2319829a613a4aff476437b53716a937d392",
+    "424979351d0f9df03b5d673957da2f7e342fe731e6ef35334da24e300566e360",
+    "450bf6452d00292bee1825ae45903f179636033db8326b9ebf0bdc1b4ef09116",
+    "46159009ab7a9a5a65582a0f255102c7a5799c7fe20f973f77f05e40a46cde0a",
+    "4687e477175277c442e3ae1317b870597757d8e0fda4830cfda9042a132e3ac0",
+    "484b3b637b8cdce2be4003b61d861dfe7baed7c0c5e817e2bb49abc5ff3839de",
+    "4a669a667cdd03b629c02a500535852f938a6b369dc5f90d3f16e87d96834c90",
     "4bf3c8cd6955b6e62856a7023e89ab669825fd49cdf675c6ac9a132020a543dd",
     "4e38d30347a1e8711752dce5d92ac12524be711bf9c87a88afb0ac9d7393d0fa",
     "51e5470612358d7557f133338952faa1b5cc7f8ae1d8e3d7e506024009ea3777",
+    "51f3e6d95cce079629b863ea7936be6d7e0a36023e4f19ac5634a4119cd83cc5",
+    "5286e37583280eb1286c5172af947829e9dadcd4307e36ed86e9b461dcabec76",
     "54862298dd74fb80069fa5cbb48673bae1931b6aebabfff1a23d703f647ec67e",
     "54b09b8dc9d03ada8eb421c14d670c06babddbfe9d815d2fe5e86975b6a3778d",
     "56a6dc7f89602ce22ba30de1e28b7a366ed4111292b76b8978abce4b4eb6775d",
+    "628c9c6ff375b72e3da2d4723c4732caee9911b04604c6f5e4821f9faa3c027e",
     "66c032ea53efa02d0218d924c13fa56e56b0ecf690dd54f8140f9f4b4cd121ea",
-    "68da07e1d7c176cf73ad3f12804208caa23a31a4c038186fa61f10e0a3c3e707",
     "6a2573357fb18f42e1df4c269c64f0b9aa86a2d2ac08acd27cba292aa33727d0",
     "728bf2a06633ce3538044ab1690ede91e15406377be82c216d44c46205f8e9c2",
     "74d84b55e7fa24821fe21e82c73079084ac857a2fc55c8749d7828f80e57c1e2",
     "773f8cac00fe79ed9bf7bd7f2ba17a9a808428896fd4e06966e337dccd138b1e",
+    "77ab38bc646ea742d9b57ca34b2c412a20671811eeae8a9936673f1d5f5df325",
     "79e23e805aa6c2ea4695898a6deffb0de53e0d844aba54379b81c6f0901115d3",
     "830c2a92daaa73825b272f186b7d935f12f5103f138c164320ab3d3c6b9fa204",
+    "841c2a5ba2bb900952afbab3b0f5e35f1d8f80f7a24781996b7b0140da6b3cd4",
     "846dd9ddee4b2a635772e0258d041a1082506423611cbdafb2ca33eae6a96fe5",
+    "89ce11c2fa702dfa89d15d35bb388cf43aff34575142cfb8f388d375a55f62e6",
     "8a2e772850fe29325c59cb9eda8a7b20be39ad614fffbcd3ca9e90e6eb88d109",
     "8fc9b7e41fcdf3b79ce5371c82d0f20241cee24c315a8c1d6ab7f29fd8aaf65e",
+    "928c59ea4f46ad1638dc4d09eb48cd145eb9342ac7d5591e55c50dcc4bdab48f",
+    "9298f8fd4130196eede731c88c1a7751af66cc728f47bcb26f5640216d7bbb2b",
+    "93b5d99a0a70cbaeae92bcc57e9477897e78a213cc2bd6acf1cb9425afe82c3c",
     "955d490154036e323596fc794dcf03b018e63949fb323b000d5aee151087a286",
     "9d12bb1ebb3dd0ed07fbf7b1748ed24fd1a79a977afbc78bccfd749d15b33186",
+    "9efe9325bd516185ae1c093638cfaffe441903920cdbd57c1cf192a6e38c8319",
     "a0b291dd98e22680fdbd2c71370977ab6765676023c02efecaa3799887f551c9",
+    "a59f805e3b726c260fb6132f7eb1947e407590c2e216d557d388b90220d7702c",
+    "a64691d59bb428274327bcfbca6277e8a7e96ef28c2625fc327b4dd3f9caf564",
+    "a9c9aa4a20257d8f821ccd0adb1c291f91c4259850b5100524540ed70dbd54b7",
     "abe2663b564d752d5701862617562f56f482c14049232043152f4cc8a2e4da91",
-    "ac1369f7f9b5556473dcb10b1296c137e099213cef1c553d07dab1cab70572f0",
     "ad0de6bd354917d76274c396377a54dc6cf3b3a4c4a98cc01ebf8e7a364a6892",
     "ad94828f0e175f120c194135124a0290d24e4aeb79fea3a5217ef5756fa6b5fd",
     "aee11732d0bf32c3168c37666289f347007f867d70ab462d645b32713e4dbcdf",
     "af376bf0d1c741704a59a631dff8ff559280001bca2f62f73a4e18241ebb6e6e",
+    "b19f06ed4a1a898052066eef27f210f8d6899fa87f0335c70a3aef0a4ca36d23",
+    "b2a7640540fef0af6b4ba93e6fc000695f21bb92c6f4234d2bda2f753ed8f34b",
+    "b50a20f5e95ae9d34daec0a66e58930c250e59d7a25af853c4b2a4f86245c398",
     "b916f3092969a1327a8f788be5aace7acdbf66edc10772ad17cfa714aa01b656",
     "bbf41bc7d3c75f7c65e0bea368ff7ad52297fec84d2f1088d22e85487732f1c0",
+    "bed54584594775374bc665c48ae8522a724c6a7ff358b0371affdf8892e1fbb2",
     "c3341b922092b509c1aebe9664b104d26811936a0104d169d0ed743686e96f9b",
+    "c61bb9b77a13dbb5503f70d78435544d2a2fa7a2c5cad7b30cdb0e6a2b1c9a33",
     "c806e0823f9986b4486f7ad00da0e4d03fc68ae7c94ce471b926ef6d8dfcf206",
-    "cbf4c8d055510004e1fa441e4466e5f19e4e9fd33aa6a5368245289f5073e794",
+    "cb8db58f8b2bdefe01cd857e449288ff3de06df297ffa3f785296664aa023176",
     "ce51205b0e7fce575812f4d35a4077570c9666b415099586d518d7a42f9e92c1",
-    "d65d2b2dd2723bc0221ed66b9edc1f2d68662757ba694d0568d39bf69b6616b5",
     "d72c114e99e58ac4e952d03aec0ad552d8a4b8c6bc033f0b1387fe69adc1dfab",
-    "da2ef5bfa07ce3a4956c9dd12c9d36333b8f277de0280e0ad754cfd3944078f3",
+    "d869462ff75d00fe6ef4a8690fdac549f0e044f61aceac427703784676700792",
     "db78bdb59d45fc91c6bf3c0f9fcf6bce85d5d2c3366a0d317be991541c00ea3d",
     "dce7f209a705ea77420ee249a571c182d7d5969eb5e96e0414356baf63ae4c1b",
     "df7a51f882c7938df72383216c6739bad654c9090141b46e9eaea63bbcaadaa7",
+    "e06d1ea3aae954f7bff0331f00fdaa79f9956f6f4331e0e178e09adbbb567a87",
+    "e232818dfe8291186cba4d167fac2f92865e6f8111aa204028bdd869e8a42df3",
     "e5740a354780346a5aa6fa8d439fcce384989db86403d0a942caba3213453a3d",
-    "e6e106241214017ec3a02e3b8bda8d551b227cb711e433b59bbe2522c14b8b7e",
     "e6fc6ae2959a271c04fa4216a477d2f8fd1a32dd13b303722e9bac81c1c7b56c",
+    "e725937aea5ce5b7c477da0fda6a2b0dd699900ab6f4158b231b5952ede99a7a",
     "e7f36affeae48e3b94b91a4fdd4d73dc16fa0a336718aba527b8c12894652cc9",
+    "e86d86113f3feeb716d5eae92a81f0e53b449ffcbb72837c9ca7486a3ea84c7e",
+    "e8a8f3f562ce57c581c530c4c9e40fcb0ec6d0a4a98382adc9f8799161f94bce",
     "e99ad0def948ee14ce703ecd91f0d98c765e4820f1c58f1bf5d91e85594d0158",
+    "ed9deb33621bc8435b520fa28d071c0a6d77006613cee9a078da27ea0fb0ba3f",
+    "ee26ce6cf94e1fbeff15e2ab809f7268d1a359bea31b81545d6cc8106fe4d23b",
+    "f674fd14258caac6250b9a38c6aa52f6e94e062141ca9466168bfe49d93baaf8",
     "f8d66be864da7d2707cfdefe6feb5cd9c765796914541c3e8f2fb3736e409db2",
-    "fdb4f6a96b67262591920da24aaced2278638515edf11afc68dc390890cedbf8"
+    "fdb4f6a96b67262591920da24aaced2278638515edf11afc68dc390890cedbf8",
+    "ff425c44502466906594490511d7eb7725663e232e941c919e8c160244e7767c"
   ],
   "artifact_summaries": [
     {
       "artifact_key": "artifact.acceptance-matrix",
       "artifact_class": "output",
       "relative_path": "acceptance-matrix.json",
-      "content_hash_sha256": "d65d2b2dd2723bc0221ed66b9edc1f2d68662757ba694d0568d39bf69b6616b5",
-      "size_bytes": 13673,
+      "content_hash_sha256": "f674fd14258caac6250b9a38c6aa52f6e94e062141ca9466168bfe49d93baaf8",
+      "size_bytes": 29944,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.538400+00:00",
+      "indexed_at": "2026-09-02T09:22:35.009395+00:00",
       "provenance": null
     },
     {
@@ -97,7 +134,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.653966+00:00",
+      "indexed_at": "2026-09-02T09:22:35.112196+00:00",
       "provenance": null
     },
     {
@@ -111,7 +148,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.584477+00:00",
+      "indexed_at": "2026-09-02T09:22:35.057026+00:00",
       "provenance": null
     },
     {
@@ -125,7 +162,63 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.615980+00:00",
+      "indexed_at": "2026-09-02T09:22:35.084249+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.baseline-tests",
+      "artifact_class": "evidence",
+      "relative_path": "tasks/WP07-authority-workspace-and-zombie-composition/baseline-tests.json",
+      "content_hash_sha256": "9298f8fd4130196eede731c88c1a7751af66cc728f47bcb26f5640216d7bbb2b",
+      "size_bytes": 311,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.287872+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.baseline-tests",
+      "artifact_class": "evidence",
+      "relative_path": "tasks/WP10-one-runid-crown-trial-and-adoption-gate/baseline-tests.json",
+      "content_hash_sha256": "46159009ab7a9a5a65582a0f255102c7a5799c7fe20f973f77f05e40a46cde0a",
+      "size_bytes": 311,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.346030+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.baseline-tests",
+      "artifact_class": "evidence",
+      "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign/baseline-tests.json",
+      "content_hash_sha256": "77ab38bc646ea742d9b57ca34b2c412a20671811eeae8a9936673f1d5f5df325",
+      "size_bytes": 311,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.381962+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.baseline-tests",
+      "artifact_class": "evidence",
+      "relative_path": "tasks/WP08-effects-independent-review-and-integration/baseline-tests.json",
+      "content_hash_sha256": "b50a20f5e95ae9d34daec0a66e58930c250e59d7a25af853c4b2a4f86245c398",
+      "size_bytes": 311,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.418043+00:00",
       "provenance": null
     },
     {
@@ -139,7 +232,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.605565+00:00",
+      "indexed_at": "2026-09-02T09:22:35.075101+00:00",
       "provenance": null
     },
     {
@@ -153,7 +246,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.610527+00:00",
+      "indexed_at": "2026-09-02T09:22:35.079714+00:00",
       "provenance": null
     },
     {
@@ -167,7 +260,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.595316+00:00",
+      "indexed_at": "2026-09-02T09:22:35.065965+00:00",
       "provenance": null
     },
     {
@@ -181,7 +274,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.629257+00:00",
+      "indexed_at": "2026-09-02T09:22:35.093686+00:00",
       "provenance": null
     },
     {
@@ -195,7 +288,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.955580+00:00",
+      "indexed_at": "2026-09-02T09:22:35.524908+00:00",
       "provenance": null
     },
     {
@@ -209,7 +302,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.600654+00:00",
+      "indexed_at": "2026-09-02T09:22:35.070377+00:00",
       "provenance": null
     },
     {
@@ -223,7 +316,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.549314+00:00",
+      "indexed_at": "2026-09-02T09:22:35.020064+00:00",
       "provenance": null
     },
     {
@@ -237,21 +330,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.589670+00:00",
+      "indexed_at": "2026-09-02T09:22:35.061519+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.meta",
       "artifact_class": "output",
       "relative_path": "meta.json",
-      "content_hash_sha256": "ac1369f7f9b5556473dcb10b1296c137e099213cef1c553d07dab1cab70572f0",
-      "size_bytes": 773,
+      "content_hash_sha256": "ff425c44502466906594490511d7eb7725663e232e941c919e8c160244e7767c",
+      "size_bytes": 1397,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.554426+00:00",
+      "indexed_at": "2026-09-02T09:22:35.024750+00:00",
       "provenance": null
     },
     {
@@ -265,7 +358,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.574584+00:00",
+      "indexed_at": "2026-09-02T09:22:35.048065+00:00",
       "provenance": null
     },
     {
@@ -279,7 +372,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.642275+00:00",
+      "indexed_at": "2026-09-02T09:22:35.102778+00:00",
       "provenance": null
     },
     {
@@ -293,7 +386,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.635258+00:00",
+      "indexed_at": "2026-09-02T09:22:35.098227+00:00",
       "provenance": null
     },
     {
@@ -307,7 +400,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.743107+00:00",
+      "indexed_at": "2026-09-02T09:22:35.183825+00:00",
       "provenance": null
     },
     {
@@ -321,7 +414,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.668179+00:00",
+      "indexed_at": "2026-09-02T09:22:35.122049+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.retrospective",
+      "artifact_class": "output",
+      "relative_path": "retrospective.yaml",
+      "content_hash_sha256": "1a8dbbffd65eaa8ab5bf4df54f5edec6185bc9720a7e223f0899e9e9f81ff782",
+      "size_bytes": 17953,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.034008+00:00",
       "provenance": null
     },
     {
@@ -335,7 +442,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.846249+00:00",
+      "indexed_at": "2026-09-02T09:22:35.269901+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP06-checkpoint-restore-epoch-and-playback/review-cycle-1.md",
+      "content_hash_sha256": "0eb1e0cadc36fb88413808ec784e9db419428d9862f9c57c792ee6df2d3d5ebe",
+      "size_bytes": 11511,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.305642+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP10-one-runid-crown-trial-and-adoption-gate/review-cycle-1.md",
+      "content_hash_sha256": "b19f06ed4a1a898052066eef27f210f8d6899fa87f0335c70a3aef0a4ca36d23",
+      "size_bytes": 6994,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.337061+00:00",
       "provenance": null
     },
     {
@@ -349,7 +484,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.863813+00:00",
+      "indexed_at": "2026-09-02T09:22:35.350572+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign/review-cycle-1.md",
+      "content_hash_sha256": "a9c9aa4a20257d8f821ccd0adb1c291f91c4259850b5100524540ed70dbd54b7",
+      "size_bytes": 8255,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.364076+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP08-effects-independent-review-and-integration/review-cycle-1.md",
+      "content_hash_sha256": "4a669a667cdd03b629c02a500535852f938a6b369dc5f90d3f16e87d96834c90",
+      "size_bytes": 9840,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.400017+00:00",
       "provenance": null
     },
     {
@@ -363,7 +526,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.883606+00:00",
+      "indexed_at": "2026-09-02T09:22:35.427222+00:00",
       "provenance": null
     },
     {
@@ -377,7 +540,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.899878+00:00",
+      "indexed_at": "2026-09-02T09:22:35.445457+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP05-atomic-application-batch-and-ambiguity/review-cycle-1.md",
+      "content_hash_sha256": "bed54584594775374bc665c48ae8522a724c6a7ff358b0371affdf8892e1fbb2",
+      "size_bytes": 9159,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.482869+00:00",
       "provenance": null
     },
     {
@@ -391,7 +568,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.945207+00:00",
+      "indexed_at": "2026-09-02T09:22:35.515630+00:00",
       "provenance": null
     },
     {
@@ -405,7 +582,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.919896+00:00",
+      "indexed_at": "2026-09-02T09:22:35.463928+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP07-authority-workspace-and-zombie-composition/review-cycle-2.md",
+      "content_hash_sha256": "841c2a5ba2bb900952afbab3b0f5e35f1d8f80f7a24781996b7b0140da6b3cd4",
+      "size_bytes": 10126,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.274398+00:00",
       "provenance": null
     },
     {
@@ -419,7 +610,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.851950+00:00",
+      "indexed_at": "2026-09-02T09:22:35.310126+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP10-one-runid-crown-trial-and-adoption-gate/review-cycle-2.md",
+      "content_hash_sha256": "a59f805e3b726c260fb6132f7eb1947e407590c2e216d557d388b90220d7702c",
+      "size_bytes": 7456,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.341427+00:00",
       "provenance": null
     },
     {
@@ -433,7 +638,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.870609+00:00",
+      "indexed_at": "2026-09-02T09:22:35.355204+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign/review-cycle-2.md",
+      "content_hash_sha256": "a64691d59bb428274327bcfbca6277e8a7e96ef28c2625fc327b4dd3f9caf564",
+      "size_bytes": 7967,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.368522+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP08-effects-independent-review-and-integration/review-cycle-2.md",
+      "content_hash_sha256": "89ce11c2fa702dfa89d15d35bb388cf43aff34575142cfb8f388d375a55f62e6",
+      "size_bytes": 6646,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.404455+00:00",
       "provenance": null
     },
     {
@@ -447,7 +680,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.904850+00:00",
+      "indexed_at": "2026-09-02T09:22:35.450091+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP05-atomic-application-batch-and-ambiguity/review-cycle-2.md",
+      "content_hash_sha256": "04b06b5cf4b79e1764f5e18b59c133def12fc2179cfb1d91a309266767580727",
+      "size_bytes": 9175,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.487662+00:00",
       "provenance": null
     },
     {
@@ -461,7 +708,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.950729+00:00",
+      "indexed_at": "2026-09-02T09:22:35.520114+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP07-authority-workspace-and-zombie-composition/review-cycle-3.md",
+      "content_hash_sha256": "5286e37583280eb1286c5172af947829e9dadcd4307e36ed86e9b461dcabec76",
+      "size_bytes": 8173,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.278918+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP06-checkpoint-restore-epoch-and-playback/review-cycle-3.md",
+      "content_hash_sha256": "9efe9325bd516185ae1c093638cfaffe441903920cdbd57c1cf192a6e38c8319",
+      "size_bytes": 11412,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.314598+00:00",
       "provenance": null
     },
     {
@@ -475,7 +750,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.877928+00:00",
+      "indexed_at": "2026-09-02T09:22:35.359642+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign/review-cycle-3.md",
+      "content_hash_sha256": "93b5d99a0a70cbaeae92bcc57e9477897e78a213cc2bd6acf1cb9425afe82c3c",
+      "size_bytes": 5738,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.372880+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP08-effects-independent-review-and-integration/review-cycle-3.md",
+      "content_hash_sha256": "cb8db58f8b2bdefe01cd857e449288ff3de06df297ffa3f785296664aa023176",
+      "size_bytes": 5308,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.408945+00:00",
       "provenance": null
     },
     {
@@ -489,7 +792,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.888700+00:00",
+      "indexed_at": "2026-09-02T09:22:35.431835+00:00",
       "provenance": null
     },
     {
@@ -503,7 +806,77 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.930352+00:00",
+      "indexed_at": "2026-09-02T09:22:35.473155+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP05-atomic-application-batch-and-ambiguity/review-cycle-3.md",
+      "content_hash_sha256": "4687e477175277c442e3ae1317b870597757d8e0fda4830cfda9042a132e3ac0",
+      "size_bytes": 8203,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.492357+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-4",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP07-authority-workspace-and-zombie-composition/review-cycle-4.md",
+      "content_hash_sha256": "17d3ed6138b9bdd45ce25b3b4ce65447cdc4fcbcfd7ec0cd46d446e2284389b3",
+      "size_bytes": 4708,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.301185+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-4",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP06-checkpoint-restore-epoch-and-playback/review-cycle-4.md",
+      "content_hash_sha256": "000ec2988bb59513f0f9c93c6a0e7f4e8e6aa9ae35e9dbc930dcd8016d87330b",
+      "size_bytes": 11423,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.332628+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-4",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign/review-cycle-4.md",
+      "content_hash_sha256": "e725937aea5ce5b7c477da0fda6a2b0dd699900ab6f4158b231b5952ede99a7a",
+      "size_bytes": 3299,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.395346+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-cycle-4",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP05-atomic-application-batch-and-ambiguity/review-cycle-4.md",
+      "content_hash_sha256": "e06d1ea3aae954f7bff0331f00fdaa79f9956f6f4331e0e178e09adbbb567a87",
+      "size_bytes": 9412,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.510611+00:00",
       "provenance": null
     },
     {
@@ -517,7 +890,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.857524+00:00",
+      "indexed_at": "2026-09-02T09:22:35.323445+00:00",
       "provenance": null
     },
     {
@@ -531,7 +904,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.935277+00:00",
+      "indexed_at": "2026-09-02T09:22:35.477821+00:00",
       "provenance": null
     },
     {
@@ -545,7 +918,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.940409+00:00",
+      "indexed_at": "2026-09-02T09:22:35.501572+00:00",
       "provenance": null
     },
     {
@@ -559,7 +932,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.894478+00:00",
+      "indexed_at": "2026-09-02T09:22:35.440795+00:00",
       "provenance": null
     },
     {
@@ -573,7 +946,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.910016+00:00",
+      "indexed_at": "2026-09-02T09:22:35.454550+00:00",
       "provenance": null
     },
     {
@@ -587,7 +960,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.925218+00:00",
+      "indexed_at": "2026-09-02T09:22:35.468463+00:00",
       "provenance": null
     },
     {
@@ -601,7 +974,189 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.914896+00:00",
+      "indexed_at": "2026-09-02T09:22:35.459000+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP07-authority-workspace-and-zombie-composition/review-feedback-1.md",
+      "content_hash_sha256": "d869462ff75d00fe6ef4a8690fdac549f0e044f61aceac427703784676700792",
+      "size_bytes": 9718,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.283368+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP06-checkpoint-restore-epoch-and-playback/review-feedback-1.md",
+      "content_hash_sha256": "e232818dfe8291186cba4d167fac2f92865e6f8111aa204028bdd869e8a42df3",
+      "size_bytes": 11316,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.318987+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign/review-feedback-1.md",
+      "content_hash_sha256": "34f64ef1cdf577bb2d692aea65a318f7c038cbf61f64e722afd1e905c7ecf8c5",
+      "size_bytes": 8060,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.377479+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP08-effects-independent-review-and-integration/review-feedback-1.md",
+      "content_hash_sha256": "928c59ea4f46ad1638dc4d09eb48cd145eb9342ac7d5591e55c50dcc4bdab48f",
+      "size_bytes": 9645,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.413543+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-1",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP05-atomic-application-batch-and-ambiguity/review-feedback-1.md",
+      "content_hash_sha256": "e8a8f3f562ce57c581c530c4c9e40fcb0ec6d0a4a98382adc9f8799161f94bce",
+      "size_bytes": 8964,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.497119+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP07-authority-workspace-and-zombie-composition/review-feedback-2.md",
+      "content_hash_sha256": "628c9c6ff375b72e3da2d4723c4732caee9911b04604c6f5e4821f9faa3c027e",
+      "size_bytes": 9931,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.292282+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign/review-feedback-2.md",
+      "content_hash_sha256": "ee26ce6cf94e1fbeff15e2ab809f7268d1a359bea31b81545d6cc8106fe4d23b",
+      "size_bytes": 7772,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.386469+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP08-effects-independent-review-and-integration/review-feedback-2.md",
+      "content_hash_sha256": "484b3b637b8cdce2be4003b61d861dfe7baed7c0c5e817e2bb49abc5ff3839de",
+      "size_bytes": 6451,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.422570+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-2",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP04-exact-sidecar-lifecycle-and-response-drop-proxy/review-feedback-2.md",
+      "content_hash_sha256": "22ce7b996e76663ba8194d68a8b8e56ce09fb955ebb596098bdbd7c9d2498b1e",
+      "size_bytes": 5876,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.436261+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP07-authority-workspace-and-zombie-composition/review-feedback-3.md",
+      "content_hash_sha256": "b2a7640540fef0af6b4ba93e6fc000695f21bb92c6f4234d2bda2f753ed8f34b",
+      "size_bytes": 7978,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.296647+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP06-checkpoint-restore-epoch-and-playback/review-feedback-3.md",
+      "content_hash_sha256": "424979351d0f9df03b5d673957da2f7e342fe731e6ef35334da24e300566e360",
+      "size_bytes": 11217,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.328008+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign/review-feedback-3.md",
+      "content_hash_sha256": "2b5bc7bcd06c831a433a3bd477ef0e8a493e630601161fc47da1a2262bff7742",
+      "size_bytes": 5543,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.390901+00:00",
+      "provenance": null
+    },
+    {
+      "artifact_key": "artifact.review-feedback-3",
+      "artifact_class": "output",
+      "relative_path": "tasks/WP05-atomic-application-batch-and-ambiguity/review-feedback-3.md",
+      "content_hash_sha256": "450bf6452d00292bee1825ae45903f179636033db8326b9ebf0bdc1b4ef09116",
+      "size_bytes": 8008,
+      "wp_id": null,
+      "step_id": null,
+      "required_status": "optional",
+      "is_present": true,
+      "error_reason": null,
+      "indexed_at": "2026-09-02T09:22:35.506142+00:00",
       "provenance": null
     },
     {
@@ -615,7 +1170,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.648318+00:00",
+      "indexed_at": "2026-09-02T09:22:35.107226+00:00",
       "provenance": null
     },
     {
@@ -629,7 +1184,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.661087+00:00",
+      "indexed_at": "2026-09-02T09:22:35.117455+00:00",
       "provenance": null
     },
     {
@@ -643,7 +1198,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.622442+00:00",
+      "indexed_at": "2026-09-02T09:22:35.088759+00:00",
       "provenance": null
     },
     {
@@ -657,35 +1212,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.960323+00:00",
+      "indexed_at": "2026-09-02T09:22:35.530266+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.status",
       "artifact_class": "output",
       "relative_path": "status.json",
-      "content_hash_sha256": "cbf4c8d055510004e1fa441e4466e5f19e4e9fd33aa6a5368245289f5073e794",
-      "size_bytes": 23952,
+      "content_hash_sha256": "51f3e6d95cce079629b863ea7936be6d7e0a36023e4f19ac5634a4119cd83cc5",
+      "size_bytes": 8548,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.526381+00:00",
+      "indexed_at": "2026-09-02T09:22:34.999989+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.status.events",
       "artifact_class": "output",
       "relative_path": "status.events.jsonl",
-      "content_hash_sha256": "68da07e1d7c176cf73ad3f12804208caa23a31a4c038186fa61f10e0a3c3e707",
-      "size_bytes": 237741,
+      "content_hash_sha256": "ed9deb33621bc8435b520fa28d071c0a6d77006613cee9a078da27ea0fb0ba3f",
+      "size_bytes": 311580,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.543772+00:00",
+      "indexed_at": "2026-09-02T09:22:35.015504+00:00",
       "provenance": null
     },
     {
@@ -699,7 +1254,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.722294+00:00",
+      "indexed_at": "2026-09-02T09:22:35.165324+00:00",
       "provenance": null
     },
     {
@@ -713,7 +1268,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.707086+00:00",
+      "indexed_at": "2026-09-02T09:22:35.152538+00:00",
       "provenance": null
     },
     {
@@ -721,13 +1276,13 @@
       "artifact_class": "output",
       "relative_path": "tasks/WP03-public-gapdb-adapter-and-external-scenarios.md",
       "content_hash_sha256": "2e4d81090d309ca22c4eb4e442bc51458ed8c60b25112b089695ae64305f3aa3",
-      "size_bytes": 9753,
+      "size_bytes": 9749,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.820959+00:00",
+      "indexed_at": "2026-09-02T09:22:35.252110+00:00",
       "provenance": null
     },
     {
@@ -735,13 +1290,13 @@
       "artifact_class": "output",
       "relative_path": "tasks/WP04-exact-sidecar-lifecycle-and-response-drop-proxy.md",
       "content_hash_sha256": "3c9fd4a5455302ce58133d81228c2319829a613a4aff476437b53716a937d392",
-      "size_bytes": 9574,
+      "size_bytes": 9570,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.788202+00:00",
+      "indexed_at": "2026-09-02T09:22:35.223044+00:00",
       "provenance": null
     },
     {
@@ -755,7 +1310,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.737951+00:00",
+      "indexed_at": "2026-09-02T09:22:35.179086+00:00",
       "provenance": null
     },
     {
@@ -763,13 +1318,13 @@
       "artifact_class": "output",
       "relative_path": "tasks/WP06-checkpoint-restore-epoch-and-playback.md",
       "content_hash_sha256": "54b09b8dc9d03ada8eb421c14d670c06babddbfe9d815d2fe5e86975b6a3778d",
-      "size_bytes": 9301,
+      "size_bytes": 9300,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.774338+00:00",
+      "indexed_at": "2026-09-02T09:22:35.210027+00:00",
       "provenance": null
     },
     {
@@ -783,7 +1338,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.840337+00:00",
+      "indexed_at": "2026-09-02T09:22:35.265271+00:00",
       "provenance": null
     },
     {
@@ -797,35 +1352,35 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.757890+00:00",
+      "indexed_at": "2026-09-02T09:22:35.196705+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.wp09-fault-and-mutant-qualification-campaign",
       "artifact_class": "output",
       "relative_path": "tasks/WP09-fault-and-mutant-qualification-campaign.md",
-      "content_hash_sha256": "319dcf5eaf33c73829fe0e2800be3f7d0cadfbe5ec3ead027dbd37ae7bba1640",
-      "size_bytes": 9324,
+      "content_hash_sha256": "c61bb9b77a13dbb5503f70d78435544d2a2fa7a2c5cad7b30cdb0e6a2b1c9a33",
+      "size_bytes": 13676,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.688806+00:00",
+      "indexed_at": "2026-09-02T09:22:35.138426+00:00",
       "provenance": null
     },
     {
       "artifact_key": "artifact.wp10-one-runid-crown-trial-and-adoption-gate",
       "artifact_class": "output",
       "relative_path": "tasks/WP10-one-runid-crown-trial-and-adoption-gate.md",
-      "content_hash_sha256": "da2ef5bfa07ce3a4956c9dd12c9d36333b8f277de0280e0ad754cfd3944078f3",
-      "size_bytes": 11426,
+      "content_hash_sha256": "325a49abf60510058d8db8d8a682b075de16893adac5c279e87fa96710452eed",
+      "size_bytes": 16758,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.804977+00:00",
+      "indexed_at": "2026-09-02T09:22:35.238658+00:00",
       "provenance": null
     },
     {
@@ -839,21 +1394,21 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.569386+00:00",
+      "indexed_at": "2026-09-02T09:22:35.043518+00:00",
       "provenance": null
     },
     {
       "artifact_key": "evidence.quickstart",
       "artifact_class": "evidence",
       "relative_path": "quickstart.md",
-      "content_hash_sha256": "e6e106241214017ec3a02e3b8bda8d551b227cb711e433b59bbe2522c14b8b7e",
-      "size_bytes": 7062,
+      "content_hash_sha256": "e86d86113f3feeb716d5eae92a81f0e53b449ffcbb72837c9ca7486a3ea84c7e",
+      "size_bytes": 9690,
       "wp_id": null,
       "step_id": null,
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.532880+00:00",
+      "indexed_at": "2026-09-02T09:22:35.004712+00:00",
       "provenance": null
     },
     {
@@ -867,7 +1422,7 @@
       "required_status": "optional",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.564290+00:00",
+      "indexed_at": "2026-09-02T09:22:35.038551+00:00",
       "provenance": null
     },
     {
@@ -881,7 +1436,7 @@
       "required_status": "required",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.559321+00:00",
+      "indexed_at": "2026-09-02T09:22:35.029413+00:00",
       "provenance": null
     },
     {
@@ -895,7 +1450,7 @@
       "required_status": "required",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.519187+00:00",
+      "indexed_at": "2026-09-02T09:22:34.994674+00:00",
       "provenance": null
     },
     {
@@ -909,9 +1464,9 @@
       "required_status": "required",
       "is_present": true,
       "error_reason": null,
-      "indexed_at": "2026-08-30T21:19:22.579551+00:00",
+      "indexed_at": "2026-09-02T09:22:35.052597+00:00",
       "provenance": null
     }
   ],
-  "computed_at": "2026-08-30 21:19:23.837218+00:00"
+  "computed_at": "2026-09-02 09:22:57.029555+00:00"
 }
