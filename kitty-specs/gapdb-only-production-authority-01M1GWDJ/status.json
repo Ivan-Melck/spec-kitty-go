@@ -20,8 +20,8 @@
     "WP01": {
       "actor": "codex-wp01-witness-guard",
       "agent": "wp01-terminal-typegraph-arbiter",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 11,
       "lane": "in_progress",
       "last_event_id": "01M1KZQFN8WJZ9A41W2RQD6AQW",
@@ -58,9 +58,9 @@
         "reviewer": "wp01-terminal-typegraph-arbiter",
         "verdict": "approved"
       },
-      "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "role": "implementer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
         "T001": "done",
         "T002": "done",
