@@ -33,12 +33,13 @@ func (r StoreRevisionV2) DurableThroughRevision() uint64 { return r.durableThrou
 type RecordAddressKindV2 string
 
 const (
-	AddressAggregateHead    RecordAddressKindV2 = "aggregate_head"
-	AddressJournalEvent     RecordAddressKindV2 = "journal_event"
-	AddressOperationBinding RecordAddressKindV2 = "operation_binding"
-	AddressOperationHead    RecordAddressKindV2 = "operation_head"
-	AddressCheckpointRecord RecordAddressKindV2 = "checkpoint_record"
-	AddressCheckpointSlot   RecordAddressKindV2 = "checkpoint_slot"
+	AddressAggregateHead      RecordAddressKindV2 = "aggregate_head"
+	AddressJournalEvent       RecordAddressKindV2 = "journal_event"
+	AddressOperationBinding   RecordAddressKindV2 = "operation_binding"
+	AddressOperationHead      RecordAddressKindV2 = "operation_head"
+	AddressCheckpointRecord   RecordAddressKindV2 = "checkpoint_record"
+	AddressCheckpointSlot     RecordAddressKindV2 = "checkpoint_slot"
+	AddressPublicationWitness RecordAddressKindV2 = "publication_witness"
 )
 
 // RecordAddressV2 is a semantic address. It has no raw key constructor and
@@ -50,6 +51,7 @@ type RecordAddressV2 struct {
 	operationID      OperationID
 	checkpointID     CheckpointID
 	checkpointSlotID CheckpointSlotID
+	publicationID    PublicationID
 }
 
 func NewAggregateHeadAddressV2(coordinate AggregateCoordinate) (RecordAddressV2, error) {
@@ -94,12 +96,23 @@ func NewCheckpointSlotAddressV2(slotID CheckpointSlotID) (RecordAddressV2, error
 	return RecordAddressV2{kind: AddressCheckpointSlot, checkpointSlotID: slotID}, nil
 }
 
+// WitnessAddressV2 constructs the exact semantic recovery address for this
+// publication without exposing an adapter key or adding another top-level
+// proof helper.
+func (publicationID PublicationID) WitnessAddressV2() (RecordAddressV2, error) {
+	if _, err := DecodePublicationID(string(publicationID)); err != nil {
+		return RecordAddressV2{}, err
+	}
+	return RecordAddressV2{kind: AddressPublicationWitness, publicationID: publicationID}, nil
+}
+
 func (a RecordAddressV2) Kind() RecordAddressKindV2          { return a.kind }
 func (a RecordAddressV2) Coordinate() AggregateCoordinate    { return a.coordinate }
 func (a RecordAddressV2) LogicalVersion() LogicalVersion     { return a.logicalVersion }
 func (a RecordAddressV2) OperationID() OperationID           { return a.operationID }
 func (a RecordAddressV2) CheckpointID() CheckpointID         { return a.checkpointID }
 func (a RecordAddressV2) CheckpointSlotID() CheckpointSlotID { return a.checkpointSlotID }
+func (a RecordAddressV2) PublicationID() PublicationID       { return a.publicationID }
 
 func (a RecordAddressV2) validate() error {
 	switch a.kind {
@@ -120,6 +133,9 @@ func (a RecordAddressV2) validate() error {
 		return err
 	case AddressCheckpointSlot:
 		_, err := NewCheckpointSlotAddressV2(a.checkpointSlotID)
+		return err
+	case AddressPublicationWitness:
+		_, err := a.publicationID.WitnessAddressV2()
 		return err
 	default:
 		return invalid(ErrorInvalidCanonicalData, "record_address")
