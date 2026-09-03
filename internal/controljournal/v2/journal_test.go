@@ -596,6 +596,7 @@ func TestCommitPlanBindsCompleteOperationStateSemantics(t *testing.T) {
 	base := fixturePlanInput(t)
 	base.OperationState = mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 1, Status: StatusResolved,
 		ResultKind: "result.one", ResultSchemaVersion: 1, CanonicalResult: []byte(`{"ok":true}`), EventIDs: []EventID{"event-mission", "event-operation"}, EffectIDs: []EffectID{"effect-01"}})
+	base.Events[0].Payload = operationPayload(t, base.OperationState)
 	baseline, err := SealCommitPlanV2(base, registry)
 	if err != nil {
 		t.Fatal(err)
@@ -626,6 +627,7 @@ func TestCommitPlanBindsCompleteOperationStateSemantics(t *testing.T) {
 		candidate := fixturePlanInput(t)
 		candidate.OperationState = base.OperationState
 		mutate(&candidate)
+		candidate.Events[0].Payload = operationPayload(t, candidate.OperationState)
 		sealed, err := SealCommitPlanV2(candidate, registry)
 		if err != nil {
 			t.Fatalf("semantic mutant=%d rejected rather than bound: %v", index, err)
@@ -668,7 +670,7 @@ func TestCommitPlanExactFirstAndCumulativeLaterMembership(t *testing.T) {
 	laterHead := HeadTransitionV2{Coordinate: coordinate, ExpectedLogicalVersion: 1, NextLogicalVersion: 2, EventID: "event-a", ExpectedRecordRevision: 7,
 		CommittedRuntimeEpochID: "epoch-18", CanonicalStateDigest: digest("state", []byte("next")), AuthoritySummary: []byte(`{"status":"in_progress"}`)}
 	later := CommitPlanInput{PriorOperationState: &prior, OperationState: next,
-		Events:        []EventDraftV2{{EventID: "event-a", EventType: "operation.progressed", Family: "operation", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: coordinate, AggregateLogicalVersion: 2, CommittedRuntimeEpochID: "epoch-18", Payload: []byte(`{"status":"in_progress"}`)}},
+		Events:        []EventDraftV2{{EventID: "event-a", EventType: "operation.progressed", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: coordinate, AggregateLogicalVersion: 2, CommittedRuntimeEpochID: "epoch-18", Payload: operationPayload(t, next)}},
 		Heads:         []HeadTransitionV2{laterHead},
 		EffectIntents: []EffectIntentReference{{EffectID: "effect-a", Digest: digest("effect", []byte("a")), Canonical: []byte(`{"intent":"a"}`)}},
 		Conditions:    []ProviderCondition{mustHeadCondition(t, laterHead)},
@@ -706,12 +708,14 @@ func TestCommitPlanRejectsFamilyAggregateAuthorityAliases(t *testing.T) {
 		},
 		"disguised_wrong_operation_id": func(v *CommitPlanInput) {
 			v.Events[1].Family = "operation"
+			v.Events[1].EventSchemaVersion, v.Events[1].ReducerVersion = 2, 2
 			v.Events[1].EventType = "operation.changed"
 			v.Events[1].Coordinate = AggregateCoordinate{Kind: "operation", ID: "operation-shadow", Scope: Scope{Kind: ScopeHost}}
 			v.Heads[1].Coordinate = v.Events[1].Coordinate
 		},
 		"disguised_wrong_operation_version": func(v *CommitPlanInput) {
 			v.Events[1].Family = "operation"
+			v.Events[1].EventSchemaVersion, v.Events[1].ReducerVersion = 2, 2
 			v.Events[1].EventType = "operation.changed"
 			v.Events[1].Coordinate = AggregateCoordinate{Kind: "operation", ID: "operation-01", Scope: Scope{Kind: ScopeHost}}
 			v.Events[1].AggregateLogicalVersion = 2
@@ -741,6 +745,7 @@ func TestCommitPlanRejectsFamilyAggregateAuthorityAliases(t *testing.T) {
 	}
 	disguisedEnvelope := sealed.events[0].input
 	disguisedEnvelope.Family = "mission"
+	disguisedEnvelope.EventSchemaVersion, disguisedEnvelope.ReducerVersion = 1, 1
 	disguisedEnvelope.Payload = []byte(`{"status":"accepted"}`)
 	disguisedEnvelope.Observations = []byte(`{"source":"test"}`)
 	if _, err := NewEventEnvelopeV2(disguisedEnvelope, registry); !IsKind(err, ErrorInvalidTransition) {
@@ -956,6 +961,7 @@ func TestCollectionBudgetBoundaries(t *testing.T) {
 	}
 	maximumEffects.OperationState = mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 1, Status: StatusAccepted,
 		EventIDs: []EventID{"event-mission", "event-operation"}, EffectIDs: effectIDs})
+	maximumEffects.Events[0].Payload = operationPayload(t, maximumEffects.OperationState)
 	if _, err := SealCommitPlanV2(maximumEffects, DefaultEventRegistryV2()); err != nil {
 		t.Fatalf("maximum effects rejected: %v", err)
 	}
@@ -1273,119 +1279,215 @@ func TestEventRegistryReducerPlaybackAndDigest(t *testing.T) {
 			t.Fatal("registry mutant accepted")
 		}
 	}
-	reducers, err := NewReducerSetV2(registry, []ReducerRegistration{{"mission", 1, 1, func(_, event []byte) ([]byte, error) { return append([]byte(nil), event...), nil }}})
+	eventDescriptor, err := registry.Descriptor()
+	if err != nil || eventDescriptor.Digest().IsZero() || len(eventDescriptor.CanonicalBytes()) == 0 {
+		t.Fatalf("event descriptor invalid: %v", err)
+	}
+	reducers, err := NewReducerSetV2(registry, fixtureReducerRegistrations(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, digest, err := reducers.Reduce("mission", 1, 1, []byte(`{"prior":1}`), []byte(`{"state":"ready"}`))
+	event := fixtureMissionEnvelope(t, []byte(`{"state":"ready"}`))
+	result, digest, err := reducers.Reduce([]byte(`{"prior":1}`), event)
 	if err != nil || digest.IsZero() || !bytes.Equal(result, []byte(`{"state":"ready"}`)) {
 		t.Fatalf("reducer result=%s digest=%s err=%v", result, digest, err)
 	}
-	if _, _, err := reducers.Reduce("mission", 2, 1, []byte(`{}`), []byte(`{}`)); !IsKind(err, ErrorUnknownEventTuple) {
+	if _, err := registry.Resolve("mission", 2, 1); !IsKind(err, ErrorUnknownEventTuple) {
 		t.Fatal("unknown event tuple fell back")
 	}
+	reducerDescriptor, err := reducers.Descriptor()
+	if err != nil || reducerDescriptor.Digest().IsZero() || len(reducerDescriptor.CanonicalBytes()) == 0 {
+		t.Fatalf("reducer descriptor invalid: %v", err)
+	}
 	toggle := false
-	nondeterministic, _ := NewReducerSetV2(registry, []ReducerRegistration{{"mission", 1, 1, func(_, _ []byte) ([]byte, error) {
+	nondeterministic, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(func(_ []byte, _ EventEnvelopeV2) ([]byte, error) {
 		toggle = !toggle
 		if toggle {
 			return []byte(`{"n":1}`), nil
 		}
 		return []byte(`{"n":2}`), nil
-	}}})
-	if _, _, err := nondeterministic.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{}`)); err != nil {
-		t.Fatalf("first observation rejected: %v", err)
+	}))
+	if _, _, err := nondeterministic.Reduce([]byte(`{}`), event); err != nil {
+		t.Fatalf("stateless runtime application rejected: %v", err)
 	}
-	if _, _, err := nondeterministic.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{}`)); !IsKind(err, ErrorNondeterministic) {
-		t.Fatal("nondeterministic reducer accepted")
+	if err := nondeterministic.QualifyDeterminismV2([]byte(`{}`), event, 4); !IsKind(err, ErrorNondeterministic) {
+		t.Fatalf("qualification accepted alternating reducer: %v", err)
 	}
 }
 
-func TestReductionSessionDeterminismIsolationConcurrencyAndBudget(t *testing.T) {
-	registry := DefaultEventRegistryV2()
-	calls := 0
-	pairStable, err := NewReducerSetV2(registry, []ReducerRegistration{{"mission", 1, 1, func(_, _ []byte) ([]byte, error) {
-		calls++
-		if calls <= 2 {
-			return []byte(`{"value":1}`), nil
-		}
-		return []byte(`{"value":2}`), nil
-	}}})
+func TestOperationEventTupleReconstructsExactStateAndAccessors(t *testing.T) {
+	state := mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 3, Status: StatusResolved,
+		ResultKind: "result.done", ResultSchemaVersion: 2, CanonicalResult: []byte(`{"done":true}`),
+		EventIDs: []EventID{"event-01", "event-02"}, EffectIDs: []EffectID{"effect-01"}})
+	payload := operationPayload(t, state)
+	publicationID := testPublicationID("operation-event")
+	reconstructed, err := ReconstructOperationStateV2(payload, publicationID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for attempt := 0; attempt < 2; attempt++ {
-		if _, _, err := pairStable.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{"same":true}`)); err != nil {
-			t.Fatalf("pair-stable observation %d rejected: %v", attempt, err)
+	if reconstructed.SchemaVersion() != SchemaVersion || reconstructed.OperationID() != state.OperationID() ||
+		reconstructed.LogicalVersion() != state.LogicalVersion() || reconstructed.Status() != state.Status() ||
+		reconstructed.ResultKind() != state.ResultKind() || reconstructed.ResultSchemaVersion() != state.ResultSchemaVersion() ||
+		!bytes.Equal(reconstructed.Result(), state.Result()) || reconstructed.ResultDigest() != state.ResultDigest() ||
+		!equalIDs(reconstructed.EventIDs(), state.EventIDs()) || !equalIDs(reconstructed.EffectIDs(), state.EffectIDs()) ||
+		reconstructed.LastPublicationID() != publicationID {
+		t.Fatalf("operation event did not reconstruct exact state: %+v", reconstructed)
+	}
+	mutated := append([]byte(nil), payload...)
+	mutated[len(mutated)-2] ^= 1
+	if _, err := ReconstructOperationStateV2(mutated, publicationID); err == nil {
+		t.Fatal("mutated operation payload accepted")
+	}
+	if _, err := DefaultEventRegistryV2().Resolve("operation", 1, 1); !IsKind(err, ErrorUnknownEventTuple) {
+		t.Fatalf("obsolete operation tuple accepted: %v", err)
+	}
+
+	plan := projectionPlan(t, "operation-02", "mission-02", "planned")
+	var envelope EventEnvelopeV2
+	for _, candidate := range plan.Events() {
+		if candidate.Family() == "operation" {
+			envelope = candidate
 		}
 	}
-	if _, _, err := pairStable.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{"same":true}`)); !IsKind(err, ErrorNondeterministic) {
-		t.Fatalf("pair-stable stateful reducer escaped observation session: %v", err)
+	if envelope.EnvelopeVersion() != EnvelopeVersion || envelope.EventType() == "" || envelope.EventSchemaVersion() != 2 ||
+		envelope.ReducerVersion() != 2 || envelope.CommittedRuntimeEpochID() == "" || envelope.CanonicalDigest().IsZero() {
+		t.Fatal("event envelope semantic accessors are incomplete")
 	}
-	if calls != 3 {
-		t.Fatalf("reducer must run exactly once per request: calls=%d", calls)
+	binding := plan.BindingCreate()
+	if binding == nil || binding.SchemaVersion() != SchemaVersion || binding.CommandKind() == "" || binding.CommandSchemaVersion() == 0 ||
+		binding.IntentDigest().IsZero() || binding.OriginatingEpoch() == "" || binding.ObservedCreatedAt() == "" {
+		t.Fatal("operation binding semantic accessors are incomplete")
 	}
+}
 
+func TestReducerRegistryIsCompleteAndImplementationDigestIsDeclared(t *testing.T) {
+	registry := DefaultEventRegistryV2()
+	registrations := fixtureReducerRegistrations(nil)
+	base, err := NewReducerSetV2(registry, registrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseDescriptor, _ := base.Descriptor()
+	missing := append([]ReducerRegistration(nil), registrations[1:]...)
+	if _, err := NewReducerSetV2(registry, missing); !IsKind(err, ErrorUnknownEventTuple) {
+		t.Fatalf("missing reducer accepted: %v", err)
+	}
+	owner := append([]ReducerRegistration(nil), registrations...)
+	owner[0].Owner = "internal/other"
+	if _, err := NewReducerSetV2(registry, owner); !IsKind(err, ErrorUnknownEventTuple) {
+		t.Fatalf("wrong reducer owner accepted: %v", err)
+	}
+	implementation := append([]ReducerRegistration(nil), registrations...)
+	implementation[0].ImplementationDigest = digest("alternate.declared.implementation", nil)
+	alternate, err := NewReducerSetV2(registry, implementation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alternateDescriptor, _ := alternate.Descriptor()
+	if baseDescriptor.Digest() == alternateDescriptor.Digest() {
+		t.Fatal("declared implementation digest did not affect compatibility identity")
+	}
+	functionOnly := append([]ReducerRegistration(nil), registrations...)
+	functionOnly[0].Reduce = func(_ []byte, _ EventEnvelopeV2) ([]byte, error) { return []byte(`{"different":"function"}`), nil }
+	sameIdentity, err := NewReducerSetV2(registry, functionOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameDescriptor, _ := sameIdentity.Descriptor()
+	if baseDescriptor.Digest() != sameDescriptor.Digest() {
+		t.Fatal("reducer compatibility identity was derived from Go function identity")
+	}
+}
+
+func TestStatelessReductionIsolationConcurrencyAndQualification(t *testing.T) {
+	registry := DefaultEventRegistryV2()
 	prior := []byte(`{"prior":1}`)
-	event := []byte(`{"event":1}`)
-	isolation, _ := NewReducerSetV2(registry, []ReducerRegistration{{"mission", 1, 1, func(priorCopy, eventCopy []byte) ([]byte, error) {
-		priorCopy[0], eventCopy[0] = 'x', 'x'
+	event := fixtureMissionEnvelope(t, []byte(`{"event":1}`))
+	isolation, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(func(priorCopy []byte, envelope EventEnvelopeV2) ([]byte, error) {
+		priorCopy[0] = 'x'
+		eventCopy := envelope.Payload()
+		eventCopy[0] = 'x'
 		return []byte(`{"stable":true}`), nil
-	}}})
-	output, _, err := isolation.Reduce("mission", 1, 1, prior, event)
-	if err != nil || !bytes.Equal(prior, []byte(`{"prior":1}`)) || !bytes.Equal(event, []byte(`{"event":1}`)) {
-		t.Fatalf("reducer aliased caller input: prior=%s event=%s err=%v", prior, event, err)
+	}))
+	output, _, err := isolation.Reduce(prior, event)
+	if err != nil || !bytes.Equal(prior, []byte(`{"prior":1}`)) || !bytes.Equal(event.Payload(), []byte(`{"event":1}`)) {
+		t.Fatalf("reducer aliased caller input: prior=%s event=%s err=%v", prior, event.Payload(), err)
 	}
 	output[0] = 'x'
-	second, _, err := isolation.Reduce("mission", 1, 1, prior, event)
+	second, _, err := isolation.Reduce(prior, event)
 	if err != nil || !bytes.Equal(second, []byte(`{"stable":true}`)) {
-		t.Fatalf("returned buffer mutated session evidence: output=%s err=%v", second, err)
+		t.Fatalf("returned buffer aliased subsequent application: output=%s err=%v", second, err)
 	}
 
-	freshA, _ := NewReducerSetV2(registry, []ReducerRegistration{{"mission", 1, 1, func(_, event []byte) ([]byte, error) { return append([]byte(nil), event...), nil }}})
-	freshB, _ := NewReducerSetV2(registry, []ReducerRegistration{{"mission", 1, 1, func(_, event []byte) ([]byte, error) { return append([]byte(nil), event...), nil }}})
-	left, leftDigest, leftErr := freshA.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{"fresh":true}`))
-	right, rightDigest, rightErr := freshB.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{"fresh":true}`))
+	freshA, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(nil))
+	freshB, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(nil))
+	freshEvent := fixtureMissionEnvelope(t, []byte(`{"fresh":true}`))
+	left, leftDigest, leftErr := freshA.Reduce([]byte(`{}`), freshEvent)
+	right, rightDigest, rightErr := freshB.Reduce([]byte(`{}`), freshEvent)
 	if leftErr != nil || rightErr != nil || !bytes.Equal(left, right) || leftDigest != rightDigest {
 		t.Fatalf("fresh sessions disagree: left=%s right=%s errors=%v/%v", left, right, leftErr, rightErr)
 	}
 
-	concurrentCalls := 0
-	concurrent, _ := NewReducerSetV2(registry, []ReducerRegistration{{"mission", 1, 1, func(_, _ []byte) ([]byte, error) {
-		concurrentCalls++
-		return []byte(`{"concurrent":true}`), nil
-	}}})
+	concurrent, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(nil))
 	var wait sync.WaitGroup
 	for index := 0; index < 64; index++ {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if _, _, err := concurrent.Reduce("mission", 1, 1, []byte(`{}`), []byte(`{"same":true}`)); err != nil {
+			if _, _, err := concurrent.Reduce([]byte(`{"same":true}`), freshEvent); err != nil {
 				t.Errorf("concurrent identical reduction failed: %v", err)
 			}
 		}()
 	}
 	wait.Wait()
-	if concurrentCalls != 64 {
-		t.Fatalf("concurrent session calls=%d", concurrentCalls)
-	}
-
-	budgetCalls := 0
-	bounded, _ := NewReducerSetV2(registry, []ReducerRegistration{{"mission", 1, 1, func(_, event []byte) ([]byte, error) {
-		budgetCalls++
-		return append([]byte(nil), event...), nil
-	}}})
-	for index := 0; index < MaxReductionObservations; index++ {
-		payload := []byte(fmt.Sprintf(`{"index":%d}`, index))
-		if _, _, err := bounded.Reduce("mission", 1, 1, []byte(`{}`), payload); err != nil {
-			t.Fatalf("observation at exact budget index=%d rejected: %v", index, err)
+	bounded, _ := NewReducerSetV2(registry, fixtureReducerRegistrations(nil))
+	for index := 0; index < 10_001; index++ {
+		priorInput := []byte(fmt.Sprintf(`{"index":%d}`, index))
+		if _, _, err := bounded.Reduce(priorInput, freshEvent); err != nil {
+			t.Fatalf("stateless application index=%d rejected: %v", index, err)
 		}
 	}
-	if _, _, err := bounded.Reduce("mission", 1, 1, []byte(`{}`), []byte(fmt.Sprintf(`{"index":%d}`, MaxReductionObservations))); !IsKind(err, ErrorBudgetExceeded) {
-		t.Fatalf("observation maximum-plus-one accepted: %v", err)
+	if err := bounded.QualifyDeterminismV2([]byte(`{}`), freshEvent, MaxQualificationRuns+1); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("qualification run budget not enforced: %v", err)
 	}
-	if budgetCalls != MaxReductionObservations {
-		t.Fatalf("budget refusal invoked reducer: calls=%d", budgetCalls)
+}
+
+func fixtureReducerRegistrations(mission Reducer) []ReducerRegistration {
+	if mission == nil {
+		mission = func(_ []byte, event EventEnvelopeV2) ([]byte, error) { return event.Payload(), nil }
 	}
+	registrations := make([]ReducerRegistration, 0, len(ExpectedEventTuples()))
+	for _, tuple := range ExpectedEventTuples() {
+		reducer := Reducer(func(_ []byte, event EventEnvelopeV2) ([]byte, error) { return event.Payload(), nil })
+		if tuple.Family == "mission" {
+			reducer = mission
+		}
+		if tuple.Family == "operation" {
+			reducer = ReduceOperationStateV2
+		}
+		implementationDigest := digest("test.reducer.implementation", []byte(tuple.Family))
+		if tuple.Family == "operation" {
+			implementationDigest = OperationReducerImplementationDigestV2()
+		}
+		registrations = append(registrations, ReducerRegistration{
+			Family: tuple.Family, EventSchemaVersion: tuple.EventSchemaVersion, ReducerVersion: tuple.ReducerVersion,
+			Owner: tuple.Owner, ImplementationDigest: implementationDigest, Reduce: reducer,
+		})
+	}
+	return registrations
+}
+
+func fixtureMissionEnvelope(t *testing.T, payload []byte) EventEnvelopeV2 {
+	t.Helper()
+	coordinate, _ := NewAggregateCoordinate("mission", "mission-01", fixtureScope())
+	envelope, err := NewEventEnvelopeV2(EventEnvelopeInput{EventID: "event-reducer", EventType: "mission.changed", Family: "mission",
+		EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: coordinate, AggregateLogicalVersion: 1,
+		OperationID: "operation-reducer", OperationLogicalVersion: 1, PublicationID: testPublicationID("reducer"),
+		CommittedRuntimeEpochID: "epoch-01", EventIndex: 0, EventCount: 1, Payload: payload}, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return envelope
 }
 
 func TestPureDecisionsAreRaceSafeAndIdempotent(t *testing.T) {
@@ -1464,7 +1566,7 @@ func fixturePlanInput(t *testing.T) CommitPlanInput {
 	missionCoordinate, _ := NewAggregateCoordinate("mission", "mission", fixtureScope())
 	operationCoordinate, _ := NewAggregateCoordinate("operation", "operation-01", Scope{Kind: ScopeHost})
 	events := []EventDraftV2{
-		{EventID: "event-operation", EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: operationCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-17", GovernanceRevisions: []string{"gov-01"}, Observations: []byte(`{"source":"test"}`), Payload: []byte(`{"status":"accepted"}`)},
+		{EventID: "event-operation", EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-17", GovernanceRevisions: []string{"gov-01"}, Observations: []byte(`{"source":"test"}`), Payload: operationPayload(t, state)},
 		{EventID: "event-mission", EventType: "mission.changed", Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: missionCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-17", Payload: []byte(`{"status":"planned"}`)},
 	}
 	heads := []HeadTransitionV2{
@@ -1497,14 +1599,28 @@ func fixtureSizedPlan(t *testing.T, eventCount, payloadSize int) CommitPlanInput
 			coordinate, _ = NewAggregateCoordinate("operation", "operation-01", Scope{Kind: ScopeHost})
 			eventType = "operation.accepted"
 		}
-		events[index] = EventDraftV2{EventID: eventID, EventType: eventType, Family: family, EventSchemaVersion: 1, ReducerVersion: 1,
+		eventSchema, reducerVersion := uint32(1), uint32(1)
+		if family == "operation" {
+			eventSchema, reducerVersion = 2, 2
+		}
+		events[index] = EventDraftV2{EventID: eventID, EventType: eventType, Family: family, EventSchemaVersion: eventSchema, ReducerVersion: reducerVersion,
 			Coordinate: coordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-17", Observations: canonical, Payload: canonical}
 		heads[index] = HeadTransitionV2{Coordinate: coordinate, NextLogicalVersion: 1, EventID: eventID, CommittedRuntimeEpochID: "epoch-17",
 			CanonicalStateDigest: digest("state", []byte(eventID)), AuthoritySummary: []byte(`{"state":"current"}`)}
 		eventIDs[index] = eventID
 	}
 	state := mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 1, Status: StatusAccepted, EventIDs: eventIDs})
+	events[0].Payload = operationPayload(t, state)
 	return CommitPlanInput{OperationBinding: &binding, OperationState: state, Events: events, Heads: heads, Conditions: headConditions(t, heads)}
+}
+
+func operationPayload(t *testing.T, state OperationStateV2) []byte {
+	t.Helper()
+	payload, err := EncodeOperationStateEventPayloadV2(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func mustHeadCondition(t *testing.T, head HeadTransitionV2) ProviderCondition {

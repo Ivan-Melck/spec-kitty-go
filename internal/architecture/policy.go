@@ -271,6 +271,15 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 		ForbiddenLocalDirections: []ForbiddenLocalDirection{
 			{
 				Sources: []PackagePattern{
+					pkg("internal/artifact"), pkg("internal/mission"), pkg("internal/workgraph"),
+					pkg("internal/execution"), pkg("internal/workspace"), pkg("internal/handoff"),
+					pkg("internal/review"), pkg("internal/integration"),
+					PackagePrefix(modulePath + "/internal/acceptance"),
+				},
+				Targets: []PackagePattern{PackagePrefix(modulePath + "/internal/controlstore/gapdb")},
+			},
+			{
+				Sources: []PackagePattern{
 					PackagePrefix(modulePath + "/internal/tracker/fake"),
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
 				},

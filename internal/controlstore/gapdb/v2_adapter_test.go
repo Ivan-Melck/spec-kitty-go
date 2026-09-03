@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -26,28 +27,28 @@ func TestV2KeyEveryFamilyRoundTripsCanonically(t *testing.T) {
 	workRevision := journalv2.Scope{Kind: journalv2.ScopeWorkRevision, ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1"}
 	work := journalv2.Scope{Kind: journalv2.ScopeWork, ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-1"}
 
-	keys := []V2Key{V2AuthorityBindingKey(), V2RuntimeCurrentKey()}
-	appendKey := func(key V2Key, err error) {
+	keys := []v2Key{v2AuthorityBindingKey(), v2RuntimeCurrentKey()}
+	appendKey := func(key v2Key, err error) {
 		t.Helper()
 		if err != nil {
 			t.Fatal(err)
 		}
 		keys = append(keys, key)
 	}
-	appendKey(V2RuntimeEpochKey("epoch-1"))
-	appendKey(V2OperationBindingKey("operation-1"))
-	appendKey(V2OperationHeadKey("operation-1"))
-	appendKey(V2EffectIntentKey("effect-1"))
-	appendKey(V2CheckpointSlotKey("slot-1"))
-	appendKey(V2CheckpointRecordKey("checkpoint-1"))
-	appendKey(V2EligibilityGuardKey("mission-1", "shard-1"))
+	appendKey(v2RuntimeEpochKey("epoch-1"))
+	appendKey(v2OperationBindingKey("operation-1"))
+	appendKey(v2OperationHeadKey("operation-1"))
+	appendKey(v2EffectIntentKey("effect-1"))
+	appendKey(v2CheckpointSlotKey("slot-1"))
+	appendKey(v2CheckpointRecordKey("checkpoint-1"))
+	appendKey(v2EligibilityGuardKey("mission-1", "shard-1"))
 	for index, scope := range []journalv2.Scope{host, project, mission, repository, workRevision, work} {
 		coordinate, err := journalv2.NewAggregateCoordinate("aggregate", "aggregate-1", scope)
 		if err != nil {
 			t.Fatal(err)
 		}
-		appendKey(V2AggregateHeadKey(coordinate))
-		appendKey(V2JournalEventKey(coordinate, journalv2.LogicalVersion(index+1)))
+		appendKey(v2AggregateHeadKey(coordinate))
+		appendKey(v2JournalEventKey(coordinate, journalv2.LogicalVersion(index+1)))
 	}
 
 	seen := make(map[string]bool, len(keys))
@@ -56,7 +57,7 @@ func TestV2KeyEveryFamilyRoundTripsCanonically(t *testing.T) {
 			t.Fatalf("empty or colliding key %q", key.String())
 		}
 		seen[key.String()] = true
-		decoded, err := ParseV2Key(key.String())
+		decoded, err := parseV2Key(key.String())
 		if err != nil || decoded.String() != key.String() || decoded.Kind() != key.Kind() {
 			t.Fatalf("key=%q decoded=%+v err=%v", key.String(), decoded, err)
 		}
@@ -68,7 +69,7 @@ func TestV2JournalKeyLexicalVersionOrderMatchesNumericOrder(t *testing.T) {
 	coordinate, _ := journalv2.NewAggregateCoordinate("mission", "mission-1", journalv2.Scope{Kind: journalv2.ScopeHost})
 	var keys []string
 	for _, version := range []journalv2.LogicalVersion{1, 2, 15, 16, 255, 256, ^journalv2.LogicalVersion(0)} {
-		key, err := V2JournalEventKey(coordinate, version)
+		key, err := v2JournalEventKey(coordinate, version)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -81,11 +82,11 @@ func TestV2JournalKeyLexicalVersionOrderMatchesNumericOrder(t *testing.T) {
 
 func TestV2KeyOperationIdentityIsHostGlobal(t *testing.T) {
 	t.Parallel()
-	left, err := V2OperationBindingKey("operation-1")
+	left, err := v2OperationBindingKey("operation-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	right, err := V2OperationBindingKey("operation-1")
+	right, err := v2OperationBindingKey("operation-1")
 	if err != nil || left.String() != right.String() || strings.Contains(left.String(), "mission") || strings.Contains(left.String(), "project") {
 		t.Fatalf("left=%q right=%q err=%v", left.String(), right.String(), err)
 	}
@@ -100,11 +101,11 @@ func TestV2KeyOperationAggregatePlacementHasNoScopedAliases(t *testing.T) {
 	id, _ := journalv2.EncodeKeyComponent("operation-1")
 	version, _ := journalv2.LogicalVersion(1).Hex16()
 
-	canonicalHead, err := V2OperationHeadKey("operation-1")
+	canonicalHead, err := v2OperationHeadKey("operation-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed, err := ParseV2Key(canonicalHead.String()); err != nil || parsed.String() != canonicalHead.String() {
+	if parsed, err := parseV2Key(canonicalHead.String()); err != nil || parsed.String() != canonicalHead.String() {
 		t.Fatalf("canonical operation head rejected: parsed=%q err=%v", parsed.String(), err)
 	}
 
@@ -124,16 +125,16 @@ func TestV2KeyOperationAggregatePlacementHasNoScopedAliases(t *testing.T) {
 			}
 			scope, _ := test.scope.CanonicalComponent()
 			headAlias := strings.Join([]string{"spk", "v2", "scopes", scope, "heads", kind, id}, "/")
-			if _, err := V2AggregateHeadKey(coordinate); !IsKind(err, OutcomeInvalid) {
+			if _, err := v2AggregateHeadKey(coordinate); !IsKind(err, OutcomeInvalid) {
 				t.Fatalf("generic operation head constructor accepted %s scope: %v", test.name, err)
 			}
-			if _, err := ParseV2Key(headAlias); !IsKind(err, OutcomeInvalid) {
+			if _, err := parseV2Key(headAlias); !IsKind(err, OutcomeInvalid) {
 				t.Fatalf("generic operation head parser accepted %s alias %q: %v", test.name, headAlias, err)
 			}
 
 			eventAlias := strings.Join([]string{"spk", "v2", "scopes", scope, "journal", kind, id, version}, "/")
-			event, constructErr := V2JournalEventKey(coordinate, 1)
-			parsed, parseErr := ParseV2Key(eventAlias)
+			event, constructErr := v2JournalEventKey(coordinate, 1)
+			parsed, parseErr := parseV2Key(eventAlias)
 			if test.host {
 				if constructErr != nil || parseErr != nil || event.String() != eventAlias || parsed.String() != eventAlias {
 					t.Fatalf("canonical host operation event rejected: event=%q parsed=%q construct=%v parse=%v", event.String(), parsed.String(), constructErr, parseErr)
@@ -149,7 +150,7 @@ func TestV2KeyOperationAggregatePlacementHasNoScopedAliases(t *testing.T) {
 
 func TestV2KeyRejectsAliasesAndMalformedVersions(t *testing.T) {
 	t.Parallel()
-	valid, err := V2OperationBindingKey("operation-1")
+	valid, err := v2OperationBindingKey("operation-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,19 +164,19 @@ func TestV2KeyRejectsAliasesAndMalformedVersions(t *testing.T) {
 		"spk/v2/unknown/k61",
 		"spk//v2/operations/k61/binding",
 	} {
-		if _, err := ParseV2Key(mutant); !IsKind(err, OutcomeInvalid) {
+		if _, err := parseV2Key(mutant); !IsKind(err, OutcomeInvalid) {
 			t.Fatalf("alias accepted %q err=%v", mutant, err)
 		}
 	}
 	coordinate, _ := journalv2.NewAggregateCoordinate("mission", "mission-1", journalv2.Scope{Kind: journalv2.ScopeHost})
-	event, err := V2JournalEventKey(coordinate, 1)
+	event, err := v2JournalEventKey(coordinate, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	version := event.String()[len(event.String())-16:]
 	for _, mutant := range []string{"0000000000000000", "000000000000001", "00000000000000001", "000000000000000A", "+000000000000001", "fffffffffffffffff", "gggggggggggggggg"} {
 		encoded := strings.TrimSuffix(event.String(), version) + mutant
-		if _, err := ParseV2Key(encoded); !IsKind(err, OutcomeInvalid) {
+		if _, err := parseV2Key(encoded); !IsKind(err, OutcomeInvalid) {
 			t.Fatalf("version mutant accepted %q err=%v", mutant, err)
 		}
 	}
@@ -189,17 +190,17 @@ func TestV2KeyExactBudgetAndPlusOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exact, err := V2JournalEventKey(coordinate, 1)
+	exact, err := v2JournalEventKey(coordinate, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(exact.String()) != MaxKeyBytes {
 		t.Fatal("could not construct exact canonical key boundary")
 	}
-	if decoded, err := ParseV2Key(exact.String()); err != nil || decoded.String() != exact.String() {
+	if decoded, err := parseV2Key(exact.String()); err != nil || decoded.String() != exact.String() {
 		t.Fatalf("exact key rejected: %v", err)
 	}
-	if _, err := ParseV2Key(exact.String() + "x"); !IsKind(err, OutcomeInvalid) {
+	if _, err := parseV2Key(exact.String() + "x"); !IsKind(err, OutcomeInvalid) {
 		t.Fatalf("key maximum-plus-one accepted: %v", err)
 	}
 }
@@ -208,34 +209,87 @@ func TestV2CanonicalPrefixesRoundTrip(t *testing.T) {
 	t.Parallel()
 	scope := journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: "project-1", MissionID: "mission-1"}
 	coordinate, _ := journalv2.NewAggregateCoordinate("mission", "mission-1", scope)
-	prefixes := []V2Prefix{V2RuntimeEpochsPrefix(), V2OperationsPrefix(), V2EffectsPrefix(), V2CheckpointSlotsPrefix(), V2CheckpointRecordsPrefix()}
-	appendPrefix := func(prefix V2Prefix, err error) {
+	prefixes := []v2Prefix{v2RuntimeEpochsPrefix(), v2OperationsPrefix(), v2EffectsPrefix(), v2CheckpointSlotsPrefix(), v2CheckpointRecordsPrefix()}
+	appendPrefix := func(prefix v2Prefix, err error) {
 		t.Helper()
 		if err != nil {
 			t.Fatal(err)
 		}
 		prefixes = append(prefixes, prefix)
 	}
-	appendPrefix(V2AggregateHeadsPrefix(scope))
-	appendPrefix(V2JournalPrefix(scope))
-	appendPrefix(V2AggregateJournalPrefix(coordinate))
-	appendPrefix(V2EligibilityPrefix("mission-1"))
+	prefixes = append(prefixes, v2AggregateHeadsPrefix())
+	appendPrefix(v2JournalPrefix(scope))
+	appendPrefix(v2AggregateJournalPrefix(coordinate))
+	appendPrefix(v2EligibilityPrefix("mission-1"))
 	for _, prefix := range prefixes {
-		parsed, err := ParseV2Prefix(prefix.String())
+		parsed, err := parseV2Prefix(prefix.String())
 		if err != nil || parsed.String() != prefix.String() || parsed.Kind() != prefix.Kind() {
 			t.Fatalf("prefix=%q parsed=%+v err=%v", prefix.String(), parsed, err)
 		}
 	}
 	for _, malformed := range []string{"", "spk/v2/scopes/host/heads", "spk/v2/scopes/host//heads/", "spk/v2/operations//", strings.Repeat("x", MaxKeyBytes+1)} {
-		if _, err := ParseV2Prefix(malformed); !IsKind(err, OutcomeInvalid) {
+		if _, err := parseV2Prefix(malformed); !IsKind(err, OutcomeInvalid) {
 			t.Fatalf("malformed prefix accepted %q: %v", malformed, err)
 		}
 	}
 }
 
+func TestV2CaptureAndVerifyStableRevisionCoordinate(t *testing.T) {
+	statuses := []gapdbapi.StatusResult{
+		{DatabaseID: "db-1", CurrentRevision: 17, DurableThroughRevision: 19},
+		{DatabaseID: "db-1", CurrentRevision: 17, DurableThroughRevision: 23},
+	}
+	var calls atomic.Int32
+	provider := &fakeProvider{statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+		index := int(calls.Add(1)) - 1
+		return statuses[index], nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	captured, err := adapter.CaptureRevisionV2(t.Context())
+	if err != nil || captured.DatabaseID() != "db-1" || captured.CurrentRevision() != 17 || captured.DurableThroughRevision() != 19 {
+		t.Fatalf("capture=%+v err=%v", captured, err)
+	}
+	if err := adapter.VerifyRevisionV2(t.Context(), captured); err != nil {
+		t.Fatalf("stable final coordinate rejected: %v", err)
+	}
+
+	for name, status := range map[string]gapdbapi.StatusResult{
+		"database":   {DatabaseID: "db-2", CurrentRevision: 17, DurableThroughRevision: 17},
+		"revision":   {DatabaseID: "db-1", CurrentRevision: 18, DurableThroughRevision: 18},
+		"durability": {DatabaseID: "db-1", CurrentRevision: 17, DurableThroughRevision: 16},
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := &fakeProvider{statusFn: func(context.Context) (gapdbapi.StatusResult, error) { return status, nil }}
+			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+			if err := adapter.VerifyRevisionV2(t.Context(), captured); !journalv2.IsKind(err, journalv2.ErrorRevisionMoved) {
+				t.Fatalf("movement accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestV2CaptureRejectsNonDurableOrUnidentifiedStatus(t *testing.T) {
+	for name, status := range map[string]gapdbapi.StatusResult{
+		"database":    {CurrentRevision: 1, DurableThroughRevision: 1},
+		"zero":        {DatabaseID: "db-1"},
+		"not-durable": {DatabaseID: "db-1", CurrentRevision: 2, DurableThroughRevision: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := &fakeProvider{statusFn: func(context.Context) (gapdbapi.StatusResult, error) { return status, nil }}
+			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+			if _, err := adapter.CaptureRevisionV2(t.Context()); !journalv2.IsKind(err, journalv2.ErrorMalformed) {
+				t.Fatalf("malformed capture accepted: %v", err)
+			}
+		})
+	}
+}
+
 func TestV2ReaderPreservesMetadataAndCopiesBuffers(t *testing.T) {
-	key, _ := V2OperationHeadKey("operation-1")
-	expires := time.Date(2030, 1, 2, 3, 4, 5, 6, time.FixedZone("offset", 3600))
+	key, _ := v2OperationHeadKey("operation-1")
+	address, _ := journalv2.NewOperationHeadAddressV2("operation-1")
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 17, 19)
+	request, _ := journalv2.NewReadRequestV2(address, attempt)
+	expires := time.Date(2030, 1, 2, 3, 4, 5, 123456789, time.FixedZone("offset", 3600))
 	providerValue := []byte(`{"status":"accepted"}`)
 	provider := &fakeProvider{getFn: func(_ context.Context, got string) (gapdbapi.Record, error) {
 		if got != key.String() {
@@ -244,9 +298,10 @@ func TestV2ReaderPreservesMetadataAndCopiesBuffers(t *testing.T) {
 		return gapdbapi.Record{Key: got, Value: providerValue, Revision: 17, ExpiresAt: &expires}, nil
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	record, err := adapter.ReadV2(t.Context(), key)
-	if err != nil || record.Key().String() != key.String() || record.Revision() != 17 || !record.ExpiresAt().Equal(expires) || record.ExpiresAt().Location() != time.UTC {
-		t.Fatalf("record=%+v expiry=%v err=%v", record, record.ExpiresAt(), err)
+	record, err := adapter.ReadV2(t.Context(), request)
+	wantExpiry := expires.UTC().Format(time.RFC3339Nano)
+	if err != nil || record.Address() != address || record.RecordRevision() != 17 || record.ExpiresAt() != wantExpiry {
+		t.Fatalf("record=%+v expiry=%q want=%q err=%v", record, record.ExpiresAt(), wantExpiry, err)
 	}
 	providerValue[0] = 'x'
 	value := record.CanonicalValue()
@@ -256,13 +311,36 @@ func TestV2ReaderPreservesMetadataAndCopiesBuffers(t *testing.T) {
 	}
 }
 
+func TestV2ReaderGlobalHeadScanDiscoversPreviouslyUnknownScope(t *testing.T) {
+	scope := journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: "project-new", MissionID: "mission-new"}
+	coordinate, _ := journalv2.NewAggregateCoordinate("mission", "mission-new", scope)
+	key, _ := v2AggregateHeadKey(coordinate)
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 11, 11)
+	request, _ := journalv2.NewScanRequestV2(journalv2.AggregateHeadScanTargetV2(), attempt, nil, 1, MaxScanBytes)
+	provider := &fakeProvider{scanFn: func(_ context.Context, prefix string, _ int, _ string) (gapdbapi.ScanPage, error) {
+		if prefix != "spk/v2/heads/" {
+			t.Fatalf("scope-first head prefix returned: %q", prefix)
+		}
+		return gapdbapi.ScanPage{ObservedRevision: 11, AsOf: time.Date(2026, 9, 2, 1, 2, 3, 0, time.UTC), Records: []gapdbapi.Record{gapdbapi.NewRecord(key.String(), []byte(`{"status":"new"}`), 10, nil)}}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	page, err := adapter.ScanV2(t.Context(), request)
+	if err != nil || len(page.Records()) != 1 || page.Records()[0].Address().Coordinate() != coordinate {
+		t.Fatalf("unknown-scope head not discovered: page=%+v err=%v", page, err)
+	}
+}
+
 func TestV2ReaderRejectsDishonestExactResponses(t *testing.T) {
-	key, _ := V2OperationHeadKey("operation-1")
-	foreign, _ := V2OperationHeadKey("operation-2")
+	key, _ := v2OperationHeadKey("operation-1")
+	foreign, _ := v2OperationHeadKey("operation-2")
+	address, _ := journalv2.NewOperationHeadAddressV2("operation-1")
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 2, 2)
+	request, _ := journalv2.NewReadRequestV2(address, attempt)
 	zeroTime := time.Time{}
 	mutants := map[string]gapdbapi.Record{
 		"foreign":     gapdbapi.NewRecord(foreign.String(), []byte(`{}`), 1, nil),
 		"zero-rev":    gapdbapi.NewRecord(key.String(), []byte(`{}`), 0, nil),
+		"future-rev":  gapdbapi.NewRecord(key.String(), []byte(`{}`), 3, nil),
 		"oversized":   gapdbapi.NewRecord(key.String(), make([]byte, MaxOrdinaryValueBytes+1), 1, nil),
 		"zero-expiry": gapdbapi.NewRecord(key.String(), []byte(`{}`), 1, &zeroTime),
 	}
@@ -270,7 +348,7 @@ func TestV2ReaderRejectsDishonestExactResponses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			provider := &fakeProvider{getFn: func(context.Context, string) (gapdbapi.Record, error) { return response, nil }}
 			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-			if _, err := adapter.ReadV2(t.Context(), key); !IsKind(err, OutcomeMalformedResponse) {
+			if _, err := adapter.ReadV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorMalformed) {
 				t.Fatalf("dishonest response accepted: %v", err)
 			}
 		})
@@ -281,23 +359,29 @@ func TestV2ReaderScanExactBudgetsAndSafeRepage(t *testing.T) {
 	records := make([]gapdbapi.Record, MaxScanRecords)
 	base := 0
 	for index := range records {
-		key, err := V2CheckpointRecordKey(journalv2.CheckpointID(fmt.Sprintf("checkpoint-%03d", index)))
+		coordinate, err := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID(fmt.Sprintf("mission-%03d", index)), journalv2.Scope{Kind: journalv2.ScopeHost})
 		if err != nil {
 			t.Fatal(err)
 		}
-		records[index] = gapdbapi.NewRecord(key.String(), nil, 7, nil)
+		key, err := v2AggregateHeadKey(coordinate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records[index] = gapdbapi.NewRecord(key.String(), []byte(`{}`), 7, nil)
 		base += len(key.String()) + 32
 	}
 	remaining := MaxScanBytes - base
 	for index := range records {
 		size := remaining / (len(records) - index)
-		records[index] = gapdbapi.NewRecord(records[index].Key, make([]byte, size), 7, nil)
+		records[index] = gapdbapi.NewRecord(records[index].Key, v2CanonicalAt(size), 7, nil)
 		remaining -= size
 	}
 	if remaining != 0 {
 		t.Fatalf("scan fixture remaining=%d", remaining)
 	}
-	prefix := V2CheckpointRecordsPrefix()
+	prefix := v2AggregateHeadsPrefix()
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 7, 7)
+	request, _ := journalv2.NewScanRequestV2(journalv2.AggregateHeadScanTargetV2(), attempt, nil, MaxScanRecords, MaxScanBytes)
 	var calls []int
 	provider := &fakeProvider{scanFn: func(_ context.Context, gotPrefix string, limit int, cursor string) (gapdbapi.ScanPage, error) {
 		calls = append(calls, limit)
@@ -310,40 +394,44 @@ func TestV2ReaderScanExactBudgetsAndSafeRepage(t *testing.T) {
 		if truncated {
 			next = "same-snapshot-next"
 		}
-		return gapdbapi.ScanPage{ObservedRevision: 7, AsOf: time.Date(2026, 9, 2, 1, 2, 3, 0, time.UTC), Records: records[:count], Cursor: next, Truncated: truncated}, nil
+		return gapdbapi.ScanPage{ObservedRevision: 7, AsOf: time.Date(2026, 9, 2, 1, 2, 3, 456789123, time.UTC), Records: records[:count], Cursor: next, Truncated: truncated}, nil
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	page, err := adapter.ScanV2(t.Context(), V2ScanRequest{Prefix: prefix, Limit: MaxScanRecords, MaxBytes: MaxScanBytes})
-	if err != nil || len(page.Records()) != MaxScanRecords || page.ObservedRevision() != 7 || fmt.Sprint(calls) != "[500]" {
+	page, err := adapter.ScanV2(t.Context(), request)
+	if err != nil || len(page.Records()) != MaxScanRecords || page.ObservedRevision() != 7 || page.AsOf() != "2026-09-02T01:02:03.456789123Z" || fmt.Sprint(calls) != "[500]" {
 		t.Fatalf("page records=%d revision=%d calls=%v err=%v", len(page.Records()), page.ObservedRevision(), calls, err)
 	}
-	records[len(records)-1].Value = append(records[len(records)-1].Value, 0)
+	records[len(records)-1].Value = v2CanonicalAt(len(records[len(records)-1].Value) + 1)
 	calls = nil
-	page, err = adapter.ScanV2(t.Context(), V2ScanRequest{Prefix: prefix, Limit: MaxScanRecords, MaxBytes: MaxScanBytes})
+	page, err = adapter.ScanV2(t.Context(), request)
 	if err != nil || len(page.Records()) != MaxScanRecords/2 || !page.Truncated() || fmt.Sprint(calls) != "[500 250]" {
 		t.Fatalf("repage records=%d calls=%v err=%v", len(page.Records()), calls, err)
 	}
 }
 
 func TestV2ReaderScanRejectsMetadataMutantsAndUnstableRepage(t *testing.T) {
-	prefix := V2CheckpointRecordsPrefix()
-	keyA, _ := V2CheckpointRecordKey("checkpoint-a")
-	keyB, _ := V2CheckpointRecordKey("checkpoint-b")
+	coordinateA, _ := journalv2.NewAggregateCoordinate("mission", "mission-a", journalv2.Scope{Kind: journalv2.ScopeHost})
+	coordinateB, _ := journalv2.NewAggregateCoordinate("mission", "mission-b", journalv2.Scope{Kind: journalv2.ScopeHost})
+	keyA, _ := v2AggregateHeadKey(coordinateA)
+	keyB, _ := v2AggregateHeadKey(coordinateB)
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 2, 2)
+	request, _ := journalv2.NewScanRequestV2(journalv2.AggregateHeadScanTargetV2(), attempt, nil, 2, MaxScanBytes)
 	now := time.Date(2026, 9, 2, 1, 2, 3, 0, time.UTC)
 	mutants := map[string]gapdbapi.ScanPage{
 		"zero-observed":   {AsOf: now},
 		"zero-asof":       {ObservedRevision: 2},
 		"cursor-lie":      {ObservedRevision: 2, AsOf: now, Cursor: "cursor"},
 		"truncated-empty": {ObservedRevision: 2, AsOf: now, Cursor: "cursor", Truncated: true},
-		"unsorted":        {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyB.String(), nil, 1, nil), gapdbapi.NewRecord(keyA.String(), nil, 1, nil)}},
-		"future-record":   {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyA.String(), nil, 3, nil)}},
-		"foreign":         {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord("spk/v2/runtime/current", nil, 1, nil)}},
+		"wrong-observed":  {ObservedRevision: 1, AsOf: now},
+		"unsorted":        {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyB.String(), []byte(`{}`), 1, nil), gapdbapi.NewRecord(keyA.String(), []byte(`{}`), 1, nil)}},
+		"future-record":   {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyA.String(), []byte(`{}`), 3, nil)}},
+		"foreign":         {ObservedRevision: 2, AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord("spk/v2/runtime/current", []byte(`{}`), 1, nil)}},
 	}
 	for name, response := range mutants {
 		t.Run(name, func(t *testing.T) {
 			provider := &fakeProvider{scanFn: func(context.Context, string, int, string) (gapdbapi.ScanPage, error) { return response, nil }}
 			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-			if _, err := adapter.ScanV2(t.Context(), V2ScanRequest{Prefix: prefix, Limit: 2}); !IsKind(err, OutcomeMalformedResponse) {
+			if _, err := adapter.ScanV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorMalformed) {
 				t.Fatalf("metadata mutant accepted: %v", err)
 			}
 		})
@@ -352,24 +440,72 @@ func TestV2ReaderScanRejectsMetadataMutantsAndUnstableRepage(t *testing.T) {
 		return gapdbapi.ScanPage{ObservedRevision: 2, AsOf: now}, nil
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	terminal, err := adapter.ScanV2(t.Context(), V2ScanRequest{Prefix: prefix, Limit: 2})
-	if err != nil || len(terminal.Records()) != 0 || terminal.Truncated() || terminal.Cursor() != "" {
+	terminal, err := adapter.ScanV2(t.Context(), request)
+	if err != nil || len(terminal.Records()) != 0 || terminal.Truncated() || len(terminal.Cursor()) != 0 {
 		t.Fatalf("valid empty terminal page rejected: page=%+v err=%v", terminal, err)
 	}
 
 	var calls atomic.Int32
 	provider = &fakeProvider{scanFn: func(_ context.Context, _ string, limit int, _ string) (gapdbapi.ScanPage, error) {
 		call := calls.Add(1)
-		value := make([]byte, 100)
-		page := gapdbapi.ScanPage{ObservedRevision: gapdbapi.Revision(call), AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyA.String(), value, 1, nil), gapdbapi.NewRecord(keyB.String(), value, 1, nil)}, Cursor: "next", Truncated: true}
+		value := v2CanonicalAt(100)
+		page := gapdbapi.ScanPage{ObservedRevision: gapdbapi.Revision(call + 1), AsOf: now, Records: []gapdbapi.Record{gapdbapi.NewRecord(keyA.String(), value, 1, nil), gapdbapi.NewRecord(keyB.String(), value, 1, nil)}, Cursor: "next", Truncated: true}
 		if limit == 1 {
 			page.Records = page.Records[:1]
 		}
 		return page, nil
 	}}
 	adapter, _ = newAdapter(provider, "/explicit/socket", time.Second)
-	if _, err := adapter.ScanV2(t.Context(), V2ScanRequest{Prefix: prefix, Limit: 2, MaxBytes: len(keyA.String()) + 100 + 32}); !IsKind(err, OutcomeMalformedResponse) || calls.Load() != 2 {
+	smallRequest, _ := journalv2.NewScanRequestV2(journalv2.AggregateHeadScanTargetV2(), attempt, nil, 2, len(keyA.String())+100+32)
+	if _, err := adapter.ScanV2(t.Context(), smallRequest); !journalv2.IsKind(err, journalv2.ErrorMalformed) || calls.Load() != 2 {
 		t.Fatalf("unstable repage err=%v calls=%d", err, calls.Load())
+	}
+}
+
+func TestV2ReaderContinuationCursorAndStaleProviderCursor(t *testing.T) {
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 9, 9)
+	cursor := []byte("opaque-revision-nine")
+	request, _ := journalv2.NewScanRequestV2(journalv2.OperationRecordScanTargetV2(), attempt, cursor, 10, MaxScanBytes)
+	provider := &fakeProvider{scanFn: func(_ context.Context, prefix string, limit int, got string) (gapdbapi.ScanPage, error) {
+		if prefix != v2OperationsPrefix().String() || limit != 10 || got != string(cursor) {
+			t.Fatalf("prefix=%q limit=%d cursor=%q", prefix, limit, got)
+		}
+		return gapdbapi.ScanPage{ObservedRevision: 9, AsOf: time.Date(2026, 9, 2, 1, 2, 3, 987654321, time.UTC)}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	page, err := adapter.ScanV2(t.Context(), request)
+	if err != nil || page.ObservedRevision() != 9 || page.AsOf() != "2026-09-02T01:02:03.987654321Z" {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+
+	provider.scanFn = func(context.Context, string, int, string) (gapdbapi.ScanPage, error) {
+		return gapdbapi.ScanPage{}, &gapdbapi.Error{Code: gapdbapi.CodeScanStale}
+	}
+	if _, err := adapter.ScanV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorStaleCursor) {
+		t.Fatalf("stale cursor was not preserved: %v", err)
+	}
+}
+
+func TestV2ReaderRejectsNonAdvancingContinuationCursor(t *testing.T) {
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 9, 9)
+	cursor := []byte("opaque-revision-nine")
+	request, _ := journalv2.NewScanRequestV2(journalv2.OperationRecordScanTargetV2(), attempt, cursor, 10, MaxScanBytes)
+	key, _ := v2OperationBindingKey("operation-1")
+	provider := &fakeProvider{scanFn: func(_ context.Context, prefix string, limit int, got string) (gapdbapi.ScanPage, error) {
+		if prefix != v2OperationsPrefix().String() || limit != 10 || got != string(cursor) {
+			t.Fatalf("prefix=%q limit=%d cursor=%q", prefix, limit, got)
+		}
+		return gapdbapi.ScanPage{
+			ObservedRevision: 9,
+			AsOf:             time.Date(2026, 9, 2, 1, 2, 3, 987654321, time.UTC),
+			Records:          []gapdbapi.Record{gapdbapi.NewRecord(key.String(), []byte(`{"binding":true}`), 8, nil)},
+			Cursor:           string(cursor),
+			Truncated:        true,
+		}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	if _, err := adapter.ScanV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorStaleCursor) {
+		t.Fatalf("non-advancing continuation cursor accepted: %v", err)
 	}
 }
 
@@ -380,46 +516,29 @@ func TestV2ReaderRequestBudgetsRefuseBeforeProvider(t *testing.T) {
 		return gapdbapi.ScanPage{}, errors.New("unexpected")
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	prefix := V2CheckpointRecordsPrefix()
-	for _, request := range []V2ScanRequest{
-		{Prefix: prefix, Limit: MaxScanRecords + 1},
-		{Prefix: prefix, Limit: 1, MaxBytes: MaxScanBytes + 1},
-		{Prefix: prefix, Limit: 1, Cursor: strings.Repeat("x", MaxCursorBytes+1)},
-		{Prefix: V2Prefix{}, Limit: 1},
+	if _, err := adapter.ScanV2(t.Context(), journalv2.ScanRequestV2{}); !journalv2.IsKind(err, journalv2.ErrorInvalidCanonicalData) {
+		t.Fatalf("zero request accepted: %v", err)
+	}
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 1, 1)
+	for _, input := range []struct {
+		cursor []byte
+		limit  int
+		bytes  int
+	}{
+		{nil, MaxScanRecords + 1, 1},
+		{nil, 1, MaxScanBytes + 1},
+		{[]byte(strings.Repeat("x", MaxCursorBytes+1)), 1, 1},
 	} {
-		if _, err := adapter.ScanV2(t.Context(), request); !IsKind(err, OutcomeInvalid) {
-			t.Fatalf("invalid request accepted: %v", err)
+		if _, err := journalv2.NewScanRequestV2(journalv2.AggregateHeadScanTargetV2(), attempt, input.cursor, input.limit, input.bytes); err == nil {
+			t.Fatal("foundation accepted an over-budget request")
 		}
+	}
+	invalidUTF8, _ := journalv2.NewScanRequestV2(journalv2.AggregateHeadScanTargetV2(), attempt, []byte{0xff}, 1, 1)
+	if _, err := adapter.ScanV2(t.Context(), invalidUTF8); !journalv2.IsKind(err, journalv2.ErrorInvalidCanonicalData) {
+		t.Fatalf("provider-inexpressible cursor accepted: %v", err)
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("invalid requests reached provider %d times", calls.Load())
-	}
-}
-
-func TestV2WatchIsNotificationOnly(t *testing.T) {
-	prefix := V2OperationsPrefix()
-	key, _ := V2OperationHeadKey("operation-1")
-	fake := &fakeWatch{registration: 4, nextFn: func(context.Context) (gapdbapi.ChangeEvent, error) {
-		record := gapdbapi.NewRecord(key.String(), []byte("secret-value-not-authority"), 5, nil)
-		return gapdbapi.ChangeEvent{Revision: 5, Order: 1, Kind: gapdbapi.ChangePut, Key: key.String(), Record: &record}, nil
-	}}
-	provider := &fakeProvider{watchFn: func(_ context.Context, got string, after gapdbapi.Revision) (providerWatch, error) {
-		if got != prefix.String() || after != 4 {
-			t.Fatalf("prefix=%q after=%d", got, after)
-		}
-		return fake, nil
-	}}
-	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	watch, err := adapter.WatchV2(t.Context(), prefix, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	notification, err := watch.Next(t.Context())
-	if err != nil || notification.Revision != 5 || notification.Key.String() != key.String() {
-		t.Fatalf("notification=%+v err=%v", notification, err)
-	}
-	if err := watch.Close(); err != nil || !fake.closed.Load() {
-		t.Fatalf("close err=%v closed=%v", err, fake.closed.Load())
 	}
 }
 
@@ -451,17 +570,18 @@ func TestV2CommitTranslatesClosedProjectionToOneDurableBatch(t *testing.T) {
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
 	result, err := adapter.CommitV2(t.Context(), plan)
-	if err != nil || calls.Load() != 1 || result.Revision() != 51 || result.DurableThrough() != 52 || result.MutationCount() != len(records) || result.PublicationID() != plan.PublicationID() {
+	if err != nil || calls.Load() != 1 || result.Revision() != 51 || result.DurableThroughRevision() != 52 || result.MutationCount() != len(records) ||
+		result.PublicationID() != plan.PublicationID() || result.PlanDigest() != plan.Digest() || result.RecordSetDigest() != plan.RecordSetDigest() {
 		t.Fatalf("result=%+v calls=%d err=%v", result, calls.Load(), err)
 	}
 }
 
 func TestV2CommitPreservesIndependentRevisionConditions(t *testing.T) {
 	plan := v2LaterTestPlan(t)
-	want := map[V2KeyKind]uint64{V2KeyOperationHead: 41, V2KeyAggregateHead: 42, V2KeyEligibilityGuard: 43, V2KeyCheckpointSlot: 44}
+	want := map[v2KeyKind]uint64{v2KeyOperationHead: 41, v2KeyAggregateHead: 42, v2KeyEligibilityGuard: 43, v2KeyCheckpointSlot: 44}
 	provider := &fakeProvider{batchFn: func(_ context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
 		for _, mutation := range batch.Mutations {
-			key, err := ParseV2Key(mutation.Key)
+			key, err := parseV2Key(mutation.Key)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -541,6 +661,21 @@ func TestV2CommitFailureClassificationNeverRetries(t *testing.T) {
 	}
 }
 
+func TestV2CommitAmbiguousTransportTakesPrecedenceOverJoinedCancellation(t *testing.T) {
+	var calls atomic.Int32
+	provider := &fakeProvider{batchFn: func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+		calls.Add(1)
+		return gapdbapi.MutationResult{}, errors.Join(
+			context.Canceled,
+			&gapdbapi.TransportError{Operation: "atomic_batch", Ambiguous: true, Cause: io.EOF},
+		)
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	if _, err := adapter.CommitV2(t.Context(), v2TestPlan(t)); !IsKind(err, OutcomeAmbiguous) || calls.Load() != 1 {
+		t.Fatalf("joined may-have-applied outcome lost ambiguity: err=%v calls=%d", err, calls.Load())
+	}
+}
+
 func TestV2CommitCanceledBeforeDeliveryMakesNoProviderCall(t *testing.T) {
 	var calls atomic.Int32
 	provider := &fakeProvider{batchFn: func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error) {
@@ -593,6 +728,9 @@ func TestV2CommitConflictPerformsSamePublicationResolution(t *testing.T) {
 						return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
 					}
 					return gapdbapi.NewRecord(key, values[key], 81, nil), nil
+				},
+				statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+					return gapdbapi.StatusResult{DatabaseID: "db-1", CurrentRevision: 82, DurableThroughRevision: 82}, nil
 				},
 			}
 			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
@@ -688,14 +826,23 @@ func TestV2AdapterPublicSidecarAtomicMembership(t *testing.T) {
 	if err != nil || result.Revision() == 0 || result.MutationCount() != len(plan.Records()) {
 		t.Fatalf("commit result=%+v err=%v", result, err)
 	}
+	attempt, err := harness.adapter.CaptureRevisionV2(t.Context())
+	if err != nil || attempt.CurrentRevision() < result.Revision() {
+		t.Fatalf("capture=%+v err=%v", attempt, err)
+	}
 	for _, sealed := range plan.Records() {
 		key, err := v2KeyForSealedRecord(sealed)
 		if err != nil {
 			t.Fatal(err)
 		}
-		record, err := harness.adapter.ReadV2(t.Context(), key)
-		if err != nil || record.Revision() != result.Revision() || string(record.CanonicalValue()) != string(sealed.CanonicalValue()) {
-			t.Fatalf("key=%s revision=%d err=%v", key.String(), record.Revision(), err)
+		address, err := v2RecoveryAddressForKey(key)
+		if err != nil {
+			continue // effects and eligibility guards are not restore exact-read families
+		}
+		request, _ := journalv2.NewReadRequestV2(address, attempt)
+		record, err := harness.adapter.ReadV2(t.Context(), request)
+		if err != nil || record.RecordRevision() != result.Revision() || string(record.CanonicalValue()) != string(sealed.CanonicalValue()) {
+			t.Fatalf("key=%s revision=%d err=%v", key.String(), record.RecordRevision(), err)
 		}
 	}
 }
@@ -759,12 +906,12 @@ func TestV2CommitPreflightMakesNoProviderCall(t *testing.T) {
 		return gapdbapi.MutationResult{}, nil
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	measurement, err := adapter.PreflightCommitV2(v2TestPlan(t))
+	measurement, err := adapter.preflightCommitV2(v2TestPlan(t))
 	if err != nil || measurement.MutationCount != len(v2TestPlan(t).Records()) || measurement.RawBytes <= 0 || measurement.WireBytes <= measurement.RawBytes || calls.Load() != 0 {
 		t.Fatalf("measurement=%+v calls=%d err=%v", measurement, calls.Load(), err)
 	}
 	adapter.wireSize = func([]byte) int { return MaxWireFrameBytes + 1 }
-	if _, err := adapter.PreflightCommitV2(v2TestPlan(t)); !IsKind(err, OutcomeInvalid) || calls.Load() != 0 {
+	if _, err := adapter.preflightCommitV2(v2TestPlan(t)); !IsKind(err, OutcomeInvalid) || calls.Load() != 0 {
 		t.Fatalf("invalid preflight err=%v calls=%d", err, calls.Load())
 	}
 }
@@ -826,12 +973,118 @@ func TestV2AmbiguityCompleteReadbackReturnsRecordedProgress(t *testing.T) {
 			writes.Add(1)
 			return gapdbapi.MutationResult{}, errors.New("forbidden write")
 		},
+		statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+			return gapdbapi.StatusResult{DatabaseID: "db-1", CurrentRevision: 80, DurableThroughRevision: 79}, nil
+		},
 	}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	result, err := adapter.ReconcileV2(t.Context(), plan)
-	if err != nil || result.Disposition() != V2ReconcileCommitted || result.PublicationID() != plan.PublicationID() || result.Revision() != 77 ||
-		result.OperationState().LastPublicationID() != plan.PublicationID() || result.MutationCount() != len(encoded.keys) || int(reads.Load()) != len(encoded.keys) || writes.Load() != 0 {
+	result, err := adapter.reconcileV2(t.Context(), plan)
+	if err != nil || result.disposition != v2ReconcileCommitted || result.observation.PublicationID() != plan.PublicationID() || result.observation.Revision() != 77 ||
+		result.observation.DurableThroughRevision() != 79 || result.operationState.LastPublicationID() != plan.PublicationID() ||
+		result.observation.MutationCount() != len(encoded.keys) || int(reads.Load()) != len(encoded.keys) || writes.Load() != 0 {
 		t.Fatalf("result=%+v reads=%d writes=%d err=%v", result, reads.Load(), writes.Load(), err)
+	}
+}
+
+type publicV2Reconciler interface {
+	ReconcileCommitV2(context.Context, journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error)
+}
+
+var _ publicV2Reconciler = (*Adapter)(nil)
+
+func TestV2AdapterExternalMethodSetAndPublicReconciliationContract(t *testing.T) {
+	method, present := reflect.TypeOf((*Adapter)(nil)).MethodByName("ReconcileCommitV2")
+	if !present || method.PkgPath != "" {
+		t.Fatalf("external method set does not expose ReconcileCommitV2: method=%+v present=%v", method, present)
+	}
+	plan := v2TestPlan(t)
+	probe, _ := newAdapter(&fakeProvider{}, "/explicit/socket", time.Second)
+	encoded, err := probe.encodeV2Plan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexByKey := make(map[string]int, len(encoded.keys))
+	for index, key := range encoded.keys {
+		indexByKey[key.String()] = index
+	}
+
+	t.Run("committed", func(t *testing.T) {
+		provider := &fakeProvider{
+			getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+				index := indexByKey[key]
+				return gapdbapi.NewRecord(key, encoded.values[index], 71, nil), nil
+			},
+			statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+				return gapdbapi.StatusResult{DatabaseID: "db-1", CurrentRevision: 73, DurableThroughRevision: 72}, nil
+			},
+		}
+		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+		observation, err := adapter.ReconcileCommitV2(t.Context(), plan)
+		if err != nil || observation.PublicationID() != plan.PublicationID() || observation.PlanDigest() != plan.Digest() ||
+			observation.RecordSetDigest() != plan.RecordSetDigest() || observation.Revision() != 71 ||
+			observation.DurableThroughRevision() != 72 || observation.MutationCount() != len(encoded.keys) {
+			t.Fatalf("observation=%+v err=%v", observation, err)
+		}
+	})
+
+	t.Run("retry-same-publication", func(t *testing.T) {
+		provider := &fakeProvider{getFn: func(context.Context, string) (gapdbapi.Record, error) {
+			return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
+		}}
+		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+		_, err := adapter.ReconcileCommitV2(t.Context(), plan)
+		var typed *Error
+		if !errors.As(err, &typed) || typed.Kind != OutcomeConflict || typed.Recovery != RecoveryRetrySameOperation ||
+			!strings.Contains(typed.Detail, "identical sealed publication") {
+			t.Fatalf("absence did not produce explicit same-publication retry: %v", err)
+		}
+	})
+
+	t.Run("corrupt", func(t *testing.T) {
+		provider := &fakeProvider{getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+			index := indexByKey[key]
+			if index == 0 {
+				return gapdbapi.NewRecord(key, encoded.values[index], 71, nil), nil
+			}
+			return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
+		}}
+		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+		if _, err := adapter.ReconcileCommitV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) {
+			t.Fatalf("partial publication did not close authority: %v", err)
+		}
+	})
+}
+
+func TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation(t *testing.T) {
+	plan := v2TestPlan(t)
+	probe, _ := newAdapter(&fakeProvider{}, "/explicit/socket", time.Second)
+	encoded, err := probe.encodeV2Plan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make(map[string][]byte, len(encoded.keys))
+	for index, key := range encoded.keys {
+		values[key.String()] = encoded.values[index]
+	}
+	provider := &fakeProvider{
+		batchFn: func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+			return gapdbapi.MutationResult{}, &gapdbapi.TransportError{Operation: "atomic_batch", Ambiguous: true, Cause: io.EOF}
+		},
+		getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+			return gapdbapi.NewRecord(key, values[key], 81, nil), nil
+		},
+		statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+			return gapdbapi.StatusResult{DatabaseID: "db-1", CurrentRevision: 82, DurableThroughRevision: 82}, nil
+		},
+	}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	if _, err := adapter.CommitV2(t.Context(), plan); !IsKind(err, OutcomeAmbiguous) {
+		t.Fatalf("commit did not expose ambiguity: %v", err)
+	}
+	observation, err := adapter.ReconcileCommitV2(t.Context(), plan)
+	if err != nil || observation.PublicationID() != plan.PublicationID() || observation.Revision() != 81 ||
+		observation.DurableThroughRevision() != 82 {
+		t.Fatalf("observation=%+v err=%v", observation, err)
 	}
 }
 
@@ -856,8 +1109,8 @@ func TestV2AmbiguityAbsenceAndExactPreconditionsPermitOnlySamePublication(t *tes
 			return gapdbapi.NewRecord(key, values[key], condition.ExpectedRevision, nil), nil
 		}}
 		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-		result, err := adapter.ReconcileV2(t.Context(), plan)
-		if err != nil || result.Disposition() != V2ReconcileRetrySamePublication || result.PublicationID() != plan.PublicationID() || result.Revision() != 0 {
+		result, err := adapter.reconcileV2(t.Context(), plan)
+		if err != nil || result.disposition != v2ReconcileRetrySamePublication || result.observation.Revision() != 0 {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 	}
@@ -896,7 +1149,7 @@ func TestV2AmbiguityPartialMixedAndContradictoryMembershipCloseAuthority(t *test
 				return test.get(indexByKey[key], key)
 			}}
 			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-			if _, err := adapter.ReconcileV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) {
+			if _, err := adapter.reconcileV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) {
 				t.Fatalf("authority remained open: %v", err)
 			}
 		})
@@ -936,7 +1189,7 @@ func TestV2AmbiguityEverySingletonExactMutableMemberClosesAuthority(t *testing.T
 				}
 			}}
 			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-			if _, err := adapter.ReconcileV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) {
+			if _, err := adapter.reconcileV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) {
 				t.Fatalf("singleton exact %s member did not close authority: %v", role, err)
 			}
 		})
@@ -958,7 +1211,7 @@ func TestV2AmbiguityReadUnavailabilityDoesNotBecomeAbsence(t *testing.T) {
 		return gapdbapi.Record{}, &gapdbapi.TransportError{Operation: "get", Cause: errors.New("offline")}
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	if _, err := adapter.ReconcileV2(t.Context(), v2TestPlan(t)); !IsKind(err, OutcomeUnavailable) {
+	if _, err := adapter.reconcileV2(t.Context(), v2TestPlan(t)); !IsKind(err, OutcomeUnavailable) {
 		t.Fatalf("unavailability became absence: %v", err)
 	}
 }
@@ -966,6 +1219,14 @@ func TestV2AmbiguityReadUnavailabilityDoesNotBecomeAbsence(t *testing.T) {
 func v2TestDigest(label string) journalv2.Digest {
 	value := sha256.Sum256([]byte(label))
 	return journalv2.Digest(value)
+}
+
+func v2CanonicalAt(size int) []byte {
+	const overhead = len(`{"x":""}`)
+	if size < overhead {
+		return []byte(`{}`)
+	}
+	return []byte(`{"x":"` + strings.Repeat("x", size-overhead) + `"}`)
 }
 
 func v2TestPlan(t *testing.T) journalv2.SealedCommitPlanV2 {
@@ -1002,10 +1263,14 @@ func v2TryNamedTestPlan(t *testing.T, operationLabel, missionLabel string, effec
 	if err != nil {
 		t.Fatal(err)
 	}
+	operationPayload, err := journalv2.EncodeOperationStateEventPayloadV2(state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	missionCoordinate, _ := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID(missionID), scope)
 	operationCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(operationID), journalv2.Scope{Kind: journalv2.ScopeHost})
 	events := []journalv2.EventDraftV2{
-		{EventID: operationEventID, EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: operationCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-1", Payload: []byte(`{"status":"accepted"}`)},
+		{EventID: operationEventID, EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-1", Payload: operationPayload},
 		{EventID: missionEventID, EventType: "mission.changed", Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: missionCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-1", Payload: []byte(`{"status":"planned"}`)},
 	}
 	heads := []journalv2.HeadTransitionV2{
@@ -1031,10 +1296,14 @@ func v2LaterTestPlan(t *testing.T) journalv2.SealedCommitPlanV2 {
 	if err != nil {
 		t.Fatal(err)
 	}
+	operationPayload, err := journalv2.EncodeOperationStateEventPayloadV2(state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	missionCoordinate, _ := journalv2.NewAggregateCoordinate("mission", "mission-1", scope)
 	operationCoordinate, _ := journalv2.NewAggregateCoordinate("operation", "operation-1", journalv2.Scope{Kind: journalv2.ScopeHost})
 	events := []journalv2.EventDraftV2{
-		{EventID: "event-operation-2", EventType: "operation.progressed", Family: "operation", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: operationCoordinate, AggregateLogicalVersion: 2, CommittedRuntimeEpochID: "epoch-1", Payload: []byte(`{"status":"in_progress"}`)},
+		{EventID: "event-operation-2", EventType: "operation.progressed", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 2, CommittedRuntimeEpochID: "epoch-1", Payload: operationPayload},
 		{EventID: "event-mission-2", EventType: "mission.changed", Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: missionCoordinate, AggregateLogicalVersion: 2, CommittedRuntimeEpochID: "epoch-1", Payload: []byte(`{"status":"running"}`)},
 	}
 	heads := []journalv2.HeadTransitionV2{
