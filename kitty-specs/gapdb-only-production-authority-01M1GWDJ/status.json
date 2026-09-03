@@ -1,7 +1,7 @@
 {
-  "event_count": 146,
-  "last_event_id": "01M1KSRNWBC9DRFDNZYQFDJKGR",
-  "materialized_at": "2026-09-03T14:11:34.411213+00:00",
+  "event_count": 147,
+  "last_event_id": "01M1KSY58HC2MG02SSQ2APD00H",
+  "materialized_at": "2026-09-03T14:14:34.001928+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -13,8 +13,8 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 12
+    "in_review": 0,
+    "planned": 13
   },
   "work_packages": {
     "WP01": {
@@ -70,14 +70,14 @@
       }
     },
     "WP02": {
-      "actor": "wp02-instant-precision-reviewer",
-      "agent": "wp02-instant-precision-reviewer",
+      "actor": "user",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 8,
-      "lane": "in_review",
-      "last_event_id": "01M1KSRNWBC9DRFDNZYQFDJKGR",
-      "last_transition_at": "2026-09-03T14:11:34.411213+00:00",
+      "force_count": 9,
+      "lane": "planned",
+      "last_event_id": "01M1KSY58HC2MG02SSQ2APD00H",
+      "last_transition_at": "2026-09-03T14:14:34.001928+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -93,25 +93,27 @@
         "Cycle-9 blockers repaired at 773284b2: reducer receives validated event semantics and operation projection equals durable head byte-for-byte; sealed checkpoint projection carries terminal EventID/tombstone while operation entries remain compact and result-free. Full repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
         "Independent cycle-10 APPROVE: operation projection equals sealed durable head including PublicationID; sealed checkpoint entries supply terminal EventID/tombstone and exclude operation result bytes; focused x20, independent probe x10, full journal x20, race x5, WP01 121-mutant architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
         "Post-approval defect 3: foundation recovery instants only admit whole seconds, but frozen GapDB preserves RFC3339Nano AsOf/ExpiresAt. Reopen for bounded canonical exact-instant repair before WP03 resumes.",
-        "Cycle-11 bounded repair at 5413eb4c preserves canonical UTC RFC3339Nano recovery instants exactly while rejecting noncanonical aliases; focused x20, package, race, architecture, compile, vet, staticcheck, formatting, and diff gates pass."
+        "Cycle-11 bounded repair at 5413eb4c preserves canonical UTC RFC3339Nano recovery instants exactly while rejecting noncanonical aliases; focused x20, package, race, architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
+        "Cycle-12 independent corpus found the sole frozen-codec mismatch: canonical year-zero RFC3339Nano instants were rejected. Reopen for exact bounded repair."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "reference": "773284b23d74cd4b0d50da47c2582d42d68cfad7",
-        "reviewer": "wp02-projection-repair-reviewer",
-        "verdict": "approved"
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP02-global-operations-and-authority-journal-v2/review-cycle-12.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP02-global-operations-and-authority-journal-v2/review-cycle-12.md",
+        "reviewer": "user",
+        "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3450757,
-      "shell_pid_created_at": "1788444137.28",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T006": "done",
-        "T007": "done",
-        "T008": "done",
-        "T009": "done",
-        "T010": "done",
-        "T011": "done"
+        "T006": "planned",
+        "T007": "planned",
+        "T008": "planned",
+        "T009": "planned",
+        "T010": "planned",
+        "T011": "planned"
       }
     },
     "WP03": {
