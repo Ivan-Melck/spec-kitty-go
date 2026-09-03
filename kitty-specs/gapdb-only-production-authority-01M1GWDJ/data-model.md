@@ -504,7 +504,7 @@ CheckpointV2 {
   }
   operation_summary
   canonical_projection_sha256
-  created_publication_id
+  covered_through_publication_id
   checkpoint_sha256
 }
 ```
@@ -514,6 +514,16 @@ only after acknowledged publication. Zero-value or field-copied forged seals
 fail internal digest validation. It never replays from origin during creation.
 It covers one complete provider revision and every authoritative aggregate
 known at that revision.
+
+`covered_through_publication_id` is the terminal acknowledged publication at
+`through_record_revision`, selected from the revision-sorted acknowledgement
+ledger and sealed by the foundation. It is not the later publication that
+writes the checkpoint. If the covered revision is `R`, the immutable
+checkpoint record and retained-ring slot are committed atomically at one
+revision `C > R`; that checkpoint-writing publication belongs to the suffix.
+Candidate validation exact-reads the immutable witness for the covered-through
+PublicationID and requires that witness to be valid at exactly `R`. Origin mode
+has no persisted checkpoint or covered-through identity.
 
 A bounded retained ring of checkpoint candidate slots points to immutable
 records. Selection sorts by watermark, validates every candidate independently,

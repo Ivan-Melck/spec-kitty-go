@@ -120,6 +120,11 @@ its operation summary exposes anonymous leaves rather than addressable
 checkpoint boundaries. Preserve all earlier approved behavior while applying
 the bounded correction below.
 
+This package is reopened a final bounded time by
+`post-approval-defect-5.md`. Preserve the durable witness and compact-boundary
+correction while adding the acyclic checkpoint boundary identity and the
+foundation-owned summary codec described below.
+
 ### Durable publication witness and shared proof helpers
 
 Define canonical encode/decode/validation for `PublicationWitnessV2` and make
@@ -225,6 +230,20 @@ Sealed projection/prefix values use private fields and internal digest
 validation. “Unforgeable” means zero values and ordinary cross-package field
 construction cannot pass; it does not claim protection from code inside the
 owning package or Go `unsafe`.
+
+The sealed value also binds and exposes the `covered-through` PublicationID:
+the acknowledgement at the greatest provider revision after revision sorting.
+It must not use response completion order, and it must reject zero, missing,
+duplicated, or conflicting terminal identities. A later publication that
+persists a checkpoint is not covered by the seal used to create it.
+
+Expose exact public `EncodeOperationSummaryV2` and
+`DecodeOperationSummaryV2` functions. They are the sole canonical structured
+wire boundary for this type and enforce field order, unknown/duplicate/trailing
+field refusal, sort/uniqueness, status arithmetic, digest validity, defensive
+copying, and all existing count/byte limits. Checkpoint code embeds the
+canonical JSON structurally; it does not base64-wrap it or reconstruct private
+boundary fields.
 
 ## T006: Define canonical v2 identities, scopes, and key model
 

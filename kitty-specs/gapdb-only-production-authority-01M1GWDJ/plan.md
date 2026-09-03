@@ -168,6 +168,14 @@ is recursive. One foundation-owned pure helper performs the fold for both the
 live tracker and restore. Unresolved ambiguity blocks the seal without
 serializing unrelated durable commits.
 
+The seal also binds the terminal PublicationID selected by greatest provider
+revision. A checkpoint at watermark `R` records that acknowledged identity as
+its covered-through publication. The later atomic publication that writes the
+checkpoint record and retained-ring slot occurs at `C > R` and remains suffix;
+the checkpoint never attempts to contain its own creating PublicationID. The
+foundation owns the sole strict canonical operation-summary codec consumed by
+checkpoint and restore code.
+
 ### Capability-owned authority
 
 | Aggregate owner | Representative facts and invariants |

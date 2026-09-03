@@ -137,6 +137,17 @@ WP04 must use the foundation recovery values repaired in WP02 and the WP03
 adapter implementation; it must not import GapDB, inspect adapter-private keys,
 or define substitute event/head/operation wire structs.
 
+`post-approval-defect-5.md` is the final dependency correction for this WP.
+Consume the sealed prefix's acknowledgement-derived
+`CoveredThroughPublicationID`; never accept that identity from the checkpoint
+caller. For watermark `R`, the checkpoint represents state immediately after
+that publication and records it as `covered_through_publication_id`. The later
+publication that atomically persists checkpoint record and slot must be
+observed at one common revision `C > R` and remains part of the suffix. Validate
+the covered-through witness at exactly `R`. Encode and decode operation summary
+only through WP02's public strict codecs; do not define a local summary or
+boundary wire model.
+
 ## Branch Strategy
 
 - Planning branch: `feat/gapdb-only-production-authority`.
@@ -169,7 +180,8 @@ latest checkpoint.
    mission model: schema/version identity, checkpoint ID, positive
    `ThroughRecordRevision`, event/reducer registry digests, codec version,
    rolling prefix digest, complete aggregate entries, operation summary,
-   canonical projection digest, creating PublicationID, and checkpoint digest.
+   canonical projection digest, covered-through PublicationID, and checkpoint
+   digest.
 2. Each aggregate entry must include its exact coordinate, logical version,
    terminal EventID, canonical state bytes/digest, and tombstone state. Sort by
    canonical coordinate before encoding; reject duplicates and ambiguous order.
@@ -212,6 +224,10 @@ latest checkpoint.
     checkpoint. Require the final structured checkpoint encoder to fit 10,000
     maximum-version boundaries and complete summary overhead within
     `MaxOperationSummaryBytesV2 = 2,112,000` bytes.
+12. Derive the covered-through PublicationID only from the sealed prefix. Its
+    witness must validate at `ThroughRecordRevision = R`. The later
+    checkpoint-record/slot publication must share one revision `C > R`; prove
+    that its PublicationID differs and is handled as post-checkpoint suffix.
 
 ### Validation
 
@@ -499,7 +515,8 @@ git diff --check
 
 - CheckpointV2 records a complete aggregate census, canonical projection,
   operation summary, registry/codec identities, positive watermark, rolling
-  prefix digest, and immutable self-digest.
+  prefix digest, acknowledgement-derived covered-through PublicationID, and
+  immutable self-digest.
 - Checkpoint creation consumes the sealed acknowledged projection/prefix and
   does not replay origin history.
 - The bounded candidate ring selects newest valid evidence, falls back safely,
