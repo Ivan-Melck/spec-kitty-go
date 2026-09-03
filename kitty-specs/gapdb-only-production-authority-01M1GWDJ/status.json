@@ -138,7 +138,8 @@
         "WP02 recovery instant contract reapproved at c997e226 after exact frozen-codec oracle. Resume preserved WP03 adapter work against corrected foundation.",
         "WP03 corrected at ff8cee74: foundation-owned recovery/observation contracts, canonical global heads, stable capture/scan/read/final proof with exact RFC3339Nano preservation, no as-of fiction, one durable AtomicBatch, and exact reconciliation; repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
         "Cycle-5 independent review: ambiguity reconciler is not production-reachable, and ScanV2 accepts a non-advancing continuation cursor. Reopen for bounded public reconciliation/error taxonomy and cursor-progress repair.",
-        "Cycle-5 repaired at 47aea2fe: production-reachable provider-neutral ReconcileCommitV2 yields exact foundation observations or closed retry/corruption outcomes, and non-advancing continuation cursors refuse as stale; full focused/race/architecture/compile/vet/staticcheck/format gates pass."
+        "Cycle-5 repaired at 47aea2fe: production-reachable provider-neutral ReconcileCommitV2 yields exact foundation observations or closed retry/corruption outcomes, and non-advancing continuation cursors refuse as stale; full focused/race/architecture/compile/vet/staticcheck/format gates pass.",
+        "Independent cycle-6 APPROVE: external-package ambiguous Commit→public ReconcileCommitV2→PublicationCoordinator resolution completed with exact observation and one write; non-advancing cursor refuses stale; focused/race/architecture/121-mutant/compile/vet/staticcheck/module/ownership gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
