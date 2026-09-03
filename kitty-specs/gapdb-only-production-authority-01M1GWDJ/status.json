@@ -125,8 +125,8 @@
     "WP03": {
       "actor": "codex-wp03-witness-gapdb",
       "agent": "codex-wp03-witness-gapdb",
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp03-witness-gapdb",
       "force_count": 6,
       "lane": "blocked",
@@ -146,7 +146,8 @@
         "Cycle-5 independent review: ambiguity reconciler is not production-reachable, and ScanV2 accepts a non-advancing continuation cursor. Reopen for bounded public reconciliation/error taxonomy and cursor-progress repair.",
         "Cycle-5 repaired at 47aea2fe: production-reachable provider-neutral ReconcileCommitV2 yields exact foundation observations or closed retry/corruption outcomes, and non-advancing continuation cursors refuse as stale; full focused/race/architecture/compile/vet/staticcheck/format gates pass.",
         "Independent cycle-6 APPROVE: external-package ambiguous Commit→public ReconcileCommitV2→PublicationCoordinator resolution completed with exact observation and one write; non-advancing cursor refuses stale; focused/race/architecture/121-mutant/compile/vet/staticcheck/module/ownership gates pass.",
-        "Explicit defect-4 ownership recovery: replace stale cycle-6 reviewer assignment wp03-reconciliation-reviewer with designated implementer after WP02 d70d3a07 independent approval. Lane-c contains the approved witness foundation. Scope is limited to canonical witness key/translation and witness-required revision-coincident reconciliation; this force changes ownership only and bypasses no code, review, or acceptance guard."
+        "Explicit defect-4 ownership recovery: replace stale cycle-6 reviewer assignment wp03-reconciliation-reviewer with designated implementer after WP02 d70d3a07 independent approval. Lane-c contains the approved witness foundation. Scope is limited to canonical witness key/translation and witness-required revision-coincident reconciliation; this force changes ownership only and bypasses no code, review, or acceptance guard.",
+        "Dependency blocker: publication witness bytes are re-canonicalized by foundation NewRecoveryRecordV2 into alphabetical object-key order, but DecodePublicationWitnessV2 requires the encoder's struct-field order. Exact adapter ReadV2 therefore returns a foundation record that the only approved witness decoder rejects. Reproduced by TestV2ReaderUsesFoundationPublicationWitnessAddressAndRejectsExpiry. Preserve the separable uncommitted WP03 witness translation until a bounded witness-specific WP02 codec repair is independently approved."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -156,8 +157,8 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": 424083,
+      "shell_pid_created_at": "1788459206.96",
       "subtasks": {
         "T012": "done",
         "T013": "done",
