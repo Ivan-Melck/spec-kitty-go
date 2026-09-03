@@ -9,34 +9,26 @@ import (
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
 
-type V2ReconcileDisposition string
+type v2ReconcileDisposition string
 
 const (
-	V2ReconcileCommitted            V2ReconcileDisposition = "committed"
-	V2ReconcileRetrySamePublication V2ReconcileDisposition = "retry_same_publication"
+	v2ReconcileCommitted            v2ReconcileDisposition = "committed"
+	v2ReconcileRetrySamePublication v2ReconcileDisposition = "retry_same_publication"
 )
 
-type V2ReconcileResult struct {
-	disposition    V2ReconcileDisposition
-	publicationID  journalv2.PublicationID
-	revision       uint64
+type v2ReconcileResult struct {
+	disposition    v2ReconcileDisposition
+	observation    journalv2.CommitObservationV2
 	operationState journalv2.OperationStateV2
-	mutationCount  int
 }
-
-func (r V2ReconcileResult) Disposition() V2ReconcileDisposition        { return r.disposition }
-func (r V2ReconcileResult) PublicationID() journalv2.PublicationID     { return r.publicationID }
-func (r V2ReconcileResult) Revision() uint64                           { return r.revision }
-func (r V2ReconcileResult) OperationState() journalv2.OperationStateV2 { return r.operationState }
-func (r V2ReconcileResult) MutationCount() int                         { return r.mutationCount }
 
 // ReconcileV2 performs bounded ordinary reads only. It proves either the exact
 // complete publication at one provider revision or the still-current complete
 // precondition set for retrying the identical sealed plan.
-func (a *Adapter) ReconcileV2(ctx context.Context, plan journalv2.SealedCommitPlanV2) (V2ReconcileResult, error) {
+func (a *Adapter) reconcileV2(ctx context.Context, plan journalv2.SealedCommitPlanV2) (v2ReconcileResult, error) {
 	encoded, err := a.encodeV2Plan(plan)
 	if err != nil {
-		return V2ReconcileResult{}, err
+		return v2ReconcileResult{}, err
 	}
 	ctx, cancel := a.requestContext(ctx)
 	defer cancel()
@@ -47,16 +39,16 @@ func (a *Adapter) ReconcileV2(ctx context.Context, plan journalv2.SealedCommitPl
 		if readErr != nil {
 			if v2NotFound(readErr) {
 				if encoded.batch.Mutations[index].Condition.Kind != gapdbapi.ConditionAbsent {
-					return V2ReconcileResult{}, corruptV2Publication("revision-conditioned record is absent", encoded.operationID)
+					return v2ReconcileResult{}, corruptV2Publication("revision-conditioned record is absent", encoded.operationID)
 				}
 				precondition++
 				continue
 			}
-			return V2ReconcileResult{}, translateError("v2_reconcile_read", string(encoded.operationID), readErr)
+			return v2ReconcileResult{}, translateError("v2_reconcile_read", string(encoded.operationID), readErr)
 		}
-		converted, convertErr := convertV2Record(record, key)
-		if convertErr != nil || converted.expiresAt != nil {
-			return V2ReconcileResult{}, corruptV2Publication("publication readback metadata is invalid", encoded.operationID)
+		converted, convertErr := convertV2ReadbackRecord(record, key)
+		if convertErr != nil || converted.hasExpiry {
+			return v2ReconcileResult{}, corruptV2Publication("publication readback metadata is invalid", encoded.operationID)
 		}
 		condition := encoded.batch.Mutations[index].Condition
 		if condition.Kind == gapdbapi.ConditionRevision && converted.revision == uint64(condition.ExpectedRevision) {
@@ -68,33 +60,59 @@ func (a *Adapter) ReconcileV2(ctx context.Context, plan journalv2.SealedCommitPl
 				moved++
 				continue
 			}
-			return V2ReconcileResult{}, corruptV2Publication("immutable publication value contradicts sealed plan", encoded.operationID)
+			return v2ReconcileResult{}, corruptV2Publication("immutable publication value contradicts sealed plan", encoded.operationID)
 		}
 		if commonRevision == 0 {
 			commonRevision = converted.revision
 		} else if commonRevision != converted.revision {
-			return V2ReconcileResult{}, corruptV2Publication("publication readback has mixed revisions", encoded.operationID)
+			return v2ReconcileResult{}, corruptV2Publication("publication readback has mixed revisions", encoded.operationID)
 		}
 		exactMembers++
 	}
 	if exactMembers == len(encoded.keys) && precondition == 0 && moved == 0 && commonRevision > 0 {
-		return V2ReconcileResult{disposition: V2ReconcileCommitted, publicationID: encoded.publicationID, revision: commonRevision,
-			operationState: plan.OperationState(), mutationCount: len(encoded.keys)}, nil
+		status, statusErr := a.client.Status(ctx)
+		if statusErr != nil {
+			return v2ReconcileResult{}, translateError("v2_reconcile_status", string(encoded.operationID), statusErr)
+		}
+		if uint64(status.CurrentRevision) < commonRevision || uint64(status.DurableThroughRevision) < commonRevision {
+			return v2ReconcileResult{}, corruptV2Publication("publication durability cannot be proven", encoded.operationID)
+		}
+		observation, observationErr := journalv2.NewCommitObservationV2(encoded.publicationID, plan.Digest(), plan.RecordSetDigest(), commonRevision, uint64(status.DurableThroughRevision), len(encoded.keys))
+		if observationErr != nil {
+			return v2ReconcileResult{}, corruptV2Publication("publication observation is invalid", encoded.operationID)
+		}
+		return v2ReconcileResult{disposition: v2ReconcileCommitted, observation: observation, operationState: plan.OperationState()}, nil
 	}
 	if precondition == len(encoded.keys) && exactMembers == 0 {
-		return V2ReconcileResult{disposition: V2ReconcileRetrySamePublication, publicationID: encoded.publicationID,
-			operationState: plan.OperationState(), mutationCount: len(encoded.keys)}, nil
+		return v2ReconcileResult{disposition: v2ReconcileRetrySamePublication, operationState: plan.OperationState()}, nil
 	}
 	if exactMembers > 0 {
-		return V2ReconcileResult{}, corruptV2Publication("publication membership is partial", encoded.operationID)
+		return v2ReconcileResult{}, corruptV2Publication("publication membership is partial", encoded.operationID)
 	}
 	if moved > 0 && moved+precondition == len(encoded.keys) {
-		return V2ReconcileResult{}, adapterError("v2_reconcile", string(encoded.operationID), OutcomeConflict, RecoveryRead, "sealed conditions moved before publication", nil)
+		return v2ReconcileResult{}, adapterError("v2_reconcile", string(encoded.operationID), OutcomeConflict, RecoveryRead, "sealed conditions moved before publication", nil)
 	}
-	return V2ReconcileResult{}, corruptV2Publication("publication membership is partial", encoded.operationID)
+	return v2ReconcileResult{}, corruptV2Publication("publication membership is partial", encoded.operationID)
 }
 
-func v2MovableConflictRole(role journalv2.SealedRecordRole, key V2Key) bool {
+type v2ReadbackRecord struct {
+	canonical []byte
+	revision  uint64
+	hasExpiry bool
+}
+
+func convertV2ReadbackRecord(record gapdbapi.Record, expected v2Key) (v2ReadbackRecord, error) {
+	if record.Key != expected.String() || record.Revision == 0 || len(record.Value) == 0 || len(record.Value) > v2ValueMaximum(expected.Kind()) {
+		return v2ReadbackRecord{}, corruptV2Publication("publication readback record is malformed", "")
+	}
+	parsed, err := parseV2Key(record.Key)
+	if err != nil || parsed.String() != expected.String() || parsed.Kind() != expected.Kind() {
+		return v2ReadbackRecord{}, corruptV2Publication("publication readback record is malformed", "")
+	}
+	return v2ReadbackRecord{canonical: append([]byte(nil), record.Value...), revision: uint64(record.Revision), hasExpiry: record.ExpiresAt != nil}, nil
+}
+
+func v2MovableConflictRole(role journalv2.SealedRecordRole, key v2Key) bool {
 	return role == journalv2.RecordAggregateHead || role == journalv2.RecordEligibilityGuard || role == journalv2.RecordCheckpointSlot ||
 		role == journalv2.RecordJournalEvent && key.Coordinate().Kind != journalv2.AggregateKind("operation")
 }

@@ -9,22 +9,10 @@ import (
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
 
-type V2CommitResult struct {
-	publicationID  journalv2.PublicationID
-	revision       uint64
-	durableThrough uint64
-	mutationCount  int
-}
-
-func (r V2CommitResult) PublicationID() journalv2.PublicationID { return r.publicationID }
-func (r V2CommitResult) Revision() uint64                       { return r.revision }
-func (r V2CommitResult) DurableThrough() uint64                 { return r.durableThrough }
-func (r V2CommitResult) MutationCount() int                     { return r.mutationCount }
-
 type v2EncodedPlan struct {
 	publicationID journalv2.PublicationID
 	operationID   journalv2.OperationID
-	keys          []V2Key
+	keys          []v2Key
 	roles         []journalv2.SealedRecordRole
 	values        [][]byte
 	batch         gapdbapi.Batch
@@ -32,15 +20,24 @@ type v2EncodedPlan struct {
 	wireBytes     int
 }
 
+var _ journalv2.DurablePublicationPortV2 = (*Adapter)(nil)
+
+// Commit is the durable foundation port. CommitV2 is retained as the adapter's
+// explicit versioned entry point; both return the provider-neutral observation
+// that only the foundation coordinator may acknowledge.
+func (a *Adapter) Commit(ctx context.Context, plan journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error) {
+	return a.CommitV2(ctx, plan)
+}
+
 // CommitV2 translates the immutable WP02 record projection to one durable
 // provider transaction. It does not parse capability values or retry.
-func (a *Adapter) CommitV2(ctx context.Context, plan journalv2.SealedCommitPlanV2) (V2CommitResult, error) {
+func (a *Adapter) CommitV2(ctx context.Context, plan journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error) {
 	encoded, err := a.encodeV2Plan(plan)
 	if err != nil {
-		return V2CommitResult{}, err
+		return journalv2.CommitObservationV2{}, err
 	}
 	if ctx != nil && ctx.Err() != nil {
-		return V2CommitResult{}, adapterError("v2_commit", string(encoded.operationID), OutcomeCanceled, RecoveryRetrySameOperation, "caller canceled before delivery", ctx.Err())
+		return journalv2.CommitObservationV2{}, adapterError("v2_commit", string(encoded.operationID), OutcomeCanceled, RecoveryRetrySameOperation, "caller canceled before delivery", ctx.Err())
 	}
 	ctx, cancel := a.requestContext(ctx)
 	defer cancel()
@@ -48,21 +45,25 @@ func (a *Adapter) CommitV2(ctx context.Context, plan journalv2.SealedCommitPlanV
 	result, callErr := a.client.AtomicBatch(ctx, encoded.batch)
 	if callErr != nil {
 		if v2DefiniteConflict(callErr) {
-			reconciled, reconcileErr := a.ReconcileV2(ctx, plan)
-			if reconcileErr == nil && reconciled.Disposition() == V2ReconcileCommitted {
-				return V2CommitResult{publicationID: reconciled.PublicationID(), revision: reconciled.Revision(), durableThrough: reconciled.Revision(), mutationCount: reconciled.MutationCount()}, nil
+			reconciled, reconcileErr := a.reconcileV2(ctx, plan)
+			if reconcileErr == nil && reconciled.disposition == v2ReconcileCommitted {
+				return reconciled.observation, nil
 			}
 			if reconcileErr != nil && !IsKind(reconcileErr, OutcomeConflict) {
-				return V2CommitResult{}, reconcileErr
+				return journalv2.CommitObservationV2{}, reconcileErr
 			}
-			return V2CommitResult{}, adapterError("v2_commit", string(encoded.operationID), OutcomeConflict, RecoveryRead, "conditional authority changed after same-publication resolution", callErr)
+			return journalv2.CommitObservationV2{}, adapterError("v2_commit", string(encoded.operationID), OutcomeConflict, RecoveryRead, "conditional authority changed after same-publication resolution", callErr)
 		}
-		return V2CommitResult{}, translateV2MutationError("v2_commit", encoded.operationID, callErr)
+		return journalv2.CommitObservationV2{}, translateV2MutationError("v2_commit", encoded.operationID, callErr)
 	}
 	if result.Revision == 0 || result.Ack != gapdbapi.AckDurable || result.DurableThroughRevision < result.Revision || result.MutationCount != len(encoded.batch.Mutations) {
-		return V2CommitResult{}, ambiguousV2Error("provider acknowledgement cannot prove durable publication", encoded.operationID, nil)
+		return journalv2.CommitObservationV2{}, ambiguousV2Error("provider acknowledgement cannot prove durable publication", encoded.operationID, nil)
 	}
-	return V2CommitResult{publicationID: encoded.publicationID, revision: uint64(result.Revision), durableThrough: uint64(result.DurableThroughRevision), mutationCount: result.MutationCount}, nil
+	observation, err := journalv2.NewCommitObservationV2(encoded.publicationID, plan.Digest(), plan.RecordSetDigest(), uint64(result.Revision), uint64(result.DurableThroughRevision), result.MutationCount)
+	if err != nil {
+		return journalv2.CommitObservationV2{}, ambiguousV2Error("provider acknowledgement cannot form a sealed observation", encoded.operationID, err)
+	}
+	return observation, nil
 }
 
 func v2DefiniteConflict(err error) bool {
@@ -78,7 +79,7 @@ func v2DefiniteConflict(err error) bool {
 	}
 }
 
-func (a *Adapter) PreflightCommitV2(plan journalv2.SealedCommitPlanV2) (BatchMeasurement, error) {
+func (a *Adapter) preflightCommitV2(plan journalv2.SealedCommitPlanV2) (BatchMeasurement, error) {
 	encoded, err := a.encodeV2Plan(plan)
 	if err != nil {
 		return BatchMeasurement{}, err
@@ -103,7 +104,7 @@ func (a *Adapter) encodeV2Plan(plan journalv2.SealedCommitPlanV2) (v2EncodedPlan
 	encoded := v2EncodedPlan{
 		publicationID: publicationID,
 		operationID:   operationID,
-		keys:          make([]V2Key, len(records)),
+		keys:          make([]v2Key, len(records)),
 		roles:         make([]journalv2.SealedRecordRole, len(records)),
 		values:        make([][]byte, len(records)),
 		batch:         gapdbapi.Batch{Ack: gapdbapi.AckDurable, Mutations: make([]gapdbapi.Mutation, len(records))},
@@ -170,59 +171,59 @@ func (a *Adapter) encodeV2Plan(plan journalv2.SealedCommitPlanV2) (v2EncodedPlan
 	return encoded, nil
 }
 
-func v2KeyForSealedRecord(record journalv2.SealedRecordV2) (V2Key, error) {
+func v2KeyForSealedRecord(record journalv2.SealedRecordV2) (v2Key, error) {
 	target := record.Target()
 	emptyCoordinate := target.Coordinate() == (journalv2.AggregateCoordinate{})
-	var key V2Key
+	var key v2Key
 	var err error
 	switch record.Role() {
 	case journalv2.RecordOperationBinding, journalv2.RecordOperationHead:
 		if target.OperationID() == "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
-			return V2Key{}, invalidV2Plan("operation target")
+			return v2Key{}, invalidV2Plan("operation target")
 		}
 		if record.Role() == journalv2.RecordOperationBinding {
-			key, err = V2OperationBindingKey(target.OperationID())
+			key, err = v2OperationBindingKey(target.OperationID())
 		} else {
-			key, err = V2OperationHeadKey(target.OperationID())
+			key, err = v2OperationHeadKey(target.OperationID())
 		}
 	case journalv2.RecordJournalEvent:
 		if target.OperationID() != "" || target.EffectID() != "" || emptyCoordinate || target.LogicalVersion() == 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
-			return V2Key{}, invalidV2Plan("journal target")
+			return v2Key{}, invalidV2Plan("journal target")
 		}
-		key, err = V2JournalEventKey(target.Coordinate(), target.LogicalVersion())
+		key, err = v2JournalEventKey(target.Coordinate(), target.LogicalVersion())
 	case journalv2.RecordAggregateHead:
 		if target.OperationID() != "" || target.EffectID() != "" || emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
-			return V2Key{}, invalidV2Plan("aggregate head target")
+			return v2Key{}, invalidV2Plan("aggregate head target")
 		}
-		key, err = V2AggregateHeadKey(target.Coordinate())
+		key, err = v2AggregateHeadKey(target.Coordinate())
 	case journalv2.RecordEffectIntent:
 		if target.EffectID() == "" {
-			return V2Key{}, invalidV2Plan("effect target")
+			return v2Key{}, invalidV2Plan("effect target")
 		}
 		if target.OperationID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
-			return V2Key{}, invalidV2Plan("effect target")
+			return v2Key{}, invalidV2Plan("effect target")
 		}
-		key, err = V2EffectIntentKey(target.EffectID())
+		key, err = v2EffectIntentKey(target.EffectID())
 	case journalv2.RecordEligibilityGuard:
 		if target.MissionID() == "" || target.ShardID() == "" || target.OperationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
-			return V2Key{}, invalidV2Plan("eligibility target")
+			return v2Key{}, invalidV2Plan("eligibility target")
 		}
-		key, err = V2EligibilityGuardKey(target.MissionID(), target.ShardID())
+		key, err = v2EligibilityGuardKey(target.MissionID(), target.ShardID())
 	case journalv2.RecordCheckpointRecord:
 		if target.CheckpointID() == "" || target.OperationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointSlotID() != "" {
-			return V2Key{}, invalidV2Plan("checkpoint record target")
+			return v2Key{}, invalidV2Plan("checkpoint record target")
 		}
-		key, err = V2CheckpointRecordKey(target.CheckpointID())
+		key, err = v2CheckpointRecordKey(target.CheckpointID())
 	case journalv2.RecordCheckpointSlot:
 		if target.CheckpointSlotID() == "" || target.OperationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" {
-			return V2Key{}, invalidV2Plan("checkpoint slot target")
+			return v2Key{}, invalidV2Plan("checkpoint slot target")
 		}
-		key, err = V2CheckpointSlotKey(target.CheckpointSlotID())
+		key, err = v2CheckpointSlotKey(target.CheckpointSlotID())
 	default:
-		return V2Key{}, invalidV2Plan("unknown record role")
+		return v2Key{}, invalidV2Plan("unknown record role")
 	}
 	if err != nil {
-		return V2Key{}, invalidV2Plan("record target key")
+		return v2Key{}, invalidV2Plan("record target key")
 	}
 	return key, nil
 }
