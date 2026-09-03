@@ -4,7 +4,7 @@ artifact_type: spec-kitty.analysis-report
 command: /spec-kitty.analyze
 mission_slug: gapdb-only-production-authority-01M1GWDJ
 mission_id: 01M1GWDJV8MMEF5VJJMD3AD0QE
-generated_at: '2026-09-03T15:54:34.923187+00:00'
+generated_at: '2026-09-03T16:34:26.331401+00:00'
 analyzer_agent: unknown
 input_artifacts:
   spec.md:
@@ -12,7 +12,7 @@ input_artifacts:
     sha256: 726a77f6f3b7fa3270e7474be84af03b69502b078863396d19ecf3ddabfe0c74
   plan.md:
     path: /home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/plan.md
-    sha256: 88e104fb6f9ceae1eb801f99b16235ff926bc4d67f80791d0a75aa8e6cf4e128
+    sha256: ebf06d59c4fa1456086221727ac38e3614bcbedc8295827a8eba6da019990294
   tasks.md:
     path: /home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks.md
     sha256: 76070e53725d1616f52201c1ed75d8e2b7ce47bffb5b099a9aac970e30000a3e
@@ -22,9 +22,9 @@ input_artifacts:
 verdict: ready
 issue_counts:
   medium: 0
-  high: 0
-  critical: 0
   low: 0
+  critical: 0
+  high: 0
   info: 0
 findings: []
 ---
@@ -71,8 +71,9 @@ remain represented by `wps.yaml` and `tasks.md`.
 - The authority record-set count excludes the witness; the provider mutation
   and observation counts include it; the 256-mutation limit therefore admits
   at most 255 non-witness members.
-- Operation summaries expose compact, OperationID-sorted boundaries without
-  terminal result bytes.
+- Operation summaries expose fixed-size identity-digest/version/leaf
+  boundaries without variable-length OperationIDs or terminal result bytes;
+  their final structured 10,000-entry encoding is bounded to 2,112,000 bytes.
 - WP01 owns permanent guards, WP02 owns provider-neutral proof semantics, WP03
   owns GapDB translation, and WP04 owns checkpoint/restore/playback. No owned
   file or dependency direction changed.

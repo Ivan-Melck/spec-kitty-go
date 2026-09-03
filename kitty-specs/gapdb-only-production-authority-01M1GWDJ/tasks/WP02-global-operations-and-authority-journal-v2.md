@@ -144,11 +144,23 @@ own a public canonical reducer-state digest helper so checkpoint/restore does
 not duplicate the hash domain.
 
 Replace anonymous operation leaves with immutable, defensively copied,
-OperationID-sorted `OperationBoundaryV2` values containing operation ID,
-logical version, last PublicationID, status, result digest, event/effect
-membership digests, and leaf digest. Expose construction and validation from
-bounded OperationState input; derive totals and status counts from boundaries
-and continue to exclude terminal result bytes.
+fixed-size `OperationBoundaryV2` values containing OperationID SHA-256 lookup
+digest, logical version, and leaf digest. The leaf continues to bind exact
+OperationID, last PublicationID, status/result, and event/effect membership.
+Expose a pure `MatchesOperationID` method plus construction and validation from
+bounded OperationState input. Sort by lookup digest, reject duplicate/colliding
+coordinates, derive totals from boundaries, and exclude both variable-length
+OperationIDs and terminal result bytes. Construct status counts from the source
+states. Structural validation checks boundary shape/order/uniqueness, totals,
+and status-count arithmetic; state-aware validation recomputes counts and
+leaves from exact reconstructed states.
+
+Define `MaxOperationSummaryBytesV2 = 2,112,000`. The final structured
+checkpoint encoding of 10,000 maximum-version boundaries plus totals, all
+status counts, field punctuation, and summary digest must fit it, leaving
+2,082,304 bytes below the 4 MiB ceiling for aggregate entries and remaining
+metadata. Do not embed the summary as base64 JSON bytes. Refuse plus-one or
+over-budget input before unbounded allocation.
 
 ### Recovery vocabulary (`recovery.go`, `recovery_test.go`)
 
@@ -206,8 +218,8 @@ record-set digest through the shared pure helper. Reject duplicate/conflicting r
 unresolved in-flight attempts, and ledger overflow. Snapshotting may copy the
 complete current projection but may not replay origin history. Operation
 summary uses bounded counts/status counts and sorted fixed-size attributable
-boundaries binding operation identity/version/publication/result and
-membership digests; it does not embed every terminal result.
+boundaries whose leaf binds operation identity/version/publication/result and
+membership digests; it embeds neither exact OperationIDs nor terminal results.
 
 Sealed projection/prefix values use private fields and internal digest
 validation. “Unforgeable” means zero values and ordinary cross-package field
@@ -574,8 +586,14 @@ the seven non-test WP02-owned files.
     and reject the first over-budget observation before unbounded allocation.
 12. Round-trip and corrupt every publication-witness field; prove one shared
     prefix helper yields byte-identical live and restored folds.
-13. Build, reorder, duplicate, omit, and regress OperationBoundary values;
-    prove the canonical summary is attributable and defensively copied.
+13. Build, reorder, duplicate, omit, collide, and regress OperationBoundary
+    values; prove exact scanned OperationIDs match through their digest,
+    reconstructed boundary events reproduce the leaf, and the canonical
+    summary is attributable and defensively copied.
+14. Prove the actual final structured checkpoint encoder fits 10,000
+    maximum-version boundaries plus complete summary overhead within exactly
+    2,112,000 bytes, and the first over-budget boundary refuses before
+    unbounded allocation.
 
 **Mandatory replay-before-epoch validation**:
 
@@ -618,8 +636,8 @@ resolution must fail deterministically.
 - Live and restore paths implement different prefix hash logic.
 - Publication witness is missing, duplicated, mutable, expiring, substituted,
   self-recursive, omitted from observation count, or not revision-coincident.
-- Operation summary contains anonymous, reordered, duplicate, missing, or
-  regressed boundaries.
+- Operation summary contains anonymous, reordered, duplicate, missing,
+  colliding, unmatched, regressed, variable-ID, or over-budget boundaries.
 - Checkpoint seal ignores an unresolved registered publication.
 - Operation event payload differs from the declared OperationState transition.
 - Semantic refusal creates a naked reservation before its result.
