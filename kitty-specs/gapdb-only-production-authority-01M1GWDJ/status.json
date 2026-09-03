@@ -1,7 +1,7 @@
 {
-  "event_count": 166,
-  "last_event_id": "01M1KZQFN8WJZ9A41W2RQD6AQW",
-  "materialized_at": "2026-09-03T15:55:46.728319+00:00",
+  "event_count": 167,
+  "last_event_id": "01M1M0TCF8SDK8JK5XB5GAG0AS",
+  "materialized_at": "2026-09-03T16:14:50.344742+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,21 +11,21 @@
     "canceled": 0,
     "claimed": 0,
     "done": 0,
-    "for_review": 0,
-    "in_progress": 1,
+    "for_review": 1,
+    "in_progress": 0,
     "in_review": 0,
     "planned": 12
   },
   "work_packages": {
     "WP01": {
-      "actor": "codex-wp01-witness-guard",
+      "actor": "wp01-terminal-typegraph-arbiter",
       "agent": "wp01-terminal-typegraph-arbiter",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 11,
-      "lane": "in_progress",
-      "last_event_id": "01M1KZQFN8WJZ9A41W2RQD6AQW",
-      "last_transition_at": "2026-09-03T15:55:46.728319+00:00",
+      "lane": "for_review",
+      "last_event_id": "01M1M0TCF8SDK8JK5XB5GAG0AS",
+      "last_transition_at": "2026-09-03T16:14:50.344742+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
