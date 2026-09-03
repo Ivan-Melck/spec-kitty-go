@@ -53,7 +53,8 @@
         "Independent review passed for 1ac0a9bb: compact boundary validation is rename/reorder resilient and semantically exact; canonical, renamed and reordered positive controls are sealed; 154 mutants preserve all prior 139; focused x3, race, full architecture, compile, vet, staticcheck, module, format, diff and ownership gates pass; all anti-pattern checks pass or N/A.",
         "Reopened for ratified post-approval defect 5: guard the acknowledgement-derived covered-through PublicationID and foundation-owned strict OperationSummaryV2 codecs before WP04 resumes.",
         "Transfer reopened defect-5 repair to the designated implementation actor; no authority or guard bypass.",
-        "Ready for independent defect-5 review at 219126e8: exact 10-helper/12-symbol foundation census; covered-through accessor/revision-order/seal proof; no local summary wire; obsolete creating-ID rejected; all 166 mutants and focused/repeated/race/full/static/module/format/ownership gates pass."
+        "Ready for independent defect-5 review at 219126e8: exact 10-helper/12-symbol foundation census; covered-through accessor/revision-order/seal proof; no local summary wire; obsolete creating-ID rejected; all 166 mutants and focused/repeated/race/full/static/module/format/ownership gates pass.",
+        "Independent review rejected defect-5 guard commit 219126e8: green suite false-greens no-op zero validation, decorative seal reference, codec-only partial activation, non-revision sorting, and []DefinedByte signatures. See review-feedback-14.md."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -63,15 +64,15 @@
         "reviewer": "renata-gapdb-review",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 870704,
-      "shell_pid_created_at": "1788464847.78",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned"
       }
     },
     "WP02": {
