@@ -1,7 +1,7 @@
 {
-  "event_count": 153,
-  "last_event_id": "01M1KTF3R7EMRPNG9X11ECXVG7",
-  "materialized_at": "2026-09-03T14:23:49.511506+00:00",
+  "event_count": 154,
+  "last_event_id": "01M1KV8P5S2JWJ1QJ5B5JVR960",
+  "materialized_at": "2026-09-03T14:37:47.577883+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,8 +11,8 @@
     "canceled": 0,
     "claimed": 0,
     "done": 0,
-    "for_review": 0,
-    "in_progress": 1,
+    "for_review": 1,
+    "in_progress": 0,
     "in_review": 0,
     "planned": 12
   },
@@ -118,14 +118,14 @@
       }
     },
     "WP03": {
-      "actor": "user",
+      "actor": "wp03-cycle3-reviewer",
       "agent": "wp03-cycle3-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
-      "lane": "in_progress",
-      "last_event_id": "01M1KTF3R7EMRPNG9X11ECXVG7",
-      "last_transition_at": "2026-09-03T14:23:49.511506+00:00",
+      "lane": "for_review",
+      "last_event_id": "01M1KV8P5S2JWJ1QJ5B5JVR960",
+      "last_transition_at": "2026-09-03T14:37:47.577883+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
