@@ -1,7 +1,7 @@
 {
-  "event_count": 149,
-  "last_event_id": "01M1KSZ7PNERBYXJZ4BZJNDW5E",
-  "materialized_at": "2026-09-03T14:15:09.262294+00:00",
+  "event_count": 151,
+  "last_event_id": "01M1KT5KXY6VNMJ5PSD7EE6G1E",
+  "materialized_at": "2026-09-03T14:18:38.398480+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 1,
-    "in_review": 0,
+    "in_progress": 0,
+    "in_review": 1,
     "planned": 12
   },
   "work_packages": {
@@ -70,14 +70,14 @@
       }
     },
     "WP02": {
-      "actor": "wp02-year-zero-repair",
-      "agent": null,
+      "actor": "wp02-year-zero-reviewer",
+      "agent": "wp02-year-zero-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 9,
-      "lane": "in_progress",
-      "last_event_id": "01M1KSZ7PNERBYXJZ4BZJNDW5E",
-      "last_transition_at": "2026-09-03T14:15:09.262294+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1KT5KXY6VNMJ5PSD7EE6G1E",
+      "last_transition_at": "2026-09-03T14:18:38.398480+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -94,7 +94,8 @@
         "Independent cycle-10 APPROVE: operation projection equals sealed durable head including PublicationID; sealed checkpoint entries supply terminal EventID/tombstone and exclude operation result bytes; focused x20, independent probe x10, full journal x20, race x5, WP01 121-mutant architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
         "Post-approval defect 3: foundation recovery instants only admit whole seconds, but frozen GapDB preserves RFC3339Nano AsOf/ExpiresAt. Reopen for bounded canonical exact-instant repair before WP03 resumes.",
         "Cycle-11 bounded repair at 5413eb4c preserves canonical UTC RFC3339Nano recovery instants exactly while rejecting noncanonical aliases; focused x20, package, race, architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
-        "Cycle-12 independent corpus found the sole frozen-codec mismatch: canonical year-zero RFC3339Nano instants were rejected. Reopen for exact bounded repair."
+        "Cycle-12 independent corpus found the sole frozen-codec mismatch: canonical year-zero RFC3339Nano instants were rejected. Reopen for exact bounded repair.",
+        "Cycle-12 repair at c997e226 admits canonical year-zero whole/fractional recovery instants, completing exact frozen GapDB RFC3339Nano language equivalence while preserving all rejection laws; full gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -104,16 +105,16 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3450757,
+      "shell_pid_created_at": "1788444137.28",
       "subtasks": {
-        "T006": "planned",
-        "T007": "planned",
-        "T008": "planned",
-        "T009": "planned",
-        "T010": "planned",
-        "T011": "planned"
+        "T006": "done",
+        "T007": "done",
+        "T008": "done",
+        "T009": "done",
+        "T010": "done",
+        "T011": "done"
       }
     },
     "WP03": {
