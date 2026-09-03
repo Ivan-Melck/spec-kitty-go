@@ -67,7 +67,8 @@ GapDB revision. It contains:
 - exactly one OperationState event/head transition;
 - zero or more capability event/head transitions;
 - zero or more effect intents and eligibility-guard transitions; and
-- due checkpoint records/slot update when explicitly planned.
+- due checkpoint records/slot update when explicitly planned; and
+- exactly one immutable publication witness.
 
 The sealed plan also exposes one closed, immutable, provider-neutral record
 projection derived by the sealer from those typed members. Each projected
@@ -80,8 +81,26 @@ domain values or inventing membership.
 
 The admitted roles are operation binding, immutable journal event, operation
 head, aggregate head, immutable effect intent, eligibility guard, immutable
-checkpoint record, and checkpoint slot. EffectID is unique within one host
-authority, matching the host-global operation membership that names it.
+checkpoint record, checkpoint slot, and immutable publication witness.
+EffectID is unique within one host authority, matching the host-global
+operation membership that names it.
+
+Every publication writes the witness at
+`spk/v2/publications/<publication-id>/witness` with `RequireAbsent` and no
+expiry. Its canonical schema-1 value binds PublicationID, OperationID,
+operation logical version, sealed plan digest, the non-witness authority
+record-set digest/count, and a domain-separated witness digest. The witness
+does not contain a member manifest. Its provider record revision is the atomic
+publication revision and is never copied into the value.
+
+Witness construction is acyclic. The plan preimage includes the mandatory
+witness contract version but excludes witness bytes. PublicationID is derived
+from that plan digest; final non-witness records are derived next; their record
+set is hashed; and only then is the witness constructed and appended. The
+authority record-set digest/count exclude the witness. The sealed plan's
+complete provider mutation set and CommitObservation mutation count include
+it, so the 256-mutation ceiling reserves one member for the witness and permits
+at most 255 non-witness records.
 
 Head-transition input includes the committed runtime epoch and bounded
 canonical authority summary needed to derive the final AggregateHead value.
@@ -126,8 +145,10 @@ unrelated provider commits concurrently, and retains a bounded revision-keyed
 acknowledgement ledger supporting at least 10,000 publications between seals.
 A quiescent checkpoint barrier orders acknowledgements by provider revision and
 folds the prior prefix with revision, PublicationID, plan digest, and sealed
-record-set digest. Unresolved ambiguity blocks sealing. Capability packages
-may reach the coordinator but must not reach the GapDB adapter directly.
+record-set digest. One public pure prefix-advance helper performs this fold for
+both live acknowledgement and restore. Unresolved ambiguity blocks sealing.
+Capability packages may reach the coordinator but must not reach the GapDB
+adapter directly.
 
 ## Ambiguity law
 
@@ -143,11 +164,13 @@ OperationState, events, and heads:
 No ambiguity path allocates a new OperationID, calls an external adapter, or
 publishes a projection optimistically.
 
-Reconciliation enumerates the sealed record projection rather than
-reconstructing a second membership model. Complete means every projected key
-has the exact canonical value and one common positive commit revision. Proven
-absence means every projected key is absent. Any partial, foreign,
-mixed-revision, or contradictory observation closes authority.
+Reconciliation enumerates the complete sealed provider mutation projection,
+including the mandatory witness, rather than reconstructing a second
+membership model. Complete means every projected key has the exact canonical
+value and one common positive commit revision. Proven absence means every
+projected key is absent. Application records without the witness are partial,
+not complete. Any partial, foreign, mixed-revision, or contradictory
+observation closes authority.
 
 ## Restore law
 
@@ -172,8 +195,19 @@ capture/final coordinates prove that retained latest-value reads are coherent
 at `R`.
 
 Restore reconstructs historical OperationState from the closed operation
-event payload, validates cumulative publication membership, and sorts events
-by `(Record.Revision, EventIndex, EventID)` before pure reduction.
+event payload. For every distinct suffix PublicationID it exact-reads the
+immutable publication witness, validates its operation coordinate and common
+provider revision, and advances the prefix with the foundation-owned helper.
+It validates cumulative publication membership and sorts events by
+`(Record.Revision, EventIndex, EventID)` before pure reduction.
+
+Checkpoint operation summaries expose canonical OperationID-sorted
+`OperationBoundaryV2` values containing OperationID, logical version, last
+PublicationID, status, result digest, event/effect membership digests, and a
+leaf digest. Counts and summary digest are derived from those boundaries;
+terminal result bytes are excluded. Existing operation suffixes begin after
+the checkpoint boundary, new operations begin at version one, and missing or
+regressed operation heads close readiness.
 
 A stale cursor or any database/revision movement restarts the entire bounded
 attempt and discards all collected material. Missing versions, physical head

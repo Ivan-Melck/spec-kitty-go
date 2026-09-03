@@ -218,8 +218,13 @@ in-memory projection. It keeps a bounded revision-keyed acknowledgement ledger
 capable of at least 10,000 publications between seals. At a quiescent
 checkpoint barrier it orders acknowledgements by provider revision and derives
 the rolling prefix from the prior prefix, revision, PublicationID, plan digest,
-and sealed record-set digest. Unresolved ambiguity blocks a seal. Capability
-packages may reach this coordinator but may not reach the GapDB adapter.
+and sealed record-set digest. Those otherwise process-local proof coordinates
+are persisted in one immutable, absent-conditioned publication witness in the
+same atomic batch. The witness is constructed after PublicationID and the
+non-witness record-set digest, avoiding recursive identity, and the live
+tracker and restore share one pure prefix-advance helper. Unresolved ambiguity
+blocks a seal. Capability packages may reach this coordinator but may not
+reach the GapDB adapter.
 
 **Rationale**: This is the machine/filesystem authority boundary ratified by
 the architecture. It preserves fast reads while making restart and ownership
