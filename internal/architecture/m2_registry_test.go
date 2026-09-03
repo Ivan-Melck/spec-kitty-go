@@ -341,7 +341,7 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"compact-boundary-authority-method-leak", m2PublicationRecoveryFixture("BOUNDARY-METHOD-LEAK"), true},
 		{"compact-boundary-variable-digest", m2PublicationRecoveryFixture("BOUNDARY-VARIABLE-DIGEST"), true},
 		{"compact-boundary-wide-version", m2PublicationRecoveryFixture("BOUNDARY-WIDE-VERSION"), true},
-		{"compact-boundary-renamed-field", m2PublicationRecoveryFixture("BOUNDARY-RENAMED-FIELD"), true},
+		{"compact-boundary-embedded-field", m2PublicationRecoveryFixture("BOUNDARY-EMBEDDED-FIELD"), true},
 		{"compact-boundary-exported-field", m2PublicationRecoveryFixture("BOUNDARY-EXPORTED-FIELD"), true},
 		{"summary-extra-authority-input", m2PublicationRecoveryFixture("SUMMARY-EXTRA-AUTHORITY"), true},
 	} {
@@ -361,6 +361,79 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 	}
 }
 
+const (
+	m2CompactBoundaryPositiveControlCount  = 3
+	m2CompactBoundaryPositiveControlSHA256 = "db55fe1763741d540ebd66e7fcd42903a285c965635f677304c2c2a543499302"
+)
+
+func TestM2CompactBoundaryPositiveControlsAreSealed(t *testing.T) {
+	controls := m2CompactBoundaryPositiveControls()
+	if err := validateM2CompactBoundaryPositiveControls(controls); err != nil {
+		t.Fatal(err)
+	}
+	for _, variant := range controls {
+		t.Run(variant, func(t *testing.T) {
+			root := t.TempDir()
+			writeGoFixture(t, root, "go.mod", "module example.test/recovery-ownership\n\ngo 1.26\n")
+			for path, source := range m2PublicationRecoveryFixture(variant) {
+				writeGoFixture(t, root, path, source)
+			}
+			setIsolatedGoPaths(t)
+			t.Setenv("GOPROXY", "off")
+			if err := inspectM2FoundationContractOwnership(t.Context(), root, "example.test/recovery-ownership"); err != nil {
+				t.Fatalf("evidence=M2-COMPACT-BOUNDARY-POSITIVE fixture=%s observed-error=%v expected=accepted", variant, err)
+			}
+		})
+	}
+
+	mutations := []struct {
+		name   string
+		mutate func([]string) []string
+	}{
+		{"delete", func(values []string) []string { return values[1:] }},
+		{"duplicate", func(values []string) []string { return append(values, values[0]) }},
+		{"substitute", func(values []string) []string { values[1] = "BOUNDARY-FULL-ID"; return values }},
+	}
+	for _, mutation := range mutations {
+		t.Run("census-"+mutation.name, func(t *testing.T) {
+			mutated := mutation.mutate(slices.Clone(controls))
+			if err := validateM2CompactBoundaryPositiveControls(mutated); err == nil {
+				t.Fatalf("evidence=M2-COMPACT-BOUNDARY-POSITIVE mutation=%s observed=accepted", mutation.name)
+			}
+		})
+	}
+}
+
+func m2CompactBoundaryPositiveControls() []string {
+	return []string{"COMPLETE", "BOUNDARY-RENAMED-FIELDS", "BOUNDARY-REORDERED-FIELDS"}
+}
+
+func validateM2CompactBoundaryPositiveControls(controls []string) error {
+	if len(controls) != m2CompactBoundaryPositiveControlCount {
+		return fmt.Errorf("evidence=M2-COMPACT-BOUNDARY-POSITIVE observed-count=%d expected=%d", len(controls), m2CompactBoundaryPositiveControlCount)
+	}
+	identities := slices.Clone(controls)
+	slices.Sort(identities)
+	sealed := make([]struct {
+		Name          string `json:"name"`
+		FixtureSHA256 string `json:"fixture_sha256"`
+	}, 0, len(identities))
+	for index, identity := range identities {
+		fixture := m2PublicationRecoveryFixture(identity)
+		if fixture == nil || index > 0 && identity == identities[index-1] {
+			return fmt.Errorf("evidence=M2-COMPACT-BOUNDARY-POSITIVE observed-invalid=%q", identity)
+		}
+		sealed = append(sealed, struct {
+			Name          string `json:"name"`
+			FixtureSHA256 string `json:"fixture_sha256"`
+		}{identity, m2DigestJSON(fixture)})
+	}
+	if observed := m2DigestJSON(sealed); observed != m2CompactBoundaryPositiveControlSHA256 {
+		return fmt.Errorf("evidence=M2-COMPACT-BOUNDARY-POSITIVE observed-sha256=%s expected=%s", observed, m2CompactBoundaryPositiveControlSHA256)
+	}
+	return nil
+}
+
 func m2PublicationRecoveryFixture(variant string) map[string]string {
 	if !slices.Contains([]string{
 		"COMPLETE", "MISSING-TYPE", "MISSING-HELPER", "MISSING-BOUNDARIES",
@@ -369,7 +442,8 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 		"BOUNDARY-MEMBERSHIP", "BOUNDARY-MISSING-MATCH", "SUMMARY-DUPLICATE-COLLISION",
 		"SUMMARY-DELETED-STATE-VALIDATION", "SUMMARY-WRONG-BUDGET",
 		"BOUNDARY-METHOD-LEAK", "BOUNDARY-VARIABLE-DIGEST", "BOUNDARY-WIDE-VERSION",
-		"BOUNDARY-RENAMED-FIELD", "BOUNDARY-EXPORTED-FIELD", "SUMMARY-EXTRA-AUTHORITY",
+		"BOUNDARY-RENAMED-FIELDS", "BOUNDARY-REORDERED-FIELDS", "BOUNDARY-EMBEDDED-FIELD",
+		"BOUNDARY-EXPORTED-FIELD", "SUMMARY-EXTRA-AUTHORITY",
 	}, variant) {
 		return nil
 	}
@@ -390,8 +464,12 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 		boundaryFields += "; status OperationStatus"
 	case "BOUNDARY-MEMBERSHIP":
 		boundaryFields += "; eventMembership []Digest"
-	case "BOUNDARY-RENAMED-FIELD":
-		boundaryFields = "lookup Digest; logicalVersion LogicalVersion; leafDigest Digest"
+	case "BOUNDARY-RENAMED-FIELDS":
+		boundaryFields = "lookupCommitment Digest; version LogicalVersion; stateCommitment Digest"
+	case "BOUNDARY-REORDERED-FIELDS":
+		boundaryFields = "leafDigest Digest; operationIDLookupDigest Digest; logicalVersion LogicalVersion"
+	case "BOUNDARY-EMBEDDED-FIELD":
+		boundaryFields = "Digest; logicalVersion LogicalVersion; leafDigest Digest"
 	case "BOUNDARY-EXPORTED-FIELD":
 		boundaryFields = "OperationIDLookupDigest Digest; logicalVersion LogicalVersion; leafDigest Digest"
 	}
@@ -850,19 +928,24 @@ func validateM2CompactOperationBoundary(foundation *productionSourcePackage, fou
 	if !ok || structure.NumFields() != 3 {
 		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s observed-fields=%d expected-fields=3", foundationPath, m2StructFieldCount(structure))
 	}
-	want := []struct {
-		name     string
-		typeName string
-	}{
-		{"operationIDLookupDigest", "Digest"},
-		{"logicalVersion", "LogicalVersion"},
-		{"leafDigest", "Digest"},
-	}
+	digestFields := 0
+	logicalVersionFields := 0
 	for index := 0; index < structure.NumFields(); index++ {
 		field := structure.Field(index)
-		if field.Exported() || field.Embedded() || field.Name() != want[index].name || !m2IsFixedBoundaryFieldType(field.Type(), foundationPath, want[index].typeName) {
-			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s index=%d observed-field=%s observed-type=%s expected-private-field=%s expected-type=%s", foundationPath, index, field.Name(), field.Type(), want[index].name, want[index].typeName)
+		if field.Exported() || field.Embedded() {
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s index=%d observed-field=%s observed-type=%s expected=private-non-embedded", foundationPath, index, field.Name(), field.Type())
 		}
+		switch {
+		case m2IsFixedBoundaryFieldType(field.Type(), foundationPath, "Digest"):
+			digestFields++
+		case m2IsFixedBoundaryFieldType(field.Type(), foundationPath, "LogicalVersion"):
+			logicalVersionFields++
+		default:
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s index=%d observed-field=%s observed-type=%s expected=foundation-Digest-or-LogicalVersion", foundationPath, index, field.Name(), field.Type())
+		}
+	}
+	if digestFields != 2 || logicalVersionFields != 1 {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s observed-digests=%d observed-logical-versions=%d expected-digests=2 expected-logical-versions=1", foundationPath, digestFields, logicalVersionFields)
 	}
 	match := m2MethodSignature(boundary, "MatchesOperationID")
 	if !m2SignatureIsExactIDMatch(match, foundationPath) {
