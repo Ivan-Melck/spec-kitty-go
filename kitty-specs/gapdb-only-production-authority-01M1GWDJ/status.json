@@ -19,7 +19,7 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-repair",
-      "agent": "renata-gapdb-review",
+      "agent": "ivan-gapdb-repair",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-repair",
@@ -57,7 +57,8 @@
         "Independent review rejected defect-5 guard commit 219126e8: green suite false-greens no-op zero validation, decorative seal reference, codec-only partial activation, non-revision sorting, and []DefinedByte signatures. See review-feedback-14.md.",
         "Review cycle 14 repair ownership returns from the completed independent reviewer to the implementation actor; force resolves only the stale reviewer assignment and bypasses no guard.",
         "Cycle-14 repair ready at 8fbe4eee: real zero refusal and returned-digest taint; any first addendum symbol activates full contract; exact provider-revision sort-before-select; exact []byte identity; 175 mutants preserve all prior 166; full required ladder passes.",
-        "Independent re-review rejected 8fbe4eee: provider revision is inferred circularly from the fold call and seal taint does not follow a same-package helper that discards its input. See review-cycle-15."
+        "Independent re-review rejected 8fbe4eee: provider revision is inferred circularly from the fold call and seal taint does not follow a same-package helper that discards its input. See review-cycle-15.",
+        "Review cycle 15 repair ownership returns from the completed reviewer to the implementer; force resolves stale reviewer assignment only and bypasses no contract guard."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
