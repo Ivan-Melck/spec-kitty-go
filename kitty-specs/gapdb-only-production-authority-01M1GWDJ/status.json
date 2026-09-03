@@ -124,9 +124,10 @@
     },
     "WP03": {
       "actor": "codex-wp03-witness-gapdb",
-      "agent": "wp03-reconciliation-reviewer",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
+      "agent": "codex-wp03-witness-gapdb",
+      "agent_profile": "implementer-ivan",
+      "agent_profile_version": "1.0",
+      "assignee": "codex-wp03-witness-gapdb",
       "force_count": 6,
       "lane": "in_progress",
       "last_event_id": "01M1M74D32C7PJAXVN9S2TBEMN",
@@ -144,7 +145,8 @@
         "WP03 corrected at ff8cee74: foundation-owned recovery/observation contracts, canonical global heads, stable capture/scan/read/final proof with exact RFC3339Nano preservation, no as-of fiction, one durable AtomicBatch, and exact reconciliation; repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
         "Cycle-5 independent review: ambiguity reconciler is not production-reachable, and ScanV2 accepts a non-advancing continuation cursor. Reopen for bounded public reconciliation/error taxonomy and cursor-progress repair.",
         "Cycle-5 repaired at 47aea2fe: production-reachable provider-neutral ReconcileCommitV2 yields exact foundation observations or closed retry/corruption outcomes, and non-advancing continuation cursors refuse as stale; full focused/race/architecture/compile/vet/staticcheck/format gates pass.",
-        "Independent cycle-6 APPROVE: external-package ambiguous Commit→public ReconcileCommitV2→PublicationCoordinator resolution completed with exact observation and one write; non-advancing cursor refuses stale; focused/race/architecture/121-mutant/compile/vet/staticcheck/module/ownership gates pass."
+        "Independent cycle-6 APPROVE: external-package ambiguous Commit→public ReconcileCommitV2→PublicationCoordinator resolution completed with exact observation and one write; non-advancing cursor refuses stale; focused/race/architecture/121-mutant/compile/vet/staticcheck/module/ownership gates pass.",
+        "Explicit defect-4 ownership recovery: replace stale cycle-6 reviewer assignment wp03-reconciliation-reviewer with designated implementer after WP02 d70d3a07 independent approval. Lane-c contains the approved witness foundation. Scope is limited to canonical witness key/translation and witness-required revision-coincident reconciliation; this force changes ownership only and bypasses no code, review, or acceptance guard."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -153,9 +155,9 @@
         "reviewer": "wp03-reconciliation-reviewer",
         "verdict": "approved"
       },
-      "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "role": "implementer",
+      "shell_pid": 411924,
+      "shell_pid_created_at": "1788458704.12",
       "subtasks": {
         "T012": "done",
         "T013": "done",
