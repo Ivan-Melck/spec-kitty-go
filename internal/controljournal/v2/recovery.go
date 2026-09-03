@@ -1,5 +1,7 @@
 package v2
 
+import "bytes"
+
 const (
 	MaxRecoveryPageRecords = 500
 	MaxRecoveryPageBytes   = 8 * 1024 * 1024
@@ -225,7 +227,7 @@ func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uin
 		return RecoveryRecordV2{}, invalid(ErrorBudgetExceeded, "recovery_record")
 	}
 	value, err := CanonicalObject(canonical)
-	if err != nil || len(value) != len(canonical) {
+	if err != nil || !bytes.Equal(value, canonical) {
 		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
 	}
 	if expiresAt != "" && !canonicalUTCInstant(expiresAt) {
