@@ -213,6 +213,20 @@ checks shape/order/uniqueness and arithmetic; state-aware validation proves
 counts and leaf commitments. Variable-length OperationIDs and terminal result
 bytes are excluded.
 
+The foundation owns strict canonical `OperationSummaryV2` encode and decode
+operations. Checkpoint and restore code consumes those operations and may not
+declare a second summary/boundary wire representation.
+
+A persisted checkpoint identifies the last publication it already covers, not
+the later publication that writes it. For checkpoint watermark `R`, the opaque
+sealed projection supplies the terminal revision-sorted acknowledged
+PublicationID `P`; the checkpoint records `P` as its
+`covered_through_publication_id`. Candidate validation proves the immutable
+publication witness for `P` at exactly `R`. The checkpoint record and retained
+slot are atomically written at a common revision `C > R`, and that writer
+publication remains part of the suffix. Origin mode has no checkpoint or
+covered-through identity.
+
 The complete operation-head scan supplies exact OperationIDs during restore.
 Each boundary matches an exact ID through a foundation-owned pure method;
 restore exact-reads the operation event at the boundary version, reconstructs

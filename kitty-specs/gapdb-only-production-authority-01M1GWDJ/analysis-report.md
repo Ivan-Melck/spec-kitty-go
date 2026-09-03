@@ -31,10 +31,11 @@ findings: []
 
 ## Specification Analysis Report
 
-The durable-publication-evidence amendment is internally consistent and ready
-for its ordered WP01 -> WP02 -> WP03 correction sequence. No unresolved
-duplication, ambiguity, underspecification, charter conflict, coverage gap, or
-cross-artifact contradiction was found.
+The durable-publication-evidence amendment and acyclic-checkpoint correction
+are internally consistent and ready for the bounded WP01 -> WP02 repair before
+WP04 resumes. WP03 remains approved. No unresolved duplication, ambiguity,
+underspecification, charter conflict, coverage gap, or cross-artifact
+contradiction was found.
 
 | ID | Category | Severity | Location(s) | Summary | Recommendation |
 |----|----------|----------|-------------|---------|----------------|
@@ -68,16 +69,23 @@ remain represented by `wps.yaml` and `tasks.md`.
 - Witness construction is acyclic: the plan binds the witness contract version,
   PublicationID precedes final non-witness records, and the witness follows the
   non-witness record-set digest.
+- Checkpoint construction is acyclic: a checkpoint records the terminal
+  acknowledged publication already covered at `R`; its later writer commits
+  checkpoint record and slot at `C > R` and remains suffix.
 - The authority record-set count excludes the witness; the provider mutation
   and observation counts include it; the 256-mutation limit therefore admits
   at most 255 non-witness members.
 - Operation summaries expose fixed-size identity-digest/version/leaf
   boundaries without variable-length OperationIDs or terminal result bytes;
   their final structured 10,000-entry encoding is bounded to 2,112,000 bytes.
+- The foundation owns the one strict canonical operation-summary codec and
+  seals the revision-sorted covered-through PublicationID; WP04 owns neither
+  representation.
 - WP01 owns permanent guards, WP02 owns provider-neutral proof semantics, WP03
   owns GapDB translation, and WP04 owns checkpoint/restore/playback. No owned
   file or dependency direction changed.
-- WP04 remains blocked until WP01, WP02, and WP03 regain independent approval.
+- WP04 remains blocked until corrected WP01 and WP02 regain independent
+  approval; WP03 needs no reopening.
 
 ### Metrics
 
@@ -91,6 +99,6 @@ remain represented by `wps.yaml` and `tasks.md`.
 
 ### Next Actions
 
-Reopen, implement, and independently reapprove WP01, then WP02, then WP03.
-Only then unblock and resume WP04. Preserve all prior approval evidence as
-history and add the new witness/boundary adversarial controls.
+Reopen, implement, and independently reapprove WP01, then WP02. Only then
+unblock and resume WP04. Preserve all prior approval evidence as history and
+add the new checkpoint-boundary and summary-codec adversarial controls.
