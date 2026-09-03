@@ -1,7 +1,7 @@
 {
-  "event_count": 219,
-  "last_event_id": "01M1MQK3GC728WV768SCC73DPD",
-  "materialized_at": "2026-09-03T22:52:49.036460+00:00",
+  "event_count": 220,
+  "last_event_id": "01M1MQXFZZ5B0GX22S3C5YPNRN",
+  "materialized_at": "2026-09-03T22:58:29.503346+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -13,8 +13,8 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
-    "planned": 12
+    "in_review": 0,
+    "planned": 13
   },
   "work_packages": {
     "WP01": {
@@ -23,10 +23,10 @@
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-codec-guard",
-      "force_count": 20,
-      "lane": "in_review",
-      "last_event_id": "01M1MQK3GC728WV768SCC73DPD",
-      "last_transition_at": "2026-09-03T22:52:49.036460+00:00",
+      "force_count": 21,
+      "lane": "planned",
+      "last_event_id": "01M1MQXFZZ5B0GX22S3C5YPNRN",
+      "last_transition_at": "2026-09-03T22:58:29.503346+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
@@ -67,9 +67,10 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "reference": "48c410ad5365d7d723e6e3e3b8244ea48263a8fb",
-        "reviewer": "renata-gapdb-review",
-        "verdict": "approved"
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-17.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-17.md",
+        "reviewer": "renata-gapdb-codec-guard-review",
+        "verdict": "changes_requested"
       },
       "role": "reviewer",
       "shell_pid": 3753728,
