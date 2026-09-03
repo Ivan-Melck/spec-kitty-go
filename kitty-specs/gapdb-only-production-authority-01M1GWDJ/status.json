@@ -119,7 +119,7 @@
     },
     "WP03": {
       "actor": "user",
-      "agent": "wp03-stable-recovery-reviewer",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 4,
@@ -136,7 +136,8 @@
         "Post-approval defect 2: replace adapter-owned recovery contracts with foundation types, implement capture/verify stable-revision semantics, global head translation, and foundation commit observations after WP02 reapproval.",
         "Confirmed upstream WP02 contract defect: recovery timestamps admit only whole-second UTC while frozen GapDB preserves canonical RFC3339Nano instants. WP03 cannot preserve ordinary provider AsOf/ExpiresAt metadata without truncation or reject normal pages. Keep the five separable adapter edits intact until WP02 is corrected and reapproved.",
         "WP02 recovery instant contract reapproved at c997e226 after exact frozen-codec oracle. Resume preserved WP03 adapter work against corrected foundation.",
-        "WP03 corrected at ff8cee74: foundation-owned recovery/observation contracts, canonical global heads, stable capture/scan/read/final proof with exact RFC3339Nano preservation, no as-of fiction, one durable AtomicBatch, and exact reconciliation; repeated/race/architecture/compile/vet/staticcheck/format gates pass."
+        "WP03 corrected at ff8cee74: foundation-owned recovery/observation contracts, canonical global heads, stable capture/scan/read/final proof with exact RFC3339Nano preservation, no as-of fiction, one durable AtomicBatch, and exact reconciliation; repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
+        "Cycle-5 independent review: ambiguity reconciler is not production-reachable, and ScanV2 accepts a non-advancing continuation cursor. Reopen for bounded public reconciliation/error taxonomy and cursor-progress repair."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -147,14 +148,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3450757,
-      "shell_pid_created_at": "1788444137.28",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T012": "done",
-        "T013": "done",
-        "T014": "done",
-        "T015": "done",
-        "T016": "done"
+        "T012": "planned",
+        "T013": "planned",
+        "T014": "planned",
+        "T015": "planned",
+        "T016": "planned"
       }
     },
     "WP04": {
