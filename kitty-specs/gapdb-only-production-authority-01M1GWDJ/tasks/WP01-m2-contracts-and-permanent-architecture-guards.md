@@ -121,6 +121,25 @@ Start or resume implementation with:
 spec-kitty agent action implement WP01 --agent <name> --mission gapdb-only-production-authority-01M1GWDJ
 ```
 
+## Post-approval correction: durable publication evidence
+
+Read `post-approval-defect-4.md` before editing. WP01 is reopened because the
+closed keyspace and foundation-type census do not yet admit the mandatory
+publication witness and attributable operation boundaries required by WP04.
+
+Extend the exact keyspace with only
+`spk/v2/publications/<publication-id>/witness`. The record is immutable,
+non-expiring, and absent-conditioned. Extend the structural foundation-owned
+type census to cover `PublicationWitnessV2`, `OperationBoundaryV2`, and their
+public pure validation/digest/prefix helpers. Continue to reject adapter-owned
+look-alike witness/boundary types and capability-to-adapter reachability.
+
+Add execution-bound deletion, substitution, plausible-prefix, malformed-key,
+renamed/wrapped-type, and adapter-side-model mutants to the existing sealed
+census. Include a mutant proving that a kernel package importing or returning
+an adapter witness fails. Preserve all prior 121 mutants and their independent
+digest/census controls.
+
 ## T001 — Executable contract and schema validation
 
 ### Purpose

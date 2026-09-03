@@ -142,6 +142,17 @@ requests, records/pages, `StoreRevisionV2`, recovery errors, and
 cursors, and errors remain private translations. Do not preserve adapter-owned
 look-alike types as a second application contract.
 
+`post-approval-defect-4.md` adds one bounded adapter correction. Extend the
+closed codec with exactly
+`spk/v2/publications/<publication-id>/witness`, consume the foundation-owned
+witness semantic address/value only, and map the sealed witness record to a
+non-expiring `RequireAbsent` ordinary put. Every commit, observation, raw/wire
+budget, and ambiguity reconciliation count includes the witness. Complete
+reconciliation requires the witness and all non-witness records at one common
+positive provider revision; application records without the witness are
+partial. Do not reconstruct witness content, operation boundaries, plan
+digests, or prefix logic in the adapter.
+
 Expose adapter methods structurally equivalent to:
 
 ```go
@@ -175,6 +186,7 @@ mission-scoped operation identity.
    - `spk/v2/runtime/current` and
      `spk/v2/runtime/epochs/<runtime-epoch-id>`;
    - host-global `spk/v2/operations/<operation-id>/binding` and `/head`;
+   - immutable `spk/v2/publications/<publication-id>/witness`;
    - host-global immutable `spk/v2/effects/<effect-id>/intent`;
    - globally enumerable
      `spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>` heads and scoped
