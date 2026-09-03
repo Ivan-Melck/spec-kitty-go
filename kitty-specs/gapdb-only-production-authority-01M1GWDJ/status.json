@@ -1,18 +1,18 @@
 {
-  "event_count": 214,
-  "last_event_id": "01M1MM6A6W68YGM3X43SF9M99G",
-  "materialized_at": "2026-09-03T21:53:24.188376+00:00",
+  "event_count": 215,
+  "last_event_id": "01M1MM82GRBGCWYYK1FXJM4RDD",
+  "materialized_at": "2026-09-03T21:54:21.848301+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
     "approved": 4,
-    "blocked": 1,
+    "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
     "planned": 12
   },
@@ -188,27 +188,28 @@
       }
     },
     "WP04": {
-      "actor": "codex-wp04-recovery",
-      "agent": "codex-wp04-recovery",
+      "actor": "ivan-gapdb-checkpoint",
+      "agent": "ivan-gapdb-checkpoint",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "codex-wp04-recovery",
-      "force_count": 0,
-      "lane": "blocked",
-      "last_event_id": "01M1M9QXZD3P7RXW7A151JDMJX",
-      "last_transition_at": "2026-09-03T18:50:47.149959+00:00",
+      "assignee": "ivan-gapdb-checkpoint",
+      "force_count": 1,
+      "lane": "in_progress",
+      "last_event_id": "01M1MM82GRBGCWYYK1FXJM4RDD",
+      "last_transition_at": "2026-09-03T21:54:21.848301+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Workspace allocation blocker resolved: approved WP02 and WP03 lane histories are now merged cleanly into lane-d; resuming the original implementation action.",
         "Dependency contract blocker: WP04 cannot legally express revision-pinned restore or sealed acknowledged checkpoints until WP02/WP03 expose the provider-neutral capabilities recorded in dependency-contract-blocker-1.md. No WP04 files changed.",
         "Dependency contracts WP01/WP02/WP03 are corrected and independently reapproved. Resume WP04 bounded checkpoint/suffix-restore/playback implementation against foundation recovery and projection seals plus public GapDB adapter.",
         "Resume WP04 after defect-4 dependency chain is independently reapproved: WP01 compact boundary contract 1ac0a9bb, WP02 witness/boundary foundation d70d3a07 plus canonical recovery repair 026e3a7e, and WP03 witness adapter 4c22f999. Lane-d contains the accepted dependency history. Implement bounded checkpoint/suffix restore/playback only within seven WP04 files.",
-        "Dependency-contract blocker confirmed before source edits: CheckpointV2.created_publication_id cannot name its checkpoint-writing publication because finalized checkpoint bytes are in the plan preimage before PublicationID derivation. Ratified correction: rename to covered_through_publication_id, derived from and sealed by the terminal revision-sorted PublicationID in SealedProjectionPrefixV2; persist checkpoint at later revision C>R and replay its writer as suffix. WP02 must also own strict OperationSummaryV2 codecs so WP04 does not duplicate its wire/digest rules. Reopen WP01 guard then WP02 foundation; WP03 requires no change. Lane-d remains clean."
+        "Dependency-contract blocker confirmed before source edits: CheckpointV2.created_publication_id cannot name its checkpoint-writing publication because finalized checkpoint bytes are in the plan preimage before PublicationID derivation. Ratified correction: rename to covered_through_publication_id, derived from and sealed by the terminal revision-sorted PublicationID in SealedProjectionPrefixV2; persist checkpoint at later revision C>R and replay its writer as suffix. WP02 must also own strict OperationSummaryV2 codecs so WP04 does not duplicate its wire/digest rules. Reopen WP01 guard then WP02 foundation; WP03 requires no change. Lane-d remains clean.",
+        "Resume after independently approved dependency repair: WP01 seals the defect-5 architecture laws, WP02 now supplies covered-through publication identity and strict operation-summary codecs, and approved WP03 already supplies the GapDB adapter. Force only transfers stale blocked ownership; no acceptance or guard is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
-      "shell_pid": 537810,
-      "shell_pid_created_at": "1788461441.96"
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47"
     },
     "WP05": {
       "actor": "finalize-tasks",
