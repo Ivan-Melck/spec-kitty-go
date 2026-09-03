@@ -193,7 +193,14 @@ func EncodePublicationWitnessV2(witness PublicationWitnessV2) ([]byte, error) {
 	if err := ValidatePublicationWitnessV2(witness); err != nil {
 		return nil, err
 	}
-	return marshalCanonical(publicationWitnessWire(witness), MaxCanonicalPayloadBytes)
+	encoded, err := marshalCanonical(publicationWitnessWire(witness), MaxCanonicalPayloadBytes)
+	if err != nil {
+		return nil, err
+	}
+	// RecoveryRecordV2 preserves application values through CanonicalObject.
+	// Emit that same deterministic object order here so a durable witness stays
+	// byte-identical across the public recovery boundary.
+	return CanonicalObject(encoded)
 }
 
 func publicationWitnessWire(witness PublicationWitnessV2) publicationWitnessWireV2 {
