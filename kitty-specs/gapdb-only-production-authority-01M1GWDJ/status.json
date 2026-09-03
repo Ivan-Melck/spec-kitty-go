@@ -19,10 +19,10 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-codec-guard",
-      "agent": "renata-gapdb-review",
+      "agent": "ivan-gapdb-codec-guard",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "ivan-gapdb-repair",
+      "assignee": "ivan-gapdb-codec-guard",
       "force_count": 20,
       "lane": "in_progress",
       "last_event_id": "01M1MP4B3XJJ3SX2D24RPP88FH",
@@ -60,7 +60,8 @@
         "Independent re-review rejected 8fbe4eee: provider revision is inferred circularly from the fold call and seal taint does not follow a same-package helper that discards its input. See review-cycle-15.",
         "Review cycle 15 repair ownership returns from the completed reviewer to the implementer; force resolves stale reviewer assignment only and bypasses no contract guard.",
         "Cycle-15 repair ready at 48c410ad: typed acknowledgement-source provider-revision anchor drives exact sort and prefix fold; bounded cycle-safe interprocedural seal dependence; coupled completion-order and discard-helper mutants; 177 census preserves all 175; full ladder passes.",
-        "Independent cycle-16 APPROVE: typed provider-revision source anchor and bounded interprocedural seal dataflow close both coupled substitutions; exact 177 census preserves prior 175; focused/race/full architecture/compile/vet/staticcheck/module/format/ownership and all anti-pattern checks pass."
+        "Independent cycle-16 APPROVE: typed provider-revision source anchor and bounded interprocedural seal dataflow close both coupled substitutions; exact 177 census preserves prior 175; focused/race/full architecture/compile/vet/staticcheck/module/format/ownership and all anti-pattern checks pass.",
+        "Reopen for ratified post-approval defect 6: add permanent execution-bound durable-codec consumer-path census before foundation repair. Force transfers stale approved reviewer ownership only; no contract or acceptance guard is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
