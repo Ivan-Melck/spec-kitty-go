@@ -67,6 +67,9 @@ subtask IDs remain represented.
   WP04 owns neither a substitute summary wire nor private boundary fields.
 - WP01 owns permanent guards, WP02 owns the corrected foundation semantics,
   WP03 already supplies exact durable witness reads, and WP04 consumes them.
+- Durable foundation encoders, recovery admission, and strict decoders share
+  one recursive canonical final-byte law; recovery rejects rather than silently
+  rewrites noncanonical provider evidence.
 - No provider API, keyspace, capability ownership, backend decision, stable
   task ID, requirement mapping, or work-package file ownership changes.
 
