@@ -315,6 +315,55 @@ func TestDefaultPolicyClassifiesM1CommandAndBoundsExternalGapDBDirection(t *test
 	})
 }
 
+func TestDefaultPolicyClassifiesCompleteM2SurfaceExactly(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		path string
+		tier TierName
+	}{
+		{module + "/internal/controljournal/v2", TierFoundation},
+		{module + "/internal/controljournal/v2/reducer", TierFoundation},
+		{module + "/internal/controlroot", TierFoundation},
+		{module + "/internal/controlroot/signatures", TierFoundation},
+		{module + "/internal/acceptance", TierAuthority},
+		{module + "/internal/acceptance/policy", TierAuthority},
+		{module + "/internal/controlstore/gapdb", TierAdapter},
+		{module + "/internal/controlstore/gapdb/mission", TierAdapter},
+		{module + "/internal/sidecar/gapdb", TierAdapter},
+		{module + "/internal/sidecar/gapdb/protocol", TierAdapter},
+		{module + "/internal/productionruntime", TierComposition},
+		{module + "/internal/productionruntime/progress", TierComposition},
+		{module + "/cmd/spec-kitty", TierComposition},
+		{module + "/cmd/spec-kitty/subcommands", TierComposition},
+		{module + "/cmd/spk-m2-qualification", TierQuality},
+		{module + "/cmd/spk-m2-qualification/reporter", TierQuality},
+	} {
+		t.Run(strings.TrimPrefix(test.path, module+"/"), func(t *testing.T) {
+			assertTier(t, policy, test.path, test.tier)
+		})
+	}
+
+	for _, path := range []string{
+		module + "/internal/controljournal/v2x",
+		module + "/internal/controlrooted",
+		module + "/internal/acceptancex",
+		module + "/internal/controlstore/gapdbx",
+		module + "/internal/sidecar/gapdbx",
+		module + "/internal/productionruntimex",
+		module + "/cmd/spec-kittyx",
+		module + "/cmd/spk-m2-qualificationx",
+	} {
+		t.Run("lookalike-"+strings.TrimPrefix(path, module+"/"), func(t *testing.T) {
+			assertExactViolation(t, policy, fixtureGraph([]string{path}), RuleUnknownPackage, path, "", path, "")
+		})
+	}
+}
+
 func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
 	const module = "github.com/spec-kitty/go-kitty3"
 	policy, err := DefaultPolicy(module)
@@ -372,6 +421,66 @@ func TestDefaultPolicySeparatesJournalApplicationComposition(t *testing.T) {
 	)
 	graph.ModulePath = module
 	assertExactViolation(t, policy, graph, RuleLocalDirection, pure, TierFoundation, adapter, TierAdapter)
+
+	for _, foundation := range []string{
+		module + "/internal/controljournal",
+		module + "/internal/controljournal/checkpoint",
+		module + "/internal/controljournal/playback",
+		module + "/internal/controljournal/v2",
+	} {
+		graph := fixtureGraph(
+			[]string{foundation, adapter},
+			ImportEdge{SourcePackage: foundation, TargetPackage: adapter, Kind: ImportModuleLocal},
+		)
+		graph.ModulePath = module
+		assertExactViolation(t, policy, graph, RuleLocalDirection, foundation, TierFoundation, adapter, TierAdapter)
+	}
+}
+
+func TestDefaultPolicyPermanentlyDeniesCapabilityToGapDBAdapter(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := module + "/internal/controlstore/gapdb"
+	for _, capability := range []struct {
+		path string
+		tier TierName
+	}{
+		{module + "/internal/artifact", TierArtifactAuthority},
+		{module + "/internal/mission", TierMissionAuthority},
+		{module + "/internal/workgraph", TierAuthority},
+		{module + "/internal/execution", TierAuthority},
+		{module + "/internal/workspace", TierAuthority},
+		{module + "/internal/handoff", TierAuthority},
+		{module + "/internal/review", TierAuthority},
+		{module + "/internal/acceptance", TierAuthority},
+		{module + "/internal/integration", TierAuthority},
+	} {
+		t.Run(strings.TrimPrefix(capability.path, module+"/internal/"), func(t *testing.T) {
+			graph := fixtureGraph(
+				[]string{capability.path, adapter},
+				ImportEdge{SourcePackage: capability.path, TargetPackage: adapter, Kind: ImportModuleLocal},
+			)
+			graph.ModulePath = module
+			assertExactViolation(t, policy, graph, RuleLocalDirection, capability.path, capability.tier, adapter, TierAdapter)
+		})
+	}
+
+	mutant := policy
+	mutant.ForbiddenLocalDirections = append([]ForbiddenLocalDirection(nil), policy.ForbiddenLocalDirections[1:]...)
+	for index := range mutant.Tiers {
+		if mutant.Tiers[index].Name == TierAuthority {
+			mutant.Tiers[index].AllowedLocalTargets = append(mutant.Tiers[index].AllowedLocalTargets, TierAdapter)
+		}
+	}
+	capability := module + "/internal/execution"
+	graph := fixtureGraph([]string{capability, adapter}, ImportEdge{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal})
+	graph.ModulePath = module
+	if err := mutant.Check(graph); err != nil {
+		t.Fatalf("removing exact GapDB denial did not admit the controlled widened-tier mutant: %v", err)
+	}
 }
 
 func TestDefaultPolicyClassifiesProvingGroundCompositionExactly(t *testing.T) {
