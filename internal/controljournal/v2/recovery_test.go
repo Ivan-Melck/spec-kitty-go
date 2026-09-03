@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRecoverySemanticAddressesAndScanTargets(t *testing.T) {
@@ -158,4 +159,77 @@ func TestReadRequestCarriesAttemptProofNotAsOfPromise(t *testing.T) {
 	}
 	// There intentionally is no requested-as-of-revision API. The attempt
 	// coordinate is used to reject movement after latest-value reads.
+}
+
+func TestRecoveryInstantsAdmitCanonicalUTCPrecisionAndPreserveSpelling(t *testing.T) {
+	address, err := NewOperationHeadAddressV2("operation-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, instant := range []string{
+		"2026-09-03T14:05:06Z",
+		"2026-09-03T14:05:06.1Z",
+		"2026-09-03T14:05:06.123456Z",
+		"2026-09-03T14:05:06.123456789Z",
+	} {
+		t.Run(instant, func(t *testing.T) {
+			parsed, parseErr := time.Parse(time.RFC3339Nano, instant)
+			if parseErr != nil || parsed.UTC().Format(time.RFC3339Nano) != instant {
+				t.Fatalf("positive fixture is not canonical RFC3339Nano: %v", parseErr)
+			}
+			record, recordErr := NewRecoveryRecordV2(address, []byte(`{"status":"ready"}`), 1, instant)
+			if recordErr != nil {
+				t.Fatalf("canonical expiry rejected: %v", recordErr)
+			}
+			page, pageErr := NewRecoveryPageV2(1, instant, []RecoveryRecordV2{record}, nil, false)
+			if pageErr != nil {
+				t.Fatalf("canonical as-of rejected: %v", pageErr)
+			}
+			if record.ExpiresAt() != instant || page.AsOf() != instant {
+				t.Fatalf("instant spelling changed: expiry=%q as_of=%q", record.ExpiresAt(), page.AsOf())
+			}
+		})
+	}
+
+	record, err := NewRecoveryRecordV2(address, []byte(`{"status":"ready"}`), 1, "")
+	if err != nil || record.ExpiresAt() != "" {
+		t.Fatalf("optional empty expiry rejected or changed: %q %v", record.ExpiresAt(), err)
+	}
+}
+
+func TestRecoveryInstantsRejectNonCanonicalAndMalformedSpellings(t *testing.T) {
+	address, err := NewOperationHeadAddressV2("operation-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, instant := range map[string]string{
+		"offset":            "2026-09-03T09:05:06-05:00",
+		"lowercase_z":       "2026-09-03T14:05:06z",
+		"zero_fraction":     "2026-09-03T14:05:06.0Z",
+		"trailing_zero":     "2026-09-03T14:05:06.120Z",
+		"overprecision":     "2026-09-03T14:05:06.1234567890Z",
+		"comma_fraction":    "2026-09-03T14:05:06,1Z",
+		"invalid_leap_day":  "2025-02-29T14:05:06Z",
+		"invalid_month_day": "2026-04-31T14:05:06Z",
+		"invalid_hour":      "2026-09-03T24:05:06Z",
+		"invalid_minute":    "2026-09-03T14:60:06Z",
+		"invalid_second":    "2026-09-03T14:05:60Z",
+		"missing_seconds":   "2026-09-03T14:05Z",
+		"space_separator":   "2026-09-03 14:05:06Z",
+		"short_year":        "026-09-03T14:05:06Z",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if parsed, parseErr := time.Parse(time.RFC3339Nano, instant); parseErr == nil && parsed.UTC().Format(time.RFC3339Nano) == instant {
+				t.Fatalf("negative fixture unexpectedly has canonical RFC3339Nano spelling: %q", instant)
+			}
+			if _, recordErr := NewRecoveryRecordV2(address, []byte(`{"status":"ready"}`), 1, instant); recordErr == nil {
+				t.Fatalf("recovery record admitted %q", instant)
+			}
+			if _, pageErr := NewRecoveryPageV2(1, instant, nil, nil, false); pageErr == nil {
+				t.Fatalf("recovery page admitted %q", instant)
+			}
+		})
+	}
 }

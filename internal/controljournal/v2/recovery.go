@@ -212,7 +212,7 @@ func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uin
 	if err != nil || len(value) != len(canonical) {
 		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
 	}
-	if expiresAt != "" && !canonicalUTCSecond(expiresAt) {
+	if expiresAt != "" && !canonicalUTCInstant(expiresAt) {
 		return RecoveryRecordV2{}, invalid(ErrorInvalidCanonicalData, "recovery_record_expiry")
 	}
 	return RecoveryRecordV2{address: address, canonical: append([]byte(nil), value...), revision: revision, expiresAt: expiresAt}, nil
@@ -232,7 +232,7 @@ type RecoveryPageV2 struct {
 }
 
 func NewRecoveryPageV2(observedRevision uint64, asOf string, records []RecoveryRecordV2, cursor []byte, truncated bool) (RecoveryPageV2, error) {
-	if observedRevision == 0 || !canonicalUTCSecond(asOf) || len(records) > MaxRecoveryPageRecords || len(cursor) > MaxRecoveryCursorBytes {
+	if observedRevision == 0 || !canonicalUTCInstant(asOf) || len(records) > MaxRecoveryPageRecords || len(cursor) > MaxRecoveryCursorBytes {
 		return RecoveryPageV2{}, invalid(ErrorBudgetExceeded, "recovery_page")
 	}
 	if truncated != (len(cursor) != 0) {
@@ -251,6 +251,31 @@ func NewRecoveryPageV2(observedRevision uint64, asOf string, records []RecoveryR
 		copied[index] = cloneRecoveryRecord(record)
 	}
 	return RecoveryPageV2{observedRevision: observedRevision, asOf: asOf, records: copied, cursor: append([]byte(nil), cursor...), truncated: truncated}, nil
+}
+
+// canonicalUTCInstant admits exactly the UTC representation produced by
+// RFC3339Nano. The package's pure-foundation import boundary excludes clock
+// packages, so canonicalUTCSecond supplies calendar validation and the suffix
+// checks encode RFC3339Nano's unique non-zero fractional representation.
+func canonicalUTCInstant(value string) bool {
+	if canonicalUTCSecond(value) {
+		return true
+	}
+	if len(value) < 22 || len(value) > 30 || value[19] != '.' || value[len(value)-1] != 'Z' {
+		return false
+	}
+	if !canonicalUTCSecond(value[:19] + "Z") {
+		return false
+	}
+	fraction := value[20 : len(value)-1]
+	for index := range fraction {
+		if fraction[index] < '0' || fraction[index] > '9' {
+			return false
+		}
+	}
+	// RFC3339Nano removes trailing zeroes. A final non-zero digit therefore
+	// proves both a non-zero fraction and the absence of an alternate spelling.
+	return fraction[len(fraction)-1] != '0'
 }
 
 func cloneRecoveryRecord(record RecoveryRecordV2) RecoveryRecordV2 {
