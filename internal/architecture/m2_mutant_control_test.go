@@ -18,7 +18,7 @@ import (
 
 const (
 	m2MutantCensusCount  = 184
-	m2MutantCensusSHA256 = "5a4400368dee372a483e8b80abbadef9cfe26959153fdb438d6b91bfd0ca1338"
+	m2MutantCensusSHA256 = "299a0dc403fd102c73b88e88569cd7da832766a957e6968e5dbc7eec37154283"
 )
 
 const (
@@ -287,7 +287,7 @@ func m2ExecutableMutants() []m2MutantCase {
 	} {
 		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
 	}
-	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "FIRST-SYMBOL-PARTIAL"} {
+	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "PARTIAL-REPAIR"} {
 		cases = append(cases, m2Case("M-DURABLE-CODEC-"+fixture, m2ValidatorDurableCodec, fixture, "DURABLE_CODEC_COMPATIBILITY", fixture, ""))
 	}
 	return cases
@@ -335,7 +335,7 @@ func observeM2Mutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
 	case m2ValidatorCapReach:
 		return observeM2CapabilityReachMutant(t, mutant)
 	case m2ValidatorDurableCodec:
-		if err := validateM2DurableCodecCompatibility(mutant.Fixture); err != nil {
+		if err := validateM2DurableCodecCompatibility(t, mutant.Fixture); err != nil {
 			return m2ViolationObservation{Validator: mutant.Validator, Code: "DURABLE_CODEC_COMPATIBILITY", Source: mutant.Fixture}
 		}
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}

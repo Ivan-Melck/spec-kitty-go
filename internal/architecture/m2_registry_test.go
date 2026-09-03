@@ -13,59 +13,46 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
 
 var m2DurableCodecNames = []string{"AggregateHeadV2", "EventEnvelopeV2", "OperationBindingV2", "OperationStateV2", "OperationSummaryV2", "PublicationWitnessV2"}
 
-type m2DurableCodecModel struct {
-	classified []string
-	encode     func([]byte) ([]byte, error)
-	recover    func([]byte) ([]byte, error)
-	decode     func([]byte) ([]byte, error)
+type m2DurableCodecConsumer struct {
+	Name string `json:"name"`
+	Mode string `json:"mode"`
+}
+
+var m2ExpectedDurableCodecConsumers = []m2DurableCodecConsumer{
+	{"AggregateHeadV2", "direct-recovery-record"},
+	{"EventEnvelopeV2", "direct-recovery-record"},
+	{"OperationBindingV2", "direct-recovery-record"},
+	{"OperationStateV2", "direct-recovery-record"},
+	{"OperationSummaryV2", "nested-checkpoint"},
+	{"PublicationWitnessV2", "direct-recovery-record"},
 }
 
 func TestM2DurableCodecCompatibilityIsExecutionBound(t *testing.T) {
-	if err := validateM2DurableCodecCompatibility("POSITIVE"); err != nil {
+	if err := validateM2DurableCodecCompatibility(t, "POSITIVE"); err != nil {
 		t.Fatalf("evidence=DURABLE-CODEC-COMPATIBILITY positive rejected: %v", err)
 	}
-	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "FIRST-SYMBOL-PARTIAL"} {
-		if err := validateM2DurableCodecCompatibility(fixture); err == nil {
+	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "PARTIAL-REPAIR"} {
+		if err := validateM2DurableCodecCompatibility(t, fixture); err == nil {
 			t.Fatalf("evidence=DURABLE-CODEC-COMPATIBILITY mutant=%s observed=accepted", fixture)
 		}
 	}
 }
 
-func TestM2DurableCodecFirstSymbolActivatesCompleteCensus(t *testing.T) {
-	if err := validateM2DurableCodecActivation(false, "RAW-STRUCT-ORDER"); err != nil {
-		t.Fatalf("pre-activation compatibility rejected: %v", err)
-	}
-	if err := validateM2DurableCodecActivation(true, "POSITIVE"); err != nil {
-		t.Fatalf("complete activated census rejected: %v", err)
-	}
-	if err := validateM2DurableCodecActivation(true, "FIRST-SYMBOL-PARTIAL"); err == nil {
-		t.Fatal("first-symbol partial repair escaped complete census")
-	}
-}
-
-func validateM2DurableCodecActivation(markerPresent bool, fixture string) error {
-	if !markerPresent {
-		return nil
-	}
-	return validateM2DurableCodecCompatibility(fixture)
-}
-
 func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
-	if !m2FoundationDeclaresFunction(t, "marshalCanonicalObject") {
-		return
-	}
 	registry := journalv2.DefaultEventRegistryV2()
 	publicationID := journalv2.PublicationID(m2TestDigest("publication", "one").String())
 	operationID := journalv2.OperationID("operation-1")
@@ -106,60 +93,33 @@ func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
 		decode  func([]byte) error
 	}{
 		{"OperationBindingV2", bindingAddress, func() ([]byte, error) { return journalv2.EncodeOperationBindingV2(binding) }, func(value []byte) error {
-			decoded, err := journalv2.DecodeOperationBindingV2(value)
-			if err != nil {
-				return err
-			}
-			again, err := journalv2.EncodeOperationBindingV2(decoded)
-			if err != nil || !bytes.Equal(again, value) {
-				return fmt.Errorf("semantic round trip")
-			}
-			return nil
+			_, err := journalv2.DecodeOperationBindingV2(value)
+			return err
 		}},
 		{"EventEnvelopeV2", eventAddress, func() ([]byte, error) { return journalv2.EncodeEventEnvelopeV2(event) }, func(value []byte) error {
-			decoded, err := journalv2.DecodeEventEnvelopeV2(value, registry)
-			if err != nil {
-				return err
-			}
-			again, err := journalv2.EncodeEventEnvelopeV2(decoded)
-			if err != nil || !bytes.Equal(again, value) {
-				return fmt.Errorf("semantic round trip")
-			}
-			return nil
+			_, err := journalv2.DecodeEventEnvelopeV2(value, registry)
+			return err
 		}},
 		{"AggregateHeadV2", headAddress, func() ([]byte, error) { return journalv2.EncodeAggregateHeadV2(head) }, func(value []byte) error {
-			decoded, err := journalv2.DecodeAggregateHeadV2(value)
-			if err != nil {
-				return err
-			}
-			again, err := journalv2.EncodeAggregateHeadV2(decoded)
-			if err != nil || !bytes.Equal(again, value) {
-				return fmt.Errorf("semantic round trip")
-			}
-			return nil
+			_, err := journalv2.DecodeAggregateHeadV2(value)
+			return err
 		}},
 		{"OperationStateV2", stateAddress, func() ([]byte, error) { return journalv2.EncodeOperationStateV2(state) }, func(value []byte) error {
-			decoded, err := journalv2.DecodeOperationStateV2(value)
-			if err != nil {
-				return err
-			}
-			again, err := journalv2.EncodeOperationStateV2(decoded)
-			if err != nil || !bytes.Equal(again, value) {
-				return fmt.Errorf("semantic round trip")
-			}
-			return nil
+			_, err := journalv2.DecodeOperationStateV2(value)
+			return err
 		}},
 		{"PublicationWitnessV2", witnessAddress, func() ([]byte, error) { return journalv2.EncodePublicationWitnessV2(witness) }, func(value []byte) error {
-			decoded, err := journalv2.DecodePublicationWitnessV2(value)
-			if err != nil {
-				return err
-			}
-			again, err := journalv2.EncodePublicationWitnessV2(decoded)
-			if err != nil || !bytes.Equal(again, value) {
-				return fmt.Errorf("semantic round trip")
-			}
-			return nil
+			_, err := journalv2.DecodePublicationWitnessV2(value)
+			return err
 		}},
+	}
+	consumers := make([]m2DurableCodecConsumer, 0, len(tests)+1)
+	for _, test := range tests {
+		consumers = append(consumers, m2DurableCodecConsumer{test.name, "direct-recovery-record"})
+	}
+	consumers = append(consumers, m2DurableCodecConsumer{"OperationSummaryV2", "nested-checkpoint"})
+	if err := m2ValidateDurableCodecCensus(consumers); err != nil {
+		t.Fatal(err)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -169,7 +129,7 @@ func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
 			}
 			canonical, err := m2CanonicalRecursive(encoded)
 			if err != nil || !bytes.Equal(canonical, encoded) {
-				t.Fatalf("encoder bytes are not recursively canonical")
+				t.Fatalf("evidence=ENCODER-RECURSIVE encoder bytes are not recursively canonical")
 			}
 			record, err := journalv2.NewRecoveryRecordV2(test.address, encoded, 7, "")
 			if err != nil {
@@ -181,9 +141,15 @@ func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
 			if err := test.decode(record.CanonicalValue()); err != nil {
 				t.Fatalf("strict consumer failed: %v", err)
 			}
-			noncanonical := []byte(`{"z":1,"a":2}`)
+			noncanonical, err := m2ReverseTopLevelObject(encoded)
+			if err != nil || bytes.Equal(noncanonical, encoded) {
+				t.Fatalf("could not construct semantically equivalent noncanonical evidence: %v", err)
+			}
 			if _, err := journalv2.NewRecoveryRecordV2(test.address, noncanonical, 7, ""); err == nil {
-				t.Fatal("noncanonical provider evidence admitted")
+				t.Fatal("evidence=LENGTH-ONLY-RECOVERY noncanonical provider evidence admitted")
+			}
+			if err := test.decode(noncanonical); err == nil {
+				t.Fatal("evidence=REMOVED-DECODER-EQUALITY semantically valid noncanonical ordering admitted")
 			}
 		})
 	}
@@ -194,6 +160,13 @@ func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
 	summaryBytes, err := journalv2.EncodeOperationSummaryV2(summary)
 	if err != nil {
 		t.Fatal(err)
+	}
+	noncanonicalSummary, err := m2ReverseTopLevelObject(summaryBytes)
+	if err != nil || bytes.Equal(noncanonicalSummary, summaryBytes) {
+		t.Fatalf("could not construct noncanonical summary: %v", err)
+	}
+	if _, err := journalv2.DecodeOperationSummaryV2(noncanonicalSummary); err == nil {
+		t.Fatal("evidence=REMOVED-DECODER-EQUALITY operation summary admitted noncanonical ordering")
 	}
 	checkpointRaw := append([]byte(`{"operation_summary":`), summaryBytes...)
 	checkpointRaw = append(checkpointRaw, []byte(`,"checkpoint_id":"checkpoint-1"}`)...)
@@ -209,7 +182,7 @@ func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
 	}
 	decodedSummary, err := journalv2.DecodeOperationSummaryV2(nested.OperationSummary)
 	if err != nil || decodedSummary.Digest() != summary.Digest() {
-		t.Fatalf("nested operation summary failed strict decode: %v", err)
+		t.Fatalf("evidence=TOP-LEVEL-ONLY nested operation summary failed strict decode: %v\nencoded=%s\nnested=%s", err, summaryBytes, nested.OperationSummary)
 	}
 	_ = operationCoordinate // proves the closed operation coordinate is constructible without an adapter key.
 }
@@ -246,144 +219,318 @@ func m2TestPublicationWitness(t *testing.T, publicationID journalv2.PublicationI
 }
 
 func m2DurableCodecFixtureMaterial(fixture string) any {
-	if !slices.Contains([]string{"POSITIVE", "RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "FIRST-SYMBOL-PARTIAL"}, fixture) {
+	if !slices.Contains([]string{"POSITIVE", "RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "PARTIAL-REPAIR"}, fixture) {
 		return nil
 	}
 	return struct {
-		Version int      `json:"version"`
-		Fixture string   `json:"fixture"`
-		Codecs  []string `json:"codecs"`
-	}{1, fixture, slices.Clone(m2DurableCodecNames)}
+		Version   int                      `json:"version"`
+		Fixture   string                   `json:"fixture"`
+		Codecs    []string                 `json:"codecs"`
+		Consumers []m2DurableCodecConsumer `json:"consumers"`
+	}{2, fixture, slices.Clone(m2DurableCodecNames), slices.Clone(m2ExpectedDurableCodecConsumers)}
 }
 
-func validateM2DurableCodecCompatibility(fixture string) error {
+func validateM2DurableCodecCompatibility(t *testing.T, fixture string) error {
+	t.Helper()
 	if m2DurableCodecFixtureMaterial(fixture) == nil {
 		return fmt.Errorf("unknown fixture")
 	}
-	model := m2DurableCodecModel{classified: slices.Clone(m2DurableCodecNames)}
-	model.encode = func(raw []byte) ([]byte, error) { return m2CanonicalRecursive(raw) }
-	model.recover = func(encoded []byte) ([]byte, error) {
-		canonical, err := m2CanonicalRecursive(encoded)
-		if err != nil || !bytes.Equal(canonical, encoded) {
-			return nil, fmt.Errorf("noncanonical provider evidence")
-		}
-		return slices.Clone(encoded), nil
-	}
-	model.decode = func(encoded []byte) ([]byte, error) {
-		canonical, err := m2CanonicalRecursive(encoded)
-		if err != nil || !bytes.Equal(canonical, encoded) {
-			return nil, fmt.Errorf("strict equality")
-		}
-		return canonical, nil
-	}
-	switch fixture {
-	case "RAW-STRUCT-ORDER":
-		model.encode = func(raw []byte) ([]byte, error) { return slices.Clone(raw), nil }
-	case "FIRST-SYMBOL-PARTIAL":
-		model.encode = func(raw []byte) ([]byte, error) { return slices.Clone(raw), nil }
-	case "TOP-LEVEL-ONLY":
-		model.encode = func([]byte) ([]byte, error) {
-			return []byte(`{"identity":"record-1","nested":{"z":1,"a":2},"schema_version":2}`), nil
-		}
-	case "DISCARDED-NORMALIZED-RESULT":
-		model.encode = func(raw []byte) ([]byte, error) { _, err := m2CanonicalRecursive(raw); return slices.Clone(raw), err }
-	case "LENGTH-ONLY-RECOVERY":
-		model.recover = func(encoded []byte) ([]byte, error) {
-			if len(encoded) == 0 {
-				return nil, fmt.Errorf("empty")
-			}
-			return slices.Clone(encoded), nil
-		}
-	case "REMOVED-DECODER-EQUALITY":
-		model.decode = func(encoded []byte) ([]byte, error) { return m2CanonicalRecursive(encoded) }
-	case "OMITTED-CODEC-CLASSIFICATION":
-		model.classified = model.classified[:len(model.classified)-1]
-	}
-	wantNames := slices.Clone(m2DurableCodecNames)
-	slices.Sort(wantNames)
-	gotNames := slices.Clone(model.classified)
-	slices.Sort(gotNames)
-	if !slices.Equal(wantNames, gotNames) {
-		return fmt.Errorf("codec classification observed=%v expected=%v", gotNames, wantNames)
-	}
-	raw := []byte(`{"schema_version":2,"nested":{"z":1,"a":2},"identity":"record-1"}`)
-	want, err := m2CanonicalRecursive(raw)
+	overlay, err := m2DurableCodecOverlay(t, fixture)
 	if err != nil {
-		return err
+		t.Fatalf("durable codec overlay harness invalid for %s: %v", fixture, err)
 	}
-	for _, name := range model.classified {
-		if name == "OperationSummaryV2" {
-			continue
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "test", "-overlay", overlay, "./internal/architecture", "-run", "^TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes$", "-count=1")
+	command.Dir = m2RepositoryRoot(t)
+	command.Env = append(os.Environ(), "GOWORK=off")
+	output, runErr := command.CombinedOutput()
+	if fixture == "POSITIVE" {
+		if runErr != nil {
+			return fmt.Errorf("repaired production overlay failed: %w\n%s", runErr, output)
 		}
-		encoded, err := model.encode(raw)
-		if err != nil || !bytes.Equal(encoded, want) {
-			return fmt.Errorf("codec=%s encoder is not recursively canonical", name)
+		return nil
+	}
+	expected := map[string]string{
+		"RAW-STRUCT-ORDER":             "evidence=ENCODER-RECURSIVE",
+		"TOP-LEVEL-ONLY":               "evidence=TOP-LEVEL-ONLY",
+		"DISCARDED-NORMALIZED-RESULT":  "evidence=ENCODER-RECURSIVE",
+		"LENGTH-ONLY-RECOVERY":         "evidence=LENGTH-ONLY-RECOVERY",
+		"REMOVED-DECODER-EQUALITY":     "evidence=REMOVED-DECODER-EQUALITY",
+		"OMITTED-CODEC-CLASSIFICATION": "evidence=M2-DURABLE-CODEC-CENSUS",
+		"PARTIAL-REPAIR":               "evidence=ENCODER-RECURSIVE",
+	}[fixture]
+	if runErr != nil && strings.Contains(string(output), expected) {
+		return fmt.Errorf("production mutation rejected by intended law %s", expected)
+	}
+	t.Logf("durable codec mutant=%s did not reach intended law=%s err=%v output=%s", fixture, expected, runErr, output)
+	return nil
+}
+
+func m2ValidateDurableCodecCensus(consumers []m2DurableCodecConsumer) error {
+	want := slices.Clone(m2DurableCodecNames)
+	got := make([]string, 0, len(consumers))
+	direct, nested := 0, 0
+	seen := make(map[string]bool, len(consumers))
+	expectedModes := make(map[string]string, len(m2ExpectedDurableCodecConsumers))
+	for _, consumer := range m2ExpectedDurableCodecConsumers {
+		expectedModes[consumer.Name] = consumer.Mode
+	}
+	for _, consumer := range consumers {
+		if consumer.Name == "" || seen[consumer.Name] {
+			return fmt.Errorf("evidence=M2-DURABLE-CODEC-CENSUS duplicate=%q", consumer.Name)
 		}
-		retained, err := model.recover(encoded)
-		if err != nil || !bytes.Equal(retained, encoded) {
-			return fmt.Errorf("codec=%s recovery rewrote bytes", name)
+		seen[consumer.Name] = true
+		got = append(got, consumer.Name)
+		if expectedModes[consumer.Name] != consumer.Mode {
+			return fmt.Errorf("evidence=M2-DURABLE-CODEC-CENSUS codec=%s mode=%s expected=%s", consumer.Name, consumer.Mode, expectedModes[consumer.Name])
 		}
-		decoded, err := model.decode(retained)
-		if err != nil || !bytes.Equal(decoded, want) {
-			return fmt.Errorf("codec=%s strict decode failed", name)
-		}
-		if _, err := model.recover(raw); err == nil {
-			return fmt.Errorf("codec=%s recovery admitted noncanonical bytes", name)
-		}
-		if _, err := model.decode(raw); err == nil {
-			return fmt.Errorf("codec=%s decoder admitted noncanonical bytes", name)
+		switch consumer.Mode {
+		case "direct-recovery-record":
+			direct++
+		case "nested-checkpoint":
+			nested++
+		default:
+			return fmt.Errorf("evidence=M2-DURABLE-CODEC-CENSUS codec=%s mode=%s", consumer.Name, consumer.Mode)
 		}
 	}
-	summary, err := model.encode(raw)
-	if err != nil {
-		return err
-	}
-	checkpointRaw := append([]byte(`{"summary":`), summary...)
-	checkpointRaw = append(checkpointRaw, []byte(`,"checkpoint_id":"checkpoint-1"}`)...)
-	checkpointCanonical, err := m2CanonicalRecursive(checkpointRaw)
-	if err != nil {
-		return err
-	}
-	var outer struct {
-		Summary json.RawMessage `json:"summary"`
-	}
-	if err := json.Unmarshal(checkpointCanonical, &outer); err != nil {
-		return err
-	}
-	decoded, err := model.decode(outer.Summary)
-	if err != nil || !bytes.Equal(decoded, want) {
-		return fmt.Errorf("nested operation summary did not survive recursive checkpoint embedding")
+	slices.Sort(want)
+	slices.Sort(got)
+	if !slices.Equal(want, got) || direct != 5 || nested != 1 {
+		return fmt.Errorf("evidence=M2-DURABLE-CODEC-CENSUS observed=%v direct=%d nested=%d expected=%v", got, direct, nested, want)
 	}
 	return nil
 }
 
-func m2FoundationDeclaresFunction(t *testing.T, name string) bool {
+func m2DurableCodecOverlay(t *testing.T, fixture string) (string, error) {
 	t.Helper()
-	directory := filepath.Join(m2RepositoryRoot(t), "internal", "controljournal", "v2")
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		t.Fatal(err)
+	root := m2RepositoryRoot(t)
+	read := func(relative string) (string, error) {
+		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		return string(contents), err
 	}
-	files := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") {
-			files = append(files, entry.Name())
-		}
-	}
-	slices.Sort(files)
-	for _, file := range files {
-		parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(directory, file), nil, 0)
+	files := make(map[string]string)
+	for _, relative := range []string{"internal/controljournal/v2/codec.go", "internal/controljournal/v2/model.go", "internal/controljournal/v2/operation.go", "internal/controljournal/v2/projection.go", "internal/controljournal/v2/recovery.go"} {
+		contents, err := read(relative)
 		if err != nil {
-			t.Fatal(err)
+			return "", err
 		}
-		for _, declaration := range parsed.Decls {
-			function, ok := declaration.(*ast.FuncDecl)
-			if ok && function.Recv == nil && function.Name.Name == name {
-				return true
+		files[relative] = contents
+	}
+	bindings := `
+func EncodeOperationBindingV2(binding OperationBindingV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeOperationBindingV2(binding)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeOperationStateV2(state)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	events := `
+func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeEventEnvelopeV2(envelope)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+func EncodeAggregateHeadV2(head AggregateHeadV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeAggregateHeadV2(head)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	witness := `
+func EncodePublicationWitnessV2(value PublicationWitnessV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodePublicationWitnessV2(value)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	summary := `
+func encodeOperationSummaryV2(value OperationSummaryV2) ([]byte, error) {
+	encoded, err := m2UnderlyingencodeOperationSummaryV2(value)
+	if err != nil { return nil, err }
+	return canonicalObjectBounded(encoded, MaxOperationSummaryBytesV2)
+}
+`
+	recovery := `
+func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	value, err := CanonicalObject(canonical)
+	if err != nil || string(value) != string(canonical) {
+		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
+	}
+	return m2UnderlyingNewRecoveryRecordV2(address, canonical, revision, expiresAt)
+}
+`
+	switch fixture {
+	case "POSITIVE":
+	case "RAW-STRUCT-ORDER":
+		bindings = `
+func EncodeOperationBindingV2(binding OperationBindingV2) ([]byte, error) {
+	if _, err := m2UnderlyingEncodeOperationBindingV2(binding); err != nil { return nil, err }
+	return marshalCanonical(binding.wire(), MaxCanonicalPayloadBytes)
+}
+func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeOperationStateV2(state)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	case "DISCARDED-NORMALIZED-RESULT":
+		bindings = `
+func EncodeOperationBindingV2(binding OperationBindingV2) ([]byte, error) {
+	if _, err := m2UnderlyingEncodeOperationBindingV2(binding); err != nil { return nil, err }
+	encoded, err := marshalCanonical(binding.wire(), MaxCanonicalPayloadBytes)
+	if err != nil { return nil, err }
+	if _, err = CanonicalObject(encoded); err != nil { return nil, err }
+	return encoded, nil
+}
+func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeOperationStateV2(state)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	case "PARTIAL-REPAIR":
+		events = `
+func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeEventEnvelopeV2(envelope)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+func EncodeAggregateHeadV2(head AggregateHeadV2) ([]byte, error) {
+	if _, err := m2UnderlyingEncodeAggregateHeadV2(head); err != nil { return nil, err }
+	return marshalCanonical(aggregateHeadWire{SchemaVersion, head.input.Coordinate, uint64(head.input.LogicalVersion), string(head.input.LastEventID), string(head.input.LastPublicationID), string(head.input.CommittedRuntimeEpochID), head.input.CanonicalStateDigest.String(), head.authoritySummary, head.input.Tombstone}, MaxCanonicalPayloadBytes)
+}
+`
+	case "LENGTH-ONLY-RECOVERY":
+		recovery = `
+func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	if err := address.validate(); err != nil { return RecoveryRecordV2{}, err }
+	if revision == 0 || len(canonical) == 0 || len(canonical) > MaxCheckpointValueBytes { return RecoveryRecordV2{}, invalid(ErrorBudgetExceeded, "recovery_record") }
+	value, err := CanonicalObject(canonical)
+	if err != nil || len(value) != len(canonical) { return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record") }
+	if expiresAt != "" && !canonicalUTCInstant(expiresAt) { return RecoveryRecordV2{}, invalid(ErrorInvalidCanonicalData, "recovery_record_expiry") }
+	return RecoveryRecordV2{address: address, canonical: append([]byte(nil), value...), revision: revision, expiresAt: expiresAt}, nil
+}
+`
+	case "REMOVED-DECODER-EQUALITY":
+		var renameErr error
+		files["internal/controljournal/v2/operation.go"], renameErr = m2RenameProductionFunction(files["internal/controljournal/v2/operation.go"], "DecodeOperationBindingV2")
+		if renameErr != nil {
+			return "", renameErr
+		}
+		bindings += `
+func DecodeOperationBindingV2(encoded []byte) (OperationBindingV2, error) {
+	canonical, err := CanonicalObject(encoded)
+	if err != nil { return OperationBindingV2{}, err }
+	return m2UnderlyingDecodeOperationBindingV2(canonical)
+}
+`
+	case "TOP-LEVEL-ONLY":
+		summary = `
+func encodeOperationSummaryV2(value OperationSummaryV2) ([]byte, error) {
+	preimage, err := operationSummaryPreimageV2(value)
+	if err != nil { return nil, err }
+	encoded, err := marshalCanonical(operationSummaryWireV2{preimage, value.digest.String()}, MaxOperationSummaryBytesV2)
+	if err != nil { return nil, err }
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &top); err != nil { return nil, err }
+	return json.Marshal(top)
+}
+`
+		if !strings.Contains(files["internal/controljournal/v2/projection.go"], `"encoding/json"`) {
+			files["internal/controljournal/v2/projection.go"] = strings.Replace(files["internal/controljournal/v2/projection.go"], "\t\"bytes\"\n", "\t\"bytes\"\n\t\"encoding/json\"\n", 1)
+		}
+	case "OMITTED-CODEC-CLASSIFICATION":
+		registry, readErr := read("internal/architecture/m2_registry_test.go")
+		if readErr != nil {
+			return "", readErr
+		}
+		old := "\tconsumers = append(consumers, m2DurableCodecConsumer{\"OperationSummaryV2\", \"nested-checkpoint\"})\n"
+		if strings.Count(registry, old) != 1 {
+			return "", fmt.Errorf("codec classification overlay anchor count=%d", strings.Count(registry, old))
+		}
+		files["internal/architecture/m2_registry_test.go"] = strings.Replace(registry, old, "", 1)
+	default:
+		return "", fmt.Errorf("unknown fixture %q", fixture)
+	}
+	for relative, functions := range map[string][]string{
+		"internal/controljournal/v2/operation.go":  {"EncodeOperationBindingV2", "EncodeOperationStateV2"},
+		"internal/controljournal/v2/model.go":      {"EncodeEventEnvelopeV2", "EncodeAggregateHeadV2"},
+		"internal/controljournal/v2/codec.go":      {"EncodePublicationWitnessV2"},
+		"internal/controljournal/v2/projection.go": {"encodeOperationSummaryV2"},
+		"internal/controljournal/v2/recovery.go":   {"NewRecoveryRecordV2"},
+	} {
+		for _, function := range functions {
+			var renameErr error
+			files[relative], renameErr = m2RenameProductionFunction(files[relative], function)
+			if renameErr != nil {
+				return "", renameErr
 			}
 		}
 	}
-	return false
+	files["internal/controljournal/v2/operation.go"] += bindings
+	files["internal/controljournal/v2/model.go"] += events
+	files["internal/controljournal/v2/codec.go"] += witness
+	files["internal/controljournal/v2/projection.go"] += summary
+	files["internal/controljournal/v2/recovery.go"] += recovery
+	temporary := t.TempDir()
+	replacements := make(map[string]string, len(files))
+	for relative, contents := range files {
+		patched := filepath.Join(temporary, filepath.Base(relative))
+		if err := os.WriteFile(patched, []byte(contents), 0o600); err != nil {
+			return "", err
+		}
+		replacements[filepath.Join(root, filepath.FromSlash(relative))] = patched
+	}
+	overlayBytes, err := json.Marshal(struct {
+		Replace map[string]string `json:"Replace"`
+	}{replacements})
+	if err != nil {
+		return "", err
+	}
+	overlay := filepath.Join(temporary, "overlay.json")
+	if err := os.WriteFile(overlay, overlayBytes, 0o600); err != nil {
+		return "", err
+	}
+	return overlay, nil
+}
+
+func m2RenameProductionFunction(source, name string) (string, error) {
+	declaration := "func " + name + "("
+	if strings.Count(source, declaration) != 1 {
+		return "", fmt.Errorf("production function %s declaration count=%d", name, strings.Count(source, declaration))
+	}
+	return strings.Replace(source, declaration, "func m2Underlying"+name+"(", 1), nil
+}
+
+func m2ReverseTopLevelObject(encoded []byte) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil || len(fields) < 2 {
+		return nil, fmt.Errorf("top-level object: %w", err)
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	slices.Reverse(keys)
+	var result bytes.Buffer
+	result.WriteByte('{')
+	for index, key := range keys {
+		if index > 0 {
+			result.WriteByte(',')
+		}
+		keyBytes, _ := json.Marshal(key)
+		result.Write(keyBytes)
+		result.WriteByte(':')
+		result.Write(fields[key])
+	}
+	result.WriteByte('}')
+	return result.Bytes(), nil
 }
 
 func m2CanonicalRecursive(encoded []byte) ([]byte, error) {
