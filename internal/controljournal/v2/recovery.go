@@ -255,16 +255,13 @@ func NewRecoveryPageV2(observedRevision uint64, asOf string, records []RecoveryR
 
 // canonicalUTCInstant admits exactly the UTC representation produced by
 // RFC3339Nano. The package's pure-foundation import boundary excludes clock
-// packages, so canonicalUTCSecond supplies calendar validation and the suffix
-// checks encode RFC3339Nano's unique non-zero fractional representation.
+// packages, so the grammar below independently validates the calendar and
+// RFC3339Nano's unique non-zero fractional representation, including year zero.
 func canonicalUTCInstant(value string) bool {
-	if canonicalUTCSecond(value) {
-		return true
+	if len(value) == 20 {
+		return value[19] == 'Z' && canonicalUTCRecoverySecond(value[:19])
 	}
-	if len(value) < 22 || len(value) > 30 || value[19] != '.' || value[len(value)-1] != 'Z' {
-		return false
-	}
-	if !canonicalUTCSecond(value[:19] + "Z") {
+	if len(value) < 22 || len(value) > 30 || value[19] != '.' || value[len(value)-1] != 'Z' || !canonicalUTCRecoverySecond(value[:19]) {
 		return false
 	}
 	fraction := value[20 : len(value)-1]
@@ -276,6 +273,30 @@ func canonicalUTCInstant(value string) bool {
 	// RFC3339Nano removes trailing zeroes. A final non-zero digit therefore
 	// proves both a non-zero fraction and the absence of an alternate spelling.
 	return fraction[len(fraction)-1] != '0'
+}
+
+func canonicalUTCRecoverySecond(value string) bool {
+	if len(value) != 19 || value[4] != '-' || value[7] != '-' || value[10] != 'T' || value[13] != ':' || value[16] != ':' {
+		return false
+	}
+	for _, index := range [...]int{0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18} {
+		if value[index] < '0' || value[index] > '9' {
+			return false
+		}
+	}
+	digit := func(index int) int { return int(value[index] - '0') }
+	number := func(a, b int) int { return digit(a)*10 + digit(b) }
+	year := digit(0)*1000 + digit(1)*100 + digit(2)*10 + digit(3)
+	month, day := number(5, 6), number(8, 9)
+	hour, minute, second := number(11, 12), number(14, 15), number(17, 18)
+	if month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59 {
+		return false
+	}
+	days := [...]int{0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	if month == 2 && (year%400 == 0 || year%4 == 0 && year%100 != 0) {
+		days[2] = 29
+	}
+	return day >= 1 && day <= days[month]
 }
 
 func cloneRecoveryRecord(record RecoveryRecordV2) RecoveryRecordV2 {

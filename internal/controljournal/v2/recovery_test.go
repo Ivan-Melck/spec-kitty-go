@@ -168,6 +168,8 @@ func TestRecoveryInstantsAdmitCanonicalUTCPrecisionAndPreserveSpelling(t *testin
 	}
 
 	for _, instant := range []string{
+		"0000-01-01T00:00:00Z",
+		"0000-02-29T23:59:59.1Z",
 		"2026-09-03T14:05:06Z",
 		"2026-09-03T14:05:06.1Z",
 		"2026-09-03T14:05:06.123456Z",
