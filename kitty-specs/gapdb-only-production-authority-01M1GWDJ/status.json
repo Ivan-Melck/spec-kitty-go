@@ -19,7 +19,7 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-repair",
-      "agent": "renata-gapdb-review",
+      "agent": "ivan-gapdb-repair",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-repair",
@@ -54,7 +54,8 @@
         "Reopened for ratified post-approval defect 5: guard the acknowledgement-derived covered-through PublicationID and foundation-owned strict OperationSummaryV2 codecs before WP04 resumes.",
         "Transfer reopened defect-5 repair to the designated implementation actor; no authority or guard bypass.",
         "Ready for independent defect-5 review at 219126e8: exact 10-helper/12-symbol foundation census; covered-through accessor/revision-order/seal proof; no local summary wire; obsolete creating-ID rejected; all 166 mutants and focused/repeated/race/full/static/module/format/ownership gates pass.",
-        "Independent review rejected defect-5 guard commit 219126e8: green suite false-greens no-op zero validation, decorative seal reference, codec-only partial activation, non-revision sorting, and []DefinedByte signatures. See review-feedback-14.md."
+        "Independent review rejected defect-5 guard commit 219126e8: green suite false-greens no-op zero validation, decorative seal reference, codec-only partial activation, non-revision sorting, and []DefinedByte signatures. See review-feedback-14.md.",
+        "Review cycle 14 repair ownership returns from the completed independent reviewer to the implementation actor; force resolves only the stale reviewer assignment and bypasses no guard."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
