@@ -167,3 +167,61 @@ func decodeStrict(encoded []byte, maximum int, target any) error {
 	}
 	return nil
 }
+
+type publicationWitnessWireV2 struct {
+	SchemaVersion   uint32 `json:"schema_version"`
+	PublicationID   string `json:"publication_id"`
+	OperationID     string `json:"operation_id"`
+	LogicalVersion  uint64 `json:"operation_logical_version"`
+	PlanSHA256      string `json:"plan_sha256"`
+	RecordSetSHA256 string `json:"authority_record_set_sha256"`
+	RecordCount     uint32 `json:"authority_record_count"`
+	WitnessSHA256   string `json:"witness_sha256"`
+}
+
+// ValidatePublicationWitnessV2 validates both semantic coordinates and the
+// self-digest. It accepts no provider revision or persistence key.
+func ValidatePublicationWitnessV2(witness PublicationWitnessV2) error {
+	want, err := publicationWitnessDigest(witness)
+	if err != nil || witness.witnessDigest.IsZero() || witness.witnessDigest != want {
+		return invalid(ErrorJournalCorrupt, "publication_witness")
+	}
+	return nil
+}
+
+func EncodePublicationWitnessV2(witness PublicationWitnessV2) ([]byte, error) {
+	if err := ValidatePublicationWitnessV2(witness); err != nil {
+		return nil, err
+	}
+	return marshalCanonical(publicationWitnessWire(witness), MaxCanonicalPayloadBytes)
+}
+
+func publicationWitnessWire(witness PublicationWitnessV2) publicationWitnessWireV2 {
+	return publicationWitnessWireV2{witness.schemaVersion, string(witness.publicationID), string(witness.operationID),
+		uint64(witness.logicalVersion), witness.planDigest.String(), witness.recordSetDigest.String(), witness.recordCount,
+		witness.witnessDigest.String()}
+}
+
+func DecodePublicationWitnessV2(encoded []byte) (PublicationWitnessV2, error) {
+	var wire publicationWitnessWireV2
+	if err := decodeStrict(encoded, MaxCanonicalPayloadBytes, &wire); err != nil {
+		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	}
+	planDigest, planErr := ParseDigest("plan_sha256", wire.PlanSHA256)
+	recordSetDigest, recordSetErr := ParseDigest("authority_record_set_sha256", wire.RecordSetSHA256)
+	witnessDigest, witnessErr := ParseDigest("witness_sha256", wire.WitnessSHA256)
+	if planErr != nil || recordSetErr != nil || witnessErr != nil {
+		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	}
+	witness := PublicationWitnessV2{schemaVersion: wire.SchemaVersion, publicationID: PublicationID(wire.PublicationID),
+		operationID: OperationID(wire.OperationID), logicalVersion: LogicalVersion(wire.LogicalVersion),
+		planDigest: planDigest, recordSetDigest: recordSetDigest, recordCount: wire.RecordCount, witnessDigest: witnessDigest}
+	if err := ValidatePublicationWitnessV2(witness); err != nil {
+		return PublicationWitnessV2{}, err
+	}
+	canonical, err := EncodePublicationWitnessV2(witness)
+	if err != nil || !bytes.Equal(canonical, encoded) {
+		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	}
+	return witness, nil
+}

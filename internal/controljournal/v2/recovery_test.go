@@ -19,6 +19,7 @@ func TestRecoverySemanticAddressesAndScanTargets(t *testing.T) {
 		func() (RecordAddressV2, error) { return NewOperationHeadAddressV2("operation-01") },
 		func() (RecordAddressV2, error) { return NewCheckpointRecordAddressV2("checkpoint-01") },
 		func() (RecordAddressV2, error) { return NewCheckpointSlotAddressV2("slot-01") },
+		func() (RecordAddressV2, error) { return testPublicationID("witness").WitnessAddressV2() },
 	}
 	for _, construct := range constructors {
 		address, constructErr := construct()
@@ -36,6 +37,14 @@ func TestRecoverySemanticAddressesAndScanTargets(t *testing.T) {
 	}
 	if (RecordAddressV2{}).validate() == nil || (ScanTargetV2{}).validate() == nil {
 		t.Fatal("zero semantic target admitted")
+	}
+	if _, err := PublicationID("not-a-digest").WitnessAddressV2(); err == nil {
+		t.Fatal("malformed publication witness address admitted")
+	}
+	witnessID := testPublicationID("witness-address")
+	witnessAddress, err := witnessID.WitnessAddressV2()
+	if err != nil || witnessAddress.Kind() != AddressPublicationWitness || witnessAddress.PublicationID() != witnessID {
+		t.Fatalf("publication witness semantic address lost identity: %+v %v", witnessAddress, err)
 	}
 }
 

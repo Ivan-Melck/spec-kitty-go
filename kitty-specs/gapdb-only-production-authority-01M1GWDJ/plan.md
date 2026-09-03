@@ -160,8 +160,13 @@ same-identity reconciliation and advances projection state only afterward.
 Its bounded revision-keyed acknowledgement ledger supports at least 10,000
 publications between seals. At a quiescent checkpoint barrier it orders
 acknowledgements by provider revision and folds the prior prefix with revision,
-PublicationID, plan digest, and sealed record-set digest. Unresolved ambiguity
-blocks the seal without serializing unrelated durable commits.
+PublicationID, plan digest, and sealed record-set digest. Every atomic
+publication persists those otherwise process-local proof coordinates in one
+immutable, absent-conditioned publication witness. The plan digest binds the
+witness contract version; the witness is constructed afterward so no identity
+is recursive. One foundation-owned pure helper performs the fold for both the
+live tracker and restore. Unresolved ambiguity blocks the seal without
+serializing unrelated durable commits.
 
 ### Capability-owned authority
 
@@ -218,6 +223,11 @@ the scope-first journal layout. The former
 `spk/v2/scopes/<scope>/heads/...` spelling is rejected, not read as a
 compatibility alias. Host-global operation binding/head records form a second
 bounded census under `spk/v2/operations/`.
+Each publication also has one exact-read immutable witness at
+`spk/v2/publications/<publication-id>/witness` carrying its operation
+coordinate, plan digest, and non-witness record-set digest/count. It shares the
+publication's provider revision and consumes one of the 256 allowed atomic
+mutations.
 
 Restore command admission remains closed while it:
 
@@ -229,10 +239,15 @@ Restore command admission remains closed while it:
 5. reads them with bounded concurrency and byte/count limits;
 6. requires every record revision to be positive and no greater than `R`, and
    reconstructs historical OperationState from operation events;
-7. sorts the union by `(Record.Revision, EventIndex, EventID)`;
-8. reduces without external or persistence capabilities;
-9. matches every terminal head and whole-product digest; and
-10. rechecks the same DatabaseID and exactly `R` before admitting a fresh
+7. exact-reads and validates one witness for every distinct suffix
+   PublicationID, requiring the same operation coordinate and provider
+   revision;
+8. advances the checkpoint prefix with the shared pure helper and validates
+   operation suffixes from their checkpoint boundaries;
+9. sorts the union by `(Record.Revision, EventIndex, EventID)`;
+10. reduces without external or persistence capabilities;
+11. matches every terminal head and whole-product digest; and
+12. rechecks the same DatabaseID and exactly `R` before admitting a fresh
     epoch.
 
 The frozen GapDB API has no as-of `Get` and does not accept a requested
@@ -265,8 +280,15 @@ immutable records/pages, typed recovery errors, and canonical aggregate
 comparators. Event, head, binding, and OperationState values expose every
 semantic field required for validation through defensive accessors. GapDB keys
 and public client values remain adapter-private translations. Checkpoints store
-a compact operation summary of counts and fixed-size leaf digests rather than
-copying every terminal result.
+a compact operation summary of counts and fixed-size boundaries rather than
+copying every variable-length OperationID or terminal result. Each boundary
+contains an OperationID lookup digest, checkpoint logical version, and leaf
+digest; the leaf commits to the full prior operation state. Restore joins the
+boundary to an exact ID from the operation-head scan, reads the boundary event,
+and verifies the leaf before using the suffix. The final structured checkpoint
+encoder must prove 10,000 maximum-version boundaries and outer summary
+overhead fit `MaxOperationSummaryBytesV2 = 2,112,000` bytes, leaving 2,082,304
+bytes for aggregate entries and remaining checkpoint metadata.
 
 ### Refusal parity and external effects
 

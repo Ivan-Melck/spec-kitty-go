@@ -1,6 +1,7 @@
 package v2
 
 import (
+	"bytes"
 	"context"
 	"sync"
 )
@@ -80,9 +81,31 @@ func validateSealedPlanIdentity(plan SealedCommitPlanV2) error {
 		len(plan.records) == 0 || len(plan.canonical) == 0 {
 		return invalid(ErrorInvalidDigest, "sealed_plan")
 	}
+	witnesses := 0
+	for _, record := range plan.records {
+		if record.role != RecordPublicationWitness {
+			continue
+		}
+		witnesses++
+		decoded, err := DecodePublicationWitnessV2(record.canonical)
+		if err != nil || decoded != plan.witness || record.target != (SealedRecordTargetV2{publicationID: plan.publicationID}) ||
+			record.valueClass != RecordValueOrdinary || record.condition.kind != ConditionAbsent || record.condition.observedRevision != 0 {
+			return invalid(ErrorInvalidDigest, "publication_witness")
+		}
+	}
+	if witnesses != 1 || plan.witness.publicationID != plan.publicationID || plan.witness.operationID != plan.operationState.operationID ||
+		plan.witness.logicalVersion != plan.operationState.logicalVersion || plan.witness.planDigest != plan.digest ||
+		plan.witness.recordSetDigest != plan.recordSetDigest || int(plan.witness.recordCount)+1 != len(plan.records) ||
+		ValidatePublicationWitnessV2(plan.witness) != nil {
+		return invalid(ErrorInvalidDigest, "publication_witness")
+	}
 	recordDigest, err := sealedRecordSetDigest(plan.records)
 	if err != nil || recordDigest != plan.recordSetDigest {
 		return invalid(ErrorInvalidDigest, "sealed_record_set")
+	}
+	canonical, err := plan.finalBytes()
+	if err != nil || !bytes.Equal(canonical, plan.canonical) {
+		return invalid(ErrorInvalidDigest, "sealed_plan")
 	}
 	return nil
 }

@@ -418,8 +418,9 @@ func TestSealedRecordProjectionIsPersistenceCompleteAndImmutable(t *testing.T) {
 	wantRoles := map[SealedRecordRole]int{
 		RecordOperationBinding: 1, RecordJournalEvent: 2, RecordOperationHead: 1, RecordAggregateHead: 1,
 		RecordEffectIntent: 1, RecordEligibilityGuard: 1, RecordCheckpointRecord: 1, RecordCheckpointSlot: 1,
+		RecordPublicationWitness: 1,
 	}
-	if len(records) != 9 || fmt.Sprint(roles) != fmt.Sprint(wantRoles) {
+	if len(records) != 10 || fmt.Sprint(roles) != fmt.Sprint(wantRoles) {
 		t.Fatalf("projected membership=%v roles=%v", len(records), roles)
 	}
 
@@ -465,8 +466,153 @@ func TestSealedRecordProjectionIsPersistenceCompleteAndImmutable(t *testing.T) {
 	firstValue[0] = 'x'
 	records[0] = SealedRecordV2{}
 	again := sealed.Records()
-	if len(again) != 9 || again[0].CanonicalValue()[0] == 'x' {
+	if len(again) != 10 || again[0].CanonicalValue()[0] == 'x' {
 		t.Fatal("sealed record projection aliases returned buffers")
+	}
+}
+
+func TestPublicationWitnessRoundTripAndSealedProjectionSemantics(t *testing.T) {
+	input := fixturePlanInput(t)
+	preimage, err := planPreimage(input.OperationBinding, input.PriorOperationState, input.OperationState, input.Events, input.Heads,
+		input.EffectIntents, input.EligibilityGuards, input.Checkpoints, input.Conditions)
+	if err != nil || !bytes.Contains(preimage, []byte(`"publication_witness_schema_version":1`)) || bytes.Contains(preimage, []byte(`"witness_sha256"`)) {
+		t.Fatalf("plan preimage does not bind only the witness contract version: %s %v", preimage, err)
+	}
+	plan, err := SealCommitPlanV2(input, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	witness := plan.PublicationWitness()
+	encoded, err := EncodePublicationWitnessV2(witness)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodePublicationWitnessV2(encoded)
+	if err != nil || decoded != witness {
+		t.Fatalf("witness round trip failed: %+v %v", decoded, err)
+	}
+	if witness.SchemaVersion() != 1 || witness.PublicationID() != plan.PublicationID() ||
+		witness.OperationID() != plan.OperationState().OperationID() || witness.OperationLogicalVersion() != plan.OperationState().LogicalVersion() ||
+		witness.PlanDigest() != plan.Digest() || witness.AuthorityRecordSetDigest() != plan.RecordSetDigest() ||
+		int(witness.AuthorityRecordCount())+1 != plan.MutationCount() || witness.WitnessDigest().IsZero() {
+		t.Fatalf("witness lost publication proof coordinates: %+v", witness)
+	}
+	if !bytes.Contains(plan.CanonicalBytes(), []byte(`"publication_witness":{"schema_version":1`)) {
+		t.Fatal("sealed plan does not carry the structured schema-bound witness")
+	}
+	if _, err := DecodePublicationWitnessV2(append(append([]byte(nil), encoded...), ' ')); err == nil {
+		t.Fatal("non-canonical witness encoding accepted")
+	}
+
+	records := plan.Records()
+	witnessRecords := 0
+	for _, record := range records {
+		if record.Role() != RecordPublicationWitness {
+			continue
+		}
+		witnessRecords++
+		condition := record.Condition()
+		if record.Target().PublicationID() != plan.PublicationID() || record.ValueClass() != RecordValueOrdinary ||
+			condition.Kind() != ConditionAbsent || condition.ObservedRevision() != 0 || !bytes.Equal(record.CanonicalValue(), encoded) {
+			t.Fatalf("witness persistence projection is mutable or misaddressed: %+v", record)
+		}
+	}
+	if witnessRecords != 1 {
+		t.Fatalf("witness projection count=%d", witnessRecords)
+	}
+	nonWitnessDigest, err := sealedRecordSetDigest(records)
+	if err != nil || nonWitnessDigest != plan.RecordSetDigest() {
+		t.Fatalf("reported record set is not the finalized non-witness set: %s %v", nonWitnessDigest, err)
+	}
+	mutatedWitnessValue := append([]byte(nil), encoded...)
+	mutatedWitnessValue[len(mutatedWitnessValue)-2] ^= 1
+	for index := range records {
+		if records[index].role == RecordPublicationWitness {
+			records[index].canonical = mutatedWitnessValue
+		}
+	}
+	mutatedSetDigest, err := sealedRecordSetDigest(records)
+	if err != nil || mutatedSetDigest != plan.RecordSetDigest() {
+		t.Fatalf("witness entered its reported record-set digest: %s %v", mutatedSetDigest, err)
+	}
+
+	base := publicationWitnessWire(witness)
+	mutants := map[string]func(*publicationWitnessWireV2){
+		"schema":      func(v *publicationWitnessWireV2) { v.SchemaVersion++ },
+		"publication": func(v *publicationWitnessWireV2) { v.PublicationID = string(testPublicationID("other")) },
+		"operation":   func(v *publicationWitnessWireV2) { v.OperationID = "operation-other" },
+		"version":     func(v *publicationWitnessWireV2) { v.LogicalVersion++ },
+		"plan":        func(v *publicationWitnessWireV2) { v.PlanSHA256 = digest("other", nil).String() },
+		"record_set":  func(v *publicationWitnessWireV2) { v.RecordSetSHA256 = digest("other", nil).String() },
+		"count":       func(v *publicationWitnessWireV2) { v.RecordCount-- },
+		"self_digest": func(v *publicationWitnessWireV2) { v.WitnessSHA256 = digest("other", nil).String() },
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			mutate(&candidate)
+			canonical, marshalErr := marshalCanonical(candidate, MaxCanonicalPayloadBytes)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if _, decodeErr := DecodePublicationWitnessV2(canonical); decodeErr == nil {
+				t.Fatal("corrupted witness field was accepted")
+			}
+		})
+	}
+}
+
+func TestPublicationWitnessPlanMutantsFailClosed(t *testing.T) {
+	plan, err := SealCommitPlanV2(fixturePlanInput(t), DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	witnessIndex := -1
+	for index := range plan.records {
+		if plan.records[index].role == RecordPublicationWitness {
+			witnessIndex = index
+		}
+	}
+	if witnessIndex < 0 {
+		t.Fatal("fixture has no witness")
+	}
+
+	mutants := map[string]func(*SealedCommitPlanV2){
+		"omitted": func(v *SealedCommitPlanV2) {
+			v.records = append(v.records[:witnessIndex:witnessIndex], v.records[witnessIndex+1:]...)
+		},
+		"duplicated": func(v *SealedCommitPlanV2) {
+			v.records = append(v.records, v.records[witnessIndex])
+		},
+		"mutable_condition": func(v *SealedCommitPlanV2) {
+			v.records[witnessIndex].condition = SealedRecordConditionV2{kind: ConditionRecordRevision, observedRevision: 1}
+		},
+		"wrong_target": func(v *SealedCommitPlanV2) {
+			v.records[witnessIndex].target.publicationID = testPublicationID("other")
+		},
+		"wrong_value_class": func(v *SealedCommitPlanV2) {
+			v.records[witnessIndex].valueClass = RecordValueCheckpoint
+		},
+		"foreign_record_set": func(v *SealedCommitPlanV2) {
+			v.witness.recordSetDigest = digest("foreign-record-set", nil)
+			v.witness.witnessDigest, _ = publicationWitnessDigest(v.witness)
+			v.records[witnessIndex].canonical, _ = EncodePublicationWitnessV2(v.witness)
+		},
+		"substituted_operation": func(v *SealedCommitPlanV2) {
+			v.witness.operationID = "operation-other"
+			v.witness.witnessDigest, _ = publicationWitnessDigest(v.witness)
+			v.records[witnessIndex].canonical, _ = EncodePublicationWitnessV2(v.witness)
+		},
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			candidate := plan
+			candidate.records = append([]SealedRecordV2(nil), plan.records...)
+			mutate(&candidate)
+			if err := validateSealedPlanIdentity(candidate); err == nil {
+				t.Fatal("witness plan mutant was accepted")
+			}
+		})
 	}
 }
 
@@ -967,7 +1113,7 @@ func TestCollectionBudgetBoundaries(t *testing.T) {
 	}
 
 	maximumMetadata := fixturePlanInput(t)
-	fixedProjectedRecords := 1 + len(maximumMetadata.Events) + len(maximumMetadata.Heads) + len(maximumMetadata.EffectIntents) + 2*MaxCheckpointsPerPlan
+	fixedProjectedRecords := 1 + len(maximumMetadata.Events) + len(maximumMetadata.Heads) + len(maximumMetadata.EffectIntents) + 2*MaxCheckpointsPerPlan + 1 // witness
 	maximumMetadata.EligibilityGuards = make([]EligibilityGuardTransition, MaxMembers-fixedProjectedRecords)
 	for index := range maximumMetadata.EligibilityGuards {
 		id := fmt.Sprintf("guard-%03d", index)
@@ -985,6 +1131,10 @@ func TestCollectionBudgetBoundaries(t *testing.T) {
 	}
 	if len(sealedMetadata.Records()) != MaxMembers {
 		t.Fatalf("sealed projection exact budget=%d", len(sealedMetadata.Records()))
+	}
+	if sealedMetadata.PublicationWitness().AuthorityRecordCount() != MaxMembers-1 || sealedMetadata.MutationCount() != MaxMembers {
+		t.Fatalf("255 non-witness plus one witness accounting drifted: reported=%d mutations=%d",
+			sealedMetadata.PublicationWitness().AuthorityRecordCount(), sealedMetadata.MutationCount())
 	}
 	overProjection := maximumMetadata
 	overProjection.EligibilityGuards = append([]EligibilityGuardTransition(nil), maximumMetadata.EligibilityGuards...)
