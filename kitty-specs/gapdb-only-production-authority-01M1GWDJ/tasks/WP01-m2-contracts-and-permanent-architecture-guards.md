@@ -150,6 +150,28 @@ remain foundation-owned. Add execution-bound full-ID leakage, missing match,
 duplicate/collision, and deleted state-aware-validation mutants without
 removing any of the 139 already sealed cases.
 
+## Post-approval correction: acyclic checkpoint identity and summary codecs
+
+Read `post-approval-defect-5.md` before editing. WP01 is reopened once more
+because the prior checkpoint field required the checkpoint to contain the
+PublicationID derived from bytes that include that checkpoint, and because
+WP04 had no foundation-owned canonical `OperationSummaryV2` codec.
+
+Replace the guarded checkpoint concept `created_publication_id` with the
+acknowledgement-derived `covered_through_publication_id`. Require
+`SealedProjectionPrefixV2` to expose and seal the terminal PublicationID chosen
+by greatest provider revision, never response completion order. Extend the
+exact public helper census from eight to ten with only
+`EncodeOperationSummaryV2` and `DecodeOperationSummaryV2`; both remain
+foundation-owned, strict, canonical, and bounded. Continue to reject an
+adapter-, checkpoint-, playback-, or restore-owned operation-summary/boundary
+wire model.
+
+Add execution-bound mutants for a missing/substituted/zero covered-through
+identity, completion-order selection, omitted seal participation, the obsolete
+field spelling, either deleted/substituted codec, and a WP04-local summary wire
+type. Preserve all previously sealed mutants and independent controls.
+
 ## T001 — Executable contract and schema validation
 
 ### Purpose
