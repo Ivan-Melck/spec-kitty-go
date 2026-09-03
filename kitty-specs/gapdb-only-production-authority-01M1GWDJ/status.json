@@ -1,7 +1,7 @@
 {
-  "event_count": 209,
-  "last_event_id": "01M1MHYSXX000GAKRPBSNQZ66F",
-  "materialized_at": "2026-09-03T21:14:20.989159+00:00",
+  "event_count": 217,
+  "last_event_id": "01M1MP4B3XJJ3SX2D24RPP88FH",
+  "materialized_at": "2026-09-03T22:27:16.733041+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,21 +12,21 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
-    "in_review": 1,
+    "in_progress": 1,
+    "in_review": 0,
     "planned": 12
   },
   "work_packages": {
     "WP01": {
-      "actor": "renata-gapdb-review",
-      "agent": "renata-gapdb-review",
+      "actor": "ivan-gapdb-codec-guard",
+      "agent": "ivan-gapdb-codec-guard",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "ivan-gapdb-repair",
-      "force_count": 19,
-      "lane": "in_review",
-      "last_event_id": "01M1MHYSXX000GAKRPBSNQZ66F",
-      "last_transition_at": "2026-09-03T21:14:20.989159+00:00",
+      "assignee": "ivan-gapdb-codec-guard",
+      "force_count": 20,
+      "lane": "in_progress",
+      "last_event_id": "01M1MP4B3XJJ3SX2D24RPP88FH",
+      "last_transition_at": "2026-09-03T22:27:16.733041+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
@@ -59,19 +59,20 @@
         "Cycle-14 repair ready at 8fbe4eee: real zero refusal and returned-digest taint; any first addendum symbol activates full contract; exact provider-revision sort-before-select; exact []byte identity; 175 mutants preserve all prior 166; full required ladder passes.",
         "Independent re-review rejected 8fbe4eee: provider revision is inferred circularly from the fold call and seal taint does not follow a same-package helper that discards its input. See review-cycle-15.",
         "Review cycle 15 repair ownership returns from the completed reviewer to the implementer; force resolves stale reviewer assignment only and bypasses no contract guard.",
-        "Cycle-15 repair ready at 48c410ad: typed acknowledgement-source provider-revision anchor drives exact sort and prefix fold; bounded cycle-safe interprocedural seal dependence; coupled completion-order and discard-helper mutants; 177 census preserves all 175; full ladder passes."
+        "Cycle-15 repair ready at 48c410ad: typed acknowledgement-source provider-revision anchor drives exact sort and prefix fold; bounded cycle-safe interprocedural seal dependence; coupled completion-order and discard-helper mutants; 177 census preserves all 175; full ladder passes.",
+        "Independent cycle-16 APPROVE: typed provider-revision source anchor and bounded interprocedural seal dataflow close both coupled substitutions; exact 177 census preserves prior 175; focused/race/full architecture/compile/vet/staticcheck/module/format/ownership and all anti-pattern checks pass.",
+        "Reopen for ratified post-approval defect 6: add permanent execution-bound durable-codec consumer-path census before foundation repair. Force transfers stale approved reviewer ownership only; no contract or acceptance guard is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-15.md",
-        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-15.md",
+        "reference": "48c410ad5365d7d723e6e3e3b8244ea48263a8fb",
         "reviewer": "renata-gapdb-review",
-        "verdict": "changes_requested"
+        "verdict": "approved"
       },
-      "role": "reviewer",
-      "shell_pid": 1693486,
-      "shell_pid_created_at": "1788470057.59",
+      "role": "implementer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
         "T001": "done",
         "T002": "done",
@@ -81,15 +82,15 @@
       }
     },
     "WP02": {
-      "actor": "codex-wp02-witness-canonical-independent-reviewer",
-      "agent": "codex-wp02-witness-canonical-independent-reviewer",
+      "actor": "user",
+      "agent": "renata-gapdb-foundation-review",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "codex-wp02-witness-canonical-codec",
-      "force_count": 14,
+      "assignee": "ivan-gapdb-foundation",
+      "force_count": 15,
       "lane": "approved",
-      "last_event_id": "01M1M8NT91H75V7R8WPXEZ9J61",
-      "last_transition_at": "2026-09-03T18:32:09.249782+00:00",
+      "last_event_id": "01M1MM6A6W68YGM3X43SF9M99G",
+      "last_transition_at": "2026-09-03T21:53:24.188376+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -115,16 +116,19 @@
         "Independent defect-4 review APPROVE at d70d3a07 (tree 3db5a2df): canonical self-digested witness, exact 255+1/256+1 preflight law, witness-inclusive durable observation, PublicationID-only recovery address, compact attributable state-authenticated boundaries, structured 10,000-operation summary budget, and shared live/restore prefix and reducer digest helpers verified. Package x20, race x5, focused x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, provider-neutrality, and all eight anti-pattern checks pass.",
         "Post-approval consumer-path defect: foundation NewRecoveryRecordV2 canonicalizes JSON object keys, while DecodePublicationWitnessV2 requires a different struct-field-order encoding byte-for-byte. Exact WP03 ReadV2 therefore returns an undecodable witness. Reopen for the smallest witness-specific canonical encoder repair plus Encode -> RecoveryRecord -> Decode regression. Force transfers the approved reviewer assignment to the designated implementer only; no code, review, or acceptance guard is bypassed.",
         "Ready for independent consumer-path review: 026e3a7e makes PublicationWitnessV2 encode through the same CanonicalObject ordering used by RecoveryRecordV2, adds direct Encode -> WitnessAddress -> RecoveryRecord -> Decode preservation proof, and retains strict alternate-order/trailing/corrupt rejection. Focused x20, package, race x5, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
-        "Independent consumer-path review APPROVE at 026e3a7e: canonical witness encoding now survives WitnessAddressV2/NewRecoveryRecordV2 and strict DecodePublicationWitnessV2 with exact semantics/self-digest. Alternate ordering, trailing/second JSON, unknown/duplicate fields, and eight canonical corrupt-field mutants refuse. Focused x20, package x3, race x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, prior d70 witness/255+1 behavior, and all eight anti-pattern checks pass."
+        "Independent consumer-path review APPROVE at 026e3a7e: canonical witness encoding now survives WitnessAddressV2/NewRecoveryRecordV2 and strict DecodePublicationWitnessV2 with exact semantics/self-digest. Alternate ordering, trailing/second JSON, unknown/duplicate fields, and eight canonical corrupt-field mutants refuse. Focused x20, package x3, race x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, prior d70 witness/255+1 behavior, and all eight anti-pattern checks pass.",
+        "Reopened for ratified defect 5: add the sealed revision-sorted covered-through PublicationID and sole strict OperationSummaryV2 codec required by WP04. Force transfers the stale approved reviewer assignment only; no guard is bypassed.",
+        "Ready for independent review: revision-sorted covered-through publication identity is sealed into the projection prefix; strict public operation-summary codecs reject noncanonical, corrupt, aliased, and over-budget evidence; focused, count-20, race, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
+        "Independent review passed: exact defect-5 commit preserves all WP02 laws; focused and full count-20, race count-5, architecture 177-mutant guard, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "reference": "026e3a7e3174ae254788826d60b65c568406ed29",
-        "reviewer": "codex-wp02-witness-canonical-independent-reviewer",
+        "reference": "db6639c415d43da27d267293e980c80e1083dd8e",
+        "reviewer": "renata-gapdb-foundation-review",
         "verdict": "approved"
       },
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
@@ -185,27 +189,29 @@
       }
     },
     "WP04": {
-      "actor": "codex-wp04-recovery",
-      "agent": "codex-wp04-recovery",
+      "actor": "ivan-gapdb-checkpoint",
+      "agent": "ivan-gapdb-checkpoint",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "codex-wp04-recovery",
-      "force_count": 0,
+      "assignee": "ivan-gapdb-checkpoint",
+      "force_count": 1,
       "lane": "blocked",
-      "last_event_id": "01M1M9QXZD3P7RXW7A151JDMJX",
-      "last_transition_at": "2026-09-03T18:50:47.149959+00:00",
+      "last_event_id": "01M1MP3RR8KTGPG43QBD38XRC5",
+      "last_transition_at": "2026-09-03T22:26:57.928178+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Workspace allocation blocker resolved: approved WP02 and WP03 lane histories are now merged cleanly into lane-d; resuming the original implementation action.",
         "Dependency contract blocker: WP04 cannot legally express revision-pinned restore or sealed acknowledged checkpoints until WP02/WP03 expose the provider-neutral capabilities recorded in dependency-contract-blocker-1.md. No WP04 files changed.",
         "Dependency contracts WP01/WP02/WP03 are corrected and independently reapproved. Resume WP04 bounded checkpoint/suffix-restore/playback implementation against foundation recovery and projection seals plus public GapDB adapter.",
         "Resume WP04 after defect-4 dependency chain is independently reapproved: WP01 compact boundary contract 1ac0a9bb, WP02 witness/boundary foundation d70d3a07 plus canonical recovery repair 026e3a7e, and WP03 witness adapter 4c22f999. Lane-d contains the accepted dependency history. Implement bounded checkpoint/suffix restore/playback only within seven WP04 files.",
-        "Dependency-contract blocker confirmed before source edits: CheckpointV2.created_publication_id cannot name its checkpoint-writing publication because finalized checkpoint bytes are in the plan preimage before PublicationID derivation. Ratified correction: rename to covered_through_publication_id, derived from and sealed by the terminal revision-sorted PublicationID in SealedProjectionPrefixV2; persist checkpoint at later revision C>R and replay its writer as suffix. WP02 must also own strict OperationSummaryV2 codecs so WP04 does not duplicate its wire/digest rules. Reopen WP01 guard then WP02 foundation; WP03 requires no change. Lane-d remains clean."
+        "Dependency-contract blocker confirmed before source edits: CheckpointV2.created_publication_id cannot name its checkpoint-writing publication because finalized checkpoint bytes are in the plan preimage before PublicationID derivation. Ratified correction: rename to covered_through_publication_id, derived from and sealed by the terminal revision-sorted PublicationID in SealedProjectionPrefixV2; persist checkpoint at later revision C>R and replay its writer as suffix. WP02 must also own strict OperationSummaryV2 codecs so WP04 does not duplicate its wire/digest rules. Reopen WP01 guard then WP02 foundation; WP03 requires no change. Lane-d remains clean.",
+        "Resume after independently approved dependency repair: WP01 seals the defect-5 architecture laws, WP02 now supplies covered-through publication identity and strict operation-summary codecs, and approved WP03 already supplies the GapDB adapter. Force only transfers stale blocked ownership; no acceptance or guard is bypassed.",
+        "Dependency defect 6: foundation durable binding, event, aggregate-head, and nested operation-summary bytes are recursively reordered by RecoveryRecordV2 then rejected by strict decoders. WP04 draft preserved without workaround; resume after WP01 guard and WP02 canonical consumer path are independently reapproved."
       ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
-      "shell_pid": 537810,
-      "shell_pid_created_at": "1788461441.96"
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47"
     },
     "WP05": {
       "actor": "finalize-tasks",
