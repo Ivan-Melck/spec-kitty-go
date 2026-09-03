@@ -92,7 +92,8 @@
         "Independent review rejected 5beb9a09: operation projection diverges from the durable operation head, and the sealed projection lacks terminal EventID/tombstone plus compact operation checkpoint semantics.",
         "Cycle-9 blockers repaired at 773284b2: reducer receives validated event semantics and operation projection equals durable head byte-for-byte; sealed checkpoint projection carries terminal EventID/tombstone while operation entries remain compact and result-free. Full repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
         "Independent cycle-10 APPROVE: operation projection equals sealed durable head including PublicationID; sealed checkpoint entries supply terminal EventID/tombstone and exclude operation result bytes; focused x20, independent probe x10, full journal x20, race x5, WP01 121-mutant architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
-        "Post-approval defect 3: foundation recovery instants only admit whole seconds, but frozen GapDB preserves RFC3339Nano AsOf/ExpiresAt. Reopen for bounded canonical exact-instant repair before WP03 resumes."
+        "Post-approval defect 3: foundation recovery instants only admit whole seconds, but frozen GapDB preserves RFC3339Nano AsOf/ExpiresAt. Reopen for bounded canonical exact-instant repair before WP03 resumes.",
+        "Cycle-11 bounded repair at 5413eb4c preserves canonical UTC RFC3339Nano recovery instants exactly while rejecting noncanonical aliases; focused x20, package, race, architecture, compile, vet, staticcheck, formatting, and diff gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
