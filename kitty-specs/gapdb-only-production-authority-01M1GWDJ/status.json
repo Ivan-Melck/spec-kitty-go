@@ -1,7 +1,7 @@
 {
-  "event_count": 217,
-  "last_event_id": "01M1MP4B3XJJ3SX2D24RPP88FH",
-  "materialized_at": "2026-09-03T22:27:16.733041+00:00",
+  "event_count": 219,
+  "last_event_id": "01M1MQK3GC728WV768SCC73DPD",
+  "materialized_at": "2026-09-03T22:52:49.036460+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,21 +12,21 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 1,
-    "in_review": 0,
+    "in_progress": 0,
+    "in_review": 1,
     "planned": 12
   },
   "work_packages": {
     "WP01": {
-      "actor": "ivan-gapdb-codec-guard",
-      "agent": "ivan-gapdb-codec-guard",
+      "actor": "renata-gapdb-codec-guard-review",
+      "agent": "renata-gapdb-codec-guard-review",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-codec-guard",
       "force_count": 20,
-      "lane": "in_progress",
-      "last_event_id": "01M1MP4B3XJJ3SX2D24RPP88FH",
-      "last_transition_at": "2026-09-03T22:27:16.733041+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1MQK3GC728WV768SCC73DPD",
+      "last_transition_at": "2026-09-03T22:52:49.036460+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
@@ -61,7 +61,8 @@
         "Review cycle 15 repair ownership returns from the completed reviewer to the implementer; force resolves stale reviewer assignment only and bypasses no contract guard.",
         "Cycle-15 repair ready at 48c410ad: typed acknowledgement-source provider-revision anchor drives exact sort and prefix fold; bounded cycle-safe interprocedural seal dependence; coupled completion-order and discard-helper mutants; 177 census preserves all 175; full ladder passes.",
         "Independent cycle-16 APPROVE: typed provider-revision source anchor and bounded interprocedural seal dataflow close both coupled substitutions; exact 177 census preserves prior 175; focused/race/full architecture/compile/vet/staticcheck/module/format/ownership and all anti-pattern checks pass.",
-        "Reopen for ratified post-approval defect 6: add permanent execution-bound durable-codec consumer-path census before foundation repair. Force transfers stale approved reviewer ownership only; no contract or acceptance guard is bypassed."
+        "Reopen for ratified post-approval defect 6: add permanent execution-bound durable-codec consumer-path census before foundation repair. Force transfers stale approved reviewer ownership only; no contract or acceptance guard is bypassed.",
+        "Ready for independent defect-6 review at aaf6abf1: activation-safe six-codec consumer-path guard, 184-mutant sealed census preserving all prior 177 IDs, and full repeated/race/architecture/static/ownership gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -70,7 +71,7 @@
         "reviewer": "renata-gapdb-review",
         "verdict": "approved"
       },
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
