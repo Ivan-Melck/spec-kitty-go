@@ -1,18 +1,18 @@
 {
-  "event_count": 169,
-  "last_event_id": "01M1M1C1D8QRSGNRKXA5FAAGKB",
-  "materialized_at": "2026-09-03T16:24:28.840736+00:00",
+  "event_count": 170,
+  "last_event_id": "01M1M1D7P49QN5AJE0N5MK3D0F",
+  "materialized_at": "2026-09-03T16:25:08.036415+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
     "approved": 2,
-    "blocked": 3,
+    "blocked": 2,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
     "planned": 12
   },
@@ -72,14 +72,14 @@
       }
     },
     "WP02": {
-      "actor": "codex-foundation-recovery",
+      "actor": "codex-wp02-witness-foundation",
       "agent": "wp02-year-zero-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 10,
-      "lane": "blocked",
-      "last_event_id": "01M1KZQ16KA9MD1276D3C6EFRX",
-      "last_transition_at": "2026-09-03T15:55:31.923302+00:00",
+      "force_count": 11,
+      "lane": "in_progress",
+      "last_event_id": "01M1M1D7P49QN5AJE0N5MK3D0F",
+      "last_transition_at": "2026-09-03T16:25:08.036415+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -107,9 +107,9 @@
         "reviewer": "wp02-year-zero-reviewer",
         "verdict": "approved"
       },
-      "role": "reviewer",
-      "shell_pid": 3450757,
-      "shell_pid_created_at": "1788444137.28",
+      "role": "implementer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
         "T006": "done",
         "T007": "done",
