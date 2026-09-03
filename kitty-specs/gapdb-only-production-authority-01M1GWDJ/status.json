@@ -99,7 +99,8 @@
         "Cycle-12 repair at c997e226 admits canonical year-zero whole/fractional recovery instants, completing exact frozen GapDB RFC3339Nano language equivalence while preserving all rejection laws; full gates pass.",
         "Independent cycle-13 APPROVE: exact prior year-zero failures pass; 20,000-instant oracle across years 0000-9999 found no mismatch with frozen GapDB RFC3339Nano canonical language; focused x50, regression x100, race x10, architecture, compile, vet, staticcheck, formatting, ownership, and diff gates pass.",
         "Resumed after approved WP01 compact-boundary contract resolved the checkpoint-size blocker.",
-        "Ownership recovery after approved post-approval defect-4: replace stale wp02-year-zero-reviewer claim with designated implementer. Current task artifact and WP01 compact-boundary guard supersede the stale action capsule; no code or acceptance guard is bypassed."
+        "Ownership recovery after approved post-approval defect-4: replace stale wp02-year-zero-reviewer claim with designated implementer. Current task artifact and WP01 compact-boundary guard supersede the stale action capsule; no code or acceptance guard is bypassed.",
+        "Ready for independent defect-4 review: d70d3a07 adds canonical self-digested publication witnesses, sealed witness-inclusive plans, exact PublicationID recovery, compact state-authenticated checkpoint boundaries, bounded 10,000-operation summaries, and shared live/restore prefix laws. Focused repeated, full package repeated, race, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -109,8 +110,8 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": 364671,
+      "shell_pid_created_at": "1788457916.16",
       "subtasks": {
         "T006": "done",
         "T007": "done",
