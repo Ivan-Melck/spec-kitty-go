@@ -491,6 +491,18 @@ func TestPublicationWitnessRoundTripAndSealedProjectionSemantics(t *testing.T) {
 	if err != nil || decoded != witness {
 		t.Fatalf("witness round trip failed: %+v %v", decoded, err)
 	}
+	address, err := witness.PublicationID().WitnessAddressV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryRecord, err := NewRecoveryRecordV2(address, encoded, 17, "")
+	if err != nil {
+		t.Fatalf("canonical witness did not cross the public recovery record boundary: %v", err)
+	}
+	recovered, err := DecodePublicationWitnessV2(recoveryRecord.CanonicalValue())
+	if err != nil || recovered != witness || recovered.WitnessDigest() != witness.WitnessDigest() {
+		t.Fatalf("recovery record changed witness semantics or digest: %+v %v", recovered, err)
+	}
 	if witness.SchemaVersion() != 1 || witness.PublicationID() != plan.PublicationID() ||
 		witness.OperationID() != plan.OperationState().OperationID() || witness.OperationLogicalVersion() != plan.OperationState().LogicalVersion() ||
 		witness.PlanDigest() != plan.Digest() || witness.AuthorityRecordSetDigest() != plan.RecordSetDigest() ||
@@ -502,6 +514,13 @@ func TestPublicationWitnessRoundTripAndSealedProjectionSemantics(t *testing.T) {
 	}
 	if _, err := DecodePublicationWitnessV2(append(append([]byte(nil), encoded...), ' ')); err == nil {
 		t.Fatal("non-canonical witness encoding accepted")
+	}
+	declarationOrder, err := marshalCanonical(publicationWitnessWire(witness), MaxCanonicalPayloadBytes)
+	if err != nil || bytes.Equal(declarationOrder, encoded) {
+		t.Fatalf("test did not construct an alternate valid JSON field order: %v", err)
+	}
+	if _, err := DecodePublicationWitnessV2(declarationOrder); err == nil {
+		t.Fatal("alternate witness field order accepted as canonical")
 	}
 
 	records := plan.Records()
@@ -552,6 +571,10 @@ func TestPublicationWitnessRoundTripAndSealedProjectionSemantics(t *testing.T) {
 			candidate := base
 			mutate(&candidate)
 			canonical, marshalErr := marshalCanonical(candidate, MaxCanonicalPayloadBytes)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			canonical, marshalErr = CanonicalObject(canonical)
 			if marshalErr != nil {
 				t.Fatal(marshalErr)
 			}
