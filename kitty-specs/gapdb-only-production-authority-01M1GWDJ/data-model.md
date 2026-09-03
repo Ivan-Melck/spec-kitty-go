@@ -370,11 +370,28 @@ restore use one foundation-owned pure prefix-advance helper. Unresolved
 ambiguity blocks sealing.
 
 The operation summary contains bounded counts/status counts and sorted
-fixed-size `OperationBoundaryV2` values. Each boundary exposes OperationID,
-logical version, last PublicationID, status/result digest, event/effect
-membership digests, and its leaf digest. Counts and the summary digest are
-derived from the canonical OperationID-sorted boundary census. Terminal result
-bytes are not copied into the checkpoint.
+fixed-size `OperationBoundaryV2` values:
+
+```text
+OperationBoundaryV2 {
+  operation_id_sha256
+  logical_version
+  leaf_sha256
+}
+```
+
+The leaf binds exact OperationID, logical version, last PublicationID,
+status/result digest, and event/effect membership digests. Boundaries sort by
+the identity digest and reject duplicate/colliding coordinates. The operation
+head scan supplies exact IDs during recovery; a pure boundary match plus an
+exact read of the boundary event reconstructs and validates the full state.
+Totals and the summary digest are derived from the boundary census. Status
+counts come from source OperationStates and are state-aware validated against
+exact boundary-event states during restore. Variable-length OperationIDs and
+terminal result bytes are not copied into the checkpoint. The final structured
+checkpoint encoder proves 10,000 maximum-version boundaries and outer summary
+overhead fit `MaxOperationSummaryBytesV2 = 2,112,000` bytes, leaving 2,082,304
+bytes of the 4 MiB limit for aggregate entries and remaining metadata.
 
 ## Capability aggregates
 

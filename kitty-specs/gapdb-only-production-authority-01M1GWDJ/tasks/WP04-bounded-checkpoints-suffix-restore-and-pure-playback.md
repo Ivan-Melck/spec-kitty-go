@@ -204,10 +204,14 @@ latest checkpoint.
     census, tombstones, defensive copies, forged seals, ring wraparound, corrupt
     newest fallback, contradictory same-watermark candidates, and origin mode.
 11. Keep `operation_summary` compact: bounded counts/status counts and sorted
-    fixed-size `OperationBoundaryV2` values that bind identity, version,
-    PublicationID, result digest, and membership digests. Preserve the
+    fixed-size `OperationBoundaryV2` values containing OperationID lookup
+    digest, logical version, and a leaf that binds exact identity,
+    PublicationID, status/result, and membership digests. Preserve the
     checkpoint logical-version boundary needed for suffix addressing, but do
-    not copy every terminal result into the checkpoint.
+    not copy variable-length OperationIDs or terminal results into the
+    checkpoint. Require the final structured checkpoint encoder to fit 10,000
+    maximum-version boundaries and complete summary overhead within
+    `MaxOperationSummaryBytesV2 = 2,112,000` bytes.
 
 ### Validation
 
@@ -250,9 +254,14 @@ or suffix records from different revisions.
 7. Reject duplicate heads, malformed keys, key/value coordinate mismatch,
    zero/regressed versions, expired records, missing checkpoint aggregates,
    and physical deletion relative to the checkpoint census.
-8. Compare operation heads with `OperationBoundaryV2`: existing operations
-   fetch `(boundaryVersion,currentVersion]`, new operations fetch from one,
-   and missing/regressed operations close recovery.
+8. Compare operation heads with `OperationBoundaryV2`: match each exact
+   scanned OperationID through the boundary's pure lookup-digest method,
+   exact-read/reconstruct the state at its boundary version, and verify the
+   leaf. Existing operations fetch `(boundaryVersion,currentVersion]`; new
+   operations fetch from one. Missing, extra, duplicate, colliding, unmatched,
+   or regressed operations close recovery.
+   Recompute status counts and leaf commitments from the exact reconstructed
+   boundary states; structural summary arithmetic alone is insufficient.
 9. Compare the head census to the checkpoint aggregate versions to derive an
    exact immutable suffix plan. New aggregates start from version one;
    unchanged aggregates require no event read; regressed/absent aggregates

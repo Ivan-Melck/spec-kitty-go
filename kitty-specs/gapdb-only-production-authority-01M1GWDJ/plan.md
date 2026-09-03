@@ -280,10 +280,15 @@ immutable records/pages, typed recovery errors, and canonical aggregate
 comparators. Event, head, binding, and OperationState values expose every
 semantic field required for validation through defensive accessors. GapDB keys
 and public client values remain adapter-private translations. Checkpoints store
-a compact operation summary of counts and fixed-size, OperationID-sorted
-boundaries rather than copying every terminal result. A boundary exposes the
-checkpoint logical version and digests needed to validate the immediately
-following operation suffix without revealing result bytes.
+a compact operation summary of counts and fixed-size boundaries rather than
+copying every variable-length OperationID or terminal result. Each boundary
+contains an OperationID lookup digest, checkpoint logical version, and leaf
+digest; the leaf commits to the full prior operation state. Restore joins the
+boundary to an exact ID from the operation-head scan, reads the boundary event,
+and verifies the leaf before using the suffix. The final structured checkpoint
+encoder must prove 10,000 maximum-version boundaries and outer summary
+overhead fit `MaxOperationSummaryBytesV2 = 2,112,000` bytes, leaving 2,082,304
+bytes for aggregate entries and remaining checkpoint metadata.
 
 ### Refusal parity and external effects
 

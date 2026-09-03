@@ -140,6 +140,16 @@ census. Include a mutant proving that a kernel package importing or returning
 an adapter witness fails. Preserve all prior 121 mutants and their independent
 digest/census controls.
 
+The compact-boundary addendum closes a checkpoint-size contradiction. When the
+foundation activates, require `OperationBoundaryV2` to expose only its
+fixed-size OperationID lookup digest, logical version, leaf digest, and a pure
+exact-ID match method. Reject a variable-length/full OperationID, terminal
+result, PublicationID, status, or membership field in the boundary's exported
+type graph. Require structural and state-aware operation-summary validation to
+remain foundation-owned. Add execution-bound full-ID leakage, missing match,
+duplicate/collision, and deleted state-aware-validation mutants without
+removing any of the 139 already sealed cases.
+
 ## T001 — Executable contract and schema validation
 
 ### Purpose
