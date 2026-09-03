@@ -1,13 +1,13 @@
 {
-  "event_count": 164,
-  "last_event_id": "01M1KZQ16KA9MD1276D3C6EFRX",
-  "materialized_at": "2026-09-03T15:55:31.923302+00:00",
+  "event_count": 165,
+  "last_event_id": "01M1KZQ8N7EGZWKKJSRNKTWHHT",
+  "materialized_at": "2026-09-03T15:55:39.559709+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 3,
-    "blocked": 2,
+    "approved": 2,
+    "blocked": 3,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
@@ -118,14 +118,14 @@
       }
     },
     "WP03": {
-      "actor": "user",
+      "actor": "codex-foundation-recovery",
       "agent": "wp03-reconciliation-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 4,
-      "lane": "approved",
-      "last_event_id": "01M1KYNCTT4W2R8CTYAG15KXAQ",
-      "last_transition_at": "2026-09-03T15:37:09.722663+00:00",
+      "force_count": 5,
+      "lane": "blocked",
+      "last_event_id": "01M1KZQ8N7EGZWKKJSRNKTWHHT",
+      "last_transition_at": "2026-09-03T15:55:39.559709+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
