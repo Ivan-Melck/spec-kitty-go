@@ -1,18 +1,18 @@
 {
-  "event_count": 185,
-  "last_event_id": "01M1M72AD66BH09TX5ZKMRZBC6",
-  "materialized_at": "2026-09-03T18:04:01.830748+00:00",
+  "event_count": 188,
+  "last_event_id": "01M1M7XXCCPTE844427GA8WQTB",
+  "materialized_at": "2026-09-03T18:19:05.996522+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 3,
+    "approved": 2,
     "blocked": 2,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
     "planned": 12
   },
@@ -70,15 +70,15 @@
       }
     },
     "WP02": {
-      "actor": "codex-wp02-witness-independent-reviewer",
-      "agent": "codex-wp02-witness-independent-reviewer",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "codex-wp02-witness-foundation",
-      "force_count": 13,
-      "lane": "approved",
-      "last_event_id": "01M1M72AD66BH09TX5ZKMRZBC6",
-      "last_transition_at": "2026-09-03T18:04:01.830748+00:00",
+      "actor": "codex-wp02-witness-canonical-codec",
+      "agent": "codex-wp02-witness-canonical-codec",
+      "agent_profile": "implementer-ivan",
+      "agent_profile_version": "1.0",
+      "assignee": "codex-wp02-witness-canonical-codec",
+      "force_count": 14,
+      "lane": "in_progress",
+      "last_event_id": "01M1M7XXCCPTE844427GA8WQTB",
+      "last_transition_at": "2026-09-03T18:19:05.996522+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -101,7 +101,8 @@
         "Resumed after approved WP01 compact-boundary contract resolved the checkpoint-size blocker.",
         "Ownership recovery after approved post-approval defect-4: replace stale wp02-year-zero-reviewer claim with designated implementer. Current task artifact and WP01 compact-boundary guard supersede the stale action capsule; no code or acceptance guard is bypassed.",
         "Ready for independent defect-4 review: d70d3a07 adds canonical self-digested publication witnesses, sealed witness-inclusive plans, exact PublicationID recovery, compact state-authenticated checkpoint boundaries, bounded 10,000-operation summaries, and shared live/restore prefix laws. Focused repeated, full package repeated, race, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
-        "Independent defect-4 review APPROVE at d70d3a07 (tree 3db5a2df): canonical self-digested witness, exact 255+1/256+1 preflight law, witness-inclusive durable observation, PublicationID-only recovery address, compact attributable state-authenticated boundaries, structured 10,000-operation summary budget, and shared live/restore prefix and reducer digest helpers verified. Package x20, race x5, focused x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, provider-neutrality, and all eight anti-pattern checks pass."
+        "Independent defect-4 review APPROVE at d70d3a07 (tree 3db5a2df): canonical self-digested witness, exact 255+1/256+1 preflight law, witness-inclusive durable observation, PublicationID-only recovery address, compact attributable state-authenticated boundaries, structured 10,000-operation summary budget, and shared live/restore prefix and reducer digest helpers verified. Package x20, race x5, focused x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, provider-neutrality, and all eight anti-pattern checks pass.",
+        "Post-approval consumer-path defect: foundation NewRecoveryRecordV2 canonicalizes JSON object keys, while DecodePublicationWitnessV2 requires a different struct-field-order encoding byte-for-byte. Exact WP03 ReadV2 therefore returns an undecodable witness. Reopen for the smallest witness-specific canonical encoder repair plus Encode -> RecoveryRecord -> Decode regression. Force transfers the approved reviewer assignment to the designated implementer only; no code, review, or acceptance guard is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -123,14 +124,15 @@
       }
     },
     "WP03": {
-      "actor": "codex-foundation-recovery",
-      "agent": "wp03-reconciliation-reviewer",
+      "actor": "codex-wp03-witness-gapdb",
+      "agent": "codex-wp03-witness-gapdb",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 5,
+      "assignee": "codex-wp03-witness-gapdb",
+      "force_count": 6,
       "lane": "blocked",
-      "last_event_id": "01M1KZQ8N7EGZWKKJSRNKTWHHT",
-      "last_transition_at": "2026-09-03T15:55:39.559709+00:00",
+      "last_event_id": "01M1M7KPRNSV7EBZ2FVY27EMHH",
+      "last_transition_at": "2026-09-03T18:13:31.541880+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
@@ -144,7 +146,9 @@
         "WP03 corrected at ff8cee74: foundation-owned recovery/observation contracts, canonical global heads, stable capture/scan/read/final proof with exact RFC3339Nano preservation, no as-of fiction, one durable AtomicBatch, and exact reconciliation; repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
         "Cycle-5 independent review: ambiguity reconciler is not production-reachable, and ScanV2 accepts a non-advancing continuation cursor. Reopen for bounded public reconciliation/error taxonomy and cursor-progress repair.",
         "Cycle-5 repaired at 47aea2fe: production-reachable provider-neutral ReconcileCommitV2 yields exact foundation observations or closed retry/corruption outcomes, and non-advancing continuation cursors refuse as stale; full focused/race/architecture/compile/vet/staticcheck/format gates pass.",
-        "Independent cycle-6 APPROVE: external-package ambiguous Commit→public ReconcileCommitV2→PublicationCoordinator resolution completed with exact observation and one write; non-advancing cursor refuses stale; focused/race/architecture/121-mutant/compile/vet/staticcheck/module/ownership gates pass."
+        "Independent cycle-6 APPROVE: external-package ambiguous Commit→public ReconcileCommitV2→PublicationCoordinator resolution completed with exact observation and one write; non-advancing cursor refuses stale; focused/race/architecture/121-mutant/compile/vet/staticcheck/module/ownership gates pass.",
+        "Explicit defect-4 ownership recovery: replace stale cycle-6 reviewer assignment wp03-reconciliation-reviewer with designated implementer after WP02 d70d3a07 independent approval. Lane-c contains the approved witness foundation. Scope is limited to canonical witness key/translation and witness-required revision-coincident reconciliation; this force changes ownership only and bypasses no code, review, or acceptance guard.",
+        "Dependency blocker: publication witness bytes are re-canonicalized by foundation NewRecoveryRecordV2 into alphabetical object-key order, but DecodePublicationWitnessV2 requires the encoder's struct-field order. Exact adapter ReadV2 therefore returns a foundation record that the only approved witness decoder rejects. Reproduced by TestV2ReaderUsesFoundationPublicationWitnessAddressAndRejectsExpiry. Preserve the separable uncommitted WP03 witness translation until a bounded witness-specific WP02 codec repair is independently approved."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -153,9 +157,9 @@
         "reviewer": "wp03-reconciliation-reviewer",
         "verdict": "approved"
       },
-      "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "role": "implementer",
+      "shell_pid": 424083,
+      "shell_pid_created_at": "1788459206.96",
       "subtasks": {
         "T012": "done",
         "T013": "done",
