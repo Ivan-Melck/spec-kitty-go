@@ -114,6 +114,42 @@ types in the adapter and could not produce the acknowledgement-derived seal
 required by checkpoints. Read `post-approval-defect-2.md` before editing. The
 following correction is normative and belongs inside this WP.
 
+This package is reopened again by `post-approval-defect-4.md`. The prior
+projection seal retains its plan and record-set proof only in live memory, and
+its operation summary exposes anonymous leaves rather than addressable
+checkpoint boundaries. Preserve all earlier approved behavior while applying
+the bounded correction below.
+
+### Durable publication witness and shared proof helpers
+
+Define canonical encode/decode/validation for `PublicationWitnessV2` and make
+every sealed plan append exactly one immutable, non-expiring,
+absent-conditioned witness record. The plan preimage binds witness schema
+version 1 but excludes witness bytes. Derive PublicationID, finalize all
+non-witness authority records, compute their record-set digest/count, then
+construct the self-digested witness. Never include the witness in the digest
+or count it reports.
+
+The sealed plan's complete provider record projection and CommitObservation
+count include the witness. Reserve one of the frozen 256 mutations: 255
+non-witness records plus one witness pass; 256 plus one refuse during sealing
+before a durable-port call. Expose a semantic recovery address for exact
+witness reads by PublicationID; no raw key enters the foundation.
+
+Own public pure `ProjectionPrefixGenesisV2` and
+`AdvanceProjectionPrefixV2` helpers and use them inside the live tracker.
+Prefix advancement binds prior digest, positive provider revision,
+PublicationID, plan digest, and non-witness authority-record-set digest. Also
+own a public canonical reducer-state digest helper so checkpoint/restore does
+not duplicate the hash domain.
+
+Replace anonymous operation leaves with immutable, defensively copied,
+OperationID-sorted `OperationBoundaryV2` values containing operation ID,
+logical version, last PublicationID, status, result digest, event/effect
+membership digests, and leaf digest. Expose construction and validation from
+bounded OperationState input; derive totals and status counts from boundaries
+and continue to exclude terminal result bytes.
+
 ### Recovery vocabulary (`recovery.go`, `recovery_test.go`)
 
 Define closed provider-neutral `StoreRevisionV2`, `RecordAddressV2`,
@@ -166,12 +202,12 @@ between seals.
 
 At a quiescent barrier, sort acknowledgements by provider revision and fold
 the prior prefix with provider revision, PublicationID, plan digest, and sealed
-record-set digest. Reject duplicate/conflicting revisions, regressions,
+record-set digest through the shared pure helper. Reject duplicate/conflicting revisions, regressions,
 unresolved in-flight attempts, and ledger overflow. Snapshotting may copy the
 complete current projection but may not replay origin history. Operation
-summary uses bounded counts/status counts and sorted fixed-size leaf digests
-binding operation identity/version/publication/result and membership digests;
-it does not embed every terminal result.
+summary uses bounded counts/status counts and sorted fixed-size attributable
+boundaries binding operation identity/version/publication/result and
+membership digests; it does not embed every terminal result.
 
 Sealed projection/prefix values use private fields and internal digest
 validation. “Unforgeable” means zero values and ordinary cross-package field
@@ -372,10 +408,11 @@ unit that WP03 can translate into exactly one conditional GapDB batch.
 12. Expose a closed immutable record projection derived only during sealing.
     It must cover binding, events, the canonical OperationState head, canonical
     capability heads, full effect-intent values, full eligibility-shard values,
-    checkpoint records, and checkpoint-slot transitions. Projected members
-    carry typed semantic targets, canonical bytes, value class, and explicit
-    absent-or-positive-revision conditions; they expose no raw-key constructor,
-    delete, expiry, condition-any, or post-seal mutation path.
+    checkpoint records, checkpoint-slot transitions, and exactly one immutable
+    publication witness. Projected members carry typed semantic targets,
+    canonical bytes, value class, and explicit absent-or-positive-revision
+    conditions; they expose no raw-key constructor, delete, expiry,
+    condition-any, or post-seal mutation path.
 13. Extend head-transition input with committed runtime epoch and bounded
     canonical authority summary, then derive final head bytes only after
     PublicationID exists. Operation coordinates project canonical
@@ -391,7 +428,15 @@ unit that WP03 can translate into exactly one conditional GapDB batch.
     conditions. Bind every target and canonical byte into the plan preimage;
     reject missing, extra, duplicate, aliased, substituted, zero-revision, and
     post-seal-mutated members before adapter access.
-16. Expose the plan and sealed record-set digests needed to validate a durable
+16. Bind witness schema version 1 into the plan preimage. After PublicationID
+    and all non-witness records exist, hash that record set and construct a
+    self-digested witness carrying the publication/operation coordinates, plan
+    digest, and non-witness digest/count. Append it with `RequireAbsent`; never
+    include it in the digest/count it reports.
+17. Reserve one provider mutation for the witness. Exactly 255 non-witness
+    records plus the witness fit the 256-member ceiling; 256 plus the witness
+    refuse before the durable port.
+18. Expose the plan and sealed record-set digests needed to validate a durable
     CommitObservation without parsing canonical bytes. Only an
     AcknowledgedPublication produced from the exact plan may enter the
     projection tracker.
@@ -413,6 +458,9 @@ unit that WP03 can translate into exactly one conditional GapDB batch.
 - Omission/substitution mutants for effect value, eligibility mission/shard/
   value/revision, head epoch/summary/value, checkpoint record/slot/value/
   revision, and projected role all fail closed.
+- Witness omission, duplication, field substitution, mutable/expiring
+  condition, self-inclusion in its record-set digest, wrong provider count,
+  and exact 255/256 non-witness budget boundaries fail or pass as specified.
 
 **Exit evidence**:
 
@@ -524,6 +572,10 @@ the seven non-test WP02-owned files.
     for or refuses unresolved registered calls without serializing delivery.
 11. Seal at least 10,000 acknowledged publications within the ledger budget
     and reject the first over-budget observation before unbounded allocation.
+12. Round-trip and corrupt every publication-witness field; prove one shared
+    prefix helper yields byte-identical live and restored folds.
+13. Build, reorder, duplicate, omit, and regress OperationBoundary values;
+    prove the canonical summary is attributable and defensively copied.
 
 **Mandatory replay-before-epoch validation**:
 
@@ -563,6 +615,11 @@ resolution must fail deterministically.
 - Acknowledgement accepts a wrong plan, record set, publication, mutation
   count, zero revision, or non-durable observation.
 - Rolling prefix follows response completion rather than provider revision.
+- Live and restore paths implement different prefix hash logic.
+- Publication witness is missing, duplicated, mutable, expiring, substituted,
+  self-recursive, omitted from observation count, or not revision-coincident.
+- Operation summary contains anonymous, reordered, duplicate, missing, or
+  regressed boundaries.
 - Checkpoint seal ignores an unresolved registered publication.
 - Operation event payload differs from the declared OperationState transition.
 - Semantic refusal creates a naked reservation before its result.

@@ -123,6 +123,14 @@ Per `post-approval-defect-2.md`, this WP remains blocked until corrected WP01,
 WP02, and WP03 are independently reapproved in that order. Do not implement
 against an intermediate dependency state.
 
+`post-approval-defect-4.md` supersedes the prior resume decision. WP04 found
+that plan/record-set prefix evidence was process-local and that anonymous
+operation-summary leaves could not address operation suffixes. It remains
+blocked until WP01, WP02, and WP03 are again independently reapproved. Then
+consume the mandatory immutable publication witness, attributable operation
+boundaries, shared prefix helper, and canonical reducer-state digest helper;
+do not invent equivalents in these packages.
+
 This is an attempt-bound stable-revision protocol, not an as-of-Get contract.
 The frozen GapDB API cannot accept `R` on `Get` or on the initial prefix page.
 WP04 must use the foundation recovery values repaired in WP02 and the WP03
@@ -196,9 +204,10 @@ latest checkpoint.
     census, tombstones, defensive copies, forged seals, ring wraparound, corrupt
     newest fallback, contradictory same-watermark candidates, and origin mode.
 11. Keep `operation_summary` compact: bounded counts/status counts and sorted
-    fixed-size operation leaf digests that bind identity, version,
-    PublicationID, result digest, and membership digests. Do not copy every
-    terminal result into the checkpoint.
+    fixed-size `OperationBoundaryV2` values that bind identity, version,
+    PublicationID, result digest, and membership digests. Preserve the
+    checkpoint logical-version boundary needed for suffix addressing, but do
+    not copy every terminal result into the checkpoint.
 
 ### Validation
 
@@ -241,17 +250,20 @@ or suffix records from different revisions.
 7. Reject duplicate heads, malformed keys, key/value coordinate mismatch,
    zero/regressed versions, expired records, missing checkpoint aggregates,
    and physical deletion relative to the checkpoint census.
-8. Compare the head census to the checkpoint aggregate versions to derive an
+8. Compare operation heads with `OperationBoundaryV2`: existing operations
+   fetch `(boundaryVersion,currentVersion]`, new operations fetch from one,
+   and missing/regressed operations close recovery.
+9. Compare the head census to the checkpoint aggregate versions to derive an
    exact immutable suffix plan. New aggregates start from version one;
    unchanged aggregates require no event read; regressed/absent aggregates
    close recovery.
-9. Test store movement before the first page, between pages, after the final
+10. Test store movement before the first page, between pages, after the final
    page, during suffix fetch, and at final seal. Assert every case restarts the
    whole attempt and no data from the abandoned attempt reaches playback.
-10. Do not claim provider as-of Get or an explicit first-page requested
-    revision. The proof is the equal capture/final store coordinate plus the
-    first-page, cursor, and record-revision checks. Include a same-`R`, different
-    DatabaseID replacement case.
+11. Do not claim provider as-of Get or an explicit first-page requested
+   revision. The proof is the equal capture/final store coordinate plus the
+   first-page, cursor, and record-revision checks. Include a same-`R`, different
+   DatabaseID replacement case.
 
 ### Validation
 
@@ -291,7 +303,10 @@ I/O, concurrency, and startup duration bounded.
    same algorithm and explicit full-reconstruction budgets.
 8. Sort materialized results after concurrent fetch. Worker completion order
    must have no semantic effect.
-9. Test one aggregate with a long suffix, many unrelated aggregates, empty
+9. Collect distinct suffix PublicationIDs and exact-read one foundation
+   `PublicationWitnessV2` address for each. Apply the same concurrency and byte
+   bounds; a witness is not discovered through a new prefix scan.
+10. Test one aggregate with a long suffix, many unrelated aggregates, empty
    suffix, new aggregate, cancellation, slow reader, budget boundaries,
    overflow inputs, missing version, and deterministic equality across worker
    counts.
@@ -328,27 +343,33 @@ partial multi-aggregate operation.
    common positive provider record revision, exact cumulative event/effect
    delta from the preceding OperationState, and the expected terminal operation
    version/result.
-4. Reject partial groups even when the absent member's aggregate was unchanged
+4. Validate exactly one immutable publication witness per group. Its
+   PublicationID, OperationID/logical version, plan digest, non-witness
+   record-set digest/count, and self-digest must validate, and its provider
+   revision must equal every event revision in the publication. Advance the
+   rolling prefix only through WP02's shared pure helper.
+5. Reject partial groups even when the absent member's aggregate was unchanged
    relative to the checkpoint. Membership is publication evidence, not an
    inference from current heads.
-5. Reject a suffix event whose operation is absent, mismatched, ambiguous,
+6. Reject a suffix event whose operation is absent, mismatched, ambiguous,
    differently bound, or records another publication digest.
-6. Order the complete union by `(Record.Revision, EventIndex, EventID)` with a
+7. Order the complete union by `(Record.Revision, EventIndex, EventID)` with a
    total deterministic comparator. Reject invalid ties rather than depending
    on Go map or worker order.
-7. Reduce from the checkpoint projection (or empty origin) and verify every
+8. Reduce from the checkpoint projection (or empty origin) and verify every
    terminal aggregate logical version, EventID, state digest, tombstone, and
    whole-product canonical projection digest against current heads/seal data.
-8. Verify the recomputed rolling prefix digest and operation summary through
+9. Verify the recomputed rolling prefix digest and operation summary through
    `R`. A matching projection digest does not excuse mismatched journal or
    operation membership.
-9. Return typed bounded diagnostics containing immutable coordinates but no
+10. Return typed bounded diagnostics containing immutable coordinates but no
    unbounded state/event payloads.
-10. Test split publications, repeated/missing indices, mixed revisions,
+11. Test split publications, repeated/missing indices, mixed revisions,
    duplicate aggregates, operation collisions, ordering ties, stale terminal
    heads, forged matching state digests, operation-only publications,
    multi-stage operations crossing a checkpoint, deleted operation head with a
-   surviving binding, and valid cross-aggregate batches.
+   surviving binding, missing/substituted/wrong-revision witnesses, divergent
+   prefix folds, and valid cross-aggregate batches.
 
 ### Validation
 
