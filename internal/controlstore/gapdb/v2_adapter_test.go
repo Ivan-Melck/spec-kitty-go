@@ -38,6 +38,8 @@ func TestV2KeyEveryFamilyRoundTripsCanonically(t *testing.T) {
 	appendKey(v2RuntimeEpochKey("epoch-1"))
 	appendKey(v2OperationBindingKey("operation-1"))
 	appendKey(v2OperationHeadKey("operation-1"))
+	publicationID := journalv2.PublicationID(v2TestDigest("publication-1").String())
+	appendKey(v2PublicationWitnessKey(publicationID))
 	appendKey(v2EffectIntentKey("effect-1"))
 	appendKey(v2CheckpointSlotKey("slot-1"))
 	appendKey(v2CheckpointRecordKey("checkpoint-1"))
@@ -61,6 +63,10 @@ func TestV2KeyEveryFamilyRoundTripsCanonically(t *testing.T) {
 		if err != nil || decoded.String() != key.String() || decoded.Kind() != key.Kind() {
 			t.Fatalf("key=%q decoded=%+v err=%v", key.String(), decoded, err)
 		}
+	}
+	witnessKey, _ := v2PublicationWitnessKey(publicationID)
+	if witnessKey.PublicationID() != publicationID || !strings.HasPrefix(witnessKey.String(), "spk/v2/publications/") || !strings.HasSuffix(witnessKey.String(), "/witness") {
+		t.Fatalf("publication witness key lost its exact semantic identity: %+v", witnessKey)
 	}
 }
 
@@ -166,6 +172,21 @@ func TestV2KeyRejectsAliasesAndMalformedVersions(t *testing.T) {
 	} {
 		if _, err := parseV2Key(mutant); !IsKind(err, OutcomeInvalid) {
 			t.Fatalf("alias accepted %q err=%v", mutant, err)
+		}
+	}
+	publicationID := journalv2.PublicationID(v2TestDigest("publication-key-mutants").String())
+	witness, err := v2PublicationWitnessKey(publicationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutant := range []string{
+		"spk/v2/publications/" + string(publicationID) + "/witness",
+		"spk/v2/publications/k626164/witness",
+		witness.String() + "/",
+		strings.TrimSuffix(witness.String(), "/witness") + "/Witness",
+	} {
+		if _, err := parseV2Key(mutant); !IsKind(err, OutcomeInvalid) {
+			t.Fatalf("publication witness alias accepted %q err=%v", mutant, err)
 		}
 	}
 	coordinate, _ := journalv2.NewAggregateCoordinate("mission", "mission-1", journalv2.Scope{Kind: journalv2.ScopeHost})
@@ -308,6 +329,60 @@ func TestV2ReaderPreservesMetadataAndCopiesBuffers(t *testing.T) {
 	value[0] = 'y'
 	if string(record.CanonicalValue()) != `{"status":"accepted"}` {
 		t.Fatal("provider or caller buffer mutation escaped reader copies")
+	}
+}
+
+func TestV2ReaderUsesFoundationPublicationWitnessAddressAndRejectsExpiry(t *testing.T) {
+	plan := v2TestPlan(t)
+	key, err := v2PublicationWitnessKey(plan.PublicationID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, err := plan.PublicationID().WitnessAddressV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 27, 27)
+	request, _ := journalv2.NewReadRequestV2(address, attempt)
+	witness, err := journalv2.EncodePublicationWitnessV2(plan.PublicationWitness())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &fakeProvider{getFn: func(_ context.Context, got string) (gapdbapi.Record, error) {
+		if got != key.String() {
+			t.Fatalf("witness read used a non-canonical key: %q", got)
+		}
+		return gapdbapi.NewRecord(got, witness, 27, nil), nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	record, err := adapter.ReadV2(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, decodeErr := journalv2.DecodePublicationWitnessV2(record.CanonicalValue())
+	if record.Address().Kind() != journalv2.AddressPublicationWitness || record.Address().PublicationID() != plan.PublicationID() ||
+		record.RecordRevision() != 27 || record.ExpiresAt() != "" || decodeErr != nil || decoded.WitnessDigest() != plan.PublicationWitness().WitnessDigest() {
+		t.Fatalf("foundation witness read lost semantic evidence: kind=%s publication=%s revision=%d expiry=%q decode=%v digest_match=%t",
+			record.Address().Kind(), record.Address().PublicationID(), record.RecordRevision(), record.ExpiresAt(), decodeErr,
+			decoded.WitnessDigest() == plan.PublicationWitness().WitnessDigest())
+	}
+	parsed, err := parseV2Key(key.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := v2RecoveryAddressForKey(parsed)
+	if err != nil || recovered.Kind() != address.Kind() || recovered.PublicationID() != address.PublicationID() {
+		t.Fatalf("witness key did not round-trip to the foundation address: %+v %v", recovered, err)
+	}
+
+	expires := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	expiring := &fakeProvider{getFn: func(_ context.Context, got string) (gapdbapi.Record, error) {
+		return gapdbapi.NewRecord(got, witness, 27, &expires), nil
+	}}
+	adapter, _ = newAdapter(expiring, "/explicit/socket", time.Second)
+	if _, err := adapter.ReadV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorMalformed) {
+		t.Fatalf("expiring publication witness admitted: %v", err)
 	}
 }
 
@@ -545,6 +620,9 @@ func TestV2ReaderRequestBudgetsRefuseBeforeProvider(t *testing.T) {
 func TestV2CommitTranslatesClosedProjectionToOneDurableBatch(t *testing.T) {
 	plan := v2TestPlan(t)
 	records := plan.Records()
+	if len(records) != int(plan.PublicationWitness().AuthorityRecordCount())+1 {
+		t.Fatalf("provider mutation total=%d non-witness authority count=%d", len(records), plan.PublicationWitness().AuthorityRecordCount())
+	}
 	var calls atomic.Int32
 	provider := &fakeProvider{batchFn: func(_ context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
 		calls.Add(1)
@@ -552,6 +630,7 @@ func TestV2CommitTranslatesClosedProjectionToOneDurableBatch(t *testing.T) {
 			t.Fatalf("batch ack=%s mutations=%d records=%d", batch.Ack, len(batch.Mutations), len(records))
 		}
 		seen := make(map[string]bool, len(records))
+		witnesses := 0
 		for index, record := range records {
 			key, err := v2KeyForSealedRecord(record)
 			if err != nil {
@@ -565,6 +644,19 @@ func TestV2CommitTranslatesClosedProjectionToOneDurableBatch(t *testing.T) {
 			if mutation.Condition.Kind == gapdbapi.ConditionAny {
 				t.Fatalf("unconditional mutation for %s", record.Role())
 			}
+			if record.Role() == journalv2.RecordPublicationWitness {
+				witnesses++
+				witnessKey, keyErr := v2PublicationWitnessKey(plan.PublicationID())
+				witnessValue, valueErr := journalv2.EncodePublicationWitnessV2(plan.PublicationWitness())
+				if keyErr != nil || valueErr != nil || mutation.Key != witnessKey.String() || string(mutation.Value) != string(witnessValue) ||
+					mutation.Condition.Kind != gapdbapi.ConditionAbsent || mutation.Condition.ExpectedRevision != 0 || mutation.ExpiresAt != nil ||
+					record.ValueClass() != journalv2.RecordValueOrdinary {
+					t.Fatalf("witness was rebuilt, mutable, expiring, or misaddressed: mutation=%+v key_err=%v value_err=%v", mutation, keyErr, valueErr)
+				}
+			}
+		}
+		if witnesses != 1 {
+			t.Fatalf("provider batch witness count=%d", witnesses)
 		}
 		return gapdbapi.MutationResult{Revision: 51, Ack: gapdbapi.AckDurable, DurableThroughRevision: 52, MutationCount: len(batch.Mutations)}, nil
 	}}
@@ -906,8 +998,17 @@ func TestV2CommitPreflightMakesNoProviderCall(t *testing.T) {
 		return gapdbapi.MutationResult{}, nil
 	}}
 	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
-	measurement, err := adapter.preflightCommitV2(v2TestPlan(t))
-	if err != nil || measurement.MutationCount != len(v2TestPlan(t).Records()) || measurement.RawBytes <= 0 || measurement.WireBytes <= measurement.RawBytes || calls.Load() != 0 {
+	plan := v2TestPlan(t)
+	expectedRaw := 0
+	for _, record := range plan.Records() {
+		key, keyErr := v2KeyForSealedRecord(record)
+		if keyErr != nil {
+			t.Fatal(keyErr)
+		}
+		expectedRaw += len(key.String()) + len(record.CanonicalValue())
+	}
+	measurement, err := adapter.preflightCommitV2(plan)
+	if err != nil || measurement.MutationCount != plan.MutationCount() || measurement.RawBytes != expectedRaw || measurement.WireBytes <= measurement.RawBytes || calls.Load() != 0 {
 		t.Fatalf("measurement=%+v calls=%d err=%v", measurement, calls.Load(), err)
 	}
 	adapter.wireSize = func([]byte) int { return MaxWireFrameBytes + 1 }
@@ -983,6 +1084,66 @@ func TestV2AmbiguityCompleteReadbackReturnsRecordedProgress(t *testing.T) {
 		result.observation.DurableThroughRevision() != 79 || result.operationState.LastPublicationID() != plan.PublicationID() ||
 		result.observation.MutationCount() != len(encoded.keys) || int(reads.Load()) != len(encoded.keys) || writes.Load() != 0 {
 		t.Fatalf("result=%+v reads=%d writes=%d err=%v", result, reads.Load(), writes.Load(), err)
+	}
+}
+
+func TestV2AmbiguityRequiresNonExpiringWitnessAtCommonPublicationRevision(t *testing.T) {
+	plan := v2TestPlan(t)
+	probe, _ := newAdapter(&fakeProvider{}, "/explicit/socket", time.Second)
+	encoded, err := probe.encodeV2Plan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexByKey := make(map[string]int, len(encoded.keys))
+	witnessIndex := -1
+	for index, key := range encoded.keys {
+		indexByKey[key.String()] = index
+		if encoded.roles[index] == journalv2.RecordPublicationWitness {
+			witnessIndex = index
+		}
+	}
+	if witnessIndex < 0 {
+		t.Fatal("encoded plan omitted the mandatory witness")
+	}
+	expires := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, test := range []struct {
+		name string
+		get  func(index int, key string) (gapdbapi.Record, error)
+	}{
+		{"application-records-without-witness", func(index int, key string) (gapdbapi.Record, error) {
+			if index == witnessIndex {
+				return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
+			}
+			return gapdbapi.NewRecord(key, encoded.values[index], 77, nil), nil
+		}},
+		{"separately-committed-witness", func(index int, key string) (gapdbapi.Record, error) {
+			revision := gapdbapi.Revision(77)
+			if index == witnessIndex {
+				revision = 78
+			}
+			return gapdbapi.NewRecord(key, encoded.values[index], revision, nil), nil
+		}},
+		{"expiring-witness", func(index int, key string) (gapdbapi.Record, error) {
+			if index == witnessIndex {
+				return gapdbapi.NewRecord(key, encoded.values[index], 77, &expires), nil
+			}
+			return gapdbapi.NewRecord(key, encoded.values[index], 77, nil), nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &fakeProvider{
+				getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+					return test.get(indexByKey[key], key)
+				},
+				statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+					return gapdbapi.StatusResult{DatabaseID: "db-1", CurrentRevision: 80, DurableThroughRevision: 80}, nil
+				},
+			}
+			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+			if _, err := adapter.ReconcileCommitV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) {
+				t.Fatalf("incomplete witness proof did not close authority: %v", err)
+			}
+		})
 	}
 }
 

@@ -128,14 +128,15 @@ func conditionFromObservedRevision(target ConditionTarget, revision uint64) Prov
 type SealedRecordRole string
 
 const (
-	RecordOperationBinding SealedRecordRole = "operation_binding"
-	RecordJournalEvent     SealedRecordRole = "journal_event"
-	RecordOperationHead    SealedRecordRole = "operation_head"
-	RecordAggregateHead    SealedRecordRole = "aggregate_head"
-	RecordEffectIntent     SealedRecordRole = "effect_intent"
-	RecordEligibilityGuard SealedRecordRole = "eligibility_guard"
-	RecordCheckpointRecord SealedRecordRole = "checkpoint_record"
-	RecordCheckpointSlot   SealedRecordRole = "checkpoint_slot"
+	RecordOperationBinding   SealedRecordRole = "operation_binding"
+	RecordJournalEvent       SealedRecordRole = "journal_event"
+	RecordOperationHead      SealedRecordRole = "operation_head"
+	RecordAggregateHead      SealedRecordRole = "aggregate_head"
+	RecordEffectIntent       SealedRecordRole = "effect_intent"
+	RecordEligibilityGuard   SealedRecordRole = "eligibility_guard"
+	RecordCheckpointRecord   SealedRecordRole = "checkpoint_record"
+	RecordCheckpointSlot     SealedRecordRole = "checkpoint_slot"
+	RecordPublicationWitness SealedRecordRole = "publication_witness"
 )
 
 type SealedRecordValueClass string
@@ -157,6 +158,7 @@ type SealedRecordTargetV2 struct {
 	shardID          EligibilityShardID
 	checkpointID     CheckpointID
 	checkpointSlotID CheckpointSlotID
+	publicationID    PublicationID
 }
 
 func (t SealedRecordTargetV2) OperationID() OperationID           { return t.operationID }
@@ -167,6 +169,7 @@ func (t SealedRecordTargetV2) MissionID() MissionID               { return t.mis
 func (t SealedRecordTargetV2) ShardID() EligibilityShardID        { return t.shardID }
 func (t SealedRecordTargetV2) CheckpointID() CheckpointID         { return t.checkpointID }
 func (t SealedRecordTargetV2) CheckpointSlotID() CheckpointSlotID { return t.checkpointSlotID }
+func (t SealedRecordTargetV2) PublicationID() PublicationID       { return t.publicationID }
 
 type SealedRecordConditionV2 struct {
 	kind             ConditionKind
@@ -218,6 +221,7 @@ type SealedCommitPlanV2 struct {
 	checkpoints     []CheckpointRecord
 	conditions      []ProviderCondition
 	records         []SealedRecordV2
+	witness         PublicationWitnessV2
 	canonical       []byte
 }
 
@@ -367,9 +371,24 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	if err != nil {
 		return SealedCommitPlanV2{}, err
 	}
+	witness, err := newPublicationWitnessV2(publicationID, state.operationID, state.logicalVersion, planDigest, recordSetDigest, len(records))
+	if err != nil {
+		return SealedCommitPlanV2{}, err
+	}
+	witnessCanonical, err := EncodePublicationWitnessV2(witness)
+	if err != nil {
+		return SealedCommitPlanV2{}, err
+	}
+	records = append(records, SealedRecordV2{role: RecordPublicationWitness,
+		target: SealedRecordTargetV2{publicationID: publicationID}, valueClass: RecordValueOrdinary,
+		condition: SealedRecordConditionV2{kind: ConditionAbsent}, canonical: witnessCanonical})
+	sort.Slice(records, func(i, j int) bool { return sealedRecordOrderKey(records[i]) < sealedRecordOrderKey(records[j]) })
+	if _, err := validateSealedRecordBudget(records); err != nil {
+		return SealedCommitPlanV2{}, err
+	}
 	plan := SealedCommitPlanV2{publicationID: publicationID, digest: planDigest, recordSetDigest: recordSetDigest,
 		binding: cloneBinding(input.OperationBinding), operationState: state, events: events, heads: heads, effects: effects,
-		eligibility: eligibility, checkpoints: checkpoints, conditions: conditions, records: records}
+		eligibility: eligibility, checkpoints: checkpoints, conditions: conditions, records: records, witness: witness}
 	plan.canonical, err = plan.finalBytes()
 	if err != nil {
 		return SealedCommitPlanV2{}, err
@@ -386,10 +405,13 @@ func sealedRecordSetDigest(records []SealedRecordV2) (Digest, error) {
 		Revision   uint64                 `json:"revision,omitempty"`
 		Value      []byte                 `json:"value"`
 	}
-	values := make([]recordDigestWire, len(records))
-	for index, record := range records {
-		values[index] = recordDigestWire{record.role, sealedTargetIdentity(record.role, record.target), record.valueClass,
-			record.condition.kind, record.condition.observedRevision, append([]byte(nil), record.canonical...)}
+	values := make([]recordDigestWire, 0, len(records))
+	for _, record := range records {
+		if record.role == RecordPublicationWitness {
+			continue
+		}
+		values = append(values, recordDigestWire{record.role, sealedTargetIdentity(record.role, record.target), record.valueClass,
+			record.condition.kind, record.condition.observedRevision, append([]byte(nil), record.canonical...)})
 	}
 	sort.Slice(values, func(i, j int) bool {
 		return string(values[i].Role)+"\x00"+values[i].Target < string(values[j].Role)+"\x00"+values[j].Target
@@ -418,6 +440,8 @@ func sealedTargetIdentity(role SealedRecordRole, target SealedRecordTargetV2) st
 		return string(target.checkpointID)
 	case RecordCheckpointSlot:
 		return string(target.checkpointSlotID)
+	case RecordPublicationWitness:
+		return string(target.publicationID)
 	default:
 		return ""
 	}
@@ -492,7 +516,7 @@ func preflightCommitPlan(input CommitPlanInput) error {
 	if input.OperationBinding != nil {
 		projectedRecords++
 	}
-	if projectedRecords > MaxMembers {
+	if projectedRecords >= MaxMembers {
 		return invalid(ErrorBudgetExceeded, "sealed_record_projection")
 	}
 	add := func(field string, size, maximum int) error {
@@ -554,6 +578,11 @@ func preflightCommitPlan(input CommitPlanInput) error {
 // WP03 repeats the check with actual encoded keys and provider wire framing.
 func conservativeProductBatchSize(input CommitPlanInput) (uint64, error) {
 	budget := productRawBudget{}
+	// The witness is a small fixed-shape ordinary record, but charging a full
+	// KiB keeps preflight conservative without constructing derived identity.
+	if err := budget.addRecord(1024, RecordValueOrdinary); err != nil {
+		return 0, err
+	}
 	if input.OperationBinding != nil {
 		if err := budget.addRecord(conservativeBindingSize(*input.OperationBinding), RecordValueOrdinary); err != nil {
 			return 0, err
@@ -1363,7 +1392,8 @@ func sealedRecordOrderKey(record SealedRecordV2) string {
 	rank := sealedRecordRoleRank(record.role)
 	target := record.target
 	return rank + "/" + string(target.operationID) + "/" + target.coordinate.canonical() + "/" + strconv.FormatUint(uint64(target.logicalVersion), 10) + "/" +
-		string(target.effectID) + "/" + string(target.missionID) + "/" + string(target.shardID) + "/" + string(target.checkpointID) + "/" + string(target.checkpointSlotID)
+		string(target.effectID) + "/" + string(target.missionID) + "/" + string(target.shardID) + "/" + string(target.checkpointID) + "/" +
+		string(target.checkpointSlotID) + "/" + string(target.publicationID)
 }
 
 func sealedRecordRoleRank(role SealedRecordRole) string {
@@ -1384,6 +1414,8 @@ func sealedRecordRoleRank(role SealedRecordRole) string {
 		return "6"
 	case RecordCheckpointSlot:
 		return "7"
+	case RecordPublicationWitness:
+		return "8"
 	default:
 		panic("unsealed record role")
 	}
@@ -1409,16 +1441,17 @@ func planPreimage(binding *OperationBindingV2, prior *OperationStateV2, state Op
 		priorWire = &value
 	}
 	return marshalCanonical(struct {
-		Binding     *operationBindingWire        `json:"operation_binding_create,omitempty"`
-		PriorState  *operationStatePreimageWire  `json:"prior_operation_state,omitempty"`
-		State       operationStatePreimageWire   `json:"operation_state"`
-		Events      []EventDraftV2               `json:"events"`
-		Heads       []HeadTransitionV2           `json:"heads"`
-		Effects     []EffectIntentReference      `json:"effect_intents"`
-		Eligibility []EligibilityGuardTransition `json:"eligibility_guards"`
-		Checkpoints []CheckpointRecord           `json:"checkpoints"`
-		Conditions  []ProviderCondition          `json:"conditions"`
-	}{bindingWire, priorWire, operationStatePreimage(state, false), events, heads, effects, eligibility, checkpoints, conditions}, MaxCommitPlanBytes)
+		PublicationWitnessSchemaVersion uint32                       `json:"publication_witness_schema_version"`
+		Binding                         *operationBindingWire        `json:"operation_binding_create,omitempty"`
+		PriorState                      *operationStatePreimageWire  `json:"prior_operation_state,omitempty"`
+		State                           operationStatePreimageWire   `json:"operation_state"`
+		Events                          []EventDraftV2               `json:"events"`
+		Heads                           []HeadTransitionV2           `json:"heads"`
+		Effects                         []EffectIntentReference      `json:"effect_intents"`
+		Eligibility                     []EligibilityGuardTransition `json:"eligibility_guards"`
+		Checkpoints                     []CheckpointRecord           `json:"checkpoints"`
+		Conditions                      []ProviderCondition          `json:"conditions"`
+	}{publicationWitnessSchemaVersionV2, bindingWire, priorWire, operationStatePreimage(state, false), events, heads, effects, eligibility, checkpoints, conditions}, MaxCommitPlanBytes)
 }
 
 type operationStatePreimageWire struct {
@@ -1469,6 +1502,7 @@ func (p SealedCommitPlanV2) finalBytes() ([]byte, error) {
 		PublicationID   string                       `json:"publication_id"`
 		PlanSHA256      string                       `json:"canonical_plan_sha256"`
 		RecordSetSHA256 string                       `json:"sealed_record_set_sha256"`
+		Witness         publicationWitnessWireV2     `json:"publication_witness"`
 		Binding         *operationBindingWire        `json:"operation_binding_create,omitempty"`
 		OperationState  []byte                       `json:"operation_state"`
 		Events          [][]byte                     `json:"events"`
@@ -1477,7 +1511,7 @@ func (p SealedCommitPlanV2) finalBytes() ([]byte, error) {
 		Eligibility     []EligibilityGuardTransition `json:"eligibility_guards"`
 		Checkpoints     []CheckpointRecord           `json:"checkpoints"`
 		Conditions      []ProviderCondition          `json:"conditions"`
-	}{string(p.publicationID), p.digest.String(), p.recordSetDigest.String(), binding, state, events, p.heads, p.effects, p.eligibility, p.checkpoints, p.conditions}, MaxCommitPlanBytes)
+	}{string(p.publicationID), p.digest.String(), p.recordSetDigest.String(), publicationWitnessWire(p.witness), binding, state, events, p.heads, p.effects, p.eligibility, p.checkpoints, p.conditions}, MaxCommitPlanBytes)
 }
 
 func (p SealedCommitPlanV2) PublicationID() PublicationID     { return p.publicationID }
@@ -1502,7 +1536,8 @@ func (p SealedCommitPlanV2) EffectIntents() []EffectIntentReference {
 func (p SealedCommitPlanV2) EligibilityGuards() []EligibilityGuardTransition {
 	return cloneEligibilityGuards(p.eligibility)
 }
-func (p SealedCommitPlanV2) Checkpoints() []CheckpointRecord { return cloneCheckpoints(p.checkpoints) }
+func (p SealedCommitPlanV2) Checkpoints() []CheckpointRecord          { return cloneCheckpoints(p.checkpoints) }
+func (p SealedCommitPlanV2) PublicationWitness() PublicationWitnessV2 { return p.witness }
 func (p SealedCommitPlanV2) Records() []SealedRecordV2 {
 	result := append([]SealedRecordV2(nil), p.records...)
 	for index := range result {

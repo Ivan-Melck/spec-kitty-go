@@ -60,6 +60,7 @@ spk/v2/runtime/epochs/<runtime-epoch-id>
 
 spk/v2/operations/<operation-id>/binding
 spk/v2/operations/<operation-id>/head
+spk/v2/publications/<publication-id>/witness
 spk/v2/effects/<effect-id>/intent
 
 spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>
@@ -170,6 +171,32 @@ PublicationID = SHA256(
 The GapDB request uses PublicationID for response-ambiguity reconciliation.
 Retrying never manufactures a new OperationID or publication identity.
 
+### Publication witness
+
+```text
+PublicationWitnessV2 {
+  schema_version: 1
+  publication_id
+  operation_id
+  operation_logical_version
+  plan_sha256
+  authority_record_set_sha256
+  authority_record_count
+  witness_sha256
+}
+```
+
+Every publication includes exactly one immutable, non-expiring witness under
+its PublicationID. The value is self-digested and the GapDB record revision is
+the publication's atomic commit revision. It contains no member manifest.
+
+The plan preimage binds the mandatory witness schema version but excludes
+witness bytes. PublicationID is derived first, followed by the final
+non-witness authority records and their digest/count, followed by the witness.
+The authority record-set digest/count exclude the witness; the provider
+mutation set and CommitObservation count include it. Thus a sealed batch has
+at most 255 non-witness records plus one witness.
+
 ### Event envelope
 
 ```text
@@ -239,6 +266,7 @@ generic state blob.
 ```text
 CommitPlanV2 {
   publication_id
+  publication_witness
   operation_binding_create?
   operation_transition
   capability_events[1..N]
@@ -258,22 +286,26 @@ canonical digests. Only a sealed plan can reach the GapDB writer. The committer
 translates it to one `AtomicBatch` and understands no capability semantics.
 
 `sealed_record_projection` is derived internally after validation and has no
-public constructor. It is a closed set of semantic record roles and typed
-targets, not a raw key/value store. Every member includes exact canonical
-bytes, an ordinary-or-checkpoint value class, and either absence or a positive
-observed-record-revision condition. The operation head value is canonical
-OperationState. Other aggregate head values are canonical AggregateHeadV2
-records derived after PublicationID is known from the head transition's
-coordinate, logical version, event, committed epoch, state digest, authority
-summary, and tombstone.
+public constructor. It is the complete provider mutation set: a closed set of
+semantic record roles and typed targets, not a raw key/value store. Every
+member includes exact canonical bytes, an ordinary-or-checkpoint value class,
+and either absence or a positive observed-record-revision condition. Exactly
+one member is the absent-conditioned publication witness. The operation head
+value is canonical OperationState. Other aggregate head values are canonical
+AggregateHeadV2 records derived after PublicationID is known from the head
+transition's coordinate, logical version, event, committed epoch, state
+digest, authority summary, and tombstone.
 
 Effect intents are immutable host-global records keyed by EffectID and carry
 the complete canonical intent value owned by the effect capability. Eligibility
 guard transitions name their mission and fixed shard and carry the complete
 canonical shard value plus its exact create/update condition. Checkpoint
 transitions pair one immutable record with one retained-ring slot value and the
-slot's exact create/update condition. Every byte and target is included in the
-sealed plan digest preimage, except fields derived from PublicationID itself.
+slot's exact create/update condition. Every non-witness byte and target is
+included in the sealed plan digest preimage, except fields derived from
+PublicationID itself. The preimage also binds the mandatory witness contract
+version; the derived witness is then bound by its own digest and the sealed
+provider projection.
 
 ### Recovery read model
 
@@ -291,9 +323,10 @@ RecoveryRecordV2 { address, canonical_value, record_revision, expiry }
 RecoveryPageV2 { observed_revision, as_of, records, cursor, truncated }
 ```
 
-Addresses never contain an encoded provider key. GapDB key strings and cursor
-interpretation remain adapter-private. Construction validates identities and
-budgets before copying; returned bytes and collections are defensive copies.
+Addresses include exact publication-witness reads by PublicationID but never
+contain an encoded provider key. GapDB key strings and cursor interpretation
+remain adapter-private. Construction validates identities and budgets before
+copying; returned bytes and collections are defensive copies.
 Closed errors distinguish not-found, revision-moved, stale-cursor, malformed,
 unavailable/canceled, and budget-exceeded outcomes.
 
@@ -332,12 +365,33 @@ summary, prior rolling prefix, and a bounded revision-keyed acknowledgement
 ledger. The ledger admits at least 10,000 publications between checkpoint
 seals. At a quiescent barrier, acknowledgements are ordered by provider
 revision and folded from the prior prefix using revision, PublicationID, plan
-digest, and sealed-record-set digest. Unresolved ambiguity blocks sealing.
+digest, and the non-witness authority-record-set digest. The live tracker and
+restore use one foundation-owned pure prefix-advance helper. Unresolved
+ambiguity blocks sealing.
 
 The operation summary contains bounded counts/status counts and sorted
-fixed-size operation leaf digests. A leaf binds OperationID, logical version,
-last PublicationID, status/result digest, and event/effect membership digests;
-it does not copy all terminal result bytes into the checkpoint.
+fixed-size `OperationBoundaryV2` values:
+
+```text
+OperationBoundaryV2 {
+  operation_id_sha256
+  logical_version
+  leaf_sha256
+}
+```
+
+The leaf binds exact OperationID, logical version, last PublicationID,
+status/result digest, and event/effect membership digests. Boundaries sort by
+the identity digest and reject duplicate/colliding coordinates. The operation
+head scan supplies exact IDs during recovery; a pure boundary match plus an
+exact read of the boundary event reconstructs and validates the full state.
+Totals and the summary digest are derived from the boundary census. Status
+counts come from source OperationStates and are state-aware validated against
+exact boundary-event states during restore. Variable-length OperationIDs and
+terminal result bytes are not copied into the checkpoint. The final structured
+checkpoint encoder proves 10,000 maximum-version boundaries and outer summary
+overhead fit `MaxOperationSummaryBytesV2 = 2,112,000` bytes, leaving 2,082,304
+bytes of the 4 MiB limit for aggregate entries and remaining metadata.
 
 ## Capability aggregates
 

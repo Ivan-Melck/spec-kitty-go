@@ -32,6 +32,7 @@ const (
 	publicationDomain        = "spec-kitty.publication.v2"
 	canonicalEventDomain     = "spec-kitty.event.v2"
 	canonicalIntentDomain    = "spec-kitty.intent.v2"
+	publicationWitnessDomain = "spec-kitty.publication-witness.v2"
 )
 
 type ErrorKind string
@@ -302,6 +303,81 @@ func digest(domain string, payload []byte) Digest {
 	var result Digest
 	copy(result[:], hash.Sum(nil))
 	return result
+}
+
+const publicationWitnessSchemaVersionV2 = uint32(1)
+
+// PublicationWitnessV2 is the immutable durable proof needed to reconstruct
+// an acknowledged publication after process loss. Its record revision is
+// provider metadata and is deliberately absent from this value.
+type PublicationWitnessV2 struct {
+	schemaVersion   uint32
+	publicationID   PublicationID
+	operationID     OperationID
+	logicalVersion  LogicalVersion
+	planDigest      Digest
+	recordSetDigest Digest
+	recordCount     uint32
+	witnessDigest   Digest
+}
+
+func (w PublicationWitnessV2) SchemaVersion() uint32                   { return w.schemaVersion }
+func (w PublicationWitnessV2) PublicationID() PublicationID            { return w.publicationID }
+func (w PublicationWitnessV2) OperationID() OperationID                { return w.operationID }
+func (w PublicationWitnessV2) OperationLogicalVersion() LogicalVersion { return w.logicalVersion }
+func (w PublicationWitnessV2) PlanDigest() Digest                      { return w.planDigest }
+func (w PublicationWitnessV2) AuthorityRecordSetDigest() Digest        { return w.recordSetDigest }
+func (w PublicationWitnessV2) AuthorityRecordCount() uint32            { return w.recordCount }
+func (w PublicationWitnessV2) WitnessDigest() Digest                   { return w.witnessDigest }
+
+func newPublicationWitnessV2(publicationID PublicationID, operationID OperationID, logicalVersion LogicalVersion, planDigest, recordSetDigest Digest, recordCount int) (PublicationWitnessV2, error) {
+	if recordCount <= 0 || recordCount >= MaxMembers {
+		return PublicationWitnessV2{}, invalid(ErrorBudgetExceeded, "authority_record_count")
+	}
+	witness := PublicationWitnessV2{schemaVersion: publicationWitnessSchemaVersionV2, publicationID: publicationID,
+		operationID: operationID, logicalVersion: logicalVersion, planDigest: planDigest,
+		recordSetDigest: recordSetDigest, recordCount: uint32(recordCount)}
+	digest, err := publicationWitnessDigest(witness)
+	if err != nil {
+		return PublicationWitnessV2{}, err
+	}
+	witness.witnessDigest = digest
+	return witness, nil
+}
+
+func publicationWitnessDigest(witness PublicationWitnessV2) (Digest, error) {
+	if witness.schemaVersion != publicationWitnessSchemaVersionV2 ||
+		validateIdentity("operation_id", string(witness.operationID)) != nil || witness.logicalVersion == 0 ||
+		witness.planDigest.IsZero() || witness.recordSetDigest.IsZero() || witness.recordCount == 0 || witness.recordCount >= MaxMembers {
+		return Digest{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	}
+	if _, err := DecodePublicationID(string(witness.publicationID)); err != nil {
+		return Digest{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	}
+	canonical, err := marshalCanonical(struct {
+		SchemaVersion   uint32 `json:"schema_version"`
+		PublicationID   string `json:"publication_id"`
+		OperationID     string `json:"operation_id"`
+		LogicalVersion  uint64 `json:"operation_logical_version"`
+		PlanSHA256      string `json:"plan_sha256"`
+		RecordSetSHA256 string `json:"authority_record_set_sha256"`
+		RecordCount     uint32 `json:"authority_record_count"`
+	}{witness.schemaVersion, string(witness.publicationID), string(witness.operationID), uint64(witness.logicalVersion),
+		witness.planDigest.String(), witness.recordSetDigest.String(), witness.recordCount}, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return Digest{}, err
+	}
+	return digest(publicationWitnessDomain, canonical), nil
+}
+
+// ReducerStateDigestV2 is the single canonical state commitment shared by
+// live reduction, checkpoints, and restore.
+func ReducerStateDigestV2(canonical []byte) (Digest, error) {
+	normalized, err := CanonicalObject(canonical)
+	if err != nil || !bytes.Equal(normalized, canonical) {
+		return Digest{}, invalid(ErrorInvalidCanonicalData, "reducer_state")
+	}
+	return digest("spec-kitty.reducer-state.v2", normalized), nil
 }
 
 type AggregateCoordinate struct {
@@ -998,7 +1074,10 @@ func (r ReducerSetV2) Apply(prior []byte, event EventEnvelopeV2) ([]byte, Digest
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	outputDigest := digest("spec-kitty.reducer-state.v2", output)
+	outputDigest, err := ReducerStateDigestV2(output)
+	if err != nil {
+		return nil, Digest{}, err
+	}
 	return append([]byte(nil), output...), outputDigest, nil
 }
 

@@ -9,6 +9,8 @@ import (
 const (
 	CanonicalCodecVersionV2         = uint32(2)
 	MaxAcknowledgementsBetweenSeals = 10_000
+	MaxOperationSummaryBytesV2      = 2_112_000
+	maxOperationBoundariesV2        = 10_000
 )
 
 type projectionEntryV2 struct {
@@ -36,17 +38,39 @@ func (e ProjectionEntryV2) LogicalVersion() LogicalVersion  { return e.version }
 func (e ProjectionEntryV2) LastEventID() EventID            { return e.lastEventID }
 func (e ProjectionEntryV2) Tombstone() bool                 { return e.tombstone }
 
+type OperationBoundaryV2 struct {
+	operationIDLookupDigest Digest
+	logicalVersion          LogicalVersion
+	leafDigest              Digest
+}
+
+func (b OperationBoundaryV2) OperationIDLookupDigest() Digest { return b.operationIDLookupDigest }
+func (b OperationBoundaryV2) LogicalVersion() LogicalVersion  { return b.logicalVersion }
+func (b OperationBoundaryV2) LeafDigest() Digest              { return b.leafDigest }
+func (b OperationBoundaryV2) MatchesOperationID(operationID OperationID) bool {
+	return validateIdentity("operation_id", string(operationID)) == nil && b.operationIDLookupDigest == operationIDLookupDigestV2(operationID)
+}
+
 type OperationSummaryV2 struct {
 	total        uint64
 	statusCounts map[OperationStatus]uint64
-	leaves       []Digest
+	boundaries   []OperationBoundaryV2
 	digest       Digest
 }
 
 func (s OperationSummaryV2) Total() uint64                             { return s.total }
 func (s OperationSummaryV2) StatusCount(status OperationStatus) uint64 { return s.statusCounts[status] }
-func (s OperationSummaryV2) LeafDigests() []Digest                     { return append([]Digest(nil), s.leaves...) }
-func (s OperationSummaryV2) Digest() Digest                            { return s.digest }
+func (s OperationSummaryV2) LeafDigests() []Digest {
+	leaves := make([]Digest, len(s.boundaries))
+	for index, boundary := range s.boundaries {
+		leaves[index] = boundary.leafDigest
+	}
+	return leaves
+}
+func (s OperationSummaryV2) Boundaries() []OperationBoundaryV2 {
+	return append([]OperationBoundaryV2(nil), s.boundaries...)
+}
+func (s OperationSummaryV2) Digest() Digest { return s.digest }
 
 type acknowledgedLedgerEntryV2 struct {
 	revision        uint64
@@ -82,7 +106,7 @@ func NewProjectionTrackerV2(reducers ReducerSetV2, codecVersion uint32) (*Projec
 	if codecVersion != CanonicalCodecVersionV2 {
 		return nil, invalid(ErrorInvalidVersion, "canonical_codec_version")
 	}
-	genesis := digest("spec-kitty.projection-prefix.genesis.v2", nil)
+	genesis := ProjectionPrefixGenesisV2()
 	return &ProjectionTrackerV2{reducers: reducers, eventRegistryDigest: eventDescriptor.Digest(),
 		reducerRegistryDigest: reducerDescriptor.Digest(), codecVersion: codecVersion,
 		states: make(map[string]projectionEntryV2), operations: make(map[OperationID]OperationStateV2),
@@ -286,17 +310,11 @@ func (t *ProjectionTrackerV2) sealPrefix() (SealedProjectionPrefixV2, error) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].revision < entries[j].revision })
 	prefix := t.priorPrefix
 	for _, entry := range entries {
-		canonical, err := marshalCanonical(struct {
-			Prior         string `json:"prior_prefix_sha256"`
-			Revision      uint64 `json:"provider_revision"`
-			PublicationID string `json:"publication_id"`
-			Plan          string `json:"plan_sha256"`
-			RecordSet     string `json:"record_set_sha256"`
-		}{prefix.String(), entry.revision, string(entry.publicationID), entry.planDigest.String(), entry.recordSetDigest.String()}, MaxCanonicalPayloadBytes)
+		next, err := AdvanceProjectionPrefixV2(prefix, entry.revision, entry.publicationID, entry.planDigest, entry.recordSetDigest)
 		if err != nil {
 			return SealedProjectionPrefixV2{}, err
 		}
-		prefix = digest("spec-kitty.projection-prefix.v2", canonical)
+		prefix = next
 	}
 	projectionEntries := snapshotProjectionEntries(t.states)
 	projectionDigest, err := digestProjectionEntries(projectionEntries)
@@ -352,7 +370,11 @@ func digestProjectionEntries(entries []ProjectionEntryV2) (Digest, error) {
 	for index, entry := range entries {
 		if _, err := NewAggregateCoordinate(entry.coordinate.Kind, entry.coordinate.ID, entry.coordinate.Scope); err != nil ||
 			entry.coordinate.Kind == AggregateKind("operation") || entry.version == 0 || validateIdentity("last_event_id", string(entry.lastEventID)) != nil ||
-			entry.digest.IsZero() || digest("spec-kitty.reducer-state.v2", entry.canonical) != entry.digest {
+			entry.digest.IsZero() {
+			return Digest{}, invalid(ErrorInvalidDigest, "projection_entry")
+		}
+		stateDigest, err := ReducerStateDigestV2(entry.canonical)
+		if err != nil || stateDigest != entry.digest {
 			return Digest{}, invalid(ErrorInvalidDigest, "projection_entry")
 		}
 		values[index] = wire{entry.coordinate, uint64(entry.version), string(entry.lastEventID), entry.tombstone,
@@ -366,85 +388,231 @@ func digestProjectionEntries(entries []ProjectionEntryV2) (Digest, error) {
 }
 
 func summarizeOperations(operations map[OperationID]OperationStateV2) (OperationSummaryV2, error) {
-	ids := make([]OperationID, 0, len(operations))
-	for id := range operations {
-		ids = append(ids, id)
+	if len(operations) > maxOperationBoundariesV2 {
+		return OperationSummaryV2{}, invalid(ErrorBudgetExceeded, "operation_summary")
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	leaves := make([]Digest, len(ids))
-	counts := make(map[OperationStatus]uint64)
-	for index, id := range ids {
-		state := operations[id]
-		eventCanonical, _ := marshalCanonical(state.eventIDs, MaxCanonicalPayloadBytes)
-		effectCanonical, _ := marshalCanonical(state.effectIDs, MaxCanonicalPayloadBytes)
-		canonical, err := marshalCanonical(struct {
-			OperationID   string          `json:"operation_id"`
-			Version       uint64          `json:"version"`
-			PublicationID string          `json:"publication_id"`
-			Status        OperationStatus `json:"status"`
-			Result        string          `json:"result_sha256"`
-			Events        string          `json:"event_membership_sha256"`
-			Effects       string          `json:"effect_membership_sha256"`
-		}{string(id), uint64(state.logicalVersion), string(state.lastPublicationID), state.status, state.resultDigest.String(), digest("spec-kitty.operation-events.v2", eventCanonical).String(), digest("spec-kitty.operation-effects.v2", effectCanonical).String()}, MaxCanonicalPayloadBytes)
+	states := make([]OperationStateV2, 0, len(operations))
+	for id, state := range operations {
+		if id != state.operationID {
+			return OperationSummaryV2{}, invalid(ErrorInvalidCanonicalData, "operation_summary_identity")
+		}
+		states = append(states, state)
+	}
+	return BuildOperationSummaryV2(states)
+}
+
+func operationIDLookupDigestV2(operationID OperationID) Digest {
+	return digest("spec-kitty.operation-id-lookup.v2", []byte(operationID))
+}
+
+func operationBoundaryLeafV2(state OperationStateV2) (Digest, error) {
+	if _, err := EncodeOperationStateV2(state); err != nil || state.lastPublicationID == "" {
+		return Digest{}, invalid(ErrorJournalCorrupt, "operation_boundary_state")
+	}
+	eventCanonical, err := marshalCanonical(state.eventIDs, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return Digest{}, err
+	}
+	effectCanonical, err := marshalCanonical(state.effectIDs, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return Digest{}, err
+	}
+	canonical, err := marshalCanonical(struct {
+		OperationID   string          `json:"operation_id"`
+		Version       uint64          `json:"version"`
+		PublicationID string          `json:"publication_id"`
+		Status        OperationStatus `json:"status"`
+		Result        string          `json:"result_sha256"`
+		Events        string          `json:"event_membership_sha256"`
+		Effects       string          `json:"effect_membership_sha256"`
+	}{string(state.operationID), uint64(state.logicalVersion), string(state.lastPublicationID), state.status,
+		state.resultDigest.String(), digest("spec-kitty.operation-events.v2", eventCanonical).String(),
+		digest("spec-kitty.operation-effects.v2", effectCanonical).String()}, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return Digest{}, err
+	}
+	return digest("spec-kitty.operation-summary-leaf.v2", canonical), nil
+}
+
+// BuildOperationSummaryV2 constructs fixed-size attributable boundaries from
+// exact current operation states. It rejects the plus-one census before
+// allocating the boundary result.
+func BuildOperationSummaryV2(states []OperationStateV2) (OperationSummaryV2, error) {
+	if len(states) == 0 || len(states) > maxOperationBoundariesV2 {
+		return OperationSummaryV2{}, invalid(ErrorBudgetExceeded, "operation_summary")
+	}
+	boundaries := make([]OperationBoundaryV2, len(states))
+	counts := make(map[OperationStatus]uint64, 6)
+	for index, state := range states {
+		leaf, err := operationBoundaryLeafV2(state)
 		if err != nil {
 			return OperationSummaryV2{}, err
 		}
-		leaves[index] = digest("spec-kitty.operation-summary-leaf.v2", canonical)
+		boundaries[index] = OperationBoundaryV2{operationIDLookupDigest: operationIDLookupDigestV2(state.operationID),
+			logicalVersion: state.logicalVersion, leafDigest: leaf}
 		counts[state.status]++
 	}
-	summary := OperationSummaryV2{total: uint64(len(leaves)), statusCounts: counts, leaves: leaves}
-	summaryDigest, err := digestOperationSummary(summary)
+	sort.Slice(boundaries, func(i, j int) bool {
+		return bytes.Compare(boundaries[i].operationIDLookupDigest[:], boundaries[j].operationIDLookupDigest[:]) < 0
+	})
+	for index := 1; index < len(boundaries); index++ {
+		if boundaries[index].operationIDLookupDigest == boundaries[index-1].operationIDLookupDigest {
+			return OperationSummaryV2{}, invalid(ErrorInvalidCanonicalData, "operation_boundary_collision")
+		}
+	}
+	summary := OperationSummaryV2{total: uint64(len(boundaries)), statusCounts: counts, boundaries: boundaries}
+	digest, err := digestOperationSummary(summary)
 	if err != nil {
 		return OperationSummaryV2{}, err
 	}
-	summary.digest = summaryDigest
+	summary.digest = digest
+	if err := validateOperationSummaryStructure(summary); err != nil {
+		return OperationSummaryV2{}, err
+	}
 	return summary, nil
 }
 
-func digestOperationSummary(summary OperationSummaryV2) (Digest, error) {
-	type statusCount struct {
-		Status OperationStatus `json:"status"`
-		Count  uint64          `json:"count"`
+// ValidateOperationSummaryV2 performs structural validation and then proves
+// every boundary and status count against exact reconstructed operation state.
+func ValidateOperationSummaryV2(summary OperationSummaryV2, states []OperationStateV2) error {
+	if err := validateOperationSummaryStructure(summary); err != nil {
+		return err
 	}
-	statuses := make([]statusCount, 0, len(summary.statusCounts))
+	rebuilt, err := BuildOperationSummaryV2(states)
+	if err != nil {
+		return err
+	}
+	if rebuilt.total != summary.total || rebuilt.digest != summary.digest || len(rebuilt.boundaries) != len(summary.boundaries) || len(rebuilt.statusCounts) != len(summary.statusCounts) {
+		return invalid(ErrorJournalCorrupt, "operation_summary_state")
+	}
+	for status, count := range rebuilt.statusCounts {
+		if summary.statusCounts[status] != count {
+			return invalid(ErrorJournalCorrupt, "operation_summary_state")
+		}
+	}
+	for index := range rebuilt.boundaries {
+		if rebuilt.boundaries[index] != summary.boundaries[index] {
+			return invalid(ErrorJournalCorrupt, "operation_summary_state")
+		}
+	}
+	return nil
+}
+
+type operationBoundaryWireV2 struct {
+	OperationIDSHA256 string `json:"operation_id_sha256"`
+	LogicalVersion    uint64 `json:"logical_version"`
+	LeafSHA256        string `json:"leaf_sha256"`
+}
+
+type operationStatusCountsWireV2 struct {
+	Accepted               uint64 `json:"accepted"`
+	InProgress             uint64 `json:"in_progress"`
+	Resolved               uint64 `json:"resolved"`
+	Refused                uint64 `json:"refused"`
+	Ambiguous              uint64 `json:"ambiguous"`
+	ReconciliationRequired uint64 `json:"reconciliation_required"`
+}
+
+func operationSummaryPreimageV2(summary OperationSummaryV2) (any, error) {
+	if summary.total == 0 || summary.total > maxOperationBoundariesV2 || uint64(len(summary.boundaries)) != summary.total {
+		return nil, invalid(ErrorBudgetExceeded, "operation_summary")
+	}
 	counted := uint64(0)
 	for status, count := range summary.statusCounts {
 		if !validOperationStatus(status) || count == 0 {
-			return Digest{}, invalid(ErrorInvalidCanonicalData, "operation_summary")
+			return nil, invalid(ErrorInvalidCanonicalData, "operation_summary_status")
 		}
-		statuses = append(statuses, statusCount{status, count})
 		counted += count
 	}
-	if counted != summary.total || uint64(len(summary.leaves)) != summary.total {
-		return Digest{}, invalid(ErrorInvalidCanonicalData, "operation_summary")
+	if counted != summary.total {
+		return nil, invalid(ErrorInvalidCanonicalData, "operation_summary_status")
 	}
-	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Status < statuses[j].Status })
-	leaves := make([]string, len(summary.leaves))
-	for index, leaf := range summary.leaves {
-		if leaf.IsZero() {
-			return Digest{}, invalid(ErrorInvalidDigest, "operation_summary_leaf")
+	boundaries := make([]operationBoundaryWireV2, len(summary.boundaries))
+	for index, boundary := range summary.boundaries {
+		if boundary.operationIDLookupDigest.IsZero() || boundary.logicalVersion == 0 || boundary.leafDigest.IsZero() ||
+			index > 0 && bytes.Compare(summary.boundaries[index-1].operationIDLookupDigest[:], boundary.operationIDLookupDigest[:]) >= 0 {
+			return nil, invalid(ErrorInvalidCanonicalData, "operation_summary_boundary")
 		}
-		leaves[index] = leaf.String()
+		boundaries[index] = operationBoundaryWireV2{boundary.operationIDLookupDigest.String(), uint64(boundary.logicalVersion), boundary.leafDigest.String()}
 	}
-	canonical, err := marshalCanonical(struct {
-		Total    uint64        `json:"total"`
-		Statuses []statusCount `json:"status_counts"`
-		Leaves   []string      `json:"leaf_sha256"`
-	}{summary.total, statuses, leaves}, MaxCheckpointValueBytes)
+	counts := operationStatusCountsWireV2{summary.statusCounts[StatusAccepted], summary.statusCounts[StatusInProgress],
+		summary.statusCounts[StatusResolved], summary.statusCounts[StatusRefused], summary.statusCounts[StatusAmbiguous],
+		summary.statusCounts[StatusReconciliationRequired]}
+	return struct {
+		Total        uint64                      `json:"total"`
+		StatusCounts operationStatusCountsWireV2 `json:"status_counts"`
+		Boundaries   []operationBoundaryWireV2   `json:"boundaries"`
+	}{summary.total, counts, boundaries}, nil
+}
+
+func digestOperationSummary(summary OperationSummaryV2) (Digest, error) {
+	preimage, err := operationSummaryPreimageV2(summary)
+	if err != nil {
+		return Digest{}, err
+	}
+	canonical, err := marshalCanonical(preimage, MaxOperationSummaryBytesV2)
 	if err != nil {
 		return Digest{}, err
 	}
 	return digest("spec-kitty.operation-summary.v2", canonical), nil
 }
 
+func operationSummaryCanonicalV2(summary OperationSummaryV2) ([]byte, error) {
+	preimage, err := operationSummaryPreimageV2(summary)
+	if err != nil {
+		return nil, err
+	}
+	return marshalCanonical(struct {
+		Summary any    `json:"summary"`
+		Digest  string `json:"summary_sha256"`
+	}{preimage, summary.digest.String()}, MaxOperationSummaryBytesV2)
+}
+
+func validateOperationSummaryStructure(summary OperationSummaryV2) error {
+	want, err := digestOperationSummary(summary)
+	if err != nil || summary.digest.IsZero() || summary.digest != want {
+		return invalid(ErrorInvalidDigest, "operation_summary")
+	}
+	if _, err := operationSummaryCanonicalV2(summary); err != nil {
+		return err
+	}
+	return nil
+}
+
 func cloneOperationSummary(summary OperationSummaryV2) OperationSummaryV2 {
 	result := summary
-	result.leaves = append([]Digest(nil), summary.leaves...)
+	result.boundaries = append([]OperationBoundaryV2(nil), summary.boundaries...)
 	result.statusCounts = make(map[OperationStatus]uint64, len(summary.statusCounts))
 	for status, count := range summary.statusCounts {
 		result.statusCounts[status] = count
 	}
 	return result
+}
+
+func ProjectionPrefixGenesisV2() Digest {
+	return digest("spec-kitty.projection-prefix.genesis.v2", nil)
+}
+
+// AdvanceProjectionPrefixV2 is shared by live sealing and restore. Its inputs
+// are provider-neutral evidence coordinates; it performs no I/O.
+func AdvanceProjectionPrefixV2(prior Digest, providerRevision uint64, publicationID PublicationID, planDigest, recordSetDigest Digest) (Digest, error) {
+	if prior.IsZero() || providerRevision == 0 || planDigest.IsZero() || recordSetDigest.IsZero() {
+		return Digest{}, invalid(ErrorInvalidDigest, "projection_prefix")
+	}
+	if _, err := DecodePublicationID(string(publicationID)); err != nil {
+		return Digest{}, err
+	}
+	canonical, err := marshalCanonical(struct {
+		Prior         string `json:"prior_prefix_sha256"`
+		Revision      uint64 `json:"provider_revision"`
+		PublicationID string `json:"publication_id"`
+		Plan          string `json:"plan_sha256"`
+		RecordSet     string `json:"record_set_sha256"`
+	}{prior.String(), providerRevision, string(publicationID), planDigest.String(), recordSetDigest.String()}, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return Digest{}, err
+	}
+	return digest("spec-kitty.projection-prefix.v2", canonical), nil
 }
 
 func projectionSeal(value SealedProjectionPrefixV2) (Digest, error) {
