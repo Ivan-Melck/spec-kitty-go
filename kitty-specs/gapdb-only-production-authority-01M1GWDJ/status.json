@@ -1,7 +1,7 @@
 {
-  "event_count": 182,
-  "last_event_id": "01M1M4QR1T5SWJ4XAV66QA9WAS",
-  "materialized_at": "2026-09-03T17:23:18.202237+00:00",
+  "event_count": 184,
+  "last_event_id": "01M1M6CSXPS23JWK9X5E68G7GD",
+  "materialized_at": "2026-09-03T17:52:16.822089+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 1,
-    "in_review": 0,
+    "in_progress": 0,
+    "in_review": 1,
     "planned": 12
   },
   "work_packages": {
@@ -70,15 +70,15 @@
       }
     },
     "WP02": {
-      "actor": "codex-wp02-witness-foundation",
-      "agent": "codex-wp02-witness-foundation",
+      "actor": "codex-wp02-witness-independent-reviewer",
+      "agent": "codex-wp02-witness-independent-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp02-witness-foundation",
       "force_count": 13,
-      "lane": "in_progress",
-      "last_event_id": "01M1M4QR1T5SWJ4XAV66QA9WAS",
-      "last_transition_at": "2026-09-03T17:23:18.202237+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1M6CSXPS23JWK9X5E68G7GD",
+      "last_transition_at": "2026-09-03T17:52:16.822089+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -99,7 +99,8 @@
         "Cycle-12 repair at c997e226 admits canonical year-zero whole/fractional recovery instants, completing exact frozen GapDB RFC3339Nano language equivalence while preserving all rejection laws; full gates pass.",
         "Independent cycle-13 APPROVE: exact prior year-zero failures pass; 20,000-instant oracle across years 0000-9999 found no mismatch with frozen GapDB RFC3339Nano canonical language; focused x50, regression x100, race x10, architecture, compile, vet, staticcheck, formatting, ownership, and diff gates pass.",
         "Resumed after approved WP01 compact-boundary contract resolved the checkpoint-size blocker.",
-        "Ownership recovery after approved post-approval defect-4: replace stale wp02-year-zero-reviewer claim with designated implementer. Current task artifact and WP01 compact-boundary guard supersede the stale action capsule; no code or acceptance guard is bypassed."
+        "Ownership recovery after approved post-approval defect-4: replace stale wp02-year-zero-reviewer claim with designated implementer. Current task artifact and WP01 compact-boundary guard supersede the stale action capsule; no code or acceptance guard is bypassed.",
+        "Ready for independent defect-4 review: d70d3a07 adds canonical self-digested publication witnesses, sealed witness-inclusive plans, exact PublicationID recovery, compact state-authenticated checkpoint boundaries, bounded 10,000-operation summaries, and shared live/restore prefix laws. Focused repeated, full package repeated, race, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -108,7 +109,7 @@
         "reviewer": "wp02-year-zero-reviewer",
         "verdict": "approved"
       },
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
