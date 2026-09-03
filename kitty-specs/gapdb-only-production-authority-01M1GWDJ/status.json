@@ -1,7 +1,7 @@
 {
-  "event_count": 178,
-  "last_event_id": "01M1M49TQD8TXQW2DR778XRY8R",
-  "materialized_at": "2026-09-03T17:15:42.189193+00:00",
+  "event_count": 179,
+  "last_event_id": "01M1M4A8198H6GNMKQ4EEG2CK2",
+  "materialized_at": "2026-09-03T17:15:55.817472+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,21 +11,21 @@
     "canceled": 0,
     "claimed": 0,
     "done": 0,
-    "for_review": 1,
+    "for_review": 0,
     "in_progress": 0,
-    "in_review": 0,
+    "in_review": 1,
     "planned": 12
   },
   "work_packages": {
     "WP01": {
-      "actor": "user",
-      "agent": null,
+      "actor": "codex-wp01-compact-independent-reviewer",
+      "agent": "codex-wp01-compact-independent-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 13,
-      "lane": "for_review",
-      "last_event_id": "01M1M49TQD8TXQW2DR778XRY8R",
-      "last_transition_at": "2026-09-03T17:15:42.189193+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1M4A8198H6GNMKQ4EEG2CK2",
+      "last_transition_at": "2026-09-03T17:15:55.817472+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
@@ -58,9 +58,9 @@
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
         "T001": "done",
         "T002": "done",
