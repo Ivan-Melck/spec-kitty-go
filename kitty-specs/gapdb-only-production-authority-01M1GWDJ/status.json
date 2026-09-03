@@ -82,10 +82,10 @@
     },
     "WP02": {
       "actor": "ivan-gapdb-foundation",
-      "agent": "codex-wp02-witness-canonical-independent-reviewer",
+      "agent": "ivan-gapdb-foundation",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "codex-wp02-witness-canonical-codec",
+      "assignee": "ivan-gapdb-foundation",
       "force_count": 15,
       "lane": "in_progress",
       "last_event_id": "01M1MJE4XD4Z3MG9KVGT8DAPGK",
@@ -115,7 +115,8 @@
         "Independent defect-4 review APPROVE at d70d3a07 (tree 3db5a2df): canonical self-digested witness, exact 255+1/256+1 preflight law, witness-inclusive durable observation, PublicationID-only recovery address, compact attributable state-authenticated boundaries, structured 10,000-operation summary budget, and shared live/restore prefix and reducer digest helpers verified. Package x20, race x5, focused x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, provider-neutrality, and all eight anti-pattern checks pass.",
         "Post-approval consumer-path defect: foundation NewRecoveryRecordV2 canonicalizes JSON object keys, while DecodePublicationWitnessV2 requires a different struct-field-order encoding byte-for-byte. Exact WP03 ReadV2 therefore returns an undecodable witness. Reopen for the smallest witness-specific canonical encoder repair plus Encode -> RecoveryRecord -> Decode regression. Force transfers the approved reviewer assignment to the designated implementer only; no code, review, or acceptance guard is bypassed.",
         "Ready for independent consumer-path review: 026e3a7e makes PublicationWitnessV2 encode through the same CanonicalObject ordering used by RecoveryRecordV2, adds direct Encode -> WitnessAddress -> RecoveryRecord -> Decode preservation proof, and retains strict alternate-order/trailing/corrupt rejection. Focused x20, package, race x5, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
-        "Independent consumer-path review APPROVE at 026e3a7e: canonical witness encoding now survives WitnessAddressV2/NewRecoveryRecordV2 and strict DecodePublicationWitnessV2 with exact semantics/self-digest. Alternate ordering, trailing/second JSON, unknown/duplicate fields, and eight canonical corrupt-field mutants refuse. Focused x20, package x3, race x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, prior d70 witness/255+1 behavior, and all eight anti-pattern checks pass."
+        "Independent consumer-path review APPROVE at 026e3a7e: canonical witness encoding now survives WitnessAddressV2/NewRecoveryRecordV2 and strict DecodePublicationWitnessV2 with exact semantics/self-digest. Alternate ordering, trailing/second JSON, unknown/duplicate fields, and eight canonical corrupt-field mutants refuse. Focused x20, package x3, race x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, prior d70 witness/255+1 behavior, and all eight anti-pattern checks pass.",
+        "Reopened for ratified defect 5: add the sealed revision-sorted covered-through PublicationID and sole strict OperationSummaryV2 codec required by WP04. Force transfers the stale approved reviewer assignment only; no guard is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
