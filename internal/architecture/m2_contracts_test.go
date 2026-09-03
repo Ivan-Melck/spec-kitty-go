@@ -293,8 +293,11 @@ func TestM2ContractPublicationWitnessAndBoundaryCorrection(t *testing.T) {
 			"non-expiring", "authority_record_set_sha256", "provider_mutation_count = authority_record_count + 1",
 		},
 		"C-M2-OPERATION-BOUNDARY": {
-			"OperationBoundaryV2", "operation_id", "logical_version", "last_publication_id",
-			"OperationID-sorted", "boundaries rather than anonymous", "(checkpointLogicalVersion, currentLogicalVersion]",
+			"OperationBoundaryV2", "operation_id_sha256", "logical_version", "leaf_sha256",
+			"fixed-size boundaries", "MatchesOperationID", "state-aware validation", "missing, extra, duplicate, colliding, unmatched, or regressed",
+		},
+		"C-M2-OPERATION-SUMMARY-BUDGET": {
+			"MaxOperationSummaryBytesV2", "2,112,000 bytes", "2,082,304", "bytes of the 4 MiB", "embedded structurally",
 		},
 		"C-M2-SHARED-PREFIX": {
 			"one prefix-advance function", "providerRevision", "publicationID", "planSHA256", "authorityRecordSetSHA256",

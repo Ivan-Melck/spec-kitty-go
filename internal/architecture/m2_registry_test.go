@@ -329,6 +329,21 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"adapter-owned-operation-boundary-lookalike", m2PublicationRecoveryFixture("ADAPTER-BOUNDARY-LOOKALIKE"), true},
 		{"renamed-wrapped-publication-witness", m2PublicationRecoveryFixture("WRAPPED-WITNESS"), true},
 		{"renamed-wrapped-operation-boundary", m2PublicationRecoveryFixture("WRAPPED-BOUNDARY"), true},
+		{"compact-boundary-full-id-leak", m2PublicationRecoveryFixture("BOUNDARY-FULL-ID"), true},
+		{"compact-boundary-publication-id-leak", m2PublicationRecoveryFixture("BOUNDARY-PUBLICATION-ID"), true},
+		{"compact-boundary-terminal-result-leak", m2PublicationRecoveryFixture("BOUNDARY-TERMINAL-RESULT"), true},
+		{"compact-boundary-status-leak", m2PublicationRecoveryFixture("BOUNDARY-STATUS"), true},
+		{"compact-boundary-membership-leak", m2PublicationRecoveryFixture("BOUNDARY-MEMBERSHIP"), true},
+		{"compact-boundary-missing-match", m2PublicationRecoveryFixture("BOUNDARY-MISSING-MATCH"), true},
+		{"summary-cannot-detect-lookup-collision", m2PublicationRecoveryFixture("SUMMARY-DUPLICATE-COLLISION"), true},
+		{"summary-deleted-state-aware-validation", m2PublicationRecoveryFixture("SUMMARY-DELETED-STATE-VALIDATION"), true},
+		{"summary-wrong-exact-budget", m2PublicationRecoveryFixture("SUMMARY-WRONG-BUDGET"), true},
+		{"compact-boundary-authority-method-leak", m2PublicationRecoveryFixture("BOUNDARY-METHOD-LEAK"), true},
+		{"compact-boundary-variable-digest", m2PublicationRecoveryFixture("BOUNDARY-VARIABLE-DIGEST"), true},
+		{"compact-boundary-wide-version", m2PublicationRecoveryFixture("BOUNDARY-WIDE-VERSION"), true},
+		{"compact-boundary-embedded-field", m2PublicationRecoveryFixture("BOUNDARY-EMBEDDED-FIELD"), true},
+		{"compact-boundary-exported-field", m2PublicationRecoveryFixture("BOUNDARY-EXPORTED-FIELD"), true},
+		{"summary-extra-authority-input", m2PublicationRecoveryFixture("SUMMARY-EXTRA-AUTHORITY"), true},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -346,31 +361,170 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 	}
 }
 
+const (
+	m2CompactBoundaryPositiveControlCount  = 3
+	m2CompactBoundaryPositiveControlSHA256 = "db55fe1763741d540ebd66e7fcd42903a285c965635f677304c2c2a543499302"
+)
+
+func TestM2CompactBoundaryPositiveControlsAreSealed(t *testing.T) {
+	controls := m2CompactBoundaryPositiveControls()
+	if err := validateM2CompactBoundaryPositiveControls(controls); err != nil {
+		t.Fatal(err)
+	}
+	for _, variant := range controls {
+		t.Run(variant, func(t *testing.T) {
+			root := t.TempDir()
+			writeGoFixture(t, root, "go.mod", "module example.test/recovery-ownership\n\ngo 1.26\n")
+			for path, source := range m2PublicationRecoveryFixture(variant) {
+				writeGoFixture(t, root, path, source)
+			}
+			setIsolatedGoPaths(t)
+			t.Setenv("GOPROXY", "off")
+			if err := inspectM2FoundationContractOwnership(t.Context(), root, "example.test/recovery-ownership"); err != nil {
+				t.Fatalf("evidence=M2-COMPACT-BOUNDARY-POSITIVE fixture=%s observed-error=%v expected=accepted", variant, err)
+			}
+		})
+	}
+
+	mutations := []struct {
+		name   string
+		mutate func([]string) []string
+	}{
+		{"delete", func(values []string) []string { return values[1:] }},
+		{"duplicate", func(values []string) []string { return append(values, values[0]) }},
+		{"substitute", func(values []string) []string { values[1] = "BOUNDARY-FULL-ID"; return values }},
+	}
+	for _, mutation := range mutations {
+		t.Run("census-"+mutation.name, func(t *testing.T) {
+			mutated := mutation.mutate(slices.Clone(controls))
+			if err := validateM2CompactBoundaryPositiveControls(mutated); err == nil {
+				t.Fatalf("evidence=M2-COMPACT-BOUNDARY-POSITIVE mutation=%s observed=accepted", mutation.name)
+			}
+		})
+	}
+}
+
+func m2CompactBoundaryPositiveControls() []string {
+	return []string{"COMPLETE", "BOUNDARY-RENAMED-FIELDS", "BOUNDARY-REORDERED-FIELDS"}
+}
+
+func validateM2CompactBoundaryPositiveControls(controls []string) error {
+	if len(controls) != m2CompactBoundaryPositiveControlCount {
+		return fmt.Errorf("evidence=M2-COMPACT-BOUNDARY-POSITIVE observed-count=%d expected=%d", len(controls), m2CompactBoundaryPositiveControlCount)
+	}
+	identities := slices.Clone(controls)
+	slices.Sort(identities)
+	sealed := make([]struct {
+		Name          string `json:"name"`
+		FixtureSHA256 string `json:"fixture_sha256"`
+	}, 0, len(identities))
+	for index, identity := range identities {
+		fixture := m2PublicationRecoveryFixture(identity)
+		if fixture == nil || index > 0 && identity == identities[index-1] {
+			return fmt.Errorf("evidence=M2-COMPACT-BOUNDARY-POSITIVE observed-invalid=%q", identity)
+		}
+		sealed = append(sealed, struct {
+			Name          string `json:"name"`
+			FixtureSHA256 string `json:"fixture_sha256"`
+		}{identity, m2DigestJSON(fixture)})
+	}
+	if observed := m2DigestJSON(sealed); observed != m2CompactBoundaryPositiveControlSHA256 {
+		return fmt.Errorf("evidence=M2-COMPACT-BOUNDARY-POSITIVE observed-sha256=%s expected=%s", observed, m2CompactBoundaryPositiveControlSHA256)
+	}
+	return nil
+}
+
 func m2PublicationRecoveryFixture(variant string) map[string]string {
 	if !slices.Contains([]string{
 		"COMPLETE", "MISSING-TYPE", "MISSING-HELPER", "MISSING-BOUNDARIES",
 		"ADAPTER-WITNESS", "ADAPTER-BOUNDARY-LOOKALIKE", "WRAPPED-WITNESS", "WRAPPED-BOUNDARY",
+		"BOUNDARY-FULL-ID", "BOUNDARY-PUBLICATION-ID", "BOUNDARY-TERMINAL-RESULT", "BOUNDARY-STATUS",
+		"BOUNDARY-MEMBERSHIP", "BOUNDARY-MISSING-MATCH", "SUMMARY-DUPLICATE-COLLISION",
+		"SUMMARY-DELETED-STATE-VALIDATION", "SUMMARY-WRONG-BUDGET",
+		"BOUNDARY-METHOD-LEAK", "BOUNDARY-VARIABLE-DIGEST", "BOUNDARY-WIDE-VERSION",
+		"BOUNDARY-RENAMED-FIELDS", "BOUNDARY-REORDERED-FIELDS", "BOUNDARY-EMBEDDED-FIELD",
+		"BOUNDARY-EXPORTED-FIELD", "SUMMARY-EXTRA-AUTHORITY",
 	}, variant) {
 		return nil
 	}
 	files := m2FoundationOwnershipFixture("COMPLETE")
-	typesToDeclare := m2PublicationRecoveryTypeNames()
 	helpersToDeclare := m2PublicationRecoveryHelperNames()
-	if variant == "MISSING-TYPE" {
-		typesToDeclare = typesToDeclare[1:]
-	}
 	if variant == "MISSING-HELPER" {
 		helpersToDeclare = helpersToDeclare[:len(helpersToDeclare)-1]
 	}
+	boundaryFields := "operationIDLookupDigest Digest; logicalVersion LogicalVersion; leafDigest Digest"
+	switch variant {
+	case "BOUNDARY-FULL-ID":
+		boundaryFields += "; operationID OperationID"
+	case "BOUNDARY-PUBLICATION-ID":
+		boundaryFields += "; publicationID PublicationID"
+	case "BOUNDARY-TERMINAL-RESULT":
+		boundaryFields += "; terminalResult []byte"
+	case "BOUNDARY-STATUS":
+		boundaryFields += "; status OperationStatus"
+	case "BOUNDARY-MEMBERSHIP":
+		boundaryFields += "; eventMembership []Digest"
+	case "BOUNDARY-RENAMED-FIELDS":
+		boundaryFields = "lookupCommitment Digest; version LogicalVersion; stateCommitment Digest"
+	case "BOUNDARY-REORDERED-FIELDS":
+		boundaryFields = "leafDigest Digest; operationIDLookupDigest Digest; logicalVersion LogicalVersion"
+	case "BOUNDARY-EMBEDDED-FIELD":
+		boundaryFields = "Digest; logicalVersion LogicalVersion; leafDigest Digest"
+	case "BOUNDARY-EXPORTED-FIELD":
+		boundaryFields = "OperationIDLookupDigest Digest; logicalVersion LogicalVersion; leafDigest Digest"
+	}
 	var declarations strings.Builder
-	for _, name := range typesToDeclare {
-		fmt.Fprintf(&declarations, "type %s struct{}\n", name)
+	if variant == "BOUNDARY-VARIABLE-DIGEST" {
+		declarations.WriteString("type Digest string\n")
+	} else {
+		declarations.WriteString("type Digest [32]byte\n")
+	}
+	if variant == "BOUNDARY-WIDE-VERSION" {
+		declarations.WriteString("type LogicalVersion string\n")
+	} else {
+		declarations.WriteString("type LogicalVersion uint64\n")
+	}
+	declarations.WriteString("type OperationID string\ntype PublicationID string\ntype OperationStatus string\ntype OperationStateV2 struct{}\n")
+	if variant != "MISSING-TYPE" {
+		declarations.WriteString("type PublicationWitnessV2 struct{}\n")
 	}
 	for _, name := range helpersToDeclare {
-		fmt.Fprintf(&declarations, "func %s() {}\n", name)
+		switch name {
+		case "BuildOperationSummaryV2":
+			if variant == "SUMMARY-DUPLICATE-COLLISION" {
+				declarations.WriteString("func BuildOperationSummaryV2([]OperationBoundaryV2) (OperationSummaryV2, error) { return OperationSummaryV2{}, nil }\n")
+			} else {
+				declarations.WriteString("func BuildOperationSummaryV2([]OperationStateV2) (OperationSummaryV2, error) { return OperationSummaryV2{}, nil }\n")
+			}
+		case "ValidateOperationSummaryV2":
+			if variant == "SUMMARY-DELETED-STATE-VALIDATION" {
+				declarations.WriteString("func ValidateOperationSummaryV2(OperationSummaryV2) error { return nil }\n")
+			} else if variant == "SUMMARY-EXTRA-AUTHORITY" {
+				declarations.WriteString("func ValidateOperationSummaryV2(OperationSummaryV2, []OperationStateV2, OperationID) error { return nil }\n")
+			} else {
+				declarations.WriteString("func ValidateOperationSummaryV2(OperationSummaryV2, []OperationStateV2) error { return nil }\n")
+			}
+		default:
+			fmt.Fprintf(&declarations, "func %s() {}\n", name)
+		}
+	}
+	declarations.WriteString("type OperationBoundaryV2 struct{" + boundaryFields + "}\n")
+	declarations.WriteString("func (OperationBoundaryV2) OperationIDLookupDigest() Digest { var value Digest; return value }\n")
+	declarations.WriteString("func (OperationBoundaryV2) LogicalVersion() LogicalVersion { var value LogicalVersion; return value }\n")
+	declarations.WriteString("func (OperationBoundaryV2) LeafDigest() Digest { var value Digest; return value }\n")
+	if variant != "BOUNDARY-MISSING-MATCH" {
+		declarations.WriteString("func (OperationBoundaryV2) MatchesOperationID(OperationID) bool { return true }\n")
+	}
+	if variant == "BOUNDARY-METHOD-LEAK" {
+		declarations.WriteString("func (OperationBoundaryV2) OperationID() OperationID { return \"operation-01\" }\n")
 	}
 	if variant != "MISSING-BOUNDARIES" {
 		declarations.WriteString("func (OperationSummaryV2) Boundaries() []OperationBoundaryV2 { return nil }\n")
+	}
+	if variant == "SUMMARY-WRONG-BUDGET" {
+		declarations.WriteString("const MaxOperationSummaryBytesV2 = 2112001\n")
+	} else {
+		declarations.WriteString("const MaxOperationSummaryBytesV2 = 2112000\n")
 	}
 	files["internal/controljournal/v2/contracts.go"] += declarations.String()
 	switch variant {
@@ -738,13 +892,206 @@ func validateM2PublicationRecoveryActivation(foundation *productionSourcePackage
 			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=complete-activated-surface owner=%s observed=missing expected-helper=%s", foundationPath, name)
 		}
 	}
+	if err := validateM2CompactOperationBoundary(foundation, foundationPath); err != nil {
+		return err
+	}
 	summary, _ := scope.Lookup("OperationSummaryV2").(*types.TypeName)
-	boundaryAccessor := summary != nil && (types.NewMethodSet(summary.Type()).Lookup(nil, "Boundaries") != nil ||
-		types.NewMethodSet(types.NewPointer(summary.Type())).Lookup(nil, "Boundaries") != nil)
-	if !boundaryAccessor {
+	boundaryAccessor := m2MethodSignature(summary, "Boundaries")
+	if !m2SignatureIsBoundaryAccessor(boundaryAccessor, foundationPath) {
 		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=defensive-boundary-access owner=%s observed=missing expected-method=OperationSummaryV2.Boundaries", foundationPath)
 	}
+	if err := validateM2OperationSummaryHelperSignatures(foundation, foundationPath); err != nil {
+		return err
+	}
+	budget, ok := scope.Lookup("MaxOperationSummaryBytesV2").(*types.Const)
+	if !ok || budget.Val().ExactString() != "2112000" {
+		observed := "missing"
+		if ok {
+			observed = budget.Val().ExactString()
+		}
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=exact-operation-summary-budget owner=%s observed=%s expected=2112000", foundationPath, observed)
+	}
 	return nil
+}
+
+func validateM2CompactOperationBoundary(foundation *productionSourcePackage, foundationPath string) error {
+	scope := foundation.typed.Scope()
+	boundary, _ := scope.Lookup("OperationBoundaryV2").(*types.TypeName)
+	if boundary == nil {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s observed=missing", foundationPath)
+	}
+	named, ok := types.Unalias(boundary.Type()).(*types.Named)
+	if !ok {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s observed=alias", foundationPath)
+	}
+	structure, ok := named.Underlying().(*types.Struct)
+	if !ok || structure.NumFields() != 3 {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s observed-fields=%d expected-fields=3", foundationPath, m2StructFieldCount(structure))
+	}
+	digestFields := 0
+	logicalVersionFields := 0
+	for index := 0; index < structure.NumFields(); index++ {
+		field := structure.Field(index)
+		if field.Exported() || field.Embedded() {
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s index=%d observed-field=%s observed-type=%s expected=private-non-embedded", foundationPath, index, field.Name(), field.Type())
+		}
+		switch {
+		case m2IsFixedBoundaryFieldType(field.Type(), foundationPath, "Digest"):
+			digestFields++
+		case m2IsFixedBoundaryFieldType(field.Type(), foundationPath, "LogicalVersion"):
+			logicalVersionFields++
+		default:
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s index=%d observed-field=%s observed-type=%s expected=foundation-Digest-or-LogicalVersion", foundationPath, index, field.Name(), field.Type())
+		}
+	}
+	if digestFields != 2 || logicalVersionFields != 1 {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary owner=%s observed-digests=%d observed-logical-versions=%d expected-digests=2 expected-logical-versions=1", foundationPath, digestFields, logicalVersionFields)
+	}
+	match := m2MethodSignature(boundary, "MatchesOperationID")
+	if !m2SignatureIsExactIDMatch(match, foundationPath) {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=exact-operation-id-match owner=%s observed=%v expected=MatchesOperationID(OperationID)bool", foundationPath, match)
+	}
+	for _, accessor := range []struct {
+		name     string
+		typeName string
+	}{
+		{"OperationIDLookupDigest", "Digest"},
+		{"LogicalVersion", "LogicalVersion"},
+		{"LeafDigest", "Digest"},
+	} {
+		if !m2SignatureIsFixedBoundaryAccessor(m2MethodSignature(boundary, accessor.name), foundationPath, accessor.typeName) {
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=compact-operation-boundary-access owner=%s observed=missing expected-method=%s()%s", foundationPath, accessor.name, accessor.typeName)
+		}
+	}
+	if leakedMethod, leakedType := m2BoundaryMethodLeak(boundary, foundationPath); leakedMethod != "" {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=no-boundary-authority-leak owner=%s method=%s observed-type=%s", foundationPath, leakedMethod, leakedType)
+	}
+	return nil
+}
+
+func m2StructFieldCount(structure *types.Struct) int {
+	if structure == nil {
+		return 0
+	}
+	return structure.NumFields()
+}
+
+func m2IsFixedBoundaryFieldType(candidate types.Type, foundationPath, name string) bool {
+	named, ok := types.Unalias(candidate).(*types.Named)
+	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != foundationPath || named.Obj().Name() != name {
+		return false
+	}
+	switch name {
+	case "Digest":
+		array, ok := named.Underlying().(*types.Array)
+		if !ok {
+			return false
+		}
+		basic, elementOK := array.Elem().Underlying().(*types.Basic)
+		return elementOK && array.Len() == 32 && basic.Kind() == types.Byte
+	case "LogicalVersion":
+		basic, ok := named.Underlying().(*types.Basic)
+		return ok && basic.Kind() == types.Uint64
+	default:
+		return false
+	}
+}
+
+func m2MethodSignature(typeName *types.TypeName, method string) *types.Signature {
+	if typeName == nil {
+		return nil
+	}
+	for _, methodSet := range []*types.MethodSet{types.NewMethodSet(typeName.Type()), types.NewMethodSet(types.NewPointer(typeName.Type()))} {
+		selection := methodSet.Lookup(nil, method)
+		if selection != nil {
+			signature, _ := selection.Obj().Type().(*types.Signature)
+			return signature
+		}
+	}
+	return nil
+}
+
+func m2SignatureIsExactIDMatch(signature *types.Signature, foundationPath string) bool {
+	return signature != nil && !signature.Variadic() && signature.Params().Len() == 1 && signature.Results().Len() == 1 &&
+		m2IsFoundationNamedType(signature.Params().At(0).Type(), foundationPath, "OperationID") &&
+		types.Identical(signature.Results().At(0).Type(), types.Typ[types.Bool])
+}
+
+func m2SignatureIsFixedBoundaryAccessor(signature *types.Signature, foundationPath, typeName string) bool {
+	return signature != nil && !signature.Variadic() && signature.Params().Len() == 0 && signature.Results().Len() == 1 &&
+		m2IsFoundationNamedType(signature.Results().At(0).Type(), foundationPath, typeName)
+}
+
+func m2BoundaryMethodLeak(boundary *types.TypeName, foundationPath string) (string, string) {
+	allowed := map[string]bool{
+		"MatchesOperationID":      true,
+		"OperationIDLookupDigest": true,
+		"LogicalVersion":          true,
+		"LeafDigest":              true,
+	}
+	for _, methodSet := range []*types.MethodSet{types.NewMethodSet(boundary.Type()), types.NewMethodSet(types.NewPointer(boundary.Type()))} {
+		for index := 0; index < methodSet.Len(); index++ {
+			method := methodSet.At(index).Obj()
+			if !method.Exported() || allowed[method.Name()] {
+				continue
+			}
+			references := make(map[m2NamedTypeReference]bool)
+			m2CollectNamedTypeReferences(method.Type(), references, make(map[types.Type]bool))
+			for _, name := range []string{"OperationID", "PublicationID", "OperationStatus", "OperationStateV2", "EventID", "EffectID"} {
+				if references[m2NamedTypeReference{Owner: foundationPath, Name: name}] {
+					return method.Name(), name
+				}
+			}
+			return method.Name(), method.Type().String()
+		}
+	}
+	return "", ""
+}
+
+func m2SignatureIsBoundaryAccessor(signature *types.Signature, foundationPath string) bool {
+	if signature == nil || signature.Variadic() || signature.Params().Len() != 0 || signature.Results().Len() != 1 {
+		return false
+	}
+	slice, ok := types.Unalias(signature.Results().At(0).Type()).(*types.Slice)
+	return ok && m2IsFoundationNamedType(slice.Elem(), foundationPath, "OperationBoundaryV2")
+}
+
+func m2IsFoundationNamedType(candidate types.Type, foundationPath, name string) bool {
+	named, ok := types.Unalias(candidate).(*types.Named)
+	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == foundationPath && named.Obj().Name() == name
+}
+
+func validateM2OperationSummaryHelperSignatures(foundation *productionSourcePackage, foundationPath string) error {
+	build, _ := foundation.typed.Scope().Lookup("BuildOperationSummaryV2").(*types.Func)
+	buildSignature := m2FunctionSignature(build)
+	if buildSignature == nil || buildSignature.Variadic() || buildSignature.Params().Len() != 1 || buildSignature.Results().Len() != 2 ||
+		!m2IsSliceOfFoundationType(buildSignature.Params().At(0).Type(), foundationPath, "OperationStateV2") ||
+		!m2IsFoundationNamedType(buildSignature.Results().At(0).Type(), foundationPath, "OperationSummaryV2") ||
+		!types.Identical(buildSignature.Results().At(1).Type(), types.Universe.Lookup("error").Type()) {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=collision-aware-operation-summary owner=%s helper=BuildOperationSummaryV2 observed=%v expected=func([]OperationStateV2)(OperationSummaryV2,error)", foundationPath, buildSignature)
+	}
+	validate, _ := foundation.typed.Scope().Lookup("ValidateOperationSummaryV2").(*types.Func)
+	validateSignature := m2FunctionSignature(validate)
+	if validateSignature == nil || validateSignature.Variadic() || validateSignature.Params().Len() != 2 || validateSignature.Results().Len() != 1 ||
+		!m2IsFoundationNamedType(validateSignature.Params().At(0).Type(), foundationPath, "OperationSummaryV2") ||
+		!m2IsSliceOfFoundationType(validateSignature.Params().At(1).Type(), foundationPath, "OperationStateV2") ||
+		!types.Identical(validateSignature.Results().At(0).Type(), types.Universe.Lookup("error").Type()) {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=state-aware-operation-summary owner=%s helper=ValidateOperationSummaryV2 observed=%v expected=func(OperationSummaryV2,[]OperationStateV2)error", foundationPath, validateSignature)
+	}
+	return nil
+}
+
+func m2FunctionSignature(function *types.Func) *types.Signature {
+	if function == nil {
+		return nil
+	}
+	signature, _ := function.Type().(*types.Signature)
+	return signature
+}
+
+func m2IsSliceOfFoundationType(candidate types.Type, foundationPath, name string) bool {
+	slice, ok := types.Unalias(candidate).(*types.Slice)
+	return ok && m2IsFoundationNamedType(slice.Elem(), foundationPath, name)
 }
 
 func validateM2FoundationContractTypeNames(names []string) error {

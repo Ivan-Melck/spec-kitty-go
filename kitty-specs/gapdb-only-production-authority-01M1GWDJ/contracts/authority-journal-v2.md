@@ -201,13 +201,29 @@ provider revision, and advances the prefix with the foundation-owned helper.
 It validates cumulative publication membership and sorts events by
 `(Record.Revision, EventIndex, EventID)` before pure reduction.
 
-Checkpoint operation summaries expose canonical OperationID-sorted
-`OperationBoundaryV2` values containing OperationID, logical version, last
-PublicationID, status, result digest, event/effect membership digests, and a
-leaf digest. Counts and summary digest are derived from those boundaries;
-terminal result bytes are excluded. Existing operation suffixes begin after
-the checkpoint boundary, new operations begin at version one, and missing or
-regressed operation heads close readiness.
+Checkpoint operation summaries expose canonical, fixed-size
+`OperationBoundaryV2` values containing an OperationID SHA-256 lookup digest,
+logical version, and the operation-summary leaf digest. The leaf remains the
+commitment to exact OperationID, version, last PublicationID, status/result,
+and event/effect membership. Boundaries sort by lookup digest; duplicate or
+colliding coordinates refuse. Totals and summary digest are derived from those
+boundaries. Status counts are constructed from source OperationStates and, on
+restore, recomputed from exact boundary-event states. Structural validation
+checks shape/order/uniqueness and arithmetic; state-aware validation proves
+counts and leaf commitments. Variable-length OperationIDs and terminal result
+bytes are excluded.
+
+The complete operation-head scan supplies exact OperationIDs during restore.
+Each boundary matches an exact ID through a foundation-owned pure method;
+restore exact-reads the operation event at the boundary version, reconstructs
+the full state, and verifies the leaf before suffix use. Existing operation
+suffixes begin after the matched boundary, new operations begin at version one,
+and missing, extra, unmatched, or regressed operations close readiness. The
+final structured checkpoint encoding of 10,000 maximum-version boundaries plus
+outer summary overhead must remain within
+`MaxOperationSummaryBytesV2 = 2,112,000` bytes. This leaves 2,082,304 bytes of
+the 4 MiB ceiling for aggregate projection entries and remaining checkpoint
+metadata. The summary is embedded structurally, not as base64 JSON bytes.
 
 A stale cursor or any database/revision movement restarts the entire bounded
 attempt and discards all collected material. Missing versions, physical head
