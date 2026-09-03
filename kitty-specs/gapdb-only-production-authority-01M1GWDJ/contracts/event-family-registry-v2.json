@@ -9,7 +9,7 @@
   ],
   "families": [
     {"family":"runtime_host","event_schema":1,"reducer":1,"owner":"internal/productionruntime"},
-    {"family":"operation","event_schema":1,"reducer":1,"owner":"internal/controljournal/application"},
+    {"family":"operation","event_schema":2,"reducer":2,"owner":"internal/controljournal/application"},
     {"family":"mission","event_schema":1,"reducer":1,"owner":"internal/mission"},
     {"family":"artifact_catalog","event_schema":1,"reducer":1,"owner":"internal/artifact"},
     {"family":"artifact_revision","event_schema":1,"reducer":1,"owner":"internal/artifact"},

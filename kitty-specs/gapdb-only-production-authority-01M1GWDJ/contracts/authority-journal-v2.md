@@ -26,7 +26,7 @@ immutable effect intent:
   spk/v2/effects/<effect-id>/intent
 
 aggregate head:
-  spk/v2/scopes/<scope>/heads/<aggregate-kind>/<aggregate-id>
+  spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>
 
 immutable event:
   spk/v2/scopes/<scope>/journal/<aggregate-kind>/<aggregate-id>/<version-hex16>
@@ -36,6 +36,12 @@ Every key component uses the canonical bounded codec. Logical version is a
 positive 16-character lowercase hexadecimal integer. An event key is inserted
 with absence required and is never updated or deleted in M2. Aggregate deletion
 is a tombstone transition with a retained head.
+
+`spk/v2/heads/` is the only aggregate-head spelling. It permits a complete
+census before the set of scopes is known. The former
+`spk/v2/scopes/<scope>/heads/...` spelling is rejected and is not a read or
+migration alias. Operation binding/head records remain host-global under
+`spk/v2/operations/` and form a second bounded recovery census.
 
 ## Operation resolution order
 
@@ -92,6 +98,37 @@ same OperationID, PublicationID, event count, provider revision, and distinct
 consecutive event index. Publication success is not exposed before durable
 acknowledgement or same-identity reconciliation.
 
+The closed operation event uses event schema 2 and reducer version 2. Its
+payload is exactly the canonical OperationState transition preimage, including
+status, result identity/bytes, and cumulative event/effect membership but
+excluding the not-yet-derived PublicationID. The sealer rejects a mismatched
+payload. The final envelope PublicationID reconstructs the exact historical
+OperationState. Operation event tuple `1/1` is incompatible and refuses.
+
+The event registry exposes canonical descriptor bytes and a digest over its
+registry ID/version, publication rule, ordering tuple, and sorted
+family/schema/reducer/owner census. The complete reducer registry exposes a
+separate descriptor/digest that also binds each declared implementation
+digest. Runtime reducer application is stateless. Bounded repeated-call
+determinism qualification is separate and cannot impose a replay-wide
+observation limit.
+
+The common journal owns the durable publication port and coordinator. A
+CommitObservation names PublicationID, positive provider revision,
+durable-through revision, and exact mutation count. Only exact validation
+against the sealed plan and record-set digest creates an opaque
+AcknowledgedPublication. Projection state and its rolling prefix advance only
+from that acknowledgement, never from optimistic delivery or unresolved
+ambiguity.
+
+The coordinator registers every in-flight plan before delivery, allows
+unrelated provider commits concurrently, and retains a bounded revision-keyed
+acknowledgement ledger supporting at least 10,000 publications between seals.
+A quiescent checkpoint barrier orders acknowledgements by provider revision and
+folds the prior prefix with revision, PublicationID, plan digest, and sealed
+record-set digest. Unresolved ambiguity blocks sealing. Capability packages
+may reach the coordinator but must not reach the GapDB adapter directly.
+
 ## Ambiguity law
 
 PublicationID is deterministically derived from OperationID, next operation
@@ -114,17 +151,35 @@ mixed-revision, or contradictory observation closes authority.
 
 ## Restore law
 
-Watch is notification only. Restore captures stable provider revision `R`,
-selects a compatible complete checkpoint, scans all current aggregate heads at
-`R`, and exact-reads every new logical version for each advanced/new aggregate.
-It validates operation membership and sorts events by
-`(Record.Revision, EventIndex, EventID)` before pure reduction. It rechecks `R`
-before sealing the restored projection.
+Provider-neutral recovery addresses, scan targets, records, pages, store
+revision coordinates, and typed recovery errors belong to the common journal.
+They expose semantic identities and copied canonical bytes, never raw GapDB
+keys or provider types. The adapter alone translates those types to the frozen
+public GapDB client.
 
-A stale cursor restarts the entire bounded attempt. Missing versions, physical
-head deletion, mismatched terminal heads, partial operation membership,
-unknown version tuples, or exceeded budgets fail readiness. Only a sealed
-restore result may admit the replacement runtime epoch.
+Watch is notification only. Restore captures a positive durable
+`(DatabaseID, R)`, selects a compatible complete checkpoint, scans all current
+aggregate heads and operation records, and exact-reads every new logical
+version for each advanced/new aggregate. Each initial scan page must report
+`R`; continuation cursors remain provider-pinned to it; each record revision
+must be positive and no greater than `R`; and final status must report the same
+DatabaseID and exactly `R`.
+
+This is an attempt-bound stable-revision proof. The frozen GapDB API offers no
+as-of `Get` and accepts no requested revision on the first prefix-scan page, so
+the contract makes neither claim. Monotonic non-reusable revisions plus equal
+capture/final coordinates prove that retained latest-value reads are coherent
+at `R`.
+
+Restore reconstructs historical OperationState from the closed operation
+event payload, validates cumulative publication membership, and sorts events
+by `(Record.Revision, EventIndex, EventID)` before pure reduction.
+
+A stale cursor or any database/revision movement restarts the entire bounded
+attempt and discards all collected material. Missing versions, physical head
+deletion, mismatched terminal heads, partial operation membership, unknown
+version tuples, or exceeded budgets fail readiness. Only a sealed restore
+result may admit the replacement runtime epoch.
 
 ## Capability ownership law
 

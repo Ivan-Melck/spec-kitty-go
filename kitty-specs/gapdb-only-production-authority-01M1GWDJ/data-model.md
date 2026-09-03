@@ -62,7 +62,7 @@ spk/v2/operations/<operation-id>/binding
 spk/v2/operations/<operation-id>/head
 spk/v2/effects/<effect-id>/intent
 
-spk/v2/scopes/<scope>/heads/<aggregate-kind>/<aggregate-id>
+spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>
 spk/v2/scopes/<scope>/journal/<aggregate-kind>/<aggregate-id>/<version-hex16>
 
 spk/v2/checkpoints/slots/<slot-id>
@@ -74,6 +74,11 @@ spk/v2/workgraphs/<mission-id>/eligibility/<shard-id>
 repository, or work revision. Operation keys are deliberately outside mission
 scope. Logical versions are fixed-width 16-character lowercase hexadecimal so
 lexical and numeric order agree, although restore normally uses exact Gets.
+The global `spk/v2/heads/` prefix makes the complete non-operation head census
+enumerable even when a scope was created after the selected checkpoint. The
+old `spk/v2/scopes/<scope>/heads/...` spelling is invalid and is never a
+compatibility alias. Operation binding/head pairs form a second bounded census
+under their existing host-global prefix.
 
 Physical deletion of an aggregate head or event is forbidden in M2. Product
 deletion is a tombstone transition. Historical retention/archival is a later
@@ -201,6 +206,13 @@ uses consecutive zero-based event indices and one positive total event count.
 Every record in the group receives the same GapDB commit revision. Unknown
 event/envelope/reducer tuples fail restore.
 
+The closed operation event uses event schema 2 and reducer version 2. Its
+payload is the canonical OperationState transition preimage with every status,
+result, event-membership, and effect-membership field, excluding only
+`last_publication_id`. The sealer derives PublicationID after validating that
+payload; the final envelope supplies it when historical OperationState is
+reconstructed. Operation event tuple `1/1` is not admitted.
+
 ### Aggregate head
 
 ```text
@@ -262,6 +274,70 @@ canonical shard value plus its exact create/update condition. Checkpoint
 transitions pair one immutable record with one retained-ring slot value and the
 slot's exact create/update condition. Every byte and target is included in the
 sealed plan digest preimage, except fields derived from PublicationID itself.
+
+### Recovery read model
+
+Provider-neutral recovery types are foundation-owned and closed:
+
+```text
+StoreRevisionV2 { store_identity, current_revision,
+                  durable_through_revision }
+RecordAddressV2 { admitted semantic role and typed identity }
+ScanTargetV2 { all_aggregate_heads | all_operation_records |
+               checkpoint_slots }
+ReadRequestV2 { address, attempt_revision }
+ScanRequestV2 { target, attempt_revision, cursor, limit, max_bytes }
+RecoveryRecordV2 { address, canonical_value, record_revision, expiry }
+RecoveryPageV2 { observed_revision, as_of, records, cursor, truncated }
+```
+
+Addresses never contain an encoded provider key. GapDB key strings and cursor
+interpretation remain adapter-private. Construction validates identities and
+budgets before copying; returned bytes and collections are defensive copies.
+Closed errors distinguish not-found, revision-moved, stale-cursor, malformed,
+unavailable/canceled, and budget-exceeded outcomes.
+
+### Registry, reducer, and acknowledgement model
+
+`EventRegistryDescriptorV2` canonically binds registry ID/version,
+publication rule, ordering tuple, and the sorted
+family/event-schema/reducer/owner census. `ReducerRegistryDescriptorV2` binds
+the matching complete tuple set plus each declared reducer implementation
+digest. Both expose canonical bytes and SHA-256 identities.
+
+Runtime reducer `Apply` is stateless. Bounded repeated-call determinism
+qualification is a separate helper and does not retain a replay-wide cache or
+impose a 256-observation ceiling.
+
+```text
+CommitObservationV2 {
+  publication_id
+  revision
+  durable_through_revision
+  mutation_count
+}
+
+AcknowledgedPublicationV2 {
+  sealed plan/record-set identity and validated durable observation
+}
+```
+
+The foundation publication coordinator registers a sealed plan before its
+durable port is invoked. Only an exact durable observation or complete
+same-identity reconciliation can create the opaque acknowledgement and advance
+the projection. Direct capability-to-adapter calls are prohibited.
+
+The projection tracker maintains current canonical state, a compact operation
+summary, prior rolling prefix, and a bounded revision-keyed acknowledgement
+ledger. The ledger admits at least 10,000 publications between checkpoint
+seals. At a quiescent barrier, acknowledgements are ordered by provider
+revision and folded from the prior prefix using revision, PublicationID, plan
+digest, and sealed-record-set digest. Unresolved ambiguity blocks sealing.
+
+The operation summary contains bounded counts/status counts and sorted
+fixed-size operation leaf digests. A leaf binds OperationID, logical version,
+last PublicationID, status/result digest, and event/effect membership digests;
+it does not copy all terminal result bytes into the checkpoint.
 
 ## Capability aggregates
 
@@ -380,9 +456,10 @@ CheckpointV2 {
 ```
 
 The checkpoint is built from a sealed projection/prefix capability maintained
-only after acknowledged publication. It never replays from origin during
-creation. It covers one complete provider revision and every authoritative
-aggregate known at that revision.
+only after acknowledged publication. Zero-value or field-copied forged seals
+fail internal digest validation. It never replays from origin during creation.
+It covers one complete provider revision and every authoritative aggregate
+known at that revision.
 
 A bounded retained ring of checkpoint candidate slots points to immutable
 records. Selection sorts by watermark, validates every candidate independently,
@@ -393,21 +470,31 @@ candidates at the same watermark.
 
 With command admission closed:
 
-1. capture store revision `R`;
+1. capture positive durable `(DatabaseID, R)`;
 2. select the newest compatible checkpoint or origin;
-3. scan every aggregate head with a cursor pinned to `R`;
-4. restart the entire attempt on stale cursor or observed revision mismatch;
+3. scan `spk/v2/heads/` and `spk/v2/operations/`, requiring each initial page
+   to report `R` and each continuation cursor to remain provider-pinned to it;
+4. restart the entire attempt on stale cursor, observed revision mismatch, or
+   database identity mismatch;
 5. compare the head census with checkpoint aggregate versions;
 6. exact-Get every logical version in `(checkpointVersion,currentVersion]`
    using a bounded worker pool;
 7. validate key/envelope coordinates, no expiry, known versions, revision in
    `(checkpointWatermark,R]`, and continuous aggregate versions;
-8. group by OperationID and require exact OperationState event membership,
-   common record revision, and complete event indices;
+8. group by OperationID/PublicationID, reconstruct historical OperationState
+   from operation event payloads, and require exact cumulative deltas, common
+   record revision, and complete event indices;
 9. sort by `(Record.Revision, EventIndex, EventID)` and reduce purely;
 10. match every terminal head and whole-product digest;
-11. re-read store revision and restart if it is no longer `R`; and
+11. re-read status and restart unless DatabaseID and revision are unchanged;
+    and
 12. admit a new RuntimeEpoch only from the sealed restore result.
+
+This is an attempt-bound stable-revision proof, not an as-of-Get claim. The
+frozen GapDB API cannot request `R` for `Get` or for an initial prefix page.
+Every exact-read record must instead have a positive revision no greater than
+`R`; monotonic non-reusable revisions plus the equal capture/final coordinate
+prove that all retained reads describe the same stable store state.
 
 Checkpoint aggregate absent from current heads, regressed head versions,
 physical deletion, duplicate versions, partial operation groups, unknown
