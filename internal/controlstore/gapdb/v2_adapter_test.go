@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -485,6 +486,29 @@ func TestV2ReaderContinuationCursorAndStaleProviderCursor(t *testing.T) {
 	}
 }
 
+func TestV2ReaderRejectsNonAdvancingContinuationCursor(t *testing.T) {
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 9, 9)
+	cursor := []byte("opaque-revision-nine")
+	request, _ := journalv2.NewScanRequestV2(journalv2.OperationRecordScanTargetV2(), attempt, cursor, 10, MaxScanBytes)
+	key, _ := v2OperationBindingKey("operation-1")
+	provider := &fakeProvider{scanFn: func(_ context.Context, prefix string, limit int, got string) (gapdbapi.ScanPage, error) {
+		if prefix != v2OperationsPrefix().String() || limit != 10 || got != string(cursor) {
+			t.Fatalf("prefix=%q limit=%d cursor=%q", prefix, limit, got)
+		}
+		return gapdbapi.ScanPage{
+			ObservedRevision: 9,
+			AsOf:             time.Date(2026, 9, 2, 1, 2, 3, 987654321, time.UTC),
+			Records:          []gapdbapi.Record{gapdbapi.NewRecord(key.String(), []byte(`{"binding":true}`), 8, nil)},
+			Cursor:           string(cursor),
+			Truncated:        true,
+		}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	if _, err := adapter.ScanV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorStaleCursor) {
+		t.Fatalf("non-advancing continuation cursor accepted: %v", err)
+	}
+}
+
 func TestV2ReaderRequestBudgetsRefuseBeforeProvider(t *testing.T) {
 	var calls atomic.Int32
 	provider := &fakeProvider{scanFn: func(context.Context, string, int, string) (gapdbapi.ScanPage, error) {
@@ -959,6 +983,108 @@ func TestV2AmbiguityCompleteReadbackReturnsRecordedProgress(t *testing.T) {
 		result.observation.DurableThroughRevision() != 79 || result.operationState.LastPublicationID() != plan.PublicationID() ||
 		result.observation.MutationCount() != len(encoded.keys) || int(reads.Load()) != len(encoded.keys) || writes.Load() != 0 {
 		t.Fatalf("result=%+v reads=%d writes=%d err=%v", result, reads.Load(), writes.Load(), err)
+	}
+}
+
+type publicV2Reconciler interface {
+	ReconcileCommitV2(context.Context, journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error)
+}
+
+var _ publicV2Reconciler = (*Adapter)(nil)
+
+func TestV2AdapterExternalMethodSetAndPublicReconciliationContract(t *testing.T) {
+	method, present := reflect.TypeOf((*Adapter)(nil)).MethodByName("ReconcileCommitV2")
+	if !present || method.PkgPath != "" {
+		t.Fatalf("external method set does not expose ReconcileCommitV2: method=%+v present=%v", method, present)
+	}
+	plan := v2TestPlan(t)
+	probe, _ := newAdapter(&fakeProvider{}, "/explicit/socket", time.Second)
+	encoded, err := probe.encodeV2Plan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexByKey := make(map[string]int, len(encoded.keys))
+	for index, key := range encoded.keys {
+		indexByKey[key.String()] = index
+	}
+
+	t.Run("committed", func(t *testing.T) {
+		provider := &fakeProvider{
+			getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+				index := indexByKey[key]
+				return gapdbapi.NewRecord(key, encoded.values[index], 71, nil), nil
+			},
+			statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+				return gapdbapi.StatusResult{DatabaseID: "db-1", CurrentRevision: 73, DurableThroughRevision: 72}, nil
+			},
+		}
+		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+		observation, err := adapter.ReconcileCommitV2(t.Context(), plan)
+		if err != nil || observation.PublicationID() != plan.PublicationID() || observation.PlanDigest() != plan.Digest() ||
+			observation.RecordSetDigest() != plan.RecordSetDigest() || observation.Revision() != 71 ||
+			observation.DurableThroughRevision() != 72 || observation.MutationCount() != len(encoded.keys) {
+			t.Fatalf("observation=%+v err=%v", observation, err)
+		}
+	})
+
+	t.Run("retry-same-publication", func(t *testing.T) {
+		provider := &fakeProvider{getFn: func(context.Context, string) (gapdbapi.Record, error) {
+			return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
+		}}
+		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+		_, err := adapter.ReconcileCommitV2(t.Context(), plan)
+		var typed *Error
+		if !errors.As(err, &typed) || typed.Kind != OutcomeConflict || typed.Recovery != RecoveryRetrySameOperation ||
+			!strings.Contains(typed.Detail, "identical sealed publication") {
+			t.Fatalf("absence did not produce explicit same-publication retry: %v", err)
+		}
+	})
+
+	t.Run("corrupt", func(t *testing.T) {
+		provider := &fakeProvider{getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+			index := indexByKey[key]
+			if index == 0 {
+				return gapdbapi.NewRecord(key, encoded.values[index], 71, nil), nil
+			}
+			return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
+		}}
+		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+		if _, err := adapter.ReconcileCommitV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) {
+			t.Fatalf("partial publication did not close authority: %v", err)
+		}
+	})
+}
+
+func TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation(t *testing.T) {
+	plan := v2TestPlan(t)
+	probe, _ := newAdapter(&fakeProvider{}, "/explicit/socket", time.Second)
+	encoded, err := probe.encodeV2Plan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make(map[string][]byte, len(encoded.keys))
+	for index, key := range encoded.keys {
+		values[key.String()] = encoded.values[index]
+	}
+	provider := &fakeProvider{
+		batchFn: func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+			return gapdbapi.MutationResult{}, &gapdbapi.TransportError{Operation: "atomic_batch", Ambiguous: true, Cause: io.EOF}
+		},
+		getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+			return gapdbapi.NewRecord(key, values[key], 81, nil), nil
+		},
+		statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+			return gapdbapi.StatusResult{DatabaseID: "db-1", CurrentRevision: 82, DurableThroughRevision: 82}, nil
+		},
+	}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	if _, err := adapter.CommitV2(t.Context(), plan); !IsKind(err, OutcomeAmbiguous) {
+		t.Fatalf("commit did not expose ambiguity: %v", err)
+	}
+	observation, err := adapter.ReconcileCommitV2(t.Context(), plan)
+	if err != nil || observation.PublicationID() != plan.PublicationID() || observation.Revision() != 81 ||
+		observation.DurableThroughRevision() != 82 {
+		t.Fatalf("observation=%+v err=%v", observation, err)
 	}
 }
 

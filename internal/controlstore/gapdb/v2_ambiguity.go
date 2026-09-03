@@ -22,7 +22,31 @@ type v2ReconcileResult struct {
 	operationState journalv2.OperationStateV2
 }
 
-// ReconcileV2 performs bounded ordinary reads only. It proves either the exact
+// ReconcileCommitV2 resolves a may-have-applied Commit/CommitV2 outcome using
+// the identical sealed plan. Complete durable membership returns the same
+// provider-neutral observation accepted by PublicationCoordinatorV2.
+// Proven absence is an explicit conflict whose recovery action permits only
+// retrying that same operation/publication; partial or contradictory
+// membership remains a closed-authority malformed response.
+func (a *Adapter) ReconcileCommitV2(ctx context.Context, plan journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error) {
+	result, err := a.reconcileV2(ctx, plan)
+	if err != nil {
+		return journalv2.CommitObservationV2{}, err
+	}
+	if result.disposition == v2ReconcileCommitted {
+		return result.observation, nil
+	}
+	return journalv2.CommitObservationV2{}, adapterError(
+		"v2_reconcile",
+		string(plan.OperationState().OperationID()),
+		OutcomeConflict,
+		RecoveryRetrySameOperation,
+		"publication is absent; retry only the identical sealed publication",
+		nil,
+	)
+}
+
+// reconcileV2 performs bounded ordinary reads only. It proves either the exact
 // complete publication at one provider revision or the still-current complete
 // precondition set for retrying the identical sealed plan.
 func (a *Adapter) reconcileV2(ctx context.Context, plan journalv2.SealedCommitPlanV2) (v2ReconcileResult, error) {

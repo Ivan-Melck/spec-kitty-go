@@ -101,6 +101,9 @@ func (a *Adapter) ScanV2(ctx context.Context, request journalv2.ScanRequestV2) (
 		if prior != nil && !v2RecoveryPagePrefix(*prior, converted) {
 			return journalv2.RecoveryPageV2{}, recoveryError(journalv2.ErrorMalformed, "scan_repage_membership")
 		}
+		if page.Truncated && len(request.Cursor()) != 0 && bytes.Equal([]byte(page.Cursor), request.Cursor()) {
+			return journalv2.RecoveryPageV2{}, recoveryError(journalv2.ErrorStaleCursor, "scan_cursor_progress")
+		}
 		if measured <= request.MaxBytes() {
 			result, resultErr := journalv2.NewRecoveryPageV2(converted.observedRevision, converted.asOf, converted.records, converted.cursor, converted.truncated)
 			if resultErr != nil {
