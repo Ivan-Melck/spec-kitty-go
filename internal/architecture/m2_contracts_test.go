@@ -285,6 +285,30 @@ func TestM2ContractAuthorityJournalLaws(t *testing.T) {
 	}
 }
 
+func TestM2ContractPublicationWitnessAndBoundaryCorrection(t *testing.T) {
+	text := string(readM2File(t, filepath.Join("kitty-specs", m2MissionDir, "post-approval-defect-4.md")))
+	laws := map[string][]string{
+		"C-M2-PUBLICATION-WITNESS": {
+			"spk/v2/publications/<publication-id>/witness", "PublicationWitnessV2", "RequireAbsent",
+			"non-expiring", "authority_record_set_sha256", "provider_mutation_count = authority_record_count + 1",
+		},
+		"C-M2-OPERATION-BOUNDARY": {
+			"OperationBoundaryV2", "operation_id", "logical_version", "last_publication_id",
+			"OperationID-sorted", "boundaries rather than anonymous", "(checkpointLogicalVersion, currentLogicalVersion]",
+		},
+		"C-M2-SHARED-PREFIX": {
+			"one prefix-advance function", "providerRevision", "publicationID", "planSHA256", "authorityRecordSetSHA256",
+		},
+	}
+	for id, phrases := range laws {
+		for _, phrase := range phrases {
+			if !strings.Contains(text, phrase) {
+				t.Fatalf("contract=%s law=ratified-correction observed=missing expected=%q", id, phrase)
+			}
+		}
+	}
+}
+
 func TestM2EntryAdmissionIsExactAndLocal(t *testing.T) {
 	payload := readM2File(t, filepath.Join("docs", "programs", "evidence", "m1-adoption.json"))
 	record, err := validateM2Adoption(payload)

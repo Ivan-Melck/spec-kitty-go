@@ -232,6 +232,16 @@ func TestM2CapabilityReachabilityStopsAtFoundationCoordinator(t *testing.T) {
 				{SourcePackage: coordinator, TargetPackage: adapter, Kind: ImportModuleLocal},
 			},
 		},
+		{
+			name: "kernel-returns-adapter-witness",
+			// A Go signature returning any adapter-owned witness necessarily
+			// imports the adapter. The dependency edge is rejected independent
+			// of the witness type's local name or any wrapper interface.
+			edges: []ImportEdge{
+				{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal},
+				{SourcePackage: adapter, TargetPackage: coordinator, Kind: ImportModuleLocal},
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			graph := fixtureGraph([]string{capability, coordinator, adapter}, test.edges...)
