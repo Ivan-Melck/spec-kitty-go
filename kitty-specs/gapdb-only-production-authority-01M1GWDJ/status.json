@@ -1,7 +1,7 @@
 {
-  "event_count": 188,
-  "last_event_id": "01M1M7XXCCPTE844427GA8WQTB",
-  "materialized_at": "2026-09-03T18:19:05.996522+00:00",
+  "event_count": 190,
+  "last_event_id": "01M1M84RP92YR07GJ3T0VD41PV",
+  "materialized_at": "2026-09-03T18:22:50.569570+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 1,
-    "in_review": 0,
+    "in_progress": 0,
+    "in_review": 1,
     "planned": 12
   },
   "work_packages": {
@@ -70,15 +70,15 @@
       }
     },
     "WP02": {
-      "actor": "codex-wp02-witness-canonical-codec",
-      "agent": "codex-wp02-witness-canonical-codec",
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
+      "actor": "codex-wp02-witness-canonical-independent-reviewer",
+      "agent": "codex-wp02-witness-canonical-independent-reviewer",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp02-witness-canonical-codec",
       "force_count": 14,
-      "lane": "in_progress",
-      "last_event_id": "01M1M7XXCCPTE844427GA8WQTB",
-      "last_transition_at": "2026-09-03T18:19:05.996522+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1M84RP92YR07GJ3T0VD41PV",
+      "last_transition_at": "2026-09-03T18:22:50.569570+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -102,7 +102,8 @@
         "Ownership recovery after approved post-approval defect-4: replace stale wp02-year-zero-reviewer claim with designated implementer. Current task artifact and WP01 compact-boundary guard supersede the stale action capsule; no code or acceptance guard is bypassed.",
         "Ready for independent defect-4 review: d70d3a07 adds canonical self-digested publication witnesses, sealed witness-inclusive plans, exact PublicationID recovery, compact state-authenticated checkpoint boundaries, bounded 10,000-operation summaries, and shared live/restore prefix laws. Focused repeated, full package repeated, race, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
         "Independent defect-4 review APPROVE at d70d3a07 (tree 3db5a2df): canonical self-digested witness, exact 255+1/256+1 preflight law, witness-inclusive durable observation, PublicationID-only recovery address, compact attributable state-authenticated boundaries, structured 10,000-operation summary budget, and shared live/restore prefix and reducer digest helpers verified. Package x20, race x5, focused x3, architecture, compile, vet, staticcheck, formatting, diff, ownership, provider-neutrality, and all eight anti-pattern checks pass.",
-        "Post-approval consumer-path defect: foundation NewRecoveryRecordV2 canonicalizes JSON object keys, while DecodePublicationWitnessV2 requires a different struct-field-order encoding byte-for-byte. Exact WP03 ReadV2 therefore returns an undecodable witness. Reopen for the smallest witness-specific canonical encoder repair plus Encode -> RecoveryRecord -> Decode regression. Force transfers the approved reviewer assignment to the designated implementer only; no code, review, or acceptance guard is bypassed."
+        "Post-approval consumer-path defect: foundation NewRecoveryRecordV2 canonicalizes JSON object keys, while DecodePublicationWitnessV2 requires a different struct-field-order encoding byte-for-byte. Exact WP03 ReadV2 therefore returns an undecodable witness. Reopen for the smallest witness-specific canonical encoder repair plus Encode -> RecoveryRecord -> Decode regression. Force transfers the approved reviewer assignment to the designated implementer only; no code, review, or acceptance guard is bypassed.",
+        "Ready for independent consumer-path review: 026e3a7e makes PublicationWitnessV2 encode through the same CanonicalObject ordering used by RecoveryRecordV2, adds direct Encode -> WitnessAddress -> RecoveryRecord -> Decode preservation proof, and retains strict alternate-order/trailing/corrupt rejection. Focused x20, package, race x5, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -111,7 +112,7 @@
         "reviewer": "codex-wp02-witness-independent-reviewer",
         "verdict": "approved"
       },
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
