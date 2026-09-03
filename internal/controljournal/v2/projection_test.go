@@ -3,6 +3,7 @@ package v2
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -56,6 +57,9 @@ func TestSealedProjectionPrefixRejectsZeroPartialAndSubstitution(t *testing.T) {
 	if err != nil || sealed.Validate() != nil {
 		t.Fatalf("valid projection seal rejected: %v", err)
 	}
+	if sealed.CoveredThroughPublicationID() != plan.PublicationID() {
+		t.Fatal("seal did not expose its terminal revision publication")
+	}
 	if err := (SealedProjectionPrefixV2{}).Validate(); err == nil {
 		t.Fatal("zero projection seal accepted")
 	}
@@ -68,6 +72,17 @@ func TestSealedProjectionPrefixRejectsZeroPartialAndSubstitution(t *testing.T) {
 	substituted.entries[0].canonical = []byte(`{"substituted":true}`)
 	if err := substituted.Validate(); err == nil {
 		t.Fatal("substituted projection state accepted")
+	}
+	coveredSubstitution := sealed
+	coveredSubstitution.coveredThrough = testPublicationID("substituted-covered-through")
+	if err := coveredSubstitution.Validate(); err == nil {
+		t.Fatal("covered-through substitution escaped the seal")
+	}
+	zeroCovered := sealed
+	zeroCovered.coveredThrough = ""
+	zeroCovered.seal, _ = projectionSeal(zeroCovered)
+	if err := zeroCovered.Validate(); err == nil {
+		t.Fatal("re-sealed zero covered-through identity accepted")
 	}
 	summary := sealed.OperationSummary()
 	if summary.Total() != 1 || summary.StatusCount(StatusAccepted) != 1 || len(summary.LeafDigests()) != 1 || summary.Digest().IsZero() {
@@ -200,7 +215,7 @@ func TestOperationSummaryBoundariesAreAttributableDefensiveAndStateAware(t *test
 	if summary.Boundaries()[0] == boundaries[0] {
 		t.Fatal("boundary accessor aliases summary storage")
 	}
-	canonical, err := operationSummaryCanonicalV2(summary)
+	canonical, err := EncodeOperationSummaryV2(summary)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,6 +263,71 @@ func TestOperationSummaryBoundariesAreAttributableDefensiveAndStateAware(t *test
 	}
 }
 
+func TestOperationSummaryPublicCodecIsCanonicalStrictAndDefensive(t *testing.T) {
+	publicationID := testPublicationID("operation-summary-codec")
+	states := []OperationStateV2{
+		mustState(t, OperationStateInput{OperationID: "operation-codec-a", LogicalVersion: 3, Status: StatusAccepted, LastPublicationID: publicationID}),
+		mustState(t, OperationStateInput{OperationID: "operation-codec-b", LogicalVersion: 7, Status: StatusResolved,
+			ResultKind: "mission.result", ResultSchemaVersion: 1, CanonicalResult: []byte(`{"result":true}`), LastPublicationID: publicationID}),
+	}
+	summary, err := BuildOperationSummaryV2(states)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeOperationSummaryV2(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeOperationSummaryV2(encoded)
+	if err != nil || ValidateOperationSummaryV2(decoded, states) != nil {
+		t.Fatalf("canonical operation summary did not round trip: %v", err)
+	}
+	reencoded, err := EncodeOperationSummaryV2(decoded)
+	if err != nil || !bytes.Equal(encoded, reencoded) {
+		t.Fatalf("operation summary wire is unstable: %v", err)
+	}
+	boundaries := decoded.Boundaries()
+	boundaries[0].logicalVersion++
+	if decoded.Boundaries()[0] == boundaries[0] {
+		t.Fatal("decoded boundary accessor aliases summary storage")
+	}
+
+	var wire operationSummaryWireV2
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	reordered, _ := json.Marshal(struct {
+		Digest  string                         `json:"summary_sha256"`
+		Summary operationSummaryPreimageWireV2 `json:"summary"`
+	}{wire.Digest, wire.Summary})
+	digestMutant := wire
+	digestMutant.Digest = digest("wrong-summary", nil).String()
+	digestBytes, _ := json.Marshal(digestMutant)
+	countMutant := wire
+	countMutant.Summary.StatusCounts.Accepted++
+	countBytes, _ := json.Marshal(countMutant)
+	mutants := map[string][]byte{
+		"whitespace":        append(append([]byte(nil), encoded...), '\n'),
+		"trailing":          append(append([]byte(nil), encoded...), []byte(`{}`)...),
+		"unknown":           bytes.Replace(encoded, []byte(`"total":2`), []byte(`"total":2,"unknown":true`), 1),
+		"duplicate":         bytes.Replace(encoded, []byte(`"total":2`), []byte(`"total":2,"total":2`), 1),
+		"field_order":       reordered,
+		"summary_digest":    digestBytes,
+		"status_arithmetic": countBytes,
+	}
+	for name, candidate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if _, err := DecodeOperationSummaryV2(candidate); err == nil {
+				t.Fatal("non-canonical or invalid operation summary accepted")
+			}
+		})
+	}
+	oversized := bytes.Repeat([]byte{' '}, MaxOperationSummaryBytesV2+1)
+	if _, err := DecodeOperationSummaryV2(oversized); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("over-budget summary did not refuse at the input boundary: %v", err)
+	}
+}
+
 func TestOperationSummaryStructuredTenThousandBoundaryBudget(t *testing.T) {
 	states := make([]OperationStateV2, maxOperationBoundariesV2)
 	publicationID := testPublicationID("maximum-operation-summary")
@@ -263,7 +343,7 @@ func TestOperationSummaryStructuredTenThousandBoundaryBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("10,000 maximum-version boundaries rejected: %v", err)
 	}
-	canonical, err := operationSummaryCanonicalV2(summary)
+	canonical, err := EncodeOperationSummaryV2(summary)
 	if err != nil {
 		t.Fatalf("final structured summary exceeded %d bytes: %v", MaxOperationSummaryBytesV2, err)
 	}
@@ -274,8 +354,76 @@ func TestOperationSummaryStructuredTenThousandBoundaryBudget(t *testing.T) {
 	if err := ValidateOperationSummaryV2(summary, states); err != nil {
 		t.Fatalf("state-aware validation rejected maximum census: %v", err)
 	}
+	decoded, err := DecodeOperationSummaryV2(canonical)
+	if err != nil || ValidateOperationSummaryV2(decoded, states) != nil {
+		t.Fatalf("maximum structured census did not round trip: %v", err)
+	}
+	var plusOne operationSummaryWireV2
+	if err := json.Unmarshal(canonical, &plusOne); err != nil {
+		t.Fatal(err)
+	}
+	plusOne.Summary.Total++
+	plusOne.Summary.StatusCounts.Accepted++
+	plusOne.Summary.Boundaries = append(plusOne.Summary.Boundaries, plusOne.Summary.Boundaries[len(plusOne.Summary.Boundaries)-1])
+	plusOneBytes, err := json.Marshal(plusOne)
+	if err != nil || len(plusOneBytes) > MaxOperationSummaryBytesV2 {
+		t.Fatalf("plus-one fixture did not stay inside the byte envelope: bytes=%d err=%v", len(plusOneBytes), err)
+	}
+	if _, err := DecodeOperationSummaryV2(plusOneBytes); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("plus-one boundary census reached semantic decoding: %v", err)
+	}
 	if _, err := BuildOperationSummaryV2(make([]OperationStateV2, maxOperationBoundariesV2+1)); !IsKind(err, ErrorBudgetExceeded) {
 		t.Fatalf("plus-one census reached state inspection or allocation: %v", err)
+	}
+}
+
+func TestCoveredThroughUsesGreatestRevisionAndExcludesLaterCheckpointWriter(t *testing.T) {
+	coveredPlan := projectionPlan(t, "operation-covered", "mission-covered", "covered")
+	writerPlan := projectionPlan(t, "operation-checkpoint-writer", "mission-checkpoint-writer", "writer")
+	tracker := fixtureProjectionTracker(t)
+	coordinator, _ := NewPublicationCoordinatorV2(&fixedRevisionPortV2{revisions: []uint64{40, 41}}, tracker)
+	if _, err := coordinator.Publish(context.Background(), coveredPlan); err != nil {
+		t.Fatal(err)
+	}
+	checkpointInput, err := coordinator.SealProjectionPrefix()
+	if err != nil || checkpointInput.CoveredThroughPublicationID() != coveredPlan.PublicationID() {
+		t.Fatalf("checkpoint input covered the wrong publication: %v", err)
+	}
+	if _, err := coordinator.Publish(context.Background(), writerPlan); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointInput.CoveredThroughPublicationID() == writerPlan.PublicationID() || checkpointInput.Validate() != nil {
+		t.Fatal("later checkpoint writer entered or invalidated its input seal")
+	}
+	next, err := coordinator.SealProjectionPrefix()
+	if err != nil || next.CoveredThroughPublicationID() != writerPlan.PublicationID() || next.Watermark() != 41 {
+		t.Fatalf("subsequent seal did not advance to writer publication: %v", err)
+	}
+}
+
+func TestCoveredThroughRejectsMalformedDuplicateAndConflictingLedgerEvidence(t *testing.T) {
+	publicationID := testPublicationID("covered-through-ledger")
+	valid := acknowledgedLedgerEntryV2{revision: 7, publicationID: publicationID,
+		planDigest: digest("plan", nil), recordSetDigest: digest("records", nil)}
+	fixtures := map[string]map[uint64]acknowledgedLedgerEntryV2{
+		"zero_revision":         {0: {revision: 0, publicationID: publicationID, planDigest: valid.planDigest, recordSetDigest: valid.recordSetDigest}},
+		"conflicting_revision":  {7: {revision: 8, publicationID: publicationID, planDigest: valid.planDigest, recordSetDigest: valid.recordSetDigest}},
+		"missing_publication":   {7: {revision: 7, planDigest: valid.planDigest, recordSetDigest: valid.recordSetDigest}},
+		"malformed_publication": {7: {revision: 7, publicationID: "bad", planDigest: valid.planDigest, recordSetDigest: valid.recordSetDigest}},
+		"duplicate_publication": {
+			7: valid,
+			8: {revision: 8, publicationID: publicationID, planDigest: digest("plan-2", nil), recordSetDigest: digest("records-2", nil)},
+		},
+	}
+	for name, ledger := range fixtures {
+		t.Run(name, func(t *testing.T) {
+			tracker := fixtureProjectionTracker(t)
+			tracker.ledger = ledger
+			tracker.highestObserved = 8
+			if _, err := tracker.sealPrefix(); err == nil {
+				t.Fatal("invalid acknowledgement ledger produced a covered-through seal")
+			}
+		})
 	}
 }
 

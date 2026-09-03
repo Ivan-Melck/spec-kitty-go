@@ -104,6 +104,9 @@ func TestConcurrentReverseCompletionFoldsProviderRevisionOrder(t *testing.T) {
 	if err != nil || reverseSeal.Validate() != nil || reverseSeal.Watermark() != 12 {
 		t.Fatalf("reverse seal invalid: %+v %v", reverseSeal, err)
 	}
+	if reverseSeal.CoveredThroughPublicationID() != right.PublicationID() {
+		t.Fatal("covered-through identity followed completion order instead of greatest provider revision")
+	}
 
 	sequentialTracker := fixtureProjectionTracker(t)
 	sequentialPort := &fixedRevisionPortV2{revisions: []uint64{11, 12}}
@@ -120,6 +123,10 @@ func TestConcurrentReverseCompletionFoldsProviderRevisionOrder(t *testing.T) {
 	}
 	if reverseSeal.RollingPrefixDigest() != orderedSeal.RollingPrefixDigest() {
 		t.Fatal("rolling prefix followed response completion rather than provider revision")
+	}
+	if orderedSeal.CoveredThroughPublicationID() != right.PublicationID() ||
+		orderedSeal.CoveredThroughPublicationID() != reverseSeal.CoveredThroughPublicationID() {
+		t.Fatal("covered-through selection is not provider-revision deterministic")
 	}
 }
 
