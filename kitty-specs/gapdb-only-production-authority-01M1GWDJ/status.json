@@ -71,7 +71,7 @@
     },
     "WP02": {
       "actor": "user",
-      "agent": "wp02-projection-repair-reviewer",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 8,
@@ -91,7 +91,8 @@
         "Expanded WP02 correction implemented by wp02-foundation-repair at 5beb9a09: provider-neutral recovery, operation 2/2 reconstruction, descriptor-bound stateless reducers, durable publication acknowledgement, ambiguity-safe coordination, provider-revision-ordered projection prefix, and >=10k bounded ledger; focused repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
         "Independent review rejected 5beb9a09: operation projection diverges from the durable operation head, and the sealed projection lacks terminal EventID/tombstone plus compact operation checkpoint semantics.",
         "Cycle-9 blockers repaired at 773284b2: reducer receives validated event semantics and operation projection equals durable head byte-for-byte; sealed checkpoint projection carries terminal EventID/tombstone while operation entries remain compact and result-free. Full repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
-        "Independent cycle-10 APPROVE: operation projection equals sealed durable head including PublicationID; sealed checkpoint entries supply terminal EventID/tombstone and exclude operation result bytes; focused x20, independent probe x10, full journal x20, race x5, WP01 121-mutant architecture, compile, vet, staticcheck, formatting, and diff gates pass."
+        "Independent cycle-10 APPROVE: operation projection equals sealed durable head including PublicationID; sealed checkpoint entries supply terminal EventID/tombstone and exclude operation result bytes; focused x20, independent probe x10, full journal x20, race x5, WP01 121-mutant architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
+        "Post-approval defect 3: foundation recovery instants only admit whole seconds, but frozen GapDB preserves RFC3339Nano AsOf/ExpiresAt. Reopen for bounded canonical exact-instant repair before WP03 resumes."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -101,15 +102,15 @@
         "verdict": "approved"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T006": "done",
-        "T007": "done",
-        "T008": "done",
-        "T009": "done",
-        "T010": "done",
-        "T011": "done"
+        "T006": "planned",
+        "T007": "planned",
+        "T008": "planned",
+        "T009": "planned",
+        "T010": "planned",
+        "T011": "planned"
       }
     },
     "WP03": {
