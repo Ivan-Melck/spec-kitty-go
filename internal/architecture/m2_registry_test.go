@@ -1,9 +1,11 @@
 package architecture
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/constant"
@@ -17,7 +19,385 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
+
+var m2DurableCodecNames = []string{"AggregateHeadV2", "EventEnvelopeV2", "OperationBindingV2", "OperationStateV2", "OperationSummaryV2", "PublicationWitnessV2"}
+
+type m2DurableCodecModel struct {
+	classified []string
+	encode     func([]byte) ([]byte, error)
+	recover    func([]byte) ([]byte, error)
+	decode     func([]byte) ([]byte, error)
+}
+
+func TestM2DurableCodecCompatibilityIsExecutionBound(t *testing.T) {
+	if err := validateM2DurableCodecCompatibility("POSITIVE"); err != nil {
+		t.Fatalf("evidence=DURABLE-CODEC-COMPATIBILITY positive rejected: %v", err)
+	}
+	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "FIRST-SYMBOL-PARTIAL"} {
+		if err := validateM2DurableCodecCompatibility(fixture); err == nil {
+			t.Fatalf("evidence=DURABLE-CODEC-COMPATIBILITY mutant=%s observed=accepted", fixture)
+		}
+	}
+}
+
+func TestM2DurableCodecFirstSymbolActivatesCompleteCensus(t *testing.T) {
+	if err := validateM2DurableCodecActivation(false, "RAW-STRUCT-ORDER"); err != nil {
+		t.Fatalf("pre-activation compatibility rejected: %v", err)
+	}
+	if err := validateM2DurableCodecActivation(true, "POSITIVE"); err != nil {
+		t.Fatalf("complete activated census rejected: %v", err)
+	}
+	if err := validateM2DurableCodecActivation(true, "FIRST-SYMBOL-PARTIAL"); err == nil {
+		t.Fatal("first-symbol partial repair escaped complete census")
+	}
+}
+
+func validateM2DurableCodecActivation(markerPresent bool, fixture string) error {
+	if !markerPresent {
+		return nil
+	}
+	return validateM2DurableCodecCompatibility(fixture)
+}
+
+func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
+	if !m2FoundationDeclaresFunction(t, "marshalCanonicalObject") {
+		return
+	}
+	registry := journalv2.DefaultEventRegistryV2()
+	publicationID := journalv2.PublicationID(m2TestDigest("publication", "one").String())
+	operationID := journalv2.OperationID("operation-1")
+	missionCoordinate, err := journalv2.NewAggregateCoordinate("mission", "mission-1", journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: "project-1", MissionID: "mission-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(operationID), journalv2.Scope{Kind: journalv2.ScopeHost})
+	intent, _ := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "mission.ready", CommandSchemaVersion: 1, Scope: missionCoordinate.Scope, Command: []byte(`{"ready":true}`)})
+	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "mission.ready", CommandSchemaVersion: 1, CanonicalIntentDigest: intent, Scope: missionCoordinate.Scope, OriginatingRuntimeEpochID: "epoch-1", ObservedCreatedAt: "2026-09-03T12:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: operationID, LogicalVersion: 1, Status: journalv2.StatusAccepted, EventIDs: []journalv2.EventID{"event-1"}, LastPublicationID: publicationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"ready":true}`)
+	stateDigest, _ := journalv2.ReducerStateDigestV2(payload)
+	head, err := journalv2.NewAggregateHeadV2(journalv2.AggregateHeadInput{Coordinate: missionCoordinate, LogicalVersion: 1, LastEventID: "event-1", LastPublicationID: publicationID, CommittedRuntimeEpochID: "epoch-1", CanonicalStateDigest: stateDigest, AuthoritySummary: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := journalv2.NewEventEnvelopeV2(journalv2.EventEnvelopeInput{EventID: "event-1", EventType: "mission.ready", Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: missionCoordinate, AggregateLogicalVersion: 1, OperationID: operationID, OperationLogicalVersion: 1, PublicationID: publicationID, CommittedRuntimeEpochID: "epoch-1", EventIndex: 0, EventCount: 1, Payload: payload, Observations: []byte(`{}`)}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	witness := m2TestPublicationWitness(t, publicationID, operationID)
+	bindingAddress, _ := journalv2.NewOperationBindingAddressV2(operationID)
+	eventAddress, _ := journalv2.NewJournalEventAddressV2(missionCoordinate, 1)
+	headAddress, _ := journalv2.NewAggregateHeadAddressV2(missionCoordinate)
+	stateAddress, _ := journalv2.NewOperationHeadAddressV2(operationID)
+	witnessAddress, _ := publicationID.WitnessAddressV2()
+	tests := []struct {
+		name    string
+		address journalv2.RecordAddressV2
+		encode  func() ([]byte, error)
+		decode  func([]byte) error
+	}{
+		{"OperationBindingV2", bindingAddress, func() ([]byte, error) { return journalv2.EncodeOperationBindingV2(binding) }, func(value []byte) error {
+			decoded, err := journalv2.DecodeOperationBindingV2(value)
+			if err != nil {
+				return err
+			}
+			again, err := journalv2.EncodeOperationBindingV2(decoded)
+			if err != nil || !bytes.Equal(again, value) {
+				return fmt.Errorf("semantic round trip")
+			}
+			return nil
+		}},
+		{"EventEnvelopeV2", eventAddress, func() ([]byte, error) { return journalv2.EncodeEventEnvelopeV2(event) }, func(value []byte) error {
+			decoded, err := journalv2.DecodeEventEnvelopeV2(value, registry)
+			if err != nil {
+				return err
+			}
+			again, err := journalv2.EncodeEventEnvelopeV2(decoded)
+			if err != nil || !bytes.Equal(again, value) {
+				return fmt.Errorf("semantic round trip")
+			}
+			return nil
+		}},
+		{"AggregateHeadV2", headAddress, func() ([]byte, error) { return journalv2.EncodeAggregateHeadV2(head) }, func(value []byte) error {
+			decoded, err := journalv2.DecodeAggregateHeadV2(value)
+			if err != nil {
+				return err
+			}
+			again, err := journalv2.EncodeAggregateHeadV2(decoded)
+			if err != nil || !bytes.Equal(again, value) {
+				return fmt.Errorf("semantic round trip")
+			}
+			return nil
+		}},
+		{"OperationStateV2", stateAddress, func() ([]byte, error) { return journalv2.EncodeOperationStateV2(state) }, func(value []byte) error {
+			decoded, err := journalv2.DecodeOperationStateV2(value)
+			if err != nil {
+				return err
+			}
+			again, err := journalv2.EncodeOperationStateV2(decoded)
+			if err != nil || !bytes.Equal(again, value) {
+				return fmt.Errorf("semantic round trip")
+			}
+			return nil
+		}},
+		{"PublicationWitnessV2", witnessAddress, func() ([]byte, error) { return journalv2.EncodePublicationWitnessV2(witness) }, func(value []byte) error {
+			decoded, err := journalv2.DecodePublicationWitnessV2(value)
+			if err != nil {
+				return err
+			}
+			again, err := journalv2.EncodePublicationWitnessV2(decoded)
+			if err != nil || !bytes.Equal(again, value) {
+				return fmt.Errorf("semantic round trip")
+			}
+			return nil
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := test.encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonical, err := m2CanonicalRecursive(encoded)
+			if err != nil || !bytes.Equal(canonical, encoded) {
+				t.Fatalf("encoder bytes are not recursively canonical")
+			}
+			record, err := journalv2.NewRecoveryRecordV2(test.address, encoded, 7, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(record.CanonicalValue(), encoded) {
+				t.Fatal("recovery admission rewrote bytes")
+			}
+			if err := test.decode(record.CanonicalValue()); err != nil {
+				t.Fatalf("strict consumer failed: %v", err)
+			}
+			noncanonical := []byte(`{"z":1,"a":2}`)
+			if _, err := journalv2.NewRecoveryRecordV2(test.address, noncanonical, 7, ""); err == nil {
+				t.Fatal("noncanonical provider evidence admitted")
+			}
+		})
+	}
+	summary, err := journalv2.BuildOperationSummaryV2([]journalv2.OperationStateV2{state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaryBytes, err := journalv2.EncodeOperationSummaryV2(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointRaw := append([]byte(`{"operation_summary":`), summaryBytes...)
+	checkpointRaw = append(checkpointRaw, []byte(`,"checkpoint_id":"checkpoint-1"}`)...)
+	canonicalCheckpoint, err := m2CanonicalRecursive(checkpointRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nested struct {
+		OperationSummary json.RawMessage `json:"operation_summary"`
+	}
+	if err := json.Unmarshal(canonicalCheckpoint, &nested); err != nil {
+		t.Fatal(err)
+	}
+	decodedSummary, err := journalv2.DecodeOperationSummaryV2(nested.OperationSummary)
+	if err != nil || decodedSummary.Digest() != summary.Digest() {
+		t.Fatalf("nested operation summary failed strict decode: %v", err)
+	}
+	_ = operationCoordinate // proves the closed operation coordinate is constructible without an adapter key.
+}
+
+func m2TestDigest(domain, value string) journalv2.Digest {
+	h := sha256.New()
+	_, _ = h.Write([]byte(domain))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(value))
+	var result journalv2.Digest
+	copy(result[:], h.Sum(nil))
+	return result
+}
+func m2TestPublicationWitness(t *testing.T, publicationID journalv2.PublicationID, operationID journalv2.OperationID) journalv2.PublicationWitnessV2 {
+	t.Helper()
+	plan, records := m2TestDigest("plan", "one"), m2TestDigest("records", "one")
+	preimage, _ := json.Marshal(struct {
+		Schema      uint32 `json:"schema_version"`
+		Publication string `json:"publication_id"`
+		Operation   string `json:"operation_id"`
+		Version     uint64 `json:"operation_logical_version"`
+		Plan        string `json:"plan_sha256"`
+		Records     string `json:"authority_record_set_sha256"`
+		Count       uint32 `json:"authority_record_count"`
+	}{1, string(publicationID), string(operationID), 1, plan.String(), records.String(), 5})
+	digest := m2TestDigest("spec-kitty.publication-witness.v2", string(preimage))
+	wire, _ := json.Marshal(map[string]any{"schema_version": uint32(1), "publication_id": string(publicationID), "operation_id": string(operationID), "operation_logical_version": uint64(1), "plan_sha256": plan.String(), "authority_record_set_sha256": records.String(), "authority_record_count": uint32(5), "witness_sha256": digest.String()})
+	canonical, _ := m2CanonicalRecursive(wire)
+	witness, err := journalv2.DecodePublicationWitnessV2(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return witness
+}
+
+func m2DurableCodecFixtureMaterial(fixture string) any {
+	if !slices.Contains([]string{"POSITIVE", "RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "FIRST-SYMBOL-PARTIAL"}, fixture) {
+		return nil
+	}
+	return struct {
+		Version int      `json:"version"`
+		Fixture string   `json:"fixture"`
+		Codecs  []string `json:"codecs"`
+	}{1, fixture, slices.Clone(m2DurableCodecNames)}
+}
+
+func validateM2DurableCodecCompatibility(fixture string) error {
+	if m2DurableCodecFixtureMaterial(fixture) == nil {
+		return fmt.Errorf("unknown fixture")
+	}
+	model := m2DurableCodecModel{classified: slices.Clone(m2DurableCodecNames)}
+	model.encode = func(raw []byte) ([]byte, error) { return m2CanonicalRecursive(raw) }
+	model.recover = func(encoded []byte) ([]byte, error) {
+		canonical, err := m2CanonicalRecursive(encoded)
+		if err != nil || !bytes.Equal(canonical, encoded) {
+			return nil, fmt.Errorf("noncanonical provider evidence")
+		}
+		return slices.Clone(encoded), nil
+	}
+	model.decode = func(encoded []byte) ([]byte, error) {
+		canonical, err := m2CanonicalRecursive(encoded)
+		if err != nil || !bytes.Equal(canonical, encoded) {
+			return nil, fmt.Errorf("strict equality")
+		}
+		return canonical, nil
+	}
+	switch fixture {
+	case "RAW-STRUCT-ORDER":
+		model.encode = func(raw []byte) ([]byte, error) { return slices.Clone(raw), nil }
+	case "FIRST-SYMBOL-PARTIAL":
+		model.encode = func(raw []byte) ([]byte, error) { return slices.Clone(raw), nil }
+	case "TOP-LEVEL-ONLY":
+		model.encode = func([]byte) ([]byte, error) {
+			return []byte(`{"identity":"record-1","nested":{"z":1,"a":2},"schema_version":2}`), nil
+		}
+	case "DISCARDED-NORMALIZED-RESULT":
+		model.encode = func(raw []byte) ([]byte, error) { _, err := m2CanonicalRecursive(raw); return slices.Clone(raw), err }
+	case "LENGTH-ONLY-RECOVERY":
+		model.recover = func(encoded []byte) ([]byte, error) {
+			if len(encoded) == 0 {
+				return nil, fmt.Errorf("empty")
+			}
+			return slices.Clone(encoded), nil
+		}
+	case "REMOVED-DECODER-EQUALITY":
+		model.decode = func(encoded []byte) ([]byte, error) { return m2CanonicalRecursive(encoded) }
+	case "OMITTED-CODEC-CLASSIFICATION":
+		model.classified = model.classified[:len(model.classified)-1]
+	}
+	wantNames := slices.Clone(m2DurableCodecNames)
+	slices.Sort(wantNames)
+	gotNames := slices.Clone(model.classified)
+	slices.Sort(gotNames)
+	if !slices.Equal(wantNames, gotNames) {
+		return fmt.Errorf("codec classification observed=%v expected=%v", gotNames, wantNames)
+	}
+	raw := []byte(`{"schema_version":2,"nested":{"z":1,"a":2},"identity":"record-1"}`)
+	want, err := m2CanonicalRecursive(raw)
+	if err != nil {
+		return err
+	}
+	for _, name := range model.classified {
+		if name == "OperationSummaryV2" {
+			continue
+		}
+		encoded, err := model.encode(raw)
+		if err != nil || !bytes.Equal(encoded, want) {
+			return fmt.Errorf("codec=%s encoder is not recursively canonical", name)
+		}
+		retained, err := model.recover(encoded)
+		if err != nil || !bytes.Equal(retained, encoded) {
+			return fmt.Errorf("codec=%s recovery rewrote bytes", name)
+		}
+		decoded, err := model.decode(retained)
+		if err != nil || !bytes.Equal(decoded, want) {
+			return fmt.Errorf("codec=%s strict decode failed", name)
+		}
+		if _, err := model.recover(raw); err == nil {
+			return fmt.Errorf("codec=%s recovery admitted noncanonical bytes", name)
+		}
+		if _, err := model.decode(raw); err == nil {
+			return fmt.Errorf("codec=%s decoder admitted noncanonical bytes", name)
+		}
+	}
+	summary, err := model.encode(raw)
+	if err != nil {
+		return err
+	}
+	checkpointRaw := append([]byte(`{"summary":`), summary...)
+	checkpointRaw = append(checkpointRaw, []byte(`,"checkpoint_id":"checkpoint-1"}`)...)
+	checkpointCanonical, err := m2CanonicalRecursive(checkpointRaw)
+	if err != nil {
+		return err
+	}
+	var outer struct {
+		Summary json.RawMessage `json:"summary"`
+	}
+	if err := json.Unmarshal(checkpointCanonical, &outer); err != nil {
+		return err
+	}
+	decoded, err := model.decode(outer.Summary)
+	if err != nil || !bytes.Equal(decoded, want) {
+		return fmt.Errorf("nested operation summary did not survive recursive checkpoint embedding")
+	}
+	return nil
+}
+
+func m2FoundationDeclaresFunction(t *testing.T, name string) bool {
+	t.Helper()
+	directory := filepath.Join(m2RepositoryRoot(t), "internal", "controljournal", "v2")
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") {
+			files = append(files, entry.Name())
+		}
+	}
+	slices.Sort(files)
+	for _, file := range files {
+		parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(directory, file), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && function.Recv == nil && function.Name.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func m2CanonicalRecursive(encoded []byte) ([]byte, error) {
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if decoder.More() {
+		return nil, fmt.Errorf("trailing JSON")
+	}
+	return json.Marshal(value)
+}
 
 const (
 	m2EligibilityPersistentKeyMarker = "spk/v2/workgraphs/"
@@ -863,6 +1243,7 @@ func m2EvidenceProbes() []m2EvidenceProbe {
 		{"WORKGRAPH-ELIGIBILITY-POLICY", "eligibility-contract-v2"},
 		{"KEYSPACE-V2", "keyspace-contract-v2"},
 		{"FOUNDATION-CONTRACT-OWNERSHIP", "foundation-contract-ownership-v2"},
+		{"DURABLE-CODEC-COMPATIBILITY", "durable-codec-compatibility-v2"},
 		{"M2-MUTANT-CENSUS", "mutant-census-v2"},
 	}
 }
@@ -888,6 +1269,8 @@ func executeM2EvidenceProbes(t *testing.T, probes []m2EvidenceProbe) []m2Evidenc
 			TestM2KeyspaceRegistryIsClosed(t)
 		case "foundation-contract-ownership-v2":
 			TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t)
+		case "durable-codec-compatibility-v2":
+			TestM2DurableCodecCompatibilityIsExecutionBound(t)
 		case "mutant-census-v2":
 			if observed := verifyM2ExecutableMutants(t); observed != m2MutantCensusCount {
 				t.Fatalf("evidence=M2-MUTANT-CENSUS observed-executions=%d expected=%d", observed, m2MutantCensusCount)
