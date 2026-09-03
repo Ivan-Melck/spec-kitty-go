@@ -1,7 +1,7 @@
 {
-  "event_count": 140,
-  "last_event_id": "01M1J6MF54PGEHZX5YKYNRVY0C",
-  "materialized_at": "2026-09-02T23:17:59.069251+00:00",
+  "event_count": 153,
+  "last_event_id": "01M1KTF3R7EMRPNG9X11ECXVG7",
+  "materialized_at": "2026-09-03T14:23:49.511506+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -71,13 +71,13 @@
     },
     "WP02": {
       "actor": "user",
-      "agent": "wp02-projection-repair-reviewer",
+      "agent": "wp02-year-zero-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 7,
+      "force_count": 9,
       "lane": "approved",
-      "last_event_id": "01M1J6JFE1RHVVA9D2AQAK27FZ",
-      "last_transition_at": "2026-09-02T23:16:53.825042+00:00",
+      "last_event_id": "01M1KTDRKSTECHFY7082F8BMFY",
+      "last_transition_at": "2026-09-03T14:23:05.337094+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -91,18 +91,23 @@
         "Expanded WP02 correction implemented by wp02-foundation-repair at 5beb9a09: provider-neutral recovery, operation 2/2 reconstruction, descriptor-bound stateless reducers, durable publication acknowledgement, ambiguity-safe coordination, provider-revision-ordered projection prefix, and >=10k bounded ledger; focused repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
         "Independent review rejected 5beb9a09: operation projection diverges from the durable operation head, and the sealed projection lacks terminal EventID/tombstone plus compact operation checkpoint semantics.",
         "Cycle-9 blockers repaired at 773284b2: reducer receives validated event semantics and operation projection equals durable head byte-for-byte; sealed checkpoint projection carries terminal EventID/tombstone while operation entries remain compact and result-free. Full repeated/race/architecture/compile/vet/staticcheck/format gates pass.",
-        "Independent cycle-10 APPROVE: operation projection equals sealed durable head including PublicationID; sealed checkpoint entries supply terminal EventID/tombstone and exclude operation result bytes; focused x20, independent probe x10, full journal x20, race x5, WP01 121-mutant architecture, compile, vet, staticcheck, formatting, and diff gates pass."
+        "Independent cycle-10 APPROVE: operation projection equals sealed durable head including PublicationID; sealed checkpoint entries supply terminal EventID/tombstone and exclude operation result bytes; focused x20, independent probe x10, full journal x20, race x5, WP01 121-mutant architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
+        "Post-approval defect 3: foundation recovery instants only admit whole seconds, but frozen GapDB preserves RFC3339Nano AsOf/ExpiresAt. Reopen for bounded canonical exact-instant repair before WP03 resumes.",
+        "Cycle-11 bounded repair at 5413eb4c preserves canonical UTC RFC3339Nano recovery instants exactly while rejecting noncanonical aliases; focused x20, package, race, architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
+        "Cycle-12 independent corpus found the sole frozen-codec mismatch: canonical year-zero RFC3339Nano instants were rejected. Reopen for exact bounded repair.",
+        "Cycle-12 repair at c997e226 admits canonical year-zero whole/fractional recovery instants, completing exact frozen GapDB RFC3339Nano language equivalence while preserving all rejection laws; full gates pass.",
+        "Independent cycle-13 APPROVE: exact prior year-zero failures pass; 20,000-instant oracle across years 0000-9999 found no mismatch with frozen GapDB RFC3339Nano canonical language; focused x50, regression x100, race x10, architecture, compile, vet, staticcheck, formatting, ownership, and diff gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "reference": "773284b23d74cd4b0d50da47c2582d42d68cfad7",
-        "reviewer": "wp02-projection-repair-reviewer",
+        "reference": "c997e226086a7c679c746cddda3f7a7ec7810b98",
+        "reviewer": "wp02-year-zero-reviewer",
         "verdict": "approved"
       },
       "role": "reviewer",
-      "shell_pid": 346017,
-      "shell_pid_created_at": "1787989271.27",
+      "shell_pid": 3450757,
+      "shell_pid_created_at": "1788444137.28",
       "subtasks": {
         "T006": "done",
         "T007": "done",
@@ -113,14 +118,14 @@
       }
     },
     "WP03": {
-      "actor": "wp03-stable-recovery-repair",
+      "actor": "user",
       "agent": "wp03-cycle3-reviewer",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
       "lane": "in_progress",
-      "last_event_id": "01M1J6MF54PGEHZX5YKYNRVY0C",
-      "last_transition_at": "2026-09-02T23:17:59.069251+00:00",
+      "last_event_id": "01M1KTF3R7EMRPNG9X11ECXVG7",
+      "last_transition_at": "2026-09-03T14:23:49.511506+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
@@ -128,7 +133,9 @@
         "Cycle 2 requested three bounded repairs: eliminate scoped operation aliases, fail closed on partial exact membership, and reject empty truncated scan pages.",
         "Cycle 2 repair committed at 7c8f2c1c; exact reviewer counterexamples now regressions and all focused/repeated/race/compile/vet/static/format gates pass.",
         "Independent cycle-3 review approved 7c8f2c1c. All cycle-2 counterexamples and predecessor retry/conflict semantics replayed; focused/repeated/race/architecture/compile/vet/static/format gates pass. External sidecar qualification remains explicitly non-admissible without prerequisites.",
-        "Post-approval defect 2: replace adapter-owned recovery contracts with foundation types, implement capture/verify stable-revision semantics, global head translation, and foundation commit observations after WP02 reapproval."
+        "Post-approval defect 2: replace adapter-owned recovery contracts with foundation types, implement capture/verify stable-revision semantics, global head translation, and foundation commit observations after WP02 reapproval.",
+        "Confirmed upstream WP02 contract defect: recovery timestamps admit only whole-second UTC while frozen GapDB preserves canonical RFC3339Nano instants. WP03 cannot preserve ordinary provider AsOf/ExpiresAt metadata without truncation or reject normal pages. Keep the five separable adapter edits intact until WP02 is corrected and reapproved.",
+        "WP02 recovery instant contract reapproved at c997e226 after exact frozen-codec oracle. Resume preserved WP03 adapter work against corrected foundation."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
