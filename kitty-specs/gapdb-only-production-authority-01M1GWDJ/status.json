@@ -1,19 +1,19 @@
 {
-  "event_count": 184,
-  "last_event_id": "01M1M6CSXPS23JWK9X5E68G7GD",
-  "materialized_at": "2026-09-03T17:52:16.822089+00:00",
+  "event_count": 185,
+  "last_event_id": "01M1M72AD66BH09TX5ZKMRZBC6",
+  "materialized_at": "2026-09-03T18:04:01.830748+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 2,
+    "approved": 3,
     "blocked": 2,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
+    "in_review": 0,
     "planned": 12
   },
   "work_packages": {
@@ -76,9 +76,9 @@
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp02-witness-foundation",
       "force_count": 13,
-      "lane": "in_review",
-      "last_event_id": "01M1M6CSXPS23JWK9X5E68G7GD",
-      "last_transition_at": "2026-09-03T17:52:16.822089+00:00",
+      "lane": "approved",
+      "last_event_id": "01M1M72AD66BH09TX5ZKMRZBC6",
+      "last_transition_at": "2026-09-03T18:04:01.830748+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -105,8 +105,8 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "reference": "c997e226086a7c679c746cddda3f7a7ec7810b98",
-        "reviewer": "wp02-year-zero-reviewer",
+        "reference": "d70d3a07f41be0449cd56c47e2b827c028197a9b",
+        "reviewer": "codex-wp02-witness-independent-reviewer",
         "verdict": "approved"
       },
       "role": "reviewer",
