@@ -109,12 +109,15 @@ func (a *Adapter) encodeV2Plan(plan journalv2.SealedCommitPlanV2) (v2EncodedPlan
 		values:        make([][]byte, len(records)),
 		batch:         gapdbapi.Batch{Ack: gapdbapi.AckDurable, Mutations: make([]gapdbapi.Mutation, len(records))},
 	}
-	counts := make(map[journalv2.SealedRecordRole]int, 8)
+	counts := make(map[journalv2.SealedRecordRole]int, 9)
 	seen := make(map[string]struct{}, len(records))
 	for index, record := range records {
 		key, err := v2KeyForSealedRecord(record)
 		if err != nil {
 			return v2EncodedPlan{}, err
+		}
+		if record.Role() == journalv2.RecordPublicationWitness && key.PublicationID() != publicationID {
+			return v2EncodedPlan{}, invalidV2Plan("publication witness identity")
 		}
 		if _, duplicate := seen[key.String()]; duplicate {
 			return v2EncodedPlan{}, invalidV2Plan("duplicate projected key")
@@ -151,7 +154,7 @@ func (a *Adapter) encodeV2Plan(plan journalv2.SealedCommitPlanV2) (v2EncodedPlan
 	if counts[journalv2.RecordJournalEvent] < 1 || counts[journalv2.RecordJournalEvent] > MaxEventsPerCommand ||
 		counts[journalv2.RecordOperationHead] != 1 || counts[journalv2.RecordOperationHead]+counts[journalv2.RecordAggregateHead] > MaxHeadsPerCommand ||
 		counts[journalv2.RecordEffectIntent] > MaxIntentsPerCommand || counts[journalv2.RecordOperationBinding] > 1 ||
-		counts[journalv2.RecordCheckpointRecord] != counts[journalv2.RecordCheckpointSlot] {
+		counts[journalv2.RecordCheckpointRecord] != counts[journalv2.RecordCheckpointSlot] || counts[journalv2.RecordPublicationWitness] != 1 {
 		return v2EncodedPlan{}, invalidV2Plan("role cardinality")
 	}
 	wire := struct {
@@ -178,7 +181,7 @@ func v2KeyForSealedRecord(record journalv2.SealedRecordV2) (v2Key, error) {
 	var err error
 	switch record.Role() {
 	case journalv2.RecordOperationBinding, journalv2.RecordOperationHead:
-		if target.OperationID() == "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
+		if target.OperationID() == "" || target.PublicationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
 			return v2Key{}, invalidV2Plan("operation target")
 		}
 		if record.Role() == journalv2.RecordOperationBinding {
@@ -187,12 +190,12 @@ func v2KeyForSealedRecord(record journalv2.SealedRecordV2) (v2Key, error) {
 			key, err = v2OperationHeadKey(target.OperationID())
 		}
 	case journalv2.RecordJournalEvent:
-		if target.OperationID() != "" || target.EffectID() != "" || emptyCoordinate || target.LogicalVersion() == 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
+		if target.OperationID() != "" || target.PublicationID() != "" || target.EffectID() != "" || emptyCoordinate || target.LogicalVersion() == 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
 			return v2Key{}, invalidV2Plan("journal target")
 		}
 		key, err = v2JournalEventKey(target.Coordinate(), target.LogicalVersion())
 	case journalv2.RecordAggregateHead:
-		if target.OperationID() != "" || target.EffectID() != "" || emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
+		if target.OperationID() != "" || target.PublicationID() != "" || target.EffectID() != "" || emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
 			return v2Key{}, invalidV2Plan("aggregate head target")
 		}
 		key, err = v2AggregateHeadKey(target.Coordinate())
@@ -200,25 +203,30 @@ func v2KeyForSealedRecord(record journalv2.SealedRecordV2) (v2Key, error) {
 		if target.EffectID() == "" {
 			return v2Key{}, invalidV2Plan("effect target")
 		}
-		if target.OperationID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
+		if target.OperationID() != "" || target.PublicationID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
 			return v2Key{}, invalidV2Plan("effect target")
 		}
 		key, err = v2EffectIntentKey(target.EffectID())
 	case journalv2.RecordEligibilityGuard:
-		if target.MissionID() == "" || target.ShardID() == "" || target.OperationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
+		if target.MissionID() == "" || target.ShardID() == "" || target.OperationID() != "" || target.PublicationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
 			return v2Key{}, invalidV2Plan("eligibility target")
 		}
 		key, err = v2EligibilityGuardKey(target.MissionID(), target.ShardID())
 	case journalv2.RecordCheckpointRecord:
-		if target.CheckpointID() == "" || target.OperationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointSlotID() != "" {
+		if target.CheckpointID() == "" || target.OperationID() != "" || target.PublicationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointSlotID() != "" {
 			return v2Key{}, invalidV2Plan("checkpoint record target")
 		}
 		key, err = v2CheckpointRecordKey(target.CheckpointID())
 	case journalv2.RecordCheckpointSlot:
-		if target.CheckpointSlotID() == "" || target.OperationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" {
+		if target.CheckpointSlotID() == "" || target.OperationID() != "" || target.PublicationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" {
 			return v2Key{}, invalidV2Plan("checkpoint slot target")
 		}
 		key, err = v2CheckpointSlotKey(target.CheckpointSlotID())
+	case journalv2.RecordPublicationWitness:
+		if target.PublicationID() == "" || target.OperationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
+			return v2Key{}, invalidV2Plan("publication witness target")
+		}
+		key, err = v2PublicationWitnessKey(target.PublicationID())
 	default:
 		return v2Key{}, invalidV2Plan("unknown record role")
 	}
@@ -230,7 +238,8 @@ func v2KeyForSealedRecord(record journalv2.SealedRecordV2) (v2Key, error) {
 
 func v2ProviderCondition(record journalv2.SealedRecordV2) (gapdbapi.Condition, error) {
 	immutable := record.Role() == journalv2.RecordOperationBinding || record.Role() == journalv2.RecordJournalEvent ||
-		record.Role() == journalv2.RecordEffectIntent || record.Role() == journalv2.RecordCheckpointRecord
+		record.Role() == journalv2.RecordEffectIntent || record.Role() == journalv2.RecordCheckpointRecord ||
+		record.Role() == journalv2.RecordPublicationWitness
 	condition := record.Condition()
 	switch condition.Kind() {
 	case journalv2.ConditionAbsent:

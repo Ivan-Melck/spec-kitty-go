@@ -176,7 +176,8 @@ func convertV2RecoveryPage(page gapdbapi.ScanPage, prefix v2Prefix, target journ
 
 func convertV2RecoveryRecord(record gapdbapi.Record, expected v2Key, address journalv2.RecordAddressV2, maximumRevision uint64) (journalv2.RecoveryRecordV2, error) {
 	if record.Key != expected.String() || record.Revision == 0 || uint64(record.Revision) > maximumRevision ||
-		len(record.Value) == 0 || len(record.Value) > v2ValueMaximum(expected.Kind()) {
+		len(record.Value) == 0 || len(record.Value) > v2ValueMaximum(expected.Kind()) ||
+		expected.Kind() == v2KeyPublicationWitness && record.ExpiresAt != nil {
 		return journalv2.RecoveryRecordV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_record")
 	}
 	parsed, err := parseV2Key(record.Key)
@@ -207,6 +208,8 @@ func v2RecoveryAddressForKey(key v2Key) (journalv2.RecordAddressV2, error) {
 		return journalv2.NewOperationBindingAddressV2(key.OperationID())
 	case v2KeyOperationHead:
 		return journalv2.NewOperationHeadAddressV2(key.OperationID())
+	case v2KeyPublicationWitness:
+		return key.PublicationID().WitnessAddressV2()
 	case v2KeyCheckpointRecord:
 		return journalv2.NewCheckpointRecordAddressV2(key.CheckpointID())
 	case v2KeyCheckpointSlot:

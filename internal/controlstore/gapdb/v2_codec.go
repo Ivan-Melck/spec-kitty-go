@@ -11,17 +11,18 @@ import (
 type v2KeyKind string
 
 const (
-	v2KeyAuthorityBinding v2KeyKind = "authority_binding"
-	v2KeyRuntimeCurrent   v2KeyKind = "runtime_current"
-	v2KeyRuntimeEpoch     v2KeyKind = "runtime_epoch"
-	v2KeyOperationBinding v2KeyKind = "operation_binding"
-	v2KeyOperationHead    v2KeyKind = "operation_head"
-	v2KeyEffectIntent     v2KeyKind = "effect_intent"
-	v2KeyAggregateHead    v2KeyKind = "aggregate_head"
-	v2KeyJournalEvent     v2KeyKind = "journal_event"
-	v2KeyCheckpointSlot   v2KeyKind = "checkpoint_slot"
-	v2KeyCheckpointRecord v2KeyKind = "checkpoint_record"
-	v2KeyEligibilityGuard v2KeyKind = "eligibility_guard"
+	v2KeyAuthorityBinding   v2KeyKind = "authority_binding"
+	v2KeyRuntimeCurrent     v2KeyKind = "runtime_current"
+	v2KeyRuntimeEpoch       v2KeyKind = "runtime_epoch"
+	v2KeyOperationBinding   v2KeyKind = "operation_binding"
+	v2KeyOperationHead      v2KeyKind = "operation_head"
+	v2KeyPublicationWitness v2KeyKind = "publication_witness"
+	v2KeyEffectIntent       v2KeyKind = "effect_intent"
+	v2KeyAggregateHead      v2KeyKind = "aggregate_head"
+	v2KeyJournalEvent       v2KeyKind = "journal_event"
+	v2KeyCheckpointSlot     v2KeyKind = "checkpoint_slot"
+	v2KeyCheckpointRecord   v2KeyKind = "checkpoint_record"
+	v2KeyEligibilityGuard   v2KeyKind = "eligibility_guard"
 )
 
 type v2Key struct {
@@ -29,6 +30,7 @@ type v2Key struct {
 	encoded          string
 	runtimeEpochID   journalv2.RuntimeEpochID
 	operationID      journalv2.OperationID
+	publicationID    journalv2.PublicationID
 	effectID         journalv2.EffectID
 	coordinate       journalv2.AggregateCoordinate
 	logicalVersion   journalv2.LogicalVersion
@@ -52,6 +54,7 @@ func (k v2Key) Kind() v2KeyKind                              { return k.kind }
 func (k v2Key) String() string                               { return k.encoded }
 func (k v2Key) RuntimeEpochID() journalv2.RuntimeEpochID     { return k.runtimeEpochID }
 func (k v2Key) OperationID() journalv2.OperationID           { return k.operationID }
+func (k v2Key) PublicationID() journalv2.PublicationID       { return k.publicationID }
 func (k v2Key) EffectID() journalv2.EffectID                 { return k.effectID }
 func (k v2Key) Coordinate() journalv2.AggregateCoordinate    { return k.coordinate }
 func (k v2Key) LogicalVersion() journalv2.LogicalVersion     { return k.logicalVersion }
@@ -94,6 +97,16 @@ func v2OperationKey(id journalv2.OperationID, kind v2KeyKind, suffix string) (v2
 	component, _ := journalv2.EncodeKeyComponent(string(validated))
 	encoded, err := joinV2Key("operation", "spk", "v2", "operations", component, suffix)
 	return v2Key{kind: kind, encoded: encoded, operationID: validated}, err
+}
+
+func v2PublicationWitnessKey(id journalv2.PublicationID) (v2Key, error) {
+	validated, err := journalv2.DecodePublicationID(string(id))
+	if err != nil {
+		return v2Key{}, v2CodecError("publication_witness")
+	}
+	component, _ := journalv2.EncodeKeyComponent(string(validated))
+	encoded, err := joinV2Key("publication_witness", "spk", "v2", "publications", component, "witness")
+	return v2Key{kind: v2KeyPublicationWitness, encoded: encoded, publicationID: validated}, err
 }
 
 func v2EffectIntentKey(id journalv2.EffectID) (v2Key, error) {
@@ -323,6 +336,12 @@ func parseV2Key(encoded string) (v2Key, error) {
 		} else {
 			key, err = v2OperationHeadKey(journalv2.OperationID(value))
 		}
+	case len(parts) == 5 && parts[2] == "publications" && parts[4] == "witness":
+		value, decodeErr := decodeV2Component(parts[3])
+		if decodeErr != nil {
+			return v2Key{}, decodeErr
+		}
+		key, err = v2PublicationWitnessKey(journalv2.PublicationID(value))
 	case len(parts) == 5 && parts[2] == "effects" && parts[4] == "intent":
 		value, decodeErr := decodeV2Component(parts[3])
 		if decodeErr != nil {
@@ -383,6 +402,8 @@ func v2KeyForRecoveryAddress(address journalv2.RecordAddressV2) (v2Key, error) {
 		return v2OperationBindingKey(address.OperationID())
 	case journalv2.AddressOperationHead:
 		return v2OperationHeadKey(address.OperationID())
+	case journalv2.AddressPublicationWitness:
+		return v2PublicationWitnessKey(address.PublicationID())
 	case journalv2.AddressCheckpointRecord:
 		return v2CheckpointRecordKey(address.CheckpointID())
 	case journalv2.AddressCheckpointSlot:
