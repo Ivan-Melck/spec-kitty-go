@@ -44,7 +44,8 @@
         "Terminal type-graph repair 053ea420 covers generic constraints, unions, transitive wrappers, every exported callable seam, and 116 sealed mutants; all required gates pass.",
         "Terminal arbiter directs one final repair: recursively inspect the complete type graph reachable from every exported package object, including composite values and unexported receiver types exposed publicly.",
         "Arbiter-directed repair 6ba8ab68 starts at every exported object and walks the bounded public type graph; 121 sealed mutants and all gates pass.",
-        "Terminal arbiter APPROVE after three ordinary rejection cycles: exported-object type-graph guard closes exact and adjacent composite-root bypasses; sealed 121-mutant census, repeated focused tests, race, full architecture, compile, vet, staticcheck, formatting, and diff gates pass."
+        "Terminal arbiter APPROVE after three ordinary rejection cycles: exported-object type-graph guard closes exact and adjacent composite-root bypasses; sealed 121-mutant census, repeated focused tests, race, full architecture, compile, vet, staticcheck, formatting, and diff gates pass.",
+        "Defect-4 guard repair 8b16f5f1: exact witness key and foundation witness/boundary surface sealed; 139-mutant census preserves all 121 prior cases; repeated/race/full architecture/helper/compile/vet/staticcheck/format gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": {
