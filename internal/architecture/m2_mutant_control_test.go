@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 121
-	m2MutantCensusSHA256 = "77517e38cd727acf75ec44c12173e64d44d83c61a68591c4627661ab031f2cc8"
+	m2MutantCensusCount  = 139
+	m2MutantCensusSHA256 = "07eb87e957c93495961cc0c33d67e3945ce695ab306f39a12a522b8d53854531"
 )
 
 const (
@@ -210,7 +210,7 @@ func m2ExecutableMutants() []m2MutantCase {
 		fixture := "PATH-" + strconv.Itoa(index)
 		cases = append(cases, m2Case("M-KEY-PATH-"+entryID, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", entryID, ""))
 	}
-	for _, fixture := range []string{"AMBIGUOUS", "GLOBAL-HEAD", "MISSION-OPERATION", "MIXED-V1", "RAW", "SCOPE-FIRST-HEAD", "VARIABLE-VERSION", "SCOPE", "MUTABILITY", "SUFFIX", "BUDGET"} {
+	for _, fixture := range []string{"AMBIGUOUS", "GLOBAL-HEAD", "MISSION-OPERATION", "MIXED-V1", "RAW", "SCOPE-FIRST-HEAD", "VARIABLE-VERSION", "SCOPE", "MUTABILITY", "SUFFIX", "BUDGET", "WITNESS-DELETE", "WITNESS-SUBSTITUTE", "WITNESS-PLAUSIBLE-PREFIX", "WITNESS-MALFORMED", "WITNESS-MUTABLE", "WITNESS-EXPIRING", "WITNESS-REVISION-CONDITION", "WITNESS-NO-CONDITION"} {
 		cases = append(cases, m2Case("M-KEY-"+fixture, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", fixture, ""))
 	}
 	for _, fixture := range []string{"ADAPTER", "DECOY-FIRST", "DECOY-LAST", "MULTI-BROKEN", "RUNTIME", "SAME-FILE-FIRST", "SAME-FILE-LAST", "SPLIT-FILE", "UNCLASSIFIED", "VALUE", "WRAPPER"} {
@@ -220,7 +220,7 @@ func m2ExecutableMutants() []m2MutantCase {
 		cases = append(cases, m2DependencyCase("M-PURE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "PURE", m2ModulePath+"/internal/controljournal/v2", target, ImportStandardLibrary, string(RuleDeferredSurface)))
 	}
 	cases = append(cases, m2DependencyCase("M-GAPDB-SCENARIO-CALLER", "GAPDB-SCENARIO", m2ModulePath+"/internal/scenario", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, string(RuleExternalDirection)))
-	for _, fixture := range []string{"DIRECT", "WRAPPER"} {
+	for _, fixture := range []string{"DIRECT", "WRAPPER", "WITNESS-DIRECT"} {
 		cases = append(cases, m2Case("M-CAPABILITY-REACH-"+fixture, m2ValidatorCapReach, fixture, string(RuleReachability), m2ModulePath+"/internal/execution", m2ModulePath+"/internal/controlstore/gapdb"))
 	}
 	for _, target := range []string{"github.com/spec-kitty/gapdb/internal/server", "github.com/spec-kitty/gapdb/server", "github.com/spec-kitty/gapdb/gapdb/internal/server", "github.com/spec-kitty/gapdb/gapdb/private-server"} {
@@ -242,6 +242,9 @@ func m2ExecutableMutants() []m2MutantCase {
 		"INTERFACE-METHOD-POINTER", "MISSING", "NAMED-CALLABLE-POINTER", "NAMED-FUNCTION-TYPE", "RECEIVER-GENERIC-CONSTRAINT",
 		"RENAMED-ADAPTER", "RENAMED-CALLABLE", "TRANSITIVE-DEFINED-WRAPPER", "UNION-CONSTRAINT", "UNUSED-GENERIC-CONSTRAINT",
 		"UNEXPORTED-RECEIVER-VARIABLE", "USED-GENERIC-CONSTRAINT", "VARIABLE-WRAPPER-POINTER", "WEAKENED-CENSUS",
+		"PUBLICATION-MISSING-TYPE", "PUBLICATION-MISSING-HELPER", "PUBLICATION-MISSING-BOUNDARIES",
+		"PUBLICATION-ADAPTER-WITNESS", "PUBLICATION-ADAPTER-BOUNDARY-LOOKALIKE",
+		"PUBLICATION-WRAPPED-WITNESS", "PUBLICATION-WRAPPED-BOUNDARY", "WEAKENED-PUBLICATION-CENSUS",
 	} {
 		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
 	}
@@ -455,10 +458,20 @@ func observeM2RecoveryOwnershipMutant(t *testing.T, mutant m2MutantCase) m2Viola
 		}
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 	}
+	if mutant.Fixture == "WEAKENED-PUBLICATION-CENSUS" {
+		helpers := m2PublicationRecoveryHelperNames()
+		if err := validateM2PublicationRecoveryNames(m2PublicationRecoveryTypeNames(), helpers[:len(helpers)-1]); err != nil {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "FOUNDATION_CONTRACT_OWNERSHIP", Source: mutant.Fixture}
+		}
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+	}
 	const module = "example.test/recovery-ownership"
 	root := t.TempDir()
 	writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
 	files := m2FoundationOwnershipFixture(mutant.Fixture)
+	if strings.HasPrefix(mutant.Fixture, "PUBLICATION-") {
+		files = m2PublicationRecoveryFixture(strings.TrimPrefix(mutant.Fixture, "PUBLICATION-"))
+	}
 	if files == nil {
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
 	}
@@ -569,8 +582,14 @@ func m2FixtureDigest(validator, fixture string) string {
 		if fixture == "WEAKENED-CENSUS" {
 			names := m2FoundationContractTypeNames()
 			material = names[:len(names)-1]
+		} else if fixture == "WEAKENED-PUBLICATION-CENSUS" {
+			helpers := m2PublicationRecoveryHelperNames()
+			material = append(m2PublicationRecoveryTypeNames(), helpers[:len(helpers)-1]...)
 		} else {
 			fixtureMaterial := m2FoundationOwnershipFixture(fixture)
+			if strings.HasPrefix(fixture, "PUBLICATION-") {
+				fixtureMaterial = m2PublicationRecoveryFixture(strings.TrimPrefix(fixture, "PUBLICATION-"))
+			}
 			if fixtureMaterial == nil {
 				return ""
 			}
@@ -709,7 +728,7 @@ func m2SQLExpectedTarget(fixture string) string {
 }
 
 func m2CanonicalKeyIDs() []string {
-	return []string{"K-AUTHORITY-BINDING", "K-RUNTIME-CURRENT", "K-RUNTIME-EPOCH", "K-OPERATION-BINDING", "K-OPERATION-HEAD", "K-AGGREGATE-HEAD", "K-AGGREGATE-EVENT", "K-CHECKPOINT-SLOT", "K-CHECKPOINT-RECORD", "K-WORKGRAPH-ELIGIBILITY"}
+	return []string{"K-AUTHORITY-BINDING", "K-RUNTIME-CURRENT", "K-RUNTIME-EPOCH", "K-OPERATION-BINDING", "K-OPERATION-HEAD", "K-AGGREGATE-HEAD", "K-AGGREGATE-EVENT", "K-CHECKPOINT-SLOT", "K-CHECKPOINT-RECORD", "K-WORKGRAPH-ELIGIBILITY", "K-PUBLICATION-WITNESS"}
 }
 
 func m2ReachFixture(fixture string) string {
@@ -756,6 +775,22 @@ func mutateM2Keyspace(fixture string, registry *[]m2KeyEntry) bool {
 		values[6].SuffixRule = "decimal"
 	case "BUDGET":
 		values[0].MaxKeyBytes++
+	case "WITNESS-DELETE":
+		values = values[:len(values)-1]
+	case "WITNESS-SUBSTITUTE":
+		values[len(values)-1].Template = "spk/v2/publications/<publication-id>/proof"
+	case "WITNESS-PLAUSIBLE-PREFIX":
+		values[len(values)-1].Template = "spk/v2/operations/<publication-id>/witness"
+	case "WITNESS-MALFORMED":
+		values[len(values)-1].Template = "spk/v2/publications//<publication-id>/witness"
+	case "WITNESS-MUTABLE":
+		values[len(values)-1].Mutable = true
+	case "WITNESS-EXPIRING":
+		values[len(values)-1].Expires = true
+	case "WITNESS-REVISION-CONDITION":
+		values[len(values)-1].WriteCondition = "require-revision"
+	case "WITNESS-NO-CONDITION":
+		values[len(values)-1].WriteCondition = ""
 	default:
 		return false
 	}
@@ -771,6 +806,13 @@ func m2CapabilityReachFixture(fixture string) (Graph, bool) {
 	switch fixture {
 	case "DIRECT":
 		edges = []ImportEdge{{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal}}
+	case "WITNESS-DIRECT":
+		// Returning an adapter-owned witness necessarily creates this forbidden
+		// kernel-to-adapter edge, independent of the local type's spelling.
+		edges = []ImportEdge{
+			{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal},
+			{SourcePackage: adapter, TargetPackage: coordinator, Kind: ImportModuleLocal},
+		}
 	case "WRAPPER":
 		edges = []ImportEdge{
 			{SourcePackage: capability, TargetPackage: coordinator, Kind: ImportModuleLocal},

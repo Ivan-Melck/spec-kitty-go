@@ -23,9 +23,10 @@ const (
 	m2EligibilityContractJSON        = `{"admitted_m1_tuple_sha256":"4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d","contention":{"max_parallel_writers":32,"required_trials":100},"hash_algorithm":"sha256-length-prefixed-mission-work-v1","max_entries_per_shard":256,"policy_version":"spk.workgraph.eligibility-shards.v1","shard_count":64}`
 	m2EligibilityContractSHA256      = "8ea2387a39847c307e40d55cecc21bf9ef2dad9ad149f352b5317eaa1f3abd85"
 	m2EligibilityTemplate            = "spk/v2/workgraphs/<mission-id>/eligibility/<shard-id>"
-	m2KeyspaceContractJSON           = `[{"id":"K-AUTHORITY-BINDING","template":"spk/v2/authority/binding","scope":"host","mutable":false,"suffix_rule":"none","max_key_bytes":4096},{"id":"K-RUNTIME-CURRENT","template":"spk/v2/runtime/current","scope":"host","mutable":true,"suffix_rule":"none","max_key_bytes":4096},{"id":"K-RUNTIME-EPOCH","template":"spk/v2/runtime/epochs/<runtime-epoch-id>","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-OPERATION-BINDING","template":"spk/v2/operations/<operation-id>/binding","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-OPERATION-HEAD","template":"spk/v2/operations/<operation-id>/head","scope":"host","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-AGGREGATE-HEAD","template":"spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>","scope":"typed","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-AGGREGATE-EVENT","template":"spk/v2/scopes/<scope>/journal/<aggregate-kind>/<aggregate-id>/<version-hex16>","scope":"typed","mutable":false,"suffix_rule":"lower-hex16","max_key_bytes":4096},{"id":"K-CHECKPOINT-SLOT","template":"spk/v2/checkpoints/slots/<slot-id>","scope":"host","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-CHECKPOINT-RECORD","template":"spk/v2/checkpoints/records/<checkpoint-id>","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-WORKGRAPH-ELIGIBILITY","template":"spk/v2/workgraphs/<mission-id>/eligibility/<shard-id>","scope":"mission","mutable":true,"suffix_rule":"shard-hex2","max_key_bytes":4096}]`
-	m2KeyspaceContractSHA256         = "bb1cda38259b2a00ab5c139b545ba8f7499ddc6e7ec31e658054ee8bbf6e98bd"
+	m2KeyspaceContractJSON           = `[{"id":"K-AUTHORITY-BINDING","template":"spk/v2/authority/binding","scope":"host","mutable":false,"suffix_rule":"none","max_key_bytes":4096},{"id":"K-RUNTIME-CURRENT","template":"spk/v2/runtime/current","scope":"host","mutable":true,"suffix_rule":"none","max_key_bytes":4096},{"id":"K-RUNTIME-EPOCH","template":"spk/v2/runtime/epochs/<runtime-epoch-id>","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-OPERATION-BINDING","template":"spk/v2/operations/<operation-id>/binding","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-OPERATION-HEAD","template":"spk/v2/operations/<operation-id>/head","scope":"host","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-AGGREGATE-HEAD","template":"spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>","scope":"typed","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-AGGREGATE-EVENT","template":"spk/v2/scopes/<scope>/journal/<aggregate-kind>/<aggregate-id>/<version-hex16>","scope":"typed","mutable":false,"suffix_rule":"lower-hex16","max_key_bytes":4096},{"id":"K-CHECKPOINT-SLOT","template":"spk/v2/checkpoints/slots/<slot-id>","scope":"host","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-CHECKPOINT-RECORD","template":"spk/v2/checkpoints/records/<checkpoint-id>","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-WORKGRAPH-ELIGIBILITY","template":"spk/v2/workgraphs/<mission-id>/eligibility/<shard-id>","scope":"mission","mutable":true,"suffix_rule":"shard-hex2","max_key_bytes":4096},{"id":"K-PUBLICATION-WITNESS","template":"spk/v2/publications/<publication-id>/witness","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096,"write_condition":"require-absent","expires":false}]`
+	m2KeyspaceContractSHA256         = "44dea603826496df094f1f0beae170544f1930e170c91b29f7c9ad7da8c94078"
 	m2FoundationContractSHA256       = "5579ab86bb3320ce9a76b8f4593dcbc379195fa771d6ef0033aa3b9270124711"
+	m2PublicationRecoverySHA256      = "dfb2914655d9b4e7da011ccc594553e230f212f02b980eb1f3f02a598310e15b"
 )
 
 type m2EligibilityContract struct {
@@ -41,12 +42,14 @@ type m2EligibilityContract struct {
 }
 
 type m2KeyEntry struct {
-	ID          string `json:"id"`
-	Template    string `json:"template"`
-	Scope       string `json:"scope"`
-	Mutable     bool   `json:"mutable"`
-	SuffixRule  string `json:"suffix_rule"`
-	MaxKeyBytes int    `json:"max_key_bytes"`
+	ID             string `json:"id"`
+	Template       string `json:"template"`
+	Scope          string `json:"scope"`
+	Mutable        bool   `json:"mutable"`
+	SuffixRule     string `json:"suffix_rule"`
+	MaxKeyBytes    int    `json:"max_key_bytes"`
+	WriteCondition string `json:"write_condition,omitempty"`
+	Expires        bool   `json:"expires,omitempty"`
 }
 
 func m2KeyspaceRegistry() []m2KeyEntry {
@@ -61,6 +64,7 @@ func m2KeyspaceRegistry() []m2KeyEntry {
 		{ID: "K-CHECKPOINT-SLOT", Template: "spk/v2/checkpoints/slots/<slot-id>", Scope: "host", Mutable: true, SuffixRule: "canonical-bounded", MaxKeyBytes: 4096},
 		{ID: "K-CHECKPOINT-RECORD", Template: "spk/v2/checkpoints/records/<checkpoint-id>", Scope: "host", Mutable: false, SuffixRule: "canonical-bounded", MaxKeyBytes: 4096},
 		{ID: "K-WORKGRAPH-ELIGIBILITY", Template: "spk/v2/workgraphs/<mission-id>/eligibility/<shard-id>", Scope: "mission", Mutable: true, SuffixRule: "shard-hex2", MaxKeyBytes: 4096},
+		{ID: "K-PUBLICATION-WITNESS", Template: "spk/v2/publications/<publication-id>/witness", Scope: "host", Mutable: false, SuffixRule: "canonical-bounded", MaxKeyBytes: 4096, WriteCondition: "require-absent", Expires: false},
 	}
 }
 
@@ -71,7 +75,7 @@ func TestM2KeyspaceRegistryIsClosed(t *testing.T) {
 	}
 	wantIDs := []string{
 		"K-AGGREGATE-EVENT", "K-AGGREGATE-HEAD", "K-AUTHORITY-BINDING", "K-CHECKPOINT-RECORD", "K-CHECKPOINT-SLOT",
-		"K-OPERATION-BINDING", "K-OPERATION-HEAD", "K-RUNTIME-CURRENT", "K-RUNTIME-EPOCH", "K-WORKGRAPH-ELIGIBILITY",
+		"K-OPERATION-BINDING", "K-OPERATION-HEAD", "K-PUBLICATION-WITNESS", "K-RUNTIME-CURRENT", "K-RUNTIME-EPOCH", "K-WORKGRAPH-ELIGIBILITY",
 	}
 	gotIDs := make([]string, 0, len(registry))
 	for _, entry := range registry {
@@ -111,6 +115,25 @@ func TestM2KeyspaceRegistryIsClosed(t *testing.T) {
 		}},
 		{"shared-projection-head", func(v []m2KeyEntry) []m2KeyEntry {
 			return append(v, m2KeyEntry{ID: "K-PROJECTION", Template: "spk/v2/projection/head", Scope: "host", Mutable: true})
+		}},
+		{"missing-publication-witness", func(v []m2KeyEntry) []m2KeyEntry { return v[:len(v)-1] }},
+		{"plausible-publication-prefix", func(v []m2KeyEntry) []m2KeyEntry {
+			v[len(v)-1].Template = "spk/v2/operations/<publication-id>/witness"
+			return v
+		}},
+		{"malformed-publication-witness", func(v []m2KeyEntry) []m2KeyEntry {
+			v[len(v)-1].Template = "spk/v2/publications//<publication-id>/witness"
+			return v
+		}},
+		{"mutable-publication-witness", func(v []m2KeyEntry) []m2KeyEntry { v[len(v)-1].Mutable = true; return v }},
+		{"expiring-publication-witness", func(v []m2KeyEntry) []m2KeyEntry { v[len(v)-1].Expires = true; return v }},
+		{"revision-conditioned-publication-witness", func(v []m2KeyEntry) []m2KeyEntry {
+			v[len(v)-1].WriteCondition = "require-revision"
+			return v
+		}},
+		{"unconditioned-publication-witness", func(v []m2KeyEntry) []m2KeyEntry {
+			v[len(v)-1].WriteCondition = ""
+			return v
 		}},
 	}
 	for _, mutant := range mutants {
@@ -298,6 +321,14 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"foundation-only-composite", m2FoundationOwnershipFixture("FOUNDATION-ONLY-COMPOSITE"), false},
 		{"private-unreachable-type", m2FoundationOwnershipFixture("PRIVATE-UNREACHABLE-TYPE"), false},
 		{"recursive-unrelated-composite", m2FoundationOwnershipFixture("RECURSIVE-UNRELATED-COMPOSITE"), false},
+		{"publication-recovery-complete", m2PublicationRecoveryFixture("COMPLETE"), false},
+		{"publication-recovery-missing-type", m2PublicationRecoveryFixture("MISSING-TYPE"), true},
+		{"publication-recovery-missing-helper", m2PublicationRecoveryFixture("MISSING-HELPER"), true},
+		{"publication-recovery-missing-boundaries-method", m2PublicationRecoveryFixture("MISSING-BOUNDARIES"), true},
+		{"adapter-owned-publication-witness", m2PublicationRecoveryFixture("ADAPTER-WITNESS"), true},
+		{"adapter-owned-operation-boundary-lookalike", m2PublicationRecoveryFixture("ADAPTER-BOUNDARY-LOOKALIKE"), true},
+		{"renamed-wrapped-publication-witness", m2PublicationRecoveryFixture("WRAPPED-WITNESS"), true},
+		{"renamed-wrapped-operation-boundary", m2PublicationRecoveryFixture("WRAPPED-BOUNDARY"), true},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -313,6 +344,56 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 			}
 		})
 	}
+}
+
+func m2PublicationRecoveryFixture(variant string) map[string]string {
+	if !slices.Contains([]string{
+		"COMPLETE", "MISSING-TYPE", "MISSING-HELPER", "MISSING-BOUNDARIES",
+		"ADAPTER-WITNESS", "ADAPTER-BOUNDARY-LOOKALIKE", "WRAPPED-WITNESS", "WRAPPED-BOUNDARY",
+	}, variant) {
+		return nil
+	}
+	files := m2FoundationOwnershipFixture("COMPLETE")
+	typesToDeclare := m2PublicationRecoveryTypeNames()
+	helpersToDeclare := m2PublicationRecoveryHelperNames()
+	if variant == "MISSING-TYPE" {
+		typesToDeclare = typesToDeclare[1:]
+	}
+	if variant == "MISSING-HELPER" {
+		helpersToDeclare = helpersToDeclare[:len(helpersToDeclare)-1]
+	}
+	var declarations strings.Builder
+	for _, name := range typesToDeclare {
+		fmt.Fprintf(&declarations, "type %s struct{}\n", name)
+	}
+	for _, name := range helpersToDeclare {
+		fmt.Fprintf(&declarations, "func %s() {}\n", name)
+	}
+	if variant != "MISSING-BOUNDARIES" {
+		declarations.WriteString("func (OperationSummaryV2) Boundaries() []OperationBoundaryV2 { return nil }\n")
+	}
+	files["internal/controljournal/v2/contracts.go"] += declarations.String()
+	switch variant {
+	case "ADAPTER-WITNESS":
+		files["internal/controlstore/gapdb/adapter.go"] += "type PublicationWitnessV2 struct{}\n"
+	case "ADAPTER-BOUNDARY-LOOKALIKE":
+		files["internal/controlstore/gapdb/adapter.go"] += "type V2OperationBoundary struct{}\n"
+	case "WRAPPED-WITNESS":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Proof journalv2.PublicationWitnessV2
+func Decode(Proof) (Parcel, error) { return Parcel{}, nil }
+`
+	case "WRAPPED-BOUNDARY":
+		files["internal/controlstore/gapdb/adapter.go"] = `package gapdb
+import journalv2 "example.test/recovery-ownership/internal/controljournal/v2"
+type Parcel struct{}
+type Boundary journalv2.OperationBoundaryV2
+var Decode func(*Boundary) (*Parcel, error)
+`
+	}
+	return files
 }
 
 func TestM2RawKeyAndGodStoreMutantsAreRejected(t *testing.T) {
@@ -546,6 +627,9 @@ func inspectM2FoundationContractOwnership(ctx context.Context, root, module stri
 	if err := validateM2FoundationContractTypeNames(m2FoundationContractTypeNames()); err != nil {
 		return err
 	}
+	if err := validateM2PublicationRecoveryNames(m2PublicationRecoveryTypeNames(), m2PublicationRecoveryHelperNames()); err != nil {
+		return err
+	}
 	sources, err := loadTypedProductionSources(ctx, root, module, runGraphCommand)
 	if err != nil {
 		return err
@@ -566,6 +650,9 @@ func inspectM2FoundationContractOwnership(ctx context.Context, root, module stri
 		if _, ok := foundation.typed.Scope().Lookup(name).(*types.TypeName); !ok {
 			return fmt.Errorf("evidence=FOUNDATION-CONTRACT-OWNERSHIP law=complete-foundation-contract owner=%s observed=missing expected-type=%s", foundationPath, name)
 		}
+	}
+	if err := validateM2PublicationRecoveryActivation(foundation, foundationPath); err != nil {
+		return err
 	}
 	for _, source := range sources {
 		if !matchesPrefix(source.importPath, []string{adapterPath}) {
@@ -597,6 +684,69 @@ func m2FoundationContractTypeNames() []string {
 	}
 }
 
+func m2PublicationRecoveryTypeNames() []string {
+	return []string{"PublicationWitnessV2", "OperationBoundaryV2"}
+}
+
+func m2PublicationRecoveryHelperNames() []string {
+	return []string{
+		"EncodePublicationWitnessV2", "DecodePublicationWitnessV2", "ValidatePublicationWitnessV2",
+		"BuildOperationSummaryV2", "ValidateOperationSummaryV2", "ReducerStateDigestV2",
+		"ProjectionPrefixGenesisV2", "AdvanceProjectionPrefixV2",
+	}
+}
+
+func validateM2PublicationRecoveryNames(typeNames, helperNames []string) error {
+	canonical := append(slices.Clone(typeNames), helperNames...)
+	slices.Sort(canonical)
+	if len(typeNames) != 2 || len(helperNames) != 8 || len(canonical) != 10 {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=closed-symbol-census observed-types=%d observed-helpers=%d expected-types=2 expected-helpers=8", len(typeNames), len(helperNames))
+	}
+	for index, name := range canonical {
+		if name == "" || (index > 0 && canonical[index-1] == name) {
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=closed-symbol-census observed=%v", canonical)
+		}
+	}
+	if digest := m2DigestJSON(canonical); digest != m2PublicationRecoverySHA256 {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=closed-symbol-census observed-sha256=%s expected=%s", digest, m2PublicationRecoverySHA256)
+	}
+	return nil
+}
+
+// The corrected contract is predeclared before WP02 lands. Its first exported
+// symbol activates the complete surface; a partially introduced proof API is
+// never admitted.
+func validateM2PublicationRecoveryActivation(foundation *productionSourcePackage, foundationPath string) error {
+	scope := foundation.typed.Scope()
+	active := false
+	for _, name := range append(m2PublicationRecoveryTypeNames(), m2PublicationRecoveryHelperNames()...) {
+		if scope.Lookup(name) != nil {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return nil
+	}
+	for _, name := range m2PublicationRecoveryTypeNames() {
+		if _, ok := scope.Lookup(name).(*types.TypeName); !ok {
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=complete-activated-surface owner=%s observed=missing expected-type=%s", foundationPath, name)
+		}
+	}
+	for _, name := range m2PublicationRecoveryHelperNames() {
+		if _, ok := scope.Lookup(name).(*types.Func); !ok {
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=complete-activated-surface owner=%s observed=missing expected-helper=%s", foundationPath, name)
+		}
+	}
+	summary, _ := scope.Lookup("OperationSummaryV2").(*types.TypeName)
+	boundaryAccessor := summary != nil && (types.NewMethodSet(summary.Type()).Lookup(nil, "Boundaries") != nil ||
+		types.NewMethodSet(types.NewPointer(summary.Type())).Lookup(nil, "Boundaries") != nil)
+	if !boundaryAccessor {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=defensive-boundary-access owner=%s observed=missing expected-method=OperationSummaryV2.Boundaries", foundationPath)
+	}
+	return nil
+}
+
 func validateM2FoundationContractTypeNames(names []string) error {
 	canonical := slices.Clone(names)
 	slices.Sort(canonical)
@@ -615,7 +765,10 @@ func validateM2FoundationContractTypeNames(names []string) error {
 }
 
 func m2AdapterOwnedRecoveryTypeNames() []string {
-	return []string{"V2Key", "V2Prefix", "V2Record", "V2ScanRequest", "V2ScanPage", "V2Page", "V2CommitResult", "V2RecoveryError"}
+	return []string{
+		"V2Key", "V2Prefix", "V2Record", "V2ScanRequest", "V2ScanPage", "V2Page", "V2CommitResult", "V2RecoveryError",
+		"PublicationWitnessV2", "OperationBoundaryV2", "V2PublicationWitness", "V2OperationBoundary",
+	}
 }
 
 type m2NamedTypeReference struct {
@@ -637,8 +790,9 @@ func m2FirstAdapterOwnedRecoverySignature(source *productionSourcePackage, found
 		m2ExpandTypeDeclarationProvenance(references, provenance)
 		foundationContract := false
 		owned := ""
+		foundationTypes := append(m2FoundationContractTypeNames(), m2PublicationRecoveryTypeNames()...)
 		for reference := range references {
-			if reference.Owner == foundationPath && slices.Contains(m2FoundationContractTypeNames(), reference.Name) {
+			if reference.Owner == foundationPath && slices.Contains(foundationTypes, reference.Name) {
 				foundationContract = true
 			}
 			if matchesPrefix(reference.Owner, []string{adapterPath, "github.com/spec-kitty/gapdb"}) {
