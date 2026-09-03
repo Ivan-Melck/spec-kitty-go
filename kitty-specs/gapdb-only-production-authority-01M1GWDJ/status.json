@@ -71,9 +71,9 @@
     },
     "WP02": {
       "actor": "codex-wp02-witness-foundation",
-      "agent": "wp02-year-zero-reviewer",
-      "agent_profile": "__resolved_profile_absent__",
-      "agent_profile_version": "__resolved_profile_version_absent__",
+      "agent": "codex-wp02-witness-foundation",
+      "agent_profile": "implementer-ivan",
+      "agent_profile_version": "1.0",
       "assignee": "codex-wp02-witness-foundation",
       "force_count": 13,
       "lane": "in_progress",
@@ -98,7 +98,8 @@
         "Cycle-12 independent corpus found the sole frozen-codec mismatch: canonical year-zero RFC3339Nano instants were rejected. Reopen for exact bounded repair.",
         "Cycle-12 repair at c997e226 admits canonical year-zero whole/fractional recovery instants, completing exact frozen GapDB RFC3339Nano language equivalence while preserving all rejection laws; full gates pass.",
         "Independent cycle-13 APPROVE: exact prior year-zero failures pass; 20,000-instant oracle across years 0000-9999 found no mismatch with frozen GapDB RFC3339Nano canonical language; focused x50, regression x100, race x10, architecture, compile, vet, staticcheck, formatting, ownership, and diff gates pass.",
-        "Resumed after approved WP01 compact-boundary contract resolved the checkpoint-size blocker."
+        "Resumed after approved WP01 compact-boundary contract resolved the checkpoint-size blocker.",
+        "Ownership recovery after approved post-approval defect-4: replace stale wp02-year-zero-reviewer claim with designated implementer. Current task artifact and WP01 compact-boundary guard supersede the stale action capsule; no code or acceptance guard is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
