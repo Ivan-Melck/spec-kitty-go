@@ -72,8 +72,8 @@
     "WP02": {
       "actor": "codex-wp02-witness-foundation",
       "agent": "codex-wp02-witness-foundation",
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp02-witness-foundation",
       "force_count": 13,
       "lane": "in_progress",
