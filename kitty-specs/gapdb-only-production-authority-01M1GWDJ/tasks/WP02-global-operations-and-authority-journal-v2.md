@@ -120,10 +120,24 @@ its operation summary exposes anonymous leaves rather than addressable
 checkpoint boundaries. Preserve all earlier approved behavior while applying
 the bounded correction below.
 
-This package is reopened a final bounded time by
+This package was reopened a bounded time by
 `post-approval-defect-5.md`. Preserve the durable witness and compact-boundary
 correction while adding the acyclic checkpoint boundary identity and the
 foundation-owned summary codec described below.
+
+This package is reopened by `post-approval-defect-6.md` after the first real
+WP04 restore fixture found a durable consumer-path contradiction. Preserve all
+digest preimages and previously approved semantics while making the final
+persistence-facing bytes of `OperationBindingV2`, `EventEnvelopeV2`,
+`AggregateHeadV2`, and `OperationSummaryV2` recursively canonical. Operation
+state and publication witness final bytes already satisfy this law.
+
+`NewRecoveryRecordV2` must compare canonicalized bytes for exact equality and
+refuse noncanonical provider evidence; it must never silently rewrite evidence.
+Add direct `Encode -> RecoveryRecord -> Decode` tests for binding, event, head,
+state, and witness values with nested/optional-rich fixtures, plus the
+equivalent recursive checkpoint-embedding test for operation summary. Keep
+strict decoder equality and do not introduce legacy or dual-read fallbacks.
 
 ### Durable publication witness and shared proof helpers
 
@@ -183,6 +197,8 @@ observed revision, as-of time, copied records, opaque cursor, and truncation.
 Closed errors distinguish not-found, revision-moved, stale-cursor, malformed,
 unavailable/canceled, and budget-exceeded outcomes. All construction validates
 budgets before allocation and every returned byte slice is defensive.
+Recovery record construction admits only bytes already in the foundation's
+recursive canonical form and preserves those exact bytes unchanged.
 
 Expose complete immutable semantic accessors for `EventEnvelopeV2`,
 `AggregateHeadV2`, `OperationBindingV2`, and `OperationStateV2`, including all

@@ -137,7 +137,8 @@ WP04 must use the foundation recovery values repaired in WP02 and the WP03
 adapter implementation; it must not import GapDB, inspect adapter-private keys,
 or define substitute event/head/operation wire structs.
 
-`post-approval-defect-5.md` is the final dependency correction for this WP.
+`post-approval-defect-5.md` is the prior checkpoint-identity correction for
+this WP.
 Consume the sealed prefix's acknowledgement-derived
 `CoveredThroughPublicationID`; never accept that identity from the checkpoint
 caller. For watermark `R`, the checkpoint represents state immediately after
@@ -147,6 +148,14 @@ observed at one common revision `C > R` and remains part of the suffix. Validate
 the covered-through witness at exactly `R`. Encode and decode operation summary
 only through WP02's public strict codecs; do not define a local summary or
 boundary wire model.
+
+`post-approval-defect-6.md` records a consumer-path defect exposed by this
+WP's first real origin-to-suffix fixture. Keep the seven-file draft preserved
+and do not parse, reorder, or reconstruct foundation wire locally. Resume only
+after WP01 and WP02 independently prove that every recovery-consumed
+foundation value survives `Encode -> RecoveryRecordV2 -> Decode` unchanged and
+that nested operation summary survives checkpoint canonicalization. Normalize
+WP04-owned checkpoint and slot final bytes before durable recovery admission.
 
 ## Branch Strategy
 

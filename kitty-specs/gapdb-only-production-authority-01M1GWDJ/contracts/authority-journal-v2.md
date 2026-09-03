@@ -180,6 +180,14 @@ They expose semantic identities and copied canonical bytes, never raw GapDB
 keys or provider types. The adapter alone translates those types to the frozen
 public GapDB client.
 
+Every exported v2 value classified as a direct or nested durable record has
+one recursively canonical final-byte representation. Persistence-facing
+encoding, `RecoveryRecordV2` admission, and strict decoding agree on those
+exact bytes. `RecoveryRecordV2` rejects noncanonical provider evidence and
+never rewrites it. Existing semantic digest preimages remain independently
+defined; canonicalizing final durable bytes does not implicitly change an
+event, plan, witness, registry, reducer, or summary digest domain.
+
 Watch is notification only. Restore captures a positive durable
 `(DatabaseID, R)`, selects a compatible complete checkpoint, scans all current
 aggregate heads and operation records, and exact-reads every new logical
