@@ -58,7 +58,8 @@
         "Review cycle 14 repair ownership returns from the completed independent reviewer to the implementation actor; force resolves only the stale reviewer assignment and bypasses no guard.",
         "Cycle-14 repair ready at 8fbe4eee: real zero refusal and returned-digest taint; any first addendum symbol activates full contract; exact provider-revision sort-before-select; exact []byte identity; 175 mutants preserve all prior 166; full required ladder passes.",
         "Independent re-review rejected 8fbe4eee: provider revision is inferred circularly from the fold call and seal taint does not follow a same-package helper that discards its input. See review-cycle-15.",
-        "Review cycle 15 repair ownership returns from the completed reviewer to the implementer; force resolves stale reviewer assignment only and bypasses no contract guard."
+        "Review cycle 15 repair ownership returns from the completed reviewer to the implementer; force resolves stale reviewer assignment only and bypasses no contract guard.",
+        "Cycle-15 repair ready at 48c410ad: typed acknowledgement-source provider-revision anchor drives exact sort and prefix fold; bounded cycle-safe interprocedural seal dependence; coupled completion-order and discard-helper mutants; 177 census preserves all 175; full ladder passes."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
