@@ -367,6 +367,8 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"covered-through-selected-before-sort", m2PublicationRecoveryFixture("COVERED-SELECT-BEFORE-SORT"), true},
 		{"operation-summary-defined-byte", m2PublicationRecoveryFixture("SUMMARY-DEFINED-BYTE"), true},
 		{"operation-summary-byte-alias", m2PublicationRecoveryFixture("SUMMARY-BYTE-ALIAS"), false},
+		{"covered-through-coupled-completion-order", m2PublicationRecoveryFixture("COVERED-COUPLED-COMPLETION-ORDER"), true},
+		{"covered-through-helper-discards-input", m2PublicationRecoveryFixture("COVERED-SEAL-HELPER-DISCARDS"), true},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -397,6 +399,8 @@ func TestM2CheckpointIdentityFalseGreensReachIntendedLaws(t *testing.T) {
 		{"ADDENDUM-ACCESSOR-ONLY", "law=complete-activated-surface"},
 		{"COVERED-OTHER-UINT64-ORDER", "law=greatest-revision-covered-through"},
 		{"COVERED-SELECT-BEFORE-SORT", "law=greatest-revision-covered-through"},
+		{"COVERED-COUPLED-COMPLETION-ORDER", "law=greatest-revision-covered-through"},
+		{"COVERED-SEAL-HELPER-DISCARDS", "law=covered-through-seal-participation"},
 		{"SUMMARY-DEFINED-BYTE", "law=foundation-summary-codec"},
 	} {
 		t.Run(fixture.variant, func(t *testing.T) {
@@ -417,7 +421,7 @@ func TestM2CheckpointIdentityFalseGreensReachIntendedLaws(t *testing.T) {
 
 const (
 	m2CompactBoundaryPositiveControlCount  = 3
-	m2CompactBoundaryPositiveControlSHA256 = "3171f53805a93578019b6410461866c029ddbbe713992ef5f8941a4a26768a48"
+	m2CompactBoundaryPositiveControlSHA256 = "7d96b288f26cce5266b00f689ccd429e4d456d8934b7511239c1e80a9559232f"
 )
 
 func TestM2CompactBoundaryPositiveControlsAreSealed(t *testing.T) {
@@ -504,6 +508,7 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 		"COVERED-ZERO-INVERTED", "COVERED-ZERO-NOOP", "COVERED-SEAL-DEAD-REFERENCE",
 		"ADDENDUM-ENCODE-ONLY", "ADDENDUM-DECODE-ONLY", "ADDENDUM-ACCESSOR-ONLY",
 		"COVERED-OTHER-UINT64-ORDER", "COVERED-SELECT-BEFORE-SORT", "SUMMARY-DEFINED-BYTE", "SUMMARY-BYTE-ALIAS",
+		"COVERED-COUPLED-COMPLETION-ORDER", "COVERED-SEAL-HELPER-DISCARDS",
 	}, variant) {
 		return nil
 	}
@@ -521,6 +526,8 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 		return files
 	}
 	files["internal/controljournal/v2/contracts.go"] = strings.Replace(files["internal/controljournal/v2/contracts.go"], "package v2\n", "package v2\nimport \"sort\"\n", 1)
+	files["internal/controljournal/v2/contracts.go"] = strings.Replace(files["internal/controljournal/v2/contracts.go"], "type CommitObservationV2 struct{}\n", "type CommitObservationV2 struct { providerRevision uint64; completionOrdinal uint64 }\n", 1)
+	files["internal/controljournal/v2/contracts.go"] = strings.Replace(files["internal/controljournal/v2/contracts.go"], "type AcknowledgedPublicationV2 struct{}\n", "type AcknowledgedPublicationV2 struct { observation CommitObservationV2 }\nfunc (a AcknowledgedPublicationV2) ProviderRevision() uint64 { return a.observation.providerRevision }\n", 1)
 	helpersToDeclare := m2PublicationRecoveryHelperNames()
 	if variant == "MISSING-HELPER" || variant == "SUMMARY-ENCODE-DELETED" || variant == "SUMMARY-DECODE-DELETED" {
 		missingName := map[string]string{
@@ -677,21 +684,31 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 	if variant == "COVERED-SEAL-DEAD-REFERENCE" {
 		sealBody = "_ = s.coveredThroughPublicationID; return s.seal, nil"
 	}
-	declarations.WriteString("func sortDigestBytes(value []byte) [32]byte { var result [32]byte; copy(result[:], value); return result }\n")
+	digestHelperBody := "return [32]byte{value[0]}"
+	if variant == "COVERED-SEAL-HELPER-DISCARDS" {
+		digestHelperBody = "_ = value; return [32]byte{}"
+	}
+	declarations.WriteString("func sortDigestBytes(value []byte) [32]byte { " + digestHelperBody + " }\n")
 	declarations.WriteString("func projectionSeal(s SealedProjectionPrefixV2) (Digest, error) { " + sealBody + " }\n")
 	comparisonField := "providerRevision"
 	if variant == "COVERED-OTHER-UINT64-ORDER" {
 		comparisonField = "completionOrdinal"
+	}
+	prefixRevisionField := "providerRevision"
+	if variant == "COVERED-COUPLED-COMPLETION-ORDER" {
+		comparisonField = "completionOrdinal"
+		prefixRevisionField = "completionOrdinal"
 	}
 	selectionPrefix := ""
 	if variant == "COVERED-SELECT-BEFORE-SORT" {
 		selectionPrefix = "selected := entries[len(entries)-1].publicationID; "
 		coveredInitializer = "coveredThroughPublicationID: selected"
 	}
-	prefixFold := "prefix := Digest{}; for _, entry := range entries { prefix, _ = AdvanceProjectionPrefixV2(prefix, entry.providerRevision, entry.publicationID, entry.planDigest, entry.recordSetDigest) }; _ = prefix; "
+	prefixFold := "prefix := Digest{}; for _, entry := range entries { prefix, _ = AdvanceProjectionPrefixV2(prefix, entry." + prefixRevisionField + ", entry.publicationID, entry.planDigest, entry.recordSetDigest) }; _ = prefix; "
 	if variant == "MISSING-HELPER" {
 		prefixFold = ""
 	}
+	declarations.WriteString("func (t *ProjectionTrackerV2) applyAcknowledged(ack AcknowledgedPublicationV2) { _ = acknowledgedLedgerEntryV2{providerRevision: ack.observation.providerRevision, completionOrdinal: ack.observation.completionOrdinal} }\n")
 	declarations.WriteString("func (t *ProjectionTrackerV2) sealPrefix() (SealedProjectionPrefixV2, error) { entries := []acknowledgedLedgerEntryV2{{providerRevision: 9, completionOrdinal: 1, publicationID: PublicationID(\"publication-high\")}, {providerRevision: 3, completionOrdinal: 2, publicationID: PublicationID(\"publication-low\")}}; completionOrder := append([]acknowledgedLedgerEntryV2(nil), entries...); " + selectionPrefix + "sort.Slice(entries, func(i, j int) bool { return entries[i]." + comparisonField + " < entries[j]." + comparisonField + " }); " + prefixFold + "_ = completionOrder; return SealedProjectionPrefixV2{" + coveredInitializer + "}, nil }\n")
 	files["internal/controljournal/v2/contracts.go"] += declarations.String()
 	switch variant {
@@ -1367,8 +1384,11 @@ func validateM2CoveredThroughSeal(foundation *productionSourcePackage, foundatio
 						continue
 					}
 					ledger, selectedAt := m2TerminalRevisionSortedPublication(foundation, function.Body, pair.Value, foundationPath, make(map[types.Object]bool))
-					revisionField := m2ProviderRevisionFieldInPrefixFold(foundation, function.Body, ledger)
-					if ledger != nil && revisionField != nil && m2BodyOrdersLedgerByAscendingRevision(foundation, function.Body, ledger, revisionField, selectedAt) {
+					providerSource := m2AcknowledgedProviderRevisionSource(foundation, foundationPath)
+					revisionField := m2LedgerFieldForProviderSource(foundation, ledger, providerSource)
+					foldField := m2ProviderRevisionFieldInPrefixFold(foundation, function.Body, ledger)
+					if ledger != nil && revisionField != nil && foldField == revisionField &&
+						m2BodyOrdersLedgerByAscendingRevision(foundation, function.Body, ledger, revisionField, selectedAt) {
 						selectedFromGreatestRevision = true
 					}
 				}
@@ -1406,31 +1426,44 @@ func validateM2CoveredThroughSeal(foundation *productionSourcePackage, foundatio
 }
 
 func m2DigestResultDependsOnField(source *productionSourcePackage, body *ast.BlockStmt, field *types.Var) bool {
-	tainted := make(map[types.Object]bool)
-	for changed := true; changed; {
+	analyzer := &m2SealDependenceAnalyzer{source: source, field: field, remaining: 65_536, active: make(map[string]bool)}
+	return analyzer.bodyResultDepends(body, nil)
+}
+
+type m2SealDependenceAnalyzer struct {
+	source    *productionSourcePackage
+	field     *types.Var
+	remaining int
+	active    map[string]bool
+}
+
+func (a *m2SealDependenceAnalyzer) bodyResultDepends(body *ast.BlockStmt, initial map[types.Object]bool) bool {
+	if body == nil || a.remaining <= 0 {
+		return false
+	}
+	tainted := make(map[types.Object]bool, len(initial))
+	for object := range initial {
+		tainted[object] = true
+	}
+	for changed := true; changed && a.remaining > 0; {
 		changed = false
 		ast.Inspect(body, func(node ast.Node) bool {
+			if a.remaining <= 0 {
+				return false
+			}
+			a.remaining--
 			if _, nested := node.(*ast.FuncLit); nested {
 				return false
 			}
 			switch statement := node.(type) {
 			case *ast.AssignStmt:
 				for index, left := range statement.Lhs {
-					identifier, ok := left.(*ast.Ident)
-					if !ok || identifier.Name == "_" {
-						continue
-					}
 					rightIndex := index
 					if len(statement.Rhs) == 1 {
 						rightIndex = 0
 					}
-					if rightIndex >= len(statement.Rhs) || !m2ExpressionDependsOnField(source, statement.Rhs[rightIndex], field, tainted) {
-						continue
-					}
-					object := source.info.ObjectOf(identifier)
-					if object != nil && !tainted[object] {
-						tainted[object] = true
-						changed = true
+					if rightIndex < len(statement.Rhs) && a.expressionDepends(statement.Rhs[rightIndex], tainted) {
+						changed = m2MarkTaintedObject(a.source, left, tainted) || changed
 					}
 				}
 			case *ast.ValueSpec:
@@ -1439,13 +1472,20 @@ func m2DigestResultDependsOnField(source *productionSourcePackage, body *ast.Blo
 					if len(statement.Values) == 1 {
 						valueIndex = 0
 					}
-					if valueIndex >= len(statement.Values) || !m2ExpressionDependsOnField(source, statement.Values[valueIndex], field, tainted) {
-						continue
+					if valueIndex < len(statement.Values) && a.expressionDepends(statement.Values[valueIndex], tainted) {
+						changed = m2MarkTaintedObject(a.source, name, tainted) || changed
 					}
-					object := source.info.ObjectOf(name)
-					if object != nil && !tainted[object] {
-						tainted[object] = true
-						changed = true
+				}
+			case *ast.CallExpr:
+				if m2IsBuiltinCall(a.source, statement, "copy") && len(statement.Args) == 2 && a.expressionDepends(statement.Args[1], tainted) {
+					changed = m2MarkTaintedObject(a.source, statement.Args[0], tainted) || changed
+				}
+				if receiver := m2CallReceiver(statement); receiver != nil {
+					for _, argument := range statement.Args {
+						if a.expressionDepends(argument, tainted) {
+							changed = m2MarkTaintedObject(a.source, receiver, tainted) || changed
+							break
+						}
 					}
 				}
 			}
@@ -1458,7 +1498,7 @@ func m2DigestResultDependsOnField(source *productionSourcePackage, body *ast.Blo
 			return false
 		}
 		returned, ok := node.(*ast.ReturnStmt)
-		if ok && len(returned.Results) > 0 && m2ExpressionDependsOnField(source, returned.Results[0], field, tainted) {
+		if ok && len(returned.Results) > 0 && a.expressionDepends(returned.Results[0], tainted) {
 			depends = true
 		}
 		return !depends
@@ -1466,22 +1506,131 @@ func m2DigestResultDependsOnField(source *productionSourcePackage, body *ast.Blo
 	return depends
 }
 
-func m2ExpressionDependsOnField(source *productionSourcePackage, expression ast.Expr, field *types.Var, tainted map[types.Object]bool) bool {
+func (a *m2SealDependenceAnalyzer) expressionDepends(expression ast.Expr, tainted map[types.Object]bool) bool {
+	if expression == nil || a.remaining <= 0 {
+		return false
+	}
+	if call, ok := expression.(*ast.CallExpr); ok {
+		return a.callResultDepends(call, tainted)
+	}
 	depends := false
 	ast.Inspect(expression, func(node ast.Node) bool {
+		if depends || a.remaining <= 0 {
+			return false
+		}
+		a.remaining--
 		if _, nested := node.(*ast.FuncLit); nested {
 			return false
 		}
 		switch value := node.(type) {
+		case *ast.CallExpr:
+			depends = a.callResultDepends(value, tainted)
+			return false
 		case *ast.SelectorExpr:
-			selection := source.info.Selections[value]
-			depends = depends || selection != nil && selection.Obj() == field
+			selection := a.source.info.Selections[value]
+			depends = selection != nil && selection.Obj() == a.field
 		case *ast.Ident:
-			depends = depends || tainted[source.info.ObjectOf(value)]
+			depends = tainted[a.source.info.ObjectOf(value)]
 		}
 		return !depends
 	})
 	return depends
+}
+
+func (a *m2SealDependenceAnalyzer) callResultDepends(call *ast.CallExpr, tainted map[types.Object]bool) bool {
+	dependencies := make([]bool, len(call.Args))
+	hasDependency := false
+	for index, argument := range call.Args {
+		dependencies[index] = a.expressionDepends(argument, tainted)
+		hasDependency = hasDependency || dependencies[index]
+	}
+	receiverDependency := false
+	if receiver := m2CallReceiver(call); receiver != nil {
+		receiverDependency = a.expressionDepends(receiver, tainted)
+	}
+	object := m2CalledObject(a.source, call)
+	function, isFunction := object.(*types.Func)
+	if !isFunction || function.Pkg() == nil || function.Pkg() != a.source.typed {
+		return hasDependency || receiverDependency
+	}
+	if !hasDependency && !receiverDependency {
+		return false
+	}
+	declaration := m2FindFunctionDeclaration(a.source, function)
+	signature := m2FunctionSignature(function)
+	if declaration == nil || signature == nil {
+		return false
+	}
+	initial := make(map[types.Object]bool)
+	for index, dependent := range dependencies {
+		if dependent && index < signature.Params().Len() {
+			initial[signature.Params().At(index)] = true
+		}
+	}
+	if receiverDependency && signature.Recv() != nil {
+		initial[signature.Recv()] = true
+	}
+	key := fmt.Sprintf("%p", function)
+	for index := 0; index < signature.Params().Len(); index++ {
+		if initial[signature.Params().At(index)] {
+			key += fmt.Sprintf(":%d", index)
+		}
+	}
+	if a.active[key] {
+		return false
+	}
+	a.active[key] = true
+	defer delete(a.active, key)
+	return a.bodyResultDepends(declaration.Body, initial)
+}
+
+func m2CalledObject(source *productionSourcePackage, call *ast.CallExpr) types.Object {
+	switch callee := call.Fun.(type) {
+	case *ast.Ident:
+		return source.info.ObjectOf(callee)
+	case *ast.SelectorExpr:
+		return source.info.ObjectOf(callee.Sel)
+	default:
+		return nil
+	}
+}
+
+func m2CallReceiver(call *ast.CallExpr) ast.Expr {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	return selector.X
+}
+
+func m2IsBuiltinCall(source *productionSourcePackage, call *ast.CallExpr, name string) bool {
+	builtin, ok := m2CalledObject(source, call).(*types.Builtin)
+	return ok && builtin.Name() == name
+}
+
+func m2MarkTaintedObject(source *productionSourcePackage, expression ast.Expr, tainted map[types.Object]bool) bool {
+	for {
+		switch value := expression.(type) {
+		case *ast.Ident:
+			if value.Name == "_" {
+				return false
+			}
+			object := source.info.ObjectOf(value)
+			if object == nil || tainted[object] {
+				return false
+			}
+			tainted[object] = true
+			return true
+		case *ast.SliceExpr:
+			expression = value.X
+		case *ast.IndexExpr:
+			expression = value.X
+		case *ast.ParenExpr:
+			expression = value.X
+		default:
+			return false
+		}
+	}
 }
 
 func m2FindMethodDeclaration(source *productionSourcePackage, receiver, name string) *ast.FuncDecl {
@@ -1766,6 +1915,115 @@ func m2ProviderRevisionFieldInPrefixFold(source *productionSourcePackage, body a
 		return nil
 	}
 	return revisionField
+}
+
+func m2AcknowledgedProviderRevisionSource(source *productionSourcePackage, foundationPath string) *types.Var {
+	declaration := m2FindMethodDeclaration(source, "AcknowledgedPublicationV2", "ProviderRevision")
+	if declaration == nil || declaration.Body == nil {
+		return nil
+	}
+	method, _ := source.info.Defs[declaration.Name].(*types.Func)
+	signature := m2FunctionSignature(method)
+	if signature == nil || signature.Params().Len() != 0 || signature.Results().Len() != 1 {
+		return nil
+	}
+	result, ok := signature.Results().At(0).Type().Underlying().(*types.Basic)
+	if !ok || result.Kind() != types.Uint64 || method.Pkg() == nil || method.Pkg().Path() != foundationPath {
+		return nil
+	}
+	var sourceField *types.Var
+	ast.Inspect(declaration.Body, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		basic, ok := source.info.TypeOf(selector).Underlying().(*types.Basic)
+		selection := source.info.Selections[selector]
+		if ok && basic.Kind() == types.Uint64 && selection != nil {
+			candidate, _ := selection.Obj().(*types.Var)
+			if sourceField == nil {
+				sourceField = candidate
+			} else if sourceField != candidate {
+				sourceField = nil
+				return false
+			}
+		}
+		return true
+	})
+	return sourceField
+}
+
+func m2LedgerFieldForProviderSource(source *productionSourcePackage, ledger types.Object, providerSource *types.Var) *types.Var {
+	if ledger == nil || providerSource == nil {
+		return nil
+	}
+	slice, ok := types.Unalias(ledger.Type()).(*types.Slice)
+	if !ok {
+		return nil
+	}
+	element, ok := types.Unalias(slice.Elem()).(*types.Named)
+	if !ok {
+		return nil
+	}
+	structure, ok := element.Underlying().(*types.Struct)
+	if !ok {
+		return nil
+	}
+	var mapped *types.Var
+	conflict := false
+	for _, file := range source.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			literal, ok := node.(*ast.CompositeLit)
+			if !ok || !types.Identical(source.info.TypeOf(literal), element) {
+				return true
+			}
+			for index, item := range literal.Elts {
+				fieldIndex := index
+				value := item
+				if pair, keyed := item.(*ast.KeyValueExpr); keyed {
+					key, ok := pair.Key.(*ast.Ident)
+					field, _ := source.info.ObjectOf(key).(*types.Var)
+					if !ok || field == nil {
+						continue
+					}
+					for candidate := 0; candidate < structure.NumFields(); candidate++ {
+						if structure.Field(candidate) == field {
+							fieldIndex = candidate
+							break
+						}
+					}
+					value = pair.Value
+				}
+				if fieldIndex >= structure.NumFields() || !m2ExpressionReferencesTypedField(source, value, providerSource) {
+					continue
+				}
+				candidate := structure.Field(fieldIndex)
+				if mapped == nil {
+					mapped = candidate
+				} else if mapped != candidate {
+					conflict = true
+				}
+			}
+			return !conflict
+		})
+	}
+	if conflict {
+		return nil
+	}
+	return mapped
+}
+
+func m2ExpressionReferencesTypedField(source *productionSourcePackage, expression ast.Expr, field *types.Var) bool {
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		selection := source.info.Selections[selector]
+		if ok && selection != nil && selection.Obj() == field {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 func m2BodyOrdersLedgerByAscendingRevision(source *productionSourcePackage, body ast.Node, ledger types.Object, revisionField *types.Var, selectedAt token.Pos) bool {
