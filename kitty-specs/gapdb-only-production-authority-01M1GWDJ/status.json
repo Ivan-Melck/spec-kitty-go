@@ -62,7 +62,8 @@
         "Cycle-15 repair ready at 48c410ad: typed acknowledgement-source provider-revision anchor drives exact sort and prefix fold; bounded cycle-safe interprocedural seal dependence; coupled completion-order and discard-helper mutants; 177 census preserves all 175; full ladder passes.",
         "Independent cycle-16 APPROVE: typed provider-revision source anchor and bounded interprocedural seal dataflow close both coupled substitutions; exact 177 census preserves prior 175; focused/race/full architecture/compile/vet/staticcheck/module/format/ownership and all anti-pattern checks pass.",
         "Reopen for ratified post-approval defect 6: add permanent execution-bound durable-codec consumer-path census before foundation repair. Force transfers stale approved reviewer ownership only; no contract or acceptance guard is bypassed.",
-        "Ready for independent defect-6 review at aaf6abf1: activation-safe six-codec consumer-path guard, 184-mutant sealed census preserving all prior 177 IDs, and full repeated/race/architecture/static/ownership gates pass."
+        "Ready for independent defect-6 review at aaf6abf1: activation-safe six-codec consumer-path guard, 184-mutant sealed census preserving all prior 177 IDs, and full repeated/race/architecture/static/ownership gates pass.",
+        "Independent defect-6 review rejected aaf6abf1: private-name activation can disable the real guard, and seven new mutants exercise a synthetic model rather than actual foundation APIs. See review-feedback-17.md."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -72,15 +73,15 @@
         "reviewer": "renata-gapdb-codec-guard-review",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T001": "done",
-        "T002": "done",
-        "T003": "done",
-        "T004": "done",
-        "T005": "done"
+        "T001": "planned",
+        "T002": "planned",
+        "T003": "planned",
+        "T004": "planned",
+        "T005": "planned"
       }
     },
     "WP02": {
