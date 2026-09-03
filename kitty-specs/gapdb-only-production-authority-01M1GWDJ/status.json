@@ -19,9 +19,10 @@
   "work_packages": {
     "WP01": {
       "actor": "codex-orchestrator",
-      "agent": "codex-wp01-compact-independent-reviewer",
+      "agent": "codex-orchestrator",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
+      "assignee": "ivan-gapdb-repair",
       "force_count": 14,
       "lane": "in_progress",
       "last_event_id": "01M1MA2NY8G6V9XH2S29BTXSEF",
@@ -49,7 +50,8 @@
         "Independent defect-4 review APPROVE at 8b16f5f1: exact immutable witness key and activation-safe foundation witness/boundary/helper contract verified; parent 121 mutant IDs preserved, exactly 18 additions, 139/139 killed; repeated/race/full architecture, compile, vet, staticcheck, module, format, ownership, and anti-pattern gates pass.",
         "Ready for independent review: c6434353 seals compact fixed-width operation boundaries, exact summary helpers/budget, exported-graph leakage controls, and preserves 139 prior mutants for a total of 154; all focused, race, full architecture, static, module, format, and ownership gates pass.",
         "Review-cycle-12 repair ready: 1ac0a9bb validates compact boundary semantics as an order-independent private fixed-width multiset, seals renamed/reordered positive controls, replaces the obsolete rename mutant with an embedded-field violation, preserves all prior 139 IDs and 154 total; all focused x3, race, full architecture, compile, vet, staticcheck, module, format, diff and ownership gates pass.",
-        "Independent review passed for 1ac0a9bb: compact boundary validation is rename/reorder resilient and semantically exact; canonical, renamed and reordered positive controls are sealed; 154 mutants preserve all prior 139; focused x3, race, full architecture, compile, vet, staticcheck, module, format, diff and ownership gates pass; all anti-pattern checks pass or N/A."
+        "Independent review passed for 1ac0a9bb: compact boundary validation is rename/reorder resilient and semantically exact; canonical, renamed and reordered positive controls are sealed; 154 mutants preserve all prior 139; focused x3, race, full architecture, compile, vet, staticcheck, module, format, diff and ownership gates pass; all anti-pattern checks pass or N/A.",
+        "Reopened for ratified post-approval defect 5: guard the acknowledgement-derived covered-through PublicationID and foundation-owned strict OperationSummaryV2 codecs before WP04 resumes."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -58,7 +60,7 @@
         "reviewer": "lynncoleart",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
