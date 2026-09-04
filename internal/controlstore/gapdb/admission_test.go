@@ -19,7 +19,7 @@ func TestAdmissionPinnedPublicModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(module)
-	want := AdmittedModulePath + " " + AdmittedModuleVersion
+	want := AdmittedModulePath + " " + AssertionCandidateModuleVersion
 	if !strings.Contains(text, want) {
 		t.Fatalf("go.mod does not pin %q", want)
 	}
@@ -31,8 +31,8 @@ func TestAdmissionPinnedPublicModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, line := range []string{
-		AdmittedModulePath + " " + AdmittedModuleVersion + " h1:kmYoO7Q3PlsNM6M0dSYtuJJSQSlbflC2wz3d/Bek2L0=",
-		AdmittedModulePath + " " + AdmittedModuleVersion + "/go.mod h1:8xNZ3k+SQIqcxLkS8bjbooOAv9xzZcbg5arjKaV6fcQ=",
+		AdmittedModulePath + " " + AssertionCandidateModuleVersion + " h1:x/zAH/n0M/nA1RQpi1ubRETo8OLcEyRBsaDUsd1TuU4=",
+		AdmittedModulePath + " " + AssertionCandidateModuleVersion + "/go.mod h1:8xNZ3k+SQIqcxLkS8bjbooOAv9xzZcbg5arjKaV6fcQ=",
 	} {
 		if !strings.Contains(string(sums), line) {
 			t.Fatalf("go.sum does not contain admitted line %q", line)
@@ -42,6 +42,24 @@ func TestAdmissionPinnedPublicModule(t *testing.T) {
 	// the admitted package without importing any implementation package.
 	if gapdbapi.DefaultMaxBatchOperations < MaxMutationsPerBatch {
 		t.Fatal("resolved public API no longer satisfies the admitted batch budget")
+	}
+	assertion := gapdbapi.Assertion{Key: "authority", Condition: gapdbapi.Condition{Kind: gapdbapi.ConditionAbsent}}
+	batch := gapdbapi.Batch{Ack: gapdbapi.AckDurable, Assertions: []gapdbapi.Assertion{assertion}, Mutations: []gapdbapi.Mutation{gapdbapi.NewPutMutation("member", []byte("value"), gapdbapi.Condition{Kind: gapdbapi.ConditionAbsent}, nil)}}
+	if err := batch.Validate(gapdbapi.DefaultOptions().Limits); err != nil || (gapdbapi.MutationResult{AssertionCount: 1}).AssertionCount != 1 {
+		t.Fatalf("resolved public API lacks assertion capability: %v", err)
+	}
+}
+
+func TestAdmissionAssertionCandidateDoesNotReplaceFrozenM1Tuple(t *testing.T) {
+	if AdmittedModuleVersion == AssertionCandidateModuleVersion || AdmittedSourceRevision == AssertionCandidateSourceRevision ||
+		AdmittedSourceTree == AssertionCandidateSourceTree || AdmittedSidecarSHA256 == AssertionCandidateSidecarSHA256 {
+		t.Fatal("assertion candidate replaced the frozen M1 admitted tuple")
+	}
+	if AssertionCandidateModuleVersion != "v0.0.0-20260904151017-4d88094749e0" ||
+		AssertionCandidateSourceRevision != "4d88094749e0f6fdb38a4786708d920fb51966a1" ||
+		AssertionCandidateSourceTree != "a109220e3dae287e321fb37e904d3bea0802b911" ||
+		AssertionCandidateSidecarSHA256 != "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad" || AssertionCandidateSidecarBytes != 5_327_126 {
+		t.Fatal("assertion candidate tuple drifted")
 	}
 }
 
@@ -131,7 +149,7 @@ func TestAdmissionProductionSourceHasNoForbiddenProviderPath(t *testing.T) {
 }
 
 func TestAdmissionExternalFlagsAreStable(t *testing.T) {
-	for _, name := range []string{"gapdbd", "data-root", "qualification"} {
+	for _, name := range []string{"gapdbd", "data-root", "qualification", "assertion-candidate-gapdbd", "assertion-candidate-data-root", "assertion-candidate-qualification"} {
 		if flag.Lookup(name) == nil {
 			t.Fatalf("documented external test flag -%s is absent", name)
 		}
