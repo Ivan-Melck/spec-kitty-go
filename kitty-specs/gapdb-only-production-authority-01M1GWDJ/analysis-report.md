@@ -4,8 +4,8 @@ artifact_type: spec-kitty.analysis-report
 command: /spec-kitty.analyze
 mission_slug: gapdb-only-production-authority-01M1GWDJ
 mission_id: 01M1GWDJV8MMEF5VJJMD3AD0QE
-generated_at: '2026-09-04T16:06:06.840916+00:00'
-analyzer_agent: unknown
+generated_at: '2026-09-04T16:46:18.097895+00:00'
+analyzer_agent: codex
 input_artifacts:
   spec.md:
     path: /home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/spec.md
@@ -15,17 +15,17 @@ input_artifacts:
     sha256: 13ea78c9310383a57a48888f8f38417d905e5984c3a9752ebcc27fc95e1bf8f1
   tasks.md:
     path: /home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks.md
-    sha256: 57788c9a4cc1f8adf008cb05c3108d03450cfc3ba48b4d9b96c2d830cb4a6cc1
+    sha256: 502f8224c13e4f88c62d8dbef5114ed4a344a3624f223910a4ada4daf20926ef
   charter:
     path: /home/lynn/projects/go-kitty3/.kittify/charter/charter.yaml
     sha256: 4442a6e0d56d4a7df873f2f529b04bb4d4917f2481a4e47f4819bd92927388de
-verdict: ready
+verdict: unknown
 issue_counts:
-  medium: 0
-  low: 0
-  high: 0
-  critical: 0
-  info: 0
+  critical:
+  info:
+  low:
+  medium:
+  high:
 findings: []
 ---
 
@@ -33,13 +33,12 @@ findings: []
 
 ## Verdict
 
-PASS — ready for the bounded WP03 assertion-adapter repair. The revised
-ownership and canonical workspace-path-claim key are consistent with the
-specification, plan, task graph, and active charter.
+PASS — ready for WP08 lease-scoped workspace authority against the accepted
+WP02 journal and WP03 GapDB assertion/path-claim adapter.
 
 | ID | Category | Severity | Location(s) | Summary | Recommendation |
 |----|----------|----------|-------------|---------|----------------|
-| - | - | - | - | No findings. | Proceed with WP03 review cycle 8. |
+| - | - | - | - | No findings. | Proceed with WP08 under the amended ownership and atomic-expiry contract. |
 
 ### Coverage Summary
 
@@ -50,11 +49,9 @@ specification, plan, task graph, and active charter.
 
 ### Charter Alignment Issues
 
-None. The repair strengthens specification fidelity, locality of change,
-architecture boundaries, mutation-sensitive testing, and the test/typecheck
-quality gate. The assertion-capable client module is distinct from the frozen
-production-admitted executable tuple, so the accepted M1 boundary is not
-silently rewritten.
+None. The WP08 amendment strengthens specification fidelity, locality of
+change, concurrency safety, mutation-sensitive testing, and architectural
+integrity. It does not claim to fence direct POSIX writes.
 
 ### Unmapped Tasks
 
@@ -63,17 +60,25 @@ subtask IDs remain represented.
 
 ### Consistency Checks
 
-- WP03 depends on the now-approved WP02 read-only assertion contract.
-- `wps.yaml`, `tasks.md`, the WP03 prompt, and lane-c all grant the same bounded
-  eleven-file repair scope.
-- The exact public GapDB module candidate and checksums are fixed in review
-  cycle 8 while the historical M1 `Admitted*` runtime tuple remains immutable.
-- The provider key for a permanent workspace-path claim has one digest-only
-  spelling: `spk/v2/workspace-path-claims/<64-lowercase-claim-digest>`.
-- Assertions remain provider-neutral read evidence, never records, events,
-  mutations, expiry work, or authority-policy decisions.
-- No requirement, user story, plan concern, dependency edge, capability
-  boundary, or stable subtask ID changed.
+- WP03 is independently approved and merged into the mission coordinator at
+  exact product candidate `71defe71766975d0302fa39a8661270fa5ecd20b`.
+- WP08 explicitly depends on WP02, WP03, WP04, and WP07 in its prompt, task
+  summary, work-package manifest, and lane dependency graph.
+- WP08 owns only the workspace capability, the narrow GapDB workspace adapter,
+  two execution-owned composition files, and the existing execution authority
+  pair required to close the bound-slot expiry bypass.
+- An execution slot's WorkspaceID/path-claim pair is immutable and all-or-none.
+  Initial binding advances the execution head atomically with workspace
+  creation; ordinary expiry refuses a bound slot.
+- Bound-slot expiry is available only through execution-owned composition that
+  quarantines the exact workspace in the same sealed GapDB publication.
+- Replacement generations start unbound and must claim a fresh WorkspaceID and
+  permanently unused canonical path; predecessor workspaces remain quarantined
+  even when a zombie can still write their directories.
+- Repository observations remain external evidence guarded before and after
+  publication, not fictional GapDB-fenced Git facts.
+- No requirement, user story, plan concern, capability boundary, or stable
+  subtask ID changed.
 
 ### Metrics
 
@@ -86,5 +91,7 @@ subtask IDs remain represented.
 
 ### Next Actions
 
-Implement and independently review WP03 review cycle 8, then resume WP08's
-execution-owned workspace-authority composition against the accepted adapter.
+Implement and independently review WP08. Prove bind-versus-expire ordering,
+restart-safe intent/action/observation, permanent path claims, 100-run zombie
+isolation, and the refusal of every execution-only expiry attempt for a bound
+slot before starting WP09.
