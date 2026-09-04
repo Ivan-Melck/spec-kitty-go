@@ -21,8 +21,10 @@ provider-neutral portion of `post-approval-defect-9.md`:
 
 - add closed read-only authority assertions for unchanged aggregate-head and
   eligibility-guard targets;
-- bind semantic target, exact condition, expected logical version, and
-  canonical observed-value digest into the plan preimage and final bytes;
+- bind semantic target, exact condition, aggregate-head logical version where
+  applicable, and canonical observed-value digest into the plan preimage and
+  final bytes; eligibility shards deliberately carry no fictional aggregate
+  logical version;
 - reject duplicates, mutation/assertion overlap, malformed absent/present
   evidence, and combined operation/byte budget overflow before the durable
   port is called;
