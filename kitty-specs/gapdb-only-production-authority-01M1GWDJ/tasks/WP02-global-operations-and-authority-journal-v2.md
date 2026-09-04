@@ -120,6 +120,25 @@ its operation summary exposes anonymous leaves rather than addressable
 checkpoint boundaries. Preserve all earlier approved behavior while applying
 the bounded correction below.
 
+This package was reopened a bounded time by
+`post-approval-defect-5.md`. Preserve the durable witness and compact-boundary
+correction while adding the acyclic checkpoint boundary identity and the
+foundation-owned summary codec described below.
+
+This package is reopened by `post-approval-defect-6.md` after the first real
+WP04 restore fixture found a durable consumer-path contradiction. Preserve all
+digest preimages and previously approved semantics while making the final
+persistence-facing bytes of `OperationBindingV2`, `EventEnvelopeV2`,
+`AggregateHeadV2`, and `OperationSummaryV2` recursively canonical. Operation
+state and publication witness final bytes already satisfy this law.
+
+`NewRecoveryRecordV2` must compare canonicalized bytes for exact equality and
+refuse noncanonical provider evidence; it must never silently rewrite evidence.
+Add direct `Encode -> RecoveryRecord -> Decode` tests for binding, event, head,
+state, and witness values with nested/optional-rich fixtures, plus the
+equivalent recursive checkpoint-embedding test for operation summary. Keep
+strict decoder equality and do not introduce legacy or dual-read fallbacks.
+
 ### Durable publication witness and shared proof helpers
 
 Define canonical encode/decode/validation for `PublicationWitnessV2` and make
@@ -178,6 +197,8 @@ observed revision, as-of time, copied records, opaque cursor, and truncation.
 Closed errors distinguish not-found, revision-moved, stale-cursor, malformed,
 unavailable/canceled, and budget-exceeded outcomes. All construction validates
 budgets before allocation and every returned byte slice is defensive.
+Recovery record construction admits only bytes already in the foundation's
+recursive canonical form and preserves those exact bytes unchanged.
 
 Expose complete immutable semantic accessors for `EventEnvelopeV2`,
 `AggregateHeadV2`, `OperationBindingV2`, and `OperationStateV2`, including all
@@ -225,6 +246,20 @@ Sealed projection/prefix values use private fields and internal digest
 validation. “Unforgeable” means zero values and ordinary cross-package field
 construction cannot pass; it does not claim protection from code inside the
 owning package or Go `unsafe`.
+
+The sealed value also binds and exposes the `covered-through` PublicationID:
+the acknowledgement at the greatest provider revision after revision sorting.
+It must not use response completion order, and it must reject zero, missing,
+duplicated, or conflicting terminal identities. A later publication that
+persists a checkpoint is not covered by the seal used to create it.
+
+Expose exact public `EncodeOperationSummaryV2` and
+`DecodeOperationSummaryV2` functions. They are the sole canonical structured
+wire boundary for this type and enforce field order, unknown/duplicate/trailing
+field refusal, sort/uniqueness, status arithmetic, digest validity, defensive
+copying, and all existing count/byte limits. Checkpoint code embeds the
+canonical JSON structurally; it does not base64-wrap it or reconstruct private
+boundary fields.
 
 ## T006: Define canonical v2 identities, scopes, and key model
 

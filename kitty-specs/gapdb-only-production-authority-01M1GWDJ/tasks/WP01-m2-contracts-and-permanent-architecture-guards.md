@@ -150,6 +150,82 @@ remain foundation-owned. Add execution-bound full-ID leakage, missing match,
 duplicate/collision, and deleted state-aware-validation mutants without
 removing any of the 139 already sealed cases.
 
+## Post-approval correction: acyclic checkpoint identity and summary codecs
+
+Read `post-approval-defect-5.md` before editing. WP01 is reopened once more
+because the prior checkpoint field required the checkpoint to contain the
+PublicationID derived from bytes that include that checkpoint, and because
+WP04 had no foundation-owned canonical `OperationSummaryV2` codec.
+
+Replace the guarded checkpoint concept `created_publication_id` with the
+acknowledgement-derived `covered_through_publication_id`. Require
+`SealedProjectionPrefixV2` to expose and seal the terminal PublicationID chosen
+by greatest provider revision, never response completion order. Extend the
+exact public helper census from eight to ten with only
+`EncodeOperationSummaryV2` and `DecodeOperationSummaryV2`; both remain
+foundation-owned, strict, canonical, and bounded. Continue to reject an
+adapter-, checkpoint-, playback-, or restore-owned operation-summary/boundary
+wire model.
+
+Add execution-bound mutants for a missing/substituted/zero covered-through
+identity, completion-order selection, omitted seal participation, the obsolete
+field spelling, either deleted/substituted codec, and a WP04-local summary wire
+type. Preserve all previously sealed mutants and independent controls.
+
+## Post-approval correction: durable canonical byte compatibility
+
+Read `post-approval-defect-6.md` before editing. The first real WP04 restore
+fixture proved that some foundation encoders emit bytes that
+`RecoveryRecordV2` silently reorders and their strict decoders then reject.
+Extend the permanent guard with an execution-bound durable-codec census for
+operation bindings, event envelopes, aggregate heads, operation states,
+publication witnesses, and the nested operation summary.
+
+Require every direct-record encoder output to be recursively canonical, remain
+byte-identical through `NewRecoveryRecordV2`, and pass its strict decoder.
+Require operation summary to survive recursive checkpoint embedding. Reject
+raw declaration-order output, top-level-only normalization, discarded
+canonicalization results, length-only recovery admission, removed decoder
+equality, and omission of any classified durable codec. Preserve every prior
+mutant ID and census control; additions append to the sealed census.
+
+## Post-approval correction: restore deadline capability boundary
+
+Read `post-approval-defect-7.md` before editing. The existing standard-library
+guard incorrectly applies the pure playback boundary to the restore I/O
+coordinator. Preserve the common v2 allowlist, but admit the exact production
+edge `internal/controljournal/v2/restore -> time` solely for validated
+elapsed-attempt context deadlines. Foundation, checkpoint, playback, and every
+other v2 package remain time-free.
+
+Add positive and negative exact-edge tests plus a mutant that widens the
+exception to the whole v2 prefix; the widening must be rejected by the same
+repository validator. Do not replace the existing `M-PURE-TIME` control or any
+prior mutant. Append the new control to the sealed census and update its exact
+count/digest. This correction authorizes no clock-derived durable state,
+ordering, digest, revision, or acceptance semantics.
+
+## Post-approval correction: split restore deadline proof
+
+Read `post-approval-defect-8.md` before editing. Review cycles 20–23 proved
+that a custom AST/types control-flow verifier is neither sound nor bounded.
+Delete that verifier instead of extending it.
+
+WP01 now proves only structural capability confinement: the exact restore-only
+`time` edge; `go/types` object-identity use limited to `time.Duration`,
+`time.Second`, and `time.Minute`; the duration-bearing field confined to the
+explicit restore attempt budget rather than durable/result/authority state; a
+direct call to the real `context.WithTimeout` object; and refusal of ambient
+clock/timer APIs or function-value escape. Keep alias, lexical-shadowing,
+exact-owner, missing-call, escaping-call, misplaced-duration, and ambient-clock
+controls. Do not infer validation dominance or arbitrary Go control flow.
+
+WP04 owns source-bound behavioral proof and overlay mutations for validation,
+deadline derivation, placement, propagation, cancellation, retries, and parent
+deadlines. WP17 owns final one-source combined evidence. Preserve the existing
+`M-PURE-TIME`, restore-owner-widening mutant, prior mutant identities, and exact
+census controls.
+
 ## T001 — Executable contract and schema validation
 
 ### Purpose

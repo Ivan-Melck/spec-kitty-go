@@ -180,6 +180,14 @@ They expose semantic identities and copied canonical bytes, never raw GapDB
 keys or provider types. The adapter alone translates those types to the frozen
 public GapDB client.
 
+Every exported v2 value classified as a direct or nested durable record has
+one recursively canonical final-byte representation. Persistence-facing
+encoding, `RecoveryRecordV2` admission, and strict decoding agree on those
+exact bytes. `RecoveryRecordV2` rejects noncanonical provider evidence and
+never rewrites it. Existing semantic digest preimages remain independently
+defined; canonicalizing final durable bytes does not implicitly change an
+event, plan, witness, registry, reducer, or summary digest domain.
+
 Watch is notification only. Restore captures a positive durable
 `(DatabaseID, R)`, selects a compatible complete checkpoint, scans all current
 aggregate heads and operation records, and exact-reads every new logical
@@ -213,6 +221,20 @@ checks shape/order/uniqueness and arithmetic; state-aware validation proves
 counts and leaf commitments. Variable-length OperationIDs and terminal result
 bytes are excluded.
 
+The foundation owns strict canonical `OperationSummaryV2` encode and decode
+operations. Checkpoint and restore code consumes those operations and may not
+declare a second summary/boundary wire representation.
+
+A persisted checkpoint identifies the last publication it already covers, not
+the later publication that writes it. For checkpoint watermark `R`, the opaque
+sealed projection supplies the terminal revision-sorted acknowledged
+PublicationID `P`; the checkpoint records `P` as its
+`covered_through_publication_id`. Candidate validation proves the immutable
+publication witness for `P` at exactly `R`. The checkpoint record and retained
+slot are atomically written at a common revision `C > R`, and that writer
+publication remains part of the suffix. Origin mode has no checkpoint or
+covered-through identity.
+
 The complete operation-head scan supplies exact OperationIDs during restore.
 Each boundary matches an exact ID through a foundation-owned pure method;
 restore exact-reads the operation event at the boundary version, reconstructs
@@ -230,6 +252,21 @@ attempt and discards all collected material. Missing versions, physical head
 deletion, mismatched terminal heads, partial operation membership, unknown
 version tuples, or exceeded budgets fail readiness. Only a sealed restore
 result may admit the replacement runtime epoch.
+
+Restore's elapsed-attempt budget is an orchestration capability. The exact
+`internal/controljournal/v2/restore` package may import the Go
+standard-library `time` package only to validate a bounded duration and enforce
+per-attempt context deadlines. The v2 foundation, checkpoint, and playback
+packages remain time-free. Wall-clock values MUST NOT enter durable records,
+ordering, revision selection, digest preimages, or acceptance decisions. The
+architecture exception MUST be exact-source/exact-target and MUST NOT widen to
+the `internal/controljournal/v2` prefix. WP01 owns structural import and object-
+use confinement, including refusal of ambient-clock APIs and escaping deadline
+functions. WP04 owns executable validation, derivation, placement, propagation,
+cancellation, retry, and parent-deadline behavior. WP17 binds those gates and
+their overlay mutants to one source identity. No partial static control-flow
+model is authoritative. See `post-approval-defect-7.md` and
+`post-approval-defect-8.md`.
 
 ## Capability ownership law
 

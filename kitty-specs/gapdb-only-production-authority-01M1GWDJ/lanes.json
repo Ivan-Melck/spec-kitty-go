@@ -78,6 +78,12 @@
         "WP03"
       ],
       "write_scope": [
+        "go.mod",
+        "go.sum",
+        "internal/controlstore/gapdb/admission_test.go",
+        "internal/controlstore/gapdb/external_scenarios_test.go",
+        "internal/controlstore/gapdb/port.go",
+        "internal/controlstore/gapdb/port_test.go",
         "internal/controlstore/gapdb/v2_adapter_test.go",
         "internal/controlstore/gapdb/v2_ambiguity.go",
         "internal/controlstore/gapdb/v2_codec.go",

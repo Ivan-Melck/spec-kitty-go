@@ -63,12 +63,24 @@ work_packages:
     title: "GapDB v2 Committer and Key Codec"
     dependencies: [WP01, WP02]
     owned_files:
+      - "go.mod"
+      - "go.sum"
+      - "internal/controlstore/gapdb/admission_test.go"
+      - "internal/controlstore/gapdb/external_scenarios_test.go"
+      - "internal/controlstore/gapdb/port.go"
+      - "internal/controlstore/gapdb/port_test.go"
       - "internal/controlstore/gapdb/v2_codec.go"
       - "internal/controlstore/gapdb/v2_committer.go"
       - "internal/controlstore/gapdb/v2_reader.go"
       - "internal/controlstore/gapdb/v2_ambiguity.go"
       - "internal/controlstore/gapdb/v2_adapter_test.go"
     create_intent:
+      - "go.mod"
+      - "go.sum"
+      - "internal/controlstore/gapdb/admission_test.go"
+      - "internal/controlstore/gapdb/external_scenarios_test.go"
+      - "internal/controlstore/gapdb/port.go"
+      - "internal/controlstore/gapdb/port_test.go"
       - "internal/controlstore/gapdb/v2_codec.go"
       - "internal/controlstore/gapdb/v2_committer.go"
       - "internal/controlstore/gapdb/v2_reader.go"
@@ -94,6 +106,7 @@ work_packages:
       - "internal/controljournal/v2/playback/playback_test.go"
       - "internal/controljournal/v2/restore/restore.go"
       - "internal/controljournal/v2/restore/restore_test.go"
+      - "internal/controljournal/v2/restore/deadline_contract_test.go"
     create_intent:
       - "internal/controljournal/v2/checkpoint/model.go"
       - "internal/controljournal/v2/checkpoint/checkpoint.go"
@@ -102,6 +115,7 @@ work_packages:
       - "internal/controljournal/v2/playback/playback_test.go"
       - "internal/controljournal/v2/restore/restore.go"
       - "internal/controljournal/v2/restore/restore_test.go"
+      - "internal/controljournal/v2/restore/deadline_contract_test.go"
     requirement_refs: [FR-003, FR-019, FR-020, FR-021, FR-022, FR-025, FR-034, NFR-005, NFR-006, NFR-007, NFR-008, NFR-009, NFR-012, NFR-013, C-002, C-013]
     plan_concern_refs: [IC-02]
     subtasks: [T017, T018, T019, T020, T021, T022]

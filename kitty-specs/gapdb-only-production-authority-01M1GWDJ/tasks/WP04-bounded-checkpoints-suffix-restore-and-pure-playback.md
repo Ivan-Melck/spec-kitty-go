@@ -42,6 +42,7 @@ create_intent:
 - internal/controljournal/v2/playback/playback_test.go
 - internal/controljournal/v2/restore/restore.go
 - internal/controljournal/v2/restore/restore_test.go
+- internal/controljournal/v2/restore/deadline_contract_test.go
 execution_mode: code_change
 model: ''
 owned_files:
@@ -52,6 +53,7 @@ owned_files:
 - internal/controljournal/v2/playback/playback_test.go
 - internal/controljournal/v2/restore/restore.go
 - internal/controljournal/v2/restore/restore_test.go
+- internal/controljournal/v2/restore/deadline_contract_test.go
 role: implementer
 tags: []
 tracker_refs: []
@@ -117,7 +119,7 @@ cannot be the durable suffix. Do not add a hot global journal sequence or scan
 all opaque EventIDs after a nonzero checkpoint. Suffix addressability comes
 from immutable `(aggregate coordinate, logical version)` event keys.
 
-Stay inside the seven owned files. If a dependency contract is missing, report
+Stay inside the eight owned files. If a dependency contract is missing, report
 the exact gap to WP02/WP03 rather than editing their surface from this lane.
 Per `post-approval-defect-2.md`, this WP remains blocked until corrected WP01,
 WP02, and WP03 are independently reapproved in that order. Do not implement
@@ -136,6 +138,46 @@ The frozen GapDB API cannot accept `R` on `Get` or on the initial prefix page.
 WP04 must use the foundation recovery values repaired in WP02 and the WP03
 adapter implementation; it must not import GapDB, inspect adapter-private keys,
 or define substitute event/head/operation wire structs.
+
+`post-approval-defect-5.md` is the prior checkpoint-identity correction for
+this WP.
+Consume the sealed prefix's acknowledgement-derived
+`CoveredThroughPublicationID`; never accept that identity from the checkpoint
+caller. For watermark `R`, the checkpoint represents state immediately after
+that publication and records it as `covered_through_publication_id`. The later
+publication that atomically persists checkpoint record and slot must be
+observed at one common revision `C > R` and remains part of the suffix. Validate
+the covered-through witness at exactly `R`. Encode and decode operation summary
+only through WP02's public strict codecs; do not define a local summary or
+boundary wire model.
+
+`post-approval-defect-6.md` records a consumer-path defect exposed by this
+WP's first real origin-to-suffix fixture. Keep the existing draft preserved
+and do not parse, reorder, or reconstruct foundation wire locally. Resume only
+after WP01 and WP02 independently prove that every recovery-consumed
+foundation value survives `Encode -> RecoveryRecordV2 -> Decode` unchanged and
+that nested operation summary survives checkpoint canonicalization. Normalize
+WP04-owned checkpoint and slot final bytes before durable recovery admission.
+
+`post-approval-defect-7.md` narrows the purity boundary exposed by WP04's
+elapsed-attempt budget. Restore is the consumer-owned I/O coordinator and may
+use `time.Duration` with context deadlines solely to validate and enforce that
+resource budget. Playback, checkpoint, and the v2 foundation remain time-free;
+time never supplies durable state, ordering, revision, digest, or acceptance.
+WP04 remains blocked until the exact restore-only architecture exception and
+its widening mutant are independently approved in WP01. Remove checkpoint's
+unnecessary `io` import rather than requesting another exception.
+
+`post-approval-defect-8.md` supersedes only defect 7's proof mechanism, not its
+semantic law. WP01 proves structural capability confinement; this WP proves the
+real production data flow. Add `restore/deadline_contract_test.go` and prove
+input-sensitive deadline derivation before first I/O, one-deadline propagation
+to every reader operation, cancellation without a seal, pre-I/O duration
+bounds, a fresh deadline on retry, and correct earlier/later parent-deadline
+precedence. Add the exact-anchored source-overlay mutants listed in defect 8.
+The overlay campaign must fail on zero or multiple anchor matches and record
+which named production-facing test kills each mutation. Do not restore the
+retired WP01 control-flow verifier or weaken the existing restore budget.
 
 ## Branch Strategy
 
@@ -169,7 +211,8 @@ latest checkpoint.
    mission model: schema/version identity, checkpoint ID, positive
    `ThroughRecordRevision`, event/reducer registry digests, codec version,
    rolling prefix digest, complete aggregate entries, operation summary,
-   canonical projection digest, creating PublicationID, and checkpoint digest.
+   canonical projection digest, covered-through PublicationID, and checkpoint
+   digest.
 2. Each aggregate entry must include its exact coordinate, logical version,
    terminal EventID, canonical state bytes/digest, and tombstone state. Sort by
    canonical coordinate before encoding; reject duplicates and ambiguous order.
@@ -212,6 +255,10 @@ latest checkpoint.
     checkpoint. Require the final structured checkpoint encoder to fit 10,000
     maximum-version boundaries and complete summary overhead within
     `MaxOperationSummaryBytesV2 = 2,112,000` bytes.
+12. Derive the covered-through PublicationID only from the sealed prefix. Its
+    witness must validate at `ThroughRecordRevision = R`. The later
+    checkpoint-record/slot publication must share one revision `C > R`; prove
+    that its PublicationID differs and is handled as post-checkpoint suffix.
 
 ### Validation
 
@@ -499,7 +546,8 @@ git diff --check
 
 - CheckpointV2 records a complete aggregate census, canonical projection,
   operation summary, registry/codec identities, positive watermark, rolling
-  prefix digest, and immutable self-digest.
+  prefix digest, acknowledgement-derived covered-through PublicationID, and
+  immutable self-digest.
 - Checkpoint creation consumes the sealed acknowledged projection/prefix and
   does not replay origin history.
 - The bounded candidate ring selects newest valid evidence, falls back safely,
@@ -522,7 +570,7 @@ git diff --check
   present, exceed 256 distinct reducer inputs, cover new-scope and
   operation-only history, and are suitable for later source-bound qualification.
 - All focused tests, race tests, v2 journal tests, and `git diff --check` pass.
-- Only the seven owned files changed.
+- Only the eight owned files changed.
 - Subtask completion is recorded in the event log, not Markdown checkboxes:
 
 ```bash

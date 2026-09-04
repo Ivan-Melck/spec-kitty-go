@@ -323,6 +323,12 @@ RecoveryRecordV2 { address, canonical_value, record_revision, expiry }
 RecoveryPageV2 { observed_revision, as_of, records, cursor, truncated }
 ```
 
+`canonical_value` is evidence, not a normalization request. Construction
+requires the supplied bytes already equal the recursive canonical form and
+stores those exact bytes defensively. Direct durable binding, event, head,
+state, and witness encoders must satisfy that identity; nested operation
+summary must remain decodable after recursive checkpoint canonicalization.
+
 Addresses include exact publication-witness reads by PublicationID but never
 contain an encoded provider key. GapDB key strings and cursor interpretation
 remain adapter-private. Construction validates identities and budgets before
@@ -504,7 +510,7 @@ CheckpointV2 {
   }
   operation_summary
   canonical_projection_sha256
-  created_publication_id
+  covered_through_publication_id
   checkpoint_sha256
 }
 ```
@@ -514,6 +520,16 @@ only after acknowledged publication. Zero-value or field-copied forged seals
 fail internal digest validation. It never replays from origin during creation.
 It covers one complete provider revision and every authoritative aggregate
 known at that revision.
+
+`covered_through_publication_id` is the terminal acknowledged publication at
+`through_record_revision`, selected from the revision-sorted acknowledgement
+ledger and sealed by the foundation. It is not the later publication that
+writes the checkpoint. If the covered revision is `R`, the immutable
+checkpoint record and retained-ring slot are committed atomically at one
+revision `C > R`; that checkpoint-writing publication belongs to the suffix.
+Candidate validation exact-reads the immutable witness for the covered-through
+PublicationID and requires that witness to be valid at exactly `R`. Origin mode
+has no persisted checkpoint or covered-through identity.
 
 A bounded retained ring of checkpoint candidate slots points to immutable
 records. Selection sorts by watermark, validates every candidate independently,
@@ -555,6 +571,14 @@ physical deletion, duplicate versions, partial operation groups, unknown
 schema/reducer/order, over-budget suffix, or unstable traversal all fail closed.
 Full reconstruction uses the same algorithm with checkpoint version zero and
 is allowed only within explicit record/byte/time budgets.
+
+The time budget is an orchestration resource bound, not authority data.
+`internal/controljournal/v2/restore` validates a positive bounded duration and
+enforces one context deadline per recovery attempt. It may import the Go
+standard-library `time` package for that purpose only. The foundation,
+checkpoint, and playback packages remain time-free, and no wall-clock value
+participates in durable state, event order, revision choice, digests, or
+acceptance. See `post-approval-defect-7.md`.
 
 ## Historical-state disposition
 

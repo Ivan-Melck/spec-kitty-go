@@ -17,22 +17,23 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 154
-	m2MutantCensusSHA256 = "e3aa51534e2015643551dfc7c5dcf68a4c59780c10edd6fada74a238abaae187"
+	m2MutantCensusCount  = 185
+	m2MutantCensusSHA256 = "bb4e46d391a130b5050eab4ee4a1193755e4747dac09537d52636a953f194379"
 )
 
 const (
-	m2ValidatorImport      = "all-go-imports-v1"
-	m2ValidatorReach       = "production-reachability-v1"
-	m2ValidatorPolicy      = "closed-policy-v2"
-	m2ValidatorKeyspace    = "keyspace-contract-v2"
-	m2ValidatorEligibility = "eligibility-seams-v1"
-	m2ValidatorDependency  = "dependency-graph-v2"
-	m2ValidatorEvents      = "event-registry-v2"
-	m2ValidatorLegacy      = "legacy-edge-filter-v1"
-	m2ValidatorRawStore    = "raw-store-census-v1"
-	m2ValidatorRecovery    = "foundation-contract-ownership-v2"
-	m2ValidatorCapReach    = "capability-adapter-reachability-v2"
+	m2ValidatorImport       = "all-go-imports-v1"
+	m2ValidatorReach        = "production-reachability-v1"
+	m2ValidatorPolicy       = "closed-policy-v2"
+	m2ValidatorKeyspace     = "keyspace-contract-v2"
+	m2ValidatorEligibility  = "eligibility-seams-v1"
+	m2ValidatorDependency   = "dependency-graph-v2"
+	m2ValidatorEvents       = "event-registry-v2"
+	m2ValidatorLegacy       = "legacy-edge-filter-v1"
+	m2ValidatorRawStore     = "raw-store-census-v1"
+	m2ValidatorRecovery     = "foundation-contract-ownership-v2"
+	m2ValidatorCapReach     = "capability-adapter-reachability-v2"
+	m2ValidatorDurableCodec = "durable-codec-compatibility-v2"
 )
 
 type m2ViolationObservation struct {
@@ -156,6 +157,25 @@ func TestM2ArbiterFixtureBindingProbe(t *testing.T) {
 		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-DUPLICATE-COLLISION", "PUBLICATION-COMPLETE"},
 		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-DELETED-STATE-VALIDATION", "PUBLICATION-COMPLETE"},
 		{m2ValidatorRecovery, "PUBLICATION-BOUNDARY-METHOD-LEAK", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-MISSING", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-COMPLETION-ORDER", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-SEAL-OMITTED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-ENCODE-DELETED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-ENCODE-SUBSTITUTED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-DECODE-SUBSTITUTED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-CHECKPOINT-OLD-FIELD", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-CHECKPOINT-SUMMARY-WIRE", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-ZERO-INVERTED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-ZERO-NOOP", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-SEAL-DEAD-REFERENCE", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-ADDENDUM-ENCODE-ONLY", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-ADDENDUM-DECODE-ONLY", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-ADDENDUM-ACCESSOR-ONLY", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-OTHER-UINT64-ORDER", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-SELECT-BEFORE-SORT", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-COUPLED-COMPLETION-ORDER", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-SEAL-HELPER-DISCARDS", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-DEFINED-BYTE", "PUBLICATION-COMPLETE"},
 	} {
 		candidate := find(swap.validator, swap.from)
 		candidate.Fixture = swap.to
@@ -224,6 +244,10 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, target := range []string{"crypto/rand", "math/rand", "net", "os", "os/exec", "path/filepath", "time"} {
 		cases = append(cases, m2DependencyCase("M-PURE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "PURE", m2ModulePath+"/internal/controljournal/v2", target, ImportStandardLibrary, string(RuleDeferredSurface)))
 	}
+	cases = append(cases, m2DependencyCase(
+		"M-PURE-TIME-RESTORE-OWNER-WIDENING", "RESTORE-OWNER-WIDENING",
+		m2ModulePath+"/internal/controljournal/v2/restore/worker", "time", ImportStandardLibrary, string(RuleDeferredSurface),
+	))
 	cases = append(cases, m2DependencyCase("M-GAPDB-SCENARIO-CALLER", "GAPDB-SCENARIO", m2ModulePath+"/internal/scenario", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, string(RuleExternalDirection)))
 	for _, fixture := range []string{"DIRECT", "WRAPPER", "WITNESS-DIRECT"} {
 		cases = append(cases, m2Case("M-CAPABILITY-REACH-"+fixture, m2ValidatorCapReach, fixture, string(RuleReachability), m2ModulePath+"/internal/execution", m2ModulePath+"/internal/controlstore/gapdb"))
@@ -256,8 +280,19 @@ func m2ExecutableMutants() []m2MutantCase {
 		"PUBLICATION-SUMMARY-WRONG-BUDGET", "PUBLICATION-BOUNDARY-METHOD-LEAK",
 		"PUBLICATION-BOUNDARY-VARIABLE-DIGEST", "PUBLICATION-BOUNDARY-WIDE-VERSION",
 		"PUBLICATION-BOUNDARY-EMBEDDED-FIELD", "PUBLICATION-BOUNDARY-EXPORTED-FIELD", "PUBLICATION-SUMMARY-EXTRA-AUTHORITY",
+		"PUBLICATION-COVERED-MISSING", "PUBLICATION-COVERED-SUBSTITUTED", "PUBLICATION-COVERED-ZERO",
+		"PUBLICATION-COVERED-COMPLETION-ORDER", "PUBLICATION-COVERED-SEAL-OMITTED",
+		"PUBLICATION-SUMMARY-ENCODE-DELETED", "PUBLICATION-SUMMARY-DECODE-DELETED", "PUBLICATION-SUMMARY-ENCODE-SUBSTITUTED", "PUBLICATION-SUMMARY-DECODE-SUBSTITUTED",
+		"PUBLICATION-CHECKPOINT-OLD-FIELD", "PUBLICATION-CHECKPOINT-SUMMARY-WIRE", "PUBLICATION-ADAPTER-SUMMARY-WIRE",
+		"PUBLICATION-COVERED-ZERO-INVERTED", "PUBLICATION-COVERED-ZERO-NOOP", "PUBLICATION-COVERED-SEAL-DEAD-REFERENCE",
+		"PUBLICATION-ADDENDUM-ENCODE-ONLY", "PUBLICATION-ADDENDUM-DECODE-ONLY", "PUBLICATION-ADDENDUM-ACCESSOR-ONLY",
+		"PUBLICATION-COVERED-OTHER-UINT64-ORDER", "PUBLICATION-COVERED-SELECT-BEFORE-SORT", "PUBLICATION-SUMMARY-DEFINED-BYTE",
+		"PUBLICATION-COVERED-COUPLED-COMPLETION-ORDER", "PUBLICATION-COVERED-SEAL-HELPER-DISCARDS",
 	} {
 		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
+	}
+	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "PARTIAL-REPAIR"} {
+		cases = append(cases, m2Case("M-DURABLE-CODEC-"+fixture, m2ValidatorDurableCodec, fixture, "DURABLE_CODEC_COMPATIBILITY", fixture, ""))
 	}
 	return cases
 }
@@ -303,6 +338,11 @@ func observeM2Mutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
 		return observeM2RecoveryOwnershipMutant(t, mutant)
 	case m2ValidatorCapReach:
 		return observeM2CapabilityReachMutant(t, mutant)
+	case m2ValidatorDurableCodec:
+		if err := validateM2DurableCodecCompatibility(t, mutant.Fixture); err != nil {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "DURABLE_CODEC_COMPATIBILITY", Source: mutant.Fixture}
+		}
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 	default:
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "HARNESS_UNKNOWN_VALIDATOR", Source: mutant.Fixture}
 	}
@@ -612,6 +652,8 @@ func m2FixtureDigest(validator, fixture string) string {
 			return ""
 		}
 		material = graph
+	case m2ValidatorDurableCodec:
+		material = m2DurableCodecFixtureMaterial(fixture)
 	default:
 		return ""
 	}
@@ -697,7 +739,7 @@ func m2DigestJSON(value any) string {
 }
 
 func m2KnownValidator(value string) bool {
-	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore, m2ValidatorRecovery, m2ValidatorCapReach}, value)
+	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore, m2ValidatorRecovery, m2ValidatorCapReach, m2ValidatorDurableCodec}, value)
 }
 
 func m2SQLImportSource(fixture string) string {

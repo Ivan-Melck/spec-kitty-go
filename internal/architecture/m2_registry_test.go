@@ -1,9 +1,11 @@
 package architecture
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/constant"
@@ -11,12 +13,559 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
+
+var m2DurableCodecNames = []string{"AggregateHeadV2", "EventEnvelopeV2", "OperationBindingV2", "OperationStateV2", "OperationSummaryV2", "PublicationWitnessV2"}
+
+type m2DurableCodecConsumer struct {
+	Name string `json:"name"`
+	Mode string `json:"mode"`
+}
+
+var m2ExpectedDurableCodecConsumers = []m2DurableCodecConsumer{
+	{"AggregateHeadV2", "direct-recovery-record"},
+	{"EventEnvelopeV2", "direct-recovery-record"},
+	{"OperationBindingV2", "direct-recovery-record"},
+	{"OperationStateV2", "direct-recovery-record"},
+	{"OperationSummaryV2", "nested-checkpoint"},
+	{"PublicationWitnessV2", "direct-recovery-record"},
+}
+
+func TestM2DurableCodecCompatibilityIsExecutionBound(t *testing.T) {
+	if err := validateM2DurableCodecCompatibility(t, "POSITIVE"); err != nil {
+		t.Fatalf("evidence=DURABLE-CODEC-COMPATIBILITY positive rejected: %v", err)
+	}
+	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "PARTIAL-REPAIR"} {
+		if err := validateM2DurableCodecCompatibility(t, fixture); err == nil {
+			t.Fatalf("evidence=DURABLE-CODEC-COMPATIBILITY mutant=%s observed=accepted", fixture)
+		}
+	}
+}
+
+func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
+	registry := journalv2.DefaultEventRegistryV2()
+	publicationID := journalv2.PublicationID(m2TestDigest("publication", "one").String())
+	operationID := journalv2.OperationID("operation-1")
+	missionCoordinate, err := journalv2.NewAggregateCoordinate("mission", "mission-1", journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: "project-1", MissionID: "mission-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(operationID), journalv2.Scope{Kind: journalv2.ScopeHost})
+	intent, _ := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "mission.ready", CommandSchemaVersion: 1, Scope: missionCoordinate.Scope, Command: []byte(`{"ready":true}`)})
+	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "mission.ready", CommandSchemaVersion: 1, CanonicalIntentDigest: intent, Scope: missionCoordinate.Scope, OriginatingRuntimeEpochID: "epoch-1", ObservedCreatedAt: "2026-09-03T12:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: operationID, LogicalVersion: 1, Status: journalv2.StatusAccepted, EventIDs: []journalv2.EventID{"event-1"}, LastPublicationID: publicationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"ready":true}`)
+	stateDigest, _ := journalv2.ReducerStateDigestV2(payload)
+	head, err := journalv2.NewAggregateHeadV2(journalv2.AggregateHeadInput{Coordinate: missionCoordinate, LogicalVersion: 1, LastEventID: "event-1", LastPublicationID: publicationID, CommittedRuntimeEpochID: "epoch-1", CanonicalStateDigest: stateDigest, AuthoritySummary: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := journalv2.NewEventEnvelopeV2(journalv2.EventEnvelopeInput{EventID: "event-1", EventType: "mission.ready", Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: missionCoordinate, AggregateLogicalVersion: 1, OperationID: operationID, OperationLogicalVersion: 1, PublicationID: publicationID, CommittedRuntimeEpochID: "epoch-1", EventIndex: 0, EventCount: 1, Payload: payload, Observations: []byte(`{}`)}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	witness := m2TestPublicationWitness(t, publicationID, operationID)
+	bindingAddress, _ := journalv2.NewOperationBindingAddressV2(operationID)
+	eventAddress, _ := journalv2.NewJournalEventAddressV2(missionCoordinate, 1)
+	headAddress, _ := journalv2.NewAggregateHeadAddressV2(missionCoordinate)
+	stateAddress, _ := journalv2.NewOperationHeadAddressV2(operationID)
+	witnessAddress, _ := publicationID.WitnessAddressV2()
+	tests := []struct {
+		name    string
+		address journalv2.RecordAddressV2
+		encode  func() ([]byte, error)
+		decode  func([]byte) ([]byte, error)
+	}{
+		{"OperationBindingV2", bindingAddress, func() ([]byte, error) { return journalv2.EncodeOperationBindingV2(binding) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodeOperationBindingV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodeOperationBindingV2(decoded)
+		}},
+		{"EventEnvelopeV2", eventAddress, func() ([]byte, error) { return journalv2.EncodeEventEnvelopeV2(event) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodeEventEnvelopeV2(value, registry)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodeEventEnvelopeV2(decoded)
+		}},
+		{"AggregateHeadV2", headAddress, func() ([]byte, error) { return journalv2.EncodeAggregateHeadV2(head) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodeAggregateHeadV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodeAggregateHeadV2(decoded)
+		}},
+		{"OperationStateV2", stateAddress, func() ([]byte, error) { return journalv2.EncodeOperationStateV2(state) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodeOperationStateV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodeOperationStateV2(decoded)
+		}},
+		{"PublicationWitnessV2", witnessAddress, func() ([]byte, error) { return journalv2.EncodePublicationWitnessV2(witness) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodePublicationWitnessV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodePublicationWitnessV2(decoded)
+		}},
+	}
+	consumers := make([]m2DurableCodecConsumer, 0, len(tests)+1)
+	for _, test := range tests {
+		consumers = append(consumers, m2DurableCodecConsumer{test.name, "direct-recovery-record"})
+	}
+	consumers = append(consumers, m2DurableCodecConsumer{"OperationSummaryV2", "nested-checkpoint"})
+	if err := m2ValidateDurableCodecCensus(consumers); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := test.encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonical, err := m2CanonicalRecursive(encoded)
+			if err != nil || !bytes.Equal(canonical, encoded) {
+				t.Fatalf("evidence=ENCODER-RECURSIVE encoder bytes are not recursively canonical")
+			}
+			record, err := journalv2.NewRecoveryRecordV2(test.address, encoded, 7, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(record.CanonicalValue(), encoded) {
+				t.Fatal("recovery admission rewrote bytes")
+			}
+			noncanonical, err := m2ReverseTopLevelObject(encoded)
+			if err != nil || bytes.Equal(noncanonical, encoded) {
+				t.Fatalf("could not construct semantically equivalent noncanonical evidence: %v", err)
+			}
+			if _, err := journalv2.NewRecoveryRecordV2(test.address, noncanonical, 7, ""); err == nil {
+				t.Fatal("evidence=LENGTH-ONLY-RECOVERY noncanonical provider evidence admitted")
+			}
+			if _, err := test.decode(noncanonical); err == nil {
+				t.Fatal("evidence=REMOVED-DECODER-EQUALITY semantically valid noncanonical ordering admitted")
+			}
+			reencoded, err := test.decode(record.CanonicalValue())
+			if err != nil || !bytes.Equal(reencoded, encoded) {
+				t.Fatalf("evidence=DECODE-EXACT-SEMANTICS decoded value did not preserve exact admitted semantics: %v", err)
+			}
+		})
+	}
+	summary, err := journalv2.BuildOperationSummaryV2([]journalv2.OperationStateV2{state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaryBytes, err := journalv2.EncodeOperationSummaryV2(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noncanonicalSummary, err := m2ReverseTopLevelObject(summaryBytes)
+	if err != nil || bytes.Equal(noncanonicalSummary, summaryBytes) {
+		t.Fatalf("could not construct noncanonical summary: %v", err)
+	}
+	if _, err := journalv2.DecodeOperationSummaryV2(noncanonicalSummary); err == nil {
+		t.Fatal("evidence=REMOVED-DECODER-EQUALITY operation summary admitted noncanonical ordering")
+	}
+	checkpointRaw := append([]byte(`{"operation_summary":`), summaryBytes...)
+	checkpointRaw = append(checkpointRaw, []byte(`,"checkpoint_id":"checkpoint-1"}`)...)
+	canonicalCheckpoint, err := m2CanonicalRecursive(checkpointRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nested struct {
+		OperationSummary json.RawMessage `json:"operation_summary"`
+	}
+	if err := json.Unmarshal(canonicalCheckpoint, &nested); err != nil {
+		t.Fatal(err)
+	}
+	decodedSummary, err := journalv2.DecodeOperationSummaryV2(nested.OperationSummary)
+	if err != nil || decodedSummary.Digest() != summary.Digest() {
+		t.Fatalf("evidence=TOP-LEVEL-ONLY nested operation summary failed strict decode: %v\nencoded=%s\nnested=%s", err, summaryBytes, nested.OperationSummary)
+	}
+	_ = operationCoordinate // proves the closed operation coordinate is constructible without an adapter key.
+}
+
+func m2TestDigest(domain, value string) journalv2.Digest {
+	h := sha256.New()
+	_, _ = h.Write([]byte(domain))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(value))
+	var result journalv2.Digest
+	copy(result[:], h.Sum(nil))
+	return result
+}
+func m2TestPublicationWitness(t *testing.T, publicationID journalv2.PublicationID, operationID journalv2.OperationID) journalv2.PublicationWitnessV2 {
+	t.Helper()
+	plan, records := m2TestDigest("plan", "one"), m2TestDigest("records", "one")
+	preimage, _ := json.Marshal(struct {
+		Schema      uint32 `json:"schema_version"`
+		Publication string `json:"publication_id"`
+		Operation   string `json:"operation_id"`
+		Version     uint64 `json:"operation_logical_version"`
+		Plan        string `json:"plan_sha256"`
+		Records     string `json:"authority_record_set_sha256"`
+		Count       uint32 `json:"authority_record_count"`
+	}{1, string(publicationID), string(operationID), 1, plan.String(), records.String(), 5})
+	digest := m2TestDigest("spec-kitty.publication-witness.v2", string(preimage))
+	wire, _ := json.Marshal(map[string]any{"schema_version": uint32(1), "publication_id": string(publicationID), "operation_id": string(operationID), "operation_logical_version": uint64(1), "plan_sha256": plan.String(), "authority_record_set_sha256": records.String(), "authority_record_count": uint32(5), "witness_sha256": digest.String()})
+	canonical, _ := m2CanonicalRecursive(wire)
+	witness, err := journalv2.DecodePublicationWitnessV2(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return witness
+}
+
+func m2DurableCodecFixtureMaterial(fixture string) any {
+	if !slices.Contains([]string{"POSITIVE", "RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "PARTIAL-REPAIR"}, fixture) {
+		return nil
+	}
+	return struct {
+		Version   int                      `json:"version"`
+		Fixture   string                   `json:"fixture"`
+		Codecs    []string                 `json:"codecs"`
+		Consumers []m2DurableCodecConsumer `json:"consumers"`
+	}{2, fixture, slices.Clone(m2DurableCodecNames), slices.Clone(m2ExpectedDurableCodecConsumers)}
+}
+
+func validateM2DurableCodecCompatibility(t *testing.T, fixture string) error {
+	t.Helper()
+	if m2DurableCodecFixtureMaterial(fixture) == nil {
+		return fmt.Errorf("unknown fixture")
+	}
+	overlay, err := m2DurableCodecOverlay(t, fixture)
+	if err != nil {
+		t.Fatalf("durable codec overlay harness invalid for %s: %v", fixture, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "test", "-overlay", overlay, "./internal/architecture", "-run", "^TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes$", "-count=1")
+	command.Dir = m2RepositoryRoot(t)
+	command.Env = append(os.Environ(), "GOWORK=off")
+	output, runErr := command.CombinedOutput()
+	if fixture == "POSITIVE" {
+		if runErr != nil {
+			return fmt.Errorf("repaired production overlay failed: %w\n%s", runErr, output)
+		}
+		return nil
+	}
+	expected := map[string]string{
+		"RAW-STRUCT-ORDER":             "evidence=ENCODER-RECURSIVE",
+		"TOP-LEVEL-ONLY":               "evidence=TOP-LEVEL-ONLY",
+		"DISCARDED-NORMALIZED-RESULT":  "evidence=ENCODER-RECURSIVE",
+		"LENGTH-ONLY-RECOVERY":         "evidence=LENGTH-ONLY-RECOVERY",
+		"REMOVED-DECODER-EQUALITY":     "evidence=DECODE-EXACT-SEMANTICS",
+		"OMITTED-CODEC-CLASSIFICATION": "evidence=M2-DURABLE-CODEC-CENSUS",
+		"PARTIAL-REPAIR":               "evidence=ENCODER-RECURSIVE",
+	}[fixture]
+	if runErr != nil && strings.Contains(string(output), expected) {
+		return fmt.Errorf("production mutation rejected by intended law %s", expected)
+	}
+	t.Logf("durable codec mutant=%s did not reach intended law=%s err=%v output=%s", fixture, expected, runErr, output)
+	return nil
+}
+
+func m2ValidateDurableCodecCensus(consumers []m2DurableCodecConsumer) error {
+	want := slices.Clone(m2DurableCodecNames)
+	got := make([]string, 0, len(consumers))
+	direct, nested := 0, 0
+	seen := make(map[string]bool, len(consumers))
+	expectedModes := make(map[string]string, len(m2ExpectedDurableCodecConsumers))
+	for _, consumer := range m2ExpectedDurableCodecConsumers {
+		expectedModes[consumer.Name] = consumer.Mode
+	}
+	for _, consumer := range consumers {
+		if consumer.Name == "" || seen[consumer.Name] {
+			return fmt.Errorf("evidence=M2-DURABLE-CODEC-CENSUS duplicate=%q", consumer.Name)
+		}
+		seen[consumer.Name] = true
+		got = append(got, consumer.Name)
+		if expectedModes[consumer.Name] != consumer.Mode {
+			return fmt.Errorf("evidence=M2-DURABLE-CODEC-CENSUS codec=%s mode=%s expected=%s", consumer.Name, consumer.Mode, expectedModes[consumer.Name])
+		}
+		switch consumer.Mode {
+		case "direct-recovery-record":
+			direct++
+		case "nested-checkpoint":
+			nested++
+		default:
+			return fmt.Errorf("evidence=M2-DURABLE-CODEC-CENSUS codec=%s mode=%s", consumer.Name, consumer.Mode)
+		}
+	}
+	slices.Sort(want)
+	slices.Sort(got)
+	if !slices.Equal(want, got) || direct != 5 || nested != 1 {
+		return fmt.Errorf("evidence=M2-DURABLE-CODEC-CENSUS observed=%v direct=%d nested=%d expected=%v", got, direct, nested, want)
+	}
+	return nil
+}
+
+func m2DurableCodecOverlay(t *testing.T, fixture string) (string, error) {
+	t.Helper()
+	root := m2RepositoryRoot(t)
+	read := func(relative string) (string, error) {
+		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		return string(contents), err
+	}
+	files := make(map[string]string)
+	for _, relative := range []string{"internal/controljournal/v2/codec.go", "internal/controljournal/v2/model.go", "internal/controljournal/v2/operation.go", "internal/controljournal/v2/projection.go", "internal/controljournal/v2/recovery.go"} {
+		contents, err := read(relative)
+		if err != nil {
+			return "", err
+		}
+		files[relative] = contents
+	}
+	bindings := `
+func EncodeOperationBindingV2(binding OperationBindingV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeOperationBindingV2(binding)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeOperationStateV2(state)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	events := `
+func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeEventEnvelopeV2(envelope)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+func EncodeAggregateHeadV2(head AggregateHeadV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeAggregateHeadV2(head)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	witness := `
+func EncodePublicationWitnessV2(value PublicationWitnessV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodePublicationWitnessV2(value)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	summary := `
+func encodeOperationSummaryV2(value OperationSummaryV2) ([]byte, error) {
+	encoded, err := m2UnderlyingencodeOperationSummaryV2(value)
+	if err != nil { return nil, err }
+	return canonicalObjectBounded(encoded, MaxOperationSummaryBytesV2)
+}
+`
+	recovery := `
+func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	value, err := CanonicalObject(canonical)
+	if err != nil || string(value) != string(canonical) {
+		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
+	}
+	return m2UnderlyingNewRecoveryRecordV2(address, canonical, revision, expiresAt)
+}
+`
+	switch fixture {
+	case "POSITIVE":
+	case "RAW-STRUCT-ORDER":
+		bindings = `
+func EncodeOperationBindingV2(binding OperationBindingV2) ([]byte, error) {
+	if _, err := m2UnderlyingEncodeOperationBindingV2(binding); err != nil { return nil, err }
+	return marshalCanonical(binding.wire(), MaxCanonicalPayloadBytes)
+}
+func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeOperationStateV2(state)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	case "DISCARDED-NORMALIZED-RESULT":
+		bindings = `
+func EncodeOperationBindingV2(binding OperationBindingV2) ([]byte, error) {
+	if _, err := m2UnderlyingEncodeOperationBindingV2(binding); err != nil { return nil, err }
+	encoded, err := marshalCanonical(binding.wire(), MaxCanonicalPayloadBytes)
+	if err != nil { return nil, err }
+	if _, err = CanonicalObject(encoded); err != nil { return nil, err }
+	return encoded, nil
+}
+func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeOperationStateV2(state)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+`
+	case "PARTIAL-REPAIR":
+		events = `
+func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
+	encoded, err := m2UnderlyingEncodeEventEnvelopeV2(envelope)
+	if err != nil { return nil, err }
+	return CanonicalObject(encoded)
+}
+func EncodeAggregateHeadV2(head AggregateHeadV2) ([]byte, error) {
+	if _, err := m2UnderlyingEncodeAggregateHeadV2(head); err != nil { return nil, err }
+	return marshalCanonical(aggregateHeadWire{SchemaVersion, head.input.Coordinate, uint64(head.input.LogicalVersion), string(head.input.LastEventID), string(head.input.LastPublicationID), string(head.input.CommittedRuntimeEpochID), head.input.CanonicalStateDigest.String(), head.authoritySummary, head.input.Tombstone}, MaxCanonicalPayloadBytes)
+}
+`
+	case "LENGTH-ONLY-RECOVERY":
+		recovery = `
+func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	if err := address.validate(); err != nil { return RecoveryRecordV2{}, err }
+	if revision == 0 || len(canonical) == 0 || len(canonical) > MaxCheckpointValueBytes { return RecoveryRecordV2{}, invalid(ErrorBudgetExceeded, "recovery_record") }
+	value, err := CanonicalObject(canonical)
+	if err != nil || len(value) != len(canonical) { return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record") }
+	if expiresAt != "" && !canonicalUTCInstant(expiresAt) { return RecoveryRecordV2{}, invalid(ErrorInvalidCanonicalData, "recovery_record_expiry") }
+	return RecoveryRecordV2{address: address, canonical: append([]byte(nil), value...), revision: revision, expiresAt: expiresAt}, nil
+}
+`
+	case "REMOVED-DECODER-EQUALITY":
+		var renameErr error
+		files["internal/controljournal/v2/operation.go"], renameErr = m2RenameProductionFunction(files["internal/controljournal/v2/operation.go"], "DecodeOperationBindingV2")
+		if renameErr != nil {
+			return "", renameErr
+		}
+		bindings += `
+func DecodeOperationBindingV2(encoded []byte) (OperationBindingV2, error) {
+	canonical, err := CanonicalObject(encoded)
+	if err != nil || !bytes.Equal(canonical, encoded) {
+		return OperationBindingV2{}, invalid(ErrorJournalCorrupt, "operation_binding")
+	}
+	if _, err := m2UnderlyingDecodeOperationBindingV2(canonical); err != nil {
+		return OperationBindingV2{}, err
+	}
+	return OperationBindingV2{}, nil
+}
+`
+	case "TOP-LEVEL-ONLY":
+		summary = `
+func encodeOperationSummaryV2(value OperationSummaryV2) ([]byte, error) {
+	preimage, err := operationSummaryPreimageV2(value)
+	if err != nil { return nil, err }
+	encoded, err := marshalCanonical(operationSummaryWireV2{preimage, value.digest.String()}, MaxOperationSummaryBytesV2)
+	if err != nil { return nil, err }
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &top); err != nil { return nil, err }
+	return json.Marshal(top)
+}
+`
+		if !strings.Contains(files["internal/controljournal/v2/projection.go"], `"encoding/json"`) {
+			files["internal/controljournal/v2/projection.go"] = strings.Replace(files["internal/controljournal/v2/projection.go"], "\t\"bytes\"\n", "\t\"bytes\"\n\t\"encoding/json\"\n", 1)
+		}
+	case "OMITTED-CODEC-CLASSIFICATION":
+		registry, readErr := read("internal/architecture/m2_registry_test.go")
+		if readErr != nil {
+			return "", readErr
+		}
+		old := "\tconsumers = append(consumers, m2DurableCodecConsumer{\"OperationSummaryV2\", \"nested-checkpoint\"})\n"
+		if strings.Count(registry, old) != 1 {
+			return "", fmt.Errorf("codec classification overlay anchor count=%d", strings.Count(registry, old))
+		}
+		files["internal/architecture/m2_registry_test.go"] = strings.Replace(registry, old, "", 1)
+	default:
+		return "", fmt.Errorf("unknown fixture %q", fixture)
+	}
+	for relative, functions := range map[string][]string{
+		"internal/controljournal/v2/operation.go":  {"EncodeOperationBindingV2", "EncodeOperationStateV2"},
+		"internal/controljournal/v2/model.go":      {"EncodeEventEnvelopeV2", "EncodeAggregateHeadV2"},
+		"internal/controljournal/v2/codec.go":      {"EncodePublicationWitnessV2"},
+		"internal/controljournal/v2/projection.go": {"encodeOperationSummaryV2"},
+		"internal/controljournal/v2/recovery.go":   {"NewRecoveryRecordV2"},
+	} {
+		for _, function := range functions {
+			var renameErr error
+			files[relative], renameErr = m2RenameProductionFunction(files[relative], function)
+			if renameErr != nil {
+				return "", renameErr
+			}
+		}
+	}
+	files["internal/controljournal/v2/operation.go"] += bindings
+	files["internal/controljournal/v2/model.go"] += events
+	files["internal/controljournal/v2/codec.go"] += witness
+	files["internal/controljournal/v2/projection.go"] += summary
+	files["internal/controljournal/v2/recovery.go"] += recovery
+	temporary := t.TempDir()
+	replacements := make(map[string]string, len(files))
+	for relative, contents := range files {
+		patched := filepath.Join(temporary, filepath.Base(relative))
+		if err := os.WriteFile(patched, []byte(contents), 0o600); err != nil {
+			return "", err
+		}
+		replacements[filepath.Join(root, filepath.FromSlash(relative))] = patched
+	}
+	overlayBytes, err := json.Marshal(struct {
+		Replace map[string]string `json:"Replace"`
+	}{replacements})
+	if err != nil {
+		return "", err
+	}
+	overlay := filepath.Join(temporary, "overlay.json")
+	if err := os.WriteFile(overlay, overlayBytes, 0o600); err != nil {
+		return "", err
+	}
+	return overlay, nil
+}
+
+func m2RenameProductionFunction(source, name string) (string, error) {
+	declaration := "func " + name + "("
+	if strings.Count(source, declaration) != 1 {
+		return "", fmt.Errorf("production function %s declaration count=%d", name, strings.Count(source, declaration))
+	}
+	return strings.Replace(source, declaration, "func m2Underlying"+name+"(", 1), nil
+}
+
+func m2ReverseTopLevelObject(encoded []byte) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil || len(fields) < 2 {
+		return nil, fmt.Errorf("top-level object: %w", err)
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	slices.Reverse(keys)
+	var result bytes.Buffer
+	result.WriteByte('{')
+	for index, key := range keys {
+		if index > 0 {
+			result.WriteByte(',')
+		}
+		keyBytes, _ := json.Marshal(key)
+		result.Write(keyBytes)
+		result.WriteByte(':')
+		result.Write(fields[key])
+	}
+	result.WriteByte('}')
+	return result.Bytes(), nil
+}
+
+func m2CanonicalRecursive(encoded []byte) ([]byte, error) {
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if decoder.More() {
+		return nil, fmt.Errorf("trailing JSON")
+	}
+	return json.Marshal(value)
+}
 
 const (
 	m2EligibilityPersistentKeyMarker = "spk/v2/workgraphs/"
@@ -26,7 +575,7 @@ const (
 	m2KeyspaceContractJSON           = `[{"id":"K-AUTHORITY-BINDING","template":"spk/v2/authority/binding","scope":"host","mutable":false,"suffix_rule":"none","max_key_bytes":4096},{"id":"K-RUNTIME-CURRENT","template":"spk/v2/runtime/current","scope":"host","mutable":true,"suffix_rule":"none","max_key_bytes":4096},{"id":"K-RUNTIME-EPOCH","template":"spk/v2/runtime/epochs/<runtime-epoch-id>","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-OPERATION-BINDING","template":"spk/v2/operations/<operation-id>/binding","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-OPERATION-HEAD","template":"spk/v2/operations/<operation-id>/head","scope":"host","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-AGGREGATE-HEAD","template":"spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>","scope":"typed","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-AGGREGATE-EVENT","template":"spk/v2/scopes/<scope>/journal/<aggregate-kind>/<aggregate-id>/<version-hex16>","scope":"typed","mutable":false,"suffix_rule":"lower-hex16","max_key_bytes":4096},{"id":"K-CHECKPOINT-SLOT","template":"spk/v2/checkpoints/slots/<slot-id>","scope":"host","mutable":true,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-CHECKPOINT-RECORD","template":"spk/v2/checkpoints/records/<checkpoint-id>","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096},{"id":"K-WORKGRAPH-ELIGIBILITY","template":"spk/v2/workgraphs/<mission-id>/eligibility/<shard-id>","scope":"mission","mutable":true,"suffix_rule":"shard-hex2","max_key_bytes":4096},{"id":"K-PUBLICATION-WITNESS","template":"spk/v2/publications/<publication-id>/witness","scope":"host","mutable":false,"suffix_rule":"canonical-bounded","max_key_bytes":4096,"write_condition":"require-absent","expires":false}]`
 	m2KeyspaceContractSHA256         = "44dea603826496df094f1f0beae170544f1930e170c91b29f7c9ad7da8c94078"
 	m2FoundationContractSHA256       = "5579ab86bb3320ce9a76b8f4593dcbc379195fa771d6ef0033aa3b9270124711"
-	m2PublicationRecoverySHA256      = "dfb2914655d9b4e7da011ccc594553e230f212f02b980eb1f3f02a598310e15b"
+	m2PublicationRecoverySHA256      = "6f636b3c1d26b16f9f880b9d542e8628fcfd49ebc152c6e60280d890e71000f8"
 )
 
 type m2EligibilityContract struct {
@@ -344,6 +893,30 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 		{"compact-boundary-embedded-field", m2PublicationRecoveryFixture("BOUNDARY-EMBEDDED-FIELD"), true},
 		{"compact-boundary-exported-field", m2PublicationRecoveryFixture("BOUNDARY-EXPORTED-FIELD"), true},
 		{"summary-extra-authority-input", m2PublicationRecoveryFixture("SUMMARY-EXTRA-AUTHORITY"), true},
+		{"covered-through-identity-missing", m2PublicationRecoveryFixture("COVERED-MISSING"), true},
+		{"covered-through-identity-substituted", m2PublicationRecoveryFixture("COVERED-SUBSTITUTED"), true},
+		{"covered-through-identity-zero", m2PublicationRecoveryFixture("COVERED-ZERO"), true},
+		{"covered-through-completion-order", m2PublicationRecoveryFixture("COVERED-COMPLETION-ORDER"), true},
+		{"covered-through-seal-omitted", m2PublicationRecoveryFixture("COVERED-SEAL-OMITTED"), true},
+		{"operation-summary-encode-deleted", m2PublicationRecoveryFixture("SUMMARY-ENCODE-DELETED"), true},
+		{"operation-summary-decode-deleted", m2PublicationRecoveryFixture("SUMMARY-DECODE-DELETED"), true},
+		{"operation-summary-encode-substituted", m2PublicationRecoveryFixture("SUMMARY-ENCODE-SUBSTITUTED"), true},
+		{"operation-summary-decode-substituted", m2PublicationRecoveryFixture("SUMMARY-DECODE-SUBSTITUTED"), true},
+		{"obsolete-checkpoint-publication-field", m2PublicationRecoveryFixture("CHECKPOINT-OLD-FIELD"), true},
+		{"wp04-local-operation-summary-wire", m2PublicationRecoveryFixture("CHECKPOINT-SUMMARY-WIRE"), true},
+		{"adapter-local-operation-summary-wire", m2PublicationRecoveryFixture("ADAPTER-SUMMARY-WIRE"), true},
+		{"covered-through-zero-inverted", m2PublicationRecoveryFixture("COVERED-ZERO-INVERTED"), true},
+		{"covered-through-zero-noop", m2PublicationRecoveryFixture("COVERED-ZERO-NOOP"), true},
+		{"covered-through-seal-dead-reference", m2PublicationRecoveryFixture("COVERED-SEAL-DEAD-REFERENCE"), true},
+		{"checkpoint-addendum-encode-only", m2PublicationRecoveryFixture("ADDENDUM-ENCODE-ONLY"), true},
+		{"checkpoint-addendum-decode-only", m2PublicationRecoveryFixture("ADDENDUM-DECODE-ONLY"), true},
+		{"checkpoint-addendum-accessor-only", m2PublicationRecoveryFixture("ADDENDUM-ACCESSOR-ONLY"), true},
+		{"covered-through-orders-other-uint64", m2PublicationRecoveryFixture("COVERED-OTHER-UINT64-ORDER"), true},
+		{"covered-through-selected-before-sort", m2PublicationRecoveryFixture("COVERED-SELECT-BEFORE-SORT"), true},
+		{"operation-summary-defined-byte", m2PublicationRecoveryFixture("SUMMARY-DEFINED-BYTE"), true},
+		{"operation-summary-byte-alias", m2PublicationRecoveryFixture("SUMMARY-BYTE-ALIAS"), false},
+		{"covered-through-coupled-completion-order", m2PublicationRecoveryFixture("COVERED-COUPLED-COMPLETION-ORDER"), true},
+		{"covered-through-helper-discards-input", m2PublicationRecoveryFixture("COVERED-SEAL-HELPER-DISCARDS"), true},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -361,9 +934,42 @@ func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
 	}
 }
 
+func TestM2CheckpointIdentityFalseGreensReachIntendedLaws(t *testing.T) {
+	for _, fixture := range []struct {
+		variant string
+		law     string
+	}{
+		{"COVERED-ZERO-INVERTED", "law=nonzero-covered-through-identity"},
+		{"COVERED-ZERO-NOOP", "law=nonzero-covered-through-identity"},
+		{"COVERED-SEAL-DEAD-REFERENCE", "law=covered-through-seal-participation"},
+		{"ADDENDUM-ENCODE-ONLY", "law=complete-activated-surface"},
+		{"ADDENDUM-DECODE-ONLY", "law=complete-activated-surface"},
+		{"ADDENDUM-ACCESSOR-ONLY", "law=complete-activated-surface"},
+		{"COVERED-OTHER-UINT64-ORDER", "law=greatest-revision-covered-through"},
+		{"COVERED-SELECT-BEFORE-SORT", "law=greatest-revision-covered-through"},
+		{"COVERED-COUPLED-COMPLETION-ORDER", "law=greatest-revision-covered-through"},
+		{"COVERED-SEAL-HELPER-DISCARDS", "law=covered-through-seal-participation"},
+		{"SUMMARY-DEFINED-BYTE", "law=foundation-summary-codec"},
+	} {
+		t.Run(fixture.variant, func(t *testing.T) {
+			root := t.TempDir()
+			writeGoFixture(t, root, "go.mod", "module example.test/recovery-ownership\n\ngo 1.26\n")
+			for path, source := range m2PublicationRecoveryFixture(fixture.variant) {
+				writeGoFixture(t, root, path, source)
+			}
+			setIsolatedGoPaths(t)
+			t.Setenv("GOPROXY", "off")
+			err := inspectM2FoundationContractOwnership(t.Context(), root, "example.test/recovery-ownership")
+			if err == nil || !strings.Contains(err.Error(), fixture.law) {
+				t.Fatalf("evidence=PUBLICATION-RECOVERY-CONTRACT fixture=%s observed=%v expected=%s", fixture.variant, err, fixture.law)
+			}
+		})
+	}
+}
+
 const (
 	m2CompactBoundaryPositiveControlCount  = 3
-	m2CompactBoundaryPositiveControlSHA256 = "db55fe1763741d540ebd66e7fcd42903a285c965635f677304c2c2a543499302"
+	m2CompactBoundaryPositiveControlSHA256 = "7d96b288f26cce5266b00f689ccd429e4d456d8934b7511239c1e80a9559232f"
 )
 
 func TestM2CompactBoundaryPositiveControlsAreSealed(t *testing.T) {
@@ -444,13 +1050,46 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 		"BOUNDARY-METHOD-LEAK", "BOUNDARY-VARIABLE-DIGEST", "BOUNDARY-WIDE-VERSION",
 		"BOUNDARY-RENAMED-FIELDS", "BOUNDARY-REORDERED-FIELDS", "BOUNDARY-EMBEDDED-FIELD",
 		"BOUNDARY-EXPORTED-FIELD", "SUMMARY-EXTRA-AUTHORITY",
+		"COVERED-MISSING", "COVERED-SUBSTITUTED", "COVERED-ZERO", "COVERED-COMPLETION-ORDER", "COVERED-SEAL-OMITTED",
+		"SUMMARY-ENCODE-DELETED", "SUMMARY-DECODE-DELETED", "SUMMARY-ENCODE-SUBSTITUTED", "SUMMARY-DECODE-SUBSTITUTED",
+		"CHECKPOINT-OLD-FIELD", "CHECKPOINT-SUMMARY-WIRE", "ADAPTER-SUMMARY-WIRE",
+		"COVERED-ZERO-INVERTED", "COVERED-ZERO-NOOP", "COVERED-SEAL-DEAD-REFERENCE",
+		"ADDENDUM-ENCODE-ONLY", "ADDENDUM-DECODE-ONLY", "ADDENDUM-ACCESSOR-ONLY",
+		"COVERED-OTHER-UINT64-ORDER", "COVERED-SELECT-BEFORE-SORT", "SUMMARY-DEFINED-BYTE", "SUMMARY-BYTE-ALIAS",
+		"COVERED-COUPLED-COMPLETION-ORDER", "COVERED-SEAL-HELPER-DISCARDS",
 	}, variant) {
 		return nil
 	}
 	files := m2FoundationOwnershipFixture("COMPLETE")
+	if variant == "ADDENDUM-ENCODE-ONLY" {
+		files["internal/controljournal/v2/contracts.go"] += "func EncodeOperationSummaryV2(OperationSummaryV2) ([]byte, error) { return nil, nil }\n"
+		return files
+	}
+	if variant == "ADDENDUM-DECODE-ONLY" {
+		files["internal/controljournal/v2/contracts.go"] += "func DecodeOperationSummaryV2([]byte) (OperationSummaryV2, error) { return OperationSummaryV2{}, nil }\n"
+		return files
+	}
+	if variant == "ADDENDUM-ACCESSOR-ONLY" {
+		files["internal/controljournal/v2/contracts.go"] += "type PublicationID string\nfunc (SealedProjectionPrefixV2) CoveredThroughPublicationID() PublicationID { return PublicationID(\"publication-01\") }\n"
+		return files
+	}
+	files["internal/controljournal/v2/contracts.go"] = strings.Replace(files["internal/controljournal/v2/contracts.go"], "package v2\n", "package v2\nimport \"sort\"\n", 1)
+	files["internal/controljournal/v2/contracts.go"] = strings.Replace(files["internal/controljournal/v2/contracts.go"], "type CommitObservationV2 struct{}\n", "type CommitObservationV2 struct { providerRevision uint64; completionOrdinal uint64 }\n", 1)
+	files["internal/controljournal/v2/contracts.go"] = strings.Replace(files["internal/controljournal/v2/contracts.go"], "type AcknowledgedPublicationV2 struct{}\n", "type AcknowledgedPublicationV2 struct { observation CommitObservationV2 }\nfunc (a AcknowledgedPublicationV2) ProviderRevision() uint64 { return a.observation.providerRevision }\n", 1)
 	helpersToDeclare := m2PublicationRecoveryHelperNames()
-	if variant == "MISSING-HELPER" {
-		helpersToDeclare = helpersToDeclare[:len(helpersToDeclare)-1]
+	if variant == "MISSING-HELPER" || variant == "SUMMARY-ENCODE-DELETED" || variant == "SUMMARY-DECODE-DELETED" {
+		missingName := map[string]string{
+			"MISSING-HELPER":         "AdvanceProjectionPrefixV2",
+			"SUMMARY-ENCODE-DELETED": "EncodeOperationSummaryV2",
+			"SUMMARY-DECODE-DELETED": "DecodeOperationSummaryV2",
+		}[variant]
+		filtered := helpersToDeclare[:0]
+		for _, helper := range helpersToDeclare {
+			if helper != missingName {
+				filtered = append(filtered, helper)
+			}
+		}
+		helpersToDeclare = filtered
 	}
 	boundaryFields := "operationIDLookupDigest Digest; logicalVersion LogicalVersion; leafDigest Digest"
 	switch variant {
@@ -485,6 +1124,12 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 		declarations.WriteString("type LogicalVersion uint64\n")
 	}
 	declarations.WriteString("type OperationID string\ntype PublicationID string\ntype OperationStatus string\ntype OperationStateV2 struct{}\n")
+	if variant == "SUMMARY-DEFINED-BYTE" {
+		declarations.WriteString("type DefinedByte byte\n")
+	}
+	if variant == "SUMMARY-BYTE-ALIAS" {
+		declarations.WriteString("type AliasByte = byte\n")
+	}
 	if variant != "MISSING-TYPE" {
 		declarations.WriteString("type PublicationWitnessV2 struct{}\n")
 	}
@@ -504,6 +1149,26 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 			} else {
 				declarations.WriteString("func ValidateOperationSummaryV2(OperationSummaryV2, []OperationStateV2) error { return nil }\n")
 			}
+		case "EncodeOperationSummaryV2":
+			if variant == "SUMMARY-ENCODE-SUBSTITUTED" {
+				declarations.WriteString("func EncodeOperationSummaryV2([]OperationStateV2) ([]byte, error) { return nil, nil }\n")
+			} else if variant == "SUMMARY-DEFINED-BYTE" {
+				declarations.WriteString("func EncodeOperationSummaryV2(OperationSummaryV2) ([]DefinedByte, error) { return nil, nil }\n")
+			} else if variant == "SUMMARY-BYTE-ALIAS" {
+				declarations.WriteString("func EncodeOperationSummaryV2(OperationSummaryV2) ([]AliasByte, error) { return nil, nil }\n")
+			} else {
+				declarations.WriteString("func EncodeOperationSummaryV2(OperationSummaryV2) ([]byte, error) { return nil, nil }\n")
+			}
+		case "DecodeOperationSummaryV2":
+			if variant == "SUMMARY-DECODE-SUBSTITUTED" {
+				declarations.WriteString("func DecodeOperationSummaryV2(string) (OperationSummaryV2, error) { return OperationSummaryV2{}, nil }\n")
+			} else {
+				declarations.WriteString("func DecodeOperationSummaryV2([]byte) (OperationSummaryV2, error) { return OperationSummaryV2{}, nil }\n")
+			}
+		case "ProjectionPrefixGenesisV2":
+			declarations.WriteString("func ProjectionPrefixGenesisV2() Digest { return Digest{} }\n")
+		case "AdvanceProjectionPrefixV2":
+			declarations.WriteString("func AdvanceProjectionPrefixV2(Digest, uint64, PublicationID, Digest, Digest) (Digest, error) { return Digest{}, nil }\n")
 		default:
 			fmt.Fprintf(&declarations, "func %s() {}\n", name)
 		}
@@ -526,6 +1191,73 @@ func m2PublicationRecoveryFixture(variant string) map[string]string {
 	} else {
 		declarations.WriteString("const MaxOperationSummaryBytesV2 = 2112000\n")
 	}
+	files["internal/controljournal/v2/contracts.go"] = strings.Replace(files["internal/controljournal/v2/contracts.go"], "type SealedProjectionPrefixV2 struct{}\n", "", 1)
+	coveredField := "coveredThroughPublicationID PublicationID; "
+	accessorBody := "return s.coveredThroughPublicationID"
+	selected := "entries[len(entries)-1].publicationID"
+	if variant == "COVERED-MISSING" {
+		coveredField = ""
+		accessorBody = "return PublicationID(\"\")"
+	}
+	if variant == "COVERED-SUBSTITUTED" {
+		accessorBody = "return PublicationID(\"substituted\")"
+	}
+	if variant == "COVERED-ZERO" {
+		selected = "PublicationID(\"\")"
+	}
+	if variant == "COVERED-COMPLETION-ORDER" {
+		selected = "completionOrder[len(completionOrder)-1].publicationID"
+	}
+	coveredInitializer := "coveredThroughPublicationID: " + selected
+	if variant == "COVERED-MISSING" {
+		coveredInitializer = ""
+	}
+	declarations.WriteString("type acknowledgedLedgerEntryV2 struct { providerRevision uint64; completionOrdinal uint64; publicationID PublicationID; planDigest Digest; recordSetDigest Digest }\n")
+	declarations.WriteString("type SealedProjectionPrefixV2 struct { " + coveredField + "seal Digest }\n")
+	declarations.WriteString("func (s SealedProjectionPrefixV2) CoveredThroughPublicationID() PublicationID { " + accessorBody + " }\n")
+	declarations.WriteString("type coveredThroughError struct{}\nfunc (coveredThroughError) Error() string { return \"covered-through publication id is zero\" }\n")
+	if variant == "COVERED-MISSING" {
+		declarations.WriteString("func (s SealedProjectionPrefixV2) Validate() error { return nil }\n")
+	} else if variant == "COVERED-ZERO-INVERTED" {
+		declarations.WriteString("func (s SealedProjectionPrefixV2) Validate() error { if s.coveredThroughPublicationID != PublicationID(\"\") { return coveredThroughError{} }; return nil }\n")
+	} else if variant == "COVERED-ZERO-NOOP" {
+		declarations.WriteString("func (s SealedProjectionPrefixV2) Validate() error { if s.coveredThroughPublicationID == PublicationID(\"\") { return nil }; return nil }\n")
+	} else {
+		declarations.WriteString("func (s SealedProjectionPrefixV2) Validate() error { if s.coveredThroughPublicationID == PublicationID(\"\") { return coveredThroughError{} }; return nil }\n")
+	}
+	sealBody := "return Digest(sortDigestBytes([]byte(s.coveredThroughPublicationID))), nil"
+	if variant == "COVERED-SEAL-OMITTED" || variant == "COVERED-MISSING" {
+		sealBody = "return s.seal, nil"
+	}
+	if variant == "COVERED-SEAL-DEAD-REFERENCE" {
+		sealBody = "_ = s.coveredThroughPublicationID; return s.seal, nil"
+	}
+	digestHelperBody := "return [32]byte{value[0]}"
+	if variant == "COVERED-SEAL-HELPER-DISCARDS" {
+		digestHelperBody = "_ = value; return [32]byte{}"
+	}
+	declarations.WriteString("func sortDigestBytes(value []byte) [32]byte { " + digestHelperBody + " }\n")
+	declarations.WriteString("func projectionSeal(s SealedProjectionPrefixV2) (Digest, error) { " + sealBody + " }\n")
+	comparisonField := "providerRevision"
+	if variant == "COVERED-OTHER-UINT64-ORDER" {
+		comparisonField = "completionOrdinal"
+	}
+	prefixRevisionField := "providerRevision"
+	if variant == "COVERED-COUPLED-COMPLETION-ORDER" {
+		comparisonField = "completionOrdinal"
+		prefixRevisionField = "completionOrdinal"
+	}
+	selectionPrefix := ""
+	if variant == "COVERED-SELECT-BEFORE-SORT" {
+		selectionPrefix = "selected := entries[len(entries)-1].publicationID; "
+		coveredInitializer = "coveredThroughPublicationID: selected"
+	}
+	prefixFold := "prefix := Digest{}; for _, entry := range entries { prefix, _ = AdvanceProjectionPrefixV2(prefix, entry." + prefixRevisionField + ", entry.publicationID, entry.planDigest, entry.recordSetDigest) }; _ = prefix; "
+	if variant == "MISSING-HELPER" {
+		prefixFold = ""
+	}
+	declarations.WriteString("func (t *ProjectionTrackerV2) applyAcknowledged(ack AcknowledgedPublicationV2) { _ = acknowledgedLedgerEntryV2{providerRevision: ack.observation.providerRevision, completionOrdinal: ack.observation.completionOrdinal} }\n")
+	declarations.WriteString("func (t *ProjectionTrackerV2) sealPrefix() (SealedProjectionPrefixV2, error) { entries := []acknowledgedLedgerEntryV2{{providerRevision: 9, completionOrdinal: 1, publicationID: PublicationID(\"publication-high\")}, {providerRevision: 3, completionOrdinal: 2, publicationID: PublicationID(\"publication-low\")}}; completionOrder := append([]acknowledgedLedgerEntryV2(nil), entries...); " + selectionPrefix + "sort.Slice(entries, func(i, j int) bool { return entries[i]." + comparisonField + " < entries[j]." + comparisonField + " }); " + prefixFold + "_ = completionOrder; return SealedProjectionPrefixV2{" + coveredInitializer + "}, nil }\n")
 	files["internal/controljournal/v2/contracts.go"] += declarations.String()
 	switch variant {
 	case "ADAPTER-WITNESS":
@@ -546,6 +1278,12 @@ type Parcel struct{}
 type Boundary journalv2.OperationBoundaryV2
 var Decode func(*Boundary) (*Parcel, error)
 `
+	case "CHECKPOINT-OLD-FIELD":
+		files["internal/controljournal/v2/checkpoint/model.go"] = "package checkpoint\nimport journalv2 \"example.test/recovery-ownership/internal/controljournal/v2\"\ntype CheckpointV2 struct { CreatedPublicationID journalv2.PublicationID `json:\"created_publication_id\"` }\n"
+	case "CHECKPOINT-SUMMARY-WIRE":
+		files["internal/controljournal/v2/checkpoint/model.go"] = "package checkpoint\ntype localSummary struct { StatusCounts map[string]uint64 `json:\"status_counts\"`; Boundaries []string `json:\"boundaries\"` }\n"
+	case "ADAPTER-SUMMARY-WIRE":
+		files["internal/controlstore/gapdb/adapter.go"] += "type operationSummaryWireV2 struct { StatusCounts map[string]uint64 `json:\"status_counts\"`; Boundaries []string `json:\"boundaries\"` }\n"
 	}
 	return files
 }
@@ -673,6 +1411,7 @@ func m2EvidenceProbes() []m2EvidenceProbe {
 		{"WORKGRAPH-ELIGIBILITY-POLICY", "eligibility-contract-v2"},
 		{"KEYSPACE-V2", "keyspace-contract-v2"},
 		{"FOUNDATION-CONTRACT-OWNERSHIP", "foundation-contract-ownership-v2"},
+		{"DURABLE-CODEC-COMPATIBILITY", "durable-codec-compatibility-v2"},
 		{"M2-MUTANT-CENSUS", "mutant-census-v2"},
 	}
 }
@@ -698,6 +1437,8 @@ func executeM2EvidenceProbes(t *testing.T, probes []m2EvidenceProbe) []m2Evidenc
 			TestM2KeyspaceRegistryIsClosed(t)
 		case "foundation-contract-ownership-v2":
 			TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t)
+		case "durable-codec-compatibility-v2":
+			TestM2DurableCodecCompatibilityIsExecutionBound(t)
 		case "mutant-census-v2":
 			if observed := verifyM2ExecutableMutants(t); observed != m2MutantCensusCount {
 				t.Fatalf("evidence=M2-MUTANT-CENSUS observed-executions=%d expected=%d", observed, m2MutantCensusCount)
@@ -809,6 +1550,20 @@ func inspectM2FoundationContractOwnership(ctx context.Context, root, module stri
 		return err
 	}
 	for _, source := range sources {
+		if !matchesPrefix(source.importPath, []string{
+			adapterPath,
+			foundationPath + "/checkpoint",
+			foundationPath + "/playback",
+			foundationPath + "/restore",
+		}) {
+			continue
+		}
+		if owner, model := m2FirstLocalOperationSummaryWireModel(source); model != "" {
+			return fmt.Errorf("evidence=FOUNDATION-CONTRACT-OWNERSHIP law=no-local-operation-summary-wire owner=%s type=%s evidence=%s", source.importPath, owner, model)
+		}
+		if field := m2FirstObsoleteCheckpointPublicationField(source); field != "" {
+			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=acyclic-checkpoint-identity owner=%s observed-field=%s expected=covered_through_publication_id", source.importPath, field)
+		}
 		if !matchesPrefix(source.importPath, []string{adapterPath}) {
 			continue
 		}
@@ -847,14 +1602,15 @@ func m2PublicationRecoveryHelperNames() []string {
 		"EncodePublicationWitnessV2", "DecodePublicationWitnessV2", "ValidatePublicationWitnessV2",
 		"BuildOperationSummaryV2", "ValidateOperationSummaryV2", "ReducerStateDigestV2",
 		"ProjectionPrefixGenesisV2", "AdvanceProjectionPrefixV2",
+		"EncodeOperationSummaryV2", "DecodeOperationSummaryV2",
 	}
 }
 
 func validateM2PublicationRecoveryNames(typeNames, helperNames []string) error {
 	canonical := append(slices.Clone(typeNames), helperNames...)
 	slices.Sort(canonical)
-	if len(typeNames) != 2 || len(helperNames) != 8 || len(canonical) != 10 {
-		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=closed-symbol-census observed-types=%d observed-helpers=%d expected-types=2 expected-helpers=8", len(typeNames), len(helperNames))
+	if len(typeNames) != 2 || len(helperNames) != 10 || len(canonical) != 12 {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=closed-symbol-census observed-types=%d observed-helpers=%d expected-types=2 expected-helpers=10", len(typeNames), len(helperNames))
 	}
 	for index, name := range canonical {
 		if name == "" || (index > 0 && canonical[index-1] == name) {
@@ -872,12 +1628,18 @@ func validateM2PublicationRecoveryNames(typeNames, helperNames []string) error {
 // never admitted.
 func validateM2PublicationRecoveryActivation(foundation *productionSourcePackage, foundationPath string) error {
 	scope := foundation.typed.Scope()
+	sealed, _ := scope.Lookup("SealedProjectionPrefixV2").(*types.TypeName)
 	active := false
-	for _, name := range append(m2PublicationRecoveryTypeNames(), m2PublicationRecoveryHelperNames()...) {
+	baseHelpers := m2PublicationRecoveryHelperNames()[:8]
+	for _, name := range append(m2PublicationRecoveryTypeNames(), baseHelpers...) {
 		if scope.Lookup(name) != nil {
 			active = true
 			break
 		}
+	}
+	if scope.Lookup("EncodeOperationSummaryV2") != nil || scope.Lookup("DecodeOperationSummaryV2") != nil ||
+		m2MethodSignature(sealed, "CoveredThroughPublicationID") != nil {
+		active = true
 	}
 	if !active {
 		return nil
@@ -887,7 +1649,7 @@ func validateM2PublicationRecoveryActivation(foundation *productionSourcePackage
 			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=complete-activated-surface owner=%s observed=missing expected-type=%s", foundationPath, name)
 		}
 	}
-	for _, name := range m2PublicationRecoveryHelperNames() {
+	for _, name := range baseHelpers {
 		if _, ok := scope.Lookup(name).(*types.Func); !ok {
 			return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=complete-activated-surface owner=%s observed=missing expected-helper=%s", foundationPath, name)
 		}
@@ -910,6 +1672,9 @@ func validateM2PublicationRecoveryActivation(foundation *productionSourcePackage
 			observed = budget.Val().ExactString()
 		}
 		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=exact-operation-summary-budget owner=%s observed=%s expected=2112000", foundationPath, observed)
+	}
+	if err := validateM2CheckpointIdentityAddendum(foundation, foundationPath); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1081,6 +1846,888 @@ func validateM2OperationSummaryHelperSignatures(foundation *productionSourcePack
 	return nil
 }
 
+func validateM2CheckpointIdentityAddendum(foundation *productionSourcePackage, foundationPath string) error {
+	scope := foundation.typed.Scope()
+	sealed, _ := scope.Lookup("SealedProjectionPrefixV2").(*types.TypeName)
+	encode, _ := scope.Lookup("EncodeOperationSummaryV2").(*types.Func)
+	decode, _ := scope.Lookup("DecodeOperationSummaryV2").(*types.Func)
+	accessor := m2MethodSignature(sealed, "CoveredThroughPublicationID")
+	// WP01 lands before the WP02 implementation. The addendum is dormant only
+	// while every new symbol is absent; the first symbol activates all of it.
+	if encode == nil && decode == nil && accessor == nil {
+		return nil
+	}
+	encodeSignature := m2FunctionSignature(encode)
+	if encodeSignature == nil || encodeSignature.Variadic() || encodeSignature.Params().Len() != 1 || encodeSignature.Results().Len() != 2 ||
+		!m2IsFoundationNamedType(encodeSignature.Params().At(0).Type(), foundationPath, "OperationSummaryV2") ||
+		!m2IsByteSlice(encodeSignature.Results().At(0).Type()) ||
+		!types.Identical(encodeSignature.Results().At(1).Type(), types.Universe.Lookup("error").Type()) {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=foundation-summary-codec owner=%s helper=EncodeOperationSummaryV2 observed=%v expected=func(OperationSummaryV2)([]byte,error)", foundationPath, encodeSignature)
+	}
+	decodeSignature := m2FunctionSignature(decode)
+	if decodeSignature == nil || decodeSignature.Variadic() || decodeSignature.Params().Len() != 1 || decodeSignature.Results().Len() != 2 ||
+		!m2IsByteSlice(decodeSignature.Params().At(0).Type()) ||
+		!m2IsFoundationNamedType(decodeSignature.Results().At(0).Type(), foundationPath, "OperationSummaryV2") ||
+		!types.Identical(decodeSignature.Results().At(1).Type(), types.Universe.Lookup("error").Type()) {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=foundation-summary-codec owner=%s helper=DecodeOperationSummaryV2 observed=%v expected=func([]byte)(OperationSummaryV2,error)", foundationPath, decodeSignature)
+	}
+	if accessor == nil || accessor.Variadic() || accessor.Params().Len() != 0 || accessor.Results().Len() != 1 ||
+		!m2IsFoundationNamedType(accessor.Results().At(0).Type(), foundationPath, "PublicationID") {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=covered-through-accessor owner=%s observed=%v expected=CoveredThroughPublicationID()PublicationID", foundationPath, accessor)
+	}
+	return validateM2CoveredThroughSeal(foundation, foundationPath, sealed)
+}
+
+func m2IsByteSlice(candidate types.Type) bool {
+	return types.Identical(candidate, types.NewSlice(types.Typ[types.Byte]))
+}
+
+func validateM2CoveredThroughSeal(foundation *productionSourcePackage, foundationPath string, sealed *types.TypeName) error {
+	named, ok := types.Unalias(sealed.Type()).(*types.Named)
+	if !ok {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=covered-through-seal owner=%s observed=alias", foundationPath)
+	}
+	structure, ok := named.Underlying().(*types.Struct)
+	if !ok {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=covered-through-seal owner=%s observed=non-struct", foundationPath)
+	}
+	var coveredField *types.Var
+	for index := 0; index < structure.NumFields(); index++ {
+		field := structure.Field(index)
+		if m2IsFoundationNamedType(field.Type(), foundationPath, "PublicationID") {
+			if field.Exported() || field.Embedded() || coveredField != nil {
+				return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=opaque-covered-through-identity owner=%s observed=ambiguous-or-public", foundationPath)
+			}
+			coveredField = field
+		}
+	}
+	if coveredField == nil {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=covered-through-seal owner=%s observed=missing-publication-id-field", foundationPath)
+	}
+	accessorDecl := m2FindMethodDeclaration(foundation, "SealedProjectionPrefixV2", "CoveredThroughPublicationID")
+	if accessorDecl == nil || !m2MethodReturnsField(foundation, accessorDecl, coveredField) {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=covered-through-accessor owner=%s observed=substituted", foundationPath)
+	}
+	validateDecl := m2FindMethodDeclaration(foundation, "SealedProjectionPrefixV2", "Validate")
+	if validateDecl == nil || !m2BodyRefusesZeroField(foundation, validateDecl.Body, coveredField) {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=nonzero-covered-through-identity owner=%s observed=unvalidated", foundationPath)
+	}
+
+	selectedFromGreatestRevision := false
+	for _, file := range foundation.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				literal, ok := node.(*ast.CompositeLit)
+				if !ok || !m2IsFoundationNamedType(foundation.info.TypeOf(literal), foundationPath, "SealedProjectionPrefixV2") {
+					return true
+				}
+				for _, element := range literal.Elts {
+					pair, ok := element.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, keyOK := pair.Key.(*ast.Ident)
+					if !keyOK || foundation.info.ObjectOf(key) != coveredField {
+						continue
+					}
+					ledger, selectedAt := m2TerminalRevisionSortedPublication(foundation, function.Body, pair.Value, foundationPath, make(map[types.Object]bool))
+					providerSource := m2AcknowledgedProviderRevisionSource(foundation, foundationPath)
+					revisionField := m2LedgerFieldForProviderSource(foundation, ledger, providerSource)
+					foldField := m2ProviderRevisionFieldInPrefixFold(foundation, function.Body, ledger)
+					if ledger != nil && revisionField != nil && foldField == revisionField &&
+						m2BodyOrdersLedgerByAscendingRevision(foundation, function.Body, ledger, revisionField, selectedAt) {
+						selectedFromGreatestRevision = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	if !selectedFromGreatestRevision {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=greatest-revision-covered-through owner=%s observed=missing-or-completion-order", foundationPath)
+	}
+
+	sealParticipation := false
+	for _, file := range foundation.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			object, _ := foundation.info.Defs[function.Name].(*types.Func)
+			signature := m2FunctionSignature(object)
+			if signature == nil || signature.Params().Len() == 0 || signature.Results().Len() == 0 ||
+				!m2IsFoundationNamedType(signature.Params().At(0).Type(), foundationPath, "SealedProjectionPrefixV2") ||
+				!m2IsFoundationNamedType(signature.Results().At(0).Type(), foundationPath, "Digest") {
+				continue
+			}
+			if m2DigestResultDependsOnField(foundation, function.Body, coveredField) {
+				sealParticipation = true
+			}
+		}
+	}
+	if !sealParticipation {
+		return fmt.Errorf("evidence=PUBLICATION-RECOVERY-CONTRACT law=covered-through-seal-participation owner=%s observed=omitted", foundationPath)
+	}
+	return nil
+}
+
+func m2DigestResultDependsOnField(source *productionSourcePackage, body *ast.BlockStmt, field *types.Var) bool {
+	analyzer := &m2SealDependenceAnalyzer{source: source, field: field, remaining: 65_536, active: make(map[string]bool)}
+	return analyzer.bodyResultDepends(body, nil)
+}
+
+type m2SealDependenceAnalyzer struct {
+	source    *productionSourcePackage
+	field     *types.Var
+	remaining int
+	active    map[string]bool
+}
+
+func (a *m2SealDependenceAnalyzer) bodyResultDepends(body *ast.BlockStmt, initial map[types.Object]bool) bool {
+	if body == nil || a.remaining <= 0 {
+		return false
+	}
+	tainted := make(map[types.Object]bool, len(initial))
+	for object := range initial {
+		tainted[object] = true
+	}
+	for changed := true; changed && a.remaining > 0; {
+		changed = false
+		ast.Inspect(body, func(node ast.Node) bool {
+			if a.remaining <= 0 {
+				return false
+			}
+			a.remaining--
+			if _, nested := node.(*ast.FuncLit); nested {
+				return false
+			}
+			switch statement := node.(type) {
+			case *ast.AssignStmt:
+				for index, left := range statement.Lhs {
+					rightIndex := index
+					if len(statement.Rhs) == 1 {
+						rightIndex = 0
+					}
+					if rightIndex < len(statement.Rhs) && a.expressionDepends(statement.Rhs[rightIndex], tainted) {
+						changed = m2MarkTaintedObject(a.source, left, tainted) || changed
+					}
+				}
+			case *ast.ValueSpec:
+				for index, name := range statement.Names {
+					valueIndex := index
+					if len(statement.Values) == 1 {
+						valueIndex = 0
+					}
+					if valueIndex < len(statement.Values) && a.expressionDepends(statement.Values[valueIndex], tainted) {
+						changed = m2MarkTaintedObject(a.source, name, tainted) || changed
+					}
+				}
+			case *ast.CallExpr:
+				if m2IsBuiltinCall(a.source, statement, "copy") && len(statement.Args) == 2 && a.expressionDepends(statement.Args[1], tainted) {
+					changed = m2MarkTaintedObject(a.source, statement.Args[0], tainted) || changed
+				}
+				if receiver := m2CallReceiver(statement); receiver != nil {
+					for _, argument := range statement.Args {
+						if a.expressionDepends(argument, tainted) {
+							changed = m2MarkTaintedObject(a.source, receiver, tainted) || changed
+							break
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	depends := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		if _, nested := node.(*ast.FuncLit); nested {
+			return false
+		}
+		returned, ok := node.(*ast.ReturnStmt)
+		if ok && len(returned.Results) > 0 && a.expressionDepends(returned.Results[0], tainted) {
+			depends = true
+		}
+		return !depends
+	})
+	return depends
+}
+
+func (a *m2SealDependenceAnalyzer) expressionDepends(expression ast.Expr, tainted map[types.Object]bool) bool {
+	if expression == nil || a.remaining <= 0 {
+		return false
+	}
+	if call, ok := expression.(*ast.CallExpr); ok {
+		return a.callResultDepends(call, tainted)
+	}
+	depends := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		if depends || a.remaining <= 0 {
+			return false
+		}
+		a.remaining--
+		if _, nested := node.(*ast.FuncLit); nested {
+			return false
+		}
+		switch value := node.(type) {
+		case *ast.CallExpr:
+			depends = a.callResultDepends(value, tainted)
+			return false
+		case *ast.SelectorExpr:
+			selection := a.source.info.Selections[value]
+			depends = selection != nil && selection.Obj() == a.field
+		case *ast.Ident:
+			depends = tainted[a.source.info.ObjectOf(value)]
+		}
+		return !depends
+	})
+	return depends
+}
+
+func (a *m2SealDependenceAnalyzer) callResultDepends(call *ast.CallExpr, tainted map[types.Object]bool) bool {
+	dependencies := make([]bool, len(call.Args))
+	hasDependency := false
+	for index, argument := range call.Args {
+		dependencies[index] = a.expressionDepends(argument, tainted)
+		hasDependency = hasDependency || dependencies[index]
+	}
+	receiverDependency := false
+	if receiver := m2CallReceiver(call); receiver != nil {
+		receiverDependency = a.expressionDepends(receiver, tainted)
+	}
+	object := m2CalledObject(a.source, call)
+	function, isFunction := object.(*types.Func)
+	if !isFunction || function.Pkg() == nil || function.Pkg() != a.source.typed {
+		return hasDependency || receiverDependency
+	}
+	if !hasDependency && !receiverDependency {
+		return false
+	}
+	declaration := m2FindFunctionDeclaration(a.source, function)
+	signature := m2FunctionSignature(function)
+	if declaration == nil || signature == nil {
+		return false
+	}
+	initial := make(map[types.Object]bool)
+	for index, dependent := range dependencies {
+		if dependent && index < signature.Params().Len() {
+			initial[signature.Params().At(index)] = true
+		}
+	}
+	if receiverDependency && signature.Recv() != nil {
+		initial[signature.Recv()] = true
+	}
+	key := fmt.Sprintf("%p", function)
+	for index := 0; index < signature.Params().Len(); index++ {
+		if initial[signature.Params().At(index)] {
+			key += fmt.Sprintf(":%d", index)
+		}
+	}
+	if a.active[key] {
+		return false
+	}
+	a.active[key] = true
+	defer delete(a.active, key)
+	return a.bodyResultDepends(declaration.Body, initial)
+}
+
+func m2CalledObject(source *productionSourcePackage, call *ast.CallExpr) types.Object {
+	switch callee := call.Fun.(type) {
+	case *ast.Ident:
+		return source.info.ObjectOf(callee)
+	case *ast.SelectorExpr:
+		return source.info.ObjectOf(callee.Sel)
+	default:
+		return nil
+	}
+}
+
+func m2CallReceiver(call *ast.CallExpr) ast.Expr {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	return selector.X
+}
+
+func m2IsBuiltinCall(source *productionSourcePackage, call *ast.CallExpr, name string) bool {
+	builtin, ok := m2CalledObject(source, call).(*types.Builtin)
+	return ok && builtin.Name() == name
+}
+
+func m2MarkTaintedObject(source *productionSourcePackage, expression ast.Expr, tainted map[types.Object]bool) bool {
+	for {
+		switch value := expression.(type) {
+		case *ast.Ident:
+			if value.Name == "_" {
+				return false
+			}
+			object := source.info.ObjectOf(value)
+			if object == nil || tainted[object] {
+				return false
+			}
+			tainted[object] = true
+			return true
+		case *ast.SliceExpr:
+			expression = value.X
+		case *ast.IndexExpr:
+			expression = value.X
+		case *ast.ParenExpr:
+			expression = value.X
+		default:
+			return false
+		}
+	}
+}
+
+func m2FindMethodDeclaration(source *productionSourcePackage, receiver, name string) *ast.FuncDecl {
+	for _, file := range source.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != name {
+				continue
+			}
+			object, _ := source.info.Defs[function.Name].(*types.Func)
+			if object != nil && m2ReceiverTypeName(object) == receiver {
+				return function
+			}
+		}
+	}
+	return nil
+}
+
+func m2BodyReferencesField(source *productionSourcePackage, body ast.Node, field *types.Var) bool {
+	found := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if ok {
+			selection := source.info.Selections[selector]
+			found = found || selection != nil && selection.Obj() == field
+		}
+		return !found
+	})
+	return found
+}
+
+func m2MethodReturnsField(source *productionSourcePackage, function *ast.FuncDecl, field *types.Var) bool {
+	if function == nil || function.Body == nil || len(function.Body.List) != 1 {
+		return false
+	}
+	statement, ok := function.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(statement.Results) != 1 {
+		return false
+	}
+	selector, ok := statement.Results[0].(*ast.SelectorExpr)
+	selection := source.info.Selections[selector]
+	return ok && selection != nil && selection.Obj() == field
+}
+
+func m2BodyRefusesZeroField(source *productionSourcePackage, body ast.Node, field *types.Var) bool {
+	refused := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		if _, nested := node.(*ast.FuncLit); nested {
+			return false
+		}
+		if refused {
+			return false
+		}
+		conditional, ok := node.(*ast.IfStmt)
+		if !ok || !m2ConditionHasZeroPublicationDisjunct(source, conditional.Cond, field) {
+			return true
+		}
+		for _, statement := range conditional.Body.List {
+			returned, ok := statement.(*ast.ReturnStmt)
+			if ok && len(returned.Results) == 1 && m2ExpressionDefinitelyNonNilError(source, returned.Results[0], make(map[*types.Func]bool)) {
+				refused = true
+				break
+			}
+		}
+		return !refused
+	})
+	return refused
+}
+
+func m2ConditionHasZeroPublicationDisjunct(source *productionSourcePackage, expression ast.Expr, field *types.Var) bool {
+	switch value := expression.(type) {
+	case *ast.ParenExpr:
+		return m2ConditionHasZeroPublicationDisjunct(source, value.X, field)
+	case *ast.BinaryExpr:
+		if value.Op == token.LOR {
+			return m2ConditionHasZeroPublicationDisjunct(source, value.X, field) || m2ConditionHasZeroPublicationDisjunct(source, value.Y, field)
+		}
+		return value.Op == token.EQL &&
+			(m2BodyReferencesField(source, value.X, field) && m2IsZeroPublicationExpression(source, value.Y) ||
+				m2BodyReferencesField(source, value.Y, field) && m2IsZeroPublicationExpression(source, value.X))
+	default:
+		return false
+	}
+}
+
+func m2ExpressionDefinitelyNonNilError(source *productionSourcePackage, expression ast.Expr, seen map[*types.Func]bool) bool {
+	errorType := types.Universe.Lookup("error").Type()
+	if expression == nil || !types.AssignableTo(source.info.TypeOf(expression), errorType) {
+		return false
+	}
+	switch value := expression.(type) {
+	case *ast.CompositeLit, *ast.UnaryExpr:
+		return true
+	case *ast.Ident:
+		if value.Name == "nil" {
+			return false
+		}
+		named, ok := types.Unalias(source.info.TypeOf(value)).(*types.Named)
+		_, isInterface := source.info.TypeOf(value).Underlying().(*types.Interface)
+		return ok && !isInterface && named != nil
+	case *ast.CallExpr:
+		var called *types.Func
+		switch callee := value.Fun.(type) {
+		case *ast.Ident:
+			called, _ = source.info.ObjectOf(callee).(*types.Func)
+		case *ast.SelectorExpr:
+			called, _ = source.info.ObjectOf(callee.Sel).(*types.Func)
+		}
+		if called == nil || seen[called] {
+			return false
+		}
+		seen[called] = true
+		defer delete(seen, called)
+		declaration := m2FindFunctionDeclaration(source, called)
+		if declaration == nil || declaration.Body == nil {
+			return false
+		}
+		found := false
+		valid := true
+		ast.Inspect(declaration.Body, func(node ast.Node) bool {
+			returned, ok := node.(*ast.ReturnStmt)
+			if !ok || len(returned.Results) == 0 {
+				return true
+			}
+			found = true
+			if !m2ExpressionDefinitelyNonNilError(source, returned.Results[0], seen) {
+				valid = false
+			}
+			return valid
+		})
+		return found && valid
+	default:
+		return false
+	}
+}
+
+func m2FindFunctionDeclaration(source *productionSourcePackage, object *types.Func) *ast.FuncDecl {
+	for _, file := range source.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && source.info.Defs[function.Name] == object {
+				return function
+			}
+		}
+	}
+	return nil
+}
+
+func m2IsZeroPublicationExpression(source *productionSourcePackage, expression ast.Expr) bool {
+	switch value := expression.(type) {
+	case *ast.BasicLit:
+		return value.Kind == token.STRING && value.Value == `""`
+	case *ast.CallExpr:
+		if len(value.Args) != 1 {
+			return false
+		}
+		literal, ok := value.Args[0].(*ast.BasicLit)
+		return ok && literal.Kind == token.STRING && literal.Value == `""`
+	case *ast.CompositeLit:
+		return len(value.Elts) == 0 && m2IsFoundationNamedType(source.info.TypeOf(value), source.importPath, "PublicationID")
+	default:
+		return false
+	}
+}
+
+func m2TerminalRevisionSortedPublication(source *productionSourcePackage, body *ast.BlockStmt, expression ast.Expr, foundationPath string, seen map[types.Object]bool) (types.Object, token.Pos) {
+	if identifier, ok := expression.(*ast.Ident); ok {
+		object := source.info.ObjectOf(identifier)
+		if object == nil || seen[object] {
+			return nil, token.NoPos
+		}
+		seen[object] = true
+		var assigned ast.Expr
+		ast.Inspect(body, func(node ast.Node) bool {
+			if _, nested := node.(*ast.FuncLit); nested {
+				return false
+			}
+			assignment, ok := node.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for index, left := range assignment.Lhs {
+				name, ok := left.(*ast.Ident)
+				if !ok || source.info.ObjectOf(name) != object {
+					continue
+				}
+				rightIndex := index
+				if len(assignment.Rhs) == 1 {
+					rightIndex = 0
+				}
+				if rightIndex < len(assignment.Rhs) {
+					assigned = assignment.Rhs[rightIndex]
+				}
+				return false
+			}
+			return true
+		})
+		if assigned == nil {
+			return nil, token.NoPos
+		}
+		return m2TerminalRevisionSortedPublication(source, body, assigned, foundationPath, seen)
+	}
+	selector, ok := expression.(*ast.SelectorExpr)
+	if !ok || !m2IsFoundationNamedType(source.info.TypeOf(selector), foundationPath, "PublicationID") {
+		return nil, token.NoPos
+	}
+	indexed, ok := selector.X.(*ast.IndexExpr)
+	if !ok {
+		return nil, token.NoPos
+	}
+	ledgerID, ok := indexed.X.(*ast.Ident)
+	if !ok {
+		return nil, token.NoPos
+	}
+	minus, ok := indexed.Index.(*ast.BinaryExpr)
+	if !ok || minus.Op != token.SUB {
+		return nil, token.NoPos
+	}
+	call, ok := minus.X.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return nil, token.NoPos
+	}
+	callee, ok := call.Fun.(*ast.Ident)
+	if !ok || callee.Name != "len" {
+		return nil, token.NoPos
+	}
+	lengthArg, ok := call.Args[0].(*ast.Ident)
+	one, okOne := minus.Y.(*ast.BasicLit)
+	if !ok || !okOne || one.Kind != token.INT || one.Value != "1" || source.info.ObjectOf(lengthArg) != source.info.ObjectOf(ledgerID) {
+		return nil, token.NoPos
+	}
+	return source.info.ObjectOf(ledgerID), selector.Pos()
+}
+
+func m2ProviderRevisionFieldInPrefixFold(source *productionSourcePackage, body ast.Node, ledger types.Object) *types.Var {
+	if ledger == nil {
+		return nil
+	}
+	var revisionField *types.Var
+	ast.Inspect(body, func(node ast.Node) bool {
+		rangeStatement, ok := node.(*ast.RangeStmt)
+		if !ok {
+			return true
+		}
+		ranged, ok := rangeStatement.X.(*ast.Ident)
+		entry, entryOK := rangeStatement.Value.(*ast.Ident)
+		if !ok || !entryOK || source.info.ObjectOf(ranged) != ledger {
+			return true
+		}
+		entryObject := source.info.ObjectOf(entry)
+		ast.Inspect(rangeStatement.Body, func(candidate ast.Node) bool {
+			call, ok := candidate.(*ast.CallExpr)
+			if !ok || len(call.Args) < 2 {
+				return true
+			}
+			callee, ok := call.Fun.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			function, _ := source.info.ObjectOf(callee).(*types.Func)
+			if function == nil || function.Pkg() != source.typed || function.Name() != "AdvanceProjectionPrefixV2" {
+				return true
+			}
+			selector, ok := call.Args[1].(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			base, baseOK := selector.X.(*ast.Ident)
+			selection := source.info.Selections[selector]
+			if baseOK && source.info.ObjectOf(base) == entryObject && selection != nil {
+				revisionField, _ = selection.Obj().(*types.Var)
+			}
+			return revisionField == nil
+		})
+		return revisionField == nil
+	})
+	if revisionField == nil {
+		return nil
+	}
+	basic, ok := revisionField.Type().Underlying().(*types.Basic)
+	if !ok || basic.Kind() != types.Uint64 {
+		return nil
+	}
+	return revisionField
+}
+
+func m2AcknowledgedProviderRevisionSource(source *productionSourcePackage, foundationPath string) *types.Var {
+	declaration := m2FindMethodDeclaration(source, "AcknowledgedPublicationV2", "ProviderRevision")
+	if declaration == nil || declaration.Body == nil {
+		return nil
+	}
+	method, _ := source.info.Defs[declaration.Name].(*types.Func)
+	signature := m2FunctionSignature(method)
+	if signature == nil || signature.Params().Len() != 0 || signature.Results().Len() != 1 {
+		return nil
+	}
+	result, ok := signature.Results().At(0).Type().Underlying().(*types.Basic)
+	if !ok || result.Kind() != types.Uint64 || method.Pkg() == nil || method.Pkg().Path() != foundationPath {
+		return nil
+	}
+	var sourceField *types.Var
+	ast.Inspect(declaration.Body, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		basic, ok := source.info.TypeOf(selector).Underlying().(*types.Basic)
+		selection := source.info.Selections[selector]
+		if ok && basic.Kind() == types.Uint64 && selection != nil {
+			candidate, _ := selection.Obj().(*types.Var)
+			if sourceField == nil {
+				sourceField = candidate
+			} else if sourceField != candidate {
+				sourceField = nil
+				return false
+			}
+		}
+		return true
+	})
+	return sourceField
+}
+
+func m2LedgerFieldForProviderSource(source *productionSourcePackage, ledger types.Object, providerSource *types.Var) *types.Var {
+	if ledger == nil || providerSource == nil {
+		return nil
+	}
+	slice, ok := types.Unalias(ledger.Type()).(*types.Slice)
+	if !ok {
+		return nil
+	}
+	element, ok := types.Unalias(slice.Elem()).(*types.Named)
+	if !ok {
+		return nil
+	}
+	structure, ok := element.Underlying().(*types.Struct)
+	if !ok {
+		return nil
+	}
+	var mapped *types.Var
+	conflict := false
+	for _, file := range source.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			literal, ok := node.(*ast.CompositeLit)
+			if !ok || !types.Identical(source.info.TypeOf(literal), element) {
+				return true
+			}
+			for index, item := range literal.Elts {
+				fieldIndex := index
+				value := item
+				if pair, keyed := item.(*ast.KeyValueExpr); keyed {
+					key, ok := pair.Key.(*ast.Ident)
+					field, _ := source.info.ObjectOf(key).(*types.Var)
+					if !ok || field == nil {
+						continue
+					}
+					for candidate := 0; candidate < structure.NumFields(); candidate++ {
+						if structure.Field(candidate) == field {
+							fieldIndex = candidate
+							break
+						}
+					}
+					value = pair.Value
+				}
+				if fieldIndex >= structure.NumFields() || !m2ExpressionReferencesTypedField(source, value, providerSource) {
+					continue
+				}
+				candidate := structure.Field(fieldIndex)
+				if mapped == nil {
+					mapped = candidate
+				} else if mapped != candidate {
+					conflict = true
+				}
+			}
+			return !conflict
+		})
+	}
+	if conflict {
+		return nil
+	}
+	return mapped
+}
+
+func m2ExpressionReferencesTypedField(source *productionSourcePackage, expression ast.Expr, field *types.Var) bool {
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		selection := source.info.Selections[selector]
+		if ok && selection != nil && selection.Obj() == field {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+func m2BodyOrdersLedgerByAscendingRevision(source *productionSourcePackage, body ast.Node, ledger types.Object, revisionField *types.Var, selectedAt token.Pos) bool {
+	ordered := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || len(call.Args) < 2 || selectedAt == token.NoPos || call.End() >= selectedAt {
+			return true
+		}
+		callee, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		function, _ := source.info.ObjectOf(callee.Sel).(*types.Func)
+		if function == nil || function.Pkg() == nil || function.Pkg().Path() != "sort" ||
+			(function.Name() != "Slice" && function.Name() != "SliceStable") {
+			return true
+		}
+		first, ok := call.Args[0].(*ast.Ident)
+		if !ok || source.info.ObjectOf(first) != ledger {
+			return true
+		}
+		for _, argument := range call.Args[1:] {
+			function, ok := argument.(*ast.FuncLit)
+			if !ok {
+				continue
+			}
+			ast.Inspect(function.Body, func(candidate ast.Node) bool {
+				comparison, ok := candidate.(*ast.BinaryExpr)
+				if ok && comparison.Op == token.LSS && m2IsRevisionSelector(source, comparison.X, ledger, revisionField) && m2IsRevisionSelector(source, comparison.Y, ledger, revisionField) {
+					ordered = true
+				}
+				return !ordered
+			})
+		}
+		return !ordered
+	})
+	return ordered
+}
+
+func m2IsRevisionSelector(source *productionSourcePackage, expression ast.Expr, ledger types.Object, revisionField *types.Var) bool {
+	selector, ok := expression.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	indexed, ok := selector.X.(*ast.IndexExpr)
+	if !ok {
+		return false
+	}
+	base, ok := indexed.X.(*ast.Ident)
+	if !ok || source.info.ObjectOf(base) != ledger {
+		return false
+	}
+	selection := source.info.Selections[selector]
+	return selection != nil && selection.Obj() == revisionField
+}
+
+func m2FirstLocalOperationSummaryWireModel(source *productionSourcePackage) (string, string) {
+	names := make(map[*ast.StructType]string)
+	for _, file := range source.files {
+		for _, declaration := range file.Decls {
+			generic, ok := declaration.(*ast.GenDecl)
+			if !ok || generic.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range generic.Specs {
+				typeSpec := specification.(*ast.TypeSpec)
+				structure, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
+				names[structure] = typeSpec.Name.Name
+			}
+		}
+	}
+	for _, file := range source.files {
+		owner, evidence := "", ""
+		ast.Inspect(file, func(node ast.Node) bool {
+			structure, ok := node.(*ast.StructType)
+			if !ok || evidence != "" {
+				return evidence == ""
+			}
+			owner = names[structure]
+			if owner == "" {
+				owner = "<anonymous>"
+			}
+			lowerName := strings.ToLower(owner)
+			if strings.Contains(lowerName, "operationsummary") || strings.Contains(lowerName, "operationboundary") {
+				evidence = "authority-shaped-name"
+				return false
+			}
+			tags := m2JSONFieldTags(structure)
+			if tags["boundaries"] && tags["status_counts"] ||
+				tags["operation_id_sha256"] && tags["logical_version"] && tags["leaf_sha256"] {
+				evidence = "operation-summary-json-shape"
+				return false
+			}
+			return true
+		})
+		if evidence != "" {
+			return owner, evidence
+		}
+	}
+	return "", ""
+}
+
+func m2FirstObsoleteCheckpointPublicationField(source *productionSourcePackage) string {
+	for _, file := range source.files {
+		found := ""
+		ast.Inspect(file, func(node ast.Node) bool {
+			structure, ok := node.(*ast.StructType)
+			if !ok || found != "" {
+				return found == ""
+			}
+			for _, field := range structure.Fields.List {
+				for _, name := range field.Names {
+					if strings.EqualFold(name.Name, "CreatedPublicationID") {
+						found = name.Name
+						return false
+					}
+				}
+				if field.Tag != nil && strings.Contains(field.Tag.Value, "created_publication_id") {
+					found = "created_publication_id"
+					return false
+				}
+			}
+			return true
+		})
+		if found != "" {
+			return found
+		}
+	}
+	return ""
+}
+
+func m2JSONFieldTags(structure *ast.StructType) map[string]bool {
+	tags := make(map[string]bool)
+	for _, field := range structure.Fields.List {
+		if field.Tag == nil {
+			continue
+		}
+		raw, err := strconv.Unquote(field.Tag.Value)
+		if err != nil {
+			continue
+		}
+		jsonTag := strings.Split(reflect.StructTag(raw).Get("json"), ",")[0]
+		if jsonTag != "" && jsonTag != "-" {
+			tags[jsonTag] = true
+		}
+	}
+	return tags
+}
+
 func m2FunctionSignature(function *types.Func) *types.Signature {
 	if function == nil {
 		return nil
@@ -1114,7 +2761,7 @@ func validateM2FoundationContractTypeNames(names []string) error {
 func m2AdapterOwnedRecoveryTypeNames() []string {
 	return []string{
 		"V2Key", "V2Prefix", "V2Record", "V2ScanRequest", "V2ScanPage", "V2Page", "V2CommitResult", "V2RecoveryError",
-		"PublicationWitnessV2", "OperationBoundaryV2", "V2PublicationWitness", "V2OperationBoundary",
+		"PublicationWitnessV2", "OperationBoundaryV2", "OperationSummaryV2", "V2PublicationWitness", "V2OperationBoundary", "V2OperationSummary",
 	}
 }
 

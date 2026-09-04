@@ -4,8 +4,8 @@
 **Branch**: `feat/gapdb-only-production-authority`  
 **Date**: 2026-09-02  
 **Spec**: [spec.md](spec.md)  
-**Status**: Post-approval correction ratified; WP01–WP03 require ordered
-reapproval before WP04 resumes
+**Status**: Post-approval correction ratified; WP01 structural deadline proof
+requires reapproval before WP04 resumes with behavioral deadline evidence
 
 ## Summary
 
@@ -167,6 +167,21 @@ witness contract version; the witness is constructed afterward so no identity
 is recursive. One foundation-owned pure helper performs the fold for both the
 live tracker and restore. Unresolved ambiguity blocks the seal without
 serializing unrelated durable commits.
+
+The seal also binds the terminal PublicationID selected by greatest provider
+revision. A checkpoint at watermark `R` records that acknowledged identity as
+its covered-through publication. The later atomic publication that writes the
+checkpoint record and retained-ring slot occurs at `C > R` and remains suffix;
+the checkpoint never attempts to contain its own creating PublicationID. The
+foundation owns the sole strict canonical operation-summary codec consumed by
+checkpoint and restore code.
+
+All persistence-facing v2 record encoders converge on one recursively
+canonical final-byte representation. Recovery admission compares rather than
+rewrites provider bytes, while established semantic digest preimages remain
+unchanged. This makes the durable pipeline closed under
+`Encode -> RecoveryRecordV2 -> Decode` and prevents capability packages from
+reconstructing foundation wire.
 
 ### Capability-owned authority
 
@@ -528,6 +543,21 @@ flowchart TD
     I7 --> I9[IC-09 SQLite eradication]
     I9 --> I10[IC-10 Crown evidence]
 ```
+
+## Restore deadline capability boundary
+
+Restore is the consumer-owned I/O coordinator, not the pure playback kernel.
+It owns the explicit elapsed-attempt budget required by bounded recovery and
+may use `time.Duration` plus context deadlines to enforce it. The architecture
+guard admits only the exact `internal/controljournal/v2/restore -> time` edge.
+Foundation, checkpoint, playback, and all other v2 packages remain time-free,
+and time cannot participate in durable state or authority decisions. A
+permanent widening mutant prevents this exception from becoming a prefix-wide
+allowance. WP01 proves structural confinement and absence of ambient-clock
+capabilities; WP04 proves the real validation and deadline data flow through
+source-bound execution; WP17 binds both to overlay mutants and one exact source
+identity. No architecture test models arbitrary Go control flow. See
+`post-approval-defect-7.md` and `post-approval-defect-8.md`.
 
 ## Complexity Tracking
 

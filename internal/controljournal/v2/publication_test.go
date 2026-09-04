@@ -17,6 +17,41 @@ type observingPortV2 struct {
 	registeredBeforeCall atomic.Bool
 }
 
+type assertionObservingPortV2 struct {
+	assertionCount int
+}
+
+func (p assertionObservingPortV2) Commit(_ context.Context, plan SealedCommitPlanV2) (CommitObservationV2, error) {
+	return NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount(), p.assertionCount)
+}
+
+func TestCoordinatorRequiresExactAssertionAcknowledgementCount(t *testing.T) {
+	input := fixturePlanInput(t)
+	coordinate, _ := NewAggregateCoordinate("execution_slot", "slot-read", fixtureScope())
+	assertion, _ := NewAuthorityAssertionV2(AuthorityAssertionInputV2{Target: ConditionTarget{Kind: ConditionTargetAggregateHead, Coordinate: coordinate}, Kind: ConditionAbsent})
+	input.Assertions = []AuthorityAssertionV2{assertion}
+	plan, err := SealCommitPlanV2(input, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []int{0, 2} {
+		tracker := fixtureProjectionTracker(t)
+		coordinator, _ := NewPublicationCoordinatorV2(assertionObservingPortV2{assertionCount: count}, tracker)
+		if _, err := coordinator.Publish(context.Background(), plan); !IsKind(err, ErrorInvalidDigest) || coordinator.UnresolvedCount() != 1 {
+			t.Fatalf("assertion count %d attributed as committed: err=%v unresolved=%d", count, err, coordinator.UnresolvedCount())
+		}
+	}
+	observation, err := NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seal, err := acknowledgementSeal(plan, observation)
+	ack := AcknowledgedPublicationV2{plan: plan, observation: observation, seal: seal}
+	if err != nil || validateAcknowledgement(ack) != nil || ack.AssertionCount() != 1 || ack.MutationCount() != plan.MutationCount() {
+		t.Fatalf("exact assertion acknowledgement rejected: ack=%+v err=%v", ack, err)
+	}
+}
+
 func (p *observingPortV2) Commit(_ context.Context, plan SealedCommitPlanV2) (CommitObservationV2, error) {
 	p.tracker.mu.Lock()
 	_, registered := p.tracker.pending[plan.PublicationID()]
@@ -104,6 +139,9 @@ func TestConcurrentReverseCompletionFoldsProviderRevisionOrder(t *testing.T) {
 	if err != nil || reverseSeal.Validate() != nil || reverseSeal.Watermark() != 12 {
 		t.Fatalf("reverse seal invalid: %+v %v", reverseSeal, err)
 	}
+	if reverseSeal.CoveredThroughPublicationID() != right.PublicationID() {
+		t.Fatal("covered-through identity followed completion order instead of greatest provider revision")
+	}
 
 	sequentialTracker := fixtureProjectionTracker(t)
 	sequentialPort := &fixedRevisionPortV2{revisions: []uint64{11, 12}}
@@ -120,6 +158,10 @@ func TestConcurrentReverseCompletionFoldsProviderRevisionOrder(t *testing.T) {
 	}
 	if reverseSeal.RollingPrefixDigest() != orderedSeal.RollingPrefixDigest() {
 		t.Fatal("rolling prefix followed response completion rather than provider revision")
+	}
+	if orderedSeal.CoveredThroughPublicationID() != right.PublicationID() ||
+		orderedSeal.CoveredThroughPublicationID() != reverseSeal.CoveredThroughPublicationID() {
+		t.Fatal("covered-through selection is not provider-revision deterministic")
 	}
 }
 
