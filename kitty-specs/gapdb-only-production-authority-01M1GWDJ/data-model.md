@@ -572,6 +572,14 @@ schema/reducer/order, over-budget suffix, or unstable traversal all fail closed.
 Full reconstruction uses the same algorithm with checkpoint version zero and
 is allowed only within explicit record/byte/time budgets.
 
+The time budget is an orchestration resource bound, not authority data.
+`internal/controljournal/v2/restore` validates a positive bounded duration and
+enforces one context deadline per recovery attempt. It may import the Go
+standard-library `time` package for that purpose only. The foundation,
+checkpoint, and playback packages remain time-free, and no wall-clock value
+participates in durable state, event order, revision choice, digests, or
+acceptance. See `post-approval-defect-7.md`.
+
 ## Historical-state disposition
 
 ```text

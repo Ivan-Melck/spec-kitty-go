@@ -189,6 +189,43 @@ canonicalization results, length-only recovery admission, removed decoder
 equality, and omission of any classified durable codec. Preserve every prior
 mutant ID and census control; additions append to the sealed census.
 
+## Post-approval correction: restore deadline capability boundary
+
+Read `post-approval-defect-7.md` before editing. The existing standard-library
+guard incorrectly applies the pure playback boundary to the restore I/O
+coordinator. Preserve the common v2 allowlist, but admit the exact production
+edge `internal/controljournal/v2/restore -> time` solely for validated
+elapsed-attempt context deadlines. Foundation, checkpoint, playback, and every
+other v2 package remain time-free.
+
+Add positive and negative exact-edge tests plus a mutant that widens the
+exception to the whole v2 prefix; the widening must be rejected by the same
+repository validator. Do not replace the existing `M-PURE-TIME` control or any
+prior mutant. Append the new control to the sealed census and update its exact
+count/digest. This correction authorizes no clock-derived durable state,
+ordering, digest, revision, or acceptance semantics.
+
+## Post-approval correction: split restore deadline proof
+
+Read `post-approval-defect-8.md` before editing. Review cycles 20–23 proved
+that a custom AST/types control-flow verifier is neither sound nor bounded.
+Delete that verifier instead of extending it.
+
+WP01 now proves only structural capability confinement: the exact restore-only
+`time` edge; `go/types` object-identity use limited to `time.Duration`,
+`time.Second`, and `time.Minute`; the duration-bearing field confined to the
+explicit restore attempt budget rather than durable/result/authority state; a
+direct call to the real `context.WithTimeout` object; and refusal of ambient
+clock/timer APIs or function-value escape. Keep alias, lexical-shadowing,
+exact-owner, missing-call, escaping-call, misplaced-duration, and ambient-clock
+controls. Do not infer validation dominance or arbitrary Go control flow.
+
+WP04 owns source-bound behavioral proof and overlay mutations for validation,
+deadline derivation, placement, propagation, cancellation, retries, and parent
+deadlines. WP17 owns final one-source combined evidence. Preserve the existing
+`M-PURE-TIME`, restore-owner-widening mutant, prior mutant identities, and exact
+census controls.
+
 ## T001 — Executable contract and schema validation
 
 ### Purpose
