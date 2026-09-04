@@ -174,9 +174,24 @@ func stageOperationBindingV2(request StageAuthorityRequestV2, state StateV2) (jo
 	return journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: request.OperationID, CommandKind: "workspace.stage", CommandSchemaVersion: 1, CanonicalIntentDigest: intent, Scope: coordinate.Scope, ActorID: journalv2.ActorID(b.ActorID), ProcessID: journalv2.ProcessID(b.ProcessID), DoctrineRevision: request.DoctrineRevision, ProfileRevision: request.ProfileRevision, PolicyRevision: request.PolicyRevision, OriginatingRuntimeEpochID: b.RuntimeEpochID, ObservedCreatedAt: request.ObservedAt.UTC().Truncate(time.Second).Format(time.RFC3339)})
 }
 func buildStageAuthorityPlanV2(request StageAuthorityRequestV2, binding journalv2.OperationBindingV2, state StateV2, assertion journalv2.AuthorityAssertionV2, registry journalv2.EventRegistryV2) (StageAuthorityPlanV2, error) {
-	contributionInput, err := AppendPlanContributionV2(journalv2.CommitPlanInput{}, request.Contribution)
+	input, err := stageAuthorityPlanInputV2(request, binding, state, assertion)
 	if err != nil {
 		return StageAuthorityPlanV2{}, err
+	}
+	if err := validateStageAuthorityPlanInputV2(input, state.Binding); err != nil {
+		return StageAuthorityPlanV2{}, err
+	}
+	sealed, err := journalv2.SealCommitPlanV2(input, registry)
+	if err != nil {
+		return StageAuthorityPlanV2{}, err
+	}
+	return StageAuthorityPlanV2{sealed}, nil
+}
+
+func stageAuthorityPlanInputV2(request StageAuthorityRequestV2, binding journalv2.OperationBindingV2, state StateV2, assertion journalv2.AuthorityAssertionV2) (journalv2.CommitPlanInput, error) {
+	contributionInput, err := AppendPlanContributionV2(journalv2.CommitPlanInput{}, request.Contribution)
+	if err != nil {
+		return journalv2.CommitPlanInput{}, err
 	}
 	workspaceEvent := contributionInput.Events[0]
 	eventIDs := []journalv2.EventID{request.OperationEventID, workspaceEvent.EventID}
@@ -188,11 +203,11 @@ func buildStageAuthorityPlanV2(request StageAuthorityRequestV2, binding journalv
 	sort.Slice(effects, func(i, j int) bool { return effects[i] < effects[j] })
 	operation, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: request.OperationID, LogicalVersion: 1, Status: journalv2.StatusResolved, ResultKind: "workspace.stage.result", ResultSchemaVersion: workspaceStageResultSchemaV2, CanonicalResult: state.CanonicalBytes(), EventIDs: eventIDs, EffectIDs: effects})
 	if err != nil {
-		return StageAuthorityPlanV2{}, err
+		return journalv2.CommitPlanInput{}, err
 	}
 	opPayload, err := journalv2.EncodeOperationStateEventPayloadV2(operation)
 	if err != nil {
-		return StageAuthorityPlanV2{}, err
+		return journalv2.CommitPlanInput{}, err
 	}
 	opCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(request.OperationID), journalv2.Scope{Kind: journalv2.ScopeHost})
 	opDigest, _ := journalv2.ReducerStateDigestV2(opPayload)
@@ -203,10 +218,31 @@ func buildStageAuthorityPlanV2(request StageAuthorityRequestV2, binding journalv
 	opEvent := journalv2.EventDraftV2{EventID: request.OperationEventID, EventType: "operation.resolved", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: opCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: state.Binding.RuntimeEpochID, ActorID: journalv2.ActorID(state.Binding.ActorID), ProcessID: journalv2.ProcessID(state.Binding.ProcessID), WorkRevisionID: journalv2.WorkRevisionID(state.Binding.WorkRevisionID), PolicyRevision: request.PolicyRevision, GovernanceRevisions: governance, Payload: opPayload}
 	opHead := journalv2.HeadTransitionV2{Coordinate: opCoordinate, NextLogicalVersion: 1, EventID: request.OperationEventID, CommittedRuntimeEpochID: state.Binding.RuntimeEpochID, CanonicalStateDigest: opDigest, AuthoritySummary: []byte(`{"status":"resolved"}`)}
 	opCondition, _ := journalv2.ConditionForHeadTransitionV2(opHead)
-	input := journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: operation, Events: []journalv2.EventDraftV2{opEvent, workspaceEvent}, Heads: []journalv2.HeadTransitionV2{opHead, contributionInput.Heads[0]}, EffectIntents: contributionInput.EffectIntents, Conditions: []journalv2.ProviderCondition{opCondition, contributionInput.Conditions[0]}, Assertions: []journalv2.AuthorityAssertionV2{assertion}}
-	sealed, err := journalv2.SealCommitPlanV2(input, registry)
-	if err != nil {
-		return StageAuthorityPlanV2{}, err
+	return journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: operation, Events: []journalv2.EventDraftV2{opEvent, workspaceEvent}, Heads: []journalv2.HeadTransitionV2{opHead, contributionInput.Heads[0]}, EffectIntents: contributionInput.EffectIntents, Conditions: []journalv2.ProviderCondition{opCondition, contributionInput.Conditions[0]}, Assertions: []journalv2.AuthorityAssertionV2{assertion}}, nil
+}
+
+func validateStageAuthorityPlanInputV2(input journalv2.CommitPlanInput, binding BindingV2) error {
+	if len(input.Events) != 2 || len(input.Heads) != 2 || len(input.Conditions) != 2 || len(input.Assertions) != 1 {
+		return workspaceV2Error(KindStaleAuthority, "stage_plan_membership", nil)
 	}
-	return StageAuthorityPlanV2{sealed}, nil
+	assertion := input.Assertions[0]
+	if err := validateExecutionAssertionForBindingV2(assertion, binding); err != nil {
+		return err
+	}
+	for _, condition := range input.Conditions {
+		if condition.Target == assertion.Target() {
+			return workspaceV2Error(KindStaleAuthority, "stage_assertion_rewritten", nil)
+		}
+	}
+	eventKinds := map[string]string{}
+	for _, event := range input.Events {
+		if _, exists := eventKinds[event.Family]; exists {
+			return workspaceV2Error(KindWorkspaceConflict, "stage_plan_events", nil)
+		}
+		eventKinds[event.Family] = event.EventType
+	}
+	if eventKinds["operation"] != "operation.resolved" || eventKinds["workspace"] == "" {
+		return workspaceV2Error(KindWorkspaceConflict, "stage_plan_events", nil)
+	}
+	return nil
 }

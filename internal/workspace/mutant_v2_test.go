@@ -49,21 +49,8 @@ func TestWorkspaceControlledMutantCensusV2(t *testing.T) {
 			_, err := ReduceEventV2(quarantined.CanonicalBytes(), workspaceEnvelopeFixtureV2(t, quarantined, next, "ready_published", "event-mutant-resurrect"))
 			return IsKind(err, KindWorkspaceConflict)
 		},
-		"M-WORKSPACE-EXPIRY-WITHOUT-QUARANTINE": func(t *testing.T) bool {
-			return quarantineContributionKillsV2(t, ready, quarantined, capsule)
-		},
-		"M-WORKSPACE-SAME-VALUE-CAS-AS-ASSERTION": func(*testing.T) bool {
-			target := journalv2.ConditionTarget{Kind: journalv2.ConditionTargetAggregateHead, Coordinate: journalv2.AggregateCoordinate{Kind: "execution_slot", ID: "slot-mutant", Scope: journalv2.Scope{Kind: journalv2.ScopeWork, ProjectID: journalv2.ProjectID(b.ProjectID), MissionID: journalv2.MissionID(b.MissionID), WorkRevisionID: journalv2.WorkRevisionID(b.WorkRevisionID), WorkID: journalv2.WorkID(b.WorkID)}}}
-			digest, _ := journalv2.ReducerStateDigestV2([]byte(`{"state":"current"}`))
-			assertion, err := journalv2.NewAuthorityAssertionV2(journalv2.AuthorityAssertionInputV2{Target: target, Kind: journalv2.ConditionRecordRevision, ObservedRevision: 7, ExpectedLogicalVersion: 3, ObservedValueDigest: digest})
-			return err == nil && validateExecutionAssertionForTestV2(assertion, b)
-		},
-		"M-WORKSPACE-EXECUTION-EXPIRES-BINDING-PUBLISHES": func(*testing.T) bool {
-			return IsKind(ValidateCurrentV2(ready, AuthorityCapsuleV2{}), KindStaleAuthority)
-		},
-		"M-WORKSPACE-BINDING-WINS-EXPIRY-OMITS-QUARANTINE": func(t *testing.T) bool {
-			input, err := AppendPlanContributionV2(journalv2.CommitPlanInput{}, mustQuarantineContributionV2(t, ready))
-			return err == nil && len(input.Events) == 1 && input.Events[0].EventType == "workspace.quarantined" && len(input.Heads) == 1
+		"M-WORKSPACE-SAME-VALUE-CAS-AS-ASSERTION": func(t *testing.T) bool {
+			return stageSameValueCASMutationKilledV2(t, b, initial)
 		},
 		"M-WORKSPACE-CLEANUP-ROLLS-BACK-QUARANTINE": func(t *testing.T) bool {
 			resurrected := quarantined
@@ -137,10 +124,13 @@ func TestWorkspaceControlledMutantCensusV2(t *testing.T) {
 		}
 	}
 	sort.Strings(ids)
-	if len(ids) != 18 {
+	// The three cross-capability atomic-composition mutants are executed by
+	// execution.TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2,
+	// where the real composition input and production validator are available.
+	if len(ids) != 15 {
 		t.Fatalf("mutant census=%d", len(ids))
 	}
-	want := "M-WORKSPACE-ADAPTER-BEFORE-INTENT\nM-WORKSPACE-ADAPTER-LEAKS-INTO-KERNEL\nM-WORKSPACE-BINDING-WINS-EXPIRY-OMITS-QUARANTINE\nM-WORKSPACE-CLEANUP-ROLLS-BACK-QUARANTINE\nM-WORKSPACE-EPOCH-OR-FENCE-ONLY-GATE\nM-WORKSPACE-EXECUTION-EXPIRES-BINDING-PUBLISHES\nM-WORKSPACE-EXPIRY-WITHOUT-QUARANTINE\nM-WORKSPACE-HOST-SCOPE-BECOMES-WORK-SCOPE\nM-WORKSPACE-MUTABLE-LEASE-REPOSITORY-PATH\nM-WORKSPACE-PATH-REUSED-BY-REPLACEMENT\nM-WORKSPACE-PROCESS-MUTEX-AUTHORITY\nM-WORKSPACE-QUARANTINE-RETURNS-READY\nM-WORKSPACE-READY-WITHOUT-FINAL-OBSERVATION\nM-WORKSPACE-RESTART-ALLOCATES-NEW-IDENTITY\nM-WORKSPACE-RESTART-TRUSTS-UNPROVEN-PROJECTION\nM-WORKSPACE-SAME-VALUE-CAS-AS-ASSERTION\nM-WORKSPACE-TWO-EVENTS-ONE-AGGREGATE\nM-WORKSPACE-ZOMBIE-PASSES-GATE"
+	want := "M-WORKSPACE-ADAPTER-BEFORE-INTENT\nM-WORKSPACE-ADAPTER-LEAKS-INTO-KERNEL\nM-WORKSPACE-CLEANUP-ROLLS-BACK-QUARANTINE\nM-WORKSPACE-EPOCH-OR-FENCE-ONLY-GATE\nM-WORKSPACE-HOST-SCOPE-BECOMES-WORK-SCOPE\nM-WORKSPACE-MUTABLE-LEASE-REPOSITORY-PATH\nM-WORKSPACE-PATH-REUSED-BY-REPLACEMENT\nM-WORKSPACE-PROCESS-MUTEX-AUTHORITY\nM-WORKSPACE-QUARANTINE-RETURNS-READY\nM-WORKSPACE-READY-WITHOUT-FINAL-OBSERVATION\nM-WORKSPACE-RESTART-ALLOCATES-NEW-IDENTITY\nM-WORKSPACE-RESTART-TRUSTS-UNPROVEN-PROJECTION\nM-WORKSPACE-SAME-VALUE-CAS-AS-ASSERTION\nM-WORKSPACE-TWO-EVENTS-ONE-AGGREGATE\nM-WORKSPACE-ZOMBIE-PASSES-GATE"
 	if got := joinLinesV2(ids); got != want {
 		t.Fatalf("mutant manifest drift:\n%s", got)
 	}
@@ -159,37 +149,35 @@ func readyStateBeforePublicationV2(binding BindingV2) StateV2 {
 	return StateV2{SchemaVersion: 1, LogicalVersion: 6, Binding: binding, Stage: StageOwnershipVerifiedV2, Observation: readyObservationFixtureV2(binding), EffectID: "effect-create", OccurredAt: "2026-09-04T12:00:00Z"}
 }
 
-func mustQuarantineContributionV2(t *testing.T, prior StateV2) PlanContributionV2 {
+func stageSameValueCASMutationKilledV2(t *testing.T, binding BindingV2, prior StateV2) bool {
 	t.Helper()
-	contribution, err := NewQuarantineContributionV2(QuarantineContributionInputV2{Prior: prior, RecordRevision: 17, EventID: "event-quarantine-mutant", Reason: QuarantineLeaseExpired, OccurredAt: time.Date(2026, 9, 4, 13, 0, 0, 0, time.UTC)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return contribution
-}
-
-func quarantineContributionKillsV2(t *testing.T, prior, expected StateV2, capsule AuthorityCapsuleV2) bool {
-	t.Helper()
-	contribution := mustQuarantineContributionV2(t, prior)
-	input, err := AppendPlanContributionV2(journalv2.CommitPlanInput{}, contribution)
-	if err != nil || len(input.Events) != 1 {
-		return false
-	}
-	next, err := contribution.State()
-	if err != nil || next.Stage != expected.Stage || next.Binding.WorkspaceID != expected.Binding.WorkspaceID {
-		return false
-	}
-	reduced, err := ReduceEventV2(prior.CanonicalBytes(), workspaceEnvelopeFixtureV2(t, prior, next, "quarantined", input.Events[0].EventID))
+	contribution, err := NewTransitionContributionV2(TransitionContributionInputV2{Prior: prior, RecordRevision: 11, EventID: "event-stage-control", NextStage: StageWorktreeObservedV2, Observation: ObservationV2{Registered: true}, OccurredAt: time.Date(2026, 9, 4, 12, 1, 0, 0, time.UTC)})
 	if err != nil {
 		return false
 	}
-	state, err := DecodeStateV2(reduced)
-	return err == nil && state.Stage == StageQuarantinedV2 && IsKind(ValidateCurrentV2(state, capsule), KindStaleAuthority)
-}
-
-func validateExecutionAssertionForTestV2(a journalv2.AuthorityAssertionV2, b BindingV2) bool {
-	target := a.Target()
-	return a.Kind() == journalv2.ConditionRecordRevision && target.Kind == journalv2.ConditionTargetAggregateHead && target.Coordinate.Kind == "execution_slot" && target.Coordinate.Scope.WorkID == journalv2.WorkID(b.WorkID)
+	request := StageAuthorityRequestV2{OperationID: "operation-stage-control", OperationEventID: "event-operation-stage-control", Contribution: contribution, PolicyRevision: "policy-stage", DoctrineRevision: "doctrine-stage", ProfileRevision: "profile-stage", ObservedAt: time.Date(2026, 9, 4, 12, 1, 0, 0, time.UTC)}
+	state, _ := contribution.State()
+	operationBinding, err := stageOperationBindingV2(request, state)
+	if err != nil {
+		return false
+	}
+	target := journalv2.ConditionTarget{Kind: journalv2.ConditionTargetAggregateHead, Coordinate: journalv2.AggregateCoordinate{Kind: "execution_slot", ID: "slot-stage-control", Scope: journalv2.Scope{Kind: journalv2.ScopeWork, ProjectID: journalv2.ProjectID(binding.ProjectID), MissionID: journalv2.MissionID(binding.MissionID), WorkRevisionID: journalv2.WorkRevisionID(binding.WorkRevisionID), WorkID: journalv2.WorkID(binding.WorkID)}}}
+	digest, _ := journalv2.ReducerStateDigestV2([]byte(`{"state":"current"}`))
+	assertion, err := journalv2.NewAuthorityAssertionV2(journalv2.AuthorityAssertionInputV2{Target: target, Kind: journalv2.ConditionRecordRevision, ObservedRevision: 7, ExpectedLogicalVersion: 3, ObservedValueDigest: digest})
+	if err != nil {
+		return false
+	}
+	control, err := stageAuthorityPlanInputV2(request, operationBinding, state, assertion)
+	if err != nil || validateStageAuthorityPlanInputV2(control, binding) != nil {
+		return false
+	}
+	if _, err := buildStageAuthorityPlanV2(request, operationBinding, state, assertion, journalv2.DefaultEventRegistryV2()); err != nil {
+		return false
+	}
+	mutant := control
+	mutant.Assertions = nil
+	mutant.Conditions = append(append([]journalv2.ProviderCondition(nil), control.Conditions...), journalv2.ProviderCondition{Target: assertion.Target(), Kind: journalv2.ConditionRecordRevision, ObservedRevision: assertion.ObservedRevision()})
+	return IsKind(validateStageAuthorityPlanInputV2(mutant, binding), KindStaleAuthority)
 }
 func mustClaimV2(t *testing.T, b BindingV2) journalv2.Digest {
 	t.Helper()

@@ -54,7 +54,8 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Execute(t.Context(), WorkspaceAuthorityRequestV2{Kind: WorkspaceBindV2, OperationID: "operation-workspace-bind", OperationEventID: "event-operation-bind", ExecutionEventID: "event-execution-bind", Governance: active.Governance, Contribution: contribution, ObservedAt: request.ObservedAt.Add(time.Second)})
+	bindRequest := WorkspaceAuthorityRequestV2{Kind: WorkspaceBindV2, OperationID: "operation-workspace-bind", OperationEventID: "event-operation-bind", ExecutionEventID: "event-execution-bind", Governance: active.Governance, Contribution: contribution, ObservedAt: request.ObservedAt.Add(time.Second)}
+	result, err := service.Execute(t.Context(), bindRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 		t.Fatalf("bad bind membership events=%d heads=%d assertions=%d", len(sealed.Events()), len(sealed.Heads()), len(sealed.Assertions()))
 	}
 	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationExactV2, State: sealed.OperationState(), RecordRevision: 19}
-	replayed, err := service.Execute(t.Context(), WorkspaceAuthorityRequestV2{Kind: WorkspaceBindV2, OperationID: "operation-workspace-bind", OperationEventID: "event-operation-bind", ExecutionEventID: "event-execution-bind", Governance: active.Governance, Contribution: contribution, ObservedAt: request.ObservedAt.Add(time.Second)})
+	replayed, err := service.Execute(t.Context(), bindRequest)
 	if err != nil || !replayed.Replayed || replayed.Execution.WorkspaceID != binding.WorkspaceID || len(port.plans) != 1 {
 		t.Fatalf("exact replay did not precede authority reads: %+v %v", replayed, err)
 	}
@@ -81,7 +82,8 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	port.execution = ExecutionSlotObservationV2{State: &bound, RecordRevision: 9}
 	port.workspace = WorkspaceAuthorityObservationV2{State: &priorWorkspace, RecordRevision: 11}
 	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}
-	expired, err := service.Execute(t.Context(), WorkspaceAuthorityRequestV2{Kind: WorkspaceQuarantineV2, OperationID: "operation-workspace-expire", OperationEventID: "event-operation-expire", ExecutionEventID: "event-execution-expire", Governance: bound.Governance, Contribution: quarantine, ObservedAt: expiredAt})
+	expiryRequest := WorkspaceAuthorityRequestV2{Kind: WorkspaceQuarantineV2, OperationID: "operation-workspace-expire", OperationEventID: "event-operation-expire", ExecutionEventID: "event-execution-expire", Governance: bound.Governance, Contribution: quarantine, ObservedAt: expiredAt}
+	expired, err := service.Execute(t.Context(), expiryRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +94,110 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	if len(expiryPlan.Events()) != 3 || len(expiryPlan.Heads()) != 3 || expiryPlan.WorkspacePathClaim() != nil {
 		t.Fatal("bad expiry membership")
 	}
+
+	bindOperation, err := workspaceOperationBindingV2(bindRequest, result.Workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindInput, err := workspaceAuthorityPlanInputV2(bindRequest, bindOperation, result.Execution, ExecutionSlotObservationV2{State: &active, RecordRevision: 7}, WorkspaceAuthorityObservationV2{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiryOperation, err := workspaceOperationBindingV2(expiryRequest, expired.Workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiryInput, err := workspaceAuthorityPlanInputV2(expiryRequest, expiryOperation, expired.Execution, ExecutionSlotObservationV2{State: &bound, RecordRevision: 9}, WorkspaceAuthorityObservationV2{State: &priorWorkspace, RecordRevision: 11})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWorkspaceCompositionControlledMutantsV2(t, bindInput, expiryInput)
+}
+
+func assertWorkspaceCompositionControlledMutantsV2(t *testing.T, bindControl, expiryControl journalv2.CommitPlanInput) {
+	t.Helper()
+	registry := journalv2.DefaultEventRegistryV2()
+	for kind, control := range map[WorkspaceAuthorityCommandKindV2]journalv2.CommitPlanInput{WorkspaceBindV2: bindControl, WorkspaceQuarantineV2: expiryControl} {
+		if err := validateWorkspaceAuthorityPlanInputV2(kind, control); err != nil {
+			t.Fatalf("%s control rejected: %v", kind, err)
+		}
+		if _, err := journalv2.SealCommitPlanV2(control, registry); err != nil {
+			t.Fatalf("%s control did not seal: %v", kind, err)
+		}
+	}
+	mutants := map[string]struct {
+		kind   WorkspaceAuthorityCommandKindV2
+		mutate func(journalv2.CommitPlanInput) journalv2.CommitPlanInput
+	}{
+		"M-WORKSPACE-EXPIRY-WITHOUT-QUARANTINE": {WorkspaceQuarantineV2, func(input journalv2.CommitPlanInput) journalv2.CommitPlanInput {
+			return removeWorkspaceCompositionMembersV2(input)
+		}},
+		"M-WORKSPACE-EXECUTION-EXPIRES-BINDING-PUBLISHES": {WorkspaceBindV2, func(input journalv2.CommitPlanInput) journalv2.CommitPlanInput {
+			for index := range input.Events {
+				if input.Events[index].Family == "execution_slot" {
+					input.Events[index].EventType = "execution_slot.lease_expired"
+				}
+			}
+			return input
+		}},
+		"M-WORKSPACE-BINDING-WINS-EXPIRY-OMITS-QUARANTINE": {WorkspaceQuarantineV2, func(input journalv2.CommitPlanInput) journalv2.CommitPlanInput {
+			input = removeWorkspaceCompositionMembersV2(input)
+			for index := range input.Events {
+				if input.Events[index].Family == "execution_slot" {
+					input.Events[index].EventType = "execution_slot.workspace_bound"
+				}
+			}
+			return input
+		}},
+	}
+	if len(mutants) != 3 {
+		t.Fatalf("composition mutant census=%d", len(mutants))
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			control := bindControl
+			if mutant.kind == WorkspaceQuarantineV2 {
+				control = expiryControl
+			}
+			input := cloneWorkspaceAuthorityPlanInputV2(control)
+			if err := validateWorkspaceAuthorityPlanInputV2(mutant.kind, mutant.mutate(input)); !IsKind(err, KindInvalidCommand) {
+				t.Fatalf("mutated production composition survived: %v", err)
+			}
+		})
+	}
+}
+
+func cloneWorkspaceAuthorityPlanInputV2(input journalv2.CommitPlanInput) journalv2.CommitPlanInput {
+	input.Events = append([]journalv2.EventDraftV2(nil), input.Events...)
+	input.Heads = append([]journalv2.HeadTransitionV2(nil), input.Heads...)
+	input.Conditions = append([]journalv2.ProviderCondition(nil), input.Conditions...)
+	input.Assertions = append([]journalv2.AuthorityAssertionV2(nil), input.Assertions...)
+	return input
+}
+
+func removeWorkspaceCompositionMembersV2(input journalv2.CommitPlanInput) journalv2.CommitPlanInput {
+	events := input.Events[:0]
+	for _, event := range input.Events {
+		if event.Family != "workspace" {
+			events = append(events, event)
+		}
+	}
+	input.Events = events
+	heads := input.Heads[:0]
+	for _, head := range input.Heads {
+		if head.Coordinate.Kind != "workspace" {
+			heads = append(heads, head)
+		}
+	}
+	input.Heads = heads
+	conditions := input.Conditions[:0]
+	for _, condition := range input.Conditions {
+		if condition.Target.Coordinate.Kind != "workspace" {
+			conditions = append(conditions, condition)
+		}
+	}
+	input.Conditions = conditions
+	return input
 }
 
 func workspaceBindingForExecutionV2(t *testing.T, state ExecutionSlotStateV2, workspaceID ids.WorkspaceID, workspacePath string) workspace.BindingV2 {
