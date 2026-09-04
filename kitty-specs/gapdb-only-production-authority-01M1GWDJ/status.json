@@ -271,6 +271,9 @@
       "last_event_id": "01M1NP6F8SK5GT0P2CMDZ9QT7A",
       "last_transition_at": "2026-09-04T07:47:40.953554+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Review-cycle-1 blockers repaired at 1db5dd3169b22e5190a3562a0ba15b0ff75e9a75; fresh provider state fenced and 15 controlled mutants executable."
+      ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
