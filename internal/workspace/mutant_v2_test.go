@@ -94,9 +94,10 @@ func TestWorkspaceControlledMutantCensusV2(t *testing.T) {
 		},
 		"M-WORKSPACE-ZOMBIE-PASSES-GATE": func(*testing.T) bool { return IsKind(ValidateCurrentV2(quarantined, capsule), KindStaleAuthority) },
 		"M-WORKSPACE-EPOCH-OR-FENCE-ONLY-GATE": func(*testing.T) bool {
-			changed := capsule
+			changed := b
 			changed.RunID = "run-other"
-			return IsKind(ValidateCurrentV2(ready, changed), KindStaleAuthority)
+			changedCapsule, err := NewAuthorityCapsuleV2(changed)
+			return err == nil && IsKind(ValidateCurrentV2(ready, changedCapsule), KindStaleAuthority)
 		},
 		"M-WORKSPACE-PROCESS-MUTEX-AUTHORITY": func(t *testing.T) bool {
 			input, err := AppendPlanContributionV2(journalv2.CommitPlanInput{}, mustBindingContributionV2(t, b, "provider-claim"))
@@ -123,6 +124,10 @@ func TestWorkspaceControlledMutantCensusV2(t *testing.T) {
 			registrations := ReducerRegistrationsV2()
 			return len(registrations) == 1 && registrations[0].Owner == "internal/workspace"
 		},
+		"M-WORKSPACE-HOST-SCOPE-BECOMES-WORK-SCOPE": func(t *testing.T) bool {
+			coordinate, err := WorkspaceCoordinateV2(b)
+			return err == nil && coordinate.Kind == "workspace" && coordinate.ID == journalv2.AggregateID(b.WorkspaceID) && coordinate.Scope == (journalv2.Scope{Kind: journalv2.ScopeHost})
+		},
 	}
 	ids := make([]string, 0, len(mutants))
 	for id, kill := range mutants {
@@ -132,10 +137,10 @@ func TestWorkspaceControlledMutantCensusV2(t *testing.T) {
 		}
 	}
 	sort.Strings(ids)
-	if len(ids) != 17 {
+	if len(ids) != 18 {
 		t.Fatalf("mutant census=%d", len(ids))
 	}
-	want := "M-WORKSPACE-ADAPTER-BEFORE-INTENT\nM-WORKSPACE-ADAPTER-LEAKS-INTO-KERNEL\nM-WORKSPACE-BINDING-WINS-EXPIRY-OMITS-QUARANTINE\nM-WORKSPACE-CLEANUP-ROLLS-BACK-QUARANTINE\nM-WORKSPACE-EPOCH-OR-FENCE-ONLY-GATE\nM-WORKSPACE-EXECUTION-EXPIRES-BINDING-PUBLISHES\nM-WORKSPACE-EXPIRY-WITHOUT-QUARANTINE\nM-WORKSPACE-MUTABLE-LEASE-REPOSITORY-PATH\nM-WORKSPACE-PATH-REUSED-BY-REPLACEMENT\nM-WORKSPACE-PROCESS-MUTEX-AUTHORITY\nM-WORKSPACE-QUARANTINE-RETURNS-READY\nM-WORKSPACE-READY-WITHOUT-FINAL-OBSERVATION\nM-WORKSPACE-RESTART-ALLOCATES-NEW-IDENTITY\nM-WORKSPACE-RESTART-TRUSTS-UNPROVEN-PROJECTION\nM-WORKSPACE-SAME-VALUE-CAS-AS-ASSERTION\nM-WORKSPACE-TWO-EVENTS-ONE-AGGREGATE\nM-WORKSPACE-ZOMBIE-PASSES-GATE"
+	want := "M-WORKSPACE-ADAPTER-BEFORE-INTENT\nM-WORKSPACE-ADAPTER-LEAKS-INTO-KERNEL\nM-WORKSPACE-BINDING-WINS-EXPIRY-OMITS-QUARANTINE\nM-WORKSPACE-CLEANUP-ROLLS-BACK-QUARANTINE\nM-WORKSPACE-EPOCH-OR-FENCE-ONLY-GATE\nM-WORKSPACE-EXECUTION-EXPIRES-BINDING-PUBLISHES\nM-WORKSPACE-EXPIRY-WITHOUT-QUARANTINE\nM-WORKSPACE-HOST-SCOPE-BECOMES-WORK-SCOPE\nM-WORKSPACE-MUTABLE-LEASE-REPOSITORY-PATH\nM-WORKSPACE-PATH-REUSED-BY-REPLACEMENT\nM-WORKSPACE-PROCESS-MUTEX-AUTHORITY\nM-WORKSPACE-QUARANTINE-RETURNS-READY\nM-WORKSPACE-READY-WITHOUT-FINAL-OBSERVATION\nM-WORKSPACE-RESTART-ALLOCATES-NEW-IDENTITY\nM-WORKSPACE-RESTART-TRUSTS-UNPROVEN-PROJECTION\nM-WORKSPACE-SAME-VALUE-CAS-AS-ASSERTION\nM-WORKSPACE-TWO-EVENTS-ONE-AGGREGATE\nM-WORKSPACE-ZOMBIE-PASSES-GATE"
 	if got := joinLinesV2(ids); got != want {
 		t.Fatalf("mutant manifest drift:\n%s", got)
 	}

@@ -352,37 +352,45 @@ func ReducerRegistrationsV2() []journalv2.ReducerRegistration {
 	return []journalv2.ReducerRegistration{{Family: "workspace", EventSchemaVersion: WorkspaceEventSchemaV2, ReducerVersion: WorkspaceReducerV2, Owner: "internal/workspace", ImplementationDigest: digest, Reduce: ReduceEventV2}}
 }
 
-type AuthorityCapsuleV2 struct {
-	ProjectID       ids.ProjectID
-	MissionID       ids.MissionID
-	WorkRevisionID  ids.WorkRevisionID
-	WorkID          ids.WorkID
-	RunID           ids.RunID
-	LeaseID         ids.LeaseID
-	Generation      uint64
-	Fence           string
-	RuntimeEpochID  journalv2.RuntimeEpochID
-	WorkspaceID     ids.WorkspaceID
-	PathClaimDigest journalv2.Digest
-	RepositoryID    ids.RepositoryID
-	CanonicalPath   string
+// AuthorityCapsuleV2 is a defensive, immutable snapshot of every execution
+// and repository coordinate that makes a workspace current. Keeping the
+// complete binding (rather than a hand-picked subset) makes additions to the
+// binding fail closed at the current-workspace gate.
+type AuthorityCapsuleV2 struct{ binding BindingV2 }
+
+func NewAuthorityCapsuleV2(binding BindingV2) (AuthorityCapsuleV2, error) {
+	if err := binding.Validate(); err != nil {
+		return AuthorityCapsuleV2{}, err
+	}
+	return AuthorityCapsuleV2{binding: cloneBindingV2(binding)}, nil
 }
+
+func (c AuthorityCapsuleV2) Binding() BindingV2 { return cloneBindingV2(c.binding) }
 
 func ValidateCurrentV2(state StateV2, capsule AuthorityCapsuleV2) error {
 	if err := state.Validate(); err != nil {
 		return workspaceV2Error(KindStaleAuthority, "workspace_state", err)
 	}
 	b := state.Binding
+	expected := capsule.binding
+	if expected.Validate() != nil {
+		return workspaceV2Error(KindStaleAuthority, "workspace_capsule", nil)
+	}
 	if state.Stage == StageQuarantinedV2 {
 		return workspaceV2Error(KindStaleAuthority, "workspace_quarantined", nil)
 	}
 	if state.Stage != StageReadyV2 {
 		return workspaceV2Error(KindWorkspaceNotReady, "workspace_stage", nil)
 	}
-	if b.ProjectID != capsule.ProjectID || b.MissionID != capsule.MissionID || b.WorkRevisionID != capsule.WorkRevisionID || b.WorkID != capsule.WorkID || b.RunID != capsule.RunID || b.LeaseID != capsule.LeaseID || b.Generation != capsule.Generation || b.Fence != capsule.Fence || b.RuntimeEpochID != capsule.RuntimeEpochID || b.WorkspaceID != capsule.WorkspaceID || b.PathClaimDigest != capsule.PathClaimDigest || b.RepositoryID != capsule.RepositoryID || b.CanonicalPath != capsule.CanonicalPath {
+	if !bindingEqualV2(b, expected) {
 		return workspaceV2Error(KindStaleAuthority, "workspace_capsule", nil)
 	}
 	return nil
+}
+
+func cloneBindingV2(binding BindingV2) BindingV2 {
+	binding.Dependencies = append([]DependencyV2(nil), binding.Dependencies...)
+	return binding
 }
 
 func bindingEqualV2(a, b BindingV2) bool { return bytes.Equal(mustJSONV2(a), mustJSONV2(b)) }

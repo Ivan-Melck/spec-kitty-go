@@ -2,8 +2,11 @@ package gapdb
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
@@ -13,14 +16,46 @@ type workspaceAuthorityV2 struct {
 	publisher   executionPublicationPortV2
 	coordinator *journalv2.PublicationCoordinatorV2
 	execution   *executionAuthorityV2
+	restore     WorkspaceRestoreConfigurationV2
 }
 
-func newWorkspaceAuthorityV2(adapter *Adapter, coordinator *journalv2.PublicationCoordinatorV2) (*workspaceAuthorityV2, error) {
+type WorkspaceRestoreConfigurationV2 struct {
+	EventRegistry   journalv2.EventRegistryV2
+	Reducers        journalv2.ReducerSetV2
+	HostAuthorityID journalv2.HostAuthorityID
+	Budgets         restore.BudgetsV2
+}
+
+// WorkspaceAuthorityPortsV2 is the callable GapDB composition seam. The final
+// process host owns construction and lifecycle; this method exposes only the
+// two provider-neutral capability ports.
+func (a *Adapter) WorkspaceAuthorityPortsV2(coordinator *journalv2.PublicationCoordinatorV2, eventRegistry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, hostAuthorityID journalv2.HostAuthorityID, budgets restore.BudgetsV2) (execution.WorkspaceAuthorityPortV2, workspace.StageAuthorityPortV2, error) {
+	config := WorkspaceRestoreConfigurationV2{EventRegistry: eventRegistry, Reducers: reducers, HostAuthorityID: hostAuthorityID, Budgets: budgets}
+	authority, err := newWorkspaceAuthorityV2(a, coordinator, config)
+	if err != nil {
+		return nil, nil, err
+	}
+	return authority, authority, nil
+}
+
+func newWorkspaceAuthorityV2(adapter *Adapter, coordinator *journalv2.PublicationCoordinatorV2, config WorkspaceRestoreConfigurationV2) (*workspaceAuthorityV2, error) {
+	if adapter == nil || coordinator == nil {
+		return nil, invalidV2Plan("workspace authority dependencies")
+	}
+	if _, err := journalv2.NewHostAuthorityID(string(config.HostAuthorityID)); err != nil {
+		return nil, err
+	}
+	if _, err := config.EventRegistry.Descriptor(); err != nil {
+		return nil, err
+	}
+	if _, err := config.Reducers.Descriptor(); err != nil {
+		return nil, err
+	}
 	executionAuthority, err := newExecutionAuthorityV2(adapter, coordinator)
 	if err != nil {
 		return nil, err
 	}
-	return &workspaceAuthorityV2{adapter: adapter, publisher: coordinator, coordinator: coordinator, execution: executionAuthority}, nil
+	return &workspaceAuthorityV2{adapter: adapter, publisher: coordinator, coordinator: coordinator, execution: executionAuthority, restore: config}, nil
 }
 
 func (a *workspaceAuthorityV2) ResolveExecutionOperation(ctx context.Context, binding journalv2.OperationBindingV2) (execution.ExecutionOperationResolutionV2, error) {
@@ -50,9 +85,44 @@ func (a *workspaceAuthorityV2) ObserveWorkspace(ctx context.Context, coordinate 
 	if a == nil || a.adapter == nil || coordinate.Kind != "workspace" || coordinate.Scope.Kind != journalv2.ScopeHost {
 		return execution.WorkspaceAuthorityObservationV2{}, invalidV2Plan("workspace authority reader")
 	}
-	revision, err := a.adapter.CaptureRevisionV2(ctx)
+	coordinateBytes, err := journalv2.CanonicalAggregateCoordinate(coordinate)
 	if err != nil {
 		return execution.WorkspaceAuthorityObservationV2{}, err
+	}
+	attemptSum := sha256.Sum256(append([]byte("spec-kitty/workspace-observe/v1\x00"), coordinateBytes...))
+	restored, err := restore.RestoreV2(ctx, restore.InputV2{Reader: a.adapter, EventRegistry: a.restore.EventRegistry, Reducers: a.restore.Reducers, HostAuthorityID: a.restore.HostAuthorityID, RecoveryAttemptID: "workspace-" + hex.EncodeToString(attemptSum[:16]), Budgets: a.restore.Budgets})
+	if err != nil {
+		return execution.WorkspaceAuthorityObservationV2{}, err
+	}
+	var projected []byte
+	var projectedDigest journalv2.Digest
+	var projectedVersion journalv2.LogicalVersion
+	var projectedEvent journalv2.EventID
+	var projectedPublication journalv2.PublicationID
+	for _, state := range restored.Playback().States() {
+		if state.Coordinate() == coordinate {
+			if projected != nil {
+				return execution.WorkspaceAuthorityObservationV2{}, invalidV2Plan("workspace duplicate restored state")
+			}
+			projected, projectedDigest, projectedVersion, projectedEvent, projectedPublication = state.CanonicalState(), state.StateDigest(), state.LogicalVersion(), state.LastEventID(), state.LastPublicationID()
+		}
+	}
+	revision := restored.StoreRevision()
+	if projected != nil && projectedPublication == "" {
+		eventAddress, addressErr := journalv2.NewJournalEventAddressV2(coordinate, projectedVersion)
+		if addressErr != nil {
+			return execution.WorkspaceAuthorityObservationV2{}, addressErr
+		}
+		eventRequest, _ := journalv2.NewReadRequestV2(eventAddress, revision)
+		eventRecord, readErr := a.adapter.ReadV2(ctx, eventRequest)
+		if readErr != nil {
+			return execution.WorkspaceAuthorityObservationV2{}, readErr
+		}
+		envelope, decodeErr := journalv2.DecodeEventEnvelopeV2(eventRecord.CanonicalValue(), a.restore.EventRegistry)
+		if decodeErr != nil || envelope.Coordinate() != coordinate || envelope.LogicalVersion() != projectedVersion || envelope.EventID() != projectedEvent {
+			return execution.WorkspaceAuthorityObservationV2{}, invalidV2Plan("workspace restored event mismatch")
+		}
+		projectedPublication = envelope.PublicationID()
 	}
 	address, err := journalv2.NewAggregateHeadAddressV2(coordinate)
 	if err != nil {
@@ -62,8 +132,8 @@ func (a *workspaceAuthorityV2) ObserveWorkspace(ctx context.Context, coordinate 
 	record, err := a.adapter.ReadV2(ctx, request)
 	if err != nil {
 		if journalv2.IsKind(err, journalv2.ErrorNotFound) {
-			if verifyErr := a.adapter.VerifyRevisionV2(ctx, revision); verifyErr != nil {
-				return execution.WorkspaceAuthorityObservationV2{}, verifyErr
+			if projected != nil {
+				return execution.WorkspaceAuthorityObservationV2{}, invalidV2Plan("workspace restored head absent")
 			}
 			return execution.WorkspaceAuthorityObservationV2{}, nil
 		}
@@ -73,7 +143,10 @@ func (a *workspaceAuthorityV2) ObserveWorkspace(ctx context.Context, coordinate 
 	if err != nil || head.Coordinate() != coordinate || head.Tombstone() {
 		return execution.WorkspaceAuthorityObservationV2{}, invalidV2Plan("workspace authority head")
 	}
-	state, err := workspace.DecodeStateV2(head.AuthoritySummary())
+	if projected == nil || projectedDigest != head.CanonicalStateDigest() || projectedVersion != head.LogicalVersion() || projectedEvent != head.LastEventID() || projectedPublication != head.LastPublicationID() {
+		return execution.WorkspaceAuthorityObservationV2{}, invalidV2Plan("workspace restored head mismatch")
+	}
+	state, err := workspace.DecodeStateV2(projected)
 	if err != nil {
 		return execution.WorkspaceAuthorityObservationV2{}, err
 	}
@@ -81,9 +154,6 @@ func (a *workspaceAuthorityV2) ObserveWorkspace(ctx context.Context, coordinate 
 	stateCoordinate, _ := workspace.WorkspaceCoordinateV2(state.Binding)
 	if stateCoordinate != coordinate || digest != head.CanonicalStateDigest() || head.LogicalVersion() != journalv2.LogicalVersion(state.LogicalVersion) || head.CommittedRuntimeEpochID() != state.Binding.RuntimeEpochID || head.LastEventID() == "" || head.LastPublicationID() == "" {
 		return execution.WorkspaceAuthorityObservationV2{}, invalidV2Plan("workspace authority digest")
-	}
-	if err := a.adapter.VerifyRevisionV2(ctx, revision); err != nil {
-		return execution.WorkspaceAuthorityObservationV2{}, err
 	}
 	return execution.WorkspaceAuthorityObservationV2{State: &state, RecordRevision: record.RecordRevision(), LastPublicationID: head.LastPublicationID()}, nil
 }

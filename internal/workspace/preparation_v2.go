@@ -94,7 +94,11 @@ func (s *PreparationServiceV2) EnsureReady(ctx context.Context, binding BindingV
 			if observeErr != nil {
 				return StateV2{}, observeErr
 			}
-			if !dependenciesPreparedV2(binding, observation) {
+			// An observation alone cannot prove that the requested dependency
+			// graph was applied: a clean pinned-base workspace has the same
+			// surface shape. For non-empty dependency sets, always cross the
+			// idempotent Git preparation boundary after the durable request.
+			if len(binding.Dependencies) > 0 || !dependenciesPreparedV2(binding, observation) {
 				if err := s.effects.PrepareDependencies(ctx, binding); err != nil {
 					return StateV2{}, err
 				}
