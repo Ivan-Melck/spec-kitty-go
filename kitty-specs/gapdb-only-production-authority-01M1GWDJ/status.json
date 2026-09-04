@@ -73,7 +73,8 @@
         "Defect-7 restore-only deadline capability guard committed at 67a0a308; exhaustive architecture, mutant, race, combined-WP04, and static gates pass.",
         "Cycle-20 repair: bind WithTimeout duration to validated restore-attempt budget and resolve import aliases per file; preserve sound WP04 implementation.",
         "Cycle-20 repair committed at 2326ed86; deadline dataflow, validation dominance, alias-scope, combined-WP04, architecture, race, and static gates pass.",
-        "Cycle-21 repair: replace spelling maps with object identity; require dominating validation on every deadline call path; prove a positive non-empty bound."
+        "Cycle-21 repair: replace spelling maps with object identity; require dominating validation on every deadline call path; prove a positive non-empty bound.",
+        "Cycle-21 semantic repair committed at 76f43ac8; object identity, universal call-path validation, positive bound, combined-WP04, architecture, race, and static gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -84,8 +85,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": 60620,
+      "shell_pid_created_at": "1788492734.43",
       "subtasks": {
         "T001": "done",
         "T002": "done",
