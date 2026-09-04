@@ -1,19 +1,19 @@
 {
-  "event_count": 307,
-  "last_event_id": "01M1P3GBMVKSW5DBR732K14XMM",
-  "materialized_at": "2026-09-04T11:40:16.411735+00:00",
+  "event_count": 308,
+  "last_event_id": "01M1P3HKZ3N0Z3DA9HBS6GGYHR",
+  "materialized_at": "2026-09-04T11:40:57.699444+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 6,
+    "approved": 7,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
     "in_progress": 1,
-    "in_review": 1,
+    "in_review": 0,
     "planned": 9
   },
   "work_packages": {
@@ -328,14 +328,14 @@
       }
     },
     "WP07": {
-      "actor": "renata",
+      "actor": "user",
       "agent": "renata",
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
-      "lane": "in_review",
-      "last_event_id": "01M1P3GBMVKSW5DBR732K14XMM",
-      "last_transition_at": "2026-09-04T11:40:16.411735+00:00",
+      "lane": "approved",
+      "last_event_id": "01M1P3HKZ3N0Z3DA9HBS6GGYHR",
+      "last_transition_at": "2026-09-04T11:40:57.699444+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Recovered allocator-created blocked state after verified manual dependency merge; no WP07 implementation began and no contract guard is bypassed.",
@@ -343,6 +343,11 @@
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
+      "review_result": {
+        "reference": "review-cycle-6:62b7ef980a7b74b5206fd66bc3fd5b54e9c76dd1",
+        "reviewer": "renata",
+        "verdict": "approved"
+      },
       "role": "reviewer",
       "shell_pid": 2616406,
       "shell_pid_created_at": "1788522011.62",
