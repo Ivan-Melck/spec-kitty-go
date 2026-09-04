@@ -200,6 +200,8 @@
         "WP08"
       ],
       "write_scope": [
+        "internal/controljournal/v2/commit_plan.go",
+        "internal/controljournal/v2/commit_plan_budget_test.go",
         "internal/controlstore/gapdb/workspace_authority.go",
         "internal/controlstore/gapdb/workspace_authority_test.go",
         "internal/execution/authority_v2.go",
