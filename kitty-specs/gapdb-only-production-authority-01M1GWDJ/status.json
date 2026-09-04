@@ -151,7 +151,8 @@
         "Independent review passed: durable bytes canonical, digest preimages stable, address-specific recovery bounds exact, 184-mutant/v2/race/static gates green.",
         "Reopened for bounded post-approval repair: add explicit permission-bound reconciliation resume under the same OperationID; generic transition remains forbidden.",
         "Exact candidate 35590268 independently approved; force only acknowledges coordinator planning artifacts merged into the lane",
-        "Independent review of exact candidate 35590268"
+        "Independent review of exact candidate 35590268",
+        "Permission semantic binding and all regression gates approved"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
