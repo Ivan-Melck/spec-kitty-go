@@ -340,7 +340,8 @@
       "notes": [
         "Recovered allocator-created blocked state after verified manual dependency merge; no WP07 implementation began and no contract guard is bypassed.",
         "Implementation complete at 62b7ef98; T034-T039 and all required gates pass.",
-        "Independent review cycle 6 approved exact commit 62b7ef98; contract audit READY."
+        "Independent review cycle 6 approved exact commit 62b7ef98; contract audit READY.",
+        "Approved WP07 code merged into mission coordination branch at 6acc6c13. | Done override: Lane tip is already an ancestor of coordination after merge 6acc6c13; post-merge ancestry check reports no commits beyond coordination."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
