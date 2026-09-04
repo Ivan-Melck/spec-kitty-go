@@ -17,22 +17,23 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 177
-	m2MutantCensusSHA256 = "9207a64510c1d9605a85a491b8be022eb0b6d4facebc8685c4e319f193f46b6b"
+	m2MutantCensusCount  = 184
+	m2MutantCensusSHA256 = "299a0dc403fd102c73b88e88569cd7da832766a957e6968e5dbc7eec37154283"
 )
 
 const (
-	m2ValidatorImport      = "all-go-imports-v1"
-	m2ValidatorReach       = "production-reachability-v1"
-	m2ValidatorPolicy      = "closed-policy-v2"
-	m2ValidatorKeyspace    = "keyspace-contract-v2"
-	m2ValidatorEligibility = "eligibility-seams-v1"
-	m2ValidatorDependency  = "dependency-graph-v2"
-	m2ValidatorEvents      = "event-registry-v2"
-	m2ValidatorLegacy      = "legacy-edge-filter-v1"
-	m2ValidatorRawStore    = "raw-store-census-v1"
-	m2ValidatorRecovery    = "foundation-contract-ownership-v2"
-	m2ValidatorCapReach    = "capability-adapter-reachability-v2"
+	m2ValidatorImport       = "all-go-imports-v1"
+	m2ValidatorReach        = "production-reachability-v1"
+	m2ValidatorPolicy       = "closed-policy-v2"
+	m2ValidatorKeyspace     = "keyspace-contract-v2"
+	m2ValidatorEligibility  = "eligibility-seams-v1"
+	m2ValidatorDependency   = "dependency-graph-v2"
+	m2ValidatorEvents       = "event-registry-v2"
+	m2ValidatorLegacy       = "legacy-edge-filter-v1"
+	m2ValidatorRawStore     = "raw-store-census-v1"
+	m2ValidatorRecovery     = "foundation-contract-ownership-v2"
+	m2ValidatorCapReach     = "capability-adapter-reachability-v2"
+	m2ValidatorDurableCodec = "durable-codec-compatibility-v2"
 )
 
 type m2ViolationObservation struct {
@@ -286,6 +287,9 @@ func m2ExecutableMutants() []m2MutantCase {
 	} {
 		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
 	}
+	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "PARTIAL-REPAIR"} {
+		cases = append(cases, m2Case("M-DURABLE-CODEC-"+fixture, m2ValidatorDurableCodec, fixture, "DURABLE_CODEC_COMPATIBILITY", fixture, ""))
+	}
 	return cases
 }
 
@@ -330,6 +334,11 @@ func observeM2Mutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
 		return observeM2RecoveryOwnershipMutant(t, mutant)
 	case m2ValidatorCapReach:
 		return observeM2CapabilityReachMutant(t, mutant)
+	case m2ValidatorDurableCodec:
+		if err := validateM2DurableCodecCompatibility(t, mutant.Fixture); err != nil {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "DURABLE_CODEC_COMPATIBILITY", Source: mutant.Fixture}
+		}
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 	default:
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "HARNESS_UNKNOWN_VALIDATOR", Source: mutant.Fixture}
 	}
@@ -639,6 +648,8 @@ func m2FixtureDigest(validator, fixture string) string {
 			return ""
 		}
 		material = graph
+	case m2ValidatorDurableCodec:
+		material = m2DurableCodecFixtureMaterial(fixture)
 	default:
 		return ""
 	}
@@ -724,7 +735,7 @@ func m2DigestJSON(value any) string {
 }
 
 func m2KnownValidator(value string) bool {
-	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore, m2ValidatorRecovery, m2ValidatorCapReach}, value)
+	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore, m2ValidatorRecovery, m2ValidatorCapReach, m2ValidatorDurableCodec}, value)
 }
 
 func m2SQLImportSource(fixture string) string {
