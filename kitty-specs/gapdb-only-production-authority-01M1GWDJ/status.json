@@ -1,7 +1,7 @@
 {
-  "event_count": 316,
-  "last_event_id": "01M1PJCS92RGYE2GMQN00YN7SE",
-  "materialized_at": "2026-09-04T16:00:27.938365+00:00",
+  "event_count": 317,
+  "last_event_id": "01M1PJEJX2CBEBW50AFBS55QA2",
+  "materialized_at": "2026-09-04T16:01:26.946258+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -175,15 +175,15 @@
       }
     },
     "WP03": {
-      "actor": "codex",
+      "actor": "user",
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp03-witness-gapdb",
-      "force_count": 7,
+      "force_count": 8,
       "lane": "planned",
-      "last_event_id": "01M1PG7P0ETZPHQ1PQGC5N5359",
-      "last_transition_at": "2026-09-04T15:22:43.598648+00:00",
+      "last_event_id": "01M1PJEJX2CBEBW50AFBS55QA2",
+      "last_transition_at": "2026-09-04T16:01:26.946258+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
