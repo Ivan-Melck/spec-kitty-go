@@ -1,7 +1,7 @@
 {
-  "event_count": 254,
-  "last_event_id": "01M1N8887MNQ160AA75XXQDDDP",
-  "materialized_at": "2026-09-04T03:43:59.220922+00:00",
+  "event_count": 255,
+  "last_event_id": "01M1N89FJT9E13FGJD02QEYDSP",
+  "materialized_at": "2026-09-04T03:44:39.514590+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,21 +12,21 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
-    "planned": 13
+    "planned": 12
   },
   "work_packages": {
     "WP01": {
-      "actor": "renata-gapdb-deadline-semantic-review",
+      "actor": "ivan-gapdb-deadline-cfg",
       "agent": "renata-gapdb-deadline-semantic-review",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-deadline-semantic",
-      "force_count": 30,
-      "lane": "planned",
-      "last_event_id": "01M1N8887MNQ160AA75XXQDDDP",
-      "last_transition_at": "2026-09-04T03:43:59.220922+00:00",
+      "force_count": 31,
+      "lane": "in_progress",
+      "last_event_id": "01M1N89FJT9E13FGJD02QEYDSP",
+      "last_transition_at": "2026-09-04T03:44:39.514590+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
