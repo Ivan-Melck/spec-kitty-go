@@ -40,6 +40,8 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- internal/execution/authority_v2.go
+- internal/execution/authority_v2_test.go
 - internal/execution/workspace_authority_v2.go
 - internal/execution/workspace_authority_v2_test.go
 - internal/workspace/**
@@ -88,7 +90,8 @@ spec-kitty agent action implement WP08 --agent codex
   `kitty-specs/gapdb-only-production-authority-01M1GWDJ/lanes.json`.
 - Planning and merge target: `feat/gapdb-only-production-authority`.
 - Use only the Spec Kitty-provided lane worktree.
-- Edit only `internal/workspace/**` and
+- Edit only `internal/workspace/**`, `internal/execution/authority_v2.go`,
+  `internal/execution/authority_v2_test.go`, and
   `internal/controlstore/gapdb/workspace_*.go`, plus the two explicitly owned
   `internal/execution/workspace_authority_v2*.go` composition files.
 - Preserve concurrent work and do not revert or absorb another agent's edits.
@@ -118,6 +121,25 @@ After lease 17 expires, workspace W1 remains evidence for lease 17. Lease 18
 gets W2. If the stale lease-17 process writes W1, it cannot make W1 current,
 transfer it to lease 18, create an admissible handoff, or pass review,
 acceptance, or integration authority checks.
+
+### Enforceable execution-slot binding
+
+The execution-slot state must record whether the current active lease has an
+immutable workspace binding. An unbound slot records neither a WorkspaceID nor
+a workspace-path-claim digest; a bound slot records both, and they are
+write-once for that lease generation. Initial binding updates the execution
+head and creates the workspace authority in one sealed publication. It must not
+leave a bound workspace while the execution slot still appears unbound.
+
+The ordinary execution service may expire only an unbound slot. When the slot
+is bound, its `ExecutionExpireV2` route must refuse before publication and
+direct callers to the execution-owned workspace composition. That composition
+alone may publish the execution expiry together with the exact bound
+workspace's irreversible quarantine in one batch. Reducer validation must also
+reject loss, replacement, or partial mutation of the binding across heartbeat,
+outcome, expiry, and replacement transitions. A replacement generation starts
+unbound and later binds a fresh WorkspaceID and fresh path claim; it never
+inherits its predecessor's binding.
 
 ## T040: Define workspace-owned model, ports, events, and reducer
 
@@ -247,6 +269,10 @@ invariant without pretending the database can revoke POSIX access.
    composition atomically publishes with lease expiry: execution authority
    becomes expired and its bound workspace becomes quarantined in the same
    GapDB revision.
+   This composition also owns the exact execution-slot transition needed to
+   establish or consume the immutable WorkspaceID/path-claim binding. The
+   general execution service must refuse bound-slot expiry rather than emit its
+   former execution-only publication.
 2. Bind quarantine evidence to WorkspaceID, LeaseID, generation/fence,
    RuntimeEpochID, WorkRevisionID, WorkID, reason, actor/process authority where
    relevant, and recorded occurrence time.

@@ -90,6 +90,19 @@ quarantines that workspace. If expiry wins first, binding's execution-head
 assertion fails. Once an execution slot records a bound WorkspaceID, expiry
 without the exact workspace quarantine contribution is invalid.
 
+The slot record therefore carries a paired, immutable WorkspaceID and
+workspace-path-claim digest for its current lease generation. Initial binding
+atomically advances the execution head while creating the workspace authority;
+an unbound-to-bound transition cannot be inferred from workspace state alone.
+Heartbeat and outcome preserve the pair byte-for-byte. The ordinary execution
+expiry operation refuses a bound slot before publication. Only the
+execution-owned workspace composition may consume a bound slot into an expired
+slot, and that same sealed publication must quarantine the exact WorkspaceID.
+A replacement generation begins unbound and must later bind a fresh identity
+and absent path claim. WP08 narrowly owns `internal/execution/authority_v2.go`
+and its test file in addition to its existing composition files so this law is
+enforced at the otherwise-bypassing entry point.
+
 ### Repository observations are external evidence
 
 Repository target state is never encoded as a fictional GapDB-fenced fact.
