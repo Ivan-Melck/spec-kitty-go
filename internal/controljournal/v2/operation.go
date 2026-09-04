@@ -472,8 +472,42 @@ type OperationTransition struct {
 	LastPublicationID   PublicationID
 }
 
+// EffectPermissionCoordinateV2 identifies the newly published permission
+// event and the effect whose pre-existing operation membership authorizes a
+// reconciliation resume. The journal deliberately does not interpret the
+// capability-owned permission payload.
+type EffectPermissionCoordinateV2 struct {
+	eventID    EventID
+	effectID   EffectID
+	commitment Digest
+}
+
+func (p EffectPermissionCoordinateV2) EventID() EventID   { return p.eventID }
+func (p EffectPermissionCoordinateV2) EffectID() EffectID { return p.effectID }
+func (p EffectPermissionCoordinateV2) Commitment() Digest { return p.commitment }
+
 func AdvanceOperationState(prior OperationStateV2, transition OperationTransition) (OperationStateV2, error) {
-	if prior.logicalVersion == 0 || transition.ExpectedVersion != prior.logicalVersion || transition.NextVersion != prior.logicalVersion+1 || !allowedOperationTransition(prior.status, transition.Status) {
+	if !allowedOperationTransition(prior.status, transition.Status) {
+		return OperationStateV2{}, invalid(ErrorInvalidTransition, "operation_version_or_status")
+	}
+	return advanceOperationStateMembership(prior, transition)
+}
+
+// ResumeOperationStateWithEffectPermissionV2 admits only the otherwise
+// forbidden reconciliation_required -> in_progress edge. The permission must
+// be a fresh event in the next cumulative membership for an effect already
+// bound to the operation before this transition.
+func ResumeOperationStateWithEffectPermissionV2(prior OperationStateV2, transition OperationTransition, permission EffectPermissionCoordinateV2) (OperationStateV2, error) {
+	if prior.status != StatusReconciliationRequired || transition.Status != StatusInProgress ||
+		validateIdentity("permission_event_id", string(permission.eventID)) != nil || validateIdentity("permission_effect_id", string(permission.effectID)) != nil || permission.commitment.IsZero() ||
+		containsID(prior.eventIDs, permission.eventID) || !containsID(transition.EventIDs, permission.eventID) || !containsID(prior.effectIDs, permission.effectID) {
+		return OperationStateV2{}, invalid(ErrorInvalidTransition, "effect_permission_resume")
+	}
+	return advanceOperationStateMembership(prior, transition)
+}
+
+func advanceOperationStateMembership(prior OperationStateV2, transition OperationTransition) (OperationStateV2, error) {
+	if prior.logicalVersion == 0 || transition.ExpectedVersion != prior.logicalVersion || transition.NextVersion != prior.logicalVersion+1 {
 		return OperationStateV2{}, invalid(ErrorInvalidTransition, "operation_version_or_status")
 	}
 	if prior.status == StatusResolved || prior.status == StatusRefused {
@@ -484,6 +518,15 @@ func AdvanceOperationState(prior OperationStateV2, transition OperationTransitio
 	}
 	return NewOperationStateV2(OperationStateInput{prior.operationID, transition.NextVersion, transition.Status, transition.ResultKind,
 		transition.ResultSchemaVersion, transition.CanonicalResult, transition.EventIDs, transition.EffectIDs, transition.LastPublicationID})
+}
+
+func containsID[T ~string](values []T, wanted T) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func allowedOperationTransition(from, to OperationStatus) bool {
