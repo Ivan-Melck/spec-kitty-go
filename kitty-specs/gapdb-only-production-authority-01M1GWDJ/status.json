@@ -411,7 +411,7 @@
     },
     "WP09": {
       "actor": "user",
-      "agent": "mill",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
@@ -421,9 +421,11 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Resolved failed workspace allocation: all dependency lineages are integrated and the lane-i worktree was fast-forwarded to coordinator 20757d1f.",
-        "Ready for independent review at c4dc9ec817f2f0acab31068b6be542b27b301c58 tree 1fa78c812cc6e68b011a611630230f89c6799a53. Force acknowledges only inherited coordinator governance files in the recovered lane; no product or test failure is bypassed."
+        "Ready for independent review at c4dc9ec817f2f0acab31068b6be542b27b301c58 tree 1fa78c812cc6e68b011a611630230f89c6799a53. Force acknowledges only inherited coordinator governance files in the recovered lane; no product or test failure is bypassed.",
+        "Independent review requested changes to candidate c4dc9ec817f2f0acab31068b6be542b27b301c58; correction cycle 2 required."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP09-candidate-handoff-and-independent-review-authority/review-cycle-1.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP09-candidate-handoff-and-independent-review-authority/review-cycle-1.md",
@@ -431,14 +433,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T044": "done",
-        "T045": "done",
-        "T046": "done",
-        "T047": "done",
-        "T048": "done"
+        "T044": "planned",
+        "T045": "planned",
+        "T046": "planned",
+        "T047": "planned",
+        "T048": "planned"
       }
     },
     "WP10": {
