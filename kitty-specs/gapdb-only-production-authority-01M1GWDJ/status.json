@@ -79,7 +79,8 @@
         "Cycle-22 control-flow repair committed at 415ac94b; exact predicates, function-value fencing, else propagation, inline self-validation, WP04 overlay, architecture/race/static gates pass.",
         "Defect-8 repair: delete custom CFG verifier; retain exact object-identity capability confinement while WP04 owns source-bound deadline behavior.",
         "Defect-8 structural correction c05094d5: bounded go/types proof; behavior delegated to WP04.",
-        "Cycle-24 repair: reject inferred and forbidden transitive duration state without reintroducing control-flow analysis."
+        "Cycle-24 repair: reject inferred and forbidden transitive duration state without reintroducing control-flow analysis.",
+        "Cycle-24 repair 3e8b393d: confine inferred, erased, and transitive duration state with bounded go/types proof."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
