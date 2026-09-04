@@ -19,10 +19,10 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-duration-state",
-      "agent": "renata-gapdb-deadline-structural",
+      "agent": "ivan-gapdb-duration-state",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "ivan-gapdb-deadline-structural",
+      "assignee": "ivan-gapdb-duration-state",
       "force_count": 35,
       "lane": "in_progress",
       "last_event_id": "01M1NBBNGW85E5T7NTKQNW0YJT",
@@ -78,7 +78,8 @@
         "Cycle-22 repair: close compound-gate and function-value escapes; accept else-dominated and inline self-validating paths without weakening prior semantic guards.",
         "Cycle-22 control-flow repair committed at 415ac94b; exact predicates, function-value fencing, else propagation, inline self-validation, WP04 overlay, architecture/race/static gates pass.",
         "Defect-8 repair: delete custom CFG verifier; retain exact object-identity capability confinement while WP04 owns source-bound deadline behavior.",
-        "Defect-8 structural correction c05094d5: bounded go/types proof; behavior delegated to WP04."
+        "Defect-8 structural correction c05094d5: bounded go/types proof; behavior delegated to WP04.",
+        "Cycle-24 repair: reject inferred and forbidden transitive duration state without reintroducing control-flow analysis."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
