@@ -193,6 +193,35 @@ func TestDecompositionDishonestProviderMatrixNeverCompletesV2(t *testing.T) {
 	}
 }
 
+func TestDecompositionFreshOperationRejectsExactMarkerPreloadV2(t *testing.T) {
+	t.Parallel()
+	request := fixtureDecompositionRequestV2(t)
+	plan := request.Effects[0]
+	effectID, childID := DeriveDecompositionEffectIdentityV2(request.Requested.OperationID, plan.Kind, plan.WorkID)
+	digest, _ := journalv2.ReducerStateDigestV2(plan.CanonicalDefinition)
+	trace := []string{}
+	port := &decompositionPortProbeV2{authorityPortProbeV2: authorityPortProbeV2{
+		resolution: OperationResolutionV2{Kind: OperationAbsentV2},
+		mission:    MissionObservationV2{State: request.Requested.Expected, RecordRevision: 8, LastEventID: "prior-event"},
+	}, trace: &trace}
+	provider := &decompositionProviderProbeV2{trace: &trace, observations: map[journalv2.EffectID]DecompositionProviderObservationV2{
+		effectID: {EffectID: effectID, WorkID: plan.WorkID, ExternalRef: "preloaded", ProviderRevision: 1, ValueDigest: digest, OperationMarker: childID},
+	}}
+	service, _ := NewDecompositionAuthorityServiceV2(port, &epochProbeV2{epoch: request.Requested.OriginatingRuntimeEpochID}, provider, journalv2.DefaultEventRegistryV2())
+	result, err := service.Execute(t.Context(), request)
+	if !IsMissionAuthorityKindV2(err, MissionAuthorityAmbiguousV2) || result.State.Decomposition() != DecompositionReconciliationRequiredV2 {
+		t.Fatalf("fresh operation accepted exact preloaded provider state: state=%s err=%v", result.State.Decomposition(), err)
+	}
+	for _, call := range trace {
+		if call == "mutate" {
+			t.Fatalf("fresh preloaded state triggered mutation: trace=%v", trace)
+		}
+	}
+	if len(port.publishes) != 2 || port.publishes[1].OperationState().Status() != journalv2.StatusAmbiguous {
+		t.Fatalf("fresh preload did not seal reconciliation: publications=%d", len(port.publishes))
+	}
+}
+
 func TestDecompositionCrashBeforeIntentMakesNoProviderCallV2(t *testing.T) {
 	t.Parallel()
 	request := fixtureDecompositionRequestV2(t)
