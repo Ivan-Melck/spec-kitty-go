@@ -1,14 +1,4 @@
 ---
-affected_files: []
-cycle_number: 7
-mission_slug: gapdb-only-production-authority-01M1GWDJ
-reproduction_command:
-reviewed_at: '2026-09-04T15:22:39Z'
-reviewer_agent: codex
-wp_id: WP03
----
-
----
 affected_files:
 - go.mod
 - go.sum
@@ -55,8 +45,11 @@ these bounded changes without altering capability policy:
    record-revision conditions. Assertions are not mutations and must never gain
    TTL, value bytes, or a write result.
 4. Translate the permanent workspace-path claim record through one closed key
-   spelling derived only from its sealed semantic claim digest. Require absent,
-   ordinary value, no expiry, and exact witness membership.
+   spelling derived only from its sealed semantic claim digest:
+   `spk/v2/workspace-path-claims/<64-lowercase-claim-digest>`. Require absent,
+   ordinary value, no expiry, and exact witness membership. The codec must
+   expose a closed workspace-path-claim kind/accessor/parser; no raw path or
+   caller-chosen provider key participates in the spelling.
 5. Enforce the product's combined assertion-plus-mutation count and byte budget
    before delivery. Require exact `MutationCount` and `AssertionCount` in a
    successful provider response.
