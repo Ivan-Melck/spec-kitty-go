@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"go/ast"
-	"go/constant"
 	"go/importer"
 	"go/parser"
 	"go/token"
@@ -189,167 +188,60 @@ func TestM2DependencyRestoreTimeUseIsDeadlineBudgetOnly(t *testing.T) {
 		wantTarget string
 	}{
 		{
-			name: "validated_deadline",
+			name: "bounded_structural_capability",
 			source: `package restore
 import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
-var defaultBudget = Budgets{Maximum: 30 * time.Second}
+type BudgetsV2 struct { MaximumDuration time.Duration }
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+var defaultBudget = BudgetsV2{MaximumDuration: 30 * time.Second}
 `,
 		},
 		{
 			name: "ambient_clock",
 			source: `package restore
 import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _, _ = child, time.Now() }
-func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
+type BudgetsV2 struct { MaximumDuration time.Duration }
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _, _ = child, time.Now() }
 `,
 			wantTarget: "time.Now",
 		},
 		{
-			name: "decorative_duration_without_deadline",
+			name: "misplaced_duration_state",
 			source: `package restore
 import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func run(ctx context.Context, budgets Budgets) { _, _ = ctx, budgets }
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type ResultV2 struct { FinishedAfter time.Duration }
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
 `,
-			wantTarget: "context.WithTimeout(duration-budget)",
+			wantTarget: "time.Duration.state",
 		},
 		{
-			name: "disconnected_duration_and_timeout",
+			name: "missing_direct_deadline_call",
 			source: `package restore
 import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-var decorative time.Duration
-func unrelated(ctx context.Context) { child, cancel := context.WithTimeout(ctx, time.Second); defer cancel(); _ = child }
-func attempt(ctx context.Context, budgets Budgets) { _, _ = ctx, budgets }
+type BudgetsV2 struct { MaximumDuration time.Duration }
+func run(ctx context.Context, budgets BudgetsV2) { _, _ = ctx, budgets }
 `,
-			wantTarget: "context.WithTimeout(duration-budget)",
+			wantTarget: "context.WithTimeout",
 		},
 		{
-			name: "discarded_validation_result",
+			name: "deadline_function_escape",
 			source: `package restore
 import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets) { validate(budgets); attempt(ctx, budgets) }
+type BudgetsV2 struct { MaximumDuration time.Duration }
+var escaped = context.WithTimeout
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
 `,
-			wantTarget: "context.WithTimeout(duration-budget)",
+			wantTarget: "context.WithTimeout.escape",
 		},
 		{
-			name: "decorative_validation_comparisons",
+			name: "control_flow_owned_by_wp04",
 			source: `package restore
 import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 {}; if budgets.Maximum > 5*time.Minute {}; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
+type BudgetsV2 struct { MaximumDuration time.Duration }
+func attempt(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+func run(ctx context.Context, budgets BudgetsV2, enabled bool) { if enabled { budgets.MaximumDuration = 0 }; invoke := attempt; invoke(ctx, budgets) }
 `,
-			wantTarget: "context.WithTimeout(duration-budget)",
-		},
-		{
-			name: "branch_only_validation",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets, enabled bool) { if enabled { if validate(budgets) != nil { return } }; attempt(ctx, budgets) }
-`,
-			wantTarget: "context.WithTimeout(duration-budget)",
-		},
-		{
-			name: "mixed_validated_and_unvalidated_callers",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func good(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
-func bad(ctx context.Context, budgets Budgets) { attempt(ctx, budgets) }
-`,
-			wantTarget: "context.WithTimeout(duration-budget)",
-		},
-		{
-			name: "compound_boolean_masks_failure",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets, enabled bool) { if validate(budgets) != nil && enabled { return }; attempt(ctx, budgets) }
-`,
-			wantTarget: "context.WithTimeout(duration-budget)",
-		},
-		{
-			name: "function_value_bypasses_validation",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func good(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
-func bad(ctx context.Context, budgets Budgets) { invoke := attempt; invoke(ctx, budgets) }
-`,
-			wantTarget: "context.WithTimeout(duration-budget)",
-		},
-		{
-			name: "zero_upper_bound",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 0*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
-`,
-			wantTarget: "context.WithTimeout(duration-budget)",
-		},
-		{
-			name: "else_dominated_validation",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return } else { attempt(ctx, budgets) } }
-`,
-		},
-		{
-			name: "inline_dominating_bounds",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func run(ctx context.Context, budgets Budgets) { if budgets.Maximum <= 0 { return }; if budgets.Maximum > 5*time.Minute { return }; child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-`,
-		},
-		{
-			name: "exported_self_validating_helper",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func Attempt(ctx context.Context, budgets Budgets) { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return }; child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-`,
-		},
-		{
-			name: "recursive_self_validating_helper",
-			source: `package restore
-import ("context"; "time")
-type Budgets struct { Maximum time.Duration }
-func attempt(ctx context.Context, budgets Budgets, recurse bool) { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return }; if recurse { attempt(ctx, budgets, false); return }; child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-`,
-		},
-		{
-			name: "deadline_without_duration_budget",
-			source: `package restore
-import ("context"; "time")
-func run(ctx context.Context) { child, cancel := context.WithTimeout(ctx, 30); defer cancel(); _, _ = child, time.Second }
-`,
-			wantTarget: "time.Duration",
 		},
 		{
 			name: "blank_time_import",
@@ -387,10 +279,8 @@ func TestM2DependencyRestoreAliasesRemainFileScoped(t *testing.T) {
 	writeGoFixture(t, root, "go.mod", "module "+m2ModulePath+"\n\ngo 1.26\n")
 	writeGoFixture(t, root, "internal/controljournal/v2/restore/restore.go", `package restore
 import ("context"; t "time")
-type Budgets struct { Maximum t.Duration }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*t.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
+type BudgetsV2 struct { MaximumDuration t.Duration }
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
 `)
 	writeGoFixture(t, root, "internal/controljournal/v2/restore/diagnostic.go", `package restore
 type localClock struct { Now int }
@@ -410,11 +300,9 @@ func TestM2DependencyRestoreAliasShadowUsesObjectIdentity(t *testing.T) {
 	writeGoFixture(t, root, "go.mod", "module "+m2ModulePath+"\n\ngo 1.26\n")
 	writeGoFixture(t, root, "internal/controljournal/v2/restore/restore.go", `package restore
 import ("context"; t "time")
-type Budgets struct { Maximum t.Duration }
+type BudgetsV2 struct { MaximumDuration t.Duration }
 type localClock struct { Now int }
-func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*t.Minute { return context.Canceled }; return nil }
-func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
-func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
 func diagnostic(t localClock) int { return t.Now }
 `)
 	graph, err := LoadGraph(t.Context(), root)
@@ -891,20 +779,25 @@ func m2RestoreDeadlineSourceViolations(graph Graph) Violations {
 	config := types.Config{Importer: m2RestoreTypeImporter{fallback: importer.Default()}, Error: func(error) {}}
 	_, _ = config.Check(restorePackage, fset, files, info)
 
+	budgetDuration := m2RestoreBudgetDurationSelector(files, info)
 	durationUses := 0
 	for _, file := range files {
 		var violation string
 		ast.Inspect(file, func(node ast.Node) bool {
-			selector, ok := node.(*ast.SelectorExpr)
+			identifier, ok := node.(*ast.Ident)
 			if !ok {
 				return true
 			}
-			object := info.Uses[selector.Sel]
+			object := info.Uses[identifier]
 			if !m2RestoreObjectFromPackage(object, "time") {
 				return true
 			}
 			if object.Name() == "Duration" {
 				durationUses++
+				if budgetDuration == nil || identifier != budgetDuration.Sel {
+					violation = "time.Duration.state"
+					return false
+				}
 			} else if !slices.Contains([]string{"Second", "Minute"}, object.Name()) {
 				violation = "time." + object.Name()
 				return false
@@ -915,11 +808,40 @@ func m2RestoreDeadlineSourceViolations(graph Graph) Violations {
 			return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: violation}}
 		}
 	}
-	if durationUses == 0 {
-		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "time.Duration"}}
+	if durationUses != 1 || budgetDuration == nil {
+		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "time.Duration.state"}}
 	}
-	if !m2RestoreDurationReachesValidatedDeadline(files, info) {
-		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "context.WithTimeout(duration-budget)"}}
+	directUses := make(map[*ast.Ident]bool)
+	directCalls := 0
+	for _, file := range files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || !m2RestoreCallTargetsPackageFunction(call, info, "context", "WithTimeout") {
+				return true
+			}
+			if identifier := m2RestoreCalledFunctionIdentifier(call); identifier != nil {
+				directUses[identifier] = true
+				directCalls++
+			}
+			return true
+		})
+	}
+	for _, file := range files {
+		escaped := false
+		ast.Inspect(file, func(node ast.Node) bool {
+			identifier, ok := node.(*ast.Ident)
+			if ok && m2RestoreObjectFromPackage(info.Uses[identifier], "context") && identifier.Name == "WithTimeout" && !directUses[identifier] {
+				escaped = true
+				return false
+			}
+			return !escaped
+		})
+		if escaped {
+			return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "context.WithTimeout.escape"}}
+		}
+	}
+	if directCalls == 0 {
+		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "context.WithTimeout"}}
 	}
 	return nil
 }
@@ -935,460 +857,61 @@ func (i m2RestoreTypeImporter) Import(path string) (*types.Package, error) {
 	return stub, nil
 }
 
-type m2RestoreDeadlineSpec struct {
-	function       *types.Func
-	declaration    *ast.FuncDecl
-	parameter      *types.Var
-	field          *types.Var
-	parameterIndex int
-	call           *ast.CallExpr
-}
-
-type m2RestoreValidatorSpec struct {
-	function       *types.Func
-	parameter      *types.Var
-	field          *types.Var
-	parameterIndex int
-	position       token.Pos
-}
-
-func m2RestoreDurationReachesValidatedDeadline(files []*ast.File, info *types.Info) bool {
-	functions := make(map[*types.Func]*ast.FuncDecl)
+func m2RestoreBudgetDurationSelector(files []*ast.File, info *types.Info) *ast.SelectorExpr {
+	var admitted *ast.SelectorExpr
 	for _, file := range files {
 		for _, declaration := range file.Decls {
-			function, ok := declaration.(*ast.FuncDecl)
-			if ok && function.Recv == nil && function.Body != nil {
-				if object, objectOK := info.Defs[function.Name].(*types.Func); objectOK {
-					functions[object] = function
+			generic, ok := declaration.(*ast.GenDecl)
+			if !ok || generic.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range generic.Specs {
+				typeSpec, ok := specification.(*ast.TypeSpec)
+				if !ok || typeSpec.Name.Name != "BudgetsV2" {
+					continue
+				}
+				structure, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					return nil
+				}
+				for _, field := range structure.Fields.List {
+					if len(field.Names) != 1 || field.Names[0].Name != "MaximumDuration" {
+						continue
+					}
+					selector, ok := field.Type.(*ast.SelectorExpr)
+					if !ok {
+						return nil
+					}
+					object := info.Uses[selector.Sel]
+					if !m2RestoreObjectFromPackage(object, "time") || object.Name() != "Duration" || admitted != nil {
+						return nil
+					}
+					admitted = selector
 				}
 			}
 		}
 	}
-	deadlines := make([]m2RestoreDeadlineSpec, 0)
-	validDeadlineCalls := true
-	for function, declaration := range functions {
-		ast.Inspect(declaration.Body, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok || !m2RestoreCallTargetsPackageFunction(call, info, "context", "WithTimeout") {
-				return true
-			}
-			deadline, admitted := m2RestoreDeadlineFromCall(function, declaration, call, info)
-			if !admitted {
-				validDeadlineCalls = false
-				return false
-			}
-			deadlines = append(deadlines, deadline)
-			return true
-		})
-	}
-	if !validDeadlineCalls || len(deadlines) == 0 {
-		return false
-	}
-	validators := make(map[*types.Func][]m2RestoreValidatorSpec)
-	for function, declaration := range functions {
-		signature := function.Type().(*types.Signature)
-		for parameterIndex := 0; parameterIndex < signature.Params().Len(); parameterIndex++ {
-			parameter := signature.Params().At(parameterIndex)
-			for _, deadline := range deadlines {
-				if position, valid := m2RestoreValidatedDuration(declaration.Body, info, parameter, deadline.field, true); valid {
-					validators[function] = append(validators[function], m2RestoreValidatorSpec{function, parameter, deadline.field, parameterIndex, position})
-				}
-			}
-		}
-	}
-	for _, deadline := range deadlines {
-		if m2RestoreDeadlineInternallyValidated(deadline, info) {
-			continue
-		}
-		if deadline.function.Exported() || m2RestoreHasFunctionValueReference(functions, deadline.function, info) ||
-			!m2RestoreEveryCallerValidates(functions, deadline, validators, info) {
-			return false
-		}
-	}
-	return true
+	return admitted
 }
 
-func m2RestoreDeadlineFromCall(function *types.Func, declaration *ast.FuncDecl, call *ast.CallExpr, info *types.Info) (m2RestoreDeadlineSpec, bool) {
-	if len(call.Args) < 2 {
-		return m2RestoreDeadlineSpec{}, false
-	}
-	selector, ok := call.Args[1].(*ast.SelectorExpr)
-	if !ok {
-		return m2RestoreDeadlineSpec{}, false
-	}
-	selection := info.Selections[selector]
-	field, fieldOK := selectionObject(selection).(*types.Var)
-	receiver, receiverOK := selector.X.(*ast.Ident)
-	parameter, parameterOK := info.Uses[receiver].(*types.Var)
-	if !fieldOK || !field.IsField() || !receiverOK || !parameterOK || !m2RestoreIsDuration(field.Type()) {
-		return m2RestoreDeadlineSpec{}, false
-	}
-	parameterIndex := m2RestoreParameterIndex(function, parameter)
-	if parameterIndex < 0 {
-		return m2RestoreDeadlineSpec{}, false
-	}
-	return m2RestoreDeadlineSpec{function, declaration, parameter, field, parameterIndex, call}, true
-}
-
-func selectionObject(selection *types.Selection) types.Object {
-	if selection == nil {
+func m2RestoreCalledFunctionIdentifier(call *ast.CallExpr) *ast.Ident {
+	switch function := call.Fun.(type) {
+	case *ast.Ident:
+		return function
+	case *ast.SelectorExpr:
+		return function.Sel
+	default:
 		return nil
 	}
-	return selection.Obj()
-}
-
-func m2RestoreParameterIndex(function *types.Func, parameter *types.Var) int {
-	signature := function.Type().(*types.Signature)
-	for index := 0; index < signature.Params().Len(); index++ {
-		if signature.Params().At(index) == parameter {
-			return index
-		}
-	}
-	return -1
-}
-
-func m2RestoreValidatedDuration(body *ast.BlockStmt, info *types.Info, parameter, field *types.Var, requireFailure bool) (token.Pos, bool) {
-	minimum, maximum := int64(0), int64(-1)
-	position := token.NoPos
-	for _, node := range body.List {
-		statement, ok := node.(*ast.IfStmt)
-		if !ok || statement.Else != nil || !m2RestoreBlockTerminates(statement.Body) || requireFailure && !m2RestoreBlockReturnsFailure(statement.Body) {
-			continue
-		}
-		statementMatched := false
-		for _, condition := range m2RestoreDisjunction(statement.Cond) {
-			if value, boundMatched := m2RestoreInvalidLowerBound(condition, info, parameter, field); boundMatched && value > minimum {
-				minimum = value
-				statementMatched = true
-			}
-			if value, boundMatched := m2RestoreInvalidUpperBound(condition, info, parameter, field); boundMatched && (maximum < 0 || value < maximum) {
-				maximum = value
-				statementMatched = true
-			}
-		}
-		if statementMatched {
-			position = statement.Pos()
-		}
-	}
-	return position, position.IsValid() && minimum >= 1 && maximum >= minimum
-}
-
-func m2RestoreDisjunction(expression ast.Expr) []ast.Expr {
-	binary, ok := expression.(*ast.BinaryExpr)
-	if !ok || binary.Op != token.LOR {
-		return []ast.Expr{expression}
-	}
-	return append(m2RestoreDisjunction(binary.X), m2RestoreDisjunction(binary.Y)...)
-}
-
-func m2RestoreInvalidLowerBound(expression ast.Expr, info *types.Info, parameter, field *types.Var) (int64, bool) {
-	comparison, ok := expression.(*ast.BinaryExpr)
-	if !ok {
-		return 0, false
-	}
-	operation, other, matched := comparison.Op, comparison.Y, m2RestoreFieldExpression(comparison.X, info, parameter, field)
-	if !matched && m2RestoreFieldExpression(comparison.Y, info, parameter, field) {
-		operation, other, matched = m2RestoreReverseComparison(comparison.Op), comparison.X, true
-	}
-	value, exact := m2RestoreConstantInt64(other, info)
-	if !matched || !exact {
-		return 0, false
-	}
-	switch operation {
-	case token.LEQ:
-		if value == int64(^uint64(0)>>1) {
-			return 0, false
-		}
-		return value + 1, true
-	case token.LSS:
-		return value, true
-	default:
-		return 0, false
-	}
-}
-
-func m2RestoreInvalidUpperBound(expression ast.Expr, info *types.Info, parameter, field *types.Var) (int64, bool) {
-	comparison, ok := expression.(*ast.BinaryExpr)
-	if !ok {
-		return 0, false
-	}
-	operation, other, matched := comparison.Op, comparison.Y, m2RestoreFieldExpression(comparison.X, info, parameter, field)
-	if !matched && m2RestoreFieldExpression(comparison.Y, info, parameter, field) {
-		operation, other, matched = m2RestoreReverseComparison(comparison.Op), comparison.X, true
-	}
-	value, exact := m2RestoreConstantInt64(other, info)
-	if !matched || !exact {
-		return 0, false
-	}
-	switch operation {
-	case token.GTR:
-		return value, true
-	case token.GEQ:
-		if value == -int64(^uint64(0)>>1)-1 {
-			return 0, false
-		}
-		return value - 1, true
-	default:
-		return 0, false
-	}
-}
-
-func m2RestoreReverseComparison(operation token.Token) token.Token {
-	switch operation {
-	case token.LSS:
-		return token.GTR
-	case token.LEQ:
-		return token.GEQ
-	case token.GTR:
-		return token.LSS
-	case token.GEQ:
-		return token.LEQ
-	default:
-		return operation
-	}
-}
-
-func m2RestoreFieldExpression(expression ast.Expr, info *types.Info, parameter, field *types.Var) bool {
-	selector, ok := expression.(*ast.SelectorExpr)
-	if !ok || selectionObject(info.Selections[selector]) != field {
-		return false
-	}
-	receiver, ok := selector.X.(*ast.Ident)
-	return ok && info.Uses[receiver] == parameter
-}
-
-func m2RestoreConstantInt64(expression ast.Expr, info *types.Info) (int64, bool) {
-	value := info.Types[expression].Value
-	if value == nil || value.Kind() != constant.Int {
-		return 0, false
-	}
-	return constant.Int64Val(value)
-}
-
-type m2RestoreBudgetKey struct {
-	variable *types.Var
-	field    *types.Var
-}
-
-type m2RestoreCallRequirement func(*ast.CallExpr) (m2RestoreBudgetKey, bool)
-
-func m2RestoreDeadlineInternallyValidated(deadline m2RestoreDeadlineSpec, info *types.Info) bool {
-	position, valid := m2RestoreValidatedDuration(deadline.declaration.Body, info, deadline.parameter, deadline.field, false)
-	return valid && position < deadline.call.Pos()
-}
-
-func m2RestoreHasFunctionValueReference(functions map[*types.Func]*ast.FuncDecl, target *types.Func, info *types.Info) bool {
-	directCalls := make(map[*ast.Ident]bool)
-	for _, declaration := range functions {
-		ast.Inspect(declaration.Body, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			if identifier, identifierOK := call.Fun.(*ast.Ident); identifierOK && info.Uses[identifier] == target {
-				directCalls[identifier] = true
-			}
-			return true
-		})
-	}
-	for _, declaration := range functions {
-		escaped := false
-		ast.Inspect(declaration.Body, func(node ast.Node) bool {
-			identifier, ok := node.(*ast.Ident)
-			if ok && info.Uses[identifier] == target && !directCalls[identifier] {
-				escaped = true
-				return false
-			}
-			return !escaped
-		})
-		if escaped {
-			return true
-		}
-	}
-	return false
-}
-
-func m2RestoreEveryCallerValidates(functions map[*types.Func]*ast.FuncDecl, deadline m2RestoreDeadlineSpec, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info) bool {
-	requirement := func(call *ast.CallExpr) (m2RestoreBudgetKey, bool) {
-		if m2RestoreCalledFunction(call, info) != deadline.function || deadline.parameterIndex >= len(call.Args) {
-			return m2RestoreBudgetKey{}, false
-		}
-		argument, ok := call.Args[deadline.parameterIndex].(*ast.Ident)
-		variable, variableOK := info.Uses[argument].(*types.Var)
-		if !ok || !variableOK {
-			return m2RestoreBudgetKey{}, true
-		}
-		return m2RestoreBudgetKey{variable, deadline.field}, true
-	}
-	total := 0
-	for _, declaration := range functions {
-		count, valid := m2RestoreAnalyzeBlock(declaration.Body, make(map[m2RestoreBudgetKey]bool), validators, info, requirement)
-		if !valid {
-			return false
-		}
-		total += count
-	}
-	return total > 0
-}
-
-func m2RestoreAnalyzeBlock(body *ast.BlockStmt, validated map[m2RestoreBudgetKey]bool, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info, requirement m2RestoreCallRequirement) (int, bool) {
-	total := 0
-	for _, statement := range body.List {
-		count, valid := m2RestoreAnalyzeStatement(statement, validated, validators, info, requirement)
-		total += count
-		if !valid {
-			return total, false
-		}
-		if conditional, ok := statement.(*ast.IfStmt); ok {
-			for _, key := range m2RestoreValidatorGate(conditional, validators, info) {
-				validated[key] = true
-			}
-		}
-	}
-	return total, true
-}
-
-func m2RestoreAnalyzeStatement(statement ast.Stmt, validated map[m2RestoreBudgetKey]bool, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info, requirement m2RestoreCallRequirement) (int, bool) {
-	check := func(node ast.Node) (int, bool) {
-		if node == nil {
-			return 0, true
-		}
-		total, valid := 0, true
-		ast.Inspect(node, func(current ast.Node) bool {
-			call, ok := current.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			key, required := requirement(call)
-			if required {
-				total++
-				if key.variable == nil || !validated[key] {
-					valid = false
-				}
-			}
-			return true
-		})
-		return total, valid
-	}
-	merge := func(leftCount int, leftValid bool, rightCount int, rightValid bool) (int, bool) {
-		return leftCount + rightCount, leftValid && rightValid
-	}
-	clone := func() map[m2RestoreBudgetKey]bool {
-		copy := make(map[m2RestoreBudgetKey]bool, len(validated))
-		for key, value := range validated {
-			copy[key] = value
-		}
-		return copy
-	}
-	switch typed := statement.(type) {
-	case *ast.IfStmt:
-		gateKeys := m2RestoreValidatorGate(typed, validators, info)
-		count, valid := check(typed.Cond)
-		if typed.Init != nil {
-			initCount, initValid := check(typed.Init)
-			count, valid = merge(count, valid, initCount, initValid)
-		}
-		bodyCount, bodyValid := m2RestoreAnalyzeBlock(typed.Body, clone(), validators, info, requirement)
-		count, valid = merge(count, valid, bodyCount, bodyValid)
-		if branch, ok := typed.Else.(*ast.BlockStmt); ok {
-			elseValidated := clone()
-			for _, key := range gateKeys {
-				elseValidated[key] = true
-			}
-			branchCount, branchValid := m2RestoreAnalyzeBlock(branch, elseValidated, validators, info, requirement)
-			count, valid = merge(count, valid, branchCount, branchValid)
-		} else if branch, ok := typed.Else.(*ast.IfStmt); ok {
-			elseValidated := clone()
-			for _, key := range gateKeys {
-				elseValidated[key] = true
-			}
-			branchCount, branchValid := m2RestoreAnalyzeStatement(branch, elseValidated, validators, info, requirement)
-			count, valid = merge(count, valid, branchCount, branchValid)
-		}
-		return count, valid
-	case *ast.ForStmt:
-		count, valid := check(typed.Init)
-		conditionCount, conditionValid := check(typed.Cond)
-		count, valid = merge(count, valid, conditionCount, conditionValid)
-		postCount, postValid := check(typed.Post)
-		count, valid = merge(count, valid, postCount, postValid)
-		bodyCount, bodyValid := m2RestoreAnalyzeBlock(typed.Body, clone(), validators, info, requirement)
-		return merge(count, valid, bodyCount, bodyValid)
-	case *ast.RangeStmt:
-		count, valid := check(typed.X)
-		bodyCount, bodyValid := m2RestoreAnalyzeBlock(typed.Body, clone(), validators, info, requirement)
-		return merge(count, valid, bodyCount, bodyValid)
-	case *ast.BlockStmt:
-		return m2RestoreAnalyzeBlock(typed, clone(), validators, info, requirement)
-	case *ast.LabeledStmt:
-		return m2RestoreAnalyzeStatement(typed.Stmt, clone(), validators, info, requirement)
-	default:
-		return check(statement)
-	}
-}
-
-func m2RestoreValidatorGate(statement *ast.IfStmt, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info) []m2RestoreBudgetKey {
-	if !m2RestoreBlockTerminates(statement.Body) {
-		return nil
-	}
-	var call *ast.CallExpr
-	if assignment, ok := statement.Init.(*ast.AssignStmt); ok && len(assignment.Lhs) == 1 && len(assignment.Rhs) == 1 {
-		candidate, callOK := assignment.Rhs[0].(*ast.CallExpr)
-		identifier, identifierOK := assignment.Lhs[0].(*ast.Ident)
-		if callOK && identifierOK && m2RestoreConditionExactlyRejectsObject(statement.Cond, info.Defs[identifier], info) {
-			call = candidate
-		}
-	}
-	if call == nil {
-		comparison, ok := statement.Cond.(*ast.BinaryExpr)
-		if ok && comparison.Op == token.NEQ {
-			if candidate, candidateOK := comparison.X.(*ast.CallExpr); candidateOK && m2RestoreNil(comparison.Y) {
-				call = candidate
-			} else if candidate, candidateOK := comparison.Y.(*ast.CallExpr); candidateOK && m2RestoreNil(comparison.X) {
-				call = candidate
-			}
-		}
-	}
-	if call == nil {
-		return nil
-	}
-	function := m2RestoreCalledFunction(call, info)
-	var result []m2RestoreBudgetKey
-	for _, validator := range validators[function] {
-		if validator.parameterIndex >= len(call.Args) {
-			continue
-		}
-		argument, ok := call.Args[validator.parameterIndex].(*ast.Ident)
-		variable, variableOK := info.Uses[argument].(*types.Var)
-		if ok && variableOK {
-			result = append(result, m2RestoreBudgetKey{variable, validator.field})
-		}
-	}
-	return result
-}
-
-func m2RestoreConditionExactlyRejectsObject(expression ast.Expr, object types.Object, info *types.Info) bool {
-	comparison, ok := expression.(*ast.BinaryExpr)
-	if !ok || comparison.Op != token.NEQ {
-		return false
-	}
-	left, leftOK := comparison.X.(*ast.Ident)
-	right, rightOK := comparison.Y.(*ast.Ident)
-	return leftOK && info.Uses[left] == object && m2RestoreNil(comparison.Y) ||
-		rightOK && info.Uses[right] == object && m2RestoreNil(comparison.X)
 }
 
 func m2RestoreCalledFunction(call *ast.CallExpr, info *types.Info) *types.Func {
-	switch function := call.Fun.(type) {
-	case *ast.Ident:
-		result, _ := info.Uses[function].(*types.Func)
-		return result
-	case *ast.SelectorExpr:
-		result, _ := info.Uses[function.Sel].(*types.Func)
-		return result
-	default:
+	identifier := m2RestoreCalledFunctionIdentifier(call)
+	if identifier == nil {
 		return nil
 	}
+	function, _ := info.Uses[identifier].(*types.Func)
+	return function
 }
 
 func m2RestoreCallTargetsPackageFunction(call *ast.CallExpr, info *types.Info, packagePath, name string) bool {
@@ -1398,37 +921,6 @@ func m2RestoreCallTargetsPackageFunction(call *ast.CallExpr, info *types.Info, p
 
 func m2RestoreObjectFromPackage(object types.Object, packagePath string) bool {
 	return object != nil && object.Pkg() != nil && object.Pkg().Path() == packagePath
-}
-
-func m2RestoreIsDuration(valueType types.Type) bool {
-	named, ok := valueType.(*types.Named)
-	return ok && named.Obj().Name() == "Duration" && m2RestoreObjectFromPackage(named.Obj(), "time")
-}
-
-func m2RestoreBlockReturnsFailure(body *ast.BlockStmt) bool {
-	if !m2RestoreBlockTerminates(body) {
-		return false
-	}
-	result := body.List[len(body.List)-1].(*ast.ReturnStmt)
-	for _, expression := range result.Results {
-		if !m2RestoreNil(expression) {
-			return true
-		}
-	}
-	return false
-}
-
-func m2RestoreBlockTerminates(body *ast.BlockStmt) bool {
-	if body == nil || len(body.List) == 0 {
-		return false
-	}
-	_, ok := body.List[len(body.List)-1].(*ast.ReturnStmt)
-	return ok
-}
-
-func m2RestoreNil(expression ast.Expr) bool {
-	identifier, ok := expression.(*ast.Ident)
-	return ok && identifier.Name == "nil"
 }
 
 func m2IsGapDBPrivatePath(target string) bool {
