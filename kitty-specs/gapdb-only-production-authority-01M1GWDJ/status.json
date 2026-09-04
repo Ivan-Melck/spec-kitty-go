@@ -204,7 +204,8 @@
         "Ready for independent defect-4 review: 4c22f999 adds canonical publication-witness key translation, foundation-addressed non-expiring reads, exactly one ordinary RequireAbsent witness in the single AtomicBatch, witness-inclusive mutation/observation/raw/wire accounting, and complete same-revision witness reconciliation. Existing exact-member reconciliation needed no duplicate policy. Focused x20, full package, race x5, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
         "Independent defect-4 review APPROVE at 4c22f999: canonical witness key and foundation address round-trip, exact sealed-byte translation, single ordinary non-expiring RequireAbsent witness in one AtomicBatch, witness-inclusive raw/wire/mutation/observation counts, and complete same-revision ambiguity reconciliation verified. Focused x20, race x3, package x3, contention race, architecture, compile, vet, staticcheck, module, formatting, diff, ownership, and all eight anti-pattern checks pass.",
         "Rebind corrected canonical review cycle 7 before implementation",
-        "Override only the lane-history planning-artifact check: coordinator governance commits are ancestors of the lane by Spec Kitty synchronization; product candidate is exact commit 71defe71766975d0302fa39a8661270fa5ecd20b and the lane worktree is clean."
+        "Override only the lane-history planning-artifact check: coordinator governance commits are ancestors of the lane by Spec Kitty synchronization; product candidate is exact commit 71defe71766975d0302fa39a8661270fa5ecd20b and the lane worktree is clean.",
+        "Independent review approved exact candidate 71defe71766975d0302fa39a8661270fa5ecd20b. Force overrides only the lane-history planning-artifact check caused by Spec Kitty coordinator synchronization; product ownership is exact and clean."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
