@@ -5,7 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +139,116 @@ func TestM2DependencyPositiveBoundaries(t *testing.T) {
 	legal.ModulePath = m2ModulePath
 	if violations := m2EvaluateClosedGraph(policy, legal); len(violations) != 0 {
 		t.Fatalf("evidence=PURE-KERNEL-IMPORTS legal provider-neutral/provider callers rejected:\n%s", violations.Error())
+	}
+}
+
+func TestM2DependencyRestoreDeadlineIsOneExactEdge(t *testing.T) {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	restorePackage := m2ModulePath + "/internal/controljournal/v2/restore"
+	legal := fixtureGraph(
+		[]string{restorePackage},
+		ImportEdge{SourcePackage: restorePackage, TargetPackage: "context", Kind: ImportStandardLibrary},
+		ImportEdge{SourcePackage: restorePackage, TargetPackage: "time", Kind: ImportStandardLibrary},
+	)
+	legal.ModulePath = m2ModulePath
+	if violations := m2EvaluateClosedGraph(policy, legal); len(violations) != 0 {
+		t.Fatalf("evidence=RESTORE-DEADLINE-BOUNDARY exact restore deadline edges rejected: %v", violations)
+	}
+
+	for _, test := range []struct{ name, source string }{
+		{"foundation", m2ModulePath + "/internal/controljournal/v2"},
+		{"checkpoint", m2ModulePath + "/internal/controljournal/v2/checkpoint"},
+		{"playback", m2ModulePath + "/internal/controljournal/v2/playback"},
+		{"nested_restore_owner", m2ModulePath + "/internal/controljournal/v2/restore/worker"},
+		{"other_v2_package", m2ModulePath + "/internal/controljournal/v2/other"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			graph := fixtureGraph([]string{test.source}, ImportEdge{SourcePackage: test.source, TargetPackage: "time", Kind: ImportStandardLibrary})
+			graph.ModulePath = m2ModulePath
+			violations := m2EvaluateClosedGraph(policy, graph)
+			if len(violations) != 1 || violations[0].Rule != RuleDeferredSurface || violations[0].SourcePackage != test.source || violations[0].TargetPackage != "time" {
+				t.Fatalf("evidence=RESTORE-DEADLINE-BOUNDARY source=%s observed=%v expected=exact deferred-surface refusal", test.source, violations)
+			}
+		})
+	}
+
+	missingTime := fixtureGraph([]string{restorePackage}, ImportEdge{SourcePackage: restorePackage, TargetPackage: "context", Kind: ImportStandardLibrary})
+	missingTime.ModulePath = m2ModulePath
+	violations := m2EvaluateClosedGraph(policy, missingTime)
+	if len(violations) != 1 || violations[0].Rule != RuleDeferredSurface || violations[0].SourcePackage != restorePackage || violations[0].TargetPackage != "time" {
+		t.Fatalf("evidence=RESTORE-DEADLINE-BOUNDARY deleted elapsed-attempt capability observed=%v expected=required restore->time edge", violations)
+	}
+}
+
+func TestM2DependencyRestoreTimeUseIsDeadlineBudgetOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		source     string
+		wantTarget string
+	}{
+		{
+			name: "validated_deadline",
+			source: `package restore
+import ("context"; "time")
+type Budgets struct { Maximum time.Duration }
+func run(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
+var defaultBudget = Budgets{Maximum: 30 * time.Second}
+`,
+		},
+		{
+			name: "ambient_clock",
+			source: `package restore
+import ("context"; "time")
+type Budgets struct { Maximum time.Duration }
+func run(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _, _ = child, time.Now() }
+`,
+			wantTarget: "time.Now",
+		},
+		{
+			name: "decorative_duration_without_deadline",
+			source: `package restore
+import ("context"; "time")
+type Budgets struct { Maximum time.Duration }
+func run(ctx context.Context, budgets Budgets) { _, _ = ctx, budgets }
+`,
+			wantTarget: "context.WithTimeout",
+		},
+		{
+			name: "deadline_without_duration_budget",
+			source: `package restore
+import ("context"; "time")
+func run(ctx context.Context) { child, cancel := context.WithTimeout(ctx, 30); defer cancel(); _, _ = child, time.Second }
+`,
+			wantTarget: "time.Duration",
+		},
+		{
+			name: "blank_time_import",
+			source: `package restore
+import ("context"; _ "time")
+func run(ctx context.Context) { child, cancel := context.WithTimeout(ctx, 30); defer cancel(); _ = child }
+`,
+			wantTarget: "time.import",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeGoFixture(t, root, "go.mod", "module "+m2ModulePath+"\n\ngo 1.26\n")
+			writeGoFixture(t, root, "internal/controljournal/v2/restore/restore.go", tc.source)
+			graph, err := LoadGraph(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			violations := m2EvaluateClosedGraph(m2ClosedPolicy(t, m2ModulePath), graph)
+			if tc.wantTarget == "" {
+				if len(violations) != 0 {
+					t.Fatalf("evidence=RESTORE-DEADLINE-BOUNDARY validated resource budget rejected: %v", violations)
+				}
+				return
+			}
+			if len(violations) != 1 || violations[0].Rule != RuleDeferredSurface || violations[0].TargetPackage != tc.wantTarget {
+				t.Fatalf("evidence=RESTORE-DEADLINE-BOUNDARY source-use=%s observed=%v expected=%s", tc.name, violations, tc.wantTarget)
+			}
+		})
 	}
 }
 
@@ -502,7 +618,7 @@ func m2EvaluateClosedGraph(policy Policy, graph Graph) Violations {
 		} else if matchesPrefix(edge.TargetPackage, []string{"github.com/spec-kitty/gapdb"}) && !forbidden(edge.SourcePackage, m2ExactGapDBCallers) {
 			violations = appendM2Violation(violations, violationForEdge(RuleExternalDirection, edge, sourceTier.Name, ""))
 		}
-		if edge.Kind != ImportTestOnly && matchesPrefix(edge.SourcePackage, []string{policy.ModulePath + "/internal/controljournal/v2"}) && edge.Kind == ImportStandardLibrary && !forbidden(edge.TargetPackage, m2PureJournalStandardLibrary) {
+		if edge.Kind != ImportTestOnly && matchesPrefix(edge.SourcePackage, []string{policy.ModulePath + "/internal/controljournal/v2"}) && edge.Kind == ImportStandardLibrary && !m2AllowedJournalStandardLibraryEdge(policy.ModulePath, edge) {
 			violations = appendM2Violation(violations, violationForEdge(RuleDeferredSurface, edge, sourceTier.Name, ""))
 		}
 		if sourceTier.Name == TierAdapter && matchesPrefix(edge.SourcePackage, []string{policy.ModulePath + "/internal/tracker"}) && forbidden(edge.TargetPackage, m2TrackerForbiddenTargets) {
@@ -510,8 +626,137 @@ func m2EvaluateClosedGraph(policy Policy, graph Graph) Violations {
 			violations = appendM2Violation(violations, violationForEdge(RuleLocalDirection, edge, sourceTier.Name, targetTier.Name))
 		}
 	}
+	violations = append(violations, m2RestoreDeadlineContractViolations(graph)...)
+	violations = append(violations, m2RestoreDeadlineSourceViolations(graph)...)
 	slices.SortFunc(violations, func(left, right Violation) int { return strings.Compare(left.Error(), right.Error()) })
 	return violations
+}
+
+func m2AllowedJournalStandardLibraryEdge(modulePath string, edge ImportEdge) bool {
+	if forbidden(edge.TargetPackage, m2PureJournalStandardLibrary) {
+		return true
+	}
+	return edge.SourcePackage == modulePath+"/internal/controljournal/v2/restore" && edge.TargetPackage == "time"
+}
+
+func m2RestoreDeadlineContractViolations(graph Graph) Violations {
+	restorePackage := graph.ModulePath + "/internal/controljournal/v2/restore"
+	present := false
+	for _, pkg := range graph.Packages {
+		if pkg.ImportPath == restorePackage {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return nil
+	}
+	required := map[string]bool{"context": false, "time": false}
+	for _, edge := range graph.Edges {
+		if edge.SourcePackage == restorePackage && edge.Kind == ImportStandardLibrary {
+			if _, tracked := required[edge.TargetPackage]; tracked {
+				required[edge.TargetPackage] = true
+			}
+		}
+	}
+	var violations Violations
+	for _, target := range []string{"context", "time"} {
+		if !required[target] {
+			violations = appendM2Violation(violations, Violation{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: target})
+		}
+	}
+	return violations
+}
+
+func m2RestoreDeadlineSourceViolations(graph Graph) Violations {
+	restorePackage := graph.ModulePath + "/internal/controljournal/v2/restore"
+	var restoreDir string
+	for _, pkg := range graph.Packages {
+		if pkg.ImportPath == restorePackage {
+			restoreDir = pkg.Dir
+			break
+		}
+	}
+	// Synthetic dependency graphs intentionally have no source directory; the
+	// exact-edge and required-import laws remain active for those fixtures.
+	if restoreDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(restoreDir)
+	if err != nil {
+		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "restore-source"}}
+	}
+	var timeAliases, contextAliases = map[string]bool{}, map[string]bool{}
+	invalidTimeImport := false
+	files := make([]*ast.File, 0)
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, parseErr := parser.ParseFile(fset, filepath.Join(restoreDir, entry.Name()), nil, 0)
+		if parseErr != nil {
+			return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "restore-source"}}
+		}
+		files = append(files, file)
+		for _, imported := range file.Imports {
+			path, unquoteErr := strconv.Unquote(imported.Path.Value)
+			if unquoteErr != nil || path != "time" && path != "context" {
+				continue
+			}
+			alias := path
+			if imported.Name != nil {
+				alias = imported.Name.Name
+			}
+			if path == "time" {
+				if alias == "." || alias == "_" {
+					invalidTimeImport = true
+				}
+				timeAliases[alias] = true
+			} else {
+				contextAliases[alias] = true
+			}
+		}
+	}
+	if invalidTimeImport {
+		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "time.import"}}
+	}
+	deadlineCalls, durationUses := 0, 0
+	for _, file := range files {
+		var violation string
+		ast.Inspect(file, func(node ast.Node) bool {
+			selector, ok := node.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			identifier, ok := selector.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if timeAliases[identifier.Name] {
+				if selector.Sel.Name == "Duration" {
+					durationUses++
+				} else if !slices.Contains([]string{"Second", "Minute"}, selector.Sel.Name) {
+					violation = "time." + selector.Sel.Name
+					return false
+				}
+			}
+			if contextAliases[identifier.Name] && selector.Sel.Name == "WithTimeout" {
+				deadlineCalls++
+			}
+			return true
+		})
+		if violation != "" {
+			return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: violation}}
+		}
+	}
+	if deadlineCalls == 0 {
+		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "context.WithTimeout"}}
+	}
+	if durationUses == 0 {
+		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "time.Duration"}}
+	}
+	return nil
 }
 
 func m2IsGapDBPrivatePath(target string) bool {
