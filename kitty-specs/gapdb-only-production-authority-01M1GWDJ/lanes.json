@@ -214,6 +214,8 @@
         "workspace"
       ],
       "depends_on_lanes": [
+        "lane-b",
+        "lane-c",
         "lane-d",
         "lane-g"
       ],

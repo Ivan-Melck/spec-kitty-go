@@ -194,7 +194,7 @@ work_packages:
 
   - id: WP08
     title: "Lease-Scoped Workspace Authority"
-    dependencies: [WP04, WP07]
+    dependencies: [WP02, WP03, WP04, WP07]
     owned_files:
       - "internal/execution/authority_v2.go"
       - "internal/execution/authority_v2_test.go"

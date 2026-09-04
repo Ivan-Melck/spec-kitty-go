@@ -2,6 +2,8 @@
 work_package_id: WP08
 title: Lease-Scoped Workspace Authority
 dependencies:
+- WP02
+- WP03
 - WP04
 - WP07
 requirement_refs:
