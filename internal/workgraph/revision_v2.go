@@ -17,6 +17,7 @@ import (
 
 const (
 	RevisionSchemaV2         uint16           = 2
+	RevisionSchemaV3         uint16           = 3
 	DependencyApprovedOrDone DependencyPolicy = "approved_or_done"
 
 	CriterionMetadataOutcome      = "spec_kitty.outcome"
@@ -122,6 +123,7 @@ type RevisionV2Params struct {
 
 // RevisionV2 is the immutable executable graph for one exact generation.
 type RevisionV2 struct {
+	schemaVersion        uint16
 	id                   ids.WorkRevisionID
 	projectID            ids.ProjectID
 	missionID            ids.MissionID
@@ -133,6 +135,9 @@ type RevisionV2 struct {
 	workItems            []WorkItemV2
 	lanes                []LaneV2
 	providerObservations []ProviderObservationV2
+	artifactObservations []ArtifactObservationV3
+	providerEvidence     []ProviderObservationV3
+	contentDigest        string
 	graphDigest          string
 	criteriaDigest       string
 	finalizedBy          ids.ActorID
@@ -148,6 +153,7 @@ type StoredRevision struct {
 	schemaVersion uint16
 	legacy        *Revision
 	v2            *RevisionV2
+	v3            *RevisionV2
 }
 
 func (stored StoredRevision) SchemaVersion() uint16 { return stored.schemaVersion }
@@ -162,6 +168,12 @@ func (stored StoredRevision) V2() (RevisionV2, bool) {
 		return RevisionV2{}, false
 	}
 	return *stored.v2, true
+}
+func (stored StoredRevision) V3() (RevisionV2, bool) {
+	if stored.v3 == nil {
+		return RevisionV2{}, false
+	}
+	return *stored.v3, true
 }
 
 // DecodeStoredRevision dispatches only exact legacy envelopes or explicit v2
@@ -185,12 +197,15 @@ func DecodeStoredRevision(encoded []byte) (StoredRevision, error) {
 		return StoredRevision{schemaVersion: 1, legacy: &legacy}, nil
 	}
 	var version uint16
-	if err := json.Unmarshal(versionBytes, &version); err != nil || version != RevisionSchemaV2 {
+	if err := json.Unmarshal(versionBytes, &version); err != nil || (version != RevisionSchemaV2 && version != RevisionSchemaV3) {
 		return StoredRevision{}, invalidV2("schema_version", "unsupported WorkRevision schema version", err)
 	}
 	v2, err := DecodeRevisionV2(encoded)
 	if err != nil {
 		return StoredRevision{}, err
+	}
+	if version == RevisionSchemaV3 {
+		return StoredRevision{schemaVersion: RevisionSchemaV3, v3: &v2}, nil
 	}
 	return StoredRevision{schemaVersion: RevisionSchemaV2, v2: &v2}, nil
 }
@@ -257,7 +272,8 @@ func constructRevisionV2(params RevisionV2Params, claimedGraphDigest, claimedCri
 		return RevisionV2{}, invalidV2("digest", "persisted WorkRevision v2 digest does not match canonical content", nil)
 	}
 	return RevisionV2{
-		id: params.ID, projectID: params.ProjectID, missionID: params.MissionID, generation: params.Generation,
+		schemaVersion: RevisionSchemaV2,
+		id:            params.ID, projectID: params.ProjectID, missionID: params.MissionID, generation: params.Generation,
 		predecessorID: params.PredecessorID, planningSourceCommit: params.PlanningSourceCommit,
 		missionDefinition: params.MissionDefinition, dependencyPolicy: params.DependencyPolicy,
 		workItems: items, lanes: lanes, providerObservations: observations,
@@ -267,7 +283,7 @@ func constructRevisionV2(params RevisionV2Params, claimedGraphDigest, claimedCri
 	}, nil
 }
 
-func (revision RevisionV2) SchemaVersion() uint16             { return RevisionSchemaV2 }
+func (revision RevisionV2) SchemaVersion() uint16             { return revision.schemaVersion }
 func (revision RevisionV2) ID() ids.WorkRevisionID            { return revision.id }
 func (revision RevisionV2) ProjectID() ids.ProjectID          { return revision.projectID }
 func (revision RevisionV2) MissionID() ids.MissionID          { return revision.missionID }
@@ -283,6 +299,13 @@ func (revision RevisionV2) Lanes() []LaneV2                    { return cloneLan
 func (revision RevisionV2) ProviderObservations() []ProviderObservationV2 {
 	return append([]ProviderObservationV2(nil), revision.providerObservations...)
 }
+func (revision RevisionV2) ArtifactObservations() []ArtifactObservationV3 {
+	return append([]ArtifactObservationV3(nil), revision.artifactObservations...)
+}
+func (revision RevisionV2) ProviderEvidence() []ProviderObservationV3 {
+	return cloneProviderEvidenceV3(revision.providerEvidence)
+}
+func (revision RevisionV2) ContentDigest() string    { return revision.contentDigest }
 func (revision RevisionV2) GraphDigest() string      { return revision.graphDigest }
 func (revision RevisionV2) CriteriaDigest() string   { return revision.criteriaDigest }
 func (revision RevisionV2) FinalizedBy() ids.ActorID { return revision.finalizedBy }
@@ -349,7 +372,12 @@ type revisionV2Envelope struct {
 	GovernanceContextID  ids.GovernanceContextID     `json:"governance_context_id"`
 }
 
-func (revision RevisionV2) Encode() ([]byte, error) { return json.Marshal(revision.wire()) }
+func (revision RevisionV2) Encode() ([]byte, error) {
+	if revision.schemaVersion == RevisionSchemaV3 {
+		return revision.encodeV3()
+	}
+	return json.Marshal(revision.wire())
+}
 
 func (revision RevisionV2) wire() revisionV2Envelope {
 	return revisionV2Envelope{
@@ -364,6 +392,15 @@ func (revision RevisionV2) wire() revisionV2Envelope {
 }
 
 func DecodeRevisionV2(encoded []byte) (RevisionV2, error) {
+	var dispatch struct {
+		SchemaVersion uint16 `json:"schema_version"`
+	}
+	if err := json.Unmarshal(encoded, &dispatch); err != nil {
+		return RevisionV2{}, invalidV2("encoded", "decode persisted WorkRevision", err)
+	}
+	if dispatch.SchemaVersion == RevisionSchemaV3 {
+		return decodeRevisionV3(encoded)
+	}
 	var envelope revisionV2Envelope
 	if err := decodeStrictJSON(encoded, &envelope); err != nil {
 		return RevisionV2{}, invalidV2("encoded", "decode persisted WorkRevision v2", err)
