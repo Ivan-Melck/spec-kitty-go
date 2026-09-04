@@ -2,10 +2,88 @@ package v2
 
 import (
 	"bytes"
+	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
 )
+
+const effectPermissionCommitmentDomainV2 = "spec-kitty.effect-permission-event.v2"
+
+type effectPermissionWireV2 struct {
+	EventID    EventID  `json:"event_id"`
+	EffectID   EffectID `json:"effect_id"`
+	Commitment string   `json:"commitment_sha256"`
+}
+
+func (p EffectPermissionCoordinateV2) wire() effectPermissionWireV2 {
+	return effectPermissionWireV2{p.eventID, p.effectID, p.commitment.String()}
+}
+
+// NewEffectPermissionCoordinateV2 seals the structural identity of one exact
+// capability-owned retry or compensation permission event. Payload meaning
+// remains exclusively owned by internal/execution.
+func NewEffectPermissionCoordinateV2(event EventDraftV2, effectID EffectID) (EffectPermissionCoordinateV2, error) {
+	payload, observations, err := canonicalPermissionEventBytes(event.Payload, event.Observations)
+	if err != nil {
+		return EffectPermissionCoordinateV2{}, err
+	}
+	event.Payload, event.Observations = payload, observations
+	if err := validateEffectPermissionEventIdentity(event, effectID); err != nil {
+		return EffectPermissionCoordinateV2{}, err
+	}
+	commitment, err := effectPermissionEventCommitment(event)
+	if err != nil {
+		return EffectPermissionCoordinateV2{}, err
+	}
+	return EffectPermissionCoordinateV2{eventID: event.EventID, effectID: effectID, commitment: commitment}, nil
+}
+
+func canonicalPermissionEventBytes(payload, observations []byte) ([]byte, []byte, error) {
+	canonicalPayload, err := requireCanonicalValue("effect_permission_payload", payload, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(observations) == 0 {
+		observations = []byte("{}")
+	}
+	canonicalObservations, err := requireCanonicalValue("effect_permission_observations", observations, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	return canonicalPayload, canonicalObservations, nil
+}
+
+func validateEffectPermissionEventIdentity(event EventDraftV2, effectID EffectID) error {
+	if validateIdentity("permission_event_id", string(event.EventID)) != nil || validateIdentity("permission_effect_id", string(effectID)) != nil ||
+		event.Family != "external_effect" || event.EventSchemaVersion != 1 || event.ReducerVersion != 1 ||
+		(event.EventType != "external_effect.allow_retry" && event.EventType != "external_effect.allow_compensation") ||
+		event.Coordinate.Kind != AggregateKind("external_effect") || event.Coordinate.ID != AggregateID(effectID) {
+		return invalid(ErrorInvalidTransition, "effect_permission_event")
+	}
+	if _, err := NewAggregateCoordinate(event.Coordinate.Kind, event.Coordinate.ID, event.Coordinate.Scope); err != nil {
+		return invalid(ErrorInvalidTransition, "effect_permission_event")
+	}
+	return nil
+}
+
+func effectPermissionEventCommitment(event EventDraftV2) (Digest, error) {
+	canonical, err := marshalCanonical(struct {
+		EventID            EventID             `json:"event_id"`
+		EventType          string              `json:"event_type"`
+		Family             string              `json:"family"`
+		EventSchemaVersion uint32              `json:"event_schema_version"`
+		ReducerVersion     uint32              `json:"reducer_version"`
+		Coordinate         AggregateCoordinate `json:"coordinate"`
+		Payload            json.RawMessage     `json:"payload"`
+		Observations       json.RawMessage     `json:"observations"`
+	}{event.EventID, event.EventType, event.Family, event.EventSchemaVersion, event.ReducerVersion, event.Coordinate,
+		append([]byte(nil), event.Payload...), append([]byte(nil), event.Observations...)}, MaxCommitPlanBytes)
+	if err != nil {
+		return Digest{}, err
+	}
+	return digest(effectPermissionCommitmentDomainV2, canonical), nil
+}
 
 type EventDraftV2 struct {
 	EventID                 EventID
@@ -385,6 +463,9 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 		}
 		sort.Strings(drafts[index].GovernanceRevisions)
 	}
+	if err := validateEffectPermissionAgainstDrafts(effectPermission, drafts, registry); err != nil {
+		return SealedCommitPlanV2{}, err
+	}
 	operationPayload, err := EncodeOperationStateEventPayloadV2(input.OperationState)
 	if err != nil {
 		return SealedCommitPlanV2{}, err
@@ -524,6 +605,31 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 		return SealedCommitPlanV2{}, err
 	}
 	return plan, nil
+}
+
+func validateEffectPermissionAgainstDrafts(permission *EffectPermissionCoordinateV2, drafts []EventDraftV2, registry EventRegistryV2) error {
+	if permission == nil {
+		return nil
+	}
+	matches := 0
+	for _, event := range drafts {
+		if event.EventID != permission.eventID {
+			continue
+		}
+		matches++
+		if err := validateEffectPermissionEventIdentity(event, permission.effectID); err != nil {
+			return err
+		}
+		tuple, err := registry.Resolve(event.Family, event.EventSchemaVersion, event.ReducerVersion)
+		commitment, commitmentErr := effectPermissionEventCommitment(event)
+		if err != nil || commitmentErr != nil || tuple.Owner != "internal/execution" || commitment != permission.commitment {
+			return invalid(ErrorInvalidTransition, "effect_permission_commitment")
+		}
+	}
+	if matches != 1 {
+		return invalid(ErrorInvalidTransition, "effect_permission_event")
+	}
+	return nil
 }
 
 func sealedRecordSetDigest(records []SealedRecordV2) (Digest, error) {
@@ -1691,21 +1797,26 @@ func planPreimage(binding *OperationBindingV2, prior *OperationStateV2, state Op
 	if workspaceClaim != nil {
 		workspaceWire = &workspacePathClaimWireV2{workspaceClaim.claimDigest.String(), append([]byte(nil), workspaceClaim.canonical...)}
 	}
+	var permissionWire *effectPermissionWireV2
+	if permission != nil {
+		value := permission.wire()
+		permissionWire = &value
+	}
 	return marshalCanonical(struct {
-		PublicationWitnessSchemaVersion uint32                        `json:"publication_witness_schema_version"`
-		Binding                         *operationBindingWire         `json:"operation_binding_create,omitempty"`
-		PriorState                      *operationStatePreimageWire   `json:"prior_operation_state,omitempty"`
-		State                           operationStatePreimageWire    `json:"operation_state"`
-		Events                          []EventDraftV2                `json:"events"`
-		Heads                           []HeadTransitionV2            `json:"heads"`
-		Effects                         []EffectIntentReference       `json:"effect_intents"`
-		Eligibility                     []EligibilityGuardTransition  `json:"eligibility_guards"`
-		Checkpoints                     []CheckpointRecord            `json:"checkpoints"`
-		Conditions                      []ProviderCondition           `json:"conditions"`
-		Assertions                      []authorityAssertionWireV2    `json:"authority_assertions"`
-		WorkspacePathClaim              *workspacePathClaimWireV2     `json:"workspace_path_claim,omitempty"`
-		EffectPermissionResume          *EffectPermissionCoordinateV2 `json:"effect_permission_resume,omitempty"`
-	}{publicationWitnessSchemaVersionV2, bindingWire, priorWire, operationStatePreimage(state, false), events, heads, effects, eligibility, checkpoints, conditions, assertionWires, workspaceWire, permission}, MaxCommitPlanBytes)
+		PublicationWitnessSchemaVersion uint32                       `json:"publication_witness_schema_version"`
+		Binding                         *operationBindingWire        `json:"operation_binding_create,omitempty"`
+		PriorState                      *operationStatePreimageWire  `json:"prior_operation_state,omitempty"`
+		State                           operationStatePreimageWire   `json:"operation_state"`
+		Events                          []EventDraftV2               `json:"events"`
+		Heads                           []HeadTransitionV2           `json:"heads"`
+		Effects                         []EffectIntentReference      `json:"effect_intents"`
+		Eligibility                     []EligibilityGuardTransition `json:"eligibility_guards"`
+		Checkpoints                     []CheckpointRecord           `json:"checkpoints"`
+		Conditions                      []ProviderCondition          `json:"conditions"`
+		Assertions                      []authorityAssertionWireV2   `json:"authority_assertions"`
+		WorkspacePathClaim              *workspacePathClaimWireV2    `json:"workspace_path_claim,omitempty"`
+		EffectPermissionResume          *effectPermissionWireV2      `json:"effect_permission_resume,omitempty"`
+	}{publicationWitnessSchemaVersionV2, bindingWire, priorWire, operationStatePreimage(state, false), events, heads, effects, eligibility, checkpoints, conditions, assertionWires, workspaceWire, permissionWire}, MaxCommitPlanBytes)
 }
 
 type operationStatePreimageWire struct {
@@ -1760,23 +1871,28 @@ func (p SealedCommitPlanV2) finalBytes() ([]byte, error) {
 	if p.workspaceClaim != nil {
 		workspaceClaim = &workspacePathClaimWireV2{p.workspaceClaim.claimDigest.String(), append([]byte(nil), p.workspaceClaim.canonical...)}
 	}
+	var permission *effectPermissionWireV2
+	if p.effectPermissionResume != nil {
+		value := p.effectPermissionResume.wire()
+		permission = &value
+	}
 	return marshalCanonical(struct {
-		PublicationID          string                        `json:"publication_id"`
-		PlanSHA256             string                        `json:"canonical_plan_sha256"`
-		RecordSetSHA256        string                        `json:"sealed_record_set_sha256"`
-		Witness                publicationWitnessWireV2      `json:"publication_witness"`
-		Binding                *operationBindingWire         `json:"operation_binding_create,omitempty"`
-		OperationState         []byte                        `json:"operation_state"`
-		Events                 [][]byte                      `json:"events"`
-		Heads                  []HeadTransitionV2            `json:"heads"`
-		Effects                []EffectIntentReference       `json:"effect_intents"`
-		Eligibility            []EligibilityGuardTransition  `json:"eligibility_guards"`
-		Checkpoints            []CheckpointRecord            `json:"checkpoints"`
-		Conditions             []ProviderCondition           `json:"conditions"`
-		Assertions             []authorityAssertionWireV2    `json:"authority_assertions"`
-		WorkspacePathClaim     *workspacePathClaimWireV2     `json:"workspace_path_claim,omitempty"`
-		EffectPermissionResume *EffectPermissionCoordinateV2 `json:"effect_permission_resume,omitempty"`
-	}{string(p.publicationID), p.digest.String(), p.recordSetDigest.String(), publicationWitnessWire(p.witness), binding, state, events, p.heads, p.effects, p.eligibility, p.checkpoints, p.conditions, assertions, workspaceClaim, p.effectPermissionResume}, MaxCommitPlanBytes)
+		PublicationID          string                       `json:"publication_id"`
+		PlanSHA256             string                       `json:"canonical_plan_sha256"`
+		RecordSetSHA256        string                       `json:"sealed_record_set_sha256"`
+		Witness                publicationWitnessWireV2     `json:"publication_witness"`
+		Binding                *operationBindingWire        `json:"operation_binding_create,omitempty"`
+		OperationState         []byte                       `json:"operation_state"`
+		Events                 [][]byte                     `json:"events"`
+		Heads                  []HeadTransitionV2           `json:"heads"`
+		Effects                []EffectIntentReference      `json:"effect_intents"`
+		Eligibility            []EligibilityGuardTransition `json:"eligibility_guards"`
+		Checkpoints            []CheckpointRecord           `json:"checkpoints"`
+		Conditions             []ProviderCondition          `json:"conditions"`
+		Assertions             []authorityAssertionWireV2   `json:"authority_assertions"`
+		WorkspacePathClaim     *workspacePathClaimWireV2    `json:"workspace_path_claim,omitempty"`
+		EffectPermissionResume *effectPermissionWireV2      `json:"effect_permission_resume,omitempty"`
+	}{string(p.publicationID), p.digest.String(), p.recordSetDigest.String(), publicationWitnessWire(p.witness), binding, state, events, p.heads, p.effects, p.eligibility, p.checkpoints, p.conditions, assertions, workspaceClaim, permission}, MaxCommitPlanBytes)
 }
 
 func (p SealedCommitPlanV2) PublicationID() PublicationID     { return p.publicationID }

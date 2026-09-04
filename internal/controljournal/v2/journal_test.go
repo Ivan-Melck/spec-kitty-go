@@ -282,7 +282,7 @@ func TestOperationReconciliationResumeRequiresFreshBoundEffectPermission(t *test
 		EventIDs:        []EventID{"event-observation", "event-permission", "event-reconcile"},
 		EffectIDs:       []EffectID{"effect-bound"},
 	}
-	permission := EffectPermissionCoordinateV2{EventID: "event-permission", EffectID: "effect-bound"}
+	permission := fixtureEffectPermission(t, "event-permission", "effect-bound")
 
 	if _, err := AdvanceOperationState(prior, transition); !IsKind(err, ErrorInvalidTransition) {
 		t.Fatalf("generic transition admitted reconciliation resume: %v", err)
@@ -306,10 +306,10 @@ func TestOperationReconciliationResumeRequiresFreshBoundEffectPermission(t *test
 			transition,
 			permission,
 		},
-		"unbound_effect":                  {prior, transition, EffectPermissionCoordinateV2{EventID: "event-permission", EffectID: "effect-unbound"}},
-		"newly_added_not_prebound_effect": {prior, OperationTransition{7, 8, StatusInProgress, "", 0, nil, transition.EventIDs, []EffectID{"effect-bound", "effect-new"}, ""}, EffectPermissionCoordinateV2{EventID: "event-permission", EffectID: "effect-new"}},
-		"empty_event":                     {prior, transition, EffectPermissionCoordinateV2{EffectID: "effect-bound"}},
-		"empty_effect":                    {prior, transition, EffectPermissionCoordinateV2{EventID: "event-permission"}},
+		"unbound_effect":                  {prior, transition, fixtureEffectPermission(t, "event-permission", "effect-unbound")},
+		"newly_added_not_prebound_effect": {prior, OperationTransition{7, 8, StatusInProgress, "", 0, nil, transition.EventIDs, []EffectID{"effect-bound", "effect-new"}, ""}, fixtureEffectPermission(t, "event-permission", "effect-new")},
+		"empty_event":                     {prior, transition, EffectPermissionCoordinateV2{}},
+		"empty_effect":                    {prior, transition, EffectPermissionCoordinateV2{}},
 		"version_skip":                    {prior, OperationTransition{7, 9, StatusInProgress, "", 0, nil, transition.EventIDs, transition.EffectIDs, ""}, permission},
 		"event_regression":                {prior, OperationTransition{7, 8, StatusInProgress, "", 0, nil, []EventID{"event-permission", "event-reconcile"}, transition.EffectIDs, ""}, permission},
 	}
@@ -323,7 +323,7 @@ func TestOperationReconciliationResumeRequiresFreshBoundEffectPermission(t *test
 }
 
 func TestOperationReconciliationResumeDoesNotWidenOtherStatusPairs(t *testing.T) {
-	permission := EffectPermissionCoordinateV2{EventID: "event-permission", EffectID: "effect-bound"}
+	permission := fixtureEffectPermission(t, "event-permission", "effect-bound")
 	for _, test := range []struct {
 		name string
 		from OperationStatus
@@ -351,7 +351,7 @@ func TestCommitPlanUsesPermissionBoundResumeWithoutWideningGenericTransition(t *
 		[]EventID{"event-old"}, []EffectID{"effect-bound"})
 	next := mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 4, Status: StatusInProgress,
 		EventIDs: []EventID{"event-old", "event-permission"}, EffectIDs: []EffectID{"effect-bound"}})
-	permission := EffectPermissionCoordinateV2{EventID: "event-permission", EffectID: "effect-bound"}
+	permission := fixtureEffectPermission(t, "event-permission", "effect-bound")
 	if err := exactPublicationMembership(&prior, next, []EventID{"event-permission"}, nil, nil); !IsKind(err, ErrorInvalidTransition) {
 		t.Fatalf("generic publication path admitted permission-only edge: %v", err)
 	}
@@ -359,8 +359,8 @@ func TestCommitPlanUsesPermissionBoundResumeWithoutWideningGenericTransition(t *
 		t.Fatalf("sealed permission path rejected exact resume: %v", err)
 	}
 	for name, mutant := range map[string]EffectPermissionCoordinateV2{
-		"reused_event":   {EventID: "event-old", EffectID: "effect-bound"},
-		"unbound_effect": {EventID: "event-permission", EffectID: "effect-other"},
+		"reused_event":   fixtureEffectPermission(t, "event-old", "effect-bound"),
+		"unbound_effect": fixtureEffectPermission(t, "event-permission", "effect-other"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := exactPublicationMembership(&prior, next, []EventID{"event-permission"}, nil, &mutant); !IsKind(err, ErrorInvalidTransition) {
@@ -368,6 +368,60 @@ func TestCommitPlanUsesPermissionBoundResumeWithoutWideningGenericTransition(t *
 			}
 		})
 	}
+}
+
+func TestSealCommitPlanBindsExactCanonicalEffectPermissionEvent(t *testing.T) {
+	prior := fixtureState(t, StatusReconciliationRequired, 3, nil, []EventID{"event-old"}, []EffectID{"effect-bound"})
+	next := mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 4, Status: StatusInProgress,
+		EventIDs: []EventID{"event-old", "event-operation", "event-permission"}, EffectIDs: []EffectID{"effect-bound"}})
+	operationCoordinate, _ := NewAggregateCoordinate("operation", "operation-01", Scope{Kind: ScopeHost})
+	effectCoordinate, _ := NewAggregateCoordinate("external_effect", "effect-bound", fixtureScope())
+	permissionEvent := EventDraftV2{EventID: "event-permission", EventType: "external_effect.allow_retry", Family: "external_effect", EventSchemaVersion: 1, ReducerVersion: 1,
+		Coordinate: effectCoordinate, AggregateLogicalVersion: 2, CommittedRuntimeEpochID: "epoch-18", Observations: []byte(`{"source":"test"}`), Payload: []byte(`{"permission":"retry"}`)}
+	permission, err := NewEffectPermissionCoordinateV2(permissionEvent, "effect-bound")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []EventDraftV2{
+		{EventID: "event-operation", EventType: "operation.progressed", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 4, CommittedRuntimeEpochID: "epoch-18", Payload: operationPayload(t, next)},
+		permissionEvent,
+	}
+	heads := []HeadTransitionV2{
+		{Coordinate: operationCoordinate, ExpectedLogicalVersion: 3, NextLogicalVersion: 4, EventID: "event-operation", ExpectedRecordRevision: 30, CommittedRuntimeEpochID: "epoch-18", CanonicalStateDigest: digest("state", []byte("operation-4")), AuthoritySummary: []byte(`{"status":"in_progress"}`)},
+		{Coordinate: effectCoordinate, ExpectedLogicalVersion: 1, NextLogicalVersion: 2, EventID: "event-permission", ExpectedRecordRevision: 31, CommittedRuntimeEpochID: "epoch-18", CanonicalStateDigest: digest("state", []byte("effect-2")), AuthoritySummary: []byte(`{"stage":"retry_allowed"}`)},
+	}
+	base := CommitPlanInput{PriorOperationState: &prior, OperationState: next, Events: events, Heads: heads,
+		Conditions: []ProviderCondition{mustHeadCondition(t, heads[0]), mustHeadCondition(t, heads[1])}, EffectPermissionResume: &permission}
+	if _, err := SealCommitPlanV2(base, DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("exact permission event failed public sealing: %v", err)
+	}
+	for name, mutate := range map[string]func(*CommitPlanInput){
+		"operation_event_substitution": func(v *CommitPlanInput) {
+			v.EffectPermissionResume = ptrEffectPermission(fixtureEffectPermission(t, "event-operation", "effect-bound"))
+		},
+		"unrelated_registered_event": func(v *CommitPlanInput) { v.Events[1].EventType = "external_effect.observation_recorded" },
+		"wrong_effect_aggregate": func(v *CommitPlanInput) {
+			v.Events[1].Coordinate.ID = "effect-other"
+			v.Heads[1].Coordinate.ID = "effect-other"
+		},
+		"wrong_tuple":          func(v *CommitPlanInput) { v.Events[1].Family = "workspace" },
+		"altered_payload":      func(v *CommitPlanInput) { v.Events[1].Payload = []byte(`{"permission":"compensation"}`) },
+		"altered_observations": func(v *CommitPlanInput) { v.Events[1].Observations = []byte(`{"source":"other"}`) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			candidate.Events = cloneEventDrafts(base.Events)
+			candidate.Heads = cloneHeadTransitions(base.Heads)
+			mutate(&candidate)
+			if _, err := SealCommitPlanV2(candidate, DefaultEventRegistryV2()); err == nil {
+				t.Fatal("permission semantic mutant admitted")
+			}
+		})
+	}
+}
+
+func ptrEffectPermission(value EffectPermissionCoordinateV2) *EffectPermissionCoordinateV2 {
+	return &value
 }
 
 func TestOperationBindingRFC3339CalendarBoundaries(t *testing.T) {
@@ -2105,6 +2159,20 @@ func reverseTopLevelObjectForTest(t *testing.T, encoded []byte) []byte {
 
 func fixtureScope() Scope {
 	return Scope{Kind: ScopeMission, ProjectID: "project", MissionID: "mission"}
+}
+
+func fixtureEffectPermission(t *testing.T, eventID EventID, effectID EffectID) EffectPermissionCoordinateV2 {
+	t.Helper()
+	coordinate, err := NewAggregateCoordinate("external_effect", AggregateID(effectID), fixtureScope())
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := NewEffectPermissionCoordinateV2(EventDraftV2{EventID: eventID, EventType: "external_effect.allow_retry", Family: "external_effect",
+		EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: coordinate, Payload: []byte(`{"permission":"retry"}`), Observations: []byte(`{"source":"test"}`)}, effectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return permission
 }
 
 func fixtureBindingInput(t *testing.T, epoch RuntimeEpochID) OperationBindingInput {

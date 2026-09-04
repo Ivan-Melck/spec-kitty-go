@@ -477,9 +477,14 @@ type OperationTransition struct {
 // reconciliation resume. The journal deliberately does not interpret the
 // capability-owned permission payload.
 type EffectPermissionCoordinateV2 struct {
-	EventID  EventID  `json:"event_id"`
-	EffectID EffectID `json:"effect_id"`
+	eventID    EventID
+	effectID   EffectID
+	commitment Digest
 }
+
+func (p EffectPermissionCoordinateV2) EventID() EventID   { return p.eventID }
+func (p EffectPermissionCoordinateV2) EffectID() EffectID { return p.effectID }
+func (p EffectPermissionCoordinateV2) Commitment() Digest { return p.commitment }
 
 func AdvanceOperationState(prior OperationStateV2, transition OperationTransition) (OperationStateV2, error) {
 	if !allowedOperationTransition(prior.status, transition.Status) {
@@ -494,8 +499,8 @@ func AdvanceOperationState(prior OperationStateV2, transition OperationTransitio
 // bound to the operation before this transition.
 func ResumeOperationStateWithEffectPermissionV2(prior OperationStateV2, transition OperationTransition, permission EffectPermissionCoordinateV2) (OperationStateV2, error) {
 	if prior.status != StatusReconciliationRequired || transition.Status != StatusInProgress ||
-		validateIdentity("permission_event_id", string(permission.EventID)) != nil || validateIdentity("permission_effect_id", string(permission.EffectID)) != nil ||
-		containsID(prior.eventIDs, permission.EventID) || !containsID(transition.EventIDs, permission.EventID) || !containsID(prior.effectIDs, permission.EffectID) {
+		validateIdentity("permission_event_id", string(permission.eventID)) != nil || validateIdentity("permission_effect_id", string(permission.effectID)) != nil || permission.commitment.IsZero() ||
+		containsID(prior.eventIDs, permission.eventID) || !containsID(transition.EventIDs, permission.eventID) || !containsID(prior.effectIDs, permission.effectID) {
 		return OperationStateV2{}, invalid(ErrorInvalidTransition, "effect_permission_resume")
 	}
 	return advanceOperationStateMembership(prior, transition)
