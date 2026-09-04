@@ -1,4 +1,14 @@
 ---
+affected_files: []
+cycle_number: 7
+mission_slug: gapdb-only-production-authority-01M1GWDJ
+reproduction_command:
+reviewed_at: '2026-09-04T15:22:39Z'
+reviewer_agent: codex
+wp_id: WP03
+---
+
+---
 affected_files:
 - go.mod
 - go.sum
