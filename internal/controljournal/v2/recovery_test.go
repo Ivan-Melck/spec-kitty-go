@@ -139,6 +139,7 @@ func TestRecoveryRecordUsesSemanticAddressValueCeilings(t *testing.T) {
 		address RecordAddressV2
 		length  int
 	}{
+		{name: "ordinary_exact_maximum", address: ordinaryAddress, length: MaxCanonicalPayloadBytes},
 		{name: "journal_above_ordinary_limit", address: eventAddress, length: MaxCanonicalPayloadBytes + 1},
 		{name: "journal_exact_maximum", address: eventAddress, length: MaxEventEnvelopeBytes},
 		{name: "checkpoint_above_ordinary_limit", address: checkpointAddress, length: MaxCanonicalPayloadBytes + 1},
