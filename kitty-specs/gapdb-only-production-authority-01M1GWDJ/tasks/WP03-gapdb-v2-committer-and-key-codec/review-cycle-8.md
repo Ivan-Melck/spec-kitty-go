@@ -1,15 +1,15 @@
 ---
 affected_files:
-- go.mod
-- go.sum
-- internal/controlstore/gapdb/admission_test.go
-- internal/controlstore/gapdb/external_scenarios_test.go
-- internal/controlstore/gapdb/port.go
-- internal/controlstore/gapdb/port_test.go
-- internal/controlstore/gapdb/v2_adapter_test.go
-- internal/controlstore/gapdb/v2_ambiguity.go
-- internal/controlstore/gapdb/v2_codec.go
-- internal/controlstore/gapdb/v2_committer.go
+- path: go.mod
+- path: go.sum
+- path: internal/controlstore/gapdb/admission_test.go
+- path: internal/controlstore/gapdb/external_scenarios_test.go
+- path: internal/controlstore/gapdb/port.go
+- path: internal/controlstore/gapdb/port_test.go
+- path: internal/controlstore/gapdb/v2_adapter_test.go
+- path: internal/controlstore/gapdb/v2_ambiguity.go
+- path: internal/controlstore/gapdb/v2_codec.go
+- path: internal/controlstore/gapdb/v2_committer.go
 cycle_number: 8
 mission_slug: gapdb-only-production-authority-01M1GWDJ
 reproduction_command: go test ./internal/controlstore/gapdb -count=1

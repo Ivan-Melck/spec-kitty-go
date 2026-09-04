@@ -1,7 +1,7 @@
 {
-  "event_count": 319,
-  "last_event_id": "01M1PJRDD16DPX864Z1V4GTYTN",
-  "materialized_at": "2026-09-04T16:06:48.983378+00:00",
+  "event_count": 321,
+  "last_event_id": "01M1PM59ERR6YJN9BJPA6HQAZZ",
+  "materialized_at": "2026-09-04T16:31:19.512445+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 2,
     "for_review": 0,
-    "in_progress": 2,
-    "in_review": 0,
+    "in_progress": 1,
+    "in_review": 1,
     "planned": 8
   },
   "work_packages": {
@@ -175,15 +175,15 @@
       }
     },
     "WP03": {
-      "actor": "codex",
-      "agent": null,
+      "actor": "mill",
+      "agent": "mill",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp03-witness-gapdb",
-      "force_count": 8,
-      "lane": "in_progress",
-      "last_event_id": "01M1PJRDD16DPX864Z1V4GTYTN",
-      "last_transition_at": "2026-09-04T16:06:48.983378+00:00",
+      "force_count": 9,
+      "lane": "in_review",
+      "last_event_id": "01M1PM59ERR6YJN9BJPA6HQAZZ",
+      "last_transition_at": "2026-09-04T16:31:19.512445+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
@@ -203,7 +203,8 @@
         "Resume preserved WP03 defect-4 adapter correction after independent approval of foundation byte-preservation repair 026e3a7e. The exact former failing reader regression now passes 20 consecutive runs in lane-c. Continue bounded key/commit/read/reconciliation validation; no prior adapter contract is reopened.",
         "Ready for independent defect-4 review: 4c22f999 adds canonical publication-witness key translation, foundation-addressed non-expiring reads, exactly one ordinary RequireAbsent witness in the single AtomicBatch, witness-inclusive mutation/observation/raw/wire accounting, and complete same-revision witness reconciliation. Existing exact-member reconciliation needed no duplicate policy. Focused x20, full package, race x5, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
         "Independent defect-4 review APPROVE at 4c22f999: canonical witness key and foundation address round-trip, exact sealed-byte translation, single ordinary non-expiring RequireAbsent witness in one AtomicBatch, witness-inclusive raw/wire/mutation/observation counts, and complete same-revision ambiguity reconciliation verified. Focused x20, race x3, package x3, contention race, architecture, compile, vet, staticcheck, module, formatting, diff, ownership, and all eight anti-pattern checks pass.",
-        "Rebind corrected canonical review cycle 7 before implementation"
+        "Rebind corrected canonical review cycle 7 before implementation",
+        "Override only the lane-history planning-artifact check: coordinator governance commits are ancestors of the lane by Spec Kitty synchronization; product candidate is exact commit 71defe71766975d0302fa39a8661270fa5ecd20b and the lane worktree is clean."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -212,15 +213,15 @@
         "reviewer": "codex-wp03-witness-independent-reviewer",
         "verdict": "approved"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
-        "T012": "planned",
-        "T013": "planned",
-        "T014": "planned",
-        "T015": "planned",
-        "T016": "planned"
+        "T012": "done",
+        "T013": "done",
+        "T014": "done",
+        "T015": "done",
+        "T016": "done"
       }
     },
     "WP04": {
