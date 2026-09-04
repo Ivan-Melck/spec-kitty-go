@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,14 +19,17 @@ import (
 )
 
 type effectPortProbeV2 struct {
-	resolution   EffectOperationResolutionV2
-	effect       EffectStateObservationV2
-	execution    ExecutionSlotObservationV2
-	trace        []string
-	plans        []EffectAuthorityPlanV2
-	publishErr   error
-	afterPublish func(journalv2.SealedCommitPlanV2)
-	timeline     *[]string
+	resolution    EffectOperationResolutionV2
+	effect        EffectStateObservationV2
+	execution     ExecutionSlotObservationV2
+	trace         []string
+	plans         []EffectAuthorityPlanV2
+	resolutionErr error
+	effectErr     error
+	executionErr  error
+	publishErr    error
+	afterPublish  func(journalv2.SealedCommitPlanV2)
+	timeline      *[]string
 }
 
 type effectDispatcherProbeV2 struct {
@@ -91,21 +95,21 @@ func (p *effectPortProbeV2) ResolveEffectOperation(context.Context, journalv2.Op
 	if p.timeline != nil {
 		*p.timeline = append(*p.timeline, "resolve")
 	}
-	return p.resolution, nil
+	return p.resolution, p.resolutionErr
 }
 func (p *effectPortProbeV2) ObserveEffectState(context.Context, journalv2.AggregateCoordinate) (EffectStateObservationV2, error) {
 	p.trace = append(p.trace, "effect")
 	if p.timeline != nil {
 		*p.timeline = append(*p.timeline, "effect")
 	}
-	return p.effect, nil
+	return p.effect, p.effectErr
 }
 func (p *effectPortProbeV2) ObserveEffectExecution(context.Context, journalv2.AggregateCoordinate) (ExecutionSlotObservationV2, error) {
 	p.trace = append(p.trace, "execution")
 	if p.timeline != nil {
 		*p.timeline = append(*p.timeline, "execution")
 	}
-	return p.execution, nil
+	return p.execution, p.executionErr
 }
 func (p *effectPortProbeV2) PublishEffect(_ context.Context, plan EffectAuthorityPlanV2) (EffectPublicationAckV2, error) {
 	p.trace = append(p.trace, "publish")
@@ -471,6 +475,42 @@ func TestExternalEffectReducerRejectsEnvelopeAndNestedObservationDriftV2(t *test
 	}
 }
 
+func TestExternalEffectReducerRejectsInitialAppliedObservationAndOperationSubstitutionV2(t *testing.T) {
+	request, port, service := effectRequestFixtureV2(t)
+	result, err := service.Execute(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, _ := port.plans[0].Publication()
+	var event journalv2.EventEnvelopeV2
+	for _, candidate := range sealed.Events() {
+		if candidate.Family() == "external_effect" {
+			event = candidate
+		}
+	}
+	newEvent := func(operationID journalv2.OperationID, payload []byte) journalv2.EventEnvelopeV2 {
+		t.Helper()
+		mutated, eventErr := journalv2.NewEventEnvelopeV2(journalv2.EventEnvelopeInput{EventID: event.EventID(), EventIndex: event.EventIndex(), EventCount: event.EventCount(), EventType: event.EventType(), Family: event.Family(), EventSchemaVersion: event.EventSchemaVersion(), ReducerVersion: event.ReducerVersion(), Coordinate: event.Coordinate(), AggregateLogicalVersion: event.LogicalVersion(), OperationID: operationID, OperationLogicalVersion: event.OperationVersion(), CommittedRuntimeEpochID: event.CommittedRuntimeEpochID(), ActorID: event.ActorID(), ProcessID: event.ProcessID(), WorkRevisionID: event.WorkRevisionID(), PolicyRevision: event.PolicyRevision(), GovernanceRevisions: event.GovernanceRevisions(), Payload: payload, PublicationID: event.PublicationID()}, journalv2.DefaultEventRegistryV2())
+		if eventErr != nil {
+			t.Fatal(eventErr)
+		}
+		return mutated
+	}
+	applied := effectObservationFixtureV2(request.Intent.Target, 2, request.Intent.IntendedValue, string(request.Intent.OperationID), "confirmed")
+	forged := result.State
+	forged.AppliedObservation = applied
+	forgedPayload, err := json.Marshal(forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReduceExternalEffectEventV2(nil, newEvent(event.OperationID(), forgedPayload)); err == nil {
+		t.Fatal("accepted forged initial applied observation")
+	}
+	if _, err := ReduceExternalEffectEventV2(nil, newEvent("operation-substituted", event.Payload())); !IsKind(err, KindAuthorityConflict) {
+		t.Fatalf("accepted substituted event operation ID: %v", err)
+	}
+}
+
 func TestExternalEffectDispatchRequiresAcknowledgedOpaquePermissionAndClassifiesResponseLossV2(t *testing.T) {
 	request, port, service := effectRequestFixtureV2(t)
 	dispatcher := &effectDispatcherProbeV2{}
@@ -579,6 +619,59 @@ func TestExternalEffectLostAcknowledgementRecoversExactNonterminalPermissionV2(t
 	}
 }
 
+func TestExternalEffectRestartCutsIntentAttemptAndObservationV2(t *testing.T) {
+	request, port, service := effectRequestFixtureV2(t)
+	port.afterPublish = func(sealed journalv2.SealedCommitPlanV2) { applySealedEffectPlanToProbeV2(t, port, sealed) }
+	restart := func() *EffectAuthorityServiceV2 {
+		t.Helper()
+		durable := &effectPortProbeV2{resolution: port.resolution, effect: port.effect, execution: port.execution}
+		value, err := NewEffectAuthorityServiceV2(durable, &executionEpochProbeV2{epoch: request.RuntimeEpochID}, journalv2.DefaultEventRegistryV2())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	assertReplay := func(action string, expected ExternalEffectStateV2) EffectAuthorityResultV2 {
+		t.Helper()
+		result, err := restart().Execute(t.Context(), request)
+		gotBytes, _ := encodeExternalEffectStateV2(result.State)
+		wantBytes, _ := encodeExternalEffectStateV2(expected)
+		if err != nil || !result.Replayed || !bytes.Equal(gotBytes, wantBytes) {
+			t.Fatalf("%s restart result=%+v err=%v", action, result, err)
+		}
+		return result
+	}
+	intent, err := service.Execute(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = assertReplay("intent", intent.State)
+	request.ExecutionSlot = intent.ExecutionSlot
+	request.Action = EffectStartAttemptV2
+	request.OperationEventID, request.EffectEventID = "event-restart-attempt-operation", "event-restart-attempt-effect"
+	attempt, err := service.Execute(t.Context(), request)
+	if err != nil || attempt.Permission == nil {
+		t.Fatalf("attempt=%+v err=%v", attempt, err)
+	}
+	replayedAttempt := assertReplay("attempt", attempt.State)
+	if replayedAttempt.Permission == nil {
+		t.Fatal("attempt restart lost acknowledged dispatch permission")
+	}
+	request.ExecutionSlot = attempt.ExecutionSlot
+	request.Action = EffectRecordObservationV2
+	request.OperationEventID, request.EffectEventID = "event-restart-observation-operation", "event-restart-observation-effect"
+	request.Observation = effectObservationFixtureV2(request.Intent.Target, 2, request.Intent.IntendedValue, string(request.Intent.OperationID), "confirmed")
+	request.DispatchEvidence = &EffectDispatchEvidenceV2{observation: *request.Observation, publicationID: attempt.Permission.publicationID, planDigest: attempt.Permission.planDigest, providerRevision: attempt.Permission.providerRevision}
+	observed, err := service.Execute(t.Context(), request)
+	if err != nil || observed.State.Observation == nil {
+		t.Fatalf("observation=%+v err=%v", observed, err)
+	}
+	replayedObservation := assertReplay("observation", observed.State)
+	if replayedObservation.State.Observation == nil || !effectAttributionExactV2(*replayedObservation.State.Observation, *request.Observation) {
+		t.Fatal("observation restart lost provider evidence")
+	}
+}
+
 func TestExternalEffectTrustedCoordinatorPersistsOutcomeAfterAcknowledgementV2(t *testing.T) {
 	request, port, service := effectRequestFixtureV2(t)
 	port.afterPublish = func(sealed journalv2.SealedCommitPlanV2) {
@@ -646,6 +739,31 @@ func TestExternalEffectServiceDiagnosticRedactsProviderCauseAndBindsRequestV2(t 
 		if strings.Contains(rendered, "provider-secret") || strings.Contains(rendered, secretText) || len(rendered) > 4096 {
 			t.Fatalf("unbounded or secret-bearing diagnostic: length=%d", len(rendered))
 		}
+	}
+}
+
+func TestExternalEffectAuthorityExternalFailuresUseBoundedRequestDiagnosticsV2(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		subject   string
+		kind      ErrorKind
+		configure func(*effectPortProbeV2, *executionEpochProbeV2, error)
+	}{
+		{"operation_resolution", "operation_resolution", KindControlStoreBusy, func(p *effectPortProbeV2, _ *executionEpochProbeV2, cause error) { p.resolutionErr = cause }},
+		{"runtime_epoch", "runtime_epoch", KindStaleAuthority, func(_ *effectPortProbeV2, e *executionEpochProbeV2, cause error) { e.err = cause }},
+		{"execution_slot", "execution_slot", KindStaleAuthority, func(p *effectPortProbeV2, _ *executionEpochProbeV2, cause error) { p.executionErr = cause }},
+		{"effect_state", "effect_state", KindControlStoreBusy, func(p *effectPortProbeV2, _ *executionEpochProbeV2, cause error) { p.effectErr = cause }},
+		{"effect_publication", "effect_publication", KindControlStoreBusy, func(p *effectPortProbeV2, _ *executionEpochProbeV2, cause error) { p.publishErr = cause }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request, port, service := effectRequestFixtureV2(t)
+			epoch := service.epochs.(*executionEpochProbeV2)
+			secret := errors.New("provider-secret-" + strings.Repeat("q", 32*1024))
+			test.configure(port, epoch, secret)
+			_, err := service.Execute(t.Context(), request)
+			executionRequest := ExecutionAuthorityRequestV2{OperationID: request.Intent.OperationID, WorkRevisionID: request.ExecutionSlot.WorkRevisionID, WorkID: request.ExecutionSlot.WorkID, RunID: request.ExecutionSlot.RunID, LeaseID: request.ExecutionSlot.LeaseID, ActorID: request.ExecutionSlot.ActorID, ProcessID: request.ExecutionSlot.ProcessID, RuntimeEpochID: request.RuntimeEpochID}
+			assertAuthorityRequestDiagnosticV2(t, err, secret, test.kind, test.subject, executionRequest)
+		})
 	}
 }
 

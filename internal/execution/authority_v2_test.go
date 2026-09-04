@@ -1,8 +1,11 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -15,25 +18,28 @@ import (
 )
 
 type executionPortProbeV2 struct {
-	resolution  ExecutionOperationResolutionV2
-	eligibility workgraph.ObservedEligibilityShardV2
-	observation ExecutionSlotObservationV2
-	trace       []string
-	plans       []ExecutionAuthorityPlanV2
-	publishErr  error
+	resolution     ExecutionOperationResolutionV2
+	eligibility    workgraph.ObservedEligibilityShardV2
+	observation    ExecutionSlotObservationV2
+	trace          []string
+	plans          []ExecutionAuthorityPlanV2
+	resolutionErr  error
+	eligibilityErr error
+	observationErr error
+	publishErr     error
 }
 
 func (p *executionPortProbeV2) ResolveExecutionOperation(context.Context, journalv2.OperationBindingV2) (ExecutionOperationResolutionV2, error) {
 	p.trace = append(p.trace, "resolve")
-	return p.resolution, nil
+	return p.resolution, p.resolutionErr
 }
 func (p *executionPortProbeV2) ObserveExecutionEligibility(context.Context, ids.MissionID, journalv2.EligibilityShardID) (workgraph.ObservedEligibilityShardV2, error) {
 	p.trace = append(p.trace, "eligibility")
-	return p.eligibility, nil
+	return p.eligibility, p.eligibilityErr
 }
 func (p *executionPortProbeV2) ObserveExecutionSlot(context.Context, journalv2.AggregateCoordinate) (ExecutionSlotObservationV2, error) {
 	p.trace = append(p.trace, "slot")
-	return p.observation, nil
+	return p.observation, p.observationErr
 }
 func (p *executionPortProbeV2) PublishExecution(_ context.Context, plan ExecutionAuthorityPlanV2) (ExecutionPublicationAckV2, error) {
 	p.trace = append(p.trace, "publish")
@@ -48,14 +54,18 @@ func (p *executionPortProbeV2) PublishExecution(_ context.Context, plan Executio
 type executionEpochProbeV2 struct {
 	epoch journalv2.RuntimeEpochID
 	calls int
+	err   error
 }
 type fixedFenceSourceV2 string
 
-func (f fixedFenceSourceV2) NewExecutionFence(context.Context) (string, error) { return string(f), nil }
+type failingFenceSourceV2 struct{ err error }
+
+func (f fixedFenceSourceV2) NewExecutionFence(context.Context) (string, error)   { return string(f), nil }
+func (f failingFenceSourceV2) NewExecutionFence(context.Context) (string, error) { return "", f.err }
 
 func (p *executionEpochProbeV2) CurrentRuntimeEpoch(context.Context) (journalv2.RuntimeEpochID, error) {
 	p.calls++
-	return p.epoch, nil
+	return p.epoch, p.err
 }
 
 func TestExecutionAuthorityAdmitsWithExactEligibilityAndOneBatchV2(t *testing.T) {
@@ -140,6 +150,73 @@ func TestExecutionAuthorityReplayAndCollisionPrecedeEpochAndCapabilityReadsV2(t 
 	}
 	if strings.Join(stalePort.trace, ",") != "resolve" {
 		t.Fatalf("stale epoch read capability: %v", stalePort.trace)
+	}
+}
+
+func TestExecutionAuthorityExternalFailuresUseBoundedRequestDiagnosticsV2(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		subject   string
+		kind      ErrorKind
+		configure func(*executionPortProbeV2, *executionEpochProbeV2, *ExecutionFenceSourceV2, error)
+	}{
+		{"operation_resolution", "operation_resolution", KindControlStoreBusy, func(p *executionPortProbeV2, _ *executionEpochProbeV2, _ *ExecutionFenceSourceV2, cause error) {
+			p.resolutionErr = cause
+		}},
+		{"runtime_epoch", "runtime_epoch", KindStaleAuthority, func(_ *executionPortProbeV2, e *executionEpochProbeV2, _ *ExecutionFenceSourceV2, cause error) {
+			e.err = cause
+		}},
+		{"execution_slot", "execution_slot", KindControlStoreBusy, func(p *executionPortProbeV2, _ *executionEpochProbeV2, _ *ExecutionFenceSourceV2, cause error) {
+			p.observationErr = cause
+		}},
+		{"eligibility", "eligibility", KindStaleAuthority, func(p *executionPortProbeV2, _ *executionEpochProbeV2, _ *ExecutionFenceSourceV2, cause error) {
+			p.eligibilityErr = cause
+		}},
+		{"fence_source", "fence_source", KindControlStoreBusy, func(_ *executionPortProbeV2, _ *executionEpochProbeV2, f *ExecutionFenceSourceV2, cause error) {
+			*f = failingFenceSourceV2{cause}
+		}},
+		{"execution_publication", "execution_publication", KindControlStoreBusy, func(p *executionPortProbeV2, _ *executionEpochProbeV2, _ *ExecutionFenceSourceV2, cause error) {
+			p.publishErr = cause
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request, eligibility := executionRequestFixtureV2(t, ExecutionAdmitV2)
+			port := &executionPortProbeV2{resolution: ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}, eligibility: eligibility}
+			epoch := &executionEpochProbeV2{epoch: request.RuntimeEpochID}
+			var fences ExecutionFenceSourceV2 = fixedFenceSourceV2("diagnostic-fence-0123456789")
+			secret := errors.New("provider-secret-" + strings.Repeat("z", 32*1024))
+			test.configure(port, epoch, &fences, secret)
+			service, err := NewExecutionAuthorityServiceWithFenceSourceV2(port, epoch, fences, journalv2.DefaultEventRegistryV2())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = service.Execute(t.Context(), request)
+			assertAuthorityRequestDiagnosticV2(t, err, secret, test.kind, test.subject, request)
+		})
+	}
+}
+
+func assertAuthorityRequestDiagnosticV2(t *testing.T, err, cause error, kind ErrorKind, subject string, request ExecutionAuthorityRequestV2) {
+	t.Helper()
+	if !IsKind(err, kind) || !errors.Is(err, cause) {
+		t.Fatalf("kind/cause lost: %v", err)
+	}
+	var diagnostic *AuthorityRequestErrorV2
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("missing request diagnostic: %T", err)
+	}
+	got := diagnostic.Diagnostic
+	if got.Kind != kind || got.Subject != subject || got.OperationID != request.OperationID || got.RuntimeEpochID != request.RuntimeEpochID || got.WorkRevisionID != request.WorkRevisionID || got.WorkID != request.WorkID || got.RunID != request.RunID || got.LeaseID != request.LeaseID || got.ActorID != request.ActorID || got.ProcessID != request.ProcessID || got.CauseClass != "provider_failure" {
+		t.Fatalf("diagnostic=%+v", got)
+	}
+	encoded, marshalErr := json.Marshal(diagnostic)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	for _, rendered := range []string{diagnostic.Error(), string(encoded)} {
+		if strings.Contains(rendered, "provider-secret") || len(rendered) > 4096 {
+			t.Fatalf("secret or unbounded diagnostic length=%d", len(rendered))
+		}
 	}
 }
 
@@ -309,6 +386,62 @@ func TestWP07ExecutableExecutionMutantsV2(t *testing.T) {
 	sum := sha256.Sum256([]byte(strings.Join(ids, "\n")))
 	if got := fmt.Sprintf("%x", sum); got != "3be8e19ae852612101ac05963fb180af04a036e46b8f501621b6c33874b5b960" {
 		t.Fatalf("mutant census count=%d digest=%s", len(ids), got)
+	}
+}
+
+func TestExecutionAuthorityRestartCutsHeartbeatExpiryAndReplacementV2(t *testing.T) {
+	admitRequest, eligibility := executionRequestFixtureV2(t, ExecutionAdmitV2)
+	admitPort := &executionPortProbeV2{resolution: ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}, eligibility: eligibility}
+	admitService, _ := NewExecutionAuthorityServiceWithFenceSourceV2(admitPort, &executionEpochProbeV2{epoch: admitRequest.RuntimeEpochID}, fixedFenceSourceV2("restart-admit-fence-0123456789"), journalv2.DefaultEventRegistryV2())
+	admitted, err := admitService.Execute(t.Context(), admitRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitPlan, _ := admitPort.plans[len(admitPort.plans)-1].Publication()
+	assertExecutionRestartReplayV2(t, admitRequest, admitPlan.OperationState(), admitted.State)
+
+	makePlan := func(request ExecutionAuthorityRequestV2, prior ExecutionSlotStateV2) (ExecutionAuthorityResultV2, journalv2.OperationStateV2) {
+		t.Helper()
+		port := &executionPortProbeV2{resolution: ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}, observation: ExecutionSlotObservationV2{State: &prior, RecordRevision: prior.LogicalVersion + 20}, eligibility: eligibility}
+		service, _ := NewExecutionAuthorityServiceWithFenceSourceV2(port, &executionEpochProbeV2{epoch: request.RuntimeEpochID}, fixedFenceSourceV2("restart-"+string(request.Kind)+"-fence-0123456789"), journalv2.DefaultEventRegistryV2())
+		result, executeErr := service.Execute(t.Context(), request)
+		if executeErr != nil {
+			t.Fatal(executeErr)
+		}
+		plan, _ := port.plans[len(port.plans)-1].Publication()
+		assertExecutionRestartReplayV2(t, request, plan.OperationState(), result.State)
+		return result, plan.OperationState()
+	}
+	heartbeatAt := admitRequest.ObservedAt.Add(10 * time.Second)
+	heartbeat := admitRequest
+	heartbeat.Kind, heartbeat.OperationID = ExecutionHeartbeatV2, "operation-restart-heartbeat"
+	heartbeat.OperationEventID, heartbeat.SlotEventID = "event-restart-heartbeat-operation", "event-restart-heartbeat-slot"
+	heartbeat.RunID, heartbeat.ActorID, heartbeat.ProcessID, heartbeat.LeaseID, heartbeat.Generation, heartbeat.Fence = admitted.State.RunID, admitted.State.ActorID, admitted.State.ProcessID, admitted.State.LeaseID, admitted.State.Generation, admitted.State.Fence
+	heartbeat.ObservedAt, heartbeat.Deadline = heartbeatAt, admitRequest.Deadline.Add(time.Minute)
+	renewed, _ := makePlan(heartbeat, admitted.State)
+
+	expire := heartbeat
+	expire.Kind, expire.OperationID = ExecutionExpireV2, "operation-restart-expire"
+	expire.OperationEventID, expire.SlotEventID = "event-restart-expire-operation", "event-restart-expire-slot"
+	expire.ObservedAt = mustExecutionTimeV2(renewed.State.Deadline)
+	expired, _ := makePlan(expire, renewed.State)
+
+	replace := expire
+	replace.Kind, replace.OperationID = ExecutionReplaceV2, "operation-restart-replace"
+	replace.OperationEventID, replace.SlotEventID = "event-restart-replace-operation", "event-restart-replace-slot"
+	replace.RunID, replace.LeaseID, replace.Generation = "run-restart-replacement", "lease-restart-replacement", expired.State.Generation+1
+	replace.ObservedAt, replace.Deadline = mustExecutionTimeV2(expired.State.Deadline), mustExecutionTimeV2(expired.State.Deadline).Add(time.Minute)
+	_, _ = makePlan(replace, expired.State)
+}
+
+func assertExecutionRestartReplayV2(t *testing.T, request ExecutionAuthorityRequestV2, operation journalv2.OperationStateV2, expected ExecutionSlotStateV2) {
+	t.Helper()
+	port := &executionPortProbeV2{resolution: ExecutionOperationResolutionV2{Kind: ExecutionOperationExactV2, State: operation}}
+	epoch := &executionEpochProbeV2{epoch: "epoch-restarted-and-rotated"}
+	service, _ := NewExecutionAuthorityServiceV2(port, epoch, journalv2.DefaultEventRegistryV2())
+	result, err := service.Execute(t.Context(), request)
+	if err != nil || !result.Replayed || !bytes.Equal(result.State.CanonicalBytes(), expected.CanonicalBytes()) || epoch.calls != 0 || strings.Join(port.trace, ",") != "resolve" {
+		t.Fatalf("restart replay kind=%s result=%+v epoch_calls=%d trace=%v err=%v", request.Kind, result, epoch.calls, port.trace, err)
 	}
 }
 

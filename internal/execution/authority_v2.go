@@ -545,11 +545,11 @@ func (s *ExecutionAuthorityServiceV2) Execute(ctx context.Context, request Execu
 	}
 	currentEpoch, err := s.epochs.CurrentRuntimeEpoch(ctx)
 	if err != nil || currentEpoch != request.RuntimeEpochID {
-		return ExecutionAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "runtime_epoch", err)
+		return ExecutionAuthorityResultV2{}, authorityRequestErrorV2(KindStaleAuthority, "runtime_epoch", request, err)
 	}
 	observation, err := s.port.ObserveExecutionSlot(ctx, prepared.coordinate)
 	if err != nil {
-		return ExecutionAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "execution_slot", err)
+		return ExecutionAuthorityResultV2{}, authorityRequestErrorV2(KindControlStoreBusy, "execution_slot", request, err)
 	}
 	if request.Kind == ExecutionAdmitV2 || request.Kind == ExecutionReplaceV2 {
 		shardID, shardErr := workgraph.NewEligibilityPolicy().ShardFor(request.MissionID, request.WorkID)
@@ -558,7 +558,7 @@ func (s *ExecutionAuthorityServiceV2) Execute(ctx context.Context, request Execu
 		}
 		eligibility, observeErr := s.port.ObserveExecutionEligibility(ctx, request.MissionID, shardID)
 		if observeErr != nil {
-			return ExecutionAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "eligibility", observeErr)
+			return ExecutionAuthorityResultV2{}, authorityRequestErrorV2(KindStaleAuthority, "eligibility", request, observeErr)
 		}
 		token, tokenErr := eligibility.Token(request.WorkID, request.WorkRevisionID, workgraph.EligibilityStart)
 		if tokenErr != nil {
@@ -567,7 +567,7 @@ func (s *ExecutionAuthorityServiceV2) Execute(ctx context.Context, request Execu
 		prepared.eligibility = token.Transition()
 		fence, fenceErr := s.fences.NewExecutionFence(ctx)
 		if fenceErr != nil {
-			return ExecutionAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "fence_source", fenceErr)
+			return ExecutionAuthorityResultV2{}, authorityRequestErrorV2(KindControlStoreBusy, "fence_source", request, fenceErr)
 		}
 		request.Fence = fence
 	}
@@ -590,9 +590,9 @@ func (s *ExecutionAuthorityServiceV2) Execute(ctx context.Context, request Execu
 		}
 		moved, movedErr := s.port.ObserveExecutionSlot(ctx, prepared.coordinate)
 		if movedErr == nil && (moved.RecordRevision != observation.RecordRevision || !executionObservationEqualV2(moved.State, observation.State)) {
-			return ExecutionAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "execution_slot", publishErr)
+			return ExecutionAuthorityResultV2{}, authorityRequestErrorV2(KindStaleAuthority, "execution_slot", request, publishErr)
 		}
-		return ExecutionAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "execution_publication", publishErr)
+		return ExecutionAuthorityResultV2{}, authorityRequestErrorV2(KindControlStoreBusy, "execution_publication", request, publishErr)
 	}
 	return ExecutionAuthorityResultV2{State: next}, nil
 }

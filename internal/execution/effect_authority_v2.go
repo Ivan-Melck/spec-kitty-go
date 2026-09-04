@@ -579,16 +579,16 @@ func (s *EffectAuthorityServiceV2) Execute(ctx context.Context, request EffectAu
 		return EffectAuthorityResultV2{State: state, Replayed: true}, nil
 	}
 	if current, epochErr := s.epochs.CurrentRuntimeEpoch(ctx); epochErr != nil || current != request.RuntimeEpochID {
-		return EffectAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "runtime_epoch", epochErr)
+		return EffectAuthorityResultV2{}, effectAuthorityRequestErrorV2(KindStaleAuthority, "runtime_epoch", request, epochErr)
 	}
 	executionCoordinate, _ := ExecutionSlotCoordinateV2(request.ExecutionSlot.ProjectID, request.ExecutionSlot.MissionID, request.ExecutionSlot.WorkRevisionID, request.ExecutionSlot.WorkID)
 	executionObserved, err := s.port.ObserveEffectExecution(ctx, executionCoordinate)
 	if err != nil || executionObserved.State == nil {
-		return EffectAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "execution_slot", err)
+		return EffectAuthorityResultV2{}, effectAuthorityRequestErrorV2(KindStaleAuthority, "execution_slot", request, err)
 	}
 	observed, err := s.port.ObserveEffectState(ctx, coordinate)
 	if err != nil {
-		return EffectAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "effect_state", err)
+		return EffectAuthorityResultV2{}, effectAuthorityRequestErrorV2(KindControlStoreBusy, "effect_state", request, err)
 	}
 	if resolution.Kind == ExecutionOperationAbsentV2 && observed.State != nil {
 		return EffectAuthorityResultV2{}, executionV2Error(KindAuthorityConflict, "effect_state", nil)
@@ -633,7 +633,7 @@ func (s *EffectAuthorityServiceV2) Execute(ctx context.Context, request EffectAu
 				return EffectAuthorityResultV2{State: *recoveredState.State, ExecutionSlot: *recoveredExecution.State, Permission: recoveredPermission, Replayed: true}, nil
 			}
 		}
-		return EffectAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "effect_publication", publishErr)
+		return EffectAuthorityResultV2{}, effectAuthorityRequestErrorV2(KindControlStoreBusy, "effect_publication", request, publishErr)
 	}
 	if permission != nil {
 		permission.publicationID = ack.publicationID
