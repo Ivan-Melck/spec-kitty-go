@@ -382,7 +382,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: candidate 6ec1f7243b1d5390f1b6195488d4bf05e44d089a; all WP08 qualification gates green",
-        "Correction cycle 2 candidate e7356f642e0d79454cc9077031673d1faaa9c521; force is limited to pre-existing coordinator governance commits already present on this reused lane. WP04 dependency fix 08046551 and all WP08 gates pass."
+        "Correction cycle 2 candidate e7356f642e0d79454cc9077031673d1faaa9c521; force is limited to pre-existing coordinator governance commits already present on this reused lane. WP04 dependency fix 08046551 and all WP08 gates pass.",
+        "Cycle 2 requested changes: executable production mutant kills and bounded redacted Git adapter errors."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -392,14 +393,14 @@
         "reviewer": "mill",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T040": "done",
-        "T041": "done",
-        "T042": "done",
-        "T043": "done"
+        "T040": "planned",
+        "T041": "planned",
+        "T042": "planned",
+        "T043": "planned"
       }
     },
     "WP09": {
