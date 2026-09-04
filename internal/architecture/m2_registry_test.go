@@ -90,27 +90,42 @@ func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
 		name    string
 		address journalv2.RecordAddressV2
 		encode  func() ([]byte, error)
-		decode  func([]byte) error
+		decode  func([]byte) ([]byte, error)
 	}{
-		{"OperationBindingV2", bindingAddress, func() ([]byte, error) { return journalv2.EncodeOperationBindingV2(binding) }, func(value []byte) error {
-			_, err := journalv2.DecodeOperationBindingV2(value)
-			return err
+		{"OperationBindingV2", bindingAddress, func() ([]byte, error) { return journalv2.EncodeOperationBindingV2(binding) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodeOperationBindingV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodeOperationBindingV2(decoded)
 		}},
-		{"EventEnvelopeV2", eventAddress, func() ([]byte, error) { return journalv2.EncodeEventEnvelopeV2(event) }, func(value []byte) error {
-			_, err := journalv2.DecodeEventEnvelopeV2(value, registry)
-			return err
+		{"EventEnvelopeV2", eventAddress, func() ([]byte, error) { return journalv2.EncodeEventEnvelopeV2(event) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodeEventEnvelopeV2(value, registry)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodeEventEnvelopeV2(decoded)
 		}},
-		{"AggregateHeadV2", headAddress, func() ([]byte, error) { return journalv2.EncodeAggregateHeadV2(head) }, func(value []byte) error {
-			_, err := journalv2.DecodeAggregateHeadV2(value)
-			return err
+		{"AggregateHeadV2", headAddress, func() ([]byte, error) { return journalv2.EncodeAggregateHeadV2(head) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodeAggregateHeadV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodeAggregateHeadV2(decoded)
 		}},
-		{"OperationStateV2", stateAddress, func() ([]byte, error) { return journalv2.EncodeOperationStateV2(state) }, func(value []byte) error {
-			_, err := journalv2.DecodeOperationStateV2(value)
-			return err
+		{"OperationStateV2", stateAddress, func() ([]byte, error) { return journalv2.EncodeOperationStateV2(state) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodeOperationStateV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodeOperationStateV2(decoded)
 		}},
-		{"PublicationWitnessV2", witnessAddress, func() ([]byte, error) { return journalv2.EncodePublicationWitnessV2(witness) }, func(value []byte) error {
-			_, err := journalv2.DecodePublicationWitnessV2(value)
-			return err
+		{"PublicationWitnessV2", witnessAddress, func() ([]byte, error) { return journalv2.EncodePublicationWitnessV2(witness) }, func(value []byte) ([]byte, error) {
+			decoded, err := journalv2.DecodePublicationWitnessV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return journalv2.EncodePublicationWitnessV2(decoded)
 		}},
 	}
 	consumers := make([]m2DurableCodecConsumer, 0, len(tests)+1)
@@ -138,9 +153,6 @@ func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
 			if !bytes.Equal(record.CanonicalValue(), encoded) {
 				t.Fatal("recovery admission rewrote bytes")
 			}
-			if err := test.decode(record.CanonicalValue()); err != nil {
-				t.Fatalf("strict consumer failed: %v", err)
-			}
 			noncanonical, err := m2ReverseTopLevelObject(encoded)
 			if err != nil || bytes.Equal(noncanonical, encoded) {
 				t.Fatalf("could not construct semantically equivalent noncanonical evidence: %v", err)
@@ -148,8 +160,12 @@ func TestM2CurrentDurableCodecsRoundTripExactRecoveryBytes(t *testing.T) {
 			if _, err := journalv2.NewRecoveryRecordV2(test.address, noncanonical, 7, ""); err == nil {
 				t.Fatal("evidence=LENGTH-ONLY-RECOVERY noncanonical provider evidence admitted")
 			}
-			if err := test.decode(noncanonical); err == nil {
+			if _, err := test.decode(noncanonical); err == nil {
 				t.Fatal("evidence=REMOVED-DECODER-EQUALITY semantically valid noncanonical ordering admitted")
+			}
+			reencoded, err := test.decode(record.CanonicalValue())
+			if err != nil || !bytes.Equal(reencoded, encoded) {
+				t.Fatalf("evidence=DECODE-EXACT-SEMANTICS decoded value did not preserve exact admitted semantics: %v", err)
 			}
 		})
 	}
@@ -256,7 +272,7 @@ func validateM2DurableCodecCompatibility(t *testing.T, fixture string) error {
 		"TOP-LEVEL-ONLY":               "evidence=TOP-LEVEL-ONLY",
 		"DISCARDED-NORMALIZED-RESULT":  "evidence=ENCODER-RECURSIVE",
 		"LENGTH-ONLY-RECOVERY":         "evidence=LENGTH-ONLY-RECOVERY",
-		"REMOVED-DECODER-EQUALITY":     "evidence=REMOVED-DECODER-EQUALITY",
+		"REMOVED-DECODER-EQUALITY":     "evidence=DECODE-EXACT-SEMANTICS",
 		"OMITTED-CODEC-CLASSIFICATION": "evidence=M2-DURABLE-CODEC-CENSUS",
 		"PARTIAL-REPAIR":               "evidence=ENCODER-RECURSIVE",
 	}[fixture]
@@ -425,8 +441,13 @@ func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uin
 		bindings += `
 func DecodeOperationBindingV2(encoded []byte) (OperationBindingV2, error) {
 	canonical, err := CanonicalObject(encoded)
-	if err != nil { return OperationBindingV2{}, err }
-	return m2UnderlyingDecodeOperationBindingV2(canonical)
+	if err != nil || !bytes.Equal(canonical, encoded) {
+		return OperationBindingV2{}, invalid(ErrorJournalCorrupt, "operation_binding")
+	}
+	if _, err := m2UnderlyingDecodeOperationBindingV2(canonical); err != nil {
+		return OperationBindingV2{}, err
+	}
+	return OperationBindingV2{}, nil
 }
 `
 	case "TOP-LEVEL-ONLY":
