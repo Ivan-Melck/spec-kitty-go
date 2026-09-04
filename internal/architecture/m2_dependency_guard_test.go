@@ -192,6 +192,7 @@ func TestM2DependencyRestoreTimeUseIsDeadlineBudgetOnly(t *testing.T) {
 			source: `package restore
 import ("context"; "time")
 type BudgetsV2 struct { MaximumDuration time.Duration }
+type InputV2 struct { Budgets BudgetsV2 }
 func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
 func defaultBudget() BudgetsV2 { return BudgetsV2{MaximumDuration: 30 * time.Second} }
 `,
@@ -251,6 +252,106 @@ func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.With
 import ("context"; "time")
 type BudgetsV2 struct { MaximumDuration time.Duration }
 type ResultV2 struct { Budget BudgetsV2 }
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "named_pointer_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type Leaked *BudgetsV2
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "named_slice_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type Leaked []BudgetsV2
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "named_map_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type Leaked map[string]BudgetsV2
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "named_channel_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type Leaked chan BudgetsV2
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "named_array_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type Leaked [1]BudgetsV2
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "named_signature_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type Leaked func() BudgetsV2
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "named_interface_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type Leaked interface { Budget() BudgetsV2 }
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "named_generic_union_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type Leaked[T interface { BudgetsV2 | string }] []T
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "malformed_input_container_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type InputV2 []BudgetsV2
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "generic_input_constraint_duration_state",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type InputV2[T interface { BudgetsV2 | string }] struct { Budgets BudgetsV2 }
 func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
 `,
 			wantTarget: "time.Duration.state",
@@ -960,13 +1061,23 @@ func m2RestoreDurationStateConfined(pkg *types.Package) bool {
 		if !ok {
 			continue
 		}
+		privileged := typeName == budget || typeName == input
+		if !privileged {
+			if m2RestoreTypeReachesDuration(typeName.Type(), make(map[types.Type]bool)) {
+				return false
+			}
+			continue
+		}
 		named, ok := types.Unalias(typeName.Type()).(*types.Named)
 		if !ok {
-			continue
+			return false
+		}
+		if m2RestoreTypeListReachesDuration(named.TypeParams(), make(map[types.Type]bool)) {
+			return false
 		}
 		structure, ok := named.Underlying().(*types.Struct)
 		if !ok {
-			continue
+			return false
 		}
 		for index := 0; index < structure.NumFields(); index++ {
 			field := structure.Field(index)
@@ -1028,6 +1139,9 @@ func m2RestoreTypeReachesDuration(valueType types.Type, visited map[types.Type]b
 	visited[valueType] = true
 	switch typed := valueType.(type) {
 	case *types.Named:
+		if m2RestoreTypeListReachesDuration(typed.TypeParams(), visited) {
+			return true
+		}
 		return m2RestoreTypeReachesDuration(typed.Underlying(), visited)
 	case *types.Pointer:
 		return m2RestoreTypeReachesDuration(typed.Elem(), visited)
@@ -1046,10 +1160,18 @@ func m2RestoreTypeReachesDuration(valueType types.Type, visited map[types.Type]b
 			}
 		}
 	case *types.Signature:
-		return m2RestoreTupleReachesDuration(typed.Params(), visited) || m2RestoreTupleReachesDuration(typed.Results(), visited)
+		return m2RestoreTypeListReachesDuration(typed.TypeParams(), visited) ||
+			m2RestoreTypeListReachesDuration(typed.RecvTypeParams(), visited) ||
+			m2RestoreTupleReachesDuration(typed.Params(), visited) ||
+			m2RestoreTupleReachesDuration(typed.Results(), visited)
 	case *types.Interface:
 		for index := 0; index < typed.NumMethods(); index++ {
 			if m2RestoreTypeReachesDuration(typed.Method(index).Type(), visited) {
+				return true
+			}
+		}
+		for index := 0; index < typed.NumEmbeddeds(); index++ {
+			if m2RestoreTypeReachesDuration(typed.EmbeddedType(index), visited) {
 				return true
 			}
 		}
@@ -1071,6 +1193,18 @@ func m2RestoreTupleReachesDuration(tuple *types.Tuple, visited map[types.Type]bo
 	}
 	for index := 0; index < tuple.Len(); index++ {
 		if m2RestoreTypeReachesDuration(tuple.At(index).Type(), visited) {
+			return true
+		}
+	}
+	return false
+}
+
+func m2RestoreTypeListReachesDuration(parameters *types.TypeParamList, visited map[types.Type]bool) bool {
+	if parameters == nil {
+		return false
+	}
+	for index := 0; index < parameters.Len(); index++ {
+		if m2RestoreTypeReachesDuration(parameters.At(index), visited) {
 			return true
 		}
 	}
