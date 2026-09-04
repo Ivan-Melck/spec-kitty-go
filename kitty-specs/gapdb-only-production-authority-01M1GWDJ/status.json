@@ -90,7 +90,7 @@
     },
     "WP02": {
       "actor": "ivan-gapdb-canonical-codecs",
-      "agent": "renata-gapdb-recovery-bounds-review",
+      "agent": "ivan-gapdb-canonical-codecs",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-canonical-codecs",
@@ -130,7 +130,8 @@
         "Stage ratified defect-6 repair beneath the always-live WP01 guard candidate 6dcae82f. Dependency WP01 remains in repair review order; force reopens only stale approved ownership and does not bypass the guard or independent approval.",
         "Defect-6 canonical durable-byte repair complete at 03ac7098; reviewed together with approved WP01 guard 2d9d5089 on lane-b eaa212b2 and subsequent lifecycle merges.",
         "Repair review cycle 14: use semantic-address-specific recovery canonical bounds and prove exact-max identity plus over-limit refusal.",
-        "Cycle-14 address-specific recovery bounds repaired at e8a5fc8f; exact-max/over-limit/noncanonical identity tests and all v2/race/184-mutant/static gates pass."
+        "Cycle-14 address-specific recovery bounds repaired at e8a5fc8f; exact-max/over-limit/noncanonical identity tests and all v2/race/184-mutant/static gates pass.",
+        "Repair review cycle 15: add the missing ordinary exact-256KiB live recovery constructor case."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
