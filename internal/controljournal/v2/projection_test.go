@@ -28,6 +28,39 @@ func TestProjectionRefusesDigestMismatchWithoutAdvancing(t *testing.T) {
 	}
 }
 
+func TestProjectionCheckpointCensusUsesCanonicalAggregateCoordinateOrder(t *testing.T) {
+	scopeA := Scope{Kind: ScopeMission, ProjectID: "project-z", MissionID: "mission-z"}
+	scopeB := Scope{Kind: ScopeWork, ProjectID: "project-a", MissionID: "mission-a", WorkRevisionID: "revision-a", WorkID: "work-a"}
+	left, _ := NewAggregateCoordinate("workspace", "workspace-z", scopeB)
+	right, _ := NewAggregateCoordinate("artifact", "artifact-a", scopeA)
+	state := []byte(`{"value":1}`)
+	digest, _ := ReducerStateDigestV2(state)
+	entries := snapshotProjectionEntries(map[string]projectionEntryV2{
+		left.canonical():  {coordinate: left, canonical: state, digest: digest, version: 1, lastEventID: "event-left"},
+		right.canonical(): {coordinate: right, canonical: state, digest: digest, version: 1, lastEventID: "event-right"},
+	})
+	if len(entries) != 2 {
+		t.Fatalf("entries=%d", len(entries))
+	}
+	wantFirst := left
+	if order, _ := CompareAggregateCoordinates(right, left); order < 0 {
+		wantFirst = right
+	}
+	if entries[0].Coordinate() != wantFirst {
+		t.Fatalf("checkpoint census used private-key order: got=%+v want=%+v", entries[0].Coordinate(), wantFirst)
+	}
+	before, err := digestProjectionEntries(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries[0].canonical = []byte(`{"value":2}`)
+	entries[0].digest, _ = ReducerStateDigestV2(entries[0].canonical)
+	after, err := digestProjectionEntries(entries)
+	if err != nil || before == after {
+		t.Fatalf("true projection mutation retained digest: before=%s after=%s err=%v", before, after, err)
+	}
+}
+
 func TestProjectionRejectsConflictingProviderRevision(t *testing.T) {
 	left := projectionPlan(t, "operation-01", "mission-01", "left")
 	right := projectionPlan(t, "operation-02", "mission-02", "right")
