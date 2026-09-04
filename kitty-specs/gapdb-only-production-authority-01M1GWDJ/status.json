@@ -152,7 +152,8 @@
         "Reopened for bounded post-approval repair: add explicit permission-bound reconciliation resume under the same OperationID; generic transition remains forbidden.",
         "Exact candidate 35590268 independently approved; force only acknowledges coordinator planning artifacts merged into the lane",
         "Independent review of exact candidate 35590268",
-        "Permission semantic binding and all regression gates approved"
+        "Permission semantic binding and all regression gates approved",
+        "Approved candidate 35590268 merged to mission coordinator | Done override: Lane ancestry is already contained in coordinator merge a6dbf7cd; post-merge lane comparison reports zero remaining commits"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
