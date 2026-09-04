@@ -372,7 +372,7 @@
     },
     "WP08": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 2,
@@ -384,6 +384,7 @@
         "Ready for independent review: candidate 6ec1f7243b1d5390f1b6195488d4bf05e44d089a; all WP08 qualification gates green"
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP08-lease-scoped-workspace-authority/review-cycle-1.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP08-lease-scoped-workspace-authority/review-cycle-1.md",
@@ -391,13 +392,13 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T040": "done",
-        "T041": "done",
-        "T042": "done",
-        "T043": "done"
+        "T040": "planned",
+        "T041": "planned",
+        "T042": "planned",
+        "T043": "planned"
       }
     },
     "WP09": {
