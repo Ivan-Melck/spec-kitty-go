@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"go/ast"
+	"go/constant"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -262,6 +264,29 @@ func run(ctx context.Context, budgets Budgets, enabled bool) { if enabled { if v
 			wantTarget: "context.WithTimeout(duration-budget)",
 		},
 		{
+			name: "mixed_validated_and_unvalidated_callers",
+			source: `package restore
+import ("context"; "time")
+type Budgets struct { Maximum time.Duration }
+func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*time.Minute { return context.Canceled }; return nil }
+func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
+func good(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
+func bad(ctx context.Context, budgets Budgets) { attempt(ctx, budgets) }
+`,
+			wantTarget: "context.WithTimeout(duration-budget)",
+		},
+		{
+			name: "zero_upper_bound",
+			source: `package restore
+import ("context"; "time")
+type Budgets struct { Maximum time.Duration }
+func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 0*time.Minute { return context.Canceled }; return nil }
+func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
+func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
+`,
+			wantTarget: "context.WithTimeout(duration-budget)",
+		},
+		{
 			name: "deadline_without_duration_budget",
 			source: `package restore
 import ("context"; "time")
@@ -320,6 +345,27 @@ func diagnostic(t localClock) int { return t.Now }
 	}
 	if violations := m2EvaluateClosedGraph(m2ClosedPolicy(t, m2ModulePath), graph); len(violations) != 0 {
 		t.Fatalf("evidence=RESTORE-DEADLINE-BOUNDARY file-scoped alias shadow rejected: %v", violations)
+	}
+}
+
+func TestM2DependencyRestoreAliasShadowUsesObjectIdentity(t *testing.T) {
+	root := t.TempDir()
+	writeGoFixture(t, root, "go.mod", "module "+m2ModulePath+"\n\ngo 1.26\n")
+	writeGoFixture(t, root, "internal/controljournal/v2/restore/restore.go", `package restore
+import ("context"; t "time")
+type Budgets struct { Maximum t.Duration }
+type localClock struct { Now int }
+func validate(budgets Budgets) error { if budgets.Maximum <= 0 || budgets.Maximum > 5*t.Minute { return context.Canceled }; return nil }
+func attempt(ctx context.Context, budgets Budgets) { child, cancel := context.WithTimeout(ctx, budgets.Maximum); defer cancel(); _ = child }
+func run(ctx context.Context, budgets Budgets) { if validate(budgets) != nil { return }; attempt(ctx, budgets) }
+func diagnostic(t localClock) int { return t.Now }
+`)
+	graph, err := LoadGraph(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if violations := m2EvaluateClosedGraph(m2ClosedPolicy(t, m2ModulePath), graph); len(violations) != 0 {
+		t.Fatalf("evidence=RESTORE-DEADLINE-BOUNDARY lexical import shadow rejected: %v", violations)
 	}
 }
 
@@ -739,11 +785,6 @@ func m2RestoreDeadlineContractViolations(graph Graph) Violations {
 	return violations
 }
 
-type m2RestoreSourceFile struct {
-	syntax                      *ast.File
-	timeAliases, contextAliases map[string]bool
-}
-
 func m2RestoreDeadlineSourceViolations(graph Graph) Violations {
 	restorePackage := graph.ModulePath + "/internal/controljournal/v2/restore"
 	var restoreDir string
@@ -763,7 +804,7 @@ func m2RestoreDeadlineSourceViolations(graph Graph) Violations {
 		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "restore-source"}}
 	}
 	invalidTimeImport := false
-	files := make([]m2RestoreSourceFile, 0)
+	files := make([]*ast.File, 0)
 	fset := token.NewFileSet()
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
@@ -773,310 +814,460 @@ func m2RestoreDeadlineSourceViolations(graph Graph) Violations {
 		if parseErr != nil {
 			return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "restore-source"}}
 		}
-		parsed := m2RestoreSourceFile{syntax: file, timeAliases: map[string]bool{}, contextAliases: map[string]bool{}}
+		files = append(files, file)
 		for _, imported := range file.Imports {
-			path, unquoteErr := strconv.Unquote(imported.Path.Value)
-			if unquoteErr != nil || path != "time" && path != "context" {
-				continue
-			}
-			alias := path
-			if imported.Name != nil {
-				alias = imported.Name.Name
-			}
-			if path == "time" {
-				if alias == "." || alias == "_" {
-					invalidTimeImport = true
-				}
-				parsed.timeAliases[alias] = true
-			} else {
-				parsed.contextAliases[alias] = true
+			if strings.Trim(imported.Path.Value, "`\"") == "time" && imported.Name != nil &&
+				(imported.Name.Name == "." || imported.Name.Name == "_") {
+				invalidTimeImport = true
 			}
 		}
-		files = append(files, parsed)
 	}
 	if invalidTimeImport {
 		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "time.import"}}
 	}
-	durationFields := make(map[string]map[string]bool)
+	info := &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+	}
+	config := types.Config{Importer: m2RestoreTypeImporter{fallback: importer.Default()}, Error: func(error) {}}
+	_, _ = config.Check(restorePackage, fset, files, info)
+
 	durationUses := 0
 	for _, file := range files {
 		var violation string
-		ast.Inspect(file.syntax, func(node ast.Node) bool {
+		ast.Inspect(file, func(node ast.Node) bool {
 			selector, ok := node.(*ast.SelectorExpr)
 			if !ok {
 				return true
 			}
-			identifier, ok := selector.X.(*ast.Ident)
-			if !ok {
+			object := info.Uses[selector.Sel]
+			if !m2RestoreObjectFromPackage(object, "time") {
 				return true
 			}
-			if file.timeAliases[identifier.Name] {
-				if selector.Sel.Name == "Duration" {
-					durationUses++
-				} else if !slices.Contains([]string{"Second", "Minute"}, selector.Sel.Name) {
-					violation = "time." + selector.Sel.Name
-					return false
-				}
+			if object.Name() == "Duration" {
+				durationUses++
+			} else if !slices.Contains([]string{"Second", "Minute"}, object.Name()) {
+				violation = "time." + object.Name()
+				return false
 			}
 			return true
 		})
 		if violation != "" {
 			return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: violation}}
 		}
-		for _, declaration := range file.syntax.Decls {
-			generic, ok := declaration.(*ast.GenDecl)
-			if !ok || generic.Tok != token.TYPE {
-				continue
-			}
-			for _, specification := range generic.Specs {
-				typeSpec, ok := specification.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-				structure, ok := typeSpec.Type.(*ast.StructType)
-				if !ok {
-					continue
-				}
-				for _, field := range structure.Fields.List {
-					selector, ok := field.Type.(*ast.SelectorExpr)
-					if !ok {
-						continue
-					}
-					qualifier, qualified := selector.X.(*ast.Ident)
-					if !qualified || !file.timeAliases[qualifier.Name] || selector.Sel.Name != "Duration" {
-						continue
-					}
-					if durationFields[typeSpec.Name.Name] == nil {
-						durationFields[typeSpec.Name.Name] = make(map[string]bool)
-					}
-					for _, name := range field.Names {
-						durationFields[typeSpec.Name.Name][name.Name] = true
-					}
-				}
-			}
-		}
 	}
 	if durationUses == 0 {
 		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "time.Duration"}}
 	}
-	if !m2RestoreDurationReachesValidatedDeadline(files, durationFields) {
+	if !m2RestoreDurationReachesValidatedDeadline(files, info) {
 		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "context.WithTimeout(duration-budget)"}}
 	}
 	return nil
 }
 
-type m2RestoreDeadlineSpec struct {
-	function, typeName, field string
-	parameterIndex            int
-	position                  token.Pos
+type m2RestoreTypeImporter struct{ fallback types.Importer }
+
+func (i m2RestoreTypeImporter) Import(path string) (*types.Package, error) {
+	if path == "context" || path == "time" {
+		return i.fallback.Import(path)
+	}
+	stub := types.NewPackage(path, filepath.Base(path))
+	stub.MarkComplete()
+	return stub, nil
 }
 
-func m2RestoreDurationReachesValidatedDeadline(files []m2RestoreSourceFile, durationFields map[string]map[string]bool) bool {
-	type functionSource struct {
-		declaration *ast.FuncDecl
-		file        m2RestoreSourceFile
-	}
-	functions := make(map[string]functionSource)
+type m2RestoreDeadlineSpec struct {
+	function       *types.Func
+	declaration    *ast.FuncDecl
+	parameter      *types.Var
+	field          *types.Var
+	parameterIndex int
+	call           *ast.CallExpr
+}
+
+type m2RestoreValidatorSpec struct {
+	function       *types.Func
+	field          *types.Var
+	parameterIndex int
+}
+
+func m2RestoreDurationReachesValidatedDeadline(files []*ast.File, info *types.Info) bool {
+	functions := make(map[*types.Func]*ast.FuncDecl)
 	for _, file := range files {
-		for _, declaration := range file.syntax.Decls {
+		for _, declaration := range file.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
 			if ok && function.Recv == nil && function.Body != nil {
-				functions[function.Name.Name] = functionSource{function, file}
-			}
-		}
-	}
-	validators := make(map[string]m2RestoreDeadlineSpec)
-	deadlines := make(map[string]m2RestoreDeadlineSpec)
-	for name, source := range functions {
-		parameters := m2RestoreParameters(source.declaration)
-		for variable, parameter := range parameters {
-			for field := range durationFields[parameter.typeName] {
-				if position := m2RestoreValidatedDurationPosition(source.declaration.Body, source.file.timeAliases, variable, field); position.IsValid() {
-					validators[name] = m2RestoreDeadlineSpec{name, parameter.typeName, field, parameter.index, position}
+				if object, objectOK := info.Defs[function.Name].(*types.Func); objectOK {
+					functions[object] = function
 				}
 			}
 		}
-		ast.Inspect(source.declaration.Body, func(node ast.Node) bool {
+	}
+	deadlines := make([]m2RestoreDeadlineSpec, 0)
+	validDeadlineCalls := true
+	for function, declaration := range functions {
+		ast.Inspect(declaration.Body, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok || len(call.Args) < 2 || !m2RestorePackageSelector(call.Fun, source.file.contextAliases, "WithTimeout") {
+			if !ok || !m2RestoreCallTargetsPackageFunction(call, info, "context", "WithTimeout") {
 				return true
 			}
-			selector, ok := call.Args[1].(*ast.SelectorExpr)
+			deadline, admitted := m2RestoreDeadlineFromCall(function, declaration, call, info)
+			if !admitted {
+				validDeadlineCalls = false
+				return false
+			}
+			deadlines = append(deadlines, deadline)
+			return true
+		})
+	}
+	if !validDeadlineCalls || len(deadlines) == 0 {
+		return false
+	}
+	validators := make(map[*types.Func][]m2RestoreValidatorSpec)
+	for function, declaration := range functions {
+		signature := function.Type().(*types.Signature)
+		for parameterIndex := 0; parameterIndex < signature.Params().Len(); parameterIndex++ {
+			parameter := signature.Params().At(parameterIndex)
+			for _, deadline := range deadlines {
+				if m2RestoreValidatedDuration(declaration.Body, info, parameter, deadline.field) {
+					validators[function] = append(validators[function], m2RestoreValidatorSpec{function, deadline.field, parameterIndex})
+				}
+			}
+		}
+	}
+	for _, deadline := range deadlines {
+		if m2RestoreDeadlineInternallyValidated(deadline, validators, info) {
+			continue
+		}
+		if deadline.function.Exported() || !m2RestoreEveryCallerValidates(functions, deadline, validators, info) {
+			return false
+		}
+	}
+	return true
+}
+
+func m2RestoreDeadlineFromCall(function *types.Func, declaration *ast.FuncDecl, call *ast.CallExpr, info *types.Info) (m2RestoreDeadlineSpec, bool) {
+	if len(call.Args) < 2 {
+		return m2RestoreDeadlineSpec{}, false
+	}
+	selector, ok := call.Args[1].(*ast.SelectorExpr)
+	if !ok {
+		return m2RestoreDeadlineSpec{}, false
+	}
+	selection := info.Selections[selector]
+	field, fieldOK := selectionObject(selection).(*types.Var)
+	receiver, receiverOK := selector.X.(*ast.Ident)
+	parameter, parameterOK := info.Uses[receiver].(*types.Var)
+	if !fieldOK || !field.IsField() || !receiverOK || !parameterOK || !m2RestoreIsDuration(field.Type()) {
+		return m2RestoreDeadlineSpec{}, false
+	}
+	parameterIndex := m2RestoreParameterIndex(function, parameter)
+	if parameterIndex < 0 {
+		return m2RestoreDeadlineSpec{}, false
+	}
+	return m2RestoreDeadlineSpec{function, declaration, parameter, field, parameterIndex, call}, true
+}
+
+func selectionObject(selection *types.Selection) types.Object {
+	if selection == nil {
+		return nil
+	}
+	return selection.Obj()
+}
+
+func m2RestoreParameterIndex(function *types.Func, parameter *types.Var) int {
+	signature := function.Type().(*types.Signature)
+	for index := 0; index < signature.Params().Len(); index++ {
+		if signature.Params().At(index) == parameter {
+			return index
+		}
+	}
+	return -1
+}
+
+func m2RestoreValidatedDuration(body *ast.BlockStmt, info *types.Info, parameter, field *types.Var) bool {
+	minimum, maximum := int64(0), int64(-1)
+	for _, node := range body.List {
+		statement, ok := node.(*ast.IfStmt)
+		if !ok || statement.Else != nil || !m2RestoreBlockReturnsFailure(statement.Body) {
+			continue
+		}
+		for _, condition := range m2RestoreDisjunction(statement.Cond) {
+			if value, matched := m2RestoreInvalidLowerBound(condition, info, parameter, field); matched && value > minimum {
+				minimum = value
+			}
+			if value, matched := m2RestoreInvalidUpperBound(condition, info, parameter, field); matched && (maximum < 0 || value < maximum) {
+				maximum = value
+			}
+		}
+	}
+	return minimum >= 1 && maximum >= minimum
+}
+
+func m2RestoreDisjunction(expression ast.Expr) []ast.Expr {
+	binary, ok := expression.(*ast.BinaryExpr)
+	if !ok || binary.Op != token.LOR {
+		return []ast.Expr{expression}
+	}
+	return append(m2RestoreDisjunction(binary.X), m2RestoreDisjunction(binary.Y)...)
+}
+
+func m2RestoreInvalidLowerBound(expression ast.Expr, info *types.Info, parameter, field *types.Var) (int64, bool) {
+	comparison, ok := expression.(*ast.BinaryExpr)
+	if !ok {
+		return 0, false
+	}
+	operation, other, matched := comparison.Op, comparison.Y, m2RestoreFieldExpression(comparison.X, info, parameter, field)
+	if !matched && m2RestoreFieldExpression(comparison.Y, info, parameter, field) {
+		operation, other, matched = m2RestoreReverseComparison(comparison.Op), comparison.X, true
+	}
+	value, exact := m2RestoreConstantInt64(other, info)
+	if !matched || !exact {
+		return 0, false
+	}
+	switch operation {
+	case token.LEQ:
+		if value == int64(^uint64(0)>>1) {
+			return 0, false
+		}
+		return value + 1, true
+	case token.LSS:
+		return value, true
+	default:
+		return 0, false
+	}
+}
+
+func m2RestoreInvalidUpperBound(expression ast.Expr, info *types.Info, parameter, field *types.Var) (int64, bool) {
+	comparison, ok := expression.(*ast.BinaryExpr)
+	if !ok {
+		return 0, false
+	}
+	operation, other, matched := comparison.Op, comparison.Y, m2RestoreFieldExpression(comparison.X, info, parameter, field)
+	if !matched && m2RestoreFieldExpression(comparison.Y, info, parameter, field) {
+		operation, other, matched = m2RestoreReverseComparison(comparison.Op), comparison.X, true
+	}
+	value, exact := m2RestoreConstantInt64(other, info)
+	if !matched || !exact {
+		return 0, false
+	}
+	switch operation {
+	case token.GTR:
+		return value, true
+	case token.GEQ:
+		if value == -int64(^uint64(0)>>1)-1 {
+			return 0, false
+		}
+		return value - 1, true
+	default:
+		return 0, false
+	}
+}
+
+func m2RestoreReverseComparison(operation token.Token) token.Token {
+	switch operation {
+	case token.LSS:
+		return token.GTR
+	case token.LEQ:
+		return token.GEQ
+	case token.GTR:
+		return token.LSS
+	case token.GEQ:
+		return token.LEQ
+	default:
+		return operation
+	}
+}
+
+func m2RestoreFieldExpression(expression ast.Expr, info *types.Info, parameter, field *types.Var) bool {
+	selector, ok := expression.(*ast.SelectorExpr)
+	if !ok || selectionObject(info.Selections[selector]) != field {
+		return false
+	}
+	receiver, ok := selector.X.(*ast.Ident)
+	return ok && info.Uses[receiver] == parameter
+}
+
+func m2RestoreConstantInt64(expression ast.Expr, info *types.Info) (int64, bool) {
+	value := info.Types[expression].Value
+	if value == nil || value.Kind() != constant.Int {
+		return 0, false
+	}
+	return constant.Int64Val(value)
+}
+
+type m2RestoreBudgetKey struct {
+	variable *types.Var
+	field    *types.Var
+}
+
+type m2RestoreCallRequirement func(*ast.CallExpr) (m2RestoreBudgetKey, bool)
+
+func m2RestoreDeadlineInternallyValidated(deadline m2RestoreDeadlineSpec, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info) bool {
+	requirement := func(call *ast.CallExpr) (m2RestoreBudgetKey, bool) {
+		return m2RestoreBudgetKey{deadline.parameter, deadline.field}, call == deadline.call
+	}
+	count, valid := m2RestoreAnalyzeBlock(deadline.declaration.Body, make(map[m2RestoreBudgetKey]bool), validators, info, requirement)
+	return count == 1 && valid
+}
+
+func m2RestoreEveryCallerValidates(functions map[*types.Func]*ast.FuncDecl, deadline m2RestoreDeadlineSpec, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info) bool {
+	requirement := func(call *ast.CallExpr) (m2RestoreBudgetKey, bool) {
+		if m2RestoreCalledFunction(call, info) != deadline.function || deadline.parameterIndex >= len(call.Args) {
+			return m2RestoreBudgetKey{}, false
+		}
+		argument, ok := call.Args[deadline.parameterIndex].(*ast.Ident)
+		variable, variableOK := info.Uses[argument].(*types.Var)
+		if !ok || !variableOK {
+			return m2RestoreBudgetKey{}, true
+		}
+		return m2RestoreBudgetKey{variable, deadline.field}, true
+	}
+	total := 0
+	for _, declaration := range functions {
+		count, valid := m2RestoreAnalyzeBlock(declaration.Body, make(map[m2RestoreBudgetKey]bool), validators, info, requirement)
+		if !valid {
+			return false
+		}
+		total += count
+	}
+	return total > 0
+}
+
+func m2RestoreAnalyzeBlock(body *ast.BlockStmt, validated map[m2RestoreBudgetKey]bool, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info, requirement m2RestoreCallRequirement) (int, bool) {
+	total := 0
+	for _, statement := range body.List {
+		count, valid := m2RestoreAnalyzeStatement(statement, validated, validators, info, requirement)
+		total += count
+		if !valid {
+			return total, false
+		}
+		if conditional, ok := statement.(*ast.IfStmt); ok {
+			for _, key := range m2RestoreValidatorGate(conditional, validators, info) {
+				validated[key] = true
+			}
+		}
+	}
+	return total, true
+}
+
+func m2RestoreAnalyzeStatement(statement ast.Stmt, validated map[m2RestoreBudgetKey]bool, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info, requirement m2RestoreCallRequirement) (int, bool) {
+	check := func(node ast.Node) (int, bool) {
+		if node == nil {
+			return 0, true
+		}
+		total, valid := 0, true
+		ast.Inspect(node, func(current ast.Node) bool {
+			call, ok := current.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
-			receiver, receiverOK := selector.X.(*ast.Ident)
-			if !receiverOK {
+			key, required := requirement(call)
+			if required {
+				total++
+				if key.variable == nil || !validated[key] {
+					valid = false
+				}
+			}
+			return true
+		})
+		return total, valid
+	}
+	merge := func(leftCount int, leftValid bool, rightCount int, rightValid bool) (int, bool) {
+		return leftCount + rightCount, leftValid && rightValid
+	}
+	clone := func() map[m2RestoreBudgetKey]bool {
+		copy := make(map[m2RestoreBudgetKey]bool, len(validated))
+		for key, value := range validated {
+			copy[key] = value
+		}
+		return copy
+	}
+	switch typed := statement.(type) {
+	case *ast.IfStmt:
+		count, valid := check(typed.Cond)
+		if typed.Init != nil {
+			initCount, initValid := check(typed.Init)
+			count, valid = merge(count, valid, initCount, initValid)
+		}
+		bodyCount, bodyValid := m2RestoreAnalyzeBlock(typed.Body, clone(), validators, info, requirement)
+		count, valid = merge(count, valid, bodyCount, bodyValid)
+		if branch, ok := typed.Else.(*ast.BlockStmt); ok {
+			branchCount, branchValid := m2RestoreAnalyzeBlock(branch, clone(), validators, info, requirement)
+			count, valid = merge(count, valid, branchCount, branchValid)
+		} else if branch, ok := typed.Else.(*ast.IfStmt); ok {
+			branchCount, branchValid := m2RestoreAnalyzeStatement(branch, clone(), validators, info, requirement)
+			count, valid = merge(count, valid, branchCount, branchValid)
+		}
+		return count, valid
+	case *ast.ForStmt:
+		count, valid := check(typed.Init)
+		conditionCount, conditionValid := check(typed.Cond)
+		count, valid = merge(count, valid, conditionCount, conditionValid)
+		postCount, postValid := check(typed.Post)
+		count, valid = merge(count, valid, postCount, postValid)
+		bodyCount, bodyValid := m2RestoreAnalyzeBlock(typed.Body, clone(), validators, info, requirement)
+		return merge(count, valid, bodyCount, bodyValid)
+	case *ast.RangeStmt:
+		count, valid := check(typed.X)
+		bodyCount, bodyValid := m2RestoreAnalyzeBlock(typed.Body, clone(), validators, info, requirement)
+		return merge(count, valid, bodyCount, bodyValid)
+	case *ast.BlockStmt:
+		return m2RestoreAnalyzeBlock(typed, clone(), validators, info, requirement)
+	case *ast.LabeledStmt:
+		return m2RestoreAnalyzeStatement(typed.Stmt, clone(), validators, info, requirement)
+	default:
+		return check(statement)
+	}
+}
+
+func m2RestoreValidatorGate(statement *ast.IfStmt, validators map[*types.Func][]m2RestoreValidatorSpec, info *types.Info) []m2RestoreBudgetKey {
+	if statement.Else != nil || !m2RestoreBlockTerminates(statement.Body) {
+		return nil
+	}
+	var call *ast.CallExpr
+	if assignment, ok := statement.Init.(*ast.AssignStmt); ok && len(assignment.Lhs) == 1 && len(assignment.Rhs) == 1 {
+		candidate, callOK := assignment.Rhs[0].(*ast.CallExpr)
+		identifier, identifierOK := assignment.Lhs[0].(*ast.Ident)
+		if callOK && identifierOK && m2RestoreConditionRejectsObject(statement.Cond, info.Defs[identifier], info) {
+			call = candidate
+		}
+	}
+	if call == nil {
+		ast.Inspect(statement.Cond, func(node ast.Node) bool {
+			comparison, ok := node.(*ast.BinaryExpr)
+			if !ok || comparison.Op != token.NEQ {
 				return true
 			}
-			parameter, exists := parameters[receiver.Name]
-			if exists && durationFields[parameter.typeName][selector.Sel.Name] {
-				deadlines[name] = m2RestoreDeadlineSpec{name, parameter.typeName, selector.Sel.Name, parameter.index, call.Pos()}
+			if candidate, candidateOK := comparison.X.(*ast.CallExpr); candidateOK && m2RestoreNil(comparison.Y) {
+				call = candidate
+			} else if candidate, candidateOK := comparison.Y.(*ast.CallExpr); candidateOK && m2RestoreNil(comparison.X) {
+				call = candidate
 			}
 			return true
 		})
 	}
-	for name, deadline := range deadlines {
-		if validator, ok := validators[name]; ok && validator.position < deadline.position && m2SameRestoreDeadlineField(validator, deadline) {
-			return true
-		}
-		for _, source := range functions {
-			if m2RestoreCallerValidatesBeforeDeadline(source.declaration.Body, validators, deadline) {
-				return true
-			}
-		}
+	if call == nil {
+		return nil
 	}
-	return false
-}
-
-type m2RestoreParameter struct {
-	typeName string
-	index    int
-}
-
-func m2RestoreParameters(function *ast.FuncDecl) map[string]m2RestoreParameter {
-	result := make(map[string]m2RestoreParameter)
-	index := 0
-	if function.Type.Params == nil {
-		return result
-	}
-	for _, field := range function.Type.Params.List {
-		typeName := ""
-		if identifier, ok := field.Type.(*ast.Ident); ok {
-			typeName = identifier.Name
-		}
-		if len(field.Names) == 0 {
-			index++
+	function := m2RestoreCalledFunction(call, info)
+	var result []m2RestoreBudgetKey
+	for _, validator := range validators[function] {
+		if validator.parameterIndex >= len(call.Args) {
 			continue
 		}
-		for _, name := range field.Names {
-			result[name.Name] = m2RestoreParameter{typeName, index}
-			index++
+		argument, ok := call.Args[validator.parameterIndex].(*ast.Ident)
+		variable, variableOK := info.Uses[argument].(*types.Var)
+		if ok && variableOK {
+			result = append(result, m2RestoreBudgetKey{variable, validator.field})
 		}
 	}
 	return result
 }
 
-func m2RestoreValidatedDurationPosition(body *ast.BlockStmt, timeAliases map[string]bool, variable, field string) token.Pos {
-	lower, upper := token.NoPos, token.NoPos
-	ast.Inspect(body, func(node ast.Node) bool {
-		statement, ok := node.(*ast.IfStmt)
-		if !ok || !m2RestoreBlockReturnsFailure(statement.Body) {
-			return true
-		}
-		conditionLower, conditionUpper := false, false
-		ast.Inspect(statement.Cond, func(conditionNode ast.Node) bool {
-			comparison, comparisonOK := conditionNode.(*ast.BinaryExpr)
-			if !comparisonOK {
-				return true
-			}
-			leftField := m2RestoreFieldSelector(comparison.X, variable, field)
-			rightField := m2RestoreFieldSelector(comparison.Y, variable, field)
-			if leftField && (comparison.Op == token.LEQ && m2RestoreInteger(comparison.Y, 0) || comparison.Op == token.LSS && m2RestoreInteger(comparison.Y, 1)) ||
-				rightField && (comparison.Op == token.GEQ && m2RestoreInteger(comparison.X, 0) || comparison.Op == token.GTR && m2RestoreInteger(comparison.X, 1)) {
-				conditionLower = true
-			}
-			if leftField && (comparison.Op == token.GTR || comparison.Op == token.GEQ) && m2RestoreContainsTimeUnit(comparison.Y, timeAliases) ||
-				rightField && (comparison.Op == token.LSS || comparison.Op == token.LEQ) && m2RestoreContainsTimeUnit(comparison.X, timeAliases) {
-				conditionUpper = true
-			}
-			return true
-		})
-		if conditionLower && !lower.IsValid() {
-			lower = statement.Pos()
-		}
-		if conditionUpper && !upper.IsValid() {
-			upper = statement.Pos()
-		}
-		return true
-	})
-	if !lower.IsValid() || !upper.IsValid() {
-		return token.NoPos
-	}
-	if lower > upper {
-		return lower
-	}
-	return upper
-}
-
-func m2RestoreCallerValidatesBeforeDeadline(body *ast.BlockStmt, validators map[string]m2RestoreDeadlineSpec, deadline m2RestoreDeadlineSpec) bool {
-	type validation struct {
-		position token.Pos
-		variable string
-		spec     m2RestoreDeadlineSpec
-	}
-	var validations []validation
-	var deadlineCalls []*ast.CallExpr
-	for _, statement := range body.List {
-		if conditional, ok := statement.(*ast.IfStmt); ok && conditional.Else == nil && m2RestoreBlockTerminates(conditional.Body) {
-			if call := m2RestoreGatedValidatorCall(conditional, validators); call != nil {
-				callee := call.Fun.(*ast.Ident)
-				validator := validators[callee.Name]
-				if argument, argumentOK := call.Args[validator.parameterIndex].(*ast.Ident); argumentOK {
-					validations = append(validations, validation{statement.Pos(), argument.Name, validator})
-				}
-			}
-		}
-		ast.Inspect(statement, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			callee, ok := call.Fun.(*ast.Ident)
-			if ok && callee.Name == deadline.function && deadline.parameterIndex < len(call.Args) {
-				deadlineCalls = append(deadlineCalls, call)
-			}
-			return true
-		})
-	}
-	for _, call := range deadlineCalls {
-		argument, ok := call.Args[deadline.parameterIndex].(*ast.Ident)
-		if !ok {
-			continue
-		}
-		for _, validated := range validations {
-			if validated.position < call.Pos() && validated.variable == argument.Name && m2SameRestoreDeadlineField(validated.spec, deadline) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func m2RestoreGatedValidatorCall(statement *ast.IfStmt, validators map[string]m2RestoreDeadlineSpec) *ast.CallExpr {
-	var candidate *ast.CallExpr
-	if assignment, ok := statement.Init.(*ast.AssignStmt); ok && len(assignment.Lhs) == 1 && len(assignment.Rhs) == 1 {
-		if call, callOK := assignment.Rhs[0].(*ast.CallExpr); callOK && m2RestoreCallIsValidator(call, validators) {
-			identifier, identifierOK := assignment.Lhs[0].(*ast.Ident)
-			if identifierOK && m2RestoreConditionRejectsIdentifier(statement.Cond, identifier.Name) {
-				candidate = call
-			}
-		}
-	}
-	ast.Inspect(statement.Cond, func(node ast.Node) bool {
-		comparison, ok := node.(*ast.BinaryExpr)
-		if !ok || comparison.Op != token.NEQ || !m2RestoreNil(comparison.Y) {
-			return true
-		}
-		call, callOK := comparison.X.(*ast.CallExpr)
-		if callOK && m2RestoreCallIsValidator(call, validators) {
-			candidate = call
-		}
-		return true
-	})
-	return candidate
-}
-
-func m2RestoreCallIsValidator(call *ast.CallExpr, validators map[string]m2RestoreDeadlineSpec) bool {
-	callee, ok := call.Fun.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	validator, exists := validators[callee.Name]
-	return exists && validator.parameterIndex < len(call.Args)
-}
-
-func m2RestoreConditionRejectsIdentifier(expression ast.Expr, name string) bool {
+func m2RestoreConditionRejectsObject(expression ast.Expr, object types.Object, info *types.Info) bool {
 	rejected := false
 	ast.Inspect(expression, func(node ast.Node) bool {
 		comparison, ok := node.(*ast.BinaryExpr)
@@ -1085,12 +1276,39 @@ func m2RestoreConditionRejectsIdentifier(expression ast.Expr, name string) bool 
 		}
 		left, leftOK := comparison.X.(*ast.Ident)
 		right, rightOK := comparison.Y.(*ast.Ident)
-		if leftOK && left.Name == name && rightOK && right.Name == "nil" || rightOK && right.Name == name && leftOK && left.Name == "nil" {
+		if leftOK && info.Uses[left] == object && m2RestoreNil(comparison.Y) || rightOK && info.Uses[right] == object && m2RestoreNil(comparison.X) {
 			rejected = true
 		}
 		return true
 	})
 	return rejected
+}
+
+func m2RestoreCalledFunction(call *ast.CallExpr, info *types.Info) *types.Func {
+	switch function := call.Fun.(type) {
+	case *ast.Ident:
+		result, _ := info.Uses[function].(*types.Func)
+		return result
+	case *ast.SelectorExpr:
+		result, _ := info.Uses[function.Sel].(*types.Func)
+		return result
+	default:
+		return nil
+	}
+}
+
+func m2RestoreCallTargetsPackageFunction(call *ast.CallExpr, info *types.Info, packagePath, name string) bool {
+	function := m2RestoreCalledFunction(call, info)
+	return function != nil && function.Name() == name && m2RestoreObjectFromPackage(function, packagePath)
+}
+
+func m2RestoreObjectFromPackage(object types.Object, packagePath string) bool {
+	return object != nil && object.Pkg() != nil && object.Pkg().Path() == packagePath
+}
+
+func m2RestoreIsDuration(valueType types.Type) bool {
+	named, ok := valueType.(*types.Named)
+	return ok && named.Obj().Name() == "Duration" && m2RestoreObjectFromPackage(named.Obj(), "time")
 }
 
 func m2RestoreBlockReturnsFailure(body *ast.BlockStmt) bool {
@@ -1117,54 +1335,6 @@ func m2RestoreBlockTerminates(body *ast.BlockStmt) bool {
 func m2RestoreNil(expression ast.Expr) bool {
 	identifier, ok := expression.(*ast.Ident)
 	return ok && identifier.Name == "nil"
-}
-
-func m2SameRestoreDeadlineField(left, right m2RestoreDeadlineSpec) bool {
-	return left.typeName == right.typeName && left.field == right.field
-}
-
-func m2RestorePackageSelector(expression ast.Expr, aliases map[string]bool, selectorName string) bool {
-	selector, ok := expression.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	identifier, identifierOK := selector.X.(*ast.Ident)
-	return identifierOK && aliases[identifier.Name] && selector.Sel.Name == selectorName
-}
-
-func m2RestoreFieldSelector(expression ast.Expr, variable, field string) bool {
-	selector, ok := expression.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	identifier, identifierOK := selector.X.(*ast.Ident)
-	return identifierOK && identifier.Name == variable && selector.Sel.Name == field
-}
-
-func m2RestoreInteger(expression ast.Expr, want int64) bool {
-	literal, ok := expression.(*ast.BasicLit)
-	if !ok || literal.Kind != token.INT {
-		return false
-	}
-	value, err := strconv.ParseInt(literal.Value, 0, 64)
-	return err == nil && value == want
-}
-
-func m2RestoreContainsTimeUnit(expression ast.Expr, aliases map[string]bool) bool {
-	found := false
-	ast.Inspect(expression, func(node ast.Node) bool {
-		selector, ok := node.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		identifier, identifierOK := selector.X.(*ast.Ident)
-		if identifierOK && aliases[identifier.Name] && slices.Contains([]string{"Second", "Minute"}, selector.Sel.Name) {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
 }
 
 func m2IsGapDBPrivatePath(target string) bool {
