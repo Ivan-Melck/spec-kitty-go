@@ -1,7 +1,7 @@
 {
-  "event_count": 224,
-  "last_event_id": "01M1MTR2RGE7R73VBC6AQAAGYP",
-  "materialized_at": "2026-09-03T23:47:57.840469+00:00",
+  "event_count": 225,
+  "last_event_id": "01M1MVJCQGVVH1GV0KGP17STCX",
+  "materialized_at": "2026-09-04T00:02:20.016284+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -13,8 +13,8 @@
     "done": 0,
     "for_review": 0,
     "in_progress": 1,
-    "in_review": 1,
-    "planned": 12
+    "in_review": 0,
+    "planned": 13
   },
   "work_packages": {
     "WP01": {
@@ -23,10 +23,10 @@
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-codec-guard",
-      "force_count": 22,
-      "lane": "in_review",
-      "last_event_id": "01M1MTR2RGE7R73VBC6AQAAGYP",
-      "last_transition_at": "2026-09-03T23:47:57.840469+00:00",
+      "force_count": 23,
+      "lane": "planned",
+      "last_event_id": "01M1MVJCQGVVH1GV0KGP17STCX",
+      "last_transition_at": "2026-09-04T00:02:20.016284+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
@@ -70,9 +70,9 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-17.md",
-        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-17.md",
-        "reviewer": "renata-gapdb-codec-guard-review",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-18.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-18.md",
+        "reviewer": "renata-gapdb-codec-combined-review",
         "verdict": "changes_requested"
       },
       "role": "reviewer",
