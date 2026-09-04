@@ -149,7 +149,8 @@
         "Repair review cycle 15: add the missing ordinary exact-256KiB live recovery constructor case.",
         "Cycle-15 adds the missing ordinary exact-256KiB live constructor evidence at 21b8cd43; focused/package/race/184-mutant/static gates pass.",
         "Independent review passed: durable bytes canonical, digest preimages stable, address-specific recovery bounds exact, 184-mutant/v2/race/static gates green.",
-        "Reopened for bounded post-approval repair: add explicit permission-bound reconciliation resume under the same OperationID; generic transition remains forbidden."
+        "Reopened for bounded post-approval repair: add explicit permission-bound reconciliation resume under the same OperationID; generic transition remains forbidden.",
+        "Exact candidate 35590268 independently approved; force only acknowledges coordinator planning artifacts merged into the lane"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
