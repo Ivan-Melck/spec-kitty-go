@@ -411,10 +411,19 @@
     },
     "WP09": {
       "actor": "gibbs",
+      "agent": "gibbs",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 0,
       "lane": "in_progress",
       "last_event_id": "01M1Q0F1CDPAXTS4XAV4P0YFFW",
-      "last_transition_at": "2026-09-04T20:06:21.837782+00:00"
+      "last_transition_at": "2026-09-04T20:06:21.837782+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Resolved failed workspace allocation: all dependency lineages are integrated and the lane-i worktree was fast-forwarded to coordinator 20757d1f."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "role": "implementer"
     },
     "WP10": {
       "actor": "finalize-tasks",
