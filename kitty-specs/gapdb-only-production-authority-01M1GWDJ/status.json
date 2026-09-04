@@ -19,10 +19,10 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-deadline-guard",
-      "agent": "renata-gapdb-codec-final-review",
+      "agent": "ivan-gapdb-deadline-guard",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "ivan-gapdb-codec-guard",
+      "assignee": "ivan-gapdb-deadline-guard",
       "force_count": 25,
       "lane": "in_progress",
       "last_event_id": "01M1N2ZVYZDPAEF630WH9STXWP",
@@ -68,7 +68,8 @@
         "Defect-6 guard is intentionally always-live and therefore red on the unrepaired WP01 lane; independent review must validate WP01 commits aaf6abf1 and 6dcae82f on the repaired combined lane-b tree at WP02 candidate 03ac7098.",
         "Repair review cycle 18: restore exact direct decoder semantics assertions and add a real-production semantic-substitution mutant while preserving the 184-mutant guard.",
         "Cycle-18 repair is intentionally red on unrepaired lane-a; review exact WP01 commit 2d9d5089 on combined repaired lane-b at eaa212b2 (WP02 candidate 03ac7098).",
-        "Independent review passed: always-live production-bound guard, exact decode semantics, 184 sealed mutants, repeated/race/full/static gates green."
+        "Independent review passed: always-live production-bound guard, exact decode semantics, 184 sealed mutants, repeated/race/full/static gates green.",
+        "Post-approval defect 7: admit exact restore->time elapsed-deadline edge, retain time prohibition for foundation/checkpoint/playback, and append a widening mutant to the sealed architecture census."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
