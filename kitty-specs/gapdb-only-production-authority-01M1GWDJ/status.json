@@ -19,10 +19,10 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-deadline-structural",
-      "agent": "renata-gapdb-deadline-cfg-review",
+      "agent": "ivan-gapdb-deadline-structural",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "ivan-gapdb-deadline-cfg",
+      "assignee": "ivan-gapdb-deadline-structural",
       "force_count": 33,
       "lane": "in_progress",
       "last_event_id": "01M1N9X7KKJ07NAHDECW20FDBT",
@@ -76,7 +76,8 @@
         "Cycle-21 repair: replace spelling maps with object identity; require dominating validation on every deadline call path; prove a positive non-empty bound.",
         "Cycle-21 semantic repair committed at 76f43ac8; object identity, universal call-path validation, positive bound, combined-WP04, architecture, race, and static gates pass.",
         "Cycle-22 repair: close compound-gate and function-value escapes; accept else-dominated and inline self-validating paths without weakening prior semantic guards.",
-        "Cycle-22 control-flow repair committed at 415ac94b; exact predicates, function-value fencing, else propagation, inline self-validation, WP04 overlay, architecture/race/static gates pass."
+        "Cycle-22 control-flow repair committed at 415ac94b; exact predicates, function-value fencing, else propagation, inline self-validation, WP04 overlay, architecture/race/static gates pass.",
+        "Defect-8 repair: delete custom CFG verifier; retain exact object-identity capability confinement while WP04 owns source-bound deadline behavior."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -87,8 +88,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": 290266,
-      "shell_pid_created_at": "1788494582.02",
+      "shell_pid": 302873,
+      "shell_pid_created_at": "1788495170.23",
       "subtasks": {
         "T001": "planned",
         "T002": "planned",
