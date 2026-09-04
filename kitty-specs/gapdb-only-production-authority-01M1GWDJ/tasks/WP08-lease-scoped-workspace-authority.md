@@ -156,6 +156,10 @@ contracts and an immutable workspace binding that later gates can verify.
    WorkspaceID, ProjectID, MissionID, WorkRevisionID, WorkID, RunID, LeaseID,
    lease generation/fence, RuntimeEpochID, RepositoryID, LaneID, canonical
    absolute path identity, owned branch/ref, pinned base, and dependency set.
+   The aggregate coordinate is host-scoped by WorkspaceID so the identity can
+   be absent only once across every project/mission/work scope. Project,
+   mission, work, and repository coordinates remain immutable state fields;
+   they are not alternate namespaces for reusing one WorkspaceID.
 2. Make repository, lease, workspace, and path bindings write-once. No stage
    transition, retry, restart, replacement, or reconciliation may change them.
 3. Treat the canonical path as recorded identity, not filesystem authority.
@@ -239,9 +243,14 @@ mutation is preceded by durable intent and every authority stage is resumable.
    registration, compare all attributable facts, and either record the exact
    observation or enter reconciliation-required state.
 10. Publish `ready` only while holding the cooperating repository target guard
-    across pre-probe, GapDB publication, and post-probe. Persist both exact
-    observations. Drift, uncertainty, or guard loss withholds ready according
-    to frozen behavior; success is never optimistic.
+    across the complete chronology. Persist both exact observations without
+    violating causality: either pre-probe -> non-ready guarded publication ->
+    post-probe -> ready publication containing both observations, or perform
+    both probes before the single final ready publication while the same guard
+    remains held. Never publish ready between the probes and then claim the
+    later observation was already in that publication. Drift, uncertainty, or
+    guard loss withholds ready according to frozen behavior; success is never
+    optimistic.
 
 **Required fault tests**:
 
@@ -396,6 +405,8 @@ owned wildcard surfaces.
 - two workspace events target one aggregate in one publication;
 - restart trusts projection state not proven by replay;
 - adapter or filesystem implementation leaks into the workspace kernel.
+- workspace aggregate scope changes from host to work, allowing one
+  WorkspaceID to bind under a second work coordinate.
 
 Each mutant requires a passing control and must fail for its intended semantic
 reason. Grep-only assertions do not count as behavioral proof.
