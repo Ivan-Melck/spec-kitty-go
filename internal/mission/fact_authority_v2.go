@@ -97,6 +97,7 @@ func (s MissionFactStateV2) LogicalVersion() journalv2.LogicalVersion {
 	return s.input.LogicalVersion
 }
 func (s MissionFactStateV2) LastOperationID() journalv2.OperationID { return s.input.LastOperationID }
+func (s MissionFactStateV2) DetailDigest() journalv2.Digest         { return s.input.DetailDigest }
 func (s MissionFactStateV2) Digest() journalv2.Digest               { return s.digest }
 func (s MissionFactStateV2) CanonicalBytes() []byte                 { return append([]byte(nil), s.canonical...) }
 
