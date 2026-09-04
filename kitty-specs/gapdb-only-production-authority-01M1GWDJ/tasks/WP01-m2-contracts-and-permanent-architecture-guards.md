@@ -189,6 +189,22 @@ canonicalization results, length-only recovery admission, removed decoder
 equality, and omission of any classified durable codec. Preserve every prior
 mutant ID and census control; additions append to the sealed census.
 
+## Post-approval correction: restore deadline capability boundary
+
+Read `post-approval-defect-7.md` before editing. The existing standard-library
+guard incorrectly applies the pure playback boundary to the restore I/O
+coordinator. Preserve the common v2 allowlist, but admit the exact production
+edge `internal/controljournal/v2/restore -> time` solely for validated
+elapsed-attempt context deadlines. Foundation, checkpoint, playback, and every
+other v2 package remain time-free.
+
+Add positive and negative exact-edge tests plus a mutant that widens the
+exception to the whole v2 prefix; the widening must be rejected by the same
+repository validator. Do not replace the existing `M-PURE-TIME` control or any
+prior mutant. Append the new control to the sealed census and update its exact
+count/digest. This correction authorizes no clock-derived durable state,
+ordering, digest, revision, or acceptance semantics.
+
 ## T001 — Executable contract and schema validation
 
 ### Purpose
