@@ -4,8 +4,8 @@
 **Branch**: `feat/gapdb-only-production-authority`  
 **Date**: 2026-09-02  
 **Spec**: [spec.md](spec.md)  
-**Status**: Post-approval correction ratified; WP01–WP03 require ordered
-reapproval before WP04 resumes
+**Status**: Post-approval correction ratified; WP01 structural deadline proof
+requires reapproval before WP04 resumes with behavioral deadline evidence
 
 ## Summary
 
@@ -553,7 +553,11 @@ guard admits only the exact `internal/controljournal/v2/restore -> time` edge.
 Foundation, checkpoint, playback, and all other v2 packages remain time-free,
 and time cannot participate in durable state or authority decisions. A
 permanent widening mutant prevents this exception from becoming a prefix-wide
-allowance. See `post-approval-defect-7.md`.
+allowance. WP01 proves structural confinement and absence of ambient-clock
+capabilities; WP04 proves the real validation and deadline data flow through
+source-bound execution; WP17 binds both to overlay mutants and one exact source
+identity. No architecture test models arbitrary Go control flow. See
+`post-approval-defect-7.md` and `post-approval-defect-8.md`.
 
 ## Complexity Tracking
 
