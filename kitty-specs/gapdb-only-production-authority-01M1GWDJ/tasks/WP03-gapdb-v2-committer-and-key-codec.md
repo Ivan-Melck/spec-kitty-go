@@ -48,12 +48,6 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
-- go.mod
-- go.sum
-- internal/controlstore/gapdb/admission_test.go
-- internal/controlstore/gapdb/external_scenarios_test.go
-- internal/controlstore/gapdb/port.go
-- internal/controlstore/gapdb/port_test.go
 - internal/controlstore/gapdb/v2_codec.go
 - internal/controlstore/gapdb/v2_committer.go
 - internal/controlstore/gapdb/v2_reader.go
@@ -85,15 +79,6 @@ that translates a WP02 sealed `CommitPlan` into exactly one durable
 `AtomicBatch`. Preserve provider record metadata for later restore, reconcile
 ambiguous publication by stable identity, and prove that the adapter adds no
 capability policy or alternate authority path.
-
-This package is reopened by `post-approval-defect-9.md` and review cycle 7.
-After the amended WP02 contract is approved, pin the exact released public
-GapDB module, translate sealed authority assertions and the permanent
-workspace-path claim, require exact assertion acknowledgements, and prove
-assertion evidence during response-loss reconciliation. The module/API
-candidate and production-admitted sidecar remain explicitly distinct until
-WP13 owns the exact human adoption cutover. Review cycle 7 is normative for
-tuple values, added ownership, external qualification, and mutants.
 
 ## Context
 
