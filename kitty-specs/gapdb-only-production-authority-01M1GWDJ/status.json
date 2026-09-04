@@ -420,7 +420,8 @@
       "last_transition_at": "2026-09-04T21:16:33.029623+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Resolved failed workspace allocation: all dependency lineages are integrated and the lane-i worktree was fast-forwarded to coordinator 20757d1f."
+        "Resolved failed workspace allocation: all dependency lineages are integrated and the lane-i worktree was fast-forwarded to coordinator 20757d1f.",
+        "Ready for independent review at c4dc9ec817f2f0acab31068b6be542b27b301c58 tree 1fa78c812cc6e68b011a611630230f89c6799a53. Force acknowledges only inherited coordinator governance files in the recovered lane; no product or test failure is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
