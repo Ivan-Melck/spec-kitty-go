@@ -285,7 +285,8 @@
       "notes": [
         "Review-cycle-1 blockers repaired at 1db5dd3169b22e5190a3562a0ba15b0ff75e9a75; fresh provider state fenced and 15 controlled mutants executable.",
         "Review-cycle-2 blocker repaired at 5ff93bc9 with typed provider-neutral mutation outcomes; definitive refusals reconcile and only explicit indeterminacy may use exact re-observation.",
-        "Independent cycle-3 review approved 5ff93bc9: seven provider outcome classes x20, 15 executable mutants, race, architecture, compile, vet, staticcheck, module, format, and ownership gates pass."
+        "Independent cycle-3 review approved 5ff93bc9: seven provider outcome classes x20, 15 executable mutants, race, architecture, compile, vet, staticcheck, module, format, and ownership gates pass.",
+        "Previously approved package integrated and verified on the coordinator; no test or review failure bypassed. | Done override: Approved WP05 product lineage was integrated by cherry-picks d09b9bcf,882d4aca,26092ea9; source SHAs differ only by integration, and combined mission/race/architecture/static gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
