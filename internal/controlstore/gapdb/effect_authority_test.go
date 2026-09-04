@@ -57,6 +57,7 @@ func (p *splitBatchMutantPortV2) Publish(_ context.Context, plan journalv2.Seale
 type gapdbAssignmentProjectionProbeV2 struct {
 	observation     tracker.AssignmentObservation
 	mutation        tracker.AssignmentMutation
+	mutationErr     error
 	observeCalls    int
 	applyCalls      int
 	compensateCalls int
@@ -68,11 +69,11 @@ func (p *gapdbAssignmentProjectionProbeV2) ObserveAssignment(context.Context, tr
 }
 func (p *gapdbAssignmentProjectionProbeV2) ProjectAssignment(context.Context, tracker.ProjectAssignmentRequest) (tracker.AssignmentMutation, error) {
 	p.applyCalls++
-	return p.mutation, nil
+	return p.mutation, p.mutationErr
 }
 func (p *gapdbAssignmentProjectionProbeV2) CompensateAssignment(context.Context, tracker.CompensateAssignmentRequest) (tracker.AssignmentMutation, error) {
 	p.compensateCalls++
-	return p.mutation, nil
+	return p.mutation, p.mutationErr
 }
 
 type gapdbEpochV2 struct{ epoch journalv2.RuntimeEpochID }
@@ -338,10 +339,115 @@ func newGapdbEffectServiceHarnessV2(t *testing.T, suffix string, guarantee track
 	return gapdbEffectServiceHarnessV2{service: effectService, request: request, projection: &gapdbAssignmentProjectionProbeV2{}}
 }
 
+func TestEffectDispatchAuthorizationIsDurableOneShotThroughGapDBV2(t *testing.T) {
+	harness := newGapdbEffectServiceHarnessV2(t, "one-shot", tracker.AssignmentAtomicClaim)
+	intent, err := harness.service.Execute(t.Context(), harness.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := harness.request
+	request.ExecutionSlot = intent.ExecutionSlot
+	request.Action = execution.EffectStartAttemptV2
+	request.OperationEventID = "event-one-shot-attempt-operation"
+	request.EffectEventID = "event-one-shot-attempt-effect"
+
+	absent := gapdbAssignmentObservationV2(t, request.Intent.Target, 1, "", "")
+	harness.projection.observation = absent
+	harness.projection.mutationErr = &tracker.Error{Kind: tracker.ErrorAmbiguous, Message: "lost response"}
+	dispatcher, err := execution.NewAssignmentEffectDispatcherV2(harness.projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := execution.EffectDispatchCommandV2{
+		Authorization:               request,
+		ObservationOperationEventID: "event-one-shot-unknown-operation",
+		ObservationEffectEventID:    "event-one-shot-unknown-effect",
+		ObservationAt:               request.ObservedAt.Add(time.Second),
+	}
+	unknown, err := harness.service.ExecuteDispatchV2(t.Context(), command, dispatcher)
+	if !execution.IsKind(err, execution.KindDecisionRequired) || unknown.State.Stage != execution.EffectObservationRecordedV2 || unknown.State.Observation == nil || unknown.State.Observation.Outcome != "unknown" || harness.projection.observeCalls != 1 || harness.projection.applyCalls != 1 {
+		t.Fatalf("first dispatch result=%+v observes=%d applies=%d err=%v", unknown, harness.projection.observeCalls, harness.projection.applyCalls, err)
+	}
+
+	// A copied authorization is no longer authority after its attempt and
+	// observation publications. It must be rejected before another provider
+	// observation or mutation, even when the provider has recovered.
+	harness.projection.mutationErr = nil
+	beforeObserve, beforeApply := harness.projection.observeCalls, harness.projection.applyCalls
+	if _, err := harness.service.ExecuteDispatchV2(t.Context(), command, dispatcher); err == nil {
+		t.Fatal("copied dispatch authorization was reusable")
+	}
+	if harness.projection.observeCalls != beforeObserve || harness.projection.applyCalls != beforeApply {
+		t.Fatalf("reused authorization reached provider: observes=%d applies=%d", harness.projection.observeCalls-beforeObserve, harness.projection.applyCalls-beforeApply)
+	}
+
+	request.ExecutionSlot = unknown.ExecutionSlot
+	request.Action = execution.EffectRequireReconcileV2
+	request.OperationEventID = "event-one-shot-reconcile-unknown-operation"
+	request.EffectEventID = "event-one-shot-reconcile-unknown-effect"
+	reconciling, err := harness.service.Execute(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExecutionSlot = reconciling.ExecutionSlot
+	request.Action = execution.EffectRecordObservationV2
+	request.OperationEventID = "event-one-shot-absent-operation"
+	request.EffectEventID = "event-one-shot-absent-effect"
+	request.Observation = effectObservationFromAssignmentForGapDBV2(t, request.Intent.Target, absent)
+	observed, err := harness.service.Execute(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExecutionSlot = observed.ExecutionSlot
+	request.Action = execution.EffectRequireReconcileV2
+	request.OperationEventID = "event-one-shot-reconcile-absent-operation"
+	request.EffectEventID = "event-one-shot-reconcile-absent-effect"
+	request.Observation = nil
+	reconciled, err := harness.service.Execute(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request.ExecutionSlot = reconciled.ExecutionSlot
+	request.Action = execution.EffectAllowRetryV2
+	request.OperationEventID = "event-one-shot-retry-operation"
+	request.EffectEventID = "event-one-shot-retry-effect"
+	request.Observation = observed.State.Observation
+	request.PermissionMarker = string(request.Intent.OperationID)
+	appliedTarget := request.Intent.Target
+	appliedTarget.LastObservation = 2
+	applied := gapdbAssignmentObservationV2(t, appliedTarget, 2, request.Intent.IntendedValue, string(request.Intent.OperationID))
+	harness.projection.observation = absent
+	harness.projection.mutation = tracker.AssignmentMutation{Observation: applied, Guarantee: tracker.AssignmentAtomicClaim}
+	retry, err := harness.service.ExecuteDispatchV2(t.Context(), execution.EffectDispatchCommandV2{
+		Authorization:               request,
+		ObservationOperationEventID: "event-one-shot-applied-operation",
+		ObservationEffectEventID:    "event-one-shot-applied-effect",
+		ObservationAt:               request.ObservedAt.Add(2 * time.Second),
+	}, dispatcher)
+	if err != nil || retry.State.AppliedObservation == nil || harness.projection.applyCalls != beforeApply+1 {
+		t.Fatalf("journaled retry result=%+v applies=%d err=%v", retry, harness.projection.applyCalls, err)
+	}
+}
+
+func effectObservationFromAssignmentForGapDBV2(t *testing.T, target tracker.ExternalWorkRef, observed tracker.AssignmentObservation) *execution.EffectProviderObservationV2 {
+	t.Helper()
+	probe := &gapdbAssignmentProjectionProbeV2{observation: observed}
+	dispatcher, err := execution.NewAssignmentEffectDispatcherV2(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, err := dispatcher.ObserveEffect(t.Context(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &observation
+}
+
 func killNakedIntentMutantV2(t *testing.T) {
 	harness := newGapdbEffectServiceHarnessV2(t, "mutant-naked", tracker.AssignmentAtomicClaim)
 	result, err := harness.service.Execute(t.Context(), harness.request)
-	if err != nil || result.Permission != nil {
+	if err != nil || result.State.Stage != execution.EffectIntentRecordedV2 || harness.projection.observeCalls != 0 || harness.projection.applyCalls != 0 {
 		t.Fatalf("naked intent mutant survived: result=%+v err=%v", result, err)
 	}
 }
@@ -363,13 +469,14 @@ func killOptimisticEffectCompletionMutantV2(t *testing.T) {
 }
 
 func killResultBeforeDurableAckMutantV2(t *testing.T) {
-	projection := &gapdbAssignmentProjectionProbeV2{}
-	dispatcher, err := execution.NewAssignmentEffectDispatcherV2(projection)
+	harness := newGapdbEffectServiceHarnessV2(t, "mutant-result-before-ack", tracker.AssignmentAtomicClaim)
+	dispatcher, err := execution.NewAssignmentEffectDispatcherV2(harness.projection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := execution.DispatchAuthorizedEffectV2(t.Context(), execution.EffectDispatchPermissionV2{}, dispatcher); err == nil || projection.observeCalls != 0 || projection.applyCalls != 0 {
-		t.Fatalf("result-before-ack mutant survived: observe=%d apply=%d err=%v", projection.observeCalls, projection.applyCalls, err)
+	_, err = harness.service.ExecuteDispatchV2(t.Context(), execution.EffectDispatchCommandV2{Authorization: harness.request, ObservationOperationEventID: "event-mutant-no-ack-observation-operation", ObservationEffectEventID: "event-mutant-no-ack-observation-effect", ObservationAt: harness.request.ObservedAt.Add(time.Second)}, dispatcher)
+	if !execution.IsKind(err, execution.KindDecisionRequired) || harness.projection.observeCalls != 0 || harness.projection.applyCalls != 0 {
+		t.Fatalf("result-before-ack mutant survived: observe=%d apply=%d err=%v", harness.projection.observeCalls, harness.projection.applyCalls, err)
 	}
 }
 
@@ -426,12 +533,8 @@ func killUnsafeCompensationMutantV2(t *testing.T) {
 	request.PermissionMarker = string(request.Intent.OperationID)
 	harness.projection.observation = applied
 	before := harness.projection.compensateCalls
-	allowed, err := harness.service.Execute(t.Context(), request)
-	if err != nil || allowed.Permission == nil {
-		t.Fatalf("failed to establish compensation permission: result=%+v err=%v", allowed, err)
-	}
-	_, err = execution.DispatchAuthorizedEffectV2(t.Context(), *allowed.Permission, dispatcher)
-	if !execution.IsKind(err, execution.KindSafeCompensationUnsupported) || harness.projection.compensateCalls != before {
+	_, err = harness.service.ExecuteDispatchV2(t.Context(), execution.EffectDispatchCommandV2{Authorization: request, ObservationOperationEventID: "event-mutant-compensation-final-operation", ObservationEffectEventID: "event-mutant-compensation-final-effect", ObservationAt: request.ObservedAt.Add(2 * time.Second)}, dispatcher)
+	if !execution.IsKind(err, execution.KindDecisionRequired) || harness.projection.compensateCalls != before {
 		t.Fatalf("unsafe compensation mutant survived: compensations=%d err=%v", harness.projection.compensateCalls-before, err)
 	}
 }

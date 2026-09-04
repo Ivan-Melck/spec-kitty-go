@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -160,7 +161,7 @@ func (i EffectIntentV2) validate() error {
 	if createdAt, err := time.Parse(time.RFC3339Nano, i.OriginObservedCreatedAt); err != nil || createdAt.IsZero() {
 		return executionV2Error(KindInvalidCommand, "origin_observed_created_at", err)
 	}
-	if i.Target.Validate() != nil || len(i.IntendedValue) > journalv2.MaxIdentityBytes || i.ExpectedProviderRevision == 0 || len(i.ExpectedValue) > journalv2.MaxIdentityBytes || len(i.ExpectedOperationMarker) > journalv2.MaxIdentityBytes || (i.RequiredGuarantee != tracker.AssignmentAtomicClaim && i.RequiredGuarantee != tracker.AssignmentUnguarded) {
+	if i.Target.Validate() != nil || len(i.Target.Provider) > journalv2.MaxIdentityBytes || len(i.Target.ExternalID) > journalv2.MaxIdentityBytes || !utf8.ValidString(i.Target.Provider) || !utf8.ValidString(i.Target.ExternalID) || len(i.IntendedValue) > journalv2.MaxIdentityBytes || i.ExpectedProviderRevision == 0 || len(i.ExpectedValue) > journalv2.MaxIdentityBytes || len(i.ExpectedOperationMarker) > journalv2.MaxIdentityBytes || (i.RequiredGuarantee != tracker.AssignmentAtomicClaim && i.RequiredGuarantee != tracker.AssignmentUnguarded) {
 		return executionV2Error(KindInvalidCommand, "effect_intent", nil)
 	}
 	if len(i.CanonicalRequestDigest) != 64 {
@@ -333,7 +334,7 @@ func (a EffectPublicationAckV2) matches(plan EffectAuthorityPlanV2) bool {
 	return err == nil && a.providerRevision > 0 && a.publicationID == sealed.PublicationID() && a.planDigest == sealed.Digest() && a.mutationCount == sealed.MutationCount()
 }
 
-type EffectDispatchPermissionV2 struct {
+type effectDispatchPermissionV2 struct {
 	effectID         journalv2.EffectID
 	operationID      journalv2.OperationID
 	action           EffectActionV2
@@ -348,13 +349,10 @@ type EffectDispatchPermissionV2 struct {
 	restoreValue     string
 }
 
-func (p EffectDispatchPermissionV2) EffectID() journalv2.EffectID { return p.effectID }
-func (p EffectDispatchPermissionV2) Action() EffectActionV2       { return p.action }
-
 // EffectDispatchDiagnosticV2 is the bounded provider-neutral error envelope
-// for the exported dispatch boundary. It contains only immutable coordinates
-// sealed into the opaque permission; provider-controlled text is never kept or
-// serialized.
+// for the trusted ExecuteDispatchV2 boundary. It contains only immutable
+// coordinates sealed into the internal permission; provider-controlled text
+// is never kept or serialized.
 type EffectDispatchDiagnosticV2 struct {
 	SchemaVersion    uint16                  `json:"schema_version"`
 	Kind             ErrorKind               `json:"kind"`
@@ -391,7 +389,7 @@ func (e *EffectDispatchErrorV2) Unwrap() []error {
 	return []error{e.typed, e.cause}
 }
 
-func effectDispatchErrorV2(kind ErrorKind, subject string, permission EffectDispatchPermissionV2, cause error) error {
+func effectDispatchErrorV2(kind ErrorKind, subject string, permission effectDispatchPermissionV2, cause error) error {
 	target := permission.expected.Target
 	return &EffectDispatchErrorV2{
 		Diagnostic: EffectDispatchDiagnosticV2{
@@ -418,8 +416,8 @@ func effectDispatchErrorV2(kind ErrorKind, subject string, permission EffectDisp
 type EffectAuthorityResultV2 struct {
 	State         ExternalEffectStateV2
 	ExecutionSlot ExecutionSlotStateV2
-	Permission    *EffectDispatchPermissionV2
 	Replayed      bool
+	permission    *effectDispatchPermissionV2
 }
 
 // EffectDispatchCommandV2 supplies the journal identities for both the
@@ -444,6 +442,9 @@ type EffectConditionalMutationV2 struct {
 	intendedValue     string
 	restoreValue      string
 	requiredGuarantee tracker.AssignmentLevel
+	publicationID     journalv2.PublicationID
+	planDigest        journalv2.Digest
+	providerRevision  uint64
 	seal              [sha256.Size]byte
 }
 
@@ -460,7 +461,7 @@ func (m EffectConditionalMutationV2) RequiredGuarantee() tracker.AssignmentLevel
 	return m.requiredGuarantee
 }
 
-func newEffectConditionalMutationV2(permission EffectDispatchPermissionV2, fresh EffectProviderObservationV2) EffectConditionalMutationV2 {
+func newEffectConditionalMutationV2(permission effectDispatchPermissionV2, fresh EffectProviderObservationV2) EffectConditionalMutationV2 {
 	mutation := EffectConditionalMutationV2{
 		effectID:          permission.effectID,
 		action:            permission.action,
@@ -472,6 +473,9 @@ func newEffectConditionalMutationV2(permission EffectDispatchPermissionV2, fresh
 		intendedValue:     permission.intendedValue,
 		restoreValue:      permission.restoreValue,
 		requiredGuarantee: permission.guarantee,
+		publicationID:     permission.publicationID,
+		planDigest:        permission.planDigest,
+		providerRevision:  permission.providerRevision,
 	}
 	mutation.seal = effectConditionalMutationSealV2(mutation)
 	return mutation
@@ -489,7 +493,10 @@ func effectConditionalMutationSealV2(mutation EffectConditionalMutationV2) [sha2
 		IntendedValue     string                  `json:"intended_value"`
 		RestoreValue      string                  `json:"restore_value"`
 		RequiredGuarantee tracker.AssignmentLevel `json:"required_guarantee"`
-	}{mutation.effectID, mutation.action, mutation.target, mutation.expectedRevision, mutation.expectedValue, mutation.expectedMarker, mutation.operationMarker, mutation.intendedValue, mutation.restoreValue, mutation.requiredGuarantee})
+		PublicationID     journalv2.PublicationID `json:"publication_id"`
+		PlanDigest        string                  `json:"plan_digest"`
+		ProviderRevision  uint64                  `json:"provider_revision"`
+	}{mutation.effectID, mutation.action, mutation.target, mutation.expectedRevision, mutation.expectedValue, mutation.expectedMarker, mutation.operationMarker, mutation.intendedValue, mutation.restoreValue, mutation.requiredGuarantee, mutation.publicationID, mutation.planDigest.String(), mutation.providerRevision})
 	return sha256.Sum256(append([]byte("spec-kitty/effect-conditional-mutation/v2\x00"), canonical...))
 }
 
@@ -500,6 +507,7 @@ func (m EffectConditionalMutationV2) validForV2(actions ...EffectActionV2) bool 
 	}
 	return allowed && m.effectID != "" && m.target.Validate() == nil && m.expectedRevision != 0 &&
 		m.target.LastObservation == m.expectedRevision && m.operationMarker != "" &&
+		m.publicationID != "" && !m.planDigest.IsZero() && m.providerRevision != 0 &&
 		(m.requiredGuarantee == tracker.AssignmentAtomicClaim || m.requiredGuarantee == tracker.AssignmentUnguarded) &&
 		m.seal != [sha256.Size]byte{} && m.seal == effectConditionalMutationSealV2(m)
 }
@@ -613,10 +621,10 @@ func effectObservationFromAssignmentV2(target tracker.ExternalWorkRef, observed 
 	return result, nil
 }
 
-// DispatchAuthorizedEffectV2 is the only provider-mutation entry point. Its
-// unforgeable permission is minted only after the corresponding journal
-// publication was acknowledged.
-func DispatchAuthorizedEffectV2(ctx context.Context, permission EffectDispatchPermissionV2, provider EffectDispatcherPortV2) (EffectDispatchEvidenceV2, error) {
+// dispatchAuthorizedEffectV2 is deliberately package-private. The trusted
+// coordinator is the only caller, so an acknowledged permission cannot be
+// copied around the journal-backed one-shot admission decision.
+func dispatchAuthorizedEffectV2(ctx context.Context, permission effectDispatchPermissionV2, provider EffectDispatcherPortV2) (EffectDispatchEvidenceV2, error) {
 	target := permission.expected.Target
 	if provider == nil || (!permission.recovered && permission.planDigest.IsZero()) || permission.providerRevision == 0 || permission.effectID == "" || permission.marker == "" || permission.expected.validateFor(target) != nil {
 		return EffectDispatchEvidenceV2{}, executionV2Error(KindInvalidCommand, "effect_permission", nil)
@@ -748,7 +756,7 @@ func (s *EffectAuthorityServiceV2) Execute(ctx context.Context, request EffectAu
 			return EffectAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "execution_slot", nil)
 		}
 		permission := recoveredEffectPermissionV2(request.Action, *observed.State, resolution.State.LastPublicationID(), observed.RecordRevision)
-		return EffectAuthorityResultV2{State: *observed.State, ExecutionSlot: *executionObserved.State, Permission: permission, Replayed: true}, nil
+		return EffectAuthorityResultV2{State: *observed.State, ExecutionSlot: *executionObserved.State, permission: permission, Replayed: true}, nil
 	}
 	next, operationStatus, permission, err := decideEffectTransitionV2(request, observed.State, resolution.State)
 	if err != nil {
@@ -772,7 +780,7 @@ func (s *EffectAuthorityServiceV2) Execute(ctx context.Context, request EffectAu
 			recoveredExecution, executionErr := s.port.ObserveEffectExecution(ctx, executionCoordinate)
 			if stateErr == nil && executionErr == nil && recoveredState.State != nil && recoveredExecution.State != nil && bytes.Equal(recoveredExecution.State.CanonicalBytes(), guardExecutionForEffectV2(request.ExecutionSlot).CanonicalBytes()) && effectRecoveryPublicationProofV2(resolved, recoveredState, recoveredExecution) && effectActionAlreadyPublishedV2(request, *recoveredState.State, resolved.State) {
 				recoveredPermission := recoveredEffectPermissionV2(request.Action, *recoveredState.State, resolved.State.LastPublicationID(), recoveredState.RecordRevision)
-				return EffectAuthorityResultV2{State: *recoveredState.State, ExecutionSlot: *recoveredExecution.State, Permission: recoveredPermission, Replayed: true}, nil
+				return EffectAuthorityResultV2{State: *recoveredState.State, ExecutionSlot: *recoveredExecution.State, permission: recoveredPermission, Replayed: true}, nil
 			}
 		}
 		return EffectAuthorityResultV2{}, effectAuthorityRequestErrorV2(KindControlStoreBusy, "effect_publication", request, publishErr)
@@ -782,7 +790,7 @@ func (s *EffectAuthorityServiceV2) Execute(ctx context.Context, request EffectAu
 		permission.planDigest = ack.planDigest
 		permission.providerRevision = ack.providerRevision
 	}
-	return EffectAuthorityResultV2{State: next, ExecutionSlot: guardExecutionForEffectV2(request.ExecutionSlot), Permission: permission}, nil
+	return EffectAuthorityResultV2{State: next, ExecutionSlot: guardExecutionForEffectV2(request.ExecutionSlot), permission: permission}, nil
 }
 
 // ExecuteDispatchV2 is the trusted effect coordinator. It durably publishes
@@ -796,10 +804,16 @@ func (s *EffectAuthorityServiceV2) ExecuteDispatchV2(ctx context.Context, comman
 	if err != nil {
 		return EffectAuthorityResultV2{}, err
 	}
-	if authorized.Permission == nil {
+	if authorized.permission == nil {
 		return EffectAuthorityResultV2{}, executionV2Error(KindDecisionRequired, "effect_dispatch_permission", nil)
 	}
-	evidence, dispatchErr := DispatchAuthorizedEffectV2(ctx, *authorized.Permission, provider)
+	var evidence EffectDispatchEvidenceV2
+	var dispatchErr error
+	if authorized.Replayed {
+		evidence, dispatchErr = observeReplayedEffectPermissionV2(ctx, *authorized.permission, provider)
+	} else {
+		evidence, dispatchErr = dispatchAuthorizedEffectV2(ctx, *authorized.permission, provider)
+	}
 	if evidence.publicationID == "" || evidence.providerRevision == 0 {
 		return EffectAuthorityResultV2{}, effectAuthorityRequestErrorV2(KindDecisionRequired, "effect_dispatch", command.Authorization, dispatchErr)
 	}
@@ -824,6 +838,30 @@ func (s *EffectAuthorityServiceV2) ExecuteDispatchV2(ctx context.Context, comman
 	return recorded, nil
 }
 
+// observeReplayedEffectPermissionV2 resolves a crash cut without performing a
+// second provider mutation. The observation is durably journaled by
+// ExecuteDispatchV2 and must pass through reconciliation before a new
+// AllowRetry or AllowCompensation publication may authorize another attempt.
+func observeReplayedEffectPermissionV2(ctx context.Context, permission effectDispatchPermissionV2, provider EffectDispatcherPortV2) (EffectDispatchEvidenceV2, error) {
+	target := permission.expected.Target
+	evidence := EffectDispatchEvidenceV2{observation: EffectProviderObservationV2{Target: target, Outcome: "unknown"}, publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: true}
+	if provider == nil || !permission.recovered || permission.publicationID == "" || permission.providerRevision == 0 || permission.effectID == "" || permission.operationID == "" || permission.marker == "" || permission.expected.validateFor(target) != nil {
+		return EffectDispatchEvidenceV2{}, executionV2Error(KindInvalidCommand, "effect_permission", nil)
+	}
+	if _, err := journalv2.DecodePublicationID(string(permission.publicationID)); err != nil {
+		return EffectDispatchEvidenceV2{}, executionV2Error(KindInvalidCommand, "effect_permission", nil)
+	}
+	fresh, err := provider.ObserveEffect(ctx, target)
+	if err != nil {
+		return evidence, effectDispatchErrorV2(KindDecisionRequired, "effect_replay_observation", permission, err)
+	}
+	if fresh.validateFor(target) != nil {
+		return evidence, executionV2Error(KindDecisionRequired, "effect_replay_observation", nil)
+	}
+	evidence.observation = fresh
+	return evidence, executionV2Error(KindDecisionRequired, "effect_permission_replayed", nil)
+}
+
 func prepareEffectBindingV2(request EffectAuthorityRequestV2) (journalv2.OperationBindingV2, journalv2.AggregateCoordinate, error) {
 	if request.Intent.validate() != nil || request.Intent.OperationID == "" || request.OperationEventID == "" || request.EffectEventID == "" || request.OperationEventID == request.EffectEventID || request.RuntimeEpochID == "" || request.ObservedAt.IsZero() {
 		return journalv2.OperationBindingV2{}, journalv2.AggregateCoordinate{}, executionV2Error(KindInvalidCommand, "effect_request", nil)
@@ -842,10 +880,10 @@ func prepareEffectBindingV2(request EffectAuthorityRequestV2) (journalv2.Operati
 	return binding, coordinate, err
 }
 
-func decideEffectTransitionV2(request EffectAuthorityRequestV2, prior *ExternalEffectStateV2, priorOperation journalv2.OperationStateV2) (ExternalEffectStateV2, journalv2.OperationStatus, *EffectDispatchPermissionV2, error) {
+func decideEffectTransitionV2(request EffectAuthorityRequestV2, prior *ExternalEffectStateV2, priorOperation journalv2.OperationStateV2) (ExternalEffectStateV2, journalv2.OperationStatus, *effectDispatchPermissionV2, error) {
 	next := ExternalEffectStateV2{SchemaVersion: 1, Intent: request.Intent, ExecutionSlot: mustExecutionSlotCoordinateV2(request.ExecutionSlot), Execution: executionCoordinatesV2(request.ExecutionSlot), CurrentGovernance: request.ExecutionSlot.Governance, RuntimeEpochID: request.RuntimeEpochID, LastOperationEventID: request.OperationEventID, LastEffectEventID: request.EffectEventID}
 	var status journalv2.OperationStatus
-	var permission *EffectDispatchPermissionV2
+	var permission *effectDispatchPermissionV2
 	if prior == nil {
 		if request.Action != EffectRecordIntentV2 {
 			return ExternalEffectStateV2{}, "", nil, executionV2Error(KindDecisionRequired, "effect_stage", nil)
@@ -903,7 +941,7 @@ func decideEffectTransitionV2(request EffectAuthorityRequestV2, prior *ExternalE
 			target.LastObservation = request.Intent.ExpectedProviderRevision
 			expected := EffectProviderObservationV2{Target: target, ProviderRevision: request.Intent.ExpectedProviderRevision, Value: request.Intent.ExpectedValue, OperationMarker: request.Intent.ExpectedOperationMarker, Outcome: effectOutcomeForValueMarkerV2(request.Intent.ExpectedValue, request.Intent.ExpectedOperationMarker)}
 			expected.CanonicalDigest = effectObservationDigestV2(expected)
-			permission = &EffectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: request.Action, marker: string(request.Intent.OperationID), expected: expected, guarantee: request.Intent.RequiredGuarantee, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
+			permission = &effectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: request.Action, marker: string(request.Intent.OperationID), expected: expected, guarantee: request.Intent.RequiredGuarantee, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
 		case EffectRecordObservationV2:
 			if (prior.Stage != EffectAttemptStartedV2 && prior.Stage != EffectRetryAllowedV2 && prior.Stage != EffectCompensationAllowedV2 && prior.Stage != EffectReconciliationRequiredV2) || request.Observation == nil || request.Observation.validateFor(request.Intent.Target) != nil {
 				return ExternalEffectStateV2{}, "", nil, executionV2Error(KindInvalidCommand, "effect_observation", nil)
@@ -941,7 +979,7 @@ func decideEffectTransitionV2(request EffectAuthorityRequestV2, prior *ExternalE
 				next.Stage = EffectCompensationAllowedV2
 			}
 			status = journalv2.StatusAmbiguous
-			permission = &EffectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: request.Action, marker: request.PermissionMarker, expected: *cloneEffectObservationV2(request.Observation), guarantee: request.Intent.RequiredGuarantee, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
+			permission = &effectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: request.Action, marker: request.PermissionMarker, expected: *cloneEffectObservationV2(request.Observation), guarantee: request.Intent.RequiredGuarantee, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
 		case EffectResolveV2, EffectRefuseV2:
 			if prior.Stage != EffectReconciliationRequiredV2 {
 				return ExternalEffectStateV2{}, "", nil, executionV2Error(KindDecisionRequired, "effect_stage", nil)
@@ -1255,7 +1293,7 @@ func effectAttributionExactV2(a, b EffectProviderObservationV2) bool {
 	return sameEffectMappingV2(a.Target, b.Target) && a.ProviderRevision == b.ProviderRevision && a.Value == b.Value && a.OperationMarker == b.OperationMarker && a.Outcome == b.Outcome
 }
 
-func effectMutationResultMatchesV2(action EffectActionV2, permission EffectDispatchPermissionV2, observation EffectProviderObservationV2) bool {
+func effectMutationResultMatchesV2(action EffectActionV2, permission effectDispatchPermissionV2, observation EffectProviderObservationV2) bool {
 	if action == EffectAllowCompensationV2 {
 		return observation.Value == permission.restoreValue && observation.OperationMarker == "" && observation.Outcome == effectOutcomeForValueMarkerV2(permission.restoreValue, "")
 	}
@@ -1311,8 +1349,8 @@ func effectRecoveryPublicationProofV2(operation EffectOperationResolutionV2, eff
 	return publicationID != "" && effect.LastPublicationID == publicationID && execution.LastPublicationID == publicationID && operation.RecordRevision > 0 && operation.RecordRevision == effect.RecordRevision && effect.RecordRevision == execution.RecordRevision
 }
 
-func recoveredEffectPermissionV2(action EffectActionV2, state ExternalEffectStateV2, publicationID journalv2.PublicationID, recordRevision uint64) *EffectDispatchPermissionV2 {
-	permission := &EffectDispatchPermissionV2{effectID: state.Intent.EffectID, operationID: state.Intent.OperationID, action: action, marker: state.PermissionMarker, publicationID: publicationID, providerRevision: recordRevision, recovered: true, guarantee: state.Intent.RequiredGuarantee, intendedValue: state.Intent.IntendedValue, restoreValue: state.Intent.ExpectedValue}
+func recoveredEffectPermissionV2(action EffectActionV2, state ExternalEffectStateV2, publicationID journalv2.PublicationID, recordRevision uint64) *effectDispatchPermissionV2 {
+	permission := &effectDispatchPermissionV2{effectID: state.Intent.EffectID, operationID: state.Intent.OperationID, action: action, marker: state.PermissionMarker, publicationID: publicationID, providerRevision: recordRevision, recovered: true, guarantee: state.Intent.RequiredGuarantee, intendedValue: state.Intent.IntendedValue, restoreValue: state.Intent.ExpectedValue}
 	switch action {
 	case EffectStartAttemptV2:
 		target := state.Intent.Target
