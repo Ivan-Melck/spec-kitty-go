@@ -1,14 +1,4 @@
 ---
-affected_files: []
-cycle_number: 8
-mission_slug: gapdb-only-production-authority-01M1GWDJ
-reproduction_command:
-reviewed_at: '2026-09-04T16:01:22Z'
-reviewer_agent: user
-wp_id: WP03
----
-
----
 affected_files:
 - go.mod
 - go.sum
@@ -20,10 +10,10 @@ affected_files:
 - internal/controlstore/gapdb/v2_ambiguity.go
 - internal/controlstore/gapdb/v2_codec.go
 - internal/controlstore/gapdb/v2_committer.go
-cycle_number: 7
+cycle_number: 8
 mission_slug: gapdb-only-production-authority-01M1GWDJ
 reproduction_command: go test ./internal/controlstore/gapdb -count=1
-reviewed_at: '2026-09-04T16:00:00Z'
+reviewed_at: '2026-09-04T16:01:22Z'
 reviewer_agent: codex
 wp_id: WP03
 ---
