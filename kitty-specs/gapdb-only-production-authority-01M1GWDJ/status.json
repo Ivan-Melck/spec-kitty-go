@@ -1,7 +1,7 @@
 {
-  "event_count": 300,
-  "last_event_id": "01M1NQ2YCA84XYFTTAT4DK6221",
-  "materialized_at": "2026-09-04T08:03:13.930457+00:00",
+  "event_count": 301,
+  "last_event_id": "01M1NQ3F515BAYG5XMC0TF81WS",
+  "materialized_at": "2026-09-04T08:03:31.105617+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,9 +11,9 @@
     "canceled": 0,
     "claimed": 0,
     "done": 0,
-    "for_review": 1,
+    "for_review": 0,
     "in_progress": 1,
-    "in_review": 0,
+    "in_review": 1,
     "planned": 9
   },
   "work_packages": {
@@ -267,9 +267,9 @@
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
-      "lane": "for_review",
-      "last_event_id": "01M1NQ2YCA84XYFTTAT4DK6221",
-      "last_transition_at": "2026-09-04T08:03:13.930457+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1NQ3F515BAYG5XMC0TF81WS",
+      "last_transition_at": "2026-09-04T08:03:31.105617+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Review-cycle-1 blockers repaired at 1db5dd3169b22e5190a3562a0ba15b0ff75e9a75; fresh provider state fenced and 15 controlled mutants executable.",
@@ -283,9 +283,9 @@
         "reviewer": "codex",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
         "T023": "done",
         "T024": "done",
