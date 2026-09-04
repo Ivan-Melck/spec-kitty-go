@@ -1,20 +1,20 @@
 {
-  "event_count": 278,
-  "last_event_id": "01M1NG8VKRE36MM6Q4P6C08MHF",
-  "materialized_at": "2026-09-04T06:04:07.672378+00:00",
+  "event_count": 301,
+  "last_event_id": "01M1NQ3F515BAYG5XMC0TF81WS",
+  "materialized_at": "2026-09-04T08:03:31.105617+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 5,
+    "approved": 6,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 0,
-    "in_review": 0,
-    "planned": 12
+    "in_progress": 1,
+    "in_review": 1,
+    "planned": 9
   },
   "work_packages": {
     "WP01": {
@@ -262,25 +262,96 @@
       }
     },
     "WP05": {
-      "actor": "finalize-tasks",
-      "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0G42JA9DMYFDFN8V871WR",
-      "last_transition_at": "2026-09-02T12:11:30.770796+00:00"
+      "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 2,
+      "lane": "in_review",
+      "last_event_id": "01M1NQ3F515BAYG5XMC0TF81WS",
+      "last_transition_at": "2026-09-04T08:03:31.105617+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Review-cycle-1 blockers repaired at 1db5dd3169b22e5190a3562a0ba15b0ff75e9a75; fresh provider state fenced and 15 controlled mutants executable.",
+        "Review-cycle-2 blocker repaired at 5ff93bc9 with typed provider-neutral mutation outcomes; definitive refusals reconcile and only explicit indeterminacy may use exact re-observation."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP05-mission-lifecycle-decisions-and-decomposition-authority/review-cycle-2.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP05-mission-lifecycle-decisions-and-decomposition-authority/review-cycle-2.md",
+        "reviewer": "codex",
+        "verdict": "changes_requested"
+      },
+      "role": "reviewer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
+      "subtasks": {
+        "T023": "done",
+        "T024": "done",
+        "T025": "done",
+        "T026": "done",
+        "T027": "done"
+      }
     },
     "WP06": {
-      "actor": "finalize-tasks",
+      "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0G7BG754BZGK54P3DSCK7",
-      "last_transition_at": "2026-09-02T12:11:34.128602+00:00"
+      "lane": "approved",
+      "last_event_id": "01M1NPQJQPJRC7AZ44EQD9W0ZK",
+      "last_transition_at": "2026-09-04T07:57:01.558987+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Implementation c33a1825 passed independent contract audit, focused repetitions, race, architecture, vet, staticcheck, formatting, compile, and module verification.",
+        "Independent review approved c33a1825; exact owned diff and all focused, race, architecture, vet, staticcheck, formatting, and recovery gates passed."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "c33a1825",
+        "reviewer": "maxwell-wp06-independent-reviewer",
+        "verdict": "approved"
+      },
+      "role": "implementer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
+      "subtasks": {
+        "T028": "done",
+        "T029": "done",
+        "T030": "done",
+        "T031": "done",
+        "T032": "done",
+        "T033": "done"
+      }
     },
     "WP07": {
-      "actor": "finalize-tasks",
-      "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0GAY33VN3KMHTPVJVKQ2H",
-      "last_transition_at": "2026-09-02T12:11:37.795833+00:00"
+      "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 1,
+      "lane": "in_progress",
+      "last_event_id": "01M1NPVXBVCY0CFEX74CR8CV7J",
+      "last_transition_at": "2026-09-04T07:59:23.507135+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Recovered allocator-created blocked state after verified manual dependency merge; no WP07 implementation began and no contract guard is bypassed."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
+      "subtasks": {
+        "T034": "planned",
+        "T035": "planned",
+        "T036": "planned",
+        "T037": "planned",
+        "T038": "planned",
+        "T039": "planned"
+      }
     },
     "WP08": {
       "actor": "finalize-tasks",
