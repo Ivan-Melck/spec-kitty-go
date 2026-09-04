@@ -75,7 +75,8 @@
         "Cycle-20 repair committed at 2326ed86; deadline dataflow, validation dominance, alias-scope, combined-WP04, architecture, race, and static gates pass.",
         "Cycle-21 repair: replace spelling maps with object identity; require dominating validation on every deadline call path; prove a positive non-empty bound.",
         "Cycle-21 semantic repair committed at 76f43ac8; object identity, universal call-path validation, positive bound, combined-WP04, architecture, race, and static gates pass.",
-        "Cycle-22 repair: close compound-gate and function-value escapes; accept else-dominated and inline self-validating paths without weakening prior semantic guards."
+        "Cycle-22 repair: close compound-gate and function-value escapes; accept else-dominated and inline self-validating paths without weakening prior semantic guards.",
+        "Cycle-22 control-flow repair committed at 415ac94b; exact predicates, function-value fencing, else propagation, inline self-validation, WP04 overlay, architecture/race/static gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -86,8 +87,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": 217904,
+      "shell_pid_created_at": "1788493982.25",
       "subtasks": {
         "T001": "done",
         "T002": "done",
