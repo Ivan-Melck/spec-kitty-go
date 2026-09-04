@@ -127,7 +127,8 @@
         "Reopened for ratified defect 5: add the sealed revision-sorted covered-through PublicationID and sole strict OperationSummaryV2 codec required by WP04. Force transfers the stale approved reviewer assignment only; no guard is bypassed.",
         "Ready for independent review: revision-sorted covered-through publication identity is sealed into the projection prefix; strict public operation-summary codecs reject noncanonical, corrupt, aliased, and over-budget evidence; focused, count-20, race, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
         "Independent review passed: exact defect-5 commit preserves all WP02 laws; focused and full count-20, race count-5, architecture 177-mutant guard, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
-        "Stage ratified defect-6 repair beneath the always-live WP01 guard candidate 6dcae82f. Dependency WP01 remains in repair review order; force reopens only stale approved ownership and does not bypass the guard or independent approval."
+        "Stage ratified defect-6 repair beneath the always-live WP01 guard candidate 6dcae82f. Dependency WP01 remains in repair review order; force reopens only stale approved ownership and does not bypass the guard or independent approval.",
+        "Defect-6 canonical durable-byte repair complete at 03ac7098; reviewed together with approved WP01 guard 2d9d5089 on lane-b eaa212b2 and subsequent lifecycle merges."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
