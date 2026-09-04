@@ -19,10 +19,10 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-deadline-cfg",
-      "agent": "renata-gapdb-deadline-semantic-review",
+      "agent": "ivan-gapdb-deadline-cfg",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "ivan-gapdb-deadline-semantic",
+      "assignee": "ivan-gapdb-deadline-cfg",
       "force_count": 31,
       "lane": "in_progress",
       "last_event_id": "01M1N89FJT9E13FGJD02QEYDSP",
@@ -74,7 +74,8 @@
         "Cycle-20 repair: bind WithTimeout duration to validated restore-attempt budget and resolve import aliases per file; preserve sound WP04 implementation.",
         "Cycle-20 repair committed at 2326ed86; deadline dataflow, validation dominance, alias-scope, combined-WP04, architecture, race, and static gates pass.",
         "Cycle-21 repair: replace spelling maps with object identity; require dominating validation on every deadline call path; prove a positive non-empty bound.",
-        "Cycle-21 semantic repair committed at 76f43ac8; object identity, universal call-path validation, positive bound, combined-WP04, architecture, race, and static gates pass."
+        "Cycle-21 semantic repair committed at 76f43ac8; object identity, universal call-path validation, positive bound, combined-WP04, architecture, race, and static gates pass.",
+        "Cycle-22 repair: close compound-gate and function-value escapes; accept else-dominated and inline self-validating paths without weakening prior semantic guards."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -85,8 +86,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": 158806,
-      "shell_pid_created_at": "1788493431.82",
+      "shell_pid": 160232,
+      "shell_pid_created_at": "1788493474.71",
       "subtasks": {
         "T001": "planned",
         "T002": "planned",
