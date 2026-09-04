@@ -157,6 +157,15 @@ foundation value survives `Encode -> RecoveryRecordV2 -> Decode` unchanged and
 that nested operation summary survives checkpoint canonicalization. Normalize
 WP04-owned checkpoint and slot final bytes before durable recovery admission.
 
+`post-approval-defect-7.md` narrows the purity boundary exposed by WP04's
+elapsed-attempt budget. Restore is the consumer-owned I/O coordinator and may
+use `time.Duration` with context deadlines solely to validate and enforce that
+resource budget. Playback, checkpoint, and the v2 foundation remain time-free;
+time never supplies durable state, ordering, revision, digest, or acceptance.
+WP04 remains blocked until the exact restore-only architecture exception and
+its widening mutant are independently approved in WP01. Remove checkpoint's
+unnecessary `io` import rather than requesting another exception.
+
 ## Branch Strategy
 
 - Planning branch: `feat/gapdb-only-production-authority`.

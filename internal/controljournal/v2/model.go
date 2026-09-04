@@ -755,7 +755,11 @@ func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
 	if err != nil || digest(canonicalEventDomain, unsigned) != envelope.digest {
 		return nil, invalid(ErrorInvalidDigest, "canonical_event_sha256")
 	}
-	return envelope.canonical(true)
+	signed, err := envelope.canonical(true)
+	if err != nil {
+		return nil, err
+	}
+	return canonicalDurableObject(signed, MaxEventEnvelopeBytes)
 }
 
 func DecodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2) (EventEnvelopeV2, error) {
@@ -902,7 +906,7 @@ func EncodeAggregateHeadV2(head AggregateHeadV2) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return marshalCanonical(aggregateHeadWire{SchemaVersion, rebuilt.input.Coordinate, uint64(rebuilt.input.LogicalVersion), string(rebuilt.input.LastEventID),
+	return marshalCanonicalObject(aggregateHeadWire{SchemaVersion, rebuilt.input.Coordinate, uint64(rebuilt.input.LogicalVersion), string(rebuilt.input.LastEventID),
 		string(rebuilt.input.LastPublicationID), string(rebuilt.input.CommittedRuntimeEpochID), rebuilt.input.CanonicalStateDigest.String(), rebuilt.authoritySummary, rebuilt.input.Tombstone}, MaxCanonicalPayloadBytes)
 }
 

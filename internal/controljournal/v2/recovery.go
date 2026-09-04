@@ -1,5 +1,7 @@
 package v2
 
+import "bytes"
+
 const (
 	MaxRecoveryPageRecords = 500
 	MaxRecoveryPageBytes   = 8 * 1024 * 1024
@@ -221,17 +223,38 @@ func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uin
 	if err := address.validate(); err != nil {
 		return RecoveryRecordV2{}, err
 	}
-	if revision == 0 || len(canonical) == 0 || len(canonical) > MaxCheckpointValueBytes {
+	maximum, err := recoveryRecordMaximumV2(address.kind)
+	if err != nil {
+		return RecoveryRecordV2{}, err
+	}
+	if revision == 0 || len(canonical) == 0 || len(canonical) > maximum {
 		return RecoveryRecordV2{}, invalid(ErrorBudgetExceeded, "recovery_record")
 	}
-	value, err := CanonicalObject(canonical)
-	if err != nil || len(value) != len(canonical) {
+	value, err := canonicalDurableObject(canonical, maximum)
+	if err != nil || !bytes.Equal(value, canonical) {
 		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
 	}
 	if expiresAt != "" && !canonicalUTCInstant(expiresAt) {
 		return RecoveryRecordV2{}, invalid(ErrorInvalidCanonicalData, "recovery_record_expiry")
 	}
-	return RecoveryRecordV2{address: address, canonical: append([]byte(nil), value...), revision: revision, expiresAt: expiresAt}, nil
+	return RecoveryRecordV2{address: address, canonical: append([]byte(nil), canonical...), revision: revision, expiresAt: expiresAt}, nil
+}
+
+func recoveryRecordMaximumV2(kind RecordAddressKindV2) (int, error) {
+	switch kind {
+	case AddressCheckpointRecord:
+		return MaxCheckpointValueBytes, nil
+	case AddressJournalEvent:
+		return MaxEventEnvelopeBytes, nil
+	case AddressAggregateHead,
+		AddressOperationBinding,
+		AddressOperationHead,
+		AddressCheckpointSlot,
+		AddressPublicationWitness:
+		return MaxCanonicalPayloadBytes, nil
+	default:
+		return 0, invalid(ErrorInvalidCanonicalData, "record_address")
+	}
 }
 
 func (r RecoveryRecordV2) Address() RecordAddressV2 { return r.address }

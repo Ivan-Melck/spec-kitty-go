@@ -544,6 +544,17 @@ flowchart TD
     I9 --> I10[IC-10 Crown evidence]
 ```
 
+## Restore deadline capability boundary
+
+Restore is the consumer-owned I/O coordinator, not the pure playback kernel.
+It owns the explicit elapsed-attempt budget required by bounded recovery and
+may use `time.Duration` plus context deadlines to enforce it. The architecture
+guard admits only the exact `internal/controljournal/v2/restore -> time` edge.
+Foundation, checkpoint, playback, and all other v2 packages remain time-free,
+and time cannot participate in durable state or authority decisions. A
+permanent widening mutant prevents this exception from becoming a prefix-wide
+allowance. See `post-approval-defect-7.md`.
+
 ## Complexity Tracking
 
 | Deliberate complexity | Why needed | Simpler alternative rejected because |
