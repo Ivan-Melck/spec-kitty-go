@@ -1,7 +1,7 @@
 {
-  "event_count": 350,
-  "last_event_id": "01M1Q8HS5YQH4PPMWC1239KG7V",
-  "materialized_at": "2026-09-04T22:27:40.350278+00:00",
+  "event_count": 351,
+  "last_event_id": "01M1Q8J5VMBVRJY5XFQEQY1CVK",
+  "materialized_at": "2026-09-04T22:27:53.332715+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,9 +11,9 @@
     "canceled": 0,
     "claimed": 0,
     "done": 9,
-    "for_review": 1,
+    "for_review": 0,
     "in_progress": 0,
-    "in_review": 0,
+    "in_review": 1,
     "planned": 7
   },
   "work_packages": {
@@ -410,14 +410,14 @@
       }
     },
     "WP09": {
-      "actor": "codex",
-      "agent": "codex",
+      "actor": "mill",
+      "agent": "mill",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
-      "lane": "for_review",
-      "last_event_id": "01M1Q8HS5YQH4PPMWC1239KG7V",
-      "last_transition_at": "2026-09-04T22:27:40.350278+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1Q8J5VMBVRJY5XFQEQY1CVK",
+      "last_transition_at": "2026-09-04T22:27:53.332715+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Resolved failed workspace allocation: all dependency lineages are integrated and the lane-i worktree was fast-forwarded to coordinator 20757d1f.",
@@ -433,9 +433,9 @@
         "reviewer": "mill",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
         "T044": "done",
         "T045": "done",
