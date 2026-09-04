@@ -411,7 +411,7 @@
     },
     "WP09": {
       "actor": "user",
-      "agent": "mill",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 6,
@@ -425,7 +425,8 @@
         "Independent review requested changes to candidate c4dc9ec817f2f0acab31068b6be542b27b301c58; correction cycle 2 required.",
         "Ready for independent correction-cycle-2 review: dependency b4e28034a4373fbd86d22207172085693d20f07f; candidate ee0cf7a21b6dbb1cb9d6ecf459e5d2af47792084; tree 78b93e3d7e08e636102fefefe0e1226f885aa623; all seven findings closed and qualification green.",
         "Independent cycle-2 review requested one production GapDB mission-policy E2E test; production corrections accepted.",
-        "Ready for cycle-3 independent rereview: candidate 080e84020429f58997d17cab246e57ad28b2d81a; tree 454cabfcc0c8f2da7c13030361861574d65f4a04; real GapDB mission-policy E2E and narrow resolved-fact assertion repair green."
+        "Ready for cycle-3 independent rereview: candidate 080e84020429f58997d17cab246e57ad28b2d81a; tree 454cabfcc0c8f2da7c13030361861574d65f4a04; real GapDB mission-policy E2E and narrow resolved-fact assertion repair green.",
+        "Independent cycle-3 review requested separate semantic status/detail mutation proof; production E2E accepted."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -436,14 +437,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T044": "done",
-        "T045": "done",
-        "T046": "done",
-        "T047": "done",
-        "T048": "done"
+        "T044": "planned",
+        "T045": "planned",
+        "T046": "planned",
+        "T047": "planned",
+        "T048": "planned"
       }
     },
     "WP10": {
