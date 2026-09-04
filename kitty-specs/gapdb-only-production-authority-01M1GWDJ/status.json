@@ -380,6 +380,9 @@
       "last_event_id": "01M1PRPJ287K4QPX46WM65AQRT",
       "last_transition_at": "2026-09-04T17:50:39.688802+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review: candidate 6ec1f7243b1d5390f1b6195488d4bf05e44d089a; all WP08 qualification gates green"
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3753728,
