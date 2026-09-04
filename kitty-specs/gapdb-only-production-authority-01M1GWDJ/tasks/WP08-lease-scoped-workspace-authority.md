@@ -245,7 +245,10 @@ mutation is preceded by durable intent and every authority stage is resumable.
 
 **Required fault tests**:
 
-- Crash before initial binding causes zero filesystem/Git calls.
+- Crash before initial binding causes zero mutating filesystem/Git effect
+  calls. Bounded read-only path and repository validation observations are
+  permitted, but they cannot create a directory, worktree, branch, ref, index,
+  registration, or other external state before durable intent.
 - Crash after binding/intent resumes with the same WorkspaceID, path,
   OperationID, and EffectID.
 - Crash after worktree creation but before observation reconciles rather than
@@ -299,9 +302,13 @@ invariant without pretending the database can revoke POSIX access.
    review, acceptance, and integration. It must compare exact epoch, work
    generation, WorkID, RunID, LeaseID/generation/fence, WorkspaceID/path,
    repository binding, ready status, and non-quarantine state.
-8. Validate the current-workspace predicate before any candidate publication,
-   reviewer mutation, acceptance decision, repository fence, or Git mutation.
-   Return the frozen earliest typed stale/quarantined refusal.
+8. Expose the current-workspace predicate for validation before any candidate
+   publication, reviewer mutation, acceptance decision, repository fence, or
+   Git mutation. WP08 proves its pure result against representative current,
+   stale, predecessor-epoch, and quarantined capsules. WP09 and WP10 own its
+   production wiring into handoff, review, acceptance, and integration; WP08
+   must not create test-only consumer integrations outside its owned surface.
+   Those consumers must return the frozen earliest typed refusal.
 9. Treat post-quarantine file changes as external observations only. They may
    support forensic reconciliation, but never restore authority or contaminate
    W2's candidate.

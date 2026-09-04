@@ -120,6 +120,14 @@ integration revalidate the target before relying on workspace evidence.
 An uncooperative raw Git writer can still move a ref. The product law is prompt
 detection and authority refusal, not impossible filesystem fencing.
 
+Read-only canonical-path, symlink, registration, and repository observations
+may occur before initial binding so invalid external facts are refused without
+publication. The crash-before-binding law prohibits external mutation before
+durable intent; it does not prohibit bounded observation. WP08 owns the pure
+current-workspace predicate and its exhaustive capsule tests. WP09 and WP10 own
+calling that predicate from handoff, review, acceptance, and integration, so
+WP08 does not add out-of-scope or test-only gate integrations.
+
 ## Routing
 
 1. Complete the already-open WP02 effect-resume repair and extend WP02 with the
