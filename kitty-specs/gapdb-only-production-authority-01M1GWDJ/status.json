@@ -71,7 +71,8 @@
         "Independent review passed: always-live production-bound guard, exact decode semantics, 184 sealed mutants, repeated/race/full/static gates green.",
         "Post-approval defect 7: admit exact restore->time elapsed-deadline edge, retain time prohibition for foundation/checkpoint/playback, and append a widening mutant to the sealed architecture census.",
         "Defect-7 restore-only deadline capability guard committed at 67a0a308; exhaustive architecture, mutant, race, combined-WP04, and static gates pass.",
-        "Cycle-20 repair: bind WithTimeout duration to validated restore-attempt budget and resolve import aliases per file; preserve sound WP04 implementation."
+        "Cycle-20 repair: bind WithTimeout duration to validated restore-attempt budget and resolve import aliases per file; preserve sound WP04 implementation.",
+        "Cycle-20 repair committed at 2326ed86; deadline dataflow, validation dominance, alias-scope, combined-WP04, architecture, race, and static gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -82,8 +83,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": 4142514,
+      "shell_pid_created_at": "1788491447.4",
       "subtasks": {
         "T001": "done",
         "T002": "done",
