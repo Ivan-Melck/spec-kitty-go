@@ -82,7 +82,8 @@
         "Cycle-24 repair: reject inferred and forbidden transitive duration state without reintroducing control-flow analysis.",
         "Cycle-24 repair 3e8b393d: confine inferred, erased, and transitive duration state with bounded go/types proof.",
         "Cycle-25 repair: apply bounded duration reachability to every package-scope named type.",
-        "Cycle-25 repair aee9e6e5: inspect all named duration-bearing types with exact privileged coordinates."
+        "Cycle-25 repair aee9e6e5: inspect all named duration-bearing types with exact privileged coordinates.",
+        "Review cycle 26 passed: exact structural duration confinement, 185-mutant census preserved, no CFG inference."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -91,7 +92,7 @@
         "reviewer": "renata-gapdb-named-types",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
