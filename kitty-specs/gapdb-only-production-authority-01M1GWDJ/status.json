@@ -176,7 +176,7 @@
     },
     "WP03": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp03-witness-gapdb",
@@ -202,7 +202,8 @@
         "Dependency blocker: publication witness bytes are re-canonicalized by foundation NewRecoveryRecordV2 into alphabetical object-key order, but DecodePublicationWitnessV2 requires the encoder's struct-field order. Exact adapter ReadV2 therefore returns a foundation record that the only approved witness decoder rejects. Reproduced by TestV2ReaderUsesFoundationPublicationWitnessAddressAndRejectsExpiry. Preserve the separable uncommitted WP03 witness translation until a bounded witness-specific WP02 codec repair is independently approved.",
         "Resume preserved WP03 defect-4 adapter correction after independent approval of foundation byte-preservation repair 026e3a7e. The exact former failing reader regression now passes 20 consecutive runs in lane-c. Continue bounded key/commit/read/reconciliation validation; no prior adapter contract is reopened.",
         "Ready for independent defect-4 review: 4c22f999 adds canonical publication-witness key translation, foundation-addressed non-expiring reads, exactly one ordinary RequireAbsent witness in the single AtomicBatch, witness-inclusive mutation/observation/raw/wire accounting, and complete same-revision witness reconciliation. Existing exact-member reconciliation needed no duplicate policy. Focused x20, full package, race x5, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
-        "Independent defect-4 review APPROVE at 4c22f999: canonical witness key and foundation address round-trip, exact sealed-byte translation, single ordinary non-expiring RequireAbsent witness in one AtomicBatch, witness-inclusive raw/wire/mutation/observation counts, and complete same-revision ambiguity reconciliation verified. Focused x20, race x3, package x3, contention race, architecture, compile, vet, staticcheck, module, formatting, diff, ownership, and all eight anti-pattern checks pass."
+        "Independent defect-4 review APPROVE at 4c22f999: canonical witness key and foundation address round-trip, exact sealed-byte translation, single ordinary non-expiring RequireAbsent witness in one AtomicBatch, witness-inclusive raw/wire/mutation/observation counts, and complete same-revision ambiguity reconciliation verified. Focused x20, race x3, package x3, contention race, architecture, compile, vet, staticcheck, module, formatting, diff, ownership, and all eight anti-pattern checks pass.",
+        "Rebind corrected canonical review cycle 7 before implementation"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
