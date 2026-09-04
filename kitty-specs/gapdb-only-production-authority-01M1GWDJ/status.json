@@ -19,10 +19,10 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-deadline-dataflow",
-      "agent": "renata-gapdb-deadline-guard-review",
+      "agent": "ivan-gapdb-deadline-dataflow",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "ivan-gapdb-deadline-guard",
+      "assignee": "ivan-gapdb-deadline-dataflow",
       "force_count": 27,
       "lane": "in_progress",
       "last_event_id": "01M1N5H8T2694Z04PGWAZVGNWP",
@@ -70,7 +70,8 @@
         "Cycle-18 repair is intentionally red on unrepaired lane-a; review exact WP01 commit 2d9d5089 on combined repaired lane-b at eaa212b2 (WP02 candidate 03ac7098).",
         "Independent review passed: always-live production-bound guard, exact decode semantics, 184 sealed mutants, repeated/race/full/static gates green.",
         "Post-approval defect 7: admit exact restore->time elapsed-deadline edge, retain time prohibition for foundation/checkpoint/playback, and append a widening mutant to the sealed architecture census.",
-        "Defect-7 restore-only deadline capability guard committed at 67a0a308; exhaustive architecture, mutant, race, combined-WP04, and static gates pass."
+        "Defect-7 restore-only deadline capability guard committed at 67a0a308; exhaustive architecture, mutant, race, combined-WP04, and static gates pass.",
+        "Cycle-20 repair: bind WithTimeout duration to validated restore-attempt budget and resolve import aliases per file; preserve sound WP04 implementation."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -81,8 +82,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": 4047974,
-      "shell_pid_created_at": "1788490525.35",
+      "shell_pid": 4050973,
+      "shell_pid_created_at": "1788490584.13",
       "subtasks": {
         "T001": "planned",
         "T002": "planned",
