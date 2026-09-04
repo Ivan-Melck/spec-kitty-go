@@ -67,7 +67,8 @@
         "Cycle-17 repair: replace reversible helper-name activation and synthetic codec mutants with an always-live validator bound to actual production APIs. The red guard will be staged with the WP02 repair candidate for review; force only returns stale reviewer ownership.",
         "Defect-6 guard is intentionally always-live and therefore red on the unrepaired WP01 lane; independent review must validate WP01 commits aaf6abf1 and 6dcae82f on the repaired combined lane-b tree at WP02 candidate 03ac7098.",
         "Repair review cycle 18: restore exact direct decoder semantics assertions and add a real-production semantic-substitution mutant while preserving the 184-mutant guard.",
-        "Cycle-18 repair is intentionally red on unrepaired lane-a; review exact WP01 commit 2d9d5089 on combined repaired lane-b at eaa212b2 (WP02 candidate 03ac7098)."
+        "Cycle-18 repair is intentionally red on unrepaired lane-a; review exact WP01 commit 2d9d5089 on combined repaired lane-b at eaa212b2 (WP02 candidate 03ac7098).",
+        "Independent review passed: always-live production-bound guard, exact decode semantics, 184 sealed mutants, repeated/race/full/static gates green."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -76,7 +77,7 @@
         "reviewer": "renata-gapdb-codec-final-review",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
