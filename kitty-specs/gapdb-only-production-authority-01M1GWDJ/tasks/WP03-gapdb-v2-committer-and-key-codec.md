@@ -48,6 +48,12 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- go.mod
+- go.sum
+- internal/controlstore/gapdb/admission_test.go
+- internal/controlstore/gapdb/external_scenarios_test.go
+- internal/controlstore/gapdb/port.go
+- internal/controlstore/gapdb/port_test.go
 - internal/controlstore/gapdb/v2_codec.go
 - internal/controlstore/gapdb/v2_committer.go
 - internal/controlstore/gapdb/v2_reader.go
