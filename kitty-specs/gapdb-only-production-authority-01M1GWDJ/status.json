@@ -77,7 +77,8 @@
         "Cycle-21 semantic repair committed at 76f43ac8; object identity, universal call-path validation, positive bound, combined-WP04, architecture, race, and static gates pass.",
         "Cycle-22 repair: close compound-gate and function-value escapes; accept else-dominated and inline self-validating paths without weakening prior semantic guards.",
         "Cycle-22 control-flow repair committed at 415ac94b; exact predicates, function-value fencing, else propagation, inline self-validation, WP04 overlay, architecture/race/static gates pass.",
-        "Defect-8 repair: delete custom CFG verifier; retain exact object-identity capability confinement while WP04 owns source-bound deadline behavior."
+        "Defect-8 repair: delete custom CFG verifier; retain exact object-identity capability confinement while WP04 owns source-bound deadline behavior.",
+        "Defect-8 structural correction c05094d5: bounded go/types proof; behavior delegated to WP04."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
