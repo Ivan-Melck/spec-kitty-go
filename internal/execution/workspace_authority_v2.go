@@ -206,17 +206,32 @@ func workspaceOperationBindingV2(request WorkspaceAuthorityRequestV2, state work
 }
 
 func buildWorkspaceAuthorityPlanV2(request WorkspaceAuthorityRequestV2, binding journalv2.OperationBindingV2, nextExecution ExecutionSlotStateV2, executionObserved ExecutionSlotObservationV2, workspaceObserved WorkspaceAuthorityObservationV2, registry journalv2.EventRegistryV2) (WorkspaceAuthorityPlanV2, error) {
+	input, err := workspaceAuthorityPlanInputV2(request, binding, nextExecution, executionObserved, workspaceObserved)
+	if err != nil {
+		return WorkspaceAuthorityPlanV2{}, err
+	}
+	if err := validateWorkspaceAuthorityPlanInputV2(request.Kind, input); err != nil {
+		return WorkspaceAuthorityPlanV2{}, err
+	}
+	sealed, err := journalv2.SealCommitPlanV2(input, registry)
+	if err != nil {
+		return WorkspaceAuthorityPlanV2{}, err
+	}
+	return WorkspaceAuthorityPlanV2{sealed: sealed}, nil
+}
+
+func workspaceAuthorityPlanInputV2(request WorkspaceAuthorityRequestV2, binding journalv2.OperationBindingV2, nextExecution ExecutionSlotStateV2, executionObserved ExecutionSlotObservationV2, workspaceObserved WorkspaceAuthorityObservationV2) (journalv2.CommitPlanInput, error) {
 	workspaceState, _ := request.Contribution.State()
 	resultBytes, _ := journalv2.CanonicalObject(mustJSONV2(WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: workspaceState}))
 	eventIDs := []journalv2.EventID{request.OperationEventID, request.ExecutionEventID}
 	// The contribution's event ID is added by AppendPlanContributionV2.
 	operation, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: binding.OperationID(), LogicalVersion: 1, Status: journalv2.StatusResolved, ResultKind: "workspace.result", ResultSchemaVersion: workspaceAuthorityResultSchemaV2, CanonicalResult: resultBytes, EventIDs: sortWorkspaceEventsV2(append(eventIDs, contributionEventIDV2(request.Contribution))), EffectIDs: contributionEffectIDsV2(request.Contribution)})
 	if err != nil {
-		return WorkspaceAuthorityPlanV2{}, err
+		return journalv2.CommitPlanInput{}, err
 	}
 	opPayload, err := journalv2.EncodeOperationStateEventPayloadV2(operation)
 	if err != nil {
-		return WorkspaceAuthorityPlanV2{}, err
+		return journalv2.CommitPlanInput{}, err
 	}
 	opCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(binding.OperationID()), journalv2.Scope{Kind: journalv2.ScopeHost})
 	execCoordinate, _ := ExecutionSlotCoordinateV2(nextExecution.ProjectID, nextExecution.MissionID, nextExecution.WorkRevisionID, nextExecution.WorkID)
@@ -230,7 +245,7 @@ func buildWorkspaceAuthorityPlanV2(request WorkspaceAuthorityRequestV2, binding 
 	pred := executionCoordinatesV2(*executionObserved.State)
 	execEventBytes, err := encodeExecutionEventV2(ExecutionSlotEventV2{SchemaVersion: 1, Kind: kind, ObservedAt: request.ObservedAt.UTC().Format(time.RFC3339Nano), Predecessor: &pred, State: nextExecution})
 	if err != nil {
-		return WorkspaceAuthorityPlanV2{}, err
+		return journalv2.CommitPlanInput{}, err
 	}
 	governance := nextExecution.Governance.journalRevisions()
 	events := []journalv2.EventDraftV2{
@@ -245,14 +260,14 @@ func buildWorkspaceAuthorityPlanV2(request WorkspaceAuthorityRequestV2, binding 
 	for _, head := range heads {
 		condition, e := journalv2.ConditionForHeadTransitionV2(head)
 		if e != nil {
-			return WorkspaceAuthorityPlanV2{}, e
+			return journalv2.CommitPlanInput{}, e
 		}
 		conditions = append(conditions, condition)
 	}
 	input := journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: operation, Events: events, Heads: heads, Conditions: conditions}
 	input, err = workspace.AppendPlanContributionV2(input, request.Contribution)
 	if err != nil {
-		return WorkspaceAuthorityPlanV2{}, err
+		return journalv2.CommitPlanInput{}, err
 	}
 	for i := range input.Events {
 		if input.Events[i].Family == "workspace" {
@@ -260,11 +275,83 @@ func buildWorkspaceAuthorityPlanV2(request WorkspaceAuthorityRequestV2, binding 
 			input.Events[i].GovernanceRevisions = append([]string(nil), governance...)
 		}
 	}
-	sealed, err := journalv2.SealCommitPlanV2(input, registry)
-	if err != nil {
-		return WorkspaceAuthorityPlanV2{}, err
+	return input, nil
+}
+
+func validateWorkspaceAuthorityPlanInputV2(kind WorkspaceAuthorityCommandKindV2, input journalv2.CommitPlanInput) error {
+	if len(input.Events) != 3 || len(input.Heads) != 3 || len(input.Conditions) != 3 || len(input.Assertions) != 0 {
+		return executionV2Error(KindInvalidCommand, "workspace_plan_membership", nil)
 	}
-	return WorkspaceAuthorityPlanV2{sealed: sealed}, nil
+	expectedTypes := map[string]string{"operation": "operation.resolved"}
+	switch kind {
+	case WorkspaceBindV2:
+		expectedTypes["execution_slot"] = "execution_slot.workspace_bound"
+		expectedTypes["workspace"] = "workspace.preparation_requested"
+		if input.WorkspacePathClaim == nil || len(input.EffectIntents) != 1 {
+			return executionV2Error(KindInvalidCommand, "workspace_bind_membership", nil)
+		}
+	case WorkspaceQuarantineV2:
+		expectedTypes["execution_slot"] = "execution_slot.lease_expired"
+		expectedTypes["workspace"] = "workspace.quarantined"
+		if input.WorkspacePathClaim != nil || len(input.EffectIntents) != 0 {
+			return executionV2Error(KindInvalidCommand, "workspace_quarantine_membership", nil)
+		}
+	default:
+		return executionV2Error(KindInvalidCommand, "workspace_command", nil)
+	}
+	events := make(map[string]journalv2.EventDraftV2, 3)
+	for _, event := range input.Events {
+		if _, duplicate := events[event.Family]; duplicate || expectedTypes[event.Family] != event.EventType || string(event.Coordinate.Kind) != event.Family {
+			return executionV2Error(KindInvalidCommand, "workspace_plan_event", nil)
+		}
+		events[event.Family] = event
+	}
+	if len(events) != len(expectedTypes) {
+		return executionV2Error(KindInvalidCommand, "workspace_plan_event", nil)
+	}
+	heads := make(map[string]journalv2.HeadTransitionV2, 3)
+	for _, head := range input.Heads {
+		family := string(head.Coordinate.Kind)
+		event, ok := events[family]
+		if !ok || head.EventID != event.EventID || head.Coordinate != event.Coordinate {
+			return executionV2Error(KindInvalidCommand, "workspace_plan_head", nil)
+		}
+		heads[family] = head
+	}
+	if len(heads) != 3 {
+		return executionV2Error(KindInvalidCommand, "workspace_plan_head", nil)
+	}
+	wantConditions := make(map[journalv2.ConditionTarget]journalv2.ProviderCondition, 3)
+	for _, head := range input.Heads {
+		condition, err := journalv2.ConditionForHeadTransitionV2(head)
+		if err != nil {
+			return err
+		}
+		wantConditions[condition.Target] = condition
+	}
+	seenConditions := make(map[journalv2.ConditionTarget]struct{}, 3)
+	for _, condition := range input.Conditions {
+		_, duplicate := seenConditions[condition.Target]
+		if want, ok := wantConditions[condition.Target]; duplicate || !ok || want != condition {
+			return executionV2Error(KindInvalidCommand, "workspace_plan_condition", nil)
+		}
+		seenConditions[condition.Target] = struct{}{}
+	}
+	eventIDs := input.OperationState.EventIDs()
+	if len(eventIDs) != 3 {
+		return executionV2Error(KindInvalidCommand, "workspace_operation_membership", nil)
+	}
+	wantIDs := make([]journalv2.EventID, 0, 3)
+	for _, event := range input.Events {
+		wantIDs = append(wantIDs, event.EventID)
+	}
+	wantIDs = sortWorkspaceEventsV2(wantIDs)
+	for index := range wantIDs {
+		if eventIDs[index] != wantIDs[index] {
+			return executionV2Error(KindInvalidCommand, "workspace_operation_membership", nil)
+		}
+	}
+	return nil
 }
 
 func contributionEventIDV2(contribution workspace.PlanContributionV2) journalv2.EventID {
