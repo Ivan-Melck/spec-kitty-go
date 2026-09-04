@@ -411,7 +411,7 @@
     },
     "WP09": {
       "actor": "codex",
-      "agent": null,
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
@@ -422,7 +422,8 @@
       "notes": [
         "Resolved failed workspace allocation: all dependency lineages are integrated and the lane-i worktree was fast-forwarded to coordinator 20757d1f.",
         "Ready for independent review at c4dc9ec817f2f0acab31068b6be542b27b301c58 tree 1fa78c812cc6e68b011a611630230f89c6799a53. Force acknowledges only inherited coordinator governance files in the recovered lane; no product or test failure is bypassed.",
-        "Independent review requested changes to candidate c4dc9ec817f2f0acab31068b6be542b27b301c58; correction cycle 2 required."
+        "Independent review requested changes to candidate c4dc9ec817f2f0acab31068b6be542b27b301c58; correction cycle 2 required.",
+        "Ready for independent correction-cycle-2 review: dependency b4e28034a4373fbd86d22207172085693d20f07f; candidate ee0cf7a21b6dbb1cb9d6ecf459e5d2af47792084; tree 78b93e3d7e08e636102fefefe0e1226f885aa623; all seven findings closed and qualification green."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
