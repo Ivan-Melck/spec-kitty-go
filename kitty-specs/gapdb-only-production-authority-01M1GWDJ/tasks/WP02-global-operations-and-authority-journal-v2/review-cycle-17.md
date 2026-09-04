@@ -42,3 +42,33 @@ Preserve the existing closed journal API and all earlier post-approval repairs.
 The foundation owns semantic proof shapes only; workspace policy, path
 canonicalization, raw keys, provider types, and Git observations remain outside
 this package.
+
+## Independent-review blocker: permission-event semantic binding
+
+The first candidate bound a resume only to a fresh EventID and a previously
+known EffectID. That permits any unrelated fresh event in the same publication,
+including the mandatory operation event, to be relabelled as effect permission.
+The repair must make the permission coordinate immutable and bind it to the
+exact current event draft admitted by the sealed plan:
+
+- require the registered capability-owned tuple
+  `external_effect@1@1`, owned by `internal/execution`;
+- require aggregate kind `external_effect`, aggregate ID equal to the existing
+  EffectID, and the exact scope carried by that event;
+- admit only the semantic permission event types
+  `external_effect.allow_retry` and
+  `external_effect.allow_compensation`;
+- bind EventID, event type, family, schema/reducer versions, aggregate
+  coordinate, canonical payload, and canonical observations into a
+  domain-separated semantic commitment;
+- reconstruct and compare that commitment against the canonicalized event
+  draft during `SealCommitPlanV2`; a caller-supplied label is not proof;
+- keep capability policy and payload interpretation in `internal/execution`;
+  the journal validates only the registered tuple, structural identity, exact
+  event type, and commitment; and
+- add positive public sealing coverage plus controlled mutants for substituting
+  the mandatory operation event, an unrelated registered event, the wrong
+  effect aggregate, the wrong registered tuple, or altered committed bytes.
+
+Generic `AdvanceOperationState` must remain closed, and the resume helper must
+not expose forgeable exported fields that reduce the proof back to two strings.
