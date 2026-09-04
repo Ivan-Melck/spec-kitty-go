@@ -132,7 +132,8 @@
         "Repair review cycle 14: use semantic-address-specific recovery canonical bounds and prove exact-max identity plus over-limit refusal.",
         "Cycle-14 address-specific recovery bounds repaired at e8a5fc8f; exact-max/over-limit/noncanonical identity tests and all v2/race/184-mutant/static gates pass.",
         "Repair review cycle 15: add the missing ordinary exact-256KiB live recovery constructor case.",
-        "Cycle-15 adds the missing ordinary exact-256KiB live constructor evidence at 21b8cd43; focused/package/race/184-mutant/static gates pass."
+        "Cycle-15 adds the missing ordinary exact-256KiB live constructor evidence at 21b8cd43; focused/package/race/184-mutant/static gates pass.",
+        "Independent review passed: durable bytes canonical, digest preimages stable, address-specific recovery bounds exact, 184-mutant/v2/race/static gates green."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -141,7 +142,7 @@
         "reviewer": "renata-gapdb-final-production-review",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
