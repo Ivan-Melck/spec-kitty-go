@@ -32,40 +32,78 @@ const (
 	StageSubmissionRequestedV2 StageV2 = "submission_requested"
 	StageRepositoryObservedV2  StageV2 = "repository_observed"
 	StageCandidateRecordedV2   StageV2 = "candidate_recorded"
+	StageCandidateReplacedV2   StageV2 = "candidate_replaced"
 	StageCandidateRefusedV2    StageV2 = "candidate_refused"
 )
 
+// CandidateReplacementV2 is the immutable lineage carried by a successor
+// handoff. The prior state remains in the journal; PredecessorStateDigest binds
+// the successor to those exact bytes without embedding an unbounded history.
+type CandidateReplacementV2 struct {
+	PredecessorHandoffID      ids.HandoffID           `json:"predecessor_handoff_id"`
+	PredecessorCandidate      string                  `json:"predecessor_candidate"`
+	PredecessorLogicalVersion uint64                  `json:"predecessor_logical_version"`
+	PredecessorStateDigest    string                  `json:"predecessor_state_digest"`
+	Reason                    string                  `json:"reason"`
+	OperationID               journalv2.OperationID   `json:"operation_id"`
+	ActorID                   ids.ActorID             `json:"actor_id"`
+	ProcessID                 ids.ProcessID           `json:"process_id"`
+	GovernanceContextID       ids.GovernanceContextID `json:"governance_context_id"`
+}
+
+func (r CandidateReplacementV2) validate() error {
+	if _, err := ids.ParseHandoffID(r.PredecessorHandoffID.String()); err != nil {
+		return authorityErrorV2(KindInvalid, "replacement_handoff", err)
+	}
+	if !ValidCommit(r.PredecessorCandidate) || r.PredecessorLogicalVersion == 0 || !ValidDigest(r.PredecessorStateDigest) || !validBoundedTextV2(r.Reason, 1024) {
+		return authorityErrorV2(KindInvalid, "replacement_lineage", nil)
+	}
+	for _, parse := range []func() error{
+		func() error { _, e := journalv2.NewOperationID(string(r.OperationID)); return e },
+		func() error { _, e := ids.ParseActorID(r.ActorID.String()); return e },
+		func() error { _, e := ids.ParseProcessID(r.ProcessID.String()); return e },
+		func() error { _, e := ids.ParseGovernanceContextID(r.GovernanceContextID.String()); return e },
+	} {
+		if err := parse(); err != nil {
+			return authorityErrorV2(KindInvalid, "replacement_authority", err)
+		}
+	}
+	return nil
+}
+
 type StateV2 struct {
-	SchemaVersion      uint16                          `json:"schema_version"`
-	LogicalVersion     uint64                          `json:"logical_version"`
-	Stage              StageV2                         `json:"stage"`
-	HandoffID          ids.HandoffID                   `json:"handoff_id"`
-	ProjectID          ids.ProjectID                   `json:"project_id"`
-	MissionID          ids.MissionID                   `json:"mission_id"`
-	WorkRevisionID     ids.WorkRevisionID              `json:"work_revision_id"`
-	WorkID             ids.WorkID                      `json:"work_id"`
-	RunID              ids.RunID                       `json:"run_id"`
-	RuntimeEpochID     journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
-	WorkspaceID        ids.WorkspaceID                 `json:"workspace_id"`
-	LeaseID            ids.LeaseID                     `json:"lease_id"`
-	LeaseGeneration    uint64                          `json:"lease_generation"`
-	Fence              string                          `json:"fence"`
-	ActorID            ids.ActorID                     `json:"actor_id"`
-	ProcessID          ids.ProcessID                   `json:"process_id"`
-	RepositoryID       ids.RepositoryID                `json:"repository_id"`
-	LaneID             ids.LaneID                      `json:"lane_id"`
-	OwnedBranch        string                          `json:"owned_branch"`
-	PinnedBase         string                          `json:"pinned_base"`
-	Candidate          string                          `json:"candidate"`
-	Contributors       []ids.ActorID                   `json:"contributors"`
-	ContributorDigest  string                          `json:"contributor_digest"`
-	CriterionIDs       []string                        `json:"criterion_ids"`
-	CriteriaDigest     string                          `json:"criteria_digest"`
-	EvidenceDigest     string                          `json:"evidence_digest"`
-	RepositoryEvidence CandidateEvidence               `json:"repository_evidence"`
-	Refusal            *CandidateRefusalV2             `json:"refusal,omitempty"`
-	Governance         execution.ExecutionGovernanceV2 `json:"governance"`
-	ObservedAt         string                          `json:"observed_at"`
+	SchemaVersion              uint16                          `json:"schema_version"`
+	LogicalVersion             uint64                          `json:"logical_version"`
+	Stage                      StageV2                         `json:"stage"`
+	HandoffID                  ids.HandoffID                   `json:"handoff_id"`
+	ProjectID                  ids.ProjectID                   `json:"project_id"`
+	MissionID                  ids.MissionID                   `json:"mission_id"`
+	WorkRevisionID             ids.WorkRevisionID              `json:"work_revision_id"`
+	WorkID                     ids.WorkID                      `json:"work_id"`
+	RunID                      ids.RunID                       `json:"run_id"`
+	RuntimeEpochID             journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
+	WorkspaceID                ids.WorkspaceID                 `json:"workspace_id"`
+	LeaseID                    ids.LeaseID                     `json:"lease_id"`
+	LeaseGeneration            uint64                          `json:"lease_generation"`
+	Fence                      string                          `json:"fence"`
+	ActorID                    ids.ActorID                     `json:"actor_id"`
+	ProcessID                  ids.ProcessID                   `json:"process_id"`
+	RepositoryID               ids.RepositoryID                `json:"repository_id"`
+	LaneID                     ids.LaneID                      `json:"lane_id"`
+	OwnedBranch                string                          `json:"owned_branch"`
+	PinnedBase                 string                          `json:"pinned_base"`
+	Candidate                  string                          `json:"candidate"`
+	Contributors               []ids.ActorID                   `json:"contributors"`
+	ContributorDigest          string                          `json:"contributor_digest"`
+	CriterionIDs               []string                        `json:"criterion_ids"`
+	CriteriaDigest             string                          `json:"criteria_digest"`
+	WorkRevisionCriteriaDigest string                          `json:"work_revision_criteria_digest"`
+	EvidenceDigest             string                          `json:"evidence_digest"`
+	RepositoryEvidence         CandidateEvidence               `json:"repository_evidence"`
+	Refusal                    *CandidateRefusalV2             `json:"refusal,omitempty"`
+	Replacement                *CandidateReplacementV2         `json:"replacement,omitempty"`
+	Governance                 execution.ExecutionGovernanceV2 `json:"governance"`
+	ObservedAt                 string                          `json:"observed_at"`
 }
 
 func (s StateV2) Validate() error {
@@ -95,7 +133,7 @@ func (s StateV2) Validate() error {
 			return authorityErrorV2(KindInvalid, "handoff_identity", err)
 		}
 	}
-	if s.LeaseGeneration == 0 || len(s.Fence) < 16 || len(s.Fence) > journalv2.MaxIdentityBytes || !ValidCommit(s.Candidate) || !ValidCommit(s.PinnedBase) || !ValidDigest(s.CriteriaDigest) || !ValidDigest(s.EvidenceDigest) || !ValidDigest(s.ContributorDigest) || !validBoundedTextV2(s.OwnedBranch, journalv2.MaxIdentityBytes) {
+	if s.LeaseGeneration == 0 || len(s.Fence) < 16 || len(s.Fence) > journalv2.MaxIdentityBytes || !ValidCommit(s.Candidate) || !ValidCommit(s.PinnedBase) || !ValidDigest(s.CriteriaDigest) || !ValidDigest(s.WorkRevisionCriteriaDigest) || !ValidDigest(s.EvidenceDigest) || !ValidDigest(s.ContributorDigest) || !validBoundedTextV2(s.OwnedBranch, journalv2.MaxIdentityBytes) {
 		return authorityErrorV2(KindInvalid, "handoff_evidence", nil)
 	}
 	criteria, err := CanonicalCriterionIDsV2(s.CriterionIDs)
@@ -117,10 +155,19 @@ func (s StateV2) Validate() error {
 		return authorityErrorV2(KindInvalid, "observed_at", err)
 	}
 	zeroEvidence := s.RepositoryEvidence == (CandidateEvidence{})
+	if s.Replacement != nil {
+		if s.Replacement.validate() != nil || s.Replacement.OperationID == "" || s.Replacement.ActorID != s.ActorID || s.Replacement.ProcessID != s.ProcessID || s.Replacement.GovernanceContextID != s.Governance.ContextID || s.Replacement.PredecessorHandoffID == s.HandoffID || s.Replacement.PredecessorCandidate == s.Candidate {
+			return authorityErrorV2(KindInvalid, "replacement", nil)
+		}
+	}
 	switch s.Stage {
 	case StageSubmissionRequestedV2:
-		if !zeroEvidence || s.Refusal != nil {
+		if !zeroEvidence || s.Refusal != nil || s.Replacement != nil {
 			return authorityErrorV2(KindInvalid, "repository_evidence", nil)
+		}
+	case StageCandidateReplacedV2:
+		if !zeroEvidence || s.Refusal != nil || s.Replacement == nil {
+			return authorityErrorV2(KindInvalid, "replacement", nil)
 		}
 	case StageRepositoryObservedV2, StageCandidateRecordedV2:
 		if s.Refusal != nil || s.RepositoryEvidence.Candidate != s.Candidate || s.RepositoryEvidence.PinnedBase != s.PinnedBase || s.RepositoryEvidence.OwnedBranch != s.OwnedBranch || s.RepositoryEvidence.ObservedBranchHead != s.Candidate {
@@ -271,14 +318,16 @@ func ReduceEventV2(prior []byte, envelope journalv2.EventEnvelopeV2) ([]byte, er
 		return next.CanonicalBytes(), nil
 	}
 	previous, err := DecodeStateV2(prior)
-	if err != nil || next.LogicalVersion != previous.LogicalVersion+1 || !sameImmutableHandoffV2(previous, next) {
+	if err != nil || next.LogicalVersion != previous.LogicalVersion+1 {
 		return nil, authorityErrorV2(KindConflict, "handoff_transition", err)
 	}
 	digest, _ := journalv2.ReducerStateDigestV2(previous.CanonicalBytes())
 	if event.PriorDigest != digest.String() {
 		return nil, authorityErrorV2(KindConflict, "handoff_prior", nil)
 	}
-	allowed := previous.Stage == StageSubmissionRequestedV2 && (next.Stage == StageRepositoryObservedV2 || next.Stage == StageCandidateRefusedV2) || previous.Stage == StageRepositoryObservedV2 && next.Stage == StageCandidateRecordedV2
+	replacementStart := (previous.Stage == StageCandidateRecordedV2 || previous.Stage == StageCandidateRefusedV2) && next.Stage == StageCandidateReplacedV2 && validReplacementTransitionV2(previous, next)
+	continued := sameImmutableHandoffV2(previous, next) && ((previous.Stage == StageSubmissionRequestedV2 || previous.Stage == StageCandidateReplacedV2) && (next.Stage == StageRepositoryObservedV2 || next.Stage == StageCandidateRefusedV2) || previous.Stage == StageRepositoryObservedV2 && next.Stage == StageCandidateRecordedV2)
+	allowed := replacementStart || continued
 	if !allowed || event.Kind != string(next.Stage) {
 		return nil, authorityErrorV2(KindConflict, "handoff_transition", nil)
 	}
@@ -286,38 +335,51 @@ func ReduceEventV2(prior []byte, envelope journalv2.EventEnvelopeV2) ([]byte, er
 }
 
 func ReducerRegistrationsV2() []journalv2.ReducerRegistration {
-	sum := sha256.Sum256([]byte("spec-kitty/handoff-reducer/1.0"))
+	sum := sha256.Sum256([]byte("spec-kitty/handoff-reducer/1.1/replacement-lineage"))
 	digest, _ := journalv2.ParseDigest("handoff_reducer", hex.EncodeToString(sum[:]))
 	return []journalv2.ReducerRegistration{{Family: "handoff_slot", EventSchemaVersion: 1, ReducerVersion: 1, Owner: "internal/handoff", ImplementationDigest: digest, Reduce: ReduceEventV2}}
 }
 
 type AuthorityRequestV2 struct {
-	OperationID     journalv2.OperationID
-	HandoffID       ids.HandoffID
-	ProjectID       ids.ProjectID
-	MissionID       ids.MissionID
-	WorkRevisionID  ids.WorkRevisionID
-	WorkID          ids.WorkID
-	RunID           ids.RunID
-	RuntimeEpochID  journalv2.RuntimeEpochID
-	Workspace       workspace.BindingV2
-	LeaseID         ids.LeaseID
-	LeaseGeneration uint64
-	Fence           string
-	ActorID         ids.ActorID
-	ProcessID       ids.ProcessID
-	RepositoryID    ids.RepositoryID
-	RepositoryPath  string
-	LaneID          ids.LaneID
-	OwnedBranch     string
-	PinnedBase      string
-	Candidate       string
-	Contributors    []ids.ActorID
-	CriterionIDs    []string
-	CriteriaDigest  string
-	EvidenceDigest  string
-	Governance      execution.ExecutionGovernanceV2
-	ObservedAt      time.Time
+	OperationID                journalv2.OperationID
+	HandoffID                  ids.HandoffID
+	ProjectID                  ids.ProjectID
+	MissionID                  ids.MissionID
+	WorkRevisionID             ids.WorkRevisionID
+	WorkID                     ids.WorkID
+	RunID                      ids.RunID
+	RuntimeEpochID             journalv2.RuntimeEpochID
+	Workspace                  workspace.BindingV2
+	LeaseID                    ids.LeaseID
+	LeaseGeneration            uint64
+	Fence                      string
+	ActorID                    ids.ActorID
+	ProcessID                  ids.ProcessID
+	RepositoryID               ids.RepositoryID
+	RepositoryPath             string
+	LaneID                     ids.LaneID
+	OwnedBranch                string
+	PinnedBase                 string
+	Candidate                  string
+	Contributors               []ids.ActorID
+	CriterionIDs               []string
+	CriteriaDigest             string
+	WorkRevisionCriteriaDigest string
+	EvidenceDigest             string
+	Replacement                *CandidateReplacementRequestV2
+	Governance                 execution.ExecutionGovernanceV2
+	ObservedAt                 time.Time
+}
+
+// CandidateReplacementRequestV2 binds a new operation to one exact terminal
+// predecessor. The service verifies this lineage against the current handoff
+// head before publishing the replacement transition.
+type CandidateReplacementRequestV2 struct {
+	PredecessorHandoffID      ids.HandoffID
+	PredecessorCandidate      string
+	PredecessorLogicalVersion uint64
+	PredecessorStateDigest    string
+	Reason                    string
 }
 
 type OperationResolutionKindV2 uint8
@@ -339,10 +401,19 @@ type ObservationV2 struct {
 	LastPublicationID journalv2.PublicationID
 }
 type AuthorityObservationV2 struct {
-	Eligibility workgraph.ObservedEligibilityShardV2
-	Execution   execution.ExecutionSlotObservationV2
-	Workspace   execution.WorkspaceAuthorityObservationV2
-	Assertions  []journalv2.AuthorityAssertionV2
+	Eligibility  workgraph.ObservedEligibilityShardV2
+	Execution    execution.ExecutionSlotObservationV2
+	Workspace    execution.WorkspaceAuthorityObservationV2
+	WorkRevision WorkRevisionObservationV2
+	Assertions   []journalv2.AuthorityAssertionV2
+}
+
+// WorkRevisionObservationV2 is the provider-neutral current immutable graph
+// authority consumed by handoff and review.
+type WorkRevisionObservationV2 struct {
+	Revision       workgraph.RevisionV2
+	RecordRevision uint64
+	Assertion      journalv2.AuthorityAssertionV2
 }
 
 type AuthorityPlanV2 struct{ sealed journalv2.SealedCommitPlanV2 }
@@ -366,6 +437,7 @@ type AuthorityPortV2 interface {
 	ObserveHandoff(context.Context, journalv2.AggregateCoordinate) (ObservationV2, error)
 	ObserveHandoffAuthority(context.Context, AuthorityRequestV2) (AuthorityObservationV2, error)
 	PublishHandoff(context.Context, AuthorityPlanV2) (AuthorityAckV2, error)
+	ReconcileHandoff(context.Context, AuthorityPlanV2) (AuthorityAckV2, error)
 }
 type RuntimeEpochSourceV2 interface {
 	CurrentRuntimeEpoch(context.Context) (journalv2.RuntimeEpochID, error)
@@ -431,8 +503,15 @@ func (s *AuthorityServiceV2) Submit(ctx context.Context, request AuthorityReques
 	} else if resolution.Kind != OperationAbsentV2 {
 		return AuthorityResultV2{}, authorityErrorV2(KindConflict, "operation_resolution", nil)
 	}
+	if resolution.Kind == OperationAbsentV2 && request.Replacement != nil {
+		observed, observeErr := s.port.ObserveHandoff(ctx, coordinate)
+		if observeErr != nil || observed.State == nil || !replacementMatchesPriorV2(*request.Replacement, *observed.State) {
+			return AuthorityResultV2{}, authorityErrorV2(KindConflict, "replacement_lineage", observeErr)
+		}
+		current, handoffRevision = observed.State, observed.RecordRevision
+	}
 	for {
-		if current != nil && current.Stage == StageCandidateRecordedV2 {
+		if current != nil && current.Stage == StageCandidateRecordedV2 && request.Replacement == nil {
 			return AuthorityResultV2{State: *current, PublicationID: operation.LastPublicationID(), Replayed: true}, nil
 		}
 		if epoch, epochErr := s.epochs.CurrentRuntimeEpoch(ctx); epochErr != nil || epoch != request.RuntimeEpochID {
@@ -452,7 +531,22 @@ func (s *AuthorityServiceV2) Submit(ctx context.Context, request AuthorityReques
 		if current != nil {
 			next.LogicalVersion = current.LogicalVersion + 1
 			switch current.Stage {
+			case StageCandidateRecordedV2, StageCandidateRefusedV2:
+				if request.Replacement == nil || !replacementMatchesPriorV2(*request.Replacement, *current) {
+					return AuthorityResultV2{}, authorityErrorV2(KindConflict, "replacement_lineage", nil)
+				}
+				next.Stage = StageCandidateReplacedV2
 			case StageSubmissionRequestedV2:
+				scope := AuthorityScope{RepositoryID: request.RepositoryID, RepositoryPath: request.RepositoryPath, OwnedBranch: request.OwnedBranch, PinnedBase: request.PinnedBase, LaneID: request.LaneID, CriteriaDigest: request.CriteriaDigest, OperationID: ids.OperationID(request.OperationID), HandoffID: request.HandoffID, WorkRevisionID: request.WorkRevisionID, WorkID: request.WorkID}
+				evidence, verifyErr := VerifyCandidateAuthority(ctx, s.verifier, scope, request.Candidate)
+				if verifyErr != nil {
+					next.Stage = StageCandidateRefusedV2
+					refusal := refusalFromErrorV2(next, verifyErr)
+					next.Refusal = &refusal
+					break
+				}
+				next.Stage, next.RepositoryEvidence = StageRepositoryObservedV2, evidence
+			case StageCandidateReplacedV2:
 				scope := AuthorityScope{RepositoryID: request.RepositoryID, RepositoryPath: request.RepositoryPath, OwnedBranch: request.OwnedBranch, PinnedBase: request.PinnedBase, LaneID: request.LaneID, CriteriaDigest: request.CriteriaDigest, OperationID: ids.OperationID(request.OperationID), HandoffID: request.HandoffID, WorkRevisionID: request.WorkRevisionID, WorkID: request.WorkID}
 				evidence, verifyErr := VerifyCandidateAuthority(ctx, s.verifier, scope, request.Candidate)
 				if verifyErr != nil {
@@ -475,29 +569,10 @@ func (s *AuthorityServiceV2) Submit(ctx context.Context, request AuthorityReques
 		ack, publishErr := s.port.PublishHandoff(ctx, plan)
 		sealed, _ := plan.Publication()
 		if publishErr != nil {
-			recovered, recoverErr := s.port.ResolveHandoffOperation(ctx, binding)
-			if recoverErr != nil || recovered.Kind != OperationExactV2 {
+			ack, publishErr = s.port.ReconcileHandoff(ctx, plan)
+			if publishErr != nil {
 				return AuthorityResultV2{}, authorityErrorV2(KindConflict, "handoff_publication", publishErr)
 			}
-			if recovered.State.Status() == journalv2.StatusResolved || recovered.State.Status() == journalv2.StatusRefused {
-				replayed, decodeErr := DecodeStateV2(recovered.State.Result())
-				if decodeErr != nil || !sameImmutableHandoffV2(seed, replayed) || (replayed.Stage != StageCandidateRecordedV2 && replayed.Stage != StageCandidateRefusedV2) {
-					return AuthorityResultV2{}, authorityErrorV2(KindConflict, "handoff_recovery", decodeErr)
-				}
-				result := AuthorityResultV2{State: replayed, PublicationID: recovered.State.LastPublicationID(), Replayed: true}
-				if replayed.Stage == StageCandidateRefusedV2 {
-					return result, refusalErrorV2(replayed)
-				}
-				return result, nil
-			}
-			observed, observeErr := s.port.ObserveHandoff(ctx, coordinate)
-			if observeErr != nil || observed.State == nil || !sameImmutableHandoffV2(seed, *observed.State) {
-				return AuthorityResultV2{}, authorityErrorV2(KindConflict, "handoff_recovery", observeErr)
-			}
-			current, handoffRevision = observed.State, observed.RecordRevision
-			state := recovered.State
-			operation, operationRevision = &state, recovered.RecordRevision
-			continue
 		}
 		if ack.ProviderRevision == 0 || ack.PublicationID != sealed.PublicationID() || ack.PlanDigest != sealed.Digest() || ack.MutationCount != sealed.MutationCount() {
 			return AuthorityResultV2{}, authorityErrorV2(KindConflict, "handoff_publication", publishErr)
@@ -522,10 +597,14 @@ func prepareRequestV2(r AuthorityRequestV2) (journalv2.OperationBindingV2, State
 		return journalv2.OperationBindingV2{}, StateV2{}, authorityErrorV2(KindInvalid, "handoff_request", err)
 	}
 	criteria, criteriaErr := CanonicalCriterionIDsV2(r.CriterionIDs)
-	if criteriaErr != nil || criterionSetDigestV2(criteria) != r.CriteriaDigest {
+	if criteriaErr != nil || criterionSetDigestV2(criteria) != r.CriteriaDigest || !ValidDigest(r.WorkRevisionCriteriaDigest) {
 		return journalv2.OperationBindingV2{}, StateV2{}, authorityErrorV2(KindInvalid, "handoff_criteria", criteriaErr)
 	}
-	state := StateV2{SchemaVersion: 1, LogicalVersion: 1, Stage: StageSubmissionRequestedV2, HandoffID: r.HandoffID, ProjectID: r.ProjectID, MissionID: r.MissionID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID, RunID: r.RunID, RuntimeEpochID: r.RuntimeEpochID, WorkspaceID: r.Workspace.WorkspaceID, LeaseID: r.LeaseID, LeaseGeneration: r.LeaseGeneration, Fence: r.Fence, ActorID: r.ActorID, ProcessID: r.ProcessID, RepositoryID: r.RepositoryID, LaneID: r.LaneID, OwnedBranch: r.OwnedBranch, PinnedBase: r.PinnedBase, Candidate: r.Candidate, Contributors: contributors, ContributorDigest: contributorDigestV2(contributors), CriterionIDs: criteria, CriteriaDigest: r.CriteriaDigest, EvidenceDigest: r.EvidenceDigest, Governance: r.Governance, ObservedAt: r.ObservedAt.UTC().Format(time.RFC3339Nano)}
+	state := StateV2{SchemaVersion: 1, LogicalVersion: 1, Stage: StageSubmissionRequestedV2, HandoffID: r.HandoffID, ProjectID: r.ProjectID, MissionID: r.MissionID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID, RunID: r.RunID, RuntimeEpochID: r.RuntimeEpochID, WorkspaceID: r.Workspace.WorkspaceID, LeaseID: r.LeaseID, LeaseGeneration: r.LeaseGeneration, Fence: r.Fence, ActorID: r.ActorID, ProcessID: r.ProcessID, RepositoryID: r.RepositoryID, LaneID: r.LaneID, OwnedBranch: r.OwnedBranch, PinnedBase: r.PinnedBase, Candidate: r.Candidate, Contributors: contributors, ContributorDigest: contributorDigestV2(contributors), CriterionIDs: criteria, CriteriaDigest: r.CriteriaDigest, WorkRevisionCriteriaDigest: r.WorkRevisionCriteriaDigest, EvidenceDigest: r.EvidenceDigest, Governance: r.Governance, ObservedAt: r.ObservedAt.UTC().Format(time.RFC3339Nano)}
+	if r.Replacement != nil {
+		state.Stage = StageCandidateReplacedV2
+		state.Replacement = &CandidateReplacementV2{PredecessorHandoffID: r.Replacement.PredecessorHandoffID, PredecessorCandidate: r.Replacement.PredecessorCandidate, PredecessorLogicalVersion: r.Replacement.PredecessorLogicalVersion, PredecessorStateDigest: r.Replacement.PredecessorStateDigest, Reason: r.Replacement.Reason, OperationID: r.OperationID, ActorID: r.ActorID, ProcessID: r.ProcessID, GovernanceContextID: r.Governance.ContextID}
+	}
 	if err := state.Validate(); err != nil {
 		return journalv2.OperationBindingV2{}, StateV2{}, err
 	}
@@ -555,16 +634,21 @@ func validateAuthorityV2(r AuthorityRequestV2, observed AuthorityObservationV2) 
 	if err != nil || workspace.ValidateCurrentV2(*observed.Workspace.State, capsule) != nil {
 		return journalv2.EligibilityGuardTransition{}, authorityErrorV2(KindStaleAuthority, "workspace", err)
 	}
-	if len(observed.Assertions) != 2 {
+	criteria, revisionDigest, revisionErr := criterionAuthorityV2(observed.WorkRevision.Revision, r.WorkID)
+	if revisionErr != nil || observed.WorkRevision.RecordRevision == 0 || observed.WorkRevision.Revision.ID() != r.WorkRevisionID || observed.WorkRevision.Revision.ProjectID() != r.ProjectID || observed.WorkRevision.Revision.MissionID() != r.MissionID || revisionDigest != r.WorkRevisionCriteriaDigest || !stringSlicesEqualV2(criteria, mustCanonicalCriterionIDsV2(r.CriterionIDs)) {
+		return journalv2.EligibilityGuardTransition{}, authorityErrorV2(KindRevisionIneligible, "work_revision_criteria", revisionErr)
+	}
+	if len(observed.Assertions) != 3 {
 		return journalv2.EligibilityGuardTransition{}, authorityErrorV2(KindStaleAuthority, "authority_assertions", nil)
 	}
 	executionCoordinate, _ := execution.ExecutionSlotCoordinateV2(r.ProjectID, r.MissionID, r.WorkRevisionID, r.WorkID)
 	workspaceCoordinate, _ := workspace.WorkspaceCoordinateV2(r.Workspace)
-	want := map[journalv2.AggregateCoordinate]uint64{executionCoordinate: observed.Execution.RecordRevision, workspaceCoordinate: observed.Workspace.RecordRevision}
+	workgraphCoordinate, _ := journalv2.NewAggregateCoordinate("workgraph", journalv2.AggregateID(r.MissionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(r.ProjectID), MissionID: journalv2.MissionID(r.MissionID)})
+	want := map[journalv2.AggregateCoordinate]uint64{executionCoordinate: observed.Execution.RecordRevision, workspaceCoordinate: observed.Workspace.RecordRevision, workgraphCoordinate: observed.WorkRevision.RecordRevision}
 	for _, assertion := range observed.Assertions {
 		target := assertion.Target()
 		revision, ok := want[target.Coordinate]
-		if !ok || target.Kind != journalv2.ConditionTargetAggregateHead || assertion.Kind() != journalv2.ConditionRecordRevision || assertion.ObservedRevision() != revision {
+		if !ok || target.Kind != journalv2.ConditionTargetAggregateHead || assertion.Kind() != journalv2.ConditionRecordRevision || assertion.ObservedRevision() != revision || target.Coordinate == workgraphCoordinate && !sameAuthorityAssertionV2(assertion, observed.WorkRevision.Assertion) {
 			return journalv2.EligibilityGuardTransition{}, authorityErrorV2(KindStaleAuthority, "authority_assertions", nil)
 		}
 		delete(want, target.Coordinate)
@@ -575,11 +659,18 @@ func validateAuthorityV2(r AuthorityRequestV2, observed AuthorityObservationV2) 
 	return token.Transition(), nil
 }
 
+func sameAuthorityAssertionV2(a, b journalv2.AuthorityAssertionV2) bool {
+	return a.Target() == b.Target() && a.Kind() == b.Kind() && a.ObservedRevision() == b.ObservedRevision() && a.ExpectedLogicalVersion() == b.ExpectedLogicalVersion() && a.ObservedValueDigest() == b.ObservedValueDigest()
+}
+
 func buildPlanV2(r AuthorityRequestV2, binding journalv2.OperationBindingV2, prior *StateV2, priorHandoffRevision uint64, priorOperation *journalv2.OperationStateV2, operationRevision uint64, next StateV2, authority AuthorityObservationV2, eligibility journalv2.EligibilityGuardTransition, registry journalv2.EventRegistryV2) (AuthorityPlanV2, error) {
 	coordinate, _ := CoordinateV2(r.ProjectID, r.MissionID, r.WorkRevisionID, r.WorkID)
 	version := journalv2.LogicalVersion(next.LogicalVersion)
-	opVersion := version
-	opEventID := deterministicEventIDV2("operation", r.OperationID, uint64(version))
+	opVersion := journalv2.LogicalVersion(1)
+	if priorOperation != nil {
+		opVersion = priorOperation.LogicalVersion() + 1
+	}
+	opEventID := deterministicEventIDV2("operation", r.OperationID, uint64(opVersion))
 	handoffEventID := deterministicEventIDV2("handoff", r.OperationID, uint64(version))
 	eventIDs := []journalv2.EventID{opEventID, handoffEventID}
 	if priorOperation != nil {
@@ -670,6 +761,51 @@ func sameImmutableHandoffV2(a, b StateV2) bool {
 	a.RepositoryEvidence, b.RepositoryEvidence = CandidateEvidence{}, CandidateEvidence{}
 	a.Refusal, b.Refusal = nil, nil
 	return bytes.Equal(mustCanonicalV2(a), mustCanonicalV2(b))
+}
+
+func validReplacementTransitionV2(prior, next StateV2) bool {
+	if next.Replacement == nil || next.Replacement.validate() != nil {
+		return false
+	}
+	digest, err := journalv2.ReducerStateDigestV2(prior.CanonicalBytes())
+	if err != nil {
+		return false
+	}
+	r := *next.Replacement
+	return r.PredecessorHandoffID == prior.HandoffID && r.PredecessorCandidate == prior.Candidate && r.PredecessorLogicalVersion == prior.LogicalVersion && r.PredecessorStateDigest == digest.String() &&
+		prior.ProjectID == next.ProjectID && prior.MissionID == next.MissionID && prior.WorkRevisionID == next.WorkRevisionID && prior.WorkID == next.WorkID && prior.RepositoryID == next.RepositoryID && prior.LaneID == next.LaneID && prior.PinnedBase == next.PinnedBase &&
+		prior.WorkRevisionCriteriaDigest == next.WorkRevisionCriteriaDigest && stringSlicesEqualV2(prior.CriterionIDs, next.CriterionIDs) && prior.CriteriaDigest == next.CriteriaDigest
+}
+
+func replacementMatchesPriorV2(request CandidateReplacementRequestV2, prior StateV2) bool {
+	digest, err := journalv2.ReducerStateDigestV2(prior.CanonicalBytes())
+	return err == nil && (prior.Stage == StageCandidateRecordedV2 || prior.Stage == StageCandidateRefusedV2) && request.PredecessorHandoffID == prior.HandoffID && request.PredecessorCandidate == prior.Candidate && request.PredecessorLogicalVersion == prior.LogicalVersion && request.PredecessorStateDigest == digest.String() && validBoundedTextV2(request.Reason, 1024)
+}
+
+func criterionAuthorityV2(revision workgraph.RevisionV2, workID ids.WorkID) ([]string, string, error) {
+	if revision.SchemaVersion() != workgraph.RevisionSchemaV3 || !ValidDigest(revision.CriteriaDigest()) {
+		return nil, "", authorityErrorV2(KindRevisionIneligible, "work_revision", nil)
+	}
+	for _, item := range revision.WorkItems() {
+		if item.WorkID() != workID {
+			continue
+		}
+		ids := make([]string, 0, len(item.Criteria()))
+		for _, criterion := range item.Criteria() {
+			ids = append(ids, criterion.ID())
+		}
+		canonical, err := CanonicalCriterionIDsV2(ids)
+		if err != nil {
+			return nil, "", err
+		}
+		return canonical, revision.CriteriaDigest(), nil
+	}
+	return nil, "", authorityErrorV2(KindRevisionIneligible, "work_revision_work", nil)
+}
+
+func mustCanonicalCriterionIDsV2(values []string) []string {
+	canonical, _ := CanonicalCriterionIDsV2(values)
+	return canonical
 }
 func sameGovernanceV2(a, b execution.ExecutionGovernanceV2) bool {
 	return bytes.Equal(mustCanonicalV2(a), mustCanonicalV2(b))

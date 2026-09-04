@@ -73,6 +73,13 @@ func (p *reviewPlanCapturePortV2) PublishReview(_ context.Context, plan review.A
 	}
 	return review.AuthorityAckV2{PublicationID: sealed.PublicationID(), ProviderRevision: p.revision, PlanDigest: sealed.Digest(), MutationCount: sealed.MutationCount()}, nil
 }
+func (p *reviewPlanCapturePortV2) ReconcileReview(_ context.Context, plan review.AuthorityPlanV2) (review.AuthorityAckV2, error) {
+	sealed, err := plan.Publication()
+	if err != nil || len(p.plans) == 0 {
+		return review.AuthorityAckV2{}, fmt.Errorf("incomplete review publication")
+	}
+	return review.AuthorityAckV2{PublicationID: sealed.PublicationID(), ProviderRevision: p.revision, PlanDigest: sealed.Digest(), MutationCount: sealed.MutationCount()}, nil
+}
 
 func TestReviewGapDBPublisherCommitsOneCompleteBatchAndContendsV2(t *testing.T) {
 	for trial := 0; trial < 100; trial++ {
@@ -154,6 +161,40 @@ func TestReviewGapDBPartialPublicationRemainsUnresolvedV2(t *testing.T) {
 	}
 }
 
+func TestReviewGapDBHeadsWithoutEventsAndMixedPublicationRemainUnresolvedV2(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		write func(*v2AtomicMemory, journalv2.SealedCommitPlanV2, gapdbapi.Batch)
+	}{
+		{"heads_without_events", writeAuthorityHeadsWithoutEventsV2},
+		{"mixed_provider_revisions", writeAuthorityMixedRevisionsV2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			capability := captureFirstReviewPlanV2(t, "topology-"+test.name, "review-"+test.name)
+			plan, _ := capability.Publication()
+			memory := newV2AtomicMemory()
+			memory.revision = 100
+			seedAuthorityPlanDependenciesV2(t, memory, plan)
+			provider := memory.provider()
+			provider.batchFn = func(_ context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+				memory.mu.Lock()
+				defer memory.mu.Unlock()
+				memory.batchCalls++
+				test.write(memory, plan, batch)
+				return gapdbapi.MutationResult{}, &gapdbapi.TransportError{Operation: "atomic_batch", Ambiguous: true, Cause: io.EOF}
+			}
+			provider.statusFn = gapdbMemoryStatusV2(memory, "db-review-topology")
+			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+			projection, _ := handoffReviewProjectionTrackerV2()
+			coordinator, _ := journalv2.NewPublicationCoordinatorV2(adapter, projection)
+			authority := &reviewAuthorityV2{adapter: adapter, coordinator: coordinator}
+			if _, err := authority.PublishReview(t.Context(), capability); err == nil || coordinator.UnresolvedCount() != 1 || memory.batchCalls != 1 {
+				t.Fatalf("incomplete topology escaped: unresolved=%d calls=%d err=%v", coordinator.UnresolvedCount(), memory.batchCalls, err)
+			}
+		})
+	}
+}
+
 func captureFirstReviewPlanV2(t *testing.T, suffix, reviewID string) review.AuthorityPlanV2 {
 	t.Helper()
 	plans := captureReviewPlansV2(t, suffix, reviewID)
@@ -174,11 +215,11 @@ func reviewCaptureFixtureV2(t *testing.T, suffix, reviewID string) (*reviewPlanC
 	for index, criterionID := range handoffState.CriterionIDs {
 		criteria[index] = review.CriterionEvidenceV2{CriterionID: criterionID, Status: review.Passed, EvidenceDigest: fmt.Sprintf("%064x", index+14), ArtifactDigest: fmt.Sprintf("%064x", index+31), Candidate: handoffState.Candidate, PolicyRevision: handoffState.Governance.PolicyRevision}
 	}
-	request := review.AuthorityRequestV2{OperationID: journalv2.OperationID("operation-review-" + suffix), ReviewID: ids.ReviewID(reviewID), HandoffID: handoffState.HandoffID, ProjectID: handoffState.ProjectID, MissionID: handoffState.MissionID, WorkRevisionID: handoffState.WorkRevisionID, WorkID: handoffState.WorkID, RuntimeEpochID: handoffState.RuntimeEpochID, Workspace: handoffRequest.Workspace, ReviewerActorID: ids.ActorID(reviewerActor), ReviewerProcessID: ids.ProcessID("process-" + suffix), Candidate: handoffState.Candidate, HandoffContributorDigest: handoffState.ContributorDigest, Criteria: criteria, Verdict: review.Approved, PolicyRevision: handoffState.Governance.PolicyRevision, Governance: handoffState.Governance, ObservedAt: handoffRequest.ObservedAt}
+	request := review.AuthorityRequestV2{OperationID: journalv2.OperationID("operation-review-" + suffix), ReviewID: ids.ReviewID(reviewID), HandoffID: handoffState.HandoffID, ProjectID: handoffState.ProjectID, MissionID: handoffState.MissionID, WorkRevisionID: handoffState.WorkRevisionID, WorkID: handoffState.WorkID, RuntimeEpochID: handoffState.RuntimeEpochID, Workspace: handoffRequest.Workspace, ReviewerActorID: ids.ActorID(reviewerActor), ReviewerProcessID: ids.ProcessID("process-" + suffix), Candidate: handoffState.Candidate, HandoffContributorDigest: handoffState.ContributorDigest, WorkRevisionCriteriaDigest: handoffState.WorkRevisionCriteriaDigest, Criteria: criteria, Verdict: review.Approved, PolicyRevision: handoffState.Governance.PolicyRevision, Governance: handoffState.Governance, ObservedAt: handoffRequest.ObservedAt}
 	handoffCoordinate, _ := handoff.CoordinateV2(handoffState.ProjectID, handoffState.MissionID, handoffState.WorkRevisionID, handoffState.WorkID)
 	assertions := append([]journalv2.AuthorityAssertionV2(nil), handoffAuthority.Assertions...)
 	assertions = append(assertions, gapdbAuthorityAssertionV2(t, handoffCoordinate, 23, journalv2.LogicalVersion(handoffState.LogicalVersion), handoffState.CanonicalBytes()))
-	authority := review.AuthorityObservationV2{Eligibility: handoffAuthority.Eligibility, Execution: handoffAuthority.Execution, Workspace: handoffAuthority.Workspace, Handoff: handoff.ObservationV2{State: &handoffState, RecordRevision: 23}, Assertions: assertions}
+	authority := review.AuthorityObservationV2{Eligibility: handoffAuthority.Eligibility, Execution: handoffAuthority.Execution, Workspace: handoffAuthority.Workspace, Handoff: handoff.ObservationV2{State: &handoffState, RecordRevision: 23}, WorkRevision: handoffAuthority.WorkRevision, Assertions: assertions}
 	capture := &reviewPlanCapturePortV2{authority: authority, revision: 60}
 	service, err := review.NewAuthorityServiceV2(capture, gapdbHandoffEpochV2(handoffState.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
 	if err != nil {
@@ -192,7 +233,7 @@ func reviewCaptureFixtureV2(t *testing.T, suffix, reviewID string) (*reviewPlanC
 
 func TestReviewGapDBTransportDoesNotInterpretVerdictPolicyV2(t *testing.T) {
 	plans := captureReviewPlansV2(t, "transport-only", "review-transport")
-	if len(plans) != 4 { // attempt, two criteria, terminal verdict
+	if len(plans) != 3 { // attempt, one criterion, terminal verdict
 		t.Fatalf("plans=%d", len(plans))
 	}
 	for index, capability := range plans {
@@ -200,6 +241,32 @@ func TestReviewGapDBTransportDoesNotInterpretVerdictPolicyV2(t *testing.T) {
 		if err != nil || !reviewTransportMembershipV2(plan) {
 			t.Fatalf("transport rejected sealed domain stage %d: %v", index, err)
 		}
+	}
+}
+
+func TestHandoffAndReviewGapDBProductionServicesAreCallableV2(t *testing.T) {
+	memory := newV2AtomicMemory()
+	adapter, err := newAdapter(memory.provider(), "/explicit/socket", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := workspaceRestoreConfigV2(t)
+	projection, err := handoffReviewProjectionTrackerV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(adapter, projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch := gapdbHandoffEpochV2("epoch-production-composition")
+	handoffService, err := adapter.HandoffAuthorityServiceV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets, epoch, gapdbCandidateVerifierV2{})
+	if err != nil || handoffService == nil {
+		t.Fatalf("handoff production service=%v err=%v", handoffService, err)
+	}
+	reviewService, err := adapter.ReviewAuthorityServiceV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets, epoch)
+	if err != nil || reviewService == nil {
+		t.Fatalf("review production service=%v err=%v", reviewService, err)
 	}
 }
 
@@ -257,8 +324,8 @@ func TestWP09ControlledMutantCensusV2(t *testing.T) {
 		},
 		"M-WP09-PARTIAL-CRITERIA": func(t *testing.T) {
 			control, request := reviewCaptureFixtureV2(t, "mutant-criteria", "review-mutant-criteria")
-			request.Criteria = request.Criteria[:1]
-			assertReviewMutationRefusedV2(t, request, control.authority, review.KindCandidateMismatch)
+			request.Criteria = nil
+			assertReviewMutationRefusedV2(t, request, control.authority, review.KindInvalid)
 		},
 		"M-WP09-CHANGED-VERDICT": func(t *testing.T) {
 			control, request := reviewCaptureFixtureV2(t, "mutant-verdict", "review-mutant-verdict")
@@ -281,18 +348,20 @@ func TestWP09ControlledMutantCensusV2(t *testing.T) {
 		},
 		"M-WP09-ADAPTER-POLICY-INTERPRETATION": func(t *testing.T) {
 			plans := captureReviewPlansV2(t, "mutant-policy", "review-mutant-policy")
-			mutantRejected := false
-			for _, capability := range plans {
-				plan, _ := capability.Publication()
-				if !reviewTransportMembershipV2(plan) {
-					t.Fatal("production transport rejected valid sealed stage")
-				}
-				if !policyInterpretingTransportMutantV2(plan) {
-					mutantRejected = true
-				}
+			attempt := plans[0]
+			controlMemory, control := reviewPublisherHarnessV2(t, attempt)
+			if _, err := control.PublishReview(t.Context(), attempt); err != nil {
+				t.Fatalf("production transport rejected valid sealed attempt: %v", err)
 			}
-			if !mutantRejected {
-				t.Fatal("policy-interpreting adapter mutant was not killed")
+			if controlMemory.batchCalls != 1 {
+				t.Fatalf("production publication calls=%d", controlMemory.batchCalls)
+			}
+
+			mutantMemory, mutant := reviewPublisherHarnessV2(t, attempt)
+			mutant.admit = reviewPolicyInterpretingAdmissionMutantV2
+			_, err := mutant.PublishReview(t.Context(), attempt)
+			if err == nil || mutantMemory.batchCalls != 0 {
+				t.Fatalf("policy-interpreting production admission mutant escaped: err=%v calls=%d", err, mutantMemory.batchCalls)
 			}
 		},
 	}
@@ -343,7 +412,7 @@ func assertReviewMutationRefusedV2(t *testing.T, request review.AuthorityRequest
 	}
 }
 
-func policyInterpretingTransportMutantV2(plan journalv2.SealedCommitPlanV2) bool {
+func reviewPolicyInterpretingAdmissionMutantV2(plan journalv2.SealedCommitPlanV2) bool {
 	if !reviewTransportMembershipV2(plan) {
 		return false
 	}
@@ -352,7 +421,7 @@ func policyInterpretingTransportMutantV2(plan journalv2.SealedCommitPlanV2) bool
 			continue
 		}
 		decoded, err := review.DecodeEventV2(event.Payload())
-		if err == nil && decoded.State.Stage == review.StageCriterionRecordedV2 {
+		if err == nil && decoded.State.Stage == review.StageAttemptRequestedV2 {
 			return false
 		}
 	}
@@ -362,7 +431,9 @@ func policyInterpretingTransportMutantV2(plan journalv2.SealedCommitPlanV2) bool
 func reviewPublisherHarnessV2(t *testing.T, plans ...review.AuthorityPlanV2) (*v2AtomicMemory, *reviewAuthorityV2) {
 	t.Helper()
 	memory := newV2AtomicMemory()
-	memory.revision = 100
+	// The capture port acknowledges stages at revisions 61, 62, ...; use the
+	// same base so later stage CAS conditions exercise the real provider path.
+	memory.revision = 60
 	for _, capability := range plans {
 		plan, err := capability.Publication()
 		if err != nil {

@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -89,6 +90,13 @@ func (p *handoffPortV2) PublishHandoff(_ context.Context, plan AuthorityPlanV2) 
 	}
 	return AuthorityAckV2{PublicationID: sealed.PublicationID(), ProviderRevision: p.revision, PlanDigest: sealed.Digest(), MutationCount: sealed.MutationCount()}, nil
 }
+func (p *handoffPortV2) ReconcileHandoff(_ context.Context, plan AuthorityPlanV2) (AuthorityAckV2, error) {
+	sealed, err := plan.Publication()
+	if err != nil || len(p.plans) == 0 || p.plans[len(p.plans)-1].PublicationID() != sealed.PublicationID() {
+		return AuthorityAckV2{}, fmt.Errorf("incomplete publication")
+	}
+	return AuthorityAckV2{PublicationID: sealed.PublicationID(), ProviderRevision: p.revision, PlanDigest: sealed.Digest(), MutationCount: sealed.MutationCount()}, nil
+}
 
 func TestHandoffAuthorityStagesImmutableCandidateAndReplaysBeforeInspectionV2(t *testing.T) {
 	request, authority := handoffRequestFixtureV2(t)
@@ -106,7 +114,7 @@ func TestHandoffAuthorityStagesImmutableCandidateAndReplaysBeforeInspectionV2(t 
 		t.Fatalf("result=%+v plans=%d verifier=%d", result, len(port.plans), verifier.calls)
 	}
 	for i, plan := range port.plans {
-		if len(plan.Events()) != 2 || len(plan.Heads()) != 2 || len(plan.Conditions()) != 3 || len(plan.Assertions()) != 2 || len(plan.EligibilityGuards()) != 1 {
+		if len(plan.Events()) != 2 || len(plan.Heads()) != 2 || len(plan.Conditions()) != 3 || len(plan.Assertions()) != 3 || len(plan.EligibilityGuards()) != 1 {
 			t.Fatalf("plan[%d] membership e=%d h=%d c=%d a=%d g=%d", i, len(plan.Events()), len(plan.Heads()), len(plan.Conditions()), len(plan.Assertions()), len(plan.EligibilityGuards()))
 		}
 	}
@@ -254,6 +262,102 @@ func TestHandoffContributorCanonicalizationAndReducerRegistrationV2(t *testing.T
 	}
 }
 
+func TestHandoffCandidateReplacementPreservesExactLineageCASAndReplayV2(t *testing.T) {
+	request, authority := handoffRequestFixtureV2(t)
+	port := &handoffPortV2{resolution: OperationResolutionV2{Kind: OperationAbsentV2}, authority: authority, revision: 40}
+	service, _ := NewAuthorityServiceV2(port, handoffEpochV2(request.RuntimeEpochID), &handoffVerifierV2{}, journalv2.DefaultEventRegistryV2())
+	first, err := service.Submit(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	predecessorBytes := first.State.CanonicalBytes()
+	predecessorDigest, _ := journalv2.ReducerStateDigestV2(predecessorBytes)
+	replacement := request
+	replacement.OperationID = "operation-handoff-replacement"
+	replacement.HandoffID = "handoff-replacement"
+	replacement.Candidate = strings.Repeat("c", 40)
+	replacement.Replacement = &CandidateReplacementRequestV2{PredecessorHandoffID: first.State.HandoffID, PredecessorCandidate: first.State.Candidate, PredecessorLogicalVersion: first.State.LogicalVersion, PredecessorStateDigest: predecessorDigest.String(), Reason: "supersede the reviewed candidate after an explicit fix"}
+	port.resolution = OperationResolutionV2{Kind: OperationAbsentV2}
+	result, err := service.Submit(t.Context(), replacement)
+	if err != nil || result.State.Stage != StageCandidateRecordedV2 || result.State.Replacement == nil || result.State.Replacement.PredecessorStateDigest != predecessorDigest.String() || !bytes.Equal(first.State.CanonicalBytes(), predecessorBytes) {
+		t.Fatalf("replacement=%+v err=%v", result, err)
+	}
+	if len(port.plans) != 6 {
+		t.Fatalf("replacement stage census=%d", len(port.plans))
+	}
+	replacementPlan := port.plans[3]
+	if replacementPlan.BindingCreate() == nil {
+		t.Fatal("replacement operation did not create its own immutable binding")
+	}
+	var replacementEvent EventV2
+	var replacementHead journalv2.HeadTransitionV2
+	for _, envelope := range replacementPlan.Events() {
+		if envelope.Family() == "handoff_slot" {
+			replacementEvent, err = DecodeEventV2(envelope.Payload())
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, head := range replacementPlan.Heads() {
+		if head.Coordinate.Kind == "handoff_slot" {
+			replacementHead = head
+		}
+	}
+	if replacementEvent.State.Stage != StageCandidateReplacedV2 || replacementHead.ExpectedLogicalVersion != journalv2.LogicalVersion(first.State.LogicalVersion) || replacementHead.ExpectedRecordRevision != 43 {
+		t.Fatalf("replacement CAS/event not bound to predecessor: event=%+v head=%+v", replacementEvent, replacementHead)
+	}
+	mutated := replacementEvent.State
+	mutated.Replacement = &CandidateReplacementV2{}
+	*mutated.Replacement = *replacementEvent.State.Replacement
+	mutated.Replacement.PredecessorCandidate = strings.Repeat("9", 40)
+	mutatedPayload, encodeErr := encodeEventV2(EventV2{SchemaVersion: 1, Kind: string(mutated.Stage), PriorDigest: digestStateV2(first.State), State: mutated})
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	if _, reduceErr := ReduceEventV2(first.State.CanonicalBytes(), handoffEnvelopeV2(t, replacement, mutated, mutatedPayload)); !IsKind(reduceErr, KindConflict) {
+		t.Fatalf("substituted replacement lineage replayed: %v", reduceErr)
+	}
+	replayed, err := service.Submit(t.Context(), replacement)
+	if err != nil || !replayed.Replayed || len(port.plans) != 6 {
+		t.Fatalf("replacement replay=%+v err=%v plans=%d", replayed, err, len(port.plans))
+	}
+	changed := replacement
+	changed.Replacement = &CandidateReplacementRequestV2{PredecessorHandoffID: first.State.HandoffID, PredecessorCandidate: first.State.Candidate, PredecessorLogicalVersion: first.State.LogicalVersion, PredecessorStateDigest: predecessorDigest.String(), Reason: "different reason"}
+	if _, err := service.Submit(t.Context(), changed); !IsKind(err, KindConflict) && !IsKind(err, KindIdempotencyConflict) {
+		t.Fatalf("changed replacement replay accepted: %v", err)
+	}
+}
+
+func TestHandoffRejectsSelfConsistentCriterionSubsetAgainstWorkRevisionV2(t *testing.T) {
+	request, authority := handoffRequestFixtureV2(t)
+	request.CriterionIDs = request.CriterionIDs[:1]
+	request.CriteriaDigest, _ = CriterionSetDigestV2(request.CriterionIDs)
+	port := &handoffPortV2{resolution: OperationResolutionV2{Kind: OperationAbsentV2}, authority: authority}
+	service, _ := NewAuthorityServiceV2(port, handoffEpochV2(request.RuntimeEpochID), &handoffVerifierV2{}, journalv2.DefaultEventRegistryV2())
+	if _, err := service.Submit(t.Context(), request); !IsKind(err, KindRevisionIneligible) || len(port.plans) != 0 {
+		t.Fatalf("self-consistent subset accepted: %v", err)
+	}
+
+	request, authority = handoffRequestFixtureV2(t)
+	authority.WorkRevision.Assertion = substituteAssertionDigestV2(t, authority.WorkRevision.Assertion)
+	port = &handoffPortV2{resolution: OperationResolutionV2{Kind: OperationAbsentV2}, authority: authority}
+	service, _ = NewAuthorityServiceV2(port, handoffEpochV2(request.RuntimeEpochID), &handoffVerifierV2{}, journalv2.DefaultEventRegistryV2())
+	if _, err := service.Submit(t.Context(), request); !IsKind(err, KindStaleAuthority) || len(port.plans) != 0 {
+		t.Fatalf("substituted WorkRevision assertion accepted: %v", err)
+	}
+}
+
+func substituteAssertionDigestV2(t *testing.T, assertion journalv2.AuthorityAssertionV2) journalv2.AuthorityAssertionV2 {
+	t.Helper()
+	digest, _ := journalv2.ParseDigest("mutant", strings.Repeat("9", 64))
+	mutated, err := journalv2.NewAuthorityAssertionV2(journalv2.AuthorityAssertionInputV2{Target: assertion.Target(), Kind: assertion.Kind(), ObservedRevision: assertion.ObservedRevision(), ExpectedLogicalVersion: assertion.ExpectedLogicalVersion(), ObservedValueDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mutated
+}
+
 func handoffRequestFixtureV2(t *testing.T) (AuthorityRequestV2, AuthorityObservationV2) {
 	t.Helper()
 	governance := handoffGovernanceV2(t)
@@ -265,7 +369,8 @@ func handoffRequestFixtureV2(t *testing.T) (AuthorityRequestV2, AuthorityObserva
 	binding := workspace.BindingV2{WorkspaceID: "workspace-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-1", WorkID: "work-1", RunID: "run-1", LeaseID: "lease-1", Generation: 1, Fence: "0123456789abcdef", RuntimeEpochID: "epoch-1", ActorID: "actor-1", ProcessID: "process-1", RepositoryID: "repository-1", LaneID: "lane-1", ManagedRoot: "/tmp/spec-kitty", CanonicalPath: "/tmp/spec-kitty/workspace-1", PathIdentity: workspace.PathIdentityV2{Absolute: true, Canonical: true, WithinManagedRoot: true, AliasFree: true, SymlinkFree: true}, PathClaimDigest: pathClaim, OwnedBranch: "kitty/work-1", PinnedBase: strings.Repeat("a", 40)}
 	workspaceState := workspace.StateV2{SchemaVersion: 1, LogicalVersion: 7, Binding: binding, Stage: workspace.StageReadyV2, Observation: workspace.ObservationV2{Registered: true, Head: binding.PinnedBase, DependencyHead: binding.PinnedBase, Branch: binding.OwnedBranch, GitDirIdentity: "git-dir-1", IndexIdentity: "index-1", Clean: true, TargetBefore: binding.PinnedBase, TargetAfter: binding.PinnedBase}, OccurredAt: now.Add(-time.Minute).Format(time.RFC3339Nano)}
 	executionState := execution.ExecutionSlotStateV2{SchemaVersion: 1, ProjectID: binding.ProjectID, MissionID: binding.MissionID, WorkRevisionID: binding.WorkRevisionID, WorkID: binding.WorkID, LogicalVersion: 4, RunID: binding.RunID, ActorID: binding.ActorID, ProcessID: binding.ProcessID, LeaseID: binding.LeaseID, Generation: binding.Generation, Fence: binding.Fence, HeartbeatAt: now.Add(-time.Minute).Format(time.RFC3339Nano), Deadline: now.Add(time.Hour).Format(time.RFC3339Nano), RuntimeEpochID: binding.RuntimeEpochID, Status: execution.ExecutionActiveV2, Governance: governance, WorkspaceID: binding.WorkspaceID, WorkspacePathClaimDigest: binding.PathClaimDigest}
-	eligibility, revisionID := handoffEligibilityV2(t)
+	eligibility, revision := handoffEligibilityV2(t)
+	revisionID := revision.ID()
 	binding.WorkRevisionID = revisionID
 	workspaceState.Binding.WorkRevisionID = revisionID
 	executionState.WorkRevisionID = revisionID
@@ -277,6 +382,7 @@ func handoffRequestFixtureV2(t *testing.T) (AuthorityRequestV2, AuthorityObserva
 	}
 	execCoordinate, _ := execution.ExecutionSlotCoordinateV2(binding.ProjectID, binding.MissionID, binding.WorkRevisionID, binding.WorkID)
 	workspaceCoordinate, _ := workspace.WorkspaceCoordinateV2(binding)
+	workgraphCoordinate, _ := journalv2.NewAggregateCoordinate("workgraph", journalv2.AggregateID(binding.MissionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(binding.ProjectID), MissionID: journalv2.MissionID(binding.MissionID)})
 	assertion := func(c journalv2.AggregateCoordinate, revision uint64, state []byte) journalv2.AuthorityAssertionV2 {
 		d, _ := journalv2.ReducerStateDigestV2(state)
 		a, e := journalv2.NewAuthorityAssertionV2(journalv2.AuthorityAssertionInputV2{Target: journalv2.ConditionTarget{Kind: journalv2.ConditionTargetAggregateHead, Coordinate: c}, Kind: journalv2.ConditionRecordRevision, ObservedRevision: revision, ExpectedLogicalVersion: 1, ObservedValueDigest: d})
@@ -287,8 +393,10 @@ func handoffRequestFixtureV2(t *testing.T) (AuthorityRequestV2, AuthorityObserva
 	}
 	criterionIDs := []string{"criterion-1", "criterion-2"}
 	criteriaDigest, _ := CriterionSetDigestV2(criterionIDs)
-	request := AuthorityRequestV2{OperationID: "operation-handoff-1", HandoffID: "handoff-1", ProjectID: binding.ProjectID, MissionID: binding.MissionID, WorkRevisionID: binding.WorkRevisionID, WorkID: binding.WorkID, RunID: binding.RunID, RuntimeEpochID: binding.RuntimeEpochID, Workspace: binding, LeaseID: binding.LeaseID, LeaseGeneration: binding.Generation, Fence: binding.Fence, ActorID: binding.ActorID, ProcessID: binding.ProcessID, RepositoryID: binding.RepositoryID, RepositoryPath: "/repo", LaneID: binding.LaneID, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, Candidate: strings.Repeat("b", 40), Contributors: []ids.ActorID{"actor-1", "actor-2"}, CriterionIDs: criterionIDs, CriteriaDigest: criteriaDigest, EvidenceDigest: strings.Repeat("d", 64), Governance: governance, ObservedAt: now}
-	return request, AuthorityObservationV2{Eligibility: eligibility, Execution: execution.ExecutionSlotObservationV2{State: &executionState, RecordRevision: 21}, Workspace: execution.WorkspaceAuthorityObservationV2{State: &workspaceState, RecordRevision: 22}, Assertions: []journalv2.AuthorityAssertionV2{assertion(execCoordinate, 21, executionState.CanonicalBytes()), assertion(workspaceCoordinate, 22, workspaceState.CanonicalBytes())}}
+	revisionBytes, _ := revision.Encode()
+	request := AuthorityRequestV2{OperationID: "operation-handoff-1", HandoffID: "handoff-1", ProjectID: binding.ProjectID, MissionID: binding.MissionID, WorkRevisionID: binding.WorkRevisionID, WorkID: binding.WorkID, RunID: binding.RunID, RuntimeEpochID: binding.RuntimeEpochID, Workspace: binding, LeaseID: binding.LeaseID, LeaseGeneration: binding.Generation, Fence: binding.Fence, ActorID: binding.ActorID, ProcessID: binding.ProcessID, RepositoryID: binding.RepositoryID, RepositoryPath: "/repo", LaneID: binding.LaneID, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, Candidate: strings.Repeat("b", 40), Contributors: []ids.ActorID{"actor-1", "actor-2"}, CriterionIDs: criterionIDs, CriteriaDigest: criteriaDigest, WorkRevisionCriteriaDigest: revision.CriteriaDigest(), EvidenceDigest: strings.Repeat("d", 64), Governance: governance, ObservedAt: now}
+	revisionAssertion := assertion(workgraphCoordinate, 23, revisionBytes)
+	return request, AuthorityObservationV2{Eligibility: eligibility, Execution: execution.ExecutionSlotObservationV2{State: &executionState, RecordRevision: 21}, Workspace: execution.WorkspaceAuthorityObservationV2{State: &workspaceState, RecordRevision: 22}, WorkRevision: WorkRevisionObservationV2{Revision: revision, RecordRevision: 23, Assertion: revisionAssertion}, Assertions: []journalv2.AuthorityAssertionV2{assertion(execCoordinate, 21, executionState.CanonicalBytes()), assertion(workspaceCoordinate, 22, workspaceState.CanonicalBytes()), revisionAssertion}}
 }
 
 func handoffGovernanceV2(t *testing.T) execution.ExecutionGovernanceV2 {
@@ -316,9 +424,9 @@ func handoffGovernanceV2(t *testing.T) execution.ExecutionGovernanceV2 {
 	return g
 }
 
-func handoffEligibilityV2(t *testing.T) (workgraph.ObservedEligibilityShardV2, ids.WorkRevisionID) {
+func handoffEligibilityV2(t *testing.T) (workgraph.ObservedEligibilityShardV2, workgraph.RevisionV2) {
 	t.Helper()
-	work, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{ProjectID: "project-1", WorkID: "work-1", Title: "Work", Description: "Deliver work safely.", DesignContext: "Use authority.", Criteria: []workgraph.CriterionObservation{{ID: "criterion-1", Text: "passes", Outcome: "green", Verifier: "test", Requirement: workgraph.CriterionRequired}}, WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/handoff", Domain: "handoff", Access: workgraph.ScopeWriteExclusive}}, Provenance: []workgraph.ScopeReference{{ID: "scope-1", Kind: workgraph.ScopePlanConcern}}})
+	work, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{ProjectID: "project-1", WorkID: "work-1", Title: "Work", Description: "Deliver work safely.", DesignContext: "Use authority.", Criteria: []workgraph.CriterionObservation{{ID: "criterion-1", Text: "passes", Outcome: "green", Verifier: "test", Requirement: workgraph.CriterionRequired}, {ID: "criterion-2", Text: "also passes", Outcome: "green", Verifier: "test", Requirement: workgraph.CriterionRequired}}, WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/handoff", Domain: "handoff", Access: workgraph.ScopeWriteExclusive}}, Provenance: []workgraph.ScopeReference{{ID: "scope-1", Kind: workgraph.ScopePlanConcern}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +435,7 @@ func handoffEligibilityV2(t *testing.T) (workgraph.ObservedEligibilityShardV2, i
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256([]byte("work-1"))
-	final, err := workgraph.NewFinalizationObservation(draft, []workgraph.ObservationEvidence{{WorkID: "work-1", Provider: "fake", ExternalID: "external-1", Revision: "provider-1", MetadataSchema: 1, DefinitionDigest: fmt.Sprintf("%x", sum), CriterionEvidenceHints: map[string]string{"criterion-1": "go test"}}})
+	final, err := workgraph.NewFinalizationObservation(draft, []workgraph.ObservationEvidence{{WorkID: "work-1", Provider: "fake", ExternalID: "external-1", Revision: "provider-1", MetadataSchema: 1, DefinitionDigest: fmt.Sprintf("%x", sum), CriterionEvidenceHints: map[string]string{"criterion-1": "go test", "criterion-2": "go test"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,12 +452,12 @@ func handoffEligibilityV2(t *testing.T) (workgraph.ObservedEligibilityShardV2, i
 		observed, e := workgraph.NewObservedEligibilityShardV2(canonical, 17)
 		if e == nil {
 			if _, e = observed.Token("work-1", revision.ID(), workgraph.EligibilityHandoff); e == nil {
-				return observed, revision.ID()
+				return observed, revision
 			}
 		}
 	}
 	t.Fatal("handoff eligibility absent")
-	return workgraph.ObservedEligibilityShardV2{}, ""
+	return workgraph.ObservedEligibilityShardV2{}, workgraph.RevisionV2{}
 }
 
 func digestStateV2(s StateV2) string {

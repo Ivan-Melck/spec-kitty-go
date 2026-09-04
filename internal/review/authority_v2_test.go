@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -75,6 +76,13 @@ func (p *reviewPortV2) PublishReview(_ context.Context, plan AuthorityPlanV2) (A
 	}
 	return AuthorityAckV2{sealed.PublicationID(), p.revision, sealed.Digest(), sealed.MutationCount()}, nil
 }
+func (p *reviewPortV2) ReconcileReview(_ context.Context, plan AuthorityPlanV2) (AuthorityAckV2, error) {
+	sealed, err := plan.Publication()
+	if err != nil || len(p.plans) == 0 || p.plans[len(p.plans)-1].PublicationID() != sealed.PublicationID() {
+		return AuthorityAckV2{}, fmt.Errorf("incomplete publication")
+	}
+	return AuthorityAckV2{sealed.PublicationID(), p.revision, sealed.Digest(), sealed.MutationCount()}, nil
+}
 
 func TestReviewAuthorityStagesEveryCriterionThenOneTerminalVerdictAndReplaysV2(t *testing.T) {
 	request, authority := reviewRequestFixtureV2(t, false)
@@ -91,7 +99,7 @@ func TestReviewAuthorityStagesEveryCriterionThenOneTerminalVerdictAndReplaysV2(t
 		t.Fatalf("result=%+v plans=%d", result, len(port.plans))
 	}
 	for i, plan := range port.plans {
-		if len(plan.Events()) != 2 || len(plan.Heads()) != 2 || len(plan.EligibilityGuards()) != 1 || len(plan.Assertions()) != 3 {
+		if len(plan.Events()) != 2 || len(plan.Heads()) != 2 || len(plan.EligibilityGuards()) != 1 || len(plan.Assertions()) != 4 {
 			t.Fatalf("plan[%d] e=%d h=%d g=%d a=%d", i, len(plan.Events()), len(plan.Heads()), len(plan.EligibilityGuards()), len(plan.Assertions()))
 		}
 	}
@@ -112,17 +120,55 @@ func TestReviewerIndependenceUsesActorIDNotProcessAndNeedsExactNarrowExceptionV2
 	}
 	exception := IndependenceExceptionV2{SchemaVersion: 1, ExceptionID: "exception-1", PolicyRevision: request.PolicyRevision, ProjectID: request.ProjectID, MissionID: request.MissionID, WorkRevisionID: request.WorkRevisionID, WorkID: request.WorkID, HandoffID: request.HandoffID, Candidate: request.Candidate, ReviewerActorID: request.ReviewerActorID, Reason: "single-maintainer emergency review", AuthorizerActorID: "actor-authorizer", EffectiveFrom: request.ObservedAt.Add(-time.Minute).Format(time.RFC3339Nano), EffectiveThrough: request.ObservedAt.Add(time.Hour).Format(time.RFC3339Nano)}
 	request.Exception = &exception
-	exceptionCoordinate, _ := journalv2.NewAggregateCoordinate("review_slot", journalv2.AggregateID("policy:"+exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID)})
-	authority.Exception = ExceptionObservationV2{State: &exception, RecordRevision: 66, Assertion: reviewAssertionV2(t, exceptionCoordinate, 66, 1, exception.CanonicalBytes())}
+	exceptionCoordinate, _ := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID)})
+	fact := MissionPolicyFactObservationV2{ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID), FactID: exception.ExceptionID, Kind: "decision", Status: "resolved", LogicalVersion: 2, DetailDigest: exception.Digest(), RecordRevision: 66, Found: true}
+	authority.Exception = ExceptionObservationV2{Fact: fact, Assertion: reviewAssertionV2(t, exceptionCoordinate, 66, 2, exception.CanonicalBytes())}
 	port.authority = authority
 	result, err := service.Submit(t.Context(), request)
 	if err != nil || result.State.Exception == nil || len(port.plans) != 4 {
 		t.Fatalf("exception result=%+v err=%v plans=%d", result, err, len(port.plans))
 	}
 	for _, plan := range port.plans {
-		if len(plan.Assertions()) != 4 {
+		if len(plan.Assertions()) != 5 {
 			t.Fatalf("policy assertion missing: %d", len(plan.Assertions()))
 		}
+	}
+}
+
+func TestReviewerExceptionRequiresCurrentExactMissionDecisionHeadV2(t *testing.T) {
+	request, authority := reviewRequestFixtureV2(t, true)
+	exception := IndependenceExceptionV2{SchemaVersion: 1, ExceptionID: "exception-current", PolicyRevision: request.PolicyRevision, ProjectID: request.ProjectID, MissionID: request.MissionID, WorkRevisionID: request.WorkRevisionID, WorkID: request.WorkID, HandoffID: request.HandoffID, Candidate: request.Candidate, ReviewerActorID: request.ReviewerActorID, Reason: "explicit current mission policy exception", AuthorizerActorID: "actor-authorizer", EffectiveFrom: request.ObservedAt.Add(-time.Minute).Format(time.RFC3339Nano), EffectiveThrough: request.ObservedAt.Add(time.Hour).Format(time.RFC3339Nano)}
+	request.Exception = &exception
+	coordinate, _ := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID)})
+
+	valid := MissionPolicyFactObservationV2{ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID), FactID: exception.ExceptionID, Kind: "decision", Status: "resolved", LogicalVersion: 2, DetailDigest: exception.Digest(), RecordRevision: 66, Found: true}
+	validObservation := ExceptionObservationV2{Fact: valid, Assertion: reviewAssertionV2(t, coordinate, 66, 2, exception.CanonicalBytes())}
+
+	tests := map[string]struct {
+		kind   ErrorKind
+		mutate func(ExceptionObservationV2) ExceptionObservationV2
+	}{
+		"stale head revision": {KindStaleAuthority, func(observation ExceptionObservationV2) ExceptionObservationV2 {
+			observation.Fact.RecordRevision++
+			return observation
+		}},
+		"substituted decision detail": {KindReviewerNotIndependent, func(observation ExceptionObservationV2) ExceptionObservationV2 {
+			wrongDigest, _ := journalv2.ParseDigest("detail", strings.Repeat("9", 64))
+			observation.Fact.DetailDigest = wrongDigest
+			observation.Assertion = reviewAssertionV2(t, coordinate, 66, 2, []byte(`{"mutant":"wrong-detail"}`))
+			return observation
+		}},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			observed := authority
+			observed.Exception = test.mutate(validObservation)
+			port := &reviewPortV2{resolution: OperationResolutionV2{Kind: OperationAbsentV2}, authority: observed}
+			service, _ := NewAuthorityServiceV2(port, reviewEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+			if _, submitErr := service.Submit(t.Context(), request); !IsKind(submitErr, test.kind) || len(port.plans) != 0 {
+				t.Fatalf("non-current exception accepted: err=%v plans=%d", submitErr, len(port.plans))
+			}
+		})
 	}
 }
 
@@ -132,7 +178,7 @@ func TestReviewRejectsPartialCriterionSetChangedVerdictAndReducerRewriteV2(t *te
 	request.Verdict = Approved
 	port := &reviewPortV2{resolution: OperationResolutionV2{Kind: OperationAbsentV2}, authority: authority}
 	service, _ := NewAuthorityServiceV2(port, reviewEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
-	if _, err := service.Submit(t.Context(), request); !IsKind(err, KindCandidateMismatch) || len(port.plans) != 0 {
+	if _, err := service.Submit(t.Context(), request); !IsKind(err, KindRevisionIneligible) || len(port.plans) != 0 {
 		t.Fatalf("partial immutable criterion set accepted: %v", err)
 	}
 	request.Criteria = append(request.Criteria, CriterionEvidenceV2{CriterionID: "criterion-1", Status: Passed, EvidenceDigest: strings.Repeat("e", 64), ArtifactDigest: strings.Repeat("f", 64), Candidate: request.Candidate, PolicyRevision: request.PolicyRevision})
@@ -160,6 +206,22 @@ func TestReviewRejectsPartialCriterionSetChangedVerdictAndReducerRewriteV2(t *te
 	}
 }
 
+func TestReviewRejectsSubstitutedWorkRevisionAssertionV2(t *testing.T) {
+	request, authority := reviewRequestFixtureV2(t, false)
+	assertion := authority.WorkRevision.Assertion
+	digest, _ := journalv2.ParseDigest("mutant", strings.Repeat("9", 64))
+	mutated, err := journalv2.NewAuthorityAssertionV2(journalv2.AuthorityAssertionInputV2{Target: assertion.Target(), Kind: assertion.Kind(), ObservedRevision: assertion.ObservedRevision(), ExpectedLogicalVersion: assertion.ExpectedLogicalVersion(), ObservedValueDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority.WorkRevision.Assertion = mutated
+	port := &reviewPortV2{resolution: OperationResolutionV2{Kind: OperationAbsentV2}, authority: authority}
+	service, _ := NewAuthorityServiceV2(port, reviewEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+	if _, err := service.Submit(t.Context(), request); !IsKind(err, KindStaleAuthority) || len(port.plans) != 0 {
+		t.Fatalf("substituted WorkRevision assertion accepted: %v", err)
+	}
+}
+
 func TestReviewDroppedAcknowledgementAtEveryStageResumesSameOperationV2(t *testing.T) {
 	for drop := 1; drop <= 4; drop++ {
 		t.Run(fmt.Sprintf("stage_%d", drop), func(t *testing.T) {
@@ -180,10 +242,31 @@ func TestReviewDroppedAcknowledgementAtEveryStageResumesSameOperationV2(t *testi
 	}
 }
 
+func TestReviewCanonicalCriterionReorderProducesIdenticalAuthorityV2(t *testing.T) {
+	request, authority := reviewRequestFixtureV2(t, false)
+	reordered := request
+	reordered.Criteria = []CriterionEvidenceV2{request.Criteria[1], request.Criteria[0]}
+	leftBinding, leftState, err := prepareReviewRequestV2(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightBinding, rightState, err := prepareReviewRequestV2(reordered)
+	if err != nil || leftBinding.IntentDigest() != rightBinding.IntentDigest() || !bytes.Equal(leftState.CanonicalBytes(), rightState.CanonicalBytes()) {
+		t.Fatalf("canonical reorder diverged: err=%v", err)
+	}
+	port := &reviewPortV2{resolution: OperationResolutionV2{Kind: OperationAbsentV2}, authority: authority, revision: 70}
+	service, _ := NewAuthorityServiceV2(port, reviewEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+	result, err := service.Submit(t.Context(), reordered)
+	if err != nil || result.State.Stage != StageVerdictRecordedV2 {
+		t.Fatalf("reordered review=%+v err=%v", result, err)
+	}
+}
+
 func reviewRequestFixtureV2(t *testing.T, sameActor bool) (AuthorityRequestV2, AuthorityObservationV2) {
 	t.Helper()
 	gov := reviewGovernanceV2(t)
-	eligibility, revisionID := reviewEligibilityV2(t)
+	eligibility, revision := reviewEligibilityV2(t)
+	revisionID := revision.ID()
 	now := time.Date(2026, 9, 5, 15, 0, 0, 0, time.UTC)
 	claim, _ := workspace.WorkspacePathClaimDigestV2("repository-1", "/tmp/spec-kitty", "/tmp/spec-kitty/workspace-1")
 	binding := workspace.BindingV2{WorkspaceID: "workspace-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: revisionID, WorkID: "work-1", RunID: "run-1", LeaseID: "lease-1", Generation: 1, Fence: "0123456789abcdef", RuntimeEpochID: "epoch-1", ActorID: "actor-implementer", ProcessID: "process-implementer", RepositoryID: "repository-1", LaneID: "lane-1", ManagedRoot: "/tmp/spec-kitty", CanonicalPath: "/tmp/spec-kitty/workspace-1", PathIdentity: workspace.PathIdentityV2{Absolute: true, Canonical: true, WithinManagedRoot: true, AliasFree: true, SymlinkFree: true}, PathClaimDigest: claim, OwnedBranch: "kitty/work-1", PinnedBase: strings.Repeat("a", 40)}
@@ -196,13 +279,16 @@ func reviewRequestFixtureV2(t *testing.T, sameActor bool) (AuthorityRequestV2, A
 	}
 	criterionIDs := []string{"criterion-1", "criterion-2"}
 	criteriaDigest, _ := handoff.CriterionSetDigestV2(criterionIDs)
-	handoffState := handoff.StateV2{SchemaVersion: 1, LogicalVersion: 3, Stage: handoff.StageCandidateRecordedV2, HandoffID: "handoff-1", ProjectID: binding.ProjectID, MissionID: binding.MissionID, WorkRevisionID: binding.WorkRevisionID, WorkID: binding.WorkID, RunID: binding.RunID, RuntimeEpochID: binding.RuntimeEpochID, WorkspaceID: binding.WorkspaceID, LeaseID: binding.LeaseID, LeaseGeneration: binding.Generation, Fence: binding.Fence, ActorID: binding.ActorID, ProcessID: binding.ProcessID, RepositoryID: binding.RepositoryID, LaneID: binding.LaneID, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, Candidate: strings.Repeat("b", 40), Contributors: contributors, ContributorDigest: reviewContributorDigestV2(contributors), CriterionIDs: criterionIDs, CriteriaDigest: criteriaDigest, EvidenceDigest: strings.Repeat("d", 64), RepositoryEvidence: handoff.CandidateEvidence{Candidate: strings.Repeat("b", 40), PinnedBase: binding.PinnedBase, OwnedBranch: binding.OwnedBranch, ObservedBranchHead: strings.Repeat("b", 40)}, Governance: gov, ObservedAt: now.Add(-time.Minute).Format(time.RFC3339Nano)}
-	request := AuthorityRequestV2{OperationID: "operation-review-1", ReviewID: "review-1", HandoffID: handoffState.HandoffID, ProjectID: binding.ProjectID, MissionID: binding.MissionID, WorkRevisionID: binding.WorkRevisionID, WorkID: binding.WorkID, RuntimeEpochID: binding.RuntimeEpochID, Workspace: binding, ReviewerActorID: reviewer, ReviewerProcessID: "process-reviewer", Candidate: handoffState.Candidate, HandoffContributorDigest: handoffState.ContributorDigest, Criteria: []CriterionEvidenceV2{{CriterionID: "criterion-1", Status: Passed, EvidenceDigest: strings.Repeat("e", 64), ArtifactDigest: strings.Repeat("f", 64), Candidate: handoffState.Candidate, PolicyRevision: gov.PolicyRevision}, {CriterionID: "criterion-2", Status: Passed, EvidenceDigest: strings.Repeat("1", 64), ArtifactDigest: strings.Repeat("2", 64), Candidate: handoffState.Candidate, PolicyRevision: gov.PolicyRevision}}, Verdict: Approved, PolicyRevision: gov.PolicyRevision, Governance: gov, ObservedAt: now}
+	handoffState := handoff.StateV2{SchemaVersion: 1, LogicalVersion: 3, Stage: handoff.StageCandidateRecordedV2, HandoffID: "handoff-1", ProjectID: binding.ProjectID, MissionID: binding.MissionID, WorkRevisionID: binding.WorkRevisionID, WorkID: binding.WorkID, RunID: binding.RunID, RuntimeEpochID: binding.RuntimeEpochID, WorkspaceID: binding.WorkspaceID, LeaseID: binding.LeaseID, LeaseGeneration: binding.Generation, Fence: binding.Fence, ActorID: binding.ActorID, ProcessID: binding.ProcessID, RepositoryID: binding.RepositoryID, LaneID: binding.LaneID, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, Candidate: strings.Repeat("b", 40), Contributors: contributors, ContributorDigest: reviewContributorDigestV2(contributors), CriterionIDs: criterionIDs, CriteriaDigest: criteriaDigest, WorkRevisionCriteriaDigest: revision.CriteriaDigest(), EvidenceDigest: strings.Repeat("d", 64), RepositoryEvidence: handoff.CandidateEvidence{Candidate: strings.Repeat("b", 40), PinnedBase: binding.PinnedBase, OwnedBranch: binding.OwnedBranch, ObservedBranchHead: strings.Repeat("b", 40)}, Governance: gov, ObservedAt: now.Add(-time.Minute).Format(time.RFC3339Nano)}
+	request := AuthorityRequestV2{OperationID: "operation-review-1", ReviewID: "review-1", HandoffID: handoffState.HandoffID, ProjectID: binding.ProjectID, MissionID: binding.MissionID, WorkRevisionID: binding.WorkRevisionID, WorkID: binding.WorkID, RuntimeEpochID: binding.RuntimeEpochID, Workspace: binding, ReviewerActorID: reviewer, ReviewerProcessID: "process-reviewer", Candidate: handoffState.Candidate, HandoffContributorDigest: handoffState.ContributorDigest, WorkRevisionCriteriaDigest: revision.CriteriaDigest(), Criteria: []CriterionEvidenceV2{{CriterionID: "criterion-1", Status: Passed, EvidenceDigest: strings.Repeat("e", 64), ArtifactDigest: strings.Repeat("f", 64), Candidate: handoffState.Candidate, PolicyRevision: gov.PolicyRevision}, {CriterionID: "criterion-2", Status: Passed, EvidenceDigest: strings.Repeat("1", 64), ArtifactDigest: strings.Repeat("2", 64), Candidate: handoffState.Candidate, PolicyRevision: gov.PolicyRevision}}, Verdict: Approved, PolicyRevision: gov.PolicyRevision, Governance: gov, ObservedAt: now}
 	execCoordinate, _ := execution.ExecutionSlotCoordinateV2(binding.ProjectID, binding.MissionID, binding.WorkRevisionID, binding.WorkID)
 	workspaceCoordinate, _ := workspace.WorkspaceCoordinateV2(binding)
 	handoffCoordinate, _ := handoff.CoordinateV2(binding.ProjectID, binding.MissionID, binding.WorkRevisionID, binding.WorkID)
-	assertions := []journalv2.AuthorityAssertionV2{reviewAssertionV2(t, execCoordinate, 21, journalv2.LogicalVersion(executionState.LogicalVersion), executionState.CanonicalBytes()), reviewAssertionV2(t, workspaceCoordinate, 22, journalv2.LogicalVersion(workspaceState.LogicalVersion), workspaceState.CanonicalBytes()), reviewAssertionV2(t, handoffCoordinate, 23, journalv2.LogicalVersion(handoffState.LogicalVersion), handoffState.CanonicalBytes())}
-	return request, AuthorityObservationV2{Eligibility: eligibility, Execution: execution.ExecutionSlotObservationV2{State: &executionState, RecordRevision: 21}, Workspace: execution.WorkspaceAuthorityObservationV2{State: &workspaceState, RecordRevision: 22}, Handoff: handoff.ObservationV2{State: &handoffState, RecordRevision: 23}, Assertions: assertions}
+	workgraphCoordinate, _ := journalv2.NewAggregateCoordinate("workgraph", journalv2.AggregateID(binding.MissionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(binding.ProjectID), MissionID: journalv2.MissionID(binding.MissionID)})
+	revisionBytes, _ := revision.Encode()
+	revisionAssertion := reviewAssertionV2(t, workgraphCoordinate, 24, 1, revisionBytes)
+	assertions := []journalv2.AuthorityAssertionV2{reviewAssertionV2(t, execCoordinate, 21, journalv2.LogicalVersion(executionState.LogicalVersion), executionState.CanonicalBytes()), reviewAssertionV2(t, workspaceCoordinate, 22, journalv2.LogicalVersion(workspaceState.LogicalVersion), workspaceState.CanonicalBytes()), revisionAssertion, reviewAssertionV2(t, handoffCoordinate, 23, journalv2.LogicalVersion(handoffState.LogicalVersion), handoffState.CanonicalBytes())}
+	return request, AuthorityObservationV2{Eligibility: eligibility, Execution: execution.ExecutionSlotObservationV2{State: &executionState, RecordRevision: 21}, Workspace: execution.WorkspaceAuthorityObservationV2{State: &workspaceState, RecordRevision: 22}, Handoff: handoff.ObservationV2{State: &handoffState, RecordRevision: 23}, WorkRevision: handoff.WorkRevisionObservationV2{Revision: revision, RecordRevision: 24, Assertion: revisionAssertion}, Assertions: assertions}
 }
 
 func reviewGovernanceV2(t *testing.T) execution.ExecutionGovernanceV2 {
@@ -229,7 +315,7 @@ func reviewGovernanceV2(t *testing.T) execution.ExecutionGovernanceV2 {
 	}
 	return g
 }
-func reviewEligibilityV2(t *testing.T) (workgraph.ObservedEligibilityShardV2, ids.WorkRevisionID) {
+func reviewEligibilityV2(t *testing.T) (workgraph.ObservedEligibilityShardV2, workgraph.RevisionV2) {
 	t.Helper()
 	work, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{ProjectID: "project-1", WorkID: "work-1", Title: "Work", Description: "Deliver reviewed work.", DesignContext: "Use review authority.", Criteria: []workgraph.CriterionObservation{{ID: "criterion-1", Text: "one", Outcome: "pass", Verifier: "test", Requirement: workgraph.CriterionRequired}, {ID: "criterion-2", Text: "two", Outcome: "pass", Verifier: "test", Requirement: workgraph.CriterionRequired}}, WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/review", Domain: "review", Access: workgraph.ScopeWriteExclusive}}, Provenance: []workgraph.ScopeReference{{ID: "scope-1", Kind: workgraph.ScopePlanConcern}}})
 	if err != nil {
@@ -257,12 +343,12 @@ func reviewEligibilityV2(t *testing.T) (workgraph.ObservedEligibilityShardV2, id
 		o, e := workgraph.NewObservedEligibilityShardV2(b, 17)
 		if e == nil {
 			if _, e = o.Token("work-1", revision.ID(), workgraph.EligibilityReview); e == nil {
-				return o, revision.ID()
+				return o, revision
 			}
 		}
 	}
 	t.Fatal("review eligibility absent")
-	return workgraph.ObservedEligibilityShardV2{}, ""
+	return workgraph.ObservedEligibilityShardV2{}, workgraph.RevisionV2{}
 }
 func reviewAssertionV2(t *testing.T, c journalv2.AggregateCoordinate, revision uint64, logical journalv2.LogicalVersion, value []byte) journalv2.AuthorityAssertionV2 {
 	t.Helper()

@@ -6,6 +6,7 @@ import (
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 )
 
@@ -13,6 +14,8 @@ type reviewAuthorityV2 struct {
 	adapter     *Adapter
 	coordinator *journalv2.PublicationCoordinatorV2
 	handoff     *handoffAuthorityV2
+	mission     mission.MissionAuthorityPortV2
+	admit       func(journalv2.SealedCommitPlanV2) bool
 }
 
 var _ review.AuthorityPortV2 = (*reviewAuthorityV2)(nil)
@@ -26,7 +29,20 @@ func (a *Adapter) ReviewAuthorityPortV2(coordinator *journalv2.PublicationCoordi
 	if !ok {
 		return nil, invalidV2Plan("review handoff dependency")
 	}
-	return &reviewAuthorityV2{a, coordinator, h}, nil
+	missionPort, err := NewMissionAuthorityPortV2(a, coordinator)
+	if err != nil {
+		return nil, err
+	}
+	return &reviewAuthorityV2{adapter: a, coordinator: coordinator, handoff: h, mission: missionPort, admit: reviewTransportMembershipV2}, nil
+}
+
+// ReviewAuthorityServiceV2 is the complete production v2 composition seam.
+func (a *Adapter) ReviewAuthorityServiceV2(coordinator *journalv2.PublicationCoordinatorV2, eventRegistry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, hostAuthorityID journalv2.HostAuthorityID, budgets restore.BudgetsV2, epochs review.RuntimeEpochSourceV2) (*review.AuthorityServiceV2, error) {
+	port, err := a.ReviewAuthorityPortV2(coordinator, eventRegistry, reducers, hostAuthorityID, budgets)
+	if err != nil {
+		return nil, err
+	}
+	return review.NewAuthorityServiceV2(port, epochs, eventRegistry)
 }
 
 func (a *reviewAuthorityV2) ResolveReviewOperation(ctx context.Context, candidate journalv2.OperationBindingV2) (review.OperationResolutionV2, error) {
@@ -71,32 +87,28 @@ func (a *reviewAuthorityV2) ObserveReviewAuthority(ctx context.Context, r review
 	if err != nil || revision != handoffObserved.RecordRevision {
 		return review.AuthorityObservationV2{}, invalidV2Plan("review handoff assertion")
 	}
-	result := review.AuthorityObservationV2{Eligibility: base.Eligibility, Execution: base.Execution, Workspace: base.Workspace, Handoff: handoffObserved, Assertions: append(base.Assertions, handoffAssertion)}
+	result := review.AuthorityObservationV2{Eligibility: base.Eligibility, Execution: base.Execution, Workspace: base.Workspace, Handoff: handoffObserved, WorkRevision: base.WorkRevision, Assertions: append(base.Assertions, handoffAssertion)}
 	if r.Exception != nil {
-		coordinate, e := review.ExceptionCoordinateV2(*r.Exception)
+		fact, e := a.mission.ObserveMissionFact(ctx, journalv2.ProjectID(r.ProjectID), journalv2.MissionID(r.MissionID), mission.MissionFactDecisionV2, r.Exception.ExceptionID)
+		if e != nil || !fact.Found {
+			return review.AuthorityObservationV2{}, invalidV2Plan("review mission policy exception")
+		}
+		coordinate, e := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+r.Exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(r.ProjectID), MissionID: journalv2.MissionID(r.MissionID)})
 		if e != nil {
 			return review.AuthorityObservationV2{}, e
-		}
-		head, record, e := readAuthorityHeadV2(ctx, a.adapter, coordinate)
-		if e != nil {
-			return review.AuthorityObservationV2{}, e
-		}
-		exception, e := review.DecodeIndependenceExceptionV2(head.AuthoritySummary())
-		if e != nil || head.CanonicalStateDigest() != exception.Digest() {
-			return review.AuthorityObservationV2{}, invalidV2Plan("review policy exception")
 		}
 		assertion, assertionRevision, e := observeHeadAssertionV2(ctx, a.adapter, coordinate)
-		if e != nil || assertionRevision != record.RecordRevision() {
+		if e != nil || assertionRevision != fact.RecordRevision {
 			return review.AuthorityObservationV2{}, invalidV2Plan("review policy assertion")
 		}
-		result.Exception = review.ExceptionObservationV2{State: &exception, RecordRevision: record.RecordRevision(), Assertion: assertion}
+		result.Exception = review.ExceptionObservationV2{Fact: review.MissionPolicyFactObservationV2{ProjectID: fact.State.ProjectID(), MissionID: fact.State.MissionID(), FactID: fact.State.FactID(), Kind: string(fact.State.Kind()), Status: string(fact.State.Status()), LogicalVersion: fact.State.LogicalVersion(), DetailDigest: fact.State.DetailDigest(), RecordRevision: fact.RecordRevision, Found: fact.Found}, Assertion: assertion}
 	}
 	return result, nil
 }
 
 func (a *reviewAuthorityV2) PublishReview(ctx context.Context, capability review.AuthorityPlanV2) (review.AuthorityAckV2, error) {
 	plan, err := capability.Publication()
-	if err != nil || !reviewTransportMembershipV2(plan) {
+	if err != nil || !a.admits(plan) {
 		return review.AuthorityAckV2{}, invalidV2Plan("review authority plan")
 	}
 	ack, err := publishAuthorityPlanV2(ctx, a.adapter, a.coordinator, plan)
@@ -105,9 +117,26 @@ func (a *reviewAuthorityV2) PublishReview(ctx context.Context, capability review
 	}
 	return review.AuthorityAckV2{PublicationID: ack.PublicationID(), ProviderRevision: ack.ProviderRevision(), PlanDigest: ack.PlanDigest(), MutationCount: ack.MutationCount()}, nil
 }
+func (a *reviewAuthorityV2) ReconcileReview(ctx context.Context, capability review.AuthorityPlanV2) (review.AuthorityAckV2, error) {
+	plan, err := capability.Publication()
+	if err != nil || !a.admits(plan) {
+		return review.AuthorityAckV2{}, invalidV2Plan("review reconciliation plan")
+	}
+	ack, err := reconcileObservedAuthorityPublicationV2(ctx, a.adapter, a.coordinator, plan)
+	if err != nil {
+		return review.AuthorityAckV2{}, err
+	}
+	return review.AuthorityAckV2{PublicationID: ack.PublicationID(), ProviderRevision: ack.ProviderRevision(), PlanDigest: ack.PlanDigest(), MutationCount: ack.MutationCount()}, nil
+}
+func (a *reviewAuthorityV2) admits(plan journalv2.SealedCommitPlanV2) bool {
+	if a != nil && a.admit != nil {
+		return a.admit(plan)
+	}
+	return reviewTransportMembershipV2(plan)
+}
 func reviewTransportMembershipV2(plan journalv2.SealedCommitPlanV2) bool {
 	assertions := len(plan.Assertions())
-	if assertions != 3 && assertions != 4 {
+	if assertions != 4 && assertions != 5 {
 		return false
 	}
 	return authorityTransportMembershipV2(plan, "review_slot", 2, 2, 3, assertions, 1)
