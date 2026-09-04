@@ -69,7 +69,8 @@
         "Repair review cycle 18: restore exact direct decoder semantics assertions and add a real-production semantic-substitution mutant while preserving the 184-mutant guard.",
         "Cycle-18 repair is intentionally red on unrepaired lane-a; review exact WP01 commit 2d9d5089 on combined repaired lane-b at eaa212b2 (WP02 candidate 03ac7098).",
         "Independent review passed: always-live production-bound guard, exact decode semantics, 184 sealed mutants, repeated/race/full/static gates green.",
-        "Post-approval defect 7: admit exact restore->time elapsed-deadline edge, retain time prohibition for foundation/checkpoint/playback, and append a widening mutant to the sealed architecture census."
+        "Post-approval defect 7: admit exact restore->time elapsed-deadline edge, retain time prohibition for foundation/checkpoint/playback, and append a widening mutant to the sealed architecture census.",
+        "Defect-7 restore-only deadline capability guard committed at 67a0a308; exhaustive architecture, mutant, race, combined-WP04, and static gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -79,8 +80,8 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": 3988735,
+      "shell_pid_created_at": "1788489730.61",
       "subtasks": {
         "T001": "done",
         "T002": "done",
