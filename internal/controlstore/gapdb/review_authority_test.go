@@ -13,10 +13,13 @@ import (
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 type reviewPlanCapturePortV2 struct {
@@ -268,6 +271,510 @@ func TestHandoffAndReviewGapDBProductionServicesAreCallableV2(t *testing.T) {
 	if err != nil || reviewService == nil {
 		t.Fatalf("review production service=%v err=%v", reviewService, err)
 	}
+}
+
+func TestReviewGapDBMissionPolicyExceptionUsesCurrentDurableFactV2(t *testing.T) {
+	scenario := newReviewMissionPolicyScenarioV2(t, "positive")
+	result, err := scenario.reviewService.Submit(t.Context(), scenario.request)
+	if err != nil || result.State.Stage != review.StageVerdictRecordedV2 {
+		t.Fatalf("same-actor review result=%+v err=%v", result, err)
+	}
+	if scenario.reviewBatches != len(scenario.request.Criteria)+2 {
+		t.Fatalf("mission-fact conditioned review stages=%d want=%d", scenario.reviewBatches, len(scenario.request.Criteria)+2)
+	}
+	if scenario.factAssertionFailures != 0 {
+		t.Fatalf("mission-fact assertion failures=%d", scenario.factAssertionFailures)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, *reviewMissionPolicyScenarioV2)
+	}{
+		{"current_head_revision_moved", func(_ *testing.T, s *reviewMissionPolicyScenarioV2) {
+			s.replaceFactHead(s.fact, s.factRevision+1)
+		}},
+		{"status_canceled", func(t *testing.T, s *reviewMissionPolicyScenarioV2) {
+			fact := reviewMissionFactV2(t, s, mission.MissionFactCanceledV2, s.fact.DetailDigest(), 3, "operation-policy-canceled-"+s.suffix)
+			s.replaceFactHead(fact, s.factRevision+1)
+		}},
+		{"detail_substituted", func(t *testing.T, s *reviewMissionPolicyScenarioV2) {
+			detail, _ := journalv2.ReducerStateDigestV2([]byte(`{"different":"exception"}`))
+			fact := reviewMissionFactV2(t, s, mission.MissionFactResolvedV2, detail, 3, "operation-policy-changed-"+s.suffix)
+			s.replaceFactHead(fact, s.factRevision+1)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newReviewMissionPolicyScenarioV2(t, test.name)
+			before := reviewRecordCountV2(s.memory, s.request.ReviewID)
+			base := s.provider.batchFn
+			moved := false
+			s.provider.batchFn = func(ctx context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+				if !moved && batchMutatesKeyV2(batch, s.reviewHeadKey) {
+					moved = true
+					test.mutate(t, s)
+				}
+				return base(ctx, batch)
+			}
+			_, err := s.reviewService.Submit(t.Context(), s.request)
+			if !review.IsKind(err, review.KindConflict) || !moved {
+				t.Fatalf("moved mission-fact head accepted: moved=%t err=%v", moved, err)
+			}
+			if after := reviewRecordCountV2(s.memory, s.request.ReviewID); after != before {
+				t.Fatalf("review mutated after stale policy assertion: records=%d -> %d", before, after)
+			}
+		})
+	}
+}
+
+func TestReviewGapDBMissionPolicyTranslationIsRequiredV2(t *testing.T) {
+	s := newReviewMissionPolicyScenarioV2(t, "translation-mutant")
+	port, err := s.adapter.ReviewAuthorityPortV2(s.coordinator, s.config.EventRegistry, s.config.Reducers, s.config.HostAuthorityID, s.config.Budgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	production := port.(*reviewAuthorityV2)
+	production.mission = reviewMissionTranslationDroppedV2{MissionAuthorityPortV2: production.mission}
+	service, err := review.NewAuthorityServiceV2(production, gapdbHandoffEpochV2(s.request.RuntimeEpochID), s.config.EventRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := s.memory.batchCalls
+	if _, err = service.Submit(t.Context(), s.request); !review.IsKind(err, review.KindStaleAuthority) || s.memory.batchCalls != before {
+		t.Fatalf("broken production mission translation escaped: err=%v batches=%d -> %d", err, before, s.memory.batchCalls)
+	}
+}
+
+func TestReviewGapDBMissionPolicyRejectsForgedTombstoneHeadV2(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, *reviewMissionPolicyScenarioV2, journalv2.AggregateHeadV2) journalv2.AggregateHeadV2
+	}{
+		{"live_head_for_resolved_fact", func(t *testing.T, s *reviewMissionPolicyScenarioV2, head journalv2.AggregateHeadV2) journalv2.AggregateHeadV2 {
+			return rebuildReviewMissionHeadV2(t, head, head.Coordinate(), false)
+		}},
+		{"tombstone_wrong_coordinate", func(t *testing.T, s *reviewMissionPolicyScenarioV2, head journalv2.AggregateHeadV2) journalv2.AggregateHeadV2 {
+			wrong, err := journalv2.NewAggregateCoordinate("mission", "decision:unrelated-policy-fact", journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(s.request.ProjectID), MissionID: journalv2.MissionID(s.request.MissionID)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return rebuildReviewMissionHeadV2(t, head, wrong, true)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newReviewMissionPolicyScenarioV2(t, "forged-"+test.name)
+			record := s.memory.records[s.factKey]
+			head, err := journalv2.DecodeAggregateHeadV2(record.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			forged := test.mutate(t, s, head)
+			encoded, err := journalv2.EncodeAggregateHeadV2(forged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.memory.records[s.factKey] = gapdbapi.NewRecord(s.factKey, encoded, record.Revision, nil)
+			before := s.memory.batchCalls
+			if _, err = s.reviewService.Submit(t.Context(), s.request); !review.IsKind(err, review.KindStaleAuthority) || s.memory.batchCalls != before {
+				t.Fatalf("forged mission policy head escaped: err=%v batches=%d -> %d", err, before, s.memory.batchCalls)
+			}
+		})
+	}
+}
+
+func rebuildReviewMissionHeadV2(t *testing.T, head journalv2.AggregateHeadV2, coordinate journalv2.AggregateCoordinate, tombstone bool) journalv2.AggregateHeadV2 {
+	t.Helper()
+	rebuilt, err := journalv2.NewAggregateHeadV2(journalv2.AggregateHeadInput{Coordinate: coordinate, LogicalVersion: head.LogicalVersion(), LastEventID: head.LastEventID(), LastPublicationID: head.LastPublicationID(), CommittedRuntimeEpochID: head.CommittedRuntimeEpochID(), CanonicalStateDigest: head.CanonicalStateDigest(), AuthoritySummary: head.AuthoritySummary(), Tombstone: tombstone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rebuilt
+}
+
+type reviewMissionTranslationDroppedV2 struct{ mission.MissionAuthorityPortV2 }
+
+func (reviewMissionTranslationDroppedV2) ObserveMissionFact(context.Context, journalv2.ProjectID, journalv2.MissionID, mission.MissionFactKindV2, string) (mission.MissionFactObservationV2, error) {
+	return mission.MissionFactObservationV2{}, nil
+}
+
+type reviewMissionPolicyScenarioV2 struct {
+	t                     *testing.T
+	suffix                string
+	memory                *v2AtomicMemory
+	provider              *fakeProvider
+	adapter               *Adapter
+	coordinator           *journalv2.PublicationCoordinatorV2
+	config                WorkspaceRestoreConfigurationV2
+	reviewService         *review.AuthorityServiceV2
+	request               review.AuthorityRequestV2
+	fact                  mission.MissionFactStateV2
+	factRevision          uint64
+	factKey               string
+	reviewHeadKey         string
+	reviewBatches         int
+	factAssertionFailures int
+}
+
+func newReviewMissionPolicyScenarioV2(t *testing.T, suffix string) *reviewMissionPolicyScenarioV2 {
+	t.Helper()
+	missionID := "mission-review-policy-" + suffix
+	workID := "work-review-policy-" + suffix
+	workgraphPlan := gapdbWorkgraphPlanForV2(t, "review-policy-"+suffix, missionID, workID)
+	sealedWorkgraph, err := workgraphPlan.Publication()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revision workgraph.RevisionV2
+	for _, head := range sealedWorkgraph.Heads() {
+		if head.Coordinate.Kind != "workgraph" {
+			continue
+		}
+		state, decodeErr := workgraph.DecodeWorkgraphStateV2(head.AuthoritySummary)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		revision, err = workgraph.DecodeRevisionV2(state.CurrentRevision)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if revision.ID() == "" {
+		t.Fatal("workgraph plan has no current revision")
+	}
+	memory := newV2AtomicMemory()
+	provider := memory.provider()
+	enableWorkspaceRecoveryScansV2(memory, provider)
+	provider.statusFn = gapdbMemoryStatusV2(memory, "db-review-policy-"+suffix)
+	adapter, err := newAdapter(provider, "/explicit/socket", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := reviewMissionRestoreConfigV2(t)
+	projection, err := journalv2.NewProjectionTrackerV2(config.Reducers, journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(adapter, projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workgraphAuthority, err := newWorkgraphAuthorityV2(coordinator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = workgraphAuthority.Publish(t.Context(), workgraphPlan); err != nil {
+		t.Fatalf("production workgraph finalization: %v", err)
+	}
+	executionPort, err := newExecutionAuthorityV2(adapter, coordinator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	executionRequest := execution.ExecutionAuthorityRequestV2{Kind: execution.ExecutionAdmitV2, OperationID: journalv2.OperationID("operation-review-policy-execution-" + suffix), ProjectID: revision.ProjectID(), MissionID: revision.MissionID(), WorkRevisionID: revision.ID(), WorkID: ids.WorkID(workID), RunID: ids.RunID("run-review-policy-" + suffix), ActorID: "actor-review-policy-contributor", ProcessID: ids.ProcessID("process-review-policy-contributor-" + suffix), LeaseID: ids.LeaseID("lease-review-policy-" + suffix), Generation: 1, ObservedAt: now, Deadline: now.Add(time.Hour), RuntimeEpochID: "epoch-gapdb", Governance: gapdbExecutionContextV2(t), OperationEventID: journalv2.EventID("event-operation-review-policy-execution-" + suffix), SlotEventID: journalv2.EventID("event-slot-review-policy-execution-" + suffix)}
+	executionService, err := execution.NewExecutionAuthorityServiceWithFenceSourceV2(executionPort, gapdbEpochV2{epoch: executionRequest.RuntimeEpochID}, gapdbFenceSourceV2(executionRequest.OperationID), config.EventRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executionResult, err := executionService.Execute(t.Context(), executionRequest)
+	if err != nil {
+		t.Fatalf("production execution admission: %v", err)
+	}
+	slot := executionResult.State
+	binding := gapdbWorkspaceBindingV2(t, slot, "workspace-review-policy-"+suffix, "/srv/spec-kitty/workspaces/review-policy-"+suffix)
+	publishReviewWorkspaceReadyV2(t, adapter, coordinator, config, slot, binding, now)
+	handoffRequest := reviewPolicyHandoffRequestV2(t, suffix, revision, slot, binding, now.Add(15*time.Second))
+	handoffService, err := adapter.HandoffAuthorityServiceV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets, gapdbHandoffEpochV2(handoffRequest.RuntimeEpochID), gapdbCandidateVerifierV2{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoffResult, err := handoffService.Submit(t.Context(), handoffRequest)
+	if err != nil || handoffResult.State.Stage != handoff.StageCandidateRecordedV2 {
+		t.Fatalf("production handoff=%+v err=%v", handoffResult, err)
+	}
+	handoffState := handoffResult.State
+
+	request := reviewRequestFromHandoffV2(t, suffix, handoffState, handoffRequest)
+	fact, factRevision := publishReviewMissionDecisionV2(t, adapter, coordinator, config, request)
+	factCoordinate, _ := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+request.Exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID)})
+	factKey, _ := v2AggregateHeadKey(factCoordinate)
+	reviewCoordinate, _ := review.CoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, request.ReviewID)
+	reviewHeadKey, _ := v2AggregateHeadKey(reviewCoordinate)
+	service, err := adapter.ReviewAuthorityServiceV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets, gapdbHandoffEpochV2(request.RuntimeEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	debugPort, err := adapter.ReviewAuthorityPortV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = debugPort.ObserveReviewAuthority(t.Context(), request); err != nil {
+		t.Fatalf("production review authority observation: %T %+v", err, err)
+	}
+	s := &reviewMissionPolicyScenarioV2{t: t, suffix: suffix, memory: memory, provider: provider, adapter: adapter, coordinator: coordinator, config: config, reviewService: service, request: request, fact: fact, factRevision: factRevision, factKey: factKey.String(), reviewHeadKey: reviewHeadKey.String()}
+	base := provider.batchFn
+	provider.batchFn = func(ctx context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+		if batchMutatesKeyV2(batch, s.reviewHeadKey) {
+			s.reviewBatches++
+			matches := 0
+			for _, assertion := range batch.Assertions {
+				if assertion.Key == s.factKey && assertion.Condition.Kind == gapdbapi.ConditionRevision && uint64(assertion.Condition.ExpectedRevision) == s.factRevision {
+					matches++
+				}
+			}
+			if matches != 1 {
+				s.factAssertionFailures++
+				return gapdbapi.MutationResult{}, &gapdbapi.Error{Code: gapdbapi.CodeInvalidRequest}
+			}
+		}
+		return base(ctx, batch)
+	}
+	return s
+}
+
+func publishReviewWorkspaceReadyV2(t *testing.T, adapter *Adapter, coordinator *journalv2.PublicationCoordinatorV2, config WorkspaceRestoreConfigurationV2, slot execution.ExecutionSlotStateV2, binding workspace.BindingV2, observedAt time.Time) {
+	t.Helper()
+	workspacePort, _, err := adapter.WorkspaceAuthorityPortsV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := workspacePort.(*workspaceAuthorityV2)
+	service, err := execution.NewWorkspaceAuthorityServiceV2(authority, gapdbEpochV2{epoch: slot.RuntimeEpochID}, config.EventRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contribution, err := workspace.NewBindingContributionV2(workspace.BindingContributionInputV2{Binding: binding, EffectID: journalv2.EffectID("effect-policy-workspace-" + string(binding.WorkspaceID)), EventID: journalv2.EventID("event-policy-workspace-bind-" + string(binding.WorkspaceID)), OccurredAt: observedAt.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Execute(t.Context(), execution.WorkspaceAuthorityRequestV2{Kind: execution.WorkspaceBindV2, OperationID: journalv2.OperationID("operation-policy-workspace-bind-" + string(binding.WorkspaceID)), OperationEventID: journalv2.EventID("event-operation-policy-workspace-bind-" + string(binding.WorkspaceID)), ExecutionEventID: journalv2.EventID("event-execution-policy-workspace-bind-" + string(binding.WorkspaceID)), Governance: slot.Governance, Contribution: contribution, ObservedAt: observedAt.Add(time.Second)}); err != nil {
+		t.Fatalf("production workspace bind: %v", err)
+	}
+	coordinate, _ := workspace.WorkspaceCoordinateV2(binding)
+	stageService, err := workspace.NewStageAuthorityServiceV2(authority, gapdbEpochV2{epoch: slot.RuntimeEpochID}, config.EventRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, stage := range []workspace.StageV2{workspace.StageWorktreeObservedV2, workspace.StageBaseVerifiedV2, workspace.StageDependenciesRequestedV2, workspace.StageDependenciesObservedV2, workspace.StageOwnershipVerifiedV2, workspace.StageReadyV2} {
+		observed, observeErr := authority.ObserveWorkspaceStage(t.Context(), coordinate)
+		if observeErr != nil || observed.State == nil {
+			t.Fatalf("observe workspace stage %d: %+v %v", index, observed, observeErr)
+		}
+		observation := workspace.ObservationV2{Registered: true, Head: binding.PinnedBase, DependencyHead: binding.PinnedBase, Branch: binding.OwnedBranch, GitDirIdentity: "gitdir-policy-" + string(binding.WorkspaceID), IndexIdentity: "index-policy-" + string(binding.WorkspaceID), Clean: true, TargetBefore: binding.PinnedBase, TargetAfter: binding.PinnedBase}
+		effectID := journalv2.EffectID("")
+		if stage == workspace.StageDependenciesRequestedV2 {
+			effectID = journalv2.EffectID("effect-policy-dependencies-" + string(binding.WorkspaceID))
+		}
+		occurredAt := observedAt.Add(time.Duration(index+2) * time.Second)
+		transition, buildErr := workspace.NewTransitionContributionV2(workspace.TransitionContributionInputV2{Prior: *observed.State, RecordRevision: observed.RecordRevision, EventID: journalv2.EventID(fmt.Sprintf("event-policy-workspace-stage-%s-%d", binding.WorkspaceID, index)), NextStage: stage, Observation: observation, EffectID: effectID, OccurredAt: occurredAt})
+		if buildErr != nil {
+			t.Fatalf("workspace transition %s: %v", stage, buildErr)
+		}
+		if _, executeErr := stageService.Execute(t.Context(), workspace.StageAuthorityRequestV2{OperationID: journalv2.OperationID(fmt.Sprintf("operation-policy-workspace-stage-%s-%d", binding.WorkspaceID, index)), OperationEventID: journalv2.EventID(fmt.Sprintf("event-operation-policy-workspace-stage-%s-%d", binding.WorkspaceID, index)), Contribution: transition, PolicyRevision: slot.Governance.PolicyRevision, DoctrineRevision: slot.Governance.DoctrineRevision, ProfileRevision: slot.Governance.ProfileRevision, ObservedAt: occurredAt}); executeErr != nil {
+			t.Fatalf("production workspace stage %s: %v", stage, executeErr)
+		}
+	}
+}
+
+func reviewPolicyHandoffRequestV2(t *testing.T, suffix string, revision workgraph.RevisionV2, slot execution.ExecutionSlotStateV2, binding workspace.BindingV2, observedAt time.Time) handoff.AuthorityRequestV2 {
+	t.Helper()
+	criterionIDs := make([]string, 0)
+	for _, item := range revision.WorkItems() {
+		if item.WorkID() != slot.WorkID {
+			continue
+		}
+		for _, criterion := range item.Criteria() {
+			criterionIDs = append(criterionIDs, criterion.ID())
+		}
+	}
+	criterionIDs, err := handoff.CanonicalCriterionIDsV2(criterionIDs)
+	if err != nil || len(criterionIDs) == 0 {
+		t.Fatalf("work revision criteria=%v err=%v", criterionIDs, err)
+	}
+	criteriaDigest, err := handoff.CriterionSetDigestV2(criterionIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handoff.AuthorityRequestV2{OperationID: journalv2.OperationID("operation-review-policy-handoff-" + suffix), HandoffID: ids.HandoffID("handoff-review-policy-" + suffix), ProjectID: slot.ProjectID, MissionID: slot.MissionID, WorkRevisionID: slot.WorkRevisionID, WorkID: slot.WorkID, RunID: slot.RunID, RuntimeEpochID: slot.RuntimeEpochID, Workspace: binding, LeaseID: slot.LeaseID, LeaseGeneration: slot.Generation, Fence: slot.Fence, ActorID: slot.ActorID, ProcessID: slot.ProcessID, RepositoryID: binding.RepositoryID, RepositoryPath: "/repo", LaneID: binding.LaneID, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, Candidate: strings.Repeat("b", 40), Contributors: []ids.ActorID{slot.ActorID, "actor-review-policy-second"}, CriterionIDs: criterionIDs, CriteriaDigest: criteriaDigest, WorkRevisionCriteriaDigest: revision.CriteriaDigest(), EvidenceDigest: strings.Repeat("d", 64), Governance: slot.Governance, ObservedAt: observedAt}
+}
+
+func reviewMissionRestoreConfigV2(t *testing.T) WorkspaceRestoreConfigurationV2 {
+	t.Helper()
+	registry := journalv2.DefaultEventRegistryV2()
+	owned := append(execution.ExecutionReducerRegistrationsV2(), workspace.ReducerRegistrationsV2()...)
+	owned = append(owned, handoff.ReducerRegistrationsV2()...)
+	owned = append(owned, review.ReducerRegistrationsV2()...)
+	owned = append(owned, workgraph.ReducerRegistrationsV2()...)
+	byFamily := make(map[string]journalv2.ReducerRegistration, len(owned))
+	for _, registration := range owned {
+		byFamily[registration.Family] = registration
+	}
+	registrations := make([]journalv2.ReducerRegistration, 0, len(journalv2.ExpectedEventTuples()))
+	for _, tuple := range journalv2.ExpectedEventTuples() {
+		switch tuple.Family {
+		case "operation":
+			registrations = append(registrations, journalv2.ReducerRegistration{Family: tuple.Family, EventSchemaVersion: tuple.EventSchemaVersion, ReducerVersion: tuple.ReducerVersion, Owner: tuple.Owner, ImplementationDigest: journalv2.OperationReducerImplementationDigestV2(), Reduce: journalv2.ReduceOperationStateV2})
+		case "mission":
+			registrations = append(registrations, journalv2.ReducerRegistration{Family: tuple.Family, EventSchemaVersion: tuple.EventSchemaVersion, ReducerVersion: tuple.ReducerVersion, Owner: tuple.Owner, ImplementationDigest: mission.MissionReducerImplementationDigestV2(), Reduce: mission.ReduceMissionEventV2})
+		default:
+			if registration, ok := byFamily[tuple.Family]; ok {
+				registrations = append(registrations, registration)
+				continue
+			}
+			sum := sha256.Sum256([]byte("unused-review-policy/" + tuple.Family))
+			digest, _ := journalv2.ParseDigest("unused_review_policy", fmt.Sprintf("%x", sum))
+			registrations = append(registrations, journalv2.ReducerRegistration{Family: tuple.Family, EventSchemaVersion: tuple.EventSchemaVersion, ReducerVersion: tuple.ReducerVersion, Owner: tuple.Owner, ImplementationDigest: digest, Reduce: func(_ []byte, event journalv2.EventEnvelopeV2) ([]byte, error) { return event.Payload(), nil }})
+		}
+	}
+	reducers, err := journalv2.NewReducerSetV2(registry, registrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return WorkspaceRestoreConfigurationV2{EventRegistry: registry, Reducers: reducers, HostAuthorityID: "host-review-policy"}
+}
+
+func seedReviewTypedHeadV2(t *testing.T, memory *v2AtomicMemory, summary []byte, coordinate journalv2.AggregateCoordinate, revision uint64, logicalVersion journalv2.LogicalVersion, publicationID journalv2.PublicationID, epoch journalv2.RuntimeEpochID) {
+	t.Helper()
+	digest, err := journalv2.ReducerStateDigestV2(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := journalv2.NewAggregateHeadV2(journalv2.AggregateHeadInput{Coordinate: coordinate, LogicalVersion: logicalVersion, LastEventID: journalv2.EventID("event-seed-" + string(coordinate.Kind)), LastPublicationID: publicationID, CommittedRuntimeEpochID: epoch, CanonicalStateDigest: digest, AuthoritySummary: summary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := journalv2.EncodeAggregateHeadV2(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := v2AggregateHeadKey(coordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory.records[key.String()] = gapdbapi.NewRecord(key.String(), encoded, gapdbapi.Revision(revision), nil)
+}
+
+func reviewRequestFromHandoffV2(t *testing.T, suffix string, state handoff.StateV2, handoffRequest handoff.AuthorityRequestV2) review.AuthorityRequestV2 {
+	t.Helper()
+	criteria := make([]review.CriterionEvidenceV2, len(state.CriterionIDs))
+	for index, criterionID := range state.CriterionIDs {
+		criteria[index] = review.CriterionEvidenceV2{CriterionID: criterionID, Status: review.Passed, EvidenceDigest: fmt.Sprintf("%064x", index+101), ArtifactDigest: fmt.Sprintf("%064x", index+201), Candidate: state.Candidate, PolicyRevision: state.Governance.PolicyRevision}
+	}
+	reviewer := state.Contributors[0]
+	observed := handoffRequest.ObservedAt.Add(10 * time.Minute)
+	exception := review.IndependenceExceptionV2{SchemaVersion: 1, ExceptionID: "exception-" + suffix, PolicyRevision: state.Governance.PolicyRevision, ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID, HandoffID: state.HandoffID, Candidate: state.Candidate, ReviewerActorID: reviewer, Reason: "explicit mission policy exception", AuthorizerActorID: "actor-policy-authorizer", EffectiveFrom: observed.Add(-time.Minute).Format(time.RFC3339Nano), EffectiveThrough: observed.Add(time.Hour).Format(time.RFC3339Nano)}
+	if err := exception.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return review.AuthorityRequestV2{OperationID: journalv2.OperationID("operation-review-policy-" + suffix), ReviewID: ids.ReviewID("review-policy-" + suffix), HandoffID: state.HandoffID, ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID, RuntimeEpochID: state.RuntimeEpochID, Workspace: handoffRequest.Workspace, ReviewerActorID: reviewer, ReviewerProcessID: ids.ProcessID("process-review-policy-" + suffix), Candidate: state.Candidate, HandoffContributorDigest: state.ContributorDigest, WorkRevisionCriteriaDigest: state.WorkRevisionCriteriaDigest, Criteria: criteria, Verdict: review.Approved, PolicyRevision: state.Governance.PolicyRevision, Exception: &exception, Governance: state.Governance, ObservedAt: observed}
+}
+
+func publishReviewMissionDecisionV2(t *testing.T, adapter *Adapter, coordinator *journalv2.PublicationCoordinatorV2, config WorkspaceRestoreConfigurationV2, request review.AuthorityRequestV2) (mission.MissionFactStateV2, uint64) {
+	t.Helper()
+	port, err := NewMissionAuthorityPortV2(adapter, coordinator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := mission.NewMissionAuthorityServiceV2(port, missionEpochFixtureV2{request.RuntimeEpochID}, config.EventRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, _ := journalv2.ReducerStateDigestV2([]byte(`{"mission":"review-policy"}`))
+	baseInput := mission.MissionAuthorityStateInputV2{ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID), DefinitionRevision: "definition-review-policy", DefinitionDigest: detail, Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "reviewing", CurrentWorkRevisionID: journalv2.WorkRevisionID(request.WorkRevisionID), Decomposition: mission.DecompositionNoneV2, LastOperationID: journalv2.OperationID("operation-mission-create-" + request.Exception.ExceptionID), ObservedAt: request.ObservedAt.Add(-3 * time.Minute).Format(time.RFC3339Nano)}
+	created, err := mission.NewMissionAuthorityStateV2(baseInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := reviewMissionCommandV2(request, mission.MissionEventCreatedV2, mission.MissionAuthorityStateV2{}, created, baseInput.LastOperationID, baseInput.ObservedAt)
+	if _, err = service.Execute(t.Context(), command); err != nil {
+		t.Fatalf("create mission authority: %v", err)
+	}
+	baseInput.Version = 2
+	baseInput.OpenDecisionIDs = []string{request.Exception.ExceptionID}
+	baseInput.LastOperationID = journalv2.OperationID("operation-policy-open-" + request.Exception.ExceptionID)
+	baseInput.ObservedAt = request.ObservedAt.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	opened, err := mission.NewMissionAuthorityStateV2(baseInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openFact := reviewMissionFactV2(t, &reviewMissionPolicyScenarioV2{request: request}, mission.MissionFactOpenV2, request.Exception.Digest(), 1, string(baseInput.LastOperationID))
+	command = reviewMissionCommandV2(request, mission.MissionEventDecisionOpenedV2, created, opened, baseInput.LastOperationID, baseInput.ObservedAt)
+	command.RelatedFact = &mission.MissionFactTransitionV2{Successor: openFact}
+	if _, err = service.Execute(t.Context(), command); err != nil {
+		t.Fatalf("open mission decision: %v", err)
+	}
+	observedOpen, err := port.ObserveMissionFact(t.Context(), journalv2.ProjectID(request.ProjectID), journalv2.MissionID(request.MissionID), mission.MissionFactDecisionV2, request.Exception.ExceptionID)
+	if err != nil || !observedOpen.Found {
+		t.Fatalf("observe open decision: %+v %v", observedOpen, err)
+	}
+	baseInput.Version = 3
+	baseInput.OpenDecisionIDs = nil
+	baseInput.LastOperationID = journalv2.OperationID("operation-policy-resolve-" + request.Exception.ExceptionID)
+	baseInput.ObservedAt = request.ObservedAt.Add(-time.Minute).Format(time.RFC3339Nano)
+	resolved, err := mission.NewMissionAuthorityStateV2(baseInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedFact := reviewMissionFactV2(t, &reviewMissionPolicyScenarioV2{request: request}, mission.MissionFactResolvedV2, request.Exception.Digest(), 2, string(baseInput.LastOperationID))
+	command = reviewMissionCommandV2(request, mission.MissionEventDecisionResolvedV2, opened, resolved, baseInput.LastOperationID, baseInput.ObservedAt)
+	command.RelatedFact = &mission.MissionFactTransitionV2{Prior: openFact, Successor: resolvedFact, ExpectedRecordRevision: observedOpen.RecordRevision}
+	if _, err = service.Execute(t.Context(), command); err != nil {
+		t.Fatalf("resolve mission decision: %v", err)
+	}
+	observed, err := port.ObserveMissionFact(t.Context(), journalv2.ProjectID(request.ProjectID), journalv2.MissionID(request.MissionID), mission.MissionFactDecisionV2, request.Exception.ExceptionID)
+	if err != nil || !observed.Found || observed.State.Status() != mission.MissionFactResolvedV2 || observed.State.DetailDigest() != request.Exception.Digest() {
+		t.Fatalf("resolved mission decision=%+v err=%v", observed, err)
+	}
+	return observed.State, observed.RecordRevision
+}
+
+func reviewMissionCommandV2(request review.AuthorityRequestV2, event mission.MissionEventTypeV2, prior, successor mission.MissionAuthorityStateV2, operationID journalv2.OperationID, observedAt string) mission.MissionAuthorityCommandV2 {
+	return mission.MissionAuthorityCommandV2{SchemaVersion: 1, OperationID: operationID, ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID), ActorID: "actor-policy-authorizer", ProcessID: "process-policy-authorizer", OriginatingRuntimeEpochID: request.RuntimeEpochID, DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.PolicyRevision, ObservedAt: observedAt, EventType: event, Expected: prior, Successor: successor}
+}
+
+func reviewMissionFactV2(t *testing.T, scenario *reviewMissionPolicyScenarioV2, status mission.MissionFactStatusV2, detail journalv2.Digest, version journalv2.LogicalVersion, operationID string) mission.MissionFactStateV2 {
+	t.Helper()
+	request := scenario.request
+	fact, err := mission.NewMissionFactStateV2(mission.MissionFactStateInputV2{ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID), FactID: request.Exception.ExceptionID, Kind: mission.MissionFactDecisionV2, Status: status, LogicalVersion: version, DetailDigest: detail, LastOperationID: journalv2.OperationID(operationID), ObservedAt: request.ObservedAt.Add(-time.Minute).Format(time.RFC3339Nano)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fact
+}
+
+func (s *reviewMissionPolicyScenarioV2) replaceFactHead(fact mission.MissionFactStateV2, revision uint64) {
+	s.t.Helper()
+	coordinate, _ := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+s.request.Exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(s.request.ProjectID), MissionID: journalv2.MissionID(s.request.MissionID)})
+	seedReviewTypedHeadV2(s.t, s.memory, fact.CanonicalBytes(), coordinate, revision, fact.LogicalVersion(), s.firstFactPublicationID(), s.request.RuntimeEpochID)
+	if gapdbapi.Revision(revision) > s.memory.revision {
+		s.memory.revision = gapdbapi.Revision(revision)
+	}
+}
+
+func (s *reviewMissionPolicyScenarioV2) firstFactPublicationID() journalv2.PublicationID {
+	record := s.memory.records[s.factKey]
+	head, _ := journalv2.DecodeAggregateHeadV2(record.Value)
+	return head.LastPublicationID()
+}
+
+func batchMutatesKeyV2(batch gapdbapi.Batch, key string) bool {
+	for _, mutation := range batch.Mutations {
+		if mutation.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func reviewRecordCountV2(memory *v2AtomicMemory, reviewID ids.ReviewID) int {
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+	needle := string(reviewID)
+	count := 0
+	for key := range memory.records {
+		if strings.Contains(key, needle) {
+			count++
+		}
+	}
+	return count
 }
 
 func TestWP09ControlledMutantCensusV2(t *testing.T) {
