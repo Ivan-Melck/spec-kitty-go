@@ -3,8 +3,13 @@ package gapdb
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -286,44 +291,155 @@ func TestReviewGapDBMissionPolicyExceptionUsesCurrentDurableFactV2(t *testing.T)
 		t.Fatalf("mission-fact assertion failures=%d", scenario.factAssertionFailures)
 	}
 
-	for _, test := range []struct {
-		name   string
-		mutate func(*testing.T, *reviewMissionPolicyScenarioV2)
-	}{
-		{"current_head_revision_moved", func(_ *testing.T, s *reviewMissionPolicyScenarioV2) {
+	s := newReviewMissionPolicyScenarioV2(t, "current-head-revision-moved")
+	before := reviewRecordCountV2(s.memory, s.request.ReviewID)
+	base := s.provider.batchFn
+	moved := false
+	s.provider.batchFn = func(ctx context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+		if !moved && batchMutatesKeyV2(batch, s.reviewHeadKey) {
+			moved = true
 			s.replaceFactHead(s.fact, s.factRevision+1)
-		}},
-		{"status_canceled", func(t *testing.T, s *reviewMissionPolicyScenarioV2) {
-			fact := reviewMissionFactV2(t, s, mission.MissionFactCanceledV2, s.fact.DetailDigest(), 3, "operation-policy-canceled-"+s.suffix)
-			s.replaceFactHead(fact, s.factRevision+1)
-		}},
-		{"detail_substituted", func(t *testing.T, s *reviewMissionPolicyScenarioV2) {
-			detail, _ := journalv2.ReducerStateDigestV2([]byte(`{"different":"exception"}`))
-			fact := reviewMissionFactV2(t, s, mission.MissionFactResolvedV2, detail, 3, "operation-policy-changed-"+s.suffix)
-			s.replaceFactHead(fact, s.factRevision+1)
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			s := newReviewMissionPolicyScenarioV2(t, test.name)
-			before := reviewRecordCountV2(s.memory, s.request.ReviewID)
-			base := s.provider.batchFn
-			moved := false
-			s.provider.batchFn = func(ctx context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
-				if !moved && batchMutatesKeyV2(batch, s.reviewHeadKey) {
-					moved = true
-					test.mutate(t, s)
-				}
-				return base(ctx, batch)
+		}
+		return base(ctx, batch)
+	}
+	_, err = s.reviewService.Submit(t.Context(), s.request)
+	if !review.IsKind(err, review.KindConflict) || !moved {
+		t.Fatalf("moved mission-fact head accepted: moved=%t err=%v", moved, err)
+	}
+	if after := reviewRecordCountV2(s.memory, s.request.ReviewID); after != before {
+		t.Fatalf("review mutated after stale policy assertion: records=%d -> %d", before, after)
+	}
+}
+
+func TestReviewGapDBMissionPolicyRejectsStableCanceledFactV2(t *testing.T) {
+	s := newReviewMissionPolicyScenarioWithFactV2(t, "stable-canceled", mission.MissionFactCanceledV2, journalv2.Digest{})
+	before := reviewRecordCountV2(s.memory, s.request.ReviewID)
+	batches := s.memory.batchCalls
+	if _, err := s.reviewService.Submit(t.Context(), s.request); !review.IsKind(err, review.KindStaleAuthority) {
+		t.Fatalf("current canceled mission fact was not semantically refused: %v", err)
+	}
+	if after := reviewRecordCountV2(s.memory, s.request.ReviewID); after != before || s.memory.batchCalls != batches {
+		t.Fatalf("canceled policy fact mutated review: records=%d -> %d batches=%d -> %d", before, after, batches, s.memory.batchCalls)
+	}
+}
+
+func TestReviewGapDBMissionPolicyRejectsStableWrongDetailV2(t *testing.T) {
+	detail, _ := journalv2.ReducerStateDigestV2([]byte(`{"different":"exception"}`))
+	s := newReviewMissionPolicyScenarioWithFactV2(t, "stable-wrong-detail", mission.MissionFactResolvedV2, detail)
+	before := reviewRecordCountV2(s.memory, s.request.ReviewID)
+	batches := s.memory.batchCalls
+	if _, err := s.reviewService.Submit(t.Context(), s.request); !review.IsKind(err, review.KindReviewerNotIndependent) {
+		t.Fatalf("current wrong-detail mission fact was not semantically refused: %v", err)
+	}
+	if after := reviewRecordCountV2(s.memory, s.request.ReviewID); after != before || s.memory.batchCalls != batches {
+		t.Fatalf("wrong-detail policy fact mutated review: records=%d -> %d batches=%d -> %d", before, after, batches, s.memory.batchCalls)
+	}
+}
+
+func TestReviewGapDBMissionPolicySemanticSourceMutantsV2(t *testing.T) {
+	if os.Getenv("SPEC_KITTY_RUN_WP09_POLICY_MUTANTS") != "1" {
+		t.Skip("set SPEC_KITTY_RUN_WP09_POLICY_MUTANTS=1 to run bounded policy mutants")
+	}
+	mutants := []struct {
+		name, killer, want string
+		replacements       map[string][][2]string
+	}{
+		{
+			name:   "resolved_status_checks_deleted",
+			killer: "TestReviewGapDBMissionPolicyRejectsStableCanceledFactV2",
+			want:   "current canceled mission fact was not semantically refused",
+			replacements: map[string][][2]string{
+				"internal/controlstore/gapdb/review_authority.go": {{" || fact.State.Status() != mission.MissionFactResolvedV2", ""}},
+				"internal/review/authority_v2.go":                 {{" || fact.Status != \"resolved\"", ""}},
+			},
+		},
+		{
+			name:   "exception_detail_binding_deleted",
+			killer: "TestReviewGapDBMissionPolicyRejectsStableWrongDetailV2",
+			want:   "current wrong-detail mission fact was not semantically refused",
+			replacements: map[string][][2]string{
+				"internal/review/authority_v2.go": {{" || fact.DetailDigest != r.Exception.Digest()", ""}},
+			},
+		},
+	}
+	root := reviewRepositoryRootV2(t)
+	for _, mutant := range mutants {
+		t.Run(mutant.name, func(t *testing.T) {
+			if output, err := runReviewPolicyKillerV2(t, root, "", mutant.killer); err != nil {
+				t.Fatalf("production control failed: %v\n%s", err, output)
 			}
-			_, err := s.reviewService.Submit(t.Context(), s.request)
-			if !review.IsKind(err, review.KindConflict) || !moved {
-				t.Fatalf("moved mission-fact head accepted: moved=%t err=%v", moved, err)
+			overlay := reviewPolicyMutantOverlayV2(t, root, mutant.replacements)
+			output, err := runReviewPolicyKillerV2(t, root, overlay, mutant.killer)
+			if err == nil {
+				t.Fatalf("production policy mutant survived\n%s", output)
 			}
-			if after := reviewRecordCountV2(s.memory, s.request.ReviewID); after != before {
-				t.Fatalf("review mutated after stale policy assertion: records=%d -> %d", before, after)
+			if !strings.Contains(output, mutant.want) {
+				t.Fatalf("policy mutant failed for the wrong reason: want %q\n%s", mutant.want, output)
 			}
 		})
 	}
+}
+
+func reviewRepositoryRootV2(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime caller unavailable")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(source), "../../.."))
+}
+
+func reviewPolicyMutantOverlayV2(t *testing.T, root string, replacements map[string][][2]string) string {
+	t.Helper()
+	replace := make(map[string]string, len(replacements))
+	for relative, mutations := range replacements {
+		source := filepath.Join(root, relative)
+		contents, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutated := string(contents)
+		for _, mutation := range mutations {
+			if count := strings.Count(mutated, mutation[0]); count != 1 {
+				t.Fatalf("mutant anchor count=%d want=1 in %s: %q", count, relative, mutation[0])
+			}
+			mutated = strings.Replace(mutated, mutation[0], mutation[1], 1)
+		}
+		target := filepath.Join(t.TempDir(), filepath.Base(source))
+		if err = os.WriteFile(target, []byte(mutated), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		replace[source] = target
+	}
+	overlay, err := json.Marshal(struct {
+		Replace map[string]string
+	}{Replace: replace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "overlay.json")
+	if err = os.WriteFile(path, overlay, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func runReviewPolicyKillerV2(t *testing.T, root, overlay, killer string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	arguments := []string{"test"}
+	if overlay != "" {
+		arguments = append(arguments, "-overlay="+overlay)
+	}
+	arguments = append(arguments, "./internal/controlstore/gapdb", "-run", "^"+killer+"$", "-count=1")
+	command := exec.CommandContext(ctx, "go", arguments...)
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		return string(output), ctx.Err()
+	}
+	return string(output), err
 }
 
 func TestReviewGapDBMissionPolicyTranslationIsRequiredV2(t *testing.T) {
@@ -415,6 +531,10 @@ type reviewMissionPolicyScenarioV2 struct {
 }
 
 func newReviewMissionPolicyScenarioV2(t *testing.T, suffix string) *reviewMissionPolicyScenarioV2 {
+	return newReviewMissionPolicyScenarioWithFactV2(t, suffix, mission.MissionFactResolvedV2, journalv2.Digest{})
+}
+
+func newReviewMissionPolicyScenarioWithFactV2(t *testing.T, suffix string, terminalStatus mission.MissionFactStatusV2, terminalDetail journalv2.Digest) *reviewMissionPolicyScenarioV2 {
 	t.Helper()
 	missionID := "mission-review-policy-" + suffix
 	workID := "work-review-policy-" + suffix
@@ -493,7 +613,10 @@ func newReviewMissionPolicyScenarioV2(t *testing.T, suffix string) *reviewMissio
 	handoffState := handoffResult.State
 
 	request := reviewRequestFromHandoffV2(t, suffix, handoffState, handoffRequest)
-	fact, factRevision := publishReviewMissionDecisionV2(t, adapter, coordinator, config, request)
+	if terminalDetail.IsZero() {
+		terminalDetail = request.Exception.Digest()
+	}
+	fact, factRevision := publishReviewMissionDecisionV2(t, adapter, coordinator, config, request, terminalStatus, terminalDetail)
 	factCoordinate, _ := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+request.Exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID)})
 	factKey, _ := v2AggregateHeadKey(factCoordinate)
 	reviewCoordinate, _ := review.CoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, request.ReviewID)
@@ -502,12 +625,14 @@ func newReviewMissionPolicyScenarioV2(t *testing.T, suffix string) *reviewMissio
 	if err != nil {
 		t.Fatal(err)
 	}
-	debugPort, err := adapter.ReviewAuthorityPortV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = debugPort.ObserveReviewAuthority(t.Context(), request); err != nil {
-		t.Fatalf("production review authority observation: %T %+v", err, err)
+	if terminalStatus == mission.MissionFactResolvedV2 && terminalDetail == request.Exception.Digest() {
+		debugPort, portErr := adapter.ReviewAuthorityPortV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets)
+		if portErr != nil {
+			t.Fatal(portErr)
+		}
+		if _, portErr = debugPort.ObserveReviewAuthority(t.Context(), request); portErr != nil {
+			t.Fatalf("production review authority observation: %T %+v", portErr, portErr)
+		}
 	}
 	s := &reviewMissionPolicyScenarioV2{t: t, suffix: suffix, memory: memory, provider: provider, adapter: adapter, coordinator: coordinator, config: config, reviewService: service, request: request, fact: fact, factRevision: factRevision, factKey: factKey.String(), reviewHeadKey: reviewHeadKey.String()}
 	base := provider.batchFn
@@ -637,7 +762,7 @@ func seedReviewTypedHeadV2(t *testing.T, memory *v2AtomicMemory, summary []byte,
 	if err != nil {
 		t.Fatal(err)
 	}
-	head, err := journalv2.NewAggregateHeadV2(journalv2.AggregateHeadInput{Coordinate: coordinate, LogicalVersion: logicalVersion, LastEventID: journalv2.EventID("event-seed-" + string(coordinate.Kind)), LastPublicationID: publicationID, CommittedRuntimeEpochID: epoch, CanonicalStateDigest: digest, AuthoritySummary: summary})
+	head, err := journalv2.NewAggregateHeadV2(journalv2.AggregateHeadInput{Coordinate: coordinate, LogicalVersion: logicalVersion, LastEventID: journalv2.EventID("event-seed-" + string(coordinate.Kind)), LastPublicationID: publicationID, CommittedRuntimeEpochID: epoch, CanonicalStateDigest: digest, AuthoritySummary: summary, Tombstone: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +792,7 @@ func reviewRequestFromHandoffV2(t *testing.T, suffix string, state handoff.State
 	return review.AuthorityRequestV2{OperationID: journalv2.OperationID("operation-review-policy-" + suffix), ReviewID: ids.ReviewID("review-policy-" + suffix), HandoffID: state.HandoffID, ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID, RuntimeEpochID: state.RuntimeEpochID, Workspace: handoffRequest.Workspace, ReviewerActorID: reviewer, ReviewerProcessID: ids.ProcessID("process-review-policy-" + suffix), Candidate: state.Candidate, HandoffContributorDigest: state.ContributorDigest, WorkRevisionCriteriaDigest: state.WorkRevisionCriteriaDigest, Criteria: criteria, Verdict: review.Approved, PolicyRevision: state.Governance.PolicyRevision, Exception: &exception, Governance: state.Governance, ObservedAt: observed}
 }
 
-func publishReviewMissionDecisionV2(t *testing.T, adapter *Adapter, coordinator *journalv2.PublicationCoordinatorV2, config WorkspaceRestoreConfigurationV2, request review.AuthorityRequestV2) (mission.MissionFactStateV2, uint64) {
+func publishReviewMissionDecisionV2(t *testing.T, adapter *Adapter, coordinator *journalv2.PublicationCoordinatorV2, config WorkspaceRestoreConfigurationV2, request review.AuthorityRequestV2, terminalStatus mission.MissionFactStatusV2, terminalDetail journalv2.Digest) (mission.MissionFactStateV2, uint64) {
 	t.Helper()
 	port, err := NewMissionAuthorityPortV2(adapter, coordinator)
 	if err != nil {
@@ -713,15 +838,19 @@ func publishReviewMissionDecisionV2(t *testing.T, adapter *Adapter, coordinator 
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolvedFact := reviewMissionFactV2(t, &reviewMissionPolicyScenarioV2{request: request}, mission.MissionFactResolvedV2, request.Exception.Digest(), 2, string(baseInput.LastOperationID))
-	command = reviewMissionCommandV2(request, mission.MissionEventDecisionResolvedV2, opened, resolved, baseInput.LastOperationID, baseInput.ObservedAt)
-	command.RelatedFact = &mission.MissionFactTransitionV2{Prior: openFact, Successor: resolvedFact, ExpectedRecordRevision: observedOpen.RecordRevision}
+	terminalEvent := mission.MissionEventDecisionResolvedV2
+	if terminalStatus == mission.MissionFactCanceledV2 {
+		terminalEvent = mission.MissionEventDecisionCanceledV2
+	}
+	terminalFact := reviewMissionFactV2(t, &reviewMissionPolicyScenarioV2{request: request}, terminalStatus, terminalDetail, 2, string(baseInput.LastOperationID))
+	command = reviewMissionCommandV2(request, terminalEvent, opened, resolved, baseInput.LastOperationID, baseInput.ObservedAt)
+	command.RelatedFact = &mission.MissionFactTransitionV2{Prior: openFact, Successor: terminalFact, ExpectedRecordRevision: observedOpen.RecordRevision}
 	if _, err = service.Execute(t.Context(), command); err != nil {
 		t.Fatalf("resolve mission decision: %v", err)
 	}
 	observed, err := port.ObserveMissionFact(t.Context(), journalv2.ProjectID(request.ProjectID), journalv2.MissionID(request.MissionID), mission.MissionFactDecisionV2, request.Exception.ExceptionID)
-	if err != nil || !observed.Found || observed.State.Status() != mission.MissionFactResolvedV2 || observed.State.DetailDigest() != request.Exception.Digest() {
-		t.Fatalf("resolved mission decision=%+v err=%v", observed, err)
+	if err != nil || !observed.Found || observed.State.Status() != terminalStatus || observed.State.DetailDigest() != terminalDetail {
+		t.Fatalf("terminal mission decision=%+v err=%v", observed, err)
 	}
 	return observed.State, observed.RecordRevision
 }
