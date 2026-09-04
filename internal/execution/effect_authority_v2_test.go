@@ -1050,6 +1050,77 @@ func TestExternalEffectIntentBoundsProviderCoordinatesAndDiagnosticV2(t *testing
 	}
 }
 
+func TestNewEffectProviderObservationV2ConstructsOnlyClosedCanonicalEvidence(t *testing.T) {
+	request, _, _ := effectRequestFixtureV2(t)
+	target := request.Intent.Target
+	target.LastObservation = 99
+	for _, test := range []struct {
+		name              string
+		revision          tracker.Revision
+		value, marker     string
+		outcome           string
+		wantLast          tracker.Revision
+		wantDigestPresent bool
+	}{
+		{"confirmed", 7, "actor", "operation", "confirmed", 7, true},
+		{"stale", 8, "human", "human-marker", "stale", 8, true},
+		{"conflicting", 9, "other", "other-marker", "conflicting", 9, true},
+		{"absent", 10, "", "", "absent", 10, true},
+		{"unavailable", 0, "", "", "unavailable", 0, false},
+		{"malformed", 0, "", "", "malformed", 0, false},
+		{"unknown", 0, "", "", "unknown", 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			observation, err := NewEffectProviderObservationV2(target, test.revision, test.value, test.marker, test.outcome)
+			if err != nil || observation.Target.LastObservation != test.wantLast || (observation.CanonicalDigest != "") != test.wantDigestPresent || observation.validateFor(target) != nil {
+				t.Fatalf("observation=%+v err=%v", observation, err)
+			}
+			if test.wantDigestPresent {
+				tampered := observation
+				tampered.Value += "-tampered"
+				if tampered.validateFor(target) == nil {
+					t.Fatal("tampered observation retained canonical authority")
+				}
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name          string
+		mutateTarget  func(*tracker.ExternalWorkRef)
+		revision      tracker.Revision
+		value, marker string
+		outcome       string
+	}{
+		{"zero_known_revision", nil, 0, "actor", "operation", "confirmed"},
+		{"absent_value", nil, 1, "actor", "", "absent"},
+		{"absent_marker", nil, 1, "", "operation", "absent"},
+		{"uncertain_revision", nil, 1, "", "", "unknown"},
+		{"uncertain_value", nil, 0, "actor", "", "unavailable"},
+		{"open_outcome", nil, 1, "actor", "operation", "maybe"},
+		{"oversized_value", nil, 1, strings.Repeat("v", journalv2.MaxIdentityBytes+1), "", "confirmed"},
+		{"oversized_marker", nil, 1, "", strings.Repeat("m", journalv2.MaxIdentityBytes+1), "confirmed"},
+		{"invalid_utf8_value", nil, 1, string([]byte{0xff}), "", "confirmed"},
+		{"invalid_utf8_marker", nil, 1, "", string([]byte{0xff}), "confirmed"},
+		{"oversized_provider", func(target *tracker.ExternalWorkRef) {
+			target.Provider = strings.Repeat("p", journalv2.MaxIdentityBytes+1)
+		}, 1, "actor", "operation", "confirmed"},
+		{"oversized_external_id", func(target *tracker.ExternalWorkRef) {
+			target.ExternalID = strings.Repeat("e", journalv2.MaxIdentityBytes+1)
+		}, 1, "actor", "operation", "confirmed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := target
+			if test.mutateTarget != nil {
+				test.mutateTarget(&candidate)
+			}
+			if _, err := NewEffectProviderObservationV2(candidate, test.revision, test.value, test.marker, test.outcome); !IsKind(err, KindInvalidCommand) || len(err.Error()) >= 4096 {
+				t.Fatalf("invalid observation accepted or diagnostic unbounded: %v", err)
+			}
+		})
+	}
+}
+
 func TestAssignmentEffectDispatcherUsesRealFakeTrackerAtomicContractV2(t *testing.T) {
 	request, _, _ := effectRequestFixtureV2(t)
 	store, err := trackerfake.Open(filepath.Join(t.TempDir(), "tracker.json"))
@@ -1074,6 +1145,42 @@ func TestAssignmentEffectDispatcherUsesRealFakeTrackerAtomicContractV2(t *testin
 	compensated, err := dispatcher.CompensateEffect(t.Context(), effectConditionalMutationFixtureV2(t, request, EffectAllowCompensationV2, applied.Observation.ProviderRevision, applied.Observation.Value, applied.Observation.OperationMarker, tracker.AssignmentAtomicClaim))
 	if err != nil || compensated.Kind != EffectMutationDefinitiveV2 || compensated.Observation.Outcome != "absent" || compensated.Observation.OperationMarker != "" {
 		t.Fatalf("compensated=%+v err=%v", compensated, err)
+	}
+}
+
+func TestExternalObservationConstructorFlowsThroughExecuteDispatchAndRealFakeTrackerV2(t *testing.T) {
+	request, port, service := effectRequestFixtureV2(t)
+	port.afterPublish = func(sealed journalv2.SealedCommitPlanV2) {
+		applySealedEffectPlanToProbeV2(t, port, sealed)
+	}
+	intent, err := service.Execute(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExecutionSlot = intent.ExecutionSlot
+	request.Action = EffectStartAttemptV2
+	request.OperationEventID = "event-constructor-dispatch-operation"
+	request.EffectEventID = "event-constructor-dispatch-effect"
+
+	store, err := trackerfake.Open(filepath.Join(t.TempDir(), "tracker.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Seed(t.Context(), trackerfake.WorkSeed{Key: request.Intent.Target.ExternalID, Title: "constructor target"}); err != nil {
+		t.Fatal(err)
+	}
+	dispatcher, err := NewAssignmentEffectDispatcherV2(trackerfake.NewProvider(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := service.ExecuteDispatchV2(t.Context(), EffectDispatchCommandV2{
+		Authorization:               request,
+		ObservationOperationEventID: "event-constructor-observed-operation",
+		ObservationEffectEventID:    "event-constructor-observed-effect",
+		ObservationAt:               request.ObservedAt.Add(time.Second),
+	}, dispatcher)
+	if err != nil || recorded.State.AppliedObservation == nil || recorded.State.AppliedObservation.CanonicalDigest == "" || recorded.State.AppliedObservation.Target.LastObservation != recorded.State.AppliedObservation.ProviderRevision || recorded.State.AppliedObservation.OperationMarker != string(request.Intent.OperationID) {
+		t.Fatalf("recorded=%+v err=%v", recorded, err)
 	}
 }
 
@@ -1141,6 +1248,11 @@ func advanceEffectProbeV2(port *effectPortProbeV2, sealed journalv2.SealedCommit
 }
 
 func effectObservationFixtureV2(target tracker.ExternalWorkRef, revision tracker.Revision, value, marker, outcome string) *EffectProviderObservationV2 {
+	if observation, err := NewEffectProviderObservationV2(target, revision, value, marker, outcome); err == nil {
+		return &observation
+	}
+	// A few adversarial tests deliberately need a structurally invalid value
+	// that the public constructor correctly refuses to create.
 	target.LastObservation = revision
 	observation := &EffectProviderObservationV2{Target: target, ProviderRevision: revision, Value: value, OperationMarker: marker, Outcome: outcome}
 	observation.CanonicalDigest = effectObservationDigestV2(*observation)

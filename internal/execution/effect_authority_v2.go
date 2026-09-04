@@ -86,6 +86,41 @@ type EffectProviderObservationV2 struct {
 	Outcome          string                  `json:"outcome"`
 }
 
+// NewEffectProviderObservationV2 constructs provider evidence without exposing
+// the journal's canonical digest algorithm. Known observations bind the target
+// to the supplied provider revision; uncertainty carries no invented facts.
+func NewEffectProviderObservationV2(target tracker.ExternalWorkRef, revision tracker.Revision, value, operationMarker, outcome string) (EffectProviderObservationV2, error) {
+	if target.Validate() != nil || len(target.Provider) > journalv2.MaxIdentityBytes || len(target.ExternalID) > journalv2.MaxIdentityBytes || !utf8.ValidString(target.Provider) || !utf8.ValidString(target.ExternalID) || len(value) > journalv2.MaxIdentityBytes || len(operationMarker) > journalv2.MaxIdentityBytes || !utf8.ValidString(value) || !utf8.ValidString(operationMarker) {
+		return EffectProviderObservationV2{}, executionV2Error(KindInvalidCommand, "provider_observation", nil)
+	}
+	observation := EffectProviderObservationV2{Target: target, ProviderRevision: revision, Value: value, OperationMarker: operationMarker, Outcome: outcome}
+	switch outcome {
+	case "confirmed", "stale", "conflicting":
+		if revision == 0 {
+			return EffectProviderObservationV2{}, executionV2Error(KindInvalidCommand, "provider_observation", nil)
+		}
+		observation.Target.LastObservation = revision
+		observation.CanonicalDigest = effectObservationDigestV2(observation)
+	case "absent":
+		if revision == 0 || value != "" || operationMarker != "" {
+			return EffectProviderObservationV2{}, executionV2Error(KindInvalidCommand, "provider_observation", nil)
+		}
+		observation.Target.LastObservation = revision
+		observation.CanonicalDigest = effectObservationDigestV2(observation)
+	case "unavailable", "malformed", "unknown":
+		if revision != 0 || value != "" || operationMarker != "" {
+			return EffectProviderObservationV2{}, executionV2Error(KindInvalidCommand, "provider_observation", nil)
+		}
+		observation.Target.LastObservation = 0
+	default:
+		return EffectProviderObservationV2{}, executionV2Error(KindInvalidCommand, "provider_observation", nil)
+	}
+	if err := observation.validateFor(target); err != nil {
+		return EffectProviderObservationV2{}, err
+	}
+	return observation, nil
+}
+
 type ExternalEffectStateV2 struct {
 	SchemaVersion        uint16                          `json:"schema_version"`
 	LogicalVersion       uint64                          `json:"logical_version"`
@@ -611,14 +646,11 @@ func effectObservationFromAssignmentV2(target tracker.ExternalWorkRef, observed 
 	if !sameEffectMappingV2(target, observed.ExternalRef) || observed.ExternalRef.LastObservation != revision || observed.Observation.ExternalID != target.ExternalID || revision == 0 || len(observed.Observation.CanonicalFields()) == 0 || observed.Assignee != observed.Observation.Assignee || observed.OperationMarker != observed.Observation.OperationMarker {
 		return EffectProviderObservationV2{}, executionV2Error(KindInvalidCommand, "assignment_observation", nil)
 	}
-	observed.ExternalRef.LastObservation = revision
 	outcome := "confirmed"
 	if observed.Assignee == "" && observed.OperationMarker == "" {
 		outcome = "absent"
 	}
-	result := EffectProviderObservationV2{Target: observed.ExternalRef, ProviderRevision: revision, Value: observed.Assignee, OperationMarker: observed.OperationMarker, Outcome: outcome}
-	result.CanonicalDigest = effectObservationDigestV2(result)
-	return result, nil
+	return NewEffectProviderObservationV2(observed.ExternalRef, revision, observed.Assignee, observed.OperationMarker, outcome)
 }
 
 // dispatchAuthorizedEffectV2 is deliberately package-private. The trusted
@@ -937,10 +969,10 @@ func decideEffectTransitionV2(request EffectAuthorityRequestV2, prior *ExternalE
 				return ExternalEffectStateV2{}, "", nil, executionV2Error(KindDecisionRequired, "effect_stage", nil)
 			}
 			next.Stage, status = EffectAttemptStartedV2, journalv2.StatusInProgress
-			target := request.Intent.Target
-			target.LastObservation = request.Intent.ExpectedProviderRevision
-			expected := EffectProviderObservationV2{Target: target, ProviderRevision: request.Intent.ExpectedProviderRevision, Value: request.Intent.ExpectedValue, OperationMarker: request.Intent.ExpectedOperationMarker, Outcome: effectOutcomeForValueMarkerV2(request.Intent.ExpectedValue, request.Intent.ExpectedOperationMarker)}
-			expected.CanonicalDigest = effectObservationDigestV2(expected)
+			expected, observationErr := NewEffectProviderObservationV2(request.Intent.Target, request.Intent.ExpectedProviderRevision, request.Intent.ExpectedValue, request.Intent.ExpectedOperationMarker, effectOutcomeForValueMarkerV2(request.Intent.ExpectedValue, request.Intent.ExpectedOperationMarker))
+			if observationErr != nil {
+				return ExternalEffectStateV2{}, "", nil, observationErr
+			}
 			permission = &effectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: request.Action, marker: string(request.Intent.OperationID), expected: expected, guarantee: request.Intent.RequiredGuarantee, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
 		case EffectRecordObservationV2:
 			if (prior.Stage != EffectAttemptStartedV2 && prior.Stage != EffectRetryAllowedV2 && prior.Stage != EffectCompensationAllowedV2 && prior.Stage != EffectReconciliationRequiredV2) || request.Observation == nil || request.Observation.validateFor(request.Intent.Target) != nil {
@@ -1353,11 +1385,12 @@ func recoveredEffectPermissionV2(action EffectActionV2, state ExternalEffectStat
 	permission := &effectDispatchPermissionV2{effectID: state.Intent.EffectID, operationID: state.Intent.OperationID, action: action, marker: state.PermissionMarker, publicationID: publicationID, providerRevision: recordRevision, recovered: true, guarantee: state.Intent.RequiredGuarantee, intendedValue: state.Intent.IntendedValue, restoreValue: state.Intent.ExpectedValue}
 	switch action {
 	case EffectStartAttemptV2:
-		target := state.Intent.Target
-		target.LastObservation = state.Intent.ExpectedProviderRevision
 		permission.marker = string(state.Intent.OperationID)
-		permission.expected = EffectProviderObservationV2{Target: target, ProviderRevision: state.Intent.ExpectedProviderRevision, Value: state.Intent.ExpectedValue, OperationMarker: state.Intent.ExpectedOperationMarker, Outcome: effectOutcomeForValueMarkerV2(state.Intent.ExpectedValue, state.Intent.ExpectedOperationMarker)}
-		permission.expected.CanonicalDigest = effectObservationDigestV2(permission.expected)
+		expected, err := NewEffectProviderObservationV2(state.Intent.Target, state.Intent.ExpectedProviderRevision, state.Intent.ExpectedValue, state.Intent.ExpectedOperationMarker, effectOutcomeForValueMarkerV2(state.Intent.ExpectedValue, state.Intent.ExpectedOperationMarker))
+		if err != nil {
+			return nil
+		}
+		permission.expected = expected
 	case EffectAllowRetryV2, EffectAllowCompensationV2:
 		if state.Observation == nil {
 			return nil
