@@ -45,10 +45,36 @@ type DecompositionProviderObservationV2 struct {
 	OperationMarker  string             `json:"operation_marker"`
 }
 
+// DecompositionProviderMutationOutcomeV2 classifies the authority consequence
+// of a provider mutation without exposing provider-specific errors to the
+// mission service. A provider must explicitly distinguish a lost/indeterminate
+// response from a definitive refusal or version conflict.
+type DecompositionProviderMutationOutcomeV2 string
+
+const (
+	DecompositionProviderMutationAppliedV2       DecompositionProviderMutationOutcomeV2 = "applied"
+	DecompositionProviderMutationIndeterminateV2 DecompositionProviderMutationOutcomeV2 = "indeterminate"
+	DecompositionProviderMutationConflictV2      DecompositionProviderMutationOutcomeV2 = "conflict"
+	DecompositionProviderMutationRefusedV2       DecompositionProviderMutationOutcomeV2 = "refused"
+)
+
+func (o DecompositionProviderMutationOutcomeV2) permitsExactReobservation(err error) bool {
+	switch o {
+	case DecompositionProviderMutationAppliedV2:
+		return err == nil
+	case DecompositionProviderMutationIndeterminateV2:
+		return true
+	case DecompositionProviderMutationConflictV2, DecompositionProviderMutationRefusedV2:
+		return false
+	default:
+		return false
+	}
+}
+
 type DecompositionProviderV2 interface {
 	RequireCapabilities(context.Context, []DecompositionEffectKindV2) error
 	ObserveEffect(context.Context, journalv2.EffectID) (DecompositionProviderObservationV2, bool, error)
-	MutateEffect(context.Context, DecompositionProviderMutationV2) error
+	MutateEffect(context.Context, DecompositionProviderMutationV2) (DecompositionProviderMutationOutcomeV2, error)
 	CompensateEffect(context.Context, DecompositionProviderMutationV2, DecompositionProviderObservationV2) error
 }
 
@@ -181,9 +207,9 @@ func (s *DecompositionAuthorityServiceV2) Execute(ctx context.Context, request D
 			return s.requireDecompositionReconciliationV2(ctx, command, operation, operationRevision, missionObservation, request, observations, missionAuthorityErrorV2(MissionAuthorityAmbiguousV2, "preexisting_provider_state", nil))
 		}
 		if !found {
-			mutateErr := s.provider.MutateEffect(ctx, effect.mutation)
+			mutationOutcome, mutateErr := s.provider.MutateEffect(ctx, effect.mutation)
 			observation, found, observeErr = s.provider.ObserveEffect(ctx, effect.effectID)
-			if observeErr != nil || !found || !effect.matches(observation) {
+			if !mutationOutcome.permitsExactReobservation(mutateErr) || observeErr != nil || !found || !effect.matches(observation) {
 				cause := observeErr
 				if cause == nil {
 					cause = mutateErr

@@ -21,15 +21,15 @@ func (p *decompositionPortProbeV2) PublishMission(ctx context.Context, plan jour
 }
 
 type decompositionProviderProbeV2 struct {
-	trace             *[]string
-	observations      map[journalv2.EffectID]DecompositionProviderObservationV2
-	mutation          DecompositionProviderMutationV2
-	dishonest         bool
-	observeErr        error
-	mutateErr         error
-	mutateResponseErr error
-	mutateObserved    func(DecompositionProviderObservationV2) DecompositionProviderObservationV2
-	compensations     int
+	trace           *[]string
+	observations    map[journalv2.EffectID]DecompositionProviderObservationV2
+	mutation        DecompositionProviderMutationV2
+	dishonest       bool
+	observeErr      error
+	mutationOutcome DecompositionProviderMutationOutcomeV2
+	mutationErr     error
+	mutateObserved  func(DecompositionProviderObservationV2) DecompositionProviderObservationV2
+	compensations   int
 }
 
 func (p *decompositionProviderProbeV2) CompensateEffect(context.Context, DecompositionProviderMutationV2, DecompositionProviderObservationV2) error {
@@ -50,12 +50,9 @@ func (p *decompositionProviderProbeV2) ObserveEffect(_ context.Context, effectID
 	value, found := p.observations[effectID]
 	return value, found, nil
 }
-func (p *decompositionProviderProbeV2) MutateEffect(_ context.Context, mutation DecompositionProviderMutationV2) error {
+func (p *decompositionProviderProbeV2) MutateEffect(_ context.Context, mutation DecompositionProviderMutationV2) (DecompositionProviderMutationOutcomeV2, error) {
 	*p.trace = append(*p.trace, "mutate")
 	p.mutation = mutation
-	if p.mutateErr != nil {
-		return p.mutateErr
-	}
 	digest, _ := journalv2.ReducerStateDigestV2(mutation.CanonicalDefinition)
 	marker := mutation.ChildOperationID
 	if p.dishonest {
@@ -69,7 +66,11 @@ func (p *decompositionProviderProbeV2) MutateEffect(_ context.Context, mutation 
 		observation = p.mutateObserved(observation)
 	}
 	p.observations[mutation.EffectID] = observation
-	return p.mutateResponseErr
+	outcome := p.mutationOutcome
+	if outcome == "" {
+		outcome = DecompositionProviderMutationAppliedV2
+	}
+	return outcome, p.mutationErr
 }
 
 func TestDecompositionIntentPrecedesProviderAndCompletionV2(t *testing.T) {
@@ -287,7 +288,8 @@ func TestDecompositionLostProviderResponseReobservesWithoutDuplicateMutationV2(t
 	}, trace: &trace}
 	provider := &decompositionProviderProbeV2{
 		trace: &trace, observations: make(map[journalv2.EffectID]DecompositionProviderObservationV2),
-		mutateResponseErr: errors.New("provider response lost"),
+		mutationOutcome: DecompositionProviderMutationIndeterminateV2,
+		mutationErr:     errors.New("provider response lost"),
 	}
 	service, _ := NewDecompositionAuthorityServiceV2(port, &epochProbeV2{epoch: request.Requested.OriginatingRuntimeEpochID}, provider, journalv2.DefaultEventRegistryV2())
 	result, err := service.Execute(t.Context(), request)
@@ -306,6 +308,69 @@ func TestDecompositionLostProviderResponseReobservesWithoutDuplicateMutationV2(t
 	}
 	if mutations != 1 || observations != 2 {
 		t.Fatalf("response loss duplicated or skipped re-observation: trace=%v", trace)
+	}
+}
+
+func TestDecompositionDefinitiveMutationConflictCannotBecomeSuccessAfterExactReobservationV2(t *testing.T) {
+	t.Parallel()
+	request := fixtureDecompositionRequestV2(t)
+	trace := []string{}
+	port := &decompositionPortProbeV2{authorityPortProbeV2: authorityPortProbeV2{
+		resolution: OperationResolutionV2{Kind: OperationAbsentV2},
+		mission:    MissionObservationV2{State: request.Requested.Expected, RecordRevision: 8, LastEventID: "prior-event"},
+	}, trace: &trace}
+	provider := &decompositionProviderProbeV2{
+		trace: &trace, observations: make(map[journalv2.EffectID]DecompositionProviderObservationV2),
+		mutationOutcome: DecompositionProviderMutationConflictV2,
+		mutationErr:     errors.New("definitive provider version conflict"),
+	}
+	service, _ := NewDecompositionAuthorityServiceV2(port, &epochProbeV2{epoch: request.Requested.OriginatingRuntimeEpochID}, provider, journalv2.DefaultEventRegistryV2())
+	result, err := service.Execute(t.Context(), request)
+	if !IsMissionAuthorityKindV2(err, MissionAuthorityAmbiguousV2) || result.State.Decomposition() != DecompositionReconciliationRequiredV2 {
+		t.Fatalf("definitive conflict became success after exact re-observation: state=%s err=%v", result.State.Decomposition(), err)
+	}
+	wantTrace := []string{"capability", "publish:in_progress", "observe", "mutate", "observe", "publish:ambiguous"}
+	if !reflect.DeepEqual(trace, wantTrace) {
+		t.Fatalf("definitive conflict probe trace=%v want=%v", trace, wantTrace)
+	}
+	if len(port.publishes) != 2 || port.publishes[1].OperationState().Status() != journalv2.StatusAmbiguous {
+		t.Fatalf("definitive conflict did not seal reconciliation: publications=%d", len(port.publishes))
+	}
+}
+
+func TestDecompositionOnlyExplicitIndeterminateOutcomeRecoversMutationErrorV2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		outcome DecompositionProviderMutationOutcomeV2
+		err     error
+	}{
+		{name: "applied_with_error", outcome: DecompositionProviderMutationAppliedV2, err: errors.New("unclassified provider error")},
+		{name: "definitive_refusal", outcome: DecompositionProviderMutationRefusedV2},
+		{name: "unknown_outcome", outcome: DecompositionProviderMutationOutcomeV2("future-provider-value")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := fixtureDecompositionRequestV2(t)
+			trace := []string{}
+			port := &decompositionPortProbeV2{authorityPortProbeV2: authorityPortProbeV2{
+				resolution: OperationResolutionV2{Kind: OperationAbsentV2},
+				mission:    MissionObservationV2{State: request.Requested.Expected, RecordRevision: 8, LastEventID: "prior-event"},
+			}, trace: &trace}
+			provider := &decompositionProviderProbeV2{
+				trace: &trace, observations: make(map[journalv2.EffectID]DecompositionProviderObservationV2),
+				mutationOutcome: test.outcome,
+				mutationErr:     test.err,
+			}
+			service, _ := NewDecompositionAuthorityServiceV2(port, &epochProbeV2{epoch: request.Requested.OriginatingRuntimeEpochID}, provider, journalv2.DefaultEventRegistryV2())
+			result, err := service.Execute(t.Context(), request)
+			if !IsMissionAuthorityKindV2(err, MissionAuthorityAmbiguousV2) || result.State.Decomposition() != DecompositionReconciliationRequiredV2 {
+				t.Fatalf("outcome %q recovered exact observation without explicit indeterminate classification: state=%s err=%v", test.outcome, result.State.Decomposition(), err)
+			}
+			if len(port.publishes) != 2 || port.publishes[1].OperationState().Status() != journalv2.StatusAmbiguous {
+				t.Fatalf("outcome %q did not seal reconciliation: publications=%d", test.outcome, len(port.publishes))
+			}
+		})
 	}
 }
 
