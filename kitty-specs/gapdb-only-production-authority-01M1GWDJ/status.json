@@ -272,7 +272,8 @@
       "last_transition_at": "2026-09-04T08:03:13.930457+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Review-cycle-1 blockers repaired at 1db5dd3169b22e5190a3562a0ba15b0ff75e9a75; fresh provider state fenced and 15 controlled mutants executable."
+        "Review-cycle-1 blockers repaired at 1db5dd3169b22e5190a3562a0ba15b0ff75e9a75; fresh provider state fenced and 15 controlled mutants executable.",
+        "Review-cycle-2 blocker repaired at 5ff93bc9 with typed provider-neutral mutation outcomes; definitive refusals reconcile and only explicit indeterminacy may use exact re-observation."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
