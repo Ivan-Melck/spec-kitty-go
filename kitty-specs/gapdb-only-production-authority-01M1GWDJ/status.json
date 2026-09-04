@@ -1,7 +1,7 @@
 {
-  "event_count": 352,
-  "last_event_id": "01M1Q90Q5AEJAEJY9GAKXF3AZG",
-  "materialized_at": "2026-09-04T22:35:49.802252+00:00",
+  "event_count": 354,
+  "last_event_id": "01M1Q91XCMNHVMA4ER7PQFCF21",
+  "materialized_at": "2026-09-04T22:36:28.940253+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,9 +12,9 @@
     "claimed": 0,
     "done": 9,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
-    "planned": 8
+    "planned": 7
   },
   "work_packages": {
     "WP01": {
@@ -410,14 +410,14 @@
       }
     },
     "WP09": {
-      "actor": "user",
+      "actor": "codex",
       "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 4,
-      "lane": "planned",
-      "last_event_id": "01M1Q90Q5AEJAEJY9GAKXF3AZG",
-      "last_transition_at": "2026-09-04T22:35:49.802252+00:00",
+      "lane": "in_progress",
+      "last_event_id": "01M1Q91XCMNHVMA4ER7PQFCF21",
+      "last_transition_at": "2026-09-04T22:36:28.940253+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Resolved failed workspace allocation: all dependency lineages are integrated and the lane-i worktree was fast-forwarded to coordinator 20757d1f.",
@@ -434,7 +434,7 @@
         "reviewer": "mill",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
