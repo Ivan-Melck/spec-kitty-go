@@ -193,7 +193,7 @@ func TestM2DependencyRestoreTimeUseIsDeadlineBudgetOnly(t *testing.T) {
 import ("context"; "time")
 type BudgetsV2 struct { MaximumDuration time.Duration }
 func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
-var defaultBudget = BudgetsV2{MaximumDuration: 30 * time.Second}
+func defaultBudget() BudgetsV2 { return BudgetsV2{MaximumDuration: 30 * time.Second} }
 `,
 		},
 		{
@@ -216,6 +216,46 @@ func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.With
 			wantTarget: "time.Duration.state",
 		},
 		{
+			name: "package_scope_inferred_duration",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+var leakedDuration = time.Second
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "package_scope_inferred_duration_constant",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+const leakedDuration = time.Second
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "package_scope_erased_duration_initializer",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+var leakedDuration any = time.Second
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
+			name: "transitive_result_budget",
+			source: `package restore
+import ("context"; "time")
+type BudgetsV2 struct { MaximumDuration time.Duration }
+type ResultV2 struct { Budget BudgetsV2 }
+func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+`,
+			wantTarget: "time.Duration.state",
+		},
+		{
 			name: "missing_direct_deadline_call",
 			source: `package restore
 import ("context"; "time")
@@ -229,8 +269,8 @@ func run(ctx context.Context, budgets BudgetsV2) { _, _ = ctx, budgets }
 			source: `package restore
 import ("context"; "time")
 type BudgetsV2 struct { MaximumDuration time.Duration }
-var escaped = context.WithTimeout
-func run(ctx context.Context, budgets BudgetsV2) { child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
+func consume(value any) { _ = value }
+func run(ctx context.Context, budgets BudgetsV2) { consume(context.WithTimeout); child, cancel := context.WithTimeout(ctx, budgets.MaximumDuration); defer cancel(); _ = child }
 `,
 			wantTarget: "context.WithTimeout.escape",
 		},
@@ -777,7 +817,7 @@ func m2RestoreDeadlineSourceViolations(graph Graph) Violations {
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
 	}
 	config := types.Config{Importer: m2RestoreTypeImporter{fallback: importer.Default()}, Error: func(error) {}}
-	_, _ = config.Check(restorePackage, fset, files, info)
+	checked, _ := config.Check(restorePackage, fset, files, info)
 
 	budgetDuration := m2RestoreBudgetDurationSelector(files, info)
 	durationUses := 0
@@ -809,6 +849,9 @@ func m2RestoreDeadlineSourceViolations(graph Graph) Violations {
 		}
 	}
 	if durationUses != 1 || budgetDuration == nil {
+		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "time.Duration.state"}}
+	}
+	if checked == nil || m2RestorePackageInitializerUsesTimeUnit(files, info) || !m2RestoreDurationStateConfined(checked) {
 		return Violations{{Rule: RuleDeferredSurface, SourcePackage: restorePackage, SourceTier: TierFoundation, TargetPackage: "time.Duration.state"}}
 	}
 	directUses := make(map[*ast.Ident]bool)
@@ -892,6 +935,151 @@ func m2RestoreBudgetDurationSelector(files []*ast.File, info *types.Info) *ast.S
 		}
 	}
 	return admitted
+}
+
+func m2RestoreDurationStateConfined(pkg *types.Package) bool {
+	scope := pkg.Scope()
+	budget, budgetOK := scope.Lookup("BudgetsV2").(*types.TypeName)
+	input, _ := scope.Lookup("InputV2").(*types.TypeName)
+	if !budgetOK {
+		return false
+	}
+	for _, name := range scope.Names() {
+		object := scope.Lookup(name)
+		switch state := object.(type) {
+		case *types.Var:
+			if m2RestoreTypeReachesDuration(state.Type(), make(map[types.Type]bool)) {
+				return false
+			}
+		case *types.Const:
+			if m2RestoreTypeReachesDuration(state.Type(), make(map[types.Type]bool)) {
+				return false
+			}
+		}
+		typeName, ok := object.(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, ok := types.Unalias(typeName.Type()).(*types.Named)
+		if !ok {
+			continue
+		}
+		structure, ok := named.Underlying().(*types.Struct)
+		if !ok {
+			continue
+		}
+		for index := 0; index < structure.NumFields(); index++ {
+			field := structure.Field(index)
+			if !m2RestoreTypeReachesDuration(field.Type(), make(map[types.Type]bool)) {
+				continue
+			}
+			budgetDuration := typeName == budget && field.Name() == "MaximumDuration" && m2RestoreIsExactDuration(field.Type())
+			inputBudget := input != nil && typeName == input && field.Name() == "Budgets" &&
+				types.Identical(types.Unalias(field.Type()), types.Unalias(budget.Type()))
+			if !budgetDuration && !inputBudget {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func m2RestorePackageInitializerUsesTimeUnit(files []*ast.File, info *types.Info) bool {
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			generic, ok := declaration.(*ast.GenDecl)
+			if !ok || generic.Tok != token.VAR && generic.Tok != token.CONST {
+				continue
+			}
+			for _, specification := range generic.Specs {
+				values, ok := specification.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, value := range values.Values {
+					found := false
+					ast.Inspect(value, func(node ast.Node) bool {
+						identifier, ok := node.(*ast.Ident)
+						object := info.Uses[identifier]
+						if ok && m2RestoreObjectFromPackage(object, "time") && (object.Name() == "Second" || object.Name() == "Minute") {
+							found = true
+							return false
+						}
+						return !found
+					})
+					if found {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func m2RestoreTypeReachesDuration(valueType types.Type, visited map[types.Type]bool) bool {
+	valueType = types.Unalias(valueType)
+	if valueType == nil || visited[valueType] {
+		return false
+	}
+	if m2RestoreIsExactDuration(valueType) {
+		return true
+	}
+	visited[valueType] = true
+	switch typed := valueType.(type) {
+	case *types.Named:
+		return m2RestoreTypeReachesDuration(typed.Underlying(), visited)
+	case *types.Pointer:
+		return m2RestoreTypeReachesDuration(typed.Elem(), visited)
+	case *types.Array:
+		return m2RestoreTypeReachesDuration(typed.Elem(), visited)
+	case *types.Slice:
+		return m2RestoreTypeReachesDuration(typed.Elem(), visited)
+	case *types.Map:
+		return m2RestoreTypeReachesDuration(typed.Key(), visited) || m2RestoreTypeReachesDuration(typed.Elem(), visited)
+	case *types.Chan:
+		return m2RestoreTypeReachesDuration(typed.Elem(), visited)
+	case *types.Struct:
+		for index := 0; index < typed.NumFields(); index++ {
+			if m2RestoreTypeReachesDuration(typed.Field(index).Type(), visited) {
+				return true
+			}
+		}
+	case *types.Signature:
+		return m2RestoreTupleReachesDuration(typed.Params(), visited) || m2RestoreTupleReachesDuration(typed.Results(), visited)
+	case *types.Interface:
+		for index := 0; index < typed.NumMethods(); index++ {
+			if m2RestoreTypeReachesDuration(typed.Method(index).Type(), visited) {
+				return true
+			}
+		}
+	case *types.TypeParam:
+		return m2RestoreTypeReachesDuration(typed.Constraint(), visited)
+	case *types.Union:
+		for index := 0; index < typed.Len(); index++ {
+			if m2RestoreTypeReachesDuration(typed.Term(index).Type(), visited) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func m2RestoreTupleReachesDuration(tuple *types.Tuple, visited map[types.Type]bool) bool {
+	if tuple == nil {
+		return false
+	}
+	for index := 0; index < tuple.Len(); index++ {
+		if m2RestoreTypeReachesDuration(tuple.At(index).Type(), visited) {
+			return true
+		}
+	}
+	return false
+}
+
+func m2RestoreIsExactDuration(valueType types.Type) bool {
+	named, ok := types.Unalias(valueType).(*types.Named)
+	return ok && named.Obj().Name() == "Duration" && m2RestoreObjectFromPackage(named.Obj(), "time")
 }
 
 func m2RestoreCalledFunctionIdentifier(call *ast.CallExpr) *ast.Ident {
