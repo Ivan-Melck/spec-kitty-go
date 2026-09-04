@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
+	trackerfake "github.com/spec-kitty/go-kitty3/internal/tracker/fake"
 )
 
 type gapdbEffectPlanProbeV2 struct {
@@ -62,6 +64,53 @@ type gapdbAssignmentProjectionProbeV2 struct {
 	applyCalls      int
 	compensateCalls int
 }
+
+// gapdbExternalEffectDispatcherV2 models a provider implemented outside the
+// execution capability package. It uses only the exported dispatcher contract
+// and observation constructor while the service authority remains real GapDB.
+type gapdbExternalEffectDispatcherV2 struct {
+	projection tracker.AssignmentProjection
+}
+
+func (d gapdbExternalEffectDispatcherV2) ObserveEffect(ctx context.Context, target tracker.ExternalWorkRef) (execution.EffectProviderObservationV2, error) {
+	observed, err := d.projection.ObserveAssignment(ctx, target)
+	if err != nil {
+		return execution.EffectProviderObservationV2{}, err
+	}
+	return gapdbExternalEffectObservationV2(target, observed)
+}
+
+func (d gapdbExternalEffectDispatcherV2) ApplyEffect(ctx context.Context, mutation execution.EffectConditionalMutationV2) (execution.EffectMutationResultV2, error) {
+	result, err := d.projection.ProjectAssignment(ctx, tracker.ProjectAssignmentRequest{ExternalRef: mutation.Target(), OperationID: ids.OperationID(mutation.OperationMarker()), Assignee: mutation.IntendedValue(), ExpectedObservation: mutation.ExpectedRevision(), RequiredGuarantee: mutation.RequiredGuarantee()})
+	observation, observationErr := gapdbExternalEffectObservationV2(mutation.Target(), result.Observation)
+	if observationErr != nil {
+		return execution.EffectMutationResultV2{Kind: execution.EffectMutationIndeterminateV2}, errors.Join(err, observationErr)
+	}
+	return execution.EffectMutationResultV2{Kind: execution.EffectMutationDefinitiveV2, Observation: observation}, err
+}
+
+func (d gapdbExternalEffectDispatcherV2) CompensateEffect(ctx context.Context, mutation execution.EffectConditionalMutationV2) (execution.EffectMutationResultV2, error) {
+	result, err := d.projection.CompensateAssignment(ctx, tracker.CompensateAssignmentRequest{ExternalRef: mutation.Target(), OperationID: ids.OperationID(mutation.OperationMarker()), ExpectedObservation: mutation.ExpectedRevision(), ExpectedAssignee: mutation.ExpectedValue(), ExpectedMarker: mutation.ExpectedMarker(), RestoreAssignee: mutation.RestoreValue()})
+	observation, observationErr := gapdbExternalEffectObservationV2(mutation.Target(), result.Observation)
+	if observationErr != nil {
+		return execution.EffectMutationResultV2{Kind: execution.EffectMutationIndeterminateV2}, errors.Join(err, observationErr)
+	}
+	return execution.EffectMutationResultV2{Kind: execution.EffectMutationDefinitiveV2, Observation: observation}, err
+}
+
+func gapdbExternalEffectObservationV2(target tracker.ExternalWorkRef, observed tracker.AssignmentObservation) (execution.EffectProviderObservationV2, error) {
+	revision := observed.Observation.Revision
+	if observed.ExternalRef.ProjectID != target.ProjectID || observed.ExternalRef.WorkID != target.WorkID || observed.ExternalRef.Provider != target.Provider || observed.ExternalRef.ExternalID != target.ExternalID || observed.ExternalRef.MetadataSchema != target.MetadataSchema || observed.ExternalRef.CreatedByOperation != target.CreatedByOperation || revision == 0 || observed.ExternalRef.LastObservation != revision || observed.Observation.ExternalID != target.ExternalID || observed.Assignee != observed.Observation.Assignee || observed.OperationMarker != observed.Observation.OperationMarker {
+		return execution.EffectProviderObservationV2{}, errors.New("incoherent external provider observation")
+	}
+	outcome := "confirmed"
+	if observed.Assignee == "" && observed.OperationMarker == "" {
+		outcome = "absent"
+	}
+	return execution.NewEffectProviderObservationV2(observed.ExternalRef, revision, observed.Assignee, observed.OperationMarker, outcome)
+}
+
+var _ execution.EffectDispatcherPortV2 = gapdbExternalEffectDispatcherV2{}
 
 func (p *gapdbAssignmentProjectionProbeV2) ObserveAssignment(context.Context, tracker.ExternalWorkRef) (tracker.AssignmentObservation, error) {
 	p.observeCalls++
@@ -339,6 +388,45 @@ func newGapdbEffectServiceHarnessV2(t *testing.T, suffix string, guarantee track
 	return gapdbEffectServiceHarnessV2{service: effectService, request: request, projection: &gapdbAssignmentProjectionProbeV2{}}
 }
 
+func TestExternalProviderRunsThroughRealGapDBEffectAuthorityV2(t *testing.T) {
+	harness := newGapdbEffectServiceHarnessV2(t, "external-provider", tracker.AssignmentAtomicClaim)
+	intent, err := harness.service.Execute(t.Context(), harness.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := harness.request
+	request.ExecutionSlot = intent.ExecutionSlot
+	request.Action = execution.EffectStartAttemptV2
+	request.OperationEventID = "event-external-provider-attempt-operation"
+	request.EffectEventID = "event-external-provider-attempt-effect"
+
+	store, err := trackerfake.Open(filepath.Join(t.TempDir(), "tracker.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Seed(t.Context(), trackerfake.WorkSeed{Key: request.Intent.Target.ExternalID, Title: "external provider GapDB target"}); err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := gapdbExternalEffectDispatcherV2{projection: trackerfake.NewProvider(store)}
+	absent, err := dispatcher.ObserveEffect(t.Context(), request.Intent.Target)
+	if err != nil || absent.Outcome != "absent" || absent.ProviderRevision != 1 || absent.CanonicalDigest == "" {
+		t.Fatalf("absent=%+v err=%v", absent, err)
+	}
+	result, err := harness.service.ExecuteDispatchV2(t.Context(), execution.EffectDispatchCommandV2{
+		Authorization:               request,
+		ObservationOperationEventID: "event-external-provider-observed-operation",
+		ObservationEffectEventID:    "event-external-provider-observed-effect",
+		ObservationAt:               request.ObservedAt.Add(time.Second),
+	}, dispatcher)
+	if err != nil || result.State.AppliedObservation == nil || result.State.AppliedObservation.Value != request.Intent.IntendedValue || result.State.AppliedObservation.OperationMarker != string(request.Intent.OperationID) || result.State.AppliedObservation.CanonicalDigest == "" || result.State.Validate() != nil {
+		t.Fatalf("durable result=%+v err=%v", result, err)
+	}
+	confirmed, err := dispatcher.ObserveEffect(t.Context(), request.Intent.Target)
+	if err != nil || confirmed.Outcome != "confirmed" || confirmed.Value != request.Intent.IntendedValue || confirmed.OperationMarker != string(request.Intent.OperationID) || confirmed.ProviderRevision != result.State.AppliedObservation.ProviderRevision {
+		t.Fatalf("confirmed=%+v err=%v", confirmed, err)
+	}
+}
+
 func TestEffectDispatchAuthorizationIsDurableOneShotThroughGapDBV2(t *testing.T) {
 	harness := newGapdbEffectServiceHarnessV2(t, "one-shot", tracker.AssignmentAtomicClaim)
 	intent, err := harness.service.Execute(t.Context(), harness.request)
@@ -365,7 +453,7 @@ func TestEffectDispatchAuthorizationIsDurableOneShotThroughGapDBV2(t *testing.T)
 		ObservationAt:               request.ObservedAt.Add(time.Second),
 	}
 	unknown, err := harness.service.ExecuteDispatchV2(t.Context(), command, dispatcher)
-	if !execution.IsKind(err, execution.KindDecisionRequired) || unknown.State.Stage != execution.EffectObservationRecordedV2 || unknown.State.Observation == nil || unknown.State.Observation.Outcome != "unknown" || harness.projection.observeCalls != 1 || harness.projection.applyCalls != 1 {
+	if !execution.IsKind(err, execution.KindDecisionRequired) || unknown.State.Stage != execution.EffectObservationRecordedV2 || unknown.State.Observation == nil || unknown.State.Observation.Outcome != "unknown" || unknown.State.Observation.Target.LastObservation != 0 || harness.projection.observeCalls != 1 || harness.projection.applyCalls != 1 {
 		t.Fatalf("first dispatch result=%+v observes=%d applies=%d err=%v", unknown, harness.projection.observeCalls, harness.projection.applyCalls, err)
 	}
 

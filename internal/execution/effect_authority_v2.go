@@ -266,7 +266,7 @@ func (o EffectProviderObservationV2) validateFor(target tracker.ExternalWorkRef)
 			return executionV2Error(KindInvalidCommand, "provider_observation", nil)
 		}
 	case "unavailable", "malformed", "unknown":
-		if o.ProviderRevision != 0 || o.CanonicalDigest != "" || o.Value != "" || o.OperationMarker != "" {
+		if o.ProviderRevision != 0 || o.Target.LastObservation != 0 || o.CanonicalDigest != "" || o.Value != "" || o.OperationMarker != "" {
 			return executionV2Error(KindInvalidCommand, "provider_observation", nil)
 		}
 	default:
@@ -288,6 +288,11 @@ func effectObservationDigestV2(o EffectProviderObservationV2) string {
 	canonical, _ := journalv2.CanonicalObject(encoded)
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:])
+}
+
+func canonicalUncertainEffectObservationV2(target tracker.ExternalWorkRef, outcome string) EffectProviderObservationV2 {
+	target.LastObservation = 0
+	return EffectProviderObservationV2{Target: target, Outcome: outcome}
 }
 
 func encodeExternalEffectStateV2(state ExternalEffectStateV2) ([]byte, error) {
@@ -591,11 +596,11 @@ func NewAssignmentEffectDispatcherV2(projection tracker.AssignmentProjection) (*
 
 func (d *AssignmentEffectDispatcherV2) ObserveEffect(ctx context.Context, target tracker.ExternalWorkRef) (EffectProviderObservationV2, error) {
 	if d == nil || d.projection == nil {
-		return EffectProviderObservationV2{Target: target, Outcome: "unknown"}, executionV2Error(KindInvalidCommand, "assignment_projection", nil)
+		return canonicalUncertainEffectObservationV2(target, "unknown"), executionV2Error(KindInvalidCommand, "assignment_projection", nil)
 	}
 	observation, err := d.projection.ObserveAssignment(ctx, target)
 	if err != nil {
-		return EffectProviderObservationV2{Target: target, Outcome: "unknown"}, err
+		return canonicalUncertainEffectObservationV2(target, "unknown"), err
 	}
 	return effectObservationFromAssignmentV2(target, observation)
 }
@@ -666,10 +671,10 @@ func dispatchAuthorizedEffectV2(ctx context.Context, permission effectDispatchPe
 	}
 	fresh, observeErr := provider.ObserveEffect(ctx, target)
 	if observeErr != nil {
-		return EffectDispatchEvidenceV2{observation: EffectProviderObservationV2{Target: target, Outcome: "unknown"}, publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: permission.recovered}, effectDispatchErrorV2(KindDecisionRequired, "effect_fresh_observation", permission, observeErr)
+		return EffectDispatchEvidenceV2{observation: canonicalUncertainEffectObservationV2(target, "unknown"), publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: permission.recovered}, effectDispatchErrorV2(KindDecisionRequired, "effect_fresh_observation", permission, observeErr)
 	}
 	if fresh.validateFor(target) != nil {
-		return EffectDispatchEvidenceV2{observation: EffectProviderObservationV2{Target: target, Outcome: "unknown"}, publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: permission.recovered}, executionV2Error(KindDecisionRequired, "effect_fresh_observation", nil)
+		return EffectDispatchEvidenceV2{observation: canonicalUncertainEffectObservationV2(target, "unknown"), publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: permission.recovered}, executionV2Error(KindDecisionRequired, "effect_fresh_observation", nil)
 	}
 	if !effectAttributionExactV2(permission.expected, fresh) {
 		return EffectDispatchEvidenceV2{observation: fresh, publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: permission.recovered}, executionV2Error(KindDecisionRequired, "effect_fresh_observation", nil)
@@ -687,7 +692,7 @@ func dispatchAuthorizedEffectV2(ctx context.Context, permission effectDispatchPe
 	} else {
 		return EffectDispatchEvidenceV2{}, executionV2Error(KindInvalidCommand, "effect_permission", nil)
 	}
-	unknown := EffectProviderObservationV2{Target: conditional.target, Outcome: "unknown"}
+	unknown := canonicalUncertainEffectObservationV2(conditional.target, "unknown")
 	if result.Kind == EffectMutationIndeterminateV2 {
 		if err != nil {
 			return EffectDispatchEvidenceV2{observation: unknown, publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: permission.recovered}, effectDispatchErrorV2(KindDecisionRequired, "effect_mutation_indeterminate", permission, err)
@@ -876,7 +881,7 @@ func (s *EffectAuthorityServiceV2) ExecuteDispatchV2(ctx context.Context, comman
 // AllowRetry or AllowCompensation publication may authorize another attempt.
 func observeReplayedEffectPermissionV2(ctx context.Context, permission effectDispatchPermissionV2, provider EffectDispatcherPortV2) (EffectDispatchEvidenceV2, error) {
 	target := permission.expected.Target
-	evidence := EffectDispatchEvidenceV2{observation: EffectProviderObservationV2{Target: target, Outcome: "unknown"}, publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: true}
+	evidence := EffectDispatchEvidenceV2{observation: canonicalUncertainEffectObservationV2(target, "unknown"), publicationID: permission.publicationID, planDigest: permission.planDigest, providerRevision: permission.providerRevision, recovered: true}
 	if provider == nil || !permission.recovered || permission.publicationID == "" || permission.providerRevision == 0 || permission.effectID == "" || permission.operationID == "" || permission.marker == "" || permission.expected.validateFor(target) != nil {
 		return EffectDispatchEvidenceV2{}, executionV2Error(KindInvalidCommand, "effect_permission", nil)
 	}

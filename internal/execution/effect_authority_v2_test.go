@@ -613,10 +613,9 @@ func TestExternalEffectLostAcknowledgementRecoversExactNonterminalPermissionV2(t
 		port.effect = EffectStateObservationV2{State: &state, RecordRevision: 52, LastPublicationID: committed.PublicationID()}
 		port.execution = ExecutionSlotObservationV2{State: &executionState, RecordRevision: 52, LastPublicationID: committed.PublicationID()}
 	}
-	expected := effectObservationFixtureV2(request.Intent.Target, request.Intent.ExpectedProviderRevision, request.Intent.ExpectedValue, request.Intent.ExpectedOperationMarker, effectOutcomeForValueMarkerV2(request.Intent.ExpectedValue, request.Intent.ExpectedOperationMarker))
-	dispatcher := &effectDispatcherProbeV2{observe: *expected, result: EffectMutationResultV2{Kind: EffectMutationIndeterminateV2}}
+	dispatcher := &effectDispatcherProbeV2{observeErr: context.DeadlineExceeded}
 	recovered, err := service.ExecuteDispatchV2(t.Context(), EffectDispatchCommandV2{Authorization: request, ObservationOperationEventID: "event-lost-ack-observation-operation", ObservationEffectEventID: "event-lost-ack-observation-effect", ObservationAt: request.ObservedAt.Add(time.Second)}, dispatcher)
-	if !IsKind(err, KindDecisionRequired) || !recovered.Replayed || recovered.State.Stage != EffectObservationRecordedV2 || recovered.State.Observation == nil || !effectAttributionExactV2(*recovered.State.Observation, *expected) || dispatcher.observeCalls != 1 || dispatcher.calls != 0 {
+	if !IsKind(err, KindDecisionRequired) || !errors.Is(err, context.DeadlineExceeded) || !recovered.Replayed || recovered.State.Stage != EffectObservationRecordedV2 || recovered.State.Observation == nil || recovered.State.Observation.Outcome != "unknown" || recovered.State.Observation.Target.LastObservation != 0 || recovered.State.Validate() != nil || dispatcher.observeCalls != 1 || dispatcher.calls != 0 {
 		t.Fatalf("recovered=%+v observes=%d mutations=%d err=%v", recovered, dispatcher.observeCalls, dispatcher.calls, err)
 	}
 }
@@ -1083,6 +1082,14 @@ func TestNewEffectProviderObservationV2ConstructsOnlyClosedCanonicalEvidence(t *
 				}
 			}
 		})
+	}
+	uncertain, err := NewEffectProviderObservationV2(target, 0, "", "", "unknown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uncertain.Target.LastObservation = 1
+	if uncertain.validateFor(target) == nil {
+		t.Fatal("uncertain observation retained a forged provider revision coordinate")
 	}
 
 	for _, test := range []struct {
