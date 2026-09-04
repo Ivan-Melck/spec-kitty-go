@@ -423,7 +423,9 @@
         "Resolved failed workspace allocation: all dependency lineages are integrated and the lane-i worktree was fast-forwarded to coordinator 20757d1f."
       ],
       "provider": "__resolved_provider_absent__",
-      "role": "implementer"
+      "role": "implementer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47"
     },
     "WP10": {
       "actor": "finalize-tasks",
