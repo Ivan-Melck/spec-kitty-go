@@ -35,6 +35,7 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/workspace/
 create_intent:
+- internal/controljournal/v2/commit_plan_budget_test.go
 - internal/execution/workspace_authority_v2.go
 - internal/execution/workspace_authority_v2_test.go
 - internal/controlstore/gapdb/workspace_authority.go
@@ -42,6 +43,8 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- internal/controljournal/v2/commit_plan.go
+- internal/controljournal/v2/commit_plan_budget_test.go
 - internal/execution/authority_v2.go
 - internal/execution/authority_v2_test.go
 - internal/execution/workspace_authority_v2.go
@@ -350,7 +353,11 @@ go test ./internal/workspace -run 'Expire|Quarantine|Replacement|Zombie|Authorit
 prove crash, restart, concurrency, and stale-writer behavior.
 
 **Files**: `internal/controlstore/gapdb/workspace_*.go` plus tests under the two
-owned wildcard surfaces.
+owned wildcard surfaces. WP08 also owns the narrow prerequisite repair in
+`internal/controljournal/v2/commit_plan.go` and
+`internal/controljournal/v2/commit_plan_budget_test.go`: a provider assertion's
+composite canonical ordering key is not itself one identity and therefore must
+be size-accounted through its already-bounded semantic components.
 
 **Adapter requirements**:
 
@@ -371,6 +378,10 @@ owned wildcard surfaces.
    values, filesystem contents, or raw adapter errors.
 8. Add no SQLite/SQL path, backend selector, fallback, dual write, importer,
    table-compatible API, or provider dependency in `internal/workspace`.
+9. Preserve every individual assertion identity/scope bound while allowing a
+   legitimate work-scoped execution-head assertion whose composite canonical
+   ordering key exceeds `MaxIdentityBytes`. Add a real exact-bound regression;
+   do not raise the global identity limit or weaken assertion validation.
 
 **Concurrency and fault campaigns**:
 
