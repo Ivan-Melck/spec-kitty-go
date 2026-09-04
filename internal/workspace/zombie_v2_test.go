@@ -108,5 +108,9 @@ func commitWorkspaceChangeV2(directory, name, content, message string) (string, 
 }
 
 func capsuleForBindingV2(b BindingV2) AuthorityCapsuleV2 {
-	return AuthorityCapsuleV2{ProjectID: b.ProjectID, MissionID: b.MissionID, WorkRevisionID: b.WorkRevisionID, WorkID: b.WorkID, RunID: b.RunID, LeaseID: b.LeaseID, Generation: b.Generation, Fence: b.Fence, RuntimeEpochID: b.RuntimeEpochID, WorkspaceID: b.WorkspaceID, PathClaimDigest: b.PathClaimDigest, RepositoryID: b.RepositoryID, CanonicalPath: b.CanonicalPath}
+	capsule, err := NewAuthorityCapsuleV2(b)
+	if err != nil {
+		panic(err)
+	}
+	return capsule
 }

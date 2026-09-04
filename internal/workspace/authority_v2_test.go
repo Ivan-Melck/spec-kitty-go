@@ -185,17 +185,52 @@ func observationForStageFixtureV2(binding BindingV2, stage StageV2) ObservationV
 func TestCurrentWorkspacePredicateUsesWholeCapsuleV2(t *testing.T) {
 	b := workspaceBindingFixtureV2(t, "18", "/srv/spec-kitty/workspaces/w18")
 	state := StateV2{SchemaVersion: 1, LogicalVersion: 7, Binding: b, Stage: StageReadyV2, Observation: readyObservationFixtureV2(b), OccurredAt: "2026-09-04T12:00:00Z"}
-	capsule := AuthorityCapsuleV2{b.ProjectID, b.MissionID, b.WorkRevisionID, b.WorkID, b.RunID, b.LeaseID, b.Generation, b.Fence, b.RuntimeEpochID, b.WorkspaceID, b.PathClaimDigest, b.RepositoryID, b.CanonicalPath}
+	capsule, err := NewAuthorityCapsuleV2(b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := ValidateCurrentV2(state, capsule); err != nil {
 		t.Fatal(err)
 	}
-	mutants := []func(*AuthorityCapsuleV2){func(v *AuthorityCapsuleV2) { v.RuntimeEpochID = "epoch-old" }, func(v *AuthorityCapsuleV2) { v.Fence = "old-fence-123456" }, func(v *AuthorityCapsuleV2) { v.WorkspaceID = "workspace-old" }, func(v *AuthorityCapsuleV2) { v.CanonicalPath = "/srv/spec-kitty/workspaces/w17" }}
+	mutants := []func(*BindingV2){
+		func(v *BindingV2) { v.RuntimeEpochID = "epoch-old" },
+		func(v *BindingV2) { v.Fence = "old-fence-123456" },
+		func(v *BindingV2) { v.WorkspaceID = "workspace-old" },
+		func(v *BindingV2) {
+			v.CanonicalPath = "/srv/spec-kitty/workspaces/w17"
+			v.PathClaimDigest, _ = WorkspacePathClaimDigestV2(v.RepositoryID, v.ManagedRoot, v.CanonicalPath)
+		},
+		func(v *BindingV2) { v.LaneID = "lane-other" },
+		func(v *BindingV2) {
+			v.ManagedRoot = "/srv/spec-kitty/other"
+			v.CanonicalPath = "/srv/spec-kitty/other/w18"
+			v.PathClaimDigest, _ = WorkspacePathClaimDigestV2(v.RepositoryID, v.ManagedRoot, v.CanonicalPath)
+		},
+		func(v *BindingV2) { v.OwnedBranch = "kitty/other" },
+		func(v *BindingV2) { v.PinnedBase = strings.Repeat("b", 40) },
+		func(v *BindingV2) {
+			v.Dependencies = []DependencyV2{{WorkID: "work-dependency", Commit: strings.Repeat("c", 40)}}
+		},
+	}
 	for _, mutate := range mutants {
-		changed := capsule
+		changed := b
 		mutate(&changed)
-		if err := ValidateCurrentV2(state, changed); !IsKind(err, KindStaleAuthority) {
+		changedCapsule, buildErr := NewAuthorityCapsuleV2(changed)
+		if buildErr != nil {
+			t.Fatal(buildErr)
+		}
+		if err := ValidateCurrentV2(state, changedCapsule); !IsKind(err, KindStaleAuthority) {
 			t.Fatalf("got %v", err)
 		}
+	}
+	b.Dependencies = []DependencyV2{{WorkID: "work-dependency", Commit: strings.Repeat("d", 40)}}
+	if got := capsule.Binding(); len(got.Dependencies) != 0 {
+		t.Fatal("capsule retained caller-owned dependency slice")
+	}
+	exposed := capsule.Binding()
+	exposed.Dependencies = append(exposed.Dependencies, DependencyV2{WorkID: "work-dependency", Commit: strings.Repeat("e", 40)})
+	if got := capsule.Binding(); len(got.Dependencies) != 0 {
+		t.Fatal("capsule exposed mutable dependency slice")
 	}
 	state.Stage, state.QuarantineReason = StageQuarantinedV2, "expired"
 	if err := ValidateCurrentV2(state, capsule); !IsKind(err, KindStaleAuthority) {
