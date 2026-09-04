@@ -1,7 +1,7 @@
 {
-  "event_count": 303,
-  "last_event_id": "01M1NQGRY5VTYY1A09VYQJQNJ2",
-  "materialized_at": "2026-09-04T08:10:47.109827+00:00",
+  "event_count": 305,
+  "last_event_id": "01M1NQH950V6M1J5SYYAM8V7DA",
+  "materialized_at": "2026-09-04T08:11:03.705503+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,9 +12,9 @@
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 1,
+    "in_progress": 2,
     "in_review": 0,
-    "planned": 10
+    "planned": 9
   },
   "work_packages": {
     "WP01": {
@@ -110,9 +110,9 @@
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-canonical-codecs",
       "force_count": 21,
-      "lane": "planned",
-      "last_event_id": "01M1NQGRY5VTYY1A09VYQJQNJ2",
-      "last_transition_at": "2026-09-04T08:10:47.109827+00:00",
+      "lane": "in_progress",
+      "last_event_id": "01M1NQH950V6M1J5SYYAM8V7DA",
+      "last_transition_at": "2026-09-04T08:11:03.705503+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
