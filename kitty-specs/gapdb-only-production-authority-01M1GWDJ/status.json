@@ -372,7 +372,7 @@
     },
     "WP08": {
       "actor": "gibbs",
-      "agent": null,
+      "agent": "gibbs",
       "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
       "force_count": 3,
@@ -381,7 +381,8 @@
       "last_transition_at": "2026-09-04T19:05:00.789186+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review: candidate 6ec1f7243b1d5390f1b6195488d4bf05e44d089a; all WP08 qualification gates green"
+        "Ready for independent review: candidate 6ec1f7243b1d5390f1b6195488d4bf05e44d089a; all WP08 qualification gates green",
+        "Correction cycle 2 candidate e7356f642e0d79454cc9077031673d1faaa9c521; force is limited to pre-existing coordinator governance commits already present on this reused lane. WP04 dependency fix 08046551 and all WP08 gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
