@@ -1,32 +1,32 @@
 {
-  "event_count": 222,
-  "last_event_id": "01M1MSBAV1QDHF75WAZ0MAFZYE",
-  "materialized_at": "2026-09-03T23:23:31.553953+00:00",
+  "event_count": 229,
+  "last_event_id": "01M1MWW4KT2QTN2N3JYHKCBN7F",
+  "materialized_at": "2026-09-04T00:25:07.962609+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 2,
+    "approved": 3,
     "blocked": 1,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
-    "in_progress": 2,
+    "in_progress": 1,
     "in_review": 0,
     "planned": 12
   },
   "work_packages": {
     "WP01": {
-      "actor": "ivan-gapdb-codec-guard",
-      "agent": "ivan-gapdb-codec-guard",
+      "actor": "renata-gapdb-codec-final-review",
+      "agent": "renata-gapdb-codec-final-review",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-codec-guard",
-      "force_count": 22,
-      "lane": "in_progress",
-      "last_event_id": "01M1MQZKNWEZQNXNDTZ616J57H",
-      "last_transition_at": "2026-09-03T22:59:38.812113+00:00",
+      "force_count": 24,
+      "lane": "approved",
+      "last_event_id": "01M1MWW4KT2QTN2N3JYHKCBN7F",
+      "last_transition_at": "2026-09-04T00:25:07.962609+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: implementation bbeaebc; ancestry repaired without bypass; focused, repeated, race, acceptance, architecture, vet, staticcheck, formatting, and diff gates pass.",
@@ -64,25 +64,28 @@
         "Reopen for ratified post-approval defect 6: add permanent execution-bound durable-codec consumer-path census before foundation repair. Force transfers stale approved reviewer ownership only; no contract or acceptance guard is bypassed.",
         "Ready for independent defect-6 review at aaf6abf1: activation-safe six-codec consumer-path guard, 184-mutant sealed census preserving all prior 177 IDs, and full repeated/race/architecture/static/ownership gates pass.",
         "Independent defect-6 review rejected aaf6abf1: private-name activation can disable the real guard, and seven new mutants exercise a synthetic model rather than actual foundation APIs. See review-feedback-17.md.",
-        "Cycle-17 repair: replace reversible helper-name activation and synthetic codec mutants with an always-live validator bound to actual production APIs. The red guard will be staged with the WP02 repair candidate for review; force only returns stale reviewer ownership."
+        "Cycle-17 repair: replace reversible helper-name activation and synthetic codec mutants with an always-live validator bound to actual production APIs. The red guard will be staged with the WP02 repair candidate for review; force only returns stale reviewer ownership.",
+        "Defect-6 guard is intentionally always-live and therefore red on the unrepaired WP01 lane; independent review must validate WP01 commits aaf6abf1 and 6dcae82f on the repaired combined lane-b tree at WP02 candidate 03ac7098.",
+        "Repair review cycle 18: restore exact direct decoder semantics assertions and add a real-production semantic-substitution mutant while preserving the 184-mutant guard.",
+        "Cycle-18 repair is intentionally red on unrepaired lane-a; review exact WP01 commit 2d9d5089 on combined repaired lane-b at eaa212b2 (WP02 candidate 03ac7098).",
+        "Independent review passed: always-live production-bound guard, exact decode semantics, 184 sealed mutants, repeated/race/full/static gates green."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-17.md",
-        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-17.md",
-        "reviewer": "renata-gapdb-codec-guard-review",
-        "verdict": "changes_requested"
+        "reference": "WP01 2d9d5089 reviewed on combined eaa212b2; 184-mutant exact-semantics campaign passed",
+        "reviewer": "renata-gapdb-codec-final-review",
+        "verdict": "approved"
       },
       "role": "implementer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
-        "T001": "planned",
-        "T002": "planned",
-        "T003": "planned",
-        "T004": "planned",
-        "T005": "planned"
+        "T001": "done",
+        "T002": "done",
+        "T003": "done",
+        "T004": "done",
+        "T005": "done"
       }
     },
     "WP02": {
