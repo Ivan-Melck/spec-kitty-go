@@ -210,8 +210,10 @@ mutation is preceded by durable intent and every authority stage is resumable.
    workspace commands that construct sealed Authority Journal commit plans.
 2. The first publication atomically binds the absent WorkspaceID and permanent
    absent path claim to the exact current run/lease/work/repository coordinates,
-   asserts the unchanged current execution head, and records the first
-   preparation effect intent before any directory or Git mutation.
+   advances the execution head with an exact record-revision mutation condition
+   so it records the immutable WorkspaceID/path-claim pair, and records the
+   first preparation effect intent before any directory or Git mutation. A key
+   changed by this publication cannot also be a read-only assertion target.
 3. For each external preparation step, follow:
    durable requested/effect intent -> adapter action -> bounded observation ->
    guarded journal transition. Never call the adapter first.
@@ -222,10 +224,12 @@ mutation is preceded by durable intent and every authority stage is resumable.
 5. Verify repository binding, managed root, pinned target/base, registered
    worktree, owned branch, isolated GitDir/index, clean state, and exact
    dependency head at their defined stages.
-6. Represent changed authority as mutation conditions and unchanged execution
-   or eligibility authority as true read-only assertions in one sealed
-   publication. Never use a same-value CAS as a fake assertion. Repository/Git
-   target state remains guarded external evidence, not a GapDB condition.
+6. Represent changed authority, including the execution head during initial
+   binding, as exact mutation conditions. Represent only genuinely unchanged
+   execution or eligibility authority as true read-only assertions in one
+   sealed publication. Never use a same-value CAS as a fake assertion, and
+   never overlap an assertion with a mutation. Repository/Git target state
+   remains guarded external evidence, not a GapDB condition.
 7. Resolve exact OperationID/PublicationID replay before current-epoch checks.
    Changed operation meaning refuses before workspace or adapter reads.
 8. On restart, reduce the durable workspace stage and effect observations, then
@@ -371,7 +375,8 @@ owned wildcard surfaces.
 - workspace path reused by replacement lease;
 - quarantine can transition back to ready;
 - lease expires without atomic workspace quarantine;
-- same-value execution-head CAS substitutes for a read-only assertion;
+- same-value CAS substitutes for a read-only assertion on genuinely unchanged
+  authority, or initial bind asserts and mutates the execution head together;
 - execution expiry wins but stale workspace binding still publishes;
 - workspace binding wins but expiry omits its quarantine contribution;
 - cleanup failure rolls back quarantine;
