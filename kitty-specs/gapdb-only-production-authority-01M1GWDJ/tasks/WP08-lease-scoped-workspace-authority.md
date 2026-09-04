@@ -36,6 +36,8 @@ agent_profile: implementer-ivan
 authoritative_surface: internal/workspace/
 create_intent:
 - internal/controljournal/v2/commit_plan_budget_test.go
+- internal/gitrepo/workspace_authority_v2.go
+- internal/gitrepo/workspace_authority_v2_test.go
 - internal/execution/workspace_authority_v2.go
 - internal/execution/workspace_authority_v2_test.go
 - internal/controlstore/gapdb/workspace_authority.go
@@ -45,6 +47,8 @@ model: ''
 owned_files:
 - internal/controljournal/v2/commit_plan.go
 - internal/controljournal/v2/commit_plan_budget_test.go
+- internal/gitrepo/workspace_authority_v2.go
+- internal/gitrepo/workspace_authority_v2_test.go
 - internal/execution/authority_v2.go
 - internal/execution/authority_v2_test.go
 - internal/execution/workspace_authority_v2.go
@@ -98,7 +102,9 @@ spec-kitty agent action implement WP08 --agent codex
 - Edit only `internal/workspace/**`, `internal/execution/authority_v2.go`,
   `internal/execution/authority_v2_test.go`, and
   `internal/controlstore/gapdb/workspace_*.go`, plus the two explicitly owned
-  `internal/execution/workspace_authority_v2*.go` composition files.
+  `internal/execution/workspace_authority_v2*.go` composition files and the
+  explicitly owned `internal/gitrepo/workspace_authority_v2*.go` outbound
+  adapter files.
 - Preserve concurrent work and do not revert or absorb another agent's edits.
 - Consume WP02 journal, WP03 GapDB, WP04 restore, and WP07 lease/effect
   contracts without modifying or bypassing them.
@@ -382,6 +388,12 @@ be size-accounted through its already-bounded semantic components.
    legitimate work-scoped execution-head assertion whose composite canonical
    ordering key exceeds `MaxIdentityBytes`. Add a real exact-bound regression;
    do not raise the global identity limit or weaken assertion validation.
+10. Supply a real `internal/gitrepo` implementation of the workspace-owned
+    preparation-effect and repository-target-guard ports, plus a callable
+    GapDB workspace-authority construction seam. WP13 remains the sole owner of
+    the host lifecycle, restore barrier, and final production composition root;
+    WP08 must not create a competing runtime or command entry point merely to
+    manufacture an early call site.
 
 **Concurrency and fault campaigns**:
 
@@ -447,6 +459,8 @@ git diff --check
 - Quarantined workspace identity is never reactivated, reused, or transferred.
 - The zombie scenario proves stale direct writes cannot pass authority gates.
 - GapDB adapter uses sealed v2 batches and restores byte-identical state.
+- The real Git/worktree outbound adapter is buildable and contract-tested;
+  final host/command wiring remains explicitly owned by WP13/WP15.
 - Parity, refusal, 100-run contention/zombie, fault, mutant, and race gates pass.
 - No SQLite, provider-kernel, process-lock, or optimistic-ready path exists.
 - T040–T043 are recorded `done` through the canonical event log.
@@ -490,6 +504,11 @@ before current-epoch checks and restart never trusts process-local memory.
 Reject any implementation that chmods or deletes W1 as its correctness
 mechanism, reassigns W1 to lease 18, derives current authority from the path or
 branch alone, uses a process mutex for exclusivity, silently retries Git work,
-or lets cleanup failure reactivate authority. Also reject dead production APIs,
-test-only substitute implementations, missing mutant controls, or a workspace
-kernel dependency on GapDB, SQL, Git implementation, filesystem, or transport.
+or lets cleanup failure reactivate authority. Also reject missing production
+outbound adapters, capability APIs without a declared downstream consumer,
+test-only substitutes for behavior WP08 owns, missing mutant controls, or a
+workspace kernel dependency on GapDB, SQL, Git implementation, filesystem, or
+transport. The declared downstream consumers are WP09/WP10 for the
+current-workspace predicate and WP13 for restore-barrier host composition;
+their not-yet-written entry points are not by themselves a WP08 dead-code
+failure.
