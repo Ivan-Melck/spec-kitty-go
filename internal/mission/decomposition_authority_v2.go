@@ -132,6 +132,7 @@ func (s *DecompositionAuthorityServiceV2) Execute(ctx context.Context, request D
 	if resolution.Kind == OperationExactV2 && (resolution.State.Status() == journalv2.StatusAmbiguous || resolution.State.Status() == journalv2.StatusReconciliationRequired) {
 		return DecompositionAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityAmbiguousV2, "reconciliation_required", nil)
 	}
+	initiallyAbsent := resolution.Kind == OperationAbsentV2
 	var operation journalv2.OperationStateV2
 	var operationRevision uint64
 	if resolution.Kind == OperationAbsentV2 {
@@ -175,6 +176,9 @@ func (s *DecompositionAuthorityServiceV2) Execute(ctx context.Context, request D
 		observation, found, observeErr := s.provider.ObserveEffect(ctx, effect.effectID)
 		if observeErr != nil {
 			return s.requireDecompositionReconciliationV2(ctx, command, operation, operationRevision, missionObservation, request, observations, observeErr)
+		}
+		if found && initiallyAbsent {
+			return s.requireDecompositionReconciliationV2(ctx, command, operation, operationRevision, missionObservation, request, observations, missionAuthorityErrorV2(MissionAuthorityAmbiguousV2, "preexisting_provider_state", nil))
 		}
 		if !found {
 			mutateErr := s.provider.MutateEffect(ctx, effect.mutation)

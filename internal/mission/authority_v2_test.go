@@ -131,6 +131,37 @@ func TestMissionReducerEveryEventAndVersionRefusalV2(t *testing.T) {
 	}
 }
 
+func TestMissionAuthorityBlockerAndDecisionGatesPrecedeAdvanceV2(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		kind   MissionAuthorityErrorKindV2
+		mutate func(*MissionAuthorityStateInputV2)
+	}{
+		{"active-blocker", MissionAuthorityActiveBlockerV2, func(input *MissionAuthorityStateInputV2) { input.ActiveBlockerIDs = []string{"blocker-1"} }},
+		{"open-decision", MissionAuthorityOpenDecisionV2, func(input *MissionAuthorityStateInputV2) { input.OpenDecisionIDs = []string{"decision-1"} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			priorInput := fixtureAuthorityStateV2(t, 1, AuthorityMissionActiveV2, "planning").input
+			test.mutate(&priorInput)
+			prior, err := NewMissionAuthorityStateV2(priorInput)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nextInput := priorInput
+			nextInput.Version = 2
+			nextInput.Step = "plan_approved"
+			next, err := NewMissionAuthorityStateV2(nextInput)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewMissionEventPayloadV2(MissionEventLifecycleAdvancedV2, prior, next); !IsMissionAuthorityKindV2(err, test.kind) {
+				t.Fatalf("%s gate skipped or reordered: %v", test.name, err)
+			}
+		})
+	}
+}
+
 func TestMissionReducerCompleteRegisteredEventFamilyV2(t *testing.T) {
 	t.Parallel()
 	base := fixtureAuthorityStateV2(t, 1, AuthorityMissionActiveV2, "planning")
@@ -458,38 +489,6 @@ func TestMissionProjectionConsumesCheckpointAndSuffixPlaybackV2(t *testing.T) {
 	gotFact, found := projection.Fact("project-1", "mission-1", MissionFactBlockerV2, "blocker-playback")
 	if !found || !bytes.Equal(gotFact.CanonicalBytes(), fact.CanonicalBytes()) {
 		t.Fatalf("restored fact found=%v state=%s", found, gotFact.CanonicalBytes())
-	}
-}
-
-func TestMissionAuthorityMandatoryMutantCensusV2(t *testing.T) {
-	t.Parallel()
-	// The entries name the production-facing killer rather than a source-text
-	// assertion. Architecture-owned mutants are executed by the permanent M2
-	// guard; the remaining mutants are exercised by the named behavioral tests.
-	mutants := map[string]string{
-		"M-MISSION-GENERIC-STORE":            "TestM2RepositoryHasNoGenericRawKeyAuthority",
-		"M-MISSION-PROVIDER-IMPORT":          "TestM2DependencyPolicyAcceptsOnlyBoundedProviderComposition",
-		"M-MISSION-OPERATION-SCOPED":         "TestMissionAuthorityAdapterBindingConflictPrecedesMissionReadV2",
-		"M-MISSION-LATE-COLLISION":           "TestMissionAuthorityLifecycleAtomicReplayAndRefusalOrderV2",
-		"M-MISSION-EPOCH-BEFORE-REPLAY":      "TestMissionAuthorityLifecycleAtomicReplayAndRefusalOrderV2",
-		"M-MISSION-HEAD-WITHOUT-CAS":         "TestMissionAuthorityFactUpdateCarriesIndependentCASV2",
-		"M-MISSION-FACT-GATE-SKIPPED":        "TestMissionAuthorityPublishesIndependentlyContendedFactAtomicallyV2",
-		"M-MISSION-TERMINAL-REOPEN":          "TestMissionReducerEveryEventAndVersionRefusalV2",
-		"M-MISSION-PROVIDER-BEFORE-INTENT":   "TestDecompositionIntentPrecedesProviderAndCompletionV2",
-		"M-MISSION-NAKED-RESERVATION":        "TestDecompositionCrashBeforeIntentMakesNoProviderCallV2",
-		"M-MISSION-CHILD-IDENTITY-DRIFT":     "TestDecompositionRestartAfterRequestedPublicationReusesIdentitiesV2",
-		"M-MISSION-UNATTRIBUTED-COMPLETION":  "TestDecompositionDishonestProviderMatrixNeverCompletesV2",
-		"M-MISSION-BLIND-COMPENSATION":       "TestDecompositionCompensationRequiresUnchangedRevisionValueAndMarkerV2",
-		"M-MISSION-IO-REDUCER":               "TestMissionProjectionConsumesCheckpointAndSuffixPlaybackV2",
-		"M-MISSION-TRACKER-GRANTS-AUTHORITY": "TestDecompositionIntentPrecedesProviderAndCompletionV2",
-	}
-	if len(mutants) != 15 {
-		t.Fatalf("controlled mutant census=%d want=15", len(mutants))
-	}
-	for id, killer := range mutants {
-		if id == "" || killer == "" {
-			t.Fatalf("unbound mutant: %q -> %q", id, killer)
-		}
 	}
 }
 
