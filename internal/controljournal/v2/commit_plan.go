@@ -87,6 +87,82 @@ type ProviderCondition struct {
 	ObservedRevision uint64          `json:"observed_revision,omitempty"`
 }
 
+// AuthorityAssertionInputV2 is provider-neutral evidence for an unchanged
+// authority record in the same atomic publication as the mutations.
+type AuthorityAssertionInputV2 struct {
+	Target                 ConditionTarget
+	Kind                   ConditionKind
+	ObservedRevision       uint64
+	ExpectedLogicalVersion LogicalVersion
+	// ObservedValueDigest is ReducerStateDigestV2 over the exact canonical
+	// bytes observed at ObservedRevision. Reusing the public state-digest
+	// domain keeps providers and capability packages on one canonical proof.
+	ObservedValueDigest Digest
+}
+
+// AuthorityAssertionV2 is immutable read-only authority evidence. It never
+// becomes a sealed record or journal event.
+type AuthorityAssertionV2 struct {
+	target                 ConditionTarget
+	kind                   ConditionKind
+	observedRevision       uint64
+	expectedLogicalVersion LogicalVersion
+	observedValueDigest    Digest
+}
+
+func NewAuthorityAssertionV2(input AuthorityAssertionInputV2) (AuthorityAssertionV2, error) {
+	assertion := AuthorityAssertionV2{input.Target, input.Kind, input.ObservedRevision, input.ExpectedLogicalVersion, input.ObservedValueDigest}
+	if err := validateAuthorityAssertion(assertion); err != nil {
+		return AuthorityAssertionV2{}, err
+	}
+	return assertion, nil
+}
+
+func (a AuthorityAssertionV2) Target() ConditionTarget  { return a.target }
+func (a AuthorityAssertionV2) Kind() ConditionKind      { return a.kind }
+func (a AuthorityAssertionV2) ObservedRevision() uint64 { return a.observedRevision }
+func (a AuthorityAssertionV2) ExpectedLogicalVersion() LogicalVersion {
+	return a.expectedLogicalVersion
+}
+func (a AuthorityAssertionV2) ObservedValueDigest() Digest { return a.observedValueDigest }
+
+type authorityAssertionWireV2 struct {
+	Target                 ConditionTarget `json:"target"`
+	Kind                   ConditionKind   `json:"kind"`
+	ObservedRevision       uint64          `json:"observed_revision,omitempty"`
+	ExpectedLogicalVersion LogicalVersion  `json:"expected_logical_version,omitempty"`
+	ObservedValueSHA256    string          `json:"observed_value_sha256,omitempty"`
+}
+
+func (a AuthorityAssertionV2) wire() authorityAssertionWireV2 {
+	digest := ""
+	if !a.observedValueDigest.IsZero() {
+		digest = a.observedValueDigest.String()
+	}
+	return authorityAssertionWireV2{a.target, a.kind, a.observedRevision, a.expectedLogicalVersion, digest}
+}
+
+// WorkspacePathClaimV2 is an immutable provider-neutral claim record. Path
+// normalization and the claim-digest domain remain owned by workspace code.
+type WorkspacePathClaimV2 struct {
+	claimDigest Digest
+	canonical   []byte
+}
+
+func NewWorkspacePathClaimV2(claimDigest Digest, canonical []byte) (WorkspacePathClaimV2, error) {
+	if claimDigest.IsZero() {
+		return WorkspacePathClaimV2{}, invalid(ErrorInvalidDigest, "workspace_path_claim")
+	}
+	value, err := requireCanonicalValue("workspace_path_claim", canonical, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return WorkspacePathClaimV2{}, err
+	}
+	return WorkspacePathClaimV2{claimDigest: claimDigest, canonical: value}, nil
+}
+
+func (c WorkspacePathClaimV2) ClaimDigest() Digest    { return c.claimDigest }
+func (c WorkspacePathClaimV2) CanonicalValue() []byte { return append([]byte(nil), c.canonical...) }
+
 func ConditionForHeadTransitionV2(head HeadTransitionV2) (ProviderCondition, error) {
 	if _, err := NewAggregateCoordinate(head.Coordinate.Kind, head.Coordinate.ID, head.Coordinate.Scope); err != nil {
 		return ProviderCondition{}, invalid(ErrorInvalidTransition, "condition_target")
@@ -125,6 +201,34 @@ func conditionFromObservedRevision(target ConditionTarget, revision uint64) Prov
 	return ProviderCondition{Target: target, Kind: ConditionRecordRevision, ObservedRevision: revision}
 }
 
+func validateAuthorityAssertion(assertion AuthorityAssertionV2) error {
+	if assertion.target.Kind != ConditionTargetAggregateHead && assertion.target.Kind != ConditionTargetEligibilityGuard {
+		return invalid(ErrorInvalidTransition, "authority_assertion_target")
+	}
+	if err := validateConditionTarget(assertion.target); err != nil {
+		return invalid(ErrorInvalidTransition, "authority_assertion_target")
+	}
+	switch assertion.kind {
+	case ConditionAbsent:
+		if assertion.observedRevision != 0 || assertion.expectedLogicalVersion != 0 || !assertion.observedValueDigest.IsZero() {
+			return invalid(ErrorInvalidTransition, "authority_assertion_absent")
+		}
+	case ConditionRecordRevision:
+		logicalVersionInvalid := assertion.target.Kind == ConditionTargetAggregateHead && assertion.expectedLogicalVersion == 0 ||
+			assertion.target.Kind == ConditionTargetEligibilityGuard && assertion.expectedLogicalVersion != 0
+		if assertion.observedRevision == 0 || logicalVersionInvalid || assertion.observedValueDigest.IsZero() {
+			return invalid(ErrorInvalidTransition, "authority_assertion_present")
+		}
+	default:
+		return invalid(ErrorInvalidTransition, "authority_assertion_condition")
+	}
+	return nil
+}
+
+func authorityAssertionKey(assertion AuthorityAssertionV2) string {
+	return conditionTargetKey(assertion.target)
+}
+
 type SealedRecordRole string
 
 const (
@@ -136,6 +240,7 @@ const (
 	RecordEligibilityGuard   SealedRecordRole = "eligibility_guard"
 	RecordCheckpointRecord   SealedRecordRole = "checkpoint_record"
 	RecordCheckpointSlot     SealedRecordRole = "checkpoint_slot"
+	RecordWorkspacePathClaim SealedRecordRole = "workspace_path_claim"
 	RecordPublicationWitness SealedRecordRole = "publication_witness"
 )
 
@@ -159,6 +264,7 @@ type SealedRecordTargetV2 struct {
 	checkpointID     CheckpointID
 	checkpointSlotID CheckpointSlotID
 	publicationID    PublicationID
+	workspaceClaim   Digest
 }
 
 func (t SealedRecordTargetV2) OperationID() OperationID           { return t.operationID }
@@ -170,6 +276,7 @@ func (t SealedRecordTargetV2) ShardID() EligibilityShardID        { return t.sha
 func (t SealedRecordTargetV2) CheckpointID() CheckpointID         { return t.checkpointID }
 func (t SealedRecordTargetV2) CheckpointSlotID() CheckpointSlotID { return t.checkpointSlotID }
 func (t SealedRecordTargetV2) PublicationID() PublicationID       { return t.publicationID }
+func (t SealedRecordTargetV2) WorkspacePathClaimDigest() Digest   { return t.workspaceClaim }
 
 type SealedRecordConditionV2 struct {
 	kind             ConditionKind
@@ -197,32 +304,38 @@ func (r SealedRecordV2) Condition() SealedRecordConditionV2 { return r.condition
 func (r SealedRecordV2) CanonicalValue() []byte             { return append([]byte(nil), r.canonical...) }
 
 type CommitPlanInput struct {
-	OperationBinding    *OperationBindingV2
-	PriorOperationState *OperationStateV2
-	OperationState      OperationStateV2
-	Events              []EventDraftV2
-	Heads               []HeadTransitionV2
-	EffectIntents       []EffectIntentReference
-	EligibilityGuards   []EligibilityGuardTransition
-	Checkpoints         []CheckpointRecord
-	Conditions          []ProviderCondition
+	OperationBinding       *OperationBindingV2
+	PriorOperationState    *OperationStateV2
+	OperationState         OperationStateV2
+	Events                 []EventDraftV2
+	Heads                  []HeadTransitionV2
+	EffectIntents          []EffectIntentReference
+	EligibilityGuards      []EligibilityGuardTransition
+	Checkpoints            []CheckpointRecord
+	Conditions             []ProviderCondition
+	Assertions             []AuthorityAssertionV2
+	WorkspacePathClaim     *WorkspacePathClaimV2
+	EffectPermissionResume *EffectPermissionCoordinateV2
 }
 
 type SealedCommitPlanV2 struct {
-	publicationID   PublicationID
-	digest          Digest
-	recordSetDigest Digest
-	binding         *OperationBindingV2
-	operationState  OperationStateV2
-	events          []EventEnvelopeV2
-	heads           []HeadTransitionV2
-	effects         []EffectIntentReference
-	eligibility     []EligibilityGuardTransition
-	checkpoints     []CheckpointRecord
-	conditions      []ProviderCondition
-	records         []SealedRecordV2
-	witness         PublicationWitnessV2
-	canonical       []byte
+	publicationID          PublicationID
+	digest                 Digest
+	recordSetDigest        Digest
+	binding                *OperationBindingV2
+	operationState         OperationStateV2
+	events                 []EventEnvelopeV2
+	heads                  []HeadTransitionV2
+	effects                []EffectIntentReference
+	eligibility            []EligibilityGuardTransition
+	checkpoints            []CheckpointRecord
+	conditions             []ProviderCondition
+	assertions             []AuthorityAssertionV2
+	workspaceClaim         *WorkspacePathClaimV2
+	effectPermissionResume *EffectPermissionCoordinateV2
+	records                []SealedRecordV2
+	witness                PublicationWitnessV2
+	canonical              []byte
 }
 
 func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCommitPlanV2, error) {
@@ -253,6 +366,9 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	eligibility := cloneEligibilityGuards(input.EligibilityGuards)
 	checkpoints := cloneCheckpoints(input.Checkpoints)
 	conditions := append([]ProviderCondition(nil), input.Conditions...)
+	assertions := append([]AuthorityAssertionV2(nil), input.Assertions...)
+	workspaceClaim := cloneWorkspacePathClaim(input.WorkspacePathClaim)
+	effectPermission := cloneEffectPermission(input.EffectPermissionResume)
 	for index := range drafts {
 		payload, err := CanonicalObject(drafts[index].Payload)
 		if err != nil {
@@ -313,6 +429,13 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 		}
 		checkpoints[index].Canonical, checkpoints[index].SlotCanonical = record, slot
 	}
+	if workspaceClaim != nil {
+		canonical, err := requireCanonicalValue("workspace_path_claim", workspaceClaim.canonical, MaxCanonicalPayloadBytes)
+		if err != nil || workspaceClaim.claimDigest.IsZero() {
+			return SealedCommitPlanV2{}, invalid(ErrorInvalidCanonicalData, "workspace_path_claim")
+		}
+		workspaceClaim.canonical = canonical
+	}
 	sort.Slice(drafts, func(i, j int) bool {
 		return drafts[i].Coordinate.canonical()+"/"+string(drafts[i].EventID) < drafts[j].Coordinate.canonical()+"/"+string(drafts[j].EventID)
 	})
@@ -325,10 +448,13 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	sort.Slice(conditions, func(i, j int) bool {
 		return conditionTargetKey(conditions[i].Target) < conditionTargetKey(conditions[j].Target)
 	})
-	if err := validatePlanMembers(input.PriorOperationState, input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions); err != nil {
+	sort.Slice(assertions, func(i, j int) bool {
+		return authorityAssertionKey(assertions[i]) < authorityAssertionKey(assertions[j])
+	})
+	if err := validatePlanMembers(input.PriorOperationState, input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions, assertions, effectPermission); err != nil {
 		return SealedCommitPlanV2{}, err
 	}
-	preimage, err := planPreimage(input.OperationBinding, input.PriorOperationState, input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions)
+	preimage, err := planPreimage(input.OperationBinding, input.PriorOperationState, input.OperationState, drafts, heads, effects, eligibility, checkpoints, conditions, assertions, workspaceClaim, effectPermission)
 	if err != nil {
 		return SealedCommitPlanV2{}, err
 	}
@@ -360,7 +486,7 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	if err := ValidatePublicationEventsV2(events); err != nil {
 		return SealedCommitPlanV2{}, err
 	}
-	records, err := deriveSealedRecords(input.OperationBinding, state, events, heads, effects, eligibility, checkpoints, conditions)
+	records, err := deriveSealedRecords(input.OperationBinding, state, events, heads, effects, eligibility, checkpoints, conditions, workspaceClaim)
 	if err != nil {
 		return SealedCommitPlanV2{}, err
 	}
@@ -386,9 +512,13 @@ func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCo
 	if _, err := validateSealedRecordBudget(records); err != nil {
 		return SealedCommitPlanV2{}, err
 	}
+	if _, err := validateSealedPlanProductBudget(records, assertions); err != nil {
+		return SealedCommitPlanV2{}, err
+	}
 	plan := SealedCommitPlanV2{publicationID: publicationID, digest: planDigest, recordSetDigest: recordSetDigest,
 		binding: cloneBinding(input.OperationBinding), operationState: state, events: events, heads: heads, effects: effects,
-		eligibility: eligibility, checkpoints: checkpoints, conditions: conditions, records: records, witness: witness}
+		eligibility: eligibility, checkpoints: checkpoints, conditions: conditions, assertions: assertions, workspaceClaim: workspaceClaim,
+		effectPermissionResume: effectPermission, records: records, witness: witness}
 	plan.canonical, err = plan.finalBytes()
 	if err != nil {
 		return SealedCommitPlanV2{}, err
@@ -440,6 +570,8 @@ func sealedTargetIdentity(role SealedRecordRole, target SealedRecordTargetV2) st
 		return string(target.checkpointID)
 	case RecordCheckpointSlot:
 		return string(target.checkpointSlotID)
+	case RecordWorkspacePathClaim:
+		return target.workspaceClaim.String()
 	case RecordPublicationWitness:
 		return string(target.publicationID)
 	default:
@@ -447,7 +579,7 @@ func sealedTargetIdentity(role SealedRecordRole, target SealedRecordTargetV2) st
 	}
 }
 
-func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) error {
+func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition, assertions []AuthorityAssertionV2, permission *EffectPermissionCoordinateV2) error {
 	eventCoordinates := make(map[string]EventDraftV2, len(events))
 	eventIDs := make(map[EventID]bool, len(events))
 	operationEvents := 0
@@ -491,7 +623,7 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 	for index, effect := range effects {
 		currentEffectIDs[index] = effect.EffectID
 	}
-	if err := exactPublicationMembership(prior, state, currentEventIDs, currentEffectIDs); err != nil {
+	if err := exactPublicationMembership(prior, state, currentEventIDs, currentEffectIDs, permission); err != nil {
 		return err
 	}
 	if err := uniqueEffects(effects); err != nil {
@@ -503,20 +635,32 @@ func validatePlanMembers(prior *OperationStateV2, state OperationStateV2, events
 	if err := validateExactConditions(heads, eligibility, checkpoints, conditions); err != nil {
 		return err
 	}
+	mutated := make(map[string]bool, len(conditions))
+	for _, condition := range conditions {
+		mutated[conditionTargetKey(condition.Target)] = true
+	}
+	seenAssertions := make(map[string]bool, len(assertions))
+	for _, assertion := range assertions {
+		key := authorityAssertionKey(assertion)
+		if err := validateAuthorityAssertion(assertion); err != nil || seenAssertions[key] || mutated[key] {
+			return invalid(ErrorInvalidTransition, "authority_assertion_membership")
+		}
+		seenAssertions[key] = true
+	}
 	return nil
 }
 
 func preflightCommitPlan(input CommitPlanInput) error {
 	if len(input.Events) == 0 || len(input.Events) > MaxEventsPerPublication || len(input.Heads) != len(input.Events) ||
 		len(input.Heads) > MaxHeadsPerPublication || len(input.EffectIntents) > MaxEffectsPerPublication || len(input.EligibilityGuards) > MaxMembers ||
-		len(input.Checkpoints) > MaxCheckpointsPerPlan || len(input.Conditions) > MaxConditionsPerPlan {
+		len(input.Checkpoints) > MaxCheckpointsPerPlan || len(input.Conditions) > MaxConditionsPerPlan || len(input.Assertions) > MaxConditionsPerPlan {
 		return invalid(ErrorBudgetExceeded, "commit_plan_members")
 	}
 	projectedRecords := len(input.Events) + len(input.Heads) + len(input.EffectIntents) + len(input.EligibilityGuards) + 2*len(input.Checkpoints)
 	if input.OperationBinding != nil {
 		projectedRecords++
 	}
-	if projectedRecords >= MaxMembers {
+	if projectedRecords+1+len(input.Assertions) > MaxMembers {
 		return invalid(ErrorBudgetExceeded, "sealed_record_projection")
 	}
 	add := func(field string, size, maximum int) error {
@@ -561,6 +705,11 @@ func preflightCommitPlan(input CommitPlanInput) error {
 			return err
 		}
 		if err := add("checkpoint_slot", len(checkpoint.SlotCanonical), MaxCanonicalPayloadBytes); err != nil {
+			return err
+		}
+	}
+	if input.WorkspacePathClaim != nil {
+		if err := add("workspace_path_claim", len(input.WorkspacePathClaim.canonical), MaxCanonicalPayloadBytes); err != nil {
 			return err
 		}
 	}
@@ -621,6 +770,16 @@ func conservativeProductBatchSize(input CommitPlanInput) (uint64, error) {
 			return 0, err
 		}
 	}
+	if input.WorkspacePathClaim != nil {
+		if err := budget.addRecord(canonicalJSONSizeBound(input.WorkspacePathClaim.canonical), RecordValueOrdinary); err != nil {
+			return 0, err
+		}
+	}
+	for range input.Assertions {
+		if err := budget.addAssertion(); err != nil {
+			return 0, err
+		}
+	}
 	return budget.value, nil
 }
 
@@ -639,6 +798,16 @@ func (b *productRawBudget) addRecord(value uint64, class SealedRecordValueClass)
 		return invalid(ErrorBudgetExceeded, "product_raw_batch_bytes")
 	}
 	b.value += recordBytes
+	return nil
+}
+
+func (b *productRawBudget) addAssertion() error {
+	const providerOperationOverhead = uint64(20)
+	assertionBytes := uint64(MaxProductKeyBytes) + providerOperationOverhead
+	if assertionBytes > uint64(MaxProductRawBatchBytes)-b.value {
+		return invalid(ErrorBudgetExceeded, "product_raw_batch_bytes")
+	}
+	b.value += assertionBytes
 	return nil
 }
 
@@ -973,6 +1142,14 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 			return 0, err
 		}
 	}
+	if input.WorkspacePathClaim != nil {
+		if err := size.add(512); err != nil {
+			return 0, err
+		}
+		if err := size.add(base64JSONSizeBound(canonicalJSONSizeBound(input.WorkspacePathClaim.canonical))); err != nil {
+			return 0, err
+		}
+	}
 	for _, condition := range input.Conditions {
 		if err := size.add(1024); err != nil {
 			return 0, err
@@ -984,6 +1161,14 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 			}
 		}
 		if err := size.addScope(condition.Target.Coordinate.Scope); err != nil {
+			return 0, err
+		}
+	}
+	for _, assertion := range input.Assertions {
+		if err := size.add(1024); err != nil {
+			return 0, err
+		}
+		if err := size.addString(authorityAssertionKey(assertion)); err != nil {
 			return 0, err
 		}
 	}
@@ -1065,8 +1250,11 @@ func uniqueEffects(effects []EffectIntentReference) error {
 	return nil
 }
 
-func exactPublicationMembership(prior *OperationStateV2, state OperationStateV2, events []EventID, effects []EffectID) error {
+func exactPublicationMembership(prior *OperationStateV2, state OperationStateV2, events []EventID, effects []EffectID, permission *EffectPermissionCoordinateV2) error {
 	if prior == nil {
+		if permission != nil {
+			return invalid(ErrorInvalidTransition, "effect_permission_resume")
+		}
 		if !equalIDs(state.eventIDs, events) || !equalIDs(state.effectIDs, effects) {
 			return invalid(ErrorInvalidTransition, "first_publication_membership")
 		}
@@ -1075,8 +1263,15 @@ func exactPublicationMembership(prior *OperationStateV2, state OperationStateV2,
 	if prior.operationID != state.operationID || prior.logicalVersion+1 != state.logicalVersion || !containsAllIDs(prior.eventIDs, state.eventIDs) || !containsAllIDs(prior.effectIDs, state.effectIDs) {
 		return invalid(ErrorInvalidTransition, "prior_operation_membership")
 	}
-	rebuilt, err := AdvanceOperationState(*prior, OperationTransition{prior.logicalVersion, state.logicalVersion, state.status, state.resultKind,
-		state.resultSchemaVersion, state.canonicalResult, state.eventIDs, state.effectIDs, state.lastPublicationID})
+	transition := OperationTransition{prior.logicalVersion, state.logicalVersion, state.status, state.resultKind,
+		state.resultSchemaVersion, state.canonicalResult, state.eventIDs, state.effectIDs, state.lastPublicationID}
+	var rebuilt OperationStateV2
+	var err error
+	if permission == nil {
+		rebuilt, err = AdvanceOperationState(*prior, transition)
+	} else {
+		rebuilt, err = ResumeOperationStateWithEffectPermissionV2(*prior, transition, *permission)
+	}
 	rebuiltBytes, _ := marshalCanonical(operationStatePreimage(rebuilt, false), MaxCanonicalPayloadBytes)
 	stateBytes, _ := marshalCanonical(operationStatePreimage(state, false), MaxCanonicalPayloadBytes)
 	if err != nil || !bytes.Equal(rebuiltBytes, stateBytes) {
@@ -1268,6 +1463,23 @@ func cloneCheckpoints(values []CheckpointRecord) []CheckpointRecord {
 	return result
 }
 
+func cloneWorkspacePathClaim(value *WorkspacePathClaimV2) *WorkspacePathClaimV2 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	copy.canonical = append([]byte(nil), value.canonical...)
+	return &copy
+}
+
+func cloneEffectPermission(value *EffectPermissionCoordinateV2) *EffectPermissionCoordinateV2 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
 func requireCanonicalValue(field string, value []byte, maximum int) ([]byte, error) {
 	canonical, err := canonicalObjectBounded(value, maximum)
 	if err != nil {
@@ -1280,13 +1492,13 @@ func requireCanonicalValue(field string, value []byte, maximum int) ([]byte, err
 }
 
 func deriveSealedRecords(binding *OperationBindingV2, state OperationStateV2, events []EventEnvelopeV2, heads []HeadTransitionV2,
-	effects []EffectIntentReference, guards []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition,
+	effects []EffectIntentReference, guards []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition, workspaceClaim *WorkspacePathClaimV2,
 ) ([]SealedRecordV2, error) {
 	conditionByTarget := make(map[string]ProviderCondition, len(conditions))
 	for _, condition := range conditions {
 		conditionByTarget[conditionTargetKey(condition.Target)] = condition
 	}
-	records := make([]SealedRecordV2, 0, boolInt(binding != nil)+len(events)+len(heads)+len(effects)+len(guards)+2*len(checkpoints))
+	records := make([]SealedRecordV2, 0, boolInt(binding != nil)+len(events)+len(heads)+len(effects)+len(guards)+2*len(checkpoints)+boolInt(workspaceClaim != nil))
 	absent := SealedRecordConditionV2{kind: ConditionAbsent}
 	appendRecord := func(role SealedRecordRole, target SealedRecordTargetV2, class SealedRecordValueClass, condition SealedRecordConditionV2, canonical []byte) {
 		records = append(records, SealedRecordV2{role: role, target: target, valueClass: class, condition: condition, canonical: append([]byte(nil), canonical...)})
@@ -1358,6 +1570,9 @@ func deriveSealedRecords(binding *OperationBindingV2, state OperationStateV2, ev
 		condition := SealedRecordConditionV2{kind: providerCondition.Kind, observedRevision: providerCondition.ObservedRevision}
 		appendRecord(RecordCheckpointSlot, SealedRecordTargetV2{checkpointSlotID: checkpoint.SlotID}, RecordValueOrdinary, condition, checkpoint.SlotCanonical)
 	}
+	if workspaceClaim != nil {
+		appendRecord(RecordWorkspacePathClaim, SealedRecordTargetV2{workspaceClaim: workspaceClaim.claimDigest}, RecordValueOrdinary, absent, workspaceClaim.canonical)
+	}
 	sort.Slice(records, func(i, j int) bool { return sealedRecordOrderKey(records[i]) < sealedRecordOrderKey(records[j]) })
 	return records, nil
 }
@@ -1375,6 +1590,27 @@ func validateSealedRecordBudget(records []SealedRecordV2) (uint64, error) {
 			return 0, invalid(ErrorInvalidCanonicalData, "sealed_record_value")
 		}
 		if err := budget.addRecord(uint64(len(record.canonical)), record.valueClass); err != nil {
+			return 0, err
+		}
+	}
+	return budget.value, nil
+}
+
+func validateSealedPlanProductBudget(records []SealedRecordV2, assertions []AuthorityAssertionV2) (uint64, error) {
+	if len(records)+len(assertions) > MaxMembers {
+		return 0, invalid(ErrorBudgetExceeded, "sealed_plan_operations")
+	}
+	budget := productRawBudget{}
+	for _, record := range records {
+		if len(record.canonical) == 0 {
+			return 0, invalid(ErrorInvalidCanonicalData, "sealed_record_value")
+		}
+		if err := budget.addRecord(uint64(len(record.canonical)), record.valueClass); err != nil {
+			return 0, err
+		}
+	}
+	for range assertions {
+		if err := budget.addAssertion(); err != nil {
 			return 0, err
 		}
 	}
@@ -1414,8 +1650,10 @@ func sealedRecordRoleRank(role SealedRecordRole) string {
 		return "6"
 	case RecordCheckpointSlot:
 		return "7"
-	case RecordPublicationWitness:
+	case RecordWorkspacePathClaim:
 		return "8"
+	case RecordPublicationWitness:
+		return "9"
 	default:
 		panic("unsealed record role")
 	}
@@ -1429,7 +1667,12 @@ func cloneBinding(value *OperationBindingV2) *OperationBindingV2 {
 	return &copy
 }
 
-func planPreimage(binding *OperationBindingV2, prior *OperationStateV2, state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition) ([]byte, error) {
+type workspacePathClaimWireV2 struct {
+	ClaimSHA256 string `json:"claim_sha256"`
+	Canonical   []byte `json:"canonical"`
+}
+
+func planPreimage(binding *OperationBindingV2, prior *OperationStateV2, state OperationStateV2, events []EventDraftV2, heads []HeadTransitionV2, effects []EffectIntentReference, eligibility []EligibilityGuardTransition, checkpoints []CheckpointRecord, conditions []ProviderCondition, assertions []AuthorityAssertionV2, workspaceClaim *WorkspacePathClaimV2, permission *EffectPermissionCoordinateV2) ([]byte, error) {
 	var bindingWire *operationBindingWire
 	if binding != nil {
 		value := binding.wire()
@@ -1440,18 +1683,29 @@ func planPreimage(binding *OperationBindingV2, prior *OperationStateV2, state Op
 		value := operationStatePreimage(*prior, true)
 		priorWire = &value
 	}
+	assertionWires := make([]authorityAssertionWireV2, len(assertions))
+	for index := range assertions {
+		assertionWires[index] = assertions[index].wire()
+	}
+	var workspaceWire *workspacePathClaimWireV2
+	if workspaceClaim != nil {
+		workspaceWire = &workspacePathClaimWireV2{workspaceClaim.claimDigest.String(), append([]byte(nil), workspaceClaim.canonical...)}
+	}
 	return marshalCanonical(struct {
-		PublicationWitnessSchemaVersion uint32                       `json:"publication_witness_schema_version"`
-		Binding                         *operationBindingWire        `json:"operation_binding_create,omitempty"`
-		PriorState                      *operationStatePreimageWire  `json:"prior_operation_state,omitempty"`
-		State                           operationStatePreimageWire   `json:"operation_state"`
-		Events                          []EventDraftV2               `json:"events"`
-		Heads                           []HeadTransitionV2           `json:"heads"`
-		Effects                         []EffectIntentReference      `json:"effect_intents"`
-		Eligibility                     []EligibilityGuardTransition `json:"eligibility_guards"`
-		Checkpoints                     []CheckpointRecord           `json:"checkpoints"`
-		Conditions                      []ProviderCondition          `json:"conditions"`
-	}{publicationWitnessSchemaVersionV2, bindingWire, priorWire, operationStatePreimage(state, false), events, heads, effects, eligibility, checkpoints, conditions}, MaxCommitPlanBytes)
+		PublicationWitnessSchemaVersion uint32                        `json:"publication_witness_schema_version"`
+		Binding                         *operationBindingWire         `json:"operation_binding_create,omitempty"`
+		PriorState                      *operationStatePreimageWire   `json:"prior_operation_state,omitempty"`
+		State                           operationStatePreimageWire    `json:"operation_state"`
+		Events                          []EventDraftV2                `json:"events"`
+		Heads                           []HeadTransitionV2            `json:"heads"`
+		Effects                         []EffectIntentReference       `json:"effect_intents"`
+		Eligibility                     []EligibilityGuardTransition  `json:"eligibility_guards"`
+		Checkpoints                     []CheckpointRecord            `json:"checkpoints"`
+		Conditions                      []ProviderCondition           `json:"conditions"`
+		Assertions                      []authorityAssertionWireV2    `json:"authority_assertions"`
+		WorkspacePathClaim              *workspacePathClaimWireV2     `json:"workspace_path_claim,omitempty"`
+		EffectPermissionResume          *EffectPermissionCoordinateV2 `json:"effect_permission_resume,omitempty"`
+	}{publicationWitnessSchemaVersionV2, bindingWire, priorWire, operationStatePreimage(state, false), events, heads, effects, eligibility, checkpoints, conditions, assertionWires, workspaceWire, permission}, MaxCommitPlanBytes)
 }
 
 type operationStatePreimageWire struct {
@@ -1498,26 +1752,38 @@ func (p SealedCommitPlanV2) finalBytes() ([]byte, error) {
 		}
 		events[index] = encoded
 	}
+	assertions := make([]authorityAssertionWireV2, len(p.assertions))
+	for index := range p.assertions {
+		assertions[index] = p.assertions[index].wire()
+	}
+	var workspaceClaim *workspacePathClaimWireV2
+	if p.workspaceClaim != nil {
+		workspaceClaim = &workspacePathClaimWireV2{p.workspaceClaim.claimDigest.String(), append([]byte(nil), p.workspaceClaim.canonical...)}
+	}
 	return marshalCanonical(struct {
-		PublicationID   string                       `json:"publication_id"`
-		PlanSHA256      string                       `json:"canonical_plan_sha256"`
-		RecordSetSHA256 string                       `json:"sealed_record_set_sha256"`
-		Witness         publicationWitnessWireV2     `json:"publication_witness"`
-		Binding         *operationBindingWire        `json:"operation_binding_create,omitempty"`
-		OperationState  []byte                       `json:"operation_state"`
-		Events          [][]byte                     `json:"events"`
-		Heads           []HeadTransitionV2           `json:"heads"`
-		Effects         []EffectIntentReference      `json:"effect_intents"`
-		Eligibility     []EligibilityGuardTransition `json:"eligibility_guards"`
-		Checkpoints     []CheckpointRecord           `json:"checkpoints"`
-		Conditions      []ProviderCondition          `json:"conditions"`
-	}{string(p.publicationID), p.digest.String(), p.recordSetDigest.String(), publicationWitnessWire(p.witness), binding, state, events, p.heads, p.effects, p.eligibility, p.checkpoints, p.conditions}, MaxCommitPlanBytes)
+		PublicationID          string                        `json:"publication_id"`
+		PlanSHA256             string                        `json:"canonical_plan_sha256"`
+		RecordSetSHA256        string                        `json:"sealed_record_set_sha256"`
+		Witness                publicationWitnessWireV2      `json:"publication_witness"`
+		Binding                *operationBindingWire         `json:"operation_binding_create,omitempty"`
+		OperationState         []byte                        `json:"operation_state"`
+		Events                 [][]byte                      `json:"events"`
+		Heads                  []HeadTransitionV2            `json:"heads"`
+		Effects                []EffectIntentReference       `json:"effect_intents"`
+		Eligibility            []EligibilityGuardTransition  `json:"eligibility_guards"`
+		Checkpoints            []CheckpointRecord            `json:"checkpoints"`
+		Conditions             []ProviderCondition           `json:"conditions"`
+		Assertions             []authorityAssertionWireV2    `json:"authority_assertions"`
+		WorkspacePathClaim     *workspacePathClaimWireV2     `json:"workspace_path_claim,omitempty"`
+		EffectPermissionResume *EffectPermissionCoordinateV2 `json:"effect_permission_resume,omitempty"`
+	}{string(p.publicationID), p.digest.String(), p.recordSetDigest.String(), publicationWitnessWire(p.witness), binding, state, events, p.heads, p.effects, p.eligibility, p.checkpoints, p.conditions, assertions, workspaceClaim, p.effectPermissionResume}, MaxCommitPlanBytes)
 }
 
 func (p SealedCommitPlanV2) PublicationID() PublicationID     { return p.publicationID }
 func (p SealedCommitPlanV2) Digest() Digest                   { return p.digest }
 func (p SealedCommitPlanV2) RecordSetDigest() Digest          { return p.recordSetDigest }
 func (p SealedCommitPlanV2) MutationCount() int               { return len(p.records) }
+func (p SealedCommitPlanV2) AssertionCount() int              { return len(p.assertions) }
 func (p SealedCommitPlanV2) CanonicalBytes() []byte           { return append([]byte(nil), p.canonical...) }
 func (p SealedCommitPlanV2) OperationState() OperationStateV2 { return p.operationState }
 func (p SealedCommitPlanV2) Events() []EventEnvelopeV2 {
@@ -1528,6 +1794,12 @@ func (p SealedCommitPlanV2) Heads() []HeadTransitionV2 {
 }
 func (p SealedCommitPlanV2) Conditions() []ProviderCondition {
 	return append([]ProviderCondition(nil), p.conditions...)
+}
+func (p SealedCommitPlanV2) Assertions() []AuthorityAssertionV2 {
+	return append([]AuthorityAssertionV2(nil), p.assertions...)
+}
+func (p SealedCommitPlanV2) WorkspacePathClaim() *WorkspacePathClaimV2 {
+	return cloneWorkspacePathClaim(p.workspaceClaim)
 }
 func (p SealedCommitPlanV2) BindingCreate() *OperationBindingV2 { return cloneBinding(p.binding) }
 func (p SealedCommitPlanV2) EffectIntents() []EffectIntentReference {

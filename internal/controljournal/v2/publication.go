@@ -15,17 +15,22 @@ type CommitObservationV2 struct {
 	revision        uint64
 	durableThrough  uint64
 	mutationCount   int
+	assertionCount  int
 }
 
 func NewCommitObservationV2(publicationID PublicationID, planDigest, recordSetDigest Digest, revision, durableThrough uint64, mutationCount int) (CommitObservationV2, error) {
+	return NewCommitObservationWithAssertionsV2(publicationID, planDigest, recordSetDigest, revision, durableThrough, mutationCount, 0)
+}
+
+func NewCommitObservationWithAssertionsV2(publicationID PublicationID, planDigest, recordSetDigest Digest, revision, durableThrough uint64, mutationCount, assertionCount int) (CommitObservationV2, error) {
 	if _, err := DecodePublicationID(string(publicationID)); err != nil || planDigest.IsZero() || recordSetDigest.IsZero() {
 		return CommitObservationV2{}, invalid(ErrorInvalidDigest, "commit_observation")
 	}
-	if revision == 0 || durableThrough < revision || mutationCount <= 0 || mutationCount > MaxConditionsPerPlan {
+	if revision == 0 || durableThrough < revision || mutationCount <= 0 || mutationCount > MaxMembers || assertionCount < 0 || assertionCount > MaxMembers || mutationCount+assertionCount > MaxMembers {
 		return CommitObservationV2{}, invalid(ErrorInvalidVersion, "commit_observation")
 	}
 	return CommitObservationV2{publicationID: publicationID, planDigest: planDigest, recordSetDigest: recordSetDigest,
-		revision: revision, durableThrough: durableThrough, mutationCount: mutationCount}, nil
+		revision: revision, durableThrough: durableThrough, mutationCount: mutationCount, assertionCount: assertionCount}, nil
 }
 
 func (o CommitObservationV2) PublicationID() PublicationID   { return o.publicationID }
@@ -34,6 +39,7 @@ func (o CommitObservationV2) RecordSetDigest() Digest        { return o.recordSe
 func (o CommitObservationV2) Revision() uint64               { return o.revision }
 func (o CommitObservationV2) DurableThroughRevision() uint64 { return o.durableThrough }
 func (o CommitObservationV2) MutationCount() int             { return o.mutationCount }
+func (o CommitObservationV2) AssertionCount() int            { return o.assertionCount }
 
 // DurablePublicationPortV2 is the only durable mutation capability accepted
 // by the foundation coordinator. Capability packages receive the coordinator,
@@ -56,6 +62,7 @@ func (a AcknowledgedPublicationV2) DurableThroughRevision() uint64 {
 	return a.observation.durableThrough
 }
 func (a AcknowledgedPublicationV2) MutationCount() int       { return a.observation.mutationCount }
+func (a AcknowledgedPublicationV2) AssertionCount() int      { return a.observation.assertionCount }
 func (a AcknowledgedPublicationV2) Plan() SealedCommitPlanV2 { return a.plan }
 
 func acknowledgementSeal(plan SealedCommitPlanV2, observation CommitObservationV2) (Digest, error) {
@@ -69,7 +76,8 @@ func acknowledgementSeal(plan SealedCommitPlanV2, observation CommitObservationV
 		Revision        uint64 `json:"revision"`
 		DurableThrough  uint64 `json:"durable_through_revision"`
 		MutationCount   int    `json:"mutation_count"`
-	}{string(observation.publicationID), observation.planDigest.String(), observation.recordSetDigest.String(), observation.revision, observation.durableThrough, observation.mutationCount}, MaxCanonicalPayloadBytes)
+		AssertionCount  int    `json:"assertion_count"`
+	}{string(observation.publicationID), observation.planDigest.String(), observation.recordSetDigest.String(), observation.revision, observation.durableThrough, observation.mutationCount, observation.assertionCount}, MaxCanonicalPayloadBytes)
 	if err != nil {
 		return Digest{}, err
 	}
@@ -114,7 +122,7 @@ func validateAcknowledgement(ack AcknowledgedPublicationV2) error {
 	seal, err := acknowledgementSeal(ack.plan, ack.observation)
 	if err != nil || seal.IsZero() || seal != ack.seal || ack.observation.publicationID != ack.plan.publicationID ||
 		ack.observation.planDigest != ack.plan.digest || ack.observation.recordSetDigest != ack.plan.recordSetDigest ||
-		ack.observation.mutationCount != len(ack.plan.records) || ack.observation.revision == 0 ||
+		ack.observation.mutationCount != len(ack.plan.records) || ack.observation.assertionCount != len(ack.plan.assertions) || ack.observation.revision == 0 ||
 		ack.observation.durableThrough < ack.observation.revision {
 		return invalid(ErrorInvalidDigest, "acknowledged_publication")
 	}
@@ -197,6 +205,7 @@ func (c *PublicationCoordinatorV2) applyObservation(plan SealedCommitPlanV2, obs
 	}
 	if observation.publicationID != plan.publicationID || observation.planDigest != plan.digest ||
 		observation.recordSetDigest != plan.recordSetDigest || observation.mutationCount != len(plan.records) ||
+		observation.assertionCount != len(plan.assertions) ||
 		observation.revision == 0 || observation.durableThrough < observation.revision {
 		return AcknowledgedPublicationV2{}, invalid(ErrorInvalidDigest, "commit_observation_attribution")
 	}
