@@ -7,6 +7,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
@@ -34,6 +35,16 @@ func (a *Adapter) HandoffAuthorityPortV2(coordinator *journalv2.PublicationCoord
 		return nil, err
 	}
 	return &handoffAuthorityV2{a, coordinator, exec, workspaces}, nil
+}
+
+// HandoffAuthorityServiceV2 is the production composition seam. It makes the
+// complete v2 authority callable without retaining the legacy store service.
+func (a *Adapter) HandoffAuthorityServiceV2(coordinator *journalv2.PublicationCoordinatorV2, eventRegistry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, hostAuthorityID journalv2.HostAuthorityID, budgets restore.BudgetsV2, epochs handoff.RuntimeEpochSourceV2, verifier handoff.CandidateVerifier) (*handoff.AuthorityServiceV2, error) {
+	port, err := a.HandoffAuthorityPortV2(coordinator, eventRegistry, reducers, hostAuthorityID, budgets)
+	if err != nil {
+		return nil, err
+	}
+	return handoff.NewAuthorityServiceV2(port, epochs, verifier, eventRegistry)
 }
 
 func (a *handoffAuthorityV2) ResolveHandoffOperation(ctx context.Context, candidate journalv2.OperationBindingV2) (handoff.OperationResolutionV2, error) {
@@ -89,7 +100,11 @@ func (a *handoffAuthorityV2) ObserveHandoffAuthority(ctx context.Context, r hand
 	if err != nil || assertionRevision != workspaceObserved.RecordRevision {
 		return handoff.AuthorityObservationV2{}, invalidV2Plan("handoff workspace assertion")
 	}
-	return handoff.AuthorityObservationV2{Eligibility: eligibility, Execution: execution.ExecutionSlotObservationV2{State: &executionState, RecordRevision: executionRevision}, Workspace: workspaceObserved, Assertions: []journalv2.AuthorityAssertionV2{executionAssertion, workspaceAssertion}}, nil
+	revision, revisionRecord, revisionAssertion, err := observeWorkRevisionV2(ctx, a.adapter, r.ProjectID, r.MissionID)
+	if err != nil {
+		return handoff.AuthorityObservationV2{}, err
+	}
+	return handoff.AuthorityObservationV2{Eligibility: eligibility, Execution: execution.ExecutionSlotObservationV2{State: &executionState, RecordRevision: executionRevision}, Workspace: workspaceObserved, WorkRevision: handoff.WorkRevisionObservationV2{Revision: revision, RecordRevision: revisionRecord, Assertion: revisionAssertion}, Assertions: []journalv2.AuthorityAssertionV2{executionAssertion, workspaceAssertion, revisionAssertion}}, nil
 }
 
 func (a *handoffAuthorityV2) PublishHandoff(ctx context.Context, capability handoff.AuthorityPlanV2) (handoff.AuthorityAckV2, error) {
@@ -103,9 +118,55 @@ func (a *handoffAuthorityV2) PublishHandoff(ctx context.Context, capability hand
 	}
 	return handoff.AuthorityAckV2{PublicationID: ack.PublicationID(), ProviderRevision: ack.ProviderRevision(), PlanDigest: ack.PlanDigest(), MutationCount: ack.MutationCount()}, nil
 }
+func (a *handoffAuthorityV2) ReconcileHandoff(ctx context.Context, capability handoff.AuthorityPlanV2) (handoff.AuthorityAckV2, error) {
+	plan, err := capability.Publication()
+	if err != nil || !handoffTransportMembershipV2(plan) {
+		return handoff.AuthorityAckV2{}, invalidV2Plan("handoff reconciliation plan")
+	}
+	ack, err := reconcileObservedAuthorityPublicationV2(ctx, a.adapter, a.coordinator, plan)
+	if err != nil {
+		return handoff.AuthorityAckV2{}, err
+	}
+	return handoff.AuthorityAckV2{PublicationID: ack.PublicationID(), ProviderRevision: ack.ProviderRevision(), PlanDigest: ack.PlanDigest(), MutationCount: ack.MutationCount()}, nil
+}
+
+// reconcileObservedAuthorityPublicationV2 only accepts durable exact-plan
+// evidence. Unlike the registered delivery recovery path, it never retries an
+// absent plan: the capability service cannot infer that a Publish error arose
+// after coordinator registration.
+func reconcileObservedAuthorityPublicationV2(ctx context.Context, adapter *Adapter, coordinator *journalv2.PublicationCoordinatorV2, plan journalv2.SealedCommitPlanV2) (journalv2.AcknowledgedPublicationV2, error) {
+	observation, err := adapter.ReconcileCommitV2(ctx, plan)
+	if err != nil {
+		return journalv2.AcknowledgedPublicationV2{}, err
+	}
+	return coordinator.ReconcileComplete(plan, observation)
+}
 
 func handoffTransportMembershipV2(plan journalv2.SealedCommitPlanV2) bool {
-	return authorityTransportMembershipV2(plan, "handoff_slot", 2, 2, 3, 2, 1)
+	return authorityTransportMembershipV2(plan, "handoff_slot", 2, 2, 3, 3, 1)
+}
+
+func observeWorkRevisionV2(ctx context.Context, a *Adapter, projectID ids.ProjectID, missionID ids.MissionID) (workgraph.RevisionV2, uint64, journalv2.AuthorityAssertionV2, error) {
+	coordinate, err := journalv2.NewAggregateCoordinate("workgraph", journalv2.AggregateID(missionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(projectID), MissionID: journalv2.MissionID(missionID)})
+	if err != nil {
+		return workgraph.RevisionV2{}, 0, journalv2.AuthorityAssertionV2{}, err
+	}
+	head, record, err := readAuthorityHeadV2(ctx, a, coordinate)
+	if err != nil {
+		return workgraph.RevisionV2{}, 0, journalv2.AuthorityAssertionV2{}, err
+	}
+	state, err := workgraph.DecodeWorkgraphStateV2(head.AuthoritySummary())
+	digest, digestErr := journalv2.ReducerStateDigestV2(head.AuthoritySummary())
+	if err != nil || digestErr != nil || digest != head.CanonicalStateDigest() || state.ProjectID != projectID || state.MissionID != missionID || journalv2.LogicalVersion(state.LogicalVersion) != head.LogicalVersion() {
+		return workgraph.RevisionV2{}, 0, journalv2.AuthorityAssertionV2{}, invalidV2Plan("workgraph authority summary")
+	}
+	revision, err := workgraph.DecodeRevisionV2(state.CurrentRevision)
+	if err != nil || revision.ProjectID() != projectID || revision.MissionID() != missionID {
+		return workgraph.RevisionV2{}, 0, journalv2.AuthorityAssertionV2{}, invalidV2Plan("work revision authority")
+	}
+	valueDigest, _ := journalv2.ReducerStateDigestV2(record.CanonicalValue())
+	assertion, err := journalv2.NewAuthorityAssertionV2(journalv2.AuthorityAssertionInputV2{Target: journalv2.ConditionTarget{Kind: journalv2.ConditionTargetAggregateHead, Coordinate: coordinate}, Kind: journalv2.ConditionRecordRevision, ObservedRevision: record.RecordRevision(), ExpectedLogicalVersion: head.LogicalVersion(), ObservedValueDigest: valueDigest})
+	return revision, record.RecordRevision(), assertion, err
 }
 
 type authorityOperationResolutionV2 struct {

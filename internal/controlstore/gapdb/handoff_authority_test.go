@@ -2,6 +2,7 @@ package gapdb
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
@@ -67,6 +69,13 @@ func (p *handoffPlanCapturePortV2) PublishHandoff(_ context.Context, plan handof
 			return handoff.AuthorityAckV2{}, decodeErr
 		}
 		p.state = &state
+	}
+	return handoff.AuthorityAckV2{PublicationID: sealed.PublicationID(), ProviderRevision: p.revision, PlanDigest: sealed.Digest(), MutationCount: sealed.MutationCount()}, nil
+}
+func (p *handoffPlanCapturePortV2) ReconcileHandoff(_ context.Context, plan handoff.AuthorityPlanV2) (handoff.AuthorityAckV2, error) {
+	sealed, err := plan.Publication()
+	if err != nil || len(p.plans) == 0 {
+		return handoff.AuthorityAckV2{}, fmt.Errorf("incomplete handoff publication")
 	}
 	return handoff.AuthorityAckV2{PublicationID: sealed.PublicationID(), ProviderRevision: p.revision, PlanDigest: sealed.Digest(), MutationCount: sealed.MutationCount()}, nil
 }
@@ -178,6 +187,21 @@ func TestHandoffGapDBPartialPublicationRemainsUnresolvedV2(t *testing.T) {
 	assertHandoffPartialPublicationRejectedV2(t)
 }
 
+func TestHandoffGapDBHeadsWithoutEventsAndMixedPublicationRemainUnresolvedV2(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		write func(*v2AtomicMemory, journalv2.SealedCommitPlanV2, gapdbapi.Batch)
+	}{
+		{"heads_without_events", writeAuthorityHeadsWithoutEventsV2},
+		{"mixed_provider_revisions", writeAuthorityMixedRevisionsV2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			capability := captureFirstHandoffPlanV2(t, "topology-"+test.name, "work-handoff-"+test.name)
+			assertHandoffPublicationTopologyRejectedV2(t, capability, test.write)
+		})
+	}
+}
+
 func assertHandoffPartialPublicationRejectedV2(t *testing.T) {
 	t.Helper()
 	capability := captureFirstHandoffPlanV2(t, "partial", "work-handoff-partial")
@@ -205,6 +229,49 @@ func assertHandoffPartialPublicationRejectedV2(t *testing.T) {
 	}
 }
 
+func assertHandoffPublicationTopologyRejectedV2(t *testing.T, capability handoff.AuthorityPlanV2, write func(*v2AtomicMemory, journalv2.SealedCommitPlanV2, gapdbapi.Batch)) {
+	t.Helper()
+	plan, _ := capability.Publication()
+	memory := newV2AtomicMemory()
+	memory.revision = 100
+	seedAuthorityPlanDependenciesV2(t, memory, plan)
+	provider := memory.provider()
+	provider.batchFn = func(_ context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+		memory.mu.Lock()
+		defer memory.mu.Unlock()
+		memory.batchCalls++
+		write(memory, plan, batch)
+		return gapdbapi.MutationResult{}, &gapdbapi.TransportError{Operation: "atomic_batch", Ambiguous: true, Cause: io.EOF}
+	}
+	provider.statusFn = gapdbMemoryStatusV2(memory, "db-handoff-topology")
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	projection, _ := handoffReviewProjectionTrackerV2()
+	coordinator, _ := journalv2.NewPublicationCoordinatorV2(adapter, projection)
+	authority := &handoffAuthorityV2{adapter: adapter, coordinator: coordinator}
+	if _, err := authority.PublishHandoff(t.Context(), capability); err == nil || coordinator.UnresolvedCount() != 1 || memory.batchCalls != 1 {
+		t.Fatalf("incomplete topology escaped: unresolved=%d calls=%d err=%v", coordinator.UnresolvedCount(), memory.batchCalls, err)
+	}
+}
+
+func writeAuthorityHeadsWithoutEventsV2(memory *v2AtomicMemory, plan journalv2.SealedCommitPlanV2, batch gapdbapi.Batch) {
+	memory.revision++
+	for index, record := range plan.Records() {
+		if record.Role() == journalv2.RecordJournalEvent {
+			continue
+		}
+		mutation := batch.Mutations[index]
+		memory.records[mutation.Key] = gapdbapi.NewRecord(mutation.Key, mutation.Value, memory.revision, nil)
+	}
+}
+
+func writeAuthorityMixedRevisionsV2(memory *v2AtomicMemory, plan journalv2.SealedCommitPlanV2, batch gapdbapi.Batch) {
+	for index := range plan.Records() {
+		memory.revision++
+		mutation := batch.Mutations[index]
+		memory.records[mutation.Key] = gapdbapi.NewRecord(mutation.Key, mutation.Value, memory.revision, nil)
+	}
+}
+
 func sameAuthorityEligibilityAddressV2(left, right journalv2.SealedCommitPlanV2) bool {
 	a, b := left.EligibilityGuards()[0], right.EligibilityGuards()[0]
 	return a.MissionID == b.MissionID && a.ShardID == b.ShardID
@@ -219,6 +286,10 @@ func captureFirstHandoffPlanV2(t *testing.T, suffix, workID string) handoff.Auth
 func captureHandoffPlansV2(t *testing.T, suffix, workID string) ([]handoff.AuthorityPlanV2, handoff.StateV2, handoff.AuthorityRequestV2, handoff.AuthorityObservationV2) {
 	t.Helper()
 	_, slot, executionRequest, eligibility := gapdbExecutionAdmissionPlanFixtureV2(t, "handoff-"+suffix, workID)
+	revision := gapdbHandoffRevisionV2(t, "handoff-"+suffix, workID)
+	if revision.ID() != slot.WorkRevisionID {
+		t.Fatalf("work revision fixture drift: %s != %s", revision.ID(), slot.WorkRevisionID)
+	}
 	claim, err := workspace.WorkspacePathClaimDigestV2("repository-handoff", "/srv/spec-kitty", "/srv/spec-kitty/"+suffix)
 	if err != nil {
 		t.Fatal(err)
@@ -228,10 +299,13 @@ func captureHandoffPlansV2(t *testing.T, suffix, workID string) ([]handoff.Autho
 	slot.WorkspaceID, slot.WorkspacePathClaimDigest = binding.WorkspaceID, binding.PathClaimDigest
 	execCoordinate, _ := execution.ExecutionSlotCoordinateV2(slot.ProjectID, slot.MissionID, slot.WorkRevisionID, slot.WorkID)
 	workspaceCoordinate, _ := workspace.WorkspaceCoordinateV2(binding)
-	authority := handoff.AuthorityObservationV2{Eligibility: eligibility, Execution: execution.ExecutionSlotObservationV2{State: &slot, RecordRevision: 21}, Workspace: execution.WorkspaceAuthorityObservationV2{State: &workspaceState, RecordRevision: 22}, Assertions: []journalv2.AuthorityAssertionV2{gapdbAuthorityAssertionV2(t, execCoordinate, 21, journalv2.LogicalVersion(slot.LogicalVersion), slot.CanonicalBytes()), gapdbAuthorityAssertionV2(t, workspaceCoordinate, 22, 7, workspaceState.CanonicalBytes())}}
-	criterionIDs := []string{"criterion-1", "criterion-2"}
+	workgraphCoordinate, _ := journalv2.NewAggregateCoordinate("workgraph", journalv2.AggregateID(slot.MissionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(slot.ProjectID), MissionID: journalv2.MissionID(slot.MissionID)})
+	revisionBytes, _ := revision.Encode()
+	revisionAssertion := gapdbAuthorityAssertionV2(t, workgraphCoordinate, 23, 1, revisionBytes)
+	authority := handoff.AuthorityObservationV2{Eligibility: eligibility, Execution: execution.ExecutionSlotObservationV2{State: &slot, RecordRevision: 21}, Workspace: execution.WorkspaceAuthorityObservationV2{State: &workspaceState, RecordRevision: 22}, WorkRevision: handoff.WorkRevisionObservationV2{Revision: revision, RecordRevision: 23, Assertion: revisionAssertion}, Assertions: []journalv2.AuthorityAssertionV2{gapdbAuthorityAssertionV2(t, execCoordinate, 21, journalv2.LogicalVersion(slot.LogicalVersion), slot.CanonicalBytes()), gapdbAuthorityAssertionV2(t, workspaceCoordinate, 22, 7, workspaceState.CanonicalBytes()), revisionAssertion}}
+	criterionIDs := []string{"criterion-1"}
 	criteriaDigest, _ := handoff.CriterionSetDigestV2(criterionIDs)
-	request := handoff.AuthorityRequestV2{OperationID: journalv2.OperationID("operation-handoff-" + suffix), HandoffID: ids.HandoffID("handoff-" + suffix), ProjectID: slot.ProjectID, MissionID: slot.MissionID, WorkRevisionID: slot.WorkRevisionID, WorkID: slot.WorkID, RunID: slot.RunID, RuntimeEpochID: slot.RuntimeEpochID, Workspace: binding, LeaseID: slot.LeaseID, LeaseGeneration: slot.Generation, Fence: slot.Fence, ActorID: slot.ActorID, ProcessID: slot.ProcessID, RepositoryID: binding.RepositoryID, RepositoryPath: "/repo", LaneID: binding.LaneID, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, Candidate: strings.Repeat("b", 40), Contributors: []ids.ActorID{slot.ActorID, "actor-second"}, CriterionIDs: criterionIDs, CriteriaDigest: criteriaDigest, EvidenceDigest: strings.Repeat("d", 64), Governance: slot.Governance, ObservedAt: executionRequest.ObservedAt}
+	request := handoff.AuthorityRequestV2{OperationID: journalv2.OperationID("operation-handoff-" + suffix), HandoffID: ids.HandoffID("handoff-" + suffix), ProjectID: slot.ProjectID, MissionID: slot.MissionID, WorkRevisionID: slot.WorkRevisionID, WorkID: slot.WorkID, RunID: slot.RunID, RuntimeEpochID: slot.RuntimeEpochID, Workspace: binding, LeaseID: slot.LeaseID, LeaseGeneration: slot.Generation, Fence: slot.Fence, ActorID: slot.ActorID, ProcessID: slot.ProcessID, RepositoryID: binding.RepositoryID, RepositoryPath: "/repo", LaneID: binding.LaneID, OwnedBranch: binding.OwnedBranch, PinnedBase: binding.PinnedBase, Candidate: strings.Repeat("b", 40), Contributors: []ids.ActorID{slot.ActorID, "actor-second"}, CriterionIDs: criterionIDs, CriteriaDigest: criteriaDigest, WorkRevisionCriteriaDigest: revision.CriteriaDigest(), EvidenceDigest: strings.Repeat("d", 64), Governance: slot.Governance, ObservedAt: executionRequest.ObservedAt}
 	capture := &handoffPlanCapturePortV2{authority: authority, revision: 40}
 	service, err := handoff.NewAuthorityServiceV2(capture, gapdbHandoffEpochV2(slot.RuntimeEpochID), gapdbCandidateVerifierV2{}, journalv2.DefaultEventRegistryV2())
 	if err != nil {
@@ -241,6 +315,28 @@ func captureHandoffPlansV2(t *testing.T, suffix, workID string) ([]handoff.Autho
 		t.Fatal(err)
 	}
 	return append([]handoff.AuthorityPlanV2(nil), capture.plans...), *capture.state, request, authority
+}
+
+func gapdbHandoffRevisionV2(t *testing.T, suffix, workID string) workgraph.RevisionV2 {
+	t.Helper()
+	work, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{ProjectID: "project-gapdb", WorkID: ids.WorkID(workID), Title: "Execute " + suffix, Description: "Exercise GapDB execution authority.", DesignContext: "Use the current lease.", Criteria: []workgraph.CriterionObservation{{ID: "criterion-1", Text: "passes", Outcome: "green", Verifier: "test", Requirement: workgraph.CriterionRequired}}, WriteScopes: []workgraph.WriteScopeObservation{{Path: "internal/execution", Domain: "execution", Access: workgraph.ScopeWriteExclusive}}, Provenance: []workgraph.ScopeReference{{ID: "scope-1", Kind: workgraph.ScopePlanConcern}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := workgraph.NewDraftObservation("project-gapdb", "mission-gapdb", "artifact-plan", strings.Repeat("a", 64), []workgraph.ApprovedScope{{ID: "scope-1", Kind: workgraph.ScopePlanConcern, MissionID: "mission-gapdb"}}, []workgraph.WorkObservation{work})
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := sha256.Sum256([]byte(workID))
+	final, err := workgraph.NewFinalizationObservation(draft, []workgraph.ObservationEvidence{{WorkID: ids.WorkID(workID), Provider: "fake", ExternalID: "external-" + suffix, Revision: "provider-r1", MetadataSchema: 1, DefinitionDigest: fmt.Sprintf("%x", definition), CriterionEvidenceHints: map[string]string{"criterion-1": "go test"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := workgraph.BuildGenerationOneCandidateV3(workgraph.GenerationOneCandidateV3Params{Observation: final, PlanningSourceCommit: strings.Repeat("b", 40), MissionDefinition: workgraph.MissionDefinitionIdentity{Key: "software-development", Version: 1, Digest: strings.Repeat("c", 64)}, DependencyPolicy: workgraph.DependencyApprovedOrDone, FinalizedBy: "actor-gapdb", FinalizedAt: time.Date(2026, 9, 5, 9, 0, 0, 0, time.UTC), GovernanceContextID: "governance-gapdb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision
 }
 
 func handoffPublisherHarnessV2(t *testing.T, plans ...handoff.AuthorityPlanV2) (*v2AtomicMemory, *handoffAuthorityV2) {
@@ -276,6 +372,24 @@ func handoffPublisherHarnessV2(t *testing.T, plans ...handoff.AuthorityPlanV2) (
 
 func seedAuthorityPlanDependenciesV2(t *testing.T, memory *v2AtomicMemory, plan journalv2.SealedCommitPlanV2) {
 	t.Helper()
+	for _, condition := range plan.Conditions() {
+		if condition.Kind != journalv2.ConditionRecordRevision || condition.Target.Kind != journalv2.ConditionTargetAggregateHead {
+			continue
+		}
+		var key v2Key
+		var err error
+		if condition.Target.Coordinate.Kind == journalv2.AggregateKind("operation") {
+			key, err = v2OperationHeadKey(journalv2.OperationID(condition.Target.Coordinate.ID))
+		} else {
+			key, err = v2AggregateHeadKey(condition.Target.Coordinate)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := memory.records[key.String()]; !exists {
+			memory.records[key.String()] = gapdbapi.NewRecord(key.String(), []byte(`{}`), gapdbapi.Revision(condition.ObservedRevision), nil)
+		}
+	}
 	for _, assertion := range plan.Assertions() {
 		key, err := v2KeyForAuthorityAssertion(assertion)
 		if err != nil {

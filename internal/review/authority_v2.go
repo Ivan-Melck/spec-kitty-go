@@ -113,32 +113,33 @@ func DecodeIndependenceExceptionV2(encoded []byte) (IndependenceExceptionV2, err
 }
 
 type StateV2 struct {
-	SchemaVersion            uint16                          `json:"schema_version"`
-	LogicalVersion           uint64                          `json:"logical_version"`
-	Stage                    StageV2                         `json:"stage"`
-	ReviewID                 ids.ReviewID                    `json:"review_id"`
-	HandoffID                ids.HandoffID                   `json:"handoff_id"`
-	ProjectID                ids.ProjectID                   `json:"project_id"`
-	MissionID                ids.MissionID                   `json:"mission_id"`
-	WorkRevisionID           ids.WorkRevisionID              `json:"work_revision_id"`
-	WorkID                   ids.WorkID                      `json:"work_id"`
-	RuntimeEpochID           journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
-	Candidate                string                          `json:"candidate"`
-	HandoffContributorDigest string                          `json:"handoff_contributor_digest"`
-	ReviewerActorID          ids.ActorID                     `json:"reviewer_actor_id"`
-	ReviewerProcessID        ids.ProcessID                   `json:"reviewer_process_id"`
-	PolicyRevision           string                          `json:"policy_revision"`
-	CriterionSetDigest       string                          `json:"criterion_set_digest"`
-	CriterionIDs             []string                        `json:"criterion_ids"`
-	Criteria                 []CriterionEvidenceV2           `json:"criteria"`
-	Verdict                  Verdict                         `json:"verdict,omitempty"`
-	Exception                *IndependenceExceptionV2        `json:"independence_exception,omitempty"`
-	Governance               execution.ExecutionGovernanceV2 `json:"governance"`
-	ObservedAt               string                          `json:"observed_at"`
+	SchemaVersion              uint16                          `json:"schema_version"`
+	LogicalVersion             uint64                          `json:"logical_version"`
+	Stage                      StageV2                         `json:"stage"`
+	ReviewID                   ids.ReviewID                    `json:"review_id"`
+	HandoffID                  ids.HandoffID                   `json:"handoff_id"`
+	ProjectID                  ids.ProjectID                   `json:"project_id"`
+	MissionID                  ids.MissionID                   `json:"mission_id"`
+	WorkRevisionID             ids.WorkRevisionID              `json:"work_revision_id"`
+	WorkID                     ids.WorkID                      `json:"work_id"`
+	RuntimeEpochID             journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
+	Candidate                  string                          `json:"candidate"`
+	HandoffContributorDigest   string                          `json:"handoff_contributor_digest"`
+	ReviewerActorID            ids.ActorID                     `json:"reviewer_actor_id"`
+	ReviewerProcessID          ids.ProcessID                   `json:"reviewer_process_id"`
+	PolicyRevision             string                          `json:"policy_revision"`
+	CriterionSetDigest         string                          `json:"criterion_set_digest"`
+	WorkRevisionCriteriaDigest string                          `json:"work_revision_criteria_digest"`
+	CriterionIDs               []string                        `json:"criterion_ids"`
+	Criteria                   []CriterionEvidenceV2           `json:"criteria"`
+	Verdict                    Verdict                         `json:"verdict,omitempty"`
+	Exception                  *IndependenceExceptionV2        `json:"independence_exception,omitempty"`
+	Governance                 execution.ExecutionGovernanceV2 `json:"governance"`
+	ObservedAt                 string                          `json:"observed_at"`
 }
 
 func (s StateV2) Validate() error {
-	if s.SchemaVersion != 1 || s.LogicalVersion == 0 || !handoff.ValidCommit(s.Candidate) || !handoff.ValidDigest(s.HandoffContributorDigest) || !handoff.ValidDigest(s.CriterionSetDigest) || !boundedTextV2(s.PolicyRevision, journalv2.MaxIdentityBytes) {
+	if s.SchemaVersion != 1 || s.LogicalVersion == 0 || !handoff.ValidCommit(s.Candidate) || !handoff.ValidDigest(s.HandoffContributorDigest) || !handoff.ValidDigest(s.CriterionSetDigest) || !handoff.ValidDigest(s.WorkRevisionCriteriaDigest) || !boundedTextV2(s.PolicyRevision, journalv2.MaxIdentityBytes) {
 		return reviewAuthorityErrorV2(KindInvalid, "review_state", nil)
 	}
 	governance, governanceErr := execution.ExecutionGovernanceFromContextV2(s.Governance.Context)
@@ -249,12 +250,6 @@ func CoordinateV2(project ids.ProjectID, mission ids.MissionID, revision ids.Wor
 	return journalv2.NewAggregateCoordinate("review_slot", journalv2.AggregateID(reviewID), journalv2.Scope{Kind: journalv2.ScopeWork, ProjectID: journalv2.ProjectID(project), MissionID: journalv2.MissionID(mission), WorkRevisionID: journalv2.WorkRevisionID(revision), WorkID: journalv2.WorkID(work)})
 }
 
-func ExceptionCoordinateV2(exception IndependenceExceptionV2) (journalv2.AggregateCoordinate, error) {
-	if err := exception.Validate(); err != nil {
-		return journalv2.AggregateCoordinate{}, err
-	}
-	return journalv2.NewAggregateCoordinate("review_slot", journalv2.AggregateID("policy:"+exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(exception.ProjectID), MissionID: journalv2.MissionID(exception.MissionID)})
-}
 func ReduceEventV2(prior []byte, envelope journalv2.EventEnvelopeV2) ([]byte, error) {
 	if envelope.Family() != "review_slot" || envelope.EventSchemaVersion() != 1 || envelope.ReducerVersion() != 1 {
 		return nil, reviewAuthorityErrorV2(KindInvalid, "tuple", nil)
@@ -296,31 +291,32 @@ func ReduceEventV2(prior []byte, envelope journalv2.EventEnvelopeV2) ([]byte, er
 	return next.CanonicalBytes(), nil
 }
 func ReducerRegistrationsV2() []journalv2.ReducerRegistration {
-	sum := sha256.Sum256([]byte("spec-kitty/review-reducer/1.0"))
+	sum := sha256.Sum256([]byte("spec-kitty/review-reducer/1.1/work-revision-policy"))
 	d, _ := journalv2.ParseDigest("review_reducer", hex.EncodeToString(sum[:]))
 	return []journalv2.ReducerRegistration{{Family: "review_slot", EventSchemaVersion: 1, ReducerVersion: 1, Owner: "internal/review", ImplementationDigest: d, Reduce: ReduceEventV2}}
 }
 
 type AuthorityRequestV2 struct {
-	OperationID              journalv2.OperationID
-	ReviewID                 ids.ReviewID
-	HandoffID                ids.HandoffID
-	ProjectID                ids.ProjectID
-	MissionID                ids.MissionID
-	WorkRevisionID           ids.WorkRevisionID
-	WorkID                   ids.WorkID
-	RuntimeEpochID           journalv2.RuntimeEpochID
-	Workspace                workspace.BindingV2
-	ReviewerActorID          ids.ActorID
-	ReviewerProcessID        ids.ProcessID
-	Candidate                string
-	HandoffContributorDigest string
-	Criteria                 []CriterionEvidenceV2
-	Verdict                  Verdict
-	PolicyRevision           string
-	Exception                *IndependenceExceptionV2
-	Governance               execution.ExecutionGovernanceV2
-	ObservedAt               time.Time
+	OperationID                journalv2.OperationID
+	ReviewID                   ids.ReviewID
+	HandoffID                  ids.HandoffID
+	ProjectID                  ids.ProjectID
+	MissionID                  ids.MissionID
+	WorkRevisionID             ids.WorkRevisionID
+	WorkID                     ids.WorkID
+	RuntimeEpochID             journalv2.RuntimeEpochID
+	Workspace                  workspace.BindingV2
+	ReviewerActorID            ids.ActorID
+	ReviewerProcessID          ids.ProcessID
+	Candidate                  string
+	HandoffContributorDigest   string
+	WorkRevisionCriteriaDigest string
+	Criteria                   []CriterionEvidenceV2
+	Verdict                    Verdict
+	PolicyRevision             string
+	Exception                  *IndependenceExceptionV2
+	Governance                 execution.ExecutionGovernanceV2
+	ObservedAt                 time.Time
 }
 type OperationResolutionKindV2 uint8
 
@@ -341,17 +337,32 @@ type ObservationV2 struct {
 	LastPublicationID journalv2.PublicationID
 }
 type ExceptionObservationV2 struct {
-	State          *IndependenceExceptionV2
+	Fact      MissionPolicyFactObservationV2
+	Assertion journalv2.AuthorityAssertionV2
+}
+
+// MissionPolicyFactObservationV2 is a provider-neutral snapshot of the
+// current mission fact head. The adapter translates the mission authority;
+// review owns policy interpretation and never parses mission wire.
+type MissionPolicyFactObservationV2 struct {
+	ProjectID      journalv2.ProjectID
+	MissionID      journalv2.MissionID
+	FactID         string
+	Kind           string
+	Status         string
+	LogicalVersion journalv2.LogicalVersion
+	DetailDigest   journalv2.Digest
 	RecordRevision uint64
-	Assertion      journalv2.AuthorityAssertionV2
+	Found          bool
 }
 type AuthorityObservationV2 struct {
-	Eligibility workgraph.ObservedEligibilityShardV2
-	Execution   execution.ExecutionSlotObservationV2
-	Workspace   execution.WorkspaceAuthorityObservationV2
-	Handoff     handoff.ObservationV2
-	Exception   ExceptionObservationV2
-	Assertions  []journalv2.AuthorityAssertionV2
+	Eligibility  workgraph.ObservedEligibilityShardV2
+	Execution    execution.ExecutionSlotObservationV2
+	Workspace    execution.WorkspaceAuthorityObservationV2
+	Handoff      handoff.ObservationV2
+	WorkRevision handoff.WorkRevisionObservationV2
+	Exception    ExceptionObservationV2
+	Assertions   []journalv2.AuthorityAssertionV2
 }
 type AuthorityPlanV2 struct{ sealed journalv2.SealedCommitPlanV2 }
 
@@ -373,6 +384,7 @@ type AuthorityPortV2 interface {
 	ObserveReview(context.Context, journalv2.AggregateCoordinate) (ObservationV2, error)
 	ObserveReviewAuthority(context.Context, AuthorityRequestV2) (AuthorityObservationV2, error)
 	PublishReview(context.Context, AuthorityPlanV2) (AuthorityAckV2, error)
+	ReconcileReview(context.Context, AuthorityPlanV2) (AuthorityAckV2, error)
 }
 type RuntimeEpochSourceV2 interface {
 	CurrentRuntimeEpoch(context.Context) (journalv2.RuntimeEpochID, error)
@@ -444,7 +456,7 @@ func (s *AuthorityServiceV2) Submit(ctx context.Context, r AuthorityRequestV2) (
 		if e != nil {
 			return AuthorityResultV2{}, reviewAuthorityErrorV2(KindStaleAuthority, "authority", e)
 		}
-		eligibility, assertions, e := validateReviewAuthorityV2(r, authority)
+		eligibility, assertions, e := validateReviewAuthorityV2(r, seed, authority)
 		if e != nil {
 			return AuthorityResultV2{}, e
 		}
@@ -471,25 +483,10 @@ func (s *AuthorityServiceV2) Submit(ctx context.Context, r AuthorityRequestV2) (
 		ack, e := s.port.PublishReview(ctx, plan)
 		sealed, _ := plan.Publication()
 		if e != nil {
-			recovered, recoverErr := s.port.ResolveReviewOperation(ctx, binding)
-			if recoverErr != nil || recovered.Kind != OperationExactV2 {
+			ack, e = s.port.ReconcileReview(ctx, plan)
+			if e != nil {
 				return AuthorityResultV2{}, reviewAuthorityErrorV2(KindConflict, "publication", e)
 			}
-			if recovered.State.Status() == journalv2.StatusResolved || recovered.State.Status() == journalv2.StatusRefused {
-				replayed, decodeErr := DecodeStateV2(recovered.State.Result())
-				if decodeErr != nil || replayed.Stage != StageVerdictRecordedV2 || !sameReviewIdentityV2(seed, replayed) || !reviewResultMatchesRequestV2(r, replayed) {
-					return AuthorityResultV2{}, reviewAuthorityErrorV2(KindConflict, "review_recovery", decodeErr)
-				}
-				return AuthorityResultV2{State: replayed, PublicationID: recovered.State.LastPublicationID(), Replayed: true}, nil
-			}
-			observed, observeErr := s.port.ObserveReview(ctx, coordinate)
-			if observeErr != nil || observed.State == nil || !sameReviewIdentityV2(seed, *observed.State) {
-				return AuthorityResultV2{}, reviewAuthorityErrorV2(KindConflict, "review_recovery", observeErr)
-			}
-			current, reviewRevision = observed.State, observed.RecordRevision
-			state := recovered.State
-			operation, operationRevision = &state, recovered.RecordRevision
-			continue
 		}
 		if ack.ProviderRevision == 0 || ack.PublicationID != sealed.PublicationID() || ack.PlanDigest != sealed.Digest() || ack.MutationCount != sealed.MutationCount() {
 			return AuthorityResultV2{}, reviewAuthorityErrorV2(KindConflict, "publication", e)
@@ -507,7 +504,7 @@ func (s *AuthorityServiceV2) Submit(ctx context.Context, r AuthorityRequestV2) (
 }
 
 func prepareReviewRequestV2(r AuthorityRequestV2) (journalv2.OperationBindingV2, StateV2, error) {
-	if r.ObservedAt.IsZero() || r.Workspace.Validate() != nil || !handoff.ValidCommit(r.Candidate) || !handoff.ValidDigest(r.HandoffContributorDigest) || r.PolicyRevision != r.Governance.PolicyRevision {
+	if r.ObservedAt.IsZero() || r.Workspace.Validate() != nil || !handoff.ValidCommit(r.Candidate) || !handoff.ValidDigest(r.HandoffContributorDigest) || !handoff.ValidDigest(r.WorkRevisionCriteriaDigest) || r.PolicyRevision != r.Governance.PolicyRevision {
 		return journalv2.OperationBindingV2{}, StateV2{}, reviewAuthorityErrorV2(KindInvalid, "request", nil)
 	}
 	criteria := append([]CriterionEvidenceV2(nil), r.Criteria...)
@@ -524,7 +521,7 @@ func prepareReviewRequestV2(r AuthorityRequestV2) (journalv2.OperationBindingV2,
 	for i := range criteria {
 		criterionIDs[i] = criteria[i].CriterionID
 	}
-	seed := StateV2{SchemaVersion: 1, LogicalVersion: 1, Stage: StageAttemptRequestedV2, ReviewID: r.ReviewID, HandoffID: r.HandoffID, ProjectID: r.ProjectID, MissionID: r.MissionID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID, RuntimeEpochID: r.RuntimeEpochID, Candidate: r.Candidate, HandoffContributorDigest: r.HandoffContributorDigest, ReviewerActorID: r.ReviewerActorID, ReviewerProcessID: r.ReviewerProcessID, PolicyRevision: r.PolicyRevision, CriterionSetDigest: criterionIDsDigestV2(criterionIDs), CriterionIDs: criterionIDs, Criteria: nil, Governance: r.Governance, ObservedAt: r.ObservedAt.UTC().Format(time.RFC3339Nano)}
+	seed := StateV2{SchemaVersion: 1, LogicalVersion: 1, Stage: StageAttemptRequestedV2, ReviewID: r.ReviewID, HandoffID: r.HandoffID, ProjectID: r.ProjectID, MissionID: r.MissionID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID, RuntimeEpochID: r.RuntimeEpochID, Candidate: r.Candidate, HandoffContributorDigest: r.HandoffContributorDigest, ReviewerActorID: r.ReviewerActorID, ReviewerProcessID: r.ReviewerProcessID, PolicyRevision: r.PolicyRevision, CriterionSetDigest: criterionIDsDigestV2(criterionIDs), WorkRevisionCriteriaDigest: r.WorkRevisionCriteriaDigest, CriterionIDs: criterionIDs, Criteria: nil, Governance: r.Governance, ObservedAt: r.ObservedAt.UTC().Format(time.RFC3339Nano)}
 	if r.Exception != nil {
 		x := *r.Exception
 		seed.Exception = &x
@@ -543,7 +540,7 @@ func prepareReviewRequestV2(r AuthorityRequestV2) (journalv2.OperationBindingV2,
 	return binding, seed, err
 }
 
-func validateReviewAuthorityV2(r AuthorityRequestV2, o AuthorityObservationV2) (journalv2.EligibilityGuardTransition, []journalv2.AuthorityAssertionV2, error) {
+func validateReviewAuthorityV2(r AuthorityRequestV2, prepared StateV2, o AuthorityObservationV2) (journalv2.EligibilityGuardTransition, []journalv2.AuthorityAssertionV2, error) {
 	token, err := o.Eligibility.Token(r.WorkID, r.WorkRevisionID, workgraph.EligibilityReview)
 	if err != nil {
 		return journalv2.EligibilityGuardTransition{}, nil, reviewAuthorityErrorV2(KindRevisionIneligible, "eligibility", err)
@@ -564,11 +561,11 @@ func validateReviewAuthorityV2(r AuthorityRequestV2, o AuthorityObservationV2) (
 		return journalv2.EligibilityGuardTransition{}, nil, reviewAuthorityErrorV2(KindStaleAuthority, "workspace", nil)
 	}
 	h := *o.Handoff.State
-	wantCriterionIDs := make([]string, len(r.Criteria))
-	for i := range r.Criteria {
-		wantCriterionIDs[i] = r.Criteria[i].CriterionID
+	criteria, revisionDigest, revisionErr := handoffCriterionAuthorityV2(o.WorkRevision.Revision, r.WorkID)
+	if revisionErr != nil || o.WorkRevision.RecordRevision == 0 || o.WorkRevision.Revision.ID() != r.WorkRevisionID || revisionDigest != r.WorkRevisionCriteriaDigest || !stringSlicesEqualReviewV2(criteria, prepared.CriterionIDs) {
+		return journalv2.EligibilityGuardTransition{}, nil, reviewAuthorityErrorV2(KindRevisionIneligible, "work_revision_criteria", revisionErr)
 	}
-	if h.Stage != handoff.StageCandidateRecordedV2 || h.HandoffID != r.HandoffID || h.ProjectID != r.ProjectID || h.MissionID != r.MissionID || h.WorkRevisionID != r.WorkRevisionID || h.WorkID != r.WorkID || h.Candidate != r.Candidate || h.ContributorDigest != r.HandoffContributorDigest || !stringSlicesEqualReviewV2(h.CriterionIDs, wantCriterionIDs) || !bytes.Equal(mustReviewCanonicalV2(h.Governance), mustReviewCanonicalV2(r.Governance)) {
+	if h.Stage != handoff.StageCandidateRecordedV2 || h.HandoffID != r.HandoffID || h.ProjectID != r.ProjectID || h.MissionID != r.MissionID || h.WorkRevisionID != r.WorkRevisionID || h.WorkID != r.WorkID || h.Candidate != r.Candidate || h.ContributorDigest != r.HandoffContributorDigest || h.WorkRevisionCriteriaDigest != r.WorkRevisionCriteriaDigest || !stringSlicesEqualReviewV2(h.CriterionIDs, prepared.CriterionIDs) || !bytes.Equal(mustReviewCanonicalV2(h.Governance), mustReviewCanonicalV2(r.Governance)) {
 		return journalv2.EligibilityGuardTransition{}, nil, reviewAuthorityErrorV2(KindCandidateMismatch, "handoff", nil)
 	}
 	sameActor := false
@@ -577,14 +574,15 @@ func validateReviewAuthorityV2(r AuthorityRequestV2, o AuthorityObservationV2) (
 	}
 	assertions := append([]journalv2.AuthorityAssertionV2(nil), o.Assertions...)
 	if sameActor {
-		if r.Exception == nil || o.Exception.State == nil || *r.Exception != *o.Exception.State || !exceptionEffectiveV2(*r.Exception, r.ObservedAt) {
+		fact := o.Exception.Fact
+		if r.Exception == nil || !fact.Found || fact.RecordRevision == 0 || fact.Kind != "decision" || fact.Status != "resolved" || fact.FactID != r.Exception.ExceptionID || fact.ProjectID != journalv2.ProjectID(r.ProjectID) || fact.MissionID != journalv2.MissionID(r.MissionID) || fact.LogicalVersion == 0 || o.Exception.Assertion.ExpectedLogicalVersion() != fact.LogicalVersion || fact.DetailDigest != r.Exception.Digest() || !exceptionEffectiveV2(*r.Exception, r.ObservedAt) {
 			return journalv2.EligibilityGuardTransition{}, nil, reviewAuthorityErrorV2(KindReviewerNotIndependent, "reviewer_actor_id", nil)
 		}
 		assertions = append(assertions, o.Exception.Assertion)
 	} else if r.Exception != nil {
 		return journalv2.EligibilityGuardTransition{}, nil, reviewAuthorityErrorV2(KindInvalid, "unnecessary_exception", nil)
 	}
-	want := 3
+	want := 4
 	if sameActor {
 		want++
 	}
@@ -594,15 +592,16 @@ func validateReviewAuthorityV2(r AuthorityRequestV2, o AuthorityObservationV2) (
 	executionCoordinate, _ := execution.ExecutionSlotCoordinateV2(r.ProjectID, r.MissionID, r.WorkRevisionID, r.WorkID)
 	workspaceCoordinate, _ := workspace.WorkspaceCoordinateV2(r.Workspace)
 	handoffCoordinate, _ := handoff.CoordinateV2(r.ProjectID, r.MissionID, r.WorkRevisionID, r.WorkID)
-	wantedAssertions := map[journalv2.AggregateCoordinate]uint64{executionCoordinate: o.Execution.RecordRevision, workspaceCoordinate: o.Workspace.RecordRevision, handoffCoordinate: o.Handoff.RecordRevision}
+	workgraphCoordinate, _ := journalv2.NewAggregateCoordinate("workgraph", journalv2.AggregateID(r.MissionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(r.ProjectID), MissionID: journalv2.MissionID(r.MissionID)})
+	wantedAssertions := map[journalv2.AggregateCoordinate]uint64{executionCoordinate: o.Execution.RecordRevision, workspaceCoordinate: o.Workspace.RecordRevision, handoffCoordinate: o.Handoff.RecordRevision, workgraphCoordinate: o.WorkRevision.RecordRevision}
 	if sameActor {
-		exceptionCoordinate, _ := ExceptionCoordinateV2(*r.Exception)
-		wantedAssertions[exceptionCoordinate] = o.Exception.RecordRevision
+		exceptionCoordinate, _ := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+r.Exception.ExceptionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(r.ProjectID), MissionID: journalv2.MissionID(r.MissionID)})
+		wantedAssertions[exceptionCoordinate] = o.Exception.Fact.RecordRevision
 	}
 	for _, assertion := range assertions {
 		target := assertion.Target()
 		revision, exists := wantedAssertions[target.Coordinate]
-		if !exists || target.Kind != journalv2.ConditionTargetAggregateHead || assertion.Kind() != journalv2.ConditionRecordRevision || assertion.ObservedRevision() != revision {
+		if !exists || target.Kind != journalv2.ConditionTargetAggregateHead || assertion.Kind() != journalv2.ConditionRecordRevision || assertion.ObservedRevision() != revision || target.Coordinate == workgraphCoordinate && !sameReviewAssertionV2(assertion, o.WorkRevision.Assertion) {
 			return journalv2.EligibilityGuardTransition{}, nil, reviewAuthorityErrorV2(KindStaleAuthority, "assertions", nil)
 		}
 		delete(wantedAssertions, target.Coordinate)
@@ -611,6 +610,10 @@ func validateReviewAuthorityV2(r AuthorityRequestV2, o AuthorityObservationV2) (
 		return journalv2.EligibilityGuardTransition{}, nil, reviewAuthorityErrorV2(KindStaleAuthority, "assertions", nil)
 	}
 	return token.Transition(), assertions, nil
+}
+
+func sameReviewAssertionV2(a, b journalv2.AuthorityAssertionV2) bool {
+	return a.Target() == b.Target() && a.Kind() == b.Kind() && a.ObservedRevision() == b.ObservedRevision() && a.ExpectedLogicalVersion() == b.ExpectedLogicalVersion() && a.ObservedValueDigest() == b.ObservedValueDigest()
 }
 
 func stringSlicesEqualReviewV2(a, b []string) bool {
@@ -712,6 +715,23 @@ func criterionIDsDigestV2(criteria []string) string {
 		fmt.Fprintf(h, "%d:%s", len(c), c)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+func handoffCriterionAuthorityV2(revision workgraph.RevisionV2, workID ids.WorkID) ([]string, string, error) {
+	if revision.SchemaVersion() != workgraph.RevisionSchemaV3 || !handoff.ValidDigest(revision.CriteriaDigest()) {
+		return nil, "", reviewAuthorityErrorV2(KindRevisionIneligible, "work_revision", nil)
+	}
+	for _, item := range revision.WorkItems() {
+		if item.WorkID() != workID {
+			continue
+		}
+		criterionIDs := make([]string, 0, len(item.Criteria()))
+		for _, criterion := range item.Criteria() {
+			criterionIDs = append(criterionIDs, criterion.ID())
+		}
+		canonical, err := handoff.CanonicalCriterionIDsV2(criterionIDs)
+		return canonical, revision.CriteriaDigest(), err
+	}
+	return nil, "", reviewAuthorityErrorV2(KindRevisionIneligible, "work_revision_work", nil)
 }
 func validVerdictForEvidenceV2(v Verdict, c []CriterionEvidenceV2) bool {
 	if len(c) == 0 {
