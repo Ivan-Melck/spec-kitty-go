@@ -19,10 +19,10 @@
   "work_packages": {
     "WP01": {
       "actor": "ivan-gapdb-named-types",
-      "agent": "renata-gapdb-duration-state",
+      "agent": "ivan-gapdb-named-types",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "assignee": "ivan-gapdb-duration-state",
+      "assignee": "ivan-gapdb-named-types",
       "force_count": 37,
       "lane": "in_progress",
       "last_event_id": "01M1NCH8ZVS2NVHVTFSKKA3J8M",
@@ -80,7 +80,8 @@
         "Defect-8 repair: delete custom CFG verifier; retain exact object-identity capability confinement while WP04 owns source-bound deadline behavior.",
         "Defect-8 structural correction c05094d5: bounded go/types proof; behavior delegated to WP04.",
         "Cycle-24 repair: reject inferred and forbidden transitive duration state without reintroducing control-flow analysis.",
-        "Cycle-24 repair 3e8b393d: confine inferred, erased, and transitive duration state with bounded go/types proof."
+        "Cycle-24 repair 3e8b393d: confine inferred, erased, and transitive duration state with bounded go/types proof.",
+        "Cycle-25 repair: apply bounded duration reachability to every package-scope named type."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
