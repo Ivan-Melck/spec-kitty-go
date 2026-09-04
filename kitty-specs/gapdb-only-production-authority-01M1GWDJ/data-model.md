@@ -323,6 +323,12 @@ RecoveryRecordV2 { address, canonical_value, record_revision, expiry }
 RecoveryPageV2 { observed_revision, as_of, records, cursor, truncated }
 ```
 
+`canonical_value` is evidence, not a normalization request. Construction
+requires the supplied bytes already equal the recursive canonical form and
+stores those exact bytes defensively. Direct durable binding, event, head,
+state, and witness encoders must satisfy that identity; nested operation
+summary must remain decodable after recursive checkpoint canonicalization.
+
 Addresses include exact publication-witness reads by PublicationID but never
 contain an encoded provider key. GapDB key strings and cursor interpretation
 remain adapter-private. Construction validates identities and budgets before

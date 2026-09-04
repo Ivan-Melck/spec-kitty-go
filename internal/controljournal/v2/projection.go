@@ -595,7 +595,7 @@ func encodeOperationSummaryV2(summary OperationSummaryV2) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return marshalCanonical(operationSummaryWireV2{preimage, summary.digest.String()}, MaxOperationSummaryBytesV2)
+	return marshalCanonicalObject(operationSummaryWireV2{preimage, summary.digest.String()}, MaxOperationSummaryBytesV2)
 }
 
 // EncodeOperationSummaryV2 is the sole canonical structured wire encoder for

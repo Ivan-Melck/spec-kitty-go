@@ -176,6 +176,13 @@ the checkpoint never attempts to contain its own creating PublicationID. The
 foundation owns the sole strict canonical operation-summary codec consumed by
 checkpoint and restore code.
 
+All persistence-facing v2 record encoders converge on one recursively
+canonical final-byte representation. Recovery admission compares rather than
+rewrites provider bytes, while established semantic digest preimages remain
+unchanged. This makes the durable pipeline closed under
+`Encode -> RecoveryRecordV2 -> Decode` and prevents capability packages from
+reconstructing foundation wire.
+
 ### Capability-owned authority
 
 | Aggregate owner | Representative facts and invariants |

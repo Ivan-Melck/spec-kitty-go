@@ -172,6 +172,23 @@ identity, completion-order selection, omitted seal participation, the obsolete
 field spelling, either deleted/substituted codec, and a WP04-local summary wire
 type. Preserve all previously sealed mutants and independent controls.
 
+## Post-approval correction: durable canonical byte compatibility
+
+Read `post-approval-defect-6.md` before editing. The first real WP04 restore
+fixture proved that some foundation encoders emit bytes that
+`RecoveryRecordV2` silently reorders and their strict decoders then reject.
+Extend the permanent guard with an execution-bound durable-codec census for
+operation bindings, event envelopes, aggregate heads, operation states,
+publication witnesses, and the nested operation summary.
+
+Require every direct-record encoder output to be recursively canonical, remain
+byte-identical through `NewRecoveryRecordV2`, and pass its strict decoder.
+Require operation summary to survive recursive checkpoint embedding. Reject
+raw declaration-order output, top-level-only normalization, discarded
+canonicalization results, length-only recovery admission, removed decoder
+equality, and omission of any classified durable codec. Preserve every prior
+mutant ID and census control; additions append to the sealed census.
+
 ## T001 — Executable contract and schema validation
 
 ### Purpose
