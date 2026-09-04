@@ -63,6 +63,12 @@ canonical absolute path. Its canonical value binds that claim digest to the
 WorkspaceID and immutable workspace coordinates. It is part of the sealed
 record set, witness, mutation count, byte budgets, and ambiguity proof.
 
+The global v2 provider spelling is
+`spk/v2/workspace-path-claims/<64-lowercase-claim-digest>`. WP02 exposes only
+the sealed semantic claim digest and record role. WP03 owns the closed codec
+kind/accessor/parser and exact provider translation; callers cannot supply a
+raw provider key or alternate spelling.
+
 A claim is never transferred, deleted, expired, or reused. Replay of the same
 publication reconciles by exact membership. A replacement lease must select a
 different WorkspaceID and a path whose claim key is absent. This rule prevents
