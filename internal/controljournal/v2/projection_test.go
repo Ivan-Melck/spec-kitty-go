@@ -347,7 +347,7 @@ func TestOperationSummaryStructuredTenThousandBoundaryBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("final structured summary exceeded %d bytes: %v", MaxOperationSummaryBytesV2, err)
 	}
-	if len(canonical) > MaxOperationSummaryBytesV2 || !bytes.Contains(canonical, []byte(`"boundaries":[{"operation_id_sha256"`)) ||
+	if len(canonical) > MaxOperationSummaryBytesV2 || !bytes.Contains(canonical, []byte(`"boundaries":[{`)) ||
 		!bytes.Contains(canonical, []byte(`"summary_sha256"`)) || bytes.Contains(canonical, []byte("operation-max-00000")) {
 		t.Fatalf("summary wire is not bounded structured proof: bytes=%d", len(canonical))
 	}

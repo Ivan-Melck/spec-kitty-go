@@ -149,6 +149,21 @@ func marshalCanonical(value any, maximum int) ([]byte, error) {
 	return encoded, nil
 }
 
+// marshalCanonicalObject emits the recursively canonical object bytes used at
+// durable boundaries. Callers that hash an established declaration-order
+// preimage must continue to use marshalCanonical for that preimage.
+func marshalCanonicalObject(value any, maximum int) ([]byte, error) {
+	encoded, err := marshalCanonical(value, maximum)
+	if err != nil {
+		return nil, err
+	}
+	return canonicalDurableObject(encoded, maximum)
+}
+
+func canonicalDurableObject(encoded []byte, maximum int) ([]byte, error) {
+	return canonicalObjectBounded(encoded, maximum)
+}
+
 func decodeStrict(encoded []byte, maximum int, target any) error {
 	if len(encoded) == 0 || len(encoded) > maximum || !utf8.Valid(encoded) {
 		kind := ErrorInvalidCanonicalData

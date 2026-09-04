@@ -182,7 +182,7 @@ func EncodeOperationBindingV2(binding OperationBindingV2) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return marshalCanonical(validated.wire(), MaxCanonicalPayloadBytes)
+	return marshalCanonicalObject(validated.wire(), MaxCanonicalPayloadBytes)
 }
 
 func DecodeOperationBindingV2(encoded []byte) (OperationBindingV2, error) {

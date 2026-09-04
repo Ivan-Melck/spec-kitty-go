@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -1682,6 +1683,202 @@ func TestPureDecisionsAreRaceSafeAndIdempotent(t *testing.T) {
 		}()
 	}
 	wait.Wait()
+}
+
+func TestDurableCodecConsumerPathsPreserveExactCanonicalBytes(t *testing.T) {
+	plan, err := SealCommitPlanV2(fixturePlanInput(t), DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := plan.BindingCreate()
+	if binding == nil {
+		t.Fatal("fixture did not create an operation binding")
+	}
+	events := plan.Events()
+	if len(events) == 0 {
+		t.Fatal("fixture did not create events")
+	}
+	event := events[0]
+	headEvent := events[0]
+	for _, candidate := range events {
+		if len(candidate.input.GovernanceRevisions) != 0 && len(candidate.Observations()) != 0 {
+			event = candidate
+		}
+		if candidate.input.Family == "mission" {
+			headEvent = candidate
+		}
+	}
+	state := plan.OperationState()
+	witness := plan.PublicationWitness()
+	head, err := NewAggregateHeadV2(AggregateHeadInput{
+		Coordinate:              headEvent.input.Coordinate,
+		LogicalVersion:          headEvent.input.AggregateLogicalVersion,
+		LastEventID:             headEvent.input.EventID,
+		LastPublicationID:       plan.PublicationID(),
+		CommittedRuntimeEpochID: headEvent.input.CommittedRuntimeEpochID,
+		CanonicalStateDigest:    digest("durable-codec-head-state", []byte(headEvent.input.EventID)),
+		AuthoritySummary:        []byte(`{"nested":{"a":1,"b":2},"status":"accepted"}`),
+		Tombstone:               false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindingAddress, _ := NewOperationBindingAddressV2(binding.OperationID())
+	eventAddress, _ := NewJournalEventAddressV2(event.input.Coordinate, event.input.AggregateLogicalVersion)
+	headAddress, _ := NewAggregateHeadAddressV2(head.Coordinate())
+	stateAddress, _ := NewOperationHeadAddressV2(state.OperationID())
+	witnessAddress, _ := witness.PublicationID().WitnessAddressV2()
+	tests := []struct {
+		name    string
+		address RecordAddressV2
+		encode  func() ([]byte, error)
+		decode  func([]byte) ([]byte, error)
+	}{
+		{"OperationBindingV2", bindingAddress, func() ([]byte, error) { return EncodeOperationBindingV2(*binding) }, func(value []byte) ([]byte, error) {
+			decoded, err := DecodeOperationBindingV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return EncodeOperationBindingV2(decoded)
+		}},
+		{"EventEnvelopeV2", eventAddress, func() ([]byte, error) { return EncodeEventEnvelopeV2(event) }, func(value []byte) ([]byte, error) {
+			decoded, err := DecodeEventEnvelopeV2(value, DefaultEventRegistryV2())
+			if err != nil {
+				return nil, err
+			}
+			return EncodeEventEnvelopeV2(decoded)
+		}},
+		{"AggregateHeadV2", headAddress, func() ([]byte, error) { return EncodeAggregateHeadV2(head) }, func(value []byte) ([]byte, error) {
+			decoded, err := DecodeAggregateHeadV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return EncodeAggregateHeadV2(decoded)
+		}},
+		{"OperationStateV2", stateAddress, func() ([]byte, error) { return EncodeOperationStateV2(state) }, func(value []byte) ([]byte, error) {
+			decoded, err := DecodeOperationStateV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return EncodeOperationStateV2(decoded)
+		}},
+		{"PublicationWitnessV2", witnessAddress, func() ([]byte, error) { return EncodePublicationWitnessV2(witness) }, func(value []byte) ([]byte, error) {
+			decoded, err := DecodePublicationWitnessV2(value)
+			if err != nil {
+				return nil, err
+			}
+			return EncodePublicationWitnessV2(decoded)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := test.encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonical, err := CanonicalObject(encoded)
+			if err != nil || !bytes.Equal(canonical, encoded) {
+				t.Fatalf("final encoder bytes are not recursively canonical: %v", err)
+			}
+			record, err := NewRecoveryRecordV2(test.address, encoded, 17, "")
+			if err != nil {
+				t.Fatalf("encoded value did not cross recovery boundary: %v", err)
+			}
+			if !bytes.Equal(record.CanonicalValue(), encoded) {
+				t.Fatal("recovery boundary rewrote encoded bytes")
+			}
+			reencoded, err := test.decode(record.CanonicalValue())
+			if err != nil || !bytes.Equal(reencoded, encoded) {
+				t.Fatalf("strict semantic round trip changed bytes: %v", err)
+			}
+			noncanonical := reverseTopLevelObjectForTest(t, encoded)
+			if _, err := NewRecoveryRecordV2(test.address, noncanonical, 17, ""); !IsKind(err, ErrorMalformed) {
+				t.Fatalf("noncanonical provider evidence was not refused: %v", err)
+			}
+		})
+	}
+
+	summary, err := BuildOperationSummaryV2([]OperationStateV2{state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaryBytes, err := EncodeOperationSummaryV2(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointBytes, err := json.Marshal(struct {
+		SchemaVersion    uint32          `json:"schema_version"`
+		OperationSummary json.RawMessage `json:"operation_summary"`
+	}{2, summaryBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointBytes, err = CanonicalObject(checkpointBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint struct {
+		OperationSummary json.RawMessage `json:"operation_summary"`
+	}
+	if err := json.Unmarshal(checkpointBytes, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	restoredSummary, err := DecodeOperationSummaryV2(checkpoint.OperationSummary)
+	if err != nil || restoredSummary.Digest() != summary.Digest() || ValidateOperationSummaryV2(restoredSummary, []OperationStateV2{state}) != nil {
+		t.Fatalf("nested checkpoint summary changed semantics: %v", err)
+	}
+	if _, err := DecodeOperationSummaryV2(reverseTopLevelObjectForTest(t, summaryBytes)); err == nil {
+		t.Fatal("operation summary decoder admitted alternate field order")
+	}
+}
+
+func TestDurableEventFinalCanonicalizationPreservesDigestPreimage(t *testing.T) {
+	event := fixtureMissionEnvelope(t, []byte(`{"nested":{"a":1,"b":2},"value":true}`))
+	const expectedDigest = "e5790e93c956897a2b38eb2da3596ce69a6f9ff332510f5346a032c1b51dff5f"
+	if got := event.CanonicalDigest().String(); got != expectedDigest {
+		t.Fatalf("event digest preimage changed: got=%s expected=%s", got, expectedDigest)
+	}
+	unsigned, err := event.canonical(false)
+	if err != nil || digest(canonicalEventDomain, unsigned) != event.CanonicalDigest() {
+		t.Fatalf("event digest no longer uses the established unsigned preimage: %v", err)
+	}
+	encoded, err := EncodeEventEnvelopeV2(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalObject(encoded)
+	if err != nil || !bytes.Equal(canonical, encoded) {
+		t.Fatalf("final signed event bytes are not recursively canonical: %v", err)
+	}
+}
+
+func reverseTopLevelObjectForTest(t *testing.T, encoded []byte) []byte {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil || len(fields) < 2 {
+		t.Fatalf("cannot build semantically equivalent field-order mutant: %v", err)
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(keys)))
+	var result bytes.Buffer
+	result.WriteByte('{')
+	for index, key := range keys {
+		if index > 0 {
+			result.WriteByte(',')
+		}
+		keyBytes, _ := json.Marshal(key)
+		result.Write(keyBytes)
+		result.WriteByte(':')
+		result.Write(fields[key])
+	}
+	result.WriteByte('}')
+	if bytes.Equal(result.Bytes(), encoded) {
+		t.Fatal("field-order mutant unexpectedly equals canonical input")
+	}
+	return result.Bytes()
 }
 
 func fixtureScope() Scope {

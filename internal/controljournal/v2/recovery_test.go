@@ -111,9 +111,143 @@ func TestRecoveryValuesAreBoundedAndDefensive(t *testing.T) {
 	if _, err := NewScanRequestV2(OperationRecordScanTargetV2(), attempt, make([]byte, MaxRecoveryCursorBytes+1), 1, 1); !IsKind(err, ErrorBudgetExceeded) {
 		t.Fatalf("cursor maximum-plus-one accepted: %v", err)
 	}
-	if _, err := NewRecoveryRecordV2(address, []byte(strings.Repeat("x", MaxCheckpointValueBytes+1)), 1, ""); !IsKind(err, ErrorBudgetExceeded) {
+	if _, err := NewRecoveryRecordV2(address, canonicalObjectOfExactLength(t, MaxCanonicalPayloadBytes+1), 1, ""); !IsKind(err, ErrorBudgetExceeded) {
 		t.Fatalf("record maximum-plus-one accepted: %v", err)
 	}
+}
+
+func TestRecoveryRecordUsesSemanticAddressValueCeilings(t *testing.T) {
+	coordinate, err := NewAggregateCoordinate("mission", "mission-01", Scope{Kind: ScopeMission, ProjectID: "project-01", MissionID: "mission-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventAddress, err := NewJournalEventAddressV2(coordinate, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointAddress, err := NewCheckpointRecordAddressV2("checkpoint-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryAddress, err := NewOperationHeadAddressV2("operation-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name    string
+		address RecordAddressV2
+		length  int
+	}{
+		{name: "ordinary_exact_maximum", address: ordinaryAddress, length: MaxCanonicalPayloadBytes},
+		{name: "journal_above_ordinary_limit", address: eventAddress, length: MaxCanonicalPayloadBytes + 1},
+		{name: "journal_exact_maximum", address: eventAddress, length: MaxEventEnvelopeBytes},
+		{name: "checkpoint_above_ordinary_limit", address: checkpointAddress, length: MaxCanonicalPayloadBytes + 1},
+		{name: "checkpoint_exact_maximum", address: checkpointAddress, length: MaxCheckpointValueBytes},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := canonicalObjectOfExactLength(t, test.length)
+			record, recordErr := NewRecoveryRecordV2(test.address, value, 17, "")
+			if recordErr != nil {
+				t.Fatalf("valid canonical value at semantic limit rejected: %v", recordErr)
+			}
+			if !bytes.Equal(record.CanonicalValue(), value) {
+				t.Fatal("recovery record changed admitted canonical bytes")
+			}
+			value[len(`{"payload":"`)] = 'y'
+			if bytes.Equal(record.CanonicalValue(), value) {
+				t.Fatal("recovery record retained caller-owned canonical bytes")
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name    string
+		address RecordAddressV2
+		length  int
+	}{
+		{name: "ordinary_maximum_plus_one", address: ordinaryAddress, length: MaxCanonicalPayloadBytes + 1},
+		{name: "journal_maximum_plus_one", address: eventAddress, length: MaxEventEnvelopeBytes + 1},
+		{name: "checkpoint_maximum_plus_one", address: checkpointAddress, length: MaxCheckpointValueBytes + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, recordErr := NewRecoveryRecordV2(test.address, canonicalObjectOfExactLength(t, test.length), 17, ""); !IsKind(recordErr, ErrorBudgetExceeded) {
+				t.Fatalf("semantic maximum-plus-one was not refused as a budget error: %v", recordErr)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name    string
+		address RecordAddressV2
+		length  int
+	}{
+		{name: "journal_noncanonical_above_ordinary_limit", address: eventAddress, length: MaxCanonicalPayloadBytes + 1},
+		{name: "checkpoint_noncanonical_above_event_limit", address: checkpointAddress, length: MaxEventEnvelopeBytes + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, recordErr := NewRecoveryRecordV2(test.address, noncanonicalObjectOfExactLength(t, test.length), 17, ""); !IsKind(recordErr, ErrorMalformed) {
+				t.Fatalf("expanded noncanonical value was not refused as malformed: %v", recordErr)
+			}
+		})
+	}
+}
+
+func TestRecoveryRecordMaximumIsClosedOverSemanticAddressKinds(t *testing.T) {
+	for _, test := range []struct {
+		kind RecordAddressKindV2
+		want int
+	}{
+		{kind: AddressAggregateHead, want: MaxCanonicalPayloadBytes},
+		{kind: AddressJournalEvent, want: MaxEventEnvelopeBytes},
+		{kind: AddressOperationBinding, want: MaxCanonicalPayloadBytes},
+		{kind: AddressOperationHead, want: MaxCanonicalPayloadBytes},
+		{kind: AddressCheckpointRecord, want: MaxCheckpointValueBytes},
+		{kind: AddressCheckpointSlot, want: MaxCanonicalPayloadBytes},
+		{kind: AddressPublicationWitness, want: MaxCanonicalPayloadBytes},
+	} {
+		got, err := recoveryRecordMaximumV2(test.kind)
+		if err != nil || got != test.want {
+			t.Fatalf("kind %q has maximum %d, want %d: %v", test.kind, got, test.want, err)
+		}
+	}
+	if _, err := recoveryRecordMaximumV2(RecordAddressKindV2("future_kind")); err == nil {
+		t.Fatal("unknown recovery address kind inherited an implicit value maximum")
+	}
+}
+
+func canonicalObjectOfExactLength(t *testing.T, length int) []byte {
+	t.Helper()
+	prefix := []byte(`{"payload":"`)
+	suffix := []byte(`"}`)
+	if length < len(prefix)+len(suffix) {
+		t.Fatalf("requested canonical fixture length %d is too small", length)
+	}
+	value := make([]byte, 0, length)
+	value = append(value, prefix...)
+	value = append(value, strings.Repeat("x", length-len(prefix)-len(suffix))...)
+	value = append(value, suffix...)
+	if len(value) != length {
+		t.Fatalf("canonical fixture length = %d, want %d", len(value), length)
+	}
+	return value
+}
+
+func noncanonicalObjectOfExactLength(t *testing.T, length int) []byte {
+	t.Helper()
+	prefix := []byte(`{"z":"`)
+	suffix := []byte(`","a":1}`)
+	if length < len(prefix)+len(suffix) {
+		t.Fatalf("requested noncanonical fixture length %d is too small", length)
+	}
+	value := make([]byte, 0, length)
+	value = append(value, prefix...)
+	value = append(value, strings.Repeat("x", length-len(prefix)-len(suffix))...)
+	value = append(value, suffix...)
+	if len(value) != length {
+		t.Fatalf("noncanonical fixture length = %d, want %d", len(value), length)
+	}
+	return value
 }
 
 func TestStableRecoveryAttemptRejectsEveryCoordinateMismatch(t *testing.T) {
