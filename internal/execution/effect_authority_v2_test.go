@@ -862,7 +862,7 @@ func TestAssignmentEffectDispatcherClassifiesDishonestAndIndeterminateProvidersV
 	if err != nil || observed.Value != request.Intent.IntendedValue || observed.OperationMarker != string(request.Intent.OperationID) {
 		t.Fatalf("observed=%+v err=%v", observed, err)
 	}
-	conditional := EffectConditionalMutationV2{EffectID: request.Intent.EffectID, Target: request.Intent.Target, ExpectedRevision: 1, ExpectedValue: "", ExpectedMarker: "none", OperationMarker: string(request.Intent.OperationID), IntendedValue: request.Intent.IntendedValue, RequiredGuarantee: tracker.AssignmentAtomicClaim}
+	conditional := effectConditionalMutationFixtureV2(request, EffectStartAttemptV2, 1, "", "none", tracker.AssignmentAtomicClaim)
 	mutation, err := dispatcher.ApplyEffect(t.Context(), conditional)
 	if err != nil || mutation.Kind != EffectMutationDefinitiveV2 || mutation.Observation.ProviderRevision != 2 {
 		t.Fatalf("mutation=%+v err=%v", mutation, err)
@@ -871,15 +871,16 @@ func TestAssignmentEffectDispatcherClassifiesDishonestAndIndeterminateProvidersV
 	if downgraded, err := dispatcher.ApplyEffect(t.Context(), conditional); !IsKind(err, KindDecisionRequired) || downgraded.Kind != EffectMutationIndeterminateV2 {
 		t.Fatalf("apply guarantee downgrade accepted: %+v err=%v", downgraded, err)
 	}
-	if downgraded, err := dispatcher.CompensateEffect(t.Context(), conditional); !IsKind(err, KindDecisionRequired) || downgraded.Kind != EffectMutationIndeterminateV2 {
+	compensation := effectConditionalMutationFixtureV2(request, EffectAllowCompensationV2, 1, "", "none", tracker.AssignmentAtomicClaim)
+	if downgraded, err := dispatcher.CompensateEffect(t.Context(), compensation); !IsKind(err, KindDecisionRequired) || downgraded.Kind != EffectMutationIndeterminateV2 {
 		t.Fatalf("compensation guarantee downgrade accepted: %+v err=%v", downgraded, err)
 	}
 	probe.mutation.Guarantee = tracker.AssignmentAtomicClaim
-	conditional.RequiredGuarantee = tracker.AssignmentUnguarded
+	conditional = effectConditionalMutationFixtureV2(request, EffectStartAttemptV2, 1, "", "none", tracker.AssignmentUnguarded)
 	if stronger, err := dispatcher.ApplyEffect(t.Context(), conditional); err != nil || stronger.Kind != EffectMutationDefinitiveV2 {
 		t.Fatalf("stronger atomic guarantee did not satisfy unguarded request: %+v err=%v", stronger, err)
 	}
-	conditional.RequiredGuarantee = tracker.AssignmentAtomicClaim
+	conditional = effectConditionalMutationFixtureV2(request, EffectStartAttemptV2, 1, "", "none", tracker.AssignmentAtomicClaim)
 
 	probe.mutationErr = &tracker.Error{Kind: tracker.ErrorAmbiguous, Message: "response lost"}
 	probe.mutation = tracker.AssignmentMutation{}
@@ -894,6 +895,94 @@ func TestAssignmentEffectDispatcherClassifiesDishonestAndIndeterminateProvidersV
 	probe.observation = dishonest
 	if _, err := dispatcher.ObserveEffect(t.Context(), request.Intent.Target); err == nil {
 		t.Fatal("dishonest mapping was accepted")
+	}
+}
+
+func TestAssignmentEffectDispatcherRejectsDirectUnsealedAndSubstitutedMutationV2(t *testing.T) {
+	request, _, _ := effectRequestFixtureV2(t)
+	probe := &assignmentProjectionProbeV2{}
+	dispatcher, err := NewAssignmentEffectDispatcherV2(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatcher.ApplyEffect(t.Context(), EffectConditionalMutationV2{}); !IsKind(err, KindInvalidCommand) {
+		t.Fatalf("unsealed apply accepted: %v", err)
+	}
+	if _, err := dispatcher.CompensateEffect(t.Context(), EffectConditionalMutationV2{}); !IsKind(err, KindInvalidCommand) {
+		t.Fatalf("unsealed compensation accepted: %v", err)
+	}
+	sealed := effectConditionalMutationFixtureV2(request, EffectStartAttemptV2, 1, "", "", tracker.AssignmentAtomicClaim)
+	if sealed.EffectID() != request.Intent.EffectID || sealed.Action() != EffectStartAttemptV2 || sealed.Target().ExternalID != request.Intent.Target.ExternalID || sealed.ExpectedRevision() != 1 || sealed.OperationMarker() != string(request.Intent.OperationID) || sealed.IntendedValue() != request.Intent.IntendedValue || sealed.RequiredGuarantee() != tracker.AssignmentAtomicClaim {
+		t.Fatalf("read-only provider coordinates changed: %+v", sealed)
+	}
+	sealed.intendedValue = "substituted-after-seal"
+	if _, err := dispatcher.ApplyEffect(t.Context(), sealed); !IsKind(err, KindInvalidCommand) {
+		t.Fatalf("substituted sealed mutation accepted: %v", err)
+	}
+	if probe.applyCalls != 0 || probe.compensateCalls != 0 {
+		t.Fatalf("direct bypass reached tracker: apply=%d compensate=%d", probe.applyCalls, probe.compensateCalls)
+	}
+}
+
+func TestDispatchAuthorizedEffectRedactsAllDirectProviderCausesV2(t *testing.T) {
+	request, port, service := effectRequestFixtureV2(t)
+	intent, err := service.Execute(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, _ := port.plans[len(port.plans)-1].Publication()
+	advanceEffectProbeV2(port, sealed, intent.State, &request, intent.ExecutionSlot)
+	request.Action = EffectStartAttemptV2
+	request.OperationEventID, request.EffectEventID = "event-direct-diagnostic-attempt-operation", "event-direct-diagnostic-attempt-effect"
+	attempt, err := service.Execute(t.Context(), request)
+	if err != nil || attempt.Permission == nil {
+		t.Fatalf("permission=%+v err=%v", attempt.Permission, err)
+	}
+	permission := *attempt.Permission
+	applied := *effectObservationFixtureV2(request.Intent.Target, permission.expected.ProviderRevision+1, request.Intent.IntendedValue, string(request.Intent.OperationID), "confirmed")
+	restored := *effectObservationFixtureV2(request.Intent.Target, applied.ProviderRevision+1, request.Intent.ExpectedValue, "", effectOutcomeForValueMarkerV2(request.Intent.ExpectedValue, ""))
+	secret := "provider-dispatch-secret-" + strings.Repeat("s", 32*1024)
+	cause := errors.New(secret)
+	for _, test := range []struct {
+		name       string
+		permission EffectDispatchPermissionV2
+		dispatcher *effectDispatcherProbeV2
+		subject    string
+	}{
+		{name: "observe", permission: permission, dispatcher: &effectDispatcherProbeV2{observeErr: cause}, subject: "effect_fresh_observation"},
+		{name: "apply", permission: permission, dispatcher: &effectDispatcherProbeV2{observe: permission.expected, result: EffectMutationResultV2{Kind: EffectMutationDefinitiveV2, Observation: applied}, mutationErr: cause}, subject: "effect_mutation"},
+		{name: "compensate", permission: func() EffectDispatchPermissionV2 {
+			candidate := permission
+			candidate.action = EffectAllowCompensationV2
+			candidate.expected = applied
+			candidate.guarantee = tracker.AssignmentAtomicClaim
+			return candidate
+		}(), dispatcher: &effectDispatcherProbeV2{observe: applied, result: EffectMutationResultV2{Kind: EffectMutationDefinitiveV2, Observation: restored}, mutationErr: cause}, subject: "effect_mutation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, dispatchErr := DispatchAuthorizedEffectV2(t.Context(), test.permission, test.dispatcher)
+			if !IsKind(dispatchErr, KindDecisionRequired) || !errors.Is(dispatchErr, cause) {
+				t.Fatalf("typed kind/cause lost: %v", dispatchErr)
+			}
+			var diagnostic *EffectDispatchErrorV2
+			if !errors.As(dispatchErr, &diagnostic) {
+				t.Fatalf("missing direct dispatch diagnostic: %T", dispatchErr)
+			}
+			got := diagnostic.Diagnostic
+			want := test.permission
+			if got.Kind != KindDecisionRequired || got.Subject != test.subject || got.EffectID != want.effectID || got.OperationID != want.operationID || got.Action != want.action || got.PublicationID != want.publicationID || got.PlanDigest != want.planDigest.String() || got.ProviderRevision != want.providerRevision || got.ProjectID != want.expected.Target.ProjectID || got.WorkID != want.expected.Target.WorkID || got.Provider != want.expected.Target.Provider || got.ExternalID != want.expected.Target.ExternalID || got.CauseClass != "provider_failure" {
+				t.Fatalf("diagnostic coordinates=%+v", got)
+			}
+			encoded, marshalErr := json.Marshal(diagnostic)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			for _, rendered := range []string{diagnostic.Error(), string(encoded)} {
+				if strings.Contains(rendered, "provider-dispatch-secret") || strings.Contains(rendered, secret) || len(rendered) > 4096 {
+					t.Fatalf("unbounded or secret-bearing dispatch diagnostic: length=%d", len(rendered))
+				}
+			}
+		})
 	}
 }
 
@@ -914,11 +1003,11 @@ func TestAssignmentEffectDispatcherUsesRealFakeTrackerAtomicContractV2(t *testin
 	if err != nil || before.Outcome != "absent" || before.ProviderRevision != 1 {
 		t.Fatalf("before=%+v err=%v", before, err)
 	}
-	applied, err := dispatcher.ApplyEffect(t.Context(), EffectConditionalMutationV2{EffectID: request.Intent.EffectID, Target: request.Intent.Target, ExpectedRevision: before.ProviderRevision, ExpectedValue: before.Value, ExpectedMarker: before.OperationMarker, OperationMarker: string(request.Intent.OperationID), IntendedValue: request.Intent.IntendedValue, RequiredGuarantee: tracker.AssignmentAtomicClaim})
+	applied, err := dispatcher.ApplyEffect(t.Context(), effectConditionalMutationFixtureV2(request, EffectStartAttemptV2, before.ProviderRevision, before.Value, before.OperationMarker, tracker.AssignmentAtomicClaim))
 	if err != nil || applied.Kind != EffectMutationDefinitiveV2 || applied.Observation.Value != request.Intent.IntendedValue || applied.Observation.OperationMarker != string(request.Intent.OperationID) {
 		t.Fatalf("applied=%+v err=%v", applied, err)
 	}
-	compensated, err := dispatcher.CompensateEffect(t.Context(), EffectConditionalMutationV2{EffectID: request.Intent.EffectID, Target: request.Intent.Target, ExpectedRevision: applied.Observation.ProviderRevision, ExpectedValue: applied.Observation.Value, ExpectedMarker: applied.Observation.OperationMarker, OperationMarker: string(request.Intent.OperationID), RestoreValue: "", RequiredGuarantee: tracker.AssignmentAtomicClaim})
+	compensated, err := dispatcher.CompensateEffect(t.Context(), effectConditionalMutationFixtureV2(request, EffectAllowCompensationV2, applied.Observation.ProviderRevision, applied.Observation.Value, applied.Observation.OperationMarker, tracker.AssignmentAtomicClaim))
 	if err != nil || compensated.Kind != EffectMutationDefinitiveV2 || compensated.Observation.Outcome != "absent" || compensated.Observation.OperationMarker != "" {
 		t.Fatalf("compensated=%+v err=%v", compensated, err)
 	}
@@ -931,7 +1020,7 @@ func TestAssignmentEffectDispatcherPreservesBeadsSafeCompensationRefusalEvidence
 	probe := &assignmentProjectionProbeV2{observation: appliedAssignment, mutation: tracker.AssignmentMutation{Observation: appliedAssignment, Guarantee: tracker.AssignmentUnguarded, Noop: true}, mutationErr: &tracker.Error{Kind: tracker.ErrorSafeCompensationUnsupported, Message: "provider lacks atomic restore"}}
 	dispatcher, _ := NewAssignmentEffectDispatcherV2(probe)
 	digest, _ := journalv2.ParseDigest("effect_test", strings.Repeat("a", 64))
-	permission := EffectDispatchPermissionV2{effectID: request.Intent.EffectID, action: EffectAllowCompensationV2, marker: string(request.Intent.OperationID), expected: *appliedEffect, publicationID: testPublicationIDV2(t, "beads-refusal"), planDigest: digest, providerRevision: 17, guarantee: tracker.AssignmentAtomicClaim, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
+	permission := EffectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: EffectAllowCompensationV2, marker: string(request.Intent.OperationID), expected: *appliedEffect, publicationID: testPublicationIDV2(t, "beads-refusal"), planDigest: digest, providerRevision: 17, guarantee: tracker.AssignmentAtomicClaim, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
 	evidence, err := DispatchAuthorizedEffectV2(t.Context(), permission, dispatcher)
 	if !IsKind(err, KindDecisionRequired) || probe.compensateCalls != 1 || evidence.Observation().ProviderRevision != 2 || evidence.Observation().Value != request.Intent.IntendedValue || evidence.Observation().OperationMarker != string(request.Intent.OperationID) {
 		t.Fatalf("evidence=%+v calls=%d err=%v", evidence.Observation(), probe.compensateCalls, err)
@@ -1004,6 +1093,15 @@ func assignmentObservationFixtureV2(t *testing.T, target tracker.ExternalWorkRef
 	provider.OperationMarker = marker
 	target.LastObservation = revision
 	return tracker.AssignmentObservation{ExternalRef: target, Assignee: value, OperationMarker: marker, Observation: provider}
+}
+
+func effectConditionalMutationFixtureV2(request EffectAuthorityRequestV2, action EffectActionV2, revision tracker.Revision, value, marker string, guarantee tracker.AssignmentLevel) EffectConditionalMutationV2 {
+	target := request.Intent.Target
+	target.LastObservation = revision
+	fresh := EffectProviderObservationV2{Target: target, ProviderRevision: revision, Value: value, OperationMarker: marker, Outcome: effectOutcomeForValueMarkerV2(value, marker)}
+	fresh.CanonicalDigest = effectObservationDigestV2(fresh)
+	permission := EffectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: action, marker: string(request.Intent.OperationID), expected: fresh, guarantee: guarantee, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
+	return newEffectConditionalMutationV2(permission, fresh)
 }
 
 func testPublicationIDV2(t *testing.T, preimage string) journalv2.PublicationID {
