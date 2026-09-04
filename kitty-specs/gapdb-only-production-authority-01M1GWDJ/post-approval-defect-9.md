@@ -5,10 +5,14 @@
 WP08 exposed two false assumptions in the ratified workspace contract.
 
 First, a condition attached only to a record being mutated cannot atomically
-prove an unchanged authority aggregate. Initial workspace binding must verify
-the current execution head without manufacturing a same-value write or
-splitting the publication across a read/commit race. The formerly admitted
-GapDB tuple did not provide read-only batch assertions.
+prove a genuinely unchanged authority aggregate. The original workspace
+binding design needed to verify an unchanged execution head without
+manufacturing a same-value write or splitting the publication across a
+read/commit race. The later execution-slot-binding correction intentionally
+changes that head so it records WorkspaceID authority; initial bind therefore
+uses an exact record-revision mutation condition on the execution head. A key
+cannot be both asserted and mutated in one publication. True read-only batch
+assertions remain required for every authority key that must stay unchanged.
 
 Second, GapDB can fence Spec Kitty authority records but cannot fence arbitrary
 POSIX or Git writes. A stale process may continue writing its old worktree, and
@@ -84,13 +88,14 @@ authority because execution already depends on workspace. The workspace
 package supplies opaque, validated binding/quarantine contributions; it does
 not import execution or expose execution wire formats.
 
-Initial binding asserts the unchanged current execution head and atomically
-writes the workspace binding, first workspace event/head, permanent path claim,
-operation state, and preparation intent. If binding wins first, expiry
-re-observes the bound workspace and atomically expires the lease plus
-quarantines that workspace. If expiry wins first, binding's execution-head
-assertion fails. Once an execution slot records a bound WorkspaceID, expiry
-without the exact workspace quarantine contribution is invalid.
+Initial binding advances the current execution head under its exact prior
+record revision and atomically writes the workspace binding, first workspace
+event/head, permanent path claim, operation state, and preparation intent. It
+must not also assert that mutated key. If binding wins first, expiry re-observes
+the bound workspace and atomically expires the lease plus quarantines that
+workspace. If expiry wins first, binding's execution-head mutation condition
+fails. Once an execution slot records a bound WorkspaceID, expiry without the
+exact workspace quarantine contribution is invalid.
 
 The slot record therefore carries a paired, immutable WorkspaceID and
 workspace-path-claim digest for its current lease generation. Initial binding
@@ -134,8 +139,10 @@ detection and authority refusal, not impossible filesystem fencing.
 
 ## Acceptance evidence
 
-- A controlled same-value-write substitute fails while a true unchanged-head
-  assertion passes.
+- A controlled same-value-write substitute fails wherever a true
+  unchanged-authority assertion is required; initial bind instead proves its
+  intentionally changed execution head with one exact revision-conditioned
+  mutation and no overlapping assertion.
 - Bind-versus-expire contention has one legal outcome per trial with no split
   execution/workspace authority.
 - Permanent path claims reject same-path aliases and replacement reuse.
