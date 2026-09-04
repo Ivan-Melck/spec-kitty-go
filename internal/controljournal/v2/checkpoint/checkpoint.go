@@ -380,10 +380,16 @@ func SelectV2(candidates []CandidateV2, compatibility CompatibilityV2, attempt j
 		}
 		return valid[i].checkpoint.checkpointID < valid[k].checkpoint.checkpointID
 	})
-	if len(valid) > 1 && valid[0].checkpoint.throughRevision == valid[1].checkpoint.throughRevision && valid[0].checkpoint.checkpointDigest != valid[1].checkpoint.checkpointDigest {
-		return SelectionV2{}, &Error{ErrorContradictory, "watermark"}
+	selected := valid[0]
+	for _, peer := range valid[1:] {
+		if peer.checkpoint.throughRevision != selected.checkpoint.throughRevision {
+			break
+		}
+		if peer.checkpoint.checkpointDigest != selected.checkpoint.checkpointDigest {
+			return SelectionV2{}, &Error{ErrorContradictory, "watermark"}
+		}
 	}
-	return SelectionV2{checkpoint: valid[0].checkpoint, commitRevision: valid[0].commitRevision}, nil
+	return SelectionV2{checkpoint: selected.checkpoint, commitRevision: selected.commitRevision}, nil
 }
 
 func decodeStrict(encoded []byte, target any) error {

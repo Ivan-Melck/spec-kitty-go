@@ -2,10 +2,17 @@ package checkpoint
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	journal "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
@@ -173,6 +180,94 @@ func TestCheckpointCandidateRingFallbackContradictionAndOrigin(t *testing.T) {
 	overRing := make([]CandidateV2, RetainedCandidateSlots+1)
 	if _, err := SelectV2(overRing, compatibility, attempt); err == nil {
 		t.Fatal("candidate ring maximum-plus-one accepted")
+	}
+}
+
+func TestCheckpointCandidateRingDuplicateCannotMaskConflict(t *testing.T) {
+	checkpointA := checkpointFixture(t)
+	checkpointB := checkpointWithIdentity(t, checkpointA, "checkpoint-peer", checkpointA.ThroughRecordRevision(), "peer")
+	attempt, _ := journal.NewStoreRevisionV2("database-1", 12, 12)
+	compatibility := CompatibilityV2{checkpointA.EventRegistryDigest(), checkpointA.ReducerRegistryDigest(), checkpointA.CanonicalCodecVersion()}
+	candidates := []CandidateV2{
+		checkpointCandidate(t, "slot-a-1", checkpointA, 8),
+		checkpointCandidate(t, "slot-a-2", checkpointA, 8),
+		checkpointCandidate(t, "slot-b", checkpointB, 9),
+	}
+	_, err := SelectV2(candidates, compatibility, attempt)
+	var checkpointError *Error
+	if !errors.As(err, &checkpointError) || checkpointError.Kind != ErrorContradictory {
+		t.Fatalf("evidence=CHECKPOINT-CONTRADICTORY-CENSUS duplicate identity masked conflicting peer: %v", err)
+	}
+}
+
+func TestCheckpointCandidateConflictSourceMutationIsKilled(t *testing.T) {
+	root := checkpointRepositoryRoot(t)
+	sourcePath := filepath.Join(root, "internal/controljournal/v2/checkpoint/checkpoint.go")
+	sourceBytes, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+	anchor := `	selected := valid[0]
+	for _, peer := range valid[1:] {
+		if peer.checkpoint.throughRevision != selected.checkpoint.throughRevision {
+			break
+		}
+		if peer.checkpoint.checkpointDigest != selected.checkpoint.checkpointDigest {
+			return SelectionV2{}, &Error{ErrorContradictory, "watermark"}
+		}
+	}
+	return SelectionV2{checkpoint: selected.checkpoint, commitRevision: selected.commitRevision}, nil`
+	firstPairOnly := `	if len(valid) > 1 && valid[0].checkpoint.throughRevision == valid[1].checkpoint.throughRevision && valid[0].checkpoint.checkpointDigest != valid[1].checkpoint.checkpointDigest {
+		return SelectionV2{}, &Error{ErrorContradictory, "watermark"}
+	}
+	return SelectionV2{checkpoint: valid[0].checkpoint, commitRevision: valid[0].commitRevision}, nil`
+	if count := strings.Count(source, anchor); count != 1 {
+		t.Fatalf("checkpoint conflict mutant anchor count=%d want=1", count)
+	}
+	mutated := strings.Replace(source, anchor, firstPairOnly, 1)
+	temporary := t.TempDir()
+	mutatedPath := filepath.Join(temporary, "checkpoint.go")
+	if err := os.WriteFile(mutatedPath, []byte(mutated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	overlayBytes, err := json.Marshal(struct {
+		Replace map[string]string `json:"Replace"`
+	}{Replace: map[string]string{sourcePath: mutatedPath}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overlayPath := filepath.Join(temporary, "overlay.json")
+	if err := os.WriteFile(overlayPath, overlayBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "test", "-overlay="+overlayPath, "./internal/controljournal/v2/checkpoint", "-run", "^TestCheckpointCandidateRingDuplicateCannotMaskConflict$", "-count=1")
+	command.Dir = root
+	command.Env = append(os.Environ(), "GOWORK=off")
+	output, runErr := command.CombinedOutput()
+	if runErr == nil || !strings.Contains(string(output), "evidence=CHECKPOINT-CONTRADICTORY-CENSUS") {
+		t.Fatalf("mutant=M-CHECKPOINT-FIRST-PAIR-ONLY survived-or-wrong-law err=%v output=%s", runErr, output)
+	}
+	t.Logf("mutant=M-CHECKPOINT-FIRST-PAIR-ONLY killer=TestCheckpointCandidateRingDuplicateCannotMaskConflict source_sha256=%x mutant_sha256=%x", sha256.Sum256(sourceBytes), sha256.Sum256([]byte(mutated)))
+}
+
+func checkpointRepositoryRoot(t *testing.T) string {
+	t.Helper()
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
+			return directory
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			t.Fatal("repository root not found")
+		}
+		directory = parent
 	}
 }
 
