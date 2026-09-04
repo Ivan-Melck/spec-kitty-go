@@ -253,6 +253,15 @@ deletion, mismatched terminal heads, partial operation membership, unknown
 version tuples, or exceeded budgets fail readiness. Only a sealed restore
 result may admit the replacement runtime epoch.
 
+Restore's elapsed-attempt budget is an orchestration capability. The exact
+`internal/controljournal/v2/restore` package may import the Go
+standard-library `time` package only to validate a bounded duration and enforce
+per-attempt context deadlines. The v2 foundation, checkpoint, and playback
+packages remain time-free. Wall-clock values MUST NOT enter durable records,
+ordering, revision selection, digest preimages, or acceptance decisions. The
+architecture exception MUST be exact-source/exact-target and MUST NOT widen to
+the `internal/controljournal/v2` prefix. See `post-approval-defect-7.md`.
+
 ## Capability ownership law
 
 The common journal owns publication mechanics and canonical validation only.
