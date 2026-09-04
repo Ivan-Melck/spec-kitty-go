@@ -239,7 +239,8 @@
         "Dependency defect-6 is repaired, independently approved, and merged: WP01 guard at 2d9d5089 and WP02 production at 03ac7098+e8a5fc8f+21b8cd43. Resume the preserved WP04 draft against canonical durable bytes and address-specific recovery bounds.",
         "Blocked on post-approval defect 7: the architecture guard forbids time across all controljournal/v2 packages, but WP04 normatively requires a validated elapsed-attempt deadline in restore. Preserve seven-file draft; remove checkpoint io; ratify exact restore-only time allowance with guard widening mutant before resuming.",
         "Defect-8 dependency resolved: WP01 structural proof approved; resume WP04 source-bound checkpoint/restore behavior and overlay mutants.",
-        "Ready for independent review: e2ca3694, bounded checkpoint/restore/playback with defect-8 source-bound deadline evidence."
+        "Ready for independent review: e2ca3694, bounded checkpoint/restore/playback with defect-8 source-bound deadline evidence.",
+        "Cycle 2 passed: all maximum-watermark candidates compared; duplicate-mask regression and first-pair-only mutant killed; focused, race, architecture, static, and retained qualification evidence green"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -248,7 +249,7 @@
         "reviewer": "renata-gapdb-checkpoint",
         "verdict": "approved"
       },
-      "role": "reviewer",
+      "role": "implementer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
