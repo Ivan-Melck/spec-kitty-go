@@ -327,10 +327,30 @@
     },
     "WP07": {
       "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 1,
       "lane": "planned",
       "last_event_id": "01M1NPVDPSDASMV1Y1JA358DB5",
-      "last_transition_at": "2026-09-04T07:59:07.481889+00:00"
+      "last_transition_at": "2026-09-04T07:59:07.481889+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Recovered allocator-created blocked state after verified manual dependency merge; no WP07 implementation began and no contract guard is bypassed."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
+      "subtasks": {
+        "T034": "planned",
+        "T035": "planned",
+        "T036": "planned",
+        "T037": "planned",
+        "T038": "planned",
+        "T039": "planned"
+      }
     },
     "WP08": {
       "actor": "finalize-tasks",
