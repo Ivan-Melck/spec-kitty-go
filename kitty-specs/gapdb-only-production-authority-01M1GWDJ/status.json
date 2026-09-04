@@ -205,7 +205,8 @@
         "Independent defect-4 review APPROVE at 4c22f999: canonical witness key and foundation address round-trip, exact sealed-byte translation, single ordinary non-expiring RequireAbsent witness in one AtomicBatch, witness-inclusive raw/wire/mutation/observation counts, and complete same-revision ambiguity reconciliation verified. Focused x20, race x3, package x3, contention race, architecture, compile, vet, staticcheck, module, formatting, diff, ownership, and all eight anti-pattern checks pass.",
         "Rebind corrected canonical review cycle 7 before implementation",
         "Override only the lane-history planning-artifact check: coordinator governance commits are ancestors of the lane by Spec Kitty synchronization; product candidate is exact commit 71defe71766975d0302fa39a8661270fa5ecd20b and the lane worktree is clean.",
-        "Independent review approved exact candidate 71defe71766975d0302fa39a8661270fa5ecd20b. Force overrides only the lane-history planning-artifact check caused by Spec Kitty coordinator synchronization; product ownership is exact and clean."
+        "Independent review approved exact candidate 71defe71766975d0302fa39a8661270fa5ecd20b. Force overrides only the lane-history planning-artifact check caused by Spec Kitty coordinator synchronization; product ownership is exact and clean.",
+        "Exact independently approved candidate is an ancestor of coordinator merge 56c38db2080e8b2a51fbc92df91a68a6771b12e0. | Done override: WP03 product candidate 71defe71766975d0302fa39a8661270fa5ecd20b was merged exactly into the mission coordinator; the check expects the whole lane branch on feat/gapdb-only-production-authority, but final feature integration occurs only after the mission gate."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
