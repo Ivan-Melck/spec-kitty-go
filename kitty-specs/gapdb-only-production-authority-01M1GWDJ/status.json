@@ -219,7 +219,7 @@
     },
     "WP04": {
       "actor": "ivan-gapdb-checkpoint",
-      "agent": "renata-gapdb-checkpoint",
+      "agent": "ivan-gapdb-checkpoint",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-checkpoint",
