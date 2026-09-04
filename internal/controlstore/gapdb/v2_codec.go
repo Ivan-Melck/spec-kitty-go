@@ -23,6 +23,7 @@ const (
 	v2KeyCheckpointSlot     v2KeyKind = "checkpoint_slot"
 	v2KeyCheckpointRecord   v2KeyKind = "checkpoint_record"
 	v2KeyEligibilityGuard   v2KeyKind = "eligibility_guard"
+	v2KeyWorkspacePathClaim v2KeyKind = "workspace_path_claim"
 )
 
 type v2Key struct {
@@ -38,6 +39,7 @@ type v2Key struct {
 	checkpointSlotID journalv2.CheckpointSlotID
 	missionID        journalv2.MissionID
 	shardID          journalv2.EligibilityShardID
+	workspaceClaim   journalv2.Digest
 }
 
 // v2Prefix is a closed scan coordinate. Prefix values always end at a key
@@ -62,6 +64,7 @@ func (k v2Key) CheckpointID() journalv2.CheckpointID         { return k.checkpoi
 func (k v2Key) CheckpointSlotID() journalv2.CheckpointSlotID { return k.checkpointSlotID }
 func (k v2Key) MissionID() journalv2.MissionID               { return k.missionID }
 func (k v2Key) ShardID() journalv2.EligibilityShardID        { return k.shardID }
+func (k v2Key) WorkspacePathClaimDigest() journalv2.Digest   { return k.workspaceClaim }
 
 func v2AuthorityBindingKey() v2Key {
 	return v2Key{kind: v2KeyAuthorityBinding, encoded: "spk/v2/authority/binding"}
@@ -180,6 +183,14 @@ func v2EligibilityGuardKey(missionID journalv2.MissionID, shardID journalv2.Elig
 	shardComponent, _ := journalv2.EncodeKeyComponent(string(shard))
 	encoded, err := joinV2Key("eligibility_guard", "spk", "v2", "workgraphs", missionComponent, "eligibility", shardComponent)
 	return v2Key{kind: v2KeyEligibilityGuard, encoded: encoded, missionID: mission, shardID: shard}, err
+}
+
+func v2WorkspacePathClaimKey(digest journalv2.Digest) (v2Key, error) {
+	if digest.IsZero() {
+		return v2Key{}, v2CodecError("workspace_path_claim")
+	}
+	encoded, err := joinV2Key("workspace_path_claim", "spk", "v2", "workspace-path-claims", digest.String())
+	return v2Key{kind: v2KeyWorkspacePathClaim, encoded: encoded, workspaceClaim: digest}, err
 }
 
 func v2RuntimeEpochsPrefix() v2Prefix {
@@ -383,6 +394,12 @@ func parseV2Key(encoded string) (v2Key, error) {
 			return v2Key{}, v2CodecError("eligibility_guard")
 		}
 		key, err = v2EligibilityGuardKey(journalv2.MissionID(mission), journalv2.EligibilityShardID(shard))
+	case len(parts) == 4 && parts[2] == "workspace-path-claims":
+		digest, decodeErr := journalv2.ParseDigest("workspace_path_claim", parts[3])
+		if decodeErr != nil || digest.IsZero() {
+			return v2Key{}, v2CodecError("workspace_path_claim")
+		}
+		key, err = v2WorkspacePathClaimKey(digest)
 	default:
 		return v2Key{}, v2CodecError("key_family")
 	}
