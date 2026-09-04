@@ -318,7 +318,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Implementation c33a1825 passed independent contract audit, focused repetitions, race, architecture, vet, staticcheck, formatting, compile, and module verification.",
-        "Independent review approved c33a1825; exact owned diff and all focused, race, architecture, vet, staticcheck, formatting, and recovery gates passed."
+        "Independent review approved c33a1825; exact owned diff and all focused, race, architecture, vet, staticcheck, formatting, and recovery gates passed.",
+        "Previously approved package integrated and verified on the coordinator; no test or review failure bypassed. | Done override: Integrated approved WP06 commit c33a1825 is already an ancestor of the coordinator; artifact/workgraph race, architecture, compile, and static gates pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
