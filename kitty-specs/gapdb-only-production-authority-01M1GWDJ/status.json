@@ -105,7 +105,7 @@
     },
     "WP02": {
       "actor": "codex",
-      "agent": "renata-gapdb-final-production-review",
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-canonical-codecs",
@@ -148,7 +148,8 @@
         "Cycle-14 address-specific recovery bounds repaired at e8a5fc8f; exact-max/over-limit/noncanonical identity tests and all v2/race/184-mutant/static gates pass.",
         "Repair review cycle 15: add the missing ordinary exact-256KiB live recovery constructor case.",
         "Cycle-15 adds the missing ordinary exact-256KiB live constructor evidence at 21b8cd43; focused/package/race/184-mutant/static gates pass.",
-        "Independent review passed: durable bytes canonical, digest preimages stable, address-specific recovery bounds exact, 184-mutant/v2/race/static gates green."
+        "Independent review passed: durable bytes canonical, digest preimages stable, address-specific recovery bounds exact, 184-mutant/v2/race/static gates green.",
+        "Reopened for bounded post-approval repair: add explicit permission-bound reconciliation resume under the same OperationID; generic transition remains forbidden."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -158,15 +159,15 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T006": "done",
-        "T007": "done",
-        "T008": "done",
-        "T009": "done",
-        "T010": "done",
-        "T011": "done"
+        "T006": "planned",
+        "T007": "planned",
+        "T008": "planned",
+        "T009": "planned",
+        "T010": "planned",
+        "T011": "planned"
       }
     },
     "WP03": {
