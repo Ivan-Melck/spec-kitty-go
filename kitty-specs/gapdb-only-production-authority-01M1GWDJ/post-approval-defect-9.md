@@ -79,6 +79,11 @@ different WorkspaceID and a path whose claim key is absent. This rule prevents
 two cooperating Spec Kitty operations from authorizing the same directory; it
 does not pretend to control direct filesystem access.
 
+Workspace aggregate identity is independently global: its journal coordinate
+is host-scoped by WorkspaceID. Project, mission, WorkRevision, work, and
+repository coordinates live in the immutable workspace state; they must not
+form a scope that permits the same WorkspaceID to be created again elsewhere.
+
 ### Execution-owned composition
 
 `internal/execution` owns the operation that composes execution and workspace
@@ -127,6 +132,13 @@ durable intent; it does not prohibit bounded observation. WP08 owns the pure
 current-workspace predicate and its exhaustive capsule tests. WP09 and WP10 own
 calling that predicate from handoff, review, acceptance, and integration, so
 WP08 does not add out-of-scope or test-only gate integrations.
+
+The recorded chronology must remain causal. A ready state cannot claim a probe
+that occurred after its own publication. While retaining the same cooperating
+repository guard, the implementation either records a non-ready intermediate
+publication between the probes and then publishes ready with both facts, or
+performs both probes before one final ready publication. It never publishes
+ready between pre- and post-probe.
 
 ## Routing
 
