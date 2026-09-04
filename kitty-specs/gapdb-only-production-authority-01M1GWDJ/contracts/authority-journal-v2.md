@@ -253,6 +253,21 @@ deletion, mismatched terminal heads, partial operation membership, unknown
 version tuples, or exceeded budgets fail readiness. Only a sealed restore
 result may admit the replacement runtime epoch.
 
+Restore's elapsed-attempt budget is an orchestration capability. The exact
+`internal/controljournal/v2/restore` package may import the Go
+standard-library `time` package only to validate a bounded duration and enforce
+per-attempt context deadlines. The v2 foundation, checkpoint, and playback
+packages remain time-free. Wall-clock values MUST NOT enter durable records,
+ordering, revision selection, digest preimages, or acceptance decisions. The
+architecture exception MUST be exact-source/exact-target and MUST NOT widen to
+the `internal/controljournal/v2` prefix. WP01 owns structural import and object-
+use confinement, including refusal of ambient-clock APIs and escaping deadline
+functions. WP04 owns executable validation, derivation, placement, propagation,
+cancellation, retry, and parent-deadline behavior. WP17 binds those gates and
+their overlay mutants to one source identity. No partial static control-flow
+model is authoritative. See `post-approval-defect-7.md` and
+`post-approval-defect-8.md`.
+
 ## Capability ownership law
 
 The common journal owns publication mechanics and canonical validation only.

@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 184
-	m2MutantCensusSHA256 = "299a0dc403fd102c73b88e88569cd7da832766a957e6968e5dbc7eec37154283"
+	m2MutantCensusCount  = 185
+	m2MutantCensusSHA256 = "bb4e46d391a130b5050eab4ee4a1193755e4747dac09537d52636a953f194379"
 )
 
 const (
@@ -244,6 +244,10 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, target := range []string{"crypto/rand", "math/rand", "net", "os", "os/exec", "path/filepath", "time"} {
 		cases = append(cases, m2DependencyCase("M-PURE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "PURE", m2ModulePath+"/internal/controljournal/v2", target, ImportStandardLibrary, string(RuleDeferredSurface)))
 	}
+	cases = append(cases, m2DependencyCase(
+		"M-PURE-TIME-RESTORE-OWNER-WIDENING", "RESTORE-OWNER-WIDENING",
+		m2ModulePath+"/internal/controljournal/v2/restore/worker", "time", ImportStandardLibrary, string(RuleDeferredSurface),
+	))
 	cases = append(cases, m2DependencyCase("M-GAPDB-SCENARIO-CALLER", "GAPDB-SCENARIO", m2ModulePath+"/internal/scenario", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, string(RuleExternalDirection)))
 	for _, fixture := range []string{"DIRECT", "WRAPPER", "WITNESS-DIRECT"} {
 		cases = append(cases, m2Case("M-CAPABILITY-REACH-"+fixture, m2ValidatorCapReach, fixture, string(RuleReachability), m2ModulePath+"/internal/execution", m2ModulePath+"/internal/controlstore/gapdb"))

@@ -113,6 +113,16 @@ Implementation command:
 spec-kitty agent action implement WP17 --agent codex
 ```
 
+## Post-approval correction: source-bound restore deadline evidence
+
+Read `post-approval-defect-8.md`. The final frozen census must include WP01's
+structural restore-time confinement tests, WP04's named deadline contract tests,
+and every exact-anchored restore overlay mutant. Bind the production source
+commit/tree, each substitution and anchor count, and each killed-by test to the
+same RunID. Refuse a campaign that substitutes generated fake-package behavior,
+omits a mutant, accepts a zero/multiple source anchor, or assembles structural
+and behavioral evidence from different source identities.
+
 ## Branch, dependency, and evidence rules
 
 - Start from accepted WP16 as recorded for WP17 in
