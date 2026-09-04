@@ -81,7 +81,8 @@
         "Defect-8 structural correction c05094d5: bounded go/types proof; behavior delegated to WP04.",
         "Cycle-24 repair: reject inferred and forbidden transitive duration state without reintroducing control-flow analysis.",
         "Cycle-24 repair 3e8b393d: confine inferred, erased, and transitive duration state with bounded go/types proof.",
-        "Cycle-25 repair: apply bounded duration reachability to every package-scope named type."
+        "Cycle-25 repair: apply bounded duration reachability to every package-scope named type.",
+        "Cycle-25 repair aee9e6e5: inspect all named duration-bearing types with exact privileged coordinates."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
