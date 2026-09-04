@@ -169,24 +169,26 @@ func (g ExecutionGovernanceV2) journalRevisions() []string {
 }
 
 type ExecutionSlotStateV2 struct {
-	SchemaVersion  uint16                   `json:"schema_version"`
-	ProjectID      ids.ProjectID            `json:"project_id"`
-	MissionID      ids.MissionID            `json:"mission_id"`
-	WorkRevisionID ids.WorkRevisionID       `json:"work_revision_id"`
-	WorkID         ids.WorkID               `json:"work_id"`
-	LogicalVersion uint64                   `json:"logical_version"`
-	RunID          ids.RunID                `json:"run_id"`
-	ActorID        ids.ActorID              `json:"actor_id"`
-	ProcessID      ids.ProcessID            `json:"process_id"`
-	LeaseID        ids.LeaseID              `json:"lease_id"`
-	Generation     uint64                   `json:"generation"`
-	Fence          string                   `json:"fence"`
-	HeartbeatAt    string                   `json:"heartbeat_at"`
-	Deadline       string                   `json:"deadline"`
-	RuntimeEpochID journalv2.RuntimeEpochID `json:"runtime_epoch_id"`
-	Status         ExecutionSlotStatusV2    `json:"status"`
-	Outcome        string                   `json:"outcome,omitempty"`
-	Governance     ExecutionGovernanceV2    `json:"governance"`
+	SchemaVersion            uint16                   `json:"schema_version"`
+	ProjectID                ids.ProjectID            `json:"project_id"`
+	MissionID                ids.MissionID            `json:"mission_id"`
+	WorkRevisionID           ids.WorkRevisionID       `json:"work_revision_id"`
+	WorkID                   ids.WorkID               `json:"work_id"`
+	LogicalVersion           uint64                   `json:"logical_version"`
+	RunID                    ids.RunID                `json:"run_id"`
+	ActorID                  ids.ActorID              `json:"actor_id"`
+	ProcessID                ids.ProcessID            `json:"process_id"`
+	LeaseID                  ids.LeaseID              `json:"lease_id"`
+	Generation               uint64                   `json:"generation"`
+	Fence                    string                   `json:"fence"`
+	HeartbeatAt              string                   `json:"heartbeat_at"`
+	Deadline                 string                   `json:"deadline"`
+	RuntimeEpochID           journalv2.RuntimeEpochID `json:"runtime_epoch_id"`
+	Status                   ExecutionSlotStatusV2    `json:"status"`
+	Outcome                  string                   `json:"outcome,omitempty"`
+	Governance               ExecutionGovernanceV2    `json:"governance"`
+	WorkspaceID              ids.WorkspaceID          `json:"workspace_id,omitempty"`
+	WorkspacePathClaimDigest journalv2.Digest         `json:"workspace_path_claim_digest,omitempty"`
 }
 
 func (s ExecutionSlotStateV2) Validate() error {
@@ -227,6 +229,15 @@ func (s ExecutionSlotStateV2) Validate() error {
 		}
 	default:
 		return executionV2Error(KindInvalidCommand, "execution_status", nil)
+	}
+	workspaceBound := s.WorkspaceID != "" || !s.WorkspacePathClaimDigest.IsZero()
+	if workspaceBound {
+		if s.WorkspaceID == "" || s.WorkspacePathClaimDigest.IsZero() {
+			return executionV2Error(KindInvalidCommand, "workspace_binding", nil)
+		}
+		if _, err := ids.ParseWorkspaceID(s.WorkspaceID.String()); err != nil {
+			return executionV2Error(KindInvalidCommand, "workspace_binding", err)
+		}
 	}
 	return s.Governance.validate()
 }
@@ -672,6 +683,8 @@ func decideExecutionTransitionV2(r ExecutionAuthorityRequestV2, governance Execu
 		return ExecutionSlotStateV2{}, executionV2Error(KindAuthorityConflict, "execution_slot", nil)
 	}
 	next.LogicalVersion = prior.LogicalVersion + 1
+	next.WorkspaceID = prior.WorkspaceID
+	next.WorkspacePathClaimDigest = prior.WorkspacePathClaimDigest
 	sameAuthority := prior.RunID == r.RunID && prior.ActorID == r.ActorID && prior.ProcessID == r.ProcessID && prior.LeaseID == r.LeaseID && prior.Generation == r.Generation && prior.Fence == r.Fence && prior.RuntimeEpochID == r.RuntimeEpochID && equalExecutionGovernanceV2(prior.Governance, governance)
 	switch r.Kind {
 	case ExecutionHeartbeatV2:
@@ -682,11 +695,16 @@ func decideExecutionTransitionV2(r ExecutionAuthorityRequestV2, governance Execu
 		if !sameAuthority || prior.Status != ExecutionActiveV2 || r.ObservedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
 			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "lease", nil)
 		}
+		if prior.WorkspaceID != "" {
+			return ExecutionSlotStateV2{}, executionV2Error(KindDecisionRequired, "workspace_quarantine_required", nil)
+		}
 		next.Deadline, next.HeartbeatAt, next.Status = prior.Deadline, prior.HeartbeatAt, ExecutionExpiredV2
 	case ExecutionReplaceV2:
 		if prior.Status != ExecutionExpiredV2 || r.Generation != prior.Generation+1 || r.LeaseID == prior.LeaseID || r.RunID == prior.RunID || r.Fence == prior.Fence || r.ObservedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
 			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "replacement", nil)
 		}
+		next.WorkspaceID = ""
+		next.WorkspacePathClaimDigest = journalv2.Digest{}
 	case ExecutionOutcomeV2:
 		if !sameAuthority || prior.Status != ExecutionActiveV2 || !r.ObservedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
 			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "lease", nil)
@@ -809,7 +827,7 @@ func ReduceExecutionSlotEventV2(prior []byte, event journalv2.EventEnvelopeV2) (
 		return nil, executionV2Error(KindAuthorityConflict, "event_authority", nil)
 	}
 	if len(prior) == 0 || bytes.Equal(prior, []byte(`{}`)) {
-		if next.LogicalVersion != 1 || next.Status != ExecutionActiveV2 || payload.Predecessor != nil || payload.Kind != "run_admitted_lease_granted" || event.EventType() != "execution_slot.run_admitted_lease_granted" {
+		if next.LogicalVersion != 1 || next.Status != ExecutionActiveV2 || next.WorkspaceID != "" || !next.WorkspacePathClaimDigest.IsZero() || payload.Predecessor != nil || payload.Kind != "run_admitted_lease_granted" || event.EventType() != "execution_slot.run_admitted_lease_granted" {
 			return nil, executionV2Error(KindAuthorityConflict, "initial_transition", nil)
 		}
 		return next.CanonicalBytes(), nil
@@ -830,11 +848,12 @@ func ReduceExecutionSlotEventV2(prior []byte, event journalv2.EventEnvelopeV2) (
 		if previous.Status == ExecutionActiveV2 {
 			renewed := payload.Kind == "lease_renewed" && event.EventType() == "execution_slot.lease_renewed" && mustExecutionTimeV2(next.Deadline).After(mustExecutionTimeV2(previous.Deadline)) && observedAt.Equal(mustExecutionTimeV2(next.HeartbeatAt)) && observedAt.After(mustExecutionTimeV2(previous.HeartbeatAt)) && observedAt.Before(mustExecutionTimeV2(previous.Deadline))
 			effectAuthorized := payload.Kind == "effect_authorized" && event.EventType() == "execution_slot.effect_authorized" && next.HeartbeatAt == previous.HeartbeatAt && next.Deadline == previous.Deadline && observedAt.Before(mustExecutionTimeV2(previous.Deadline))
-			if !sameExecutionAuthorityV2(previous, next) || (!renewed && !effectAuthorized) {
+			workspaceBound := payload.Kind == "workspace_bound" && event.EventType() == "execution_slot.workspace_bound" && previous.WorkspaceID == "" && previous.WorkspacePathClaimDigest.IsZero() && next.WorkspaceID != "" && !next.WorkspacePathClaimDigest.IsZero() && next.HeartbeatAt == previous.HeartbeatAt && next.Deadline == previous.Deadline && sameExecutionAuthorityIgnoringWorkspaceV2(previous, next)
+			if (!workspaceBound && !sameExecutionAuthorityV2(previous, next)) || (!renewed && !effectAuthorized && !workspaceBound) {
 				return nil, executionV2Error(KindStaleAuthority, "lease", nil)
 			}
 		} else if previous.Status == ExecutionExpiredV2 {
-			if payload.Kind != "run_replaced_lease_granted" || event.EventType() != "execution_slot.run_replaced_lease_granted" || next.Generation != previous.Generation+1 || next.LeaseID == previous.LeaseID || next.RunID == previous.RunID || next.Fence == previous.Fence || observedAt.Before(mustExecutionTimeV2(previous.Deadline)) || !observedAt.Equal(mustExecutionTimeV2(next.HeartbeatAt)) {
+			if payload.Kind != "run_replaced_lease_granted" || event.EventType() != "execution_slot.run_replaced_lease_granted" || next.Generation != previous.Generation+1 || next.LeaseID == previous.LeaseID || next.RunID == previous.RunID || next.Fence == previous.Fence || next.WorkspaceID != "" || !next.WorkspacePathClaimDigest.IsZero() || observedAt.Before(mustExecutionTimeV2(previous.Deadline)) || !observedAt.Equal(mustExecutionTimeV2(next.HeartbeatAt)) {
 				return nil, executionV2Error(KindStaleAuthority, "replacement", nil)
 			}
 		} else {
@@ -896,7 +915,12 @@ func executionObservationEqualV2(a, b *ExecutionSlotStateV2) bool {
 	return bytes.Equal(a.CanonicalBytes(), b.CanonicalBytes())
 }
 func sameExecutionAuthorityV2(a, b ExecutionSlotStateV2) bool {
-	return a.ProjectID == b.ProjectID && a.MissionID == b.MissionID && a.WorkRevisionID == b.WorkRevisionID && a.WorkID == b.WorkID && a.RunID == b.RunID && a.ActorID == b.ActorID && a.ProcessID == b.ProcessID && a.LeaseID == b.LeaseID && a.Generation == b.Generation && a.Fence == b.Fence && a.RuntimeEpochID == b.RuntimeEpochID && equalExecutionGovernanceV2(a.Governance, b.Governance)
+	return a.ProjectID == b.ProjectID && a.MissionID == b.MissionID && a.WorkRevisionID == b.WorkRevisionID && a.WorkID == b.WorkID && a.RunID == b.RunID && a.ActorID == b.ActorID && a.ProcessID == b.ProcessID && a.LeaseID == b.LeaseID && a.Generation == b.Generation && a.Fence == b.Fence && a.RuntimeEpochID == b.RuntimeEpochID && a.WorkspaceID == b.WorkspaceID && a.WorkspacePathClaimDigest == b.WorkspacePathClaimDigest && equalExecutionGovernanceV2(a.Governance, b.Governance)
+}
+func sameExecutionAuthorityIgnoringWorkspaceV2(a, b ExecutionSlotStateV2) bool {
+	a.WorkspaceID, b.WorkspaceID = "", ""
+	a.WorkspacePathClaimDigest, b.WorkspacePathClaimDigest = journalv2.Digest{}, journalv2.Digest{}
+	return sameExecutionAuthorityV2(a, b)
 }
 func stringSlicesEqualV2(a, b []string) bool {
 	if len(a) != len(b) {

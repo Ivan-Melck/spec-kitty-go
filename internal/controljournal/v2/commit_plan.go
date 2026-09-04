@@ -1274,7 +1274,14 @@ func prospectiveEncodedPlanSize(input CommitPlanInput) (uint64, error) {
 		if err := size.add(1024); err != nil {
 			return 0, err
 		}
-		if err := size.addString(authorityAssertionKey(assertion)); err != nil {
+		target := assertion.Target()
+		for _, value := range []string{string(target.Kind), string(target.Coordinate.Kind), string(target.Coordinate.ID),
+			string(target.MissionID), string(target.ShardID), string(target.CheckpointSlotID), string(assertion.Kind())} {
+			if err := size.addString(value); err != nil {
+				return 0, err
+			}
+		}
+		if err := size.addScope(target.Coordinate.Scope); err != nil {
 			return 0, err
 		}
 	}

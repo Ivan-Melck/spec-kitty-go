@@ -275,6 +275,53 @@ func TestExecutionLeaseTransitionsFenceStaleAuthorityAndKeepReplacementDistinctV
 	}
 }
 
+func TestExecutionBoundWorkspaceIsImmutableAndOrdinaryExpiryRefusesV2(t *testing.T) {
+	request, _ := executionRequestFixtureV2(t, ExecutionAdmitV2)
+	governance, err := ExecutionGovernanceFromContextV2(request.Governance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := decideExecutionTransitionV2(request, governance, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := journalv2.ParseDigest("workspace_claim", strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.WorkspaceID, active.WorkspacePathClaimDigest = "workspace-1", claim
+	expire := request
+	expire.Kind, expire.OperationID = ExecutionExpireV2, "operation-bound-expire"
+	expire.ObservedAt = request.Deadline.Add(time.Second)
+	expire.Fence = active.Fence
+	if _, err := decideExecutionTransitionV2(expire, governance, &active); !IsKind(err, KindDecisionRequired) {
+		t.Fatalf("bound expiry got %v", err)
+	}
+	heartbeat := request
+	heartbeat.Kind, heartbeat.OperationID, heartbeat.Fence = ExecutionHeartbeatV2, "operation-bound-heartbeat", active.Fence
+	heartbeat.ObservedAt, heartbeat.Deadline = request.ObservedAt.Add(time.Second), request.Deadline.Add(time.Minute)
+	renewed, err := decideExecutionTransitionV2(heartbeat, governance, &active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.WorkspaceID != active.WorkspaceID || renewed.WorkspacePathClaimDigest != claim {
+		t.Fatal("heartbeat lost immutable workspace binding")
+	}
+	replaceRequest := request
+	replaceRequest.Kind, replaceRequest.OperationID, replaceRequest.Generation = ExecutionReplaceV2, "operation-replace", active.Generation+1
+	replaceRequest.RunID, replaceRequest.LeaseID, replaceRequest.Fence = "run-2", "lease-2", strings.Repeat("b", 32)
+	replaceRequest.ObservedAt, replaceRequest.Deadline = request.Deadline.Add(time.Second), request.Deadline.Add(time.Minute)
+	expired := active
+	expired.Status = ExecutionExpiredV2
+	replaced, err := decideExecutionTransitionV2(replaceRequest, governance, &expired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.WorkspaceID != "" || !replaced.WorkspacePathClaimDigest.IsZero() {
+		t.Fatal("replacement inherited predecessor workspace")
+	}
+}
+
 func TestExecutionAuthorityMintsGrantFenceAndEligibilityOnlyForGrantsV2(t *testing.T) {
 	request, eligibility := executionRequestFixtureV2(t, ExecutionAdmitV2)
 	port := &executionPortProbeV2{resolution: ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}, eligibility: eligibility}
