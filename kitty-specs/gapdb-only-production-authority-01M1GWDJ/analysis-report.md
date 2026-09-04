@@ -4,41 +4,42 @@ artifact_type: spec-kitty.analysis-report
 command: /spec-kitty.analyze
 mission_slug: gapdb-only-production-authority-01M1GWDJ
 mission_id: 01M1GWDJV8MMEF5VJJMD3AD0QE
-generated_at: '2026-09-04T02:11:14.020466+00:00'
-analyzer_agent: unknown
+generated_at: '2026-09-04T04:10:10.568750+00:00'
+analyzer_agent: codex-gapdb-proof-boundary
 input_artifacts:
   spec.md:
     path: /home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/spec.md
     sha256: 726a77f6f3b7fa3270e7474be84af03b69502b078863396d19ecf3ddabfe0c74
   plan.md:
     path: /home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/plan.md
-    sha256: 62eba70eac3b198f7a021002ef64f314cde2b259672ade327dfe570b399f4ec2
+    sha256: 13ea78c9310383a57a48888f8f38417d905e5984c3a9752ebcc27fc95e1bf8f1
   tasks.md:
     path: /home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks.md
     sha256: 76070e53725d1616f52201c1ed75d8e2b7ce47bffb5b099a9aac970e30000a3e
   charter:
     path: /home/lynn/projects/go-kitty3/.kittify/charter/charter.yaml
     sha256: 4442a6e0d56d4a7df873f2f529b04bb4d4917f2481a4e47f4819bd92927388de
-verdict: ready
+verdict: unknown
 issue_counts:
-  medium: 0
-  low: 0
-  high: 0
-  critical: 0
-  info: 0
+  info:
+  high:
+  low:
+  medium:
+  critical:
 findings: []
 ---
 
 ## Specification Analysis Report
 
-The restore-deadline correction is internally consistent and ready for the
-bounded WP01 guard amendment before WP04 resumes. It distinguishes the
-consumer-owned restore I/O coordinator from pure playback without granting
-time-derived authority or widening the journal's dependency surface.
+The defect-8 proof-ownership correction is internally consistent and ready for
+the bounded WP01 structural amendment before WP04 resumes. It preserves the
+defect-7 runtime law while assigning static capability confinement, executable
+deadline behavior, and final source-bound mutation evidence to the layers able
+to prove them without a partial Go control-flow model.
 
 | ID | Category | Severity | Location(s) | Summary | Recommendation |
 |----|----------|----------|-------------|---------|----------------|
-| - | - | - | - | No findings. | Proceed through the ratified dependency order. |
+| - | - | - | - | No findings. | Proceed through the ratified WP01 → WP04 → WP17 proof order. |
 
 ### Coverage Summary
 
@@ -49,9 +50,9 @@ time-derived authority or widening the journal's dependency surface.
 
 ### Charter Alignment Issues
 
-None. The correction preserves bounded recovery, explicit authority,
-side-effect-free playback, locality of change, mutation-tested architecture,
-and independent review.
+None. The correction strengthens bounded recovery, source-bound evidence,
+mutation sensitivity, locality of change, and independent review while
+removing an unsound proof mechanism.
 
 ### Unmapped Tasks
 
@@ -60,19 +61,20 @@ subtask IDs remain represented.
 
 ### Consistency Checks
 
-- WP04, the data model, plan, and Authority Journal v2 contract all require an
-  explicit validated elapsed-attempt budget.
-- Only `internal/controljournal/v2/restore` may import standard-library `time`,
-  and only to type and enforce that budget with context deadlines.
-- Foundation, checkpoint, playback, and every other v2 package remain
-  time-free; time supplies no durable state, ordering, revision, digest, or
-  acceptance input.
-- WP01 owns the exact-edge allowance, positive/negative controls, and a mutant
-  that kills any prefix-wide widening. Existing mutant IDs remain intact.
-- WP04 removes the unrelated checkpoint `io` import and retains its seven-file
-  ownership boundary; WP02 and WP03 remain unchanged.
-- No provider API, keyspace, backend decision, stable task ID, requirement
-  mapping, or capability authority boundary changes.
+- Defect 7's semantic deadline law is unchanged.
+- WP01 owns the exact restore-only `time` edge, `go/types` object-use
+  confinement, ambient-clock refusal, budget-field placement, and direct
+  non-escaping `context.WithTimeout` presence.
+- WP04 owns eight files after adding
+  `restore/deadline_contract_test.go`; its prompt and `wps.yaml` agree.
+- WP04 owns source-bound validation, derivation, placement, propagation,
+  cancellation, retry, and parent-deadline behavior.
+- WP17 owns the final exact-source overlay-mutant census and refuses mixed
+  source identities, zero/multiple anchors, and fake-package substitution.
+- WP02 and WP03 remain unchanged; no provider API, keyspace, backend,
+  authority boundary, requirement mapping, or stable subtask ID changes.
+- Focused contract, registry, and restore architecture tests pass after the
+  documentation correction.
 
 ### Metrics
 
@@ -85,6 +87,7 @@ subtask IDs remain represented.
 
 ### Next Actions
 
-Reopen, implement, and independently reapprove WP01's exact restore-to-time
-guard amendment. Then unblock and resume WP04 from its preserved seven-file
-draft, retaining the elapsed-attempt budget and structurally pure playback.
+Replace WP01's custom CFG verifier with the bounded structural guard and obtain
+independent approval. Then resume WP04 from its preserved draft, add the named
+deadline contract tests and overlay controls, and carry the combined evidence
+into WP17.
