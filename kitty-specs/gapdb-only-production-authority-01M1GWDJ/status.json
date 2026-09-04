@@ -83,7 +83,8 @@
         "Cycle-24 repair 3e8b393d: confine inferred, erased, and transitive duration state with bounded go/types proof.",
         "Cycle-25 repair: apply bounded duration reachability to every package-scope named type.",
         "Cycle-25 repair aee9e6e5: inspect all named duration-bearing types with exact privileged coordinates.",
-        "Review cycle 26 passed: exact structural duration confinement, 185-mutant census preserved, no CFG inference."
+        "Review cycle 26 passed: exact structural duration confinement, 185-mutant census preserved, no CFG inference.",
+        "Previously approved package integrated and verified on the coordinator; no test or review failure bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
