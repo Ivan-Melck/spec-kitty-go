@@ -1,20 +1,20 @@
 {
-  "event_count": 296,
-  "last_event_id": "01M1NPR8TK6MKPF25M3R50XCAY",
-  "materialized_at": "2026-09-04T07:57:24.179827+00:00",
+  "event_count": 297,
+  "last_event_id": "01M1NPVDPSDASMV1Y1JA358DB5",
+  "materialized_at": "2026-09-04T07:59:07.481889+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
     "approved": 6,
-    "blocked": 1,
+    "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
     "in_progress": 1,
     "in_review": 0,
-    "planned": 9
+    "planned": 10
   },
   "work_packages": {
     "WP01": {
@@ -327,10 +327,10 @@
     },
     "WP07": {
       "actor": "codex",
-      "force_count": 0,
-      "lane": "blocked",
-      "last_event_id": "01M1NPR8TK6MKPF25M3R50XCAY",
-      "last_transition_at": "2026-09-04T07:57:24.179827+00:00"
+      "force_count": 1,
+      "lane": "planned",
+      "last_event_id": "01M1NPVDPSDASMV1Y1JA358DB5",
+      "last_transition_at": "2026-09-04T07:59:07.481889+00:00"
     },
     "WP08": {
       "actor": "finalize-tasks",
