@@ -1,18 +1,18 @@
 {
-  "event_count": 311,
-  "last_event_id": "01M1P3T8PMVWHPX7QG14MQSYDE",
-  "materialized_at": "2026-09-04T11:45:41.075982+00:00",
+  "event_count": 323,
+  "last_event_id": "01M1PMXVMAW3GTYC9S4EC7SBG6",
+  "materialized_at": "2026-09-04T16:44:44.554051+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 6,
+    "approved": 5,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
-    "done": 1,
+    "done": 3,
     "for_review": 0,
-    "in_progress": 2,
+    "in_progress": 1,
     "in_review": 0,
     "planned": 8
   },
@@ -104,15 +104,15 @@
       }
     },
     "WP02": {
-      "actor": "codex",
+      "actor": "user",
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-canonical-codecs",
-      "force_count": 21,
-      "lane": "in_progress",
-      "last_event_id": "01M1NQH950V6M1J5SYYAM8V7DA",
-      "last_transition_at": "2026-09-04T08:11:03.705503+00:00",
+      "force_count": 25,
+      "lane": "done",
+      "last_event_id": "01M1PJCS92RGYE2GMQN00YN7SE",
+      "last_transition_at": "2026-09-04T16:00:27.938365+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -149,37 +149,41 @@
         "Repair review cycle 15: add the missing ordinary exact-256KiB live recovery constructor case.",
         "Cycle-15 adds the missing ordinary exact-256KiB live constructor evidence at 21b8cd43; focused/package/race/184-mutant/static gates pass.",
         "Independent review passed: durable bytes canonical, digest preimages stable, address-specific recovery bounds exact, 184-mutant/v2/race/static gates green.",
-        "Reopened for bounded post-approval repair: add explicit permission-bound reconciliation resume under the same OperationID; generic transition remains forbidden."
+        "Reopened for bounded post-approval repair: add explicit permission-bound reconciliation resume under the same OperationID; generic transition remains forbidden.",
+        "Exact candidate 35590268 independently approved; force only acknowledges coordinator planning artifacts merged into the lane",
+        "Independent review of exact candidate 35590268",
+        "Permission semantic binding and all regression gates approved",
+        "Approved candidate 35590268 merged to mission coordinator | Done override: Lane ancestry is already contained in coordinator merge a6dbf7cd; post-merge lane comparison reports zero remaining commits"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "reference": "WP02 03ac7098+e8a5fc8f+21b8cd43; independent canonical/recovery boundary review passed",
-        "reviewer": "renata-gapdb-final-production-review",
+        "reference": "independent-review:35590268611f2c5e3784648cdddff183319da060",
+        "reviewer": "mill",
         "verdict": "approved"
       },
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T006": "planned",
-        "T007": "planned",
-        "T008": "planned",
-        "T009": "planned",
-        "T010": "planned",
-        "T011": "planned"
+        "T006": "done",
+        "T007": "done",
+        "T008": "done",
+        "T009": "done",
+        "T010": "done",
+        "T011": "done"
       }
     },
     "WP03": {
-      "actor": "codex-wp03-witness-independent-reviewer",
-      "agent": "codex-wp03-witness-independent-reviewer",
+      "actor": "user",
+      "agent": "mill",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp03-witness-gapdb",
-      "force_count": 6,
-      "lane": "approved",
-      "last_event_id": "01M1M97SDTW8TTYMNGMZ9KA931",
-      "last_transition_at": "2026-09-03T18:41:58.202282+00:00",
+      "force_count": 11,
+      "lane": "done",
+      "last_event_id": "01M1PMXVMAW3GTYC9S4EC7SBG6",
+      "last_transition_at": "2026-09-04T16:44:44.554051+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
@@ -198,16 +202,20 @@
         "Dependency blocker: publication witness bytes are re-canonicalized by foundation NewRecoveryRecordV2 into alphabetical object-key order, but DecodePublicationWitnessV2 requires the encoder's struct-field order. Exact adapter ReadV2 therefore returns a foundation record that the only approved witness decoder rejects. Reproduced by TestV2ReaderUsesFoundationPublicationWitnessAddressAndRejectsExpiry. Preserve the separable uncommitted WP03 witness translation until a bounded witness-specific WP02 codec repair is independently approved.",
         "Resume preserved WP03 defect-4 adapter correction after independent approval of foundation byte-preservation repair 026e3a7e. The exact former failing reader regression now passes 20 consecutive runs in lane-c. Continue bounded key/commit/read/reconciliation validation; no prior adapter contract is reopened.",
         "Ready for independent defect-4 review: 4c22f999 adds canonical publication-witness key translation, foundation-addressed non-expiring reads, exactly one ordinary RequireAbsent witness in the single AtomicBatch, witness-inclusive mutation/observation/raw/wire accounting, and complete same-revision witness reconciliation. Existing exact-member reconciliation needed no duplicate policy. Focused x20, full package, race x5, architecture, compile, vet, staticcheck, module, formatting, diff, and ownership gates pass.",
-        "Independent defect-4 review APPROVE at 4c22f999: canonical witness key and foundation address round-trip, exact sealed-byte translation, single ordinary non-expiring RequireAbsent witness in one AtomicBatch, witness-inclusive raw/wire/mutation/observation counts, and complete same-revision ambiguity reconciliation verified. Focused x20, race x3, package x3, contention race, architecture, compile, vet, staticcheck, module, formatting, diff, ownership, and all eight anti-pattern checks pass."
+        "Independent defect-4 review APPROVE at 4c22f999: canonical witness key and foundation address round-trip, exact sealed-byte translation, single ordinary non-expiring RequireAbsent witness in one AtomicBatch, witness-inclusive raw/wire/mutation/observation counts, and complete same-revision ambiguity reconciliation verified. Focused x20, race x3, package x3, contention race, architecture, compile, vet, staticcheck, module, formatting, diff, ownership, and all eight anti-pattern checks pass.",
+        "Rebind corrected canonical review cycle 7 before implementation",
+        "Override only the lane-history planning-artifact check: coordinator governance commits are ancestors of the lane by Spec Kitty synchronization; product candidate is exact commit 71defe71766975d0302fa39a8661270fa5ecd20b and the lane worktree is clean.",
+        "Independent review approved exact candidate 71defe71766975d0302fa39a8661270fa5ecd20b. Force overrides only the lane-history planning-artifact check caused by Spec Kitty coordinator synchronization; product ownership is exact and clean.",
+        "Exact independently approved candidate is an ancestor of coordinator merge 56c38db2080e8b2a51fbc92df91a68a6771b12e0. | Done override: WP03 product candidate 71defe71766975d0302fa39a8661270fa5ecd20b was merged exactly into the mission coordinator; the check expects the whole lane branch on feat/gapdb-only-production-authority, but final feature integration occurs only after the mission gate."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "reference": "4c22f999f450377676b080de49f3fa6d6a15960b",
-        "reviewer": "codex-wp03-witness-independent-reviewer",
+        "reference": "Independent review approved exact candidate 71defe71766975d0302fa39a8661270fa5ecd20b. Force overrides only the lane-history planning-artifact check caused by Spec Kitty coordinator synchronization; product ownership is exact and clean.",
+        "reviewer": "mill",
         "verdict": "approved"
       },
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": 3753728,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {

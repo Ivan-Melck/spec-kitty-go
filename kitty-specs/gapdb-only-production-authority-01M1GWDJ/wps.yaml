@@ -63,12 +63,24 @@ work_packages:
     title: "GapDB v2 Committer and Key Codec"
     dependencies: [WP01, WP02]
     owned_files:
+      - "go.mod"
+      - "go.sum"
+      - "internal/controlstore/gapdb/admission_test.go"
+      - "internal/controlstore/gapdb/external_scenarios_test.go"
+      - "internal/controlstore/gapdb/port.go"
+      - "internal/controlstore/gapdb/port_test.go"
       - "internal/controlstore/gapdb/v2_codec.go"
       - "internal/controlstore/gapdb/v2_committer.go"
       - "internal/controlstore/gapdb/v2_reader.go"
       - "internal/controlstore/gapdb/v2_ambiguity.go"
       - "internal/controlstore/gapdb/v2_adapter_test.go"
     create_intent:
+      - "go.mod"
+      - "go.sum"
+      - "internal/controlstore/gapdb/admission_test.go"
+      - "internal/controlstore/gapdb/external_scenarios_test.go"
+      - "internal/controlstore/gapdb/port.go"
+      - "internal/controlstore/gapdb/port_test.go"
       - "internal/controlstore/gapdb/v2_codec.go"
       - "internal/controlstore/gapdb/v2_committer.go"
       - "internal/controlstore/gapdb/v2_reader.go"
@@ -182,12 +194,18 @@ work_packages:
 
   - id: WP08
     title: "Lease-Scoped Workspace Authority"
-    dependencies: [WP04, WP07]
+    dependencies: [WP02, WP03, WP04, WP07]
     owned_files:
+      - "internal/execution/authority_v2.go"
+      - "internal/execution/authority_v2_test.go"
+      - "internal/execution/workspace_authority_v2.go"
+      - "internal/execution/workspace_authority_v2_test.go"
       - "internal/workspace/**"
       - "internal/controlstore/gapdb/workspace_authority.go"
       - "internal/controlstore/gapdb/workspace_authority_test.go"
     create_intent:
+      - "internal/execution/workspace_authority_v2.go"
+      - "internal/execution/workspace_authority_v2_test.go"
       - "internal/controlstore/gapdb/workspace_authority.go"
       - "internal/controlstore/gapdb/workspace_authority_test.go"
     requirement_refs: [FR-012, FR-020, FR-023, FR-024, FR-025, NFR-001, NFR-003, NFR-004, NFR-007, NFR-016, C-004, C-005, C-011]
