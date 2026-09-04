@@ -250,7 +250,8 @@
         "Blocked on post-approval defect 7: the architecture guard forbids time across all controljournal/v2 packages, but WP04 normatively requires a validated elapsed-attempt deadline in restore. Preserve seven-file draft; remove checkpoint io; ratify exact restore-only time allowance with guard widening mutant before resuming.",
         "Defect-8 dependency resolved: WP01 structural proof approved; resume WP04 source-bound checkpoint/restore behavior and overlay mutants.",
         "Ready for independent review: e2ca3694, bounded checkpoint/restore/playback with defect-8 source-bound deadline evidence.",
-        "Cycle 2 passed: all maximum-watermark candidates compared; duplicate-mask regression and first-pair-only mutant killed; focused, race, architecture, static, and retained qualification evidence green"
+        "Cycle 2 passed: all maximum-watermark candidates compared; duplicate-mask regression and first-pair-only mutant killed; focused, race, architecture, static, and retained qualification evidence green",
+        "Previously approved package integrated and verified on the coordinator; no test or review failure bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
