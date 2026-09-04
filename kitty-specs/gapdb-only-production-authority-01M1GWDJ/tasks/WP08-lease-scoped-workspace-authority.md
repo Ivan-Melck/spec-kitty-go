@@ -33,11 +33,15 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/workspace/
 create_intent:
+- internal/execution/workspace_authority_v2.go
+- internal/execution/workspace_authority_v2_test.go
 - internal/controlstore/gapdb/workspace_authority.go
 - internal/controlstore/gapdb/workspace_authority_test.go
 execution_mode: code_change
 model: ''
 owned_files:
+- internal/execution/workspace_authority_v2.go
+- internal/execution/workspace_authority_v2_test.go
 - internal/workspace/**
 - internal/controlstore/gapdb/workspace_authority.go
 - internal/controlstore/gapdb/workspace_authority_test.go
@@ -85,12 +89,16 @@ spec-kitty agent action implement WP08 --agent codex
 - Planning and merge target: `feat/gapdb-only-production-authority`.
 - Use only the Spec Kitty-provided lane worktree.
 - Edit only `internal/workspace/**` and
-  `internal/controlstore/gapdb/workspace_*.go`.
+  `internal/controlstore/gapdb/workspace_*.go`, plus the two explicitly owned
+  `internal/execution/workspace_authority_v2*.go` composition files.
 - Preserve concurrent work and do not revert or absorb another agent's edits.
 - Consume WP02 journal, WP03 GapDB, WP04 restore, and WP07 lease/effect
   contracts without modifying or bypassing them.
 - Filesystem and Git implementations remain outbound adapters behind
   workspace-owned ports. They never enter the pure model or reducers.
+- Apply `post-approval-defect-9.md`. Execution owns cross-capability atomic
+  composition; workspace contributes opaque validated binding/quarantine
+  members, and neither layer invents raw Git state as a GapDB-fenced fact.
 
 Read the mission `spec.md`, `plan.md`, `research.md`, `data-model.md`, and
 `contracts/authority-journal-v2.md`, plus the frozen workspace behavior tests,
@@ -176,8 +184,9 @@ mutation is preceded by durable intent and every authority stage is resumable.
 
 1. Replace `ReserveWorkspace`/`AdvanceWorkspace` persistence shape with typed
    workspace commands that construct sealed Authority Journal commit plans.
-2. The first publication atomically binds the absent WorkspaceID/path to the
-   exact current run/lease/work/repository coordinates and records the first
+2. The first publication atomically binds the absent WorkspaceID and permanent
+   absent path claim to the exact current run/lease/work/repository coordinates,
+   asserts the unchanged current execution head, and records the first
    preparation effect intent before any directory or Git mutation.
 3. For each external preparation step, follow:
    durable requested/effect intent -> adapter action -> bounded observation ->
@@ -189,9 +198,10 @@ mutation is preceded by durable intent and every authority stage is resumable.
 5. Verify repository binding, managed root, pinned target/base, registered
    worktree, owned branch, isolated GitDir/index, clean state, and exact
    dependency head at their defined stages.
-6. Represent all mutable authority used for a stage as operation, workspace,
-   execution-slot, repository/target, and eligibility-guard conditions in one
-   sealed publication. Do not rely on a process mutex or read-then-write gap.
+6. Represent changed authority as mutation conditions and unchanged execution
+   or eligibility authority as true read-only assertions in one sealed
+   publication. Never use a same-value CAS as a fake assertion. Repository/Git
+   target state remains guarded external evidence, not a GapDB condition.
 7. Resolve exact OperationID/PublicationID replay before current-epoch checks.
    Changed operation meaning refuses before workspace or adapter reads.
 8. On restart, reduce the durable workspace stage and effect observations, then
@@ -200,9 +210,10 @@ mutation is preceded by durable intent and every authority stage is resumable.
 9. If an adapter response was lost, inspect the intended path and repository
    registration, compare all attributable facts, and either record the exact
    observation or enter reconciliation-required state.
-10. Publish `ready` only after a final repository-target and workspace probe in
-    the guarded window. Drift before or during publication refuses/quarantines
-    according to frozen behavior; success is never optimistic.
+10. Publish `ready` only while holding the cooperating repository target guard
+    across pre-probe, GapDB publication, and post-probe. Persist both exact
+    observations. Drift, uncertainty, or guard loss withholds ready according
+    to frozen behavior; success is never optimistic.
 
 **Required fault tests**:
 
@@ -232,9 +243,10 @@ invariant without pretending the database can revoke POSIX access.
 
 **Implementation requirements**:
 
-1. Provide a workspace event/plan contribution that WP07 can atomically publish
-   with lease expiry: execution authority becomes expired and its bound
-   workspace becomes quarantined in the same GapDB revision.
+1. Provide a workspace event/plan contribution that execution-owned
+   composition atomically publishes with lease expiry: execution authority
+   becomes expired and its bound workspace becomes quarantined in the same
+   GapDB revision.
 2. Bind quarantine evidence to WorkspaceID, LeaseID, generation/fence,
    RuntimeEpochID, WorkRevisionID, WorkID, reason, actor/process authority where
    relevant, and recorded occurrence time.
@@ -243,7 +255,8 @@ invariant without pretending the database can revoke POSIX access.
    ready, transferable, or reusable.
 4. A replacement lease must use a newly allocated WorkspaceID and distinct
    canonical path. Reject a replacement request that reuses the old ID, path,
-   branch authority, GitDir, index, or mutable workspace record.
+   permanent path claim, branch authority, GitDir, index, or mutable workspace
+   record.
 5. Do not transfer filesystem ownership or rewrite the old workspace binding to
    name the replacement lease. W1 stays evidence for expired lease 17; W2 is
    created for lease 18.
@@ -330,6 +343,9 @@ owned wildcard surfaces.
 - workspace path reused by replacement lease;
 - quarantine can transition back to ready;
 - lease expires without atomic workspace quarantine;
+- same-value execution-head CAS substitutes for a read-only assertion;
+- execution expiry wins but stale workspace binding still publishes;
+- workspace binding wins but expiry omits its quarantine contribution;
 - cleanup failure rolls back quarantine;
 - preparation adapter call occurs before durable effect intent;
 - crash retry allocates a new WorkspaceID, path, OperationID, or EffectID;
