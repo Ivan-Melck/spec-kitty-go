@@ -654,7 +654,7 @@
     },
     "WP18": {
       "actor": "codex",
-      "agent": "maxwell",
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 3,
@@ -670,7 +670,8 @@
         "Cycle 2 blockers repaired: readiness now consumes exact-capture opaque capability observations, WorkRevision consumes durable publication authority, and future-only softwaredev facade removed.",
         "Cycle 4 independent review passed on exact commit c2b58663; all anti-pattern checks and focused authority validations passed.",
         "Canonical workgraph acknowledgement binding repaired; focused, race, vet, and 20-mutant campaign pass",
-        "Independent review passed at 4791fd9f; canonical finalization operation and acknowledgement are fully bound"
+        "Independent review passed at 4791fd9f; canonical finalization operation and acknowledgement are fully bound",
+        "Outer autonomy mutant guard is stale after approved acknowledgement repair"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -680,17 +681,17 @@
         "reviewer": "codex",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T093": "done",
-        "T094": "done",
-        "T095": "done",
-        "T096": "done",
-        "T097": "done",
-        "T098": "done",
-        "T099": "done"
+        "T093": "planned",
+        "T094": "planned",
+        "T095": "planned",
+        "T096": "planned",
+        "T097": "planned",
+        "T098": "planned",
+        "T099": "planned"
       }
     }
   }
