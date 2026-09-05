@@ -7,8 +7,8 @@ import (
 
 func TestM2AutonomyMutationCampaignCoversCeremonyFailureClasses(t *testing.T) {
 	source := readM2AutonomySource(t, m2RepositoryRoot(t), "internal/mission/readiness_mutant_test.go")
-	if count := strings.Count(source, `id: "M18-`); count != 20 {
-		t.Fatalf("autonomy mutant census=%d want=20", count)
+	if count := strings.Count(source, `id: "M18-`); count != 22 {
+		t.Fatalf("autonomy mutant census=%d want=22", count)
 	}
 	for _, identity := range []string{
 		"M18-CURRENT-STEP-AUTHORITY",
@@ -31,6 +31,8 @@ func TestM2AutonomyMutationCampaignCoversCeremonyFailureClasses(t *testing.T) {
 		"M18-SUBSTITUTED-WORKGRAPH-BINDING",
 		"M18-SUBSTITUTED-WORKGRAPH-SCOPE",
 		"M18-SUBSTITUTED-WORKGRAPH-RESULT",
+		"M18-RELATED-FACT-OMITTED",
+		"M18-SUBSTITUTED-RELATED-FACT",
 	} {
 		if strings.Count(source, `id: "`+identity+`"`) != 1 {
 			t.Fatalf("autonomy mutant %s is absent or duplicated", identity)

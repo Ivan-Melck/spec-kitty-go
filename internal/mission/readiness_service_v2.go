@@ -44,6 +44,7 @@ func (o ReadinessAuthorityObservationV2) LastEventID() journalv2.EventID     { r
 type ReadinessAuthorityPortV2 interface {
 	ResolveOperation(context.Context, journalv2.OperationBindingV2) (OperationResolutionV2, error)
 	ObserveReadinessAuthority(context.Context, journalv2.ProjectID, journalv2.MissionID) (ReadinessAuthorityObservationV2, error)
+	ObserveMissionFact(context.Context, journalv2.ProjectID, journalv2.MissionID, MissionFactKindV2, string) (MissionFactObservationV2, error)
 	PublishReadinessAuthority(context.Context, journalv2.SealedCommitPlanV2) (MissionPublicationV2, error)
 }
 
@@ -64,6 +65,7 @@ type ReadinessAuthorityCommandV2 struct {
 	Updated                   ReadinessAuthorityStateV2
 	Activity                  *MissionActivityV2
 	WorkRevisionSelection     *WorkRevisionSelectionV2
+	RelatedFact               *MissionFactTransitionV2
 	ObservationEvidence       []byte
 }
 
@@ -142,6 +144,21 @@ func (s *ReadinessAuthorityServiceV2) Execute(ctx context.Context, command Readi
 	} else if !command.Expected.IsZero() {
 		return ReadinessAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "expected_mission", nil)
 	}
+	if command.RelatedFact != nil {
+		fact := command.RelatedFact
+		nextFact := fact.Next()
+		factObservation, observeErr := s.port.ObserveMissionFact(ctx, command.ProjectID, command.MissionID, nextFact.Kind(), nextFact.FactID())
+		if observeErr != nil {
+			return ReadinessAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityAmbiguousV2, "mission_fact", observeErr)
+		}
+		if fact.Prior.IsZero() {
+			if factObservation.Found {
+				return ReadinessAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "mission_fact", nil)
+			}
+		} else if !factObservation.Found || factObservation.RecordRevision != fact.ExpectedRecordRevision || factObservation.State.Digest() != fact.Prior.Digest() {
+			return ReadinessAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "mission_fact", nil)
+		}
+	}
 	plan, resultBytes, err := buildReadinessAuthorityPlanV2(command, binding, observed, s.registry)
 	if err != nil {
 		return ReadinessAuthorityResultV2{}, err
@@ -180,6 +197,9 @@ func validateReadinessAuthorityCommandV2(command ReadinessAuthorityCommandV2) (j
 		}
 	} else if command.WorkRevisionSelection != nil {
 		return journalv2.OperationBindingV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "work_revision_selection", nil)
+	}
+	if err := validateReadinessRelatedFactV2(command); err != nil {
+		return journalv2.OperationBindingV2{}, err
 	}
 	if len(command.ObservationEvidence) != 0 {
 		canonical, canonicalErr := journalv2.CanonicalObject(command.ObservationEvidence)
@@ -226,8 +246,9 @@ func encodeReadinessAuthorityIntentV2(command ReadinessAuthorityCommandV2) ([]by
 		Updated       json.RawMessage      `json:"updated"`
 		Activity      *MissionActivityV2   `json:"activity,omitempty"`
 		WorkRevision  json.RawMessage      `json:"work_revision_selection,omitempty"`
+		RelatedFact   json.RawMessage      `json:"related_fact,omitempty"`
 		Evidence      json.RawMessage      `json:"observation_evidence,omitempty"`
-	}{command.SchemaVersion, command.ProjectID, command.MissionID, command.EventType, command.Expected.CanonicalBytes(), command.Updated.CanonicalBytes(), command.Activity, readinessSelectionBytesV2(command.WorkRevisionSelection), command.ObservationEvidence})
+	}{command.SchemaVersion, command.ProjectID, command.MissionID, command.EventType, command.Expected.CanonicalBytes(), command.Updated.CanonicalBytes(), command.Activity, readinessSelectionBytesV2(command.WorkRevisionSelection), canonicalMissionFactIntentV2(command.RelatedFact), command.ObservationEvidence})
 	if err != nil {
 		return nil, err
 	}
@@ -253,6 +274,11 @@ func buildReadinessAuthorityPlanV2(command ReadinessAuthorityCommandV2, binding 
 	operationEventID := deterministicAuthorityIDV2[journalv2.EventID]("readiness-operation-event", command.OperationID, 1)
 	missionEventID := deterministicAuthorityIDV2[journalv2.EventID]("readiness-mission-event", command.OperationID, 1)
 	eventIDs := []journalv2.EventID{missionEventID, operationEventID}
+	var factEventID journalv2.EventID
+	if command.RelatedFact != nil {
+		factEventID = deterministicAuthorityIDV2[journalv2.EventID]("readiness-mission-fact-event", command.OperationID, 1)
+		eventIDs = append(eventIDs, factEventID)
+	}
 	sort.Slice(eventIDs, func(i, j int) bool { return eventIDs[i] < eventIDs[j] })
 	operation, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: command.OperationID, LogicalVersion: 1, Status: journalv2.StatusResolved, ResultKind: "mission.readiness.result", ResultSchemaVersion: 2, CanonicalResult: resultBytes, EventIDs: eventIDs})
 	if err != nil {
@@ -268,6 +294,24 @@ func buildReadinessAuthorityPlanV2(command ReadinessAuthorityCommandV2, binding 
 		{EventID: operationEventID, EventType: "operation_transitioned", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: command.OriginatingRuntimeEpochID, ActorID: command.ActorID, ProcessID: command.ProcessID, PolicyRevision: command.PolicyRevision, GovernanceRevisions: governance, Payload: operationPayload},
 		{EventID: missionEventID, EventType: string(command.EventType), Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: missionCoordinate, AggregateLogicalVersion: command.Updated.Version(), CommittedRuntimeEpochID: command.OriginatingRuntimeEpochID, ActorID: command.ActorID, ProcessID: command.ProcessID, WorkRevisionID: command.Updated.CurrentWorkRevisionID(), PolicyRevision: command.PolicyRevision, GovernanceRevisions: governance, Observations: command.ObservationEvidence, Payload: payload},
 	}
+	var factHead *journalv2.HeadTransitionV2
+	if command.RelatedFact != nil {
+		nextFact := command.RelatedFact.Next()
+		factBytes, factErr := encodeMissionFactEventV2(*command.RelatedFact)
+		if factErr != nil {
+			return journalv2.SealedCommitPlanV2{}, nil, factErr
+		}
+		factCoordinate, coordinateErr := journalv2.NewAggregateCoordinate("mission", missionFactAggregateIDV2(nextFact), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: command.ProjectID, MissionID: command.MissionID})
+		if coordinateErr != nil {
+			return journalv2.SealedCommitPlanV2{}, nil, coordinateErr
+		}
+		factEventType, eventTypeErr := readinessRelatedFactEventTypeV2(*command.RelatedFact)
+		if eventTypeErr != nil {
+			return journalv2.SealedCommitPlanV2{}, nil, eventTypeErr
+		}
+		drafts = append(drafts, journalv2.EventDraftV2{EventID: factEventID, EventType: string(factEventType), Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: factCoordinate, AggregateLogicalVersion: nextFact.LogicalVersion(), CommittedRuntimeEpochID: command.OriginatingRuntimeEpochID, ActorID: command.ActorID, ProcessID: command.ProcessID, WorkRevisionID: command.Updated.CurrentWorkRevisionID(), PolicyRevision: command.PolicyRevision, GovernanceRevisions: governance, Payload: factBytes})
+		factHead = &journalv2.HeadTransitionV2{Coordinate: factCoordinate, ExpectedLogicalVersion: command.RelatedFact.Prior.LogicalVersion(), NextLogicalVersion: nextFact.LogicalVersion(), EventID: factEventID, ExpectedRecordRevision: command.RelatedFact.ExpectedRecordRevision, CommittedRuntimeEpochID: command.OriginatingRuntimeEpochID, CanonicalStateDigest: nextFact.Digest(), AuthoritySummary: nextFact.CanonicalBytes(), Tombstone: nextFact.Status() != MissionFactActiveV2 && nextFact.Status() != MissionFactOpenV2}
+	}
 	expectedVersion, recordRevision := journalv2.LogicalVersion(0), uint64(0)
 	if command.EventType != ReadinessEventCreatedV2 {
 		expectedVersion, recordRevision = command.Expected.Version(), observed.recordRevision
@@ -275,6 +319,9 @@ func buildReadinessAuthorityPlanV2(command ReadinessAuthorityCommandV2, binding 
 	heads := []journalv2.HeadTransitionV2{
 		{Coordinate: operationCoordinate, ExpectedLogicalVersion: 0, NextLogicalVersion: 1, EventID: operationEventID, CommittedRuntimeEpochID: command.OriginatingRuntimeEpochID, CanonicalStateDigest: opDigest, AuthoritySummary: []byte(`{}`)},
 		{Coordinate: missionCoordinate, ExpectedLogicalVersion: expectedVersion, NextLogicalVersion: command.Updated.Version(), EventID: missionEventID, ExpectedRecordRevision: recordRevision, CommittedRuntimeEpochID: command.OriginatingRuntimeEpochID, CanonicalStateDigest: command.Updated.Digest(), AuthoritySummary: command.Updated.CanonicalBytes(), Tombstone: command.Updated.Lifecycle().Terminal()},
+	}
+	if factHead != nil {
+		heads = append(heads, *factHead)
 	}
 	conditions := make([]journalv2.ProviderCondition, len(heads))
 	for index := range heads {
@@ -295,6 +342,96 @@ func readinessSelectionBytesV2(selection *WorkRevisionSelectionV2) []byte {
 		return nil
 	}
 	return selection.CanonicalBytes()
+}
+
+func validateReadinessRelatedFactV2(command ReadinessAuthorityCommandV2) error {
+	if command.RelatedFact == nil {
+		return nil
+	}
+	if command.EventType != ReadinessEventFactOpenedV2 && command.EventType != ReadinessEventFactClosedV2 {
+		return missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "unexpected_fact", nil)
+	}
+	transition := *command.RelatedFact
+	nextFact := transition.Next()
+	if err := validateMissionFactTransitionV2(transition); err != nil {
+		return err
+	}
+	if nextFact.ProjectID() != command.ProjectID || nextFact.MissionID() != command.MissionID || nextFact.LastOperationID() != command.OperationID {
+		return missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "related_fact", nil)
+	}
+	changed, ok := readinessChangedScopedFactV2(command.EventType, command.Expected.ActiveFacts(), command.Updated.ActiveFacts())
+	projected := nextFact
+	if command.EventType == ReadinessEventFactClosedV2 {
+		projected = transition.Prior
+	}
+	if !ok || !readinessFactProjectsScopedFactV2(projected, changed) {
+		return missionAuthorityErrorV2(MissionAuthorityInvalidTransitionV2, "related_fact", nil)
+	}
+	if command.EventType == ReadinessEventFactOpenedV2 {
+		if !transition.Prior.IsZero() || transition.ExpectedRecordRevision != 0 {
+			return missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "fact_revision", nil)
+		}
+	} else if transition.Prior.IsZero() || transition.ExpectedRecordRevision == 0 || transition.Prior.ProjectID() != command.ProjectID || transition.Prior.MissionID() != command.MissionID || transition.Prior.FactID() != changed.FactID || transition.Prior.Kind() != nextFact.Kind() {
+		return missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "fact_revision", nil)
+	}
+	_, err := readinessRelatedFactEventTypeV2(transition)
+	return err
+}
+
+func readinessChangedScopedFactV2(event ReadinessEventTypeV2, prior, next []ScopedMissionFactV2) (ScopedMissionFactV2, bool) {
+	before, after := prior, next
+	if event == ReadinessEventFactClosedV2 {
+		before, after = next, prior
+	}
+	if len(after) != len(before)+1 {
+		return ScopedMissionFactV2{}, false
+	}
+	beforeByKey := make(map[string]ScopedMissionFactV2, len(before))
+	for _, fact := range before {
+		beforeByKey[scopedMissionFactKeyV2(fact)] = fact
+	}
+	for _, fact := range after {
+		if existing, found := beforeByKey[scopedMissionFactKeyV2(fact)]; !found {
+			return fact, true
+		} else if !equalScopedFactsV2([]ScopedMissionFactV2{existing}, []ScopedMissionFactV2{fact}) {
+			return ScopedMissionFactV2{}, false
+		}
+	}
+	return ScopedMissionFactV2{}, false
+}
+
+func readinessFactProjectsScopedFactV2(projected MissionFactStateV2, scoped ScopedMissionFactV2) bool {
+	detail, err := journalv2.ParseDigest("evidence_sha256", scoped.EvidenceDigest)
+	if err != nil || projected.FactID() != scoped.FactID || projected.DetailDigest() != detail {
+		return false
+	}
+	switch scoped.Kind {
+	case ScopedFactDecisionV2:
+		return projected.Kind() == MissionFactDecisionV2
+	case ScopedFactBlockerV2:
+		return projected.Kind() == MissionFactBlockerV2
+	default:
+		return false
+	}
+}
+
+func readinessRelatedFactEventTypeV2(transition MissionFactTransitionV2) (MissionEventTypeV2, error) {
+	switch transition.Next().Status() {
+	case MissionFactActiveV2:
+		return MissionEventBlockerRaisedV2, nil
+	case MissionFactClearedV2:
+		return MissionEventBlockerClearedV2, nil
+	case MissionFactOpenV2:
+		return MissionEventDecisionOpenedV2, nil
+	case MissionFactResolvedV2:
+		return MissionEventDecisionResolvedV2, nil
+	case MissionFactDeferredV2:
+		return MissionEventDecisionDeferredV2, nil
+	case MissionFactCanceledV2:
+		return MissionEventDecisionCanceledV2, nil
+	default:
+		return "", missionAuthorityErrorV2(MissionAuthorityInvalidTransitionV2, "related_fact", nil)
+	}
 }
 
 type readinessAuthorityResultWireV2 struct {
