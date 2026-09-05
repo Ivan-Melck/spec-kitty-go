@@ -30,9 +30,10 @@ type terminalWorkFacts struct {
 	review                  review.StateV2
 	evidence                integration.AcceptanceEvidenceV2
 	accepted                integration.AcceptanceStateV2
+	operations              []terminalOperationEvidence
 }
 
-func completeTwoItemMission(t *testing.T, h *portableHarness, missionState mission.ReadinessAuthorityStateV2, revision workgraph.RevisionV2, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2, restartEveryBoundary bool) {
+func completeTwoItemMission(t *testing.T, h *portableHarness, missionState mission.ReadinessAuthorityStateV2, revision workgraph.RevisionV2, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2, restartEveryBoundary bool) []terminalOperationEvidence {
 	t.Helper()
 	repositoryID := ids.RepositoryID("repository-two-item")
 	targetRef := "refs/heads/main"
@@ -53,10 +54,12 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 		ensureWorkCurrent(t, h, facts[workID], governance, "before-handoff-"+workID.String())
 		candidate := fmt.Sprintf("%040x", index+11)
 		facts[workID].handoff = submitTerminalHandoff(t, h, facts[workID], revision, repositoryID, candidate, index)
+		assertUniversalInvariants(t, h, facts[workID].execution.ProjectID.String(), facts[workID].execution.MissionID.String(), "handoff-"+workID.String())
 		restartWorkAfterDurableBoundary(t, h, facts[workID], governance, "handoff-"+workID.String(), restartEveryBoundary)
 		facts[workID].review = submitTerminalReview(t, h, facts[workID], revision, index)
+		assertUniversalInvariants(t, h, facts[workID].execution.ProjectID.String(), facts[workID].execution.MissionID.String(), "review-"+workID.String())
 		restartWorkAfterDurableBoundary(t, h, facts[workID], governance, "review-"+workID.String(), restartEveryBoundary)
-		facts[workID].evidence = publishTerminalEvidence(t, h, facts[workID], index)
+		facts[workID].evidence, facts[workID].operations = publishTerminalEvidence(t, h, facts[workID], index, restartEveryBoundary)
 		restartWorkAfterDurableBoundary(t, h, facts[workID], governance, "artifact-"+workID.String(), restartEveryBoundary)
 	}
 
@@ -75,6 +78,7 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 			t.Fatalf("accept %s stage=%s", workID, accepted.State.Stage)
 		}
 		facts[workID].accepted = accepted.State
+		assertUniversalInvariants(t, h, accepted.State.ProjectID.String(), accepted.State.MissionID.String(), "acceptance-"+workID.String())
 		restartWorkAfterDurableBoundary(t, h, facts[workID], governance, "acceptance-"+workID.String(), restartEveryBoundary)
 
 		integrated, err := h.host.ExecuteIntegration(t.Context(), h.host.RuntimeEpochID(), integration.IntegrationAuthorityRequestV2{
@@ -93,13 +97,21 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 		if integrated.Stage != integration.IntegrationAttemptCompletedV2 {
 			t.Fatalf("integrate %s stage=%s", workID, integrated.Stage)
 		}
+		assertUniversalInvariants(t, h, accepted.State.ProjectID.String(), accepted.State.MissionID.String(), "integration-"+workID.String())
 		restartWorkAfterDurableBoundary(t, h, facts[workID], governance, "integration-"+workID.String(), restartEveryBoundary)
 		markExecutionCompleted(t, h, facts[workID].execution, governance, index)
+		assertUniversalInvariants(t, h, accepted.State.ProjectID.String(), accepted.State.MissionID.String(), "execution-outcome-"+workID.String())
 		restartAfterDurableBoundary(t, h, accepted.State.ProjectID.String(), accepted.State.MissionID.String(), "execution-outcome-"+workID.String(), restartEveryBoundary)
 	}
 
 	completeMissionAuthority(t, h, currentMission, revision.ID())
+	assertUniversalInvariants(t, h, string(currentMission.ProjectID()), string(currentMission.MissionID()), "mission-completed")
 	restartAfterDurableBoundary(t, h, string(currentMission.ProjectID()), string(currentMission.MissionID()), "mission-completed", restartEveryBoundary)
+	operations := make([]terminalOperationEvidence, 0, 4)
+	for _, workID := range workIDs {
+		operations = append(operations, facts[workID].operations...)
+	}
+	return operations
 }
 
 func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.ExecutionSlotStateV2, governance governancecontext.Context, repositoryID ids.RepositoryID, pinnedBase string, index int, restartEveryBoundary bool) *terminalWorkFacts {
@@ -113,6 +125,7 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), "workspace-bound-"+active.WorkID.String())
 	binding := workspace.BindingV2{
 		WorkspaceID: ids.WorkspaceID("workspace-" + active.WorkID.String()), ProjectID: active.ProjectID,
 		MissionID: active.MissionID, WorkRevisionID: active.WorkRevisionID, WorkID: active.WorkID,
@@ -188,6 +201,7 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 		if recordRevision == 0 {
 			t.Fatalf("stage workspace %s %s omitted reusable authority revision", active.WorkID, step.stage)
 		}
+		assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), fmt.Sprintf("workspace-%s-%s", active.WorkID, step.stage))
 		currentExecution, current, recordRevision = restartBoundWorkspaceAfterDurableBoundary(t, h, currentExecution, current, recordRevision, fmt.Sprintf("workspace-%s-%s", active.WorkID, step.stage), restartEveryBoundary)
 	}
 	if current.Stage != workspace.StageReadyV2 {
@@ -257,7 +271,7 @@ func submitTerminalReview(t *testing.T, h *portableHarness, facts *terminalWorkF
 	return result.State
 }
 
-func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWorkFacts, index int) integration.AcceptanceEvidenceV2 {
+func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWorkFacts, index int, restartEveryBoundary bool) (integration.AcceptanceEvidenceV2, []terminalOperationEvidence) {
 	t.Helper()
 	contentBytes := []byte("scenario verification evidence for " + facts.execution.WorkID.String())
 	content, err := artifact.CommitContentV2(contentBytes)
@@ -326,12 +340,64 @@ func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWo
 	if ack.ProviderRevision() == 0 || evidenceHead.Coordinate.Kind == "" || evidenceHead.CanonicalStateDigest.IsZero() {
 		t.Fatalf("evidence publication %s omitted exact head authority", facts.execution.WorkID)
 	}
+	assertUniversalInvariants(t, h, facts.execution.ProjectID.String(), facts.execution.MissionID.String(), "artifact-published-"+facts.execution.WorkID.String())
+	restartAfterDurableBoundary(t, h, facts.execution.ProjectID.String(), facts.execution.MissionID.String(), "artifact-published-"+facts.execution.WorkID.String(), restartEveryBoundary)
+
+	// Validation is evidence, not a verdict. Exercise the separately durable
+	// exact-revision decision capability so the complete scenario cannot mistake
+	// a passing validator for independent approval.
+	approval, err := artifact.NewArtifactApproval(artifact.ArtifactApprovalParams{
+		ID: "approval-" + facts.execution.WorkID.String(), ArtifactRevisionID: revisionID,
+		Verdict: artifact.VerdictApproved, ActorID: "actor-artifact-approver",
+		EvidenceDigest: content.Digest(), GovernanceContextID: "config." + facts.execution.Governance.PolicyRevision,
+		SubmittedAt: terminalTime(index, 28),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionPlan, err := artifact.BuildArtifactDecisionAuthorityV2(artifact.DecisionPlanInputV2{
+		Context: artifact.AuthorityContextV2{
+			ProjectID: journalv2.ProjectID(facts.execution.ProjectID), OperationID: journalv2.OperationID("operation-evidence-decision-" + facts.execution.WorkID.String()),
+			RuntimeEpochID: h.host.RuntimeEpochID(), ActorID: "actor-artifact-approver", ProcessID: journalv2.ProcessID("process-evidence-decision-" + facts.execution.WorkID.String()),
+			DoctrineRevision: facts.execution.Governance.DoctrineRevision, ProfileRevision: facts.execution.Governance.ProfileRevision,
+			PolicyRevision: facts.execution.Governance.PolicyRevision, Governance: governanceRevisions, ObservedCreatedAt: terminalTime(index, 28).Format(time.RFC3339Nano),
+			OperationEventID: journalv2.EventID("event-operation-evidence-decision-" + facts.execution.WorkID.String()),
+			RevisionEventID:  journalv2.EventID("event-revision-evidence-decision-" + facts.execution.WorkID.String()),
+		},
+		PriorRevisionState: evidenceHead.AuthoritySummary, Approval: approval,
+		ExpectedRevisionRecordRevision: ack.ProviderRevision(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionPublication, err := decisionPlan.Publication()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionAck, err := h.host.PublishArtifact(t.Context(), h.host.RuntimeEpochID(), decisionPlan)
+	if err != nil {
+		t.Fatalf("decide evidence %s: %v", facts.execution.WorkID, err)
+	}
+	for _, head := range decisionPublication.Heads() {
+		if head.Coordinate == evidenceHead.Coordinate {
+			evidenceHead = head
+			break
+		}
+	}
+	if decisionAck.ProviderRevision() <= ack.ProviderRevision() || evidenceHead.NextLogicalVersion != 2 || evidenceHead.CanonicalStateDigest.IsZero() {
+		t.Fatalf("evidence decision %s omitted exact approved head authority", facts.execution.WorkID)
+	}
+	assertUniversalInvariants(t, h, facts.execution.ProjectID.String(), facts.execution.MissionID.String(), "artifact-decided-"+facts.execution.WorkID.String())
 	criterionID := "criterion-" + strings.TrimPrefix(facts.execution.WorkID.String(), "work-")
-	return integration.AcceptanceEvidenceV2{
+	evidence := integration.AcceptanceEvidenceV2{
 		CriterionID: criterionID, Kind: "automated_test", Disposition: integration.EvidenceSatisfiedV2,
 		Producer: "scenario.verify", PolicyBasis: "typed production-host scenario", EvidenceID: revisionID,
 		Coordinate: evidenceHead.Coordinate, LogicalVersion: evidenceHead.NextLogicalVersion,
-		RecordRevision: ack.ProviderRevision(), StateDigestSHA256: evidenceHead.CanonicalStateDigest.String(),
+		RecordRevision: decisionAck.ProviderRevision(), StateDigestSHA256: evidenceHead.CanonicalStateDigest.String(),
+	}
+	return evidence, []terminalOperationEvidence{
+		operationEvidenceFromPublication(t, sealed),
+		operationEvidenceFromPublication(t, decisionPublication),
 	}
 }
 
@@ -400,6 +466,7 @@ func restartAfterDurableBoundary(t *testing.T, h *portableHarness, projectID, mi
 	if after != before {
 		t.Fatalf("boundary %s changed recovered projection: before=%s after=%s", boundary, before, after)
 	}
+	assertUniversalInvariants(t, h, projectID, missionID, boundary+"-restored")
 	assertStaleEpochRefusesBeforeRepository(t, h, predecessor)
 }
 

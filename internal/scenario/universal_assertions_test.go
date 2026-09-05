@@ -2,9 +2,8 @@ package scenario
 
 import (
 	"encoding/json"
-	"testing"
-
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
+	"testing"
 )
 
 func TestUniversalInvariantOracleControlledMutants(t *testing.T) {
@@ -93,6 +92,78 @@ func TestWorkCoordinateAgreementControlledMutants(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTerminalSemanticEquivalenceControlledMutants(t *testing.T) {
+	want := terminalSemanticProgress{
+		Lifecycle: "completed", WorkRevisionID: "revision-1", Generation: 1, Complete: true, TotalWork: 1,
+		WorkCounts:     []productionruntime.StateCount{{State: "completed", Count: 1}},
+		Items:          []terminalSemanticItem{{Family: "mission", AggregateID: "mission-1", AuthorityState: "completed", SemanticSHA256: "state-sha", Fenced: true}},
+		Families:       []string{"mission"},
+		Tracker:        []terminalTrackerEvidence{{WorkID: "work-1", Revision: 2, Assignee: "actor-1", Marker: "operation-1"}},
+		Repository:     repositoryTerminalEvidence{Targets: []string{"repository\x00main\x00result"}, Publications: []string{"effect\x00result"}},
+		SemanticSHA256: "projection-sha",
+		Operations:     []terminalOperationEvidence{{OperationID: "operation-1", ResultKind: "fixture.result", ResultBody: `{"ok":true}`, ResultSHA256: "result-sha"}},
+	}
+	if err := validateTerminalSemanticEquivalence(want, want); err != nil {
+		t.Fatal(err)
+	}
+	mutants := map[string]func(*terminalSemanticProgress){
+		"mission_summary":     func(value *terminalSemanticProgress) { value.Complete = false },
+		"work_count":          func(value *terminalSemanticProgress) { value.WorkCounts[0].Count++ },
+		"canonical_item":      func(value *terminalSemanticProgress) { value.Items[0].SemanticSHA256 = "substituted" },
+		"fence_presence":      func(value *terminalSemanticProgress) { value.Items[0].Fenced = false },
+		"family_coverage":     func(value *terminalSemanticProgress) { value.Families = nil },
+		"tracker_attribution": func(value *terminalSemanticProgress) { value.Tracker[0].Marker = "operation-other" },
+		"repository_result":   func(value *terminalSemanticProgress) { value.Repository.Targets[0] = "repository\x00main\x00other" },
+		"projection_digest":   func(value *terminalSemanticProgress) { value.SemanticSHA256 = "other" },
+		"operation_result":    func(value *terminalSemanticProgress) { value.Operations[0].ResultSHA256 = "other" },
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			got := cloneTerminalSemanticProgress(t, want)
+			mutate(&got)
+			if err := validateTerminalSemanticEquivalence(want, got); err == nil {
+				t.Fatal("terminal semantic mutant survived")
+			}
+		})
+	}
+}
+
+func assertUniversalTerminalMembershipMutants(t *testing.T, status productionruntime.HostStatus, progress productionruntime.MissionProgress, project, missionID string, repositoryCalls int) {
+	t.Helper()
+	mutants := map[string]func(*productionruntime.MissionProgress){
+		"effect_membership_omitted": func(value *productionruntime.MissionProgress) { value.Effects = nil },
+		"review_membership_duplicated": func(value *productionruntime.MissionProgress) {
+			value.Reviews = append(value.Reviews, value.Reviews[0])
+		},
+		"acceptance_membership_omitted": func(value *productionruntime.MissionProgress) { value.Acceptance = value.Acceptance[1:] },
+		"integration_member_unbound": func(value *productionruntime.MissionProgress) {
+			value.Integration[0].AggregateID = "attempt-substituted"
+		},
+	}
+	for name, mutate := range mutants {
+		t.Run("terminal-membership-mutant/"+name, func(t *testing.T) {
+			candidate := cloneMissionProgressForOracle(t, progress)
+			mutate(&candidate)
+			if _, err := validateUniversalSnapshot(status, candidate, project, missionID, repositoryCalls); err == nil {
+				t.Fatal("terminal membership mutant survived")
+			}
+		})
+	}
+}
+
+func cloneTerminalSemanticProgress(t *testing.T, value terminalSemanticProgress) terminalSemanticProgress {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone terminalSemanticProgress
+	if err := json.Unmarshal(raw, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
 }
 
 func cloneMissionProgressForOracle(t *testing.T, value productionruntime.MissionProgress) productionruntime.MissionProgress {

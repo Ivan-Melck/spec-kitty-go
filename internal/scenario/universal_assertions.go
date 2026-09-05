@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 )
@@ -66,6 +67,10 @@ func validateUniversalSnapshot(status productionruntime.HostStatus, progress pro
 	seen := make(map[string]struct{}, len(progress.Items))
 	families := make(map[string]struct{})
 	work := make(map[string]map[string]map[string]any)
+	itemKeys := make(map[string]productionruntime.ProgressItem, len(progress.Items))
+	states := make(map[string]map[string]any, len(progress.Items))
+	operations := make(map[string]journalv2.OperationStateV2)
+	eventOwners := make(map[journalv2.EventID]string)
 	operationCount := 0
 	for _, item := range progress.Items {
 		key := item.Family + "\x00" + item.AggregateID
@@ -76,6 +81,7 @@ func validateUniversalSnapshot(status productionruntime.HostStatus, progress pro
 			return invariantEvidence{}, fmt.Errorf("duplicate aggregate %q", key)
 		}
 		seen[key] = struct{}{}
+		itemKeys[key] = item
 		families[item.Family] = struct{}{}
 		canonical, canonicalErr := journalv2.CanonicalObject(item.CanonicalState)
 		if canonicalErr != nil {
@@ -94,6 +100,7 @@ func validateUniversalSnapshot(status productionruntime.HostStatus, progress pro
 		if err := json.Unmarshal(item.CanonicalState, &state); err != nil {
 			return invariantEvidence{}, fmt.Errorf("decode %s: %w", key, err)
 		}
+		states[key] = state
 		stateVersion, versionPresent := uintField(state, "logical_version")
 		if !versionPresent {
 			stateVersion, versionPresent = uintField(state, "version")
@@ -117,6 +124,16 @@ func validateUniversalSnapshot(status productionruntime.HostStatus, progress pro
 					return invariantEvidence{}, fmt.Errorf("terminal operation has no immutable result: %s", key)
 				}
 			}
+			if len(operation.EventIDs()) == 0 {
+				return invariantEvidence{}, fmt.Errorf("operation has no complete batch membership: %s", key)
+			}
+			for _, eventID := range operation.EventIDs() {
+				if owner, duplicate := eventOwners[eventID]; duplicate && owner != item.AggregateID {
+					return invariantEvidence{}, fmt.Errorf("event %s belongs to operations %s and %s", eventID, owner, item.AggregateID)
+				}
+				eventOwners[eventID] = item.AggregateID
+			}
+			operations[item.AggregateID] = operation
 			operationCount++
 		}
 		if workID, ok := nestedTextField(state, "work_id"); ok {
@@ -124,6 +141,41 @@ func validateUniversalSnapshot(status productionruntime.HostStatus, progress pro
 				work[workID] = make(map[string]map[string]any)
 			}
 			work[workID][item.Family] = state
+		}
+	}
+	if err := validateProgressFamilyMembership(progress, itemKeys); err != nil {
+		return invariantEvidence{}, err
+	}
+	for key, state := range states {
+		item := itemKeys[key]
+		if item.Family == "operation" {
+			continue
+		}
+		if operationID, ok := nestedTextField(state, "last_operation_id"); ok && operationID != "" && len(operations) != 0 {
+			if _, present := operations[operationID]; !present {
+				return invariantEvidence{}, fmt.Errorf("%s names absent operation %s", key, operationID)
+			}
+		}
+		if item.Family == "external_effect" {
+			effect, decodeErr := execution.DecodeExternalEffectStateV2(item.CanonicalState)
+			if decodeErr != nil {
+				return invariantEvidence{}, fmt.Errorf("decode %s: %w", key, decodeErr)
+			}
+			if operation, present := operations[string(effect.Intent.OperationID)]; present {
+				foundEffect := false
+				for _, effectID := range operation.EffectIDs() {
+					if string(effectID) == item.AggregateID {
+						foundEffect = true
+						break
+					}
+				}
+				if !foundEffect {
+					return invariantEvidence{}, fmt.Errorf("effect %s is absent from operation batch membership", item.AggregateID)
+				}
+			}
+			if (effect.Stage == execution.EffectAmbiguousV2 || effect.Stage == execution.EffectReconciliationRequiredV2) && (effect.PermissionMarker != "" || effect.Outcome != "") {
+				return invariantEvidence{}, fmt.Errorf("ambiguous effect %s acquired retry, compensation, or terminal authority", item.AggregateID)
+			}
 		}
 	}
 	for workID, byFamily := range work {
@@ -142,6 +194,47 @@ func validateUniversalSnapshot(status productionruntime.HostStatus, progress pro
 		ProjectionRevision: status.ProjectionRevision, ProjectionSHA256: status.ProjectionSHA256,
 		Families: familyList, AggregateCount: len(progress.Items), OperationCount: operationCount, RepositoryCalls: repositoryCalls,
 	}, nil
+}
+
+func validateProgressFamilyMembership(progress productionruntime.MissionProgress, all map[string]productionruntime.ProgressItem) error {
+	checks := []struct {
+		name     string
+		items    []productionruntime.ProgressItem
+		families map[string]struct{}
+	}{
+		{"effects", progress.Effects, map[string]struct{}{"external_effect": {}}},
+		{"reviews", progress.Reviews, map[string]struct{}{"review_slot": {}}},
+		{"acceptance", progress.Acceptance, map[string]struct{}{"acceptance": {}}},
+		{"integration", progress.Integration, map[string]struct{}{"integration_target": {}, "integration_attempt": {}}},
+		{"operations", progress.Operations, map[string]struct{}{"operation": {}}},
+	}
+	for _, check := range checks {
+		expected := make(map[string]struct{})
+		for key, item := range all {
+			if _, include := check.families[item.Family]; include {
+				expected[key] = struct{}{}
+			}
+		}
+		actual := make(map[string]struct{}, len(check.items))
+		for _, item := range check.items {
+			key := item.Family + "\x00" + item.AggregateID
+			if _, allowed := check.families[item.Family]; !allowed {
+				return fmt.Errorf("%s contains foreign family %s", check.name, item.Family)
+			}
+			canonical, present := all[key]
+			if !present || canonical.LogicalVersion != item.LogicalVersion || canonical.LastPublicationID != item.LastPublicationID || !bytes.Equal(canonical.CanonicalState, item.CanonicalState) {
+				return fmt.Errorf("%s contains an unbound or stale member %s", check.name, key)
+			}
+			if _, duplicate := actual[key]; duplicate {
+				return fmt.Errorf("%s duplicates member %s", check.name, key)
+			}
+			actual[key] = struct{}{}
+		}
+		if len(actual) != len(expected) {
+			return fmt.Errorf("%s membership incomplete: got=%d want=%d", check.name, len(actual), len(expected))
+		}
+	}
+	return nil
 }
 
 func validateWorkCoordinateAgreement(workID string, states map[string]map[string]any) error {

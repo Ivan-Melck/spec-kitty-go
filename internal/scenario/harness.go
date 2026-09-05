@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -289,6 +290,11 @@ type attributableGit struct {
 	cleanups     map[journalv2.EffectID]integration.IntegrationCleanupObservationV2
 }
 
+type repositoryTerminalEvidence struct {
+	Targets      []string
+	Publications []string
+}
+
 func newAttributableGit() *attributableGit { return &attributableGit{} }
 func integrationTargetKey(repository ids.RepositoryID, target string) string {
 	return repository.String() + "\x00" + target
@@ -308,6 +314,20 @@ func (g *attributableGit) record(name string) {
 	g.mu.Unlock()
 }
 func (g *attributableGit) count() int { g.mu.Lock(); defer g.mu.Unlock(); return len(g.calls) }
+func (g *attributableGit) terminalEvidence() repositoryTerminalEvidence {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	evidence := repositoryTerminalEvidence{}
+	for key, head := range g.targets {
+		evidence.Targets = append(evidence.Targets, key+"\x00"+head)
+	}
+	for effectID, observation := range g.publications {
+		evidence.Publications = append(evidence.Publications, string(effectID)+"\x00"+observation.ExpectedOld+"\x00"+observation.Result+"\x00"+observation.ObservedTarget+"\x00"+observation.ProviderMarker)
+	}
+	sort.Strings(evidence.Targets)
+	sort.Strings(evidence.Publications)
+	return evidence
+}
 func (g *attributableGit) TargetHead(_ context.Context, repository ids.RepositoryID, target string) (string, error) {
 	g.record("target_head")
 	g.mu.Lock()

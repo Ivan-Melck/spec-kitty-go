@@ -3,9 +3,9 @@ package scenario
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -45,8 +45,8 @@ func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
 	})
 	t.Run("restart-every-boundary", func(t *testing.T) {
 		restarted := runTwoItemMissionScenario(t, true)
-		if !reflect.DeepEqual(restarted, uninterrupted) {
-			t.Fatalf("restart-every-boundary terminal semantics differ:\nuninterrupted=%+v\nrestarted=%+v", uninterrupted, restarted)
+		if err := validateTerminalSemanticEquivalence(uninterrupted, restarted); err != nil {
+			t.Fatalf("restart-every-boundary terminal semantics differ: %v\nuninterrupted=%+v\nrestarted=%+v", err, uninterrupted, restarted)
 		}
 	})
 }
@@ -78,11 +78,18 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	if err != nil {
 		t.Fatalf("publish two-item graph: %v", err)
 	}
+	workgraphPublication, err := plan.Publication()
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationEvidence := []terminalOperationEvidence{operationEvidenceFromPublication(t, workgraphPublication)}
+	assertUniversalInvariants(t, h, projectID, missionID, "workgraph-published")
 	restartAfterDurableBoundary(t, h, projectID, missionID, "workgraph-published", restartEveryBoundary)
 	selection, err := mission.SealAcknowledgedInitialWorkRevisionSelectionV2(revision, acknowledgedWorkgraph)
 	if err != nil {
 		t.Fatalf("seal acknowledged two-item graph: %v", err)
 	}
+	assertUniversalInvariants(t, h, projectID, missionID, "workgraph-selected")
 	definitionDigest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"portable-scenario"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +116,7 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	restartAfterDurableBoundary(t, h, projectID, missionID, "workgraph-selected", restartEveryBoundary)
 
 	admitted := admitTwoItemWork(t, h, projectID, missionID, revision, governance, restartEveryBoundary)
-	assignTwoItemTrackerEffects(t, h, governance, admitted, effectReconciler, restartEveryBoundary)
+	trackerEvidence := assignTwoItemTrackerEffects(t, h, governance, admitted, effectReconciler, restartEveryBoundary)
 	progress, err := h.host.Progress().Mission(journalv2.ProjectID(projectID), journalv2.MissionID(missionID))
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +124,7 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	if progress.TotalWork != 2 || len(progress.Running) != 2 {
 		t.Fatalf("two-item progress lost parallel authority: total=%d running=%d progress=%+v", progress.TotalWork, len(progress.Running), progress)
 	}
-	completeTwoItemMission(t, h, missionResult.State(), revision, governance, admitted, restartEveryBoundary)
+	operationEvidence = append(operationEvidence, completeTwoItemMission(t, h, missionResult.State(), revision, governance, admitted, restartEveryBoundary)...)
 	terminal, err := h.host.Progress().Mission(journalv2.ProjectID(projectID), journalv2.MissionID(missionID))
 	if err != nil {
 		t.Fatal(err)
@@ -128,9 +135,12 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	if terminal.Lifecycle != "completed" || len(terminal.Running) != 0 || len(terminal.Reviews) != 2 || len(terminal.Acceptance) != 2 || len(terminal.Integration) != 2 {
 		t.Fatalf("incomplete terminal mission: lifecycle=%s revision=%s generation=%d total=%d running=%d reviews=%d acceptance=%d integration=%d projection=%d", terminal.Lifecycle, terminal.WorkRevisionID, terminal.Generation, terminal.TotalWork, len(terminal.Running), len(terminal.Reviews), len(terminal.Acceptance), len(terminal.Integration), terminal.ProjectionRevision)
 	}
-	semantic := semanticTerminalProgress(terminal)
+	semantic := semanticTerminalProgress(t, terminal, trackerEvidence, h.git.terminalEvidence(), operationEvidence)
 	terminalDigest := semanticProgressDigest(t, h, projectID, missionID)
 	assertUniversalInvariants(t, h, projectID, missionID, "two-items-terminal")
+	if !restartEveryBoundary {
+		assertUniversalTerminalMembershipMutants(t, h.host.Status(), terminal, projectID, missionID, h.git.count())
+	}
 	prior, _ := h.restart()
 	assertStaleEpochRefusesBeforeRepository(t, h, prior)
 	if got := semanticProgressDigest(t, h, projectID, missionID); got != terminalDigest {
@@ -140,8 +150,16 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	return semantic
 }
 
-func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2, reconciler *scenarioEffectReconciler, restartEveryBoundary bool) {
+type terminalTrackerEvidence struct {
+	WorkID   string
+	Revision uint64
+	Assignee string
+	Marker   string
+}
+
+func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2, reconciler *scenarioEffectReconciler, restartEveryBoundary bool) []terminalTrackerEvidence {
 	t.Helper()
+	evidence := make([]terminalTrackerEvidence, 0, len(admitted))
 	store, err := trackerfake.Open(filepath.Join(h.root, "tracker.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -240,6 +258,7 @@ func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance go
 			if err != nil || observed.Assignee != intent.IntendedValue || observed.OperationMarker != string(intent.OperationID) {
 				t.Fatalf("tracker attribution %s: observation=%+v err=%v", workID, observed, err)
 			}
+			evidence = append(evidence, terminalTrackerEvidence{WorkID: workID.String(), Revision: uint64(observed.Observation.Revision), Assignee: observed.Assignee, Marker: observed.OperationMarker})
 			continue
 		}
 		request.Action = execution.EffectRequireReconcileV2
@@ -267,7 +286,10 @@ func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance go
 		if err != nil || observed.Assignee != intent.IntendedValue || observed.OperationMarker != string(intent.OperationID) {
 			t.Fatalf("tracker attribution %s: observation=%+v err=%v", workID, observed, err)
 		}
+		evidence = append(evidence, terminalTrackerEvidence{WorkID: workID.String(), Revision: uint64(observed.Observation.Revision), Assignee: observed.Assignee, Marker: observed.OperationMarker})
 	}
+	sort.Slice(evidence, func(i, j int) bool { return evidence[i].WorkID < evidence[j].WorkID })
+	return evidence
 }
 
 type scenarioEffectRecovery struct {
@@ -372,6 +394,7 @@ func admitTwoItemWork(t *testing.T, h *portableHarness, projectID, missionID str
 				t.Fatalf("work admission %s omitted current authority", workID)
 			}
 			admitted[workID] = restartUnboundExecutionAfterDurableBoundary(t, h, result.State, governance, "execution-admitted-"+workID.String(), true)
+			assertUniversalInvariants(t, h, projectID, missionID, "execution-admitted-"+workID.String())
 		}
 		return admitted
 	}
@@ -402,8 +425,93 @@ func admitTwoItemWork(t *testing.T, h *portableHarness, projectID, missionID str
 			t.Fatal("concurrent work admission omitted current authority")
 		}
 		admitted[result.State.WorkID] = result.State
+		assertUniversalInvariants(t, h, projectID, missionID, "execution-admitted-"+result.State.WorkID.String())
 	}
 	return admitted
+}
+
+func validateTerminalSemanticEquivalence(want, got terminalSemanticProgress) error {
+	if want.Lifecycle != got.Lifecycle || want.WorkRevisionID != got.WorkRevisionID || want.Generation != got.Generation || want.Complete != got.Complete || want.TotalWork != got.TotalWork {
+		return fmt.Errorf("mission summary differs")
+	}
+	if !equalStateCounts(want.WorkCounts, got.WorkCounts) {
+		return fmt.Errorf("work counts differ")
+	}
+	if !equalTerminalItems(want.Items, got.Items) {
+		return fmt.Errorf("canonical terminal item facts differ")
+	}
+	if !equalStrings(want.Families, got.Families) {
+		return fmt.Errorf("event-family coverage differs")
+	}
+	if !equalTrackerEvidence(want.Tracker, got.Tracker) {
+		return fmt.Errorf("attributed tracker observations differ")
+	}
+	if !equalStrings(want.Repository.Targets, got.Repository.Targets) || !equalStrings(want.Repository.Publications, got.Repository.Publications) {
+		return fmt.Errorf("repository targets or attributed publications differ")
+	}
+	if !equalTerminalOperations(want.Operations, got.Operations) {
+		return fmt.Errorf("operation result bodies or digests differ")
+	}
+	if want.SemanticSHA256 == "" || want.SemanticSHA256 != got.SemanticSHA256 {
+		return fmt.Errorf("semantic projection digest differs")
+	}
+	return nil
+}
+
+func equalStateCounts(a, b []productionruntime.StateCount) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
+}
+func equalTerminalItems(a, b []terminalSemanticItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
+}
+func equalTrackerEvidence(a, b []terminalTrackerEvidence) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
+}
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
+}
+func equalTerminalOperations(a, b []terminalOperationEvidence) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] || a[index].OperationID == "" || a[index].ResultKind == "" || a[index].ResultBody == "" || a[index].ResultSHA256 == "" {
+			return false
+		}
+	}
+	return true
 }
 
 type terminalSemanticProgress struct {
@@ -414,6 +522,18 @@ type terminalSemanticProgress struct {
 	TotalWork      int
 	WorkCounts     []productionruntime.StateCount
 	Items          []terminalSemanticItem
+	Families       []string
+	Tracker        []terminalTrackerEvidence
+	Repository     repositoryTerminalEvidence
+	SemanticSHA256 string
+	Operations     []terminalOperationEvidence
+}
+
+type terminalOperationEvidence struct {
+	OperationID  string
+	ResultKind   string
+	ResultBody   string
+	ResultSHA256 string
 }
 
 type terminalSemanticItem struct {
@@ -421,15 +541,42 @@ type terminalSemanticItem struct {
 	AggregateID    string
 	AuthorityState string
 	ObservedState  string
+	SemanticSHA256 string
+	ResultKind     string
+	ResultBody     string
+	ResultSHA256   string
+	Fenced         bool
 }
 
-func semanticTerminalProgress(progress productionruntime.MissionProgress) terminalSemanticProgress {
+func semanticTerminalProgress(t *testing.T, progress productionruntime.MissionProgress, trackerEvidence []terminalTrackerEvidence, repository repositoryTerminalEvidence, operationEvidence []terminalOperationEvidence) terminalSemanticProgress {
+	t.Helper()
 	items := make([]terminalSemanticItem, 0, len(progress.Items))
+	familySet := make(map[string]struct{})
 	for _, item := range progress.Items {
-		items = append(items, terminalSemanticItem{
+		semanticState := semanticCanonicalJSON(t, item.CanonicalState)
+		entry := terminalSemanticItem{
 			Family: item.Family, AggregateID: item.AggregateID,
 			AuthorityState: item.AuthorityState, ObservedState: item.ObservedState,
-		})
+			SemanticSHA256: digestBytes(semanticState),
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(item.CanonicalState, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		fence, _ := nestedTextField(decoded, "fence")
+		entry.Fenced = fence != ""
+		if item.Family == "operation" {
+			operation, err := journalv2.DecodeOperationStateV2(item.CanonicalState)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := semanticCanonicalJSON(t, operation.Result())
+			entry.ResultKind = operation.ResultKind()
+			entry.ResultBody = string(result)
+			entry.ResultSHA256 = digestBytes(result)
+		}
+		items = append(items, entry)
+		familySet[item.Family] = struct{}{}
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Family != items[j].Family {
@@ -439,10 +586,113 @@ func semanticTerminalProgress(progress productionruntime.MissionProgress) termin
 	})
 	counts := append([]productionruntime.StateCount(nil), progress.WorkCounts...)
 	sort.Slice(counts, func(i, j int) bool { return counts[i].State < counts[j].State })
-	return terminalSemanticProgress{
-		Lifecycle: progress.Lifecycle, WorkRevisionID: string(progress.WorkRevisionID), Generation: progress.Generation,
-		Complete: progress.Complete, TotalWork: progress.TotalWork, WorkCounts: counts, Items: items,
+	families := make([]string, 0, len(familySet))
+	for family := range familySet {
+		families = append(families, family)
 	}
+	sort.Strings(families)
+	result := terminalSemanticProgress{
+		Lifecycle: progress.Lifecycle, WorkRevisionID: string(progress.WorkRevisionID), Generation: progress.Generation,
+		Complete: progress.Complete, TotalWork: progress.TotalWork, WorkCounts: counts, Items: items, Families: families,
+		Tracker: append([]terminalTrackerEvidence(nil), trackerEvidence...), Repository: repository,
+		Operations: append([]terminalOperationEvidence(nil), operationEvidence...),
+	}
+	sort.Slice(result.Operations, func(i, j int) bool { return result.Operations[i].OperationID < result.Operations[j].OperationID })
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := journalv2.CanonicalObject(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.SemanticSHA256 = digestBytes(canonical)
+	return result
+}
+
+func operationEvidenceFromPublication(t *testing.T, publication journalv2.SealedCommitPlanV2) terminalOperationEvidence {
+	t.Helper()
+	operation := publication.OperationState()
+	if operation.OperationID() == "" || operation.ResultKind() == "" || len(operation.Result()) == 0 || operation.ResultDigest().IsZero() {
+		t.Fatal("sealed publication omitted exact operation result")
+	}
+	return terminalOperationEvidence{OperationID: string(operation.OperationID()), ResultKind: operation.ResultKind(), ResultBody: string(operation.Result()), ResultSHA256: operation.ResultDigest().String()}
+}
+
+func semanticCanonicalJSON(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	if len(raw) == 0 {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	value = projectTerminalSemantics(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := journalv2.CanonicalObject(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+
+func projectTerminalSemantics(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		projected := make(map[string]any)
+		for key, child := range typed {
+			if terminalSemanticField(key) {
+				projected[key] = projectTerminalSemantics(child)
+				continue
+			}
+			if nested, ok := child.(map[string]any); ok {
+				candidate := projectTerminalSemantics(nested).(map[string]any)
+				if len(candidate) != 0 {
+					projected[key] = candidate
+				}
+			}
+		}
+		return projected
+	case []any:
+		projected := make([]any, 0, len(typed))
+		for _, child := range typed {
+			candidate := projectTerminalSemantics(child)
+			if object, ok := candidate.(map[string]any); ok && len(object) == 0 {
+				continue
+			}
+			projected = append(projected, candidate)
+		}
+		return projected
+	default:
+		return typed
+	}
+}
+
+func terminalSemanticField(key string) bool {
+	switch key {
+	case "schema_version", "project_id", "mission_id", "work_revision_id", "work_id", "run_id", "lease_id", "generation",
+		"stage", "outcome", "status", "lifecycle", "complete", "candidate", "contributor_digest", "criteria_digest", "criterion_ids",
+		"review_id", "reviewer_actor_id", "handoff_id", "verdict", "acceptance_id", "criterion_id", "kind", "disposition", "producer",
+		"policy_basis", "evidence_id", "state_digest_sha256", "repository_id", "target_ref", "expected_old", "result", "observed_target",
+		"provider_marker", "effect_id", "intended_value", "expected_value", "expected_operation_marker", "assignee", "operation_marker",
+		"provider_revision", "artifact_revision_id", "approval_id", "content_digest", "source_ref", "source_revision", "created_by", "actor_id",
+		"governance_context_id", "policy_revision", "doctrine_revision", "profile_revision", "mission_type_revision", "fact_id", "detail_digest",
+		"definition_revision", "definition_digest", "title", "description", "design_context", "required_guarantee", "active_facts", "evidence",
+		"criteria", "review_ids", "governance", "binding", "workspace", "execution", "intent", "observation", "applied_observation", "contract",
+		"artifact_revision", "validation", "approval":
+		return true
+	default:
+		return false
+	}
+}
+
+func digestBytes(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf("%x", sum)
 }
 
 func twoItemRevision(t *testing.T, projectID, missionID string) (workgraph.RevisionV2, governancecontext.Context) {
