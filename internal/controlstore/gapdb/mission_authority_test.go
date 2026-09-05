@@ -481,12 +481,12 @@ func readinessStateGapDBFixtureV2(t *testing.T, version journalv2.LogicalVersion
 	return state
 }
 
-func readinessCommandGapDBFixtureV2(successor, expected mission.ReadinessAuthorityStateV2, eventType mission.ReadinessEventTypeV2) mission.ReadinessAuthorityCommandV2 {
+func readinessCommandGapDBFixtureV2(updated, expected mission.ReadinessAuthorityStateV2, eventType mission.ReadinessEventTypeV2) mission.ReadinessAuthorityCommandV2 {
 	return mission.ReadinessAuthorityCommandV2{
-		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: successor.LastOperationID(), ProjectID: successor.ProjectID(), MissionID: successor.MissionID(),
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: updated.LastOperationID(), ProjectID: updated.ProjectID(), MissionID: updated.MissionID(),
 		ActorID: "actor-readiness", ProcessID: "process-readiness", OriginatingRuntimeEpochID: "epoch-readiness",
 		DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1",
-		ObservedAt: successor.ObservedAt(), EventType: eventType, Expected: expected, Successor: successor,
+		ObservedAt: updated.ObservedAt(), EventType: eventType, Expected: expected, Updated: updated,
 	}
 }
 
