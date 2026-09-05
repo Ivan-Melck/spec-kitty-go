@@ -31,7 +31,7 @@ type terminalWorkFacts struct {
 	accepted  integration.AcceptanceStateV2
 }
 
-func completeTwoItemMission(t *testing.T, h *portableHarness, missionState mission.MissionAuthorityStateV2, revision workgraph.RevisionV2, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2) {
+func completeTwoItemMission(t *testing.T, h *portableHarness, missionState mission.ReadinessAuthorityStateV2, revision workgraph.RevisionV2, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2) {
 	t.Helper()
 	repositoryID := ids.RepositoryID("repository-two-item")
 	targetRef := "refs/heads/main"
@@ -334,38 +334,47 @@ func terminalAcceptanceRequest(t *testing.T, h *portableHarness, facts *terminal
 	}
 }
 
-func recordResolvedPolicyFact(t *testing.T, h *portableHarness, current mission.MissionAuthorityStateV2, request integration.AcceptanceAuthorityRequestV2) mission.MissionAuthorityStateV2 {
+func recordResolvedPolicyFact(t *testing.T, h *portableHarness, current mission.ReadinessAuthorityStateV2, request integration.AcceptanceAuthorityRequestV2) mission.ReadinessAuthorityStateV2 {
 	t.Helper()
 	openAt := request.ObservedAt.Add(-2 * time.Second)
 	openOperation := journalv2.OperationID("operation-open-" + request.PolicyFactID)
-	openState := cloneMissionState(t, current, current.Version()+1, current.Status(), current.Step(), openOperation, openAt, []string{request.PolicyFactID})
 	openDigest, _ := journalv2.ReducerStateDigestV2([]byte(`{"status":"open"}`))
+	scopedFact := mission.ScopedMissionFactV2{
+		Kind: mission.ScopedFactDecisionV2, FactID: request.PolicyFactID,
+		Scope:            mission.ActionRef{ID: mission.ActionAcceptanceEvaluate, Scope: mission.AuthorityScope{Kind: mission.ScopeWork, Identity: request.WorkID.String()}},
+		EvidenceIdentity: "policy-open-" + request.PolicyFactID, EvidenceDigest: openDigest.String(),
+	}
+	openState := cloneReadinessState(t, current, current.Version()+1, current.Lifecycle(), openOperation, openAt, []mission.ScopedMissionFactV2{scopedFact})
 	openFact, err := mission.NewMissionFactStateV2(mission.MissionFactStateInputV2{ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID), FactID: request.PolicyFactID, Kind: mission.MissionFactDecisionV2, Status: mission.MissionFactOpenV2, LogicalVersion: 1, DetailDigest: openDigest, LastOperationID: openOperation, ObservedAt: openAt.Format(time.RFC3339Nano)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	openResult, err := h.host.ExecuteMission(t.Context(), h.host.RuntimeEpochID(), mission.MissionAuthorityCommandV2{SchemaVersion: 1, OperationID: openOperation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-policy", ProcessID: "process-policy", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.PolicyRevision, ObservedAt: openAt.Format(time.RFC3339Nano), EventType: mission.MissionEventDecisionOpenedV2, Expected: current, Successor: openState, RelatedFact: &mission.MissionFactTransitionV2{Successor: openFact}})
+	openResult, err := h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: openOperation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-policy", ProcessID: "process-policy", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.PolicyRevision, ObservedAt: openAt.Format(time.RFC3339Nano), EventType: mission.ReadinessEventFactOpenedV2, Expected: current, Updated: openState, RelatedFact: &mission.MissionFactTransitionV2{Successor: openFact}})
 	if err != nil {
 		t.Fatalf("open policy fact %s: %v", request.PolicyFactID, err)
 	}
 
 	resolvedAt := request.ObservedAt.Add(-time.Second)
 	resolveOperation := journalv2.OperationID("operation-resolve-" + request.PolicyFactID)
-	resolvedState := cloneMissionState(t, openResult.State(), openResult.State().Version()+1, openResult.State().Status(), openResult.State().Step(), resolveOperation, resolvedAt, nil)
+	resolvedState := cloneReadinessState(t, openResult.State(), openResult.State().Version()+1, openResult.State().Lifecycle(), resolveOperation, resolvedAt, nil)
 	resolvedFact, err := mission.NewMissionFactStateV2(mission.MissionFactStateInputV2{ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID), FactID: request.PolicyFactID, Kind: mission.MissionFactDecisionV2, Status: mission.MissionFactResolvedV2, LogicalVersion: 2, DetailDigest: integration.AcceptancePolicyRevisionDigestV2(request), LastOperationID: resolveOperation, ObservedAt: resolvedAt.Format(time.RFC3339Nano)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := h.host.ExecuteMission(t.Context(), h.host.RuntimeEpochID(), mission.MissionAuthorityCommandV2{SchemaVersion: 1, OperationID: resolveOperation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-policy", ProcessID: "process-policy", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.PolicyRevision, ObservedAt: resolvedAt.Format(time.RFC3339Nano), EventType: mission.MissionEventDecisionResolvedV2, Expected: openResult.State(), Successor: resolvedState, RelatedFact: &mission.MissionFactTransitionV2{Prior: openFact, Successor: resolvedFact, ExpectedRecordRevision: openResult.RecordRevision()}})
+	resolved, err := h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: resolveOperation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-policy", ProcessID: "process-policy", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.PolicyRevision, ObservedAt: resolvedAt.Format(time.RFC3339Nano), EventType: mission.ReadinessEventFactClosedV2, Expected: openResult.State(), Updated: resolvedState, RelatedFact: &mission.MissionFactTransitionV2{Prior: openFact, Successor: resolvedFact, ExpectedRecordRevision: openResult.RecordRevision()}})
 	if err != nil {
 		t.Fatalf("resolve policy fact %s: %v", request.PolicyFactID, err)
 	}
 	return resolved.State()
 }
 
-func cloneMissionState(t *testing.T, prior mission.MissionAuthorityStateV2, version journalv2.LogicalVersion, status mission.AuthorityMissionStatusV2, step string, operation journalv2.OperationID, observedAt time.Time, decisions []string) mission.MissionAuthorityStateV2 {
+func cloneReadinessState(t *testing.T, prior mission.ReadinessAuthorityStateV2, version journalv2.LogicalVersion, lifecycle mission.MissionLifecycle, operation journalv2.OperationID, observedAt time.Time, facts []mission.ScopedMissionFactV2) mission.ReadinessAuthorityStateV2 {
 	t.Helper()
-	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{ProjectID: prior.ProjectID(), MissionID: prior.MissionID(), DefinitionRevision: prior.DefinitionRevision(), DefinitionDigest: prior.DefinitionDigest(), Version: version, Status: status, Step: step, CurrentWorkRevisionID: prior.CurrentWorkRevisionID(), ActionCount: prior.ActionCount(), ActiveBlockerIDs: prior.ActiveBlockerIDs(), OpenDecisionIDs: decisions, Decomposition: prior.Decomposition(), EffectIDs: prior.EffectIDs(), LastOperationID: operation, ObservedAt: observedAt.Format(time.RFC3339Nano)})
+	definitionDigest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"portable-scenario"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{ProjectID: prior.ProjectID(), MissionID: prior.MissionID(), DefinitionRevision: "definition-1", DefinitionDigest: definitionDigest, Version: version, Lifecycle: lifecycle, CurrentWorkRevision: prior.CurrentWorkRevision(), ActivityCount: prior.ActivityCount(), ActiveFacts: facts, LastOperationID: operation, ObservedAt: observedAt.Format(time.RFC3339Nano)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,17 +393,17 @@ func markExecutionCompleted(t *testing.T, h *portableHarness, state execution.Ex
 	}
 }
 
-func completeMissionAuthority(t *testing.T, h *portableHarness, current mission.MissionAuthorityStateV2, revisionID ids.WorkRevisionID) {
+func completeMissionAuthority(t *testing.T, h *portableHarness, current mission.ReadinessAuthorityStateV2, revisionID ids.WorkRevisionID) {
 	t.Helper()
 	observedAt := terminalTime(2, 55)
 	operation := journalv2.OperationID("operation-mission-complete")
-	next := cloneMissionState(t, current, current.Version()+1, mission.AuthorityMissionCompletedV2, current.Step(), operation, observedAt, nil)
-	result, err := h.host.ExecuteMission(t.Context(), h.host.RuntimeEpochID(), mission.MissionAuthorityCommandV2{SchemaVersion: 1, OperationID: operation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-orchestrator", ProcessID: "process-orchestrator", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: observedAt.Format(time.RFC3339Nano), EventType: mission.MissionEventCompletedV2, Expected: current, Successor: next})
+	next := cloneReadinessState(t, current, current.Version()+1, mission.MissionCompleted, operation, observedAt, nil)
+	result, err := h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: operation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-orchestrator", ProcessID: "process-orchestrator", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: observedAt.Format(time.RFC3339Nano), EventType: mission.ReadinessEventCompletedV2, Expected: current, Updated: next})
 	if err != nil {
 		t.Fatalf("complete mission revision %s: %v", revisionID, err)
 	}
-	if result.State().Status() != mission.AuthorityMissionCompletedV2 {
-		t.Fatalf("mission did not complete: %s", result.State().Status())
+	if result.State().Lifecycle() != mission.MissionCompleted {
+		t.Fatalf("mission did not complete: %s", result.State().Lifecycle())
 	}
 }
 

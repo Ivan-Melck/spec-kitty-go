@@ -34,7 +34,7 @@ func runIndependentMissionPairs(t *testing.T, trials int) {
 	t.Helper()
 	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: fmt.Sprintf("%s-%d", t.Name(), trials)})
 	for trial := range trials {
-		commands := []mission.MissionAuthorityCommandV2{
+		commands := []mission.ReadinessAuthorityCommandV2{
 			missionCreateCommand(t, h.host.RuntimeEpochID(), fmt.Sprintf("independent-%03d-a", trial), fmt.Sprintf("create-%03d-a", trial)),
 			missionCreateCommand(t, h.host.RuntimeEpochID(), fmt.Sprintf("independent-%03d-b", trial), fmt.Sprintf("create-%03d-b", trial)),
 		}
@@ -57,7 +57,7 @@ func runSameAggregateConflicts(t *testing.T, trials int) {
 	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: fmt.Sprintf("%s-%d", t.Name(), trials)})
 	for trial := range trials {
 		missionID := fmt.Sprintf("contended-%03d", trial)
-		commands := []mission.MissionAuthorityCommandV2{
+		commands := []mission.ReadinessAuthorityCommandV2{
 			missionCreateCommand(t, h.host.RuntimeEpochID(), missionID, fmt.Sprintf("contender-%03d-a", trial)),
 			missionCreateCommand(t, h.host.RuntimeEpochID(), missionID, fmt.Sprintf("contender-%03d-b", trial)),
 		}
@@ -81,34 +81,34 @@ func runSameAggregateConflicts(t *testing.T, trials int) {
 	t.Logf("campaign seed=%s trials=%d one_winner=%d typed_losers=%d", t.Name(), trials, trials, trials)
 }
 
-func missionCreateCommand(t *testing.T, epoch journalv2.RuntimeEpochID, missionID, operation string) mission.MissionAuthorityCommandV2 {
+func missionCreateCommand(t *testing.T, epoch journalv2.RuntimeEpochID, missionID, operation string) mission.ReadinessAuthorityCommandV2 {
 	t.Helper()
 	digest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"concurrency"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 9, 5, 13, 0, 0, 0, time.UTC)
-	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+	state, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
 		ProjectID: "project-concurrency", MissionID: journalv2.MissionID(missionID),
 		DefinitionRevision: "definition-concurrency", DefinitionDigest: digest,
-		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "active",
+		Version: 1, Lifecycle: mission.MissionOpen,
 		LastOperationID: journalv2.OperationID(operation), ObservedAt: now.Format(time.RFC3339),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return mission.MissionAuthorityCommandV2{
-		SchemaVersion: 1, OperationID: journalv2.OperationID(operation),
+	return mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: journalv2.OperationID(operation),
 		ProjectID: "project-concurrency", MissionID: journalv2.MissionID(missionID),
 		ActorID: journalv2.ActorID("actor-" + operation), ProcessID: journalv2.ProcessID("process-" + operation),
 		OriginatingRuntimeEpochID: epoch, DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1",
-		ObservedAt: now.Format(time.RFC3339), EventType: mission.MissionEventCreatedV2, Successor: state,
+		ObservedAt: now.Format(time.RFC3339), EventType: mission.ReadinessEventCreatedV2, Updated: state,
 	}
 }
 
-func executeMissionPair(t *testing.T, h *portableHarness, commands []mission.MissionAuthorityCommandV2) ([2]mission.MissionAuthorityResultV2, [2]error) {
+func executeMissionPair(t *testing.T, h *portableHarness, commands []mission.ReadinessAuthorityCommandV2) ([2]mission.ReadinessAuthorityResultV2, [2]error) {
 	t.Helper()
-	var results [2]mission.MissionAuthorityResultV2
+	var results [2]mission.ReadinessAuthorityResultV2
 	var errs [2]error
 	start := make(chan struct{})
 	var ready, done sync.WaitGroup
@@ -120,7 +120,7 @@ func executeMissionPair(t *testing.T, h *portableHarness, commands []mission.Mis
 			defer done.Done()
 			ready.Done()
 			<-start
-			results[index], errs[index] = h.host.ExecuteMission(t.Context(), h.host.RuntimeEpochID(), commands[index])
+			results[index], errs[index] = h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), commands[index])
 		}()
 	}
 	ready.Wait()
@@ -131,7 +131,7 @@ func executeMissionPair(t *testing.T, h *portableHarness, commands []mission.Mis
 	// identical operation binding; never invent a replacement identity.
 	for index := range 2 {
 		for attempt := 0; attempt < 8 && mission.IsMissionAuthorityKindV2(errs[index], mission.MissionAuthorityAmbiguousV2); attempt++ {
-			results[index], errs[index] = h.host.ExecuteMission(t.Context(), h.host.RuntimeEpochID(), commands[index])
+			results[index], errs[index] = h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), commands[index])
 		}
 	}
 	return results, errs

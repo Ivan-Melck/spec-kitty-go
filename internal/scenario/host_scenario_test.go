@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
@@ -35,7 +36,7 @@ func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
 	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: t.Name(), CandidateVerifier: sourceBoundCandidateVerifier{}})
 	projectID, missionID := "project-two-item", "mission-two-item"
 	revision, governance := twoItemRevision(t, projectID, missionID)
-	missionResult := h.createMissionWithRevision(projectID, missionID, "operation-mission-create", revision.ID())
+	missionResult := h.createMission(projectID, missionID, "operation-mission-create")
 	assertUniversalInvariants(t, h, projectID, missionID, "mission-publication")
 	prior, _ := h.restart()
 	assertStaleEpochRefusesBeforeRepository(t, h, prior)
@@ -53,8 +54,36 @@ func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.host.PublishWorkgraph(t.Context(), h.host.RuntimeEpochID(), plan); err != nil {
+	acknowledgedWorkgraph, err := h.host.PublishWorkgraph(t.Context(), h.host.RuntimeEpochID(), plan)
+	if err != nil {
 		t.Fatalf("publish two-item graph: %v", err)
+	}
+	selection, err := mission.SealAcknowledgedInitialWorkRevisionSelectionV2(revision, acknowledgedWorkgraph)
+	if err != nil {
+		t.Fatalf("seal acknowledged two-item graph: %v", err)
+	}
+	definitionDigest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"portable-scenario"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectedState, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+		ProjectID: journalv2.ProjectID(projectID), MissionID: journalv2.MissionID(missionID),
+		DefinitionRevision: "definition-1", DefinitionDigest: definitionDigest,
+		Version: 2, Lifecycle: mission.MissionOpen, CurrentWorkRevision: selection.Head(),
+		LastOperationID: "operation-mission-select-workgraph", ObservedAt: "2026-09-05T12:01:30Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missionResult, err = h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: selectedState.LastOperationID(),
+		ProjectID: selectedState.ProjectID(), MissionID: selectedState.MissionID(), ActorID: "actor-planner", ProcessID: "process-planner",
+		OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1",
+		ObservedAt: selectedState.ObservedAt(), EventType: mission.ReadinessEventWorkRevisionSelectedV2,
+		Expected: missionResult.State(), Updated: selectedState, WorkRevisionSelection: &selection,
+	})
+	if err != nil {
+		t.Fatalf("select acknowledged two-item graph: %v", err)
 	}
 	digestBeforeGraphRestart := semanticProgressDigest(t, h, projectID, missionID)
 	prior, _ = h.restart()

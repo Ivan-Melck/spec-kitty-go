@@ -185,34 +185,29 @@ func (h *portableHarness) close() {
 	h.host = nil
 }
 
-func (h *portableHarness) createMission(project, missionID, operation string) mission.MissionAuthorityResultV2 {
-	return h.createMissionWithRevision(project, missionID, operation, "")
-}
-
-func (h *portableHarness) createMissionWithRevision(project, missionID, operation string, revisionID ids.WorkRevisionID) mission.MissionAuthorityResultV2 {
+func (h *portableHarness) createMission(project, missionID, operation string) mission.ReadinessAuthorityResultV2 {
 	h.t.Helper()
 	now := time.Date(2026, 9, 5, 12, 0, h.starts, 0, time.UTC)
 	digest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"portable-scenario"}`))
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+	state, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
 		ProjectID: journalv2.ProjectID(project), MissionID: journalv2.MissionID(missionID),
 		DefinitionRevision: "definition-1", DefinitionDigest: digest,
-		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "active",
-		CurrentWorkRevisionID: journalv2.WorkRevisionID(revisionID),
-		LastOperationID:       journalv2.OperationID(operation), ObservedAt: now.Format(time.RFC3339),
+		Version: 1, Lifecycle: mission.MissionOpen,
+		LastOperationID: journalv2.OperationID(operation), ObservedAt: now.Format(time.RFC3339),
 	})
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	result, err := h.host.ExecuteMission(h.t.Context(), h.host.RuntimeEpochID(), mission.MissionAuthorityCommandV2{
-		SchemaVersion: 1, OperationID: journalv2.OperationID(operation),
+	result, err := h.host.ExecuteReadiness(h.t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: journalv2.OperationID(operation),
 		ProjectID: journalv2.ProjectID(project), MissionID: journalv2.MissionID(missionID),
 		ActorID: "actor-scenario", ProcessID: "process-scenario",
 		OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: "doctrine-1",
 		ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: now.Format(time.RFC3339),
-		EventType: mission.MissionEventCreatedV2, Successor: state,
+		EventType: mission.ReadinessEventCreatedV2, Updated: state,
 	})
 	if err != nil {
 		h.t.Fatalf("create mission %s: %v", missionID, err)

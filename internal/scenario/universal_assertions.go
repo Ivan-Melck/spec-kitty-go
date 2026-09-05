@@ -242,7 +242,7 @@ func assertStaleEpochRefusesBeforeRepository(t *testing.T, h *portableHarness, s
 	t.Helper()
 	status := h.host.Status()
 	beforeRevision, beforeDigest, beforeCalls := status.ProjectionRevision, status.ProjectionSHA256, h.git.count()
-	_, err := h.host.ExecuteMission(t.Context(), stale, zeroMissionCommand())
+	_, err := h.host.ExecuteReadiness(t.Context(), stale, zeroReadinessCommand())
 	if !productionruntime.IsKind(err, productionruntime.ErrorStaleEpoch) {
 		t.Fatalf("stale epoch returned %v", err)
 	}
@@ -252,8 +252,8 @@ func assertStaleEpochRefusesBeforeRepository(t *testing.T, h *portableHarness, s
 	}
 }
 
-func zeroMissionCommand() mission.MissionAuthorityCommandV2 {
+func zeroReadinessCommand() mission.ReadinessAuthorityCommandV2 {
 	// Kept separate only to make accidental command construction at this probe
 	// a compile-time error. The caller converts no untrusted or textual input.
-	return mission.MissionAuthorityCommandV2{}
+	return mission.ReadinessAuthorityCommandV2{}
 }
