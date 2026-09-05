@@ -63,14 +63,22 @@ type StageAuthorityAckV2 struct {
 	planDigest       journalv2.Digest
 	mutationCount    int
 	providerRevision uint64
+	recordRevision   uint64
 }
 
-func NewStageAuthorityAckV2(plan StageAuthorityPlanV2, ack journalv2.AcknowledgedPublicationV2) (StageAuthorityAckV2, error) {
+func NewStageAuthorityAckV2(plan StageAuthorityPlanV2, ack journalv2.AcknowledgedPublicationV2, observedRecordRevision ...uint64) (StageAuthorityAckV2, error) {
 	sealed, err := plan.Publication()
 	if err != nil || ack.PublicationID() != sealed.PublicationID() || ack.PlanDigest() != sealed.Digest() || ack.MutationCount() != sealed.MutationCount() || ack.ProviderRevision() == 0 {
 		return StageAuthorityAckV2{}, workspaceV2Error(KindWorkspaceConflict, "stage_ack", err)
 	}
-	return StageAuthorityAckV2{ack.PublicationID(), ack.PlanDigest(), ack.MutationCount(), ack.ProviderRevision()}, nil
+	recordRevision := ack.ProviderRevision()
+	if len(observedRecordRevision) > 1 || len(observedRecordRevision) == 1 && observedRecordRevision[0] == 0 {
+		return StageAuthorityAckV2{}, workspaceV2Error(KindWorkspaceConflict, "stage_record_revision", nil)
+	}
+	if len(observedRecordRevision) == 1 {
+		recordRevision = observedRecordRevision[0]
+	}
+	return StageAuthorityAckV2{ack.PublicationID(), ack.PlanDigest(), ack.MutationCount(), ack.ProviderRevision(), recordRevision}, nil
 }
 func (a StageAuthorityAckV2) matches(plan StageAuthorityPlanV2) bool {
 	sealed, err := plan.Publication()
@@ -151,7 +159,7 @@ func (s *StageAuthorityServiceV2) Execute(ctx context.Context, request StageAuth
 	if err != nil || !ack.matches(plan) {
 		return StageAuthorityResultV2{}, workspaceV2Error(KindWorkspaceConflict, "stage_publication", err)
 	}
-	return StageAuthorityResultV2{State: state, RecordRevision: ack.providerRevision}, nil
+	return StageAuthorityResultV2{State: state, RecordRevision: ack.recordRevision}, nil
 }
 
 func validateExecutionAssertionForBindingV2(assertion journalv2.AuthorityAssertionV2, b BindingV2) error {
