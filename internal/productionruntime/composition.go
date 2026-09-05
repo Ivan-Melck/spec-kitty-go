@@ -29,7 +29,7 @@ import (
 // command barrier remains closed. It may use capability-owned observers but
 // receives no raw database or projection mutation handle.
 type Reconciler interface {
-	Reconcile(context.Context, projection.QueryPortV2, journalv2.RuntimeEpochID) error
+	Reconcile(context.Context, *ReconciliationCommands) error
 }
 
 type Config struct {
@@ -43,6 +43,7 @@ type Config struct {
 	Actions                     ActionCensusSource
 	CandidateVerifier           handoff.CandidateVerifier
 	IntegrationGit              integration.IntegrationGitPortV2
+	CheckpointEvery             int
 	MonitorInterval             time.Duration
 }
 
@@ -107,6 +108,9 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 	}
 	if config.CandidateVerifier == nil || config.IntegrationGit == nil {
 		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "capability_dependencies"}
+	}
+	if config.CheckpointEvery < 0 || config.CheckpointEvery > journalv2.MaxAcknowledgementsBetweenSeals {
+		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "checkpoint_every"}
 	}
 	lifecycle, err := sidecargapdb.Start(ctx, config.Sidecar)
 	if err != nil {
@@ -190,8 +194,16 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 		_ = host.Close(context.Background())
 		return nil, err
 	}
+	capabilities, err := composeRuntimeCapabilities(adapter, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
+	if err != nil {
+		_ = host.Close(context.Background())
+		return nil, err
+	}
 	if config.Reconciler != nil {
-		if err := config.Reconciler.Reconcile(ctx, authority, epoch); err != nil {
+		commands := newReconciliationCommands(epoch, capabilities)
+		reconcileErr := config.Reconciler.Reconcile(ctx, commands)
+		commands.close()
+		if reconcileErr != nil {
 			host.degrade("reconciliation")
 			_ = host.Close(context.Background())
 			return nil, &Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciliation"}
@@ -211,6 +223,11 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 			return nil, err
 		}
 		host.projection, host.progress, postRestore = authority, progress, reconciled
+		capabilities, err = composeRuntimeCapabilities(adapter, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
+		if err != nil {
+			_ = host.Close(context.Background())
+			return nil, err
+		}
 	}
 	// A reconciler completing is not itself evidence that ambiguity was
 	// resolved. Readiness depends on the resulting authority state, so a no-op,
@@ -219,11 +236,6 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 		host.degrade("reconciler_required")
 		_ = host.Close(context.Background())
 		return nil, &Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciler_required"}
-	}
-	capabilities, err := composeRuntimeCapabilities(adapter, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
-	if err != nil {
-		_ = host.Close(context.Background())
-		return nil, err
 	}
 	host.capabilities = capabilities
 	host.refresh = func(refreshContext context.Context) (*projection.AuthorityV2, *ProgressService, error) {
@@ -362,7 +374,12 @@ func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.
 	if err != nil {
 		return runtimeCapabilities{}, err
 	}
-	return runtimeCapabilities{mission: missionService, readiness: readinessService, execution: executionService, workspace: workspaceService, stage: stageService, handoff: handoffService, review: reviewService, acceptance: acceptanceService, integration: integrationService, effect: effectService, artifact: artifactPort, workgraph: workgraphPort}, nil
+	checkpointEvery := config.CheckpointEvery
+	if checkpointEvery == 0 {
+		checkpointEvery = 1000
+	}
+	scheduler := &checkpointScheduler{tracker: tracker, coordinator: coordinator, reader: adapter, epoch: epoch, every: checkpointEvery}
+	return runtimeCapabilities{mission: missionService, readiness: readinessService, execution: executionService, workspace: workspaceService, stage: stageService, handoff: handoffService, review: reviewService, acceptance: acceptanceService, integration: integrationService, effect: effectService, artifact: artifactPort, workgraph: workgraphPort, checkpoints: scheduler}, nil
 }
 
 func pendingReconciliation(query projection.QueryPortV2) bool {

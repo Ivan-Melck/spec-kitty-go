@@ -1,6 +1,7 @@
 package productionruntime
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -83,6 +84,28 @@ func (refusingIntegrationGit) ObserveCleanup(context.Context, integration.Integr
 }
 func (refusingIntegrationGit) IsAncestor(context.Context, ids.RepositoryID, string, string) (bool, error) {
 	return false, fmt.Errorf("test git is fail-closed")
+}
+
+type missionCreatingReconciler struct{ retained *ReconciliationCommands }
+
+func (r *missionCreatingReconciler) Reconcile(ctx context.Context, commands *ReconciliationCommands) error {
+	r.retained = commands
+	epoch := commands.RuntimeEpochID()
+	digest, _ := journalv2.ReducerStateDigestV2([]byte(`{"definition":"reconciled"}`))
+	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+		ProjectID: "project-runtime", MissionID: "mission-reconciled", DefinitionRevision: "definition-runtime", DefinitionDigest: digest,
+		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "active", LastOperationID: "operation-reconciled-create", ObservedAt: "2026-09-05T11:59:00Z",
+	})
+	if err != nil {
+		return err
+	}
+	_, err = commands.ExecuteMission(ctx, mission.MissionAuthorityCommandV2{
+		SchemaVersion: 1, OperationID: "operation-reconciled-create", ProjectID: "project-runtime", MissionID: "mission-reconciled",
+		ActorID: "actor-runtime", ProcessID: "process-reconciler", OriginatingRuntimeEpochID: epoch,
+		DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
+		ObservedAt: "2026-09-05T11:59:00Z", EventType: mission.MissionEventCreatedV2, Successor: state,
+	})
+	return err
 }
 
 func (p *fixtureCommitPort) Commit(_ context.Context, plan journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error) {
@@ -389,6 +412,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		t.Fatal(err)
 	}
 	data := filepath.Join(root, "authority")
+	reconciler := &missionCreatingReconciler{}
 	config := Config{
 		ControlRoot:                 data,
 		HostAuthorityID:             "host-real-sidecar",
@@ -401,6 +425,8 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		MonitorInterval:   10 * time.Millisecond,
 		CandidateVerifier: refusingCandidateVerifier{},
 		IntegrationGit:    refusingIntegrationGit{},
+		Reconciler:        reconciler,
+		CheckpointEvery:   1,
 	}
 	first, err := Start(t.Context(), config)
 	if err != nil {
@@ -409,6 +435,15 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	firstEpoch := first.RuntimeEpochID()
 	if first.State() != HostReady || firstEpoch == "" {
 		t.Fatalf("first state=%s epoch=%q", first.State(), firstEpoch)
+	}
+	if _, err := first.Progress().Mission("project-runtime", "mission-reconciled"); err != nil {
+		t.Fatalf("reconciliation publication absent after rescan: %v", err)
+	}
+	if reconciler.retained == nil || reconciler.retained.RuntimeEpochID() != "" {
+		t.Fatal("reconciliation capability remained live after startup")
+	}
+	if _, err := reconciler.retained.ExecuteMission(t.Context(), mission.MissionAuthorityCommandV2{}); !IsKind(err, ErrorNotReady) {
+		t.Fatalf("retained reconciliation capability admitted command: %v", err)
 	}
 	beforeRevision := first.Status().ProjectionRevision
 	definitionDigest, _ := journalv2.ReducerStateDigestV2([]byte(`{"definition":"runtime-test"}`))
@@ -436,6 +471,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		t.Fatal(err)
 	}
 	config.Sidecar.SupervisorRunID = "supervisor-real-2"
+	config.Reconciler = nil
 	second, err := Start(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
@@ -636,6 +672,72 @@ func TestProgressReportsCompleteMissionWithoutExclusiveCurrentStep(t *testing.T)
 	}
 }
 
+func TestProgressLifecycleAndAuthorityStateMatrix(t *testing.T) {
+	tests := []struct {
+		name, lifecycle string
+		mutate          func(*fakeProgressQuery)
+		check           func(MissionProgress) bool
+	}{
+		{"active", "active", nil, func(p MissionProgress) bool { return p.Lifecycle == "active" && len(p.Running) == 1 }},
+		{"blocked", "active", func(q *fakeProgressQuery) {
+			q.items = append(q.items, progressView("mission", "blocker-1", `{"kind":"blocker","status":"active"}`))
+		}, func(p MissionProgress) bool { return len(p.Blockers) == 1 }},
+		{"decision-required", "active", func(q *fakeProgressQuery) {
+			q.items = append(q.items, progressView("mission", "decision-1", `{"kind":"decision","status":"open"}`))
+		}, func(p MissionProgress) bool { return len(p.Decisions) == 1 }},
+		{"reconciling", "active", nil, func(p MissionProgress) bool { return len(p.PendingReconciliation) == 1 }},
+		{"reviewing", "active", nil, func(p MissionProgress) bool { return len(p.Reviews) == 1 && p.Reviews[0].AuthorityState == "approved" }},
+		{"integrating", "active", nil, func(p MissionProgress) bool {
+			return len(p.Integration) == 1 && p.Integration[0].AuthorityState == "in_progress"
+		}},
+		{"failed", "failed", nil, func(p MissionProgress) bool { return p.Lifecycle == "failed" }},
+		{"canceled", "canceled", nil, func(p MissionProgress) bool { return p.Lifecycle == "canceled" }},
+		{"completed", "completed", nil, func(p MissionProgress) bool { return p.Lifecycle == "completed" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			query := progressFixture()
+			query.items[0].CanonicalState = []byte(`{"current_work_revision_id":"revision-4","lifecycle":"` + test.lifecycle + `"}`)
+			if test.mutate != nil {
+				test.mutate(query)
+			}
+			service, err := NewProgressService(query, fixedActionCensus{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			progress, err := service.Mission("project-1", "mission-1")
+			if err != nil || !test.check(progress) {
+				t.Fatalf("progress=%+v err=%v", progress, err)
+			}
+		})
+	}
+}
+
+func TestProgressTypedFamilyGetAndListAreCopyOnly(t *testing.T) {
+	service, err := NewProgressService(progressFixture(), fixedActionCensus{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range []ProgressFamily{ProgressWork, ProgressEffects, ProgressReviews, ProgressAcceptance, ProgressIntegration, ProgressOperations} {
+		items, listErr := service.List("project-1", "mission-1", family)
+		if listErr != nil || len(items) == 0 {
+			t.Fatalf("family=%s items=%v err=%v", family, items, listErr)
+		}
+		got, getErr := service.Get("project-1", "mission-1", family, items[0].AggregateID)
+		if getErr != nil || got.AggregateID != items[0].AggregateID {
+			t.Fatalf("family=%s got=%+v err=%v", family, got, getErr)
+		}
+		got.CanonicalState[0] ^= 0xff
+		again, _ := service.Get("project-1", "mission-1", family, items[0].AggregateID)
+		if bytes.Equal(got.CanonicalState, again.CanonicalState) {
+			t.Fatalf("family=%s returned mutable storage", family)
+		}
+	}
+	if _, err := service.List("project-1", "mission-1", "provider-private"); !IsProgressKind(err, ProgressInvalidQuery) {
+		t.Fatalf("unsupported family err=%v", err)
+	}
+}
+
 func TestReconciliationReadinessDependsOnRecordedAuthorityNotCallbackSuccess(t *testing.T) {
 	query := progressFixture()
 	if !pendingReconciliation(query) {
@@ -818,6 +920,12 @@ func progressFixture() *fakeProgressQuery {
 		makeItem("operation", "operation-1", `{"status":"in_progress"}`),
 	}
 	return &fakeProgressQuery{base: projection.ProgressBaseV2{DatabaseID: "database-progress", Revision: 42, RuntimeEpochID: "epoch-progress", MissionID: "mission-1"}, items: items, watch: make(chan projection.NotificationV2, 2)}
+}
+
+func progressView(family, id, state string) projection.AggregateViewV2 {
+	scope := journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: "project-1", MissionID: "mission-1"}
+	coordinate, _ := journalv2.NewAggregateCoordinate(journalv2.AggregateKind(family), journalv2.AggregateID(id), scope)
+	return projection.AggregateViewV2{DatabaseID: "database-progress", ProjectionRevision: 42, RuntimeEpochID: "epoch-progress", ProjectionDigest: repeatByte('b', 64), Coordinate: coordinate, LogicalVersion: 1, LastEventID: journalv2.EventID("event-" + id), LastPublicationID: journalv2.PublicationID(repeatByte('c', 64)), StateDigest: repeatByte('d', 64), CanonicalState: []byte(state)}
 }
 
 func repeatByte(value byte, count int) string {

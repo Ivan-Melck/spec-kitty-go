@@ -8,11 +8,110 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/checkpoint"
 	journalrestore "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 )
+
+type checkpointScheduler struct {
+	mu          sync.Mutex
+	tracker     *journalv2.ProjectionTrackerV2
+	coordinator *journalv2.PublicationCoordinatorV2
+	reader      journalrestore.ReaderV2
+	epoch       journalv2.RuntimeEpochID
+	every       int
+}
+
+func (s *checkpointScheduler) MaybeCheckpoint(ctx context.Context) error {
+	if s == nil || s.every <= 0 || s.tracker.LedgerSize() < s.every {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tracker.LedgerSize() < s.every {
+		return nil
+	}
+	sealed, err := s.coordinator.SealProjectionPrefix()
+	if err != nil {
+		return err
+	}
+	label := fmt.Sprintf("%d-%s", sealed.Watermark(), sealed.ProjectionDigest().String()[:16])
+	checkpointID := journalv2.CheckpointID("checkpoint-" + label)
+	value, err := checkpoint.BuildV2(checkpointID, sealed)
+	if err != nil {
+		return err
+	}
+	slotID := journalv2.CheckpointSlotID(fmt.Sprintf("checkpoint-slot-%d", sealed.Watermark()%4))
+	_, slotBytes, err := checkpoint.NewSlotV2(slotID, value)
+	if err != nil {
+		return err
+	}
+	expectedSlotRevision, err := checkpointSlotRevision(ctx, s.reader, slotID)
+	if err != nil {
+		return err
+	}
+	operationID := journalv2.OperationID("operation-checkpoint-" + label)
+	eventID := journalv2.EventID("event-checkpoint-" + label)
+	scope := journalv2.Scope{Kind: journalv2.ScopeHost}
+	intent, err := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "checkpoint.write", CommandSchemaVersion: 2, Scope: scope, Command: []byte(fmt.Sprintf(`{"checkpoint_id":%q}`, checkpointID))})
+	if err != nil {
+		return err
+	}
+	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "checkpoint.write", CommandSchemaVersion: 2, CanonicalIntentDigest: intent, Scope: scope, ActorID: "runtime-checkpoint", ProcessID: "runtime-checkpoint", DoctrineRevision: "runtime-v2", ProfileRevision: "runtime-v2", PolicyRevision: "runtime-v2", OriginatingRuntimeEpochID: s.epoch, ObservedCreatedAt: "1970-01-01T00:00:00Z"})
+	if err != nil {
+		return err
+	}
+	state, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: operationID, LogicalVersion: 1, Status: journalv2.StatusAccepted, EventIDs: []journalv2.EventID{eventID}})
+	if err != nil {
+		return err
+	}
+	payload, _ := journalv2.EncodeOperationStateEventPayloadV2(state)
+	coordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(operationID), scope)
+	digest, _ := journalv2.ReducerStateDigestV2(payload)
+	event := journalv2.EventDraftV2{EventID: eventID, EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: coordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: s.epoch, ActorID: "runtime-checkpoint", ProcessID: "runtime-checkpoint", PolicyRevision: "runtime-v2", GovernanceRevisions: []string{"runtime-v2"}, Payload: payload}
+	head := journalv2.HeadTransitionV2{Coordinate: coordinate, NextLogicalVersion: 1, EventID: eventID, CommittedRuntimeEpochID: s.epoch, CanonicalStateDigest: digest, AuthoritySummary: payload}
+	headCondition, err := journalv2.ConditionForHeadTransitionV2(head)
+	if err != nil {
+		return err
+	}
+	record := journalv2.CheckpointRecord{CheckpointID: value.CheckpointID(), Canonical: value.CanonicalBytes(), SlotID: slotID, SlotCanonical: slotBytes, ExpectedSlotRecordRevision: expectedSlotRevision}
+	checkpointCondition, err := journalv2.ConditionForCheckpointRecordV2(record)
+	if err != nil {
+		return err
+	}
+	plan, err := journalv2.SealCommitPlanV2(journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: state, Events: []journalv2.EventDraftV2{event}, Heads: []journalv2.HeadTransitionV2{head}, Checkpoints: []journalv2.CheckpointRecord{record}, Conditions: []journalv2.ProviderCondition{headCondition, checkpointCondition}}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		return err
+	}
+	_, err = s.coordinator.Publish(ctx, plan)
+	return err
+}
+
+func checkpointSlotRevision(ctx context.Context, reader journalrestore.ReaderV2, slotID journalv2.CheckpointSlotID) (uint64, error) {
+	capture, err := reader.CaptureRevisionV2(ctx)
+	if err != nil {
+		return 0, err
+	}
+	address, err := journalv2.NewCheckpointSlotAddressV2(slotID)
+	if err != nil {
+		return 0, err
+	}
+	request, _ := journalv2.NewReadRequestV2(address, capture)
+	record, err := reader.ReadV2(ctx, request)
+	if journalv2.IsKind(err, journalv2.ErrorNotFound) {
+		return 0, reader.VerifyRevisionV2(ctx, capture)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if err := reader.VerifyRevisionV2(ctx, capture); err != nil {
+		return 0, err
+	}
+	return record.RecordRevision(), nil
+}
 
 const (
 	authorityBindingKey = "spk/v2/authority/binding"
