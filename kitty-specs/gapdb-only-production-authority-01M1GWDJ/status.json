@@ -643,6 +643,9 @@
       "last_event_id": "01M1SWMCH470KTT30H8DZWKVNJ",
       "last_transition_at": "2026-09-05T22:57:06.084999+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review. Scoped helper/native CLI tests, vet, and staticcheck pass at 3cba5bf7. Cross-lane architecture smoke still expects retired inspect-beads documentation; README ownership is WP17 and must reconcile that historical contract before M2 crown qualification."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3753728,
