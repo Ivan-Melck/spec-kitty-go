@@ -3,10 +3,15 @@ package productionruntime
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -806,6 +811,52 @@ func TestProgressSlowSubscriberCannotBlockAndMustResnapshot(t *testing.T) {
 	}
 }
 
+func TestProgressWatchRejectsUnbackedNotification(t *testing.T) {
+	query := progressFixture()
+	service, _ := NewProgressService(query, fixedActionCensus{})
+	watch, err := service.Watch("project-1", "mission-1", query.base.DatabaseID, query.base.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Cancel()
+	query.watch <- projection.NotificationV2{DatabaseID: query.base.DatabaseID, Revision: query.base.Revision + 1, RuntimeEpochID: query.base.RuntimeEpochID}
+	select {
+	case err := <-watch.Errors:
+		if !IsProgressKind(err, ProgressResyncRequired) {
+			t.Fatalf("unbacked watch notification err=%v", err)
+		}
+	case value := <-watch.C:
+		t.Fatalf("watch notification became durable progress: %+v", value)
+	case <-time.After(time.Second):
+		t.Fatal("unbacked watch notification was not refused")
+	}
+}
+
+func TestProductionHostSurfaceHasNoRawAuthorityOrBackendSelector(t *testing.T) {
+	for _, typ := range []reflect.Type{reflect.TypeOf(Host{}), reflect.TypeOf(Config{})} {
+		for index := 0; index < typ.NumField(); index++ {
+			field := typ.Field(index)
+			if !field.IsExported() {
+				continue
+			}
+			text := strings.ToLower(field.Name + " " + field.Type.String())
+			for _, forbidden := range []string{"rawowner", "rawadapter", "databasehandle", "sqlitefallback", "backendselector", "controlstore/gapdb.adapter"} {
+				if strings.Contains(strings.ReplaceAll(text, " ", ""), forbidden) {
+					t.Fatalf("production surface leaked %s", field.Name)
+				}
+			}
+		}
+	}
+	hostType := reflect.TypeOf((*Host)(nil))
+	for index := 0; index < hostType.NumMethod(); index++ {
+		method := hostType.Method(index)
+		text := strings.ToLower(method.Type.String())
+		if strings.Contains(text, "controlstore/gapdb") || strings.Contains(text, "sidecar/gapdb") {
+			t.Fatalf("production method leaked raw authority: %s", method.Name)
+		}
+	}
+}
+
 func TestProgressTenThousandQueriesRemainMemoryOnlyAndBelowP95Budget(t *testing.T) {
 	query := progressFixture()
 	service, _ := NewProgressService(query, nil)
@@ -934,4 +985,124 @@ func repeatByte(value byte, count int) string {
 		result[i] = value
 	}
 	return string(result)
+}
+
+type wp13SourceReplacement struct{ old, new string }
+type wp13ProductionMutant struct {
+	id, source, pkg, killer, want string
+	replacements                  []wp13SourceReplacement
+}
+
+func TestWP13MandatoryProductionMutantCampaign(t *testing.T) {
+	if testing.Short() {
+		t.Skip("WP13 production overlay campaign is excluded from the short tier")
+	}
+	if os.Getenv("SPEC_KITTY_WP13_GAPDBD") == "" {
+		t.Skip("exact admitted sidecar is required for the lost-memory mutant control")
+	}
+	root := wp13RepositoryRoot(t)
+	mutants := []wp13ProductionMutant{
+		{"arbitrary_executable", "internal/sidecar/gapdb/provenance.go", "./internal/sidecar/gapdb", "TestProductionExecutableRequiresAbsolutePath", "relative executable did not fail", []wp13SourceReplacement{{`if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, 0) {`, `if path == "" || strings.ContainsRune(path, 0) {`}}},
+		{"unadopted_record", "internal/sidecar/gapdb/adoption.go", "./internal/sidecar/gapdb", "TestProductionAdoptionRecordRejectsEveryAuthorityCoordinate", "signature_value", []wp13SourceReplacement{{`record.Signature.Kind != AdoptedSignatureKind || record.Signature.Value != AdoptedSignatureValue`, `record.Signature.Kind != AdoptedSignatureKind || record.Signature.Value == ""`}}},
+		{"classifier_after_mutation", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestStartupRefusesMismatchedAndHistoricalRootsBeforeSidecarAcquisition", "historical root err", []wp13SourceReplacement{{"decision, err := classifier.Decide(ctx, config.ControlRoot)\n\tif err != nil {\n\t\treturn nil, err\n\t}", "decision, err := classifier.Decide(ctx, config.ControlRoot)\n\tif err != nil {\n\t\tdecision = controlroot.Decision{}\n\t}"}}},
+		{"second_host", "internal/productionruntime/host.go", "./internal/productionruntime", "TestHostSecondOwnerForSameDatabaseRefusesAndDifferentDatabasesProgress", "second owner err=<nil>", []wp13SourceReplacement{{`if current := liveOwners.byDatabase[h.ownerKey]; current != nil && current != h {`, `if current := liveOwners.byDatabase[h.ownerKey]; current != nil && current != h && false {`}}},
+		{"ready_before_recovery", "internal/productionruntime/host.go", "./internal/productionruntime", "TestHostBarrierRejectsEveryNonReadyStateAndStaleEpochBeforeCommand", "state=recovering", []wp13SourceReplacement{{"func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {\n\th.mu.Lock()\n\tif h.state != HostReady {", "func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {\n\th.mu.Lock()\n\tif false {"}}},
+		{"epoch_before_restore", "internal/productionruntime/recovery.go", "./internal/productionruntime", "TestFreshEpochRequiresSealedRestoreAndRotatesPredecessorDurably", "forged restore admitted", []wp13SourceReplacement{{"request, err := recovered.FreshEpochAdmissionRequestV2()\n\tif err != nil || request.DatabaseID() != binding.DatabaseID", "request, err := recovered.FreshEpochAdmissionRequestV2()\n\tif err != nil { return journalv2.RuntimeEpochID(\"epoch-mutant\"), nil }\n\tif request.DatabaseID() != binding.DatabaseID"}}},
+		{"predecessor_client", "internal/productionruntime/host.go", "./internal/productionruntime", "TestHostBarrierRejectsEveryNonReadyStateAndStaleEpochBeforeCommand", "stale epoch err=<nil>", []wp13SourceReplacement{{`if expectedEpoch != h.epoch {`, `if expectedEpoch != h.epoch && false {`}}},
+		{"projection_before_ack", "internal/projection/authority.go", "./internal/projection", "TestProjectionPublishesCompleteAcknowledgedRevisionsAndDefensiveQueries", "duplicate acknowledgement err=<nil>", []wp13SourceReplacement{{`return &ErrorV2{ErrorIncompleteRevisionV2, "acknowledgement"}`, `return nil`}}},
+		{"watch_as_durable", "internal/productionruntime/progress.go", "./internal/productionruntime", "TestProgressWatchRejectsUnbackedNotification", "watch notification became durable progress", []wp13SourceReplacement{{`if queryErr != nil || value.ProjectionRevision != notification.Revision {`, `if queryErr != nil {`}}},
+		{"lost_memory_loses_state", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch", "reconciliation publication absent after rescan", []wp13SourceReplacement{{"if err := authority.RestoreCurrentEpoch(epoch, restored); err != nil {\n\t\treturn nil, nil, err\n\t}", "// mutant: discard restored state"}}},
+		{"query_mints_authority", "internal/projection/query.go", "./internal/projection", "TestQueryPortCannotMutateAuthorityOrCollapseProgressIntoCeremony", "query method count", []wp13SourceReplacement{{"\tProgressBase(string) (ProgressBaseV2, error)\n}", "\tProgressBase(string) (ProgressBaseV2, error)\n\tPublishAcknowledged(journalv2.AcknowledgedPublicationV2) error\n}"}}},
+		{"raw_handle_escape", "internal/productionruntime/host.go", "./internal/productionruntime", "TestProductionHostSurfaceHasNoRawAuthorityOrBackendSelector", "production surface leaked RawOwner", []wp13SourceReplacement{{"type Host struct {\n\tmu", "type Host struct {\n\tRawOwner ownerLifecycle\n\tmu"}}},
+		{"sqlite_backend_selector", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestProductionHostSurfaceHasNoRawAuthorityOrBackendSelector", "production surface leaked SQLiteFallback", []wp13SourceReplacement{{"type Config struct {\n", "type Config struct {\n\tSQLiteFallback any\n"}}},
+		{"playback_external_io", "internal/productionruntime/recovery.go", "./internal/productionruntime", "TestProductionReducerCompositionIsCompleteAndRuntimePlaybackPure", "mutant external call", []wp13SourceReplacement{{"\t\"sort\"\n\t\"sync\"", "\t\"sort\"\n\t\"sync\"\n\t\"os\""}, {"func ReduceRuntimeHostEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte, error) {\n", "func ReduceRuntimeHostEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte, error) {\n\tif _, err := os.Stat(\".\"); err == nil { return nil, fmt.Errorf(\"mutant external call\") }\n"}}},
+	}
+	if len(mutants) != 14 {
+		t.Fatalf("WP13 mutant census=%d want=14", len(mutants))
+	}
+	seen := make(map[string]bool, len(mutants))
+	for _, mutant := range mutants {
+		mutant := mutant
+		t.Run(mutant.id, func(t *testing.T) {
+			if mutant.id == "" || mutant.source == "" || mutant.pkg == "" || mutant.killer == "" || mutant.want == "" || len(mutant.replacements) == 0 || seen[mutant.id] {
+				t.Fatalf("unsealed mutant row: %+v", mutant)
+			}
+			seen[mutant.id] = true
+			if output, err := wp13RunKiller(t, root, mutant, ""); err != nil {
+				t.Fatalf("positive control failed: %v\n%s", err, output)
+			}
+			mutated := wp13MutatedSource(t, filepath.Join(root, mutant.source), mutant.replacements)
+			overlay := wp13Overlay(t, filepath.Join(root, mutant.source), mutated)
+			output, err := wp13RunKiller(t, root, mutant, overlay)
+			if err == nil {
+				t.Fatalf("production mutant survived\n%s", output)
+			}
+			if !strings.Contains(output, mutant.want) {
+				t.Fatalf("mutant died for wrong reason; want %q\n%s", mutant.want, output)
+			}
+		})
+	}
+}
+
+func wp13RepositoryRoot(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate WP13 mutant campaign")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
+}
+
+func wp13MutatedSource(t *testing.T, source string, replacements []wp13SourceReplacement) string {
+	t.Helper()
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := string(raw)
+	for _, replacement := range replacements {
+		if count := strings.Count(value, replacement.old); count != 1 {
+			t.Fatalf("mutant anchor count=%d source=%s anchor=%q", count, source, replacement.old)
+		}
+		value = strings.Replace(value, replacement.old, replacement.new, 1)
+	}
+	path := filepath.Join(t.TempDir(), filepath.Base(source))
+	if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func wp13Overlay(t *testing.T, source, replacement string) string {
+	t.Helper()
+	raw, err := json.Marshal(struct {
+		Replace map[string]string `json:"Replace"`
+	}{map[string]string{source: replacement}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "overlay.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func wp13RunKiller(t *testing.T, root string, mutant wp13ProductionMutant, overlay string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	args := []string{"test"}
+	if overlay != "" {
+		args = append(args, "-overlay="+overlay)
+	}
+	args = append(args, mutant.pkg, "-run", "^"+mutant.killer+"$", "-count=1")
+	command := exec.CommandContext(ctx, "go", args...)
+	command.Dir = root
+	command.Env = os.Environ()
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		return string(output), fmt.Errorf("killer timed out: %w", ctx.Err())
+	}
+	return string(output), err
 }

@@ -89,6 +89,16 @@ func TestProductionAdoptionRecordRejectsSymlinkAndUnknownField(t *testing.T) {
 	}
 }
 
+func TestProductionExecutableRequiresAbsolutePath(t *testing.T) {
+	admission, err := filepath.Abs(filepath.Join("..", "..", "..", "docs", "programs", "evidence", "m1-admission.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyExecutable(VerifyConfig{ExecutablePath: "gapdbd", AdmissionRecordPath: admission}); !IsFailure(err, FailureInvalidConfiguration) {
+		t.Fatalf("relative executable did not fail configuration admission: %v", err)
+	}
+}
+
 func stringOf(value byte, count int) string {
 	result := make([]byte, count)
 	for i := range result {
