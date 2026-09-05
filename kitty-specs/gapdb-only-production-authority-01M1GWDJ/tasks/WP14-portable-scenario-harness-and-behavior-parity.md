@@ -353,8 +353,11 @@ mutant instead of claiming a synthetic Cartesian campaign.
    cut at least 100 times as required by NFR-001, NFR-002, FR-025, and the
    mission success criteria.
 4. Add an executable composition guard and controlled bypass mutant proving
-   every registered family reaches authority only through that qualified
-   boundary. Do not add a production fault-injection configuration surface.
+   every host-served command capability reaches authority only through that
+   qualified boundary. Qualify `runtime_host` bootstrap at its pre-coordinator
+   sealed GapDB batch; treat `operation` as mandatory plan membership; and do
+   not claim a Host route for registered `outbox` until one exists. Do not add
+   a production fault-injection configuration surface.
 5. Script fake tracker observations for unavailable, stale, contradictory,
    unattributed, maliciously changed, and permanently ambiguous outcomes while
    preserving the existing fake tracker protocol.

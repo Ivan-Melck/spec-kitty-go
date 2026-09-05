@@ -25,8 +25,9 @@ Qualification is orthogonal and compositional:
    required repetitions.
 2. Every provider/transport cut executes through the sole real publication
    coordinator and GapDB committer under the required repetitions.
-3. An executable composition guard proves every production capability is
-   wired to that coordinator/committer and no alternate publisher exists.
+3. An executable composition guard proves every host-served command capability
+   is wired to that coordinator/committer and no alternate command publisher
+   exists.
 4. A controlled source overlay bypasses the boundary and must be killed by the
    composition guard.
 5. The evidence ledger reports these axes separately. It never multiplies
@@ -44,3 +45,12 @@ composition proof.
   than simulated inconsistently in fifteen consumers.
 - A future capability must join the registered family census and the
   no-bypass composition guard before it can be production-admitted.
+
+The composition claim has three explicit, testable boundaries. `runtime_host`
+bootstrap admission necessarily occurs before the coordinator exists and is
+qualified as its own sealed atomic GapDB batch. `operation` is mandatory
+membership in every command plan rather than a standalone command port.
+`outbox` is registered, replayed, and adapter-qualified, but has no production
+Host command surface yet; it must join the no-bypass guard if such a surface is
+introduced. None of these cases is counted as if it traversed a port it does
+not have.
