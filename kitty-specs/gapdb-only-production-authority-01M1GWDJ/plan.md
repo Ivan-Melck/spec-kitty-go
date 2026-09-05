@@ -429,7 +429,10 @@ Each capability slice must pass before its dependents begin:
 
 The final source-bound campaign additionally executes:
 
-- a complete two-item mission with restart between every major phase;
+- a complete two-item mission with two simultaneous work authorities, distinct
+  lease-scoped workspaces, attributed tracker effects, independent reviews,
+  serialized integration, and production startup reconciliation after durable
+  ambiguous effect observations;
 - 100 two-agent authority trials and 100 clean/unclean epoch replacements;
 - 100 semantic publication/replay repetitions for every authority-changing
   family, 100 repetitions of every transport/acknowledgement/reconciliation
@@ -444,6 +447,14 @@ The final source-bound campaign additionally executes:
 Failed, incomplete, and non-admissible campaigns remain immutable evidence.
 Only one complete census from one exact source/tree/dependency/binary tuple may
 support the final M2 decision.
+
+Concurrency evidence follows the orthogonal qualification recorded in
+`research/compositional-concurrency-qualification.md`: the complete scenario,
+capability-owned same-key/unrelated-key contention tests, the host no-global-
+mutex proof, and controlled mutants are separately attributable axes. Native
+autonomous readiness and an acknowledged WorkRevision replace the removed
+Python phase/task-list ceremony; an outbox Host route is not claimed where none
+exists.
 
 ## Implementation Concern Map
 
