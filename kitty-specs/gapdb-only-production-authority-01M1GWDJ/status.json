@@ -463,7 +463,8 @@
       "notes": [
         "Ready for independent review. go test ./internal/integration -count=1: exit 0; go test ./internal/controlstore/gapdb -count=1: exit 0; go test -race ./internal/integration -count=1: exit 0; go vet ./internal/integration ./internal/controlstore/gapdb: exit 0; staticcheck ./internal/integration ./internal/controlstore/gapdb: 0 issues, exit 0; diff-scoped gofmt and git diff --check: clean.",
         "Ready for independent cycle-3 review: bounded error serialization, observe-before-cleanup retry, and sealed 27-mutant authority census",
-        "Ready for independent cycle-4 review: waiver omission mutant now isolated from unrelated policy facts"
+        "Ready for independent cycle-4 review: waiver omission mutant now isolated from unrelated policy facts",
+        "Independent cycle-4 review passed c815737e: exact waiver-fact omission control typed-refuses with zero publication; M-WP10-WAIVER-OMITTED admits only under the production overlay for the intended reason; all 27 sealed executable mutants, focused repetition/race, integration regressions, architecture, vet, staticcheck, whole-module compile, module verification, formatting, ownership, and all eight anti-pattern checks pass. --force is used only because historical committed status.events.jsonl/status.json remain detectable after the prescribed 1febd15c lane cleanup; no product or unrelated lifecycle artifact is being accepted."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
