@@ -2,7 +2,6 @@ package scenario
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
 	"testing"
 
@@ -103,8 +102,4 @@ func zeroMissionCommand() mission.MissionAuthorityCommandV2 {
 	// Kept separate only to make accidental command construction at this probe
 	// a compile-time error. The caller converts no untrusted or textual input.
 	return mission.MissionAuthorityCommandV2{}
-}
-
-func invariantFailure(scenario, cut, law string, cause error) error {
-	return fmt.Errorf("scenario=%s cut=%s law=%s: %w", scenario, cut, law, cause)
 }
