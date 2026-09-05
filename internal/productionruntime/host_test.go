@@ -39,14 +39,19 @@ import (
 type hostOwnerProbe struct {
 	database journalv2.DatabaseID
 	probes   atomic.Int64
+	expired  atomic.Int64
 	closed   atomic.Int64
 	fail     atomic.Bool
 	failFor  atomic.Int64
 }
 
 func (o *hostOwnerProbe) DatabaseID() journalv2.DatabaseID { return o.database }
-func (o *hostOwnerProbe) Probe(context.Context) error {
+func (o *hostOwnerProbe) Probe(ctx context.Context) error {
 	o.probes.Add(1)
+	if ctx.Err() != nil {
+		o.expired.Add(1)
+		return ctx.Err()
+	}
 	for remaining := o.failFor.Load(); remaining > 0; remaining = o.failFor.Load() {
 		if o.failFor.CompareAndSwap(remaining, remaining-1) {
 			return fmt.Errorf("injected transient owner probe failure")
@@ -434,6 +439,31 @@ func TestHostMonitorDoesNotClassifyInFlightProviderStateAsOwnerLoss(t *testing.T
 	}
 	if host.State() != HostDegraded || owner.probes.Load() == 0 {
 		t.Fatalf("monitor failed to resume after command: state=%s probes=%d", host.State(), owner.probes.Load())
+	}
+}
+
+func TestHostMonitorStartsProbeDeadlineAfterInFlightCommandDrains(t *testing.T) {
+	host, _ := hostFixture(t, "database-monitor-probe-deadline")
+	owner := host.owner.(*hostOwnerProbe)
+	_ = host.transition(HostReconciling)
+	_ = host.transition(HostReady)
+	release, err := host.beginCommand("epoch-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.startMonitor(context.Background(), time.Millisecond)
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	// Exceed the monitor's minimum one-second probe timeout while the command
+	// barrier is intentionally held. The eventual probe must still receive its
+	// complete deadline because lock-wait time is not provider-health evidence.
+	time.Sleep(1100 * time.Millisecond)
+	release()
+	deadline := time.Now().Add(time.Second)
+	for owner.probes.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if owner.probes.Load() == 0 || owner.expired.Load() != 0 || host.State() != HostReady {
+		t.Fatalf("probes=%d expired=%d state=%s", owner.probes.Load(), owner.expired.Load(), host.State())
 	}
 }
 
