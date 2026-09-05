@@ -101,12 +101,12 @@ func TestM2AutonomyEvaluatorIsPureAndTakesOneImmutableSnapshot(t *testing.T) {
 		t.Fatal("pure readiness evaluator is absent")
 	}
 	snapshotSource := readM2AutonomySource(t, root, "internal/mission/readiness_snapshot.go")
-	for _, required := range []string{"CapabilityObservationSetV2", "len(observations) != len(allActionIDs)", "non_capture_authority_revision", "capture.DatabaseID()", "snapshotDigest"} {
+	for _, required := range []string{"CapabilityObservationSetV2", "CapabilityReadinessSourceV2", "NewCapabilityAuthorityObserverV2", "len(observations) != len(allActionIDs)", "non_capture_authority_revision", "capture.DatabaseID()", "snapshotDigest"} {
 		if !strings.Contains(snapshotSource, required) {
 			t.Fatalf("sealed readiness snapshot lacks completeness law %s", required)
 		}
 	}
-	for _, forbidden := range []string{"type ReadinessEvidence struct", "type CapabilityScopeSet struct", "type CapabilityScopeCensus struct"} {
+	for _, forbidden := range []string{"type ReadinessEvidence struct", "type CapabilityScopeSet struct", "type CapabilityScopeCensus struct", "func SealCapabilityAuthorityObservationV2"} {
 		if strings.Contains(snapshotSource, forbidden) {
 			t.Fatalf("readiness seal exposes caller-authored authority bag %s", forbidden)
 		}

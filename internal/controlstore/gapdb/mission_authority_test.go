@@ -538,8 +538,18 @@ func readinessCensusGapDBFixtureV2(t *testing.T, state mission.ReadinessAuthorit
 	definition := softwaredev.CapabilityDefinition()
 	observations := make([]mission.CapabilityAuthorityObservationV2, 0, len(mission.AllActionIDs()))
 	evidenceDigest := readinessDigestGapDBFixtureV2(t, "complete-scope-census").String()
+	source := gapDBCapabilityReadinessSourceFuncV2(func(_ context.Context, query mission.CapabilityReadinessQueryV2) (mission.CapabilityReadinessEvidenceV2, error) {
+		return mission.CapabilityReadinessEvidenceV2{
+			Capture: query.Capture(), ProjectID: query.ProjectID(), MissionID: query.MissionID(), Action: query.Action(),
+			ObservedAbsent: true, EvidenceIdentity: "absence-" + string(query.Action()), EvidenceDigest: evidenceDigest,
+		}, nil
+	})
+	observer, err := mission.NewCapabilityAuthorityObserverV2(source)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, template := range definition.Templates() {
-		observation, err := mission.SealCapabilityAuthorityObservationV2(capture, state.ProjectID(), state.MissionID(), template.Action, nil, nil, "absence-"+string(template.Action), evidenceDigest)
+		observation, err := observer.Observe(t.Context(), capture, state.ProjectID(), state.MissionID(), template.Action)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -562,6 +572,12 @@ func readinessCensusGapDBFixtureV2(t *testing.T, state mission.ReadinessAuthorit
 		t.Fatal(err)
 	}
 	return census
+}
+
+type gapDBCapabilityReadinessSourceFuncV2 func(context.Context, mission.CapabilityReadinessQueryV2) (mission.CapabilityReadinessEvidenceV2, error)
+
+func (f gapDBCapabilityReadinessSourceFuncV2) ObserveCapabilityReadiness(ctx context.Context, query mission.CapabilityReadinessQueryV2) (mission.CapabilityReadinessEvidenceV2, error) {
+	return f(ctx, query)
 }
 
 func readinessAuthorityGapDBFixtureV2(t *testing.T) (*v2AtomicMemory, *fakeProvider, mission.ReadinessAuthorityPortV2) {

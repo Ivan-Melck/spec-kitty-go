@@ -2,6 +2,7 @@ package mission
 
 import (
 	"bytes"
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -342,7 +343,7 @@ func TestReadinessRequiresCompleteSealedDefinitionScopeCensusAndAuthorityMembers
 	}
 	fact = satisfiedFact(PredicateProjectVerification, ActionAcceptanceEvaluate)
 	fact.Authority.Revision = 4
-	if _, err := SealCapabilityAuthorityObservationV2(capture, "project-readiness", "mission-future", fact.Action, nil, []PredicateFact{fact}, "absence", testEvidenceDigest()); !IsReadinessKind(err, ReadinessInvalidFact) {
+	if _, err := observeCapabilityEvidenceForTest(capture, "project-readiness", "mission-future", fact.Action, nil, []PredicateFact{fact}, true, "absence", testEvidenceDigest()); !IsReadinessKind(err, ReadinessInvalidFact) {
 		t.Fatalf("future observation entered one-revision snapshot: %v", err)
 	}
 }
@@ -369,10 +370,20 @@ func TestReadinessSealBindsDatabaseMissionAndExactCaptureAndDerivesMissionScope(
 	if _, err := NewReadinessAuthorityObservationV2(state, capture, 8, ""); !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidRequestV2) {
 		t.Fatalf("future record revision entered snapshot: %v", err)
 	}
-	if _, err := SealCapabilityAuthorityObservationV2(capture, "project-readiness", "mission-bound", ActionExecutionClaim, nil, nil, "", ""); !IsReadinessKind(err, ReadinessInvalidInput) {
+	wrongSource := capabilityReadinessSourceFuncV2(func(_ context.Context, query CapabilityReadinessQueryV2) (CapabilityReadinessEvidenceV2, error) {
+		return CapabilityReadinessEvidenceV2{
+			Capture: wrongDatabase, ProjectID: query.ProjectID(), MissionID: query.MissionID(), Action: query.Action(),
+			ObservedAbsent: true, EvidenceIdentity: "absence", EvidenceDigest: testEvidenceDigest(),
+		}, nil
+	})
+	wrongObserver, _ := NewCapabilityAuthorityObserverV2(wrongSource)
+	if _, err := wrongObserver.Observe(context.Background(), capture, "project-readiness", "mission-bound", ActionExecutionClaim); !IsReadinessKind(err, ReadinessInvalidInput) {
+		t.Fatalf("capability reader echoed a different database capture: %v", err)
+	}
+	if _, err := observeCapabilityEvidenceForTest(capture, "project-readiness", "mission-bound", ActionExecutionClaim, nil, nil, true, "", ""); !IsReadinessKind(err, ReadinessInvalidInput) {
 		t.Fatalf("empty dynamic membership without absence evidence was accepted: %v", err)
 	}
-	forgedMissionScope, err := SealCapabilityAuthorityObservationV2(capture, "project-readiness", "mission-bound", ActionIntegrationPublish, []AuthorityScope{{Kind: ScopeMission, Identity: "mission-forged"}}, nil, "", "")
+	forgedMissionScope, err := observeCapabilityEvidenceForTest(capture, "project-readiness", "mission-bound", ActionIntegrationPublish, []AuthorityScope{{Kind: ScopeMission, Identity: "mission-forged"}}, nil, false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,13 +531,33 @@ func testCapabilityObservations(t *testing.T, capture journalv2.StoreRevisionV2,
 		if len(scopes) == 0 {
 			absenceID, absenceDigest = "absence-"+string(action), testEvidenceDigest()
 		}
-		observation, err := SealCapabilityAuthorityObservationV2(capture, projectID, missionID, action, scopes, actionFacts, absenceID, absenceDigest)
+		observation, err := observeCapabilityEvidenceForTest(capture, projectID, missionID, action, scopes, actionFacts, len(scopes) == 0, absenceID, absenceDigest)
 		if err != nil {
 			t.Fatal(err)
 		}
 		values = append(values, observation)
 	}
 	return values
+}
+
+type capabilityReadinessSourceFuncV2 func(context.Context, CapabilityReadinessQueryV2) (CapabilityReadinessEvidenceV2, error)
+
+func (f capabilityReadinessSourceFuncV2) ObserveCapabilityReadiness(ctx context.Context, query CapabilityReadinessQueryV2) (CapabilityReadinessEvidenceV2, error) {
+	return f(ctx, query)
+}
+
+func observeCapabilityEvidenceForTest(capture journalv2.StoreRevisionV2, projectID journalv2.ProjectID, missionID journalv2.MissionID, action ActionID, scopes []AuthorityScope, facts []PredicateFact, observedAbsent bool, evidenceIdentity, evidenceDigest string) (CapabilityAuthorityObservationV2, error) {
+	source := capabilityReadinessSourceFuncV2(func(_ context.Context, query CapabilityReadinessQueryV2) (CapabilityReadinessEvidenceV2, error) {
+		return CapabilityReadinessEvidenceV2{
+			Capture: query.Capture(), ProjectID: query.ProjectID(), MissionID: query.MissionID(), Action: query.Action(),
+			Scopes: scopes, Facts: facts, ObservedAbsent: observedAbsent, EvidenceIdentity: evidenceIdentity, EvidenceDigest: evidenceDigest,
+		}, nil
+	})
+	observer, err := NewCapabilityAuthorityObserverV2(source)
+	if err != nil {
+		return CapabilityAuthorityObservationV2{}, err
+	}
+	return observer.Observe(context.Background(), capture, projectID, missionID, action)
 }
 
 func testObservationSet(t *testing.T, capture journalv2.StoreRevisionV2, projectID journalv2.ProjectID, missionID journalv2.MissionID, contracts []CapabilityContract, facts []PredicateFact) CapabilityObservationSetV2 {

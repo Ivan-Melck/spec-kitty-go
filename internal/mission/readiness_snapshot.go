@@ -1,6 +1,7 @@
 package mission
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,65 @@ import (
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
+
+// CapabilityReadinessQueryV2 is an immutable exact-capture request issued by
+// the WP11 composition observer to one capability-owned reader.
+type CapabilityReadinessQueryV2 struct {
+	capture   journalv2.StoreRevisionV2
+	projectID journalv2.ProjectID
+	missionID journalv2.MissionID
+	action    ActionID
+}
+
+func (q CapabilityReadinessQueryV2) Capture() journalv2.StoreRevisionV2 { return q.capture }
+func (q CapabilityReadinessQueryV2) ProjectID() journalv2.ProjectID     { return q.projectID }
+func (q CapabilityReadinessQueryV2) MissionID() journalv2.MissionID     { return q.missionID }
+func (q CapabilityReadinessQueryV2) Action() ActionID                   { return q.action }
+
+// CapabilityReadinessEvidenceV2 is normalized output from a capability-owned
+// reader. It is not authority by itself; the observer below validates its
+// echoed capture and membership before minting an opaque observation.
+type CapabilityReadinessEvidenceV2 struct {
+	Capture          journalv2.StoreRevisionV2
+	ProjectID        journalv2.ProjectID
+	MissionID        journalv2.MissionID
+	Action           ActionID
+	Scopes           []AuthorityScope
+	Facts            []PredicateFact
+	ObservedAbsent   bool
+	EvidenceIdentity string
+	EvidenceDigest   string
+}
+
+type CapabilityReadinessSourceV2 interface {
+	ObserveCapabilityReadiness(context.Context, CapabilityReadinessQueryV2) (CapabilityReadinessEvidenceV2, error)
+}
+
+// CapabilityAuthorityObserverV2 is the narrow sealed producer seam reserved
+// for WP11. It is deliberately separate from the pure snapshot evaluator.
+type CapabilityAuthorityObserverV2 struct{ source CapabilityReadinessSourceV2 }
+
+func NewCapabilityAuthorityObserverV2(source CapabilityReadinessSourceV2) (*CapabilityAuthorityObserverV2, error) {
+	if source == nil {
+		return nil, &ReadinessError{Kind: ReadinessInvalidInput, Field: "capability_source"}
+	}
+	return &CapabilityAuthorityObserverV2{source: source}, nil
+}
+
+func (o *CapabilityAuthorityObserverV2) Observe(ctx context.Context, capture journalv2.StoreRevisionV2, projectID journalv2.ProjectID, missionID journalv2.MissionID, action ActionID) (CapabilityAuthorityObservationV2, error) {
+	if o == nil || o.source == nil || ctx == nil {
+		return CapabilityAuthorityObservationV2{}, &ReadinessError{Kind: ReadinessInvalidInput, Field: "capability_observer"}
+	}
+	query := CapabilityReadinessQueryV2{capture: capture, projectID: projectID, missionID: missionID, action: action}
+	evidence, err := o.source.ObserveCapabilityReadiness(ctx, query)
+	if err != nil {
+		return CapabilityAuthorityObservationV2{}, &ReadinessError{Kind: ReadinessInvalidInput, Field: "capability_observation_unavailable"}
+	}
+	if !sameReadinessCapture(evidence.Capture, capture) || evidence.ProjectID != projectID || evidence.MissionID != missionID || evidence.Action != action || evidence.ObservedAbsent != (len(evidence.Scopes) == 0) {
+		return CapabilityAuthorityObservationV2{}, &ReadinessError{Kind: ReadinessInvalidInput, Field: "capability_observation_coordinate"}
+	}
+	return sealCapabilityAuthorityObservationV2(capture, projectID, missionID, action, evidence.Scopes, evidence.Facts, evidence.EvidenceIdentity, evidence.EvidenceDigest)
+}
 
 // CapabilityAuthorityObservationV2 is an opaque observation produced by one
 // capability reader at one exact GapDB capture. Empty dynamic membership is
@@ -25,10 +85,9 @@ type CapabilityAuthorityObservationV2 struct {
 	canonical       []byte
 }
 
-// SealCapabilityAuthorityObservationV2 is the narrow producer seam reserved
-// for capability-owned readers. It binds all membership and predicate facts
-// to the same project, mission, database incarnation, and exact revision.
-func SealCapabilityAuthorityObservationV2(capture journalv2.StoreRevisionV2, projectID journalv2.ProjectID, missionID journalv2.MissionID, action ActionID, scopes []AuthorityScope, facts []PredicateFact, absenceIdentity, absenceDigest string) (CapabilityAuthorityObservationV2, error) {
+// sealCapabilityAuthorityObservationV2 is intentionally private. Production
+// callers must obtain observations through a capability-owned source above.
+func sealCapabilityAuthorityObservationV2(capture journalv2.StoreRevisionV2, projectID journalv2.ProjectID, missionID journalv2.MissionID, action ActionID, scopes []AuthorityScope, facts []PredicateFact, absenceIdentity, absenceDigest string) (CapabilityAuthorityObservationV2, error) {
 	if _, err := journalv2.NewStoreRevisionV2(capture.DatabaseID(), capture.CurrentRevision(), capture.DurableThroughRevision()); err != nil {
 		return CapabilityAuthorityObservationV2{}, &ReadinessError{Kind: ReadinessInvalidInput, Field: "capability_capture"}
 	}
