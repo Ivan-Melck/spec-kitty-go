@@ -476,9 +476,6 @@ func (s MissionSnapshot) Validate() error {
 		if _, err := ids.ParseWorkRevisionID(s.CurrentWorkRevisionID.String()); err != nil {
 			return err
 		}
-		if s.CurrentStep != StepWorkFinalized && s.CurrentStep != StepReconciliationRequired {
-			return errors.New("current work revision is not legal before finalization")
-		}
 	}
 	if s.CurrentStep == StepWorkFinalized && s.CurrentWorkRevisionID == "" {
 		return errors.New("finalized mission requires a current work revision")
