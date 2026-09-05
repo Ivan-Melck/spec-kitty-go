@@ -677,16 +677,16 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
-        "T093": "planned",
-        "T094": "planned",
-        "T095": "planned",
-        "T096": "planned",
-        "T097": "planned",
-        "T098": "planned",
-        "T099": "planned"
+        "T093": "done",
+        "T094": "done",
+        "T095": "done",
+        "T096": "done",
+        "T097": "done",
+        "T098": "done",
+        "T099": "done"
       }
     }
   }
