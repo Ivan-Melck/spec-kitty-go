@@ -574,7 +574,8 @@
         "Independent review passed; GapDB-only host, readiness selection, replay, progress, and 20-mutant outer guard verified",
         "Ready for independent integration review: approved WP18 atomic readiness fact authority merged and host regression suite green",
         "Independent integration review passed: one GapDB owner, readiness/progress shared authority, 22 mutants and race evidence green",
-        "Codex implementation complete: monitor deadline begins after command drain; focused production and race gates pass"
+        "Codex implementation complete: monitor deadline begins after command drain; focused production and race gates pass",
+        "Independent review passed: probe deadline starts after command drain; old ordering killed by regression; real owner-loss, transient, cancellation, shutdown, full production, race, architecture, static and compile gates pass"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
