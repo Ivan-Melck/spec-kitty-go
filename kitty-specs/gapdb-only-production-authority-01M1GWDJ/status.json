@@ -1,7 +1,7 @@
 {
-  "event_count": 410,
-  "last_event_id": "01M1RRGCTY1W0CHSRC69712RQ1",
-  "materialized_at": "2026-09-05T12:25:46.590534+00:00",
+  "event_count": 411,
+  "last_event_id": "01M1RRH7FP0VSTZNQXWE23XCJV",
+  "materialized_at": "2026-09-05T12:26:13.878093+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,9 +11,9 @@
     "canceled": 0,
     "claimed": 0,
     "done": 10,
-    "for_review": 1,
+    "for_review": 0,
     "in_progress": 0,
-    "in_review": 0,
+    "in_review": 1,
     "planned": 4
   },
   "work_packages": {
@@ -553,21 +553,21 @@
       }
     },
     "WP13": {
-      "actor": "codex",
+      "actor": "mill",
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 1,
-      "lane": "for_review",
-      "last_event_id": "01M1RRGCTY1W0CHSRC69712RQ1",
-      "last_transition_at": "2026-09-05T12:25:46.590534+00:00",
+      "force_count": 2,
+      "lane": "in_review",
+      "last_event_id": "01M1RRH7FP0VSTZNQXWE23XCJV",
+      "last_transition_at": "2026-09-05T12:26:13.878093+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Allocation block resolved by dependency merge 6488469e; resume implementation.",
         "Override lane-purity ceremony: flagged kitty-specs files are Spec Kitty-owned historical evidence from dependency lane merges, not implementation contamination. Candidate 1a2af4fb independently approved."
       ],
       "provider": "__resolved_provider_absent__",
-      "role": "implementer",
+      "role": "reviewer",
       "shell_pid": 1798288,
       "shell_pid_created_at": "1788611140.44",
       "subtasks": {
