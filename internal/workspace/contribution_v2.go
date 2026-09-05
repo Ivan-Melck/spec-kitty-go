@@ -105,6 +105,49 @@ type TransitionContributionInputV2 struct {
 	OccurredAt     time.Time
 }
 
+// EpochRebindContributionInputV2 explicitly re-evaluates one lease-scoped
+// workspace under a newly admitted host epoch. The workspace identity and
+// lease coordinates remain immutable; only the host epoch and fresh
+// observation may change.
+type EpochRebindContributionInputV2 struct {
+	Prior          StateV2
+	RecordRevision uint64
+	EventID        journalv2.EventID
+	RuntimeEpochID journalv2.RuntimeEpochID
+	Observation    ObservationV2
+	OccurredAt     time.Time
+}
+
+func NewEpochRebindContributionV2(input EpochRebindContributionInputV2) (PlanContributionV2, error) {
+	if input.Prior.Validate() != nil || input.Prior.Stage == StageQuarantinedV2 || input.RecordRevision == 0 || input.EventID == "" || input.RuntimeEpochID == "" || input.RuntimeEpochID == input.Prior.Binding.RuntimeEpochID || input.OccurredAt.IsZero() {
+		return PlanContributionV2{}, workspaceV2Error(KindInvalid, "epoch_rebind_contribution", nil)
+	}
+	next := input.Prior
+	next.Binding = cloneBindingV2(input.Prior.Binding)
+	next.Binding.RuntimeEpochID = input.RuntimeEpochID
+	next.LogicalVersion++
+	next.Observation = input.Observation
+	next.OccurredAt = input.OccurredAt.UTC().Format(time.RFC3339Nano)
+	if next.Validate() != nil {
+		return PlanContributionV2{}, workspaceV2Error(KindInvalid, "epoch_rebind_state", nil)
+	}
+	priorDigest, _ := journalv2.ReducerStateDigestV2(input.Prior.CanonicalBytes())
+	eventBytes, err := encodeEventV2(EventV2{SchemaVersion: 1, Kind: "runtime_epoch_rebound", PriorDigest: priorDigest.String(), State: next})
+	if err != nil {
+		return PlanContributionV2{}, err
+	}
+	stateBytes := next.CanonicalBytes()
+	stateDigest, _ := journalv2.ReducerStateDigestV2(stateBytes)
+	coordinate, _ := WorkspaceCoordinateV2(next.Binding)
+	head := journalv2.HeadTransitionV2{Coordinate: coordinate, ExpectedLogicalVersion: journalv2.LogicalVersion(input.Prior.LogicalVersion), NextLogicalVersion: journalv2.LogicalVersion(next.LogicalVersion), EventID: input.EventID, ExpectedRecordRevision: input.RecordRevision, CommittedRuntimeEpochID: next.Binding.RuntimeEpochID, CanonicalStateDigest: stateDigest, AuthoritySummary: stateBytes}
+	condition, err := journalv2.ConditionForHeadTransitionV2(head)
+	if err != nil {
+		return PlanContributionV2{}, err
+	}
+	event := journalv2.EventDraftV2{EventID: input.EventID, EventType: "workspace.runtime_epoch_rebound", Family: "workspace", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: coordinate, AggregateLogicalVersion: journalv2.LogicalVersion(next.LogicalVersion), CommittedRuntimeEpochID: next.Binding.RuntimeEpochID, ActorID: journalv2.ActorID(next.Binding.ActorID), ProcessID: journalv2.ProcessID(next.Binding.ProcessID), WorkRevisionID: journalv2.WorkRevisionID(next.Binding.WorkRevisionID), Payload: eventBytes}
+	return PlanContributionV2{state: next, event: event, head: head, condition: condition}, nil
+}
+
 // NewTransitionContributionV2 constructs an ordinary preparation transition.
 // Quarantine is deliberately excluded: it is valid only through the
 // execution-owned expiry composition.

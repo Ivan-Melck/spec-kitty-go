@@ -72,15 +72,45 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 		t.Fatalf("exact replay did not precede authority reads: %+v %v", replayed, err)
 	}
 
-	bound := result.Execution
-	priorWorkspace := result.Workspace
-	expiredAt := time.Date(2026, 9, 5, 13, 0, 0, 0, time.UTC)
-	quarantine, err := workspace.NewQuarantineContributionV2(workspace.QuarantineContributionInputV2{Prior: priorWorkspace, RecordRevision: 11, EventID: "event-workspace-quarantine", Reason: workspace.QuarantineLeaseExpired, OccurredAt: expiredAt})
+	boundBeforeRebind := result.Execution
+	workspaceBeforeRebind := result.Workspace
+	rebindAt := request.ObservedAt.Add(2 * time.Second)
+	rebindContribution, err := workspace.NewEpochRebindContributionV2(workspace.EpochRebindContributionInputV2{
+		Prior: workspaceBeforeRebind, RecordRevision: 19, EventID: "event-workspace-runtime-epoch-rebind",
+		RuntimeEpochID: "epoch-2", Observation: workspaceBeforeRebind.Observation, OccurredAt: rebindAt,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	port.execution = ExecutionSlotObservationV2{State: &bound, RecordRevision: 9}
-	port.workspace = WorkspaceAuthorityObservationV2{State: &priorWorkspace, RecordRevision: 11}
+	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}
+	port.execution = ExecutionSlotObservationV2{State: &boundBeforeRebind, RecordRevision: 19}
+	port.workspace = WorkspaceAuthorityObservationV2{State: &workspaceBeforeRebind, RecordRevision: 19}
+	service, err = NewWorkspaceAuthorityServiceV2(port, &executionEpochProbeV2{epoch: "epoch-2"}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebindRequest := WorkspaceAuthorityRequestV2{Kind: WorkspaceRebindV2, OperationID: "operation-workspace-runtime-epoch-rebind", OperationEventID: "event-operation-runtime-epoch-rebind", ExecutionEventID: "event-execution-runtime-epoch-rebind", Governance: boundBeforeRebind.Governance, Contribution: rebindContribution, ObservedAt: rebindAt}
+	rebound, err := service.Execute(t.Context(), rebindRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebound.Execution.RuntimeEpochID != "epoch-2" || rebound.Workspace.Binding.RuntimeEpochID != "epoch-2" || rebound.Execution.WorkspaceID != boundBeforeRebind.WorkspaceID || rebound.Execution.LeaseID != boundBeforeRebind.LeaseID || rebound.Execution.Fence != boundBeforeRebind.Fence || rebound.Execution.LogicalVersion != boundBeforeRebind.LogicalVersion+1 || rebound.Workspace.LogicalVersion != workspaceBeforeRebind.LogicalVersion+1 {
+		t.Fatalf("workspace epoch rebind changed lease/workspace identity: %+v", rebound)
+	}
+	rebindPlan, _ := port.plans[1].Publication()
+	if len(rebindPlan.Events()) != 3 || len(rebindPlan.Heads()) != 3 || rebindPlan.WorkspacePathClaim() != nil {
+		t.Fatal("bad epoch rebind membership")
+	}
+
+	bound := rebound.Execution
+	priorWorkspace := rebound.Workspace
+	expiredAt := time.Date(2026, 9, 5, 13, 0, 0, 0, time.UTC)
+	quarantine, err := workspace.NewQuarantineContributionV2(workspace.QuarantineContributionInputV2{Prior: priorWorkspace, RecordRevision: 19, EventID: "event-workspace-quarantine", Reason: workspace.QuarantineLeaseExpired, OccurredAt: expiredAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port.execution = ExecutionSlotObservationV2{State: &bound, RecordRevision: 19}
+	port.workspace = WorkspaceAuthorityObservationV2{State: &priorWorkspace, RecordRevision: 19}
 	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}
 	expiryRequest := WorkspaceAuthorityRequestV2{Kind: WorkspaceQuarantineV2, OperationID: "operation-workspace-expire", OperationEventID: "event-operation-expire", ExecutionEventID: "event-execution-expire", Governance: bound.Governance, Contribution: quarantine, ObservedAt: expiredAt}
 	expired, err := service.Execute(t.Context(), expiryRequest)
@@ -90,7 +120,7 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	if expired.Execution.Status != ExecutionExpiredV2 || expired.Workspace.Stage != workspace.StageQuarantinedV2 {
 		t.Fatalf("not atomically expired/quarantined: %+v", expired)
 	}
-	expiryPlan, _ := port.plans[1].Publication()
+	expiryPlan, _ := port.plans[2].Publication()
 	if len(expiryPlan.Events()) != 3 || len(expiryPlan.Heads()) != 3 || expiryPlan.WorkspacePathClaim() != nil {
 		t.Fatal("bad expiry membership")
 	}
@@ -107,17 +137,25 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expiryInput, err := workspaceAuthorityPlanInputV2(expiryRequest, expiryOperation, expired.Execution, ExecutionSlotObservationV2{State: &bound, RecordRevision: 9}, WorkspaceAuthorityObservationV2{State: &priorWorkspace, RecordRevision: 11})
+	expiryInput, err := workspaceAuthorityPlanInputV2(expiryRequest, expiryOperation, expired.Execution, ExecutionSlotObservationV2{State: &bound, RecordRevision: 19}, WorkspaceAuthorityObservationV2{State: &priorWorkspace, RecordRevision: 19})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertWorkspaceCompositionControlledMutantsV2(t, bindInput, expiryInput)
+	rebindOperation, err := workspaceOperationBindingV2(rebindRequest, rebound.Workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebindInput, err := workspaceAuthorityPlanInputV2(rebindRequest, rebindOperation, rebound.Execution, ExecutionSlotObservationV2{State: &boundBeforeRebind, RecordRevision: 19}, WorkspaceAuthorityObservationV2{State: &workspaceBeforeRebind, RecordRevision: 19})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWorkspaceCompositionControlledMutantsV2(t, bindInput, expiryInput, rebindInput)
 }
 
-func assertWorkspaceCompositionControlledMutantsV2(t *testing.T, bindControl, expiryControl journalv2.CommitPlanInput) {
+func assertWorkspaceCompositionControlledMutantsV2(t *testing.T, bindControl, expiryControl, rebindControl journalv2.CommitPlanInput) {
 	t.Helper()
 	registry := journalv2.DefaultEventRegistryV2()
-	for kind, control := range map[WorkspaceAuthorityCommandKindV2]journalv2.CommitPlanInput{WorkspaceBindV2: bindControl, WorkspaceQuarantineV2: expiryControl} {
+	for kind, control := range map[WorkspaceAuthorityCommandKindV2]journalv2.CommitPlanInput{WorkspaceBindV2: bindControl, WorkspaceQuarantineV2: expiryControl, WorkspaceRebindV2: rebindControl} {
 		if err := validateWorkspaceAuthorityPlanInputV2(kind, control); err != nil {
 			t.Fatalf("%s control rejected: %v", kind, err)
 		}
