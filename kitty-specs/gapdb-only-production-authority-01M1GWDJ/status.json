@@ -1,7 +1,7 @@
 {
-  "event_count": 378,
-  "last_event_id": "01M1QT634SX3E8F6EWW4G30ZFN",
-  "materialized_at": "2026-09-05T03:35:51.705949+00:00",
+  "event_count": 381,
+  "last_event_id": "01M1QTJ6HH7TNKVWK705FAG1RD",
+  "materialized_at": "2026-09-05T03:42:28.392478+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 10,
     "for_review": 0,
-    "in_progress": 0,
-    "in_review": 1,
+    "in_progress": 1,
+    "in_review": 0,
     "planned": 7
   },
   "work_packages": {
@@ -452,13 +452,13 @@
     },
     "WP10": {
       "actor": "codex",
-      "agent": "codex",
-      "agent_profile": "reviewer-renata",
+      "agent": null,
+      "agent_profile": "implementer-ivan",
       "agent_profile_version": "1.0",
-      "force_count": 2,
-      "lane": "in_review",
-      "last_event_id": "01M1QT634SX3E8F6EWW4G30ZFN",
-      "last_transition_at": "2026-09-05T03:35:51.705949+00:00",
+      "force_count": 3,
+      "lane": "in_progress",
+      "last_event_id": "01M1QTJ6HH7TNKVWK705FAG1RD",
+      "last_transition_at": "2026-09-05T03:42:28.392478+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review. go test ./internal/integration -count=1: exit 0; go test ./internal/controlstore/gapdb -count=1: exit 0; go test -race ./internal/integration -count=1: exit 0; go vet ./internal/integration ./internal/controlstore/gapdb: exit 0; staticcheck ./internal/integration ./internal/controlstore/gapdb: 0 issues, exit 0; diff-scoped gofmt and git diff --check: clean.",
@@ -467,20 +467,20 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP10-acceptance-and-serialized-integration-authority/review-cycle-2.md",
-        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP10-acceptance-and-serialized-integration-authority/review-cycle-2.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP10-acceptance-and-serialized-integration-authority/review-cycle-3.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP10-acceptance-and-serialized-integration-authority/review-cycle-3.md",
         "reviewer": "user",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T049": "done",
-        "T050": "done",
-        "T051": "done",
-        "T052": "done",
-        "T053": "done"
+        "T049": "planned",
+        "T050": "planned",
+        "T051": "planned",
+        "T052": "planned",
+        "T053": "planned"
       }
     },
     "WP11": {
