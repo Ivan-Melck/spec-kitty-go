@@ -13,6 +13,53 @@ type cleanupPortV2 struct {
 	*integrationPortV2
 }
 
+type cleanupCompletionFailurePortV2 struct {
+	cleanupPortV2
+	failCompletion bool
+}
+
+func (p *cleanupCompletionFailurePortV2) PublishIntegrationCleanup(ctx context.Context, plan IntegrationCleanupPlanV2) (IntegrationAckV2, error) {
+	sealed, err := plan.Publication()
+	if err != nil {
+		return IntegrationAckV2{}, err
+	}
+	if p.failCompletion && sealed.OperationState().Status() == journalv2.StatusResolved {
+		return IntegrationAckV2{}, errors.New("completion publication unavailable")
+	}
+	return p.cleanupPortV2.PublishIntegrationCleanup(ctx, plan)
+}
+
+func (p *cleanupCompletionFailurePortV2) ReconcileIntegrationCleanup(ctx context.Context, plan IntegrationCleanupPlanV2) (IntegrationAckV2, error) {
+	sealed, err := plan.Publication()
+	if err != nil {
+		return IntegrationAckV2{}, err
+	}
+	if p.failCompletion && sealed.OperationState().Status() == journalv2.StatusResolved {
+		p.failCompletion = false
+		return IntegrationAckV2{}, errors.New("completion publication absent")
+	}
+	return p.cleanupPortV2.ReconcileIntegrationCleanup(ctx, plan)
+}
+
+type cleanupCountingGitV2 struct {
+	IntegrationGitPortV2
+	cleanupMutations int
+}
+
+func (g *cleanupCountingGitV2) CleanupWorkspace(ctx context.Context, intent IntegrationCleanupIntentV2) (IntegrationCleanupObservationV2, error) {
+	g.cleanupMutations++
+	return g.IntegrationGitPortV2.CleanupWorkspace(ctx, intent)
+}
+
+type cleanupObserveFailureGitV2 struct {
+	IntegrationGitPortV2
+	observeErr error
+}
+
+func (g cleanupObserveFailureGitV2) ObserveCleanup(context.Context, IntegrationCleanupIntentV2) (IntegrationCleanupObservationV2, bool, error) {
+	return IntegrationCleanupObservationV2{}, false, g.observeErr
+}
+
 func (p cleanupPortV2) ResolveIntegrationCleanupOperation(ctx context.Context, binding journalv2.OperationBindingV2) (IntegrationOperationResolutionV2, error) {
 	return p.ResolveIntegrationOperation(ctx, binding)
 }
@@ -128,6 +175,50 @@ func TestIntegrationCleanupFailureCannotRewriteIntegrationTruthV2(t *testing.T) 
 	result, err := service.Cleanup(t.Context(), request)
 	if err != nil || result.CleanupStatus != CleanupComplete || result.Stage != IntegrationAttemptCompletedV2 {
 		t.Fatalf("retry result=%+v error=%v", result, err)
+	}
+}
+
+func TestIntegrationCleanupPendingRestartObservesStableEffectBeforeMutationV2(t *testing.T) {
+	request, rawPort, git := integrationCleanupFixtureV2(t)
+	port := &cleanupCompletionFailurePortV2{cleanupPortV2: cleanupPortV2{integrationPortV2: rawPort}, failCompletion: true}
+	countingGit := &cleanupCountingGitV2{IntegrationGitPortV2: gitAdapterV2{integrationGitV2: git}}
+	service, err := NewIntegrationCleanupServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), countingGit, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Cleanup(t.Context(), request); !IsKind(err, KindStoreFailure) {
+		t.Fatalf("completion publication failure not surfaced: %v", err)
+	}
+	attemptCoordinate, _ := IntegrationAttemptCoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, request.AttemptID)
+	pending := rawPort.attempts[attemptCoordinate]
+	if pending.CleanupStatus != CleanupPending || pending.CleanupEffectID == "" || countingGit.cleanupMutations != 1 {
+		t.Fatalf("first cleanup did not preserve pending effect: state=%+v mutations=%d", pending, countingGit.cleanupMutations)
+	}
+	result, err := service.Cleanup(t.Context(), request)
+	if err != nil || result.CleanupStatus != CleanupComplete || result.CleanupEffectID != pending.CleanupEffectID || countingGit.cleanupMutations != 1 {
+		t.Fatalf("restart repeated cleanup: result=%+v error=%v mutations=%d", result, err, countingGit.cleanupMutations)
+	}
+}
+
+func TestIntegrationCleanupPendingRestartDoesNotMutateWhenObservationUnavailableV2(t *testing.T) {
+	request, rawPort, git := integrationCleanupFixtureV2(t)
+	basePort := cleanupPortV2{integrationPortV2: rawPort}
+	baseService, err := NewIntegrationCleanupServiceV2(basePort, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	git.cleanupErr = errors.New("cleanup unavailable")
+	if _, err = baseService.Cleanup(t.Context(), request); err == nil {
+		t.Fatal("expected initial cleanup uncertainty")
+	}
+	git.cleanupErr = nil
+	countingGit := &cleanupCountingGitV2{IntegrationGitPortV2: cleanupObserveFailureGitV2{IntegrationGitPortV2: gitAdapterV2{integrationGitV2: git}, observeErr: errors.New("observation unavailable")}}
+	service, err := NewIntegrationCleanupServiceV2(basePort, acceptanceEpochV2(request.RuntimeEpochID), countingGit, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Cleanup(t.Context(), request); !IsKind(err, KindGitFailure) || countingGit.cleanupMutations != 0 {
+		t.Fatalf("uncertain observation triggered blind retry: error=%v mutations=%d", err, countingGit.cleanupMutations)
 	}
 }
 

@@ -37,7 +37,7 @@ type Error struct {
 	Message  string
 	Observed map[string]string
 	Expected map[string]string
-	Cause    error
+	Cause    error `json:"-"`
 }
 
 func (e *Error) Error() string {

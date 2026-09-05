@@ -1,7 +1,9 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,6 +15,18 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
+
+type providerJSONCauseV2 struct {
+	secret       string
+	marshalCalls int
+}
+
+func (e *providerJSONCauseV2) Error() string { return e.secret }
+
+func (e *providerJSONCauseV2) MarshalJSON() ([]byte, error) {
+	e.marshalCalls++
+	return json.Marshal(map[string]string{"provider_secret": e.secret})
+}
 
 type integrationPortV2 struct {
 	mu          sync.Mutex
@@ -436,6 +450,25 @@ func TestIntegrationExternalEvidenceAndDiagnosticsAreBoundedV2(t *testing.T) {
 	state.RepairAction = "repair"
 	if state.Validate() == nil {
 		t.Fatal("oversized conflict evidence entered durable state")
+	}
+}
+
+func TestIntegrationProviderCauseIsRedactedFromJSONAndRemainsClassifiableV2(t *testing.T) {
+	cause := &providerJSONCauseV2{secret: strings.Repeat("private-provider-output", 1024)}
+	err := boundedGitFailureV2("observe integration target", cause)
+	encoded, marshalErr := json.Marshal(err)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if len(encoded) >= 4096 || bytes.Contains(encoded, []byte("private-provider-output")) || cause.marshalCalls != 0 {
+		t.Fatalf("provider cause crossed JSON boundary: bytes=%d calls=%d prefix=%q", len(encoded), cause.marshalCalls, encoded[:min(len(encoded), 128)])
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("bounded diagnostic lost errors.Is classification")
+	}
+	var typed *providerJSONCauseV2
+	if !errors.As(err, &typed) || typed != cause {
+		t.Fatal("bounded diagnostic lost errors.As classification")
 	}
 }
 

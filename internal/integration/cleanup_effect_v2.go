@@ -127,12 +127,25 @@ func (s *IntegrationCleanupServiceV2) Cleanup(ctx context.Context, request Integ
 		priorOperation, priorOperationRevision = &op, resolution.RecordRevision
 	}
 	intent := IntegrationCleanupIntentV2{EffectID: current.CleanupEffectID, OperationID: current.OperationID, AttemptID: current.AttemptID, RepositoryID: current.RepositoryID, TargetRef: current.TargetRef, WorkspacePath: current.Workspace.Path, Generation: current.TargetGeneration, FenceTokenHash: current.FenceTokenHash}
-	observation, effectErr := s.git.CleanupWorkspace(ctx, intent)
-	if effectErr != nil {
+	var observation IntegrationCleanupObservationV2
+	observedCompletion := false
+	if resolution.Kind == AcceptanceOperationExactV2 {
 		var found bool
-		observation, found, effectErr = s.git.ObserveCleanup(ctx, intent)
-		if effectErr != nil || !found {
-			return IntegrationAttemptStateV2{}, boundedGitFailureV2("cleanup integration workspace", effectErr)
+		observation, found, err = s.git.ObserveCleanup(ctx, intent)
+		if err != nil {
+			return IntegrationAttemptStateV2{}, boundedGitFailureV2("observe cleanup integration workspace", err)
+		}
+		observedCompletion = found
+	}
+	if !observedCompletion {
+		var effectErr error
+		observation, effectErr = s.git.CleanupWorkspace(ctx, intent)
+		if effectErr != nil {
+			var found bool
+			observation, found, effectErr = s.git.ObserveCleanup(ctx, intent)
+			if effectErr != nil || !found {
+				return IntegrationAttemptStateV2{}, boundedGitFailureV2("cleanup integration workspace", effectErr)
+			}
 		}
 	}
 	if !observation.validates(intent) {
