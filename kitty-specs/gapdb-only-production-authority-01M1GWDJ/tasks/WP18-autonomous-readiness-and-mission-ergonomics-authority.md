@@ -41,6 +41,8 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/mission/
 create_intent:
+- internal/controlstore/gapdb/mission_authority.go
+- internal/controlstore/gapdb/mission_authority_test.go
 - internal/architecture/m2_autonomy_contract_test.go
 - internal/architecture/m2_autonomy_mutant_test.go
 execution_mode: code_change
