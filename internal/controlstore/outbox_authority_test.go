@@ -334,11 +334,33 @@ func TestOutboxReducerProductionSourceHasNoExternalCapabilityImportsMutant(t *te
 }
 
 func TestOutboxDeliveryEvidenceCannotBecomeProductAuthorityMutant(t *testing.T) {
+	source, coordinates := outboxSourcePlanFixtureV2(t)
+	intent, err := BindDurableOutboxIntentV2(source, 11, coordinates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := journalv2.DefaultEventRegistryV2()
+	startedCapability, err := BuildOutboxAuthorityPlanV2(bindOutboxCommandFixtureV2(t, OutboxCommandV2{Action: OutboxStartAttemptV2, Intent: intent, AttemptID: "attempt-authority-boundary", RuntimeEpochID: "epoch-1", OperationEventID: "event-authority-boundary-operation-1", OutboxEventID: "event-authority-boundary-1"}, 41), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startedPlan, _ := startedCapability.Publication()
+	started := reduceOutboxPlanV2(t, []byte(`{}`), startedPlan)
+	observation, err := NewOutboxProviderObservationV2(coordinates.ExpectedProviderRevision+1, coordinates.IntendedValue, coordinates.AttributionMarker, "confirmed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedPlan := buildLaterOutboxPlanV2(t, registry, intent, startedPlan, started, OutboxRecordObservationV2, &observation, "", "", 42)
+	observed := reduceOutboxPlanV2(t, started.CanonicalBytes(), observedPlan)
+	observedValue := reflect.ValueOf(observed)
 	state := reflect.TypeOf(OutboxDeliveryStateV2{})
 	for index := 0; index < state.NumField(); index++ {
 		name := strings.ToLower(state.Field(index).Name)
 		for _, forbidden := range []string{"missionstatus", "workstatus", "reviewverdict", "acceptanceverdict", "integrationstatus", "legalaction", "readiness"} {
 			if strings.Contains(name, forbidden) {
+				if !observedValue.Field(index).IsZero() {
+					t.Fatalf("delivery-evidence authority mutant populated %s from provider outcome %s", state.Field(index).Name, observation.Outcome)
+				}
 				t.Fatalf("delivery-evidence authority mutant survived through field %s", state.Field(index).Name)
 			}
 		}

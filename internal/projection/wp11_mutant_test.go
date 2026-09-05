@@ -44,8 +44,11 @@ func TestWP11ProductionMutantCampaignV2(t *testing.T) {
 			replacements: []wp11SourceReplacementV2{{"\tProgressBase(string) (ProgressBaseV2, error)\n}", "\tProgressBase(string) (ProgressBaseV2, error)\n\tPublishAcknowledged(journalv2.AcknowledgedPublicationV2) error\n}"}},
 		},
 		{
-			id: "delivery_evidence_changes_mission", source: "internal/controlstore/outbox_model.go", pkg: "./internal/controlstore", killer: "TestOutboxDeliveryEvidenceCannotBecomeProductAuthorityMutant", wantFailure: "delivery-evidence authority mutant",
-			replacements: []wp11SourceReplacementV2{{"\tStage                         OutboxStageV2", "\tMissionStatus                 string                        `json:\"mission_status,omitempty\"`\n\tStage                         OutboxStageV2"}},
+			id: "delivery_evidence_changes_mission", source: "internal/controlstore/outbox_model.go", pkg: "./internal/controlstore", killer: "TestOutboxDeliveryEvidenceCannotBecomeProductAuthorityMutant", wantFailure: "delivery-evidence authority mutant populated MissionStatus",
+			replacements: []wp11SourceReplacementV2{
+				{"\tStage                         OutboxStageV2", "\tMissionStatus                 string                        `json:\"mission_status,omitempty\"`\n\tStage                         OutboxStageV2"},
+				{"func (s OutboxDeliveryStateV2) CanonicalBytes() []byte {\n\tif s.Validate() != nil {", "func (s OutboxDeliveryStateV2) CanonicalBytes() []byte {\n\tif s.Observation != nil {\n\t\ts.MissionStatus = s.Observation.Outcome\n\t}\n\tif s.Validate() != nil {"},
+			},
 		},
 		{
 			id: "playback_invokes_external_capability", source: "internal/controlstore/outbox_reducer.go", pkg: "./internal/controlstore", killer: "TestOutboxReducerProductionSourceHasNoExternalCapabilityImportsMutant", wantFailure: "pure playback reached external capability import os", mutantEnv: true,
@@ -64,19 +67,39 @@ func TestWP11ProductionMutantCampaignV2(t *testing.T) {
 			replacements: []wp11SourceReplacementV2{{"query.Limit > MaxQueryPageV2 || ", ""}},
 		},
 		{
-			id: "watch_becomes_recovery", source: "internal/projection/watch.go", pkg: "./internal/projection", killer: "TestWatchCannotBecomeRecoveryStreamMutant", wantFailure: "watch recovery mutant leaked EventCursor",
-			replacements: []wp11SourceReplacementV2{{"\tProjectionDigest string", "\tEventCursor      string"}},
+			id: "watch_becomes_recovery", source: "internal/projection/watch.go", pkg: "./internal/projection", killer: "TestWatchCannotBecomeRecoveryStreamMutant", wantFailure: "watch recovery mutant populated RecoverySnapshot",
+			replacements: []wp11SourceReplacementV2{
+				{"\tProjectionDigest string                   `json:\"projection_digest_sha256\"`", "\tProjectionDigest string                   `json:\"projection_digest_sha256\"`\n\tRecoverySnapshot []byte                   `json:\"recovery_snapshot,omitempty\"`"},
+				{"notification := NotificationV2{snapshot.databaseID, snapshot.revision, snapshot.epoch, snapshot.projectionDigest.String(), epochChanged || watch.epoch != snapshot.epoch}", "notification := NotificationV2{snapshot.databaseID, snapshot.revision, snapshot.epoch, snapshot.projectionDigest.String(), snapshot.CanonicalBytes(), epochChanged || watch.epoch != snapshot.epoch}"},
+			},
 		},
 		{
 			id: "generic_store_leaks_through_query", source: "internal/projection/authority.go", pkg: "./internal/projection", killer: "TestQueryDTOsCannotLeakGenericStoreMutant", wantFailure: "query DTO AggregateViewV2 leaked repository",
 			replacements: []wp11SourceReplacementV2{{"type AggregateViewV2 struct {\n", "type AggregateViewV2 struct {\n\tRepository         any                          `json:\"repository,omitempty\"`\n"}},
 		},
 	}
+	type expectedMutantV2 struct {
+		source      string
+		pkg         string
+		killer      string
+		wantFailure string
+	}
+	required := map[string]expectedMutantV2{
+		"projection_writes_become_authority":    {"internal/projection/query.go", "./internal/projection", "TestQueryPortCannotMutateAuthorityOrCollapseProgressIntoCeremony", "query method count"},
+		"delivery_evidence_changes_mission":     {"internal/controlstore/outbox_model.go", "./internal/controlstore", "TestOutboxDeliveryEvidenceCannotBecomeProductAuthorityMutant", "delivery-evidence authority mutant populated MissionStatus"},
+		"playback_invokes_external_capability":  {"internal/controlstore/outbox_reducer.go", "./internal/controlstore", "TestOutboxReducerProductionSourceHasNoExternalCapabilityImportsMutant", "pure playback reached external capability import os"},
+		"refusal_moves_after_provider_boundary": {"internal/controlstore/gapdb/outbox_authority.go", "./internal/controlstore/gapdb", "TestOutboxAdapterAdmitsOnlyExactCapabilityPlanV2", "unminted plan reached provider"},
+		"atomic_batch_member_disappears":        {"internal/controlstore/outbox_command.go", "./internal/controlstore", "TestOutboxPlanContainsWholeAtomicMembershipMutant", "outbox atomic membership missing"},
+		"list_becomes_unbounded":                {"internal/projection/query.go", "./internal/projection", "TestProjectionListCursorIsBoundedStableAndRevisionScoped", "over-budget list err"},
+		"watch_becomes_recovery":                {"internal/projection/watch.go", "./internal/projection", "TestWatchCannotBecomeRecoveryStreamMutant", "watch recovery mutant populated RecoverySnapshot"},
+		"generic_store_leaks_through_query":     {"internal/projection/authority.go", "./internal/projection", "TestQueryDTOsCannotLeakGenericStoreMutant", "query DTO AggregateViewV2 leaked repository"},
+	}
 	seen := make(map[string]bool, len(mutants))
 	for _, mutant := range mutants {
 		mutant := mutant
 		t.Run(mutant.id, func(t *testing.T) {
-			if seen[mutant.id] || mutant.killer == "" || mutant.wantFailure == "" || len(mutant.replacements) == 0 {
+			want, requiredID := required[mutant.id]
+			if !requiredID || want.source != mutant.source || want.pkg != mutant.pkg || want.killer != mutant.killer || want.wantFailure != mutant.wantFailure || seen[mutant.id] || len(mutant.replacements) == 0 {
 				t.Fatalf("unsealed mutant census row %s", mutant.id)
 			}
 			seen[mutant.id] = true
@@ -98,8 +121,13 @@ func TestWP11ProductionMutantCampaignV2(t *testing.T) {
 			}
 		})
 	}
-	if len(seen) != 8 {
-		t.Fatalf("sealed T058 mutant census size=%d want=8", len(seen))
+	if len(seen) != len(required) {
+		t.Fatalf("sealed T058 mutant census size=%d want=%d", len(seen), len(required))
+	}
+	for id := range required {
+		if !seen[id] {
+			t.Fatalf("sealed T058 mutant census omitted %s", id)
+		}
 	}
 }
 

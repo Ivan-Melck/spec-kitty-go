@@ -231,22 +231,44 @@ func TestQueryPortCannotMutateAuthorityOrCollapseProgressIntoCeremony(t *testing
 }
 
 func TestWatchCannotBecomeRecoveryStreamMutant(t *testing.T) {
+	authority, coordinator := projectionFixtureV2(t)
+	first := publishProjectionFixtureV2(t, coordinator, "watch-boundary-a", "mission", "mission-watch-boundary")
+	if err := authority.PublishAcknowledged(first); err != nil {
+		t.Fatal(err)
+	}
+	watch, err := authority.Watch("database-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Cancel()
+	second := publishProjectionFixtureV2(t, coordinator, "watch-boundary-b", "workgraph", "graph-watch-boundary")
+	if err := authority.PublishAcknowledged(second); err != nil {
+		t.Fatal(err)
+	}
+	observed, open := <-watch.C
+	if !open {
+		t.Fatal("watch boundary closed before notification")
+	}
+	observedValue := reflect.ValueOf(observed)
 	notification := reflect.TypeOf(NotificationV2{})
 	want := map[string]bool{"DatabaseID": true, "Revision": true, "RuntimeEpochID": true, "ProjectionDigest": true, "ResyncRequired": true}
-	if notification.NumField() != len(want) {
-		t.Fatalf("watch recovery mutant changed notification width to %d", notification.NumField())
-	}
 	for index := 0; index < notification.NumField(); index++ {
 		field := notification.Field(index)
-		if !want[field.Name] {
-			t.Fatalf("watch recovery mutant leaked %s", field.Name)
-		}
 		lower := strings.ToLower(field.Name + " " + field.Type.String())
-		for _, forbidden := range []string{"event", "payload", "canonicalstate", "cursor", "history", "checkpoint"} {
+		for _, forbidden := range []string{"event", "payload", "canonicalstate", "cursor", "history", "checkpoint", "recovery", "snapshot"} {
 			if strings.Contains(lower, forbidden) {
+				if !observedValue.Field(index).IsZero() {
+					t.Fatalf("watch recovery mutant populated %s", field.Name)
+				}
 				t.Fatalf("watch notification leaked recovery material %s through %s", forbidden, field.Name)
 			}
 		}
+		if !want[field.Name] {
+			t.Fatalf("watch recovery mutant leaked %s", field.Name)
+		}
+	}
+	if notification.NumField() != len(want) {
+		t.Fatalf("watch recovery mutant changed notification width to %d", notification.NumField())
 	}
 }
 
