@@ -944,8 +944,34 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = first.PublishWorkgraph(t.Context(), firstEpoch, workgraphPlan); err != nil {
+	acknowledgedWorkgraph, err := first.PublishWorkgraph(t.Context(), firstEpoch, workgraphPlan)
+	if err != nil {
 		t.Fatalf("publish workgraph: %v", err)
+	}
+	selection, err := mission.SealAcknowledgedInitialWorkRevisionSelectionV2(revision, acknowledgedWorkgraph)
+	if err != nil {
+		t.Fatalf("seal acknowledged workgraph selection: %v", err)
+	}
+	selectedMissionState, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+		ProjectID: "project-runtime", MissionID: "mission-runtime", DefinitionRevision: "definition-runtime", DefinitionDigest: definitionDigest,
+		Version: 2, Lifecycle: mission.MissionOpen, CurrentWorkRevision: selection.Head(), LastOperationID: "operation-runtime-select-workgraph", ObservedAt: "2026-09-05T12:02:30Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := first.ExecuteReadiness(t.Context(), firstEpoch, mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: "operation-runtime-select-workgraph", ProjectID: "project-runtime", MissionID: "mission-runtime",
+		ActorID: "actor-runtime", ProcessID: "process-runtime", OriginatingRuntimeEpochID: firstEpoch,
+		DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
+		ObservedAt: "2026-09-05T12:02:30Z", EventType: mission.ReadinessEventWorkRevisionSelectedV2,
+		Expected: created.State(), Updated: selectedMissionState, WorkRevisionSelection: &selection,
+	})
+	if err != nil || selected.State().CurrentWorkRevisionID() != journalv2.WorkRevisionID(revision.ID()) {
+		t.Fatalf("select acknowledged workgraph: result=%+v err=%v", selected, err)
+	}
+	selectedProgress, err := progressHandle.Mission("project-runtime", "mission-runtime")
+	if err != nil || selectedProgress.WorkRevisionID != journalv2.WorkRevisionID(revision.ID()) || selectedProgress.Generation != 1 {
+		t.Fatalf("selected workgraph absent from live progress: progress=%+v err=%v", selectedProgress, err)
 	}
 	now := time.Date(2026, 9, 5, 12, 3, 0, 0, time.UTC)
 	admitted, err := first.ExecuteWork(t.Context(), firstEpoch, execution.ExecutionAuthorityRequestV2{
@@ -1055,7 +1081,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	}
 	pausedState, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
 		ProjectID: "project-runtime", MissionID: "mission-runtime", DefinitionRevision: "definition-runtime", DefinitionDigest: definitionDigest,
-		Version: 2, Lifecycle: mission.MissionPaused, LastOperationID: "operation-runtime-pause", ObservedAt: "2026-09-05T12:01:00Z",
+		Version: 3, Lifecycle: mission.MissionPaused, CurrentWorkRevision: restoredMissionState.CurrentWorkRevision(), LastOperationID: "operation-runtime-pause", ObservedAt: "2026-09-05T12:04:00Z",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1064,7 +1090,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: "operation-runtime-pause", ProjectID: "project-runtime", MissionID: "mission-runtime",
 		ActorID: "actor-runtime", ProcessID: "process-runtime-2", OriginatingRuntimeEpochID: second.RuntimeEpochID(),
 		DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
-		ObservedAt: "2026-09-05T12:01:00Z", EventType: mission.ReadinessEventPausedV2, Expected: restoredMissionState, Updated: pausedState,
+		ObservedAt: "2026-09-05T12:04:00Z", EventType: mission.ReadinessEventPausedV2, Expected: restoredMissionState, Updated: pausedState,
 	}); err != nil {
 		t.Fatalf("post-restart typed command: %v", err)
 	}
@@ -1560,7 +1586,7 @@ func TestWP13MandatoryProductionMutantCampaign(t *testing.T) {
 		{"unadopted_record", "internal/sidecar/gapdb/adoption.go", "./internal/sidecar/gapdb", "TestProductionAdoptionRecordRejectsEveryAuthorityCoordinate", "signature_value", []wp13SourceReplacement{{`record.Signature.Kind != AdoptedSignatureKind || record.Signature.Value != AdoptedSignatureValue`, `record.Signature.Kind != AdoptedSignatureKind || record.Signature.Value == ""`}}},
 		{"classifier_after_mutation", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestStartupRefusesMismatchedAndHistoricalRootsBeforeSidecarAcquisition", "historical root err", []wp13SourceReplacement{{"decision, err := classifier.Decide(ctx, config.ControlRoot)\n\tif err != nil {\n\t\treturn nil, err\n\t}", "decision, err := classifier.Decide(ctx, config.ControlRoot)\n\tif err != nil {\n\t\tdecision = controlroot.Decision{}\n\t}"}}},
 		{"second_host", "internal/productionruntime/host.go", "./internal/productionruntime", "TestHostSecondOwnerForSameDatabaseRefusesAndDifferentDatabasesProgress", "second owner err=<nil>", []wp13SourceReplacement{{`if current := liveOwners.byDatabase[h.ownerKey]; current != nil && current != h {`, `if current := liveOwners.byDatabase[h.ownerKey]; current != nil && current != h && false {`}}},
-		{"ready_before_recovery", "internal/productionruntime/host.go", "./internal/productionruntime", "TestHostBarrierRejectsEveryNonReadyStateAndStaleEpochBeforeCommand", "state=recovering", []wp13SourceReplacement{{"func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {\n\th.mu.Lock()\n\tif h.state != HostReady {", "func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {\n\th.mu.Lock()\n\tif false {"}}},
+		{"ready_before_recovery", "internal/productionruntime/host.go", "./internal/productionruntime", "TestHostBarrierRejectsEveryNonReadyStateAndStaleEpochBeforeCommand", "state=recovering", []wp13SourceReplacement{{"func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {\n\t// Independent commands share this read lock. The health monitor takes the\n\t// write side so a transient provider state inside an admitted atomic command\n\t// cannot be mistaken for owner loss.\n\th.commandMu.RLock()\n\th.mu.Lock()\n\tif h.state != HostReady {", "func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {\n\t// Independent commands share this read lock. The health monitor takes the\n\t// write side so a transient provider state inside an admitted atomic command\n\t// cannot be mistaken for owner loss.\n\th.commandMu.RLock()\n\th.mu.Lock()\n\tif false {"}}},
 		{"epoch_before_restore", "internal/productionruntime/recovery.go", "./internal/productionruntime", "TestFreshEpochRequiresSealedRestoreAndRotatesPredecessorDurably", "forged restore admitted", []wp13SourceReplacement{{"request, err := recovered.FreshEpochAdmissionRequestV2()\n\tif err != nil || request.DatabaseID() != binding.DatabaseID", "request, err := recovered.FreshEpochAdmissionRequestV2()\n\tif err != nil { return journalv2.RuntimeEpochID(\"epoch-mutant\"), nil }\n\tif request.DatabaseID() != binding.DatabaseID"}}},
 		{"predecessor_client", "internal/productionruntime/host.go", "./internal/productionruntime", "TestHostBarrierRejectsEveryNonReadyStateAndStaleEpochBeforeCommand", "stale epoch err=<nil>", []wp13SourceReplacement{{`if expectedEpoch != h.epoch {`, `if expectedEpoch != h.epoch && false {`}}},
 		{"projection_before_ack", "internal/projection/authority.go", "./internal/projection", "TestProjectionPublishesCompleteAcknowledgedRevisionsAndDefensiveQueries", "duplicate acknowledgement err=<nil>", []wp13SourceReplacement{{`return &ErrorV2{ErrorIncompleteRevisionV2, "acknowledgement"}`, `return nil`}}},
