@@ -121,8 +121,8 @@ var productionPublicationCutProofs = []publicationCutProof{
 	{"after_durable_commit_before_response", proof("./internal/controlstore/gapdb", "TestV2AssertionCandidateSidecarQualification")},
 	{"lost_response", proof("./internal/controlstore/gapdb", "TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation")},
 	{"malformed_acknowledgement", proof("./internal/controlstore/gapdb", "TestV2CommitRefusesWireBudgetBeforeProviderAndValidatesAck")},
-	{"restart_before_reconciliation", proof("./internal/scenario", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_before_reconciliation")},
-	{"restart_after_reconciliation", proof("./internal/scenario", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_after_reconciliation")},
+	{"restart_before_reconciliation", proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_before_reconciliation")},
+	{"restart_after_reconciliation", proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_after_reconciliation")},
 }
 
 // familyClaims records only the behavior each executable test actually proves.
