@@ -602,7 +602,7 @@
     },
     "WP14": {
       "actor": "user",
-      "agent": "maxwell",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
@@ -624,14 +624,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T070": "done",
-        "T071": "done",
-        "T072": "done",
-        "T073": "done",
-        "T074": "done"
+        "T070": "planned",
+        "T071": "planned",
+        "T072": "planned",
+        "T073": "planned",
+        "T074": "planned"
       }
     },
     "WP15": {
