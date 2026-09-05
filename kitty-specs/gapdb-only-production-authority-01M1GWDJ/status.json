@@ -1,7 +1,7 @@
 {
-  "event_count": 450,
-  "last_event_id": "01M1S5MM3A2AF4QBTZVD8ASTRJ",
-  "materialized_at": "2026-09-05T16:15:16.586454+00:00",
+  "event_count": 451,
+  "last_event_id": "01M1S5ZPQVPHTWZF7F5JC0RZ8V",
+  "materialized_at": "2026-09-05T16:21:19.739046+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,9 +11,9 @@
     "canceled": 0,
     "claimed": 0,
     "done": 10,
-    "for_review": 1,
+    "for_review": 0,
     "in_progress": 2,
-    "in_review": 0,
+    "in_review": 1,
     "planned": 2
   },
   "work_packages": {
@@ -655,14 +655,14 @@
       "last_transition_at": "2026-09-02T12:12:13.418890+00:00"
     },
     "WP18": {
-      "actor": "codex",
-      "agent": "codex",
+      "actor": "maxwell",
+      "agent": "maxwell",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 5,
-      "lane": "for_review",
-      "last_event_id": "01M1S5MM3A2AF4QBTZVD8ASTRJ",
-      "last_transition_at": "2026-09-05T16:15:16.586454+00:00",
+      "lane": "in_review",
+      "last_event_id": "01M1S5ZPQVPHTWZF7F5JC0RZ8V",
+      "last_transition_at": "2026-09-05T16:21:19.739046+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Capability readiness, phase-free authority, GapDB persistence, replay, property tests, and 15 controlled mutants implemented; focused race green; full GapDB race campaign times out in unchanged 100-trial real-Git workspace test without a race report.",
@@ -687,9 +687,9 @@
         "reviewer": "codex",
         "verdict": "changes_requested"
       },
-      "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "role": "reviewer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
       "subtasks": {
         "T093": "done",
         "T094": "done",
