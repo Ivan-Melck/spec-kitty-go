@@ -577,7 +577,8 @@
         "Independent integration review passed: one GapDB owner, readiness/progress shared authority, 22 mutants and race evidence green",
         "Codex implementation complete: monitor deadline begins after command drain; focused production and race gates pass",
         "Independent review passed: probe deadline starts after command drain; old ordering killed by regression; real owner-loss, transient, cancellation, shutdown, full production, race, architecture, static and compile gates pass",
-        "Independent re-review of durable-observation rebind at c2881cde; all prior blockers closed."
+        "Independent re-review of durable-observation rebind at c2881cde; all prior blockers closed.",
+        "APPROVE c2881cde: stable idempotency identity; exact/conflict before live reads; derived CAS authority; real GapDB restart/replay verified."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
