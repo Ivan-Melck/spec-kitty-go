@@ -452,9 +452,9 @@
     },
     "WP10": {
       "actor": "codex",
-      "agent": null,
-      "agent_profile": "implementer-ivan",
-      "agent_profile_version": "1.0",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 1,
       "lane": "for_review",
       "last_event_id": "01M1QPQNXR0KKKKQENV98Q9FFH",
