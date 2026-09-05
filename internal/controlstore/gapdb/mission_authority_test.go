@@ -1,6 +1,7 @@
 package gapdb
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -10,6 +11,16 @@ import (
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 )
+
+type readinessEpochCounterV2 struct {
+	epoch journalv2.RuntimeEpochID
+	calls int
+}
+
+func (e *readinessEpochCounterV2) CurrentRuntimeEpoch(context.Context) (journalv2.RuntimeEpochID, error) {
+	e.calls++
+	return e.epoch, nil
+}
 
 type missionEpochFixtureV2 struct{ epoch journalv2.RuntimeEpochID }
 
@@ -298,4 +309,192 @@ func missionReducerSetFixtureV2(t *testing.T) journalv2.ReducerSetV2 {
 		t.Fatal(err)
 	}
 	return reducers
+}
+
+func TestReadinessAuthorityAdapterCreateActivityPauseRestartReplayV2(t *testing.T) {
+	memory, _, readiness := readinessAuthorityGapDBFixtureV2(t)
+	service, err := mission.NewReadinessAuthorityServiceV2(readiness, missionEpochFixtureV2{"epoch-readiness"}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := readinessStateGapDBFixtureV2(t, 1, mission.MissionOpen, 0, "operation-readiness-create", "2026-09-04T12:00:00Z")
+	create := readinessCommandGapDBFixtureV2(created, mission.ReadinessAuthorityStateV2{}, mission.ReadinessEventCreatedV2)
+	createResult, err := service.Execute(t.Context(), create)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	active := readinessStateGapDBFixtureV2(t, 2, mission.MissionOpen, 1, "operation-readiness-activity", "2026-09-04T12:01:00Z")
+	activity := readinessCommandGapDBFixtureV2(active, created, mission.ReadinessEventActivityRecordedV2)
+	activity.Activity = &mission.MissionActivityV2{
+		ActivityID: "activity-readiness-1",
+		Action:     mission.ActionRef{ID: mission.ActionArtifactPublish, Scope: mission.AuthorityScope{Kind: mission.ScopeArtifact, Identity: "artifact-readiness"}},
+		Outcome:    "succeeded", ResultDigest: readinessDigestGapDBFixtureV2(t, "activity").String(), EvidenceIdentities: []string{"evidence-readiness"},
+	}
+	if _, err = service.Execute(t.Context(), activity); err != nil {
+		t.Fatal(err)
+	}
+
+	paused := readinessStateGapDBFixtureV2(t, 3, mission.MissionPaused, 1, "operation-readiness-pause", "2026-09-04T12:02:00Z")
+	pause := readinessCommandGapDBFixtureV2(paused, active, mission.ReadinessEventPausedV2)
+	pauseResult, err := service.Execute(t.Context(), pause)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if memory.batchCalls != 3 || createResult.State().Digest() != created.Digest() || pauseResult.State().Digest() != paused.Digest() {
+		t.Fatalf("readiness progression batches=%d create=%s pause=%s", memory.batchCalls, createResult.State().Digest(), pauseResult.State().Digest())
+	}
+	observed, err := readiness.ObserveReadinessAuthority(t.Context(), paused.ProjectID(), paused.MissionID())
+	if err != nil || observed.State.Digest() != paused.Digest() || observed.RecordRevision != 4 {
+		t.Fatalf("readiness readback=%+v err=%v", observed, err)
+	}
+
+	epoch := &readinessEpochCounterV2{epoch: "replacement-epoch"}
+	restarted, err := mission.NewReadinessAuthorityServiceV2(readiness, epoch, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeReads, beforeBatches := memory.getCalls, memory.batchCalls
+	replay, err := restarted.Execute(t.Context(), pause)
+	if err != nil || !replay.Replayed() || !bytes.Equal(replay.CanonicalBytes(), pauseResult.CanonicalBytes()) || replay.PublicationID() != pauseResult.PublicationID() {
+		t.Fatalf("canonical restart replay=%s err=%v", replay.CanonicalBytes(), err)
+	}
+	if epoch.calls != 0 || memory.getCalls != beforeReads+2 || memory.batchCalls != beforeBatches {
+		t.Fatalf("replay crossed later authority: epoch=%d reads=%d/%d batches=%d/%d", epoch.calls, beforeReads, memory.getCalls, beforeBatches, memory.batchCalls)
+	}
+
+	changed := pause
+	changed.ProcessID = "process-readiness-other"
+	beforeReads = memory.getCalls
+	if _, err = restarted.Execute(t.Context(), changed); !mission.IsMissionAuthorityKindV2(err, mission.MissionAuthorityIdempotencyConflictV2) {
+		t.Fatalf("changed readiness binding did not conflict: %v", err)
+	}
+	if epoch.calls != 0 || memory.getCalls != beforeReads+1 || memory.batchCalls != beforeBatches {
+		t.Fatalf("binding conflict crossed later authority: epoch=%d reads=%d/%d batches=%d/%d", epoch.calls, beforeReads, memory.getCalls, beforeBatches, memory.batchCalls)
+	}
+}
+
+func TestReadinessAuthorityAdapterRejectsLegacyPhaseStateV2(t *testing.T) {
+	_, _, readiness, legacy := missionAuthorityGapDBFixtureV2(t)
+	service, err := mission.NewMissionAuthorityServiceV2(legacy, missionEpochFixtureV2{"epoch-legacy"}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionDigest := readinessDigestGapDBFixtureV2(t, "legacy-definition")
+	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+		ProjectID: "project-1", MissionID: "mission-1", DefinitionRevision: "definition-1", DefinitionDigest: definitionDigest,
+		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "specifying", Decomposition: mission.DecompositionNoneV2,
+		LastOperationID: "operation-legacy-readiness", ObservedAt: "2026-09-04T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := mission.MissionAuthorityCommandV2{
+		SchemaVersion: 1, OperationID: "operation-legacy-readiness", ProjectID: state.ProjectID(), MissionID: state.MissionID(),
+		ActorID: "actor-legacy", ProcessID: "process-legacy", OriginatingRuntimeEpochID: "epoch-legacy",
+		DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1",
+		ObservedAt: state.ObservedAt(), EventType: mission.MissionEventCreatedV2, Successor: state,
+	}
+	if _, err = service.Execute(t.Context(), command); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = readiness.ObserveReadinessAuthority(t.Context(), state.ProjectID(), state.MissionID()); !mission.IsMissionAuthorityKindV2(err, mission.MissionAuthorityLegacyPhaseV2) {
+		t.Fatalf("legacy phase state entered readiness authority: %v", err)
+	}
+}
+
+func TestReadinessAuthorityAdapterRefusesOneRevisionDriftV2(t *testing.T) {
+	memory, provider, readiness := readinessAuthorityGapDBFixtureV2(t)
+	service, _ := mission.NewReadinessAuthorityServiceV2(readiness, missionEpochFixtureV2{"epoch-readiness"}, journalv2.DefaultEventRegistryV2())
+	created := readinessStateGapDBFixtureV2(t, 1, mission.MissionOpen, 0, "operation-readiness-drift", "2026-09-04T12:00:00Z")
+	if _, err := service.Execute(t.Context(), readinessCommandGapDBFixtureV2(created, mission.ReadinessAuthorityStateV2{}, mission.ReadinessEventCreatedV2)); err != nil {
+		t.Fatal(err)
+	}
+	statusCalls := 0
+	provider.statusFn = func(context.Context) (gapdbapi.StatusResult, error) {
+		memory.mu.Lock()
+		defer memory.mu.Unlock()
+		statusCalls++
+		revision := memory.revision
+		if statusCalls > 1 {
+			revision++
+		}
+		return gapdbapi.StatusResult{DatabaseID: "database-1", CurrentRevision: revision, DurableThroughRevision: revision}, nil
+	}
+	if _, err := readiness.ObserveReadinessAuthority(t.Context(), created.ProjectID(), created.MissionID()); !journalv2.IsKind(err, journalv2.ErrorRevisionMoved) {
+		t.Fatalf("one-revision drift was accepted: %v", err)
+	}
+	if statusCalls != 2 {
+		t.Fatalf("readiness observation did not capture and verify one revision: calls=%d", statusCalls)
+	}
+}
+
+func readinessAuthorityGapDBFixtureV2(t *testing.T) (*v2AtomicMemory, *fakeProvider, mission.ReadinessAuthorityPortV2) {
+	t.Helper()
+	memory, provider, readiness, _ := missionAuthorityGapDBFixtureV2(t)
+	return memory, provider, readiness
+}
+
+func missionAuthorityGapDBFixtureV2(t *testing.T) (*v2AtomicMemory, *fakeProvider, mission.ReadinessAuthorityPortV2, mission.MissionAuthorityPortV2) {
+	t.Helper()
+	memory := newV2AtomicMemory()
+	memory.revision = 1
+	provider := memory.provider()
+	provider.statusFn = func(context.Context) (gapdbapi.StatusResult, error) {
+		memory.mu.Lock()
+		defer memory.mu.Unlock()
+		return gapdbapi.StatusResult{DatabaseID: "database-1", CurrentRevision: memory.revision, DurableThroughRevision: memory.revision}, nil
+	}
+	store, err := newAdapter(provider, "/explicit/socket", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := journalv2.NewProjectionTrackerV2(missionReducerSetFixtureV2(t), journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(store, projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := NewMissionAuthorityPortV2(store, coordinator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readiness, ok := legacy.(mission.ReadinessAuthorityPortV2)
+	if !ok {
+		t.Fatal("mission adapter does not implement readiness authority")
+	}
+	return memory, provider, readiness, legacy
+}
+
+func readinessStateGapDBFixtureV2(t *testing.T, version journalv2.LogicalVersion, lifecycle mission.MissionLifecycle, activityCount uint64, operationID journalv2.OperationID, observedAt string) mission.ReadinessAuthorityStateV2 {
+	t.Helper()
+	state, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+		ProjectID: "project-readiness", MissionID: "mission-readiness", DefinitionRevision: "definition-1",
+		DefinitionDigest: readinessDigestGapDBFixtureV2(t, "definition"), Version: version, Lifecycle: lifecycle,
+		ActivityCount: activityCount, LastOperationID: operationID, ObservedAt: observedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func readinessCommandGapDBFixtureV2(successor, expected mission.ReadinessAuthorityStateV2, eventType mission.ReadinessEventTypeV2) mission.ReadinessAuthorityCommandV2 {
+	return mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: successor.LastOperationID(), ProjectID: successor.ProjectID(), MissionID: successor.MissionID(),
+		ActorID: "actor-readiness", ProcessID: "process-readiness", OriginatingRuntimeEpochID: "epoch-readiness",
+		DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1",
+		ObservedAt: successor.ObservedAt(), EventType: eventType, Expected: expected, Successor: successor,
+	}
+}
+
+func readinessDigestGapDBFixtureV2(t *testing.T, value string) journalv2.Digest {
+	t.Helper()
+	digest, err := journalv2.ReducerStateDigestV2([]byte(`{"value":"` + value + `"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }
