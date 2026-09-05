@@ -108,23 +108,32 @@ var familyEvidenceProofs = map[string][]evidenceClaim{
 	),
 }
 
+type publicationEvidenceClass string
+
+const (
+	publicationCutOnly        publicationEvidenceClass = "cut_only"
+	publicationCutAndRecovery publicationEvidenceClass = "same_state_cut_and_recovery"
+)
+
 type publicationCutProof struct {
-	Cut   string          `json:"cut"`
-	Proof executableProof `json:"same_state_cut_and_recovery_proof"`
+	Cut   string                   `json:"cut"`
+	Class publicationEvidenceClass `json:"evidence_class"`
+	Proof executableProof          `json:"proof"`
 }
 
 // Production publication cuts are an orthogonal evidence axis. Each entry is
-// one real experiment at the shared v2 coordinator/GapDB boundary. The named
-// test performs its cut and recovery assertion against the same owner and
-// control-store state; an unrelated fresh-host oracle is not admissible.
-// Family claims above are never multiplied by these labels.
+// one real experiment at the shared v2 coordinator/GapDB boundary. Recovery is
+// claimed only when that same test performs recovery against the same owner
+// and control-store state. Cut-only refusals make no recovery claim, and an
+// unrelated fresh-host oracle is never admissible. Family claims above are
+// never multiplied by these labels.
 var productionPublicationCutProofs = []publicationCutProof{
-	{"before_publication", proof("./internal/controlstore/gapdb", "TestV2CommitCanceledBeforeDeliveryMakesNoProviderCall")},
-	{"after_durable_commit_before_response", proof("./internal/controlstore/gapdb", "TestV2AssertionCandidateSidecarQualification")},
-	{"lost_response", proof("./internal/controlstore/gapdb", "TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation")},
-	{"malformed_acknowledgement", proof("./internal/controlstore/gapdb", "TestV2CommitRefusesWireBudgetBeforeProviderAndValidatesAck")},
-	{"restart_before_reconciliation", proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_before_reconciliation")},
-	{"restart_after_reconciliation", proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_after_reconciliation")},
+	{"before_publication", publicationCutOnly, proof("./internal/controlstore/gapdb", "TestV2CommitCanceledBeforeDeliveryMakesNoProviderCall")},
+	{"after_durable_commit_before_response", publicationCutAndRecovery, proof("./internal/controlstore/gapdb", "TestV2AssertionCandidateSidecarQualification")},
+	{"lost_response", publicationCutAndRecovery, proof("./internal/controlstore/gapdb", "TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation")},
+	{"malformed_acknowledgement", publicationCutOnly, proof("./internal/controlstore/gapdb", "TestV2CommitRefusesWireBudgetBeforeProviderAndValidatesAck")},
+	{"restart_before_reconciliation", publicationCutAndRecovery, proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_before_reconciliation")},
+	{"restart_after_reconciliation", publicationCutAndRecovery, proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_after_reconciliation")},
 }
 
 // familyClaims records only the behavior each executable test actually proves.
@@ -244,8 +253,11 @@ func TestUniversalCampaignCensusMutants(t *testing.T) {
 		"substituted_family_proof": func(c *campaignCensus) { c.Entries[0].Claims[0].Proof = c.Entries[1].Claims[0].Proof },
 		"missing_publication_cut":  func(c *campaignCensus) { c.PublicationCuts = c.PublicationCuts[1:] },
 		"substituted_cut_proof":    func(c *campaignCensus) { c.PublicationCuts[0].Proof = c.PublicationCuts[1].Proof },
+		"cut_only_laundered_as_recovery": func(c *campaignCensus) {
+			c.PublicationCuts[0].Class = publicationCutAndRecovery
+		},
 		"severed_cut_recovery_state": func(c *campaignCensus) {
-			c.PublicationCuts[0].Proof = proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")
+			c.PublicationCuts[1].Proof = proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")
 		},
 		"reduced_repetition":       func(c *campaignCensus) { c.Entries[0].Repetitions = 99 },
 		"swallowed_refusal":        func(c *campaignCensus) { c.Entries[0].Outcome = "ignored" },
@@ -328,7 +340,7 @@ func equalPublicationCutProofs(got, want []publicationCutProof) bool {
 	}
 	seen := make(map[string]struct{}, len(got))
 	for index := range got {
-		if got[index] != want[index] || got[index].Cut == "" {
+		if got[index] != want[index] || got[index].Cut == "" || (got[index].Class != publicationCutOnly && got[index].Class != publicationCutAndRecovery) {
 			return false
 		}
 		if _, duplicate := seen[got[index].Cut]; duplicate {
