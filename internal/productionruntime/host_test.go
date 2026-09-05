@@ -208,22 +208,37 @@ func (d *cancellingEffectDispatcher) CompensateEffect(context.Context, execution
 
 type missionCreatingReconciler struct{ retained *ReconciliationCommands }
 
+type refusingDecompositionProvider struct{}
+
+func (refusingDecompositionProvider) RequireCapabilities(context.Context, []mission.DecompositionEffectKindV2) error {
+	return nil
+}
+func (refusingDecompositionProvider) ObserveEffect(context.Context, journalv2.EffectID) (mission.DecompositionProviderObservationV2, bool, error) {
+	return mission.DecompositionProviderObservationV2{}, false, nil
+}
+func (refusingDecompositionProvider) MutateEffect(context.Context, mission.DecompositionProviderMutationV2) (mission.DecompositionProviderMutationOutcomeV2, error) {
+	return mission.DecompositionProviderMutationRefusedV2, errors.New("decomposition unavailable in host fixture")
+}
+func (refusingDecompositionProvider) CompensateEffect(context.Context, mission.DecompositionProviderMutationV2, mission.DecompositionProviderObservationV2) error {
+	return errors.New("decomposition unavailable in host fixture")
+}
+
 func (r *missionCreatingReconciler) Reconcile(ctx context.Context, commands *ReconciliationCommands) error {
 	r.retained = commands
 	epoch := commands.RuntimeEpochID()
 	digest, _ := journalv2.ReducerStateDigestV2([]byte(`{"definition":"reconciled"}`))
-	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+	state, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
 		ProjectID: "project-runtime", MissionID: "mission-reconciled", DefinitionRevision: "definition-runtime", DefinitionDigest: digest,
-		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "active", LastOperationID: "operation-reconciled-create", ObservedAt: "2026-09-05T11:59:00Z",
+		Version: 1, Lifecycle: mission.MissionOpen, LastOperationID: "operation-reconciled-create", ObservedAt: "2026-09-05T11:59:00Z",
 	})
 	if err != nil {
 		return err
 	}
-	_, err = commands.ExecuteMission(ctx, mission.MissionAuthorityCommandV2{
-		SchemaVersion: 1, OperationID: "operation-reconciled-create", ProjectID: "project-runtime", MissionID: "mission-reconciled",
+	_, err = commands.ExecuteReadiness(ctx, mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: "operation-reconciled-create", ProjectID: "project-runtime", MissionID: "mission-reconciled",
 		ActorID: "actor-runtime", ProcessID: "process-reconciler", OriginatingRuntimeEpochID: epoch,
 		DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
-		ObservedAt: "2026-09-05T11:59:00Z", EventType: mission.MissionEventCreatedV2, Successor: state,
+		ObservedAt: "2026-09-05T11:59:00Z", EventType: mission.ReadinessEventCreatedV2, Updated: state,
 	})
 	return err
 }
@@ -835,11 +850,13 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 			ExecutablePath: binary, AdmissionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-admission.json"),
 			RuntimeRoot: runtimeRoot, DataDirectory: data, SupervisorRunID: "supervisor-real-1", ProductPolicySHA256: repeatByte('e', 64),
 		},
-		MonitorInterval:   250 * time.Millisecond,
-		CandidateVerifier: refusingCandidateVerifier{},
-		IntegrationGit:    refusingIntegrationGit{},
-		Reconciler:        reconciler,
-		CheckpointEvery:   1,
+		MonitorInterval:       250 * time.Millisecond,
+		CapabilityReadiness:   absentReadinessSource{},
+		DecompositionProvider: refusingDecompositionProvider{},
+		CandidateVerifier:     refusingCandidateVerifier{},
+		IntegrationGit:        refusingIntegrationGit{},
+		Reconciler:            reconciler,
+		CheckpointEvery:       1,
 	}
 	first, err := Start(t.Context(), config)
 	if err != nil {
@@ -849,11 +866,12 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if first.State() != HostReady || firstEpoch == "" {
 		t.Fatalf("first state=%s epoch=%q", first.State(), firstEpoch)
 	}
-	if first.capabilities.effect == nil || first.capabilities.cleanup == nil {
-		t.Fatal("production host omitted effect dispatch or integration cleanup capability")
+	if first.capabilities.effect == nil || first.capabilities.cleanup == nil || first.capabilities.decomposition == nil || first.capabilities.actions == nil {
+		t.Fatal("production host omitted a required typed capability")
 	}
 	progressHandle := first.Progress()
-	if _, err := progressHandle.Mission("project-runtime", "mission-reconciled"); err != nil {
+	reconciledProgress, err := progressHandle.Mission("project-runtime", "mission-reconciled")
+	if err != nil || !reconciledProgress.Complete || len(reconciledProgress.Actions) == 0 {
 		t.Fatalf("reconciliation publication absent after rescan: %v", err)
 	}
 	watchBase, err := progressHandle.Mission("project-runtime", "mission-reconciled")
@@ -873,18 +891,18 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	}
 	beforeRevision := first.Status().ProjectionRevision
 	definitionDigest, _ := journalv2.ReducerStateDigestV2([]byte(`{"definition":"runtime-test"}`))
-	missionState, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+	missionState, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
 		ProjectID: "project-runtime", MissionID: "mission-runtime", DefinitionRevision: "definition-runtime", DefinitionDigest: definitionDigest,
-		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "active", LastOperationID: "operation-runtime-create", ObservedAt: "2026-09-05T12:00:00Z",
+		Version: 1, Lifecycle: mission.MissionOpen, LastOperationID: "operation-runtime-create", ObservedAt: "2026-09-05T12:00:00Z",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := first.ExecuteMission(t.Context(), firstEpoch, mission.MissionAuthorityCommandV2{
-		SchemaVersion: 1, OperationID: "operation-runtime-create", ProjectID: "project-runtime", MissionID: "mission-runtime",
+	created, err := first.ExecuteReadiness(t.Context(), firstEpoch, mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: "operation-runtime-create", ProjectID: "project-runtime", MissionID: "mission-runtime",
 		ActorID: "actor-runtime", ProcessID: "process-runtime", OriginatingRuntimeEpochID: firstEpoch,
 		DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
-		ObservedAt: "2026-09-05T12:00:00Z", EventType: mission.MissionEventCreatedV2, Successor: missionState,
+		ObservedAt: "2026-09-05T12:00:00Z", EventType: mission.ReadinessEventCreatedV2, Updated: missionState,
 	})
 	if err != nil || created.PublicationID() == "" {
 		t.Fatalf("typed mission create: result=%+v err=%v", created, err)
@@ -893,7 +911,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		t.Fatal("successful command replaced the retained progress facade")
 	}
 	firstProgress, err := progressHandle.Mission("project-runtime", "mission-runtime")
-	if err != nil || firstProgress.ProjectionRevision <= beforeRevision || firstProgress.Lifecycle != "active" {
+	if err != nil || firstProgress.ProjectionRevision <= beforeRevision || firstProgress.Lifecycle != "open" || !firstProgress.Complete {
 		t.Fatalf("live memory was not refreshed: progress=%+v err=%v", firstProgress, err)
 	}
 	select {
@@ -1025,28 +1043,28 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if err != nil || restartedProgress.Lifecycle != firstProgress.Lifecycle || restartedProgress.ProjectionSHA256 != firstProgress.ProjectionSHA256 {
 		t.Fatalf("restart did not reproduce mission memory: first=%+v second=%+v err=%v", firstProgress, restartedProgress, err)
 	}
-	var restoredMissionState mission.MissionAuthorityStateV2
+	var restoredMissionState mission.ReadinessAuthorityStateV2
 	for _, item := range restartedProgress.Items {
 		if item.Family == "mission" {
-			restoredMissionState, err = mission.DecodeMissionAuthorityStateV2(item.CanonicalState)
+			restoredMissionState, err = mission.DecodeReadinessAuthorityStateV2(item.CanonicalState)
 			break
 		}
 	}
 	if err != nil || restoredMissionState.IsZero() {
 		t.Fatalf("restored mission state: %v", err)
 	}
-	pausedState, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+	pausedState, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
 		ProjectID: "project-runtime", MissionID: "mission-runtime", DefinitionRevision: "definition-runtime", DefinitionDigest: definitionDigest,
-		Version: 2, Status: mission.AuthorityMissionPausedV2, Step: "active", LastOperationID: "operation-runtime-pause", ObservedAt: "2026-09-05T12:01:00Z",
+		Version: 2, Lifecycle: mission.MissionPaused, LastOperationID: "operation-runtime-pause", ObservedAt: "2026-09-05T12:01:00Z",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.ExecuteMission(t.Context(), second.RuntimeEpochID(), mission.MissionAuthorityCommandV2{
-		SchemaVersion: 1, OperationID: "operation-runtime-pause", ProjectID: "project-runtime", MissionID: "mission-runtime",
+	if _, err := second.ExecuteReadiness(t.Context(), second.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: "operation-runtime-pause", ProjectID: "project-runtime", MissionID: "mission-runtime",
 		ActorID: "actor-runtime", ProcessID: "process-runtime-2", OriginatingRuntimeEpochID: second.RuntimeEpochID(),
 		DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
-		ObservedAt: "2026-09-05T12:01:00Z", EventType: mission.MissionEventPausedV2, Expected: restoredMissionState, Successor: pausedState,
+		ObservedAt: "2026-09-05T12:01:00Z", EventType: mission.ReadinessEventPausedV2, Expected: restoredMissionState, Updated: pausedState,
 	}); err != nil {
 		t.Fatalf("post-restart typed command: %v", err)
 	}
