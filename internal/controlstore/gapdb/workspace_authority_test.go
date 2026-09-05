@@ -390,6 +390,10 @@ func TestWorkspaceAuthorityCommitsBindingAndPermanentPathClaimThroughGapDBV2(t *
 	if stageResult.State.Stage != workspace.StageWorktreeObservedV2 {
 		t.Fatalf("stage=%s", stageResult.State.Stage)
 	}
+	stageObserved, err := authority.ObserveWorkspaceStage(t.Context(), workspaceCoordinate)
+	if err != nil || stageResult.RecordRevision == 0 || stageResult.RecordRevision != stageObserved.RecordRevision {
+		t.Fatalf("stage result omitted reusable authority revision: result=%d observed=%d err=%v", stageResult.RecordRevision, stageObserved.RecordRevision, err)
+	}
 	executionAfter, err := authority.ObserveExecutionSlot(t.Context(), executionCoordinate)
 	if err != nil {
 		t.Fatal(err)

@@ -72,9 +72,10 @@ type WorkspaceAuthorityRequestV2 struct {
 }
 
 type WorkspaceAuthorityResultV2 struct {
-	Execution ExecutionSlotStateV2
-	Workspace workspace.StateV2
-	Replayed  bool
+	Execution      ExecutionSlotStateV2
+	Workspace      workspace.StateV2
+	RecordRevision uint64
+	Replayed       bool
 }
 
 type WorkspaceAuthorityServiceV2 struct {
@@ -119,6 +120,7 @@ func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request Works
 		if err := strictExecutionJSONV2(resolution.State.Result(), &result); err != nil || result.Execution.Validate() != nil || result.Workspace.Validate() != nil {
 			return WorkspaceAuthorityResultV2{}, executionV2Error(KindAuthorityConflict, "workspace_result", err)
 		}
+		result.RecordRevision = resolution.RecordRevision
 		result.Replayed = true
 		return result, nil
 	}
@@ -154,7 +156,7 @@ func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request Works
 	if err != nil || !ack.matches(plan) {
 		return WorkspaceAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "workspace_publication", err)
 	}
-	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: workspaceState}, nil
+	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: workspaceState, RecordRevision: ack.providerRevision}, nil
 }
 
 func composeWorkspaceExecutionTransitionV2(kind WorkspaceAuthorityCommandKindV2, observedAt time.Time, prior ExecutionSlotStateV2, nextWorkspace workspace.StateV2, observed WorkspaceAuthorityObservationV2) (ExecutionSlotStateV2, error) {

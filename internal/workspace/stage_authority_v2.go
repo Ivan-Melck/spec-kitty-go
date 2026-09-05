@@ -78,8 +78,9 @@ func (a StageAuthorityAckV2) matches(plan StageAuthorityPlanV2) bool {
 }
 
 type StageAuthorityResultV2 struct {
-	State    StateV2
-	Replayed bool
+	State          StateV2
+	RecordRevision uint64
+	Replayed       bool
 }
 type StageAuthorityServiceV2 struct {
 	port     StageAuthorityPortV2
@@ -121,7 +122,7 @@ func (s *StageAuthorityServiceV2) Execute(ctx context.Context, request StageAuth
 		if decodeErr != nil {
 			return StageAuthorityResultV2{}, decodeErr
 		}
-		return StageAuthorityResultV2{State: restored, Replayed: true}, nil
+		return StageAuthorityResultV2{State: restored, RecordRevision: resolution.RecordRevision, Replayed: true}, nil
 	}
 	epoch, err := s.epochs.CurrentRuntimeEpoch(ctx)
 	if err != nil || epoch != state.Binding.RuntimeEpochID {
@@ -150,7 +151,7 @@ func (s *StageAuthorityServiceV2) Execute(ctx context.Context, request StageAuth
 	if err != nil || !ack.matches(plan) {
 		return StageAuthorityResultV2{}, workspaceV2Error(KindWorkspaceConflict, "stage_publication", err)
 	}
-	return StageAuthorityResultV2{State: state}, nil
+	return StageAuthorityResultV2{State: state, RecordRevision: ack.providerRevision}, nil
 }
 
 func validateExecutionAssertionForBindingV2(assertion journalv2.AuthorityAssertionV2, b BindingV2) error {
