@@ -40,6 +40,9 @@ func TestProjectionPublishesCompleteAcknowledgedRevisionsAndDefensiveQueries(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	if view.DatabaseID != "database-1" || view.ProjectionRevision != 1 || view.RuntimeEpochID != "epoch-1" || view.ProjectionDigest == "" {
+		t.Fatalf("get result lacks exact projection attribution: %+v", view)
+	}
 	view.CanonicalState[0] ^= 1
 	again, err := authority.Get(GetQueryV2{Coordinate: coordinate})
 	if err != nil || string(again.CanonicalState) != `{"name":"a"}` {
@@ -105,6 +108,16 @@ func TestProjectionListCursorIsBoundedStableAndRevisionScoped(t *testing.T) {
 	if _, err := authority.List(ListQueryV2{Limit: MaxQueryPageV2 + 1}); !IsKindV2(err, ErrorInvalidQueryV2) {
 		t.Fatalf("over-budget list err=%v", err)
 	}
+	for name, query := range map[string]ListQueryV2{
+		"project": {ProjectID: journalv2.ProjectID(strings.Repeat("p", journalv2.MaxIdentityBytes+1)), Limit: 1},
+		"mission": {MissionID: journalv2.MissionID(strings.Repeat("m", journalv2.MaxIdentityBytes+1)), Limit: 1},
+		"work":    {WorkID: journalv2.WorkID(strings.Repeat("w", journalv2.MaxIdentityBytes+1)), Limit: 1},
+		"family":  {Family: "not_registered", Limit: 1},
+	} {
+		if _, err := authority.List(query); !IsKindV2(err, ErrorInvalidQueryV2) {
+			t.Fatalf("%s filter escaped bound/registry check: %v", name, err)
+		}
+	}
 }
 
 func TestProjectionWatchSignalsChangeAndForcesLaggedOrEpochResync(t *testing.T) {
@@ -147,6 +160,30 @@ func TestProjectionWatchSignalsChangeAndForcesLaggedOrEpochResync(t *testing.T) 
 	watch.Cancel()
 	if _, err := authority.Watch("database-other", 4); !IsKindV2(err, ErrorResyncRequiredV2) {
 		t.Fatalf("wrong database watch err=%v", err)
+	}
+}
+
+func TestProjectionWatchCancelIsConcurrentlyIdempotent(t *testing.T) {
+	authority, coordinator := projectionFixtureV2(t)
+	first := publishProjectionFixtureV2(t, coordinator, "cancel", "mission", "mission-cancel")
+	if err := authority.PublishAcknowledged(first); err != nil {
+		t.Fatal(err)
+	}
+	watch, err := authority.Watch("database-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var callers sync.WaitGroup
+	for index := 0; index < 32; index++ {
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			watch.Cancel()
+		}()
+	}
+	callers.Wait()
+	if _, open := <-watch.C; open {
+		t.Fatal("canceled watch remained open")
 	}
 }
 
@@ -193,42 +230,22 @@ func TestQueryPortCannotMutateAuthorityOrCollapseProgressIntoCeremony(t *testing
 	}
 }
 
-func TestWP11ConformanceCensusCoversEveryMigratedAuthorityFamily(t *testing.T) {
-	capabilities := map[string][]string{
-		"global_operation":            {"operation"},
-		"mission_decision_blocker":    {"mission"},
-		"artifact":                    {"artifact_catalog", "artifact_revision"},
-		"workrevision_reconciliation": {"workgraph"},
-		"run_lease":                   {"execution_slot"},
-		"workspace":                   {"workspace"},
-		"handoff":                     {"handoff_slot"},
-		"independent_review":          {"review_slot"},
-		"acceptance":                  {"acceptance"},
-		"serialized_integration":      {"integration_target", "integration_attempt"},
-		"external_effect":             {"external_effect"},
-		"outbox_delivery_evidence":    {"outbox"},
+func TestWatchCannotBecomeRecoveryStreamMutant(t *testing.T) {
+	notification := reflect.TypeOf(NotificationV2{})
+	want := map[string]bool{"DatabaseID": true, "Revision": true, "RuntimeEpochID": true, "ProjectionDigest": true, "ResyncRequired": true}
+	if notification.NumField() != len(want) {
+		t.Fatalf("watch recovery mutant changed notification width to %d", notification.NumField())
 	}
-	covered := make(map[string]string)
-	for capability, families := range capabilities {
-		if len(families) == 0 {
-			t.Fatalf("capability %s has no event family", capability)
+	for index := 0; index < notification.NumField(); index++ {
+		field := notification.Field(index)
+		if !want[field.Name] {
+			t.Fatalf("watch recovery mutant leaked %s", field.Name)
 		}
-		for _, family := range families {
-			if prior := covered[family]; prior != "" {
-				t.Fatalf("family %s ambiguously owned by %s and %s", family, prior, capability)
+		lower := strings.ToLower(field.Name + " " + field.Type.String())
+		for _, forbidden := range []string{"event", "payload", "canonicalstate", "cursor", "history", "checkpoint"} {
+			if strings.Contains(lower, forbidden) {
+				t.Fatalf("watch notification leaked recovery material %s through %s", forbidden, field.Name)
 			}
-			covered[family] = capability
-		}
-	}
-	for _, tuple := range journalv2.ExpectedEventTuples() {
-		if tuple.Family == "runtime_host" { // WP13 owns production-host composition.
-			continue
-		}
-		if covered[tuple.Family] == "" {
-			t.Fatalf("registered migrated family %s is absent from the conformance census", tuple.Family)
-		}
-		if _, err := journalv2.DefaultEventRegistryV2().Resolve(tuple.Family, tuple.EventSchemaVersion, tuple.ReducerVersion); err != nil {
-			t.Fatalf("capability=%s family=%s tuple rejected: %v", covered[tuple.Family], tuple.Family, err)
 		}
 	}
 }

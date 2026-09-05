@@ -44,7 +44,23 @@ func ReduceOutboxEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte,
 	if change.PriorDigest != digest.String() {
 		return nil, outboxError("prior_digest_mismatch")
 	}
+	if change.Action == OutboxPermitRetryV2 && !outboxRetrySafeV2(*old.Observation, next.Observation) {
+		return nil, outboxError("unsafe_retry")
+	}
+	if change.Action == OutboxPermitCompensationV2 && !outboxAttributionExactV2(*old.Observation, next.Observation, outboxIntentCoordinatesFromStateV2(next)) {
+		return nil, outboxError("unsafe_compensation")
+	}
 	return next.CanonicalBytes(), nil
+}
+
+func outboxIntentCoordinatesFromStateV2(state OutboxDeliveryStateV2) OutboxIntentCoordinatesV2 {
+	return OutboxIntentCoordinatesV2{
+		EffectID: state.EffectID, SourceOperationID: state.SourceOperationID,
+		IntendedMutationDigest: state.IntendedMutationDigest, IntendedValue: state.IntendedValue,
+		ExpectedProviderRevision: state.ExpectedProviderRevision, ExpectedValue: state.ExpectedValue,
+		ExpectedOperationMarker: state.ExpectedOperationMarker, AttributionMarker: state.AttributionMarker,
+		ActorID: state.ActorID, Capability: state.Capability,
+	}
 }
 
 func OutboxReducerRegistrationsV2() []journalv2.ReducerRegistration {

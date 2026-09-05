@@ -12,10 +12,18 @@ import (
 	"time"
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/artifact"
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	restore "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/controlstore"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/integration"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/projection"
+	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 // This test is deliberately the only GapDB/projection join in WP11. The
@@ -29,13 +37,26 @@ func TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2(t *test
 		t.Fatal(err)
 	}
 	memory := newV2AtomicMemory()
+	// The execution fixture is conditioned on a real finalized-work eligibility
+	// observation at revision 17. Seed that authoritative prerequisite exactly;
+	// the source and outbox publications themselves still travel through the
+	// production GapDB adapter and coordinator below.
+	executionSource, source, coordinates := outboxGapDBSourceFixtureV2(t, registry)
+	memory.revision = 17
+	for _, guard := range executionSource.EligibilityGuards() {
+		key, keyErr := v2EligibilityGuardKey(guard.MissionID, guard.ShardID)
+		if keyErr != nil {
+			t.Fatal(keyErr)
+		}
+		memory.records[key.String()] = gapdbapi.NewRecord(key.String(), guard.Canonical, gapdbapi.Revision(guard.ExpectedRecordRevision), nil)
+	}
 	provider := memory.provider()
 	commit := provider.batchFn
 	calls := 0
 	provider.batchFn = func(ctx context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
 		calls++
 		result, commitErr := commit(ctx, batch)
-		if commitErr == nil && calls == 3 {
+		if commitErr == nil && calls == 4 {
 			return gapdbapi.MutationResult{}, &gapdbapi.TransportError{Operation: "atomic_batch", Ambiguous: true, Cause: io.EOF}
 		}
 		return result, commitErr
@@ -78,7 +99,9 @@ func TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2(t *test
 		t.Fatal(err)
 	}
 
-	source, coordinates := outboxGapDBSourceFixtureV2(t, registry)
+	if _, err := coordinator.Publish(t.Context(), executionSource); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := coordinator.Publish(t.Context(), source); err != nil {
 		t.Fatal(err)
 	}
@@ -92,10 +115,10 @@ func TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2(t *test
 		t.Fatal(err)
 	}
 	wrongPlan, _ := wrongCapability.Publication()
-	if _, err := adapter.CommitV2(t.Context(), wrongPlan); !IsKind(err, OutcomeConflict) || memory.revision != 1 {
+	if _, err := adapter.CommitV2(t.Context(), wrongPlan); !IsKind(err, OutcomeConflict) || memory.revision != 19 {
 		t.Fatalf("unproven source intent committed: revision=%d err=%v", memory.revision, err)
 	}
-	durable, err := controlstore.BindDurableOutboxIntentV2(source, 1, coordinates)
+	durable, err := controlstore.BindDurableOutboxIntentV2(source, 19, coordinates)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +137,7 @@ func TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2(t *test
 		t.Fatal(err)
 	}
 	ack, err := authority.PublishOutbox(t.Context(), capability)
-	if err != nil || ack.ProviderRevision != 2 || coordinator.UnresolvedCount() != 0 || memory.batchCalls != 3 {
+	if err != nil || ack.AuthorityRevision != 20 || coordinator.UnresolvedCount() != 0 || memory.batchCalls != 4 {
 		t.Fatalf("ack=%+v unresolved=%d batches=%d err=%v", ack, coordinator.UnresolvedCount(), memory.batchCalls, err)
 	}
 	exact, err := authority.ResolveOutboxOperation(t.Context(), command.OperationBinding())
@@ -144,7 +167,7 @@ func TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2(t *test
 		t.Fatal(err)
 	}
 	coordinate, _ := journalv2.NewAggregateCoordinate("outbox", journalv2.AggregateID(coordinates.EffectID), journalv2.Scope{Kind: journalv2.ScopeHost})
-	view, err := readModel.Get(projection.GetQueryV2{Coordinate: coordinate, AtRevision: 2})
+	view, err := readModel.Get(projection.GetQueryV2{Coordinate: coordinate, AtRevision: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +176,7 @@ func TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2(t *test
 		t.Fatalf("state=%+v err=%v", state, err)
 	}
 	durableObservation, err := authority.ObserveOutboxState(t.Context(), coordinate)
-	if err != nil || durableObservation.State == nil || durableObservation.RecordRevision != 2 {
+	if err != nil || durableObservation.State == nil || durableObservation.RecordRevision != 20 {
 		t.Fatalf("durable observation=%+v err=%v", durableObservation, err)
 	}
 	recoveredIntent, err := controlstore.RecoverDurableOutboxIntentV2(*durableObservation.State)
@@ -175,27 +198,44 @@ func TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2(t *test
 		t.Fatal("continuation incorrectly required the source head to remain current")
 	}
 	continuationAck, err := authority.PublishOutbox(t.Context(), continuationCapability)
-	if err != nil || continuationAck.ProviderRevision != 3 || memory.batchCalls != 4 {
+	if err != nil || continuationAck.AuthorityRevision != 21 || memory.batchCalls != 5 {
 		t.Fatalf("continuation=%+v batches=%d err=%v", continuationAck, memory.batchCalls, err)
 	}
 }
 
 func outboxProjectionReducersV2(t *testing.T, registry journalv2.EventRegistryV2) journalv2.ReducerSetV2 {
 	t.Helper()
-	outbox := controlstore.OutboxReducerRegistrationsV2()[0]
+	owned := []journalv2.ReducerRegistration{{Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Owner: "internal/controljournal/application", ImplementationDigest: journalv2.OperationReducerImplementationDigestV2(), Reduce: journalv2.ReduceOperationStateV2}}
+	owned = append(owned, journalv2.ReducerRegistration{Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Owner: "internal/mission", ImplementationDigest: mission.MissionReducerImplementationDigestV2(), Reduce: mission.ReduceMissionEventV2})
+	owned = append(owned, artifact.ReducerRegistrationsV2()...)
+	owned = append(owned, workgraph.ReducerRegistrationsV2()...)
+	owned = append(owned, execution.ExecutionReducerRegistrationsV2()...)
+	owned = append(owned, workspace.ReducerRegistrationsV2()...)
+	owned = append(owned, handoff.ReducerRegistrationsV2()...)
+	owned = append(owned, review.ReducerRegistrationsV2()...)
+	owned = append(owned, integration.AcceptanceReducerRegistrationsV2()...)
+	owned = append(owned, integration.IntegrationReducerRegistrationsV2()...)
+	owned = append(owned, execution.EffectReducerRegistrationsV2()...)
+	owned = append(owned, controlstore.OutboxReducerRegistrationsV2()...)
+	byFamily := make(map[string]journalv2.ReducerRegistration, len(owned))
+	for _, registration := range owned {
+		if prior := byFamily[registration.Family]; prior.Reduce != nil {
+			t.Fatalf("duplicate production reducer registration for %s", registration.Family)
+		}
+		byFamily[registration.Family] = registration
+	}
 	registrations := make([]journalv2.ReducerRegistration, 0, len(journalv2.ExpectedEventTuples()))
 	for _, tuple := range journalv2.ExpectedEventTuples() {
-		registration := journalv2.ReducerRegistration{Family: tuple.Family, EventSchemaVersion: tuple.EventSchemaVersion, ReducerVersion: tuple.ReducerVersion, Owner: tuple.Owner}
-		switch tuple.Family {
-		case "operation":
-			registration.ImplementationDigest = journalv2.OperationReducerImplementationDigestV2()
-			registration.Reduce = journalv2.ReduceOperationStateV2
-		case "outbox":
-			registration = outbox
-		default:
+		registration := byFamily[tuple.Family]
+		if tuple.Family == "runtime_host" { // WP13 owns the only not-yet-migrated family.
 			sum := sha256.Sum256([]byte("wp11-test-reducer/" + tuple.Family))
-			registration.ImplementationDigest, _ = journalv2.ParseDigest("test_reducer", hex.EncodeToString(sum[:]))
-			registration.Reduce = func(_ []byte, event journalv2.EventEnvelopeV2) ([]byte, error) { return event.Payload(), nil }
+			digest, _ := journalv2.ParseDigest("test_reducer", hex.EncodeToString(sum[:]))
+			registration = journalv2.ReducerRegistration{Family: tuple.Family, EventSchemaVersion: tuple.EventSchemaVersion, ReducerVersion: tuple.ReducerVersion, Owner: tuple.Owner, ImplementationDigest: digest, Reduce: func(_ []byte, _ journalv2.EventEnvelopeV2) ([]byte, error) {
+				return nil, fmt.Errorf("runtime_host is owned by WP13")
+			}}
+		}
+		if registration.Family != tuple.Family || registration.EventSchemaVersion != tuple.EventSchemaVersion || registration.ReducerVersion != tuple.ReducerVersion || registration.Owner != tuple.Owner || registration.Reduce == nil || registration.ImplementationDigest.IsZero() {
+			t.Fatalf("missing exact production reducer for %s", tuple.Family)
 		}
 		registrations = append(registrations, registration)
 	}
@@ -206,56 +246,85 @@ func outboxProjectionReducersV2(t *testing.T, registry journalv2.EventRegistryV2
 	return reducers
 }
 
-func outboxGapDBSourceFixtureV2(t *testing.T, registry journalv2.EventRegistryV2) (journalv2.SealedCommitPlanV2, controlstore.OutboxIntentCoordinatesV2) {
-	t.Helper()
-	operationID := journalv2.OperationID("operation-outbox-source")
-	effectID := journalv2.EffectID("effect-outbox-source")
-	actorID := journalv2.ActorID("actor-outbox")
-	mutationSum := sha256.Sum256([]byte("outbox mutation"))
-	mutationDigest := hex.EncodeToString(mutationSum[:])
-	intent, err := journalv2.CanonicalObject([]byte(fmt.Sprintf(`{"actor_id":"%s","canonical_request_digest":"%s","effect_id":"%s","expected_operation_marker":"marker-before","expected_provider_revision":7,"expected_value":"owner-before","intended_value":"owner-after","operation_id":"%s"}`, actorID, mutationDigest, effectID, operationID)))
-	if err != nil {
-		t.Fatal(err)
+// TestWP11ExecutableCapabilityConformanceV2 is intentionally an executable
+// matrix, not a list of test names. Each row runs an accepted path and a
+// refusal/fault path through the capability's consumer-owned production port.
+// This makes a deleted, renamed, or weakened capability test observable here
+// and keeps the final composition proof tied to behavior rather than prose.
+func TestWP11ExecutableCapabilityConformanceV2(t *testing.T) {
+	if testing.Short() {
+		t.Skip("bounded capability campaign is excluded from the short PR tier")
 	}
-	intentSum := sha256.Sum256(intent)
-	intentDigest, _ := journalv2.ParseDigest("effect_intent", hex.EncodeToString(intentSum[:]))
-	scope := journalv2.Scope{Kind: journalv2.ScopeHost}
-	commandDigest, _ := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "external_effect.saga", CommandSchemaVersion: 1, Scope: scope, Command: intent})
-	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "external_effect.saga", CommandSchemaVersion: 1, CanonicalIntentDigest: commandDigest, Scope: scope, ActorID: actorID, ProcessID: "process-outbox", DoctrineRevision: "doctrine-outbox", ProfileRevision: "profile-outbox", PolicyRevision: "policy-outbox", OriginatingRuntimeEpochID: "epoch-outbox", ObservedCreatedAt: "2026-09-05T12:00:00Z"})
-	if err != nil {
-		t.Fatal(err)
+	type evidence struct {
+		name     string
+		families []string
+		accepted func(*testing.T)
+		refused  func(*testing.T)
 	}
-	eventIDs := []journalv2.EventID{"event-outbox-source-effect", "event-outbox-source-operation"}
-	sort.Slice(eventIDs, func(i, j int) bool { return eventIDs[i] < eventIDs[j] })
-	operation, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: operationID, LogicalVersion: 1, Status: journalv2.StatusAccepted, EventIDs: eventIDs, EffectIDs: []journalv2.EffectID{effectID}})
-	if err != nil {
-		t.Fatal(err)
+	matrix := []evidence{
+		{"mission_decision_blocker", []string{"mission"}, TestMissionAuthorityAdapterOneBatchRestartReplayV2, TestMissionAuthorityAdapterBindingConflictPrecedesMissionReadV2},
+		{"readiness_actions", []string{"mission"}, TestReadinessAuthorityAdapterCreateActivityPauseRestartReplayV2, TestReadinessAuthorityAdapterRejectsLegacyPhaseStateV2},
+		{"artifact", []string{"artifact_catalog", "artifact_revision"}, TestArtifactAuthorityPublishesCompleteBatchThroughCoordinatorAndGapDB, TestArtifactAuthorityRefusesNil},
+		{"workrevision_reconciliation", []string{"workgraph"}, TestWorkgraphAuthorityPublishesCompleteBatchThroughCoordinatorAndGapDB, TestWorkgraphAuthorityRefusesNil},
+		{"run_lease_governance", []string{"execution_slot"}, TestExecutionAndEffectAuthoritiesProductionConstructorsCommitAndRecoverAmbiguityV2, TestAuthorityAdapterNeverDeliversAfterPreRegistrationRefusalV2},
+		{"workspace", []string{"workspace"}, TestWorkspaceAuthorityCommitsBindingAndPermanentPathClaimThroughGapDBV2, TestWorkspacePathClaimContentionAndIndependentProgressV2},
+		{"handoff", []string{"handoff_slot"}, TestHandoffGapDBPublisherCommitsOneCompleteBatchAndContendsV2, TestHandoffGapDBPartialPublicationRemainsUnresolvedV2},
+		{"independent_review", []string{"review_slot"}, TestReviewGapDBPublisherCommitsOneCompleteBatchAndContendsV2, TestReviewGapDBPartialPublicationRemainsUnresolvedV2},
+		{"acceptance_integration", []string{"acceptance", "integration_target", "integration_attempt"}, TestAcceptanceAndIntegrationPublishThroughRealGapDBAndReconcileLostCASV2, TestAcceptanceAndIntegrationGapDBRejectPartialAndMixedPublicationsV2},
+		{"external_effect", []string{"external_effect"}, TestExternalProviderRunsThroughRealGapDBEffectAuthorityV2, TestEffectDispatchAuthorizationIsDurableOneShotThroughGapDBV2},
+		{"outbox_projection", []string{"outbox"}, TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2, TestOutboxAdapterAdmitsOnlyExactCapabilityPlanV2},
 	}
-	operationPayload, _ := journalv2.EncodeOperationStateEventPayloadV2(operation)
-	effectPayload := []byte(`{"stage":"intent_recorded"}`)
-	operationCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(operationID), scope)
-	effectCoordinate, _ := journalv2.NewAggregateCoordinate("external_effect", journalv2.AggregateID(effectID), scope)
-	drafts := []journalv2.EventDraftV2{
-		{EventID: eventIDs[1], EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-outbox", ActorID: actorID, ProcessID: "process-outbox", PolicyRevision: "policy-outbox", GovernanceRevisions: []string{"doctrine-outbox", "profile-outbox"}, Payload: operationPayload},
-		{EventID: eventIDs[0], EventType: "external_effect.record_intent", Family: "external_effect", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: effectCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-outbox", ActorID: actorID, ProcessID: "process-outbox", PolicyRevision: "policy-outbox", GovernanceRevisions: []string{"doctrine-outbox", "profile-outbox"}, Payload: effectPayload},
-	}
-	operationStateDigest, _ := journalv2.ReducerStateDigestV2(operationPayload)
-	effectStateDigest, _ := journalv2.ReducerStateDigestV2(effectPayload)
-	heads := []journalv2.HeadTransitionV2{
-		{Coordinate: operationCoordinate, NextLogicalVersion: 1, EventID: eventIDs[1], CommittedRuntimeEpochID: "epoch-outbox", CanonicalStateDigest: operationStateDigest, AuthoritySummary: operationPayload},
-		{Coordinate: effectCoordinate, NextLogicalVersion: 1, EventID: eventIDs[0], CommittedRuntimeEpochID: "epoch-outbox", CanonicalStateDigest: effectStateDigest, AuthoritySummary: effectPayload},
-	}
-	conditions := make([]journalv2.ProviderCondition, 0, len(heads))
-	for _, head := range heads {
-		condition, conditionErr := journalv2.ConditionForHeadTransitionV2(head)
-		if conditionErr != nil {
-			t.Fatal(conditionErr)
+	covered := map[string]string{"operation": "global_operation"}
+	for _, row := range matrix {
+		row := row
+		if row.accepted == nil || row.refused == nil || len(row.families) == 0 {
+			t.Fatalf("incomplete executable conformance row %s", row.name)
 		}
-		conditions = append(conditions, condition)
+		for _, family := range row.families {
+			if prior := covered[family]; prior != "" && family != "mission" {
+				t.Fatalf("family %s is ambiguously evidenced by %s and %s", family, prior, row.name)
+			}
+			covered[family] = row.name
+		}
+		t.Run(row.name+"/accepted", row.accepted)
+		t.Run(row.name+"/refused", row.refused)
 	}
-	plan, err := journalv2.SealCommitPlanV2(journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: operation, Events: drafts, Heads: heads, EffectIntents: []journalv2.EffectIntentReference{{EffectID: effectID, Digest: intentDigest, Canonical: intent}}, Conditions: conditions}, registry)
+	for _, tuple := range journalv2.ExpectedEventTuples() {
+		if tuple.Family == "runtime_host" { // WP13 owns runtime-host composition.
+			continue
+		}
+		if covered[tuple.Family] == "" {
+			t.Fatalf("registered migrated family %s lacks executable accepted/refused evidence", tuple.Family)
+		}
+	}
+	// Constructing this set verifies that the projection joins the exact real
+	// reducer implementation for every covered family. Synthetic pass-through
+	// reducers cannot satisfy this call.
+	_ = outboxProjectionReducersV2(t, journalv2.DefaultEventRegistryV2())
+}
+
+func outboxGapDBSourceFixtureV2(t *testing.T, registry journalv2.EventRegistryV2) (journalv2.SealedCommitPlanV2, journalv2.SealedCommitPlanV2, controlstore.OutboxIntentCoordinatesV2) {
+	t.Helper()
+	executionCapability, slot, _, _ := gapdbExecutionAdmissionPlanFixtureV2(t, "outbox-source", "work-outbox-source")
+	executionPlan, err := executionCapability.Publication()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return plan, controlstore.OutboxIntentCoordinatesV2{EffectID: effectID, SourceOperationID: operationID, CanonicalIntent: intent, IntendedMutationDigest: mutationDigest, IntendedValue: "owner-after", ExpectedProviderRevision: 7, ExpectedValue: "owner-before", ExpectedOperationMarker: "marker-before", AttributionMarker: string(operationID), ActorID: actorID, Capability: "external_effect.saga"}
+	request := gapdbEffectRequestForSlotV2(t, "outbox-source", slot)
+	capability := gapdbEffectPlanFixtureForSlotV2(t, "outbox-source", slot, 18)
+	plan, err := capability.Publication()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := plan.BindingCreate()
+	if binding == nil || binding.OperationID() != request.Intent.OperationID {
+		t.Fatal("effect source fixture omitted its operation binding")
+	}
+	return executionPlan, plan, controlstore.OutboxIntentCoordinatesV2{
+		EffectID: request.Intent.EffectID, SourceOperationID: request.Intent.OperationID,
+		CanonicalIntent: request.Intent.CanonicalBytesV2(), IntendedMutationDigest: request.Intent.CanonicalRequestDigest,
+		IntendedValue: request.Intent.IntendedValue, ExpectedProviderRevision: uint64(request.Intent.ExpectedProviderRevision),
+		ExpectedValue: request.Intent.ExpectedValue, ExpectedOperationMarker: request.Intent.ExpectedOperationMarker,
+		AttributionMarker: string(request.Intent.OperationID), ActorID: journalv2.ActorID(request.Intent.ActorID), Capability: binding.CommandKind(),
+	}
 }

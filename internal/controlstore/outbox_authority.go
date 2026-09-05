@@ -43,10 +43,10 @@ func (p OutboxAuthorityPlanV2) Publication() (journalv2.SealedCommitPlanV2, erro
 }
 
 type OutboxPublicationAckV2 struct {
-	PublicationID    journalv2.PublicationID
-	PlanDigest       journalv2.Digest
-	ProviderRevision uint64
-	MutationCount    int
+	PublicationID     journalv2.PublicationID
+	PlanDigest        journalv2.Digest
+	AuthorityRevision uint64
+	MutationCount     int
 }
 
 func NewOutboxPublicationAckV2(plan OutboxAuthorityPlanV2, ack journalv2.AcknowledgedPublicationV2) (OutboxPublicationAckV2, error) {

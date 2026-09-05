@@ -58,7 +58,8 @@ type QueryPortV2 interface {
 }
 
 func (a *AuthorityV2) List(query ListQueryV2) (ListResultV2, error) {
-	if query.Limit <= 0 || query.Limit > MaxQueryPageV2 || len(query.Family) > 64 || len(query.Cursor) > journalv2.MaxRecoveryCursorBytes {
+	if query.Limit <= 0 || query.Limit > MaxQueryPageV2 || !validListFamilyV2(query.Family) || len(query.Cursor) > journalv2.MaxRecoveryCursorBytes ||
+		len(query.ProjectID) > journalv2.MaxIdentityBytes || len(query.MissionID) > journalv2.MaxIdentityBytes || len(query.WorkID) > journalv2.MaxIdentityBytes {
 		return ListResultV2{}, &ErrorV2{ErrorInvalidQueryV2, "budget"}
 	}
 	snapshot := a.current.Load()
@@ -100,7 +101,25 @@ func (a *AuthorityV2) List(query ListQueryV2) (ListResultV2, error) {
 	if next != "" {
 		result.NextCursor = encodeCursorV2(listCursorV2{DatabaseID: snapshot.databaseID, Revision: snapshot.revision, ProjectionDigest: snapshot.projectionDigest.String(), FilterDigest: listFilterDigestV2(query), After: next})
 	}
+	if encoded, err := json.Marshal(result); err != nil || len(encoded) > MaxQueryResponseV2 {
+		return ListResultV2{}, &ErrorV2{ErrorInvalidQueryV2, "response_budget"}
+	}
 	return result, nil
+}
+
+func validListFamilyV2(family string) bool {
+	if family == "" {
+		return true
+	}
+	if len(family) > 64 {
+		return false
+	}
+	for _, tuple := range journalv2.ExpectedEventTuples() {
+		if tuple.Family == family {
+			return true
+		}
+	}
+	return false
 }
 
 // ProgressBaseV2 supplies only exact projection attribution. The GapDB

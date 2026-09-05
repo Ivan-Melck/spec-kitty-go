@@ -1,6 +1,10 @@
 package projection
 
-import journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+import (
+	"sync"
+
+	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+)
 
 type NotificationV2 struct {
 	DatabaseID       journalv2.DatabaseID     `json:"database_id"`
@@ -12,12 +16,16 @@ type NotificationV2 struct {
 type WatchV2 struct {
 	C      <-chan NotificationV2
 	cancel func()
+	once   sync.Once
 }
 
 func (w *WatchV2) Cancel() {
-	if w != nil && w.cancel != nil {
-		w.cancel()
-		w.cancel = nil
+	if w != nil {
+		w.once.Do(func() {
+			if w.cancel != nil {
+				w.cancel()
+			}
+		})
 	}
 }
 

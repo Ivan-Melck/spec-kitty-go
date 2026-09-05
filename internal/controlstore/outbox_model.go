@@ -396,10 +396,11 @@ func outboxError(kind string) error    { return &OutboxErrorV2{Kind: kind} }
 // checkpoint composition without exposing shared mutable maps.
 func CanonicalOutboxStatesV2(values []OutboxDeliveryStateV2) ([]OutboxDeliveryStateV2, error) {
 	result := append([]OutboxDeliveryStateV2(nil), values...)
-	for _, value := range result {
+	for index, value := range result {
 		if value.Validate() != nil {
 			return nil, outboxError("invalid_state_set")
 		}
+		result[index].Observation = cloneOutboxObservation(value.Observation)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].EffectID < result[j].EffectID })
 	for i := 1; i < len(result); i++ {

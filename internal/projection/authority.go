@@ -44,13 +44,17 @@ func IsKindV2(err error, kind ErrorKindV2) bool {
 // AggregateViewV2 is an immutable authority observation. CanonicalState is a
 // defensive copy and contains no raw provider key or mutation capability.
 type AggregateViewV2 struct {
-	Coordinate        journalv2.AggregateCoordinate `json:"coordinate"`
-	LogicalVersion    journalv2.LogicalVersion      `json:"logical_version"`
-	LastEventID       journalv2.EventID             `json:"last_event_id"`
-	LastPublicationID journalv2.PublicationID       `json:"last_publication_id"`
-	StateDigest       string                        `json:"state_digest_sha256"`
-	Tombstone         bool                          `json:"tombstone"`
-	CanonicalState    []byte                        `json:"canonical_state"`
+	DatabaseID         journalv2.DatabaseID          `json:"database_id"`
+	ProjectionRevision uint64                        `json:"projection_revision"`
+	RuntimeEpochID     journalv2.RuntimeEpochID      `json:"runtime_epoch_id"`
+	ProjectionDigest   string                        `json:"projection_digest_sha256"`
+	Coordinate         journalv2.AggregateCoordinate `json:"coordinate"`
+	LogicalVersion     journalv2.LogicalVersion      `json:"logical_version"`
+	LastEventID        journalv2.EventID             `json:"last_event_id"`
+	LastPublicationID  journalv2.PublicationID       `json:"last_publication_id"`
+	StateDigest        string                        `json:"state_digest_sha256"`
+	Tombstone          bool                          `json:"tombstone"`
+	CanonicalState     []byte                        `json:"canonical_state"`
 }
 
 type SnapshotV2 struct {
@@ -252,7 +256,11 @@ func buildSnapshotV2(databaseID journalv2.DatabaseID, revision, durable uint64, 
 		if _, duplicate := index[key]; duplicate {
 			return nil, &ErrorV2{ErrorProjectionCorruptV2, "duplicate_coordinate"}
 		}
-		views[i] = AggregateViewV2{state.Coordinate(), state.LogicalVersion(), state.LastEventID(), state.LastPublicationID(), state.StateDigest().String(), state.Tombstone(), state.CanonicalState()}
+		views[i] = AggregateViewV2{
+			DatabaseID: databaseID, ProjectionRevision: revision, RuntimeEpochID: epoch, ProjectionDigest: digest.String(),
+			Coordinate: state.Coordinate(), LogicalVersion: state.LogicalVersion(), LastEventID: state.LastEventID(),
+			LastPublicationID: state.LastPublicationID(), StateDigest: state.StateDigest().String(), Tombstone: state.Tombstone(), CanonicalState: state.CanonicalState(),
+		}
 		index[key] = i
 	}
 	sort.Slice(views, func(i, j int) bool {

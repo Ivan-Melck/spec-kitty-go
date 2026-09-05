@@ -136,6 +136,65 @@ func TestOutboxReducerRejectsUnknownTuplePriorSubstitutionAndIllegalJump(t *test
 	}
 }
 
+func TestOutboxReducerIndependentlyEnforcesRetryAndCompensationSafety(t *testing.T) {
+	source, coordinates := outboxSourcePlanFixtureV2(t)
+	intent, _ := BindDurableOutboxIntentV2(source, 11, coordinates)
+	registry := journalv2.DefaultEventRegistryV2()
+	startCommand := bindOutboxCommandFixtureV2(t, OutboxCommandV2{Action: OutboxStartAttemptV2, Intent: intent, AttemptID: "attempt-reducer-safety", RuntimeEpochID: "epoch-1", OperationEventID: "event-reducer-operation-1", OutboxEventID: "event-reducer-outbox-1"}, 41)
+	startCapability, _ := BuildOutboxAuthorityPlanV2(startCommand, registry)
+	startPlan, _ := startCapability.Publication()
+	started := reduceOutboxPlanV2(t, []byte(`{}`), startPlan)
+
+	present, _ := NewOutboxProviderObservationV2(8, coordinates.IntendedValue, coordinates.AttributionMarker, "confirmed")
+	observedPlan := buildLaterOutboxPlanV2(t, registry, intent, startPlan, started, OutboxRecordObservationV2, &present, "", "", 2)
+	observed := reduceOutboxPlanV2(t, started.CanonicalBytes(), observedPlan)
+	reconcilePlan := buildLaterOutboxPlanV2(t, registry, intent, observedPlan, observed, OutboxRequireReconcileV2, &present, "", "", 3)
+	reconciling := reduceOutboxPlanV2(t, observed.CanonicalBytes(), reconcilePlan)
+	compensationPlan := buildLaterOutboxPlanV2(t, registry, intent, reconcilePlan, reconciling, OutboxPermitCompensationV2, &present, string(coordinates.SourceOperationID), "", 4)
+	compensationEvent := outboxEventFromPlanV2(t, compensationPlan)
+	var compensationChange outboxEventV2
+	if err := strictOutboxJSON(compensationEvent.Payload(), &compensationChange); err != nil {
+		t.Fatal(err)
+	}
+	compensationMutants := []OutboxProviderObservationV2{}
+	for _, input := range []struct {
+		revision uint64
+		value    string
+		marker   string
+	}{{9, present.Value, present.AttributionMarker}, {present.ProviderRevision, "other-value", present.AttributionMarker}, {present.ProviderRevision, present.Value, "other-operation"}} {
+		observation, err := NewOutboxProviderObservationV2(input.revision, input.value, input.marker, "confirmed")
+		if err != nil {
+			t.Fatal(err)
+		}
+		compensationMutants = append(compensationMutants, observation)
+	}
+	for index, mutant := range compensationMutants {
+		changed := compensationChange
+		changed.State.Observation = &mutant
+		event := replaceOutboxEventStateV2(t, compensationEvent, changed)
+		if _, err := ReduceOutboxEventV2(reconciling.CanonicalBytes(), event); err == nil {
+			t.Fatalf("unsafe compensation reducer mutant %d survived playback", index)
+		}
+	}
+
+	absent, _ := NewOutboxProviderObservationV2(9, "", "", "absent")
+	absentObservedPlan := buildLaterOutboxPlanV2(t, registry, intent, startPlan, started, OutboxRecordObservationV2, &absent, "", "", 5)
+	absentObserved := reduceOutboxPlanV2(t, started.CanonicalBytes(), absentObservedPlan)
+	absentReconcilePlan := buildLaterOutboxPlanV2(t, registry, intent, absentObservedPlan, absentObserved, OutboxRequireReconcileV2, &absent, "", "", 6)
+	absentReconciling := reduceOutboxPlanV2(t, absentObserved.CanonicalBytes(), absentReconcilePlan)
+	retryPlan := buildLaterOutboxPlanV2(t, registry, intent, absentReconcilePlan, absentReconciling, OutboxPermitRetryV2, &absent, string(coordinates.SourceOperationID), "", 7)
+	retryEvent := outboxEventFromPlanV2(t, retryPlan)
+	var retryChange outboxEventV2
+	if err := strictOutboxJSON(retryEvent.Payload(), &retryChange); err != nil {
+		t.Fatal(err)
+	}
+	notAbsent, _ := NewOutboxProviderObservationV2(9, coordinates.ExpectedValue, coordinates.ExpectedOperationMarker, "confirmed")
+	retryChange.State.Observation = &notAbsent
+	if _, err := ReduceOutboxEventV2(absentReconciling.CanonicalBytes(), replaceOutboxEventStateV2(t, retryEvent, retryChange)); err == nil {
+		t.Fatal("retry permission without exact reconciled absence survived playback")
+	}
+}
+
 func TestOutboxOperationBindingRejectsPostBindCommandMutation(t *testing.T) {
 	source, coordinates := outboxSourcePlanFixtureV2(t)
 	intent, err := BindDurableOutboxIntentV2(source, 11, coordinates)
@@ -165,6 +224,32 @@ func TestOutboxOperationBindingRejectsPostBindCommandMutation(t *testing.T) {
 	}
 }
 
+func TestCanonicalOutboxStatesOwnsNestedObservationMemory(t *testing.T) {
+	source, coordinates := outboxSourcePlanFixtureV2(t)
+	intent, _ := BindDurableOutboxIntentV2(source, 11, coordinates)
+	registry := journalv2.DefaultEventRegistryV2()
+	startCommand := bindOutboxCommandFixtureV2(t, OutboxCommandV2{Action: OutboxStartAttemptV2, Intent: intent, AttemptID: "attempt-copy", RuntimeEpochID: "epoch-1", OperationEventID: "event-copy-operation-1", OutboxEventID: "event-copy-outbox-1"}, 31)
+	start, _ := BuildOutboxAuthorityPlanV2(startCommand, registry)
+	startPlan, _ := start.Publication()
+	state := reduceOutboxPlanV2(t, []byte(`{}`), startPlan)
+	observation, _ := NewOutboxProviderObservationV2(8, coordinates.IntendedValue, coordinates.AttributionMarker, "confirmed")
+	observed := buildLaterOutboxPlanV2(t, registry, intent, startPlan, state, OutboxRecordObservationV2, &observation, "", "", 32)
+	state = reduceOutboxPlanV2(t, state.CanonicalBytes(), observed)
+	input := []OutboxDeliveryStateV2{state}
+	result, err := CanonicalOutboxStatesV2(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input[0].Observation.Value = "mutated-input"
+	if result[0].Observation.Value != coordinates.IntendedValue {
+		t.Fatal("input mutation changed canonical result")
+	}
+	result[0].Observation.AttributionMarker = "mutated-result"
+	if input[0].Observation.AttributionMarker != coordinates.AttributionMarker {
+		t.Fatal("result mutation changed caller input")
+	}
+}
+
 func TestOutboxPortRemainsCapabilityShaped(t *testing.T) {
 	port := reflect.TypeOf((*OutboxAuthorityPortV2)(nil)).Elem()
 	want := map[string]bool{"ObserveOutboxState": true, "PublishOutbox": true, "ResolveOutboxOperation": true}
@@ -181,6 +266,24 @@ func TestOutboxPortRemainsCapabilityShaped(t *testing.T) {
 			if strings.Contains(lower, forbidden) {
 				t.Fatalf("outbox port leaked %s through %s", forbidden, method.Name)
 			}
+		}
+	}
+}
+
+func TestOutboxDeliveryEvidenceCannotBecomeProductAuthorityMutant(t *testing.T) {
+	state := reflect.TypeOf(OutboxDeliveryStateV2{})
+	for index := 0; index < state.NumField(); index++ {
+		name := strings.ToLower(state.Field(index).Name)
+		for _, forbidden := range []string{"missionstatus", "workstatus", "reviewverdict", "acceptanceverdict", "integrationstatus", "legalaction", "readiness"} {
+			if strings.Contains(name, forbidden) {
+				t.Fatalf("delivery-evidence authority mutant survived through field %s", state.Field(index).Name)
+			}
+		}
+	}
+	ack := reflect.TypeOf(OutboxPublicationAckV2{})
+	for index := 0; index < ack.NumField(); index++ {
+		if strings.Contains(strings.ToLower(ack.Field(index).Name), "provider") {
+			t.Fatalf("provider vocabulary escaped through acknowledgement field %s", ack.Field(index).Name)
 		}
 	}
 }
@@ -227,6 +330,36 @@ func reduceOutboxPlanV2(t *testing.T, prior []byte, plan journalv2.SealedCommitP
 	}
 	t.Fatal("outbox event missing")
 	return OutboxDeliveryStateV2{}
+}
+
+func outboxEventFromPlanV2(t *testing.T, plan journalv2.SealedCommitPlanV2) journalv2.EventEnvelopeV2 {
+	t.Helper()
+	for _, event := range plan.Events() {
+		if event.Family() == "outbox" {
+			return event
+		}
+	}
+	t.Fatal("outbox event missing")
+	return journalv2.EventEnvelopeV2{}
+}
+
+func replaceOutboxEventStateV2(t *testing.T, event journalv2.EventEnvelopeV2, change outboxEventV2) journalv2.EventEnvelopeV2 {
+	t.Helper()
+	payload, err := canonicalOutboxValue(change)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutant, err := journalv2.NewEventEnvelopeV2(journalv2.EventEnvelopeInput{
+		EventID: event.EventID(), EventType: event.EventType(), Family: event.Family(), EventSchemaVersion: event.EventSchemaVersion(), ReducerVersion: event.ReducerVersion(),
+		Coordinate: event.Coordinate(), AggregateLogicalVersion: event.LogicalVersion(), OperationID: event.OperationID(), OperationLogicalVersion: event.OperationVersion(),
+		PublicationID: event.PublicationID(), CommittedRuntimeEpochID: event.CommittedRuntimeEpochID(), EventIndex: event.EventIndex(), EventCount: event.EventCount(),
+		ActorID: event.ActorID(), ProcessID: event.ProcessID(), WorkRevisionID: event.WorkRevisionID(), PolicyRevision: event.PolicyRevision(), GovernanceRevisions: event.GovernanceRevisions(),
+		Observations: event.Observations(), Payload: payload,
+	}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mutant
 }
 
 func outboxSourcePlanFixtureV2(t *testing.T) (journalv2.SealedCommitPlanV2, OutboxIntentCoordinatesV2) {
