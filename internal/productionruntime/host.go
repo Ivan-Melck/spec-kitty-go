@@ -88,6 +88,7 @@ type HostStatus struct {
 // returns its sidecar, durable adapter, projection mutator, or repositories.
 type Host struct {
 	mu           sync.Mutex
+	commandMu    sync.RWMutex
 	refreshMu    sync.Mutex
 	state        HostState
 	epoch        journalv2.RuntimeEpochID
@@ -191,19 +192,26 @@ func (h *Host) Status() HostStatus {
 }
 
 func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {
+	// Independent commands share this read lock. The health monitor takes the
+	// write side so a transient provider state inside an admitted atomic command
+	// cannot be mistaken for owner loss.
+	h.commandMu.RLock()
 	h.mu.Lock()
 	if h.state != HostReady {
 		state := h.state
 		h.mu.Unlock()
+		h.commandMu.RUnlock()
 		return nil, &Error{Kind: ErrorNotReady, State: state, Field: "command_barrier"}
 	}
 	if expectedEpoch != h.epoch {
 		h.mu.Unlock()
+		h.commandMu.RUnlock()
 		return nil, &Error{Kind: ErrorStaleEpoch, State: HostReady, Field: "runtime_epoch_id"}
 	}
 	snapshot := h.projection.Snapshot()
 	if snapshot == nil || snapshot.RuntimeEpochID() != h.epoch || snapshot.DatabaseID() != h.databaseID || snapshot.Revision() == 0 || snapshot.DurableThroughRevision() < snapshot.Revision() {
 		h.mu.Unlock()
+		h.commandMu.RUnlock()
 		h.degrade("projection_binding")
 		return nil, &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_binding"}
 	}
@@ -213,6 +221,7 @@ func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), err
 		h.mu.Lock()
 		h.inflight--
 		h.mu.Unlock()
+		h.commandMu.RUnlock()
 	}, nil
 }
 
@@ -297,7 +306,9 @@ func (h *Host) startMonitor(parent context.Context, interval time.Duration) {
 				return
 			case <-ticker.C:
 				probe, stop := context.WithTimeout(ctx, interval)
+				h.commandMu.Lock()
 				err := h.owner.Probe(probe)
+				h.commandMu.Unlock()
 				stop()
 				if err != nil {
 					h.degrade("owner_health")
