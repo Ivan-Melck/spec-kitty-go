@@ -220,7 +220,7 @@ fallback,” or “ticket status” as domain authority vocabulary.
 | FR-022 | Side-effect-free playback | As an auditor, reduce only recorded facts during playback with zero external or durable-write adapters. | High | Open |
 | FR-023 | Behavior inventory parity | As a maintainer, map every frozen Exact or Strengthen behavior to a capability and proof while rejecting inherited Python/Markdown structure that is not product behavior. | High | Open |
 | FR-024 | Refusal ordering parity | As a caller, retain defined precedence for stale identity, generation, policy, candidate, repository, and input failures before side effects. | High | Open |
-| FR-025 | Per-family crash recovery | As an operator, exercise before/after publication faults and ambiguous responses for every authority-changing event family. | High | Open |
+| FR-025 | Compositional crash recovery | As an operator, exercise every authority-changing event family's semantic publication/replay contract and every before/after-publication, lost/malformed-response, and restart/reconciliation cut through the single production publication boundary, while proving no family can bypass that boundary. | High | Open |
 | FR-026 | Historical-state refusal | As an operator, receive a typed offline disposition for identified or suspected historical SQLite roots before current authority is created or mutated. | High | Open |
 | FR-027 | Split-root refusal | As an operator, refuse mixed current/historical, shared, symlinked, foreign-owner, or ambiguous control roots rather than choose an authority. | High | Open |
 | FR-028 | No automatic importer | As a maintainer, expose no production command, startup hook, library, helper, or subprocess that translates historical SQLite state into current authority. | High | Open |
@@ -237,8 +237,8 @@ fallback,” or “ticket status” as domain authority vocabulary.
 
 | ID | Title | Requirement | Category | Priority | Status |
 |----|-------|-------------|----------|----------|--------|
-| NFR-001 | Atomic fault reliability | Across at least 100 repetitions for each authority-changing family and applicable cut, zero accepted commands expose partial state and every committed operation has exactly one result. | Reliability | High | Open |
-| NFR-002 | Idempotency reliability | Across at least 100 lost-response retries per family, identical identities/digests create zero duplicate transitions/effects; changed digests refuse in 100% of trials. | Reliability | High | Open |
+| NFR-001 | Atomic fault reliability | Across at least 100 repetitions for each authority-family semantic proof and each production publication cut, zero accepted commands expose partial state and every committed operation has exactly one result; structural and mutant evidence must prove every family traverses the qualified publication boundary. | Reliability | High | Open |
+| NFR-002 | Idempotency reliability | Across at least 100 family-specific replay/collision trials and 100 trials of every lost-response cut at the shared production publication boundary, identical identities/digests create zero duplicate transitions/effects; changed digests refuse in 100% of trials. | Reliability | High | Open |
 | NFR-003 | Concurrent authority | Across at least 100 two-agent trials, independent work progresses concurrently while every observation has at most one current authority per WorkRevision/work item. | Concurrency | High | Open |
 | NFR-004 | Same-aggregate contention | Across at least 100 contention trials per mutable aggregate family, exactly one incompatible update wins and all losers receive typed stale/conflict outcomes. | Concurrency | High | Open |
 | NFR-005 | Deterministic restore | Across at least 100 restore/playback comparisons covering every event family, canonical projection bytes and digests match in 100% of trials. | Determinism | High | Open |
