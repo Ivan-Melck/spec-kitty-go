@@ -209,9 +209,12 @@ func runExecutableProof(t *testing.T, root string, proof executableProof, repeti
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "test", "-json", fmt.Sprintf("-count=%d", repetitions), "-run", "^"+proof.Test+"$", proof.Package)
 	command.Dir = root
+	executable := os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE")
+	baseExecutable := os.Getenv("SPEC_KITTY_WP14_BASE_AUTHORITY_EXECUTABLE")
 	command.Env = append(os.Environ(),
 		"SPEC_KITTY_WP14_CAMPAIGN=",
-		"SPEC_KITTY_WP13_GAPDBD="+os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE"),
+		"SPEC_KITTY_WP13_GAPDBD="+executable,
+		"SPEC_KITTY_M1_GAPDBD="+baseExecutable,
 	)
 	output, err := command.CombinedOutput()
 	if len(output) > 8<<20 {
