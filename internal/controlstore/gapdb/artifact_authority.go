@@ -11,12 +11,6 @@ type artifactPublicationPortV2 interface {
 	Publish(context.Context, journalv2.SealedCommitPlanV2) (journalv2.AcknowledgedPublicationV2, error)
 }
 
-// ArtifactAuthorityPortV2 is the capability-owned publication surface. It
-// cannot express a raw key/value mutation or another aggregate family.
-type ArtifactAuthorityPortV2 interface {
-	Publish(context.Context, artifact.AuthorityPlanV2) (journalv2.AcknowledgedPublicationV2, error)
-}
-
 // artifactAuthorityV2 is the narrow translation boundary from artifact-owned
 // sealed plans to the sole GapDB v2 committer. It owns no artifact policy and
 // exposes neither a raw key nor a generic Get/Put operation.
@@ -29,7 +23,7 @@ func newArtifactAuthorityV2(coordinator *journalv2.PublicationCoordinatorV2) (*a
 	return &artifactAuthorityV2{publisher: coordinator}, nil
 }
 
-func NewArtifactAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2) (ArtifactAuthorityPortV2, error) {
+func NewArtifactAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2) (artifact.AuthorityPortV2, error) {
 	return newArtifactAuthorityV2(coordinator)
 }
 
