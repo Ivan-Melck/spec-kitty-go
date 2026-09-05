@@ -33,18 +33,19 @@ type Reconciler interface {
 }
 
 type Config struct {
-	ControlRoot                 string
-	HostAuthorityID             journalv2.HostAuthorityID
-	AuthorityBindingOperationID string
-	M1AdoptionRecordPath        string
-	Sidecar                     sidecargapdb.LifecycleConfig
-	RestoreBudgets              journalrestore.BudgetsV2
-	Reconciler                  Reconciler
-	Actions                     ActionCensusSource
-	CandidateVerifier           handoff.CandidateVerifier
-	IntegrationGit              integration.IntegrationGitPortV2
-	CheckpointEvery             int
-	MonitorInterval             time.Duration
+	ControlRoot                          string
+	HostAuthorityID                      journalv2.HostAuthorityID
+	AuthorityBindingOperationID          string
+	M1AdoptionRecordPath                 string
+	AssertionExtensionAdoptionRecordPath string
+	Sidecar                              sidecargapdb.LifecycleConfig
+	RestoreBudgets                       journalrestore.BudgetsV2
+	Reconciler                           Reconciler
+	Actions                              ActionCensusSource
+	CandidateVerifier                    handoff.CandidateVerifier
+	IntegrationGit                       integration.IntegrationGitPortV2
+	CheckpointEvery                      int
+	MonitorInterval                      time.Duration
 }
 
 type productionOwner struct {
@@ -106,6 +107,11 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 	if _, err = sidecargapdb.VerifyAdoptionRecord(config.M1AdoptionRecordPath); err != nil {
 		return nil, err
 	}
+	extensionAdmission, err := sidecargapdb.VerifyAssertionExtensionAdoption(config.AssertionExtensionAdoptionRecordPath, config.Sidecar.AdmissionRecordPath)
+	if err != nil {
+		return nil, err
+	}
+	config.Sidecar.Admission = extensionAdmission
 	if config.CandidateVerifier == nil || config.IntegrationGit == nil {
 		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "capability_dependencies"}
 	}

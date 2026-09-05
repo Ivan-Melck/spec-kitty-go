@@ -751,7 +751,7 @@ func productionRuntimeWorkRevision(t *testing.T, projectID ids.ProjectID, missio
 func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testing.T) {
 	binary := os.Getenv("SPEC_KITTY_WP13_GAPDBD")
 	if binary == "" {
-		t.Skip("set SPEC_KITTY_WP13_GAPDBD to the exact admitted sidecar")
+		t.Skip("set SPEC_KITTY_WP13_GAPDBD to the exact assertion-extension sidecar")
 	}
 	binary, _ = filepath.Abs(binary)
 	repository, _ := filepath.Abs(filepath.Join("..", ".."))
@@ -770,12 +770,13 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	data := filepath.Join(root, "authority")
 	reconciler := &missionCreatingReconciler{}
 	config := Config{
-		ControlRoot:                 data,
-		HostAuthorityID:             "host-real-sidecar",
-		AuthorityBindingOperationID: "operation-bind-real-sidecar",
-		M1AdoptionRecordPath:        filepath.Join(repository, "docs", "programs", "evidence", "m1-adoption.json"),
+		ControlRoot:                          data,
+		HostAuthorityID:                      "host-real-sidecar",
+		AuthorityBindingOperationID:          "operation-bind-real-sidecar",
+		M1AdoptionRecordPath:                 filepath.Join(repository, "docs", "programs", "evidence", "m1-adoption.json"),
+		AssertionExtensionAdoptionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json"),
 		Sidecar: sidecargapdb.LifecycleConfig{
-			ExecutablePath: binary, AdmissionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-admission.json"),
+			ExecutablePath: binary, AdmissionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-admission.json"),
 			RuntimeRoot: runtimeRoot, DataDirectory: data, SupervisorRunID: "supervisor-real-1", ProductPolicySHA256: repeatByte('e', 64),
 		},
 		MonitorInterval:   250 * time.Millisecond,
