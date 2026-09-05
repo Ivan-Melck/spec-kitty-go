@@ -21,6 +21,62 @@ func TestProductionAdoptionRecordExactCoordinatesAdmit(t *testing.T) {
 	}
 }
 
+func TestAssertionExtensionAdoptionChainsM1AndExactExecutable(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adoptionPath := filepath.Join(root, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json")
+	admissionPath := filepath.Join(root, "docs", "programs", "evidence", "m1-assertion-extension-admission.json")
+	admission, err := VerifyAssertionExtensionAdoption(adoptionPath, admissionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admission.recordSHA256 != AssertionExtensionAdmissionSHA256 || admission.sidecarSHA256 == "" || admission.executableSize == 0 {
+		t.Fatalf("incomplete extension admission: %+v", admission)
+	}
+	binary := os.Getenv("SPEC_KITTY_WP13_GAPDBD")
+	if binary == "" {
+		t.Skip("set SPEC_KITTY_WP13_GAPDBD to verify the exact assertion-extension executable")
+	}
+	binary, err = filepath.Abs(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := VerifyExecutable(VerifyConfig{ExecutablePath: binary, AdmissionRecordPath: admissionPath, Admission: admission})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verified.Close()
+	provenance := verified.Provenance()
+	if provenance.SHA256 != admission.sidecarSHA256 || provenance.SourceRevision != admission.sourceRevision || provenance.AdmissionRecordSHA256 != admission.recordSHA256 {
+		t.Fatalf("extension executable provenance differs: %+v", provenance)
+	}
+}
+
+func TestAssertionExtensionAdoptionRejectsRecordMutation(t *testing.T) {
+	root, _ := filepath.Abs(filepath.Join("..", "..", ".."))
+	adoptionSource := filepath.Join(root, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json")
+	admissionSource := filepath.Join(root, "docs", "programs", "evidence", "m1-assertion-extension-admission.json")
+	adoption, err := os.ReadFile(adoptionSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(adoption, &value); err != nil {
+		t.Fatal(err)
+	}
+	value["sidecar_sha256"] = stringOf('0', 64)
+	mutated, _ := json.Marshal(value)
+	path := filepath.Join(t.TempDir(), "extension-adoption.json")
+	if err := os.WriteFile(path, mutated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyAssertionExtensionAdoption(path, admissionSource); !IsFailure(err, FailureAdmissionMismatch) {
+		t.Fatalf("mutated extension adoption admitted: %v", err)
+	}
+}
+
 func TestProductionAdoptionRecordRejectsEveryAuthorityCoordinate(t *testing.T) {
 	source, err := filepath.Abs(filepath.Join("..", "..", "..", "docs", "programs", "evidence", "m1-adoption.json"))
 	if err != nil {

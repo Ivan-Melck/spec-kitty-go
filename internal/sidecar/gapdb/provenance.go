@@ -79,6 +79,7 @@ func failure(kind FailureKind, operation, reason string, cause error) error {
 type VerifyConfig struct {
 	ExecutablePath      string
 	AdmissionRecordPath string
+	Admission           ExecutableAdmission
 }
 
 // ExecutableProvenance is the bounded host proof bound to an open executable.
@@ -174,6 +175,10 @@ type admissionRecord struct {
 // VerifyExecutable validates the admission record and executable from held
 // descriptors. Every component is checked without accepting symlinks.
 func VerifyExecutable(config VerifyConfig) (*VerifiedExecutable, error) {
+	admission := config.Admission
+	if admission == (ExecutableAdmission{}) {
+		admission = historicalM1ExecutableAdmission()
+	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return nil, failure(FailureIdentityUnprovable, "verify", "platform is not admitted", nil)
 	}
@@ -194,14 +199,14 @@ func VerifyExecutable(config VerifyConfig) (*VerifiedExecutable, error) {
 	if err != nil {
 		return nil, failure(FailureAdmissionMismatch, "verify", "admission record cannot be verified", err)
 	}
-	if recordDigest != storegapdb.AdmittedTupleSHA256 {
+	if recordDigest != admission.recordSHA256 {
 		return nil, failure(FailureAdmissionMismatch, "verify", "admission record digest differs", nil)
 	}
 	var record admissionRecord
 	if err := json.Unmarshal(recordBytes, &record); err != nil {
 		return nil, failure(FailureAdmissionMismatch, "verify", "admission record is malformed", err)
 	}
-	if err := validateAdmission(record); err != nil {
+	if err := validateAdmission(record, admission); err != nil {
 		return nil, failure(FailureAdmissionMismatch, "verify", "admission tuple differs", err)
 	}
 
@@ -216,16 +221,16 @@ func VerifyExecutable(config VerifyConfig) (*VerifiedExecutable, error) {
 		_ = file.Close()
 		return nil, failure(FailureIdentityUnprovable, "verify", "executable identity cannot be read", err)
 	}
-	if err := validateExecutableIdentity(verified.sourceIdentity); err != nil {
+	if err := validateExecutableIdentity(verified.sourceIdentity, admission.executableSize); err != nil {
 		_ = file.Close()
 		return nil, failure(FailureUnsafePath, "verify", "executable metadata is not admitted", err)
 	}
-	digest, err := digestFile(file, admittedExecutableSize)
+	digest, err := digestFile(file, admission.executableSize)
 	if err != nil {
 		_ = file.Close()
 		return nil, failure(FailureAdmissionMismatch, "verify", "executable cannot be hashed", err)
 	}
-	if digest != storegapdb.AdmittedSidecarSHA256 {
+	if digest != admission.sidecarSHA256 {
 		_ = file.Close()
 		return nil, failure(FailureAdmissionMismatch, "verify", "executable digest differs", nil)
 	}
@@ -237,7 +242,7 @@ func VerifyExecutable(config VerifyConfig) (*VerifiedExecutable, error) {
 		ModuleVersion: record.GapDBTuple.ModuleVersion, AdmissionRecordSHA256: recordDigest,
 		ContractRevision: contractRevision,
 	}
-	verified.execution, verified.executeIdentity, verified.executed, err = createSealedExecutionImage(file, digest)
+	verified.execution, verified.executeIdentity, verified.executed, err = createSealedExecutionImage(file, digest, admission.executableSize)
 	if err != nil {
 		_ = verified.Close()
 		return nil, failure(FailureIdentityUnprovable, "verify", "immutable execution image cannot be established", err)
@@ -325,7 +330,7 @@ func (v *VerifiedExecutable) command(arguments, environment []string) (*exec.Cmd
 
 const requiredExecutionSeals = unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
 
-func createSealedExecutionImage(source *os.File, expectedDigest string) (*os.File, fileIdentity, ExecutedImageProvenance, error) {
+func createSealedExecutionImage(source *os.File, expectedDigest string, expectedSize int64) (*os.File, fileIdentity, ExecutedImageProvenance, error) {
 	fd, err := unix.MemfdCreate("spec-kitty-gapdbd", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
 	if err != nil {
 		return nil, fileIdentity{}, ExecutedImageProvenance{}, err
@@ -338,8 +343,8 @@ func createSealedExecutionImage(source *os.File, expectedDigest string) (*os.Fil
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return fail(err)
 	}
-	written, err := io.Copy(image, io.LimitReader(source, admittedExecutableSize+1))
-	if err != nil || written != admittedExecutableSize {
+	written, err := io.Copy(image, io.LimitReader(source, expectedSize+1))
+	if err != nil || written != expectedSize {
 		return fail(errors.Join(err, errors.New("execution image size differs")))
 	}
 	if err := unix.Fchmod(fd, 0o500); err != nil {
@@ -389,14 +394,14 @@ func sameExecutableIdentity(first, second fileIdentity) bool {
 		first.nlink == second.nlink && first.mtimeNsec == second.mtimeNsec
 }
 
-func validateAdmission(record admissionRecord) error {
+func validateAdmission(record admissionRecord, admission ExecutableAdmission) error {
 	if record.SchemaVersion != 1 || record.Decision != "admitted" ||
-		record.GapDBTuple.SourceRevision != storegapdb.AdmittedSourceRevision ||
-		record.GapDBTuple.SourceTree != storegapdb.AdmittedSourceTree ||
-		record.GapDBTuple.ModuleVersion != storegapdb.AdmittedModuleVersion ||
+		record.GapDBTuple.SourceRevision != admission.sourceRevision ||
+		record.GapDBTuple.SourceTree != admission.sourceTree ||
+		record.GapDBTuple.ModuleVersion != admission.moduleVersion ||
 		record.GapDBTuple.Sidecar.Command != "gapdbd" ||
-		record.GapDBTuple.Sidecar.SHA256 != storegapdb.AdmittedSidecarSHA256 ||
-		record.GapDBTuple.Sidecar.Size != admittedExecutableSize ||
+		record.GapDBTuple.Sidecar.SHA256 != admission.sidecarSHA256 ||
+		record.GapDBTuple.Sidecar.Size != admission.executableSize ||
 		record.GapDBTuple.Protocol.WireVersion != storegapdb.AdmittedWireVersion ||
 		record.GapDBTuple.Protocol.StorageVersion != storegapdb.AdmittedStorageVersion ||
 		record.GapDBTuple.Platform.OS != "linux" || record.GapDBTuple.Platform.Arch != "amd64" {
@@ -453,8 +458,8 @@ func validatePathChain(path string, executable bool) error {
 	return nil
 }
 
-func validateExecutableIdentity(identity fileIdentity) error {
-	if identity.size != admittedExecutableSize || identity.nlink != 1 {
+func validateExecutableIdentity(identity fileIdentity, expectedSize int64) error {
+	if identity.size != expectedSize || identity.nlink != 1 {
 		return errors.New("size or hard-link count differs")
 	}
 	if identity.mode&uint32(syscall.S_IFMT) != uint32(syscall.S_IFREG) || identity.mode&0o111 == 0 || identity.mode&0o022 != 0 {
