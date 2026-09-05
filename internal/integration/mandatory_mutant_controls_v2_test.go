@@ -2,6 +2,7 @@ package integration
 
 import (
 	"testing"
+	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
@@ -62,6 +63,70 @@ func TestAcceptanceCannotOmitPolicyAuthorityV2(t *testing.T) {
 	}
 	if _, err = service.Accept(t.Context(), request); !IsKind(err, KindPolicyRefused) || len(port.plans) != 0 {
 		t.Fatalf("required policy authority omission accepted: error=%v plans=%d", err, len(port.plans))
+	}
+}
+
+func TestAcceptanceCannotOmitWaiverAuthorityV2(t *testing.T) {
+	request, authority := acceptanceFixtureV2(t)
+	waiver, err := SealAcceptanceWaiverV2(AcceptanceWaiverV2{
+		SchemaVersion:    1,
+		WaiverID:         "waiver-docs-omission",
+		CriterionID:      "criterion-docs",
+		ProjectID:        request.ProjectID,
+		MissionID:        request.MissionID,
+		WorkRevisionID:   request.WorkRevisionID,
+		WorkID:           request.WorkID,
+		PolicyRevision:   request.PolicyRevision,
+		PolicyBasis:      "project policy permits this exact documentation waiver",
+		AccountableActor: "actor-owner",
+		Rationale:        "documentation is supplied by an independently verified generated reference",
+		EffectiveFrom:    request.ObservedAt.Add(-time.Minute).Format(time.RFC3339Nano),
+		EffectiveThrough: request.ObservedAt.Add(time.Hour).Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Waivers = []AcceptanceWaiverV2{waiver}
+	for index := range request.Evidence {
+		if request.Evidence[index].CriterionID == waiver.CriterionID {
+			request.Evidence[index] = AcceptanceEvidenceV2{
+				CriterionID: waiver.CriterionID,
+				Kind:        "documentation",
+				Disposition: EvidenceWaivedV2,
+				Producer:    "project.policy",
+				PolicyBasis: waiver.PolicyBasis,
+				WaiverID:    waiver.WaiverID,
+			}
+		}
+	}
+	refreshAcceptancePolicyFactsV2(t, request, &authority)
+	var omitted journalv2.AggregateCoordinate
+	policyFacts := make([]AcceptancePolicyFactObservationV2, 0, len(authority.PolicyFacts)-1)
+	for _, fact := range authority.PolicyFacts {
+		if fact.Fact.FactID == waiver.WaiverID {
+			omitted = fact.Assertion.Target().Coordinate
+			continue
+		}
+		policyFacts = append(policyFacts, fact)
+	}
+	if omitted == (journalv2.AggregateCoordinate{}) {
+		t.Fatal("waiver authority fixture did not contain the exact waiver fact")
+	}
+	authority.PolicyFacts = policyFacts
+	assertions := make([]journalv2.AuthorityAssertionV2, 0, len(authority.Assertions)-1)
+	for _, assertion := range authority.Assertions {
+		if assertion.Target().Coordinate != omitted {
+			assertions = append(assertions, assertion)
+		}
+	}
+	authority.Assertions = assertions
+	port := &acceptancePortV2{resolution: AcceptanceOperationResolutionV2{Kind: AcceptanceOperationAbsentV2}, authority: authority}
+	service, err := NewAcceptanceAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Accept(t.Context(), request); !IsKind(err, KindPolicyRefused) || len(port.plans) != 0 {
+		t.Fatalf("required waiver authority omission accepted: error=%v plans=%d", err, len(port.plans))
 	}
 }
 
