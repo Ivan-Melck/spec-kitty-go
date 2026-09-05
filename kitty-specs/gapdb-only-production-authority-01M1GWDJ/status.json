@@ -554,7 +554,7 @@
     },
     "WP13": {
       "actor": "codex",
-      "agent": "mill",
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 4,
@@ -566,25 +566,27 @@
         "Allocation block resolved by dependency merge 6488469e; resume implementation.",
         "Override lane-purity ceremony: flagged kitty-specs files are Spec Kitty-owned historical evidence from dependency lane merges, not implementation contamination. Candidate 1a2af4fb independently approved.",
         "Independent review of candidate 1a2af4fb and tree b941534d.",
-        "APPROVE: prior reconciliation blocker closed; 17/17 mutants, exact GapDB route, race, static, and p95 1.254477891s independently verified."
+        "APPROVE: prior reconciliation blocker closed; 17/17 mutants, exact GapDB route, race, static, and p95 1.254477891s independently verified.",
+        "Reopen approved runtime composition for product defect exposed by WP14 and WP15; no guard is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP13-single-owner-production-runtime-and-memory-primary-progress/review-cycle-2.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP13-single-owner-production-runtime-and-memory-primary-progress/review-cycle-2.md",
         "reviewer": "codex",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 1814288,
-      "shell_pid_created_at": "1788611168.52",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T064": "done",
-        "T065": "done",
-        "T066": "done",
-        "T067": "done",
-        "T068": "done",
-        "T069": "done"
+        "T064": "planned",
+        "T065": "planned",
+        "T066": "planned",
+        "T067": "planned",
+        "T068": "planned",
+        "T069": "planned"
       }
     },
     "WP14": {
