@@ -34,6 +34,12 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/controlstore/gapdb/
 create_intent:
+- go.mod
+- go.sum
+- internal/controlstore/gapdb/admission_test.go
+- internal/controlstore/gapdb/external_scenarios_test.go
+- internal/controlstore/gapdb/port.go
+- internal/controlstore/gapdb/port_test.go
 - internal/controlstore/gapdb/v2_codec.go
 - internal/controlstore/gapdb/v2_committer.go
 - internal/controlstore/gapdb/v2_reader.go
@@ -42,6 +48,12 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- go.mod
+- go.sum
+- internal/controlstore/gapdb/admission_test.go
+- internal/controlstore/gapdb/external_scenarios_test.go
+- internal/controlstore/gapdb/port.go
+- internal/controlstore/gapdb/port_test.go
 - internal/controlstore/gapdb/v2_codec.go
 - internal/controlstore/gapdb/v2_committer.go
 - internal/controlstore/gapdb/v2_reader.go
@@ -74,6 +86,15 @@ that translates a WP02 sealed `CommitPlan` into exactly one durable
 ambiguous publication by stable identity, and prove that the adapter adds no
 capability policy or alternate authority path.
 
+This package is reopened by `post-approval-defect-9.md` and review cycle 7.
+After the amended WP02 contract is approved, pin the exact released public
+GapDB module, translate sealed authority assertions and the permanent
+workspace-path claim, require exact assertion acknowledgements, and prove
+assertion evidence during response-loss reconciliation. The module/API
+candidate and production-admitted sidecar remain explicitly distinct until
+WP13 owns the exact human adoption cutover. Review cycle 7 is normative for
+tuple values, added ownership, external qualification, and mutants.
+
 ## Context
 
 WP01 freezes the M2 contracts, registry, budgets, and architectural boundaries.
@@ -88,11 +109,13 @@ and consumer ports. WP02 owns plan membership, digests, logical versions, and
 registry validation. This WP owns provider translation; WP04 later consumes its
 read metadata without moving restore policy into the adapter.
 
-Use only the admitted public `github.com/spec-kitty/gapdb/gapdb` client already
-bound by the M1 adoption tuple. Do not import provider internals, start or
-discover a sidecar executable, add a dependency, expose raw provider types to
-kernel packages, or retain/reintroduce SQLite, SQL, a backend selector, a dual
-write, a rescue read, or a migration path.
+Use only the released public `github.com/spec-kitty/gapdb/gapdb` client at the
+exact assertion-capable module version named by review cycle 7. This compiles
+the new client capability but does not replace the separately frozen M1
+production-admitted executable tuple. Do not import provider internals, start
+or discover a sidecar executable, expose raw provider types to kernel packages,
+or retain/reintroduce SQLite, SQL, a backend selector, a dual write, a rescue
+read, or a migration path.
 
 ### Branch, lane, and ownership
 
@@ -109,8 +132,10 @@ reuse another WP's lane, edit the root checkout, or merge directly to `main`.
 Accepted work merges only into `feat/gapdb-only-production-authority` through
 the Spec Kitty workflow.
 
-Own exactly the five files in `owned_files`. Do not modify WP02 journal files,
-existing M1 adapter files, `go.mod`, `go.sum`, mission contracts, architecture
+Own exactly the files in `owned_files`, including the bounded module pin,
+candidate admission evidence, public-port compatibility, and external scenario
+updates added by review cycle 7. Do not modify WP02 journal files, overwrite the
+frozen M1 `Admitted*` executable tuple, alter mission contracts, architecture
 guards, sidecar lifecycle code, or later capability packages. If an upstream
 contract is insufficient, stop with a concrete dependency finding rather than
 creating a second model inside the adapter.

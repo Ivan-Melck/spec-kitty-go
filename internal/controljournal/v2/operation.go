@@ -337,17 +337,17 @@ func (s OperationStateV2) EffectIDs() []EffectID            { return append([]Ef
 func (s OperationStateV2) LastPublicationID() PublicationID { return s.lastPublicationID }
 
 type operationStateWire struct {
-	SchemaVersion       uint32          `json:"schema_version"`
-	OperationID         string          `json:"operation_id"`
+	CanonicalResult     []byte          `json:"canonical_result,omitempty"`
+	EffectIDs           []string        `json:"effect_ids"`
+	EventIDs            []string        `json:"event_ids"`
+	LastPublicationID   string          `json:"last_publication_id,omitempty"`
 	LogicalVersion      uint64          `json:"logical_version"`
-	Status              OperationStatus `json:"status"`
+	OperationID         string          `json:"operation_id"`
 	ResultKind          string          `json:"result_kind,omitempty"`
 	ResultSchemaVersion uint32          `json:"result_schema_version,omitempty"`
-	CanonicalResult     []byte          `json:"canonical_result,omitempty"`
 	ResultSHA256        string          `json:"result_sha256,omitempty"`
-	EventIDs            []string        `json:"event_ids"`
-	EffectIDs           []string        `json:"effect_ids"`
-	LastPublicationID   string          `json:"last_publication_id,omitempty"`
+	SchemaVersion       uint32          `json:"schema_version"`
+	Status              OperationStatus `json:"status"`
 }
 
 func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
@@ -371,12 +371,16 @@ func EncodeOperationStateV2(state OperationStateV2) ([]byte, error) {
 	if !state.resultDigest.IsZero() {
 		resultDigest = state.resultDigest.String()
 	}
-	encoded, err := marshalCanonical(operationStateWire{SchemaVersion, string(state.operationID), uint64(state.logicalVersion), state.status, state.resultKind,
-		state.resultSchemaVersion, append([]byte(nil), state.canonicalResult...), resultDigest, events, effects, string(state.lastPublicationID)}, MaxCanonicalPayloadBytes)
+	encoded, err := marshalCanonical(operationStateWire{
+		CanonicalResult: append([]byte(nil), state.canonicalResult...), EffectIDs: effects, EventIDs: events,
+		LastPublicationID: string(state.lastPublicationID), LogicalVersion: uint64(state.logicalVersion), OperationID: string(state.operationID),
+		ResultKind: state.resultKind, ResultSchemaVersion: state.resultSchemaVersion, ResultSHA256: resultDigest,
+		SchemaVersion: SchemaVersion, Status: state.status,
+	}, MaxCanonicalPayloadBytes)
 	if err != nil {
 		return nil, err
 	}
-	return CanonicalObject(encoded)
+	return encoded, nil
 }
 
 func DecodeOperationStateV2(encoded []byte) (OperationStateV2, error) {
@@ -418,11 +422,7 @@ func EncodeOperationStateEventPayloadV2(state OperationStateV2) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	canonical, err := CanonicalObject(encoded)
-	if err != nil {
-		return nil, err
-	}
-	return append([]byte(nil), canonical...), nil
+	return append([]byte(nil), encoded...), nil
 }
 
 // ReconstructOperationStateV2 combines the operation transition preimage with
@@ -472,8 +472,42 @@ type OperationTransition struct {
 	LastPublicationID   PublicationID
 }
 
+// EffectPermissionCoordinateV2 identifies the newly published permission
+// event and the effect whose pre-existing operation membership authorizes a
+// reconciliation resume. The journal deliberately does not interpret the
+// capability-owned permission payload.
+type EffectPermissionCoordinateV2 struct {
+	eventID    EventID
+	effectID   EffectID
+	commitment Digest
+}
+
+func (p EffectPermissionCoordinateV2) EventID() EventID   { return p.eventID }
+func (p EffectPermissionCoordinateV2) EffectID() EffectID { return p.effectID }
+func (p EffectPermissionCoordinateV2) Commitment() Digest { return p.commitment }
+
 func AdvanceOperationState(prior OperationStateV2, transition OperationTransition) (OperationStateV2, error) {
-	if prior.logicalVersion == 0 || transition.ExpectedVersion != prior.logicalVersion || transition.NextVersion != prior.logicalVersion+1 || !allowedOperationTransition(prior.status, transition.Status) {
+	if !allowedOperationTransition(prior.status, transition.Status) {
+		return OperationStateV2{}, invalid(ErrorInvalidTransition, "operation_version_or_status")
+	}
+	return advanceOperationStateMembership(prior, transition)
+}
+
+// ResumeOperationStateWithEffectPermissionV2 admits only the otherwise
+// forbidden reconciliation_required -> in_progress edge. The permission must
+// be a fresh event in the next cumulative membership for an effect already
+// bound to the operation before this transition.
+func ResumeOperationStateWithEffectPermissionV2(prior OperationStateV2, transition OperationTransition, permission EffectPermissionCoordinateV2) (OperationStateV2, error) {
+	if prior.status != StatusReconciliationRequired || transition.Status != StatusInProgress ||
+		validateIdentity("permission_event_id", string(permission.eventID)) != nil || validateIdentity("permission_effect_id", string(permission.effectID)) != nil || permission.commitment.IsZero() ||
+		containsID(prior.eventIDs, permission.eventID) || !containsID(transition.EventIDs, permission.eventID) || !containsID(prior.effectIDs, permission.effectID) {
+		return OperationStateV2{}, invalid(ErrorInvalidTransition, "effect_permission_resume")
+	}
+	return advanceOperationStateMembership(prior, transition)
+}
+
+func advanceOperationStateMembership(prior OperationStateV2, transition OperationTransition) (OperationStateV2, error) {
+	if prior.logicalVersion == 0 || transition.ExpectedVersion != prior.logicalVersion || transition.NextVersion != prior.logicalVersion+1 {
 		return OperationStateV2{}, invalid(ErrorInvalidTransition, "operation_version_or_status")
 	}
 	if prior.status == StatusResolved || prior.status == StatusRefused {
@@ -484,6 +518,15 @@ func AdvanceOperationState(prior OperationStateV2, transition OperationTransitio
 	}
 	return NewOperationStateV2(OperationStateInput{prior.operationID, transition.NextVersion, transition.Status, transition.ResultKind,
 		transition.ResultSchemaVersion, transition.CanonicalResult, transition.EventIDs, transition.EffectIDs, transition.LastPublicationID})
+}
+
+func containsID[T ~string](values []T, wanted T) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func allowedOperationTransition(from, to OperationStatus) bool {
