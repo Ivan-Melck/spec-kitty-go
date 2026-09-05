@@ -451,6 +451,7 @@ func rebindBoundWorkspaceToCurrent(t *testing.T, h *portableHarness, state execu
 	observedAt := time.Date(2026, 9, 5, 12, 20, 0, 0, time.UTC)
 	result, err := h.host.RebindWorkspaceRuntimeEpoch(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceEpochRebindRequestV2{
 		ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID,
+		ActorID: state.ActorID, ProcessID: state.ProcessID, OriginatingRuntimeEpochID: h.host.RuntimeEpochID(),
 		OperationID:      journalv2.OperationID("operation-workspace-rebind-" + boundary),
 		OperationEventID: journalv2.EventID("event-operation-workspace-rebind-" + boundary), ExecutionEventID: journalv2.EventID("event-execution-workspace-rebind-" + boundary),
 		WorkspaceEventID: journalv2.EventID("event-workspace-rebind-" + boundary), Governance: state.Governance, ObservedAt: observedAt,
