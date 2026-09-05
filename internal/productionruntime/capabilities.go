@@ -40,7 +40,11 @@ type runtimeCapabilities struct {
 	effect      *execution.EffectAuthorityServiceV2
 	artifact    artifact.AuthorityPortV2
 	workgraph   workgraph.AuthorityPortV2
-	checkpoints *checkpointScheduler
+	checkpoints checkpointPublisher
+}
+
+type checkpointPublisher interface {
+	MaybeCheckpoint(context.Context) error
 }
 
 func (h *Host) afterMutation(ctx context.Context) error {
@@ -57,13 +61,24 @@ func (h *Host) afterMutation(ctx context.Context) error {
 // fails. Request cancellation must not leave the host's memory behind those
 // acknowledged facts.
 func (h *Host) afterPossibleMutation(ctx context.Context, primary error) error {
-	refreshContext := ctx
-	cancel := func() {}
-	if refreshContext == nil || refreshContext.Err() != nil {
-		refreshContext, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	// A request context controls the external attempt, not reconciliation of
+	// durable facts that attempt may already have acknowledged. Preserve its
+	// values while deliberately dropping cancellation and deadline authority.
+	refreshContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	refreshErr := h.afterMutation(refreshContext)
+	var refreshErr error
+	if primary == nil {
+		refreshErr = h.afterMutation(refreshContext)
+	} else {
+		// A typed refusal may be wholly non-mutating. Publishing a checkpoint in
+		// this branch would turn that refusal into a durable side effect. A
+		// bounded read-only refresh is sufficient to expose any intent,
+		// uncertainty, or pending cleanup committed before the failure.
+		refreshErr = h.refreshProjection(refreshContext)
+	}
 	if primary != nil {
 		return errors.Join(primary, refreshErr)
 	}

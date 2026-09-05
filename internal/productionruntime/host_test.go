@@ -3,6 +3,7 @@ package productionruntime
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,8 @@ import (
 	journalrestore "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/integration"
@@ -29,6 +32,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
 	"github.com/spec-kitty/go-kitty3/internal/projection"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/tracker"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 type hostOwnerProbe struct {
@@ -49,6 +54,25 @@ func (o *hostOwnerProbe) Probe(context.Context) error {
 func (o *hostOwnerProbe) Close(context.Context) error { o.closed.Add(1); return nil }
 
 type fixtureCommitPort struct{ revision atomic.Uint64 }
+
+type checkpointProbe struct {
+	calls atomic.Int64
+}
+
+func (p *checkpointProbe) MaybeCheckpoint(context.Context) error {
+	p.calls.Add(1)
+	return nil
+}
+
+type recordingCheckpointPublisher struct {
+	delegate checkpointPublisher
+	calls    atomic.Int64
+}
+
+func (p *recordingCheckpointPublisher) MaybeCheckpoint(ctx context.Context) error {
+	p.calls.Add(1)
+	return p.delegate.MaybeCheckpoint(ctx)
+}
 
 type refusingCandidateVerifier struct{}
 
@@ -90,6 +114,90 @@ func (refusingIntegrationGit) ObserveCleanup(context.Context, integration.Integr
 }
 func (refusingIntegrationGit) IsAncestor(context.Context, ids.RepositoryID, string, string) (bool, error) {
 	return false, fmt.Errorf("test git is fail-closed")
+}
+
+type cancellingEffectDispatcher struct {
+	cancel   context.CancelFunc
+	expected execution.EffectProviderObservationV2
+	applies  atomic.Int64
+}
+
+type cancellingCleanupGit struct {
+	refusingIntegrationGit
+	cancel context.CancelFunc
+}
+
+func (g cancellingCleanupGit) CleanupWorkspace(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, error) {
+	g.cancel()
+	return integration.IntegrationCleanupObservationV2{}, context.Canceled
+}
+
+type cleanupAuthorityProbe struct {
+	attempt          integration.IntegrationAttemptStateV2
+	attemptRevision  uint64
+	source           journalv2.OperationStateV2
+	sourceRevision   uint64
+	resolution       integration.IntegrationOperationResolutionV2
+	providerRevision uint64
+}
+
+func (p *cleanupAuthorityProbe) ResolveIntegrationCleanupOperation(context.Context, journalv2.OperationBindingV2) (integration.IntegrationOperationResolutionV2, error) {
+	if p.resolution.Kind == 0 {
+		return integration.IntegrationOperationResolutionV2{Kind: integration.AcceptanceOperationAbsentV2}, nil
+	}
+	return p.resolution, nil
+}
+func (p *cleanupAuthorityProbe) ObserveIntegrationCleanupAuthority(context.Context, integration.IntegrationCleanupRequestV2) (integration.IntegrationCleanupAuthorityObservationV2, error) {
+	source, err := journalv2.EncodeOperationStateV2(p.source)
+	if err != nil {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, err
+	}
+	digest, err := journalv2.ReducerStateDigestV2(source)
+	if err != nil {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, err
+	}
+	return integration.IntegrationCleanupAuthorityObservationV2{
+		Attempt: p.attempt, AttemptRecordRevision: p.attemptRevision,
+		SourceOperation: p.source, SourceOperationRecordRevision: p.sourceRevision, SourceOperationValueDigest: digest,
+	}, nil
+}
+func (p *cleanupAuthorityProbe) PublishIntegrationCleanup(_ context.Context, plan integration.IntegrationCleanupPlanV2) (integration.IntegrationAckV2, error) {
+	sealed, err := plan.Publication()
+	if err != nil {
+		return integration.IntegrationAckV2{}, err
+	}
+	for _, event := range sealed.Events() {
+		if event.Family() != "integration_attempt" {
+			continue
+		}
+		next, reduceErr := integration.ReduceIntegrationAttemptEventV2(p.attempt.CanonicalBytes(), event)
+		if reduceErr != nil {
+			return integration.IntegrationAckV2{}, reduceErr
+		}
+		p.attempt, err = integration.DecodeIntegrationAttemptStateV2(next)
+		if err != nil {
+			return integration.IntegrationAckV2{}, err
+		}
+	}
+	p.providerRevision++
+	p.attemptRevision = p.providerRevision
+	p.resolution = integration.IntegrationOperationResolutionV2{Kind: integration.AcceptanceOperationExactV2, State: sealed.OperationState(), RecordRevision: p.providerRevision}
+	return integration.IntegrationAckV2{PublicationID: sealed.PublicationID(), ProviderRevision: p.providerRevision, PlanDigest: sealed.Digest(), MutationCount: sealed.MutationCount()}, nil
+}
+func (p *cleanupAuthorityProbe) ReconcileIntegrationCleanup(context.Context, integration.IntegrationCleanupPlanV2) (integration.IntegrationAckV2, error) {
+	return integration.IntegrationAckV2{}, errors.New("unexpected cleanup reconciliation")
+}
+
+func (d *cancellingEffectDispatcher) ObserveEffect(context.Context, tracker.ExternalWorkRef) (execution.EffectProviderObservationV2, error) {
+	return d.expected, nil
+}
+func (d *cancellingEffectDispatcher) ApplyEffect(context.Context, execution.EffectConditionalMutationV2) (execution.EffectMutationResultV2, error) {
+	d.applies.Add(1)
+	d.cancel()
+	return execution.EffectMutationResultV2{Kind: execution.EffectMutationIndeterminateV2}, context.Canceled
+}
+func (d *cancellingEffectDispatcher) CompensateEffect(context.Context, execution.EffectConditionalMutationV2) (execution.EffectMutationResultV2, error) {
+	return execution.EffectMutationResultV2{}, errors.New("unexpected compensation")
 }
 
 type missionCreatingReconciler struct{ retained *ReconciliationCommands }
@@ -256,22 +364,20 @@ func TestPossibleMutationRefreshesDurableTruthDespiteTypedErrorAndCancellation(t
 	if err := host.transition(HostReady); err != nil {
 		t.Fatal(err)
 	}
-	registry := journalv2.DefaultEventRegistryV2()
-	reducers := fixtureReducers(t, registry)
-	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	host.capabilities.checkpoints = &checkpointScheduler{tracker: tracker, every: journalv2.MaxAcknowledgementsBetweenSeals}
+	checkpoints := &checkpointProbe{}
+	host.capabilities.checkpoints = checkpoints
 	var refreshes atomic.Int64
 	host.refresh = func(ctx context.Context) error {
 		if ctx == nil || ctx.Err() != nil {
 			t.Fatal("refresh inherited cancelled request authority")
 		}
+		if got := ctx.Value(possibleMutationContextKey{}); got != "retained" {
+			t.Fatalf("refresh lost request values: %v", got)
+		}
 		refreshes.Add(1)
 		return nil
 	}
-	cancelled, cancel := context.WithCancel(t.Context())
+	cancelled, cancel := context.WithCancel(context.WithValue(t.Context(), possibleMutationContextKey{}, "retained"))
 	cancel()
 	primary := errors.New("typed decision required after durable progress")
 	if err := host.afterPossibleMutation(cancelled, primary); !errors.Is(err, primary) {
@@ -279,6 +385,110 @@ func TestPossibleMutationRefreshesDurableTruthDespiteTypedErrorAndCancellation(t
 	}
 	if refreshes.Load() != 1 || host.State() != HostReady {
 		t.Fatalf("possible mutation refreshes=%d state=%s", refreshes.Load(), host.State())
+	}
+	if checkpoints.calls.Load() != 0 {
+		t.Fatalf("typed refusal published %d checkpoints", checkpoints.calls.Load())
+	}
+}
+
+type possibleMutationContextKey struct{}
+
+func TestHostIntegrationCleanupPublishesPendingProgressDespiteFailureAndCancellation(t *testing.T) {
+	host, _ := hostFixture(t, "database-cleanup-route")
+	defer host.Close(t.Context())
+	if err := host.transition(HostReconciling); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.transition(HostReady); err != nil {
+		t.Fatal(err)
+	}
+	_, governanceContext := productionRuntimeWorkRevision(t, "project-1", "mission-1")
+	governance, err := execution.ExecutionGovernanceFromContextV2(governanceContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := integration.IntegrationAttemptStateV2{
+		SchemaVersion: 1, LogicalVersion: 5, Stage: integration.IntegrationAttemptCompletedV2,
+		AttemptID: "attempt-cleanup", OperationID: "operation-integration-cleanup-source",
+		ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: "revision-cleanup", WorkID: "work-cleanup",
+		AcceptanceID: "acceptance-cleanup", AcceptanceDigest: repeatByte('a', 64),
+		RepositoryID: "repository-cleanup", TargetRef: "refs/heads/main", Candidate: repeatByte('b', 40), ExpectedOld: repeatByte('c', 40),
+		TargetGeneration: 1, FenceTokenHash: repeatByte('d', 64), Result: repeatByte('e', 40), ObservedTarget: repeatByte('e', 40),
+		Workspace:     integration.WorkspaceFacts{Path: "/tmp/spec-kitty-cleanup", Registered: true, Detached: true, Clean: true, Head: repeatByte('e', 40), CandidateReachable: true},
+		FenceEffectID: "effect-fence-cleanup", WorkspaceEffectID: "effect-workspace-cleanup", MergeEffectID: "effect-merge-cleanup",
+		PublishEffectID: "effect-publish-cleanup", CleanupEffectID: "effect-cleanup", CleanupStatus: integration.CleanupEligible,
+		RuntimeEpochID: "epoch-current", ActorID: "actor-integrator", ProcessID: "process-integrator", Governance: governance,
+		ObservedAt: "2026-09-05T12:10:00Z",
+	}
+	if err := attempt.Validate(); err != nil {
+		t.Fatalf("cleanup fixture attempt: %v", err)
+	}
+	source, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{
+		OperationID: attempt.OperationID, LogicalVersion: 5, Status: journalv2.StatusResolved,
+		ResultKind: "integration.result", ResultSchemaVersion: 1, CanonicalResult: attempt.CanonicalBytes(),
+		EventIDs: []journalv2.EventID{"event-integration-cleanup-source"}, EffectIDs: []journalv2.EffectID{attempt.CleanupEffectID},
+		LastPublicationID: journalv2.PublicationID(repeatByte('3', 64)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := &cleanupAuthorityProbe{attempt: attempt, attemptRevision: 40, source: source, sourceRevision: 40, providerRevision: 40}
+	requestContext, cancel := context.WithCancel(context.WithValue(t.Context(), possibleMutationContextKey{}, "retained"))
+	service, err := integration.NewIntegrationCleanupServiceV2(port, runtimeEpochSource{epoch: "epoch-current"}, cancellingCleanupGit{cancel: cancel}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.capabilities.cleanup = service
+	query := progressFixture()
+	progress, err := NewProgressService(query, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.progress = progress
+	host.refresh = func(ctx context.Context) error {
+		if ctx.Err() != nil || ctx.Value(possibleMutationContextKey{}) != "retained" {
+			return errors.New("cleanup refresh inherited cancellation or lost values")
+		}
+		query.base.Revision++
+		for index := range query.items {
+			query.items[index].ProjectionRevision = query.base.Revision
+		}
+		coordinate, coordinateErr := integration.IntegrationAttemptCoordinateV2(port.attempt.ProjectID, port.attempt.MissionID, port.attempt.WorkRevisionID, port.attempt.WorkID, port.attempt.AttemptID)
+		if coordinateErr != nil {
+			return coordinateErr
+		}
+		query.items = append(query.items, projection.AggregateViewV2{
+			DatabaseID: query.base.DatabaseID, ProjectionRevision: query.base.Revision, RuntimeEpochID: query.base.RuntimeEpochID,
+			ProjectionDigest: repeatByte('b', 64), Coordinate: coordinate, LogicalVersion: journalv2.LogicalVersion(port.attempt.LogicalVersion),
+			LastEventID: "event-cleanup-pending", LastPublicationID: journalv2.PublicationID(repeatByte('1', 64)),
+			StateDigest: repeatByte('2', 64), CanonicalState: port.attempt.CanonicalBytes(),
+		})
+		return nil
+	}
+	checkpoints := &checkpointProbe{}
+	host.capabilities.checkpoints = checkpoints
+	request := integration.IntegrationCleanupRequestV2{
+		CleanupOperationID: "operation-cleanup-route", IntegrationOperationID: attempt.OperationID,
+		ProjectID: attempt.ProjectID, MissionID: attempt.MissionID, WorkRevisionID: attempt.WorkRevisionID, WorkID: attempt.WorkID,
+		AttemptID: attempt.AttemptID, RepositoryID: attempt.RepositoryID, TargetRef: attempt.TargetRef, RuntimeEpochID: attempt.RuntimeEpochID,
+		ActorID: "actor-cleanup", ProcessID: "process-cleanup", Governance: governance, ObservedAt: time.Date(2026, 9, 5, 12, 11, 0, 0, time.UTC),
+	}
+	if _, observeErr := port.ObserveIntegrationCleanupAuthority(t.Context(), request); observeErr != nil {
+		t.Fatalf("cleanup authority fixture: %v", observeErr)
+	}
+	if _, err = host.ExecuteIntegrationCleanup(requestContext, "epoch-current", request); !integration.IsKind(err, integration.KindGitFailure) || requestContext.Err() != context.Canceled {
+		t.Fatalf("cleanup failure=%v cancellation=%v", err, requestContext.Err())
+	}
+	item, err := progress.Get("project-1", "mission-1", ProgressIntegration, "attempt-cleanup")
+	if err != nil {
+		t.Fatalf("pending cleanup was not visible through retained progress: %v", err)
+	}
+	pending, err := integration.DecodeIntegrationAttemptStateV2(item.CanonicalState)
+	if err != nil || pending.CleanupStatus != integration.CleanupPending {
+		t.Fatalf("cleanup progress status=%s err=%v", pending.CleanupStatus, err)
+	}
+	if checkpoints.calls.Load() != 0 {
+		t.Fatalf("failed cleanup published checkpoint calls=%d", checkpoints.calls.Load())
 	}
 }
 
@@ -433,6 +643,63 @@ func TestFreshEpochRequiresSealedRestoreAndRotatesPredecessorDurably(t *testing.
 	}
 }
 
+func productionRuntimeWorkRevision(t *testing.T, projectID ids.ProjectID, missionID ids.MissionID) (workgraph.RevisionV2, governancecontext.Context) {
+	t.Helper()
+	work, err := workgraph.NewWorkObservation(workgraph.WorkObservationParams{
+		ProjectID: projectID, WorkID: "work-runtime", Title: "Exercise production dispatch", Description: "Verify durable progress after cancellation.",
+		DesignContext: "Use the single GapDB authority host.",
+		Criteria:      []workgraph.CriterionObservation{{ID: "criterion-runtime", Text: "Durable progress remains visible.", Outcome: "green", Verifier: "test", Requirement: workgraph.CriterionRequired}},
+		WriteScopes:   []workgraph.WriteScopeObservation{{Path: "internal/productionruntime", Domain: "runtime", Access: workgraph.ScopeWriteExclusive}},
+		Provenance:    []workgraph.ScopeReference{{ID: "scope-runtime", Kind: workgraph.ScopePlanConcern}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := workgraph.NewDraftObservation(projectID, missionID, "artifact-runtime-plan", strings.Repeat("a", 64), []workgraph.ApprovedScope{{ID: "scope-runtime", Kind: workgraph.ScopePlanConcern, MissionID: missionID}}, []workgraph.WorkObservation{work})
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := sha256.Sum256([]byte("work-runtime"))
+	finalized, err := workgraph.NewFinalizationObservation(draft, []workgraph.ObservationEvidence{{WorkID: "work-runtime", Provider: "fake", ExternalID: "external-runtime", Revision: "revision-runtime", MetadataSchema: 1, DefinitionDigest: fmt.Sprintf("%x", definition), CriterionEvidenceHints: map[string]string{"criterion-runtime": "go test"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := workgraph.BuildGenerationOneCandidateV3(workgraph.GenerationOneCandidateV3Params{
+		Observation: finalized, PlanningSourceCommit: strings.Repeat("b", 40),
+		MissionDefinition: workgraph.MissionDefinitionIdentity{Key: "software-development", Version: 1, Digest: strings.Repeat("c", 64)},
+		DependencyPolicy:  workgraph.DependencyApprovedOrDone, FinalizedBy: "actor-runtime",
+		FinalizedAt: time.Date(2026, 9, 5, 12, 2, 0, 0, time.UTC), GovernanceContextID: "governance-runtime",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := make([]governancecontext.Entry, 0, 4)
+	for _, item := range []struct {
+		kind                 governancecontext.EntryKind
+		ref, revision, value string
+	}{
+		{governancecontext.KindConfig, "config.runtime", "policy-runtime", "config"},
+		{governancecontext.KindDoctrine, "doctrine.runtime", "doctrine-runtime", "doctrine"},
+		{governancecontext.KindProfile, "profile.runtime", "profile-runtime", "profile"},
+		{governancecontext.KindMissionType, "mission-type.runtime", "mission-type-runtime", "mission-type"},
+	} {
+		commitment, commitErr := governancecontext.CommitSHA256([]byte(item.value))
+		if commitErr != nil {
+			t.Fatal(commitErr)
+		}
+		entry, entryErr := governancecontext.NewEntry(item.kind, item.ref, item.revision, commitment)
+		if entryErr != nil {
+			t.Fatal(entryErr)
+		}
+		entries = append(entries, entry)
+	}
+	governance, err := governancecontext.NewContext("governance-runtime", governancecontext.SchemaVersion, entries, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision, governance
+}
+
 func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testing.T) {
 	binary := os.Getenv("SPEC_KITTY_WP13_GAPDBD")
 	if binary == "" {
@@ -533,6 +800,108 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		t.Fatalf("existing watch was orphaned by projection refresh: %v", watchErr)
 	case <-time.After(2 * time.Second):
 		t.Fatal("existing watch was orphaned by projection refresh")
+	}
+
+	// Exercise the real public dispatch route after creating its exact durable
+	// workgraph and execution authority through the host. The provider cancels
+	// the request only after StartAttempt has been acknowledged. The host must
+	// still expose that durable progress through the original retained handle,
+	// and a failed dispatch must not create a checkpoint side effect.
+	revision, governance := productionRuntimeWorkRevision(t, "project-runtime", "mission-runtime")
+	workgraphPlan, err := workgraph.BuildFinalizationAuthorityV2(workgraph.FinalizationPlanInputV2{
+		Context: workgraph.AuthorityContextV2{
+			OperationID: "operation-runtime-workgraph", RuntimeEpochID: firstEpoch,
+			ActorID: "actor-runtime", ProcessID: "process-runtime",
+			DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
+			Governance: []string{"governance-runtime"}, ObservedCreatedAt: "2026-09-05T12:02:00Z",
+			OperationEventID: "event-runtime-workgraph-operation", DomainEventID: "event-runtime-workgraph",
+		},
+		Revision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = first.PublishWorkgraph(t.Context(), firstEpoch, workgraphPlan); err != nil {
+		t.Fatalf("publish workgraph: %v", err)
+	}
+	now := time.Date(2026, 9, 5, 12, 3, 0, 0, time.UTC)
+	admitted, err := first.ExecuteWork(t.Context(), firstEpoch, execution.ExecutionAuthorityRequestV2{
+		Kind: execution.ExecutionAdmitV2, OperationID: "operation-runtime-admit", ProjectID: "project-runtime", MissionID: "mission-runtime",
+		WorkRevisionID: revision.ID(), WorkID: "work-runtime", RunID: "run-runtime", ActorID: "actor-runtime", ProcessID: "process-runtime",
+		LeaseID: "lease-runtime", Generation: 1, ObservedAt: now, Deadline: now.Add(time.Minute), RuntimeEpochID: firstEpoch,
+		Governance: governance, OperationEventID: "event-runtime-admit-operation", SlotEventID: "event-runtime-admit-slot",
+	})
+	if err != nil {
+		t.Fatalf("admit execution: %v", err)
+	}
+	executionGovernance, err := execution.ExecutionGovernanceFromContextV2(governance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := tracker.ExternalWorkRef{ProjectID: "project-runtime", WorkID: "work-runtime", Provider: "fake", ExternalID: "external-runtime", MetadataSchema: 1, CreatedByOperation: "operation-runtime-workgraph", LastObservation: 1}
+	intent := execution.EffectIntentV2{
+		EffectID: "effect-runtime", OperationID: "operation-runtime-effect", Target: target, IntendedValue: "actor-runtime",
+		ExpectedProviderRevision: 1, RequiredGuarantee: tracker.AssignmentAtomicClaim,
+		ActorID: "actor-runtime", ProcessID: "process-runtime", Governance: executionGovernance,
+		OriginRuntimeEpochID: firstEpoch, OriginObservedCreatedAt: now.Add(time.Second).Format(time.RFC3339),
+	}
+	intent.CanonicalRequestDigest, err = execution.EffectRequestDigestV2(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effectRequest := execution.EffectAuthorityRequestV2{
+		Action: execution.EffectRecordIntentV2, Intent: intent, RuntimeEpochID: firstEpoch, ExecutionSlot: admitted.State,
+		ObservedAt: now.Add(time.Second), OperationEventID: "event-runtime-effect-intent-operation", EffectEventID: "event-runtime-effect-intent",
+	}
+	recorded, err := first.ExecuteEffect(t.Context(), firstEpoch, effectRequest)
+	if err != nil {
+		t.Fatalf("record effect intent: %v", err)
+	}
+	operationsBefore, err := progressHandle.List("project-runtime", "mission-runtime", ProgressOperations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointCalls := &recordingCheckpointPublisher{delegate: first.capabilities.checkpoints}
+	first.capabilities.checkpoints = checkpointCalls
+	expectedObservation, err := execution.NewEffectProviderObservationV2(target, 1, "", "", "absent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatchContext, cancelDispatch := context.WithCancel(context.WithValue(t.Context(), possibleMutationContextKey{}, "retained"))
+	dispatcher := &cancellingEffectDispatcher{cancel: cancelDispatch, expected: expectedObservation}
+	effectRequest.Action = execution.EffectStartAttemptV2
+	effectRequest.ExecutionSlot = recorded.ExecutionSlot
+	effectRequest.ObservedAt = now.Add(2 * time.Second)
+	effectRequest.OperationEventID = "event-runtime-effect-attempt-operation"
+	effectRequest.EffectEventID = "event-runtime-effect-attempt"
+	_, dispatchErr := first.ExecuteEffectDispatch(dispatchContext, firstEpoch, execution.EffectDispatchCommandV2{
+		Authorization: effectRequest, ObservationOperationEventID: "event-runtime-effect-observation-operation",
+		ObservationEffectEventID: "event-runtime-effect-observation", ObservationAt: now.Add(3 * time.Second),
+	}, dispatcher)
+	if !execution.IsKind(dispatchErr, execution.KindDecisionRequired) || dispatcher.applies.Load() != 1 || dispatchContext.Err() != context.Canceled {
+		t.Fatalf("dispatch result calls=%d err=%v", dispatcher.applies.Load(), dispatchErr)
+	}
+	effectProgress, err := progressHandle.Get("project-runtime", "mission-runtime", ProgressEffects, "effect-runtime")
+	if err != nil {
+		t.Fatalf("durable failed-dispatch progress absent: %v", err)
+	}
+	effectState, err := execution.DecodeExternalEffectStateV2(effectProgress.CanonicalState)
+	if err != nil || (effectState.Stage != execution.EffectAttemptStartedV2 && effectState.Stage != execution.EffectObservationRecordedV2) {
+		t.Fatalf("durable failed-dispatch state=%s err=%v", effectState.Stage, err)
+	}
+	operationsAfter, err := progressHandle.List("project-runtime", "mission-runtime", ProgressOperations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operationsAfter) != len(operationsBefore) {
+		t.Fatalf("typed dispatch failure published a checkpoint: operations before=%d after=%d", len(operationsBefore), len(operationsAfter))
+	}
+	if checkpointCalls.calls.Load() != 0 {
+		t.Fatalf("typed dispatch failure invoked checkpoint publication: calls=%d", checkpointCalls.calls.Load())
+	}
+	firstProgress, err = progressHandle.Mission("project-runtime", "mission-runtime")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := first.Close(t.Context()); err != nil {
 		t.Fatal(err)
@@ -1074,13 +1443,16 @@ func TestWP13MandatoryProductionMutantCampaign(t *testing.T) {
 		{"projection_before_ack", "internal/projection/authority.go", "./internal/projection", "TestProjectionPublishesCompleteAcknowledgedRevisionsAndDefensiveQueries", "duplicate acknowledgement err=<nil>", []wp13SourceReplacement{{`return &ErrorV2{ErrorIncompleteRevisionV2, "acknowledgement"}`, `return nil`}}},
 		{"watch_as_durable", "internal/productionruntime/progress.go", "./internal/productionruntime", "TestProgressWatchRejectsUnbackedNotification", "watch notification became durable progress", []wp13SourceReplacement{{`if queryErr != nil || value.ProjectionRevision != notification.Revision {`, `if queryErr != nil {`}}},
 		{"lost_memory_loses_state", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch", "live memory was not refreshed", []wp13SourceReplacement{{"result, restoreErr := journalrestore.RestoreV2", "_, restoreErr := journalrestore.RestoreV2"}, {"return authority.RestoreCurrentEpoch(epoch, result)", "return nil // mutant: discard restored state"}}},
+		{"possible_mutation_refresh_omitted", "internal/productionruntime/capabilities.go", "./internal/productionruntime", "TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch", "durable failed-dispatch state=intent_recorded", []wp13SourceReplacement{{"refreshErr = h.refreshProjection(refreshContext)", "refreshErr = nil // mutant: durable progress is left invisible"}}},
+		{"possible_mutation_inherits_cancellation", "internal/productionruntime/capabilities.go", "./internal/productionruntime", "TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch", "durable failed-dispatch state=intent_recorded", []wp13SourceReplacement{{"context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)", "context.WithTimeout(ctx, 30*time.Second)"}}},
+		{"refusal_publishes_checkpoint", "internal/productionruntime/capabilities.go", "./internal/productionruntime", "TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch", "typed dispatch failure invoked checkpoint publication", []wp13SourceReplacement{{"refreshErr = h.refreshProjection(refreshContext)", "refreshErr = h.afterMutation(refreshContext) // mutant: refusal writes a checkpoint"}}},
 		{"query_mints_authority", "internal/projection/query.go", "./internal/projection", "TestQueryPortCannotMutateAuthorityOrCollapseProgressIntoCeremony", "query method count", []wp13SourceReplacement{{"\tProgressBase(string) (ProgressBaseV2, error)\n}", "\tProgressBase(string) (ProgressBaseV2, error)\n\tPublishAcknowledged(journalv2.AcknowledgedPublicationV2) error\n}"}}},
 		{"raw_handle_escape", "internal/productionruntime/host.go", "./internal/productionruntime", "TestProductionHostSurfaceHasNoRawAuthorityOrBackendSelector", "production surface leaked RawOwner", []wp13SourceReplacement{{"type Host struct {\n\tmu", "type Host struct {\n\tRawOwner ownerLifecycle\n\tmu"}}},
 		{"sqlite_backend_selector", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestProductionHostSurfaceHasNoRawAuthorityOrBackendSelector", "production surface leaked SQLiteFallback", []wp13SourceReplacement{{"type Config struct {\n", "type Config struct {\n\tSQLiteFallback any\n"}}},
 		{"playback_external_io", "internal/productionruntime/recovery.go", "./internal/productionruntime", "TestProductionReducerCompositionIsCompleteAndRuntimePlaybackPure", "mutant external call", []wp13SourceReplacement{{"\t\"sort\"\n\t\"sync\"", "\t\"sort\"\n\t\"sync\"\n\t\"os\""}, {"func ReduceRuntimeHostEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte, error) {\n", "func ReduceRuntimeHostEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte, error) {\n\tif _, err := os.Stat(\".\"); err == nil { return nil, fmt.Errorf(\"mutant external call\") }\n"}}},
 	}
-	if len(mutants) != 14 {
-		t.Fatalf("WP13 mutant census=%d want=14", len(mutants))
+	if len(mutants) != 17 {
+		t.Fatalf("WP13 mutant census=%d want=17", len(mutants))
 	}
 	seen := make(map[string]bool, len(mutants))
 	for _, mutant := range mutants {
