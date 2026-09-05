@@ -57,6 +57,23 @@ func TestProjectionPublishesCompleteAcknowledgedRevisionsAndDefensiveQueries(t *
 	}
 }
 
+func TestProjectionSnapshotUsesCompletePlaybackBudgetNotPerRecordCeiling(t *testing.T) {
+	authority, coordinator := projectionFixtureV2(t)
+	for index := 0; index < 200; index++ {
+		ack := publishProjectionFixtureV2(t, coordinator, fmt.Sprintf("large-%03d", index), "mission", fmt.Sprintf("mission-%03d", index))
+		if err := authority.PublishAcknowledged(ack); err != nil {
+			t.Fatalf("publication %d: %v", index, err)
+		}
+	}
+	snapshot := authority.Snapshot()
+	if snapshot == nil || snapshot.Revision() != 200 || len(snapshot.CanonicalBytes()) <= journalv2.MaxCanonicalPayloadBytes || len(snapshot.CanonicalBytes()) > MaxProjectionSnapshotBytesV2 {
+		t.Fatalf("revision=%d bytes=%d", snapshot.Revision(), len(snapshot.CanonicalBytes()))
+	}
+	if _, err := authority.List(ListQueryV2{Family: "mission", Limit: MaxQueryPageV2}); err != nil {
+		t.Fatalf("large projection is not queryable: %v", err)
+	}
+}
+
 func TestProjectionRefusesARevisionGapWithoutPoisoningLaterAdmission(t *testing.T) {
 	authority, coordinator := projectionFixtureV2(t)
 	first := publishProjectionFixtureV2(t, coordinator, "gap-a", "mission", "mission-gap")
