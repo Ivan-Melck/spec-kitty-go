@@ -487,10 +487,20 @@
     },
     "WP11": {
       "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "assignee": "codex",
       "force_count": 0,
       "lane": "in_progress",
       "last_event_id": "01M1R602SNNMJ6VGVEWVGFNJMW",
-      "last_transition_at": "2026-09-05T07:02:17.654000+00:00"
+      "last_transition_at": "2026-09-05T07:02:17.654000+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Allocator recovery after manually admitting conflicting dependency histories into the existing lane-k workspace"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "role": "implementer"
     },
     "WP12": {
       "actor": "user",
