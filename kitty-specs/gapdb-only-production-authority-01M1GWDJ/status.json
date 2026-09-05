@@ -554,7 +554,7 @@
     },
     "WP13": {
       "actor": "mill",
-      "agent": "codex",
+      "agent": "mill",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 2,
@@ -564,12 +564,13 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Allocation block resolved by dependency merge 6488469e; resume implementation.",
-        "Override lane-purity ceremony: flagged kitty-specs files are Spec Kitty-owned historical evidence from dependency lane merges, not implementation contamination. Candidate 1a2af4fb independently approved."
+        "Override lane-purity ceremony: flagged kitty-specs files are Spec Kitty-owned historical evidence from dependency lane merges, not implementation contamination. Candidate 1a2af4fb independently approved.",
+        "Independent review of candidate 1a2af4fb and tree b941534d."
       ],
       "provider": "__resolved_provider_absent__",
       "role": "reviewer",
-      "shell_pid": 1798288,
-      "shell_pid_created_at": "1788611140.44",
+      "shell_pid": 1814288,
+      "shell_pid_created_at": "1788611168.52",
       "subtasks": {
         "T064": "done",
         "T065": "done",
