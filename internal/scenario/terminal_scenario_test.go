@@ -125,7 +125,6 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), "workspace-bound-"+active.WorkID.String())
 	binding := workspace.BindingV2{
 		WorkspaceID: ids.WorkspaceID("workspace-" + active.WorkID.String()), ProjectID: active.ProjectID,
 		MissionID: active.MissionID, WorkRevisionID: active.WorkRevisionID, WorkID: active.WorkID,
@@ -152,6 +151,7 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 	if err != nil {
 		t.Fatalf("bind workspace %s: %v", active.WorkID, err)
 	}
+	assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), "workspace-bound-"+active.WorkID.String())
 
 	current := bound.Workspace
 	currentExecution := bound.Execution

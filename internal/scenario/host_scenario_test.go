@@ -89,7 +89,6 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	if err != nil {
 		t.Fatalf("seal acknowledged two-item graph: %v", err)
 	}
-	assertUniversalInvariants(t, h, projectID, missionID, "workgraph-selected")
 	definitionDigest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"portable-scenario"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +112,7 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	if err != nil {
 		t.Fatalf("select acknowledged two-item graph: %v", err)
 	}
+	assertUniversalInvariants(t, h, projectID, missionID, "workgraph-selected")
 	restartAfterDurableBoundary(t, h, projectID, missionID, "workgraph-selected", restartEveryBoundary)
 
 	admitted := admitTwoItemWork(t, h, projectID, missionID, revision, governance, restartEveryBoundary)

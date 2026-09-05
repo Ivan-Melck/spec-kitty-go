@@ -109,21 +109,22 @@ var familyEvidenceProofs = map[string][]evidenceClaim{
 }
 
 type publicationCutProof struct {
-	Cut            string          `json:"cut"`
-	Proof          executableProof `json:"proof"`
-	RecoveryOracle executableProof `json:"recovery_oracle"`
+	Cut   string          `json:"cut"`
+	Proof executableProof `json:"same_state_cut_and_recovery_proof"`
 }
 
 // Production publication cuts are an orthogonal evidence axis. Each entry is
-// one real experiment at the shared v2 coordinator/GapDB boundary; family
-// claims above are never multiplied by these labels.
+// one real experiment at the shared v2 coordinator/GapDB boundary. The named
+// test performs its cut and recovery assertion against the same owner and
+// control-store state; an unrelated fresh-host oracle is not admissible.
+// Family claims above are never multiplied by these labels.
 var productionPublicationCutProofs = []publicationCutProof{
-	{"before_publication", proof("./internal/controlstore/gapdb", "TestV2CommitCanceledBeforeDeliveryMakesNoProviderCall"), proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")},
-	{"after_durable_commit_before_response", proof("./internal/controlstore/gapdb", "TestV2AssertionCandidateSidecarQualification"), proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")},
-	{"lost_response", proof("./internal/controlstore/gapdb", "TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation"), proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")},
-	{"malformed_acknowledgement", proof("./internal/controlstore/gapdb", "TestV2CommitRefusesWireBudgetBeforeProviderAndValidatesAck"), proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")},
-	{"restart_before_reconciliation", proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_before_reconciliation"), proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")},
-	{"restart_after_reconciliation", proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_after_reconciliation"), proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")},
+	{"before_publication", proof("./internal/controlstore/gapdb", "TestV2CommitCanceledBeforeDeliveryMakesNoProviderCall")},
+	{"after_durable_commit_before_response", proof("./internal/controlstore/gapdb", "TestV2AssertionCandidateSidecarQualification")},
+	{"lost_response", proof("./internal/controlstore/gapdb", "TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation")},
+	{"malformed_acknowledgement", proof("./internal/controlstore/gapdb", "TestV2CommitRefusesWireBudgetBeforeProviderAndValidatesAck")},
+	{"restart_before_reconciliation", proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_before_reconciliation")},
+	{"restart_after_reconciliation", proof("./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_after_reconciliation")},
 }
 
 // familyClaims records only the behavior each executable test actually proves.
@@ -243,7 +244,9 @@ func TestUniversalCampaignCensusMutants(t *testing.T) {
 		"substituted_family_proof": func(c *campaignCensus) { c.Entries[0].Claims[0].Proof = c.Entries[1].Claims[0].Proof },
 		"missing_publication_cut":  func(c *campaignCensus) { c.PublicationCuts = c.PublicationCuts[1:] },
 		"substituted_cut_proof":    func(c *campaignCensus) { c.PublicationCuts[0].Proof = c.PublicationCuts[1].Proof },
-		"substituted_cut_oracle":   func(c *campaignCensus) { c.PublicationCuts[0].RecoveryOracle = executableProof{} },
+		"severed_cut_recovery_state": func(c *campaignCensus) {
+			c.PublicationCuts[0].Proof = proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries")
+		},
 		"reduced_repetition":       func(c *campaignCensus) { c.Entries[0].Repetitions = 99 },
 		"swallowed_refusal":        func(c *campaignCensus) { c.Entries[0].Outcome = "ignored" },
 		"missing_mutant_suite":     func(c *campaignCensus) { c.MutantSuites = c.MutantSuites[1:] },
@@ -388,7 +391,6 @@ func executeProofSet(t *testing.T, census campaignCensus, repetitions int) {
 		cut := cut
 		t.Run("publication-cut/"+cut.Cut, func(t *testing.T) {
 			runExecutableProof(t, root, cut.Proof, repetitions)
-			runExecutableProof(t, root, cut.RecoveryOracle, repetitions)
 		})
 	}
 	for _, proof := range census.Concurrency {
