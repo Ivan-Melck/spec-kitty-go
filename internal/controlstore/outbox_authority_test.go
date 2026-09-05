@@ -1,0 +1,282 @@
+package controlstore
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+)
+
+func TestDurableOutboxIntentBindsExactSourceBytesAndAttribution(t *testing.T) {
+	plan, coordinates := outboxSourcePlanFixtureV2(t)
+	intent, err := BindDurableOutboxIntentV2(plan, 11, coordinates)
+	if err != nil || intent.IsZero() || intent.coordinates.SourceOperationID != coordinates.SourceOperationID {
+		t.Fatalf("intent=%+v err=%v", intent, err)
+	}
+	mutants := []func(*OutboxIntentCoordinatesV2){
+		func(value *OutboxIntentCoordinatesV2) { value.ExpectedProviderRevision++ },
+		func(value *OutboxIntentCoordinatesV2) { value.IntendedValue = "substituted" },
+		func(value *OutboxIntentCoordinatesV2) { value.ExpectedValue = "substituted" },
+		func(value *OutboxIntentCoordinatesV2) { value.ExpectedOperationMarker = "substituted" },
+		func(value *OutboxIntentCoordinatesV2) { value.AttributionMarker = "substituted" },
+		func(value *OutboxIntentCoordinatesV2) {
+			value.IntendedMutationDigest = outboxDigestFixtureV2("substituted")
+		},
+		func(value *OutboxIntentCoordinatesV2) { value.ActorID = "actor-other" },
+		func(value *OutboxIntentCoordinatesV2) { value.Capability = "other.capability" },
+	}
+	for index, mutate := range mutants {
+		candidate := coordinates
+		candidate.CanonicalIntent = append([]byte(nil), coordinates.CanonicalIntent...)
+		mutate(&candidate)
+		if _, err := BindDurableOutboxIntentV2(plan, 11, candidate); err == nil {
+			t.Fatalf("attribution mutant %d survived", index)
+		}
+	}
+	tamperedBytes := coordinates
+	tamperedBytes.CanonicalIntent = append([]byte(nil), coordinates.CanonicalIntent...)
+	tamperedBytes.CanonicalIntent[len(tamperedBytes.CanonicalIntent)-2] ^= 1
+	if _, err := BindDurableOutboxIntentV2(plan, 11, tamperedBytes); err == nil {
+		t.Fatal("changed source bytes retained durable intent authority")
+	}
+}
+
+func TestOutboxLifecycleRequiresIntentAndCompareBeforeCompensate(t *testing.T) {
+	source, coordinates := outboxSourcePlanFixtureV2(t)
+	intent, err := BindDurableOutboxIntentV2(source, 11, coordinates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := journalv2.DefaultEventRegistryV2()
+	startCommand := bindOutboxCommandFixtureV2(t, OutboxCommandV2{Action: OutboxStartAttemptV2, Intent: intent, AttemptID: "attempt-stable-1", RuntimeEpochID: "epoch-1", OperationEventID: "event-outbox-operation-1", OutboxEventID: "event-outbox-1"}, 1)
+	start, err := BuildOutboxAuthorityPlanV2(startCommand, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startPlan, _ := start.Publication()
+	state := reduceOutboxPlanV2(t, []byte(`{}`), startPlan)
+	if state.Stage != OutboxAttemptStartedV2 || state.AttemptID != "attempt-stable-1" || startPlan.OperationState().Status() != journalv2.StatusResolved || startPlan.OperationState().OperationID() == coordinates.SourceOperationID {
+		t.Fatalf("state=%+v status=%s", state, startPlan.OperationState().Status())
+	}
+
+	observation, err := NewOutboxProviderObservationV2(coordinates.ExpectedProviderRevision+1, coordinates.IntendedValue, coordinates.AttributionMarker, "confirmed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedPlan := buildLaterOutboxPlanV2(t, registry, intent, startPlan, state, OutboxRecordObservationV2, &observation, "", "", 2)
+	state = reduceOutboxPlanV2(t, state.CanonicalBytes(), observedPlan)
+	reconcilePlan := buildLaterOutboxPlanV2(t, registry, intent, observedPlan, state, OutboxRequireReconcileV2, &observation, "", "", 3)
+	state = reduceOutboxPlanV2(t, state.CanonicalBytes(), reconcilePlan)
+	if state.Stage != OutboxReconciliationRequiredV2 {
+		t.Fatalf("stage=%s", state.Stage)
+	}
+	if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitRetryV2, &observation, string(coordinates.SourceOperationID), "", 4), registry); err == nil {
+		t.Fatal("retry accepted while the attributed provider value was still present")
+	}
+
+	changed, _ := NewOutboxProviderObservationV2(coordinates.ExpectedProviderRevision+2, coordinates.IntendedValue, coordinates.AttributionMarker, "confirmed")
+	if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitCompensationV2, &changed, string(coordinates.SourceOperationID), "", 4), registry); err == nil {
+		t.Fatal("compensation accepted a changed provider revision")
+	}
+	changedValue, _ := NewOutboxProviderObservationV2(observation.ProviderRevision, "other-owner", observation.AttributionMarker, "confirmed")
+	if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitCompensationV2, &changedValue, string(coordinates.SourceOperationID), "", 4), registry); err == nil {
+		t.Fatal("compensation accepted a changed provider value")
+	}
+	changedAttribution, _ := NewOutboxProviderObservationV2(observation.ProviderRevision, observation.Value, "other-operation", "confirmed")
+	if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitCompensationV2, &changedAttribution, string(coordinates.SourceOperationID), "", 4), registry); err == nil {
+		t.Fatal("compensation accepted a changed provider attribution marker")
+	}
+	if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitCompensationV2, &observation, "wrong-marker", "", 4), registry); err == nil {
+		t.Fatal("compensation accepted a changed permission marker")
+	}
+	permitted, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitCompensationV2, &observation, string(coordinates.SourceOperationID), "", 4), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permittedPlan, _ := permitted.Publication()
+	permittedState := reduceOutboxPlanV2(t, state.CanonicalBytes(), permittedPlan)
+	if permittedState.Stage != OutboxCompensationPermittedV2 || permittedPlan.OperationState().Status() != journalv2.StatusResolved {
+		t.Fatalf("state=%+v status=%s", permittedState, permittedPlan.OperationState().Status())
+	}
+
+	absent, err := NewOutboxProviderObservationV2(coordinates.ExpectedProviderRevision+2, "", "", "absent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	absentObserved := buildLaterOutboxPlanV2(t, registry, intent, startPlan, reduceOutboxPlanV2(t, []byte(`{}`), startPlan), OutboxRecordObservationV2, &absent, "", "", 5)
+	absentState := reduceOutboxPlanV2(t, reduceOutboxPlanV2(t, []byte(`{}`), startPlan).CanonicalBytes(), absentObserved)
+	absentReconcile := buildLaterOutboxPlanV2(t, registry, intent, absentObserved, absentState, OutboxRequireReconcileV2, &absent, "", "", 6)
+	absentState = reduceOutboxPlanV2(t, absentState.CanonicalBytes(), absentReconcile)
+	retry := buildLaterOutboxPlanV2(t, registry, intent, absentReconcile, absentState, OutboxPermitRetryV2, &absent, string(coordinates.SourceOperationID), "", 7)
+	if retryState := reduceOutboxPlanV2(t, absentState.CanonicalBytes(), retry); retryState.Stage != OutboxRetryPermittedV2 {
+		t.Fatalf("reconciled absence did not permit stable retry: %+v", retryState)
+	}
+}
+
+func TestOutboxReducerRejectsUnknownTuplePriorSubstitutionAndIllegalJump(t *testing.T) {
+	source, coordinates := outboxSourcePlanFixtureV2(t)
+	intent, _ := BindDurableOutboxIntentV2(source, 11, coordinates)
+	registry := journalv2.DefaultEventRegistryV2()
+	startCommand := bindOutboxCommandFixtureV2(t, OutboxCommandV2{Action: OutboxStartAttemptV2, Intent: intent, AttemptID: "attempt-stable-1", RuntimeEpochID: "epoch-1", OperationEventID: "event-outbox-operation-1", OutboxEventID: "event-outbox-1"}, 1)
+	start, _ := BuildOutboxAuthorityPlanV2(startCommand, registry)
+	startPlan, _ := start.Publication()
+	state := reduceOutboxPlanV2(t, []byte(`{}`), startPlan)
+	observation, _ := NewOutboxProviderObservationV2(coordinates.ExpectedProviderRevision, coordinates.ExpectedValue, coordinates.AttributionMarker, "confirmed")
+	if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitRetryV2, &observation, string(coordinates.SourceOperationID), "", 2), registry); err == nil {
+		t.Fatal("attempt jumped directly to retry permission")
+	}
+	for _, registration := range OutboxReducerRegistrationsV2() {
+		if registration.Owner != "internal/controlstore" || registration.Family != "outbox" || registration.Reduce == nil || registration.ImplementationDigest.IsZero() {
+			t.Fatalf("bad registration: %+v", registration)
+		}
+	}
+}
+
+func TestOutboxOperationBindingRejectsPostBindCommandMutation(t *testing.T) {
+	source, coordinates := outboxSourcePlanFixtureV2(t)
+	intent, err := BindDurableOutboxIntentV2(source, 11, coordinates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := bindOutboxCommandFixtureV2(t, OutboxCommandV2{
+		Action:           OutboxStartAttemptV2,
+		Intent:           intent,
+		AttemptID:        "attempt-stable-1",
+		RuntimeEpochID:   "epoch-1",
+		OperationEventID: "event-outbox-operation-1",
+		OutboxEventID:    "event-outbox-1",
+	}, 1)
+	mutants := []func(*OutboxCommandV2){
+		func(command *OutboxCommandV2) { command.AttemptID = "attempt-substituted" },
+		func(command *OutboxCommandV2) { command.RuntimeEpochID = "epoch-substituted" },
+		func(command *OutboxCommandV2) { command.OutboxEventID = "event-substituted" },
+		func(command *OutboxCommandV2) { command.Action = OutboxResolveV2 },
+	}
+	for index, mutate := range mutants {
+		candidate := bound
+		mutate(&candidate)
+		if _, err := BuildOutboxAuthorityPlanV2(candidate, journalv2.DefaultEventRegistryV2()); err == nil {
+			t.Fatalf("post-bind command mutant %d retained authority", index)
+		}
+	}
+}
+
+func TestOutboxPortRemainsCapabilityShaped(t *testing.T) {
+	port := reflect.TypeOf((*OutboxAuthorityPortV2)(nil)).Elem()
+	want := map[string]bool{"ObserveOutboxState": true, "PublishOutbox": true, "ResolveOutboxOperation": true}
+	if port.NumMethod() != len(want) {
+		t.Fatalf("outbox port method count=%d", port.NumMethod())
+	}
+	for index := 0; index < port.NumMethod(); index++ {
+		method := port.Method(index)
+		if !want[method.Name] {
+			t.Fatalf("outbox port leaked method %s", method.Name)
+		}
+		lower := strings.ToLower(method.Name + " " + method.Type.String())
+		for _, forbidden := range []string{"repository", "rawkey", "scanprefix", "append", "genericstore"} {
+			if strings.Contains(lower, forbidden) {
+				t.Fatalf("outbox port leaked %s through %s", forbidden, method.Name)
+			}
+		}
+	}
+}
+
+func buildLaterOutboxPlanV2(t *testing.T, registry journalv2.EventRegistryV2, intent DurableOutboxIntentV2, priorPlan journalv2.SealedCommitPlanV2, prior OutboxDeliveryStateV2, action OutboxActionV2, observation *OutboxProviderObservationV2, permission, resolution string, index int) journalv2.SealedCommitPlanV2 {
+	t.Helper()
+	_ = priorPlan
+	plan, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, prior, action, observation, permission, resolution, index), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, _ := plan.Publication()
+	return sealed
+}
+
+func laterOutboxCommandV2(t *testing.T, intent DurableOutboxIntentV2, prior OutboxDeliveryStateV2, action OutboxActionV2, observation *OutboxProviderObservationV2, permission, resolution string, index int) OutboxCommandV2 {
+	t.Helper()
+	return bindOutboxCommandFixtureV2(t, OutboxCommandV2{Action: action, Intent: intent, Prior: &prior, PriorRecordRevision: uint64(20 + index), AttemptID: prior.AttemptID, RuntimeEpochID: prior.RuntimeEpochID, Observation: observation, PermissionMarker: permission, Resolution: resolution, OperationEventID: journalv2.EventID("event-outbox-operation-" + string(rune('0'+index))), OutboxEventID: journalv2.EventID("event-outbox-" + string(rune('0'+index)))}, index)
+}
+
+func bindOutboxCommandFixtureV2(t *testing.T, command OutboxCommandV2, index int) OutboxCommandV2 {
+	t.Helper()
+	bound, err := BindOutboxCommandOperationV2(command, OutboxOperationCoordinatesV2{OperationID: journalv2.OperationID(fmt.Sprintf("operation-outbox-command-%d", index)), ProcessID: "process-outbox", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedCreatedAt: "2026-09-05T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bound
+}
+
+func reduceOutboxPlanV2(t *testing.T, prior []byte, plan journalv2.SealedCommitPlanV2) OutboxDeliveryStateV2 {
+	t.Helper()
+	for _, event := range plan.Events() {
+		if event.Family() == "outbox" {
+			encoded, err := ReduceOutboxEventV2(prior, event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := DecodeOutboxDeliveryStateV2(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return state
+		}
+	}
+	t.Fatal("outbox event missing")
+	return OutboxDeliveryStateV2{}
+}
+
+func outboxSourcePlanFixtureV2(t *testing.T) (journalv2.SealedCommitPlanV2, OutboxIntentCoordinatesV2) {
+	t.Helper()
+	operationID := journalv2.OperationID("operation-effect-1")
+	effectID := journalv2.EffectID("effect-1")
+	actor := journalv2.ActorID("actor-1")
+	mutationDigest := outboxDigestFixtureV2("mutation")
+	intentRaw := []byte(`{"actor_id":"actor-1","canonical_request_digest":"` + mutationDigest + `","effect_id":"effect-1","expected_operation_marker":"marker-old","expected_provider_revision":7,"expected_value":"old","intended_value":"owner-new","operation_id":"operation-effect-1"}`)
+	intent, err := journalv2.CanonicalObject(intentRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intentSum := sha256.Sum256(intent)
+	intentDigest, _ := journalv2.ParseDigest("effect_intent", hex.EncodeToString(intentSum[:]))
+	scope := journalv2.Scope{Kind: journalv2.ScopeHost}
+	commandDigest, _ := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "external_effect.saga", CommandSchemaVersion: 1, Scope: scope, Command: intent})
+	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "external_effect.saga", CommandSchemaVersion: 1, CanonicalIntentDigest: commandDigest, Scope: scope, ActorID: actor, ProcessID: "process-1", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", OriginatingRuntimeEpochID: "epoch-1", ObservedCreatedAt: "2026-09-05T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventIDs := []journalv2.EventID{"event-effect-1", "event-operation-1"}
+	operation, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: operationID, LogicalVersion: 1, Status: journalv2.StatusAccepted, EventIDs: eventIDs, EffectIDs: []journalv2.EffectID{effectID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opPayload, _ := journalv2.EncodeOperationStateEventPayloadV2(operation)
+	effectPayload := []byte(`{"stage":"intent_recorded"}`)
+	opCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(operationID), scope)
+	effectCoordinate, _ := journalv2.NewAggregateCoordinate("external_effect", journalv2.AggregateID(effectID), scope)
+	drafts := []journalv2.EventDraftV2{{EventID: "event-operation-1", EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: opCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-1", ActorID: actor, ProcessID: "process-1", PolicyRevision: "policy-1", GovernanceRevisions: []string{"doctrine-1", "profile-1"}, Payload: opPayload}, {EventID: "event-effect-1", EventType: "external_effect.record_intent", Family: "external_effect", EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: effectCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-1", ActorID: actor, ProcessID: "process-1", PolicyRevision: "policy-1", GovernanceRevisions: []string{"doctrine-1", "profile-1"}, Payload: effectPayload}}
+	opDigest, _ := journalv2.ReducerStateDigestV2(opPayload)
+	effectDigest, _ := journalv2.ReducerStateDigestV2(effectPayload)
+	heads := []journalv2.HeadTransitionV2{{Coordinate: opCoordinate, NextLogicalVersion: 1, EventID: "event-operation-1", CommittedRuntimeEpochID: "epoch-1", CanonicalStateDigest: opDigest, AuthoritySummary: opPayload}, {Coordinate: effectCoordinate, NextLogicalVersion: 1, EventID: "event-effect-1", CommittedRuntimeEpochID: "epoch-1", CanonicalStateDigest: effectDigest, AuthoritySummary: effectPayload}}
+	conditions := make([]journalv2.ProviderCondition, 0, 2)
+	for _, head := range heads {
+		condition, conditionErr := journalv2.ConditionForHeadTransitionV2(head)
+		if conditionErr != nil {
+			t.Fatal(conditionErr)
+		}
+		conditions = append(conditions, condition)
+	}
+	plan, err := journalv2.SealCommitPlanV2(journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: operation, Events: drafts, Heads: heads, EffectIntents: []journalv2.EffectIntentReference{{EffectID: effectID, Digest: intentDigest, Canonical: intent}}, Conditions: conditions}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan, OutboxIntentCoordinatesV2{EffectID: effectID, SourceOperationID: operationID, CanonicalIntent: intent, IntendedMutationDigest: mutationDigest, IntendedValue: "owner-new", ExpectedProviderRevision: 7, ExpectedValue: "old", ExpectedOperationMarker: "marker-old", AttributionMarker: string(operationID), ActorID: actor, Capability: "external_effect.saga"}
+}
+
+func outboxDigestFixtureV2(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
