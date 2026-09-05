@@ -21,7 +21,7 @@ import (
 const (
 	runReadinessMutantsEnv = "SPEC_KITTY_RUN_WP18_MUTANTS"
 	readinessMutatedSource = "SPEC_KITTY_WP18_MUTATED_SOURCE"
-	readinessMutantDigest  = "6aa8696ef720819239b9f36fd04a35aecb294bb39e1c813d7a3003114df2bcb2"
+	readinessMutantDigest  = "f9b574d563eb922bdf3ff8f4460cdefe34ec6087546fb398e3e1a8d46bd9c4ac"
 )
 
 type readinessReplacement struct {
@@ -44,8 +44,8 @@ func TestAutonomousReadinessExecutableControlledMutants(t *testing.T) {
 	}
 	root := readinessRepositoryRoot(t)
 	mutants := autonomousReadinessMutants()
-	if len(mutants) != 20 {
-		t.Fatalf("executable mutant census=%d want=20", len(mutants))
+	if len(mutants) != 22 {
+		t.Fatalf("executable mutant census=%d want=22", len(mutants))
 	}
 	identities := make([]string, 0, len(mutants))
 	seen := make(map[string]bool, len(mutants))
@@ -107,6 +107,8 @@ func autonomousReadinessMutants() []readinessSourceMutant {
 		{id: "M18-SUBSTITUTED-WORKGRAPH-BINDING", file: "internal/mission/readiness_workrevision.go", replacements: []readinessReplacement{{anchor: "if err != nil || binding.CommandKind() != \"workgraph.finalized\" || binding.CommandSchemaVersion() != 1 || binding.Scope() != exactScope || binding.IntentDigest() != exactIntent {", replacement: "if _ = exactIntent; err != nil || binding.CommandSchemaVersion() != 1 || binding.Scope() != exactScope {"}}, target: "./internal/mission", killer: "TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication", want: "wrong command kind inherited workgraph authority"},
 		{id: "M18-SUBSTITUTED-WORKGRAPH-SCOPE", file: "internal/mission/readiness_workrevision.go", replacements: []readinessReplacement{{anchor: "if err != nil || binding.CommandKind() != \"workgraph.finalized\" || binding.CommandSchemaVersion() != 1 || binding.Scope() != exactScope || binding.IntentDigest() != exactIntent {", replacement: "if _ = exactIntent; err != nil || binding.CommandKind() != \"workgraph.finalized\" || binding.CommandSchemaVersion() != 1 {"}}, target: "./internal/mission", killer: "TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication", want: "wrong mission scope inherited workgraph authority"},
 		{id: "M18-SUBSTITUTED-WORKGRAPH-RESULT", file: "internal/mission/readiness_workrevision.go", replacements: []readinessReplacement{{anchor: "if err != nil || operation.ResultKind() != \"workgraph.result\" || operation.ResultSchemaVersion() != 1 || !bytes.Equal(operation.Result(), exactResult) {", replacement: "_ = exactResult\n\tif err != nil || operation.ResultKind() != \"workgraph.result\" || operation.ResultSchemaVersion() != 1 {"}}, target: "./internal/mission", killer: "TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication", want: "wrong operation result inherited workgraph authority"},
+		{id: "M18-RELATED-FACT-OMITTED", file: "internal/mission/readiness_service_v2.go", replacements: []readinessReplacement{{anchor: "func buildReadinessAuthorityPlanV2(command ReadinessAuthorityCommandV2, binding journalv2.OperationBindingV2, observed ReadinessAuthorityObservationV2, registry journalv2.EventRegistryV2) (journalv2.SealedCommitPlanV2, []byte, error) {", replacement: "func buildReadinessAuthorityPlanV2(command ReadinessAuthorityCommandV2, binding journalv2.OperationBindingV2, observed ReadinessAuthorityObservationV2, registry journalv2.EventRegistryV2) (journalv2.SealedCommitPlanV2, []byte, error) {\n\tcommand.RelatedFact = nil"}}, target: "./internal/mission", killer: "TestReadinessFactTransitionPublishesAtomicMissionAndAcceptanceEvidence", want: "related fact was not one atomic publication"},
+		{id: "M18-SUBSTITUTED-RELATED-FACT", file: "internal/mission/readiness_service_v2.go", replacements: []readinessReplacement{{anchor: "if !ok || !readinessFactProjectsScopedFactV2(projected, changed) {", replacement: "if _ = projected; !ok {"}}, target: "./internal/mission", killer: "TestReadinessRelatedFactIsIntentBoundAndTamperRefusedBeforeReads", want: "substituted fact was not refused"},
 	}
 }
 

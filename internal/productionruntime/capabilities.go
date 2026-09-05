@@ -146,6 +146,12 @@ func (c *ReconciliationCommands) ExecuteWorkspace(ctx context.Context, command e
 	}
 	return c.capabilities.workspace.Execute(ctx, command)
 }
+func (c *ReconciliationCommands) RebindWorkspaceRuntimeEpoch(ctx context.Context, command execution.WorkspaceEpochRebindRequestV2) (execution.WorkspaceAuthorityResultV2, error) {
+	if err := c.admit(); err != nil {
+		return execution.WorkspaceAuthorityResultV2{}, err
+	}
+	return c.capabilities.workspace.RebindRuntimeEpoch(ctx, command)
+}
 func (c *ReconciliationCommands) ExecuteWorkspaceStage(ctx context.Context, command workspace.StageAuthorityRequestV2) (workspace.StageAuthorityResultV2, error) {
 	if err := c.admit(); err != nil {
 		return workspace.StageAuthorityResultV2{}, err
@@ -254,6 +260,19 @@ func (h *Host) ExecuteWorkspace(ctx context.Context, expected journalv2.RuntimeE
 	}
 	defer release()
 	result, err := h.capabilities.workspace.Execute(ctx, command)
+	if err == nil {
+		err = h.afterMutation(ctx)
+	}
+	return result, err
+}
+
+func (h *Host) RebindWorkspaceRuntimeEpoch(ctx context.Context, expected journalv2.RuntimeEpochID, command execution.WorkspaceEpochRebindRequestV2) (execution.WorkspaceAuthorityResultV2, error) {
+	release, err := h.beginCommand(expected)
+	if err != nil {
+		return execution.WorkspaceAuthorityResultV2{}, err
+	}
+	defer release()
+	result, err := h.capabilities.workspace.RebindRuntimeEpoch(ctx, command)
 	if err == nil {
 		err = h.afterMutation(ctx)
 	}

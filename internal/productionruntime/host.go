@@ -310,8 +310,12 @@ func (h *Host) startMonitor(parent context.Context, interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				probe, stop := context.WithTimeout(ctx, probeTimeout)
 				h.commandMu.Lock()
+				// Waiting for an admitted command to leave the provider boundary is
+				// not part of the owner probe. Starting the deadline before this
+				// lock would turn a slow but healthy command into an already-expired
+				// probe and could manufacture consecutive owner-loss evidence.
+				probe, stop := context.WithTimeout(ctx, probeTimeout)
 				err := h.owner.Probe(probe)
 				h.commandMu.Unlock()
 				stop()

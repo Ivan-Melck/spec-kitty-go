@@ -377,6 +377,83 @@ func TestReadinessAuthorityAdapterCreateActivityPauseRestartReplayV2(t *testing.
 	}
 }
 
+func TestReadinessAuthorityPublishesResolvedPolicyFactInSameGapDBBatchV2(t *testing.T) {
+	memory, _, authority := readinessAuthorityGapDBFixtureV2(t)
+	service, err := mission.NewReadinessAuthorityServiceV2(authority, missionEpochFixtureV2{"epoch-readiness"}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := readinessStateGapDBFixtureV2(t, 1, mission.MissionOpen, 0, "operation-readiness-fact-create", "2026-09-04T12:00:00Z")
+	if _, err = service.Execute(t.Context(), readinessCommandGapDBFixtureV2(created, mission.ReadinessAuthorityStateV2{}, mission.ReadinessEventCreatedV2)); err != nil {
+		t.Fatal(err)
+	}
+	openDigest := readinessDigestGapDBFixtureV2(t, "policy-open")
+	scoped := mission.ScopedMissionFactV2{
+		Kind: mission.ScopedFactDecisionV2, FactID: "policy-fact-readiness",
+		Scope:            mission.ActionRef{ID: mission.ActionAcceptanceEvaluate, Scope: mission.AuthorityScope{Kind: mission.ScopeWork, Identity: "work-readiness"}},
+		EvidenceIdentity: "policy-open-readiness", EvidenceDigest: openDigest.String(),
+	}
+	opened, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+		ProjectID: created.ProjectID(), MissionID: created.MissionID(), DefinitionRevision: "definition-1",
+		DefinitionDigest: readinessDigestGapDBFixtureV2(t, "definition"), Version: 2, Lifecycle: mission.MissionOpen,
+		ActiveFacts: []mission.ScopedMissionFactV2{scoped}, LastOperationID: "operation-readiness-fact-open", ObservedAt: "2026-09-04T12:01:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openFact, err := mission.NewMissionFactStateV2(mission.MissionFactStateInputV2{
+		ProjectID: opened.ProjectID(), MissionID: opened.MissionID(), FactID: scoped.FactID, Kind: mission.MissionFactDecisionV2,
+		Status: mission.MissionFactOpenV2, LogicalVersion: 1, DetailDigest: openDigest,
+		LastOperationID: opened.LastOperationID(), ObservedAt: opened.ObservedAt(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openCommand := readinessCommandGapDBFixtureV2(opened, created, mission.ReadinessEventFactOpenedV2)
+	openCommand.RelatedFact = &mission.MissionFactTransitionV2{Successor: openFact}
+	openResult, err := service.Execute(t.Context(), openCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedOpen, err := authority.ObserveMissionFact(t.Context(), opened.ProjectID(), opened.MissionID(), mission.MissionFactDecisionV2, scoped.FactID)
+	if err != nil || !observedOpen.Found || observedOpen.State.Digest() != openFact.Digest() || openResult.RecordRevision() != observedOpen.RecordRevision {
+		t.Fatalf("open fact was not atomically observable: %+v err=%v", observedOpen, err)
+	}
+
+	resolvedDigest := readinessDigestGapDBFixtureV2(t, "policy-resolved")
+	resolved, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+		ProjectID: opened.ProjectID(), MissionID: opened.MissionID(), DefinitionRevision: "definition-1",
+		DefinitionDigest: readinessDigestGapDBFixtureV2(t, "definition"), Version: 3, Lifecycle: mission.MissionOpen,
+		LastOperationID: "operation-readiness-fact-resolve", ObservedAt: "2026-09-04T12:02:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedFact, err := mission.NewMissionFactStateV2(mission.MissionFactStateInputV2{
+		ProjectID: resolved.ProjectID(), MissionID: resolved.MissionID(), FactID: scoped.FactID, Kind: mission.MissionFactDecisionV2,
+		Status: mission.MissionFactResolvedV2, LogicalVersion: 2, DetailDigest: resolvedDigest,
+		LastOperationID: resolved.LastOperationID(), ObservedAt: resolved.ObservedAt(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolveCommand := readinessCommandGapDBFixtureV2(resolved, opened, mission.ReadinessEventFactClosedV2)
+	resolveCommand.RelatedFact = &mission.MissionFactTransitionV2{Prior: openFact, Successor: resolvedFact, ExpectedRecordRevision: observedOpen.RecordRevision}
+	resolveResult, err := service.Execute(t.Context(), resolveCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedResolved, err := authority.ObserveMissionFact(t.Context(), resolved.ProjectID(), resolved.MissionID(), mission.MissionFactDecisionV2, scoped.FactID)
+	if err != nil || !observedResolved.Found || observedResolved.State.Status() != mission.MissionFactResolvedV2 || observedResolved.State.DetailDigest() != resolvedDigest {
+		t.Fatalf("resolved policy fact was not acceptance-ready: %+v err=%v", observedResolved, err)
+	}
+	beforeBatches := memory.batchCalls
+	replay, err := service.Execute(t.Context(), resolveCommand)
+	if err != nil || !replay.Replayed() || !bytes.Equal(replay.CanonicalBytes(), resolveResult.CanonicalBytes()) || replay.RecordRevision() != resolveResult.RecordRevision() || memory.batchCalls != beforeBatches {
+		t.Fatalf("fact-bearing operation did not replay exactly: replay=%s err=%v batches=%d/%d", replay.CanonicalBytes(), err, beforeBatches, memory.batchCalls)
+	}
+}
+
 func TestReadinessAuthorityAdapterRejectsLegacyPhaseStateV2(t *testing.T) {
 	_, _, readiness, legacy := missionAuthorityGapDBFixtureV2(t)
 	service, err := mission.NewMissionAuthorityServiceV2(legacy, missionEpochFixtureV2{"epoch-legacy"}, journalv2.DefaultEventRegistryV2())

@@ -34,19 +34,25 @@ import (
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 type hostOwnerProbe struct {
 	database journalv2.DatabaseID
 	probes   atomic.Int64
+	expired  atomic.Int64
 	closed   atomic.Int64
 	fail     atomic.Bool
 	failFor  atomic.Int64
 }
 
 func (o *hostOwnerProbe) DatabaseID() journalv2.DatabaseID { return o.database }
-func (o *hostOwnerProbe) Probe(context.Context) error {
+func (o *hostOwnerProbe) Probe(ctx context.Context) error {
 	o.probes.Add(1)
+	if ctx.Err() != nil {
+		o.expired.Add(1)
+		return ctx.Err()
+	}
 	for remaining := o.failFor.Load(); remaining > 0; remaining = o.failFor.Load() {
 		if o.failFor.CompareAndSwap(remaining, remaining-1) {
 			return fmt.Errorf("injected transient owner probe failure")
@@ -434,6 +440,31 @@ func TestHostMonitorDoesNotClassifyInFlightProviderStateAsOwnerLoss(t *testing.T
 	}
 	if host.State() != HostDegraded || owner.probes.Load() == 0 {
 		t.Fatalf("monitor failed to resume after command: state=%s probes=%d", host.State(), owner.probes.Load())
+	}
+}
+
+func TestHostMonitorStartsProbeDeadlineAfterInFlightCommandDrains(t *testing.T) {
+	host, _ := hostFixture(t, "database-monitor-probe-deadline")
+	owner := host.owner.(*hostOwnerProbe)
+	_ = host.transition(HostReconciling)
+	_ = host.transition(HostReady)
+	release, err := host.beginCommand("epoch-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.startMonitor(context.Background(), time.Millisecond)
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	// Exceed the monitor's minimum one-second probe timeout while the command
+	// barrier is intentionally held. The eventual probe must still receive its
+	// complete deadline because lock-wait time is not provider-health evidence.
+	time.Sleep(1100 * time.Millisecond)
+	release()
+	deadline := time.Now().Add(time.Second)
+	for owner.probes.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if owner.probes.Load() == 0 || owner.expired.Load() != 0 || host.State() != HostReady {
+		t.Fatalf("probes=%d expired=%d state=%s", owner.probes.Load(), owner.expired.Load(), host.State())
 	}
 }
 
@@ -983,6 +1014,34 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if err != nil {
 		t.Fatalf("admit execution: %v", err)
 	}
+	workspacePath := filepath.Join(root, "workspaces", "work-runtime")
+	pathClaim, err := workspace.WorkspacePathClaimDigestV2("repository-runtime", filepath.Join(root, "workspaces"), workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceBinding := workspace.BindingV2{
+		WorkspaceID: "workspace-runtime", ProjectID: admitted.State.ProjectID, MissionID: admitted.State.MissionID,
+		WorkRevisionID: admitted.State.WorkRevisionID, WorkID: admitted.State.WorkID, RunID: admitted.State.RunID,
+		LeaseID: admitted.State.LeaseID, Generation: admitted.State.Generation, Fence: admitted.State.Fence,
+		RuntimeEpochID: firstEpoch, ActorID: admitted.State.ActorID, ProcessID: admitted.State.ProcessID,
+		RepositoryID: "repository-runtime", LaneID: "lane-runtime", ManagedRoot: filepath.Join(root, "workspaces"), CanonicalPath: workspacePath,
+		PathIdentity:    workspace.PathIdentityV2{Absolute: true, Canonical: true, WithinManagedRoot: true, AliasFree: true, SymlinkFree: true},
+		PathClaimDigest: pathClaim, OwnedBranch: "kitty/runtime-workspace", PinnedBase: strings.Repeat("d", 40),
+	}
+	workspaceContribution, err := workspace.NewBindingContributionV2(workspace.BindingContributionInputV2{
+		Binding: workspaceBinding, EffectID: "effect-runtime-workspace-create", EventID: "event-runtime-workspace-bind", OccurredAt: now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := first.ExecuteWorkspace(t.Context(), firstEpoch, execution.WorkspaceAuthorityRequestV2{
+		Kind: execution.WorkspaceBindV2, OperationID: "operation-runtime-workspace-bind",
+		OperationEventID: "event-runtime-workspace-bind-operation", ExecutionEventID: "event-runtime-workspace-bind-execution",
+		Governance: admitted.State.Governance, Contribution: workspaceContribution, ObservedAt: now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("bind runtime workspace: %v", err)
+	}
 	executionGovernance, err := execution.ExecutionGovernanceFromContextV2(governance)
 	if err != nil {
 		t.Fatal(err)
@@ -999,7 +1058,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		t.Fatal(err)
 	}
 	effectRequest := execution.EffectAuthorityRequestV2{
-		Action: execution.EffectRecordIntentV2, Intent: intent, RuntimeEpochID: firstEpoch, ExecutionSlot: admitted.State,
+		Action: execution.EffectRecordIntentV2, Intent: intent, RuntimeEpochID: firstEpoch, ExecutionSlot: bound.Execution,
 		ObservedAt: now.Add(time.Second), OperationEventID: "event-runtime-effect-intent-operation", EffectEventID: "event-runtime-effect-intent",
 	}
 	recorded, err := first.ExecuteEffect(t.Context(), firstEpoch, effectRequest)
@@ -1065,9 +1124,43 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if second.State() != HostReady || second.RuntimeEpochID() == firstEpoch || second.DatabaseID() != first.DatabaseID() {
 		t.Fatalf("restart state=%s first=%q second=%q firstdb=%q seconddb=%q", second.State(), firstEpoch, second.RuntimeEpochID(), first.DatabaseID(), second.DatabaseID())
 	}
+	restoredProgress, err := second.Progress().Mission("project-runtime", "mission-runtime")
+	if err != nil || restoredProgress.Lifecycle != firstProgress.Lifecycle || restoredProgress.ProjectionSHA256 != firstProgress.ProjectionSHA256 {
+		t.Fatalf("restart did not reproduce mission memory: first_revision=%d first_sha=%s second_revision=%d second_sha=%s first_lifecycle=%s second_lifecycle=%s err=%v", firstProgress.ProjectionRevision, firstProgress.ProjectionSHA256, restoredProgress.ProjectionRevision, restoredProgress.ProjectionSHA256, firstProgress.Lifecycle, restoredProgress.Lifecycle, err)
+	}
+	rebindCommand := execution.WorkspaceEpochRebindRequestV2{
+		ProjectID: bound.Execution.ProjectID, MissionID: bound.Execution.MissionID, WorkRevisionID: bound.Execution.WorkRevisionID, WorkID: bound.Execution.WorkID,
+		ActorID: bound.Execution.ActorID, ProcessID: bound.Execution.ProcessID, OriginatingRuntimeEpochID: second.RuntimeEpochID(),
+		OperationID: "operation-runtime-workspace-rebind", OperationEventID: "event-runtime-workspace-rebind-operation",
+		ExecutionEventID: "event-runtime-workspace-rebind-execution", WorkspaceEventID: "event-runtime-workspace-rebind-workspace",
+		Governance: bound.Execution.Governance, ObservedAt: now.Add(10 * time.Second),
+	}
+	rebound, err := second.RebindWorkspaceRuntimeEpoch(t.Context(), second.RuntimeEpochID(), rebindCommand)
+	if err != nil {
+		t.Fatalf("rebind restored workspace authority: %v", err)
+	}
+	if rebound.Execution.RuntimeEpochID != second.RuntimeEpochID() || rebound.Workspace.Binding.RuntimeEpochID != second.RuntimeEpochID() || rebound.Execution.WorkspaceID != bound.Execution.WorkspaceID || rebound.Workspace.Binding.OwnedBranch != workspaceBinding.OwnedBranch || rebound.Workspace.Binding.CanonicalPath != workspaceBinding.CanonicalPath {
+		t.Fatalf("rebind changed durable workspace identity: before=%+v after=%+v", bound, rebound)
+	}
+	replayedRebind, err := second.RebindWorkspaceRuntimeEpoch(t.Context(), second.RuntimeEpochID(), rebindCommand)
+	if err != nil || !replayedRebind.Replayed || !bytes.Equal(replayedRebind.Workspace.CanonicalBytes(), rebound.Workspace.CanonicalBytes()) {
+		t.Fatalf("rebind exact replay=%+v err=%v", replayedRebind, err)
+	}
+	heartbeatAt := now.Add(20 * time.Second)
+	heartbeat, err := second.ExecuteWork(t.Context(), second.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
+		Kind: execution.ExecutionHeartbeatV2, OperationID: "operation-runtime-post-rebind-heartbeat",
+		ProjectID: rebound.Execution.ProjectID, MissionID: rebound.Execution.MissionID, WorkRevisionID: rebound.Execution.WorkRevisionID, WorkID: rebound.Execution.WorkID,
+		RunID: rebound.Execution.RunID, ActorID: rebound.Execution.ActorID, ProcessID: rebound.Execution.ProcessID, LeaseID: rebound.Execution.LeaseID,
+		Generation: rebound.Execution.Generation, Fence: rebound.Execution.Fence, ObservedAt: heartbeatAt, Deadline: now.Add(2 * time.Minute),
+		RuntimeEpochID: second.RuntimeEpochID(), Governance: governance,
+		OperationEventID: "event-runtime-post-rebind-heartbeat-operation", SlotEventID: "event-runtime-post-rebind-heartbeat-slot",
+	})
+	if err != nil || heartbeat.State.RuntimeEpochID != second.RuntimeEpochID() || heartbeat.State.LogicalVersion != rebound.Execution.LogicalVersion+1 {
+		t.Fatalf("post-rebind execution did not continue: result=%+v err=%v", heartbeat, err)
+	}
 	restartedProgress, err := second.Progress().Mission("project-runtime", "mission-runtime")
-	if err != nil || restartedProgress.Lifecycle != firstProgress.Lifecycle || restartedProgress.ProjectionSHA256 != firstProgress.ProjectionSHA256 {
-		t.Fatalf("restart did not reproduce mission memory: first=%+v second=%+v err=%v", firstProgress, restartedProgress, err)
+	if err != nil {
+		t.Fatal(err)
 	}
 	var restoredMissionState mission.ReadinessAuthorityStateV2
 	for _, item := range restartedProgress.Items {
@@ -1100,6 +1193,48 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	}
 	if err := second.executeBarrierProbe(firstEpoch, func(CommandContext) error { return nil }); !IsKind(err, ErrorStaleEpoch) {
 		t.Fatalf("predecessor epoch admitted: %v", err)
+	}
+	if err := second.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	config.Sidecar.SupervisorRunID = "supervisor-real-3"
+	third, err := Start(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer third.Close(t.Context())
+	thirdProgress, err := third.Progress().Mission("project-runtime", "mission-runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restoredExecution execution.ExecutionSlotStateV2
+	for _, item := range thirdProgress.Items {
+		if item.Family == "execution_slot" {
+			restoredExecution, err = execution.DecodeExecutionSlotStateV2(item.CanonicalState)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspaceCoordinate, err := workspace.WorkspaceCoordinateV2(rebound.Workspace.Binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceView, err := third.projection.Get(projection.GetQueryV2{Coordinate: workspaceCoordinate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredWorkspace, err := workspace.DecodeStateV2(workspaceView.CanonicalState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(restoredExecution.CanonicalBytes(), heartbeat.State.CanonicalBytes()) || !bytes.Equal(restoredWorkspace.CanonicalBytes(), rebound.Workspace.CanonicalBytes()) {
+		t.Fatalf("post-rebind events did not replay exactly: execution_version=%d want=%d workspace_version=%d want=%d", restoredExecution.LogicalVersion, heartbeat.State.LogicalVersion, restoredWorkspace.LogicalVersion, rebound.Workspace.LogicalVersion)
+	}
+	beforeReplayRevision := third.Status().ProjectionRevision
+	replayedAfterRotation, err := third.RebindWorkspaceRuntimeEpoch(t.Context(), third.RuntimeEpochID(), rebindCommand)
+	if err != nil || !replayedAfterRotation.Replayed || replayedAfterRotation.Execution.RuntimeEpochID != rebound.Execution.RuntimeEpochID || third.Status().ProjectionRevision != beforeReplayRevision {
+		t.Fatalf("completed rebind did not replay unchanged after later epoch rotation: result=%+v before=%d after=%d err=%v", replayedAfterRotation, beforeReplayRevision, third.Status().ProjectionRevision, err)
 	}
 }
 
