@@ -356,7 +356,7 @@ func ReduceEventV2(prior []byte, envelope journalv2.EventEnvelopeV2) ([]byte, er
 }
 
 func ReducerRegistrationsV2() []journalv2.ReducerRegistration {
-	sum := sha256.Sum256([]byte("spec-kitty/workspace-reducer/1.0"))
+	sum := sha256.Sum256([]byte("spec-kitty/workspace-reducer/1.1"))
 	digest, _ := journalv2.ParseDigest("workspace_reducer", hex.EncodeToString(sum[:]))
 	return []journalv2.ReducerRegistration{{Family: "workspace", EventSchemaVersion: WorkspaceEventSchemaV2, ReducerVersion: WorkspaceReducerV2, Owner: "internal/workspace", ImplementationDigest: digest, Reduce: ReduceEventV2}}
 }

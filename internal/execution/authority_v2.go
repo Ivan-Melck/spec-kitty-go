@@ -882,7 +882,7 @@ func ReduceExecutionSlotEventV2(prior []byte, event journalv2.EventEnvelopeV2) (
 }
 
 func ExecutionReducerRegistrationsV2() []journalv2.ReducerRegistration {
-	sum := sha256.Sum256([]byte("spec-kitty/execution-slot-reducer/1.1"))
+	sum := sha256.Sum256([]byte("spec-kitty/execution-slot-reducer/1.2"))
 	digest, _ := journalv2.ParseDigest("execution_reducer", hex.EncodeToString(sum[:]))
 	return []journalv2.ReducerRegistration{{Family: "execution_slot", EventSchemaVersion: 1, ReducerVersion: 1, Owner: "internal/execution", ImplementationDigest: digest, Reduce: ReduceExecutionSlotEventV2}}
 }
