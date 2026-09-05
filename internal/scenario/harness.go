@@ -1,94 +1,276 @@
+// Package scenario qualifies the production authority host only through its
+// typed command, progress, readiness, and shutdown contracts.
 package scenario
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"errors"
 	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
 	"time"
 
-	"github.com/spec-kitty/go-kitty3/internal/controlstore/sqlite"
-	"github.com/spec-kitty/go-kitty3/internal/helpercmd"
+	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/integration"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
+	sidecar "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
-type claimProcess struct {
-	command *exec.Cmd
-	stdout  bytes.Buffer
-	stderr  bytes.Buffer
+const productionScenarioSchemaVersion uint32 = 1
+
+// ProductionConfig makes every external input to a scenario explicit. Tests
+// may obtain the executable from an environment variable, but the harness does
+// not consult process-global configuration.
+type ProductionConfig struct {
+	ExecutablePath  string
+	RepositoryRoot  string
+	Seed            string
+	CheckpointEvery int
 }
 
-func inspectAuthority(ctx context.Context, helper, database string) (sqlite.AuthoritySnapshot, error) {
-	command := exec.CommandContext(ctx, helper, "inspect", "--db", database, "--work", "work-1", "--revision", "revision-1")
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	if err := command.Run(); err != nil {
-		return sqlite.AuthoritySnapshot{}, fmt.Errorf("inspect helper exit: %w; stderr=%s; stdout=%s", err, stderr.String(), stdout.String())
-	}
-	var response helpercmd.Response
-	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
-		return sqlite.AuthoritySnapshot{}, fmt.Errorf("decode inspect response %q: %w", stdout.String(), err)
-	}
-	if !response.OK || response.Snapshot == nil {
-		return sqlite.AuthoritySnapshot{}, fmt.Errorf("inspect response: %+v", response)
-	}
-	return *response.Snapshot, nil
+type portableHarness struct {
+	t       *testing.T
+	config  ProductionConfig
+	root    string
+	runtime string
+	data    string
+	host    *productionruntime.Host
+	epochs  []journalv2.RuntimeEpochID
+	starts  int
+	git     *attributableGit
 }
 
-type claimInput struct {
-	Database  string
-	Barrier   string
-	Operation string
-	Actor     string
-	Process   string
-}
-
-func startClaim(ctx context.Context, helper string, input claimInput) (*claimProcess, error) {
-	command := exec.CommandContext(ctx, helper,
-		"claim", "--db", input.Database, "--barrier", input.Barrier,
-		"--operation", input.Operation, "--project", "project-1", "--mission", "mission-1",
-		"--revision", "revision-1", "--work", "work-1", "--actor", input.Actor,
-		"--process", input.Process, "--ttl", "1m",
-	)
-	process := &claimProcess{command: command}
-	command.Stdout, command.Stderr = &process.stdout, &process.stderr
-	if err := command.Start(); err != nil {
-		return nil, err
+func newPortableHarness(t *testing.T, config ProductionConfig) *portableHarness {
+	t.Helper()
+	if config.ExecutablePath == "" || !filepath.IsAbs(config.ExecutablePath) {
+		t.Fatal("portable scenario requires an explicit absolute production executable")
 	}
-	return process, nil
-}
-
-func (p *claimProcess) wait() (helpercmd.Response, error) {
-	if err := p.command.Wait(); err != nil {
-		return helpercmd.Response{}, fmt.Errorf("helper exit: %w; stderr=%s; stdout=%s", err, p.stderr.String(), p.stdout.String())
+	if config.RepositoryRoot == "" {
+		config.RepositoryRoot = repositoryRoot(t)
 	}
-	var response helpercmd.Response
-	if err := json.Unmarshal(p.stdout.Bytes(), &response); err != nil {
-		return response, fmt.Errorf("decode helper response %q: %w", p.stdout.String(), err)
+	if config.Seed == "" {
+		config.Seed = t.Name()
 	}
-	return response, nil
-}
-
-func waitForReached(ctx context.Context, directory string, count int) error {
-	return waitForBoundaryReached(ctx, directory, "SR-00", count)
-}
-
-func waitForBoundaryReached(ctx context.Context, directory, boundary string, count int) error {
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		matches, err := filepath.Glob(filepath.Join(directory, boundary+".*.reached"))
-		if err != nil {
-			return err
+	root, err := os.MkdirTemp("/tmp", "spk-scenario-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		_ = os.RemoveAll(root)
+		t.Fatal(err)
+	}
+	runtimeRoot := filepath.Join(root, "runtime")
+	if err := os.Mkdir(runtimeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h := &portableHarness{
+		t: t, config: config, root: root, runtime: runtimeRoot,
+		data: filepath.Join(root, "authority"), git: newAttributableGit(),
+	}
+	h.start()
+	t.Cleanup(func() {
+		h.close()
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove scenario root: %v", err)
 		}
-		if len(matches) == count {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("wait for %d claimants, observed %d: %w", count, len(matches), ctx.Err())
-		case <-ticker.C:
-		}
+	})
+	return h
+}
+
+func (h *portableHarness) start() {
+	h.t.Helper()
+	h.starts++
+	config := productionruntime.Config{
+		ControlRoot:                 h.data,
+		HostAuthorityID:             journalv2.HostAuthorityID("host-" + shortDigest(h.config.Seed)),
+		AuthorityBindingOperationID: "bind-" + shortDigest(h.config.Seed),
+		M1AdoptionRecordPath:        filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-adoption.json"),
+		Sidecar: sidecar.LifecycleConfig{
+			ExecutablePath:      h.config.ExecutablePath,
+			AdmissionRecordPath: filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-admission.json"),
+			RuntimeRoot:         h.runtime,
+			DataDirectory:       h.data,
+			SupervisorRunID:     fmt.Sprintf("scenario-%s-%d", shortDigest(h.config.Seed), h.starts),
+			ProductPolicySHA256: strings.Repeat("e", 64),
+		},
+		CandidateVerifier: closedCandidateVerifier{},
+		IntegrationGit:    h.git,
+		CheckpointEvery:   h.config.CheckpointEvery,
+		MonitorInterval:   25 * time.Millisecond,
 	}
+	host, err := productionruntime.Start(h.t.Context(), config)
+	if err != nil {
+		h.t.Fatalf("start production authority host: %v", err)
+	}
+	status := host.Status()
+	if status.SchemaVersion != productionScenarioSchemaVersion || status.State != productionruntime.HostReady || status.DatabaseID == "" || status.RuntimeEpochID == "" || status.ProjectionRevision == 0 {
+		_ = host.Close(context.Background())
+		h.t.Fatalf("incomplete typed readiness: %+v", status)
+	}
+	h.host = host
+	h.epochs = append(h.epochs, status.RuntimeEpochID)
+}
+
+func (h *portableHarness) restart() (journalv2.RuntimeEpochID, journalv2.RuntimeEpochID) {
+	h.t.Helper()
+	prior := h.host.RuntimeEpochID()
+	if err := h.host.Close(h.t.Context()); err != nil {
+		h.t.Fatalf("close production authority host: %v", err)
+	}
+	h.host = nil
+	h.start()
+	current := h.host.RuntimeEpochID()
+	if current == prior {
+		h.t.Fatalf("restart reused runtime epoch %q", current)
+	}
+	return prior, current
+}
+
+func (h *portableHarness) close() {
+	if h.host == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.host.Close(ctx); err != nil {
+		h.t.Errorf("close production authority host: %v", err)
+	}
+	h.host = nil
+}
+
+func (h *portableHarness) createMission(project, missionID, operation string) mission.MissionAuthorityResultV2 {
+	h.t.Helper()
+	now := time.Date(2026, 9, 5, 12, 0, h.starts, 0, time.UTC)
+	digest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"portable-scenario"}`))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+		ProjectID: journalv2.ProjectID(project), MissionID: journalv2.MissionID(missionID),
+		DefinitionRevision: "definition-1", DefinitionDigest: digest,
+		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "active",
+		LastOperationID: journalv2.OperationID(operation), ObservedAt: now.Format(time.RFC3339),
+	})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	result, err := h.host.ExecuteMission(h.t.Context(), h.host.RuntimeEpochID(), mission.MissionAuthorityCommandV2{
+		SchemaVersion: 1, OperationID: journalv2.OperationID(operation),
+		ProjectID: journalv2.ProjectID(project), MissionID: journalv2.MissionID(missionID),
+		ActorID: "actor-scenario", ProcessID: "process-scenario",
+		OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: "doctrine-1",
+		ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: now.Format(time.RFC3339),
+		EventType: mission.MissionEventCreatedV2, Successor: state,
+	})
+	if err != nil {
+		h.t.Fatalf("create mission %s: %v", missionID, err)
+	}
+	if result.PublicationID() == "" {
+		h.t.Fatalf("create mission %s returned no publication", missionID)
+	}
+	return result
+}
+
+func repositoryRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate scenario source")
+	}
+	root, err := filepath.Abs(filepath.Join(filepath.Dir(file), "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func shortDigest(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+func productionExecutable(t *testing.T) string {
+	t.Helper()
+	path := os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE")
+	if path == "" {
+		path = os.Getenv("SPEC_KITTY_WP13_GAPDBD")
+	}
+	if path == "" {
+		t.Skip("set SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE to run production-host scenarios")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}
+
+// closedCandidateVerifier is intentionally incapable of inventing repository
+// evidence. Scenarios that need a candidate provide a source-bound verifier.
+type closedCandidateVerifier struct{}
+
+func (closedCandidateVerifier) Verify(context.Context, handoff.AuthorityScope, string) (handoff.CandidateEvidence, error) {
+	return handoff.CandidateEvidence{}, errors.New("candidate evidence was not configured")
+}
+func (closedCandidateVerifier) RevalidateRefusal(context.Context, handoff.Refusal) error { return nil }
+
+type attributableGit struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func newAttributableGit() *attributableGit { return &attributableGit{} }
+func (g *attributableGit) record(name string) {
+	g.mu.Lock()
+	g.calls = append(g.calls, name)
+	g.mu.Unlock()
+}
+func (g *attributableGit) count() int { g.mu.Lock(); defer g.mu.Unlock(); return len(g.calls) }
+func (g *attributableGit) TargetHead(context.Context, ids.RepositoryID, string) (string, error) {
+	g.record("target_head")
+	return "", errors.New("repository evidence not configured")
+}
+func (g *attributableGit) InstallFence(context.Context, integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, error) {
+	g.record("install_fence")
+	return integration.IntegrationFenceObservationV2{}, errors.New("repository evidence not configured")
+}
+func (g *attributableGit) ObserveFence(context.Context, integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, bool, error) {
+	g.record("observe_fence")
+	return integration.IntegrationFenceObservationV2{}, false, errors.New("repository evidence not configured")
+}
+func (g *attributableGit) EnsureWorkspace(context.Context, integration.IntegrationWorkspaceIntentV2) (integration.WorkspaceFacts, error) {
+	g.record("ensure_workspace")
+	return integration.WorkspaceFacts{}, errors.New("repository evidence not configured")
+}
+func (g *attributableGit) MergeCandidate(context.Context, integration.IntegrationMergeIntentV2, integration.WorkspaceFacts) (string, *integration.ConflictEvidence, error) {
+	g.record("merge_candidate")
+	return "", nil, errors.New("repository evidence not configured")
+}
+func (g *attributableGit) CompareAndSwapTarget(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, error) {
+	g.record("publish_target")
+	return integration.IntegrationPublishObservationV2{}, errors.New("repository evidence not configured")
+}
+func (g *attributableGit) ObserveTargetPublication(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, bool, error) {
+	g.record("observe_target")
+	return integration.IntegrationPublishObservationV2{}, false, errors.New("repository evidence not configured")
+}
+func (g *attributableGit) CleanupWorkspace(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, error) {
+	g.record("cleanup_workspace")
+	return integration.IntegrationCleanupObservationV2{}, errors.New("repository evidence not configured")
+}
+func (g *attributableGit) ObserveCleanup(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, bool, error) {
+	g.record("observe_cleanup")
+	return integration.IntegrationCleanupObservationV2{}, false, errors.New("repository evidence not configured")
+}
+func (g *attributableGit) IsAncestor(context.Context, ids.RepositoryID, string, string) (bool, error) {
+	g.record("is_ancestor")
+	return false, errors.New("repository evidence not configured")
 }
