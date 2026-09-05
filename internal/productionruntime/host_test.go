@@ -298,6 +298,30 @@ func TestHostIndependentCommandsRunConcurrentlyWithoutGlobalCommandMutex(t *test
 	}
 }
 
+func TestHostProjectionRefreshRetriesConcurrentStablePrefixMovement(t *testing.T) {
+	host, _ := hostFixture(t, "database-refresh-retry")
+	defer host.Close(t.Context())
+	if err := host.transition(HostReconciling); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.transition(HostReady); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int64
+	host.refresh = func(context.Context) error {
+		if calls.Add(1) < 4 {
+			return errors.New("stable prefix moved")
+		}
+		return nil
+	}
+	if err := host.refreshProjection(t.Context()); err != nil {
+		t.Fatalf("transient concurrent refresh degraded host: %v", err)
+	}
+	if calls.Load() != 4 || host.State() != HostReady {
+		t.Fatalf("calls=%d state=%s", calls.Load(), host.State())
+	}
+}
+
 func TestHostSecondOwnerForSameDatabaseRefusesAndDifferentDatabasesProgress(t *testing.T) {
 	first, _ := hostFixture(t, "database-owner")
 	defer first.Close(t.Context())

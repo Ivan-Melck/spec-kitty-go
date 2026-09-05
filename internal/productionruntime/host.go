@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -241,7 +242,18 @@ func (h *Host) refreshProjection(ctx context.Context) error {
 		h.degrade("projection_refresh")
 		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_refresh"}
 	}
-	if err := h.refresh(ctx); err != nil {
+	var refreshErr error
+	for attempt := 0; attempt < 8; attempt++ {
+		refreshErr = h.refresh(ctx)
+		if refreshErr == nil || ctx.Err() != nil {
+			break
+		}
+		// A concurrent independent publication can invalidate a restore's
+		// stable-prefix proof after the command itself has committed. Retry
+		// from durable truth without sleeping or replaying the command.
+		runtime.Gosched()
+	}
+	if refreshErr != nil {
 		h.degrade("projection_refresh")
 		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_refresh"}
 	}
