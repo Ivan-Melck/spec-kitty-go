@@ -566,7 +566,9 @@
         "Allocation block resolved by dependency merge 6488469e; resume implementation."
       ],
       "provider": "__resolved_provider_absent__",
-      "role": "implementer"
+      "role": "implementer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47"
     },
     "WP14": {
       "actor": "finalize-tasks",
