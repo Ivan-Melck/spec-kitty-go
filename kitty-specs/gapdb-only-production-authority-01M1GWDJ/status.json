@@ -554,7 +554,7 @@
     },
     "WP13": {
       "actor": "maxwell",
-      "agent": "codex",
+      "agent": "maxwell",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex",
@@ -576,7 +576,8 @@
         "Ready for independent integration review: approved WP18 atomic readiness fact authority merged and host regression suite green",
         "Independent integration review passed: one GapDB owner, readiness/progress shared authority, 22 mutants and race evidence green",
         "Codex implementation complete: monitor deadline begins after command drain; focused production and race gates pass",
-        "Independent review passed: probe deadline starts after command drain; old ordering killed by regression; real owner-loss, transient, cancellation, shutdown, full production, race, architecture, static and compile gates pass"
+        "Independent review passed: probe deadline starts after command drain; old ordering killed by regression; real owner-loss, transient, cancellation, shutdown, full production, race, architecture, static and compile gates pass",
+        "Independent re-review of durable-observation rebind at c2881cde; all prior blockers closed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
