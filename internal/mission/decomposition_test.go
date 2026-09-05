@@ -41,9 +41,12 @@ func TestDecompositionRefusesIneligiblePlanBeforeProviderAuthority(t *testing.T)
 		{"superseded", func(c *mission.DecompositionCommand, _ *missionSource, p *planSource) {
 			p.observation = approvalObservation(t, c.MissionID, artifact.KindPlan, "plan-current", strings.Repeat("b", 64), artifact.VerdictApproved)
 		}},
-		{"wrong mission state", func(c *mission.DecompositionCommand, m *missionSource, _ *planSource) {
+		{"paused mission", func(c *mission.DecompositionCommand, m *missionSource, _ *planSource) {
 			changed := m.snapshot
-			changed.CurrentStep = mission.StepPlanning
+			changed.Lifecycle = mission.LifecycleTerminal
+			changed.CurrentStep = mission.StepWorkFinalized
+			changed.CurrentWorkRevisionID = "revision-terminal"
+			changed.TerminalOutcome = mission.OutcomeWorkFinalized
 			m.snapshot = changed
 			c.ExpectedMission = changed
 		}},
@@ -60,6 +63,16 @@ func TestDecompositionRefusesIneligiblePlanBeforeProviderAuthority(t *testing.T)
 				t.Fatalf("provider consulted before plan eligibility: %+v", provider)
 			}
 		})
+	}
+}
+
+func TestDecompositionUsesCurrentPlanEvidenceNotMissionPhase(t *testing.T) {
+	command, missions, plans, provider := decompositionFixture(t)
+	command.ExpectedMission.CurrentStep = mission.StepInitialized
+	missions.snapshot = command.ExpectedMission
+	result, err := newDecompositionTestService(t, missions, plans, provider).Decompose(context.Background(), command)
+	if err != nil || result.Status != mission.DecompositionComplete {
+		t.Fatalf("phase-independent decomposition failed: result=%+v err=%v", result, err)
 	}
 }
 

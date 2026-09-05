@@ -183,8 +183,8 @@ func validateFinalizationCommand(command FinalizationCommand) error {
 	if _, err := ids.ParseProjectID(command.ProjectID.String()); err != nil {
 		return finalizationError(FinalizationInvalidRequest, FinalizationCorrectInput, "project_id", "project identity is invalid", err)
 	}
-	if command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID || command.ExpectedMission.CurrentStep != StepWorkDraftReady || command.ExpectedMission.CurrentWorkRevisionID != "" {
-		return finalizationError(FinalizationInvalidRequest, FinalizationCorrectInput, "expected_mission", "mission is not at the exact work-draft-ready state", nil)
+	if command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID || command.ExpectedMission.Lifecycle != LifecycleOpen || command.ExpectedMission.CurrentWorkRevisionID != "" {
+		return finalizationError(FinalizationInvalidRequest, FinalizationCorrectInput, "expected_mission", "mission is not open with an empty current-generation slot", nil)
 	}
 	if command.ExpectedCurrentGeneration != 0 || command.RequestedGeneration != 1 || command.PredecessorID != "" {
 		return finalizationError(FinalizationInvalidRequest, FinalizationCorrectInput, "generation", "ordinary finalization may publish generation 1 into an empty slot only", nil)
@@ -259,11 +259,8 @@ func validateFinalizationPostconditions(command FinalizationCommand, candidate w
 
 func expectedFinalizationMission(command FinalizationCommand, revisionID ids.WorkRevisionID) MissionSnapshot {
 	result := command.ExpectedMission.clone()
-	result.CurrentStep = StepWorkFinalized
 	result.CurrentWorkRevisionID = revisionID
 	result.StateVersion++
-	result.Lifecycle = LifecycleTerminal
-	result.TerminalOutcome = OutcomeWorkFinalized
 	result.UpdatedAt = command.OccurredAt
 	return result
 }

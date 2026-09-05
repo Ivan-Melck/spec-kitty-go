@@ -22,7 +22,7 @@ func TestSuccessorPublicationAtomicallyAdvancesPointerAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Replayed || result.Revision.ID() != command.Candidate.ID() || result.Mission.CurrentWorkRevisionID != command.Candidate.ID() || result.Mission.StateVersion != command.ExpectedMission.StateVersion+1 || result.Mission.Lifecycle != LifecycleTerminal || result.Mission.CurrentStep != StepWorkFinalized || result.Mission.TerminalOutcome != OutcomeWorkFinalized || len(result.RequestDigest) != 64 {
+	if result.Replayed || result.Revision.ID() != command.Candidate.ID() || result.Mission.CurrentWorkRevisionID != command.Candidate.ID() || result.Mission.StateVersion != command.ExpectedMission.StateVersion+1 || result.Mission.Lifecycle != LifecycleOpen || result.Mission.CurrentStep != command.ExpectedMission.CurrentStep || result.Mission.TerminalOutcome != "" || len(result.RequestDigest) != 64 {
 		t.Fatalf("incomplete publication result: %#v", result)
 	}
 	wantKinds := []AuthorityActionKind{AuthorityExpireRun, AuthorityQuarantineWorkspace}
@@ -395,11 +395,8 @@ func successorPublicationFixture(t *testing.T, operation ids.OperationID) Succes
 		t.Fatal(err)
 	}
 	mission := oldCommand.ExpectedMission.clone()
-	mission.CurrentStep = StepWorkFinalized
 	mission.CurrentWorkRevisionID = old.ID()
 	mission.StateVersion++
-	mission.Lifecycle = LifecycleTerminal
-	mission.TerminalOutcome = OutcomeWorkFinalized
 	mission.UpdatedAt = oldCommand.OccurredAt
 	return SuccessorPublicationCommand{MissionID: old.MissionID(), ProjectID: old.ProjectID(), ExpectedMission: mission, ExpectedCurrentGeneration: 1, ExpectedOld: old, Candidate: candidate, Drift: drift, ReconciliationID: "reconciliation-successor", Reconciliation: plan, OperationID: operation, ActorID: "actor-reconciler", GovernanceContextID: "governance-reconcile", Rationale: rationale, OccurredAt: when}
 }

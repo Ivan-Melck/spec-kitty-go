@@ -41,6 +41,19 @@ func TestFinalizationSagaObservesTwiceThenPublishesGenerationOne(t *testing.T) {
 	}
 }
 
+func TestFinalizationIsCapabilityReadyWithoutWorkDraftPhaseAndDoesNotCompleteMission(t *testing.T) {
+	command := finalizationCommandFixture("operation-capability-ready")
+	command.ExpectedMission.CurrentStep = StepPlanApproved
+	source := &finalizationSource{fallback: missionFinalizationObservation(t, "revision-1")}
+	result, err := NewFinalizationService(source, newFinalizationStore()).Finalize(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mission.CurrentStep != StepPlanApproved || result.Mission.Lifecycle != LifecycleOpen || result.Mission.TerminalOutcome != "" || result.Mission.CurrentWorkRevisionID != command.ProposedRevisionID {
+		t.Fatalf("finalization recreated phase ceremony or terminalized mission: %+v", result.Mission)
+	}
+}
+
 func TestFinalizationReplayBindsEveryValidExpectedMissionField(t *testing.T) {
 	mutants := map[string]func(*FinalizationCommand){
 		"mission identity": func(command *FinalizationCommand) {
@@ -189,7 +202,6 @@ func TestFinalizationRejectsInvalidExpectedMissionIdentityBeforePorts(t *testing
 			command.ExpectedMission.Lifecycle = LifecycleTerminal
 			command.ExpectedMission.TerminalOutcome = OutcomeWorkFinalized
 		},
-		"current step": func(command *FinalizationCommand) { command.ExpectedMission.CurrentStep = StepReconciliationRequired },
 		"current pointer": func(command *FinalizationCommand) {
 			command.ExpectedMission.CurrentWorkRevisionID = "revision-other"
 		},
@@ -439,7 +451,7 @@ func TestFinalizationDetectsStorePostconditionViolation(t *testing.T) {
 }
 
 func TestFinalizationRejectsGenerationAndOperationMutants(t *testing.T) {
-	tests := map[string]func(*FinalizationCommand){"successor generation": func(c *FinalizationCommand) { c.RequestedGeneration = 2; c.PredecessorID = "revision-old" }, "expected current": func(c *FinalizationCommand) { c.ExpectedCurrentGeneration = 1 }, "wrong step": func(c *FinalizationCommand) { c.ExpectedMission.CurrentStep = StepReconciliationRequired }, "invalid planning source": func(c *FinalizationCommand) { c.PlanningSourceCommit = "not-a-git-object" }, "unsupported definition version": func(c *FinalizationCommand) { c.ExpectedMission.DefinitionVersion = 2 }}
+	tests := map[string]func(*FinalizationCommand){"successor generation": func(c *FinalizationCommand) { c.RequestedGeneration = 2; c.PredecessorID = "revision-old" }, "expected current": func(c *FinalizationCommand) { c.ExpectedCurrentGeneration = 1 }, "invalid planning source": func(c *FinalizationCommand) { c.PlanningSourceCommit = "not-a-git-object" }, "unsupported definition version": func(c *FinalizationCommand) { c.ExpectedMission.DefinitionVersion = 2 }}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			command := finalizationCommandFixture(ids.OperationID("operation-mutant-" + strings.ReplaceAll(name, " ", "-")))
@@ -626,11 +638,8 @@ func (store *memoryFinalizationStore) PublishGenerationOne(_ context.Context, co
 		return FinalizationResult{}, &FinalizationError{Kind: FinalizationCurrentConflict, Recovery: FinalizationReconcileCurrent, Field: "current_generation", Message: "a current generation already exists"}
 	}
 	snapshot := commit.ExpectedMission.clone()
-	snapshot.CurrentStep = StepWorkFinalized
 	snapshot.CurrentWorkRevisionID = commit.Candidate.ID()
 	snapshot.StateVersion++
-	snapshot.Lifecycle = LifecycleTerminal
-	snapshot.TerminalOutcome = OutcomeWorkFinalized
 	snapshot.UpdatedAt = commit.OccurredAt
 	result := FinalizationResult{Revision: commit.Candidate, Mission: snapshot, RequestDigest: commit.RequestDigest, Receipt: commit.ExpectedReceipt}
 	if store.violatePostcondition {
