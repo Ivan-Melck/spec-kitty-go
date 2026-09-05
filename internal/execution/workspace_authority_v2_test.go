@@ -75,13 +75,6 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	boundBeforeRebind := result.Execution
 	workspaceBeforeRebind := result.Workspace
 	rebindAt := request.ObservedAt.Add(2 * time.Second)
-	rebindContribution, err := workspace.NewEpochRebindContributionV2(workspace.EpochRebindContributionInputV2{
-		Prior: workspaceBeforeRebind, RecordRevision: 19, EventID: "event-workspace-runtime-epoch-rebind",
-		RuntimeEpochID: "epoch-2", Observation: workspaceBeforeRebind.Observation, OccurredAt: rebindAt,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}
 	port.execution = ExecutionSlotObservationV2{State: &boundBeforeRebind, RecordRevision: 19}
 	port.workspace = WorkspaceAuthorityObservationV2{State: &workspaceBeforeRebind, RecordRevision: 19}
@@ -89,8 +82,12 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rebindRequest := WorkspaceAuthorityRequestV2{Kind: WorkspaceRebindV2, OperationID: "operation-workspace-runtime-epoch-rebind", OperationEventID: "event-operation-runtime-epoch-rebind", ExecutionEventID: "event-execution-runtime-epoch-rebind", Governance: boundBeforeRebind.Governance, Contribution: rebindContribution, ObservedAt: rebindAt}
-	rebound, err := service.Execute(t.Context(), rebindRequest)
+	rebindRequest := WorkspaceEpochRebindRequestV2{
+		ProjectID: boundBeforeRebind.ProjectID, MissionID: boundBeforeRebind.MissionID, WorkRevisionID: boundBeforeRebind.WorkRevisionID, WorkID: boundBeforeRebind.WorkID,
+		OperationID: "operation-workspace-runtime-epoch-rebind", OperationEventID: "event-operation-runtime-epoch-rebind", ExecutionEventID: "event-execution-runtime-epoch-rebind", WorkspaceEventID: "event-workspace-runtime-epoch-rebind",
+		Governance: boundBeforeRebind.Governance, ObservedAt: rebindAt,
+	}
+	rebound, err := service.RebindRuntimeEpoch(t.Context(), rebindRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,15 +138,132 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rebindOperation, err := workspaceOperationBindingV2(rebindRequest, rebound.Workspace)
+	rebindContribution, err := workspace.NewEpochRebindContributionV2(workspace.EpochRebindContributionInputV2{
+		Prior: workspaceBeforeRebind, RecordRevision: 19, EventID: rebindRequest.WorkspaceEventID,
+		RuntimeEpochID: "epoch-2", Observation: workspaceBeforeRebind.Observation, OccurredAt: rebindAt,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rebindInput, err := workspaceAuthorityPlanInputV2(rebindRequest, rebindOperation, rebound.Execution, ExecutionSlotObservationV2{State: &boundBeforeRebind, RecordRevision: 19}, WorkspaceAuthorityObservationV2{State: &workspaceBeforeRebind, RecordRevision: 19})
+	rebindInternalRequest := WorkspaceAuthorityRequestV2{Kind: WorkspaceRebindV2, OperationID: rebindRequest.OperationID, OperationEventID: rebindRequest.OperationEventID, ExecutionEventID: rebindRequest.ExecutionEventID, Governance: rebindRequest.Governance, Contribution: rebindContribution, ObservedAt: rebindRequest.ObservedAt}
+	rebindOperation, err := workspaceEpochRebindOperationBindingV2(rebindRequest, "epoch-2", boundBeforeRebind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebindInput, err := workspaceAuthorityPlanInputV2(rebindInternalRequest, rebindOperation, rebound.Execution, ExecutionSlotObservationV2{State: &boundBeforeRebind, RecordRevision: 19}, WorkspaceAuthorityObservationV2{State: &workspaceBeforeRebind, RecordRevision: 19})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertWorkspaceCompositionControlledMutantsV2(t, bindInput, expiryInput, rebindInput)
+}
+
+func TestWorkspaceEpochRebindRejectsCallerConstructedWorkspaceBeforePublicationV2(t *testing.T) {
+	bound, prior, governance := boundWorkspaceFixtureV2(t)
+	mutants := map[string]func(*workspace.StateV2){
+		"lane":   func(state *workspace.StateV2) { state.Binding.LaneID = "lane-forged" },
+		"branch": func(state *workspace.StateV2) { state.Binding.OwnedBranch = "kitty/forged" },
+		"base":   func(state *workspace.StateV2) { state.Binding.PinnedBase = strings.Repeat("b", 40) },
+		"dependency": func(state *workspace.StateV2) {
+			state.Binding.Dependencies = []workspace.DependencyV2{{WorkID: "work-dependency", Commit: strings.Repeat("c", 40)}}
+		},
+		"observation": func(state *workspace.StateV2) { state.Observation = workspace.ObservationV2{} },
+		"path": func(state *workspace.StateV2) {
+			state.Binding.CanonicalPath = "/srv/spec-kitty/workspaces/forged"
+			state.Binding.PathClaimDigest, _ = workspace.WorkspacePathClaimDigestV2(state.Binding.RepositoryID, state.Binding.ManagedRoot, state.Binding.CanonicalPath)
+		},
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			forged := prior
+			forged.Binding.Dependencies = append([]workspace.DependencyV2(nil), prior.Binding.Dependencies...)
+			mutate(&forged)
+			contribution, err := workspace.NewEpochRebindContributionV2(workspace.EpochRebindContributionInputV2{
+				Prior: forged, RecordRevision: 41, EventID: "event-forged-workspace", RuntimeEpochID: "epoch-2", Observation: forged.Observation, OccurredAt: time.Date(2026, 9, 5, 12, 1, 0, 0, time.UTC),
+			})
+			if err != nil {
+				t.Fatalf("forged contribution did not reach service boundary: %v", err)
+			}
+			port := &workspacePortProbeV2{execution: ExecutionSlotObservationV2{State: &bound, RecordRevision: 40}, workspace: WorkspaceAuthorityObservationV2{State: &prior, RecordRevision: 41}}
+			service, _ := NewWorkspaceAuthorityServiceV2(port, &executionEpochProbeV2{epoch: "epoch-2"}, journalv2.DefaultEventRegistryV2())
+			_, err = service.Execute(t.Context(), WorkspaceAuthorityRequestV2{
+				Kind: WorkspaceRebindV2, OperationID: journalv2.OperationID("operation-forged-" + name), OperationEventID: "event-forged-operation", ExecutionEventID: "event-forged-execution",
+				Governance: governance, Contribution: contribution, ObservedAt: time.Date(2026, 9, 5, 12, 1, 0, 0, time.UTC),
+			})
+			if !IsKind(err, KindInvalidCommand) || len(port.plans) != 0 {
+				t.Fatalf("caller-forged %s authority reached publication: plans=%d err=%v", name, len(port.plans), err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceEpochRebindRefusesObservedMismatchBeforePublicationV2(t *testing.T) {
+	bound, prior, governance := boundWorkspaceFixtureV2(t)
+	request := WorkspaceEpochRebindRequestV2{
+		ProjectID: bound.ProjectID, MissionID: bound.MissionID, WorkRevisionID: bound.WorkRevisionID, WorkID: bound.WorkID,
+		OperationID: "operation-rebind-mismatch", OperationEventID: "event-rebind-mismatch-operation", ExecutionEventID: "event-rebind-mismatch-execution", WorkspaceEventID: "event-rebind-mismatch-workspace",
+		Governance: governance, ObservedAt: time.Date(2026, 9, 5, 12, 1, 0, 0, time.UTC),
+	}
+	mutants := map[string]func(*ExecutionSlotStateV2, *workspace.StateV2){
+		"run":        func(_ *ExecutionSlotStateV2, state *workspace.StateV2) { state.Binding.RunID = "run-forged" },
+		"lease":      func(_ *ExecutionSlotStateV2, state *workspace.StateV2) { state.Binding.LeaseID = "lease-forged" },
+		"fence":      func(_ *ExecutionSlotStateV2, state *workspace.StateV2) { state.Binding.Fence = strings.Repeat("f", 32) },
+		"generation": func(_ *ExecutionSlotStateV2, state *workspace.StateV2) { state.Binding.Generation++ },
+		"actor":      func(_ *ExecutionSlotStateV2, state *workspace.StateV2) { state.Binding.ActorID = "actor-forged" },
+		"process":    func(_ *ExecutionSlotStateV2, state *workspace.StateV2) { state.Binding.ProcessID = "process-forged" },
+		"workspace": func(_ *ExecutionSlotStateV2, state *workspace.StateV2) {
+			state.Binding.WorkspaceID = "workspace-forged"
+		},
+		"path-claim": func(_ *ExecutionSlotStateV2, state *workspace.StateV2) {
+			state.Binding.PathClaimDigest = mustExecutionDigestV2(t)
+		},
+		"epoch":       func(_ *ExecutionSlotStateV2, state *workspace.StateV2) { state.Binding.RuntimeEpochID = "epoch-2" },
+		"expired":     func(execution *ExecutionSlotStateV2, _ *workspace.StateV2) { execution.Status = ExecutionExpiredV2 },
+		"quarantined": func(_ *ExecutionSlotStateV2, state *workspace.StateV2) { state.Stage = workspace.StageQuarantinedV2 },
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			executionState, workspaceState := bound, prior
+			workspaceState.Binding.Dependencies = append([]workspace.DependencyV2(nil), prior.Binding.Dependencies...)
+			mutate(&executionState, &workspaceState)
+			port := &workspacePortProbeV2{
+				resolution: ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2},
+				execution:  ExecutionSlotObservationV2{State: &executionState, RecordRevision: 40},
+				workspace:  WorkspaceAuthorityObservationV2{State: &workspaceState, RecordRevision: 41},
+			}
+			service, _ := NewWorkspaceAuthorityServiceV2(port, &executionEpochProbeV2{epoch: "epoch-2"}, journalv2.DefaultEventRegistryV2())
+			_, err := service.RebindRuntimeEpoch(t.Context(), request)
+			if !IsKind(err, KindStaleAuthority) || len(port.plans) != 0 {
+				t.Fatalf("observed %s mismatch reached publication: plans=%d err=%v", name, len(port.plans), err)
+			}
+		})
+	}
+}
+
+func boundWorkspaceFixtureV2(t *testing.T) (ExecutionSlotStateV2, workspace.StateV2, ExecutionGovernanceV2) {
+	t.Helper()
+	request, _ := executionRequestFixtureV2(t, ExecutionAdmitV2)
+	request.Fence = strings.Repeat("a", 32)
+	governance, err := ExecutionGovernanceFromContextV2(request.Governance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := decideExecutionTransitionV2(request, governance, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := workspaceBindingForExecutionV2(t, active, "workspace-1", "/srv/spec-kitty/workspaces/w1")
+	contribution, err := workspace.NewBindingContributionV2(workspace.BindingContributionInputV2{Binding: binding, EffectID: "effect-fixture", EventID: "event-fixture", OccurredAt: request.ObservedAt.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _ := contribution.State()
+	active.LogicalVersion++
+	active.WorkspaceID = binding.WorkspaceID
+	active.WorkspacePathClaimDigest = binding.PathClaimDigest
+	if err := active.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return active, state, governance
 }
 
 func assertWorkspaceCompositionControlledMutantsV2(t *testing.T, bindControl, expiryControl, rebindControl journalv2.CommitPlanInput) {
