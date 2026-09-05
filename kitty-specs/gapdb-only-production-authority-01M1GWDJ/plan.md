@@ -433,7 +433,7 @@ The final source-bound campaign additionally executes:
 - 100 two-agent authority trials and 100 clean/unclean epoch replacements;
 - 100 semantic publication/replay repetitions for every authority-changing
   family, 100 repetitions of every transport/acknowledgement/reconciliation
-  cut through the single production publication boundary, and an executable
+  cut through the shared host-command publication boundary, and an executable
   guard plus killed bypass mutant proving no family routes around that boundary;
 - historical/mixed/malformed/unsafe root matrices;
 - structural source/module/SBOM/binary/install/config/runtime absence gates;
