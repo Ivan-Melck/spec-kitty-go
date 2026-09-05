@@ -21,7 +21,7 @@ import (
 const (
 	runReadinessMutantsEnv = "SPEC_KITTY_RUN_WP18_MUTANTS"
 	readinessMutatedSource = "SPEC_KITTY_WP18_MUTATED_SOURCE"
-	readinessMutantDigest  = "61fe71164f73689a655bd9efe3f08da44f52b3fb79b7be576f2cc14f61e2c1ac"
+	readinessMutantDigest  = "6aa8696ef720819239b9f36fd04a35aecb294bb39e1c813d7a3003114df2bcb2"
 )
 
 type readinessReplacement struct {
@@ -44,8 +44,8 @@ func TestAutonomousReadinessExecutableControlledMutants(t *testing.T) {
 	}
 	root := readinessRepositoryRoot(t)
 	mutants := autonomousReadinessMutants()
-	if len(mutants) != 15 {
-		t.Fatalf("executable mutant census=%d want=15", len(mutants))
+	if len(mutants) != 20 {
+		t.Fatalf("executable mutant census=%d want=20", len(mutants))
 	}
 	identities := make([]string, 0, len(mutants))
 	seen := make(map[string]bool, len(mutants))
@@ -102,6 +102,11 @@ func autonomousReadinessMutants() []readinessSourceMutant {
 		{id: "M18-LEGACY-PHASE-STATE-ACCEPTED", file: "internal/mission/readiness_authority_v2.go", replacements: []readinessReplacement{{anchor: "if header.SchemaVersion == MissionAuthoritySchemaVersionV2 {", replacement: "if false && header.SchemaVersion == MissionAuthoritySchemaVersionV2 {"}}, target: "./internal/mission", killer: "TestReadinessAuthorityReducerReplaysCoarseLifecycleAndRejectsLegacyPhaseState", want: "legacy phase state entered readiness"},
 		{id: "M18-LIFECYCLE-ADVANCE-RETURNS", file: "internal/mission/readiness_authority_v2.go", replacements: []readinessReplacement{{anchor: "ReadinessEventFactOpenedV2, ReadinessEventFactClosedV2, ReadinessEventWorkRevisionSelectedV2:", replacement: "ReadinessEventFactOpenedV2, ReadinessEventFactClosedV2, ReadinessEventWorkRevisionSelectedV2, ReadinessEventTypeV2(\"lifecycle_advanced\"):"}, {anchor: "\tdefault:\n\t\treturn missionAuthorityErrorV2(MissionAuthorityInvalidTransitionV2, \"event_type\", nil)\n\t}\n\treturn nil", replacement: "\tcase ReadinessEventTypeV2(\"lifecycle_advanced\"):\n\t\treturn nil\n\tdefault:\n\t\treturn missionAuthorityErrorV2(MissionAuthorityInvalidTransitionV2, \"event_type\", nil)\n\t}\n\treturn nil"}}, target: "./internal/mission", killer: "TestReadinessAuthorityTransitionAllowsActivityWithoutLifecycleAdvance", want: "lifecycle advance re-entered"},
 		{id: "M18-UNSTABLE-GAPDB-READ", file: "internal/controlstore/gapdb/mission_authority.go", replacements: []readinessReplacement{{anchor: "\tif err := a.store.VerifyRevisionV2(ctx, attempt); err != nil {\n\t\treturn mission.ReadinessAuthorityObservationV2{}, err\n\t}\n", replacement: ""}}, target: "./internal/controlstore/gapdb", killer: "TestReadinessAuthorityAdapterRefusesOneRevisionDriftV2", want: "one-revision drift was accepted"},
+		{id: "M18-UNACKNOWLEDGED-WORKGRAPH", file: "internal/mission/readiness_workrevision.go", replacements: []readinessReplacement{{anchor: "func SealAcknowledgedInitialWorkRevisionSelectionV2(revision workgraph.RevisionV2, acknowledged journalv2.AcknowledgedPublicationV2) (WorkRevisionSelectionV2, error) {", replacement: "func SealAcknowledgedInitialWorkRevisionSelectionV2(revision workgraph.RevisionV2, acknowledged journalv2.AcknowledgedPublicationV2) (WorkRevisionSelectionV2, error) {\n\tif acknowledged.Plan().Digest().IsZero() {\n\t\tencoded, _ := revision.Encode()\n\t\thead, _ := sealWorkRevisionAuthorityV2(revision)\n\t\tpublication := newWorkRevisionPublicationV2(revision, strings.Repeat(\"a\", 64), strings.Repeat(\"b\", 64))\n\t\treturn sealWorkRevisionSelectionV2(head, encoded, publication.canonical, \"\", \"\", nil)\n\t}"}}, target: "./internal/mission", killer: "TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication", want: "unacknowledged revision became selectable"},
+		{id: "M18-SUBSTITUTED-WORKGRAPH", file: "internal/mission/readiness_workrevision.go", replacements: []readinessReplacement{{anchor: " || !bytes.Equal(payload.Revision, encoded)", replacement: ""}, {anchor: "if err != nil || operation.ResultKind() != \"workgraph.result\" || operation.ResultSchemaVersion() != 1 || !bytes.Equal(operation.Result(), exactResult) {", replacement: "_ = exactResult\n\tif err != nil || operation.ResultKind() != \"workgraph.result\" || operation.ResultSchemaVersion() != 1 {"}}, target: "./internal/mission", killer: "TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication", want: "substituted revision inherited acknowledgement"},
+		{id: "M18-SUBSTITUTED-WORKGRAPH-BINDING", file: "internal/mission/readiness_workrevision.go", replacements: []readinessReplacement{{anchor: "if err != nil || binding.CommandKind() != \"workgraph.finalized\" || binding.CommandSchemaVersion() != 1 || binding.Scope() != exactScope || binding.IntentDigest() != exactIntent {", replacement: "if _ = exactIntent; err != nil || binding.CommandSchemaVersion() != 1 || binding.Scope() != exactScope {"}}, target: "./internal/mission", killer: "TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication", want: "wrong command kind inherited workgraph authority"},
+		{id: "M18-SUBSTITUTED-WORKGRAPH-SCOPE", file: "internal/mission/readiness_workrevision.go", replacements: []readinessReplacement{{anchor: "if err != nil || binding.CommandKind() != \"workgraph.finalized\" || binding.CommandSchemaVersion() != 1 || binding.Scope() != exactScope || binding.IntentDigest() != exactIntent {", replacement: "if _ = exactIntent; err != nil || binding.CommandKind() != \"workgraph.finalized\" || binding.CommandSchemaVersion() != 1 {"}}, target: "./internal/mission", killer: "TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication", want: "wrong mission scope inherited workgraph authority"},
+		{id: "M18-SUBSTITUTED-WORKGRAPH-RESULT", file: "internal/mission/readiness_workrevision.go", replacements: []readinessReplacement{{anchor: "if err != nil || operation.ResultKind() != \"workgraph.result\" || operation.ResultSchemaVersion() != 1 || !bytes.Equal(operation.Result(), exactResult) {", replacement: "_ = exactResult\n\tif err != nil || operation.ResultKind() != \"workgraph.result\" || operation.ResultSchemaVersion() != 1 {"}}, target: "./internal/mission", killer: "TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication", want: "wrong operation result inherited workgraph authority"},
 	}
 }
 

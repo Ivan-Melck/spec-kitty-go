@@ -27,20 +27,22 @@ func (s runtimeEpochSource) CurrentRuntimeEpoch(context.Context) (journalv2.Runt
 }
 
 type runtimeCapabilities struct {
-	mission     *mission.MissionAuthorityServiceV2
-	readiness   *mission.ReadinessAuthorityServiceV2
-	execution   *execution.ExecutionAuthorityServiceV2
-	workspace   *execution.WorkspaceAuthorityServiceV2
-	stage       *workspace.StageAuthorityServiceV2
-	handoff     *handoff.AuthorityServiceV2
-	review      *review.AuthorityServiceV2
-	acceptance  *integration.AcceptanceAuthorityServiceV2
-	integration *integration.IntegrationAuthorityServiceV2
-	cleanup     *integration.IntegrationCleanupServiceV2
-	effect      *execution.EffectAuthorityServiceV2
-	artifact    artifact.AuthorityPortV2
-	workgraph   workgraph.AuthorityPortV2
-	checkpoints checkpointPublisher
+	mission       *mission.MissionAuthorityServiceV2
+	readiness     *mission.ReadinessAuthorityServiceV2
+	decomposition *mission.DecompositionAuthorityServiceV2
+	execution     *execution.ExecutionAuthorityServiceV2
+	workspace     *execution.WorkspaceAuthorityServiceV2
+	stage         *workspace.StageAuthorityServiceV2
+	handoff       *handoff.AuthorityServiceV2
+	review        *review.AuthorityServiceV2
+	acceptance    *integration.AcceptanceAuthorityServiceV2
+	integration   *integration.IntegrationAuthorityServiceV2
+	cleanup       *integration.IntegrationCleanupServiceV2
+	effect        *execution.EffectAuthorityServiceV2
+	artifact      artifact.AuthorityPortV2
+	workgraph     workgraph.AuthorityPortV2
+	actions       ActionCensusSource
+	checkpoints   checkpointPublisher
 }
 
 type checkpointPublisher interface {
@@ -125,6 +127,12 @@ func (c *ReconciliationCommands) ExecuteReadiness(ctx context.Context, command m
 		return mission.ReadinessAuthorityResultV2{}, err
 	}
 	return c.capabilities.readiness.Execute(ctx, command)
+}
+func (c *ReconciliationCommands) ExecuteDecomposition(ctx context.Context, command mission.DecompositionAuthorityRequestV2) (mission.DecompositionAuthorityResultV2, error) {
+	if err := c.admit(); err != nil {
+		return mission.DecompositionAuthorityResultV2{}, err
+	}
+	return c.capabilities.decomposition.Execute(ctx, command)
 }
 func (c *ReconciliationCommands) ExecuteWork(ctx context.Context, command execution.ExecutionAuthorityRequestV2) (execution.ExecutionAuthorityResultV2, error) {
 	if err := c.admit(); err != nil {
@@ -214,6 +222,16 @@ func (h *Host) ExecuteReadiness(ctx context.Context, expected journalv2.RuntimeE
 		err = h.afterMutation(ctx)
 	}
 	return result, err
+}
+
+func (h *Host) ExecuteDecomposition(ctx context.Context, expected journalv2.RuntimeEpochID, command mission.DecompositionAuthorityRequestV2) (mission.DecompositionAuthorityResultV2, error) {
+	release, err := h.beginCommand(expected)
+	if err != nil {
+		return mission.DecompositionAuthorityResultV2{}, err
+	}
+	defer release()
+	result, err := h.capabilities.decomposition.Execute(ctx, command)
+	return result, h.afterPossibleMutation(ctx, err)
 }
 
 func (h *Host) ExecuteWork(ctx context.Context, expected journalv2.RuntimeEpochID, command execution.ExecutionAuthorityRequestV2) (execution.ExecutionAuthorityResultV2, error) {
