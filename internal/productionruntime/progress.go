@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/projection"
 )
 
@@ -105,10 +106,69 @@ type MissionProgress struct {
 	Items                 []ProgressItem           `json:"items"`
 }
 
+type ProgressFamily string
+
+const (
+	ProgressWork        ProgressFamily = "work"
+	ProgressEffects     ProgressFamily = "effects"
+	ProgressReviews     ProgressFamily = "reviews"
+	ProgressAcceptance  ProgressFamily = "acceptance"
+	ProgressIntegration ProgressFamily = "integration"
+	ProgressOperations  ProgressFamily = "operations"
+)
+
+// List returns one closed progress family from the same immutable mission
+// snapshot used by Mission. Family is a product vocabulary, not a provider
+// key or tracker status string.
+func (s *ProgressService) List(projectID journalv2.ProjectID, missionID journalv2.MissionID, family ProgressFamily) ([]ProgressItem, error) {
+	progress, err := s.Mission(projectID, missionID)
+	if err != nil {
+		return nil, err
+	}
+	var items []ProgressItem
+	switch family {
+	case ProgressWork:
+		for _, item := range progress.Items {
+			if item.Family == "execution_slot" {
+				items = append(items, item)
+			}
+		}
+	case ProgressEffects:
+		items = progress.Effects
+	case ProgressReviews:
+		items = progress.Reviews
+	case ProgressAcceptance:
+		items = progress.Acceptance
+	case ProgressIntegration:
+		items = progress.Integration
+	case ProgressOperations:
+		items = progress.Operations
+	default:
+		return nil, &ProgressError{Kind: ProgressInvalidQuery, Field: "family"}
+	}
+	return cloneProgressItems(items), nil
+}
+
+func (s *ProgressService) Get(projectID journalv2.ProjectID, missionID journalv2.MissionID, family ProgressFamily, aggregateID string) (ProgressItem, error) {
+	if aggregateID == "" || len(aggregateID) > journalv2.MaxIdentityBytes {
+		return ProgressItem{}, &ProgressError{Kind: ProgressInvalidQuery, Field: "aggregate_id"}
+	}
+	items, err := s.List(projectID, missionID, family)
+	if err != nil {
+		return ProgressItem{}, err
+	}
+	for _, item := range items {
+		if item.AggregateID == aggregateID {
+			return cloneProgressItem(item), nil
+		}
+	}
+	return ProgressItem{}, &ProgressError{Kind: ProgressNotFound, Field: "aggregate_id"}
+}
+
 // ActionCensusSource supplies a capability-derived action census. It is query
 // authority only: it cannot mint operations, leases, epochs, or effects.
 type ActionCensusSource interface {
-	Actions(projectID journalv2.ProjectID, missionID journalv2.MissionID, revision uint64) ([]ActionAvailability, error)
+	Census(projectID journalv2.ProjectID, missionID journalv2.MissionID, revision uint64) (mission.ActionCensus, error)
 }
 
 type ProgressService struct {
@@ -154,7 +214,7 @@ func (s *ProgressService) Mission(projectID journalv2.ProjectID, missionID journ
 	if err != nil {
 		return MissionProgress{}, err
 	}
-	progress := MissionProgress{SchemaVersion: ProgressSchemaVersion, DatabaseID: base.DatabaseID, ProjectionRevision: base.Revision, ProjectionSHA256: projectionDigest, RuntimeEpochID: base.RuntimeEpochID, ProjectID: projectID, MissionID: missionID, Complete: s.actions != nil, Items: cloneProgressItems(items)}
+	progress := MissionProgress{SchemaVersion: ProgressSchemaVersion, DatabaseID: base.DatabaseID, ProjectionRevision: base.Revision, ProjectionSHA256: projectionDigest, RuntimeEpochID: base.RuntimeEpochID, ProjectID: projectID, MissionID: missionID, Items: cloneProgressItems(items)}
 	counts := make(map[string]int)
 	for _, item := range items {
 		classifyProgressItem(&progress, item, counts)
@@ -167,10 +227,12 @@ func (s *ProgressService) Mission(projectID journalv2.ProjectID, missionID journ
 		return progress.Running[i].WorkID+"\x00"+progress.Running[i].RunID < progress.Running[j].WorkID+"\x00"+progress.Running[j].RunID
 	})
 	if s.actions != nil {
-		progress.Actions, err = s.actions.Actions(projectID, missionID, base.Revision)
-		if err != nil {
+		census, censusErr := s.actions.Census(projectID, missionID, base.Revision)
+		if censusErr != nil || census.MissionID() != string(missionID) || census.Revision() != base.Revision || !hexDigest(census.SnapshotDigest()) || len(census.CanonicalBytes()) == 0 || len(census.Assessments()) > MaxProgressItems {
 			return MissionProgress{}, &ProgressError{Kind: ProgressIncomplete, Field: "action_census"}
 		}
+		progress.Actions = actionAvailability(census)
+		progress.Complete = true
 		sort.Slice(progress.Actions, func(i, j int) bool {
 			return progress.Actions[i].Action+"\x00"+progress.Actions[i].Scope < progress.Actions[j].Action+"\x00"+progress.Actions[j].Scope
 		})
@@ -197,6 +259,25 @@ func (s *ProgressService) Mission(projectID journalv2.ProjectID, missionID journ
 	s.cache[key] = cloneMissionProgress(progress)
 	s.cacheMu.Unlock()
 	return cloneMissionProgress(progress), nil
+}
+
+func actionAvailability(census mission.ActionCensus) []ActionAvailability {
+	assessments := census.Assessments()
+	result := make([]ActionAvailability, 0, len(assessments))
+	for _, assessment := range assessments {
+		value := ActionAvailability{Action: string(assessment.Action.ID), Scope: string(assessment.Action.Scope.Kind) + ":" + assessment.Action.Scope.Identity, Status: string(assessment.Status)}
+		for _, predicate := range assessment.Predicates {
+			if predicate.Status == mission.PredicateSatisfied || predicate.Status == mission.PredicateInapplicable {
+				continue
+			}
+			value.BlockingPredicates = append(value.BlockingPredicates, string(predicate.Kind))
+			value.ResponsibleProducers = append(value.ResponsibleProducers, string(predicate.ResponsibleCapability))
+		}
+		sort.Strings(value.BlockingPredicates)
+		sort.Strings(value.ResponsibleProducers)
+		result = append(result, value)
+	}
+	return result
 }
 
 func (s *ProgressService) listAll(projectID journalv2.ProjectID, missionID journalv2.MissionID, revision uint64) ([]ProgressItem, string, error) {
@@ -275,6 +356,8 @@ func classifyProgressItem(progress *MissionProgress, item ProgressItem, counts m
 	case "mission":
 		if selected.lifecycle != "" {
 			progress.Lifecycle = selected.lifecycle
+		} else if item.AuthorityState != "" {
+			progress.Lifecycle = item.AuthorityState
 		}
 		if selected.workRevision != "" {
 			progress.WorkRevisionID = journalv2.WorkRevisionID(selected.workRevision)

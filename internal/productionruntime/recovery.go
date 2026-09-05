@@ -80,16 +80,16 @@ func ensureAuthorityBinding(ctx context.Context, port authorityPort, expected Au
 }
 
 type runtimeCurrentV2 struct {
-	SchemaVersion      uint32                    `json:"schema_version"`
-	RuntimeEpochID     journalv2.RuntimeEpochID  `json:"runtime_epoch_id"`
-	PredecessorEpochID journalv2.RuntimeEpochID  `json:"predecessor_runtime_epoch_id,omitempty"`
-	HostAuthorityID    journalv2.HostAuthorityID `json:"host_authority_id"`
-	DatabaseID         journalv2.DatabaseID      `json:"database_id"`
-	ProjectionRevision uint64                    `json:"projection_revision"`
-	ProjectionSHA256   string                    `json:"projection_sha256"`
-	CreatedOperationID string                    `json:"created_operation_id"`
-	RecoveryAttemptID  string                    `json:"recovery_attempt_id"`
-	Status             string                    `json:"status"`
+	SchemaVersion          uint32                    `json:"schema_version"`
+	RuntimeEpochID         journalv2.RuntimeEpochID  `json:"runtime_epoch_id"`
+	PredecessorEpochID     journalv2.RuntimeEpochID  `json:"predecessor_runtime_epoch_id,omitempty"`
+	HostAuthorityID        journalv2.HostAuthorityID `json:"host_authority_id"`
+	DatabaseID             journalv2.DatabaseID      `json:"database_id"`
+	RecoveredStoreRevision uint64                    `json:"recovered_store_revision"`
+	ProjectionSHA256       string                    `json:"projection_sha256"`
+	CreatedOperationID     string                    `json:"created_operation_id"`
+	RecoveryAttemptID      string                    `json:"recovery_attempt_id"`
+	Status                 string                    `json:"status"`
 }
 
 func readCurrentEpoch(ctx context.Context, port authorityPort) (runtimeCurrentV2, uint64, error) {
@@ -124,7 +124,11 @@ func admitFreshEpoch(ctx context.Context, port authorityPort, binding AuthorityB
 	if err != nil {
 		return "", err
 	}
-	current := runtimeCurrentV2{SchemaVersion: 2, RuntimeEpochID: epoch, PredecessorEpochID: prior.RuntimeEpochID, HostAuthorityID: binding.HostAuthorityID, DatabaseID: binding.DatabaseID, ProjectionRevision: request.ThroughRecordRevision(), ProjectionSHA256: request.CanonicalProjectionDigest().String(), CreatedOperationID: operationID, RecoveryAttemptID: attemptID, Status: "ready"}
+	// The batch's provider revision does not exist until GapDB acknowledges the
+	// commit, so it cannot honestly be embedded in a value inside that batch.
+	// Record the exact recovered product prefix consumed by admission. The
+	// runtime/current record's own revision is the post-admission coordinate.
+	current := runtimeCurrentV2{SchemaVersion: 2, RuntimeEpochID: epoch, PredecessorEpochID: prior.RuntimeEpochID, HostAuthorityID: binding.HostAuthorityID, DatabaseID: binding.DatabaseID, RecoveredStoreRevision: request.ThroughRecordRevision(), ProjectionSHA256: request.CanonicalProjectionDigest().String(), CreatedOperationID: operationID, RecoveryAttemptID: attemptID, Status: "ready"}
 	currentRaw, _ := json.Marshal(current)
 	currentBytes, err := journalv2.CanonicalObject(currentRaw)
 	if err != nil {
@@ -156,7 +160,7 @@ func admitFreshEpoch(ctx context.Context, port authorityPort, binding AuthorityB
 		CurrentBinding: storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: runtimeCurrentKey, Condition: currentCondition, Value: currentBytes},
 	}
 	result, err := port.AdmitRuntimeEpoch(ctx, batch)
-	if err != nil || result.Revision == 0 || result.Ack != storegapdb.AckDurable || result.DurableThrough < result.Revision || result.MutationCount != 5 {
+	if err != nil || result.Revision <= request.ThroughRecordRevision() || result.Ack != storegapdb.AckDurable || result.DurableThrough < result.Revision || result.MutationCount != 5 {
 		return "", &Error{Kind: ErrorStartup, State: HostRecovering, Field: "runtime_epoch_admission"}
 	}
 	return epoch, nil

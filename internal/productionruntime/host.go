@@ -87,18 +87,21 @@ type HostStatus struct {
 // Host is the only normal owner of the local authority composition. It never
 // returns its sidecar, durable adapter, projection mutator, or repositories.
 type Host struct {
-	mu          sync.Mutex
-	state       HostState
-	epoch       journalv2.RuntimeEpochID
-	databaseID  journalv2.DatabaseID
-	diagnosis   string
-	inflight    int
-	owner       ownerLifecycle
-	projection  *projection.AuthorityV2
-	progress    *ProgressService
-	monitorStop context.CancelFunc
-	ownerKey    string
-	closeOnce   sync.Once
+	mu           sync.Mutex
+	refreshMu    sync.Mutex
+	state        HostState
+	epoch        journalv2.RuntimeEpochID
+	databaseID   journalv2.DatabaseID
+	diagnosis    string
+	inflight     int
+	owner        ownerLifecycle
+	projection   *projection.AuthorityV2
+	progress     *ProgressService
+	capabilities runtimeCapabilities
+	refresh      func(context.Context) (*projection.AuthorityV2, *ProgressService, error)
+	monitorStop  context.CancelFunc
+	ownerKey     string
+	closeOnce    sync.Once
 }
 
 var liveOwners = struct {
@@ -187,39 +190,72 @@ func (h *Host) Status() HostStatus {
 	return status
 }
 
-// Execute applies the common barrier before invoking a capability-owned
-// command. It does not serialize unrelated commands and does not interpret the
-// command's result.
-func (h *Host) Execute(ctx context.Context, expectedEpoch journalv2.RuntimeEpochID, command func(context.Context, CommandContext) error) error {
-	if command == nil {
-		return &Error{Kind: ErrorInvalidConfiguration, State: h.State(), Field: "command"}
-	}
+func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {
 	h.mu.Lock()
 	if h.state != HostReady {
 		state := h.state
 		h.mu.Unlock()
-		return &Error{Kind: ErrorNotReady, State: state, Field: "command_barrier"}
+		return nil, &Error{Kind: ErrorNotReady, State: state, Field: "command_barrier"}
 	}
 	if expectedEpoch != h.epoch {
 		h.mu.Unlock()
-		return &Error{Kind: ErrorStaleEpoch, State: HostReady, Field: "runtime_epoch_id"}
+		return nil, &Error{Kind: ErrorStaleEpoch, State: HostReady, Field: "runtime_epoch_id"}
 	}
 	snapshot := h.projection.Snapshot()
 	if snapshot == nil || snapshot.RuntimeEpochID() != h.epoch || snapshot.DatabaseID() != h.databaseID || snapshot.Revision() == 0 || snapshot.DurableThroughRevision() < snapshot.Revision() {
 		h.mu.Unlock()
 		h.degrade("projection_binding")
-		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_binding"}
+		return nil, &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_binding"}
 	}
-	capsule := CommandContext{RuntimeEpochID: h.epoch, ProjectionRevision: snapshot.Revision(), ProjectionDigest: snapshot.ProjectionDigest()}
 	h.inflight++
 	h.mu.Unlock()
-
-	defer func() {
+	return func() {
 		h.mu.Lock()
 		h.inflight--
 		h.mu.Unlock()
-	}()
-	return command(ctx, capsule)
+	}, nil
+}
+
+// executeBarrierProbe exists only for authority-law tests. Production callers
+// use the typed capability methods in capabilities.go.
+func (h *Host) executeBarrierProbe(expectedEpoch journalv2.RuntimeEpochID, command func(CommandContext) error) error {
+	if command == nil {
+		return &Error{Kind: ErrorInvalidConfiguration, State: h.State(), Field: "command"}
+	}
+	release, err := h.beginCommand(expectedEpoch)
+	if err != nil {
+		return err
+	}
+	defer release()
+	h.mu.Lock()
+	snapshot := h.projection.Snapshot()
+	capsule := CommandContext{RuntimeEpochID: h.epoch, ProjectionRevision: snapshot.Revision(), ProjectionDigest: snapshot.ProjectionDigest()}
+	h.mu.Unlock()
+	return command(capsule)
+}
+
+func (h *Host) refreshProjection(ctx context.Context) error {
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
+	if h.refresh == nil {
+		h.degrade("projection_refresh")
+		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_refresh"}
+	}
+	authority, progress, err := h.refresh(ctx)
+	if err != nil || authority == nil || progress == nil {
+		h.degrade("projection_refresh")
+		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_refresh"}
+	}
+	h.mu.Lock()
+	if h.state != HostReady {
+		state := h.state
+		h.mu.Unlock()
+		return &Error{Kind: ErrorNotReady, State: state, Field: "projection_refresh"}
+	}
+	h.projection = authority
+	h.progress = progress
+	h.mu.Unlock()
+	return nil
 }
 
 func (h *Host) degrade(field string) {
@@ -261,7 +297,11 @@ func (h *Host) startMonitor(parent context.Context, interval time.Duration) {
 
 // Progress exposes only the query authority. The returned service contains no
 // durable mutation or epoch-minting capability.
-func (h *Host) Progress() *ProgressService { return h.progress }
+func (h *Host) Progress() *ProgressService {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.progress
+}
 
 // Close shuts admission before waiting for in-flight commands. Durable data is
 // never deleted. Context cancellation may end the drain wait, but cleanup is

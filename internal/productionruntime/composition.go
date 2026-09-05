@@ -41,6 +41,8 @@ type Config struct {
 	RestoreBudgets              journalrestore.BudgetsV2
 	Reconciler                  Reconciler
 	Actions                     ActionCensusSource
+	CandidateVerifier           handoff.CandidateVerifier
+	IntegrationGit              integration.IntegrationGitPortV2
 	MonitorInterval             time.Duration
 }
 
@@ -103,6 +105,9 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 	if _, err = sidecargapdb.VerifyAdoptionRecord(config.M1AdoptionRecordPath); err != nil {
 		return nil, err
 	}
+	if config.CandidateVerifier == nil || config.IntegrationGit == nil {
+		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "capability_dependencies"}
+	}
 	lifecycle, err := sidecargapdb.Start(ctx, config.Sidecar)
 	if err != nil {
 		return nil, err
@@ -157,14 +162,23 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 	if err != nil {
 		return nil, err
 	}
-	authority, err := projection.NewAuthorityV2(databaseID, registry, reducers)
-	if err != nil {
-		return nil, err
+	current, currentRevision, err := readCurrentEpoch(ctx, adapter)
+	if err != nil || current.RuntimeEpochID != epoch {
+		return nil, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "post_epoch_identity"}
 	}
-	if err := authority.Restore(epoch, postRestore); err != nil {
-		return nil, err
+	if current.RecoveredStoreRevision != restored.StoreRevision().CurrentRevision() {
+		return nil, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "post_epoch_recovered_prefix"}
 	}
-	progress, err := NewProgressService(authority, config.Actions)
+	if currentRevision != postRestore.StoreRevision().CurrentRevision() {
+		return nil, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "post_epoch_record_revision"}
+	}
+	if currentRevision <= current.RecoveredStoreRevision {
+		return nil, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "post_epoch_revision_order"}
+	}
+	if postRestore.Playback().CanonicalProjectionDigest().String() != current.ProjectionSHA256 || postRestore.Playback().CanonicalProjectionDigest() != restored.Playback().CanonicalProjectionDigest() {
+		return nil, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "post_epoch_digest"}
+	}
+	authority, progress, err := restoredAuthority(databaseID, epoch, postRestore, registry, reducers, config.Actions)
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +196,21 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 			_ = host.Close(context.Background())
 			return nil, &Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciliation"}
 		}
+		// Reconciliation is not trusted to mutate query memory. Rebuild from a
+		// fresh stable durable coordinate and judge the resulting facts.
+		reconcileAttemptID, _ := randomIdentity[string]("restore-post-reconcile-")
+		reconciled, restoreErr := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: reconcileAttemptID, Budgets: budgets})
+		if restoreErr != nil {
+			host.degrade("reconciliation_restore")
+			_ = host.Close(context.Background())
+			return nil, &Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciliation_restore"}
+		}
+		authority, progress, err = restoredCurrentEpochAuthority(databaseID, epoch, reconciled, registry, reducers, config.Actions)
+		if err != nil {
+			_ = host.Close(context.Background())
+			return nil, err
+		}
+		host.projection, host.progress, postRestore = authority, progress, reconciled
 	}
 	// A reconciler completing is not itself evidence that ambiguity was
 	// resolved. Readiness depends on the resulting authority state, so a no-op,
@@ -191,12 +220,149 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 		_ = host.Close(context.Background())
 		return nil, &Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciler_required"}
 	}
+	capabilities, err := composeRuntimeCapabilities(adapter, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
+	if err != nil {
+		_ = host.Close(context.Background())
+		return nil, err
+	}
+	host.capabilities = capabilities
+	host.refresh = func(refreshContext context.Context) (*projection.AuthorityV2, *ProgressService, error) {
+		attempt, identityErr := randomIdentity[string]("restore-live-")
+		if identityErr != nil {
+			return nil, nil, identityErr
+		}
+		result, restoreErr := journalrestore.RestoreV2(refreshContext, journalrestore.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: attempt, Budgets: budgets})
+		if restoreErr != nil {
+			return nil, nil, restoreErr
+		}
+		return restoredCurrentEpochAuthority(databaseID, epoch, result, registry, reducers, config.Actions)
+	}
 	if err := host.transition(HostReady); err != nil {
 		_ = host.Close(context.Background())
 		return nil, err
 	}
 	host.startMonitor(context.Background(), config.MonitorInterval)
 	return host, nil
+}
+
+func restoredCurrentEpochAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, actions ActionCensusSource) (*projection.AuthorityV2, *ProgressService, error) {
+	authority, err := projection.NewAuthorityV2(databaseID, registry, reducers)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := authority.RestoreCurrentEpoch(epoch, restored); err != nil {
+		return nil, nil, err
+	}
+	progress, err := NewProgressService(authority, actions)
+	if err != nil {
+		return nil, nil, err
+	}
+	return authority, progress, nil
+}
+
+func restoredAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, actions ActionCensusSource) (*projection.AuthorityV2, *ProgressService, error) {
+	authority, err := projection.NewAuthorityV2(databaseID, registry, reducers)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := authority.Restore(epoch, restored); err != nil {
+		return nil, nil, err
+	}
+	progress, err := NewProgressService(authority, actions)
+	if err != nil {
+		return nil, nil, err
+	}
+	return authority, progress, nil
+}
+
+func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, budgets journalrestore.BudgetsV2, hostAuthorityID journalv2.HostAuthorityID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, config Config) (runtimeCapabilities, error) {
+	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	states := restored.Playback().States()
+	entries := make([]journalv2.ProjectionRestoreEntryV2, len(states))
+	for index, state := range states {
+		entries[index] = journalv2.ProjectionRestoreEntryV2{Coordinate: state.Coordinate(), LogicalVersion: state.LogicalVersion(), LastEventID: state.LastEventID(), CanonicalState: state.CanonicalState(), StateDigest: state.StateDigest(), Tombstone: state.Tombstone()}
+	}
+	seed := journalv2.ProjectionRestoreSeedV2{ThroughRecordRevision: restored.StoreRevision().CurrentRevision(), RollingPrefixDigest: restored.RollingPrefixDigest(), CanonicalProjectionDigest: restored.Playback().CanonicalProjectionDigest(), Entries: entries}
+	if err := tracker.Restore(seed); err != nil {
+		return runtimeCapabilities{}, err
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(adapter, tracker)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	epochSource := runtimeEpochSource{epoch: epoch}
+	missionPort, err := storegapdb.NewMissionAuthorityPortV2(adapter, coordinator)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	readinessPort, ok := missionPort.(mission.ReadinessAuthorityPortV2)
+	if !ok {
+		return runtimeCapabilities{}, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "readiness_port"}
+	}
+	missionService, err := mission.NewMissionAuthorityServiceV2(missionPort, epochSource, registry)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	readinessService, err := mission.NewReadinessAuthorityServiceV2(readinessPort, epochSource, registry)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	executionPort, err := adapter.ExecutionAuthorityPortV2(coordinator)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	executionService, err := execution.NewExecutionAuthorityServiceV2(executionPort, epochSource, registry)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	workspacePort, stagePort, err := adapter.WorkspaceAuthorityPortsV2(coordinator, registry, reducers, hostAuthorityID, budgets)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	workspaceService, err := execution.NewWorkspaceAuthorityServiceV2(workspacePort, epochSource, registry)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	stageService, err := workspace.NewStageAuthorityServiceV2(stagePort, epochSource, registry)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	handoffService, err := adapter.HandoffAuthorityServiceV2(coordinator, registry, reducers, hostAuthorityID, budgets, epochSource, config.CandidateVerifier)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	reviewService, err := adapter.ReviewAuthorityServiceV2(coordinator, registry, reducers, hostAuthorityID, budgets, epochSource)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	acceptanceService, err := adapter.AcceptanceAuthorityServiceV2(coordinator, registry, reducers, hostAuthorityID, budgets, epochSource)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	integrationService, err := adapter.IntegrationAuthorityServiceV2(coordinator, registry, reducers, hostAuthorityID, budgets, epochSource, config.IntegrationGit)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	effectPort, err := adapter.EffectAuthorityPortV2(coordinator)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	effectService, err := execution.NewEffectAuthorityServiceV2(effectPort, epochSource, registry)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	artifactPort, err := storegapdb.NewArtifactAuthorityPortV2(coordinator)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	workgraphPort, err := storegapdb.NewWorkgraphAuthorityPortV2(coordinator)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	return runtimeCapabilities{mission: missionService, readiness: readinessService, execution: executionService, workspace: workspaceService, stage: stageService, handoff: handoffService, review: reviewService, acceptance: acceptanceService, integration: integrationService, effect: effectService, artifact: artifactPort, workgraph: workgraphPort}, nil
 }
 
 func pendingReconciliation(query projection.QueryPortV2) bool {

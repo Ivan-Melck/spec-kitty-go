@@ -35,15 +35,20 @@ func TestProductionAdoptionRecordRejectsEveryAuthorityCoordinate(t *testing.T) {
 		t.Fatal("fixture is malformed")
 	}
 	tests := map[string]func(map[string]any){
-		"schema":    func(v map[string]any) { v["schema_version"] = float64(2) },
-		"decision":  func(v map[string]any) { v["decision"] = "pending" },
-		"manifest":  func(v map[string]any) { v["evidence_manifest_sha256"] = stringOf('0', 64) },
-		"tuple":     func(v map[string]any) { v["admitted_tuple_sha256"] = stringOf('0', 64) },
-		"commit":    func(v map[string]any) { v["source_commit"] = stringOf('0', 40) },
-		"tree":      func(v map[string]any) { v["source_tree"] = stringOf('0', 40) },
-		"sidecar":   func(v map[string]any) { v["sidecar_sha256"] = stringOf('0', 64) },
-		"signer":    func(v map[string]any) { v["signer"] = "" },
-		"signature": func(v map[string]any) { v["signature"] = map[string]any{"kind": "", "value": ""} },
+		"schema":          func(v map[string]any) { v["schema_version"] = float64(2) },
+		"program":         func(v map[string]any) { v["program_id"] = "other" },
+		"mission":         func(v map[string]any) { v["mission_id"] = "M2" },
+		"decision":        func(v map[string]any) { v["decision"] = "pending" },
+		"manifest":        func(v map[string]any) { v["evidence_manifest_sha256"] = stringOf('0', 64) },
+		"tuple":           func(v map[string]any) { v["admitted_tuple_sha256"] = stringOf('0', 64) },
+		"commit":          func(v map[string]any) { v["source_commit"] = stringOf('0', 40) },
+		"tree":            func(v map[string]any) { v["source_tree"] = stringOf('0', 40) },
+		"sidecar":         func(v map[string]any) { v["sidecar_sha256"] = stringOf('0', 64) },
+		"signer":          func(v map[string]any) { v["signer"] = "github:someone-else" },
+		"rationale":       func(v map[string]any) { v["rationale"] = "different decision" },
+		"signed_at":       func(v map[string]any) { v["signed_at"] = "2026-09-02T10:46:42Z" },
+		"signature_kind":  func(v map[string]any) { v["signature"].(map[string]any)["kind"] = "detached" },
+		"signature_value": func(v map[string]any) { v["signature"].(map[string]any)["value"] = "another-reference" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

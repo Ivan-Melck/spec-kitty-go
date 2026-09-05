@@ -15,6 +15,11 @@ import (
 	journalrestore "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/integration"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
 	"github.com/spec-kitty/go-kitty3/internal/projection"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
@@ -38,6 +43,48 @@ func (o *hostOwnerProbe) Close(context.Context) error { o.closed.Add(1); return 
 
 type fixtureCommitPort struct{ revision atomic.Uint64 }
 
+type refusingCandidateVerifier struct{}
+
+func (refusingCandidateVerifier) Verify(context.Context, handoff.AuthorityScope, string) (handoff.CandidateEvidence, error) {
+	return handoff.CandidateEvidence{}, fmt.Errorf("test verifier is fail-closed")
+}
+func (refusingCandidateVerifier) RevalidateRefusal(context.Context, handoff.Refusal) error {
+	return nil
+}
+
+type refusingIntegrationGit struct{}
+
+func (refusingIntegrationGit) TargetHead(context.Context, ids.RepositoryID, string) (string, error) {
+	return "", fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) InstallFence(context.Context, integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, error) {
+	return integration.IntegrationFenceObservationV2{}, fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) ObserveFence(context.Context, integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, bool, error) {
+	return integration.IntegrationFenceObservationV2{}, false, fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) EnsureWorkspace(context.Context, integration.IntegrationWorkspaceIntentV2) (integration.WorkspaceFacts, error) {
+	return integration.WorkspaceFacts{}, fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) MergeCandidate(context.Context, integration.IntegrationMergeIntentV2, integration.WorkspaceFacts) (string, *integration.ConflictEvidence, error) {
+	return "", nil, fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) CompareAndSwapTarget(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, error) {
+	return integration.IntegrationPublishObservationV2{}, fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) ObserveTargetPublication(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, bool, error) {
+	return integration.IntegrationPublishObservationV2{}, false, fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) CleanupWorkspace(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, error) {
+	return integration.IntegrationCleanupObservationV2{}, fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) ObserveCleanup(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, bool, error) {
+	return integration.IntegrationCleanupObservationV2{}, false, fmt.Errorf("test git is fail-closed")
+}
+func (refusingIntegrationGit) IsAncestor(context.Context, ids.RepositoryID, string, string) (bool, error) {
+	return false, fmt.Errorf("test git is fail-closed")
+}
+
 func (p *fixtureCommitPort) Commit(_ context.Context, plan journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error) {
 	revision := p.revision.Add(1)
 	return journalv2.NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), revision, revision, plan.MutationCount(), plan.AssertionCount())
@@ -46,34 +93,34 @@ func (p *fixtureCommitPort) Commit(_ context.Context, plan journalv2.SealedCommi
 func TestHostBarrierRejectsEveryNonReadyStateAndStaleEpochBeforeCommand(t *testing.T) {
 	host, calls := hostFixture(t, "database-barrier")
 	defer host.Close(t.Context())
-	command := func(context.Context, CommandContext) error { calls.Add(1); return nil }
+	command := func(CommandContext) error { calls.Add(1); return nil }
 	for _, state := range []HostState{HostRecovering, HostReconciling} {
 		if state == HostReconciling {
 			if err := host.transition(state); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := host.Execute(t.Context(), "epoch-current", command); !IsKind(err, ErrorNotReady) {
+		if err := host.executeBarrierProbe("epoch-current", command); !IsKind(err, ErrorNotReady) {
 			t.Fatalf("state=%s err=%v", state, err)
 		}
 	}
 	if err := host.transition(HostReady); err != nil {
 		t.Fatal(err)
 	}
-	if err := host.Execute(t.Context(), "epoch-predecessor", command); !IsKind(err, ErrorStaleEpoch) {
+	if err := host.executeBarrierProbe("epoch-predecessor", command); !IsKind(err, ErrorStaleEpoch) {
 		t.Fatalf("stale epoch err=%v", err)
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("command called before authority: %d", calls.Load())
 	}
-	if err := host.Execute(t.Context(), "epoch-current", command); err != nil {
+	if err := host.executeBarrierProbe("epoch-current", command); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("ready calls=%d", calls.Load())
 	}
 	host.degrade("test")
-	if err := host.Execute(t.Context(), "epoch-current", command); !IsKind(err, ErrorNotReady) {
+	if err := host.executeBarrierProbe("epoch-current", command); !IsKind(err, ErrorNotReady) {
 		t.Fatalf("degraded err=%v", err)
 	}
 }
@@ -91,7 +138,7 @@ func TestHostIndependentCommandsRunConcurrentlyWithoutGlobalCommandMutex(t *test
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if err := host.Execute(t.Context(), "epoch-current", func(context.Context, CommandContext) error {
+			if err := host.executeBarrierProbe("epoch-current", func(CommandContext) error {
 				entered <- struct{}{}
 				<-release
 				return nil
@@ -314,7 +361,7 @@ func TestFreshEpochRequiresSealedRestoreAndRotatesPredecessorDurably(t *testing.
 		t.Fatalf("epoch=%q err=%v", epoch, err)
 	}
 	current, revision, err := readCurrentEpoch(t.Context(), port)
-	if err != nil || current.RuntimeEpochID != epoch || current.PredecessorEpochID != "" || revision != 2 {
+	if err != nil || current.RuntimeEpochID != epoch || current.PredecessorEpochID != "" || revision != 2 || current.RecoveredStoreRevision != 1 {
 		t.Fatalf("current=%+v revision=%d err=%v", current, revision, err)
 	}
 	if _, err := admitFreshEpoch(t.Context(), port, binding, current, revision, journalrestore.ResultV2{}, "forged"); !IsKind(err, ErrorStartup) {
@@ -351,7 +398,9 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 			ExecutablePath: binary, AdmissionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-admission.json"),
 			RuntimeRoot: runtimeRoot, DataDirectory: data, SupervisorRunID: "supervisor-real-1", ProductPolicySHA256: repeatByte('e', 64),
 		},
-		MonitorInterval: 10 * time.Millisecond,
+		MonitorInterval:   10 * time.Millisecond,
+		CandidateVerifier: refusingCandidateVerifier{},
+		IntegrationGit:    refusingIntegrationGit{},
 	}
 	first, err := Start(t.Context(), config)
 	if err != nil {
@@ -360,6 +409,28 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	firstEpoch := first.RuntimeEpochID()
 	if first.State() != HostReady || firstEpoch == "" {
 		t.Fatalf("first state=%s epoch=%q", first.State(), firstEpoch)
+	}
+	beforeRevision := first.Status().ProjectionRevision
+	definitionDigest, _ := journalv2.ReducerStateDigestV2([]byte(`{"definition":"runtime-test"}`))
+	missionState, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+		ProjectID: "project-runtime", MissionID: "mission-runtime", DefinitionRevision: "definition-runtime", DefinitionDigest: definitionDigest,
+		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "active", LastOperationID: "operation-runtime-create", ObservedAt: "2026-09-05T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := first.ExecuteMission(t.Context(), firstEpoch, mission.MissionAuthorityCommandV2{
+		SchemaVersion: 1, OperationID: "operation-runtime-create", ProjectID: "project-runtime", MissionID: "mission-runtime",
+		ActorID: "actor-runtime", ProcessID: "process-runtime", OriginatingRuntimeEpochID: firstEpoch,
+		DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
+		ObservedAt: "2026-09-05T12:00:00Z", EventType: mission.MissionEventCreatedV2, Successor: missionState,
+	})
+	if err != nil || created.PublicationID() == "" {
+		t.Fatalf("typed mission create: result=%+v err=%v", created, err)
+	}
+	firstProgress, err := first.Progress().Mission("project-runtime", "mission-runtime")
+	if err != nil || firstProgress.ProjectionRevision <= beforeRevision || firstProgress.Lifecycle != "active" {
+		t.Fatalf("live memory was not refreshed: progress=%+v err=%v", firstProgress, err)
 	}
 	if err := first.Close(t.Context()); err != nil {
 		t.Fatal(err)
@@ -373,7 +444,40 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if second.State() != HostReady || second.RuntimeEpochID() == firstEpoch || second.DatabaseID() != first.DatabaseID() {
 		t.Fatalf("restart state=%s first=%q second=%q firstdb=%q seconddb=%q", second.State(), firstEpoch, second.RuntimeEpochID(), first.DatabaseID(), second.DatabaseID())
 	}
-	if err := second.Execute(t.Context(), firstEpoch, func(context.Context, CommandContext) error { return nil }); !IsKind(err, ErrorStaleEpoch) {
+	restartedProgress, err := second.Progress().Mission("project-runtime", "mission-runtime")
+	if err != nil || restartedProgress.Lifecycle != firstProgress.Lifecycle || restartedProgress.ProjectionSHA256 != firstProgress.ProjectionSHA256 {
+		t.Fatalf("restart did not reproduce mission memory: first=%+v second=%+v err=%v", firstProgress, restartedProgress, err)
+	}
+	var restoredMissionState mission.MissionAuthorityStateV2
+	for _, item := range restartedProgress.Items {
+		if item.Family == "mission" {
+			restoredMissionState, err = mission.DecodeMissionAuthorityStateV2(item.CanonicalState)
+			break
+		}
+	}
+	if err != nil || restoredMissionState.IsZero() {
+		t.Fatalf("restored mission state: %v", err)
+	}
+	pausedState, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+		ProjectID: "project-runtime", MissionID: "mission-runtime", DefinitionRevision: "definition-runtime", DefinitionDigest: definitionDigest,
+		Version: 2, Status: mission.AuthorityMissionPausedV2, Step: "active", LastOperationID: "operation-runtime-pause", ObservedAt: "2026-09-05T12:01:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.ExecuteMission(t.Context(), second.RuntimeEpochID(), mission.MissionAuthorityCommandV2{
+		SchemaVersion: 1, OperationID: "operation-runtime-pause", ProjectID: "project-runtime", MissionID: "mission-runtime",
+		ActorID: "actor-runtime", ProcessID: "process-runtime-2", OriginatingRuntimeEpochID: second.RuntimeEpochID(),
+		DoctrineRevision: "doctrine-runtime", ProfileRevision: "profile-runtime", PolicyRevision: "policy-runtime",
+		ObservedAt: "2026-09-05T12:01:00Z", EventType: mission.MissionEventPausedV2, Expected: restoredMissionState, Successor: pausedState,
+	}); err != nil {
+		t.Fatalf("post-restart typed command: %v", err)
+	}
+	pausedProgress, err := second.Progress().Mission("project-runtime", "mission-runtime")
+	if err != nil || pausedProgress.Lifecycle != "paused" || pausedProgress.ProjectionRevision <= restartedProgress.ProjectionRevision {
+		t.Fatalf("post-restart memory did not advance: progress=%+v err=%v", pausedProgress, err)
+	}
+	if err := second.executeBarrierProbe(firstEpoch, func(CommandContext) error { return nil }); !IsKind(err, ErrorStaleEpoch) {
 		t.Fatalf("predecessor epoch admitted: %v", err)
 	}
 }
@@ -467,8 +571,39 @@ func (f *fakeProgressQuery) ProgressBase(mission string) (projection.ProgressBas
 
 type fixedActionCensus struct{}
 
-func (fixedActionCensus) Actions(journalv2.ProjectID, journalv2.MissionID, uint64) ([]ActionAvailability, error) {
-	return []ActionAvailability{{Action: "work.claim", Scope: "work-b", Status: "authorized"}, {Action: "artifact.publish", Scope: "mission", Status: "authorized"}, {Action: "integration.publish", Scope: "repository", Status: "unavailable", BlockingPredicates: []string{"review_approved"}, ResponsibleProducers: []string{"review.submit"}}}, nil
+type absentReadinessSource struct{}
+
+func (absentReadinessSource) ObserveCapabilityReadiness(_ context.Context, query mission.CapabilityReadinessQueryV2) (mission.CapabilityReadinessEvidenceV2, error) {
+	return mission.CapabilityReadinessEvidenceV2{Capture: query.Capture(), ProjectID: query.ProjectID(), MissionID: query.MissionID(), Action: query.Action(), ObservedAbsent: true, EvidenceIdentity: "absence-" + string(query.Action()), EvidenceDigest: repeatByte('a', 64)}, nil
+}
+
+func (fixedActionCensus) Census(projectID journalv2.ProjectID, missionID journalv2.MissionID, revision uint64) (mission.ActionCensus, error) {
+	capture, err := journalv2.NewStoreRevisionV2("database-progress", revision, revision)
+	if err != nil {
+		return mission.ActionCensus{}, err
+	}
+	definition := softwaredev.CapabilityDefinition()
+	observer, err := mission.NewCapabilityAuthorityObserverV2(absentReadinessSource{})
+	if err != nil {
+		return mission.ActionCensus{}, err
+	}
+	observations := make([]mission.CapabilityAuthorityObservationV2, 0, len(definition.Templates()))
+	for _, template := range definition.Templates() {
+		observation, observeErr := observer.Observe(context.Background(), capture, projectID, missionID, template.Action)
+		if observeErr != nil {
+			return mission.ActionCensus{}, observeErr
+		}
+		observations = append(observations, observation)
+	}
+	set, err := mission.SealCapabilityObservationSetV2(capture, projectID, missionID, observations)
+	if err != nil {
+		return mission.ActionCensus{}, err
+	}
+	snapshot, err := mission.SealPrecreationReadinessSnapshot(projectID, missionID, capture, definition, set)
+	if err != nil {
+		return mission.ActionCensus{}, err
+	}
+	return mission.EvaluateReadiness(snapshot)
 }
 
 func TestProgressReportsCompleteMissionWithoutExclusiveCurrentStep(t *testing.T) {
@@ -484,7 +619,7 @@ func TestProgressReportsCompleteMissionWithoutExclusiveCurrentStep(t *testing.T)
 	if !got.Complete || got.Lifecycle != "open" || got.Generation != 4 || got.WorkRevisionID != "revision-4" || got.TotalWork != 1 || len(got.Running) != 1 || len(got.Effects) != 1 || len(got.Reviews) != 1 || len(got.Integration) != 1 || len(got.Operations) != 1 {
 		t.Fatalf("incomplete progress: %+v", got)
 	}
-	if len(got.Actions) != 3 || got.Actions[0].Action != "artifact.publish" || got.Actions[1].Action != "integration.publish" || got.Actions[2].Action != "work.claim" {
+	if len(got.Actions) != 11 || got.Actions[0].Action != "acceptance.evaluate" || got.Actions[4].Action != "mission.create" || got.Actions[4].Status != "authorized" {
 		t.Fatalf("action census=%+v", got.Actions)
 	}
 	got.Items[0].CanonicalState[0] ^= 0xff
