@@ -96,7 +96,7 @@ func TestAcceptanceIsExactEvidenceReadinessNotPhaseCeremonyV2(t *testing.T) {
 		t.Fatalf("result=%+v error=%v plans=%d", result, err, len(port.plans))
 	}
 	for _, plan := range port.plans {
-		if len(plan.Events()) != 2 || len(plan.Heads()) != 2 || len(plan.Conditions()) != 3 || len(plan.EligibilityGuards()) != 1 || len(plan.Assertions()) != 3 {
+		if len(plan.Events()) != 2 || len(plan.Heads()) != 2 || len(plan.Conditions()) != 3 || len(plan.EligibilityGuards()) != 1 || len(plan.Assertions()) != 6 {
 			t.Fatalf("unexpected readiness plan: events=%d heads=%d conditions=%d guards=%d assertions=%d", len(plan.Events()), len(plan.Heads()), len(plan.Conditions()), len(plan.EligibilityGuards()), len(plan.Assertions()))
 		}
 	}
@@ -125,6 +125,11 @@ func TestAcceptanceLostAuthorityResponsesReconcileOneHundredTrialsV2(t *testing.
 func TestAcceptanceRefusesStaleEvidenceAndSameActorBeforePublicationV2(t *testing.T) {
 	request, authority := acceptanceFixtureV2(t)
 	for name, mutate := range map[string]func(*AcceptanceAuthorityObservationV2){
+		"candidate mismatch": func(observed *AcceptanceAuthorityObservationV2) {
+			state := *observed.Handoff.State
+			state.Candidate = strings.Repeat("e", 40)
+			observed.Handoff.State = &state
+		},
 		"stale evidence revision": func(observed *AcceptanceAuthorityObservationV2) {
 			item := observed.Evidence[0]
 			item.Evidence.RecordRevision++
@@ -155,6 +160,24 @@ func TestAcceptanceRefusesStaleEvidenceAndSameActorBeforePublicationV2(t *testin
 	}
 }
 
+func TestAcceptanceCannotOmitRequiredReviewV2(t *testing.T) {
+	request, authority := acceptanceFixtureV2(t)
+	reviewCoordinate, _ := review.CoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, request.ReviewIDs[0])
+	authority.Reviews = nil
+	assertions := make([]journalv2.AuthorityAssertionV2, 0, len(authority.Assertions)-1)
+	for _, assertion := range authority.Assertions {
+		if assertion.Target().Coordinate != reviewCoordinate {
+			assertions = append(assertions, assertion)
+		}
+	}
+	authority.Assertions = assertions
+	port := &acceptancePortV2{resolution: AcceptanceOperationResolutionV2{Kind: AcceptanceOperationAbsentV2}, authority: authority}
+	service, _ := NewAcceptanceAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+	if _, err := service.Accept(t.Context(), request); !IsKind(err, KindNotApproved) || len(port.plans) != 0 {
+		t.Fatalf("required review omission accepted: %v plans=%d", err, len(port.plans))
+	}
+}
+
 func TestApplicableMissingEvidenceNamesProducerAndRecoveryV2(t *testing.T) {
 	request, authority := acceptanceFixtureV2(t)
 	authority.Evidence = nil
@@ -175,6 +198,7 @@ func TestAcceptanceWaiversAreNarrowCurrentAndContentAddressedV2(t *testing.T) {
 	}
 	request.Waivers = []AcceptanceWaiverV2{waiver}
 	request.Evidence[1] = AcceptanceEvidenceV2{CriterionID: "criterion-docs", Kind: "documentation", Disposition: EvidenceWaivedV2, Producer: "project.policy", PolicyBasis: "project policy permits a documentation-only waiver", WaiverID: waiver.WaiverID}
+	refreshAcceptancePolicyFactsV2(t, request, &authority)
 	port := &acceptancePortV2{resolution: AcceptanceOperationResolutionV2{Kind: AcceptanceOperationAbsentV2}, authority: authority}
 	service, _ := NewAcceptanceAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
 	if _, err := service.Accept(t.Context(), request); err != nil {
@@ -186,6 +210,85 @@ func TestAcceptanceWaiversAreNarrowCurrentAndContentAddressedV2(t *testing.T) {
 	service, _ = NewAcceptanceAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
 	if _, err := service.Accept(t.Context(), request); !IsKind(err, KindPolicyRefused) || len(port.plans) != 0 {
 		t.Fatalf("expired waiver accepted: %v", err)
+	}
+}
+
+func TestAcceptancePolicyWaiverAndApplicabilityNeedCurrentDurableFactsV2(t *testing.T) {
+	for name, mutate := range map[string]func(*AcceptanceAuthorityRequestV2, *AcceptanceAuthorityObservationV2){
+		"policy fact absent": func(_ *AcceptanceAuthorityRequestV2, authority *AcceptanceAuthorityObservationV2) {
+			authority.PolicyFacts = authority.PolicyFacts[1:]
+		},
+		"policy detail substituted": func(_ *AcceptanceAuthorityRequestV2, authority *AcceptanceAuthorityObservationV2) {
+			fact := authority.PolicyFacts[0]
+			fact.Fact.DetailDigest, _ = journalv2.ReducerStateDigestV2([]byte(`{"substituted":true}`))
+			authority.PolicyFacts[0] = fact
+		},
+		"inapplicability fact absent": func(_ *AcceptanceAuthorityRequestV2, authority *AcceptanceAuthorityObservationV2) {
+			authority.PolicyFacts = append(authority.PolicyFacts[:1], authority.PolicyFacts[2:]...)
+		},
+		"inapplicability fact stale": func(_ *AcceptanceAuthorityRequestV2, authority *AcceptanceAuthorityObservationV2) {
+			fact := authority.PolicyFacts[1]
+			fact.Fact.RecordRevision++
+			authority.PolicyFacts[1] = fact
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, authority := acceptanceFixtureV2(t)
+			authority.PolicyFacts = append([]AcceptancePolicyFactObservationV2(nil), authority.PolicyFacts...)
+			authority.Assertions = append([]journalv2.AuthorityAssertionV2(nil), authority.Assertions...)
+			mutate(&request, &authority)
+			port := &acceptancePortV2{resolution: AcceptanceOperationResolutionV2{Kind: AcceptanceOperationAbsentV2}, authority: authority}
+			service, _ := NewAcceptanceAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+			if _, err := service.Accept(t.Context(), request); err == nil || len(port.plans) != 0 {
+				t.Fatalf("fabricated policy accepted: %v plans=%d", err, len(port.plans))
+			}
+		})
+	}
+
+	t.Run("caller minted waiver", func(t *testing.T) {
+		request, authority := acceptanceFixtureV2(t)
+		waiver, _ := SealAcceptanceWaiverV2(AcceptanceWaiverV2{SchemaVersion: 1, WaiverID: "waiver-fabricated", CriterionID: "criterion-docs", ProjectID: request.ProjectID, MissionID: request.MissionID, WorkRevisionID: request.WorkRevisionID, WorkID: request.WorkID, PolicyRevision: request.PolicyRevision, PolicyBasis: "caller prose", AccountableActor: "actor-owner", Rationale: "caller created this object without durable policy authority", EffectiveFrom: request.ObservedAt.Add(-time.Minute).Format(time.RFC3339Nano), EffectiveThrough: request.ObservedAt.Add(time.Hour).Format(time.RFC3339Nano)})
+		request.Waivers = []AcceptanceWaiverV2{waiver}
+		request.Evidence[1] = AcceptanceEvidenceV2{CriterionID: "criterion-docs", Kind: "documentation", Disposition: EvidenceWaivedV2, Producer: "project.policy", PolicyBasis: waiver.PolicyBasis, WaiverID: waiver.WaiverID}
+		// Deliberately do not add the corresponding durable mission fact.
+		port := &acceptancePortV2{resolution: AcceptanceOperationResolutionV2{Kind: AcceptanceOperationAbsentV2}, authority: authority}
+		service, _ := NewAcceptanceAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+		if _, err := service.Accept(t.Context(), request); !IsKind(err, KindPolicyRefused) || len(port.plans) != 0 {
+			t.Fatalf("caller-minted waiver accepted: %v plans=%d", err, len(port.plans))
+		}
+	})
+}
+
+func TestAcceptanceRevalidatesReviewIndependenceExceptionAuthorityV2(t *testing.T) {
+	request, authority := acceptanceFixtureV2(t)
+	state := *authority.Reviews[0].State
+	exception := review.IndependenceExceptionV2{SchemaVersion: 1, ExceptionID: "exception-acceptance-review", PolicyRevision: request.PolicyRevision, ProjectID: request.ProjectID, MissionID: request.MissionID, WorkRevisionID: request.WorkRevisionID, WorkID: request.WorkID, HandoffID: request.HandoffID, Candidate: request.Candidate, ReviewerActorID: "actor-implementer", Reason: "explicit emergency same-actor review", AuthorizerActorID: "actor-policy-owner", EffectiveFrom: request.ObservedAt.Add(-time.Minute).Format(time.RFC3339Nano), EffectiveThrough: request.ObservedAt.Add(time.Hour).Format(time.RFC3339Nano)}
+	if exception.Validate() != nil {
+		t.Fatal("invalid review exception fixture")
+	}
+	state.ReviewerActorID = "actor-implementer"
+	state.Exception = &exception
+	authority.Reviews[0].State = &state
+	reviewCoordinate, _ := review.CoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, state.ReviewID)
+	for index, assertion := range authority.Assertions {
+		if assertion.Target().Coordinate == reviewCoordinate {
+			authority.Assertions[index] = acceptanceAssertionV2(t, reviewCoordinate, authority.Reviews[0].RecordRevision, journalv2.LogicalVersion(state.LogicalVersion), state.CanonicalBytes())
+		}
+	}
+	refreshAcceptancePolicyFactsV2(t, request, &authority)
+	port := &acceptancePortV2{resolution: AcceptanceOperationResolutionV2{Kind: AcceptanceOperationAbsentV2}, authority: authority}
+	service, _ := NewAcceptanceAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+	if _, err := service.Accept(t.Context(), request); err != nil {
+		t.Fatalf("current exact review exception refused: %v", err)
+	}
+
+	request.OperationID = "operation-acceptance-stale-review-exception"
+	request.AcceptanceID = "acceptance-stale-review-exception"
+	authority.PolicyFacts = authority.PolicyFacts[:len(authority.PolicyFacts)-1]
+	port = &acceptancePortV2{resolution: AcceptanceOperationResolutionV2{Kind: AcceptanceOperationAbsentV2}, authority: authority}
+	service, _ = NewAcceptanceAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), journalv2.DefaultEventRegistryV2())
+	if _, err := service.Accept(t.Context(), request); err == nil || len(port.plans) != 0 {
+		t.Fatalf("stale review exception authority accepted: %v", err)
 	}
 }
 
@@ -206,10 +309,55 @@ func acceptanceFixtureV2(t *testing.T) (AcceptanceAuthorityRequestV2, Acceptance
 	evidenceCoordinate, _ := journalv2.NewAggregateCoordinate("mission", "evidence:test", journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: "project-1", MissionID: "mission-1"})
 	evidenceDigest, _ := journalv2.ReducerStateDigestV2([]byte(`{"status":"pass"}`))
 	evidence := AcceptanceEvidenceV2{CriterionID: "criterion-test", Kind: "automated_test", Disposition: EvidenceSatisfiedV2, Producer: "project.verify", PolicyBasis: "project verification contract", EvidenceID: "evidence-test-1", Coordinate: evidenceCoordinate, LogicalVersion: 2, RecordRevision: 22, StateDigestSHA256: evidenceDigest.String()}
-	request := AcceptanceAuthorityRequestV2{OperationID: "operation-acceptance-1", AcceptanceID: "acceptance-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: revision.ID(), WorkID: "work-1", HandoffID: "handoff-1", RepositoryID: "repository-1", Candidate: strings.Repeat("b", 40), ContributorDigest: contributorDigest, ReviewIDs: []ids.ReviewID{"review-1"}, Evidence: []AcceptanceEvidenceV2{evidence, {CriterionID: "criterion-docs", Kind: "documentation", Disposition: EvidenceInapplicableV2, Producer: "project.policy", PolicyBasis: "no documentation deliverable is applicable"}, {CriterionID: "criterion-network", Kind: "contract", Disposition: EvidenceInapplicableV2, Producer: "project.policy", PolicyBasis: "the product has no network surface"}}, PolicyRevision: governance.PolicyRevision, RuntimeEpochID: "epoch-1", ActorID: "actor-acceptor", ProcessID: "process-acceptor", Governance: governance, ObservedAt: now}
+	request := AcceptanceAuthorityRequestV2{OperationID: "operation-acceptance-1", AcceptanceID: "acceptance-1", ProjectID: "project-1", MissionID: "mission-1", WorkRevisionID: revision.ID(), WorkID: "work-1", HandoffID: "handoff-1", RepositoryID: "repository-1", Candidate: strings.Repeat("b", 40), ContributorDigest: contributorDigest, ReviewIDs: []ids.ReviewID{"review-1"}, Evidence: []AcceptanceEvidenceV2{evidence, {CriterionID: "criterion-docs", Kind: "documentation", Disposition: EvidenceInapplicableV2, Producer: "project.policy", PolicyBasis: "no documentation deliverable is applicable", EvidenceID: "policy-docs-inapplicable"}, {CriterionID: "criterion-network", Kind: "contract", Disposition: EvidenceInapplicableV2, Producer: "project.policy", PolicyBasis: "the product has no network surface", EvidenceID: "policy-network-inapplicable"}}, PolicyRevision: governance.PolicyRevision, PolicyFactID: "policy-acceptance-1", RuntimeEpochID: "epoch-1", ActorID: "actor-acceptor", ProcessID: "process-acceptor", Governance: governance, ObservedAt: now}
 	handoffCoordinate, _ := handoff.CoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID)
 	reviewCoordinate, _ := review.CoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, "review-1")
-	return request, AcceptanceAuthorityObservationV2{Eligibility: eligibility, Handoff: handoff.ObservationV2{State: &handoffState, RecordRevision: 20}, Reviews: []review.ObservationV2{{State: &reviewState, RecordRevision: 21}}, Evidence: []AcceptanceEvidenceObservationV2{{Evidence: evidence, Assertion: acceptanceAssertionV2(t, evidenceCoordinate, 22, 2, []byte(`{"head":"evidence"}`))}}, Assertions: []journalv2.AuthorityAssertionV2{acceptanceAssertionV2(t, handoffCoordinate, 20, 3, handoffState.CanonicalBytes()), acceptanceAssertionV2(t, reviewCoordinate, 21, 3, reviewState.CanonicalBytes()), acceptanceAssertionV2(t, evidenceCoordinate, 22, 2, []byte(`{"head":"evidence"}`))}}
+	authority := AcceptanceAuthorityObservationV2{Eligibility: eligibility, Handoff: handoff.ObservationV2{State: &handoffState, RecordRevision: 20}, Reviews: []review.ObservationV2{{State: &reviewState, RecordRevision: 21}}, Evidence: []AcceptanceEvidenceObservationV2{{Evidence: evidence, Assertion: acceptanceAssertionV2(t, evidenceCoordinate, 22, 2, []byte(`{"head":"evidence"}`))}}, Assertions: []journalv2.AuthorityAssertionV2{acceptanceAssertionV2(t, handoffCoordinate, 20, 3, handoffState.CanonicalBytes()), acceptanceAssertionV2(t, reviewCoordinate, 21, 3, reviewState.CanonicalBytes()), acceptanceAssertionV2(t, evidenceCoordinate, 22, 2, []byte(`{"head":"evidence"}`))}}
+	refreshAcceptancePolicyFactsV2(t, request, &authority)
+	return request, authority
+}
+
+func refreshAcceptancePolicyFactsV2(t *testing.T, request AcceptanceAuthorityRequestV2, authority *AcceptanceAuthorityObservationV2) {
+	t.Helper()
+	// Keep non-policy assertions and deterministically rebuild every exact
+	// terminal mission-policy assertion consumed by this request.
+	nonPolicy := authority.Assertions[:0]
+	for _, assertion := range authority.Assertions {
+		if assertion.Target().Coordinate.Kind != "mission" || !strings.HasPrefix(string(assertion.Target().Coordinate.ID), "decision:") {
+			nonPolicy = append(nonPolicy, assertion)
+		}
+	}
+	authority.Assertions = nonPolicy
+	authority.PolicyFacts = nil
+	add := func(factID string, detail journalv2.Digest) {
+		coordinate, _ := acceptancePolicyCoordinateV2(request.ProjectID, request.MissionID, factID)
+		revision := uint64(30 + len(authority.PolicyFacts))
+		logical := journalv2.LogicalVersion(2)
+		assertion := acceptanceAssertionV2(t, coordinate, revision, logical, acceptanceCanonical(struct {
+			FactID string `json:"fact_id"`
+		}{factID}))
+		authority.PolicyFacts = append(authority.PolicyFacts, AcceptancePolicyFactObservationV2{Fact: review.MissionPolicyFactObservationV2{ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID), FactID: factID, Kind: "decision", Status: "resolved", LogicalVersion: logical, DetailDigest: detail, RecordRevision: revision, Found: true}, Assertion: assertion})
+		authority.Assertions = append(authority.Assertions, assertion)
+	}
+	add(request.PolicyFactID, AcceptancePolicyRevisionDigestV2(request))
+	waivers := make(map[string]AcceptanceWaiverV2, len(request.Waivers))
+	for _, waiver := range request.Waivers {
+		waivers[waiver.WaiverID] = waiver
+	}
+	for _, evidence := range request.Evidence {
+		switch evidence.Disposition {
+		case EvidenceInapplicableV2:
+			add(evidence.EvidenceID, AcceptanceApplicabilityDigestV2(request, evidence))
+		case EvidenceWaivedV2:
+			digest, _ := journalv2.ParseDigest("waiver_content", waivers[evidence.WaiverID].ContentDigest)
+			add(evidence.WaiverID, digest)
+		}
+	}
+	for _, observed := range authority.Reviews {
+		if observed.State != nil && observed.State.Exception != nil {
+			add(observed.State.Exception.ExceptionID, observed.State.Exception.Digest())
+		}
+	}
 }
 
 func acceptanceGovernanceV2(t *testing.T) execution.ExecutionGovernanceV2 {

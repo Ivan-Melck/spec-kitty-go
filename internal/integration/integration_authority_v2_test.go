@@ -11,6 +11,7 @@ import (
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 type integrationPortV2 struct {
@@ -124,17 +125,24 @@ func (p *integrationPortV2) ReconcileIntegration(_ context.Context, capability I
 }
 
 type integrationGitV2 struct {
-	mu           sync.Mutex
-	targets      map[string]string
-	result       string
-	conflict     bool
-	lostPublish  bool
-	blockFence   chan struct{}
-	fenceEntered chan struct{}
-	fences       map[journalv2.OperationID]IntegrationFenceObservationV2
-	lostFence    bool
-	calls        int
-	cleanupErr   error
+	mu                  sync.Mutex
+	targets             map[string]string
+	result              string
+	conflict            bool
+	lostPublish         bool
+	stealPublish        bool
+	advanceAfterPublish bool
+	ancestralResult     bool
+	corruptPublication  bool
+	blockFence          chan struct{}
+	fenceEntered        chan struct{}
+	fences              map[journalv2.OperationID]IntegrationFenceObservationV2
+	publications        map[journalv2.EffectID]IntegrationPublishObservationV2
+	cleanups            map[journalv2.EffectID]IntegrationCleanupObservationV2
+	lostFence           bool
+	lostCleanup         bool
+	calls               int
+	cleanupErr          error
 }
 
 func (g *integrationGitV2) key(repository string, target string) string {
@@ -194,26 +202,79 @@ func (g *integrationGitV2) MergeCandidate(_ context.Context, intent IntegrationM
 	}
 	return g.result, nil, nil
 }
-func (g *integrationGitV2) CompareAndSwapTarget(_ context.Context, intent IntegrationPublishIntentV2) error {
+func (g *integrationGitV2) CompareAndSwapTarget(_ context.Context, intent IntegrationPublishIntentV2) (IntegrationPublishObservationV2, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.calls++
 	key := g.key(intent.RepositoryID.String(), intent.TargetRef)
+	if g.stealPublish {
+		g.targets[key] = strings.Repeat("d", 40)
+		g.stealPublish = false
+		return IntegrationPublishObservationV2{}, errors.New("target moved by another actor")
+	}
 	if g.targets[key] != intent.ExpectedOld {
-		return errors.New("target moved")
+		return IntegrationPublishObservationV2{}, errors.New("target moved")
 	}
 	g.targets[key] = intent.Result
+	observation := IntegrationPublishObservationV2{EffectID: intent.EffectID, OperationID: intent.OperationID, RepositoryID: intent.RepositoryID, TargetRef: intent.TargetRef, ExpectedOld: intent.ExpectedOld, Result: intent.Result, ObservedTarget: intent.Result, Generation: intent.Generation, FenceTokenHash: intent.FenceTokenHash, ProviderMarker: "git-ref-effect:" + string(intent.EffectID)}
+	if g.publications == nil {
+		g.publications = map[journalv2.EffectID]IntegrationPublishObservationV2{}
+	}
+	g.publications[intent.EffectID] = observation
+	if g.corruptPublication {
+		observation.EffectID = "effect-other"
+	}
+	if g.advanceAfterPublish {
+		g.targets[key] = strings.Repeat("d", 40)
+	}
 	if g.lostPublish {
 		g.lostPublish = false
-		return errors.New("lost response")
+		return IntegrationPublishObservationV2{}, errors.New("lost response")
 	}
-	return nil
+	return observation, nil
 }
-func (g *integrationGitV2) Cleanup(context.Context, IntegrationCleanupIntentV2) error {
+func (g *integrationGitV2) ObserveTargetPublication(_ context.Context, intent IntegrationPublishIntentV2) (IntegrationPublishObservationV2, bool, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.calls++
-	return g.cleanupErr
+	observation, found := g.publications[intent.EffectID]
+	return observation, found, nil
+}
+func (g *integrationGitV2) CleanupWorkspace(_ context.Context, intent IntegrationCleanupIntentV2) (IntegrationCleanupObservationV2, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls++
+	if g.cleanupErr != nil {
+		return IntegrationCleanupObservationV2{}, g.cleanupErr
+	}
+	observation := IntegrationCleanupObservationV2{
+		EffectID:       intent.EffectID,
+		OperationID:    intent.OperationID,
+		AttemptID:      intent.AttemptID,
+		RepositoryID:   intent.RepositoryID,
+		TargetRef:      intent.TargetRef,
+		WorkspacePath:  intent.WorkspacePath,
+		Generation:     intent.Generation,
+		FenceTokenHash: intent.FenceTokenHash,
+		ProviderMarker: "git-cleanup-effect:" + string(intent.EffectID),
+	}
+	if g.cleanups == nil {
+		g.cleanups = map[journalv2.EffectID]IntegrationCleanupObservationV2{}
+	}
+	g.cleanups[intent.EffectID] = observation
+	if g.lostCleanup {
+		g.lostCleanup = false
+		return IntegrationCleanupObservationV2{}, errors.New("lost cleanup response")
+	}
+	return observation, nil
+}
+
+func (g *integrationGitV2) ObserveCleanup(_ context.Context, intent IntegrationCleanupIntentV2) (IntegrationCleanupObservationV2, bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls++
+	observation, found := g.cleanups[intent.EffectID]
+	return observation, found, nil
 }
 
 func TestIntegrationAuthorityStagesIntentBeforeEffectsAndReplaysV2(t *testing.T) {
@@ -253,6 +314,17 @@ func TestIntegrationRefusesBeforeAnyRepositoryObservationV2(t *testing.T) {
 	}
 }
 
+func TestIntegrationCannotDowngradeZeroEligibilityBeforeGitV2(t *testing.T) {
+	request, authority := integrationFixtureV2(t)
+	authority.Eligibility = workgraph.ObservedEligibilityShardV2{}
+	port := newIntegrationPortV2(authority)
+	git := newIntegrationGitFixtureV2(request)
+	service, _ := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
+	if _, err := service.Integrate(t.Context(), request); !IsKind(err, KindRevisionIneligible) || git.calls != 0 || len(port.plans) != 0 {
+		t.Fatalf("zero eligibility crossed integration boundary: %v git=%d plans=%d", err, git.calls, len(port.plans))
+	}
+}
+
 func TestIntegrationConflictAndManualMovementRequireRepairV2(t *testing.T) {
 	for name, configure := range map[string]func(*integrationGitV2){"merge conflict": func(g *integrationGitV2) { g.conflict = true }, "manual movement": func(g *integrationGitV2) { g.result = strings.Repeat("c", 40) }} {
 		t.Run(name, func(t *testing.T) {
@@ -268,8 +340,14 @@ func TestIntegrationConflictAndManualMovementRequireRepairV2(t *testing.T) {
 				}}
 				service, _ := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapter, journalv2.DefaultEventRegistryV2())
 				result, err := service.Integrate(t.Context(), request)
-				if err != nil || result.Stage != IntegrationAttemptRepairRequiredV2 || result.Conflict == nil {
-					t.Fatalf("result=%+v error=%v", result, err)
+				if err != nil || result.Stage != IntegrationAttemptRepairRequiredV2 || result.Conflict == nil || len(port.plans) != 4 {
+					t.Fatalf("result=%+v error=%v plans=%d", result, err, len(port.plans))
+				}
+				git.mu.Lock()
+				published := len(git.publications)
+				git.mu.Unlock()
+				if published != 0 {
+					t.Fatalf("manual movement reached ref publication: %d", published)
 				}
 				return
 			}
@@ -291,6 +369,73 @@ func TestIntegrationLostRefUpdateResponseIsOneAdmissionV2(t *testing.T) {
 	result, err := service.Integrate(t.Context(), request)
 	if err != nil || result.Stage != IntegrationAttemptCompletedV2 || len(port.plans) != 5 {
 		t.Fatalf("result=%+v error=%v plans=%d", result, err, len(port.plans))
+	}
+}
+
+func TestIntegrationRefPublicationNeedsAttributableEffectNotAncestryV2(t *testing.T) {
+	request, authority := integrationFixtureV2(t)
+	port := newIntegrationPortV2(authority)
+	git := newIntegrationGitFixtureV2(request)
+	git.stealPublish = true
+	git.ancestralResult = true // another actor's descendant contains our result
+	service, _ := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
+	result, err := service.Integrate(t.Context(), request)
+	if err != nil || result.Stage != IntegrationAttemptRepairRequiredV2 || result.ObservedTarget != strings.Repeat("d", 40) {
+		t.Fatalf("unattributable ancestry result=%+v err=%v", result, err)
+	}
+	git.mu.Lock()
+	_, attributed := git.publications[result.PublishEffectID]
+	git.mu.Unlock()
+	if attributed {
+		t.Fatal("failed CAS fabricated an attributable publish observation")
+	}
+}
+
+func TestIntegrationPostPublishAdvancementPreservesExactAdmissionV2(t *testing.T) {
+	request, authority := integrationFixtureV2(t)
+	port := newIntegrationPortV2(authority)
+	git := newIntegrationGitFixtureV2(request)
+	git.advanceAfterPublish = true
+	git.ancestralResult = true
+	service, _ := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
+	result, err := service.Integrate(t.Context(), request)
+	if err != nil || result.Stage != IntegrationAttemptCompletedV2 || result.ObservedTarget != strings.Repeat("d", 40) {
+		t.Fatalf("attributable advanced publication result=%+v err=%v", result, err)
+	}
+}
+
+func TestIntegrationRejectsSubstitutedPublishObservationV2(t *testing.T) {
+	request, authority := integrationFixtureV2(t)
+	port := newIntegrationPortV2(authority)
+	git := newIntegrationGitFixtureV2(request)
+	git.corruptPublication = true
+	service, _ := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
+	if _, err := service.Integrate(t.Context(), request); !IsKind(err, KindStaleAuthority) {
+		t.Fatalf("substituted publication observation accepted: %v", err)
+	}
+}
+
+func TestIntegrationExternalEvidenceAndDiagnosticsAreBoundedV2(t *testing.T) {
+	secret := strings.Repeat("credential-and-command-output", 500)
+	err := boundedGitFailureV2("observe integration target", errors.New(secret))
+	if strings.Contains(err.Error(), "credential") || len(err.Error()) > 128 || !errors.Is(err, errors.Unwrap(err)) {
+		t.Fatalf("unbounded public diagnostic: %q", err.Error())
+	}
+	request, _ := integrationFixtureV2(t)
+	state := IntegrationAttemptStateV2{SchemaVersion: 1, LogicalVersion: 2, Stage: IntegrationAttemptAuthorityActiveV2, AttemptID: request.AttemptID, OperationID: request.OperationID, ProjectID: request.ProjectID, MissionID: request.MissionID, WorkRevisionID: request.WorkRevisionID, WorkID: request.WorkID, AcceptanceID: request.AcceptanceID, AcceptanceDigest: strings.Repeat("a", 64), RepositoryID: request.RepositoryID, TargetRef: request.TargetRef, Candidate: request.Candidate, ExpectedOld: strings.Repeat("b", 40), TargetGeneration: 1, FenceTokenHash: strings.Repeat("c", 64), FenceEffectID: "effect-fence", WorkspaceEffectID: "effect-workspace", MergeEffectID: "effect-merge", PublishEffectID: "effect-publish", CleanupEffectID: "effect-cleanup", RuntimeEpochID: request.RuntimeEpochID, ActorID: request.ActorID, ProcessID: request.ProcessID, Governance: request.Governance, ObservedAt: request.ObservedAt.Format(time.RFC3339Nano)}
+	state.Stage = IntegrationAttemptResultObservedV2
+	state.Result = strings.Repeat("d", 40)
+	state.ObservedTarget = state.ExpectedOld
+	state.Workspace = WorkspaceFacts{Path: strings.Repeat("x", maxIntegrationWorkspacePathV2+1), Registered: true, Detached: true, Clean: true, Head: state.Result, CandidateReachable: true}
+	if state.Validate() == nil {
+		t.Fatal("oversized workspace evidence entered durable state")
+	}
+	state.Workspace = WorkspaceFacts{}
+	state.Stage = IntegrationAttemptRepairRequiredV2
+	state.Conflict = &ConflictEvidence{Base: state.ExpectedOld, Candidate: state.Candidate, GitMessage: strings.Repeat("x", maxIntegrationExternalTextV2+1)}
+	state.RepairAction = "repair"
+	if state.Validate() == nil {
+		t.Fatal("oversized conflict evidence entered durable state")
 	}
 }
 
@@ -434,7 +579,7 @@ func (g gitAdapterV2) TargetHead(_ context.Context, repositoryID ids.RepositoryI
 	return g.targets[g.key(repositoryID.String(), target)], nil
 }
 func (g gitAdapterV2) IsAncestor(_ context.Context, _ ids.RepositoryID, ancestor, current string) (bool, error) {
-	return ancestor == current, nil
+	return ancestor == current || g.ancestralResult, nil
 }
 func (g gitAdapterV2) MergeCandidate(ctx context.Context, intent IntegrationMergeIntentV2, workspace WorkspaceFacts) (string, *ConflictEvidence, error) {
 	result, conflict, err := g.integrationGitV2.MergeCandidate(ctx, intent, workspace)

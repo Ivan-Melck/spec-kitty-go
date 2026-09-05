@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
@@ -19,6 +20,12 @@ import (
 )
 
 type IntegrationAttemptStageV2 string
+
+const (
+	maxIntegrationExternalTextV2  = 1024
+	maxIntegrationWorkspacePathV2 = 4096
+	maxIntegrationConflictFilesV2 = 256
+)
 
 const (
 	IntegrationAttemptRequestedV2       IntegrationAttemptStageV2 = "requested"
@@ -130,6 +137,8 @@ type IntegrationAttemptStateV2 struct {
 	MergeEffectID     journalv2.EffectID              `json:"merge_effect_id"`
 	PublishEffectID   journalv2.EffectID              `json:"publish_effect_id"`
 	CleanupEffectID   journalv2.EffectID              `json:"cleanup_effect_id"`
+	CleanupStatus     CleanupStatus                   `json:"cleanup_status,omitempty"`
+	CleanupMarker     string                          `json:"cleanup_provider_marker,omitempty"`
 	RuntimeEpochID    journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
 	ActorID           ids.ActorID                     `json:"actor_id"`
 	ProcessID         ids.ProcessID                   `json:"process_id"`
@@ -164,28 +173,71 @@ func (s IntegrationAttemptStateV2) Validate() error {
 	if err != nil || when.Location() != time.UTC {
 		return acceptanceErrorV2(KindInvalid, "integration_attempt_time")
 	}
+	if !validWorkspaceFactsV2(s.Workspace) || !validConflictEvidenceV2(s.Conflict) || len(s.RepairAction) > maxIntegrationExternalTextV2 {
+		return acceptanceErrorV2(KindInvalid, "integration_attempt_external_evidence")
+	}
 	zeroWorkspace := s.Workspace == (WorkspaceFacts{})
 	switch s.Stage {
 	case IntegrationAttemptRequestedV2:
-		if s.FenceTokenHash != "" || s.Result != "" || s.ObservedTarget != "" || !zeroWorkspace || s.Conflict != nil || s.RepairAction != "" {
+		if s.FenceTokenHash != "" || s.Result != "" || s.ObservedTarget != "" || !zeroWorkspace || s.Conflict != nil || s.RepairAction != "" || s.CleanupStatus != "" || s.CleanupMarker != "" {
 			return acceptanceErrorV2(KindInvalid, "integration_attempt_requested")
 		}
 	case IntegrationAttemptAuthorityActiveV2:
-		if !validAcceptanceDigest(s.FenceTokenHash) || s.Result != "" || s.ObservedTarget != "" || !zeroWorkspace || s.Conflict != nil || s.RepairAction != "" {
+		if !validAcceptanceDigest(s.FenceTokenHash) || s.Result != "" || s.ObservedTarget != "" || !zeroWorkspace || s.Conflict != nil || s.RepairAction != "" || s.CleanupStatus != "" || s.CleanupMarker != "" {
 			return acceptanceErrorV2(KindInvalid, "integration_attempt_early")
 		}
-	case IntegrationAttemptResultObservedV2, IntegrationAttemptPublishingV2, IntegrationAttemptCompletedV2:
-		if !validAcceptanceDigest(s.FenceTokenHash) || !validCommit(s.Result) || !validCommit(s.ObservedTarget) || zeroWorkspace || s.Conflict != nil || s.RepairAction != "" {
+	case IntegrationAttemptResultObservedV2, IntegrationAttemptPublishingV2:
+		if !validAcceptanceDigest(s.FenceTokenHash) || !validCommit(s.Result) || !validCommit(s.ObservedTarget) || zeroWorkspace || s.Conflict != nil || s.RepairAction != "" || s.CleanupStatus != "" || s.CleanupMarker != "" {
 			return acceptanceErrorV2(KindInvalid, "integration_attempt_result")
 		}
+	case IntegrationAttemptCompletedV2:
+		if !validAcceptanceDigest(s.FenceTokenHash) || !validCommit(s.Result) || !validCommit(s.ObservedTarget) || zeroWorkspace || s.Conflict != nil || s.RepairAction != "" || (s.CleanupStatus != CleanupEligible && s.CleanupStatus != CleanupPending && s.CleanupStatus != CleanupComplete) || s.CleanupStatus != CleanupComplete && s.CleanupMarker != "" || s.CleanupStatus == CleanupComplete && !acceptanceText(s.CleanupMarker, 512) {
+			return acceptanceErrorV2(KindInvalid, "integration_attempt_completed")
+		}
 	case IntegrationAttemptRepairRequiredV2:
-		if !validAcceptanceDigest(s.FenceTokenHash) || s.Conflict == nil || s.RepairAction == "" {
+		if !validAcceptanceDigest(s.FenceTokenHash) || s.Conflict == nil || s.RepairAction == "" || s.CleanupStatus != "" || s.CleanupMarker != "" {
 			return acceptanceErrorV2(KindInvalid, "integration_attempt_repair")
 		}
 	default:
 		return acceptanceErrorV2(KindInvalid, "integration_attempt_stage")
 	}
 	return nil
+}
+
+func validWorkspaceFactsV2(value WorkspaceFacts) bool {
+	if len(value.Path) > maxIntegrationWorkspacePathV2 || !utf8.ValidString(value.Path) {
+		return false
+	}
+	if value.Head != "" && !validCommit(value.Head) {
+		return false
+	}
+	return true
+}
+
+func validConflictEvidenceV2(value *ConflictEvidence) bool {
+	if value == nil {
+		return true
+	}
+	for _, commit := range []string{value.Base, value.Target, value.Candidate, value.Result} {
+		if commit != "" && !validCommit(commit) {
+			return false
+		}
+	}
+	if len(value.Workspace) > maxIntegrationWorkspacePathV2 || len(value.GitMessage) > maxIntegrationExternalTextV2 || !utf8.ValidString(value.Workspace) || !utf8.ValidString(value.GitMessage) || len(value.ConflictFiles) > maxIntegrationConflictFilesV2 {
+		return false
+	}
+	for _, path := range value.ConflictFiles {
+		if path == "" || len(path) > maxIntegrationWorkspacePathV2 || !utf8.ValidString(path) {
+			return false
+		}
+	}
+	return true
+}
+
+func boundedGitFailureV2(message string, cause error) error {
+	// Preserve the cause for errors.Is/errors.As classification, but never render
+	// adapter text through the stable public diagnostic.
+	return &Error{Kind: KindGitFailure, Message: message, Cause: cause}
 }
 
 func (s IntegrationAttemptStateV2) CanonicalBytes() []byte {
@@ -278,7 +330,7 @@ func ReduceIntegrationAttemptEventV2(prior []byte, envelope journalv2.EventEnvel
 		return next.CanonicalBytes(), nil
 	}
 	old, err := DecodeIntegrationAttemptStateV2(prior)
-	if err != nil || next.LogicalVersion != old.LogicalVersion+1 || !sameIntegrationAttemptIdentityV2(old, next) || !validAttemptTransitionV2(old.Stage, next.Stage) {
+	if err != nil || next.LogicalVersion != old.LogicalVersion+1 || !sameIntegrationAttemptIdentityV2(old, next) || !validAttemptSuccessorV2(old, next) {
 		return nil, acceptanceErrorV2(KindConflict, "integration_attempt_transition")
 	}
 	digest, _ := journalv2.ReducerStateDigestV2(old.CanonicalBytes())
@@ -367,7 +419,10 @@ type IntegrationGitPortV2 interface {
 	ObserveFence(context.Context, IntegrationFenceIntentV2) (IntegrationFenceObservationV2, bool, error)
 	EnsureWorkspace(context.Context, IntegrationWorkspaceIntentV2) (WorkspaceFacts, error)
 	MergeCandidate(context.Context, IntegrationMergeIntentV2, WorkspaceFacts) (string, *ConflictEvidence, error)
-	CompareAndSwapTarget(context.Context, IntegrationPublishIntentV2) error
+	CompareAndSwapTarget(context.Context, IntegrationPublishIntentV2) (IntegrationPublishObservationV2, error)
+	ObserveTargetPublication(context.Context, IntegrationPublishIntentV2) (IntegrationPublishObservationV2, bool, error)
+	CleanupWorkspace(context.Context, IntegrationCleanupIntentV2) (IntegrationCleanupObservationV2, error)
+	ObserveCleanup(context.Context, IntegrationCleanupIntentV2) (IntegrationCleanupObservationV2, bool, error)
 	IsAncestor(context.Context, ids.RepositoryID, string, string) (bool, error)
 }
 
@@ -399,6 +454,32 @@ type IntegrationPublishIntentV2 struct {
 	Generation                     uint64
 	FenceTokenHash                 string
 }
+
+// IntegrationPublishObservationV2 is adapter-produced evidence that the exact
+// recorded publish effect, rather than mere Git ancestry, performed the CAS.
+// A provider marker may be opaque, but it is bounded and must be stable across
+// a lost-response observation.
+type IntegrationPublishObservationV2 struct {
+	EffectID       journalv2.EffectID
+	OperationID    journalv2.OperationID
+	RepositoryID   ids.RepositoryID
+	TargetRef      string
+	ExpectedOld    string
+	Result         string
+	ObservedTarget string
+	Generation     uint64
+	FenceTokenHash string
+	ProviderMarker string
+}
+
+func (o IntegrationPublishObservationV2) validates(intent IntegrationPublishIntentV2) bool {
+	return o.EffectID == intent.EffectID && o.OperationID == intent.OperationID &&
+		o.RepositoryID == intent.RepositoryID && o.TargetRef == intent.TargetRef &&
+		o.ExpectedOld == intent.ExpectedOld && o.Result == intent.Result &&
+		o.Generation == intent.Generation && o.FenceTokenHash == intent.FenceTokenHash &&
+		validCommit(o.ObservedTarget) && acceptanceText(o.ProviderMarker, 512)
+}
+
 type IntegrationCleanupIntentV2 struct {
 	EffectID       journalv2.EffectID
 	OperationID    journalv2.OperationID
@@ -408,6 +489,24 @@ type IntegrationCleanupIntentV2 struct {
 	WorkspacePath  string
 	Generation     uint64
 	FenceTokenHash string
+}
+
+type IntegrationCleanupObservationV2 struct {
+	EffectID       journalv2.EffectID
+	OperationID    journalv2.OperationID
+	AttemptID      string
+	RepositoryID   ids.RepositoryID
+	TargetRef      string
+	WorkspacePath  string
+	Generation     uint64
+	FenceTokenHash string
+	ProviderMarker string
+}
+
+func (o IntegrationCleanupObservationV2) validates(intent IntegrationCleanupIntentV2) bool {
+	return o.EffectID == intent.EffectID && o.OperationID == intent.OperationID && o.AttemptID == intent.AttemptID &&
+		o.RepositoryID == intent.RepositoryID && o.TargetRef == intent.TargetRef && o.WorkspacePath == intent.WorkspacePath &&
+		o.Generation == intent.Generation && o.FenceTokenHash == intent.FenceTokenHash && acceptanceText(o.ProviderMarker, 512)
 }
 
 type IntegrationAuthorityServiceV2 struct {
@@ -483,7 +582,7 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 		if observed.Attempt == nil {
 			head, gitErr := s.git.TargetHead(ctx, request.RepositoryID, request.TargetRef)
 			if gitErr != nil {
-				return IntegrationAttemptStateV2{}, &Error{Kind: KindGitFailure, Message: "observe integration target", Cause: gitErr}
+				return IntegrationAttemptStateV2{}, boundedGitFailureV2("observe integration target", gitErr)
 			}
 			nextAttempt := seed
 			nextAttempt.AcceptanceDigest = proof.acceptanceDigest
@@ -533,7 +632,7 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 				}
 			}
 			if gitErr != nil || fence.Generation != target.Generation || !validAcceptanceDigest(fence.TokenDigest) {
-				return IntegrationAttemptStateV2{}, &Error{Kind: KindGitFailure, Message: "install integration fence", Cause: gitErr}
+				return IntegrationAttemptStateV2{}, boundedGitFailureV2("install integration fence", gitErr)
 			}
 			nextAttempt := attempt
 			nextAttempt.LogicalVersion++
@@ -558,7 +657,10 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 		case IntegrationAttemptAuthorityActiveV2:
 			workspace, gitErr := s.git.EnsureWorkspace(ctx, IntegrationWorkspaceIntentV2{attempt.WorkspaceEffectID, request.OperationID, request.RepositoryID, request.TargetRef, attempt.ExpectedOld, request.Candidate, attempt.TargetGeneration, attempt.FenceTokenHash})
 			if gitErr != nil {
-				return IntegrationAttemptStateV2{}, &Error{Kind: KindGitFailure, Message: "ensure integration workspace", Cause: gitErr}
+				return IntegrationAttemptStateV2{}, boundedGitFailureV2("ensure integration workspace", gitErr)
+			}
+			if !validWorkspaceFactsV2(workspace) {
+				return IntegrationAttemptStateV2{}, acceptanceErrorV2(KindGitFailure, "workspace_observation")
 			}
 			result, conflict, mergeErr := s.git.MergeCandidate(ctx, IntegrationMergeIntentV2{attempt.MergeEffectID, request.OperationID, request.RepositoryID, request.TargetRef, attempt.ExpectedOld, request.Candidate, attempt.TargetGeneration, attempt.FenceTokenHash}, workspace)
 			next := attempt
@@ -566,10 +668,18 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 			next.Workspace = workspace
 			if mergeErr != nil || conflict != nil {
 				if conflict == nil {
-					return IntegrationAttemptStateV2{}, &Error{Kind: KindGitFailure, Message: "merge candidate", Cause: mergeErr}
+					return IntegrationAttemptStateV2{}, boundedGitFailureV2("merge candidate", mergeErr)
+				}
+				// Adapter prose is never durable authority. Preserve only typed,
+				// bounded conflict evidence and a kernel-owned recovery action.
+				copyConflict := *conflict
+				copyConflict.ConflictFiles = append([]string(nil), conflict.ConflictFiles...)
+				copyConflict.GitMessage = ""
+				if !validConflictEvidenceV2(&copyConflict) {
+					return IntegrationAttemptStateV2{}, acceptanceErrorV2(KindGitFailure, "conflict_observation")
 				}
 				next.Stage = IntegrationAttemptRepairRequiredV2
-				next.Conflict = conflict
+				next.Conflict = &copyConflict
 				next.RepairAction = "submit a new immutable candidate, review, and acceptance after explicit conflict repair"
 			} else {
 				if !validCommit(result) {
@@ -594,7 +704,7 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 		case IntegrationAttemptResultObservedV2:
 			current, gitErr := s.git.TargetHead(ctx, request.RepositoryID, request.TargetRef)
 			if gitErr != nil {
-				return IntegrationAttemptStateV2{}, &Error{Kind: KindGitFailure, Message: "reobserve integration target", Cause: gitErr}
+				return IntegrationAttemptStateV2{}, boundedGitFailureV2("reobserve integration target", gitErr)
 			}
 			if current != attempt.ExpectedOld {
 				next := integrationRepairV2(attempt, current, "target moved before compare-and-swap; revalidate through a new operation")
@@ -626,14 +736,42 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 			operation, operationRevision = &op, ack.ProviderRevision
 			observed.Attempt, observed.AttemptRevision = &next, ack.ProviderRevision
 		case IntegrationAttemptPublishingV2:
-			publishErr := s.git.CompareAndSwapTarget(ctx, IntegrationPublishIntentV2{attempt.PublishEffectID, request.OperationID, request.RepositoryID, request.TargetRef, attempt.ExpectedOld, attempt.Result, attempt.TargetGeneration, attempt.FenceTokenHash})
+			intent := IntegrationPublishIntentV2{attempt.PublishEffectID, request.OperationID, request.RepositoryID, request.TargetRef, attempt.ExpectedOld, attempt.Result, attempt.TargetGeneration, attempt.FenceTokenHash}
+			publication, publishErr := s.git.CompareAndSwapTarget(ctx, intent)
+			if publishErr != nil {
+				var found bool
+				publication, found, publishErr = s.git.ObserveTargetPublication(ctx, intent)
+				if publishErr != nil {
+					return IntegrationAttemptStateV2{}, boundedGitFailureV2("observe target publication", publishErr)
+				}
+				if !found {
+					current, observeErr := s.git.TargetHead(ctx, request.RepositoryID, request.TargetRef)
+					if observeErr != nil {
+						return IntegrationAttemptStateV2{}, boundedGitFailureV2("reconcile target publication", observeErr)
+					}
+					next := integrationRepairV2(attempt, current, "publish effect is not attributable to this operation; revalidate through a new operation")
+					plan, planErr := buildIntegrationPlanV2(request, binding, operation, operationRevision, observed, nil, next, nil, proof, s.registry)
+					if planErr != nil {
+						return IntegrationAttemptStateV2{}, planErr
+					}
+					ack, err := s.publish(ctx, plan)
+					if err != nil {
+						return IntegrationAttemptStateV2{}, err
+					}
+					observed.Attempt, observed.AttemptRevision = &next, ack.ProviderRevision
+					continue
+				}
+			}
+			if !publication.validates(intent) {
+				return IntegrationAttemptStateV2{}, acceptanceErrorV2(KindStaleAuthority, "publish_effect_observation")
+			}
 			current, observeErr := s.git.TargetHead(ctx, request.RepositoryID, request.TargetRef)
 			if observeErr != nil {
-				return IntegrationAttemptStateV2{}, &Error{Kind: KindGitFailure, Message: "reconcile target publication", Cause: observeErr}
+				return IntegrationAttemptStateV2{}, boundedGitFailureV2("reconcile target publication", observeErr)
 			}
 			ancestral, ancestorErr := s.git.IsAncestor(ctx, request.RepositoryID, attempt.Result, current)
 			if ancestorErr != nil {
-				return IntegrationAttemptStateV2{}, &Error{Kind: KindGitFailure, Message: "verify published result", Cause: ancestorErr}
+				return IntegrationAttemptStateV2{}, boundedGitFailureV2("verify published result", ancestorErr)
 			}
 			if !ancestral {
 				next := integrationRepairV2(attempt, current, "target does not contain the attributable intended result")
@@ -648,11 +786,11 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 				observed.Attempt, observed.AttemptRevision = &next, ack.ProviderRevision
 				continue
 			}
-			_ = publishErr // exact observation reconciles a lost acknowledgement.
 			next := attempt
 			next.LogicalVersion++
 			next.Stage = IntegrationAttemptCompletedV2
 			next.ObservedTarget = current
+			next.CleanupStatus = CleanupEligible
 			nextTarget := target
 			nextTarget.LogicalVersion++
 			nextTarget.Stage = IntegrationTargetReleasedV2
@@ -933,6 +1071,15 @@ func validAttemptTransitionV2(old, next IntegrationAttemptStageV2) bool {
 	}
 	return false
 }
+func validAttemptSuccessorV2(old, next IntegrationAttemptStateV2) bool {
+	if old.Stage == IntegrationAttemptCompletedV2 && next.Stage == IntegrationAttemptCompletedV2 {
+		return old.CleanupStatus == CleanupEligible && next.CleanupStatus == CleanupPending && old.CleanupMarker == "" && next.CleanupMarker == "" || old.CleanupStatus == CleanupPending && next.CleanupStatus == CleanupComplete && old.CleanupMarker == "" && acceptanceText(next.CleanupMarker, 512)
+	}
+	if old.Stage == IntegrationAttemptPublishingV2 && next.Stage == IntegrationAttemptCompletedV2 {
+		return validAttemptTransitionV2(old.Stage, next.Stage) && old.CleanupStatus == "" && next.CleanupStatus == CleanupEligible && next.CleanupMarker == ""
+	}
+	return validAttemptTransitionV2(old.Stage, next.Stage) && old.CleanupStatus == "" && next.CleanupStatus == ""
+}
 func sameIntegrationTargetIdentityV2(a, b IntegrationTargetStateV2) bool {
 	a.LogicalVersion, b.LogicalVersion = 0, 0
 	a.Stage, b.Stage = "", ""
@@ -951,6 +1098,8 @@ func sameIntegrationAttemptIdentityV2(a, b IntegrationAttemptStateV2) bool {
 	a.Conflict, b.Conflict = nil, nil
 	a.RepairAction, b.RepairAction = "", ""
 	a.AcceptanceDigest, b.AcceptanceDigest = "", ""
+	a.CleanupStatus, b.CleanupStatus = "", ""
+	a.CleanupMarker, b.CleanupMarker = "", ""
 	return bytes.Equal(acceptanceCanonical(a), acceptanceCanonical(b))
 }
 func sameIntegrationAttemptRequestV2(seed, state IntegrationAttemptStateV2) bool {

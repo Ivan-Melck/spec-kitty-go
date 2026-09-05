@@ -71,7 +71,7 @@ func (e AcceptanceEvidenceV2) validate() error {
 			return acceptanceErrorV2(KindInvalid, "evidence_coordinate")
 		}
 	case EvidenceInapplicableV2:
-		if e.Coordinate != zeroCoordinate || e.LogicalVersion != 0 || e.RecordRevision != 0 || e.StateDigestSHA256 != "" || e.EvidenceID != "" || e.ApprovalID != "" || e.WaiverID != "" {
+		if e.Coordinate != zeroCoordinate || e.LogicalVersion != 0 || e.RecordRevision != 0 || e.StateDigestSHA256 != "" || !acceptanceText(e.EvidenceID, journalv2.MaxIdentityBytes) || e.ApprovalID != "" || e.WaiverID != "" {
 			return acceptanceErrorV2(KindInvalid, "inapplicable_evidence")
 		}
 	case EvidenceWaivedV2:
@@ -171,6 +171,7 @@ type AcceptanceStateV2 struct {
 	Evidence          []AcceptanceEvidenceV2          `json:"evidence"`
 	Waivers           []AcceptanceWaiverV2            `json:"waivers"`
 	PolicyRevision    string                          `json:"policy_revision"`
+	PolicyFactID      string                          `json:"policy_fact_id"`
 	RuntimeEpochID    journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
 	ActorID           ids.ActorID                     `json:"actor_id"`
 	ProcessID         ids.ProcessID                   `json:"process_id"`
@@ -179,7 +180,7 @@ type AcceptanceStateV2 struct {
 }
 
 func (s AcceptanceStateV2) Validate() error {
-	if s.SchemaVersion != 1 || s.LogicalVersion == 0 || !acceptanceText(s.AcceptanceID, journalv2.MaxIdentityBytes) || !handoff.ValidCommit(s.Candidate) || !handoff.ValidDigest(s.ContributorDigest) || !handoff.ValidDigest(s.CriteriaDigest) || !acceptanceText(s.PolicyRevision, journalv2.MaxIdentityBytes) || s.PolicyRevision != s.Governance.PolicyRevision {
+	if s.SchemaVersion != 1 || s.LogicalVersion == 0 || !acceptanceText(s.AcceptanceID, journalv2.MaxIdentityBytes) || !handoff.ValidCommit(s.Candidate) || !handoff.ValidDigest(s.ContributorDigest) || !handoff.ValidDigest(s.CriteriaDigest) || !acceptanceText(s.PolicyRevision, journalv2.MaxIdentityBytes) || !acceptanceText(s.PolicyFactID, journalv2.MaxIdentityBytes) || s.PolicyRevision != s.Governance.PolicyRevision {
 		return acceptanceErrorV2(KindInvalid, "acceptance_state")
 	}
 	for _, parse := range []func() error{
@@ -329,6 +330,7 @@ type AcceptanceAuthorityRequestV2 struct {
 	Evidence          []AcceptanceEvidenceV2
 	Waivers           []AcceptanceWaiverV2
 	PolicyRevision    string
+	PolicyFactID      string
 	RuntimeEpochID    journalv2.RuntimeEpochID
 	ActorID           ids.ActorID
 	ProcessID         ids.ProcessID
@@ -361,11 +363,17 @@ type AcceptanceEvidenceObservationV2 struct {
 	Assertion journalv2.AuthorityAssertionV2
 }
 
+type AcceptancePolicyFactObservationV2 struct {
+	Fact      review.MissionPolicyFactObservationV2
+	Assertion journalv2.AuthorityAssertionV2
+}
+
 type AcceptanceAuthorityObservationV2 struct {
 	Eligibility workgraph.ObservedEligibilityShardV2
 	Handoff     handoff.ObservationV2
 	Reviews     []review.ObservationV2
 	Evidence    []AcceptanceEvidenceObservationV2
+	PolicyFacts []AcceptancePolicyFactObservationV2
 	Assertions  []journalv2.AuthorityAssertionV2
 }
 
@@ -500,7 +508,7 @@ func (s *AcceptanceAuthorityServiceV2) Accept(ctx context.Context, request Accep
 }
 
 func prepareAcceptanceRequestV2(r AcceptanceAuthorityRequestV2) (journalv2.OperationBindingV2, AcceptanceStateV2, error) {
-	if r.ObservedAt.IsZero() || !handoff.ValidCommit(r.Candidate) || !handoff.ValidDigest(r.ContributorDigest) || r.PolicyRevision == "" || r.PolicyRevision != r.Governance.PolicyRevision {
+	if r.ObservedAt.IsZero() || !handoff.ValidCommit(r.Candidate) || !handoff.ValidDigest(r.ContributorDigest) || r.PolicyRevision == "" || !acceptanceText(r.PolicyFactID, journalv2.MaxIdentityBytes) || r.PolicyRevision != r.Governance.PolicyRevision {
 		return journalv2.OperationBindingV2{}, AcceptanceStateV2{}, acceptanceErrorV2(KindInvalid, "request")
 	}
 	reviewIDs := append([]ids.ReviewID(nil), r.ReviewIDs...)
@@ -535,7 +543,7 @@ func prepareAcceptanceRequestV2(r AcceptanceAuthorityRequestV2) (journalv2.Opera
 	if err != nil {
 		return journalv2.OperationBindingV2{}, AcceptanceStateV2{}, acceptanceErrorV2(KindInvalid, "criteria_digest")
 	}
-	state := AcceptanceStateV2{SchemaVersion: 1, LogicalVersion: 1, Stage: AcceptanceRequestedV2, AcceptanceID: r.AcceptanceID, ProjectID: r.ProjectID, MissionID: r.MissionID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID, HandoffID: r.HandoffID, RepositoryID: r.RepositoryID, Candidate: r.Candidate, ContributorDigest: r.ContributorDigest, CriteriaDigest: criteriaDigest, Evidence: evidence, Waivers: waivers, PolicyRevision: r.PolicyRevision, RuntimeEpochID: r.RuntimeEpochID, ActorID: r.ActorID, ProcessID: r.ProcessID, Governance: r.Governance, ObservedAt: r.ObservedAt.UTC().Format(time.RFC3339Nano)}
+	state := AcceptanceStateV2{SchemaVersion: 1, LogicalVersion: 1, Stage: AcceptanceRequestedV2, AcceptanceID: r.AcceptanceID, ProjectID: r.ProjectID, MissionID: r.MissionID, WorkRevisionID: r.WorkRevisionID, WorkID: r.WorkID, HandoffID: r.HandoffID, RepositoryID: r.RepositoryID, Candidate: r.Candidate, ContributorDigest: r.ContributorDigest, CriteriaDigest: criteriaDigest, Evidence: evidence, Waivers: waivers, PolicyRevision: r.PolicyRevision, PolicyFactID: r.PolicyFactID, RuntimeEpochID: r.RuntimeEpochID, ActorID: r.ActorID, ProcessID: r.ProcessID, Governance: r.Governance, ObservedAt: r.ObservedAt.UTC().Format(time.RFC3339Nano)}
 	// Reviews are populated from observed immutable review authority so callers
 	// cannot smuggle reviewer identity or verdict claims into accepted state.
 	state.Reviews = make([]AcceptedReviewV2, len(reviewIDs))
@@ -591,6 +599,34 @@ func validateAcceptanceAuthorityV2(r AcceptanceAuthorityRequestV2, observed Acce
 	wantedAssertions := map[journalv2.AggregateCoordinate]assertionExpectation{}
 	handoffCoordinate, _ := handoff.CoordinateV2(r.ProjectID, r.MissionID, r.WorkRevisionID, r.WorkID)
 	wantedAssertions[handoffCoordinate] = assertionExpectation{revision: observed.Handoff.RecordRevision, logical: journalv2.LogicalVersion(h.LogicalVersion)}
+	policyFacts := make(map[string]AcceptancePolicyFactObservationV2, len(observed.PolicyFacts))
+	for _, fact := range observed.PolicyFacts {
+		if _, duplicate := policyFacts[fact.Fact.FactID]; duplicate {
+			return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindStaleAuthority, "policy_fact_duplicate")
+		}
+		policyFacts[fact.Fact.FactID] = fact
+	}
+	consumePolicyFact := func(factID string, detail journalv2.Digest) error {
+		observedFact, ok := policyFacts[factID]
+		fact := observedFact.Fact
+		if !ok || !fact.Found || fact.ProjectID != journalv2.ProjectID(r.ProjectID) || fact.MissionID != journalv2.MissionID(r.MissionID) || fact.FactID != factID || fact.Kind != "decision" || fact.Status != "resolved" || fact.LogicalVersion == 0 || fact.RecordRevision == 0 || fact.DetailDigest != detail {
+			return acceptanceErrorV2(KindPolicyRefused, "policy_fact")
+		}
+		coordinate, coordinateErr := acceptancePolicyCoordinateV2(r.ProjectID, r.MissionID, factID)
+		if coordinateErr != nil {
+			return acceptanceErrorV2(KindPolicyRefused, "policy_coordinate")
+		}
+		assertion := observedFact.Assertion
+		if assertion.Target().Coordinate != coordinate || assertion.Kind() != journalv2.ConditionRecordRevision || assertion.ObservedRevision() != fact.RecordRevision || assertion.ExpectedLogicalVersion() != fact.LogicalVersion || assertion.ObservedValueDigest().IsZero() {
+			return acceptanceErrorV2(KindStaleAuthority, "policy_assertion")
+		}
+		wantedAssertions[coordinate] = assertionExpectation{revision: fact.RecordRevision, logical: fact.LogicalVersion}
+		delete(policyFacts, factID)
+		return nil
+	}
+	if err := consumePolicyFact(r.PolicyFactID, AcceptancePolicyRevisionDigestV2(r)); err != nil {
+		return journalv2.EligibilityGuardTransition{}, nil, nil, err
+	}
 	for i, item := range observed.Reviews {
 		if item.State == nil {
 			return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindNotApproved, "review")
@@ -601,6 +637,11 @@ func validateAcceptanceAuthorityV2(r AcceptanceAuthorityRequestV2, observed Acce
 		}
 		if _, self := contributors[state.ReviewerActorID]; self && state.Exception == nil {
 			return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindNotApproved, "reviewer_independence")
+		}
+		if state.Exception != nil {
+			if err := consumePolicyFact(state.Exception.ExceptionID, state.Exception.Digest()); err != nil {
+				return journalv2.EligibilityGuardTransition{}, nil, nil, err
+			}
 		}
 		digest, _ := journalv2.ReducerStateDigestV2(state.CanonicalBytes())
 		acceptedReviews = append(acceptedReviews, AcceptedReviewV2{ReviewID: state.ReviewID, ReviewerActor: state.ReviewerActorID, LogicalVersion: state.LogicalVersion, StateDigest: digest.String()})
@@ -638,12 +679,23 @@ func validateAcceptanceAuthorityV2(r AcceptanceAuthorityRequestV2, observed Acce
 			if !ok || waiver.CriterionID != evidence.CriterionID || waiver.ProjectID != r.ProjectID || waiver.MissionID != r.MissionID || waiver.WorkRevisionID != r.WorkRevisionID || waiver.WorkID != r.WorkID || waiver.PolicyRevision != r.PolicyRevision || when.Before(from) || !when.Before(through) {
 				return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindPolicyRefused, "waiver")
 			}
+			detail, parseErr := journalv2.ParseDigest("waiver_content", waiver.ContentDigest)
+			if parseErr != nil {
+				return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindPolicyRefused, "waiver_digest")
+			}
+			if err := consumePolicyFact(waiver.WaiverID, detail); err != nil {
+				return journalv2.EligibilityGuardTransition{}, nil, nil, err
+			}
 		case EvidenceInapplicableV2:
-			// Explicit policy applicability is evidence in the immutable request;
-			// there is deliberately no artifact or filesystem observation.
+			if err := consumePolicyFact(evidence.EvidenceID, AcceptanceApplicabilityDigestV2(r, evidence)); err != nil {
+				return journalv2.EligibilityGuardTransition{}, nil, nil, err
+			}
 		default:
 			return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindInvalid, "evidence_disposition")
 		}
+	}
+	if len(policyFacts) != 0 {
+		return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindStaleAuthority, "unexpected_policy_fact")
 	}
 	if len(observed.Assertions) != len(wantedAssertions) {
 		return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindStaleAuthority, "assertions")
@@ -660,6 +712,46 @@ func validateAcceptanceAuthorityV2(r AcceptanceAuthorityRequestV2, observed Acce
 		return journalv2.EligibilityGuardTransition{}, nil, nil, acceptanceErrorV2(KindStaleAuthority, "assertions")
 	}
 	return token.Transition(), append([]journalv2.AuthorityAssertionV2(nil), observed.Assertions...), acceptedReviews, nil
+}
+
+func acceptancePolicyCoordinateV2(projectID ids.ProjectID, missionID ids.MissionID, factID string) (journalv2.AggregateCoordinate, error) {
+	return journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+factID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(projectID), MissionID: journalv2.MissionID(missionID)})
+}
+
+// AcceptancePolicyRevisionDigestV2 is the exact semantic payload a resolved
+// mission policy fact must authorize. It is exported for provider adapters and
+// qualification fixtures; callers cannot grant authority by computing it.
+func AcceptancePolicyRevisionDigestV2(r AcceptanceAuthorityRequestV2) journalv2.Digest {
+	payload := acceptanceCanonical(struct {
+		ProjectID      ids.ProjectID                   `json:"project_id"`
+		MissionID      ids.MissionID                   `json:"mission_id"`
+		WorkRevisionID ids.WorkRevisionID              `json:"work_revision_id"`
+		WorkID         ids.WorkID                      `json:"work_id"`
+		PolicyRevision string                          `json:"policy_revision"`
+		PolicyFactID   string                          `json:"policy_fact_id"`
+		Governance     execution.ExecutionGovernanceV2 `json:"governance"`
+	}{r.ProjectID, r.MissionID, r.WorkRevisionID, r.WorkID, r.PolicyRevision, r.PolicyFactID, r.Governance})
+	digest, _ := journalv2.ReducerStateDigestV2(payload)
+	return digest
+}
+
+// AcceptanceApplicabilityDigestV2 binds a producer's inapplicability result
+// to the exact criterion, scope, policy revision, and durable policy fact.
+func AcceptanceApplicabilityDigestV2(r AcceptanceAuthorityRequestV2, evidence AcceptanceEvidenceV2) journalv2.Digest {
+	payload := acceptanceCanonical(struct {
+		ProjectID      ids.ProjectID      `json:"project_id"`
+		MissionID      ids.MissionID      `json:"mission_id"`
+		WorkRevisionID ids.WorkRevisionID `json:"work_revision_id"`
+		WorkID         ids.WorkID         `json:"work_id"`
+		PolicyRevision string             `json:"policy_revision"`
+		CriterionID    string             `json:"criterion_id"`
+		Kind           string             `json:"kind"`
+		Producer       string             `json:"producer"`
+		PolicyBasis    string             `json:"policy_basis"`
+		PolicyFactID   string             `json:"policy_fact_id"`
+	}{r.ProjectID, r.MissionID, r.WorkRevisionID, r.WorkID, r.PolicyRevision, evidence.CriterionID, evidence.Kind, evidence.Producer, evidence.PolicyBasis, evidence.EvidenceID})
+	digest, _ := journalv2.ReducerStateDigestV2(payload)
+	return digest
 }
 
 func buildAcceptancePlanV2(r AcceptanceAuthorityRequestV2, binding journalv2.OperationBindingV2, prior *AcceptanceStateV2, priorAcceptanceRevision uint64, priorOperation *journalv2.OperationStateV2, priorOperationRevision uint64, next AcceptanceStateV2, eligibility journalv2.EligibilityGuardTransition, assertions []journalv2.AuthorityAssertionV2, registry journalv2.EventRegistryV2) (AcceptancePlanV2, error) {
