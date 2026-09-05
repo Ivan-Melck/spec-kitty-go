@@ -1441,8 +1441,8 @@ func progressFixture() *fakeProgressQuery {
 		return projection.AggregateViewV2{DatabaseID: "database-progress", ProjectionRevision: 42, RuntimeEpochID: "epoch-progress", ProjectionDigest: repeatByte('b', 64), Coordinate: coordinate, LogicalVersion: 1, LastEventID: journalv2.EventID("event-" + id), LastPublicationID: journalv2.PublicationID(repeatByte('c', 64)), StateDigest: repeatByte('d', 64), CanonicalState: []byte(state)}
 	}
 	items := []projection.AggregateViewV2{
-		makeItem("mission", "mission-1", `{"current_work_revision_id":"revision-4","lifecycle":"open"}`),
-		makeItem("workgraph", "revision-4", `{"generation":4,"status":"current"}`),
+		makeItem("mission", "mission-1", `{"lifecycle":"open"}`),
+		makeItem("workgraph", "revision-4", `{"current_revision":{"generation":4,"work_revision_id":"revision-4"},"logical_version":1,"status":"current"}`),
 		makeItem("execution_slot", "work-1", `{"actor_id":"agent-a","lease_id":"lease-1","process_id":"process-a","run_id":"run-1","stage":"active","work_id":"work-1"}`),
 		makeItem("external_effect", "effect-1", `{"stage":"reconciliation_required"}`),
 		makeItem("review_slot", "review-1", `{"stage":"approved"}`),
