@@ -32,14 +32,14 @@ func TestHarnessProductionLifecycleAndTypedQueries(t *testing.T) {
 }
 
 func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
-	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: t.Name()})
+	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: t.Name(), CandidateVerifier: sourceBoundCandidateVerifier{}})
 	projectID, missionID := "project-two-item", "mission-two-item"
-	h.createMission(projectID, missionID, "operation-mission-create")
+	revision, governance := twoItemRevision(t, projectID, missionID)
+	missionResult := h.createMissionWithRevision(projectID, missionID, "operation-mission-create", revision.ID())
 	assertUniversalInvariants(t, h, projectID, missionID, "mission-publication")
 	prior, _ := h.restart()
 	assertStaleEpochRefusesBeforeRepository(t, h, prior)
 
-	revision, governance := twoItemRevision(t, projectID, missionID)
 	plan, err := workgraph.BuildFinalizationAuthorityV2(workgraph.FinalizationPlanInputV2{
 		Context: workgraph.AuthorityContextV2{
 			OperationID: "operation-workgraph", RuntimeEpochID: h.host.RuntimeEpochID(),
@@ -81,7 +81,7 @@ func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
 				WorkRevisionID: revision.ID(), WorkID: workID,
 				RunID: ids.RunID("run-" + workID.String()), ActorID: ids.ActorID("actor-" + workID.String()),
 				ProcessID: ids.ProcessID("process-" + workID.String()), LeaseID: ids.LeaseID("lease-" + workID.String()),
-				Generation: 1, ObservedAt: now, Deadline: now.Add(time.Minute), RuntimeEpochID: h.host.RuntimeEpochID(),
+				Generation: 1, ObservedAt: now, Deadline: now.Add(time.Hour), RuntimeEpochID: h.host.RuntimeEpochID(),
 				Governance:       governance,
 				OperationEventID: journalv2.EventID("event-operation-" + workID.String()),
 				SlotEventID:      journalv2.EventID("event-slot-" + workID.String()),
@@ -92,12 +92,15 @@ func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
 	}
 	ready.Wait()
 	close(start)
+	admitted := make(map[ids.WorkID]execution.ExecutionSlotStateV2, 2)
 	for range 2 {
 		if err := <-errs; err != nil {
 			t.Fatalf("concurrent work admission: %v", err)
 		}
 		if result := <-results; result.State.LogicalVersion == 0 || result.State.Fence == "" {
 			t.Fatal("concurrent work admission omitted current authority")
+		} else {
+			admitted[result.State.WorkID] = result.State
 		}
 	}
 	progress, err := h.host.Progress().Mission(journalv2.ProjectID(projectID), journalv2.MissionID(missionID))
@@ -107,14 +110,25 @@ func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
 	if progress.TotalWork != 2 || len(progress.Running) != 2 {
 		t.Fatalf("two-item progress lost parallel authority: total=%d running=%d progress=%+v", progress.TotalWork, len(progress.Running), progress)
 	}
+	completeTwoItemMission(t, h, missionResult.State(), revision, governance, admitted)
+	terminal, err := h.host.Progress().Mission(journalv2.ProjectID(projectID), journalv2.MissionID(missionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Integration targets are host-scoped serialization authority shared by
+	// missions. Mission progress reports the two durable mission-scoped
+	// attempts, not the mutable host lock as duplicated historical evidence.
+	if terminal.Lifecycle != "completed" || len(terminal.Running) != 0 || len(terminal.Reviews) != 2 || len(terminal.Acceptance) != 2 || len(terminal.Integration) != 2 {
+		t.Fatalf("incomplete terminal mission: lifecycle=%s revision=%s generation=%d total=%d running=%d reviews=%d acceptance=%d integration=%d projection=%d", terminal.Lifecycle, terminal.WorkRevisionID, terminal.Generation, terminal.TotalWork, len(terminal.Running), len(terminal.Reviews), len(terminal.Acceptance), len(terminal.Integration), terminal.ProjectionRevision)
+	}
 	terminalDigest := semanticProgressDigest(t, h, projectID, missionID)
-	assertUniversalInvariants(t, h, projectID, missionID, "two-items-running")
+	assertUniversalInvariants(t, h, projectID, missionID, "two-items-terminal")
 	prior, _ = h.restart()
 	assertStaleEpochRefusesBeforeRepository(t, h, prior)
 	if got := semanticProgressDigest(t, h, projectID, missionID); got != terminalDigest {
 		t.Fatalf("two-item restart changed terminal authority: before=%s after=%s", terminalDigest, got)
 	}
-	assertUniversalInvariants(t, h, projectID, missionID, "two-items-restored")
+	assertUniversalInvariants(t, h, projectID, missionID, "two-items-terminal-restored")
 }
 
 func twoItemRevision(t *testing.T, projectID, missionID string) (workgraph.RevisionV2, governancecontext.Context) {

@@ -30,10 +30,11 @@ const productionScenarioSchemaVersion uint32 = 1
 // may obtain the executable from an environment variable, but the harness does
 // not consult process-global configuration.
 type ProductionConfig struct {
-	ExecutablePath  string
-	RepositoryRoot  string
-	Seed            string
-	CheckpointEvery int
+	ExecutablePath    string
+	RepositoryRoot    string
+	Seed              string
+	CheckpointEvery   int
+	CandidateVerifier handoff.CandidateVerifier
 }
 
 type portableHarness struct {
@@ -88,20 +89,25 @@ func newPortableHarness(t *testing.T, config ProductionConfig) *portableHarness 
 func (h *portableHarness) start() {
 	h.t.Helper()
 	h.starts++
+	verifier := h.config.CandidateVerifier
+	if verifier == nil {
+		verifier = closedCandidateVerifier{}
+	}
 	config := productionruntime.Config{
-		ControlRoot:                 h.data,
-		HostAuthorityID:             journalv2.HostAuthorityID("host-" + shortDigest(h.config.Seed)),
-		AuthorityBindingOperationID: "bind-" + shortDigest(h.config.Seed),
-		M1AdoptionRecordPath:        filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-adoption.json"),
+		ControlRoot:                          h.data,
+		HostAuthorityID:                      journalv2.HostAuthorityID("host-" + shortDigest(h.config.Seed)),
+		AuthorityBindingOperationID:          "bind-" + shortDigest(h.config.Seed),
+		M1AdoptionRecordPath:                 filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-adoption.json"),
+		AssertionExtensionAdoptionRecordPath: filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json"),
 		Sidecar: sidecar.LifecycleConfig{
 			ExecutablePath:      h.config.ExecutablePath,
-			AdmissionRecordPath: filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-admission.json"),
+			AdmissionRecordPath: filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-assertion-extension-admission.json"),
 			RuntimeRoot:         h.runtime,
 			DataDirectory:       h.data,
 			SupervisorRunID:     fmt.Sprintf("scenario-%s-%d", shortDigest(h.config.Seed), h.starts),
 			ProductPolicySHA256: strings.Repeat("e", 64),
 		},
-		CandidateVerifier: closedCandidateVerifier{},
+		CandidateVerifier: verifier,
 		IntegrationGit:    h.git,
 		CheckpointEvery:   h.config.CheckpointEvery,
 		MonitorInterval:   25 * time.Millisecond,
@@ -147,6 +153,10 @@ func (h *portableHarness) close() {
 }
 
 func (h *portableHarness) createMission(project, missionID, operation string) mission.MissionAuthorityResultV2 {
+	return h.createMissionWithRevision(project, missionID, operation, "")
+}
+
+func (h *portableHarness) createMissionWithRevision(project, missionID, operation string, revisionID ids.WorkRevisionID) mission.MissionAuthorityResultV2 {
 	h.t.Helper()
 	now := time.Date(2026, 9, 5, 12, 0, h.starts, 0, time.UTC)
 	digest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"portable-scenario"}`))
@@ -157,7 +167,8 @@ func (h *portableHarness) createMission(project, missionID, operation string) mi
 		ProjectID: journalv2.ProjectID(project), MissionID: journalv2.MissionID(missionID),
 		DefinitionRevision: "definition-1", DefinitionDigest: digest,
 		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "active",
-		LastOperationID: journalv2.OperationID(operation), ObservedAt: now.Format(time.RFC3339),
+		CurrentWorkRevisionID: journalv2.WorkRevisionID(revisionID),
+		LastOperationID:       journalv2.OperationID(operation), ObservedAt: now.Format(time.RFC3339),
 	})
 	if err != nil {
 		h.t.Fatal(err)
@@ -222,55 +233,153 @@ func (closedCandidateVerifier) Verify(context.Context, handoff.AuthorityScope, s
 }
 func (closedCandidateVerifier) RevalidateRefusal(context.Context, handoff.Refusal) error { return nil }
 
+// sourceBoundCandidateVerifier returns only the immutable facts present in the
+// authority scope and exact candidate supplied by the production command. It
+// is deliberately deterministic: scenarios test the kernel protocol, not a
+// particular Git executable's output format.
+type sourceBoundCandidateVerifier struct{}
+
+func (sourceBoundCandidateVerifier) Verify(_ context.Context, scope handoff.AuthorityScope, candidate string) (handoff.CandidateEvidence, error) {
+	return handoff.CandidateEvidence{
+		Candidate: candidate, PinnedBase: scope.PinnedBase,
+		OwnedBranch: scope.OwnedBranch, ObservedBranchHead: candidate,
+	}, nil
+}
+func (sourceBoundCandidateVerifier) RevalidateRefusal(context.Context, handoff.Refusal) error {
+	return nil
+}
+
 type attributableGit struct {
-	mu    sync.Mutex
-	calls []string
+	mu           sync.Mutex
+	calls        []string
+	enabled      bool
+	targets      map[string]string
+	fences       map[journalv2.OperationID]integration.IntegrationFenceObservationV2
+	publications map[journalv2.EffectID]integration.IntegrationPublishObservationV2
+	cleanups     map[journalv2.EffectID]integration.IntegrationCleanupObservationV2
 }
 
 func newAttributableGit() *attributableGit { return &attributableGit{} }
+func integrationTargetKey(repository ids.RepositoryID, target string) string {
+	return repository.String() + "\x00" + target
+}
+func (g *attributableGit) enable(repository ids.RepositoryID, target, head string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.enabled = true
+	g.targets = map[string]string{integrationTargetKey(repository, target): head}
+	g.fences = make(map[journalv2.OperationID]integration.IntegrationFenceObservationV2)
+	g.publications = make(map[journalv2.EffectID]integration.IntegrationPublishObservationV2)
+	g.cleanups = make(map[journalv2.EffectID]integration.IntegrationCleanupObservationV2)
+}
 func (g *attributableGit) record(name string) {
 	g.mu.Lock()
 	g.calls = append(g.calls, name)
 	g.mu.Unlock()
 }
 func (g *attributableGit) count() int { g.mu.Lock(); defer g.mu.Unlock(); return len(g.calls) }
-func (g *attributableGit) TargetHead(context.Context, ids.RepositoryID, string) (string, error) {
+func (g *attributableGit) TargetHead(_ context.Context, repository ids.RepositoryID, target string) (string, error) {
 	g.record("target_head")
-	return "", errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.enabled {
+		return "", errors.New("repository evidence not configured")
+	}
+	return g.targets[integrationTargetKey(repository, target)], nil
 }
-func (g *attributableGit) InstallFence(context.Context, integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, error) {
+func (g *attributableGit) InstallFence(_ context.Context, intent integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, error) {
 	g.record("install_fence")
-	return integration.IntegrationFenceObservationV2{}, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.enabled {
+		return integration.IntegrationFenceObservationV2{}, errors.New("repository evidence not configured")
+	}
+	observation := integration.IntegrationFenceObservationV2{TokenDigest: strings.Repeat("a", 64), Generation: intent.Generation}
+	g.fences[intent.OperationID] = observation
+	return observation, nil
 }
-func (g *attributableGit) ObserveFence(context.Context, integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, bool, error) {
+func (g *attributableGit) ObserveFence(_ context.Context, intent integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, bool, error) {
 	g.record("observe_fence")
-	return integration.IntegrationFenceObservationV2{}, false, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	observation, found := g.fences[intent.OperationID]
+	return observation, found, nil
 }
-func (g *attributableGit) EnsureWorkspace(context.Context, integration.IntegrationWorkspaceIntentV2) (integration.WorkspaceFacts, error) {
+func (g *attributableGit) EnsureWorkspace(_ context.Context, intent integration.IntegrationWorkspaceIntentV2) (integration.WorkspaceFacts, error) {
 	g.record("ensure_workspace")
-	return integration.WorkspaceFacts{}, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.enabled {
+		return integration.WorkspaceFacts{}, errors.New("repository evidence not configured")
+	}
+	return integration.WorkspaceFacts{Path: "/managed/scenario-integration", Registered: true, Detached: true, Clean: true, Head: intent.ExpectedOld, CandidateReachable: true}, nil
 }
-func (g *attributableGit) MergeCandidate(context.Context, integration.IntegrationMergeIntentV2, integration.WorkspaceFacts) (string, *integration.ConflictEvidence, error) {
+func (g *attributableGit) MergeCandidate(_ context.Context, intent integration.IntegrationMergeIntentV2, _ integration.WorkspaceFacts) (string, *integration.ConflictEvidence, error) {
 	g.record("merge_candidate")
-	return "", nil, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.enabled {
+		return "", nil, errors.New("repository evidence not configured")
+	}
+	// A deterministic merge result remains source-bound to both inputs while
+	// satisfying the Git object-ID contract.
+	sum := sha256.Sum256([]byte(intent.ExpectedOld + "\x00" + intent.Candidate))
+	return fmt.Sprintf("%x", sum[:20]), nil, nil
 }
-func (g *attributableGit) CompareAndSwapTarget(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, error) {
+func (g *attributableGit) CompareAndSwapTarget(_ context.Context, intent integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, error) {
 	g.record("publish_target")
-	return integration.IntegrationPublishObservationV2{}, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.enabled || g.targets[integrationTargetKey(intent.RepositoryID, intent.TargetRef)] != intent.ExpectedOld {
+		return integration.IntegrationPublishObservationV2{}, errors.New("target moved")
+	}
+	g.targets[integrationTargetKey(intent.RepositoryID, intent.TargetRef)] = intent.Result
+	observation := integration.IntegrationPublishObservationV2{
+		EffectID: intent.EffectID, OperationID: intent.OperationID,
+		RepositoryID: intent.RepositoryID, TargetRef: intent.TargetRef,
+		ExpectedOld: intent.ExpectedOld, Result: intent.Result, ObservedTarget: intent.Result,
+		Generation: intent.Generation, FenceTokenHash: intent.FenceTokenHash,
+		ProviderMarker: "scenario-ref:" + string(intent.EffectID),
+	}
+	g.publications[intent.EffectID] = observation
+	return observation, nil
 }
-func (g *attributableGit) ObserveTargetPublication(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, bool, error) {
+func (g *attributableGit) ObserveTargetPublication(_ context.Context, intent integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, bool, error) {
 	g.record("observe_target")
-	return integration.IntegrationPublishObservationV2{}, false, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	observation, found := g.publications[intent.EffectID]
+	return observation, found, nil
 }
-func (g *attributableGit) CleanupWorkspace(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, error) {
+func (g *attributableGit) CleanupWorkspace(_ context.Context, intent integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, error) {
 	g.record("cleanup_workspace")
-	return integration.IntegrationCleanupObservationV2{}, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.enabled {
+		return integration.IntegrationCleanupObservationV2{}, errors.New("repository evidence not configured")
+	}
+	observation := integration.IntegrationCleanupObservationV2{
+		EffectID: intent.EffectID, OperationID: intent.OperationID, AttemptID: intent.AttemptID,
+		RepositoryID: intent.RepositoryID, TargetRef: intent.TargetRef, WorkspacePath: intent.WorkspacePath,
+		Generation: intent.Generation, FenceTokenHash: intent.FenceTokenHash,
+		ProviderMarker: "scenario-cleanup:" + string(intent.EffectID),
+	}
+	g.cleanups[intent.EffectID] = observation
+	return observation, nil
 }
-func (g *attributableGit) ObserveCleanup(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, bool, error) {
+func (g *attributableGit) ObserveCleanup(_ context.Context, intent integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, bool, error) {
 	g.record("observe_cleanup")
-	return integration.IntegrationCleanupObservationV2{}, false, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	observation, found := g.cleanups[intent.EffectID]
+	return observation, found, nil
 }
-func (g *attributableGit) IsAncestor(context.Context, ids.RepositoryID, string, string) (bool, error) {
+func (g *attributableGit) IsAncestor(_ context.Context, _ ids.RepositoryID, ancestor, current string) (bool, error) {
 	g.record("is_ancestor")
-	return false, errors.New("repository evidence not configured")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.enabled {
+		return false, errors.New("repository evidence not configured")
+	}
+	return ancestor == current, nil
 }
