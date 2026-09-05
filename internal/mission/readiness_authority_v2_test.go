@@ -2,13 +2,120 @@ package mission
 
 import (
 	"bytes"
+	"context"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
+
+type readinessAckCommitPort struct{}
+
+func (readinessAckCommitPort) Commit(_ context.Context, plan journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error) {
+	return journalv2.NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 17, 17, plan.MutationCount(), plan.AssertionCount())
+}
+
+func acknowledgedInitialRevisionFixture(t *testing.T) (workgraph.RevisionV2, journalv2.AcknowledgedPublicationV2) {
+	t.Helper()
+	observation := missionFinalizationObservation(t, "provider-acknowledged")
+	revision, err := workgraph.BuildGenerationOneCandidateV3(workgraph.GenerationOneCandidateV3Params{
+		Observation: observation, PlanningSourceCommit: strings.Repeat("a", 40),
+		MissionDefinition: workgraph.MissionDefinitionIdentity{Key: "software-development", Version: 1, Digest: strings.Repeat("b", 64)},
+		DependencyPolicy:  workgraph.DependencyApprovedOrDone, FinalizedBy: "actor-finalizer",
+		FinalizedAt: time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC), GovernanceContextID: "governance-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := workgraph.BuildFinalizationAuthorityV2(workgraph.FinalizationPlanInputV2{
+		Context: workgraph.AuthorityContextV2{
+			OperationID: "operation-acknowledged-finalize", RuntimeEpochID: "epoch-acknowledged-finalize",
+			ActorID: "actor-finalizer", ProcessID: "process-finalizer", DoctrineRevision: "doctrine-v1", ProfileRevision: "profile-v1", PolicyRevision: "policy-v1",
+			Governance: []string{"governance-v1"}, ObservedCreatedAt: "2026-09-04T12:00:00Z", OperationEventID: "event-acknowledged-finalize-operation", DomainEventID: "event-acknowledged-finalize-workgraph",
+		},
+		Revision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := plan.Publication()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := journalv2.DefaultEventRegistryV2()
+	workgraphRegistrations := workgraph.ReducerRegistrationsV2()
+	workgraphByFamily := make(map[string]journalv2.ReducerRegistration, len(workgraphRegistrations))
+	for _, registration := range workgraphRegistrations {
+		workgraphByFamily[registration.Family] = registration
+	}
+	testDigest, _ := journalv2.ReducerStateDigestV2([]byte(`{"test":"unused-reducer"}`))
+	registrations := make([]journalv2.ReducerRegistration, 0, len(journalv2.ExpectedEventTuples()))
+	for _, tuple := range journalv2.ExpectedEventTuples() {
+		registration := journalv2.ReducerRegistration{Family: tuple.Family, EventSchemaVersion: tuple.EventSchemaVersion, ReducerVersion: tuple.ReducerVersion, Owner: tuple.Owner, ImplementationDigest: testDigest, Reduce: func(_ []byte, event journalv2.EventEnvelopeV2) ([]byte, error) { return event.Payload(), nil }}
+		if tuple.Family == "operation" {
+			registration.ImplementationDigest = journalv2.OperationReducerImplementationDigestV2()
+			registration.Reduce = journalv2.ReduceOperationStateV2
+		} else if exact, ok := workgraphByFamily[tuple.Family]; ok {
+			registration = exact
+		}
+		registrations = append(registrations, registration)
+	}
+	reducers, err := journalv2.NewReducerSetV2(registry, registrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(readinessAckCommitPort{}, tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acknowledged, err := coordinator.Publish(t.Context(), sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision, acknowledged
+}
+
+func substitutedInitialRevisionFixture(t *testing.T) workgraph.RevisionV2 {
+	t.Helper()
+	observation := missionFinalizationObservation(t, "provider-acknowledged")
+	revision, err := workgraph.BuildGenerationOneCandidateV3(workgraph.GenerationOneCandidateV3Params{
+		Observation: observation, PlanningSourceCommit: strings.Repeat("a", 40),
+		MissionDefinition: workgraph.MissionDefinitionIdentity{Key: "software-development", Version: 1, Digest: strings.Repeat("b", 64)},
+		DependencyPolicy:  workgraph.DependencyApprovedOrDone, FinalizedBy: "actor-substituted",
+		FinalizedAt: time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC), GovernanceContextID: "governance-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision
+}
+
+func TestAcknowledgedInitialWorkRevisionSelectionBindsExactV2Publication(t *testing.T) {
+	revision, acknowledged := acknowledgedInitialRevisionFixture(t)
+	selection, err := SealAcknowledgedInitialWorkRevisionSelectionV2(revision, acknowledged)
+	if err != nil || selection.IsZero() || selection.Head().ID() != journalv2.WorkRevisionID(revision.ID()) || selection.Head().Generation() != 1 {
+		t.Fatalf("acknowledged revision was not selectable: selection=%+v err=%v", selection, err)
+	}
+	decoded, err := decodeWorkRevisionSelectionV2(selection.CanonicalBytes())
+	if err != nil || decoded.Head().ContentDigest() != revision.ContentDigest() {
+		t.Fatalf("acknowledged evidence did not round trip: %v", err)
+	}
+
+	substitute := substitutedInitialRevisionFixture(t)
+	if _, err := SealAcknowledgedInitialWorkRevisionSelectionV2(substitute, acknowledged); !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidRequestV2) {
+		t.Fatalf("substituted revision inherited acknowledgement: %v", err)
+	}
+	if _, err := SealAcknowledgedInitialWorkRevisionSelectionV2(revision, journalv2.AcknowledgedPublicationV2{}); !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidRequestV2) {
+		t.Fatalf("unacknowledged revision became selectable: %v", err)
+	}
+}
 
 func TestReadinessAuthorityStateHasNoPhaseCursorAndFactDigestIgnoresActivityOrder(t *testing.T) {
 	first := readinessAuthorityStateFixture(t, 3, 9, "2026-09-04T12:03:00Z")
