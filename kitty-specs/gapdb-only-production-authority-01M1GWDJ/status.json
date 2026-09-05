@@ -501,21 +501,22 @@
         "Product candidate 1e036307; lane tip 5c9fab83 contains only the tool-required planning-artifact cleanup. Focused tests, targeted race, vet, staticcheck, diff check, and architecture gate pass; inherited full GapDB race campaign exceeded Go's default 10m timeout without a race report."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP11-outbox-query-projections-and-capability-conformance/review-cycle-1.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP11-outbox-query-projections-and-capability-conformance/review-cycle-1.md",
         "reviewer": "mill-wp11-independent-reviewer",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 2789753,
-      "shell_pid_created_at": "1788596162.5",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T054": "done",
-        "T055": "done",
-        "T056": "done",
-        "T057": "done",
-        "T058": "done"
+        "T054": "planned",
+        "T055": "planned",
+        "T056": "planned",
+        "T057": "planned",
+        "T058": "planned"
       }
     },
     "WP12": {
