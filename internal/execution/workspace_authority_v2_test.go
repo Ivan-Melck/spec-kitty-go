@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,20 +13,23 @@ import (
 )
 
 type workspacePortProbeV2 struct {
-	resolution ExecutionOperationResolutionV2
-	execution  ExecutionSlotObservationV2
-	workspace  WorkspaceAuthorityObservationV2
-	plans      []WorkspaceAuthorityPlanV2
+	resolution    ExecutionOperationResolutionV2
+	resolutionErr error
+	execution     ExecutionSlotObservationV2
+	executionErr  error
+	workspace     WorkspaceAuthorityObservationV2
+	workspaceErr  error
+	plans         []WorkspaceAuthorityPlanV2
 }
 
 func (p *workspacePortProbeV2) ResolveExecutionOperation(context.Context, journalv2.OperationBindingV2) (ExecutionOperationResolutionV2, error) {
-	return p.resolution, nil
+	return p.resolution, p.resolutionErr
 }
 func (p *workspacePortProbeV2) ObserveExecutionSlot(context.Context, journalv2.AggregateCoordinate) (ExecutionSlotObservationV2, error) {
-	return p.execution, nil
+	return p.execution, p.executionErr
 }
 func (p *workspacePortProbeV2) ObserveWorkspace(context.Context, journalv2.AggregateCoordinate) (WorkspaceAuthorityObservationV2, error) {
-	return p.workspace, nil
+	return p.workspace, p.workspaceErr
 }
 func (p *workspacePortProbeV2) PublishWorkspace(_ context.Context, plan WorkspaceAuthorityPlanV2) (WorkspaceAuthorityAckV2, error) {
 	p.plans = append(p.plans, plan)
@@ -84,6 +88,7 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	}
 	rebindRequest := WorkspaceEpochRebindRequestV2{
 		ProjectID: boundBeforeRebind.ProjectID, MissionID: boundBeforeRebind.MissionID, WorkRevisionID: boundBeforeRebind.WorkRevisionID, WorkID: boundBeforeRebind.WorkID,
+		ActorID: boundBeforeRebind.ActorID, ProcessID: boundBeforeRebind.ProcessID, OriginatingRuntimeEpochID: "epoch-2",
 		OperationID: "operation-workspace-runtime-epoch-rebind", OperationEventID: "event-operation-runtime-epoch-rebind", ExecutionEventID: "event-execution-runtime-epoch-rebind", WorkspaceEventID: "event-workspace-runtime-epoch-rebind",
 		Governance: boundBeforeRebind.Governance, ObservedAt: rebindAt,
 	}
@@ -98,6 +103,18 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	if len(rebindPlan.Events()) != 3 || len(rebindPlan.Heads()) != 3 || rebindPlan.WorkspacePathClaim() != nil {
 		t.Fatal("bad epoch rebind membership")
 	}
+	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationExactV2, State: rebindPlan.OperationState(), RecordRevision: 77}
+	port.executionErr, port.workspaceErr = errors.New("must not observe after exact replay"), errors.New("must not observe after exact replay")
+	rotatedService, _ := NewWorkspaceAuthorityServiceV2(port, &executionEpochProbeV2{epoch: "epoch-3"}, journalv2.DefaultEventRegistryV2())
+	replayedAcrossRotation, err := rotatedService.RebindRuntimeEpoch(t.Context(), rebindRequest)
+	if err != nil || !replayedAcrossRotation.Replayed || replayedAcrossRotation.Execution.RuntimeEpochID != "epoch-2" || len(port.plans) != 2 {
+		t.Fatalf("exact rebind did not replay before post-restart observations: result=%+v plans=%d err=%v", replayedAcrossRotation, len(port.plans), err)
+	}
+	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationConflictV2}
+	if _, err := rotatedService.RebindRuntimeEpoch(t.Context(), rebindRequest); !IsKind(err, KindIdempotencyConflict) || len(port.plans) != 2 {
+		t.Fatalf("rebind conflict did not precede post-restart observations: plans=%d err=%v", len(port.plans), err)
+	}
+	port.executionErr, port.workspaceErr = nil, nil
 
 	bound := rebound.Execution
 	priorWorkspace := rebound.Workspace
@@ -146,7 +163,7 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 		t.Fatal(err)
 	}
 	rebindInternalRequest := WorkspaceAuthorityRequestV2{Kind: WorkspaceRebindV2, OperationID: rebindRequest.OperationID, OperationEventID: rebindRequest.OperationEventID, ExecutionEventID: rebindRequest.ExecutionEventID, Governance: rebindRequest.Governance, Contribution: rebindContribution, ObservedAt: rebindRequest.ObservedAt}
-	rebindOperation, err := workspaceEpochRebindOperationBindingV2(rebindRequest, "epoch-2", boundBeforeRebind)
+	rebindOperation, err := workspaceEpochRebindOperationBindingV2(rebindRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +217,7 @@ func TestWorkspaceEpochRebindRefusesObservedMismatchBeforePublicationV2(t *testi
 	bound, prior, governance := boundWorkspaceFixtureV2(t)
 	request := WorkspaceEpochRebindRequestV2{
 		ProjectID: bound.ProjectID, MissionID: bound.MissionID, WorkRevisionID: bound.WorkRevisionID, WorkID: bound.WorkID,
+		ActorID: bound.ActorID, ProcessID: bound.ProcessID, OriginatingRuntimeEpochID: "epoch-2",
 		OperationID: "operation-rebind-mismatch", OperationEventID: "event-rebind-mismatch-operation", ExecutionEventID: "event-rebind-mismatch-execution", WorkspaceEventID: "event-rebind-mismatch-workspace",
 		Governance: governance, ObservedAt: time.Date(2026, 9, 5, 12, 1, 0, 0, time.UTC),
 	}

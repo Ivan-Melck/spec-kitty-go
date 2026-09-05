@@ -1130,6 +1130,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	}
 	rebindCommand := execution.WorkspaceEpochRebindRequestV2{
 		ProjectID: bound.Execution.ProjectID, MissionID: bound.Execution.MissionID, WorkRevisionID: bound.Execution.WorkRevisionID, WorkID: bound.Execution.WorkID,
+		ActorID: bound.Execution.ActorID, ProcessID: bound.Execution.ProcessID, OriginatingRuntimeEpochID: second.RuntimeEpochID(),
 		OperationID: "operation-runtime-workspace-rebind", OperationEventID: "event-runtime-workspace-rebind-operation",
 		ExecutionEventID: "event-runtime-workspace-rebind-execution", WorkspaceEventID: "event-runtime-workspace-rebind-workspace",
 		Governance: bound.Execution.Governance, ObservedAt: now.Add(10 * time.Second),
@@ -1229,6 +1230,11 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	}
 	if !bytes.Equal(restoredExecution.CanonicalBytes(), heartbeat.State.CanonicalBytes()) || !bytes.Equal(restoredWorkspace.CanonicalBytes(), rebound.Workspace.CanonicalBytes()) {
 		t.Fatalf("post-rebind events did not replay exactly: execution_version=%d want=%d workspace_version=%d want=%d", restoredExecution.LogicalVersion, heartbeat.State.LogicalVersion, restoredWorkspace.LogicalVersion, rebound.Workspace.LogicalVersion)
+	}
+	beforeReplayRevision := third.Status().ProjectionRevision
+	replayedAfterRotation, err := third.RebindWorkspaceRuntimeEpoch(t.Context(), third.RuntimeEpochID(), rebindCommand)
+	if err != nil || !replayedAfterRotation.Replayed || replayedAfterRotation.Execution.RuntimeEpochID != rebound.Execution.RuntimeEpochID || third.Status().ProjectionRevision != beforeReplayRevision {
+		t.Fatalf("completed rebind did not replay unchanged after later epoch rotation: result=%+v before=%d after=%d err=%v", replayedAfterRotation, beforeReplayRevision, third.Status().ProjectionRevision, err)
 	}
 }
 

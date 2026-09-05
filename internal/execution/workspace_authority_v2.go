@@ -93,16 +93,22 @@ type WorkspaceAuthorityResultV2 struct {
 // from the durable authority observations. Callers therefore cannot use
 // recovery to rewrite repository or filesystem authority.
 type WorkspaceEpochRebindRequestV2 struct {
-	ProjectID        ids.ProjectID
-	MissionID        ids.MissionID
-	WorkRevisionID   ids.WorkRevisionID
-	WorkID           ids.WorkID
-	OperationID      journalv2.OperationID
-	OperationEventID journalv2.EventID
-	ExecutionEventID journalv2.EventID
-	WorkspaceEventID journalv2.EventID
-	Governance       ExecutionGovernanceV2
-	ObservedAt       time.Time
+	ProjectID      ids.ProjectID
+	MissionID      ids.MissionID
+	WorkRevisionID ids.WorkRevisionID
+	WorkID         ids.WorkID
+	ActorID        ids.ActorID
+	ProcessID      ids.ProcessID
+	// OriginatingRuntimeEpochID is the immutable target selected when this
+	// operation was created. It does not change when a later host retries the
+	// same OperationID after another epoch rotation.
+	OriginatingRuntimeEpochID journalv2.RuntimeEpochID
+	OperationID               journalv2.OperationID
+	OperationEventID          journalv2.EventID
+	ExecutionEventID          journalv2.EventID
+	WorkspaceEventID          journalv2.EventID
+	Governance                ExecutionGovernanceV2
+	ObservedAt                time.Time
 }
 
 type WorkspaceAuthorityServiceV2 struct {
@@ -193,34 +199,10 @@ func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request Works
 // currently admitted host epoch. All mutable workspace facts and both CAS
 // revisions come from the port observations made in this call.
 func (s *WorkspaceAuthorityServiceV2) RebindRuntimeEpoch(ctx context.Context, request WorkspaceEpochRebindRequestV2) (WorkspaceAuthorityResultV2, error) {
-	if request.OperationID == "" || request.OperationEventID == "" || request.ExecutionEventID == "" || request.WorkspaceEventID == "" || request.ObservedAt.IsZero() || request.Governance.validate() != nil {
+	if request.OperationID == "" || request.OperationEventID == "" || request.ExecutionEventID == "" || request.WorkspaceEventID == "" || request.ActorID == "" || request.ProcessID == "" || request.OriginatingRuntimeEpochID == "" || request.ObservedAt.IsZero() || request.Governance.validate() != nil {
 		return WorkspaceAuthorityResultV2{}, executionV2Error(KindInvalidCommand, "workspace_epoch_rebind_request", nil)
 	}
-	executionCoordinate, err := ExecutionSlotCoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID)
-	if err != nil {
-		return WorkspaceAuthorityResultV2{}, err
-	}
-	currentEpoch, err := s.epochs.CurrentRuntimeEpoch(ctx)
-	if err != nil {
-		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "runtime_epoch", err)
-	}
-	executionObserved, err := s.port.ObserveExecutionSlot(ctx, executionCoordinate)
-	if err != nil || executionObserved.State == nil {
-		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "execution_slot", err)
-	}
-	priorExecution := *executionObserved.State
-	if !equalExecutionGovernanceV2(request.Governance, priorExecution.Governance) || priorExecution.WorkspaceID == "" || priorExecution.WorkspacePathClaimDigest.IsZero() {
-		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
-	}
-	workspaceCoordinate, err := workspace.WorkspaceCoordinateV2(workspace.BindingV2{WorkspaceID: priorExecution.WorkspaceID})
-	if err != nil {
-		return WorkspaceAuthorityResultV2{}, err
-	}
-	workspaceObserved, err := s.port.ObserveWorkspace(ctx, workspaceCoordinate)
-	if err != nil || workspaceObserved.State == nil || workspaceObserved.RecordRevision == 0 {
-		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace", err)
-	}
-	binding, err := workspaceEpochRebindOperationBindingV2(request, currentEpoch, priorExecution)
+	binding, err := workspaceEpochRebindOperationBindingV2(request)
 	if err != nil {
 		return WorkspaceAuthorityResultV2{}, err
 	}
@@ -241,6 +223,33 @@ func (s *WorkspaceAuthorityServiceV2) RebindRuntimeEpoch(ctx context.Context, re
 		}
 		result.Replayed = true
 		return result, nil
+	}
+	currentEpoch, err := s.epochs.CurrentRuntimeEpoch(ctx)
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "runtime_epoch", err)
+	}
+	if currentEpoch != request.OriginatingRuntimeEpochID {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "runtime_epoch", nil)
+	}
+	executionCoordinate, err := ExecutionSlotCoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID)
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, err
+	}
+	executionObserved, err := s.port.ObserveExecutionSlot(ctx, executionCoordinate)
+	if err != nil || executionObserved.State == nil {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "execution_slot", err)
+	}
+	priorExecution := *executionObserved.State
+	if !equalExecutionGovernanceV2(request.Governance, priorExecution.Governance) || priorExecution.ActorID != request.ActorID || priorExecution.ProcessID != request.ProcessID || priorExecution.WorkspaceID == "" || priorExecution.WorkspacePathClaimDigest.IsZero() {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
+	}
+	workspaceCoordinate, err := workspace.WorkspaceCoordinateV2(workspace.BindingV2{WorkspaceID: priorExecution.WorkspaceID})
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, err
+	}
+	workspaceObserved, err := s.port.ObserveWorkspace(ctx, workspaceCoordinate)
+	if err != nil || workspaceObserved.State == nil || workspaceObserved.RecordRevision == 0 {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace", err)
 	}
 	if priorExecution.Status != ExecutionActiveV2 || priorExecution.RuntimeEpochID == currentEpoch || !request.ObservedAt.Before(mustExecutionTimeV2(priorExecution.Deadline)) {
 		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace_epoch_rebind", nil)
@@ -278,16 +287,15 @@ func (s *WorkspaceAuthorityServiceV2) RebindRuntimeEpoch(ctx context.Context, re
 	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: nextWorkspace, RecordRevision: ack.recordRevision}, nil
 }
 
-func workspaceEpochRebindOperationBindingV2(request WorkspaceEpochRebindRequestV2, currentEpoch journalv2.RuntimeEpochID, execution ExecutionSlotStateV2) (journalv2.OperationBindingV2, error) {
+func workspaceEpochRebindOperationBindingV2(request WorkspaceEpochRebindRequestV2) (journalv2.OperationBindingV2, error) {
 	command, err := journalv2.CanonicalObject(mustJSONV2(struct {
 		Kind           WorkspaceAuthorityCommandKindV2 `json:"kind"`
 		ProjectID      ids.ProjectID                   `json:"project_id"`
 		MissionID      ids.MissionID                   `json:"mission_id"`
 		WorkRevisionID ids.WorkRevisionID              `json:"work_revision_id"`
 		WorkID         ids.WorkID                      `json:"work_id"`
-		WorkspaceID    ids.WorkspaceID                 `json:"workspace_id"`
 		TargetEpoch    journalv2.RuntimeEpochID        `json:"target_runtime_epoch_id"`
-	}{WorkspaceRebindV2, request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, execution.WorkspaceID, currentEpoch}))
+	}{WorkspaceRebindV2, request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, request.OriginatingRuntimeEpochID}))
 	if err != nil {
 		return journalv2.OperationBindingV2{}, err
 	}
@@ -298,9 +306,9 @@ func workspaceEpochRebindOperationBindingV2(request WorkspaceEpochRebindRequestV
 	}
 	return journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{
 		OperationID: request.OperationID, CommandKind: "workspace." + string(WorkspaceRebindV2), CommandSchemaVersion: 1,
-		CanonicalIntentDigest: digest, Scope: scope, ActorID: journalv2.ActorID(execution.ActorID), ProcessID: journalv2.ProcessID(execution.ProcessID),
+		CanonicalIntentDigest: digest, Scope: scope, ActorID: journalv2.ActorID(request.ActorID), ProcessID: journalv2.ProcessID(request.ProcessID),
 		DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.Governance.PolicyRevision,
-		OriginatingRuntimeEpochID: currentEpoch, ObservedCreatedAt: request.ObservedAt.UTC().Truncate(time.Second).Format(time.RFC3339),
+		OriginatingRuntimeEpochID: request.OriginatingRuntimeEpochID, ObservedCreatedAt: request.ObservedAt.UTC().Truncate(time.Second).Format(time.RFC3339),
 	})
 }
 
