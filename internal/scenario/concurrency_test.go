@@ -126,6 +126,14 @@ func executeMissionPair(t *testing.T, h *portableHarness, commands []mission.Mis
 	ready.Wait()
 	close(start)
 	done.Wait()
+	// A stable-prefix observation may deliberately report ambiguity while the
+	// other publisher is moving durable state. Resolve only by replaying the
+	// identical operation binding; never invent a replacement identity.
+	for index := range 2 {
+		for attempt := 0; attempt < 8 && mission.IsMissionAuthorityKindV2(errs[index], mission.MissionAuthorityAmbiguousV2); attempt++ {
+			results[index], errs[index] = h.host.ExecuteMission(t.Context(), h.host.RuntimeEpochID(), commands[index])
+		}
+	}
 	return results, errs
 }
 
