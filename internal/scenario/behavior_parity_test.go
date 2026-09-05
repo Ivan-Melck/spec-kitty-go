@@ -210,28 +210,3 @@ func loadFrozenInventory(t *testing.T) map[string]string {
 	}
 	return result
 }
-
-// allTestSources remains only for legacy census checks outside the executable
-// parity map. Those checks are removed as their replacement scenarios land.
-func allTestSources(t *testing.T) string {
-	t.Helper()
-	var joined strings.Builder
-	err := filepath.WalkDir(filepath.Join(repositoryRoot(t), "internal"), func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
-			return nil
-		}
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		joined.Write(raw)
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return joined.String()
-}
