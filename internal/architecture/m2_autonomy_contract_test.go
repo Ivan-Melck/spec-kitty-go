@@ -14,9 +14,12 @@ func TestM2AutonomyKernelHasNoCeremonyOrIOAuthority(t *testing.T) {
 	root := m2RepositoryRoot(t)
 	paths := []string{
 		"internal/mission/readiness.go",
+		"internal/mission/readiness_snapshot.go",
 		"internal/mission/readiness_authority_v2.go",
 		"internal/mission/readiness_service_v2.go",
+		"internal/mission/readiness_workrevision.go",
 		"internal/missiontype/softwaredev/capability.go",
+		"internal/missiontype/softwaredev/readiness.go",
 	}
 	for _, relative := range paths {
 		t.Run(filepath.Base(relative), func(t *testing.T) {
@@ -75,6 +78,10 @@ func TestM2AutonomyEvaluatorIsPureAndTakesOneImmutableSnapshot(t *testing.T) {
 		if function.Type.Params.NumFields() != 1 || function.Type.Results.NumFields() != 2 {
 			t.Fatalf("pure evaluator signature widened: %s", function.Name.Name)
 		}
+		parameter, ok := function.Type.Params.List[0].Type.(*ast.Ident)
+		if !ok || parameter.Name != "ReadinessSnapshot" {
+			t.Fatal("pure evaluator accepts a caller-authored bag instead of the sealed readiness snapshot")
+		}
 		ast.Inspect(function.Body, func(node ast.Node) bool {
 			switch value := node.(type) {
 			case *ast.GoStmt:
@@ -93,6 +100,12 @@ func TestM2AutonomyEvaluatorIsPureAndTakesOneImmutableSnapshot(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("pure readiness evaluator is absent")
+	}
+	snapshotSource := readM2AutonomySource(t, root, "internal/mission/readiness_snapshot.go")
+	for _, required := range []string{"CapabilityScopeCensus", "len(sets) != len(allActionIDs)", "future_authority_revision", "snapshotDigest"} {
+		if !strings.Contains(snapshotSource, required) {
+			t.Fatalf("sealed readiness snapshot lacks completeness law %s", required)
+		}
 	}
 }
 

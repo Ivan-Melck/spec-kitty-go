@@ -71,6 +71,33 @@ func TestReadinessServiceExactReplayAndCollisionPrecedeEpochAndAuthorityReads(t 
 	}
 }
 
+func TestReadinessOperationIdentityBindsExactObservationEvidenceBeforeReads(t *testing.T) {
+	first := readinessCreateCommand(t, "operation-readiness-evidence")
+	first.ObservationEvidence = []byte(`{"authority":"one"}`)
+	changed := first
+	changed.ObservationEvidence = []byte(`{"authority":"two"}`)
+	firstBinding, err := validateReadinessAuthorityCommandV2(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedBinding, err := validateReadinessAuthorityCommandV2(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBinding.IntentDigest() == changedBinding.IntentDigest() {
+		t.Fatal("changed committed observation evidence reused the operation binding")
+	}
+	port := &readinessPortProbeV2{resolution: OperationResolutionV2{Kind: OperationConflictV2}}
+	epoch := &readinessEpochProbeV2{value: "wrong-epoch"}
+	service, _ := NewReadinessAuthorityServiceV2(port, epoch, journalv2.DefaultEventRegistryV2())
+	if _, err := service.Execute(context.Background(), changed); !IsMissionAuthorityKindV2(err, MissionAuthorityIdempotencyConflictV2) {
+		t.Fatalf("changed evidence was not refused as an operation collision: %v", err)
+	}
+	if epoch.calls != 0 || port.observeCalls != 0 || port.publishCalls != 0 {
+		t.Fatalf("evidence collision crossed later authority: epoch=%d observe=%d publish=%d", epoch.calls, port.observeCalls, port.publishCalls)
+	}
+}
+
 type readinessPortProbeV2 struct {
 	resolution   OperationResolutionV2
 	observation  ReadinessAuthorityObservationV2

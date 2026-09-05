@@ -5,11 +5,11 @@ import "github.com/spec-kitty/go-kitty3/internal/mission"
 // CapabilityDefinition returns unordered capability law. It deliberately has
 // no initial action, successor edges, terminal phase, prompt, path, language,
 // framework, or provider assumption.
-func CapabilityDefinition() []mission.CapabilityTemplate {
+func CapabilityDefinition() mission.CapabilityDefinition {
 	invariant := func(kind mission.PredicateKind, producer mission.ActionID) mission.PredicateRequirement {
 		return mission.PredicateRequirement{Kind: kind, Authority: mission.InstructionInvariant, ResponsibleCapability: producer}
 	}
-	return []mission.CapabilityTemplate{
+	templates := []mission.CapabilityTemplate{
 		{Action: mission.ActionAcceptanceEvaluate, ScopeKind: mission.ScopeMission, Predicates: []mission.PredicateRequirement{
 			invariant(mission.PredicateWorkGraphCurrent, mission.ActionWorkGraphObserve),
 			invariant(mission.PredicateIndependentReview, mission.ActionReviewRecord),
@@ -80,6 +80,11 @@ func CapabilityDefinition() []mission.CapabilityTemplate {
 			invariant(mission.PredicateWorkspaceBound, mission.ActionWorkspaceAllocate),
 		}},
 	}
+	definition, err := mission.NewCapabilityDefinition(templates)
+	if err != nil {
+		panic("software-development capability definition is invalid: " + err.Error())
+	}
+	return definition
 }
 
 func applicability(invariant func(mission.PredicateKind, mission.ActionID) mission.PredicateRequirement) *mission.PredicateRequirement {

@@ -12,6 +12,7 @@ import (
 
 type ReadinessAuthorityObservationV2 struct {
 	State          ReadinessAuthorityStateV2
+	StoreRevision  uint64
 	RecordRevision uint64
 	LastEventID    journalv2.EventID
 }
@@ -38,6 +39,7 @@ type ReadinessAuthorityCommandV2 struct {
 	Expected                  ReadinessAuthorityStateV2
 	Updated                   ReadinessAuthorityStateV2
 	Activity                  *MissionActivityV2
+	WorkRevisionSelection     *WorkRevisionSelectionV2
 	ObservationEvidence       []byte
 }
 
@@ -143,6 +145,16 @@ func validateReadinessAuthorityCommandV2(command ReadinessAuthorityCommandV2) (j
 	} else if command.Activity != nil {
 		return journalv2.OperationBindingV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "activity", nil)
 	}
+	if command.EventType == ReadinessEventWorkRevisionSelectedV2 {
+		if command.WorkRevisionSelection == nil || command.WorkRevisionSelection.IsZero() {
+			return journalv2.OperationBindingV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "work_revision_selection", nil)
+		}
+		if _, err := NewReadinessWorkRevisionEventV2(command.Expected, command.Updated, *command.WorkRevisionSelection); err != nil {
+			return journalv2.OperationBindingV2{}, err
+		}
+	} else if command.WorkRevisionSelection != nil {
+		return journalv2.OperationBindingV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "work_revision_selection", nil)
+	}
 	if len(command.ObservationEvidence) != 0 {
 		canonical, canonicalErr := journalv2.CanonicalObject(command.ObservationEvidence)
 		if canonicalErr != nil || !bytes.Equal(canonical, command.ObservationEvidence) {
@@ -187,7 +199,9 @@ func encodeReadinessAuthorityIntentV2(command ReadinessAuthorityCommandV2) ([]by
 		Expected      json.RawMessage      `json:"expected,omitempty"`
 		Updated       json.RawMessage      `json:"updated"`
 		Activity      *MissionActivityV2   `json:"activity,omitempty"`
-	}{command.SchemaVersion, command.ProjectID, command.MissionID, command.EventType, command.Expected.CanonicalBytes(), command.Updated.CanonicalBytes(), command.Activity})
+		WorkRevision  json.RawMessage      `json:"work_revision_selection,omitempty"`
+		Evidence      json.RawMessage      `json:"observation_evidence,omitempty"`
+	}{command.SchemaVersion, command.ProjectID, command.MissionID, command.EventType, command.Expected.CanonicalBytes(), command.Updated.CanonicalBytes(), command.Activity, readinessSelectionBytesV2(command.WorkRevisionSelection), command.ObservationEvidence})
 	if err != nil {
 		return nil, err
 	}
@@ -202,6 +216,9 @@ func buildReadinessAuthorityPlanV2(command ReadinessAuthorityCommandV2, binding 
 	event, err := NewReadinessAuthorityEventV2(command.EventType, command.Expected, command.Updated)
 	if command.Activity != nil {
 		event, err = NewReadinessActivityEventV2(command.Expected, command.Updated, *command.Activity)
+	}
+	if command.WorkRevisionSelection != nil {
+		event, err = NewReadinessWorkRevisionEventV2(command.Expected, command.Updated, *command.WorkRevisionSelection)
 	}
 	if err != nil {
 		return journalv2.SealedCommitPlanV2{}, nil, err
@@ -245,6 +262,13 @@ func buildReadinessAuthorityPlanV2(command ReadinessAuthorityCommandV2, binding 
 		return journalv2.SealedCommitPlanV2{}, nil, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "commit_plan", err)
 	}
 	return plan, resultBytes, nil
+}
+
+func readinessSelectionBytesV2(selection *WorkRevisionSelectionV2) []byte {
+	if selection == nil {
+		return nil
+	}
+	return selection.CanonicalBytes()
 }
 
 type readinessAuthorityResultWireV2 struct {

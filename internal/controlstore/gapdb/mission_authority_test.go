@@ -9,7 +9,10 @@ import (
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/checkpoint"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
 )
 
 type readinessEpochCounterV2 struct {
@@ -364,10 +367,10 @@ func TestReadinessAuthorityAdapterCreateActivityPauseRestartReplayV2(t *testing.
 	}
 
 	changed := pause
-	changed.ProcessID = "process-readiness-other"
+	changed.ObservationEvidence = []byte(`{"authority":"changed-after-commit"}`)
 	beforeReads = memory.getCalls
 	if _, err = restarted.Execute(t.Context(), changed); !mission.IsMissionAuthorityKindV2(err, mission.MissionAuthorityIdempotencyConflictV2) {
-		t.Fatalf("changed readiness binding did not conflict: %v", err)
+		t.Fatalf("changed readiness observation evidence did not conflict: %v", err)
 	}
 	if epoch.calls != 0 || memory.getCalls != beforeReads+1 || memory.batchCalls != beforeBatches {
 		t.Fatalf("binding conflict crossed later authority: epoch=%d reads=%d/%d batches=%d/%d", epoch.calls, beforeReads, memory.getCalls, beforeBatches, memory.batchCalls)
@@ -427,6 +430,130 @@ func TestReadinessAuthorityAdapterRefusesOneRevisionDriftV2(t *testing.T) {
 	if statusCalls != 2 {
 		t.Fatalf("readiness observation did not capture and verify one revision: calls=%d", statusCalls)
 	}
+}
+
+func TestReadinessAuthorityRealGapDBCheckpointSuffixMatchesOriginAndProjectionLossV2(t *testing.T) {
+	memory := newV2AtomicMemory()
+	memory.revision = 1
+	provider := memory.provider()
+	enableWorkspaceRecoveryScansV2(memory, provider)
+	provider.statusFn = func(context.Context) (gapdbapi.StatusResult, error) {
+		memory.mu.Lock()
+		defer memory.mu.Unlock()
+		return gapdbapi.StatusResult{DatabaseID: "database-1", CurrentRevision: memory.revision, DurableThroughRevision: memory.revision}, nil
+	}
+	store, err := newAdapter(provider, "/explicit/socket", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reducers := missionReducerSetFixtureV2(t)
+	registry := journalv2.DefaultEventRegistryV2()
+	projection, _ := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
+	coordinator, _ := journalv2.NewPublicationCoordinatorV2(store, projection)
+	portValue, _ := NewMissionAuthorityPortV2(store, coordinator)
+	port := portValue.(mission.ReadinessAuthorityPortV2)
+	service, _ := mission.NewReadinessAuthorityServiceV2(port, missionEpochFixtureV2{"epoch-readiness"}, registry)
+
+	created := readinessStateGapDBFixtureV2(t, 1, mission.MissionOpen, 0, "operation-readiness-cp-create", "2026-09-04T12:00:00Z")
+	if _, err = service.Execute(t.Context(), readinessCommandGapDBFixtureV2(created, mission.ReadinessAuthorityStateV2{}, mission.ReadinessEventCreatedV2)); err != nil {
+		t.Fatal(err)
+	}
+	active := readinessStateGapDBFixtureV2(t, 2, mission.MissionOpen, 1, "operation-readiness-cp-activity", "2026-09-04T12:01:00Z")
+	activity := readinessCommandGapDBFixtureV2(active, created, mission.ReadinessEventActivityRecordedV2)
+	activity.Activity = &mission.MissionActivityV2{ActivityID: "activity-readiness-cp", Action: mission.ActionRef{ID: mission.ActionArtifactPublish, Scope: mission.AuthorityScope{Kind: mission.ScopeArtifact, Identity: "artifact-cp"}}, Outcome: "succeeded", ResultDigest: readinessDigestGapDBFixtureV2(t, "activity-cp").String(), EvidenceIdentities: []string{"evidence-cp"}}
+	if _, err = service.Execute(t.Context(), activity); err != nil {
+		t.Fatal(err)
+	}
+	prefix, err := coordinator.SealProjectionPrefix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointValue, err := checkpoint.BuildV2("checkpoint-readiness-authority", prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointSlot, slotBytes, err := checkpoint.NewSlotV2("slot-readiness-authority", checkpointValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = coordinator.Publish(t.Context(), workspaceCheckpointWriterPlanV2(t, checkpointValue, checkpointSlot, slotBytes)); err != nil {
+		t.Fatal(err)
+	}
+
+	paused := readinessStateGapDBFixtureV2(t, 3, mission.MissionPaused, 1, "operation-readiness-cp-pause", "2026-09-04T12:02:00Z")
+	if _, err = service.Execute(t.Context(), readinessCommandGapDBFixtureV2(paused, active, mission.ReadinessEventPausedV2)); err != nil {
+		t.Fatal(err)
+	}
+	// Delete the only in-memory projection after the suffix publication. Both
+	// recovery paths below must reconstruct exclusively from durable authority.
+	projection = nil
+	input := restore.InputV2{Reader: store, EventRegistry: registry, Reducers: reducers, HostAuthorityID: "host-readiness", RecoveryAttemptID: "restore-readiness-checkpoint", Budgets: restore.DefaultBudgetsV2()}
+	fromCheckpoint, err := restore.RestoreV2(t.Context(), input)
+	if err != nil {
+		t.Fatalf("checkpoint restore: %v (cause: %v)", err, errors.Unwrap(err))
+	}
+	input.Reader = checkpointHidingReaderV2{ReaderV2: store}
+	input.RecoveryAttemptID = "restore-readiness-origin"
+	fromOrigin, err := restore.RestoreV2(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromCheckpoint.Playback().CanonicalProjectionDigest() != fromOrigin.Playback().CanonicalProjectionDigest() {
+		t.Fatal("real checkpoint-plus-suffix playback diverged from origin playback")
+	}
+	checkpointProjection, err := mission.NewMissionRestoredProjectionV2(fromCheckpoint.Playback())
+	if err != nil {
+		t.Fatal(err)
+	}
+	originProjection, err := mission.NewMissionRestoredProjectionV2(fromOrigin.Playback())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointState, found := checkpointProjection.Readiness(paused.ProjectID(), paused.MissionID())
+	if !found {
+		t.Fatal("checkpoint restore omitted readiness authority")
+	}
+	originState, found := originProjection.Readiness(paused.ProjectID(), paused.MissionID())
+	if !found || !bytes.Equal(checkpointState.CanonicalBytes(), originState.CanonicalBytes()) || !bytes.Equal(checkpointState.CanonicalBytes(), paused.CanonicalBytes()) {
+		t.Fatal("restored readiness authority was not byte-identical")
+	}
+	checkpointCensus := readinessCensusGapDBFixtureV2(t, checkpointState, fromCheckpoint.StoreRevision().CurrentRevision())
+	originCensus := readinessCensusGapDBFixtureV2(t, originState, fromOrigin.StoreRevision().CurrentRevision())
+	if !bytes.Equal(checkpointCensus.CanonicalBytes(), originCensus.CanonicalBytes()) {
+		t.Fatal("restored complete action census was not byte-identical")
+	}
+}
+
+type checkpointHidingReaderV2 struct{ restore.ReaderV2 }
+
+func (r checkpointHidingReaderV2) ScanV2(ctx context.Context, request journalv2.ScanRequestV2) (journalv2.RecoveryPageV2, error) {
+	if request.Target().Kind() == journalv2.ScanCheckpointSlots {
+		return journalv2.NewRecoveryPageV2(request.AttemptRevision().CurrentRevision(), "2026-09-04T12:03:00Z", nil, nil, false)
+	}
+	return r.ReaderV2.ScanV2(ctx, request)
+}
+
+func readinessCensusGapDBFixtureV2(t *testing.T, state mission.ReadinessAuthorityStateV2, storeRevision uint64) mission.ActionCensus {
+	t.Helper()
+	definition := softwaredev.CapabilityDefinition()
+	sets := make([]mission.CapabilityScopeSet, 0, len(mission.AllActionIDs()))
+	for _, template := range definition.Templates() {
+		entry := mission.CapabilityScopeSet{Action: template.Action}
+		if template.ScopeKind == mission.ScopeMission {
+			entry.Scopes = []mission.AuthorityScope{{Kind: mission.ScopeMission, Identity: string(state.MissionID())}}
+		}
+		sets = append(sets, entry)
+	}
+	evidenceDigest := readinessDigestGapDBFixtureV2(t, "complete-scope-census").String()
+	scopes, err := mission.NewCapabilityScopeCensus(mission.ReadinessAuthorityCoordinate{Family: "mission_authority", Identity: string(state.MissionID()), Revision: storeRevision}, "scope-census", evidenceDigest, sets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, census, err := softwaredev.EvaluateReadiness(mission.ReadinessAuthorityObservationV2{State: state, StoreRevision: storeRevision}, scopes, mission.ReadinessEvidence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return census
 }
 
 func readinessAuthorityGapDBFixtureV2(t *testing.T) (*v2AtomicMemory, *fakeProvider, mission.ReadinessAuthorityPortV2) {

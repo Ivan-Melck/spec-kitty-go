@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
 func TestReadinessAuthorityStateHasNoPhaseCursorAndFactDigestIgnoresActivityOrder(t *testing.T) {
@@ -83,6 +84,75 @@ func TestReadinessAuthorityTransitionAllowsActivityWithoutLifecycleAdvance(t *te
 	}
 }
 
+func TestReadinessWorkRevisionSelectionBindsGenerationLineageAndMixedReconciliation(t *testing.T) {
+	command := successorPublicationFixture(t, "operation-readiness-successor")
+	initial, err := SealInitialWorkRevisionSelectionV2(command.ExpectedOld)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := NewReadinessAuthorityStateV2(ReadinessAuthorityStateInputV2{
+		ProjectID: "project-final", MissionID: "mission-final", DefinitionRevision: "definition-v1",
+		DefinitionDigest: readinessDigest(t, strings.Repeat("a", 64)), Version: 1, Lifecycle: MissionOpen,
+		LastOperationID: "operation-readiness-create", ObservedAt: "2026-09-04T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectedInput := created.input
+	selectedInput.Version = 2
+	selectedInput.CurrentWorkRevision = initial.Head()
+	selectedInput.LastOperationID = "operation-readiness-finalize"
+	selectedInput.ObservedAt = "2026-09-04T12:01:00Z"
+	selected, err := NewReadinessAuthorityStateV2(selectedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialEvent, err := NewReadinessWorkRevisionEventV2(created, selected, initial)
+	if err != nil {
+		t.Fatalf("exact generation-one revision was not selectable: %v", err)
+	}
+	encoded, err := EncodeReadinessAuthorityEventV2(initialEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeReadinessAuthorityEventV2(encoded)
+	if err != nil || decoded.WorkRevisionSelection() == nil || decoded.State().CurrentWorkRevisionID() != initial.Head().ID() {
+		t.Fatalf("selection evidence did not round trip: %v", err)
+	}
+
+	reconciled, err := SealReconciledWorkRevisionSelectionV2(initial.Head(), command.Candidate, command.Reconciliation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successorInput := selected.input
+	successorInput.Version = 3
+	successorInput.CurrentWorkRevision = reconciled.Head()
+	successorInput.LastOperationID = "operation-readiness-reconcile"
+	successorInput.ObservedAt = "2026-09-04T12:02:00Z"
+	successor, err := NewReadinessAuthorityStateV2(successorInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReadinessWorkRevisionEventV2(selected, successor, reconciled); err != nil {
+		t.Fatalf("mixed reconciliation was not preserved: %v", err)
+	}
+	dispositions := reconciled.Dispositions()
+	if len(dispositions) != 2 || dispositions[0].Disposition != workgraph.Invalidate || dispositions[1].Disposition != workgraph.Continue {
+		t.Fatalf("continue/invalidate semantics were not bound: %+v", dispositions)
+	}
+
+	forged := successorInput
+	forged.Version = 4
+	forged.LastOperationID = "operation-readiness-forged"
+	forgedState, err := NewReadinessAuthorityStateV2(forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReadinessWorkRevisionEventV2(successor, forgedState, reconciled); !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidTransitionV2) && !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidRequestV2) {
+		t.Fatalf("reused selection changed current WorkRevision: %v", err)
+	}
+}
+
 func TestReadinessAuthorityCheckpointSuffixMatchesOriginReplayAndCensus(t *testing.T) {
 	created := readinessAuthorityStateFixture(t, 0, 1, "2026-09-04T12:00:00Z")
 	created.input.LastOperationID = "operation-origin-create"
@@ -148,13 +218,12 @@ func TestReadinessAuthorityCheckpointSuffixMatchesOriginReplayAndCensus(t *testi
 		t.Fatal(err)
 	}
 	contracts := mustReadinessContracts(t, CapabilityContract{Action: ActionMissionResume}, CapabilityContract{Action: ActionArtifactPublish})
-	input := ReadinessInput{MissionID: string(replayed.MissionID()), Revision: uint64(replayed.Version()), SnapshotDigest: replayed.AuthorityFactSetDigest().String(), Lifecycle: replayed.Lifecycle(), Contracts: contracts}
-	fromOrigin, err := EvaluateReadiness(input)
+	input := ReadinessInput{MissionID: string(replayed.MissionID()), Revision: uint64(replayed.Version()), Lifecycle: replayed.Lifecycle(), Contracts: contracts}
+	fromOrigin, err := evaluateReadinessInput(t, input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input.SnapshotDigest = paused.AuthorityFactSetDigest().String()
-	fromCheckpoint, err := EvaluateReadiness(input)
+	fromCheckpoint, err := evaluateReadinessInput(t, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +237,7 @@ func readinessAuthorityStateFixture(t *testing.T, activity, version uint64, obse
 	state, err := NewReadinessAuthorityStateV2(ReadinessAuthorityStateInputV2{
 		ProjectID: "project-readiness", MissionID: "mission-readiness", DefinitionRevision: "definition-v1",
 		DefinitionDigest: readinessDigest(t, strings.Repeat("a", 64)), Version: journalv2.LogicalVersion(version), Lifecycle: MissionOpen,
-		CurrentWorkRevisionID: "revision-current", ActivityCount: activity,
+		ActivityCount: activity,
 		ActiveFacts: []ScopedMissionFactV2{
 			{Kind: ScopedFactBlockerV2, FactID: "blocker-1", Scope: ActionRef{ID: ActionExecutionClaim, Scope: AuthorityScope{Kind: ScopeWork, Identity: "work-a"}}, EvidenceIdentity: "evidence-blocker", EvidenceDigest: strings.Repeat("b", 64)},
 		},

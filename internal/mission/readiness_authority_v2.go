@@ -36,17 +36,17 @@ func (f ScopedMissionFactV2) validate() bool {
 }
 
 type ReadinessAuthorityStateInputV2 struct {
-	ProjectID             journalv2.ProjectID
-	MissionID             journalv2.MissionID
-	DefinitionRevision    string
-	DefinitionDigest      journalv2.Digest
-	Version               journalv2.LogicalVersion
-	Lifecycle             MissionLifecycle
-	CurrentWorkRevisionID journalv2.WorkRevisionID
-	ActivityCount         uint64
-	ActiveFacts           []ScopedMissionFactV2
-	LastOperationID       journalv2.OperationID
-	ObservedAt            string
+	ProjectID           journalv2.ProjectID
+	MissionID           journalv2.MissionID
+	DefinitionRevision  string
+	DefinitionDigest    journalv2.Digest
+	Version             journalv2.LogicalVersion
+	Lifecycle           MissionLifecycle
+	CurrentWorkRevision WorkRevisionAuthorityV2
+	ActivityCount       uint64
+	ActiveFacts         []ScopedMissionFactV2
+	LastOperationID     journalv2.OperationID
+	ObservedAt          string
 }
 
 type ReadinessAuthorityStateV2 struct {
@@ -58,18 +58,18 @@ type ReadinessAuthorityStateV2 struct {
 }
 
 type readinessAuthorityStateWireV2 struct {
-	SchemaVersion         uint32                   `json:"schema_version"`
-	ProjectID             journalv2.ProjectID      `json:"project_id"`
-	MissionID             journalv2.MissionID      `json:"mission_id"`
-	DefinitionRevision    string                   `json:"definition_revision"`
-	DefinitionSHA256      string                   `json:"definition_sha256"`
-	Version               uint64                   `json:"version"`
-	Lifecycle             MissionLifecycle         `json:"lifecycle"`
-	CurrentWorkRevisionID journalv2.WorkRevisionID `json:"current_work_revision_id,omitempty"`
-	ActivityCount         uint64                   `json:"activity_count"`
-	ActiveFacts           []ScopedMissionFactV2    `json:"active_facts"`
-	LastOperationID       journalv2.OperationID    `json:"last_operation_id"`
-	ObservedAt            string                   `json:"observed_at"`
+	SchemaVersion       uint32                `json:"schema_version"`
+	ProjectID           journalv2.ProjectID   `json:"project_id"`
+	MissionID           journalv2.MissionID   `json:"mission_id"`
+	DefinitionRevision  string                `json:"definition_revision"`
+	DefinitionSHA256    string                `json:"definition_sha256"`
+	Version             uint64                `json:"version"`
+	Lifecycle           MissionLifecycle      `json:"lifecycle"`
+	CurrentWorkRevision json.RawMessage       `json:"current_work_revision,omitempty"`
+	ActivityCount       uint64                `json:"activity_count"`
+	ActiveFacts         []ScopedMissionFactV2 `json:"active_facts"`
+	LastOperationID     journalv2.OperationID `json:"last_operation_id"`
+	ObservedAt          string                `json:"observed_at"`
 }
 
 func NewReadinessAuthorityStateV2(input ReadinessAuthorityStateInputV2) (ReadinessAuthorityStateV2, error) {
@@ -81,11 +81,6 @@ func NewReadinessAuthorityStateV2(input ReadinessAuthorityStateInputV2) (Readine
 	}
 	if !boundedAuthorityIdentityV2(input.DefinitionRevision) || input.DefinitionDigest.IsZero() || input.Version == 0 || input.Lifecycle.Validate() != nil || !canonicalAuthorityTimeV2(input.ObservedAt) {
 		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "mission_state", nil)
-	}
-	if input.CurrentWorkRevisionID != "" {
-		if _, err := journalv2.NewWorkRevisionID(string(input.CurrentWorkRevisionID)); err != nil {
-			return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "work_revision_id", err)
-		}
 	}
 	if _, err := journalv2.NewOperationID(string(input.LastOperationID)); err != nil {
 		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "last_operation_id", err)
@@ -128,7 +123,10 @@ func (s ReadinessAuthorityStateV2) MissionID() journalv2.MissionID    { return s
 func (s ReadinessAuthorityStateV2) Version() journalv2.LogicalVersion { return s.input.Version }
 func (s ReadinessAuthorityStateV2) Lifecycle() MissionLifecycle       { return s.input.Lifecycle }
 func (s ReadinessAuthorityStateV2) CurrentWorkRevisionID() journalv2.WorkRevisionID {
-	return s.input.CurrentWorkRevisionID
+	return s.input.CurrentWorkRevision.ID()
+}
+func (s ReadinessAuthorityStateV2) CurrentWorkRevision() WorkRevisionAuthorityV2 {
+	return s.input.CurrentWorkRevision
 }
 func (s ReadinessAuthorityStateV2) ActivityCount() uint64 { return s.input.ActivityCount }
 func (s ReadinessAuthorityStateV2) ActiveFacts() []ScopedMissionFactV2 {
@@ -148,7 +146,7 @@ func canonicalReadinessAuthorityStateV2(state ReadinessAuthorityStateV2) ([]byte
 	wire := readinessAuthorityStateWireV2{
 		SchemaVersion: ReadinessAuthorityStateSchemaV2, ProjectID: state.input.ProjectID, MissionID: state.input.MissionID,
 		DefinitionRevision: state.input.DefinitionRevision, DefinitionSHA256: state.input.DefinitionDigest.String(), Version: uint64(state.input.Version),
-		Lifecycle: state.input.Lifecycle, CurrentWorkRevisionID: state.input.CurrentWorkRevisionID, ActivityCount: state.input.ActivityCount,
+		Lifecycle: state.input.Lifecycle, CurrentWorkRevision: state.input.CurrentWorkRevision.CanonicalBytes(), ActivityCount: state.input.ActivityCount,
 		ActiveFacts: append([]ScopedMissionFactV2(nil), state.facts...), LastOperationID: state.input.LastOperationID, ObservedAt: state.input.ObservedAt,
 	}
 	encoded, err := json.Marshal(wire)
@@ -160,14 +158,14 @@ func canonicalReadinessAuthorityStateV2(state ReadinessAuthorityStateV2) ([]byte
 
 func canonicalReadinessFactSetV2(state ReadinessAuthorityStateV2) ([]byte, error) {
 	encoded, err := json.Marshal(struct {
-		ProjectID             journalv2.ProjectID      `json:"project_id"`
-		MissionID             journalv2.MissionID      `json:"mission_id"`
-		DefinitionRevision    string                   `json:"definition_revision"`
-		DefinitionSHA256      string                   `json:"definition_sha256"`
-		Lifecycle             MissionLifecycle         `json:"lifecycle"`
-		CurrentWorkRevisionID journalv2.WorkRevisionID `json:"current_work_revision_id,omitempty"`
-		ActiveFacts           []ScopedMissionFactV2    `json:"active_facts"`
-	}{state.input.ProjectID, state.input.MissionID, state.input.DefinitionRevision, state.input.DefinitionDigest.String(), state.input.Lifecycle, state.input.CurrentWorkRevisionID, state.facts})
+		ProjectID           journalv2.ProjectID   `json:"project_id"`
+		MissionID           journalv2.MissionID   `json:"mission_id"`
+		DefinitionRevision  string                `json:"definition_revision"`
+		DefinitionSHA256    string                `json:"definition_sha256"`
+		Lifecycle           MissionLifecycle      `json:"lifecycle"`
+		CurrentWorkRevision json.RawMessage       `json:"current_work_revision,omitempty"`
+		ActiveFacts         []ScopedMissionFactV2 `json:"active_facts"`
+	}{state.input.ProjectID, state.input.MissionID, state.input.DefinitionRevision, state.input.DefinitionDigest.String(), state.input.Lifecycle, state.input.CurrentWorkRevision.CanonicalBytes(), state.facts})
 	if err != nil {
 		return nil, err
 	}
@@ -204,9 +202,20 @@ func DecodeReadinessAuthorityStateV2(encoded []byte) (ReadinessAuthorityStateV2,
 	if err != nil {
 		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
 	}
+	var current WorkRevisionAuthorityV2
+	if len(wire.CurrentWorkRevision) != 0 {
+		var head workRevisionHeadWireV2
+		if decodeErr := json.Unmarshal(wire.CurrentWorkRevision, &head); decodeErr != nil {
+			return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "work_revision", decodeErr)
+		}
+		current, err = sealWorkRevisionHeadV2(head)
+		if err != nil {
+			return ReadinessAuthorityStateV2{}, err
+		}
+	}
 	state, err := NewReadinessAuthorityStateV2(ReadinessAuthorityStateInputV2{
 		ProjectID: wire.ProjectID, MissionID: wire.MissionID, DefinitionRevision: wire.DefinitionRevision, DefinitionDigest: digest,
-		Version: journalv2.LogicalVersion(wire.Version), Lifecycle: wire.Lifecycle, CurrentWorkRevisionID: wire.CurrentWorkRevisionID,
+		Version: journalv2.LogicalVersion(wire.Version), Lifecycle: wire.Lifecycle, CurrentWorkRevision: current,
 		ActivityCount: wire.ActivityCount, ActiveFacts: wire.ActiveFacts, LastOperationID: wire.LastOperationID, ObservedAt: wire.ObservedAt,
 	})
 	if err != nil || !bytes.Equal(state.CanonicalBytes(), encoded) {
@@ -246,6 +255,15 @@ type ReadinessAuthorityEventV2 struct {
 	prior     ReadinessAuthorityStateV2
 	next      ReadinessAuthorityStateV2
 	activity  *MissionActivityV2
+	selection *WorkRevisionSelectionV2
+}
+
+func (e ReadinessAuthorityEventV2) WorkRevisionSelection() *WorkRevisionSelectionV2 {
+	if e.selection == nil {
+		return nil
+	}
+	copyValue := *e.selection
+	return &copyValue
 }
 
 func (e ReadinessAuthorityEventV2) EventType() ReadinessEventTypeV2  { return e.eventType }
@@ -303,12 +321,29 @@ func NewReadinessActivityEventV2(prior, next ReadinessAuthorityStateV2, activity
 	return base, nil
 }
 
+func NewReadinessWorkRevisionEventV2(prior, next ReadinessAuthorityStateV2, selection WorkRevisionSelectionV2) (ReadinessAuthorityEventV2, error) {
+	base, err := NewReadinessAuthorityEventV2(ReadinessEventWorkRevisionSelectedV2, prior, next)
+	if err != nil || selection.IsZero() || next.CurrentWorkRevision().CanonicalBytes() == nil || !bytes.Equal(next.CurrentWorkRevision().CanonicalBytes(), selection.Head().CanonicalBytes()) {
+		return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "work_revision_selection", err)
+	}
+	if prior.CurrentWorkRevision().IsZero() {
+		if selection.Head().Generation() != 1 || selection.Head().PredecessorID() != "" || len(selection.Dispositions()) != 0 {
+			return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "initial_work_revision", nil)
+		}
+	} else if selection.Head().Generation() != prior.CurrentWorkRevision().Generation()+1 || selection.Head().PredecessorID() != prior.CurrentWorkRevisionID() || len(selection.Dispositions()) == 0 {
+		return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "reconciled_work_revision", nil)
+	}
+	base.selection = &selection
+	return base, nil
+}
+
 type readinessAuthorityEventWireV2 struct {
 	SchemaVersion uint32               `json:"schema_version"`
 	EventType     ReadinessEventTypeV2 `json:"event_type"`
 	Prior         json.RawMessage      `json:"prior,omitempty"`
 	Next          json.RawMessage      `json:"next"`
 	Activity      *MissionActivityV2   `json:"activity,omitempty"`
+	WorkRevision  json.RawMessage      `json:"work_revision_selection,omitempty"`
 }
 
 func EncodeReadinessAuthorityEventV2(event ReadinessAuthorityEventV2) ([]byte, error) {
@@ -324,11 +359,23 @@ func EncodeReadinessAuthorityEventV2(event ReadinessAuthorityEventV2) ([]byte, e
 	} else if event.eventType == ReadinessEventActivityRecordedV2 {
 		return nil, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "activity", nil)
 	}
+	if event.selection != nil {
+		validated, err = NewReadinessWorkRevisionEventV2(event.prior, event.next, *event.selection)
+		if err != nil {
+			return nil, err
+		}
+	} else if event.eventType == ReadinessEventWorkRevisionSelectedV2 {
+		return nil, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "work_revision_selection", nil)
+	}
 	var prior json.RawMessage
 	if !validated.prior.IsZero() {
 		prior = validated.prior.CanonicalBytes()
 	}
-	encoded, err := json.Marshal(readinessAuthorityEventWireV2{ReadinessAuthorityStateSchemaV2, validated.eventType, prior, validated.next.CanonicalBytes(), validated.Activity()})
+	var selection json.RawMessage
+	if validated.selection != nil {
+		selection = validated.selection.CanonicalBytes()
+	}
+	encoded, err := json.Marshal(readinessAuthorityEventWireV2{ReadinessAuthorityStateSchemaV2, validated.eventType, prior, validated.next.CanonicalBytes(), validated.Activity(), selection})
 	if err != nil {
 		return nil, err
 	}
@@ -360,6 +407,13 @@ func DecodeReadinessAuthorityEventV2(encoded []byte) (ReadinessAuthorityEventV2,
 	if wire.Activity != nil {
 		return NewReadinessActivityEventV2(prior, next, *wire.Activity)
 	}
+	if len(wire.WorkRevision) != 0 {
+		selection, decodeErr := decodeWorkRevisionSelectionV2(wire.WorkRevision)
+		if decodeErr != nil {
+			return ReadinessAuthorityEventV2{}, decodeErr
+		}
+		return NewReadinessWorkRevisionEventV2(prior, next, selection)
+	}
 	return NewReadinessAuthorityEventV2(wire.EventType, prior, next)
 }
 
@@ -386,7 +440,7 @@ func ReduceReadinessAuthorityEventV2(prior []byte, event journalv2.EventEnvelope
 
 func validateReadinessTransitionV2(event ReadinessEventTypeV2, prior, next ReadinessAuthorityStateV2) error {
 	if event == ReadinessEventCreatedV2 {
-		if !prior.IsZero() || next.Version() != 1 || next.Lifecycle() != MissionOpen || next.ActivityCount() != 0 || len(next.ActiveFacts()) != 0 {
+		if !prior.IsZero() || next.Version() != 1 || next.Lifecycle() != MissionOpen || next.ActivityCount() != 0 || len(next.ActiveFacts()) != 0 || !next.CurrentWorkRevision().IsZero() {
 			return missionAuthorityErrorV2(MissionAuthorityInvalidTransitionV2, "readiness_created", nil)
 		}
 		return nil
@@ -422,7 +476,7 @@ func validateReadinessTransitionV2(event ReadinessEventTypeV2, prior, next Readi
 			return missionAuthorityErrorV2(MissionAuthorityInvalidTransitionV2, "fact", nil)
 		}
 	case ReadinessEventWorkRevisionSelectedV2:
-		if next.Lifecycle() != prior.Lifecycle() || next.ActivityCount() != prior.ActivityCount() || next.CurrentWorkRevisionID() == prior.CurrentWorkRevisionID() || !equalScopedFactsV2(next.facts, prior.facts) {
+		if next.Lifecycle() != prior.Lifecycle() || next.ActivityCount() != prior.ActivityCount() || next.CurrentWorkRevision().IsZero() || next.CurrentWorkRevisionID() == prior.CurrentWorkRevisionID() || !equalScopedFactsV2(next.facts, prior.facts) {
 			return missionAuthorityErrorV2(MissionAuthorityInvalidTransitionV2, "work_revision", nil)
 		}
 	default:

@@ -9,7 +9,7 @@ import (
 )
 
 func TestCapabilityDefinitionIsCompleteUnorderedAndStackNeutral(t *testing.T) {
-	templates := softwaredev.CapabilityDefinition()
+	templates := softwaredev.CapabilityDefinition().Templates()
 	if len(templates) != len(mission.AllActionIDs()) {
 		t.Fatalf("capability census=%d want=%d", len(templates), len(mission.AllActionIDs()))
 	}
@@ -41,8 +41,8 @@ func TestCapabilityDefinitionIsCompleteUnorderedAndStackNeutral(t *testing.T) {
 		}
 	}
 
-	first := softwaredev.CapabilityDefinition()
-	second := softwaredev.CapabilityDefinition()
+	first := softwaredev.CapabilityDefinition().Templates()
+	second := softwaredev.CapabilityDefinition().Templates()
 	first[0].Predicates = nil
 	if slices.Equal(first[0].Predicates, second[0].Predicates) {
 		t.Fatal("definition returned aliased predicate storage")

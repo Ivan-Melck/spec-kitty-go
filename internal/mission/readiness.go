@@ -271,6 +271,60 @@ type CapabilityTemplate struct {
 	Predicates    []PredicateRequirement
 }
 
+// CapabilityDefinition is the sealed, complete action vocabulary for one
+// mission method. A definition cannot omit an admitted action, so a consumer
+// cannot turn an incomplete caller-authored list into apparent readiness.
+type CapabilityDefinition struct {
+	templates []CapabilityTemplate
+	canonical []byte
+}
+
+func NewCapabilityDefinition(templates []CapabilityTemplate) (CapabilityDefinition, error) {
+	if len(templates) != len(allActionIDs) {
+		return CapabilityDefinition{}, &ReadinessError{Kind: ReadinessInvalidContract, Field: "capability_definition"}
+	}
+	values := slices.Clone(templates)
+	sort.Slice(values, func(i, j int) bool { return values[i].Action < values[j].Action })
+	expected := slices.Clone(allActionIDs)
+	sort.Slice(expected, func(i, j int) bool { return expected[i] < expected[j] })
+	for index, template := range values {
+		if template.Action.Validate() != nil || template.ScopeKind == "" || index > 0 && values[index-1].Action == template.Action {
+			return CapabilityDefinition{}, &ReadinessError{Kind: ReadinessInvalidContract, Field: "capability_definition"}
+		}
+		if index >= len(expected) || template.Action != expected[index] {
+			return CapabilityDefinition{}, &ReadinessError{Kind: ReadinessInvalidContract, Field: "capability_definition"}
+		}
+		probe := AuthorityScope{Kind: template.ScopeKind, Identity: "definition-probe"}
+		if _, err := template.Instantiate(probe); err != nil {
+			return CapabilityDefinition{}, err
+		}
+		values[index].Predicates = slices.Clone(template.Predicates)
+		if template.Applicability != nil {
+			copyValue := *template.Applicability
+			values[index].Applicability = &copyValue
+		}
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return CapabilityDefinition{}, &ReadinessError{Kind: ReadinessInvalidContract, Field: "capability_definition"}
+	}
+	return CapabilityDefinition{templates: values, canonical: encoded}, nil
+}
+
+func (d CapabilityDefinition) IsZero() bool { return len(d.canonical) == 0 }
+
+func (d CapabilityDefinition) Templates() []CapabilityTemplate {
+	result := slices.Clone(d.templates)
+	for index := range result {
+		result[index].Predicates = slices.Clone(result[index].Predicates)
+		if result[index].Applicability != nil {
+			copyValue := *result[index].Applicability
+			result[index].Applicability = &copyValue
+		}
+	}
+	return result
+}
+
 func (t CapabilityTemplate) Instantiate(scope AuthorityScope) (CapabilityContract, error) {
 	if t.Action.Validate() != nil || scope.Validate() != nil || t.ScopeKind != scope.Kind {
 		return CapabilityContract{}, &ReadinessError{Kind: ReadinessInvalidContract, Field: "scope"}
@@ -329,7 +383,8 @@ func (c ReadinessAuthorityCoordinate) factSource() bool {
 	switch c.Family {
 	case "mission_authority", "artifact_authority", "workgraph_authority", "execution_authority",
 		"workspace_authority", "candidate_authority", "review_authority", "acceptance_authority",
-		"repository_authority", "external_effect_authority", "project_policy", "verifier_authority":
+		"repository_authority", "external_effect_authority", "project_policy", "verifier_authority",
+		"mission_decision", "mission_blocker", "mission_conflict":
 		return true
 	default:
 		return false
@@ -362,8 +417,9 @@ type ReadinessConflict struct {
 	EvidenceDigest   string                       `json:"evidence_sha256"`
 }
 
-type ReadinessInput struct {
+type readinessInput struct {
 	MissionID      string
+	MissionExists  bool
 	Revision       uint64
 	SnapshotDigest string
 	Lifecycle      MissionLifecycle
@@ -452,8 +508,12 @@ func IsReadinessKind(err error, kind ReadinessErrorKind) bool {
 	return errors.As(err, &target) && target.Kind == kind
 }
 
-func EvaluateReadiness(input ReadinessInput) (ActionCensus, error) {
-	if !boundedReadinessText(input.MissionID, 128) || input.Revision == 0 || !lowerHexDigest(input.SnapshotDigest) || input.Lifecycle.Validate() != nil || len(input.Contracts) == 0 || len(input.Contracts) > maxReadinessMembers {
+func EvaluateReadiness(snapshot ReadinessSnapshot) (ActionCensus, error) {
+	if snapshot.IsZero() {
+		return ActionCensus{}, &ReadinessError{Kind: ReadinessInvalidInput, Field: "snapshot_seal"}
+	}
+	input := snapshot.input()
+	if !boundedReadinessText(input.MissionID, 128) || input.Revision == 0 || !lowerHexDigest(input.SnapshotDigest) || input.MissionExists && input.Lifecycle.Validate() != nil || len(input.Contracts) == 0 || len(input.Contracts) > maxReadinessMembers {
 		return ActionCensus{}, &ReadinessError{Kind: ReadinessInvalidInput, Field: "snapshot"}
 	}
 	contracts, err := canonicalContracts(input.Contracts)
@@ -485,7 +545,7 @@ func EvaluateReadiness(input ReadinessInput) (ActionCensus, error) {
 	census := ActionCensus{missionID: input.MissionID, revision: input.Revision, snapshotDigest: input.SnapshotDigest, lifecycle: input.Lifecycle, decisionsRequired: decisions, conflicts: conflicts, terminal: input.Lifecycle.Terminal()}
 	for _, contract := range contracts {
 		ref := contract.Ref()
-		blocked := lifecycleBlockingPredicate(input.Lifecycle, contract.Action, input.MissionID, input.Revision)
+		blocked := lifecycleBlockingPredicate(input.MissionExists, input.Lifecycle, contract.Action, input.MissionID, input.Revision)
 		inapplicable := false
 		if contract.Applicability != nil {
 			fact, ok := byFact[factKey(ref, contract.Applicability.Kind)]
@@ -594,9 +654,17 @@ func canonicalFacts(values []PredicateFact, contracts []CapabilityContract) ([]P
 	if len(values) > maxReadinessMembers {
 		return nil, &ReadinessError{Kind: ReadinessInvalidFact, Field: "facts"}
 	}
-	actions := make(map[string]bool, len(contracts))
+	requirements := make(map[string]PredicateRequirement, len(contracts))
+	applicability := make(map[string]bool, len(contracts))
 	for _, contract := range contracts {
-		actions[actionRefKey(contract.Ref())] = true
+		if contract.Applicability != nil {
+			key := factKey(contract.Ref(), contract.Applicability.Kind)
+			requirements[key] = *contract.Applicability
+			applicability[key] = true
+		}
+		for _, requirement := range contract.Predicates {
+			requirements[factKey(contract.Ref(), requirement.Kind)] = requirement
+		}
 	}
 	result := slices.Clone(values)
 	sort.Slice(result, func(i, j int) bool {
@@ -609,10 +677,17 @@ func canonicalFacts(values []PredicateFact, contracts []CapabilityContract) ([]P
 	})
 	for index, fact := range result {
 		ref := ActionRef{ID: fact.Action, Scope: fact.Scope}
-		if !actions[actionRefKey(ref)] || ref.Validate() != nil || fact.Kind.Validate() != nil || fact.Status.Validate() != nil || fact.Producer.Validate() != nil || fact.Recovery.Validate() != nil ||
+		requirement, declared := requirements[factKey(ref, fact.Kind)]
+		if !declared || ref.Validate() != nil || fact.Kind.Validate() != nil || fact.Status.Validate() != nil || fact.Producer.Validate() != nil || fact.Recovery.Validate() != nil ||
 			fact.Authority.Validate() != nil || !fact.Authority.factSource() || !boundedReadinessText(fact.EvidenceIdentity, 128) || !lowerHexDigest(fact.EvidenceDigest) ||
 			(fact.Diagnostic != "" && !boundedReadinessDiagnostic(fact.Diagnostic, maxReadinessText)) || index > 0 && factKey(ActionRef{ID: result[index-1].Action, Scope: result[index-1].Scope}, result[index-1].Kind) == factKey(ref, fact.Kind) {
 			return nil, &ReadinessError{Kind: ReadinessInvalidFact, Field: "fact"}
+		}
+		if fact.Producer != requirement.ResponsibleCapability || fact.Authority.Family != predicateAuthorityFamily(fact.Kind) {
+			return nil, &ReadinessError{Kind: ReadinessInvalidFact, Field: "producer_authority"}
+		}
+		if fact.Status == PredicateInapplicable && !applicability[factKey(ref, fact.Kind)] {
+			return nil, &ReadinessError{Kind: ReadinessInvalidFact, Field: "applicability_status"}
 		}
 		if fact.Status == PredicateWaived {
 			if !boundedReadinessText(fact.WaiverEvidenceIdentity, 128) || !lowerHexDigest(fact.WaiverEvidenceDigest) {
@@ -676,9 +751,9 @@ func canonicalConflicts(values []ReadinessConflict, contracts []CapabilityContra
 	return result, nil
 }
 
-func lifecycleBlockingPredicate(lifecycle MissionLifecycle, action ActionID, missionID string, revision uint64) []BlockingPredicate {
-	allowed := lifecycle == MissionOpen || lifecycle == MissionPaused && action == ActionMissionResume
-	if action == ActionMissionCreate || lifecycle == MissionOpen && action == ActionMissionResume {
+func lifecycleBlockingPredicate(exists bool, lifecycle MissionLifecycle, action ActionID, missionID string, revision uint64) []BlockingPredicate {
+	allowed := !exists && action == ActionMissionCreate || exists && (lifecycle == MissionOpen || lifecycle == MissionPaused && action == ActionMissionResume)
+	if exists && (action == ActionMissionCreate || lifecycle == MissionOpen && action == ActionMissionResume) {
 		allowed = false
 	}
 	if allowed {
@@ -705,12 +780,49 @@ func blockingFromFact(fact PredicateFact) BlockingPredicate {
 	return BlockingPredicate{Kind: fact.Kind, Status: fact.Status, Authority: fact.Authority, EvidenceIdentity: fact.EvidenceIdentity, EvidenceDigest: fact.EvidenceDigest, ResponsibleCapability: fact.Producer, Recovery: fact.Recovery, Diagnostic: fact.Diagnostic}
 }
 
-func missingPredicate(input ReadinessInput, ref ActionRef, kind PredicateKind, producer ActionID, diagnostic string) BlockingPredicate {
+func missingPredicate(input readinessInput, ref ActionRef, kind PredicateKind, producer ActionID, diagnostic string) BlockingPredicate {
 	return BlockingPredicate{
 		Kind: kind, Status: PredicateUnavailable,
 		Authority:        ReadinessAuthorityCoordinate{Family: "capability_contract", Identity: string(ref.ID) + ":" + ref.Scope.Identity + ":" + string(kind), Revision: input.Revision},
 		EvidenceIdentity: "missing:" + actionRefKey(ref) + ":" + string(kind), ResponsibleCapability: producer,
 		Recovery: RecoveryRunProducer, Diagnostic: diagnostic,
+	}
+}
+
+func predicateAuthorityFamily(kind PredicateKind) string {
+	switch kind {
+	case PredicateLifecycleAllows:
+		return "mission_authority"
+	case PredicateDecisionResolved:
+		return "mission_decision"
+	case PredicateBlockerCleared:
+		return "mission_blocker"
+	case PredicateApplicable, PredicatePolicyCurrent:
+		return "project_policy"
+	case PredicateArtifactCurrent:
+		return "artifact_authority"
+	case PredicateWorkGraphComplete, PredicateWorkGraphCurrent, PredicateExecutionEligible:
+		return "workgraph_authority"
+	case PredicateLeaseCurrent, PredicateLeaseExpired, PredicateRuntimeEpochCurrent:
+		return "execution_authority"
+	case PredicateWorkspaceBound:
+		return "workspace_authority"
+	case PredicateCandidateCurrent:
+		return "candidate_authority"
+	case PredicateIndependentReview:
+		return "review_authority"
+	case PredicateAcceptanceCurrent:
+		return "acceptance_authority"
+	case PredicateRepositoryTarget:
+		return "repository_authority"
+	case PredicateExternalEffectSafe:
+		return "external_effect_authority"
+	case PredicateConflictAbsent:
+		return "mission_conflict"
+	case PredicateProjectVerification:
+		return "verifier_authority"
+	default:
+		return ""
 	}
 }
 

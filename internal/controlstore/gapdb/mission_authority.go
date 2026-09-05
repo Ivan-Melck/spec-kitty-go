@@ -136,7 +136,7 @@ func (a *missionAuthorityAdapterV2) ObserveReadinessAuthority(ctx context.Contex
 	if err := a.store.VerifyRevisionV2(ctx, attempt); err != nil {
 		return mission.ReadinessAuthorityObservationV2{}, err
 	}
-	return mission.ReadinessAuthorityObservationV2{State: state, RecordRevision: record.RecordRevision(), LastEventID: head.LastEventID()}, nil
+	return mission.ReadinessAuthorityObservationV2{State: state, StoreRevision: attempt.CurrentRevision(), RecordRevision: record.RecordRevision(), LastEventID: head.LastEventID()}, nil
 }
 
 func (a *missionAuthorityAdapterV2) ObserveMissionFact(ctx context.Context, projectID journalv2.ProjectID, missionID journalv2.MissionID, kind mission.MissionFactKindV2, factID string) (mission.MissionFactObservationV2, error) {
