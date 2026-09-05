@@ -427,7 +427,8 @@
         "Independent cycle-2 review requested one production GapDB mission-policy E2E test; production corrections accepted.",
         "Ready for cycle-3 independent rereview: candidate 080e84020429f58997d17cab246e57ad28b2d81a; tree 454cabfcc0c8f2da7c13030361861574d65f4a04; real GapDB mission-policy E2E and narrow resolved-fact assertion repair green.",
         "Independent cycle-3 review requested separate semantic status/detail mutation proof; production E2E accepted.",
-        "Ready for cycle-4 independent rereview: candidate 4c55a467b1bdc30b72a0810df91a63041268437e; tree c7daf777f553ab17c618b208b060fccd188f3093; stable semantic policy refusals and source-overlay sensitivity green."
+        "Ready for cycle-4 independent rereview: candidate 4c55a467b1bdc30b72a0810df91a63041268437e; tree c7daf777f553ab17c618b208b060fccd188f3093; stable semantic policy refusals and source-overlay sensitivity green.",
+        "Independent reviewer Mill approved exact candidate 4c55a467b1bdc30b72a0810df91a63041268437e, tree c7daf777f553ab17c618b208b060fccd188f3093; all eight anti-patterns pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
