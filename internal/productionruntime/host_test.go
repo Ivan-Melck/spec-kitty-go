@@ -41,11 +41,17 @@ type hostOwnerProbe struct {
 	probes   atomic.Int64
 	closed   atomic.Int64
 	fail     atomic.Bool
+	failFor  atomic.Int64
 }
 
 func (o *hostOwnerProbe) DatabaseID() journalv2.DatabaseID { return o.database }
 func (o *hostOwnerProbe) Probe(context.Context) error {
 	o.probes.Add(1)
+	for remaining := o.failFor.Load(); remaining > 0; remaining = o.failFor.Load() {
+		if o.failFor.CompareAndSwap(remaining, remaining-1) {
+			return fmt.Errorf("injected transient owner probe failure")
+		}
+	}
 	if o.fail.Load() {
 		return fmt.Errorf("injected owner loss")
 	}
@@ -413,6 +419,23 @@ func TestHostMonitorDoesNotClassifyInFlightProviderStateAsOwnerLoss(t *testing.T
 	}
 	if host.State() != HostDegraded || owner.probes.Load() == 0 {
 		t.Fatalf("monitor failed to resume after command: state=%s probes=%d", host.State(), owner.probes.Load())
+	}
+}
+
+func TestHostMonitorRequiresConsecutiveOwnerLossEvidence(t *testing.T) {
+	host, _ := hostFixture(t, "database-monitor-transient")
+	owner := host.owner.(*hostOwnerProbe)
+	_ = host.transition(HostReconciling)
+	_ = host.transition(HostReady)
+	owner.failFor.Store(2)
+	host.startMonitor(context.Background(), time.Millisecond)
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	deadline := time.Now().Add(time.Second)
+	for owner.probes.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if host.State() != HostReady || owner.probes.Load() < 3 {
+		t.Fatalf("transient owner probe closed barrier: state=%s probes=%d", host.State(), owner.probes.Load())
 	}
 }
 
