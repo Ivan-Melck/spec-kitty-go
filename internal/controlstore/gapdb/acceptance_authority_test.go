@@ -17,7 +17,7 @@ func TestAcceptanceAndIntegrationGapDBProductionServicesAreCallableV2(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := workspaceRestoreConfigV2(t)
+	config := wp10RestoreConfigV2(t)
 	projection, err := handoffReviewProjectionTrackerV2()
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +35,10 @@ func TestAcceptanceAndIntegrationGapDBProductionServicesAreCallableV2(t *testing
 	if err != nil || integrator == nil {
 		t.Fatalf("integration service=%v error=%v", integrator, err)
 	}
+	cleanup, err := adapter.IntegrationCleanupServiceV2(coordinator, config.EventRegistry, config.Reducers, config.HostAuthorityID, config.Budgets, epoch, gapdbIntegrationGitNoopV2{})
+	if err != nil || cleanup == nil {
+		t.Fatalf("integration cleanup service=%v error=%v", cleanup, err)
+	}
 }
 
 func TestAcceptanceAndIntegrationGapDBRejectUnsealedCapabilitiesV2(t *testing.T) {
@@ -45,6 +49,10 @@ func TestAcceptanceAndIntegrationGapDBRejectUnsealedCapabilitiesV2(t *testing.T)
 	integrator := &integrationAuthorityV2{}
 	if _, err := integrator.PublishIntegration(t.Context(), integration.IntegrationPlanV2{}); err == nil {
 		t.Fatal("integration adapter admitted an unsealed capability")
+	}
+	cleanup := &integrationCleanupAuthorityV2{}
+	if _, err := cleanup.PublishIntegrationCleanup(t.Context(), integration.IntegrationCleanupPlanV2{}); err == nil {
+		t.Fatal("integration cleanup adapter admitted an unsealed capability")
 	}
 }
 
@@ -65,12 +73,18 @@ func (gapdbIntegrationGitNoopV2) EnsureWorkspace(context.Context, integration.In
 func (gapdbIntegrationGitNoopV2) MergeCandidate(context.Context, integration.IntegrationMergeIntentV2, integration.WorkspaceFacts) (string, *integration.ConflictEvidence, error) {
 	return "", nil, errors.New("not invoked by composition")
 }
-func (gapdbIntegrationGitNoopV2) CompareAndSwapTarget(context.Context, integration.IntegrationPublishIntentV2) error {
-	return errors.New("not invoked by composition")
+func (gapdbIntegrationGitNoopV2) CompareAndSwapTarget(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, error) {
+	return integration.IntegrationPublishObservationV2{}, errors.New("not invoked by composition")
+}
+func (gapdbIntegrationGitNoopV2) ObserveTargetPublication(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, bool, error) {
+	return integration.IntegrationPublishObservationV2{}, false, errors.New("not invoked by composition")
+}
+func (gapdbIntegrationGitNoopV2) CleanupWorkspace(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, error) {
+	return integration.IntegrationCleanupObservationV2{}, errors.New("not invoked by composition")
+}
+func (gapdbIntegrationGitNoopV2) ObserveCleanup(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, bool, error) {
+	return integration.IntegrationCleanupObservationV2{}, false, errors.New("not invoked by composition")
 }
 func (gapdbIntegrationGitNoopV2) IsAncestor(context.Context, ids.RepositoryID, string, string) (bool, error) {
 	return false, errors.New("not invoked by composition")
-}
-func (gapdbIntegrationGitNoopV2) Cleanup(context.Context, integration.IntegrationCleanupIntentV2) error {
-	return errors.New("not invoked by composition")
 }

@@ -2,12 +2,15 @@ package gapdb
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/integration"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
@@ -27,6 +30,9 @@ func (a *Adapter) AcceptanceAuthorityPortV2(coordinator *journalv2.PublicationCo
 	if a == nil || coordinator == nil {
 		return nil, invalidV2Plan("acceptance authority dependencies")
 	}
+	if err := requireAuthorityReducerRegistrationsV2(reducers, integration.AcceptanceReducerRegistrationsV2()); err != nil {
+		return nil, err
+	}
 	base, err := a.ReviewAuthorityPortV2(coordinator, eventRegistry, reducers, hostAuthorityID, budgets)
 	if err != nil {
 		return nil, err
@@ -36,6 +42,42 @@ func (a *Adapter) AcceptanceAuthorityPortV2(coordinator *journalv2.PublicationCo
 		return nil, invalidV2Plan("acceptance review dependency")
 	}
 	return &acceptanceAuthorityV2{adapter: a, coordinator: coordinator, review: r}, nil
+}
+
+// requireAuthorityReducerRegistrationsV2 binds production adapter composition
+// to the capability-owned reducer implementations. The foundation descriptor is
+// the provider-neutral, immutable registry identity; the adapter does not
+// interpret event payloads or duplicate reducer policy.
+func requireAuthorityReducerRegistrationsV2(reducers journalv2.ReducerSetV2, required []journalv2.ReducerRegistration) error {
+	descriptor, err := reducers.Descriptor()
+	if err != nil {
+		return invalidV2Plan("authority reducer registry")
+	}
+	var wire struct {
+		EventRegistrySHA256 string `json:"event_registry_sha256"`
+		Reducers            []struct {
+			Family               string `json:"family"`
+			EventSchemaVersion   uint32 `json:"event_schema_version"`
+			ReducerVersion       uint32 `json:"reducer_version"`
+			Owner                string `json:"owner"`
+			ImplementationSHA256 string `json:"implementation_sha256"`
+		} `json:"reducers"`
+	}
+	if err = json.Unmarshal(descriptor.CanonicalBytes(), &wire); err != nil || wire.EventRegistrySHA256 == "" {
+		return invalidV2Plan("authority reducer descriptor")
+	}
+	for _, want := range required {
+		matches := 0
+		for _, got := range wire.Reducers {
+			if got.Family == want.Family && got.EventSchemaVersion == want.EventSchemaVersion && got.ReducerVersion == want.ReducerVersion && got.Owner == want.Owner && got.ImplementationSHA256 == want.ImplementationDigest.String() {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return invalidV2Plan("authority reducer implementation")
+		}
+	}
+	return nil
 }
 
 func (a *Adapter) AcceptanceAuthorityServiceV2(coordinator *journalv2.PublicationCoordinatorV2, eventRegistry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, hostAuthorityID journalv2.HostAuthorityID, budgets restore.BudgetsV2, epochs integration.AcceptanceEpochSourceV2) (*integration.AcceptanceAuthorityServiceV2, error) {
@@ -133,6 +175,43 @@ func (a *acceptanceAuthorityV2) ObserveAcceptanceAuthority(ctx context.Context, 
 		actual.RecordRevision = record.RecordRevision()
 		actual.StateDigestSHA256 = head.CanonicalStateDigest().String()
 		result.Evidence = append(result.Evidence, integration.AcceptanceEvidenceObservationV2{Evidence: actual, Assertion: assertion})
+		result.Assertions = append(result.Assertions, assertion)
+	}
+
+	policyFactIDs := []string{request.PolicyFactID}
+	for _, waiver := range request.Waivers {
+		policyFactIDs = append(policyFactIDs, waiver.WaiverID)
+	}
+	for _, evidence := range request.Evidence {
+		if evidence.Disposition == integration.EvidenceInapplicableV2 {
+			policyFactIDs = append(policyFactIDs, evidence.EvidenceID)
+		}
+	}
+	for _, observed := range result.Reviews {
+		if observed.State != nil && observed.State.Exception != nil {
+			policyFactIDs = append(policyFactIDs, observed.State.Exception.ExceptionID)
+		}
+	}
+	sort.Strings(policyFactIDs)
+	prior := ""
+	for _, factID := range policyFactIDs {
+		if factID == prior {
+			continue
+		}
+		prior = factID
+		fact, observeErr := a.review.mission.ObserveMissionFact(ctx, journalv2.ProjectID(request.ProjectID), journalv2.MissionID(request.MissionID), mission.MissionFactDecisionV2, factID)
+		if observeErr != nil || !fact.Found {
+			return integration.AcceptanceAuthorityObservationV2{}, invalidV2Plan("acceptance policy fact")
+		}
+		coordinate, coordinateErr := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID("decision:"+factID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(request.ProjectID), MissionID: journalv2.MissionID(request.MissionID)})
+		if coordinateErr != nil {
+			return integration.AcceptanceAuthorityObservationV2{}, coordinateErr
+		}
+		assertion, assertionRevision, assertionErr := observeMissionPolicyAssertionV2(ctx, a.adapter, coordinate, fact)
+		if assertionErr != nil || assertionRevision != fact.RecordRevision {
+			return integration.AcceptanceAuthorityObservationV2{}, invalidV2Plan("acceptance policy assertion")
+		}
+		result.PolicyFacts = append(result.PolicyFacts, integration.AcceptancePolicyFactObservationV2{Fact: review.MissionPolicyFactObservationV2{ProjectID: fact.State.ProjectID(), MissionID: fact.State.MissionID(), FactID: fact.State.FactID(), Kind: string(fact.State.Kind()), Status: string(fact.State.Status()), LogicalVersion: fact.State.LogicalVersion(), DetailDigest: fact.State.DetailDigest(), RecordRevision: fact.RecordRevision, Found: fact.Found}, Assertion: assertion})
 		result.Assertions = append(result.Assertions, assertion)
 	}
 	return result, nil

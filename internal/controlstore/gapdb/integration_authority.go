@@ -16,9 +16,18 @@ type integrationAuthorityV2 struct {
 	acceptance  *acceptanceAuthorityV2
 }
 
+type integrationCleanupAuthorityV2 struct {
+	adapter     *Adapter
+	coordinator *journalv2.PublicationCoordinatorV2
+}
+
 var _ integration.IntegrationAuthorityPortV2 = (*integrationAuthorityV2)(nil)
+var _ integration.IntegrationCleanupAuthorityPortV2 = (*integrationCleanupAuthorityV2)(nil)
 
 func (a *Adapter) IntegrationAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2, eventRegistry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, hostAuthorityID journalv2.HostAuthorityID, budgets restore.BudgetsV2) (integration.IntegrationAuthorityPortV2, error) {
+	if err := requireAuthorityReducerRegistrationsV2(reducers, integration.IntegrationReducerRegistrationsV2()); err != nil {
+		return nil, err
+	}
 	base, err := a.AcceptanceAuthorityPortV2(coordinator, eventRegistry, reducers, hostAuthorityID, budgets)
 	if err != nil {
 		return nil, err
@@ -36,6 +45,24 @@ func (a *Adapter) IntegrationAuthorityServiceV2(coordinator *journalv2.Publicati
 		return nil, err
 	}
 	return integration.NewIntegrationAuthorityServiceV2(port, epochs, git, eventRegistry)
+}
+
+func (a *Adapter) IntegrationCleanupAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2, eventRegistry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, hostAuthorityID journalv2.HostAuthorityID, budgets restore.BudgetsV2) (integration.IntegrationCleanupAuthorityPortV2, error) {
+	if a == nil || coordinator == nil {
+		return nil, invalidV2Plan("integration cleanup dependencies")
+	}
+	if err := requireAuthorityReducerRegistrationsV2(reducers, integration.IntegrationReducerRegistrationsV2()); err != nil {
+		return nil, err
+	}
+	return &integrationCleanupAuthorityV2{adapter: a, coordinator: coordinator}, nil
+}
+
+func (a *Adapter) IntegrationCleanupServiceV2(coordinator *journalv2.PublicationCoordinatorV2, eventRegistry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, hostAuthorityID journalv2.HostAuthorityID, budgets restore.BudgetsV2, epochs integration.AcceptanceEpochSourceV2, git integration.IntegrationGitPortV2) (*integration.IntegrationCleanupServiceV2, error) {
+	port, err := a.IntegrationCleanupAuthorityPortV2(coordinator, eventRegistry, reducers, hostAuthorityID, budgets)
+	if err != nil {
+		return nil, err
+	}
+	return integration.NewIntegrationCleanupServiceV2(port, epochs, git, eventRegistry)
 }
 
 func (a *integrationAuthorityV2) ResolveIntegrationOperation(ctx context.Context, candidate journalv2.OperationBindingV2) (integration.IntegrationOperationResolutionV2, error) {
@@ -164,6 +191,93 @@ func integrationTransportMembershipV2(plan journalv2.SealedCommitPlanV2) bool {
 		return families["integration_target"] == 1 && len(families) == 3
 	}
 	return len(families) == 2
+}
+
+func (a *integrationCleanupAuthorityV2) ResolveIntegrationCleanupOperation(ctx context.Context, candidate journalv2.OperationBindingV2) (integration.IntegrationOperationResolutionV2, error) {
+	resolved, err := resolveAuthorityOperationV2(ctx, a.adapter, candidate)
+	if err != nil {
+		return integration.IntegrationOperationResolutionV2{}, err
+	}
+	return integration.IntegrationOperationResolutionV2{Kind: integration.AcceptanceOperationResolutionKindV2(resolved.kind), State: resolved.state, RecordRevision: resolved.recordRevision}, nil
+}
+
+func (a *integrationCleanupAuthorityV2) ObserveIntegrationCleanupAuthority(ctx context.Context, request integration.IntegrationCleanupRequestV2) (integration.IntegrationCleanupAuthorityObservationV2, error) {
+	if a == nil || a.adapter == nil {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, invalidV2Plan("integration cleanup reader")
+	}
+	attempt, err := a.adapter.CaptureRevisionV2(ctx)
+	if err != nil {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, err
+	}
+	attemptCoordinate, err := integration.IntegrationAttemptCoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, request.AttemptID)
+	if err != nil {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, err
+	}
+	attemptAddress, _ := journalv2.NewAggregateHeadAddressV2(attemptCoordinate)
+	attemptRead, _ := journalv2.NewReadRequestV2(attemptAddress, attempt)
+	attemptRecord, err := a.adapter.ReadV2(ctx, attemptRead)
+	if err != nil || attemptRecord.ExpiresAt() != "" {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, invalidV2Plan("integration cleanup attempt")
+	}
+	attemptHead, err := journalv2.DecodeAggregateHeadV2(attemptRecord.CanonicalValue())
+	if err != nil || attemptHead.Coordinate() != attemptCoordinate || attemptHead.Tombstone() || attemptHead.LastPublicationID() == "" {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, invalidV2Plan("integration cleanup attempt head")
+	}
+	attemptState, err := integration.DecodeIntegrationAttemptStateV2(attemptHead.AuthoritySummary())
+	if err != nil || journalv2.LogicalVersion(attemptState.LogicalVersion) != attemptHead.LogicalVersion() {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, invalidV2Plan("integration cleanup attempt state")
+	}
+	attemptDigest, _ := journalv2.ReducerStateDigestV2(attemptState.CanonicalBytes())
+	if attemptDigest != attemptHead.CanonicalStateDigest() {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, invalidV2Plan("integration cleanup attempt digest")
+	}
+
+	sourceAddress, _ := journalv2.NewOperationHeadAddressV2(request.IntegrationOperationID)
+	sourceRead, _ := journalv2.NewReadRequestV2(sourceAddress, attempt)
+	sourceRecord, err := a.adapter.ReadV2(ctx, sourceRead)
+	if err != nil || sourceRecord.ExpiresAt() != "" {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, invalidV2Plan("integration cleanup source operation")
+	}
+	sourceState, err := journalv2.DecodeOperationStateV2(sourceRecord.CanonicalValue())
+	if err != nil || sourceState.OperationID() != request.IntegrationOperationID {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, invalidV2Plan("integration cleanup source state")
+	}
+	if err = a.adapter.VerifyRevisionV2(ctx, attempt); err != nil {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, err
+	}
+	sourceValueDigest, err := journalv2.ReducerStateDigestV2(sourceRecord.CanonicalValue())
+	if err != nil {
+		return integration.IntegrationCleanupAuthorityObservationV2{}, err
+	}
+	return integration.IntegrationCleanupAuthorityObservationV2{Attempt: attemptState, AttemptRecordRevision: attemptRecord.RecordRevision(), SourceOperation: sourceState, SourceOperationRecordRevision: sourceRecord.RecordRevision(), SourceOperationValueDigest: sourceValueDigest}, nil
+}
+
+func (a *integrationCleanupAuthorityV2) PublishIntegrationCleanup(ctx context.Context, capability integration.IntegrationCleanupPlanV2) (integration.IntegrationAckV2, error) {
+	plan, err := capability.Publication()
+	if err != nil || !integrationCleanupTransportMembershipV2(plan) {
+		return integration.IntegrationAckV2{}, invalidV2Plan("integration cleanup plan")
+	}
+	ack, err := publishAuthorityPlanV2(ctx, a.adapter, a.coordinator, plan)
+	if err != nil {
+		return integration.IntegrationAckV2{}, err
+	}
+	return integration.IntegrationAckV2{PublicationID: ack.PublicationID(), ProviderRevision: ack.ProviderRevision(), PlanDigest: ack.PlanDigest(), MutationCount: ack.MutationCount()}, nil
+}
+
+func (a *integrationCleanupAuthorityV2) ReconcileIntegrationCleanup(ctx context.Context, capability integration.IntegrationCleanupPlanV2) (integration.IntegrationAckV2, error) {
+	plan, err := capability.Publication()
+	if err != nil || !integrationCleanupTransportMembershipV2(plan) {
+		return integration.IntegrationAckV2{}, invalidV2Plan("integration cleanup reconciliation plan")
+	}
+	ack, err := reconcileObservedAuthorityPublicationV2(ctx, a.adapter, a.coordinator, plan)
+	if err != nil {
+		return integration.IntegrationAckV2{}, err
+	}
+	return integration.IntegrationAckV2{PublicationID: ack.PublicationID(), ProviderRevision: ack.ProviderRevision(), PlanDigest: ack.PlanDigest(), MutationCount: ack.MutationCount()}, nil
+}
+
+func integrationCleanupTransportMembershipV2(plan journalv2.SealedCommitPlanV2) bool {
+	return len(plan.EffectIntents()) == 0 && authorityTransportMembershipV2(plan, "integration_attempt", 2, 2, 2, 0, 0)
 }
 
 var _ = ids.RepositoryID("")
