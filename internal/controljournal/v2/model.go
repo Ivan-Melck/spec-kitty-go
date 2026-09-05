@@ -773,6 +773,21 @@ func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
 }
 
 func DecodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2) (EventEnvelopeV2, error) {
+	return decodeEventEnvelopeV2(encoded, registry, false)
+}
+
+// DecodeEventEnvelopeRecordV2 decodes an event from canonical bytes already
+// sealed by RecoveryRecordV2. Schema, registry membership, semantic identity,
+// and the event digest remain mandatory; only duplicate JSON normalization is
+// omitted.
+func DecodeEventEnvelopeRecordV2(record RecoveryRecordV2, registry EventRegistryV2) (EventEnvelopeV2, error) {
+	if record.address.kind != AddressJournalEvent || record.expiresAt != "" {
+		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
+	}
+	return decodeEventEnvelopeV2(record.canonical, registry, true)
+}
+
+func decodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2, canonicalSealed bool) (EventEnvelopeV2, error) {
 	var wire eventEnvelopeWire
 	if err := decodeStrict(encoded, MaxEventEnvelopeBytes, &wire); err != nil || wire.EnvelopeVersion != EnvelopeVersion {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
@@ -792,9 +807,11 @@ func DecodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2) (EventEnvel
 	if err != nil || envelope.digest != want {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
 	}
-	canonical, _ := EncodeEventEnvelopeV2(envelope)
-	if !bytes.Equal(canonical, encoded) {
-		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
+	if !canonicalSealed {
+		canonical, _ := EncodeEventEnvelopeV2(envelope)
+		if !bytes.Equal(canonical, encoded) {
+			return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
+		}
 	}
 	envelope.canonicalSize = len(encoded)
 	return envelope, nil
