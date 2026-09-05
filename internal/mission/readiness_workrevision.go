@@ -148,6 +148,94 @@ func SealInitialWorkRevisionSelectionV2(result FinalizationResult) (WorkRevision
 	return sealWorkRevisionSelectionV2(head, encoded, publication.canonical, "", "", nil)
 }
 
+// SealAcknowledgedInitialWorkRevisionSelectionV2 bridges the production
+// Authority Journal v2 workgraph publication into mission readiness authority.
+// The acknowledgement, not a caller-authored success flag, proves that the
+// exact canonical generation-one revision reached durable GapDB authority.
+func SealAcknowledgedInitialWorkRevisionSelectionV2(revision workgraph.RevisionV2, acknowledged journalv2.AcknowledgedPublicationV2) (WorkRevisionSelectionV2, error) {
+	encoded, err := revision.Encode()
+	if err != nil || revision.Generation() != 1 || revision.PredecessorID() != "" || revision.SchemaVersion() != workgraph.RevisionSchemaV3 {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "acknowledged_initial_revision", err)
+	}
+	plan := acknowledged.Plan()
+	if plan.Digest().IsZero() || acknowledged.PublicationID() != plan.PublicationID() || acknowledged.PlanDigest() != plan.Digest() || acknowledged.RecordSetDigest() != plan.RecordSetDigest() ||
+		acknowledged.ProviderRevision() == 0 || acknowledged.DurableThroughRevision() < acknowledged.ProviderRevision() || acknowledged.MutationCount() != plan.MutationCount() || acknowledged.AssertionCount() != plan.AssertionCount() {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_acknowledgement", nil)
+	}
+	binding := plan.BindingCreate()
+	operation := plan.OperationState()
+	events := plan.Events()
+	if binding == nil || binding.OperationID() != operation.OperationID() || operation.Status() != journalv2.StatusResolved || operation.LastPublicationID() != acknowledged.PublicationID() || len(events) != 2 {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_operation", nil)
+	}
+	var event journalv2.EventEnvelopeV2
+	workgraphEvents := 0
+	for _, candidate := range events {
+		if candidate.OperationID() != operation.OperationID() || candidate.PublicationID() != acknowledged.PublicationID() {
+			return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_membership", nil)
+		}
+		if candidate.Family() == "workgraph" {
+			event = candidate
+			workgraphEvents++
+		} else if candidate.Family() != "operation" {
+			return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_membership", nil)
+		}
+	}
+	if workgraphEvents != 1 {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_membership", nil)
+	}
+	coordinate := event.Coordinate()
+	if event.Family() != "workgraph" || event.EventType() != "workgraph.finalized" || event.OperationID() != operation.OperationID() || event.PublicationID() != acknowledged.PublicationID() ||
+		coordinate.Kind != "workgraph" || coordinate.Scope.Kind != journalv2.ScopeMission || coordinate.Scope.ProjectID != journalv2.ProjectID(revision.ProjectID()) || coordinate.Scope.MissionID != journalv2.MissionID(revision.MissionID()) || string(coordinate.ID) != string(revision.MissionID()) {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_event", nil)
+	}
+	var payload struct {
+		SchemaVersion uint16          `json:"schema_version"`
+		Kind          string          `json:"kind"`
+		Revision      json.RawMessage `json:"revision"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(event.Payload()))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&payload); err != nil || payload.SchemaVersion != 1 || payload.Kind != "finalized" || !bytes.Equal(payload.Revision, encoded) {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_payload", err)
+	}
+	exactScope := journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(revision.ProjectID()), MissionID: journalv2.MissionID(revision.MissionID())}
+	exactIntent, err := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "workgraph.finalized", CommandSchemaVersion: 1, Scope: exactScope, Command: event.Payload()})
+	if err != nil || binding.CommandKind() != "workgraph.finalized" || binding.CommandSchemaVersion() != 1 || binding.Scope() != exactScope || binding.IntentDigest() != exactIntent {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_binding", err)
+	}
+	exactResult, err := journalv2.CanonicalObject([]byte(fmt.Sprintf(`{"work_revision_id":%q}`, revision.ID())))
+	if err != nil || operation.ResultKind() != "workgraph.result" || operation.ResultSchemaVersion() != 1 || !bytes.Equal(operation.Result(), exactResult) {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_result", err)
+	}
+	receipt, err := json.Marshal(struct {
+		PublicationID  journalv2.PublicationID `json:"publication_id"`
+		PlanDigest     string                  `json:"plan_sha256"`
+		RecordSet      string                  `json:"record_set_sha256"`
+		Revision       uint64                  `json:"provider_revision"`
+		DurableThrough uint64                  `json:"durable_through_revision"`
+		Mutations      int                     `json:"mutation_count"`
+		Assertions     int                     `json:"assertion_count"`
+	}{acknowledged.PublicationID(), acknowledged.PlanDigest().String(), acknowledged.RecordSetDigest().String(), acknowledged.ProviderRevision(), acknowledged.DurableThroughRevision(), acknowledged.MutationCount(), acknowledged.AssertionCount()})
+	if err != nil {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_receipt", err)
+	}
+	receipt, err = journalv2.CanonicalObject(receipt)
+	if err != nil {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_receipt", err)
+	}
+	receiptDigest := fmt.Sprintf("%x", sha256.Sum256(receipt))
+	publication := newWorkRevisionPublicationV2(revision, binding.IntentDigest().String(), receiptDigest)
+	if len(publication.canonical) == 0 {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_evidence", nil)
+	}
+	head, err := sealWorkRevisionAuthorityV2(revision)
+	if err != nil {
+		return WorkRevisionSelectionV2{}, err
+	}
+	return sealWorkRevisionSelectionV2(head, encoded, publication.canonical, "", "", nil)
+}
+
 func SealReconciledWorkRevisionSelectionV2(prior WorkRevisionAuthorityV2, result SuccessorPublicationResult) (WorkRevisionSelectionV2, error) {
 	publication := result.publication
 	if len(publication.canonical) == 0 {
