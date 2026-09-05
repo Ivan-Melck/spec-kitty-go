@@ -32,6 +32,18 @@ func TestSuccessorPublicationAtomicallyAdvancesPointerAndReplays(t *testing.T) {
 	if !slices.Equal(gotKinds, wantKinds) || store.publishCalls.Load() != 1 {
 		t.Fatalf("durable action facts=%#v publish=%d", result.Actions, store.publishCalls.Load())
 	}
+	prior, err := sealWorkRevisionAuthorityV2(command.ExpectedOld)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SealReconciledWorkRevisionSelectionV2(prior, result); err != nil {
+		t.Fatalf("validated successor publication did not mint work-revision authority: %v", err)
+	}
+	forged := result
+	forged.publication = workRevisionPublicationV2{}
+	if _, err := SealReconciledWorkRevisionSelectionV2(prior, forged); !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidRequestV2) {
+		t.Fatalf("caller-authored successor result minted work-revision authority: %v", err)
+	}
 	replay, err := service.Publish(context.Background(), command)
 	if err != nil || !replay.Replayed || store.publishCalls.Load() != 1 || replay.RequestDigest != result.RequestDigest || replay.Revision.ID() != result.Revision.ID() {
 		t.Fatalf("replay=%#v err=%v calls=%d", replay, err, store.publishCalls.Load())

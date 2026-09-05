@@ -67,6 +67,7 @@ type FinalizationResult struct {
 	RequestDigest string
 	Receipt       FinalizationReceipt
 	Replayed      bool
+	publication   workRevisionPublicationV2
 }
 
 // FinalizationReceipt binds an operation to its exact complete outcome,
@@ -140,6 +141,7 @@ func (service *FinalizationService) Finalize(ctx context.Context, command Finali
 		}
 		replay.RequestDigest = requestDigest
 		replay.Replayed = true
+		replay.publication = newWorkRevisionPublicationV2(replay.Revision, replay.RequestDigest, string(replay.Receipt))
 		return replay, nil
 	}
 	first, err := service.observations.ObserveFinalization(ctx, command.MissionID)
@@ -173,6 +175,7 @@ func (service *FinalizationService) Finalize(ctx context.Context, command Finali
 		return FinalizationResult{}, err
 	}
 	result.RequestDigest = requestDigest
+	result.publication = newWorkRevisionPublicationV2(result.Revision, result.RequestDigest, string(result.Receipt))
 	return result, nil
 }
 

@@ -19,7 +19,6 @@ func TestM2AutonomyKernelHasNoCeremonyOrIOAuthority(t *testing.T) {
 		"internal/mission/readiness_service_v2.go",
 		"internal/mission/readiness_workrevision.go",
 		"internal/missiontype/softwaredev/capability.go",
-		"internal/missiontype/softwaredev/readiness.go",
 	}
 	for _, relative := range paths {
 		t.Run(filepath.Base(relative), func(t *testing.T) {
@@ -102,10 +101,28 @@ func TestM2AutonomyEvaluatorIsPureAndTakesOneImmutableSnapshot(t *testing.T) {
 		t.Fatal("pure readiness evaluator is absent")
 	}
 	snapshotSource := readM2AutonomySource(t, root, "internal/mission/readiness_snapshot.go")
-	for _, required := range []string{"CapabilityScopeCensus", "len(sets) != len(allActionIDs)", "future_authority_revision", "snapshotDigest"} {
+	for _, required := range []string{"CapabilityObservationSetV2", "len(observations) != len(allActionIDs)", "non_capture_authority_revision", "capture.DatabaseID()", "snapshotDigest"} {
 		if !strings.Contains(snapshotSource, required) {
 			t.Fatalf("sealed readiness snapshot lacks completeness law %s", required)
 		}
+	}
+	for _, forbidden := range []string{"type ReadinessEvidence struct", "type CapabilityScopeSet struct", "type CapabilityScopeCensus struct"} {
+		if strings.Contains(snapshotSource, forbidden) {
+			t.Fatalf("readiness seal exposes caller-authored authority bag %s", forbidden)
+		}
+	}
+	workRevisionSource := readM2AutonomySource(t, root, "internal/mission/readiness_workrevision.go")
+	for _, required := range []string{
+		"func SealInitialWorkRevisionSelectionV2(result FinalizationResult)",
+		"func SealReconciledWorkRevisionSelectionV2(prior WorkRevisionAuthorityV2, result SuccessorPublicationResult)",
+		"publication_authority",
+	} {
+		if !strings.Contains(workRevisionSource, required) {
+			t.Fatalf("work-revision readiness is not bound to publication authority: %s", required)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "internal/missiontype/softwaredev/readiness.go")); !os.IsNotExist(err) {
+		t.Fatal("future-only software-development readiness facade remains in production")
 	}
 }
 

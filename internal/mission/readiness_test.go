@@ -26,21 +26,50 @@ type ReadinessInput struct {
 
 func evaluateReadinessInput(t *testing.T, input ReadinessInput) (ActionCensus, error) {
 	t.Helper()
+	input.Contracts = cloneContracts(input.Contracts)
+	for index := range input.Contracts {
+		if input.Contracts[index].Scope.Kind == ScopeMission {
+			input.Contracts[index].Scope.Identity = input.MissionID
+		}
+	}
 	definition := testCapabilityDefinition(t, input.Contracts)
-	scopes := testScopeCensus(t, input.MissionID, input.Revision, input.Contracts)
 	facts := slices.Clone(input.Facts)
 	facts = slices.DeleteFunc(facts, func(fact PredicateFact) bool { return fact.Kind == PredicateLifecycleAllows })
-	evidence := ReadinessEvidence{Facts: facts, Decisions: input.Decisions, Blockers: input.Blockers, Conflicts: input.Conflicts}
+	for index := range facts {
+		facts[index].Authority.Revision = input.Revision
+		if facts[index].Scope.Kind == ScopeMission {
+			facts[index].Scope.Identity = input.MissionID
+		}
+	}
+	for index := range input.Decisions {
+		if input.Decisions[index].Affects[0].Scope.Kind == ScopeMission {
+			input.Decisions[index].Affects[0].Scope.Identity = input.MissionID
+		}
+	}
+	for index := range input.Blockers {
+		if input.Blockers[index].Affects[0].Scope.Kind == ScopeMission {
+			input.Blockers[index].Affects[0].Scope.Identity = input.MissionID
+		}
+	}
+	for index := range input.Conflicts {
+		if input.Conflicts[index].Affects[0].Scope.Kind == ScopeMission {
+			input.Conflicts[index].Affects[0].Scope.Identity = input.MissionID
+		}
+	}
+	capture, err := journalv2.NewStoreRevisionV2("database-readiness", input.Revision, input.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observations := testObservationSet(t, capture, "project-readiness", journalv2.MissionID(input.MissionID), input.Contracts, facts)
 	if !input.MissionExists {
 		input.MissionExists = input.Lifecycle != ""
 	}
 	var snapshot ReadinessSnapshot
-	var err error
 	if input.MissionExists {
-		state := readinessStateForTest(t, input.MissionID, input.Revision, input.Lifecycle)
-		snapshot, err = SealReadinessSnapshot(ReadinessAuthorityObservationV2{State: state, StoreRevision: input.Revision, RecordRevision: input.Revision}, definition, scopes, evidence)
+		state := readinessStateForTestWithFacts(t, input.MissionID, input.Revision, input.Lifecycle, input.Decisions, input.Blockers, input.Conflicts)
+		snapshot, err = SealReadinessSnapshot(readinessObservationForTest(t, state, capture, input.Revision), definition, observations)
 	} else {
-		snapshot, err = SealPrecreationReadinessSnapshot(input.MissionID, input.Revision, definition, scopes, evidence)
+		snapshot, err = SealPrecreationReadinessSnapshot("project-readiness", journalv2.MissionID(input.MissionID), capture, definition, observations)
 	}
 	if err != nil {
 		return ActionCensus{}, err
@@ -69,15 +98,17 @@ func TestCapabilityReadinessReturnsCompleteCensusAndParallelActions(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []ActionRef{testRef(ActionArtifactPublish), testRef(ActionVerificationRun)}; !slices.Equal(got.Authorized(), want) {
+	if want := []ActionRef{testRefFor(ActionArtifactPublish, "mission-autonomy"), testRefFor(ActionVerificationRun, "mission-autonomy")}; !slices.Equal(got.Authorized(), want) {
 		t.Fatalf("authorized=%v want=%v", got.Authorized(), want)
 	}
 	unavailable := got.Unavailable()
-	if len(unavailable) != 1 || unavailable[0].Action != testRef(ActionWorkFinalize) || len(unavailable[0].Predicates) != 1 {
+	if len(unavailable) != 1 || unavailable[0].Action != testRefFor(ActionWorkFinalize, "mission-autonomy") || len(unavailable[0].Predicates) != 1 {
 		t.Fatalf("complete unavailable census lost: %+v", unavailable)
 	}
 	predicate := unavailable[0].Predicates[0]
-	if predicate.Status != PredicateUnavailable || predicate.Authority != testAuthority("workgraph_authority") || predicate.EvidenceIdentity != "evidence-workgraph" || predicate.EvidenceDigest != testEvidenceDigest() || predicate.ResponsibleCapability != ActionWorkGraphObserve || predicate.Recovery != RecoveryRunProducer {
+	wantAuthority := testAuthority("workgraph_authority")
+	wantAuthority.Revision = 9
+	if predicate.Status != PredicateUnavailable || predicate.Authority != wantAuthority || predicate.EvidenceIdentity != "evidence-workgraph" || predicate.EvidenceDigest != testEvidenceDigest() || predicate.ResponsibleCapability != ActionWorkGraphObserve || predicate.Recovery != RecoveryRunProducer {
 		t.Fatalf("blocking predicate is not actionable: %+v", predicate)
 	}
 	if !lowerHexDigest(got.SnapshotDigest()) || got.SnapshotDigest() == testSnapshotDigest() {
@@ -111,7 +142,7 @@ func TestCapabilityReadinessScopesDecisionsAndBlockersToAffectedActions(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got.Authorized(), []ActionRef{testRef(ActionBlockerClear), testRef(ActionDecisionResolve)}) {
+	if !slices.Equal(got.Authorized(), []ActionRef{testRefFor(ActionBlockerClear, "mission-scoped"), testRefFor(ActionDecisionResolve, "mission-scoped")}) {
 		t.Fatalf("scoped facts became a global ceremony gate: %v", got.Authorized())
 	}
 	if len(got.DecisionsRequired()) != 1 || len(got.Conflicts()) != 0 {
@@ -216,14 +247,14 @@ func TestCapabilityReadinessLifecycleIsCoarseAndTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(paused.Authorized(), []ActionRef{testRef(ActionMissionResume)}) {
+	if !slices.Equal(paused.Authorized(), []ActionRef{testRefFor(ActionMissionResume, "mission-paused")}) {
 		t.Fatalf("paused mission authority=%v", paused.Authorized())
 	}
 	opened, err := evaluateReadinessInput(t, ReadinessInput{MissionID: "mission-open", Revision: 2, SnapshotDigest: testSnapshotDigest(), Lifecycle: MissionOpen, Contracts: contracts, Facts: facts})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(opened.Authorized(), []ActionRef{testRef(ActionArtifactPublish)}) {
+	if !slices.Equal(opened.Authorized(), []ActionRef{testRefFor(ActionArtifactPublish, "mission-open")}) {
 		t.Fatalf("existing open mission re-authorized create/resume: %v", opened.Authorized())
 	}
 	terminal, err := evaluateReadinessInput(t, ReadinessInput{MissionID: "mission-terminal", Revision: 9, SnapshotDigest: testSnapshotDigest(), Lifecycle: MissionCompleted, Contracts: contracts, Facts: facts})
@@ -279,13 +310,17 @@ func TestReadinessRequiresCompleteSealedDefinitionScopeCensusAndAuthorityMembers
 	}
 	contracts := mustReadinessContracts(t, CapabilityContract{Action: ActionMissionCreate})
 	definition := testCapabilityDefinition(t, contracts)
-	sets := testScopeCensus(t, "mission-create", 3, contracts).Sets()
-	if _, err := NewCapabilityScopeCensus(testAuthority("mission_authority"), "scope-census", testEvidenceDigest(), sets[:len(sets)-1]); !IsReadinessKind(err, ReadinessInvalidInput) {
-		t.Fatalf("partial scope census was accepted: %v", err)
+	capture, _ := journalv2.NewStoreRevisionV2("database-readiness", 3, 3)
+	observations := testCapabilityObservations(t, capture, "project-readiness", "mission-create", contracts, nil)
+	if _, err := SealCapabilityObservationSetV2(capture, "project-readiness", "mission-create", observations[:len(observations)-1]); !IsReadinessKind(err, ReadinessInvalidInput) {
+		t.Fatalf("partial capability observation set was accepted: %v", err)
 	}
-	scopes := testScopeCensus(t, "mission-create", 3, contracts)
+	observationSet, err := SealCapabilityObservationSetV2(capture, "project-readiness", "mission-create", observations)
+	if err != nil {
+		t.Fatal(err)
+	}
 	snapshot, census, err := func() (ReadinessSnapshot, ActionCensus, error) {
-		snapshot, sealErr := SealPrecreationReadinessSnapshot("mission-create", 3, definition, scopes, ReadinessEvidence{})
+		snapshot, sealErr := SealPrecreationReadinessSnapshot("project-readiness", "mission-create", capture, definition, observationSet)
 		if sealErr != nil {
 			return ReadinessSnapshot{}, ActionCensus{}, sealErr
 		}
@@ -295,7 +330,7 @@ func TestReadinessRequiresCompleteSealedDefinitionScopeCensusAndAuthorityMembers
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(census.Authorized(), []ActionRef{testRef(ActionMissionCreate)}) || snapshot.SnapshotDigest() == testSnapshotDigest() {
+	if !slices.Equal(census.Authorized(), []ActionRef{testRefFor(ActionMissionCreate, "mission-create")}) || snapshot.SnapshotDigest() == testSnapshotDigest() {
 		t.Fatalf("precreation census did not derive mission.create authority: %s", census.CanonicalBytes())
 	}
 
@@ -307,8 +342,52 @@ func TestReadinessRequiresCompleteSealedDefinitionScopeCensusAndAuthorityMembers
 	}
 	fact = satisfiedFact(PredicateProjectVerification, ActionAcceptanceEvaluate)
 	fact.Authority.Revision = 4
-	if _, err := evaluateReadinessInput(t, ReadinessInput{MissionID: "mission-future", Revision: 3, Lifecycle: MissionOpen, Contracts: producerContract, Facts: []PredicateFact{fact}}); !IsReadinessKind(err, ReadinessInvalidFact) {
+	if _, err := SealCapabilityAuthorityObservationV2(capture, "project-readiness", "mission-future", fact.Action, nil, []PredicateFact{fact}, "absence", testEvidenceDigest()); !IsReadinessKind(err, ReadinessInvalidFact) {
 		t.Fatalf("future observation entered one-revision snapshot: %v", err)
+	}
+}
+
+func TestReadinessSealBindsDatabaseMissionAndExactCaptureAndDerivesMissionScope(t *testing.T) {
+	capture, _ := journalv2.NewStoreRevisionV2("database-authority-a", 7, 7)
+	contracts := mustReadinessContracts(t, CapabilityContract{Action: ActionIntegrationPublish})
+	definition := testCapabilityDefinition(t, contracts)
+	observations := testObservationSet(t, capture, "project-readiness", "mission-bound", contracts, nil)
+	state := readinessStateForTest(t, "mission-bound", 7, MissionOpen)
+	snapshot, err := SealReadinessSnapshot(readinessObservationForTest(t, state, capture, 7), definition, observations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	census, err := EvaluateReadiness(snapshot)
+	if err != nil || snapshot.DatabaseID() != "database-authority-a" || !slices.Contains(census.Authorized(), testRefFor(ActionIntegrationPublish, "mission-bound")) {
+		t.Fatalf("mission scope was not derived from exact observation: census=%v database=%s err=%v", census.Authorized(), snapshot.DatabaseID(), err)
+	}
+
+	wrongDatabase, _ := journalv2.NewStoreRevisionV2("database-authority-b", 7, 7)
+	if _, err := SealReadinessSnapshot(readinessObservationForTest(t, state, wrongDatabase, 7), definition, observations); !IsReadinessKind(err, ReadinessInvalidInput) {
+		t.Fatalf("cross-database capability evidence entered snapshot: %v", err)
+	}
+	if _, err := NewReadinessAuthorityObservationV2(state, capture, 8, ""); !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidRequestV2) {
+		t.Fatalf("future record revision entered snapshot: %v", err)
+	}
+	if _, err := SealCapabilityAuthorityObservationV2(capture, "project-readiness", "mission-bound", ActionExecutionClaim, nil, nil, "", ""); !IsReadinessKind(err, ReadinessInvalidInput) {
+		t.Fatalf("empty dynamic membership without absence evidence was accepted: %v", err)
+	}
+	forgedMissionScope, err := SealCapabilityAuthorityObservationV2(capture, "project-readiness", "mission-bound", ActionIntegrationPublish, []AuthorityScope{{Kind: ScopeMission, Identity: "mission-forged"}}, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := testCapabilityObservations(t, capture, "project-readiness", "mission-bound", contracts, nil)
+	for index := range values {
+		if values[index].action == ActionIntegrationPublish {
+			values[index] = forgedMissionScope
+		}
+	}
+	forgedSet, err := SealCapabilityObservationSetV2(capture, "project-readiness", "mission-bound", values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SealReadinessSnapshot(readinessObservationForTest(t, state, capture, 7), definition, forgedSet); !IsReadinessKind(err, ReadinessInvalidInput) {
+		t.Fatalf("caller-provided mission scope replaced derived mission authority: %v", err)
 	}
 }
 
@@ -385,6 +464,10 @@ func testScope() AuthorityScope { return AuthorityScope{Kind: ScopeMission, Iden
 
 func testRef(action ActionID) ActionRef { return ActionRef{ID: action, Scope: testScope()} }
 
+func testRefFor(action ActionID, missionID string) ActionRef {
+	return ActionRef{ID: action, Scope: AuthorityScope{Kind: ScopeMission, Identity: missionID}}
+}
+
 func testCapabilityDefinition(t *testing.T, contracts []CapabilityContract) CapabilityDefinition {
 	t.Helper()
 	templates := make([]CapabilityTemplate, 0, len(allActionIDs))
@@ -401,7 +484,9 @@ func testCapabilityDefinition(t *testing.T, contracts []CapabilityContract) Capa
 	for _, action := range allActionIDs {
 		contract, ok := byAction[action]
 		if !ok {
-			templates = append(templates, CapabilityTemplate{Action: action, ScopeKind: ScopeMission})
+			// Unmentioned actions use an empty dynamic scope in unit fixtures so
+			// each test can isolate the contracts it is exercising.
+			templates = append(templates, CapabilityTemplate{Action: action, ScopeKind: ScopeAction})
 			continue
 		}
 		templates = append(templates, CapabilityTemplate{Action: action, ScopeKind: contract.Scope.Kind, Applicability: contract.Applicability, Predicates: contract.Predicates})
@@ -413,19 +498,40 @@ func testCapabilityDefinition(t *testing.T, contracts []CapabilityContract) Capa
 	return definition
 }
 
-func testScopeCensus(t *testing.T, missionID string, revision uint64, contracts []CapabilityContract) CapabilityScopeCensus {
+func testCapabilityObservations(t *testing.T, capture journalv2.StoreRevisionV2, projectID journalv2.ProjectID, missionID journalv2.MissionID, contracts []CapabilityContract, facts []PredicateFact) []CapabilityAuthorityObservationV2 {
 	t.Helper()
-	sets := make([]CapabilityScopeSet, 0, len(allActionIDs))
+	values := make([]CapabilityAuthorityObservationV2, 0, len(allActionIDs))
 	for _, action := range allActionIDs {
-		entry := CapabilityScopeSet{Action: action}
+		var scopes []AuthorityScope
 		for _, contract := range contracts {
 			if contract.Action == action {
-				entry.Scopes = append(entry.Scopes, contract.Scope)
+				if contract.Scope.Kind != ScopeMission {
+					scopes = append(scopes, contract.Scope)
+				}
 			}
 		}
-		sets = append(sets, entry)
+		var actionFacts []PredicateFact
+		for _, fact := range facts {
+			if fact.Action == action {
+				actionFacts = append(actionFacts, fact)
+			}
+		}
+		absenceID, absenceDigest := "", ""
+		if len(scopes) == 0 {
+			absenceID, absenceDigest = "absence-"+string(action), testEvidenceDigest()
+		}
+		observation, err := SealCapabilityAuthorityObservationV2(capture, projectID, missionID, action, scopes, actionFacts, absenceID, absenceDigest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values = append(values, observation)
 	}
-	census, err := NewCapabilityScopeCensus(ReadinessAuthorityCoordinate{Family: "mission_authority", Identity: missionID, Revision: 1}, "scope-census", testEvidenceDigest(), sets)
+	return values
+}
+
+func testObservationSet(t *testing.T, capture journalv2.StoreRevisionV2, projectID journalv2.ProjectID, missionID journalv2.MissionID, contracts []CapabilityContract, facts []PredicateFact) CapabilityObservationSetV2 {
+	t.Helper()
+	census, err := SealCapabilityObservationSetV2(capture, projectID, missionID, testCapabilityObservations(t, capture, projectID, missionID, contracts, facts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,14 +539,37 @@ func testScopeCensus(t *testing.T, missionID string, revision uint64, contracts 
 }
 
 func readinessStateForTest(t *testing.T, missionID string, storeRevision uint64, lifecycle MissionLifecycle) ReadinessAuthorityStateV2 {
+	return readinessStateForTestWithFacts(t, missionID, storeRevision, lifecycle, nil, nil, nil)
+}
+
+func readinessObservationForTest(t *testing.T, state ReadinessAuthorityStateV2, capture journalv2.StoreRevisionV2, recordRevision uint64) ReadinessAuthorityObservationV2 {
+	t.Helper()
+	observation, err := NewReadinessAuthorityObservationV2(state, capture, recordRevision, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return observation
+}
+
+func readinessStateForTestWithFacts(t *testing.T, missionID string, storeRevision uint64, lifecycle MissionLifecycle, decisions []ReadinessDecision, blockers []ReadinessBlocker, conflicts []ReadinessConflict) ReadinessAuthorityStateV2 {
 	t.Helper()
 	digest, err := journalv2.ParseDigest("definition", testEvidenceDigest())
 	if err != nil {
 		t.Fatal(err)
 	}
+	active := make([]ScopedMissionFactV2, 0, len(decisions)+len(blockers)+len(conflicts))
+	for _, value := range decisions {
+		active = append(active, ScopedMissionFactV2{Kind: ScopedFactDecisionV2, FactID: value.ID, Scope: value.Affects[0], EvidenceIdentity: value.EvidenceIdentity, EvidenceDigest: value.EvidenceDigest})
+	}
+	for _, value := range blockers {
+		active = append(active, ScopedMissionFactV2{Kind: ScopedFactBlockerV2, FactID: value.ID, Scope: value.Affects[0], EvidenceIdentity: value.EvidenceIdentity, EvidenceDigest: value.EvidenceDigest})
+	}
+	for _, value := range conflicts {
+		active = append(active, ScopedMissionFactV2{Kind: ScopedFactConflictV2, FactID: value.ID, Scope: value.Affects[0], EvidenceIdentity: value.EvidenceIdentity, EvidenceDigest: value.EvidenceDigest})
+	}
 	state, err := NewReadinessAuthorityStateV2(ReadinessAuthorityStateInputV2{
 		ProjectID: "project-readiness", MissionID: journalv2.MissionID(missionID), DefinitionRevision: "definition-readiness",
-		DefinitionDigest: digest, Version: journalv2.LogicalVersion(storeRevision), Lifecycle: lifecycle, LastOperationID: "operation-readiness-create", ObservedAt: "2026-01-01T00:00:00Z",
+		DefinitionDigest: digest, Version: journalv2.LogicalVersion(storeRevision), Lifecycle: lifecycle, ActiveFacts: active, LastOperationID: "operation-readiness-create", ObservedAt: "2026-01-01T00:00:00Z",
 	})
 	if err != nil {
 		t.Fatal(err)

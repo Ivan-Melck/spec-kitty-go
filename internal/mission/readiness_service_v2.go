@@ -11,12 +11,36 @@ import (
 )
 
 type ReadinessAuthorityObservationV2 struct {
-	State          ReadinessAuthorityStateV2
-	StoreRevision  uint64
-	RecordRevision uint64
-	LastEventID    journalv2.EventID
+	state          ReadinessAuthorityStateV2
+	capture        journalv2.StoreRevisionV2
+	recordRevision uint64
+	lastEventID    journalv2.EventID
 }
 
+func NewReadinessAuthorityObservationV2(state ReadinessAuthorityStateV2, capture journalv2.StoreRevisionV2, recordRevision uint64, lastEventID journalv2.EventID) (ReadinessAuthorityObservationV2, error) {
+	if state.IsZero() || recordRevision == 0 || recordRevision > capture.CurrentRevision() {
+		return ReadinessAuthorityObservationV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "readiness_observation", nil)
+	}
+	if _, err := journalv2.NewStoreRevisionV2(capture.DatabaseID(), capture.CurrentRevision(), capture.DurableThroughRevision()); err != nil {
+		return ReadinessAuthorityObservationV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "readiness_capture", err)
+	}
+	if lastEventID != "" {
+		if _, err := journalv2.NewEventID(string(lastEventID)); err != nil {
+			return ReadinessAuthorityObservationV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "readiness_event", err)
+		}
+	}
+	return ReadinessAuthorityObservationV2{state: state, capture: capture, recordRevision: recordRevision, lastEventID: lastEventID}, nil
+}
+
+func (o ReadinessAuthorityObservationV2) State() ReadinessAuthorityStateV2   { return o.state }
+func (o ReadinessAuthorityObservationV2) Capture() journalv2.StoreRevisionV2 { return o.capture }
+func (o ReadinessAuthorityObservationV2) RecordRevision() uint64             { return o.recordRevision }
+func (o ReadinessAuthorityObservationV2) LastEventID() journalv2.EventID     { return o.lastEventID }
+
+// ReadinessAuthorityPortV2 is the narrow sealed consumer contract reserved
+// for WP11's runtime composition host. WP18 deliberately supplies no
+// mission-type facade or cross-capability reader: those require the restored
+// projection and exact-capture composition owned by WP11.
 type ReadinessAuthorityPortV2 interface {
 	ResolveOperation(context.Context, journalv2.OperationBindingV2) (OperationResolutionV2, error)
 	ObserveReadinessAuthority(context.Context, journalv2.ProjectID, journalv2.MissionID) (ReadinessAuthorityObservationV2, error)
@@ -65,6 +89,8 @@ type ReadinessAuthorityServiceV2 struct {
 	registry journalv2.EventRegistryV2
 }
 
+// NewReadinessAuthorityServiceV2 constructs the capability authority service;
+// the sole production composition caller is intentionally deferred to WP11.
 func NewReadinessAuthorityServiceV2(port ReadinessAuthorityPortV2, epoch RuntimeEpochSourceV2, registry journalv2.EventRegistryV2) (*ReadinessAuthorityServiceV2, error) {
 	if port == nil || epoch == nil {
 		return nil, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "service", nil)
@@ -110,7 +136,7 @@ func (s *ReadinessAuthorityServiceV2) Execute(ctx context.Context, command Readi
 		if err != nil {
 			return ReadinessAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityNotFoundV2, "mission", err)
 		}
-		if observed.State.Digest() != command.Expected.Digest() {
+		if observed.state.Digest() != command.Expected.Digest() {
 			return ReadinessAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "expected_mission", nil)
 		}
 	} else if !command.Expected.IsZero() {
@@ -244,7 +270,7 @@ func buildReadinessAuthorityPlanV2(command ReadinessAuthorityCommandV2, binding 
 	}
 	expectedVersion, recordRevision := journalv2.LogicalVersion(0), uint64(0)
 	if command.EventType != ReadinessEventCreatedV2 {
-		expectedVersion, recordRevision = command.Expected.Version(), observed.RecordRevision
+		expectedVersion, recordRevision = command.Expected.Version(), observed.recordRevision
 	}
 	heads := []journalv2.HeadTransitionV2{
 		{Coordinate: operationCoordinate, ExpectedLogicalVersion: 0, NextLogicalVersion: 1, EventID: operationEventID, CommittedRuntimeEpochID: command.OriginatingRuntimeEpochID, CanonicalStateDigest: opDigest, AuthoritySummary: []byte(`{}`)},

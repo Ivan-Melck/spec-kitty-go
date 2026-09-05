@@ -86,7 +86,9 @@ func TestReadinessAuthorityTransitionAllowsActivityWithoutLifecycleAdvance(t *te
 
 func TestReadinessWorkRevisionSelectionBindsGenerationLineageAndMixedReconciliation(t *testing.T) {
 	command := successorPublicationFixture(t, "operation-readiness-successor")
-	initial, err := SealInitialWorkRevisionSelectionV2(command.ExpectedOld)
+	initialResult := FinalizationResult{Revision: command.ExpectedOld, RequestDigest: testEvidenceDigest(), Receipt: FinalizationReceipt(testEvidenceDigest())}
+	initialResult.publication = newWorkRevisionPublicationV2(initialResult.Revision, initialResult.RequestDigest, string(initialResult.Receipt))
+	initial, err := SealInitialWorkRevisionSelectionV2(initialResult)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +122,9 @@ func TestReadinessWorkRevisionSelectionBindsGenerationLineageAndMixedReconciliat
 		t.Fatalf("selection evidence did not round trip: %v", err)
 	}
 
-	reconciled, err := SealReconciledWorkRevisionSelectionV2(initial.Head(), command.Candidate, command.Reconciliation)
+	successorResult := SuccessorPublicationResult{Revision: command.Candidate, Reconciliation: command.Reconciliation, RequestDigest: command.Reconciliation.RequestDigest()}
+	successorResult.publication = newWorkRevisionPublicationV2(successorResult.Revision, testEvidenceDigest(), testEvidenceDigest())
+	reconciled, err := SealReconciledWorkRevisionSelectionV2(initial.Head(), successorResult)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +231,7 @@ func TestReadinessAuthorityCheckpointSuffixMatchesOriginReplayAndCensus(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(fromOrigin.CanonicalBytes(), fromCheckpoint.CanonicalBytes()) || !slices.Equal(fromOrigin.Authorized(), []ActionRef{testRef(ActionMissionResume)}) {
+	if !bytes.Equal(fromOrigin.CanonicalBytes(), fromCheckpoint.CanonicalBytes()) || !slices.Equal(fromOrigin.Authorized(), []ActionRef{testRefFor(ActionMissionResume, "mission-readiness")}) {
 		t.Fatalf("replay changed census: origin=%s checkpoint=%s", fromOrigin.CanonicalBytes(), fromCheckpoint.CanonicalBytes())
 	}
 }

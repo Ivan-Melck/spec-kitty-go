@@ -28,6 +28,12 @@ func TestFinalizationSagaObservesTwiceThenPublishesGenerationOne(t *testing.T) {
 	if source.calls.Load() != 2 || store.publishCalls.Load() != 1 || result.Replayed || result.Revision.Generation() != 1 || result.Mission.CurrentWorkRevisionID != command.ProposedRevisionID {
 		t.Fatalf("unexpected saga result: calls=%d publish=%d result=%#v", source.calls.Load(), store.publishCalls.Load(), result)
 	}
+	if _, err := SealInitialWorkRevisionSelectionV2(result); err != nil {
+		t.Fatalf("validated publication did not mint work-revision authority: %v", err)
+	}
+	if _, err := SealInitialWorkRevisionSelectionV2(FinalizationResult{Revision: result.Revision, Mission: result.Mission, RequestDigest: result.RequestDigest, Receipt: result.Receipt}); !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidRequestV2) {
+		t.Fatalf("caller-authored finalization result minted work-revision authority: %v", err)
+	}
 	expectedReceipt, err := finalizationOutcomeReceipt(result.Revision, result.Mission, command.MissionID, command.OperationID, result.RequestDigest)
 	if err != nil || result.Receipt.Validate() != nil || result.Receipt != expectedReceipt {
 		t.Fatalf("initial publication receipt is not bound to its complete outcome: receipt=%q expected=%q err=%v", result.Receipt, expectedReceipt, err)
@@ -38,6 +44,9 @@ func TestFinalizationSagaObservesTwiceThenPublishesGenerationOne(t *testing.T) {
 	}
 	if !replay.Replayed || source.calls.Load() != 2 || store.publishCalls.Load() != 1 {
 		t.Fatalf("replay crossed service boundaries: %#v", replay)
+	}
+	if _, err := SealInitialWorkRevisionSelectionV2(replay); err != nil {
+		t.Fatalf("validated replay lost work-revision authority: %v", err)
 	}
 }
 

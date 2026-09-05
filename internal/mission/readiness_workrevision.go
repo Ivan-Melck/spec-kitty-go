@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
@@ -27,7 +28,47 @@ type WorkRevisionAuthorityV2 struct {
 	canonical []byte
 }
 
-func SealWorkRevisionAuthorityV2(revision workgraph.RevisionV2) (WorkRevisionAuthorityV2, error) {
+// workRevisionPublicationV2 is minted only after a finalization or successor
+// publication service has validated the durable store's complete result. A raw
+// RevisionV2 is data, not proof that the revision is the published head.
+type workRevisionPublicationV2 struct {
+	revision      workgraph.RevisionV2
+	requestDigest string
+	receiptDigest string
+	canonical     []byte
+}
+
+func newWorkRevisionPublicationV2(revision workgraph.RevisionV2, requestDigest, receiptDigest string) workRevisionPublicationV2 {
+	requestDigest, requestOK := normalizedSHA256(requestDigest)
+	receiptDigest, receiptOK := normalizedSHA256(receiptDigest)
+	if !requestOK || !receiptOK {
+		return workRevisionPublicationV2{}
+	}
+	revisionBytes, err := revision.Encode()
+	if err != nil {
+		return workRevisionPublicationV2{}
+	}
+	encoded, err := json.Marshal(struct {
+		Revision      json.RawMessage `json:"revision"`
+		RequestDigest string          `json:"request_sha256"`
+		ReceiptDigest string          `json:"publication_evidence_sha256"`
+	}{revisionBytes, requestDigest, receiptDigest})
+	if err != nil {
+		return workRevisionPublicationV2{}
+	}
+	canonical, err := journalv2.CanonicalObject(encoded)
+	if err != nil {
+		return workRevisionPublicationV2{}
+	}
+	return workRevisionPublicationV2{revision: revision, requestDigest: requestDigest, receiptDigest: receiptDigest, canonical: canonical}
+}
+
+func normalizedSHA256(value string) (string, bool) {
+	value = strings.TrimPrefix(value, "sha256:")
+	return value, lowerHexDigest(value)
+}
+
+func sealWorkRevisionAuthorityV2(revision workgraph.RevisionV2) (WorkRevisionAuthorityV2, error) {
 	encoded, err := revision.Encode()
 	if err != nil {
 		return WorkRevisionAuthorityV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "work_revision_encode", err)
@@ -83,14 +124,20 @@ type WorkRevisionDispositionV2 struct {
 type WorkRevisionSelectionV2 struct {
 	head                 WorkRevisionAuthorityV2
 	revisionCanonical    []byte
+	publicationCanonical []byte
 	reconciliationID     string
 	reconciliationDigest string
 	dispositions         []WorkRevisionDispositionV2
 	canonical            []byte
 }
 
-func SealInitialWorkRevisionSelectionV2(revision workgraph.RevisionV2) (WorkRevisionSelectionV2, error) {
-	head, err := SealWorkRevisionAuthorityV2(revision)
+func SealInitialWorkRevisionSelectionV2(result FinalizationResult) (WorkRevisionSelectionV2, error) {
+	publication := result.publication
+	if len(publication.canonical) == 0 {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "initial_work_revision_publication", nil)
+	}
+	revision := publication.revision
+	head, err := sealWorkRevisionAuthorityV2(revision)
 	if err != nil {
 		return WorkRevisionSelectionV2{}, err
 	}
@@ -98,12 +145,18 @@ func SealInitialWorkRevisionSelectionV2(revision workgraph.RevisionV2) (WorkRevi
 		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "initial_work_revision", nil)
 	}
 	encoded, _ := revision.Encode()
-	return sealWorkRevisionSelectionV2(head, encoded, "", "", nil)
+	return sealWorkRevisionSelectionV2(head, encoded, publication.canonical, "", "", nil)
 }
 
-func SealReconciledWorkRevisionSelectionV2(prior WorkRevisionAuthorityV2, revision workgraph.RevisionV2, reconciliation workgraph.MixedReconciliation) (WorkRevisionSelectionV2, error) {
-	head, err := SealWorkRevisionAuthorityV2(revision)
-	if err != nil || prior.IsZero() || head.Generation() != prior.Generation()+1 || head.PredecessorID() != prior.ID() || reconciliation.OldRevisionID() != ids.WorkRevisionID(prior.ID()) || reconciliation.NewRevisionID() != revision.ID() || reconciliation.RequestDigest() == "" || reconciliation.ID() == "" {
+func SealReconciledWorkRevisionSelectionV2(prior WorkRevisionAuthorityV2, result SuccessorPublicationResult) (WorkRevisionSelectionV2, error) {
+	publication := result.publication
+	if len(publication.canonical) == 0 {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "reconciled_work_revision_publication", nil)
+	}
+	revision, reconciliation := publication.revision, result.Reconciliation
+	head, err := sealWorkRevisionAuthorityV2(revision)
+	reconciliationDigest, digestOK := normalizedSHA256(reconciliation.RequestDigest())
+	if err != nil || prior.IsZero() || head.Generation() != prior.Generation()+1 || head.PredecessorID() != prior.ID() || reconciliation.OldRevisionID() != ids.WorkRevisionID(prior.ID()) || reconciliation.NewRevisionID() != revision.ID() || !digestOK || reconciliation.ID() == "" {
 		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "reconciled_work_revision", err)
 	}
 	dispositions := make([]WorkRevisionDispositionV2, 0, len(reconciliation.Decisions()))
@@ -119,17 +172,18 @@ func SealReconciledWorkRevisionSelectionV2(prior WorkRevisionAuthorityV2, revisi
 	}
 	sort.Slice(dispositions, func(i, j int) bool { return dispositions[i].OldWorkID < dispositions[j].OldWorkID })
 	encoded, _ := revision.Encode()
-	return sealWorkRevisionSelectionV2(head, encoded, reconciliation.ID(), reconciliation.RequestDigest(), dispositions)
+	return sealWorkRevisionSelectionV2(head, encoded, publication.canonical, reconciliation.ID(), reconciliationDigest, dispositions)
 }
 
-func sealWorkRevisionSelectionV2(head WorkRevisionAuthorityV2, revision []byte, reconciliationID, reconciliationDigest string, dispositions []WorkRevisionDispositionV2) (WorkRevisionSelectionV2, error) {
+func sealWorkRevisionSelectionV2(head WorkRevisionAuthorityV2, revision, publication []byte, reconciliationID, reconciliationDigest string, dispositions []WorkRevisionDispositionV2) (WorkRevisionSelectionV2, error) {
 	wire := struct {
 		Head                 json.RawMessage             `json:"head"`
 		Revision             json.RawMessage             `json:"revision"`
+		Publication          json.RawMessage             `json:"publication_authority"`
 		ReconciliationID     string                      `json:"reconciliation_id,omitempty"`
 		ReconciliationDigest string                      `json:"reconciliation_sha256,omitempty"`
 		Dispositions         []WorkRevisionDispositionV2 `json:"dispositions"`
-	}{head.CanonicalBytes(), revision, reconciliationID, reconciliationDigest, dispositions}
+	}{head.CanonicalBytes(), revision, publication, reconciliationID, reconciliationDigest, dispositions}
 	canonical, err := json.Marshal(wire)
 	if err != nil {
 		return WorkRevisionSelectionV2{}, err
@@ -138,7 +192,7 @@ func sealWorkRevisionSelectionV2(head WorkRevisionAuthorityV2, revision []byte, 
 	if err != nil {
 		return WorkRevisionSelectionV2{}, err
 	}
-	return WorkRevisionSelectionV2{head: head, revisionCanonical: bytes.Clone(revision), reconciliationID: reconciliationID, reconciliationDigest: reconciliationDigest, dispositions: append([]WorkRevisionDispositionV2(nil), dispositions...), canonical: canonical}, nil
+	return WorkRevisionSelectionV2{head: head, revisionCanonical: bytes.Clone(revision), publicationCanonical: bytes.Clone(publication), reconciliationID: reconciliationID, reconciliationDigest: reconciliationDigest, dispositions: append([]WorkRevisionDispositionV2(nil), dispositions...), canonical: canonical}, nil
 }
 
 func (s WorkRevisionSelectionV2) IsZero() bool                  { return len(s.canonical) == 0 }
@@ -156,6 +210,7 @@ func decodeWorkRevisionSelectionV2(encoded []byte) (WorkRevisionSelectionV2, err
 	var wire struct {
 		Head                 json.RawMessage             `json:"head"`
 		Revision             json.RawMessage             `json:"revision"`
+		Publication          json.RawMessage             `json:"publication_authority"`
 		ReconciliationID     string                      `json:"reconciliation_id,omitempty"`
 		ReconciliationDigest string                      `json:"reconciliation_sha256,omitempty"`
 		Dispositions         []WorkRevisionDispositionV2 `json:"dispositions"`
@@ -177,7 +232,17 @@ func decodeWorkRevisionSelectionV2(encoded []byte) (WorkRevisionSelectionV2, err
 	if err != nil {
 		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "selection_revision", err)
 	}
-	wantHead, err := SealWorkRevisionAuthorityV2(revision)
+	var publication struct {
+		Revision      json.RawMessage `json:"revision"`
+		RequestDigest string          `json:"request_sha256"`
+		ReceiptDigest string          `json:"publication_evidence_sha256"`
+	}
+	publicationDecoder := json.NewDecoder(bytes.NewReader(wire.Publication))
+	publicationDecoder.DisallowUnknownFields()
+	if err := publicationDecoder.Decode(&publication); err != nil || !bytes.Equal(publication.Revision, wire.Revision) || !lowerHexDigest(publication.RequestDigest) || !lowerHexDigest(publication.ReceiptDigest) {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "selection_publication", err)
+	}
+	wantHead, err := sealWorkRevisionAuthorityV2(revision)
 	if err != nil || !bytes.Equal(wantHead.CanonicalBytes(), head.CanonicalBytes()) {
 		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "selection_head_mismatch", err)
 	}
@@ -193,7 +258,7 @@ func decodeWorkRevisionSelectionV2(encoded []byte) (WorkRevisionSelectionV2, err
 			return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "work_revision_selection", nil)
 		}
 	}
-	selection, err := sealWorkRevisionSelectionV2(head, wire.Revision, wire.ReconciliationID, wire.ReconciliationDigest, wire.Dispositions)
+	selection, err := sealWorkRevisionSelectionV2(head, wire.Revision, wire.Publication, wire.ReconciliationID, wire.ReconciliationDigest, wire.Dispositions)
 	if err != nil || !bytes.Equal(selection.CanonicalBytes(), encoded) {
 		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "selection_canonical", err)
 	}

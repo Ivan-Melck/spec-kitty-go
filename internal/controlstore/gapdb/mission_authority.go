@@ -136,7 +136,11 @@ func (a *missionAuthorityAdapterV2) ObserveReadinessAuthority(ctx context.Contex
 	if err := a.store.VerifyRevisionV2(ctx, attempt); err != nil {
 		return mission.ReadinessAuthorityObservationV2{}, err
 	}
-	return mission.ReadinessAuthorityObservationV2{State: state, StoreRevision: attempt.CurrentRevision(), RecordRevision: record.RecordRevision(), LastEventID: head.LastEventID()}, nil
+	observation, err := mission.NewReadinessAuthorityObservationV2(state, attempt, record.RecordRevision(), head.LastEventID())
+	if err != nil {
+		return mission.ReadinessAuthorityObservationV2{}, adapterError("readiness_observe", string(missionID), OutcomeMalformedResponse, RecoveryOperator, "readiness observation is invalid", err)
+	}
+	return observation, nil
 }
 
 func (a *missionAuthorityAdapterV2) ObserveMissionFact(ctx context.Context, projectID journalv2.ProjectID, missionID journalv2.MissionID, kind mission.MissionFactKindV2, factID string) (mission.MissionFactObservationV2, error) {

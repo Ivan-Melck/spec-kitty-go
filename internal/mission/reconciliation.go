@@ -59,6 +59,7 @@ type SuccessorPublicationResult struct {
 	Actions        []AuthorityAction
 	RequestDigest  string
 	Replayed       bool
+	publication    workRevisionPublicationV2
 }
 
 type SuccessorPublicationCommit struct {
@@ -109,6 +110,7 @@ func (service *SuccessorPublicationService) Publish(ctx context.Context, command
 			return SuccessorPublicationResult{}, err
 		}
 		replay.Replayed = true
+		replay.publication = newWorkRevisionPublicationV2(replay.Revision, replay.RequestDigest, replay.Reconciliation.RequestDigest())
 		return cloneSuccessorResult(replay), nil
 	}
 	result, err := service.store.PublishSuccessorAtomically(ctx, SuccessorPublicationCommit{
@@ -124,6 +126,7 @@ func (service *SuccessorPublicationService) Publish(ctx context.Context, command
 	if err := validateSuccessorResult(command, actions, requestDigest, result); err != nil {
 		return SuccessorPublicationResult{}, err
 	}
+	result.publication = newWorkRevisionPublicationV2(result.Revision, result.RequestDigest, result.Reconciliation.RequestDigest())
 	return cloneSuccessorResult(result), nil
 }
 

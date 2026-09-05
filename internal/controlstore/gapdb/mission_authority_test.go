@@ -348,7 +348,7 @@ func TestReadinessAuthorityAdapterCreateActivityPauseRestartReplayV2(t *testing.
 		t.Fatalf("readiness progression batches=%d create=%s pause=%s", memory.batchCalls, createResult.State().Digest(), pauseResult.State().Digest())
 	}
 	observed, err := readiness.ObserveReadinessAuthority(t.Context(), paused.ProjectID(), paused.MissionID())
-	if err != nil || observed.State.Digest() != paused.Digest() || observed.RecordRevision != 4 {
+	if err != nil || observed.State().Digest() != paused.Digest() || observed.RecordRevision() != 4 || observed.Capture().DatabaseID() != "database-1" {
 		t.Fatalf("readiness readback=%+v err=%v", observed, err)
 	}
 
@@ -517,8 +517,8 @@ func TestReadinessAuthorityRealGapDBCheckpointSuffixMatchesOriginAndProjectionLo
 	if !found || !bytes.Equal(checkpointState.CanonicalBytes(), originState.CanonicalBytes()) || !bytes.Equal(checkpointState.CanonicalBytes(), paused.CanonicalBytes()) {
 		t.Fatal("restored readiness authority was not byte-identical")
 	}
-	checkpointCensus := readinessCensusGapDBFixtureV2(t, checkpointState, fromCheckpoint.StoreRevision().CurrentRevision())
-	originCensus := readinessCensusGapDBFixtureV2(t, originState, fromOrigin.StoreRevision().CurrentRevision())
+	checkpointCensus := readinessCensusGapDBFixtureV2(t, checkpointState, fromCheckpoint.StoreRevision())
+	originCensus := readinessCensusGapDBFixtureV2(t, originState, fromOrigin.StoreRevision())
 	if !bytes.Equal(checkpointCensus.CanonicalBytes(), originCensus.CanonicalBytes()) {
 		t.Fatal("restored complete action census was not byte-identical")
 	}
@@ -533,23 +533,31 @@ func (r checkpointHidingReaderV2) ScanV2(ctx context.Context, request journalv2.
 	return r.ReaderV2.ScanV2(ctx, request)
 }
 
-func readinessCensusGapDBFixtureV2(t *testing.T, state mission.ReadinessAuthorityStateV2, storeRevision uint64) mission.ActionCensus {
+func readinessCensusGapDBFixtureV2(t *testing.T, state mission.ReadinessAuthorityStateV2, capture journalv2.StoreRevisionV2) mission.ActionCensus {
 	t.Helper()
 	definition := softwaredev.CapabilityDefinition()
-	sets := make([]mission.CapabilityScopeSet, 0, len(mission.AllActionIDs()))
-	for _, template := range definition.Templates() {
-		entry := mission.CapabilityScopeSet{Action: template.Action}
-		if template.ScopeKind == mission.ScopeMission {
-			entry.Scopes = []mission.AuthorityScope{{Kind: mission.ScopeMission, Identity: string(state.MissionID())}}
-		}
-		sets = append(sets, entry)
-	}
+	observations := make([]mission.CapabilityAuthorityObservationV2, 0, len(mission.AllActionIDs()))
 	evidenceDigest := readinessDigestGapDBFixtureV2(t, "complete-scope-census").String()
-	scopes, err := mission.NewCapabilityScopeCensus(mission.ReadinessAuthorityCoordinate{Family: "mission_authority", Identity: string(state.MissionID()), Revision: storeRevision}, "scope-census", evidenceDigest, sets)
+	for _, template := range definition.Templates() {
+		observation, err := mission.SealCapabilityAuthorityObservationV2(capture, state.ProjectID(), state.MissionID(), template.Action, nil, nil, "absence-"+string(template.Action), evidenceDigest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		observations = append(observations, observation)
+	}
+	observationSet, err := mission.SealCapabilityObservationSetV2(capture, state.ProjectID(), state.MissionID(), observations)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, census, err := softwaredev.EvaluateReadiness(mission.ReadinessAuthorityObservationV2{State: state, StoreRevision: storeRevision}, scopes, mission.ReadinessEvidence{})
+	authorityObservation, err := mission.NewReadinessAuthorityObservationV2(state, capture, capture.CurrentRevision(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := mission.SealReadinessSnapshot(authorityObservation, definition, observationSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	census, err := mission.EvaluateReadiness(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
