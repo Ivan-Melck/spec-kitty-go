@@ -30,7 +30,7 @@ func (p *workspacePortProbeV2) ObserveWorkspace(context.Context, journalv2.Aggre
 func (p *workspacePortProbeV2) PublishWorkspace(_ context.Context, plan WorkspaceAuthorityPlanV2) (WorkspaceAuthorityAckV2, error) {
 	p.plans = append(p.plans, plan)
 	sealed, _ := plan.Publication()
-	return WorkspaceAuthorityAckV2{sealed.PublicationID(), sealed.Digest(), sealed.MutationCount(), 19}, nil
+	return WorkspaceAuthorityAckV2{sealed.PublicationID(), sealed.Digest(), sealed.MutationCount(), 19, 19}, nil
 }
 
 func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T) {
