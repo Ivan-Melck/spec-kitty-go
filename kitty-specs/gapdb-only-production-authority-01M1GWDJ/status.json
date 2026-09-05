@@ -589,7 +589,7 @@
     },
     "WP14": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -601,6 +601,7 @@
         "Ready for independent review: real GapDB production host terminal scenario; 100 replacement, independent-pair, and conflict trials; 1,500 family proofs plus 600 shared fault proofs; ordinary/race/architecture/vet/staticcheck green."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-1.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-1.md",
@@ -608,14 +609,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T070": "done",
-        "T071": "done",
-        "T072": "done",
-        "T073": "done",
-        "T074": "done"
+        "T070": "planned",
+        "T071": "planned",
+        "T072": "planned",
+        "T073": "planned",
+        "T074": "planned"
       }
     },
     "WP15": {
