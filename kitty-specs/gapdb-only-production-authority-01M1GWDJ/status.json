@@ -561,7 +561,7 @@
     },
     "WP18": {
       "actor": "codex",
-      "agent": null,
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 1,
@@ -571,7 +571,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Capability readiness, phase-free authority, GapDB persistence, replay, property tests, and 15 controlled mutants implemented; focused race green; full GapDB race campaign times out in unchanged 100-trial real-Git workspace test without a race report.",
-        "Independent review cycle 1 requested authority derivation, evidence-bound idempotency, sealed WorkRevision selection, real restore qualification, and semantic end-to-end proof."
+        "Independent review cycle 1 requested authority derivation, evidence-bound idempotency, sealed WorkRevision selection, real restore qualification, and semantic end-to-end proof.",
+        "Cycle 2: sealed complete GapDB snapshot, exact WorkRevision selection, production governance binding, real checkpoint-suffix recovery, semantic autonomous scheduler, and 15 killed mutants."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -582,8 +583,8 @@
         "verdict": "changes_requested"
       },
       "role": "implementer",
-      "shell_pid": null,
-      "shell_pid_created_at": null,
+      "shell_pid": 1698290,
+      "shell_pid_created_at": "1788588121.81",
       "subtasks": {
         "T093": "done",
         "T094": "done",
