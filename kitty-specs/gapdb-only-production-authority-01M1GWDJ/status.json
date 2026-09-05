@@ -1,7 +1,7 @@
 {
-  "event_count": 388,
-  "last_event_id": "01M1QZE8KG2KQRM6QVSWD0S03B",
-  "materialized_at": "2026-09-05T05:07:42.320077+00:00",
+  "event_count": 391,
+  "last_event_id": "01M1R0042RW0KZ5BATZ7ER9CQC",
+  "materialized_at": "2026-09-05T05:17:27.504088+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,8 +12,8 @@
     "claimed": 0,
     "done": 10,
     "for_review": 0,
-    "in_progress": 0,
-    "in_review": 1,
+    "in_progress": 1,
+    "in_review": 0,
     "planned": 6
   },
   "work_packages": {
@@ -560,30 +560,38 @@
       "last_transition_at": "2026-09-02T12:12:13.418890+00:00"
     },
     "WP18": {
-      "actor": "mill",
-      "agent": "mill",
+      "actor": "codex",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 0,
-      "lane": "in_review",
-      "last_event_id": "01M1QZE8KG2KQRM6QVSWD0S03B",
-      "last_transition_at": "2026-09-05T05:07:42.320077+00:00",
+      "force_count": 1,
+      "lane": "in_progress",
+      "last_event_id": "01M1R0042RW0KZ5BATZ7ER9CQC",
+      "last_transition_at": "2026-09-05T05:17:27.504088+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Capability readiness, phase-free authority, GapDB persistence, replay, property tests, and 15 controlled mutants implemented; focused race green; full GapDB race campaign times out in unchanged 100-trial real-Git workspace test without a race report."
+        "Capability readiness, phase-free authority, GapDB persistence, replay, property tests, and 15 controlled mutants implemented; focused race green; full GapDB race campaign times out in unchanged 100-trial real-Git workspace test without a race report.",
+        "Independent review cycle 1 requested authority derivation, evidence-bound idempotency, sealed WorkRevision selection, real restore qualification, and semantic end-to-end proof."
       ],
       "provider": "__resolved_provider_absent__",
-      "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "review": null,
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP18-autonomous-readiness-and-mission-ergonomics-authority/review-cycle-1.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP18-autonomous-readiness-and-mission-ergonomics-authority/review-cycle-1.md",
+        "reviewer": "user",
+        "verdict": "changes_requested"
+      },
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T093": "done",
-        "T094": "done",
-        "T095": "done",
-        "T096": "done",
-        "T097": "done",
-        "T098": "done",
-        "T099": "done"
+        "T093": "planned",
+        "T094": "planned",
+        "T095": "planned",
+        "T096": "planned",
+        "T097": "planned",
+        "T098": "planned",
+        "T099": "planned"
       }
     }
   }
