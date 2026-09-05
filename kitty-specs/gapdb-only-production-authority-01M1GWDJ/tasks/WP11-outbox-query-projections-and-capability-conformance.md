@@ -8,6 +8,7 @@ dependencies:
 - WP08
 - WP09
 - WP10
+- WP18
 requirement_refs:
 - FR-002
 - FR-019
@@ -90,7 +91,7 @@ spec-kitty agent action implement WP11 --agent codex
 
 - Start from the dependency-qualified WP11 lane declared in
   `kitty-specs/gapdb-only-production-authority-01M1GWDJ/lanes.json` only after
-  WP05, WP06, WP07, WP08, WP09, and WP10 are accepted.
+  WP05, WP06, WP07, WP08, WP09, WP10, and WP18 are accepted.
 - The planning and merge target is `feat/gapdb-only-production-authority`.
 - Use only the Spec Kitty-created lane worktree; do not create one manually.
 - Edit only `internal/controlstore/*.go`, `internal/projection/**`,
@@ -130,6 +131,9 @@ WP02–WP10. Treat old table-oriented APIs as behavior evidence only.
    mutation count, and evidence rather than preserving obsolete store shapes.
 10. Stable successor contracts remain capability-shaped and consumer-owned;
     there is no replacement god-store or universal repository.
+11. Mission progress projects WP18's complete authorized/unavailable action
+    census. It never collapses readiness back into one current phase or one
+    chosen successor.
 
 ## Required cross-cutting semantics
 

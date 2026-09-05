@@ -204,6 +204,8 @@ work_packages:
       - "internal/controlstore/gapdb/workspace_authority.go"
       - "internal/controlstore/gapdb/workspace_authority_test.go"
     create_intent:
+      - "internal/execution/authority_v2.go"
+      - "internal/execution/authority_v2_test.go"
       - "internal/execution/workspace_authority_v2.go"
       - "internal/execution/workspace_authority_v2_test.go"
       - "internal/controlstore/gapdb/workspace_authority.go"
@@ -266,7 +268,7 @@ work_packages:
 
   - id: WP11
     title: "Outbox Query Projections and Capability Conformance"
-    dependencies: [WP05, WP06, WP07, WP08, WP09, WP10]
+    dependencies: [WP05, WP06, WP07, WP08, WP09, WP10, WP18]
     owned_files:
       - "internal/controlstore/store.go"
       - "internal/projection/**"
@@ -283,6 +285,30 @@ work_packages:
     plan_concern_refs: [IC-06, IC-07]
     subtasks: [T054, T055, T056, T057, T058]
     prompt_file: "tasks/WP11-outbox-query-projections-and-capability-conformance.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP18
+    title: "Autonomous Readiness and Mission Ergonomics Authority"
+    dependencies: [WP10]
+    owned_files:
+      - "internal/mission/**"
+      - "internal/missiontype/**"
+      - "internal/governancecontext/mission_action.go"
+      - "internal/governancecontext/mission_action_test.go"
+      - "internal/controlstore/gapdb/mission_authority.go"
+      - "internal/controlstore/gapdb/mission_authority_test.go"
+      - "internal/architecture/m2_autonomy_contract_test.go"
+      - "internal/architecture/m2_autonomy_mutant_test.go"
+    create_intent:
+      - "internal/architecture/m2_autonomy_contract_test.go"
+      - "internal/architecture/m2_autonomy_mutant_test.go"
+    requirement_refs: [FR-007, FR-008, FR-009, FR-010, FR-015, FR-017, FR-018, FR-019, FR-023, FR-024, FR-025, FR-036, NFR-001, NFR-004, NFR-005, NFR-010, NFR-015, NFR-016, C-004, C-005, C-009, C-010]
+    plan_concern_refs: [IC-03, IC-05, IC-06, IC-07]
+    subtasks: [T093, T094, T095, T096, T097, T098, T099]
+    prompt_file: "tasks/WP18-autonomous-readiness-and-mission-ergonomics-authority.md"
     agent_profile: implementer-ivan
     role: implementer
     agent: codex

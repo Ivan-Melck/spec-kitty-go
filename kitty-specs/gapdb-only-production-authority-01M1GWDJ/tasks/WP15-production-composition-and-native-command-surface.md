@@ -128,6 +128,8 @@ At completion, these statements must all be true:
 - `cmd/spec-kitty` provides the bounded native command surface for M2;
 - commands and queries enter through production host capabilities;
 - status and progress are derived from typed projections;
+- the native surface exposes autonomous `drive` over the full readiness census,
+  not a fixed phase-command ladder;
 - operation resume uses the original stable operation identity and typed input;
 - historical or unsafe roots are refused before a sidecar or runtime is opened;
 - black-box tests prove the help, configuration, restart, and refusal contracts;
@@ -232,13 +234,23 @@ is now. Results should include, where applicable:
 - pinned work revision and execution generation;
 - current operation stage and terminal result, if committed;
 - active blockers or degraded-mode reason;
-- legal next actions derived by the kernel projection; and
+- all authorized and unavailable actions with typed reasons, derived by the
+  kernel projection; and
 - a typed diagnostic when the requested identity does not exist.
 
 The command layer must not synthesize progress by scraping logs, Markdown task
 lists, Git output, provider prose, or a human-oriented renderer. It serializes a
 closed typed query result. An optional human presentation may be derived from
 that result, but it must never be read back as input to automation.
+
+### Autonomous drive
+
+Expose a bounded local `drive` operation that repeatedly queries one exact
+readiness census, schedules safe independent actions, and re-evaluates after
+durable publication. It stops only at terminal state, a typed decision,
+conflict, unavailable external dependency, cancellation, or explicit policy-
+mandated human authority. It never advances a generic phase and never treats a
+prompt completion claim as evidence.
 
 ### Machine output
 
