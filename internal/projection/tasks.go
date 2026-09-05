@@ -31,7 +31,6 @@ func RenderTasks(view TasksView) ([]byte, error) {
 	line(&output, "")
 	field(&output, "Mission ID", mission.MissionID().String())
 	field(&output, "Mission state version", strconv.FormatUint(mission.StateVersion(), 10))
-	field(&output, "Current step", mission.CurrentStep())
 	field(&output, "WorkRevision ID", graph.RevisionID().String())
 	field(&output, "Generation", strconv.FormatUint(graph.Generation(), 10))
 	field(&output, "Graph digest", graph.GraphDigest())

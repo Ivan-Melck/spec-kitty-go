@@ -19,6 +19,11 @@ func newEffectAuthorityV2(adapter *Adapter, coordinator *journalv2.PublicationCo
 	}
 	return &effectAuthorityV2{adapter: adapter, publisher: coordinator, coordinator: coordinator}, nil
 }
+
+// EffectAuthorityPortV2 exposes only the effect capability contract.
+func (a *Adapter) EffectAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2) (execution.EffectAuthorityPortV2, error) {
+	return newEffectAuthorityV2(a, coordinator)
+}
 func newEffectAuthorityV2ForTest(publisher executionPublicationPortV2) *effectAuthorityV2 {
 	return &effectAuthorityV2{publisher: publisher}
 }

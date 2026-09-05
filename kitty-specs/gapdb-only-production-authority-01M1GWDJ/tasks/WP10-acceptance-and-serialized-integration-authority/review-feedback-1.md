@@ -1,13 +1,3 @@
----
-affected_files: []
-cycle_number: 1
-mission_slug: gapdb-only-production-authority-01M1GWDJ
-reproduction_command:
-reviewed_at: '2026-09-05T01:48:08Z'
-reviewer_agent: user
-wp_id: WP10
----
-
 # WP10 review feedback — cycle 1
 
 Verdict: **REQUEST CHANGES**

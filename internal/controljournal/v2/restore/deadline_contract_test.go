@@ -96,7 +96,7 @@ func TestRestoreDeadlineInputSensitiveAndBeforeFirstIO(t *testing.T) {
 }
 
 func TestRestoreDeadlinePropagatesExactAttemptDeadline(t *testing.T) {
-	input, _, _ := qualificationRestoreFixture(t, 1, 1)
+	input, _, _ := qualificationRestoreFixture(t, 1, 1, false)
 	reader := &deadlineRecordingReader{ReaderV2: input.Reader}
 	input.Reader = reader
 	input.Budgets = DefaultBudgetsV2()

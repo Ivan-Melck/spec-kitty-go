@@ -134,6 +134,9 @@ func (s *ActionService) Execute(ctx context.Context, command ActionCommand) (Act
 		return ActionResult{}, normalizeActionStoreError(err)
 	}
 	if snapshot.Mission.Validate() != nil || !sameMissionSnapshot(snapshot.Mission, command.ExpectedMission) {
+		if replayed, found, replayErr := s.replayAction(ctx, command, digest); replayErr != nil || found {
+			return replayed, replayErr
+		}
 		return ActionResult{}, refusal(KindStateVersionConflict, RecoveryRefreshState, "expected_mission", "mission state changed")
 	}
 	if err := validateCommandGovernance(command, snapshot); err != nil {
@@ -160,7 +163,13 @@ func (s *ActionService) Execute(ctx context.Context, command ActionCommand) (Act
 	commit := ActionCommit{OperationID: command.OperationID, MissionID: command.MissionID, Expected: command.ExpectedMission.clone(), ActionKey: command.ActionKey, Successor: command.Successor, GovernanceAction: command.GovernanceAction, ActorID: command.ActorID, ProcessID: command.ProcessID, Governance: command.Governance, RequestDigest: digest, Outcome: cloneActionOutcome(outcome), Receipt: receipt, OccurredAt: command.OccurredAt}
 	result, err := s.store.CommitAction(ctx, commit)
 	if err != nil {
-		return ActionResult{}, normalizeActionStoreError(err)
+		normalized := normalizeActionStoreError(err)
+		if IsKind(normalized, KindStateVersionConflict) {
+			if replayed, found, replayErr := s.replayAction(ctx, command, digest); replayErr != nil || found {
+				return replayed, replayErr
+			}
+		}
+		return ActionResult{}, normalized
 	}
 	if err := validateActionResult(command, digest, result); err != nil {
 		return ActionResult{}, err
@@ -169,6 +178,22 @@ func (s *ActionService) Execute(ctx context.Context, command ActionCommand) (Act
 		return ActionResult{}, refusal(KindPersistenceContract, RecoveryRepairStoredState, "action.receipt", "action store replaced the prepared outcome")
 	}
 	return cloneActionResult(result), nil
+}
+
+func (s *ActionService) replayAction(ctx context.Context, command ActionCommand, digest string) (ActionResult, bool, error) {
+	prior, found, err := s.store.ReplayAction(ctx, command.MissionID, command.OperationID, digest)
+	if err != nil {
+		return ActionResult{}, false, normalizeActionStoreError(err)
+	}
+	if !found {
+		return ActionResult{}, false, nil
+	}
+	if err := validateActionResult(command, digest, prior); err != nil {
+		return ActionResult{}, false, err
+	}
+	prior = cloneActionResult(prior)
+	prior.Replayed = true
+	return prior, true, nil
 }
 
 func validateActionCommand(c ActionCommand) (string, error) {
