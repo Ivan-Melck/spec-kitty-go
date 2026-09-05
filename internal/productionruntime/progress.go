@@ -2,14 +2,17 @@ package productionruntime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missiontype/softwaredev"
 	"github.com/spec-kitty/go-kitty3/internal/projection"
 )
 
@@ -169,6 +172,56 @@ func (s *ProgressService) Get(projectID journalv2.ProjectID, missionID journalv2
 // authority only: it cannot mint operations, leases, epochs, or effects.
 type ActionCensusSource interface {
 	Census(projectID journalv2.ProjectID, missionID journalv2.MissionID, revision uint64) (mission.ActionCensus, error)
+}
+
+// authorityActionCensusSource is the sole production census assembler. It
+// observes the mission and every capability at one exact GapDB capture, seals
+// the complete membership, and only then invokes the pure evaluator. Callers
+// cannot inject a precomputed census or an editable projection as authority.
+type authorityActionCensusSource struct {
+	readiness  mission.ReadinessAuthorityPortV2
+	observer   *mission.CapabilityAuthorityObserverV2
+	definition mission.CapabilityDefinition
+}
+
+func newAuthorityActionCensusSource(readiness mission.ReadinessAuthorityPortV2, source mission.CapabilityReadinessSourceV2) (*authorityActionCensusSource, error) {
+	if readiness == nil || source == nil {
+		return nil, &ProgressError{Kind: ProgressIncomplete, Field: "readiness_authority"}
+	}
+	observer, err := mission.NewCapabilityAuthorityObserverV2(source)
+	if err != nil {
+		return nil, err
+	}
+	return &authorityActionCensusSource{readiness: readiness, observer: observer, definition: softwaredev.CapabilityDefinition()}, nil
+}
+
+func (s *authorityActionCensusSource) Census(projectID journalv2.ProjectID, missionID journalv2.MissionID, revision uint64) (mission.ActionCensus, error) {
+	if s == nil || s.readiness == nil || s.observer == nil || revision == 0 {
+		return mission.ActionCensus{}, &ProgressError{Kind: ProgressIncomplete, Field: "readiness_authority"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	authority, err := s.readiness.ObserveReadinessAuthority(ctx, projectID, missionID)
+	if err != nil || authority.Capture().CurrentRevision() != revision || authority.Capture().DurableThroughRevision() < revision {
+		return mission.ActionCensus{}, &ProgressError{Kind: ProgressResyncRequired, Field: "readiness_capture"}
+	}
+	observations := make([]mission.CapabilityAuthorityObservationV2, 0, len(s.definition.Templates()))
+	for _, template := range s.definition.Templates() {
+		observed, observeErr := s.observer.Observe(ctx, authority.Capture(), projectID, missionID, template.Action)
+		if observeErr != nil {
+			return mission.ActionCensus{}, &ProgressError{Kind: ProgressIncomplete, Field: "capability_observation"}
+		}
+		observations = append(observations, observed)
+	}
+	set, err := mission.SealCapabilityObservationSetV2(authority.Capture(), projectID, missionID, observations)
+	if err != nil {
+		return mission.ActionCensus{}, err
+	}
+	snapshot, err := mission.SealReadinessSnapshot(authority, s.definition, set)
+	if err != nil {
+		return mission.ActionCensus{}, err
+	}
+	return mission.EvaluateReadiness(snapshot)
 }
 
 type ProgressService struct {

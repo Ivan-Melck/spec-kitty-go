@@ -41,7 +41,8 @@ type Config struct {
 	Sidecar                              sidecargapdb.LifecycleConfig
 	RestoreBudgets                       journalrestore.BudgetsV2
 	Reconciler                           Reconciler
-	Actions                              ActionCensusSource
+	CapabilityReadiness                  mission.CapabilityReadinessSourceV2
+	DecompositionProvider                mission.DecompositionProviderV2
 	CandidateVerifier                    handoff.CandidateVerifier
 	IntegrationGit                       integration.IntegrationGitPortV2
 	CheckpointEvery                      int
@@ -112,7 +113,7 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 		return nil, err
 	}
 	config.Sidecar.Admission = extensionAdmission
-	if config.CandidateVerifier == nil || config.IntegrationGit == nil {
+	if config.CapabilityReadiness == nil || config.DecompositionProvider == nil || config.CandidateVerifier == nil || config.IntegrationGit == nil {
 		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "capability_dependencies"}
 	}
 	if config.CheckpointEvery < 0 || config.CheckpointEvery > journalv2.MaxAcknowledgementsBetweenSeals {
@@ -188,7 +189,7 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 	if postRestore.Playback().CanonicalProjectionDigest().String() != current.ProjectionSHA256 || postRestore.Playback().CanonicalProjectionDigest() != restored.Playback().CanonicalProjectionDigest() {
 		return nil, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "post_epoch_digest"}
 	}
-	authority, progress, err := restoredAuthority(databaseID, epoch, postRestore, registry, reducers, config.Actions)
+	authority, progress, err := restoredAuthority(databaseID, epoch, postRestore, registry, reducers)
 	if err != nil {
 		return nil, err
 	}
@@ -205,6 +206,7 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 		_ = host.Close(context.Background())
 		return nil, err
 	}
+	progress.actions = capabilities.actions
 	if config.Reconciler != nil {
 		commands := newReconciliationCommands(epoch, capabilities)
 		reconcileErr := config.Reconciler.Reconcile(ctx, commands)
@@ -233,6 +235,7 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 			_ = host.Close(context.Background())
 			return nil, err
 		}
+		progress.actions = capabilities.actions
 	}
 	// A reconciler completing is not itself evidence that ambiguity was
 	// resolved. Readiness depends on the resulting authority state, so a no-op,
@@ -262,7 +265,7 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 	return host, nil
 }
 
-func restoredAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, actions ActionCensusSource) (*projection.AuthorityV2, *ProgressService, error) {
+func restoredAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2) (*projection.AuthorityV2, *ProgressService, error) {
 	authority, err := projection.NewAuthorityV2(databaseID, registry, reducers)
 	if err != nil {
 		return nil, nil, err
@@ -270,7 +273,7 @@ func restoredAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeE
 	if err := authority.Restore(epoch, restored); err != nil {
 		return nil, nil, err
 	}
-	progress, err := NewProgressService(authority, actions)
+	progress, err := NewProgressService(authority, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -309,6 +312,14 @@ func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.
 		return runtimeCapabilities{}, err
 	}
 	readinessService, err := mission.NewReadinessAuthorityServiceV2(readinessPort, epochSource, registry)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	decompositionService, err := mission.NewDecompositionAuthorityServiceV2(missionPort, epochSource, config.DecompositionProvider, registry)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
+	actions, err := newAuthorityActionCensusSource(readinessPort, config.CapabilityReadiness)
 	if err != nil {
 		return runtimeCapabilities{}, err
 	}
@@ -373,7 +384,7 @@ func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.
 		checkpointEvery = 1000
 	}
 	scheduler := &checkpointScheduler{tracker: tracker, coordinator: coordinator, reader: adapter, epoch: epoch, every: checkpointEvery}
-	return runtimeCapabilities{mission: missionService, readiness: readinessService, execution: executionService, workspace: workspaceService, stage: stageService, handoff: handoffService, review: reviewService, acceptance: acceptanceService, integration: integrationService, cleanup: cleanupService, effect: effectService, artifact: artifactPort, workgraph: workgraphPort, checkpoints: scheduler}, nil
+	return runtimeCapabilities{mission: missionService, readiness: readinessService, decomposition: decompositionService, execution: executionService, workspace: workspaceService, stage: stageService, handoff: handoffService, review: reviewService, acceptance: acceptanceService, integration: integrationService, cleanup: cleanupService, effect: effectService, artifact: artifactPort, workgraph: workgraphPort, actions: actions, checkpoints: scheduler}, nil
 }
 
 func pendingReconciliation(query projection.QueryPortV2) bool {
