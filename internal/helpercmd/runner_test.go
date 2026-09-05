@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
@@ -48,6 +49,7 @@ type sessionSpy struct {
 	status    productionruntime.HostStatus
 	progress  productionruntime.MissionProgress
 	queryErr  error
+	missionFn func(journalv2.ProjectID, journalv2.MissionID) (productionruntime.MissionProgress, error)
 	executeFn func(decodedOperation) (json.RawMessage, error)
 	queries   int
 	executes  int
@@ -55,11 +57,16 @@ type sessionSpy struct {
 }
 
 func (s *sessionSpy) Status() productionruntime.HostStatus { return s.status }
-func (s *sessionSpy) Mission(journalv2.ProjectID, journalv2.MissionID) (productionruntime.MissionProgress, error) {
+func (s *sessionSpy) Mission(project journalv2.ProjectID, missionID journalv2.MissionID) (productionruntime.MissionProgress, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.queries++
-	return s.progress, s.queryErr
+	fn := s.missionFn
+	progress, err := s.progress, s.queryErr
+	s.mu.Unlock()
+	if fn != nil {
+		return fn(project, missionID)
+	}
+	return progress, err
 }
 func (s *sessionSpy) Operation(_ journalv2.ProjectID, _ journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
 	s.mu.Lock()
@@ -72,10 +79,11 @@ func (s *sessionSpy) Operation(_ journalv2.ProjectID, _ journalv2.MissionID, ope
 }
 func (s *sessionSpy) Execute(_ context.Context, operation decodedOperation) (json.RawMessage, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.executes++
-	if s.executeFn != nil {
-		return s.executeFn(operation)
+	fn := s.executeFn
+	s.mu.Unlock()
+	if fn != nil {
+		return fn(operation)
 	}
 	return json.RawMessage(`{"schema_version":1,"ok":true}`), nil
 }
@@ -217,6 +225,61 @@ func TestDriveStopsBeforeUnauthorizedMutation(t *testing.T) {
 	}
 }
 
+func TestDriveDoesNotClaimTerminalWhenBoundedPlanIsExhausted(t *testing.T) {
+	session := defaultSession()
+	session.progress.Lifecycle = string(mission.MissionOpen)
+	session.progress.Actions = []productionruntime.ActionAvailability{{Action: string(mission.ActionMissionCreate), Status: "authorized"}}
+	factory := admittedFactory(session)
+	runner, _ := NewRunner(factory)
+	request := missionCreateRequest(t, "operation-drive-active")
+	plan, _ := json.Marshal(DrivePlan{SchemaVersion: 1, Operations: []OperationRequest{request}})
+	var stdout bytes.Buffer
+	code := runner.Run(t.Context(), []string{"--control-root", filepath.Join(t.TempDir(), "authority"), "drive", "--plan", "-"}, bytes.NewReader(plan), &stdout, &bytes.Buffer{})
+	var envelope Envelope
+	_ = json.Unmarshal(stdout.Bytes(), &envelope)
+	if code != ExitRefused || envelope.Drive == nil || envelope.Drive.Terminal || envelope.Drive.StopReason != "plan_exhausted" || session.queries < 2 {
+		t.Fatalf("exit=%d queries=%d envelope=%+v", code, session.queries, envelope)
+	}
+}
+
+func TestDriveExecutesIndependentMissionActionsConcurrently(t *testing.T) {
+	session := defaultSession()
+	session.missionFn = func(_ journalv2.ProjectID, _ journalv2.MissionID) (productionruntime.MissionProgress, error) {
+		return productionruntime.MissionProgress{}, &productionruntime.ProgressError{Kind: productionruntime.ProgressNotFound, Field: "mission_id"}
+	}
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	session.executeFn = func(decodedOperation) (json.RawMessage, error) {
+		entered <- struct{}{}
+		<-release
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	left := missionCreateRequestFor(t, "mission-left", "operation-left")
+	right := missionCreateRequestFor(t, "mission-right", "operation-right")
+	plan, _ := json.Marshal(DrivePlan{SchemaVersion: 1, Operations: []OperationRequest{left, right}})
+	factory := admittedFactory(session)
+	runner, _ := NewRunner(factory)
+	done := make(chan int, 1)
+	root := filepath.Join(t.TempDir(), "authority")
+	go func() {
+		done <- runner.Run(t.Context(), []string{"--control-root", root, "drive", "--plan", "-"}, bytes.NewReader(plan), &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+	for index := 0; index < 2; index++ {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("independent actions were serialized")
+		}
+	}
+	close(release)
+	if code := <-done; code != ExitRefused { // both creates succeeded; missing terminal progress is an honest stop.
+		t.Fatalf("exit=%d", code)
+	}
+	if session.executes != 2 {
+		t.Fatalf("executes=%d", session.executes)
+	}
+}
+
 func TestMachineEnvelopeDoesNotDependOnHumanRenderer(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "authority")
 	jsonFactory := admittedFactory(defaultSession())
@@ -249,6 +312,10 @@ func defaultSession() *sessionSpy {
 }
 
 func missionCreateRequest(t *testing.T, operationID journalv2.OperationID) OperationRequest {
+	return missionCreateRequestFor(t, "mission-1", operationID)
+}
+
+func missionCreateRequestFor(t *testing.T, missionID journalv2.MissionID, operationID journalv2.OperationID) OperationRequest {
 	t.Helper()
 	digestBytes := sha256.Sum256([]byte("definition"))
 	digest, err := journalv2.ParseDigest("definition", strings.ToLower(strings.TrimSpace(bytesToHex(digestBytes[:]))))
@@ -256,14 +323,14 @@ func missionCreateRequest(t *testing.T, operationID journalv2.OperationID) Opera
 		t.Fatal(err)
 	}
 	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
-		ProjectID: "project-1", MissionID: "mission-1", DefinitionRevision: "definition-1", DefinitionDigest: digest,
+		ProjectID: "project-1", MissionID: missionID, DefinitionRevision: "definition-1", DefinitionDigest: digest,
 		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "initialized", LastOperationID: operationID, ObservedAt: "2026-09-05T12:00:00Z",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	payload, err := json.Marshal(missionCommandWire{
-		SchemaVersion: 1, OperationID: operationID, ProjectID: "project-1", MissionID: "mission-1", ActorID: "actor-1", ProcessID: "process-1",
+		SchemaVersion: 1, OperationID: operationID, ProjectID: "project-1", MissionID: missionID, ActorID: "actor-1", ProcessID: "process-1",
 		RuntimeEpochID: "epoch-1", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1",
 		ObservedAt: "2026-09-05T12:00:00Z", EventType: mission.MissionEventCreatedV2, Successor: state.CanonicalBytes(),
 	})

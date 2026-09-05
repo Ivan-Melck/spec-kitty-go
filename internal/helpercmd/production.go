@@ -185,32 +185,32 @@ func (unavailableDecompositionProvider) CompensateEffect(context.Context, missio
 type unavailableIntegrationGit struct{}
 
 func (unavailableIntegrationGit) TargetHead(context.Context, ids.RepositoryID, string) (string, error) {
-	return "", errors.New("Git integration is not composed in M2")
+	return "", errors.New("git integration is not composed in M2")
 }
 func (unavailableIntegrationGit) InstallFence(context.Context, integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, error) {
-	return integration.IntegrationFenceObservationV2{}, errors.New("Git integration is not composed in M2")
+	return integration.IntegrationFenceObservationV2{}, errors.New("git integration is not composed in M2")
 }
 func (unavailableIntegrationGit) ObserveFence(context.Context, integration.IntegrationFenceIntentV2) (integration.IntegrationFenceObservationV2, bool, error) {
 	return integration.IntegrationFenceObservationV2{}, false, nil
 }
 func (unavailableIntegrationGit) EnsureWorkspace(context.Context, integration.IntegrationWorkspaceIntentV2) (integration.WorkspaceFacts, error) {
-	return integration.WorkspaceFacts{}, errors.New("Git integration is not composed in M2")
+	return integration.WorkspaceFacts{}, errors.New("git integration is not composed in M2")
 }
 func (unavailableIntegrationGit) MergeCandidate(context.Context, integration.IntegrationMergeIntentV2, integration.WorkspaceFacts) (string, *integration.ConflictEvidence, error) {
-	return "", nil, errors.New("Git integration is not composed in M2")
+	return "", nil, errors.New("git integration is not composed in M2")
 }
 func (unavailableIntegrationGit) CompareAndSwapTarget(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, error) {
-	return integration.IntegrationPublishObservationV2{}, errors.New("Git integration is not composed in M2")
+	return integration.IntegrationPublishObservationV2{}, errors.New("git integration is not composed in M2")
 }
 func (unavailableIntegrationGit) ObserveTargetPublication(context.Context, integration.IntegrationPublishIntentV2) (integration.IntegrationPublishObservationV2, bool, error) {
 	return integration.IntegrationPublishObservationV2{}, false, nil
 }
 func (unavailableIntegrationGit) CleanupWorkspace(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, error) {
-	return integration.IntegrationCleanupObservationV2{}, errors.New("Git integration is not composed in M2")
+	return integration.IntegrationCleanupObservationV2{}, errors.New("git integration is not composed in M2")
 }
 func (unavailableIntegrationGit) ObserveCleanup(context.Context, integration.IntegrationCleanupIntentV2) (integration.IntegrationCleanupObservationV2, bool, error) {
 	return integration.IntegrationCleanupObservationV2{}, false, nil
 }
 func (unavailableIntegrationGit) IsAncestor(context.Context, ids.RepositoryID, string, string) (bool, error) {
-	return false, errors.New("Git integration is not composed in M2")
+	return false, errors.New("git integration is not composed in M2")
 }

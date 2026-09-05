@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
@@ -180,31 +181,105 @@ func invokeOperation(ctx context.Context, session hostSession, base Envelope, pr
 
 func invokeDrive(ctx context.Context, session hostSession, base Envelope, prepared preparedCommand) (Envelope, int) {
 	result := DriveResult{SchemaVersion: 1, Steps: make([]DriveStep, 0, len(prepared.drive))}
-	for _, decoded := range prepared.drive {
-		request := decoded.request
-		progress, progressErr := session.Mission(decoded.projectID, decoded.missionID)
-		if progressErr != nil && request.Action != string(mission.ActionMissionCreate) {
-			base.Outcome, result.StopReason, base.Drive = OutcomeStopped, "mission_progress_unavailable", &result
-			return base, ExitUnavailable
+	pending := append([]decodedOperation(nil), prepared.drive...)
+	touched := make(map[string]decodedOperation)
+	for len(pending) != 0 {
+		ready := make([]int, 0, len(pending))
+		seenMission := make(map[string]bool)
+		stopReason, stopCode := "action_not_authorized", ExitRefused
+		for index, decoded := range pending {
+			key := string(decoded.projectID) + "\x00" + string(decoded.missionID)
+			if seenMission[key] {
+				continue
+			}
+			progress, progressErr := session.Mission(decoded.projectID, decoded.missionID)
+			if progressErr != nil {
+				if decoded.request.Action == string(mission.ActionMissionCreate) && progressNotFound(progressErr) {
+					ready = append(ready, index)
+					seenMission[key] = true
+					continue
+				}
+				stopReason, stopCode = "mission_progress_unavailable", exitFor(progressErr)
+				continue
+			}
+			if actionAuthorized(progress.Actions, decoded.request.Action) {
+				ready = append(ready, index)
+				seenMission[key] = true
+			}
 		}
-		if progressErr == nil && !actionAuthorized(progress.Actions, request.Action) {
-			base.Outcome, result.StopReason, base.Drive = OutcomeStopped, "action_not_authorized", &result
-			return base, ExitRefused
+		if len(ready) == 0 {
+			base.Outcome, result.StopReason, base.Drive = OutcomeStopped, stopReason, &result
+			return base, stopCode
 		}
-		payload, executeErr := session.Execute(ctx, decoded)
-		_ = payload
-		step := DriveStep{Action: request.Action, OperationID: string(decoded.operation), RequestSHA256: decoded.requestSHA, Outcome: OutcomeSuccess}
-		if executeErr != nil {
-			step.Outcome = failureEnvelope("drive", executeErr).Outcome
-			result.Steps = append(result.Steps, step)
-			base.Outcome, result.StopReason, base.Drive = OutcomeStopped, "operation_failed", &result
-			return base, exitFor(executeErr)
+		type waveResult struct {
+			step DriveStep
+			err  error
 		}
-		result.Steps = append(result.Steps, step)
+		wave := make([]waveResult, len(ready))
+		var wait sync.WaitGroup
+		for outputIndex, pendingIndex := range ready {
+			outputIndex, decoded := outputIndex, pending[pendingIndex]
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				_, executeErr := session.Execute(ctx, decoded)
+				step := DriveStep{Action: decoded.request.Action, OperationID: string(decoded.operation), RequestSHA256: decoded.requestSHA, Outcome: OutcomeSuccess}
+				if executeErr != nil {
+					step.Outcome = failureEnvelope("drive", executeErr).Outcome
+				}
+				wave[outputIndex] = waveResult{step: step, err: executeErr}
+			}()
+		}
+		wait.Wait()
+		for outputIndex, pendingIndex := range ready {
+			result.Steps = append(result.Steps, wave[outputIndex].step)
+			decoded := pending[pendingIndex]
+			touched[string(decoded.projectID)+"\x00"+string(decoded.missionID)] = decoded
+			if wave[outputIndex].err != nil {
+				base.Outcome, result.StopReason, base.Drive = OutcomeStopped, "operation_failed", &result
+				return base, exitFor(wave[outputIndex].err)
+			}
+		}
+		remove := make(map[int]bool, len(ready))
+		for _, index := range ready {
+			remove[index] = true
+		}
+		next := make([]decodedOperation, 0, len(pending)-len(ready))
+		for index, decoded := range pending {
+			if !remove[index] {
+				next = append(next, decoded)
+			}
+		}
+		pending = next
 	}
-	result.Terminal = true
+	result.Terminal = len(touched) != 0
+	for _, decoded := range touched {
+		progress, err := session.Mission(decoded.projectID, decoded.missionID)
+		if err != nil || !terminalLifecycle(progress.Lifecycle) {
+			result.Terminal = false
+			break
+		}
+	}
+	if !result.Terminal {
+		base.Outcome, result.StopReason, base.Drive = OutcomeStopped, "plan_exhausted", &result
+		return base, ExitRefused
+	}
 	base.Drive = &result
 	return base, ExitSuccess
+}
+
+func progressNotFound(err error) bool {
+	var progressErr *productionruntime.ProgressError
+	return errors.As(err, &progressErr) && progressErr.Kind == productionruntime.ProgressNotFound
+}
+
+func terminalLifecycle(lifecycle string) bool {
+	switch lifecycle {
+	case string(mission.MissionCompleted), string(mission.MissionFailed), string(mission.MissionCanceled):
+		return true
+	default:
+		return false
+	}
 }
 
 func prepare(options globalOptions, stdin io.Reader) (preparedCommand, error) {
