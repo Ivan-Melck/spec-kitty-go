@@ -59,7 +59,7 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Execution.WorkspaceID != binding.WorkspaceID || result.Execution.WorkspacePathClaimDigest != binding.PathClaimDigest || len(port.plans) != 1 {
+	if result.Execution.WorkspaceID != binding.WorkspaceID || result.Execution.WorkspacePathClaimDigest != binding.PathClaimDigest || result.RecordRevision != 19 || len(port.plans) != 1 {
 		t.Fatalf("binding not composed: %+v", result.Execution)
 	}
 	sealed, _ := port.plans[0].Publication()
@@ -68,7 +68,7 @@ func TestWorkspaceBindingAndExpiryComposeAtomicallyWithExecutionV2(t *testing.T)
 	}
 	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationExactV2, State: sealed.OperationState(), RecordRevision: 19}
 	replayed, err := service.Execute(t.Context(), bindRequest)
-	if err != nil || !replayed.Replayed || replayed.Execution.WorkspaceID != binding.WorkspaceID || len(port.plans) != 1 {
+	if err != nil || !replayed.Replayed || replayed.Execution.WorkspaceID != binding.WorkspaceID || replayed.RecordRevision != 19 || len(port.plans) != 1 {
 		t.Fatalf("exact replay did not precede authority reads: %+v %v", replayed, err)
 	}
 
