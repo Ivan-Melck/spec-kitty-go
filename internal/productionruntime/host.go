@@ -293,6 +293,10 @@ func (h *Host) startMonitor(parent context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
+	probeTimeout := interval
+	if probeTimeout < time.Second {
+		probeTimeout = time.Second
+	}
 	ctx, cancel := context.WithCancel(parent)
 	h.mu.Lock()
 	h.monitorStop = cancel
@@ -300,20 +304,26 @@ func (h *Host) startMonitor(parent context.Context, interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		consecutiveFailures := 0
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				probe, stop := context.WithTimeout(ctx, interval)
+				probe, stop := context.WithTimeout(ctx, probeTimeout)
 				h.commandMu.Lock()
 				err := h.owner.Probe(probe)
 				h.commandMu.Unlock()
 				stop()
 				if err != nil {
-					h.degrade("owner_health")
-					return
+					consecutiveFailures++
+					if consecutiveFailures >= 3 {
+						h.degrade("owner_health")
+						return
+					}
+					continue
 				}
+				consecutiveFailures = 0
 			}
 		}
 	}()
