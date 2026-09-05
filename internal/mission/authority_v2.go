@@ -35,6 +35,7 @@ const (
 	MissionAuthorityTerminalV2            MissionAuthorityErrorKindV2 = "TERMINAL_MISSION"
 	MissionAuthorityAmbiguousV2           MissionAuthorityErrorKindV2 = "AMBIGUOUS"
 	MissionAuthorityCorruptV2             MissionAuthorityErrorKindV2 = "AUTHORITY_CORRUPT"
+	MissionAuthorityLegacyPhaseV2         MissionAuthorityErrorKindV2 = "LEGACY_PHASE_STATE"
 )
 
 type MissionAuthorityErrorV2 struct {
@@ -404,6 +405,12 @@ func DecodeMissionEventPayloadV2(encoded []byte) (MissionEventPayloadV2, error) 
 }
 
 func ReduceMissionEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte, error) {
+	var schema struct {
+		SchemaVersion uint32 `json:"schema_version"`
+	}
+	if json.Unmarshal(event.Payload(), &schema) == nil && schema.SchemaVersion == ReadinessAuthorityStateSchemaV2 {
+		return ReduceReadinessAuthorityEventV2(prior, event)
+	}
 	if event.Family() != "mission" || event.EventSchemaVersion() != 1 || event.ReducerVersion() != 1 || event.Coordinate().Kind != "mission" {
 		return nil, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "event_tuple", nil)
 	}
@@ -428,7 +435,7 @@ func ReduceMissionEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte
 }
 
 func MissionReducerImplementationDigestV2() journalv2.Digest {
-	digest, _ := journalv2.ReducerStateDigestV2([]byte(`{"implementation":"mission-authority-v2"}`))
+	digest, _ := journalv2.ReducerStateDigestV2([]byte(`{"implementation":"mission-capability-authority-v2"}`))
 	return digest
 }
 
