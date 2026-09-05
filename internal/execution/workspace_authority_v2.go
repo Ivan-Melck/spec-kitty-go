@@ -59,6 +59,7 @@ type WorkspaceAuthorityCommandKindV2 string
 const (
 	WorkspaceBindV2       WorkspaceAuthorityCommandKindV2 = "bind"
 	WorkspaceQuarantineV2 WorkspaceAuthorityCommandKindV2 = "expire_and_quarantine"
+	WorkspaceRebindV2     WorkspaceAuthorityCommandKindV2 = "rebind_runtime_epoch"
 )
 
 type WorkspaceAuthorityRequestV2 struct {
@@ -159,22 +160,34 @@ func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request Works
 
 func composeWorkspaceExecutionTransitionV2(kind WorkspaceAuthorityCommandKindV2, observedAt time.Time, prior ExecutionSlotStateV2, nextWorkspace workspace.StateV2, observed WorkspaceAuthorityObservationV2) (ExecutionSlotStateV2, error) {
 	b := nextWorkspace.Binding
-	if prior.ProjectID != b.ProjectID || prior.MissionID != b.MissionID || prior.WorkRevisionID != b.WorkRevisionID || prior.WorkID != b.WorkID || prior.RunID != b.RunID || prior.LeaseID != b.LeaseID || prior.Generation != b.Generation || prior.Fence != b.Fence || prior.RuntimeEpochID != b.RuntimeEpochID || prior.ActorID != b.ActorID || prior.ProcessID != b.ProcessID {
+	if prior.ProjectID != b.ProjectID || prior.MissionID != b.MissionID || prior.WorkRevisionID != b.WorkRevisionID || prior.WorkID != b.WorkID || prior.RunID != b.RunID || prior.LeaseID != b.LeaseID || prior.Generation != b.Generation || prior.Fence != b.Fence || prior.ActorID != b.ActorID || prior.ProcessID != b.ProcessID {
 		return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
 	}
 	next := prior
 	next.LogicalVersion++
 	switch kind {
 	case WorkspaceBindV2:
+		if prior.RuntimeEpochID != b.RuntimeEpochID {
+			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
+		}
 		if prior.Status != ExecutionActiveV2 || prior.WorkspaceID != "" || !prior.WorkspacePathClaimDigest.IsZero() || observed.State != nil || nextWorkspace.Stage != workspace.StageCreationRequestedV2 || nextWorkspace.LogicalVersion != 1 || !observedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
 			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_bind", nil)
 		}
 		next.WorkspaceID, next.WorkspacePathClaimDigest = b.WorkspaceID, b.PathClaimDigest
 	case WorkspaceQuarantineV2:
+		if prior.RuntimeEpochID != b.RuntimeEpochID {
+			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
+		}
 		if prior.Status != ExecutionActiveV2 || prior.WorkspaceID != b.WorkspaceID || prior.WorkspacePathClaimDigest != b.PathClaimDigest || observed.State == nil || observed.RecordRevision == 0 || nextWorkspace.Stage != workspace.StageQuarantinedV2 || observedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
 			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_expiry", nil)
 		}
 		next.Status = ExecutionExpiredV2
+	case WorkspaceRebindV2:
+		if prior.Status != ExecutionActiveV2 || prior.RuntimeEpochID == b.RuntimeEpochID || prior.WorkspaceID != b.WorkspaceID || prior.WorkspacePathClaimDigest != b.PathClaimDigest || observed.State == nil || observed.RecordRevision == 0 || observed.State.LogicalVersion+1 != nextWorkspace.LogicalVersion || observed.State.Stage != nextWorkspace.Stage || observed.State.Binding.RuntimeEpochID != prior.RuntimeEpochID || !observedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
+			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_epoch_rebind", nil)
+		}
+		next.RuntimeEpochID = b.RuntimeEpochID
+		next.HeartbeatAt, next.Deadline = prior.HeartbeatAt, prior.Deadline
 	default:
 		return ExecutionSlotStateV2{}, executionV2Error(KindInvalidCommand, "workspace_command", nil)
 	}
@@ -241,6 +254,8 @@ func workspaceAuthorityPlanInputV2(request WorkspaceAuthorityRequestV2, binding 
 	kind := "workspace_bound"
 	if request.Kind == WorkspaceQuarantineV2 {
 		kind = "lease_expired"
+	} else if request.Kind == WorkspaceRebindV2 {
+		kind = "runtime_epoch_rebound"
 	}
 	pred := executionCoordinatesV2(*executionObserved.State)
 	execEventBytes, err := encodeExecutionEventV2(ExecutionSlotEventV2{SchemaVersion: 1, Kind: kind, ObservedAt: request.ObservedAt.UTC().Format(time.RFC3339Nano), Predecessor: &pred, State: nextExecution})
@@ -295,6 +310,12 @@ func validateWorkspaceAuthorityPlanInputV2(kind WorkspaceAuthorityCommandKindV2,
 		expectedTypes["workspace"] = "workspace.quarantined"
 		if input.WorkspacePathClaim != nil || len(input.EffectIntents) != 0 {
 			return executionV2Error(KindInvalidCommand, "workspace_quarantine_membership", nil)
+		}
+	case WorkspaceRebindV2:
+		expectedTypes["execution_slot"] = "execution_slot.runtime_epoch_rebound"
+		expectedTypes["workspace"] = "workspace.runtime_epoch_rebound"
+		if input.WorkspacePathClaim != nil || len(input.EffectIntents) != 0 {
+			return executionV2Error(KindInvalidCommand, "workspace_rebind_membership", nil)
 		}
 	default:
 		return executionV2Error(KindInvalidCommand, "workspace_command", nil)

@@ -323,12 +323,21 @@ func ReduceEventV2(prior []byte, envelope journalv2.EventEnvelopeV2) ([]byte, er
 		return next.CanonicalBytes(), nil
 	}
 	previous, err := DecodeStateV2(prior)
-	if err != nil || next.LogicalVersion != previous.LogicalVersion+1 || !bindingEqualV2(next.Binding, previous.Binding) {
+	if err != nil || next.LogicalVersion != previous.LogicalVersion+1 {
 		return nil, workspaceV2Error(KindWorkspaceConflict, "binding_or_version", err)
 	}
 	priorDigest, _ := journalv2.ReducerStateDigestV2(previous.CanonicalBytes())
 	if event.PriorDigest != priorDigest.String() {
 		return nil, workspaceV2Error(KindWorkspaceConflict, "prior_digest", nil)
+	}
+	if event.Kind == "runtime_epoch_rebound" {
+		if envelope.EventType() != "workspace.runtime_epoch_rebound" || previous.Stage == StageQuarantinedV2 || next.Stage != previous.Stage || previous.Binding.RuntimeEpochID == next.Binding.RuntimeEpochID || !bindingEqualIgnoringRuntimeEpochV2(previous.Binding, next.Binding) || next.EffectID != previous.EffectID || next.QuarantineReason != previous.QuarantineReason {
+			return nil, workspaceV2Error(KindStaleAuthority, "runtime_epoch_rebind", nil)
+		}
+		return next.CanonicalBytes(), nil
+	}
+	if !bindingEqualV2(next.Binding, previous.Binding) {
+		return nil, workspaceV2Error(KindWorkspaceConflict, "binding_or_version", nil)
 	}
 	allowed := map[StageV2]map[StageV2]string{
 		StageCreationRequestedV2:     {StageWorktreeObservedV2: "preparation_observed", StageReconciliationV2: "reconciliation_required", StageQuarantinedV2: "quarantined"},
@@ -394,6 +403,10 @@ func cloneBindingV2(binding BindingV2) BindingV2 {
 }
 
 func bindingEqualV2(a, b BindingV2) bool { return bytes.Equal(mustJSONV2(a), mustJSONV2(b)) }
+func bindingEqualIgnoringRuntimeEpochV2(a, b BindingV2) bool {
+	a.RuntimeEpochID, b.RuntimeEpochID = "", ""
+	return bindingEqualV2(a, b)
+}
 func mustJSONV2(value any) []byte {
 	raw, _ := json.Marshal(value)
 	canonical, _ := journalv2.CanonicalObject(raw)

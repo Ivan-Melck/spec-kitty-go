@@ -481,6 +481,70 @@ func TestExecutionAuthorityRestartCutsHeartbeatExpiryAndReplacementV2(t *testing
 	_, _ = makePlan(replace, expired.State)
 }
 
+func TestExecutionAuthorityExplicitlyRebindsUnboundLeaseToCurrentRuntimeEpochV2(t *testing.T) {
+	request, eligibility := executionRequestFixtureV2(t, ExecutionAdmitV2)
+	port := &executionPortProbeV2{resolution: ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}, eligibility: eligibility}
+	service, err := NewExecutionAuthorityServiceWithFenceSourceV2(port, &executionEpochProbeV2{epoch: request.RuntimeEpochID}, fixedFenceSourceV2("rebind-admit-fence-0123456789"), journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.Execute(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rebind := request
+	rebind.Kind, rebind.OperationID = ExecutionRebindV2, "operation-runtime-epoch-rebind"
+	rebind.OperationEventID, rebind.SlotEventID = "event-runtime-epoch-rebind-operation", "event-runtime-epoch-rebind-slot"
+	rebind.RunID, rebind.ActorID, rebind.ProcessID = admitted.State.RunID, admitted.State.ActorID, admitted.State.ProcessID
+	rebind.LeaseID, rebind.Generation, rebind.Fence = admitted.State.LeaseID, admitted.State.Generation, admitted.State.Fence
+	rebind.RuntimeEpochID = "epoch-2"
+	rebind.ObservedAt = request.ObservedAt.Add(time.Second)
+	rebind.Deadline = mustExecutionTimeV2(admitted.State.Deadline)
+	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}
+	port.observation = ExecutionSlotObservationV2{State: &admitted.State, RecordRevision: 29}
+	service, err = NewExecutionAuthorityServiceV2(port, &executionEpochProbeV2{epoch: rebind.RuntimeEpochID}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebound, err := service.Execute(t.Context(), rebind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebound.State.RuntimeEpochID != rebind.RuntimeEpochID || rebound.State.RunID != admitted.State.RunID || rebound.State.LeaseID != admitted.State.LeaseID || rebound.State.Fence != admitted.State.Fence || rebound.State.Generation != admitted.State.Generation || rebound.State.LogicalVersion != admitted.State.LogicalVersion+1 {
+		t.Fatalf("rebind changed lease authority: before=%+v after=%+v", admitted.State, rebound.State)
+	}
+	plan, err := port.plans[len(port.plans)-1].Publication()
+	if err != nil {
+		t.Fatal(err)
+	}
+	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationExactV2, State: plan.OperationState()}
+	replayed, err := service.Execute(t.Context(), rebind)
+	if err != nil || !replayed.Replayed || !bytes.Equal(replayed.State.CanonicalBytes(), rebound.State.CanonicalBytes()) {
+		t.Fatalf("rebind replay=%+v err=%v", replayed, err)
+	}
+
+	bound := admitted.State
+	bound.WorkspaceID = "workspace-bound"
+	bound.WorkspacePathClaimDigest = mustExecutionDigestV2(t)
+	port.resolution = ExecutionOperationResolutionV2{Kind: ExecutionOperationAbsentV2}
+	port.observation = ExecutionSlotObservationV2{State: &bound, RecordRevision: 31}
+	rebind.OperationID = "operation-runtime-epoch-rebind-bound"
+	rebind.OperationEventID, rebind.SlotEventID = "event-runtime-epoch-rebind-bound-operation", "event-runtime-epoch-rebind-bound-slot"
+	if _, err := service.Execute(t.Context(), rebind); !IsKind(err, KindStaleAuthority) {
+		t.Fatalf("execution-only rebind transferred bound workspace: %v", err)
+	}
+}
+
+func mustExecutionDigestV2(t *testing.T) journalv2.Digest {
+	t.Helper()
+	digest, err := journalv2.ParseDigest("workspace_path_claim", strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}
+
 func assertExecutionRestartReplayV2(t *testing.T, request ExecutionAuthorityRequestV2, operation journalv2.OperationStateV2, expected ExecutionSlotStateV2) {
 	t.Helper()
 	port := &executionPortProbeV2{resolution: ExecutionOperationResolutionV2{Kind: ExecutionOperationExactV2, State: operation}}
