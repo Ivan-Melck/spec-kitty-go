@@ -568,7 +568,8 @@
         "Independent review of candidate 1a2af4fb and tree b941534d.",
         "APPROVE: prior reconciliation blocker closed; 17/17 mutants, exact GapDB route, race, static, and p95 1.254477891s independently verified.",
         "Reopen approved runtime composition for product defect exposed by WP14 and WP15; no guard is bypassed.",
-        "Production host now composes readiness/decomposition and proves acknowledged WorkRevision selection through real GapDB sidecar, restart, and progress"
+        "Production host now composes readiness/decomposition and proves acknowledged WorkRevision selection through real GapDB sidecar, restart, and progress",
+        "Integrated WP18 autonomy mutant census guard is stale"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -578,16 +579,16 @@
         "reviewer": "maxwell",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T064": "done",
-        "T065": "done",
-        "T066": "done",
-        "T067": "done",
-        "T068": "done",
-        "T069": "done"
+        "T064": "planned",
+        "T065": "planned",
+        "T066": "planned",
+        "T067": "planned",
+        "T068": "planned",
+        "T069": "planned"
       }
     },
     "WP14": {
