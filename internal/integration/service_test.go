@@ -129,6 +129,8 @@ func TestIntegrationConsumesCompleteMixedEligibilityBeforeGitAndFence(t *testing
 			service := NewService(store, git).WithFaults(hookFunc(func(string) error { hookCalls++; return nil }))
 			if test.reader {
 				service.WithEligibilityFacts(reader)
+			} else {
+				service.eligibility = nil
 			}
 			_, integrateErr := service.Integrate(context.Background(), request)
 			if !IsKind(integrateErr, KindRevisionIneligible) || !store.reviewRead || store.eligibilityRead || hookCalls != 0 || git.establishCalls != 0 || git.updates != 0 {
@@ -168,32 +170,27 @@ func TestCompletedIntegrationReplayPrecedesCompleteEligibilityInspection(t *test
 
 func TestCompleteIntegrationEligibilityConfigurationCannotBeDowngraded(t *testing.T) {
 	denied := completeIntegrationFact(t, "reconciliation-integration-denied", "revision-2", "work-1", workgraph.Invalidate, workgraph.StatusApproved, workgraph.EligibilityIntegration)
-	newLegacy := func() *memoryStore {
-		return &memoryStore{eligibility: workgraph.Consequence{IntegrationEligible: true, RunMayContinue: true, Reason: "permissive legacy tuple"}}
-	}
-	assertRefused := func(t *testing.T, service *Service, legacy *memoryStore, reader *recordingEligibilityReader, git *memoryGit) {
-		t.Helper()
-		_, err := service.WithEligibilityFacts(nil).Integrate(context.Background(), validRequest("operation-nil-downgrade"))
-		if !IsKind(err, KindRevisionIneligible) || service.mode != eligibilityComplete || service.eligibility == nil || !legacy.reviewRead || legacy.eligibilityRead || reader.calls != 0 || git.establishCalls != 0 || git.updates != 0 {
-			t.Fatalf("error=%v mode=%v full=%v review=%v full_reads=%d legacy=%v establish=%d updates=%d", err, service.mode, service.eligibility != nil, legacy.reviewRead, reader.calls, legacy.eligibilityRead, git.establishCalls, git.updates)
-		}
-	}
 	t.Run("auto-detected reader survives nil", func(t *testing.T) {
-		legacy := newLegacy()
-		reader := &recordingEligibilityReader{fact: denied}
-		full := &fullMemoryStore{memoryStore: legacy, recordingEligibilityReader: reader}
-		var configured Store = full
+		store := &memoryStore{eligibilityID: denied.ReconciliationID(), eligibility: workgraph.Consequence{Reason: denied.Reason()}}
 		git := &memoryGit{target: testBase, workspaceHead: testBase}
-		assertRefused(t, NewService(configured, git), legacy, reader, git)
+		service := NewService(store, git).WithEligibilityFacts(nil)
+		_, err := service.Integrate(context.Background(), validRequest("operation-nil-auto"))
+		if !IsKind(err, KindRevisionIneligible) || service.eligibility == nil || !store.reviewRead || !store.eligibilityRead || git.establishCalls != 0 || git.updates != 0 {
+			t.Fatalf("error=%v full=%v review=%v read=%v establish=%d updates=%d", err, service.eligibility != nil, store.reviewRead, store.eligibilityRead, git.establishCalls, git.updates)
+		}
 	})
 	t.Run("explicit reader survives nil", func(t *testing.T) {
-		legacy := newLegacy()
+		store := &memoryStore{}
 		reader := &recordingEligibilityReader{fact: denied}
 		git := &memoryGit{target: testBase, workspaceHead: testBase}
-		assertRefused(t, NewService(legacy, git).WithEligibilityFacts(reader), legacy, reader, git)
+		service := NewService(store, git).WithEligibilityFacts(reader).WithEligibilityFacts(nil)
+		_, err := service.Integrate(context.Background(), validRequest("operation-nil-explicit"))
+		if !IsKind(err, KindRevisionIneligible) || service.eligibility != reader || !store.reviewRead || reader.calls != 1 || store.eligibilityRead || git.establishCalls != 0 || git.updates != 0 {
+			t.Fatalf("error=%v full=%v review=%v reads=%d fallback=%v establish=%d updates=%d", err, service.eligibility == reader, store.reviewRead, reader.calls, store.eligibilityRead, git.establishCalls, git.updates)
+		}
 	})
 	t.Run("full read failure never falls back", func(t *testing.T) {
-		legacy := newLegacy()
+		legacy := &memoryStore{}
 		reader := &recordingEligibilityReader{fact: denied, err: errors.New("full authority unavailable")}
 		git := &memoryGit{target: testBase, workspaceHead: testBase}
 		request := validRequest("operation-full-read-failure")
@@ -245,7 +242,8 @@ func TestUnrecordedExactWorkspaceResultIsRecovered(t *testing.T) {
 }
 
 func validRequest(operation string) Request {
-	return Request{SchemaVersion: 1, CorrelationID: operation, OperationID: ids.OperationID(operation), ReviewID: "review-1", RepositoryID: "repository-1", TargetRef: "refs/heads/main", ActorID: "actor-integrator", ProcessID: "process-integrator", Candidate: testCandidate, LeaseTTL: time.Minute, StartedAt: time.Now().UTC()}
+	fact, _ := workgraph.NewEligibilityFact("reconciliation-current", "revision-1", "revision-2", "work-1", workgraph.StatusApproved, workgraph.Continue, workgraph.EligibilityIntegration)
+	return Request{SchemaVersion: 1, CorrelationID: operation, OperationID: ids.OperationID(operation), ReviewID: "review-1", RepositoryID: "repository-1", TargetRef: "refs/heads/main", ActorID: "actor-integrator", ProcessID: "process-integrator", Candidate: testCandidate, LeaseTTL: time.Minute, StartedAt: time.Now().UTC(), ExpectedEligibility: fact}
 }
 
 type crashOnce struct{ boundary string }
@@ -282,11 +280,6 @@ type recordingEligibilityReader struct {
 	operation   workgraph.EligibilityOperation
 }
 
-type fullMemoryStore struct {
-	*memoryStore
-	*recordingEligibilityReader
-}
-
 func (r *recordingEligibilityReader) WorkEligibilityFact(_ context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {
 	r.calls++
 	r.oldRevision, r.workID, r.status, r.operation = oldRevision, workID, status, operation
@@ -307,12 +300,17 @@ func (s *memoryStore) Review(_ context.Context, reviewID ids.ReviewID) (review.R
 	return review.Record{ReviewID: reviewID, HandoffID: "handoff-1", WorkRevisionID: "revision-1", WorkID: "work-1", Candidate: testCandidate, Verdict: review.Approved}, nil
 }
 
-func (s *memoryStore) WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error) {
+func (s *memoryStore) WorkEligibilityFact(_ context.Context, oldRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, operation workgraph.EligibilityOperation) (workgraph.EligibilityFact, error) {
 	s.eligibilityRead = true
-	if s.eligibility.Reason == "" {
-		return workgraph.Consequence{HandoffEligible: true, IntegrationEligible: true, RunMayContinue: true, Reason: "no reconciliation restricts this WorkRevision generation"}, "", nil
+	reconciliationID := s.eligibilityID
+	if reconciliationID == "" {
+		reconciliationID = "reconciliation-current"
 	}
-	return s.eligibility, s.eligibilityID, nil
+	disposition := workgraph.Continue
+	if s.eligibility.Reason != "" && !s.eligibility.IntegrationEligible {
+		disposition = workgraph.Invalidate
+	}
+	return workgraph.NewEligibilityFact(reconciliationID, oldRevision, "revision-2", workID, status, disposition, operation)
 }
 
 func (s *memoryStore) LookupIntegrationOperation(_ context.Context, _ Request) (Record, bool, error) {
