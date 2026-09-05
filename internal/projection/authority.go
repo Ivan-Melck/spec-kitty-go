@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	MaxQueryPageV2         = 100
-	MaxQueryResponseV2     = 1024 * 1024
-	MaxProjectionWatchesV2 = 256
+	MaxQueryPageV2               = 100
+	MaxQueryResponseV2           = 1024 * 1024
+	MaxProjectionWatchesV2       = 256
+	MaxProjectionSnapshotBytesV2 = playback.MaxPlaybackBytes
 )
 
 type ErrorKindV2 string
@@ -310,9 +311,14 @@ func buildSnapshotV2(databaseID journalv2.DatabaseID, revision, durable uint64, 
 	if err != nil {
 		return nil, err
 	}
-	canonical, err := journalv2.CanonicalObject(raw)
-	if err != nil {
-		return nil, err
+	// The snapshot is a sorted, struct-shaped in-memory view of the complete
+	// projection. It is not one provider record and must not inherit the
+	// per-record payload ceiling. json.Marshal is deterministic here: the
+	// envelope and all nested values are structs/slices and views were sorted
+	// above. Bound the complete snapshot by the playback budget it represents.
+	if len(raw) > MaxProjectionSnapshotBytesV2 {
+		return nil, &ErrorV2{ErrorProjectionCorruptV2, "snapshot_budget"}
 	}
+	canonical := append([]byte(nil), raw...)
 	return &SnapshotV2{databaseID: databaseID, revision: revision, durableThrough: durable, epoch: epoch, states: append([]playback.StateV2(nil), states...), views: views, byCoordinate: index, projectionDigest: digest, canonical: canonical}, nil
 }
