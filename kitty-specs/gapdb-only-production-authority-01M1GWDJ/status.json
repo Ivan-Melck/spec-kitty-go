@@ -428,7 +428,8 @@
         "Ready for cycle-3 independent rereview: candidate 080e84020429f58997d17cab246e57ad28b2d81a; tree 454cabfcc0c8f2da7c13030361861574d65f4a04; real GapDB mission-policy E2E and narrow resolved-fact assertion repair green.",
         "Independent cycle-3 review requested separate semantic status/detail mutation proof; production E2E accepted.",
         "Ready for cycle-4 independent rereview: candidate 4c55a467b1bdc30b72a0810df91a63041268437e; tree c7daf777f553ab17c618b208b060fccd188f3093; stable semantic policy refusals and source-overlay sensitivity green.",
-        "Independent reviewer Mill approved exact candidate 4c55a467b1bdc30b72a0810df91a63041268437e, tree c7daf777f553ab17c618b208b060fccd188f3093; all eight anti-patterns pass."
+        "Independent reviewer Mill approved exact candidate 4c55a467b1bdc30b72a0810df91a63041268437e, tree c7daf777f553ab17c618b208b060fccd188f3093; all eight anti-patterns pass.",
+        "WP09 independently approved and integrated into coordinator with byte-identical owned surfaces. | Done override: Approved WP09 lineage was integrated by exact ordered cherry-picks a63172db, 7ffd19e7, d052f859, 21cc8ea1, and 30689a2e; coordinator owned/dependency files are byte-identical to lane-i and integrated boundary, architecture, compile, and vet gates pass. Force acknowledges the lane is behind only because those integration/status commits now live on the coordinator. No test or review failure is bypassed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
