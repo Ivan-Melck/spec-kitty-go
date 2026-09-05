@@ -1,7 +1,7 @@
 {
-  "event_count": 465,
-  "last_event_id": "01M1SCD3J1Y5CJQQZS8KYM6D9D",
-  "materialized_at": "2026-09-05T18:13:30.305591+00:00",
+  "event_count": 466,
+  "last_event_id": "01M1SCE1QT6DN624R3KDQGMQTJ",
+  "materialized_at": "2026-09-05T18:14:01.210845+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,9 +12,9 @@
     "claimed": 0,
     "done": 10,
     "for_review": 0,
-    "in_progress": 2,
+    "in_progress": 3,
     "in_review": 0,
-    "planned": 3
+    "planned": 2
   },
   "work_packages": {
     "WP01": {
@@ -557,10 +557,10 @@
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 8,
-      "lane": "planned",
-      "last_event_id": "01M1SCD3J1Y5CJQQZS8KYM6D9D",
-      "last_transition_at": "2026-09-05T18:13:30.305591+00:00",
+      "force_count": 9,
+      "lane": "in_progress",
+      "last_event_id": "01M1SCE1QT6DN624R3KDQGMQTJ",
+      "last_transition_at": "2026-09-05T18:14:01.210845+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Allocation block resolved by dependency merge 6488469e; resume implementation.",
