@@ -1,8 +1,10 @@
 package scenario
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -16,6 +18,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
+	"github.com/spec-kitty/go-kitty3/internal/tracker"
+	trackerfake "github.com/spec-kitty/go-kitty3/internal/tracker/fake"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
@@ -49,7 +53,8 @@ func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
 
 func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminalSemanticProgress {
 	t.Helper()
-	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: t.Name(), CandidateVerifier: sourceBoundCandidateVerifier{}})
+	effectReconciler := &scenarioEffectReconciler{}
+	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: t.Name(), CandidateVerifier: sourceBoundCandidateVerifier{}, Reconciler: effectReconciler})
 	projectID, missionID := "project-two-item", "mission-two-item"
 	revision, governance := twoItemRevision(t, projectID, missionID)
 	missionResult := h.createMission(projectID, missionID, "operation-mission-create")
@@ -104,6 +109,7 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	restartAfterDurableBoundary(t, h, projectID, missionID, "workgraph-selected", restartEveryBoundary)
 
 	admitted := admitTwoItemWork(t, h, projectID, missionID, revision, governance, restartEveryBoundary)
+	assignTwoItemTrackerEffects(t, h, governance, admitted, effectReconciler, restartEveryBoundary)
 	progress, err := h.host.Progress().Mission(journalv2.ProjectID(projectID), journalv2.MissionID(missionID))
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +138,214 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	}
 	assertUniversalInvariants(t, h, projectID, missionID, "two-items-terminal-restored")
 	return semantic
+}
+
+func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2, reconciler *scenarioEffectReconciler, restartEveryBoundary bool) {
+	t.Helper()
+	store, err := trackerfake.Open(filepath.Join(h.root, "tracker.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := trackerfake.NewProvider(store)
+	dispatcher, err := execution.NewAssignmentEffectDispatcherV2(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, workID := range []ids.WorkID{"work-a", "work-b"} {
+		ticketID := "ticket-" + workID.String()
+		if err := store.Seed(t.Context(), trackerfake.WorkSeed{Key: ticketID, Title: "Scenario " + workID.String()}); err != nil {
+			t.Fatal(err)
+		}
+		slot := admitted[workID]
+		if err := slot.Validate(); err != nil {
+			t.Fatalf("tracker effect %s received invalid execution authority: %v", workID, err)
+		}
+		if slot.RuntimeEpochID != h.host.RuntimeEpochID() {
+			slot = rebindUnboundExecutionToCurrent(t, h, slot, governance, "before-effect-"+workID.String())
+			admitted[workID] = slot
+		}
+		at := time.Date(2026, 9, 5, 12, 30, index, 0, time.UTC)
+		target := tracker.ExternalWorkRef{
+			ProjectID: slot.ProjectID, WorkID: workID, Provider: "fake", ExternalID: ticketID,
+			MetadataSchema: 1, CreatedByOperation: "operation-workgraph", LastObservation: 1,
+		}
+		intent := execution.EffectIntentV2{
+			EffectID: journalv2.EffectID("effect-assign-" + workID.String()), OperationID: journalv2.OperationID("operation-assign-" + workID.String()),
+			Target: target, IntendedValue: "actor-" + workID.String(), ExpectedProviderRevision: 1,
+			RequiredGuarantee: tracker.AssignmentAtomicClaim, ActorID: slot.ActorID, ProcessID: slot.ProcessID,
+			Governance: slot.Governance, OriginRuntimeEpochID: slot.RuntimeEpochID, OriginObservedCreatedAt: at.Format(time.RFC3339Nano),
+		}
+		intent.CanonicalRequestDigest, err = execution.EffectRequestDigestV2(intent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(intent.CanonicalBytesV2()) == 0 {
+			t.Fatalf("tracker effect %s produced an invalid intent", workID)
+		}
+		request := execution.EffectAuthorityRequestV2{
+			Action: execution.EffectRecordIntentV2, Intent: intent, RuntimeEpochID: h.host.RuntimeEpochID(), ExecutionSlot: slot, ObservedAt: at,
+			OperationEventID: journalv2.EventID("event-effect-intent-operation-" + workID.String()), EffectEventID: journalv2.EventID("event-effect-intent-" + workID.String()),
+		}
+		recorded, err := h.host.ExecuteEffect(t.Context(), h.host.RuntimeEpochID(), request)
+		if err != nil {
+			t.Fatalf("record tracker effect %s: %v", workID, err)
+		}
+		assertUniversalInvariants(t, h, slot.ProjectID.String(), slot.MissionID.String(), "effect-intent-"+workID.String())
+		if restartEveryBoundary {
+			slot = restartUnboundExecutionAfterDurableBoundary(t, h, recorded.ExecutionSlot, governance, "effect-intent-"+workID.String(), true)
+			request.Action = execution.EffectAdoptRecoveryV2
+			request.RuntimeEpochID = h.host.RuntimeEpochID()
+			request.ExecutionSlot = slot
+			request.ObservedAt = at.Add(500 * time.Millisecond)
+			request.OperationEventID = journalv2.EventID("event-effect-adopt-operation-" + workID.String())
+			request.EffectEventID = journalv2.EventID("event-effect-adopt-" + workID.String())
+			adopted, adoptErr := h.host.ExecuteEffect(t.Context(), h.host.RuntimeEpochID(), request)
+			if adoptErr != nil {
+				t.Fatalf("adopt tracker effect %s after restart: %v", workID, adoptErr)
+			}
+			slot = adopted.ExecutionSlot
+		} else {
+			slot = recorded.ExecutionSlot
+		}
+		request.Action = execution.EffectStartAttemptV2
+		request.RuntimeEpochID = h.host.RuntimeEpochID()
+		request.ExecutionSlot = slot
+		request.ObservedAt = at.Add(time.Second)
+		request.OperationEventID = journalv2.EventID("event-effect-attempt-operation-" + workID.String())
+		request.EffectEventID = journalv2.EventID("event-effect-attempt-" + workID.String())
+		applied, err := h.host.ExecuteEffectDispatch(t.Context(), h.host.RuntimeEpochID(), execution.EffectDispatchCommandV2{
+			Authorization: request, ObservationOperationEventID: journalv2.EventID("event-effect-observation-operation-" + workID.String()),
+			ObservationEffectEventID: journalv2.EventID("event-effect-observation-" + workID.String()), ObservationAt: at.Add(2 * time.Second),
+		}, dispatcher)
+		if err != nil || applied.State.AppliedObservation == nil || applied.State.AppliedObservation.Value != intent.IntendedValue || applied.State.AppliedObservation.OperationMarker != string(intent.OperationID) {
+			t.Fatalf("apply tracker effect %s: result=%+v err=%v", workID, applied, err)
+		}
+		assertUniversalInvariants(t, h, slot.ProjectID.String(), slot.MissionID.String(), "effect-applied-"+workID.String())
+		if restartEveryBoundary {
+			reconciler.arm(scenarioEffectRecovery{
+				workID: workID, intent: intent, execution: applied.ExecutionSlot, governance: governance,
+				observedAt: at.Add(3 * time.Second),
+			})
+			t.Logf("restart boundary=effect-observation-%s phase=before", workID)
+			predecessor, _ := h.restart()
+			t.Logf("restart boundary=effect-observation-%s phase=reconciled", workID)
+			assertStaleEpochRefusesBeforeRepository(t, h, predecessor)
+			resolved, recoveryErr := reconciler.take()
+			if recoveryErr != nil || resolved.State.Stage != execution.EffectResolvedV2 || resolved.State.Outcome != execution.EffectOutcomeAppliedV2 {
+				t.Fatalf("recover tracker effect %s: result=%+v err=%v", workID, resolved, recoveryErr)
+			}
+			admitted[workID] = resolved.ExecutionSlot
+			assertUniversalInvariants(t, h, slot.ProjectID.String(), slot.MissionID.String(), "effect-resolved-"+workID.String())
+			observed, err := provider.ObserveAssignment(t.Context(), target)
+			if err != nil || observed.Assignee != intent.IntendedValue || observed.OperationMarker != string(intent.OperationID) {
+				t.Fatalf("tracker attribution %s: observation=%+v err=%v", workID, observed, err)
+			}
+			continue
+		}
+		request.Action = execution.EffectRequireReconcileV2
+		request.ExecutionSlot = applied.ExecutionSlot
+		request.ObservedAt = at.Add(3 * time.Second)
+		request.OperationEventID = journalv2.EventID("event-effect-reconcile-operation-" + workID.String())
+		request.EffectEventID = journalv2.EventID("event-effect-reconcile-" + workID.String())
+		reconciled, err := h.host.ExecuteEffect(t.Context(), h.host.RuntimeEpochID(), request)
+		if err != nil {
+			t.Fatalf("require tracker reconciliation %s: %v", workID, err)
+		}
+		request.Action = execution.EffectResolveV2
+		request.ExecutionSlot = reconciled.ExecutionSlot
+		request.ObservedAt = at.Add(4 * time.Second)
+		request.Outcome = execution.EffectOutcomeAppliedV2
+		request.OperationEventID = journalv2.EventID("event-effect-resolve-operation-" + workID.String())
+		request.EffectEventID = journalv2.EventID("event-effect-resolve-" + workID.String())
+		resolved, err := h.host.ExecuteEffect(t.Context(), h.host.RuntimeEpochID(), request)
+		if err != nil || resolved.State.Stage != execution.EffectResolvedV2 || resolved.State.Outcome != execution.EffectOutcomeAppliedV2 {
+			t.Fatalf("resolve tracker effect %s: result=%+v err=%v", workID, resolved, err)
+		}
+		admitted[workID] = resolved.ExecutionSlot
+		assertUniversalInvariants(t, h, slot.ProjectID.String(), slot.MissionID.String(), "effect-resolved-"+workID.String())
+		observed, err := provider.ObserveAssignment(t.Context(), target)
+		if err != nil || observed.Assignee != intent.IntendedValue || observed.OperationMarker != string(intent.OperationID) {
+			t.Fatalf("tracker attribution %s: observation=%+v err=%v", workID, observed, err)
+		}
+	}
+}
+
+type scenarioEffectRecovery struct {
+	workID     ids.WorkID
+	intent     execution.EffectIntentV2
+	execution  execution.ExecutionSlotStateV2
+	governance governancecontext.Context
+	observedAt time.Time
+}
+
+// scenarioEffectReconciler models the production startup contract rather than
+// bypassing it: a durable applied observation is adopted into the fresh epoch,
+// attributed, and resolved while the ordinary command barrier remains closed.
+type scenarioEffectReconciler struct {
+	mu      sync.Mutex
+	pending *scenarioEffectRecovery
+	result  execution.EffectAuthorityResultV2
+	err     error
+}
+
+func (r *scenarioEffectReconciler) arm(recovery scenarioEffectRecovery) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pending = &recovery
+	r.result = execution.EffectAuthorityResultV2{}
+	r.err = nil
+}
+
+func (r *scenarioEffectReconciler) take() (execution.EffectAuthorityResultV2, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.result, r.err
+}
+
+func (r *scenarioEffectReconciler) Reconcile(ctx context.Context, commands *productionruntime.ReconciliationCommands) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pending == nil {
+		return nil
+	}
+	recovery := *r.pending
+	deadline, err := time.Parse(time.RFC3339Nano, recovery.execution.Deadline)
+	if err != nil {
+		r.err = err
+		return err
+	}
+	rebound, err := commands.ExecuteWork(ctx, execution.ExecutionAuthorityRequestV2{
+		Kind: execution.ExecutionRebindV2, OperationID: journalv2.OperationID("operation-rebind-effect-observation-" + recovery.workID.String()),
+		ProjectID: recovery.execution.ProjectID, MissionID: recovery.execution.MissionID, WorkRevisionID: recovery.execution.WorkRevisionID, WorkID: recovery.execution.WorkID,
+		RunID: recovery.execution.RunID, ActorID: recovery.execution.ActorID, ProcessID: recovery.execution.ProcessID, LeaseID: recovery.execution.LeaseID,
+		Generation: recovery.execution.Generation, Fence: recovery.execution.Fence, ObservedAt: recovery.observedAt, Deadline: deadline,
+		RuntimeEpochID: commands.RuntimeEpochID(), Governance: recovery.governance,
+		OperationEventID: journalv2.EventID("event-operation-rebind-effect-observation-" + recovery.workID.String()), SlotEventID: journalv2.EventID("event-slot-rebind-effect-observation-" + recovery.workID.String()),
+	})
+	if err != nil {
+		r.err = err
+		return err
+	}
+	request := execution.EffectAuthorityRequestV2{
+		Action: execution.EffectAdoptRecoveryV2, Intent: recovery.intent, RuntimeEpochID: commands.RuntimeEpochID(), ExecutionSlot: rebound.State,
+		ObservedAt: recovery.observedAt.Add(time.Second), OperationEventID: journalv2.EventID("event-effect-startup-adopt-operation-" + recovery.workID.String()), EffectEventID: journalv2.EventID("event-effect-startup-adopt-" + recovery.workID.String()),
+	}
+	adopted, err := commands.ExecuteEffect(ctx, request)
+	if err != nil {
+		r.err = err
+		return err
+	}
+	request.Action = execution.EffectResolveV2
+	request.ExecutionSlot = adopted.ExecutionSlot
+	request.ObservedAt = recovery.observedAt.Add(2 * time.Second)
+	request.Outcome = execution.EffectOutcomeAppliedV2
+	request.OperationEventID = journalv2.EventID("event-effect-startup-resolve-operation-" + recovery.workID.String())
+	request.EffectEventID = journalv2.EventID("event-effect-startup-resolve-" + recovery.workID.String())
+	r.result, r.err = commands.ExecuteEffect(ctx, request)
+	if r.err == nil {
+		r.pending = nil
+	}
+	return r.err
 }
 
 func admitTwoItemWork(t *testing.T, h *portableHarness, projectID, missionID string, revision workgraph.RevisionV2, governance governancecontext.Context, restartEveryBoundary bool) map[ids.WorkID]execution.ExecutionSlotStateV2 {

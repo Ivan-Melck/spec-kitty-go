@@ -151,6 +151,8 @@ var controlledMutantSuites = []mutantSuite{
 	{"effect_authority_mutants", proof("./internal/execution", "TestWP07ExecutableEffectMutantsV2")},
 	{"journal_acknowledgement_mutants", proof("./internal/controljournal/v2", "TestAcknowledgementAttributionAndOpaqueSealMutants")},
 	{"production_composition_bypass", proof("./internal/scenario", "TestProductionCapabilityCompositionBoundaryBypassMutant")},
+	{"universal_progress_oracle", proof("./internal/scenario", "TestUniversalInvariantOracleControlledMutants")},
+	{"work_coordinate_oracle", proof("./internal/scenario", "TestWorkCoordinateAgreementControlledMutants")},
 }
 
 var concurrencyProofs = []executableProof{
@@ -168,6 +170,7 @@ var universalScenarioProofs = []executableProof{
 	proof("./internal/scenario", "TestProductionCapabilityCompositionHasOnePublicationBoundary"),
 	proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries"),
 	proof("./internal/scenario", "TestTwoItemMissionRestartAfterEachDurableBoundary"),
+	proof("./internal/scenario", "TestUniversalInvariantOracleControlledMutants"),
 	proof("./internal/scenario", "TestZombieWorkspaceRemainsWritableButAuthorityIsFenced"),
 }
 

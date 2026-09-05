@@ -32,15 +32,36 @@ type invariantEvidence struct {
 func assertUniversalInvariants(t *testing.T, h *portableHarness, project, missionID, cut string) []byte {
 	t.Helper()
 	status := h.host.Status()
-	if status.State != productionruntime.HostReady || status.DatabaseID == "" || status.RuntimeEpochID == "" || status.ProjectionRevision == 0 || status.ProjectionSHA256 == "" {
-		t.Fatalf("scenario=%s cut=%s incomplete readiness: %+v", t.Name(), cut, status)
-	}
 	progress, err := h.host.Progress().Mission(journalv2.ProjectID(project), journalv2.MissionID(missionID))
 	if err != nil {
 		t.Fatalf("scenario=%s cut=%s progress: %v", t.Name(), cut, err)
 	}
-	if progress.SchemaVersion != productionruntime.ProgressSchemaVersion || progress.DatabaseID != status.DatabaseID || progress.RuntimeEpochID != status.RuntimeEpochID || progress.ProjectionRevision != status.ProjectionRevision || progress.ProjectionSHA256 != status.ProjectionSHA256 || progress.SnapshotSHA256 == "" {
-		t.Fatalf("scenario=%s cut=%s readiness/progress disagreement: status=%+v progress=%+v", t.Name(), cut, status, progress)
+	evidence, err := validateUniversalSnapshot(status, progress, project, missionID, h.git.count())
+	if err != nil {
+		t.Fatalf("scenario=%s cut=%s universal invariant: %v", t.Name(), cut, err)
+	}
+	evidence.Scenario = t.Name()
+	evidence.Cut = cut
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip invariantEvidence
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil || roundTrip.SchemaVersion != productionScenarioSchemaVersion || roundTrip.Scenario == "" || roundTrip.Cut == "" {
+		t.Fatalf("invalid invariant evidence schema: %s err=%v", encoded, err)
+	}
+	return encoded
+}
+
+// validateUniversalSnapshot is the pure, adversarially testable half of the
+// scenario oracle. It accepts only the public host/progress DTOs; no raw
+// GapDB, projection repository, or provider transcript can satisfy a law.
+func validateUniversalSnapshot(status productionruntime.HostStatus, progress productionruntime.MissionProgress, project, missionID string, repositoryCalls int) (invariantEvidence, error) {
+	if status.State != productionruntime.HostReady || status.DatabaseID == "" || status.RuntimeEpochID == "" || status.ProjectionRevision == 0 || status.ProjectionSHA256 == "" {
+		return invariantEvidence{}, fmt.Errorf("incomplete readiness")
+	}
+	if progress.SchemaVersion != productionruntime.ProgressSchemaVersion || progress.DatabaseID != status.DatabaseID || progress.RuntimeEpochID != status.RuntimeEpochID || progress.ProjectionRevision != status.ProjectionRevision || progress.ProjectionSHA256 != status.ProjectionSHA256 || progress.SnapshotSHA256 == "" || string(progress.ProjectID) != project || string(progress.MissionID) != missionID {
+		return invariantEvidence{}, fmt.Errorf("readiness/progress disagreement")
 	}
 	seen := make(map[string]struct{}, len(progress.Items))
 	families := make(map[string]struct{})
@@ -49,44 +70,51 @@ func assertUniversalInvariants(t *testing.T, h *portableHarness, project, missio
 	for _, item := range progress.Items {
 		key := item.Family + "\x00" + item.AggregateID
 		if item.Family == "" || item.AggregateID == "" || item.LogicalVersion == 0 || len(item.CanonicalState) == 0 {
-			t.Fatalf("scenario=%s cut=%s incomplete authority item: %+v", t.Name(), cut, item)
+			return invariantEvidence{}, fmt.Errorf("incomplete authority item %q", key)
 		}
 		if _, duplicate := seen[key]; duplicate {
-			t.Fatalf("scenario=%s cut=%s duplicate aggregate %q", t.Name(), cut, key)
+			return invariantEvidence{}, fmt.Errorf("duplicate aggregate %q", key)
 		}
 		seen[key] = struct{}{}
 		families[item.Family] = struct{}{}
 		canonical, canonicalErr := journalv2.CanonicalObject(item.CanonicalState)
-		if canonicalErr != nil || !bytes.Equal(canonical, item.CanonicalState) {
-			t.Fatalf("scenario=%s cut=%s noncanonical %s state: %v", t.Name(), cut, key, canonicalErr)
+		if canonicalErr != nil {
+			return invariantEvidence{}, fmt.Errorf("noncanonical %s state: %w", key, canonicalErr)
+		}
+		if !bytes.Equal(canonical, item.CanonicalState) {
+			return invariantEvidence{}, fmt.Errorf("noncanonical %s state", key)
 		}
 		if item.LastPublicationID == "" {
-			t.Fatalf("scenario=%s cut=%s authority item has no publication: %s", t.Name(), cut, key)
+			return invariantEvidence{}, fmt.Errorf("authority item has no publication: %s", key)
 		}
 		if _, decodeErr := journalv2.DecodePublicationID(item.LastPublicationID); decodeErr != nil {
-			t.Fatalf("scenario=%s cut=%s invalid publication %s: %v", t.Name(), cut, key, decodeErr)
+			return invariantEvidence{}, fmt.Errorf("invalid publication %s: %w", key, decodeErr)
 		}
 		var state map[string]any
 		if err := json.Unmarshal(item.CanonicalState, &state); err != nil {
-			t.Fatalf("scenario=%s cut=%s decode %s: %v", t.Name(), cut, key, err)
+			return invariantEvidence{}, fmt.Errorf("decode %s: %w", key, err)
 		}
-		if value, ok := uintField(state, "logical_version"); ok && value != item.LogicalVersion {
-			t.Fatalf("scenario=%s cut=%s projection/head version mismatch %s: state=%d head=%d", t.Name(), cut, key, value, item.LogicalVersion)
+		stateVersion, versionPresent := uintField(state, "logical_version")
+		if !versionPresent {
+			stateVersion, versionPresent = uintField(state, "version")
+		}
+		if !versionPresent || stateVersion != item.LogicalVersion {
+			return invariantEvidence{}, fmt.Errorf("projection/head version mismatch %s", key)
 		}
 		if value, ok := textField(state, "project_id"); ok && value != project {
-			t.Fatalf("scenario=%s cut=%s cross-project state %s: %s", t.Name(), cut, key, value)
+			return invariantEvidence{}, fmt.Errorf("cross-project state %s", key)
 		}
 		if value, ok := textField(state, "mission_id"); ok && value != missionID {
-			t.Fatalf("scenario=%s cut=%s cross-mission state %s: %s", t.Name(), cut, key, value)
+			return invariantEvidence{}, fmt.Errorf("cross-mission state %s", key)
 		}
 		if item.Family == "operation" {
 			operation, decodeErr := journalv2.DecodeOperationStateV2(item.CanonicalState)
 			if decodeErr != nil || string(operation.OperationID()) != item.AggregateID || uint64(operation.LogicalVersion()) != item.LogicalVersion || string(operation.LastPublicationID()) != item.LastPublicationID {
-				t.Fatalf("scenario=%s cut=%s operation binding/result mismatch %s: state=%+v err=%v", t.Name(), cut, key, operation, decodeErr)
+				return invariantEvidence{}, fmt.Errorf("operation binding/result mismatch %s", key)
 			}
 			if operation.Status() == journalv2.StatusResolved || operation.Status() == journalv2.StatusRefused {
 				if operation.ResultKind() == "" || operation.ResultSchemaVersion() == 0 || len(operation.Result()) == 0 || operation.ResultDigest().IsZero() {
-					t.Fatalf("scenario=%s cut=%s terminal operation has no immutable result: %s", t.Name(), cut, key)
+					return invariantEvidence{}, fmt.Errorf("terminal operation has no immutable result: %s", key)
 				}
 			}
 			operationCount++
@@ -99,32 +127,24 @@ func assertUniversalInvariants(t *testing.T, h *portableHarness, project, missio
 		}
 	}
 	for workID, byFamily := range work {
-		assertWorkCoordinateAgreement(t, cut, workID, byFamily)
+		if err := validateWorkCoordinateAgreement(workID, byFamily); err != nil {
+			return invariantEvidence{}, err
+		}
 	}
 	familyList := make([]string, 0, len(families))
 	for family := range families {
 		familyList = append(familyList, family)
 	}
 	sort.Strings(familyList)
-	evidence := invariantEvidence{
-		SchemaVersion: productionScenarioSchemaVersion, Scenario: t.Name(), Cut: cut,
-		DatabaseID: status.DatabaseID, RuntimeEpochID: status.RuntimeEpochID,
+	return invariantEvidence{
+		SchemaVersion: productionScenarioSchemaVersion,
+		DatabaseID:    status.DatabaseID, RuntimeEpochID: status.RuntimeEpochID,
 		ProjectionRevision: status.ProjectionRevision, ProjectionSHA256: status.ProjectionSHA256,
-		Families: familyList, AggregateCount: len(progress.Items), OperationCount: operationCount, RepositoryCalls: h.git.count(),
-	}
-	encoded, err := json.Marshal(evidence)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var roundTrip invariantEvidence
-	if err := json.Unmarshal(encoded, &roundTrip); err != nil || roundTrip.SchemaVersion != productionScenarioSchemaVersion || roundTrip.Scenario == "" || roundTrip.Cut == "" {
-		t.Fatalf("invalid invariant evidence schema: %s err=%v", encoded, err)
-	}
-	return encoded
+		Families: familyList, AggregateCount: len(progress.Items), OperationCount: operationCount, RepositoryCalls: repositoryCalls,
+	}, nil
 }
 
-func assertWorkCoordinateAgreement(t *testing.T, cut, workID string, states map[string]map[string]any) {
-	t.Helper()
+func validateWorkCoordinateAgreement(workID string, states map[string]map[string]any) error {
 	fields := []string{"work_revision_id", "run_id", "lease_id", "generation", "fence", "candidate", "policy_revision"}
 	for _, field := range fields {
 		var expected string
@@ -138,7 +158,7 @@ func assertWorkCoordinateAgreement(t *testing.T, cut, workID string, states map[
 				continue
 			}
 			if value != expected {
-				t.Fatalf("cut=%s work=%s coordinate=%s disagreement in %s: want=%s got=%s", cut, workID, field, family, expected, value)
+				return fmt.Errorf("work=%s coordinate=%s disagreement in %s", workID, field, family)
 			}
 		}
 	}
@@ -147,10 +167,11 @@ func assertWorkCoordinateAgreement(t *testing.T, cut, workID string, states map[
 		if reviewState := states["review_slot"]; reviewState != nil {
 			reviewer, _ := nestedTextField(reviewState, "reviewer_actor_id")
 			if contributor != "" && reviewer == contributor {
-				t.Fatalf("cut=%s work=%s reviewer actor equals contributor actor %s", cut, workID, contributor)
+				return fmt.Errorf("work=%s reviewer actor equals contributor actor", workID)
 			}
 		}
 	}
+	return nil
 }
 
 func textField(value map[string]any, name string) (string, bool) {

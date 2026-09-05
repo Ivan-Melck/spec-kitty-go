@@ -35,6 +35,7 @@ type ProductionConfig struct {
 	Seed              string
 	CheckpointEvery   int
 	CandidateVerifier handoff.CandidateVerifier
+	Reconciler        productionruntime.Reconciler
 }
 
 type portableHarness struct {
@@ -142,6 +143,7 @@ func (h *portableHarness) start() {
 		DecompositionProvider: unavailableDecomposition{},
 		CandidateVerifier:     verifier,
 		IntegrationGit:        h.git,
+		Reconciler:            h.config.Reconciler,
 		CheckpointEvery:       h.config.CheckpointEvery,
 		MonitorInterval:       25 * time.Millisecond,
 	}

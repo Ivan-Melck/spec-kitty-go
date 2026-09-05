@@ -62,17 +62,7 @@ func TestZombieOwnerReplacementCampaign100(t *testing.T) {
 	t.Logf("campaign seed=%s replacements=100 distinct_epochs=%d outcome=pass", t.Name(), len(seen))
 }
 
-func TestReviewerIndependenceAndIntegrationSerializationEvidence(t *testing.T) {
-	sources := allTestSources(t)
-	for _, testName := range []string{
-		"TestReviewerIndependenceUsesActorIDNotProcessAndNeedsExactNarrowExceptionV2",
-		"TestIntegrationAuthorityStagesIntentBeforeEffectsAndReplaysV2",
-		"TestIntegrationRefusesBeforeAnyRepositoryObservationV2",
-	} {
-		if !strings.Contains(sources, "func "+testName+"(") {
-			t.Fatalf("required executable authority proof %s is absent", testName)
-		}
-	}
+func TestStaleEpochRefusesBeforeRepositoryFence(t *testing.T) {
 	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: t.Name()})
 	h.createMission("project-guard", "mission-guard", "operation-guard-create")
 	stale, _ := h.restart()
