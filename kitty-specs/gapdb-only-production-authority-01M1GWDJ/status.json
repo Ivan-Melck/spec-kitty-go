@@ -567,7 +567,8 @@
         "Override lane-purity ceremony: flagged kitty-specs files are Spec Kitty-owned historical evidence from dependency lane merges, not implementation contamination. Candidate 1a2af4fb independently approved.",
         "Independent review of candidate 1a2af4fb and tree b941534d.",
         "APPROVE: prior reconciliation blocker closed; 17/17 mutants, exact GapDB route, race, static, and p95 1.254477891s independently verified.",
-        "Reopen approved runtime composition for product defect exposed by WP14 and WP15; no guard is bypassed."
+        "Reopen approved runtime composition for product defect exposed by WP14 and WP15; no guard is bypassed.",
+        "Production host now composes readiness/decomposition and proves acknowledged WorkRevision selection through real GapDB sidecar, restart, and progress"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
