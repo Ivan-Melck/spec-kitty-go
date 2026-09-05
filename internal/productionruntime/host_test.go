@@ -322,6 +322,30 @@ func TestHostProjectionRefreshRetriesConcurrentStablePrefixMovement(t *testing.T
 	}
 }
 
+func TestHostProjectionRefreshRetryIsBoundedAndCancellationAware(t *testing.T) {
+	host, _ := hostFixture(t, "database-refresh-bound")
+	defer host.Close(t.Context())
+	if err := host.transition(HostReconciling); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.transition(HostReady); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int64
+	host.refresh = func(context.Context) error {
+		calls.Add(1)
+		return errors.New("permanent refresh failure")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := host.refreshProjection(ctx); !IsKind(err, ErrorProjection) {
+		t.Fatalf("cancelled refresh error=%v", err)
+	}
+	if calls.Load() != 1 || host.State() != HostDegraded {
+		t.Fatalf("calls=%d state=%s", calls.Load(), host.State())
+	}
+}
+
 func TestHostSecondOwnerForSameDatabaseRefusesAndDifferentDatabasesProgress(t *testing.T) {
 	first, _ := hostFixture(t, "database-owner")
 	defer first.Close(t.Context())
