@@ -186,7 +186,7 @@ func SealAcknowledgedInitialWorkRevisionSelectionV2(revision workgraph.RevisionV
 	}
 	coordinate := event.Coordinate()
 	if event.Family() != "workgraph" || event.EventType() != "workgraph.finalized" || event.OperationID() != operation.OperationID() || event.PublicationID() != acknowledged.PublicationID() ||
-		coordinate.Kind != "workgraph" || coordinate.Scope.ProjectID != journalv2.ProjectID(revision.ProjectID()) || coordinate.Scope.MissionID != journalv2.MissionID(revision.MissionID()) || string(coordinate.ID) != string(revision.MissionID()) {
+		coordinate.Kind != "workgraph" || coordinate.Scope.Kind != journalv2.ScopeMission || coordinate.Scope.ProjectID != journalv2.ProjectID(revision.ProjectID()) || coordinate.Scope.MissionID != journalv2.MissionID(revision.MissionID()) || string(coordinate.ID) != string(revision.MissionID()) {
 		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_event", nil)
 	}
 	var payload struct {
@@ -198,6 +198,15 @@ func SealAcknowledgedInitialWorkRevisionSelectionV2(revision workgraph.RevisionV
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(&payload); err != nil || payload.SchemaVersion != 1 || payload.Kind != "finalized" || !bytes.Equal(payload.Revision, encoded) {
 		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_payload", err)
+	}
+	exactScope := journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: journalv2.ProjectID(revision.ProjectID()), MissionID: journalv2.MissionID(revision.MissionID())}
+	exactIntent, err := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "workgraph.finalized", CommandSchemaVersion: 1, Scope: exactScope, Command: event.Payload()})
+	if err != nil || binding.CommandKind() != "workgraph.finalized" || binding.CommandSchemaVersion() != 1 || binding.Scope() != exactScope || binding.IntentDigest() != exactIntent {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_binding", err)
+	}
+	exactResult, err := journalv2.CanonicalObject([]byte(fmt.Sprintf(`{"work_revision_id":%q}`, revision.ID())))
+	if err != nil || operation.ResultKind() != "workgraph.result" || operation.ResultSchemaVersion() != 1 || !bytes.Equal(operation.Result(), exactResult) {
+		return WorkRevisionSelectionV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "workgraph_publication_result", err)
 	}
 	receipt, err := json.Marshal(struct {
 		PublicationID  journalv2.PublicationID `json:"publication_id"`
