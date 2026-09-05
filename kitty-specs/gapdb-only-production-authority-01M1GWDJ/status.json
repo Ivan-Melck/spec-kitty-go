@@ -571,7 +571,8 @@
         "Production host now composes readiness/decomposition and proves acknowledged WorkRevision selection through real GapDB sidecar, restart, and progress",
         "Integrated WP18 autonomy mutant census guard is stale",
         "Integrated repaired 20-mutant architecture guard; production runtime and focused autonomy suites pass",
-        "Independent review passed; GapDB-only host, readiness selection, replay, progress, and 20-mutant outer guard verified"
+        "Independent review passed; GapDB-only host, readiness selection, replay, progress, and 20-mutant outer guard verified",
+        "Ready for independent integration review: approved WP18 atomic readiness fact authority merged and host regression suite green"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
