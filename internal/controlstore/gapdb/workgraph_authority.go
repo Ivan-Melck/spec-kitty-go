@@ -11,6 +11,11 @@ type workgraphPublicationPortV2 interface {
 	Publish(context.Context, journalv2.SealedCommitPlanV2) (journalv2.AcknowledgedPublicationV2, error)
 }
 
+// WorkgraphAuthorityPortV2 is a closed workgraph publication surface.
+type WorkgraphAuthorityPortV2 interface {
+	Publish(context.Context, workgraph.AuthorityPlanV2) (journalv2.AcknowledgedPublicationV2, error)
+}
+
 // workgraphAuthorityV2 admits only operation+workgraph plans and delegates the
 // single atomic publication to the shared GapDB v2 committer.
 type workgraphAuthorityV2 struct{ publisher workgraphPublicationPortV2 }
@@ -20,6 +25,10 @@ func newWorkgraphAuthorityV2(coordinator *journalv2.PublicationCoordinatorV2) (*
 		return nil, invalidV2Plan("workgraph authority coordinator")
 	}
 	return &workgraphAuthorityV2{publisher: coordinator}, nil
+}
+
+func NewWorkgraphAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2) (WorkgraphAuthorityPortV2, error) {
+	return newWorkgraphAuthorityV2(coordinator)
 }
 
 func newWorkgraphAuthorityV2ForTest(port workgraphPublicationPortV2) *workgraphAuthorityV2 {
