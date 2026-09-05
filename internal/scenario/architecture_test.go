@@ -17,7 +17,7 @@ func portableSourceViolations(files map[string]string) []sourceViolation {
 		"relational_driver":    "database/" + "sql",
 		"legacy_adapter":       "controlstore/" + "sqlite",
 		"legacy_module":        "modernc.org/" + "sqlite",
-		"raw_store":            "controlstore/" + "gapdb",
+		"raw_store":            "\"github.com/spec-kitty/go-kitty3/internal/controlstore/" + "gapdb\"",
 		"helper_shortcut":      "internal/" + "helpercmd",
 		"path_argument":        "--" + "db",
 		"legacy_eligibility":   "legacy-" + "v1",
@@ -64,7 +64,7 @@ func TestHarnessArchitectureGuardKillsStorageMutants(t *testing.T) {
 	mutants := map[string]string{
 		"driver":   "import _ \"modernc.org/" + "sqlite\"",
 		"query":    "rows, err := q.Query(\"SELECT * FROM " + "lea" + "ses\")",
-		"raw":      "import \"example/internal/controlstore/" + "gapdb\"",
+		"raw":      "import \"github.com/spec-kitty/go-kitty3/internal/controlstore/" + "gapdb\"",
 		"shortcut": "exec.Command(helper, \"inspect\", \"--" + "db\", path)",
 	}
 	for name, source := range mutants {

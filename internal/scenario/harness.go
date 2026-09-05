@@ -49,6 +49,37 @@ type portableHarness struct {
 	git     *attributableGit
 }
 
+// absentCapabilityReadiness is an explicit, source-bound absence observer for
+// scenario missions that have not yet created capability aggregates. It does
+// not manufacture a census; the production host invokes it once per declared
+// capability at the exact GapDB capture and seals the complete observation set.
+type absentCapabilityReadiness struct{}
+
+func (absentCapabilityReadiness) ObserveCapabilityReadiness(_ context.Context, query mission.CapabilityReadinessQueryV2) (mission.CapabilityReadinessEvidenceV2, error) {
+	return mission.CapabilityReadinessEvidenceV2{
+		Capture: query.Capture(), ProjectID: query.ProjectID(), MissionID: query.MissionID(), Action: query.Action(),
+		ObservedAbsent: true, EvidenceIdentity: "scenario-absence-" + string(query.Action()), EvidenceDigest: strings.Repeat("a", 64),
+	}, nil
+}
+
+// unavailableDecomposition is the scenario's deterministic external-provider
+// boundary. It advertises the contract but never grants tracker authority or
+// turns an unavailable mutation into success.
+type unavailableDecomposition struct{}
+
+func (unavailableDecomposition) RequireCapabilities(context.Context, []mission.DecompositionEffectKindV2) error {
+	return nil
+}
+func (unavailableDecomposition) ObserveEffect(context.Context, journalv2.EffectID) (mission.DecompositionProviderObservationV2, bool, error) {
+	return mission.DecompositionProviderObservationV2{}, false, nil
+}
+func (unavailableDecomposition) MutateEffect(context.Context, mission.DecompositionProviderMutationV2) (mission.DecompositionProviderMutationOutcomeV2, error) {
+	return mission.DecompositionProviderMutationRefusedV2, errors.New("scenario decomposition provider unavailable")
+}
+func (unavailableDecomposition) CompensateEffect(context.Context, mission.DecompositionProviderMutationV2, mission.DecompositionProviderObservationV2) error {
+	return errors.New("scenario decomposition provider unavailable")
+}
+
 func newPortableHarness(t *testing.T, config ProductionConfig) *portableHarness {
 	t.Helper()
 	if config.ExecutablePath == "" || !filepath.IsAbs(config.ExecutablePath) {
@@ -107,10 +138,12 @@ func (h *portableHarness) start() {
 			SupervisorRunID:     fmt.Sprintf("scenario-%s-%d", shortDigest(h.config.Seed), h.starts),
 			ProductPolicySHA256: strings.Repeat("e", 64),
 		},
-		CandidateVerifier: verifier,
-		IntegrationGit:    h.git,
-		CheckpointEvery:   h.config.CheckpointEvery,
-		MonitorInterval:   25 * time.Millisecond,
+		CapabilityReadiness:   absentCapabilityReadiness{},
+		DecompositionProvider: unavailableDecomposition{},
+		CandidateVerifier:     verifier,
+		IntegrationGit:        h.git,
+		CheckpointEvery:       h.config.CheckpointEvery,
+		MonitorInterval:       25 * time.Millisecond,
 	}
 	host, err := productionruntime.Start(h.t.Context(), config)
 	if err != nil {
