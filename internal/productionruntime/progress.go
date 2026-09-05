@@ -347,7 +347,23 @@ func selectiveState(raw []byte) selectedState {
 	}
 	var generation uint64
 	_ = json.Unmarshal(wire["generation"], &generation)
-	return selectedState{authority: text("stage", "status", "lifecycle", "state"), observed: text("observed_state", "provider_state"), lifecycle: text("lifecycle"), workRevision: text("work_revision_id", "current_work_revision_id"), kind: text("kind", "fact_kind"), generation: generation, runID: text("run_id"), leaseID: text("lease_id"), actorID: text("actor_id"), processID: text("process_id"), workID: text("work_id")}
+	workRevision := text("work_revision_id", "current_work_revision_id")
+	// Workgraph reducer state wraps the complete immutable revision under
+	// current_revision. Decode only the two bounded coordinates progress needs;
+	// do not teach the transport-neutral projection the rest of that schema.
+	var currentRevision struct {
+		WorkRevisionID string `json:"work_revision_id"`
+		Generation     uint64 `json:"generation"`
+	}
+	if json.Unmarshal(wire["current_revision"], &currentRevision) == nil {
+		if generation == 0 {
+			generation = currentRevision.Generation
+		}
+		if workRevision == "" && len(currentRevision.WorkRevisionID) <= MaxProgressDiagnosis {
+			workRevision = currentRevision.WorkRevisionID
+		}
+	}
+	return selectedState{authority: text("stage", "status", "lifecycle", "state"), observed: text("observed_state", "provider_state"), lifecycle: text("lifecycle"), workRevision: workRevision, kind: text("kind", "fact_kind"), generation: generation, runID: text("run_id"), leaseID: text("lease_id"), actorID: text("actor_id"), processID: text("process_id"), workID: text("work_id")}
 }
 
 func classifyProgressItem(progress *MissionProgress, item ProgressItem, counts map[string]int) {
@@ -371,6 +387,9 @@ func classifyProgressItem(progress *MissionProgress, item ProgressItem, counts m
 	case "workgraph":
 		if selected.generation > progress.Generation {
 			progress.Generation = selected.generation
+		}
+		if progress.WorkRevisionID == "" && selected.workRevision != "" {
+			progress.WorkRevisionID = journalv2.WorkRevisionID(selected.workRevision)
 		}
 	case "execution_slot":
 		progress.TotalWork++
