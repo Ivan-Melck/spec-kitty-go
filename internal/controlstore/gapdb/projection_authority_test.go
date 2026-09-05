@@ -256,51 +256,306 @@ func TestWP11ExecutableCapabilityConformanceV2(t *testing.T) {
 		t.Skip("bounded capability campaign is excluded from the short PR tier")
 	}
 	type evidence struct {
-		name     string
-		families []string
-		accepted func(*testing.T)
-		refused  func(*testing.T)
+		name               string
+		families           []string
+		acceptedControl    string
+		refusedControl     string
+		acceptedOutcome    string
+		refusedOutcome     string
+		atomicBatchCount   int
+		logicalIncrement   int
+		effectIntent       bool
+		refusalPreMutation bool
 	}
 	matrix := []evidence{
-		{"mission_decision_blocker", []string{"mission"}, TestMissionAuthorityAdapterOneBatchRestartReplayV2, TestMissionAuthorityAdapterBindingConflictPrecedesMissionReadV2},
-		{"readiness_actions", []string{"mission"}, TestReadinessAuthorityAdapterCreateActivityPauseRestartReplayV2, TestReadinessAuthorityAdapterRejectsLegacyPhaseStateV2},
-		{"artifact", []string{"artifact_catalog", "artifact_revision"}, TestArtifactAuthorityPublishesCompleteBatchThroughCoordinatorAndGapDB, TestArtifactAuthorityRefusesNil},
-		{"workrevision_reconciliation", []string{"workgraph"}, TestWorkgraphAuthorityPublishesCompleteBatchThroughCoordinatorAndGapDB, TestWorkgraphAuthorityRefusesNil},
-		{"run_lease_governance", []string{"execution_slot"}, TestExecutionAndEffectAuthoritiesProductionConstructorsCommitAndRecoverAmbiguityV2, TestAuthorityAdapterNeverDeliversAfterPreRegistrationRefusalV2},
-		{"workspace", []string{"workspace"}, TestWorkspaceAuthorityCommitsBindingAndPermanentPathClaimThroughGapDBV2, TestWorkspacePathClaimContentionAndIndependentProgressV2},
-		{"handoff", []string{"handoff_slot"}, TestHandoffGapDBPublisherCommitsOneCompleteBatchAndContendsV2, TestHandoffGapDBPartialPublicationRemainsUnresolvedV2},
-		{"independent_review", []string{"review_slot"}, TestReviewGapDBPublisherCommitsOneCompleteBatchAndContendsV2, TestReviewGapDBPartialPublicationRemainsUnresolvedV2},
-		{"acceptance_integration", []string{"acceptance", "integration_target", "integration_attempt"}, TestAcceptanceAndIntegrationPublishThroughRealGapDBAndReconcileLostCASV2, TestAcceptanceAndIntegrationGapDBRejectPartialAndMixedPublicationsV2},
-		{"external_effect", []string{"external_effect"}, TestExternalProviderRunsThroughRealGapDBEffectAuthorityV2, TestEffectDispatchAuthorizationIsDurableOneShotThroughGapDBV2},
-		{"outbox_projection", []string{"outbox"}, TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2, TestOutboxAdapterAdmitsOnlyExactCapabilityPlanV2},
+		{"global_operation", []string{"operation"}, "mission", "binding_conflict", "stable OperationID resolves or replays", "changed canonical binding conflicts before domain read", 1, 1, false, true},
+		{"mission", []string{"mission"}, "mission", "binding_conflict", "mission create commits and replays", "changed binding refuses before mission read", 1, 1, false, true},
+		{"decision", []string{"mission"}, "decision", "binding_conflict", "decision fact and mission head commit together", "changed binding refuses before mission read", 1, 1, false, true},
+		{"blocker", []string{"mission"}, "blocker", "binding_conflict", "blocker fact and mission head commit together", "changed binding refuses before mission read", 1, 1, false, true},
+		{"readiness", []string{"mission"}, "readiness", "legacy_phase", "activity census survives restart", "legacy phase authority is refused", 1, 1, false, true},
+		{"artifact", []string{"artifact_catalog", "artifact_revision"}, "artifact", "artifact_nil", "catalog and immutable revision commit atomically", "unminted capability is refused", 1, 1, false, true},
+		{"workrevision", []string{"workgraph"}, "workgraph", "workgraph_nil", "finalized graph commits atomically", "unminted capability is refused", 1, 1, false, true},
+		{"reconciliation", []string{"workgraph"}, "workgraph_contention", "workgraph_nil", "independent mission advances while one CAS wins", "stale or unminted graph refuses", 1, 1, false, true},
+		{"run", []string{"execution_slot"}, "execution", "pre_registration", "run admission commits and replays", "pre-registration refusal performs no delivery", 1, 1, false, true},
+		{"lease", []string{"execution_slot"}, "execution", "pre_registration", "lease identity and fence commit with run", "stale authority refuses before delivery", 1, 1, false, true},
+		{"workspace", []string{"workspace"}, "workspace", "workspace_contention", "lease-scoped path claim commits atomically", "same path permits one winner", 1, 1, false, true},
+		{"governance", []string{"acceptance"}, "governance", "governance", "current policy decision permits publication", "stale policy decision refuses before publication", 1, 1, false, true},
+		{"handoff", []string{"handoff_slot"}, "handoff", "handoff_partial", "candidate evidence commits atomically", "partial publication remains unresolved", 1, 1, false, true},
+		{"review", []string{"review_slot"}, "review", "review_partial", "independent verdict commits atomically", "partial publication remains unresolved", 1, 1, false, true},
+		{"acceptance", []string{"acceptance"}, "acceptance_integration", "acceptance_integration_partial", "criteria verdict commits before integration", "partial or mixed publication refuses", 1, 1, false, true},
+		{"integration", []string{"integration_target", "integration_attempt"}, "acceptance_integration", "acceptance_integration_partial", "target serialization records exact attempt", "partial or mixed publication refuses", 1, 1, false, true},
+		{"effect", []string{"external_effect"}, "effect", "effect_one_shot", "durable intent precedes provider dispatch", "duplicate dispatch permission is refused", 1, 1, true, true},
+		{"outbox", []string{"outbox"}, "outbox_projection", "outbox_membership", "delivery evidence restores without authority transfer", "unminted or incomplete outbox plan refuses", 1, 1, false, true},
 	}
-	covered := map[string]string{"operation": "global_operation"}
+	type expectedEvidence struct {
+		families        string
+		acceptedControl string
+		refusedControl  string
+		effectIntent    bool
+	}
+	expected := map[string]expectedEvidence{
+		"global_operation": {"operation", "mission", "binding_conflict", false},
+		"mission":          {"mission", "mission", "binding_conflict", false},
+		"decision":         {"mission", "decision", "binding_conflict", false},
+		"blocker":          {"mission", "blocker", "binding_conflict", false},
+		"readiness":        {"mission", "readiness", "legacy_phase", false},
+		"artifact":         {"artifact_catalog,artifact_revision", "artifact", "artifact_nil", false},
+		"workrevision":     {"workgraph", "workgraph", "workgraph_nil", false},
+		"reconciliation":   {"workgraph", "workgraph_contention", "workgraph_nil", false},
+		"run":              {"execution_slot", "execution", "pre_registration", false},
+		"lease":            {"execution_slot", "execution", "pre_registration", false},
+		"workspace":        {"workspace", "workspace", "workspace_contention", false},
+		"governance":       {"acceptance", "governance", "governance", false},
+		"handoff":          {"handoff_slot", "handoff", "handoff_partial", false},
+		"review":           {"review_slot", "review", "review_partial", false},
+		"acceptance":       {"acceptance", "acceptance_integration", "acceptance_integration_partial", false},
+		"integration":      {"integration_target,integration_attempt", "acceptance_integration", "acceptance_integration_partial", false},
+		"effect":           {"external_effect", "effect", "effect_one_shot", true},
+		"outbox":           {"outbox", "outbox_projection", "outbox_membership", false},
+	}
+	controls := map[string]func(*testing.T){
+		"mission": TestMissionAuthorityAdapterOneBatchRestartReplayV2, "binding_conflict": TestMissionAuthorityAdapterBindingConflictPrecedesMissionReadV2,
+		"decision": testWP11DecisionFactThroughGapDBV2, "blocker": TestMissionAuthorityAdapterPublishesAndObservesFactInSameBatchV2,
+		"readiness": TestReadinessAuthorityAdapterCreateActivityPauseRestartReplayV2, "legacy_phase": TestReadinessAuthorityAdapterRejectsLegacyPhaseStateV2,
+		"artifact": TestArtifactAuthorityPublishesCompleteBatchThroughCoordinatorAndGapDB, "artifact_nil": TestArtifactAuthorityRefusesNil,
+		"workgraph": TestWorkgraphAuthorityPublishesCompleteBatchThroughCoordinatorAndGapDB, "workgraph_nil": TestWorkgraphAuthorityRefusesNil, "workgraph_contention": TestWorkgraphAuthorityHeadCASAllowsOneWinnerAndIndependentMissions,
+		"execution": TestExecutionAndEffectAuthoritiesProductionConstructorsCommitAndRecoverAmbiguityV2, "pre_registration": TestAuthorityAdapterNeverDeliversAfterPreRegistrationRefusalV2,
+		"workspace": TestWorkspaceAuthorityCommitsBindingAndPermanentPathClaimThroughGapDBV2, "workspace_contention": TestWorkspacePathClaimContentionAndIndependentProgressV2,
+		"governance": TestAcceptanceGapDBRequiresExactCurrentPolicyDecisionBeforePublicationV2,
+		"handoff":    TestHandoffGapDBPublisherCommitsOneCompleteBatchAndContendsV2, "handoff_partial": TestHandoffGapDBPartialPublicationRemainsUnresolvedV2,
+		"review": TestReviewGapDBPublisherCommitsOneCompleteBatchAndContendsV2, "review_partial": TestReviewGapDBPartialPublicationRemainsUnresolvedV2,
+		"acceptance_integration": TestAcceptanceAndIntegrationPublishThroughRealGapDBAndReconcileLostCASV2, "acceptance_integration_partial": TestAcceptanceAndIntegrationGapDBRejectPartialAndMixedPublicationsV2,
+		"effect": TestExternalProviderRunsThroughRealGapDBEffectAuthorityV2, "effect_one_shot": TestEffectDispatchAuthorizationIsDurableOneShotThroughGapDBV2,
+		"outbox_projection": TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2, "outbox_membership": TestOutboxAdapterAdmitsOnlyExactCapabilityPlanV2,
+	}
+	coveredFamilies := map[string]bool{}
+	coveredCapabilities := map[string]bool{}
+	usedControls := map[string]bool{}
 	for _, row := range matrix {
-		row := row
-		if row.accepted == nil || row.refused == nil || len(row.families) == 0 {
+		want, required := expected[row.name]
+		if !required || coveredCapabilities[row.name] || strings.Join(row.families, ",") != want.families || row.acceptedControl != want.acceptedControl || row.refusedControl != want.refusedControl || row.effectIntent != want.effectIntent || controls[row.acceptedControl] == nil || controls[row.refusedControl] == nil || row.acceptedOutcome == "" || row.refusedOutcome == "" || row.atomicBatchCount != 1 || row.logicalIncrement != 1 || !row.refusalPreMutation {
 			t.Fatalf("incomplete executable conformance row %s", row.name)
 		}
+		coveredCapabilities[row.name] = true
 		for _, family := range row.families {
-			if prior := covered[family]; prior != "" && family != "mission" {
-				t.Fatalf("family %s is ambiguously evidenced by %s and %s", family, prior, row.name)
-			}
-			covered[family] = row.name
+			coveredFamilies[family] = true
 		}
-		t.Run(row.name+"/accepted", row.accepted)
-		t.Run(row.name+"/refused", row.refused)
+		usedControls[row.acceptedControl] = true
+		usedControls[row.refusedControl] = true
+	}
+	if len(coveredCapabilities) != len(expected) {
+		t.Fatalf("capability census width=%d want=%d", len(coveredCapabilities), len(expected))
+	}
+	for name := range expected {
+		if !coveredCapabilities[name] {
+			t.Fatalf("required capability %s has no explicit accepted/refused mapping", name)
+		}
+	}
+	for name := range usedControls {
+		t.Run("control/"+name, controls[name])
 	}
 	for _, tuple := range journalv2.ExpectedEventTuples() {
 		if tuple.Family == "runtime_host" { // WP13 owns runtime-host composition.
 			continue
 		}
-		if covered[tuple.Family] == "" {
+		if !coveredFamilies[tuple.Family] {
 			t.Fatalf("registered migrated family %s lacks executable accepted/refused evidence", tuple.Family)
 		}
 	}
-	// Constructing this set verifies that the projection joins the exact real
-	// reducer implementation for every covered family. Synthetic pass-through
-	// reducers cannot satisfy this call.
-	_ = outboxProjectionReducersV2(t, journalv2.DefaultEventRegistryV2())
+	assertWP11ProductionPlansReduceThroughComposedProjectionV2(t)
+}
+
+// assertWP11ProductionPlansReduceThroughComposedProjectionV2 closes the
+// composition chain behind the capability controls above. Production services
+// and plan builders emit the events; the exact WP11 reducer set consumes every
+// migrated version-one aggregate event. Capability states must match the
+// sealed head digest; operation state must match the durable full operation
+// record because operation heads intentionally expose a compact summary. A deleted capability row,
+// substituted family, pass-through reducer, or missing production reducer
+// therefore makes the campaign fail for a specific family.
+func assertWP11ProductionPlansReduceThroughComposedProjectionV2(t *testing.T) {
+	t.Helper()
+	registry := journalv2.DefaultEventRegistryV2()
+	reducers := outboxProjectionReducersV2(t, registry)
+	plans := make([]journalv2.SealedCommitPlanV2, 0, 12)
+	appendPlan := func(plan journalv2.SealedCommitPlanV2, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		plans = append(plans, plan)
+	}
+
+	appendPlan(gapdbArtifactPlanV2(t).Publication())
+	appendPlan(gapdbWorkgraphPlanV2(t).Publication())
+	executionPlan, slot, _, _ := gapdbExecutionAdmissionPlanFixtureV2(t, "wp11-composed", "work-wp11-composed")
+	appendPlan(executionPlan.Publication())
+	appendPlan(gapdbEffectPlanFixtureForSlotV2(t, "wp11-composed", slot, 18).Publication())
+
+	workspaceMemory := newV2AtomicMemory()
+	workspaceMemory.revision = 17
+	workspaceProvider := workspaceMemory.provider()
+	enableWorkspaceRecoveryScansV2(workspaceMemory, workspaceProvider)
+	workspaceProvider.statusFn = gapdbMemoryStatusV2(workspaceMemory, "db-wp11-composed-workspace")
+	workspaceAdapter, err := newAdapter(workspaceProvider, "/explicit/socket", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspacePlan, _ := gapdbWorkspaceBindPlanV2(t, workspaceAdapter, workspaceMemory, "wp11-composed", "work-wp11-composed-workspace", "/srv/spec-kitty/workspaces/wp11-composed")
+	plans = append(plans, workspacePlan)
+	appendPlan(captureFirstHandoffPlanV2(t, "wp11-composed", "work-wp11-composed-handoff").Publication())
+	appendPlan(captureFirstReviewPlanV2(t, "wp11-composed", "review-wp11-composed").Publication())
+	appendPlan(captureAcceptancePlanThroughProductionV2(t, newWP10GapDBScenarioV2(t, "wp11-composed-acceptance", false)).Publication())
+	appendPlan(captureIntegrationPlanThroughProductionV2(t, newWP10GapDBScenarioV2(t, "wp11-composed-integration", true)).Publication())
+	plans = append(plans, captureWP11MissionCreatePlanV2(t, registry))
+
+	_, source, coordinates := outboxGapDBSourceFixtureV2(t, registry)
+	durable, err := controlstore.BindDurableOutboxIntentV2(source, 19, coordinates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outboxCommand := bindGapDBOutboxCommandV2(t, controlstore.OutboxCommandV2{Action: controlstore.OutboxStartAttemptV2, Intent: durable, AttemptID: "attempt-wp11-composed", RuntimeEpochID: "epoch-outbox", OperationEventID: "event-operation-outbox-wp11-composed", OutboxEventID: "event-outbox-wp11-composed"}, "wp11-composed")
+	outboxPlan, err := controlstore.BuildOutboxAuthorityPlanV2(outboxCommand, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendPlan(outboxPlan.Publication())
+
+	covered := map[string]bool{}
+	for _, plan := range plans {
+		heads := plan.Heads()
+		for _, event := range plan.Events() {
+			if event.LogicalVersion() != 1 {
+				continue
+			}
+			var head *journalv2.HeadTransitionV2
+			for index := range heads {
+				candidate := &heads[index]
+				if candidate.Coordinate == event.Coordinate() && candidate.EventID == event.EventID() && candidate.NextLogicalVersion == event.LogicalVersion() {
+					head = candidate
+					break
+				}
+			}
+			if head == nil {
+				t.Fatalf("production plan %s event %s has no exact sealed head", plan.PublicationID(), event.EventID())
+			}
+			state, digest, reduceErr := reducers.Apply([]byte(`{}`), event)
+			if reduceErr != nil {
+				t.Fatalf("composed reducer rejected production %s event %s: %v", event.Family(), event.EventID(), reduceErr)
+			}
+			if event.Family() == "operation" {
+				planned, encodeErr := journalv2.EncodeOperationStateV2(plan.OperationState())
+				if encodeErr != nil || string(state) != string(planned) {
+					t.Fatalf("composed reducer disagrees with durable operation state for event %s", event.EventID())
+				}
+			} else if digest != head.CanonicalStateDigest {
+				t.Fatalf("composed reducer disagrees with sealed %s digest for event %s", event.Family(), event.EventID())
+			}
+			covered[event.Family()] = true
+		}
+	}
+	for _, tuple := range journalv2.ExpectedEventTuples() {
+		if tuple.Family == "runtime_host" {
+			continue
+		}
+		if !covered[tuple.Family] {
+			t.Fatalf("migrated family %s has no production event through composed projection", tuple.Family)
+		}
+	}
+}
+
+type wp11MissionPlanCaptureV2 struct {
+	plan journalv2.SealedCommitPlanV2
+}
+
+func (p *wp11MissionPlanCaptureV2) ResolveOperation(context.Context, journalv2.OperationBindingV2) (mission.OperationResolutionV2, error) {
+	return mission.OperationResolutionV2{Kind: mission.OperationAbsentV2}, nil
+}
+
+func (p *wp11MissionPlanCaptureV2) ObserveMission(context.Context, journalv2.ProjectID, journalv2.MissionID) (mission.MissionObservationV2, error) {
+	return mission.MissionObservationV2{}, fmt.Errorf("unexpected mission observation")
+}
+
+func (p *wp11MissionPlanCaptureV2) ObserveMissionFact(context.Context, journalv2.ProjectID, journalv2.MissionID, mission.MissionFactKindV2, string) (mission.MissionFactObservationV2, error) {
+	return mission.MissionFactObservationV2{}, nil
+}
+
+func (p *wp11MissionPlanCaptureV2) PublishMission(_ context.Context, plan journalv2.SealedCommitPlanV2) (mission.MissionPublicationV2, error) {
+	p.plan = plan
+	return mission.MissionPublicationV2{}, fmt.Errorf("captured production mission plan")
+}
+
+func captureWP11MissionCreatePlanV2(t *testing.T, registry journalv2.EventRegistryV2) journalv2.SealedCommitPlanV2 {
+	t.Helper()
+	port := &wp11MissionPlanCaptureV2{}
+	service, err := mission.NewMissionAuthorityServiceV2(port, missionEpochFixtureV2{"epoch-1"}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := missionStateFixtureV2(t)
+	command := mission.MissionAuthorityCommandV2{SchemaVersion: 1, OperationID: "operation-1", ProjectID: "project-1", MissionID: "mission-1", ActorID: "actor-1", ProcessID: "process-1", OriginatingRuntimeEpochID: "epoch-1", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: "2026-09-04T12:00:00Z", EventType: mission.MissionEventCreatedV2, Successor: created}
+	if _, err = service.Execute(t.Context(), command); err == nil {
+		t.Fatal("mission capture port unexpectedly acknowledged publication")
+	}
+	if len(port.plan.Events()) == 0 {
+		t.Fatal("mission service did not emit a production plan")
+	}
+	return port.plan
+}
+
+func testWP11DecisionFactThroughGapDBV2(t *testing.T) {
+	t.Helper()
+	memory := newV2AtomicMemory()
+	memory.revision = 1
+	provider := memory.provider()
+	provider.statusFn = gapdbMemoryStatusV2(memory, "database-wp11-decision")
+	adapter, err := newAdapter(provider, "/explicit/socket", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := journalv2.DefaultEventRegistryV2()
+	reducers := outboxProjectionReducersV2(t, registry)
+	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(adapter, tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := NewMissionAuthorityPortV2(adapter, coordinator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := mission.NewMissionAuthorityServiceV2(authority, missionEpochFixtureV2{"epoch-1"}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := missionStateFixtureV2(t)
+	create := mission.MissionAuthorityCommandV2{SchemaVersion: 1, OperationID: "operation-1", ProjectID: "project-1", MissionID: "mission-1", ActorID: "actor-1", ProcessID: "process-1", OriginatingRuntimeEpochID: "epoch-1", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: "2026-09-04T12:00:00Z", EventType: mission.MissionEventCreatedV2, Successor: created}
+	if _, err := service.Execute(t.Context(), create); err != nil {
+		t.Fatal(err)
+	}
+	deciding, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{ProjectID: "project-1", MissionID: "mission-1", DefinitionRevision: created.DefinitionRevision(), DefinitionDigest: created.DefinitionDigest(), Version: 2, Status: mission.AuthorityMissionActiveV2, Step: created.Step(), OpenDecisionIDs: []string{"decision-1"}, Decomposition: mission.DecompositionNoneV2, LastOperationID: "operation-wp11-decision-open", ObservedAt: "2026-09-04T12:01:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact, err := mission.NewMissionFactStateV2(mission.MissionFactStateInputV2{ProjectID: "project-1", MissionID: "mission-1", FactID: "decision-1", Kind: mission.MissionFactDecisionV2, Status: mission.MissionFactOpenV2, LogicalVersion: 1, DetailDigest: created.DefinitionDigest(), LastOperationID: "operation-wp11-decision-open", ObservedAt: "2026-09-04T12:01:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := mission.MissionAuthorityCommandV2{SchemaVersion: 1, OperationID: "operation-wp11-decision-open", ProjectID: "project-1", MissionID: "mission-1", ActorID: "actor-1", ProcessID: "process-1", OriginatingRuntimeEpochID: "epoch-1", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: "2026-09-04T12:01:00Z", EventType: mission.MissionEventDecisionOpenedV2, Expected: created, Successor: deciding, RelatedFact: &mission.MissionFactTransitionV2{Successor: fact}}
+	before := memory.batchCalls
+	if _, err := service.Execute(t.Context(), command); err != nil {
+		t.Fatal(err)
+	}
+	if memory.batchCalls != before+1 {
+		t.Fatalf("decision fact publication split across batches: %d -> %d", before, memory.batchCalls)
+	}
+	observed, err := authority.ObserveMissionFact(t.Context(), "project-1", "mission-1", mission.MissionFactDecisionV2, "decision-1")
+	if err != nil || !observed.Found || observed.State.Digest() != fact.Digest() || observed.RecordRevision != 3 {
+		t.Fatalf("decision fact observation=%+v err=%v", observed, err)
+	}
 }
 
 func outboxGapDBSourceFixtureV2(t *testing.T, registry journalv2.EventRegistryV2) (journalv2.SealedCommitPlanV2, journalv2.SealedCommitPlanV2, controlstore.OutboxIntentCoordinatesV2) {

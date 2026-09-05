@@ -223,7 +223,7 @@ func outboxAttributionExactV2(prior OutboxProviderObservationV2, current *Outbox
 	if current == nil || prior.Validate() != nil || current.Validate() != nil || prior != *current {
 		return false
 	}
-	return current.Value == intent.IntendedValue && current.AttributionMarker == intent.AttributionMarker
+	return current.Outcome == "confirmed" && current.Value == intent.IntendedValue && current.AttributionMarker == intent.AttributionMarker
 }
 
 func outboxRetrySafeV2(prior OutboxProviderObservationV2, current *OutboxProviderObservationV2) bool {

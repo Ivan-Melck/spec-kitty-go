@@ -250,6 +250,20 @@ func TestWatchCannotBecomeRecoveryStreamMutant(t *testing.T) {
 	}
 }
 
+func TestQueryDTOsCannotLeakGenericStoreMutant(t *testing.T) {
+	for _, candidate := range []reflect.Type{reflect.TypeOf(AggregateViewV2{}), reflect.TypeOf(ListResultV2{}), reflect.TypeOf(GetQueryV2{}), reflect.TypeOf(ListQueryV2{})} {
+		for index := 0; index < candidate.NumField(); index++ {
+			field := candidate.Field(index)
+			lower := strings.ToLower(field.Name + " " + field.Type.String())
+			for _, forbidden := range []string{"repository", "genericstore", "rawkey", "conditiontoken", "commitplan", "adapter"} {
+				if strings.Contains(lower, forbidden) {
+					t.Fatalf("query DTO %s leaked %s through %s", candidate.Name(), forbidden, field.Name)
+				}
+			}
+		}
+	}
+}
+
 func TestProjectionReadersNeverObservePartialPublication(t *testing.T) {
 	authority, coordinator := projectionFixtureV2(t)
 	first := publishProjectionFixtureV2(t, coordinator, "atomic-origin", "mission", "mission-atomic")

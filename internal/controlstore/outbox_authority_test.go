@@ -4,7 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -90,6 +96,12 @@ func TestOutboxLifecycleRequiresIntentAndCompareBeforeCompensate(t *testing.T) {
 	if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitCompensationV2, &changedAttribution, string(coordinates.SourceOperationID), "", 4), registry); err == nil {
 		t.Fatal("compensation accepted a changed provider attribution marker")
 	}
+	for _, outcome := range []string{"stale", "conflicting"} {
+		notConfirmed, _ := NewOutboxProviderObservationV2(observation.ProviderRevision, observation.Value, observation.AttributionMarker, outcome)
+		if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitCompensationV2, &notConfirmed, string(coordinates.SourceOperationID), "", 4), registry); err == nil {
+			t.Fatalf("compensation accepted an attribution match with %s outcome", outcome)
+		}
+	}
 	if _, err := BuildOutboxAuthorityPlanV2(laterOutboxCommandV2(t, intent, state, OutboxPermitCompensationV2, &observation, "wrong-marker", "", 4), registry); err == nil {
 		t.Fatal("compensation accepted a changed permission marker")
 	}
@@ -161,8 +173,9 @@ func TestOutboxReducerIndependentlyEnforcesRetryAndCompensationSafety(t *testing
 		revision uint64
 		value    string
 		marker   string
-	}{{9, present.Value, present.AttributionMarker}, {present.ProviderRevision, "other-value", present.AttributionMarker}, {present.ProviderRevision, present.Value, "other-operation"}} {
-		observation, err := NewOutboxProviderObservationV2(input.revision, input.value, input.marker, "confirmed")
+		outcome  string
+	}{{9, present.Value, present.AttributionMarker, "confirmed"}, {present.ProviderRevision, "other-value", present.AttributionMarker, "confirmed"}, {present.ProviderRevision, present.Value, "other-operation", "confirmed"}, {present.ProviderRevision, present.Value, present.AttributionMarker, "stale"}, {present.ProviderRevision, present.Value, present.AttributionMarker, "conflicting"}} {
+		observation, err := NewOutboxProviderObservationV2(input.revision, input.value, input.marker, input.outcome)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -265,6 +278,56 @@ func TestOutboxPortRemainsCapabilityShaped(t *testing.T) {
 		for _, forbidden := range []string{"repository", "rawkey", "scanprefix", "append", "genericstore"} {
 			if strings.Contains(lower, forbidden) {
 				t.Fatalf("outbox port leaked %s through %s", forbidden, method.Name)
+			}
+		}
+	}
+}
+
+func TestOutboxPlanContainsWholeAtomicMembershipMutant(t *testing.T) {
+	source, coordinates := outboxSourcePlanFixtureV2(t)
+	intent, err := BindDurableOutboxIntentV2(source, 11, coordinates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := bindOutboxCommandFixtureV2(t, OutboxCommandV2{Action: OutboxStartAttemptV2, Intent: intent, AttemptID: "attempt-membership", RuntimeEpochID: "epoch-1", OperationEventID: "event-membership-operation", OutboxEventID: "event-membership-outbox"}, 51)
+	capability, err := BuildOutboxAuthorityPlanV2(command, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatalf("outbox atomic membership missing: %v", err)
+	}
+	plan, err := capability.Publication()
+	if err != nil || len(plan.Events()) != 2 || len(plan.Heads()) != 2 || len(plan.Conditions()) != 2 || len(plan.Assertions()) != 1 {
+		t.Fatalf("outbox atomic membership changed: events=%d heads=%d conditions=%d assertions=%d err=%v", len(plan.Events()), len(plan.Heads()), len(plan.Conditions()), len(plan.Assertions()), err)
+	}
+	families := map[string]int{}
+	for _, event := range plan.Events() {
+		families[event.Family()]++
+	}
+	if families["operation"] != 1 || families["outbox"] != 1 || len(families) != 2 {
+		t.Fatalf("outbox atomic membership families=%v", families)
+	}
+}
+
+func TestOutboxReducerProductionSourceHasNoExternalCapabilityImportsMutant(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate outbox reducer source")
+	}
+	source := filepath.Join(filepath.Dir(testFile), "outbox_reducer.go")
+	if mutant := os.Getenv("SPEC_KITTY_WP11_MUTANT_SOURCE"); mutant != "" {
+		source = mutant
+	}
+	parsed, err := parser.ParseFile(token.NewFileSet(), source, nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imported := range parsed.Imports {
+		path, err := strconv.Unquote(imported.Path.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"os", "os/exec", "net", "net/http", "database/sql", "github.com/spec-kitty/gapdb", "internal/controlstore/gapdb", "internal/gitrepo"} {
+			if path == forbidden || strings.HasPrefix(path, forbidden+"/") {
+				t.Fatalf("pure playback reached external capability import %s", path)
 			}
 		}
 	}
