@@ -449,17 +449,11 @@ func restartBoundWorkspaceAfterDurableBoundary(t *testing.T, h *portableHarness,
 func rebindBoundWorkspaceToCurrent(t *testing.T, h *portableHarness, state execution.ExecutionSlotStateV2, workspaceState workspace.StateV2, recordRevision uint64, boundary string) (execution.ExecutionSlotStateV2, workspace.StateV2, uint64) {
 	t.Helper()
 	observedAt := time.Date(2026, 9, 5, 12, 20, 0, 0, time.UTC)
-	contribution, err := workspace.NewEpochRebindContributionV2(workspace.EpochRebindContributionInputV2{
-		Prior: workspaceState, RecordRevision: recordRevision, EventID: journalv2.EventID("event-workspace-rebind-" + boundary),
-		RuntimeEpochID: h.host.RuntimeEpochID(), Observation: workspaceState.Observation, OccurredAt: observedAt,
-	})
-	if err != nil {
-		t.Fatalf("construct workspace rebind after %s: %v", boundary, err)
-	}
-	result, err := h.host.ExecuteWorkspace(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceAuthorityRequestV2{
-		Kind: execution.WorkspaceRebindV2, OperationID: journalv2.OperationID("operation-workspace-rebind-" + boundary),
+	result, err := h.host.RebindWorkspaceRuntimeEpoch(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceEpochRebindRequestV2{
+		ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID,
+		OperationID:      journalv2.OperationID("operation-workspace-rebind-" + boundary),
 		OperationEventID: journalv2.EventID("event-operation-workspace-rebind-" + boundary), ExecutionEventID: journalv2.EventID("event-execution-workspace-rebind-" + boundary),
-		Governance: state.Governance, Contribution: contribution, ObservedAt: observedAt,
+		WorkspaceEventID: journalv2.EventID("event-workspace-rebind-" + boundary), Governance: state.Governance, ObservedAt: observedAt,
 	})
 	if err != nil {
 		t.Fatalf("rebind workspace after %s: %v", boundary, err)

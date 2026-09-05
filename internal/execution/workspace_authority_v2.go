@@ -275,7 +275,7 @@ func (s *WorkspaceAuthorityServiceV2) RebindRuntimeEpoch(ctx context.Context, re
 	if err != nil || !ack.matches(plan) {
 		return WorkspaceAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "workspace_publication", err)
 	}
-	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: nextWorkspace}, nil
+	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: nextWorkspace, RecordRevision: ack.recordRevision}, nil
 }
 
 func workspaceEpochRebindOperationBindingV2(request WorkspaceEpochRebindRequestV2, currentEpoch journalv2.RuntimeEpochID, execution ExecutionSlotStateV2) (journalv2.OperationBindingV2, error) {

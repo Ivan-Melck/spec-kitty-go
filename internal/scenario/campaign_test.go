@@ -108,6 +108,23 @@ var familyEvidenceProofs = map[string][]evidenceClaim{
 	),
 }
 
+type publicationCutProof struct {
+	Cut   string          `json:"cut"`
+	Proof executableProof `json:"proof"`
+}
+
+// Production publication cuts are an orthogonal evidence axis. Each entry is
+// one real experiment at the shared v2 coordinator/GapDB boundary; family
+// claims above are never multiplied by these labels.
+var productionPublicationCutProofs = []publicationCutProof{
+	{"before_publication", proof("./internal/controlstore/gapdb", "TestV2CommitCanceledBeforeDeliveryMakesNoProviderCall")},
+	{"after_durable_commit_before_response", proof("./internal/controlstore/gapdb", "TestV2AssertionCandidateSidecarQualification")},
+	{"lost_response", proof("./internal/controlstore/gapdb", "TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation")},
+	{"malformed_acknowledgement", proof("./internal/controlstore/gapdb", "TestV2CommitRefusesWireBudgetBeforeProviderAndValidatesAck")},
+	{"restart_before_reconciliation", proof("./internal/scenario", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_before_reconciliation")},
+	{"restart_after_reconciliation", proof("./internal/scenario", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts/restart_after_reconciliation")},
+}
+
 // familyClaims records only the behavior each executable test actually proves.
 // A behavior is never expanded into several synthetic fault-cut labels.
 func familyClaims(proofs ...executableProof) []evidenceClaim {
@@ -133,6 +150,7 @@ var controlledMutantSuites = []mutantSuite{
 	{"execution_authority_mutants", proof("./internal/execution", "TestWP07ExecutableExecutionMutantsV2")},
 	{"effect_authority_mutants", proof("./internal/execution", "TestWP07ExecutableEffectMutantsV2")},
 	{"journal_acknowledgement_mutants", proof("./internal/controljournal/v2", "TestAcknowledgementAttributionAndOpaqueSealMutants")},
+	{"production_composition_bypass", proof("./internal/scenario", "TestProductionCapabilityCompositionBoundaryBypassMutant")},
 }
 
 var concurrencyProofs = []executableProof{
@@ -147,6 +165,7 @@ var concurrencyProofs = []executableProof{
 }
 
 var universalScenarioProofs = []executableProof{
+	proof("./internal/scenario", "TestProductionCapabilityCompositionHasOnePublicationBoundary"),
 	proof("./internal/scenario", "TestHarnessProductionLifecycleAndTypedQueries"),
 	proof("./internal/scenario", "TestTwoItemMissionRestartAfterEachDurableBoundary"),
 	proof("./internal/scenario", "TestZombieWorkspaceRemainsWritableButAuthorityIsFenced"),
@@ -167,13 +186,14 @@ type campaignEntry struct {
 }
 
 type campaignCensus struct {
-	SchemaVersion  uint32            `json:"schema_version"`
-	SourceRevision string            `json:"source_revision"`
-	Seed           string            `json:"seed"`
-	Entries        []campaignEntry   `json:"entries"`
-	MutantSuites   []mutantSuite     `json:"mutant_suites"`
-	Concurrency    []executableProof `json:"concurrency"`
-	Universal      []executableProof `json:"universal_scenarios"`
+	SchemaVersion   uint32                `json:"schema_version"`
+	SourceRevision  string                `json:"source_revision"`
+	Seed            string                `json:"seed"`
+	Entries         []campaignEntry       `json:"entries"`
+	PublicationCuts []publicationCutProof `json:"publication_cuts"`
+	MutantSuites    []mutantSuite         `json:"mutant_suites"`
+	Concurrency     []executableProof     `json:"concurrency"`
+	Universal       []executableProof     `json:"universal_scenarios"`
 }
 
 func TestCrashAmbiguousDishonestUniversalCensus(t *testing.T) {
@@ -205,7 +225,7 @@ func TestCrashAmbiguousDishonestUniversalCampaign100(t *testing.T) {
 	for _, entry := range census.Entries {
 		claimCount += len(entry.Claims)
 	}
-	t.Logf("campaign source=%s repetitions=100 family_behavior_trials=%d controlled_mutant_suites=%d concurrency_proofs=%d universal_scenarios=%d digest=%s outcome=pass", revision, claimCount*100, len(census.MutantSuites), len(census.Concurrency), len(census.Universal), hex.EncodeToString(sum[:]))
+	t.Logf("campaign source=%s repetitions=100 family_behavior_trials=%d publication_cut_trials=%d controlled_mutant_suites=%d concurrency_proofs=%d universal_scenarios=%d digest=%s outcome=pass", revision, claimCount*100, len(census.PublicationCuts)*100, len(census.MutantSuites), len(census.Concurrency), len(census.Universal), hex.EncodeToString(sum[:]))
 }
 
 func TestUniversalCampaignCensusMutants(t *testing.T) {
@@ -215,6 +235,8 @@ func TestUniversalCampaignCensusMutants(t *testing.T) {
 		"missing_family":           func(c *campaignCensus) { c.Entries = c.Entries[1:] },
 		"missing_claim":            func(c *campaignCensus) { c.Entries[0].Claims = c.Entries[0].Claims[1:] },
 		"substituted_family_proof": func(c *campaignCensus) { c.Entries[0].Claims[0].Proof = c.Entries[1].Claims[0].Proof },
+		"missing_publication_cut":  func(c *campaignCensus) { c.PublicationCuts = c.PublicationCuts[1:] },
+		"substituted_cut_proof":    func(c *campaignCensus) { c.PublicationCuts[0].Proof = c.PublicationCuts[1].Proof },
 		"reduced_repetition":       func(c *campaignCensus) { c.Entries[0].Repetitions = 99 },
 		"swallowed_refusal":        func(c *campaignCensus) { c.Entries[0].Outcome = "ignored" },
 		"missing_mutant_suite":     func(c *campaignCensus) { c.MutantSuites = c.MutantSuites[1:] },
@@ -246,7 +268,7 @@ func buildCampaignCensus(t *testing.T, revision string, repetitions int) campaig
 	}
 	return campaignCensus{
 		SchemaVersion: productionScenarioSchemaVersion, SourceRevision: revision, Seed: t.Name(), Entries: entries,
-		MutantSuites: append([]mutantSuite(nil), controlledMutantSuites...), Concurrency: append([]executableProof(nil), concurrencyProofs...), Universal: append([]executableProof(nil), universalScenarioProofs...),
+		PublicationCuts: append([]publicationCutProof(nil), productionPublicationCutProofs...), MutantSuites: append([]mutantSuite(nil), controlledMutantSuites...), Concurrency: append([]executableProof(nil), concurrencyProofs...), Universal: append([]executableProof(nil), universalScenarioProofs...),
 	}
 }
 
@@ -258,7 +280,7 @@ func validateCampaignCensus(t *testing.T, census campaignCensus, repetitions int
 }
 
 func campaignCensusError(census campaignCensus, repetitions int) error {
-	if census.SchemaVersion != productionScenarioSchemaVersion || census.SourceRevision == "" || census.Seed == "" || len(census.Entries) != len(familyEvidenceProofs) || len(census.MutantSuites) != len(controlledMutantSuites) || !equalProofs(census.Concurrency, concurrencyProofs) || !equalProofs(census.Universal, universalScenarioProofs) {
+	if census.SchemaVersion != productionScenarioSchemaVersion || census.SourceRevision == "" || census.Seed == "" || len(census.Entries) != len(familyEvidenceProofs) || !equalPublicationCutProofs(census.PublicationCuts, productionPublicationCutProofs) || len(census.MutantSuites) != len(controlledMutantSuites) || !equalProofs(census.Concurrency, concurrencyProofs) || !equalProofs(census.Universal, universalScenarioProofs) {
 		return errCampaign("incomplete envelope")
 	}
 	seen := make(map[string]struct{}, len(census.Entries))
@@ -288,6 +310,23 @@ func campaignCensusError(census campaignCensus, repetitions int) error {
 		}
 	}
 	return nil
+}
+
+func equalPublicationCutProofs(got, want []publicationCutProof) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(got))
+	for index := range got {
+		if got[index] != want[index] || got[index].Cut == "" {
+			return false
+		}
+		if _, duplicate := seen[got[index].Cut]; duplicate {
+			return false
+		}
+		seen[got[index].Cut] = struct{}{}
+	}
+	return true
 }
 
 func equalEvidenceClaims(got, want []evidenceClaim) bool {
@@ -338,6 +377,10 @@ func executeProofSet(t *testing.T, census campaignCensus, repetitions int) {
 			})
 		}
 	}
+	for _, cut := range census.PublicationCuts {
+		cut := cut
+		t.Run("publication-cut/"+cut.Cut, func(t *testing.T) { runExecutableProof(t, root, cut.Proof, repetitions) })
+	}
 	for _, proof := range census.Concurrency {
 		proof := proof
 		t.Run("concurrency/"+proof.Test, func(t *testing.T) { runExecutableProof(t, root, proof, repetitions) })
@@ -364,6 +407,17 @@ func runExecutableProof(t *testing.T, root string, proof executableProof, repeti
 	command.Dir = root
 	command.Env = append(os.Environ(), "SPEC_KITTY_WP14_CAMPAIGN=", "SPEC_KITTY_WP13_GAPDBD="+os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE"), "SPEC_KITTY_M1_GAPDBD="+os.Getenv("SPEC_KITTY_WP14_BASE_AUTHORITY_EXECUTABLE"))
 	switch proof.Test {
+	case "TestV2AssertionCandidateSidecarQualification":
+		dataRoot, err := os.MkdirTemp("/tmp", "spk-wp14-cut-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(dataRoot)
+		command.Env = append(command.Env,
+			"SPEC_KITTY_ASSERTION_CANDIDATE_QUALIFICATION=true",
+			"SPEC_KITTY_ASSERTION_CANDIDATE_GAPDBD="+os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE"),
+			"SPEC_KITTY_ASSERTION_CANDIDATE_DATA_ROOT="+dataRoot,
+		)
 	case "TestAutonomousReadinessExecutableControlledMutants":
 		command.Env = append(command.Env, "SPEC_KITTY_RUN_WP18_MUTANTS=1")
 	case "TestWP10ExecutableControlledMutantCensusV2":
