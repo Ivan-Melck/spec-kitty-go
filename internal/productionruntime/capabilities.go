@@ -6,7 +6,6 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/artifact"
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
-	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/integration"
@@ -36,8 +35,8 @@ type runtimeCapabilities struct {
 	acceptance  *integration.AcceptanceAuthorityServiceV2
 	integration *integration.IntegrationAuthorityServiceV2
 	effect      *execution.EffectAuthorityServiceV2
-	artifact    storegapdb.ArtifactAuthorityPortV2
-	workgraph   storegapdb.WorkgraphAuthorityPortV2
+	artifact    artifact.AuthorityPortV2
+	workgraph   workgraph.AuthorityPortV2
 	checkpoints *checkpointScheduler
 }
 

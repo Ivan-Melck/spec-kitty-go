@@ -422,7 +422,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 			ExecutablePath: binary, AdmissionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-admission.json"),
 			RuntimeRoot: runtimeRoot, DataDirectory: data, SupervisorRunID: "supervisor-real-1", ProductPolicySHA256: repeatByte('e', 64),
 		},
-		MonitorInterval:   10 * time.Millisecond,
+		MonitorInterval:   250 * time.Millisecond,
 		CandidateVerifier: refusingCandidateVerifier{},
 		IntegrationGit:    refusingIntegrationGit{},
 		Reconciler:        reconciler,
