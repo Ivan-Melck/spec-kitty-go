@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -405,4 +406,78 @@ func TestFailureClassificationIsClosed(t *testing.T) {
 			t.Fatalf("err=%v outcome=%s diagnostic=%+v", test.err, outcome, diagnostic)
 		}
 	}
+}
+
+func TestOwnedProductionSurfaceHasOneHostAndNoLegacyStorageVocabulary(t *testing.T) {
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make(map[string]string)
+	for _, directory := range []string{"internal/helpercmd", "cmd/spec-kitty", "cmd/spk-phase1-helper"} {
+		entries, readErr := os.ReadDir(filepath.Join(repository, directory))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+			raw, readErr := os.ReadFile(filepath.Join(repository, directory, entry.Name()))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			files[filepath.Join(directory, entry.Name())] = string(raw)
+		}
+	}
+	if violations := productionSurfaceViolations(files); len(violations) != 0 {
+		t.Fatalf("production command boundary violations: %v", violations)
+	}
+	if strings.Count(files["internal/helpercmd/production.go"], "productionruntime.Start(") != 1 {
+		t.Fatal("production command surface must have exactly one host composition call")
+	}
+}
+
+func TestOwnedProductionSurfaceGuardKillsBoundaryMutants(t *testing.T) {
+	mutants := []string{
+		"import \"github.com/spec-kitty/go-kitty3/internal/controlstore/" + "sqlite\"",
+		"flags.String(\"" + "db\", \"\", \"database\")",
+		"flags.String(\"" + "backend\", \"\", \"provider\")",
+		"sql.Open(\"driver\", path)",
+		"productionruntime.Start(ctx, config); productionruntime.Start(ctx, config)",
+	}
+	for _, mutant := range mutants {
+		if got := productionSurfaceViolations(map[string]string{"mutant.go": mutant}); len(got) == 0 {
+			t.Fatalf("boundary mutant survived: %s", mutant)
+		}
+	}
+}
+
+func productionSurfaceViolations(files map[string]string) []string {
+	forbidden := []string{
+		"controlstore/" + "sqlite",
+		"modernc.org/" + "sqlite",
+		"database/" + "sql",
+		"\"" + "db\"",
+		"\"" + "backend\"",
+		"\"--" + "db\"",
+		"\"--" + "backend\"",
+		"\"--" + "eligibility",
+		"\"--" + "fallback",
+		"\"--" + "waiver",
+		"\"--" + "import",
+		"sql." + "Open(",
+	}
+	var violations []string
+	for name, source := range files {
+		for _, fragment := range forbidden {
+			if strings.Contains(source, fragment) {
+				violations = append(violations, name+":"+fragment)
+			}
+		}
+		if name != "internal/helpercmd/production.go" && strings.Contains(source, "productionruntime.Start(") {
+			violations = append(violations, name+":second_composition_root")
+		}
+	}
+	return violations
 }
