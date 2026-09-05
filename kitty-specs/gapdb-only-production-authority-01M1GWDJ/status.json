@@ -1,7 +1,7 @@
 {
-  "event_count": 432,
-  "last_event_id": "01M1S1YJBQ8H21WYXV37HV299J",
-  "materialized_at": "2026-09-05T15:10:48.183967+00:00",
+  "event_count": 433,
+  "last_event_id": "01M1S2EA6SJVPS8TG2Z8YM93H1",
+  "materialized_at": "2026-09-05T15:19:24.121279+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -13,8 +13,8 @@
     "done": 10,
     "for_review": 0,
     "in_progress": 2,
-    "in_review": 1,
-    "planned": 2
+    "in_review": 0,
+    "planned": 3
   },
   "work_packages": {
     "WP01": {
@@ -557,10 +557,10 @@
       "agent": "maxwell",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 4,
-      "lane": "in_review",
-      "last_event_id": "01M1S1YJBQ8H21WYXV37HV299J",
-      "last_transition_at": "2026-09-05T15:10:48.183967+00:00",
+      "force_count": 5,
+      "lane": "planned",
+      "last_event_id": "01M1S2EA6SJVPS8TG2Z8YM93H1",
+      "last_transition_at": "2026-09-05T15:19:24.121279+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Allocation block resolved by dependency merge 6488469e; resume implementation.",
@@ -573,9 +573,9 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP13-single-owner-production-runtime-and-memory-primary-progress/review-cycle-2.md",
-        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP13-single-owner-production-runtime-and-memory-primary-progress/review-cycle-2.md",
-        "reviewer": "codex",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP13-single-owner-production-runtime-and-memory-primary-progress/review-cycle-3.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP13-single-owner-production-runtime-and-memory-primary-progress/review-cycle-3.md",
+        "reviewer": "maxwell",
         "verdict": "changes_requested"
       },
       "role": "reviewer",
