@@ -557,6 +557,7 @@
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
+      "assignee": "codex",
       "force_count": 9,
       "lane": "in_progress",
       "last_event_id": "01M1SCE1QT6DN624R3KDQGMQTJ",
