@@ -1,19 +1,19 @@
 {
-  "event_count": 472,
-  "last_event_id": "01M1SX4XVD0B0K7WJ08G3B4F49",
-  "materialized_at": "2026-09-05T23:06:08.109335+00:00",
+  "event_count": 473,
+  "last_event_id": "01M1SX6AD7TPK3SEZ0CC1AE7SR",
+  "materialized_at": "2026-09-05T23:06:53.735345+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 4,
+    "approved": 5,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 10,
     "for_review": 1,
     "in_progress": 0,
-    "in_review": 1,
+    "in_review": 0,
     "planned": 2
   },
   "work_packages": {
@@ -601,14 +601,14 @@
       }
     },
     "WP14": {
-      "actor": "maxwell",
+      "actor": "user",
       "agent": "maxwell",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 1,
-      "lane": "in_review",
-      "last_event_id": "01M1SX4XVD0B0K7WJ08G3B4F49",
-      "last_transition_at": "2026-09-05T23:06:08.109335+00:00",
+      "lane": "approved",
+      "last_event_id": "01M1SX6AD7TPK3SEZ0CC1AE7SR",
+      "last_transition_at": "2026-09-05T23:06:53.735345+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: real GapDB production host terminal scenario; 100 replacement, independent-pair, and conflict trials; 1,500 family proofs plus 600 shared fault proofs; ordinary/race/architecture/vet/staticcheck green.",
@@ -617,10 +617,10 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-1.md",
-        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-1.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-2.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-2.md",
         "reviewer": "user",
-        "verdict": "changes_requested"
+        "verdict": "approved"
       },
       "role": "reviewer",
       "shell_pid": 3753728,
