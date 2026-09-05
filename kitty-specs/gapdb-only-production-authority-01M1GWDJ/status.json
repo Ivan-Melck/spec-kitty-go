@@ -675,7 +675,8 @@
         "Independent review passed at 4791fd9f; canonical finalization operation and acknowledgement are fully bound",
         "Outer autonomy mutant guard is stale after approved acknowledgement repair",
         "Expanded 20-mutant autonomy census is sealed and full architecture suite passes",
-        "Independent post-approval repair review passed; exact 20-mutant architecture census is sealed"
+        "Independent post-approval repair review passed; exact 20-mutant architecture census is sealed",
+        "Ready for independent review: readiness fact transitions publish atomic GapDB evidence; 22 mutants killed"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
