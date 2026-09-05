@@ -1820,16 +1820,16 @@ func planPreimage(binding *OperationBindingV2, prior *OperationStateV2, state Op
 }
 
 type operationStatePreimageWire struct {
-	OperationID         string          `json:"operation_id"`
+	CanonicalResult     []byte          `json:"canonical_result,omitempty"`
+	EffectIDs           []EffectID      `json:"effect_ids"`
+	EventIDs            []EventID       `json:"event_ids"`
+	LastPublicationID   string          `json:"last_publication_id,omitempty"`
 	LogicalVersion      uint64          `json:"logical_version"`
-	Status              OperationStatus `json:"status"`
+	OperationID         string          `json:"operation_id"`
 	ResultKind          string          `json:"result_kind,omitempty"`
 	ResultSchemaVersion uint32          `json:"result_schema_version,omitempty"`
-	CanonicalResult     []byte          `json:"canonical_result,omitempty"`
 	ResultSHA256        string          `json:"result_sha256,omitempty"`
-	EventIDs            []EventID       `json:"event_ids"`
-	EffectIDs           []EffectID      `json:"effect_ids"`
-	LastPublicationID   string          `json:"last_publication_id,omitempty"`
+	Status              OperationStatus `json:"status"`
 }
 
 func operationStatePreimage(state OperationStateV2, includePublication bool) operationStatePreimageWire {
@@ -1841,8 +1841,12 @@ func operationStatePreimage(state OperationStateV2, includePublication bool) ope
 	if includePublication {
 		publicationID = string(state.lastPublicationID)
 	}
-	return operationStatePreimageWire{string(state.operationID), uint64(state.logicalVersion), state.status, state.resultKind, state.resultSchemaVersion,
-		append([]byte(nil), state.canonicalResult...), resultDigest, append([]EventID(nil), state.eventIDs...), append([]EffectID(nil), state.effectIDs...), publicationID}
+	return operationStatePreimageWire{
+		CanonicalResult: append([]byte(nil), state.canonicalResult...), EffectIDs: append([]EffectID(nil), state.effectIDs...),
+		EventIDs: append([]EventID(nil), state.eventIDs...), LastPublicationID: publicationID, LogicalVersion: uint64(state.logicalVersion),
+		OperationID: string(state.operationID), ResultKind: state.resultKind, ResultSchemaVersion: state.resultSchemaVersion,
+		ResultSHA256: resultDigest, Status: state.status,
+	}
 }
 
 func (p SealedCommitPlanV2) finalBytes() ([]byte, error) {
