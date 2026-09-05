@@ -563,12 +563,13 @@
       "last_transition_at": "2026-09-05T12:25:46.590534+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Allocation block resolved by dependency merge 6488469e; resume implementation."
+        "Allocation block resolved by dependency merge 6488469e; resume implementation.",
+        "Override lane-purity ceremony: flagged kitty-specs files are Spec Kitty-owned historical evidence from dependency lane merges, not implementation contamination. Candidate 1a2af4fb independently approved."
       ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": 1798288,
+      "shell_pid_created_at": "1788611140.44",
       "subtasks": {
         "T064": "done",
         "T065": "done",
