@@ -220,13 +220,30 @@ func (a *AuthorityV2) PublishAcknowledged(ack journalv2.AcknowledgedPublicationV
 // coordinator owns I/O; this method cannot accept a caller-assembled playback
 // result or an independently supplied provider revision.
 func (a *AuthorityV2) Restore(epoch journalv2.RuntimeEpochID, recovered restore.ResultV2) error {
+	return a.restore(epoch, recovered, false)
+}
+
+// RestoreCurrentEpoch atomically replaces the current-epoch snapshot after an
+// acknowledged publication or startup reconciliation. The AuthorityV2 object
+// itself remains stable so existing query watches remain attached. Unlike
+// Restore, it requires the replay attempt to name the same already-admitted
+// epoch; it cannot be used to admit or rotate an epoch.
+func (a *AuthorityV2) RestoreCurrentEpoch(epoch journalv2.RuntimeEpochID, recovered restore.ResultV2) error {
+	return a.restore(epoch, recovered, true)
+}
+
+func (a *AuthorityV2) restore(epoch journalv2.RuntimeEpochID, recovered restore.ResultV2, currentEpoch bool) error {
 	admission, admissionErr := recovered.FreshEpochAdmissionRequestV2()
 	revision := recovered.StoreRevision()
 	result := recovered.Playback()
+	epochRelationValid := epoch != admission.PriorRuntimeEpochID()
+	if currentEpoch {
+		epochRelationValid = epoch == admission.PriorRuntimeEpochID()
+	}
 	if a == nil || admissionErr != nil || revision.DatabaseID() != a.databaseID || admission.DatabaseID() != a.databaseID ||
 		admission.ThroughRecordRevision() != revision.CurrentRevision() || admission.CanonicalProjectionDigest() != result.CanonicalProjectionDigest() ||
 		admission.EventRegistryDigest() != a.eventDigest || admission.ReducerRegistryDigest() != a.reducerDigest || result.Validate() != nil ||
-		epoch == "" || epoch == admission.PriorRuntimeEpochID() {
+		epoch == "" || !epochRelationValid {
 		return &ErrorV2{ErrorProjectionCorruptV2, "restore"}
 	}
 	next, err := buildSnapshotV2(a.databaseID, revision.CurrentRevision(), revision.DurableThroughRevision(), epoch, result.States(), result.CanonicalProjectionDigest())
@@ -237,10 +254,18 @@ func (a *AuthorityV2) Restore(epoch journalv2.RuntimeEpochID, recovered restore.
 	defer a.mu.Unlock()
 	old := a.current.Load()
 	if old != nil && old.revision != 0 {
-		return &ErrorV2{ErrorProjectionCorruptV2, "restore_over_live_projection"}
+		if !currentEpoch || old.epoch != epoch || next.revision < old.revision {
+			return &ErrorV2{ErrorProjectionCorruptV2, "restore_over_live_projection"}
+		}
+		if next.revision == old.revision {
+			if next.projectionDigest != old.projectionDigest || !bytes.Equal(next.canonical, old.canonical) {
+				return &ErrorV2{ErrorProjectionCorruptV2, "restore_same_revision_mismatch"}
+			}
+			return nil
+		}
 	}
 	a.current.Store(next)
-	a.notifyLocked(next, true)
+	a.notifyLocked(next, old != nil && old.epoch != "" && old.epoch != next.epoch)
 	return nil
 }
 
