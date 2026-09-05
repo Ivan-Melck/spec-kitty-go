@@ -26,13 +26,6 @@ type invariantEvidence struct {
 	RepositoryCalls    int                      `json:"repository_calls"`
 }
 
-type authoritySnapshot struct {
-	revision        uint64
-	digest          string
-	missionSnapshot string
-	repositoryCalls int
-}
-
 // assertUniversalInvariants observes only the public readiness and progress
 // views. The returned bytes are stable evidence suitable for campaign census
 // records; they contain no process path or provider transcript.
@@ -199,31 +192,6 @@ func nestedScalarField(value map[string]any, name string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func captureAuthority(t *testing.T, h *portableHarness, project, missionID string) authoritySnapshot {
-	t.Helper()
-	progress, err := h.host.Progress().Mission(journalv2.ProjectID(project), journalv2.MissionID(missionID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.Marshal(progress)
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := journalv2.CanonicalObject(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return authoritySnapshot{revision: progress.ProjectionRevision, digest: progress.ProjectionSHA256, missionSnapshot: string(canonical), repositoryCalls: h.git.count()}
-}
-
-func assertAuthorityUnchanged(t *testing.T, before authoritySnapshot, h *portableHarness, project, missionID, refusal string) {
-	t.Helper()
-	after := captureAuthority(t, h, project, missionID)
-	if after != before {
-		t.Fatalf("refusal=%s mutated authority/effects: before=%+v after=%+v", refusal, before, after)
-	}
 }
 
 func semanticProgressDigest(t *testing.T, h *portableHarness, project, missionID string) string {

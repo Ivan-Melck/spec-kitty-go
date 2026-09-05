@@ -15,15 +15,6 @@ import (
 	"time"
 )
 
-var mandatoryFaultCuts = []string{
-	"before_publication",
-	"after_commit_before_response",
-	"lost_response",
-	"malformed_acknowledgement",
-	"restart_before_reconciliation",
-	"restart_after_reconciliation",
-}
-
 type executableProof struct {
 	Package      string `json:"package"`
 	Test         string `json:"test"`
