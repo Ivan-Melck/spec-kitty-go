@@ -597,6 +597,9 @@
       "last_event_id": "01M1RY5ZB402045AAB5JDM2Z2T",
       "last_transition_at": "2026-09-05T14:04:56.548983+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review: real GapDB production host terminal scenario; 100 replacement, independent-pair, and conflict trials; 1,500 family proofs plus 600 shared fault proofs; ordinary/race/architecture/vet/staticcheck green."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 3753728,
