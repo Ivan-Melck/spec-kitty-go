@@ -136,6 +136,8 @@ type MissionFactTransitionV2 struct {
 	ExpectedRecordRevision uint64
 }
 
+func (t MissionFactTransitionV2) Next() MissionFactStateV2 { return t.Successor }
+
 type missionFactEventWireV2 struct {
 	SchemaVersion uint32          `json:"schema_version"`
 	Prior         json.RawMessage `json:"prior,omitempty"`
