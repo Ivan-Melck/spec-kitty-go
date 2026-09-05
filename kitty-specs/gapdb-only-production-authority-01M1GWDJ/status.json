@@ -561,7 +561,7 @@
     },
     "WP18": {
       "actor": "user",
-      "agent": "mill",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 1,
@@ -570,9 +570,11 @@
       "last_transition_at": "2026-09-05T05:17:12.613608+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Capability readiness, phase-free authority, GapDB persistence, replay, property tests, and 15 controlled mutants implemented; focused race green; full GapDB race campaign times out in unchanged 100-trial real-Git workspace test without a race report."
+        "Capability readiness, phase-free authority, GapDB persistence, replay, property tests, and 15 controlled mutants implemented; focused race green; full GapDB race campaign times out in unchanged 100-trial real-Git workspace test without a race report.",
+        "Independent review cycle 1 requested authority derivation, evidence-bound idempotency, sealed WorkRevision selection, real restore qualification, and semantic end-to-end proof."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP18-autonomous-readiness-and-mission-ergonomics-authority/review-cycle-1.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP18-autonomous-readiness-and-mission-ergonomics-authority/review-cycle-1.md",
@@ -580,16 +582,16 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T093": "done",
-        "T094": "done",
-        "T095": "done",
-        "T096": "done",
-        "T097": "done",
-        "T098": "done",
-        "T099": "done"
+        "T093": "planned",
+        "T094": "planned",
+        "T095": "planned",
+        "T096": "planned",
+        "T097": "planned",
+        "T098": "planned",
+        "T099": "planned"
       }
     }
   }
