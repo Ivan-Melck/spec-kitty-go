@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -246,6 +247,41 @@ func TestHostLifecycleRejectsBackwardAndCeremonyTransitions(t *testing.T) {
 	}
 }
 
+func TestPossibleMutationRefreshesDurableTruthDespiteTypedErrorAndCancellation(t *testing.T) {
+	host, _ := hostFixture(t, "database-possible-mutation")
+	defer host.Close(t.Context())
+	if err := host.transition(HostReconciling); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.transition(HostReady); err != nil {
+		t.Fatal(err)
+	}
+	registry := journalv2.DefaultEventRegistryV2()
+	reducers := fixtureReducers(t, registry)
+	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.capabilities.checkpoints = &checkpointScheduler{tracker: tracker, every: journalv2.MaxAcknowledgementsBetweenSeals}
+	var refreshes atomic.Int64
+	host.refresh = func(ctx context.Context) error {
+		if ctx == nil || ctx.Err() != nil {
+			t.Fatal("refresh inherited cancelled request authority")
+		}
+		refreshes.Add(1)
+		return nil
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	primary := errors.New("typed decision required after durable progress")
+	if err := host.afterPossibleMutation(cancelled, primary); !errors.Is(err, primary) {
+		t.Fatalf("typed capability error was not preserved: %v", err)
+	}
+	if refreshes.Load() != 1 || host.State() != HostReady {
+		t.Fatalf("possible mutation refreshes=%d state=%s", refreshes.Load(), host.State())
+	}
+}
+
 func TestProductionReducerCompositionIsCompleteAndRuntimePlaybackPure(t *testing.T) {
 	registry := journalv2.DefaultEventRegistryV2()
 	reducers, err := BuildReducerSetV2(registry)
@@ -441,14 +477,18 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if first.State() != HostReady || firstEpoch == "" {
 		t.Fatalf("first state=%s epoch=%q", first.State(), firstEpoch)
 	}
-	if _, err := first.Progress().Mission("project-runtime", "mission-reconciled"); err != nil {
+	if first.capabilities.effect == nil || first.capabilities.cleanup == nil {
+		t.Fatal("production host omitted effect dispatch or integration cleanup capability")
+	}
+	progressHandle := first.Progress()
+	if _, err := progressHandle.Mission("project-runtime", "mission-reconciled"); err != nil {
 		t.Fatalf("reconciliation publication absent after rescan: %v", err)
 	}
-	watchBase, err := first.Progress().Mission("project-runtime", "mission-reconciled")
+	watchBase, err := progressHandle.Mission("project-runtime", "mission-reconciled")
 	if err != nil {
 		t.Fatal(err)
 	}
-	watch, err := first.Progress().Watch("project-runtime", "mission-reconciled", watchBase.DatabaseID, watchBase.ProjectionRevision)
+	watch, err := progressHandle.Watch("project-runtime", "mission-reconciled", watchBase.DatabaseID, watchBase.ProjectionRevision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +517,10 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if err != nil || created.PublicationID() == "" {
 		t.Fatalf("typed mission create: result=%+v err=%v", created, err)
 	}
-	firstProgress, err := first.Progress().Mission("project-runtime", "mission-runtime")
+	if first.Progress() != progressHandle {
+		t.Fatal("successful command replaced the retained progress facade")
+	}
+	firstProgress, err := progressHandle.Mission("project-runtime", "mission-runtime")
 	if err != nil || firstProgress.ProjectionRevision <= beforeRevision || firstProgress.Lifecycle != "active" {
 		t.Fatalf("live memory was not refreshed: progress=%+v err=%v", firstProgress, err)
 	}

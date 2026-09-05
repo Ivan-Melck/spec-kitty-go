@@ -342,6 +342,10 @@ func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.
 	if err != nil {
 		return runtimeCapabilities{}, err
 	}
+	cleanupService, err := adapter.IntegrationCleanupServiceV2(coordinator, registry, reducers, hostAuthorityID, budgets, epochSource, config.IntegrationGit)
+	if err != nil {
+		return runtimeCapabilities{}, err
+	}
 	effectPort, err := adapter.EffectAuthorityPortV2(coordinator)
 	if err != nil {
 		return runtimeCapabilities{}, err
@@ -363,7 +367,7 @@ func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.
 		checkpointEvery = 1000
 	}
 	scheduler := &checkpointScheduler{tracker: tracker, coordinator: coordinator, reader: adapter, epoch: epoch, every: checkpointEvery}
-	return runtimeCapabilities{mission: missionService, readiness: readinessService, execution: executionService, workspace: workspaceService, stage: stageService, handoff: handoffService, review: reviewService, acceptance: acceptanceService, integration: integrationService, effect: effectService, artifact: artifactPort, workgraph: workgraphPort, checkpoints: scheduler}, nil
+	return runtimeCapabilities{mission: missionService, readiness: readinessService, execution: executionService, workspace: workspaceService, stage: stageService, handoff: handoffService, review: reviewService, acceptance: acceptanceService, integration: integrationService, cleanup: cleanupService, effect: effectService, artifact: artifactPort, workgraph: workgraphPort, checkpoints: scheduler}, nil
 }
 
 func pendingReconciliation(query projection.QueryPortV2) bool {

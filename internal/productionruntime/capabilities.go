@@ -2,7 +2,9 @@ package productionruntime
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
+	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/artifact"
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
@@ -34,6 +36,7 @@ type runtimeCapabilities struct {
 	review      *review.AuthorityServiceV2
 	acceptance  *integration.AcceptanceAuthorityServiceV2
 	integration *integration.IntegrationAuthorityServiceV2
+	cleanup     *integration.IntegrationCleanupServiceV2
 	effect      *execution.EffectAuthorityServiceV2
 	artifact    artifact.AuthorityPortV2
 	workgraph   workgraph.AuthorityPortV2
@@ -46,6 +49,25 @@ func (h *Host) afterMutation(ctx context.Context) error {
 		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "checkpoint"}
 	}
 	return h.refreshProjection(ctx)
+}
+
+// afterPossibleMutation refreshes from durable truth even when a capability
+// returns a typed failure. Effect dispatch and integration cleanup can commit
+// intent, ambiguity, or pending-cleanup state before an external operation
+// fails. Request cancellation must not leave the host's memory behind those
+// acknowledged facts.
+func (h *Host) afterPossibleMutation(ctx context.Context, primary error) error {
+	refreshContext := ctx
+	cancel := func() {}
+	if refreshContext == nil || refreshContext.Err() != nil {
+		refreshContext, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	}
+	defer cancel()
+	refreshErr := h.afterMutation(refreshContext)
+	if primary != nil {
+		return errors.Join(primary, refreshErr)
+	}
+	return refreshErr
 }
 
 // ReconciliationCommands is a callback-scoped typed capability surface. It
@@ -136,6 +158,18 @@ func (c *ReconciliationCommands) ExecuteEffect(ctx context.Context, command exec
 		return execution.EffectAuthorityResultV2{}, err
 	}
 	return c.capabilities.effect.Execute(ctx, command)
+}
+func (c *ReconciliationCommands) ExecuteEffectDispatch(ctx context.Context, command execution.EffectDispatchCommandV2, provider execution.EffectDispatcherPortV2) (execution.EffectAuthorityResultV2, error) {
+	if err := c.admit(); err != nil {
+		return execution.EffectAuthorityResultV2{}, err
+	}
+	return c.capabilities.effect.ExecuteDispatchV2(ctx, command, provider)
+}
+func (c *ReconciliationCommands) ExecuteIntegrationCleanup(ctx context.Context, command integration.IntegrationCleanupRequestV2) (integration.IntegrationAttemptStateV2, error) {
+	if err := c.admit(); err != nil {
+		return integration.IntegrationAttemptStateV2{}, err
+	}
+	return c.capabilities.cleanup.Cleanup(ctx, command)
 }
 
 // ExecuteMission applies the common runtime barrier, then delegates policy to
@@ -269,6 +303,31 @@ func (h *Host) ExecuteEffect(ctx context.Context, expected journalv2.RuntimeEpoc
 		err = h.afterMutation(ctx)
 	}
 	return result, err
+}
+
+// ExecuteEffectDispatch is the sole production route from durable effect
+// permission through provider observation/mutation and durable outcome.
+// Memory is refreshed even when the typed result requires a decision.
+func (h *Host) ExecuteEffectDispatch(ctx context.Context, expected journalv2.RuntimeEpochID, command execution.EffectDispatchCommandV2, provider execution.EffectDispatcherPortV2) (execution.EffectAuthorityResultV2, error) {
+	release, err := h.beginCommand(expected)
+	if err != nil {
+		return execution.EffectAuthorityResultV2{}, err
+	}
+	defer release()
+	result, commandErr := h.capabilities.effect.ExecuteDispatchV2(ctx, command, provider)
+	return result, h.afterPossibleMutation(ctx, commandErr)
+}
+
+// ExecuteIntegrationCleanup is the separately retryable durable cleanup route.
+// CleanupPending remains observable even when the Git effect returns an error.
+func (h *Host) ExecuteIntegrationCleanup(ctx context.Context, expected journalv2.RuntimeEpochID, command integration.IntegrationCleanupRequestV2) (integration.IntegrationAttemptStateV2, error) {
+	release, err := h.beginCommand(expected)
+	if err != nil {
+		return integration.IntegrationAttemptStateV2{}, err
+	}
+	defer release()
+	result, commandErr := h.capabilities.cleanup.Cleanup(ctx, command)
+	return result, h.afterPossibleMutation(ctx, commandErr)
 }
 
 func (h *Host) PublishArtifact(ctx context.Context, expected journalv2.RuntimeEpochID, plan artifact.AuthorityPlanV2) (journalv2.AcknowledgedPublicationV2, error) {
