@@ -636,7 +636,7 @@
     },
     "WP15": {
       "actor": "user",
-      "agent": "maxwell",
+      "agent": null,
       "agent_profile": "reviewer-renata",
       "agent_profile_version": "1.0",
       "force_count": 1,
@@ -648,6 +648,7 @@
         "Ready for independent review. Scoped helper/native CLI tests, vet, and staticcheck pass at 3cba5bf7. Cross-lane architecture smoke still expects retired inspect-beads documentation; README ownership is WP17 and must reconcile that historical contract before M2 crown qualification."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP15-production-composition-and-native-command-surface/review-cycle-1.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP15-production-composition-and-native-command-surface/review-cycle-1.md",
@@ -655,14 +656,14 @@
         "verdict": "changes_requested"
       },
       "role": "reviewer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T075": "done",
-        "T076": "done",
-        "T077": "done",
-        "T078": "done",
-        "T079": "done"
+        "T075": "planned",
+        "T076": "planned",
+        "T077": "planned",
+        "T078": "planned",
+        "T079": "planned"
       }
     },
     "WP16": {
