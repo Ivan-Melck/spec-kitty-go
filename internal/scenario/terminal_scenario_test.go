@@ -165,7 +165,7 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 		}
 		staged, stageErr := h.host.ExecuteWorkspaceStage(t.Context(), h.host.RuntimeEpochID(), request)
 		if stageErr != nil {
-			t.Fatalf("stage workspace %s %s: %v", active.WorkID, step.stage, stageErr)
+			t.Fatalf("stage workspace %s %s: %v host=%+v", active.WorkID, step.stage, stageErr, h.host.Status())
 		}
 		current = staged.State
 		recordRevision = staged.RecordRevision
