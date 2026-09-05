@@ -217,12 +217,11 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 			_ = host.Close(context.Background())
 			return nil, &Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciliation_restore"}
 		}
-		authority, progress, err = restoredCurrentEpochAuthority(databaseID, epoch, reconciled, registry, reducers, config.Actions)
-		if err != nil {
+		if err = authority.RestoreCurrentEpoch(epoch, reconciled); err != nil {
 			_ = host.Close(context.Background())
 			return nil, err
 		}
-		host.projection, host.progress, postRestore = authority, progress, reconciled
+		postRestore = reconciled
 		capabilities, err = composeRuntimeCapabilities(adapter, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
 		if err != nil {
 			_ = host.Close(context.Background())
@@ -238,16 +237,16 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 		return nil, &Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciler_required"}
 	}
 	host.capabilities = capabilities
-	host.refresh = func(refreshContext context.Context) (*projection.AuthorityV2, *ProgressService, error) {
+	host.refresh = func(refreshContext context.Context) error {
 		attempt, identityErr := randomIdentity[string]("restore-live-")
 		if identityErr != nil {
-			return nil, nil, identityErr
+			return identityErr
 		}
 		result, restoreErr := journalrestore.RestoreV2(refreshContext, journalrestore.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: attempt, Budgets: budgets})
 		if restoreErr != nil {
-			return nil, nil, restoreErr
+			return restoreErr
 		}
-		return restoredCurrentEpochAuthority(databaseID, epoch, result, registry, reducers, config.Actions)
+		return authority.RestoreCurrentEpoch(epoch, result)
 	}
 	if err := host.transition(HostReady); err != nil {
 		_ = host.Close(context.Background())
@@ -255,21 +254,6 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 	}
 	host.startMonitor(context.Background(), config.MonitorInterval)
 	return host, nil
-}
-
-func restoredCurrentEpochAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, actions ActionCensusSource) (*projection.AuthorityV2, *ProgressService, error) {
-	authority, err := projection.NewAuthorityV2(databaseID, registry, reducers)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := authority.RestoreCurrentEpoch(epoch, restored); err != nil {
-		return nil, nil, err
-	}
-	progress, err := NewProgressService(authority, actions)
-	if err != nil {
-		return nil, nil, err
-	}
-	return authority, progress, nil
 }
 
 func restoredAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, actions ActionCensusSource) (*projection.AuthorityV2, *ProgressService, error) {

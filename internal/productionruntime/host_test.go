@@ -444,6 +444,15 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	if _, err := first.Progress().Mission("project-runtime", "mission-reconciled"); err != nil {
 		t.Fatalf("reconciliation publication absent after rescan: %v", err)
 	}
+	watchBase, err := first.Progress().Mission("project-runtime", "mission-reconciled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	watch, err := first.Progress().Watch("project-runtime", "mission-reconciled", watchBase.DatabaseID, watchBase.ProjectionRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Cancel()
 	if reconciler.retained == nil || reconciler.retained.RuntimeEpochID() != "" {
 		t.Fatal("reconciliation capability remained live after startup")
 	}
@@ -471,6 +480,16 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	firstProgress, err := first.Progress().Mission("project-runtime", "mission-runtime")
 	if err != nil || firstProgress.ProjectionRevision <= beforeRevision || firstProgress.Lifecycle != "active" {
 		t.Fatalf("live memory was not refreshed: progress=%+v err=%v", firstProgress, err)
+	}
+	select {
+	case watched := <-watch.C:
+		if watched.MissionID != "mission-reconciled" || watched.ProjectionRevision != firstProgress.ProjectionRevision {
+			t.Fatalf("existing watch observed wrong acknowledged revision: %+v", watched)
+		}
+	case watchErr := <-watch.Errors:
+		t.Fatalf("existing watch was orphaned by projection refresh: %v", watchErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("existing watch was orphaned by projection refresh")
 	}
 	if err := first.Close(t.Context()); err != nil {
 		t.Fatal(err)
@@ -1011,7 +1030,7 @@ func TestWP13MandatoryProductionMutantCampaign(t *testing.T) {
 		{"predecessor_client", "internal/productionruntime/host.go", "./internal/productionruntime", "TestHostBarrierRejectsEveryNonReadyStateAndStaleEpochBeforeCommand", "stale epoch err=<nil>", []wp13SourceReplacement{{`if expectedEpoch != h.epoch {`, `if expectedEpoch != h.epoch && false {`}}},
 		{"projection_before_ack", "internal/projection/authority.go", "./internal/projection", "TestProjectionPublishesCompleteAcknowledgedRevisionsAndDefensiveQueries", "duplicate acknowledgement err=<nil>", []wp13SourceReplacement{{`return &ErrorV2{ErrorIncompleteRevisionV2, "acknowledgement"}`, `return nil`}}},
 		{"watch_as_durable", "internal/productionruntime/progress.go", "./internal/productionruntime", "TestProgressWatchRejectsUnbackedNotification", "watch notification became durable progress", []wp13SourceReplacement{{`if queryErr != nil || value.ProjectionRevision != notification.Revision {`, `if queryErr != nil {`}}},
-		{"lost_memory_loses_state", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch", "reconciliation publication absent after rescan", []wp13SourceReplacement{{"if err := authority.RestoreCurrentEpoch(epoch, restored); err != nil {\n\t\treturn nil, nil, err\n\t}", "// mutant: discard restored state"}}},
+		{"lost_memory_loses_state", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch", "live memory was not refreshed", []wp13SourceReplacement{{"result, restoreErr := journalrestore.RestoreV2", "_, restoreErr := journalrestore.RestoreV2"}, {"return authority.RestoreCurrentEpoch(epoch, result)", "return nil // mutant: discard restored state"}}},
 		{"query_mints_authority", "internal/projection/query.go", "./internal/projection", "TestQueryPortCannotMutateAuthorityOrCollapseProgressIntoCeremony", "query method count", []wp13SourceReplacement{{"\tProgressBase(string) (ProgressBaseV2, error)\n}", "\tProgressBase(string) (ProgressBaseV2, error)\n\tPublishAcknowledged(journalv2.AcknowledgedPublicationV2) error\n}"}}},
 		{"raw_handle_escape", "internal/productionruntime/host.go", "./internal/productionruntime", "TestProductionHostSurfaceHasNoRawAuthorityOrBackendSelector", "production surface leaked RawOwner", []wp13SourceReplacement{{"type Host struct {\n\tmu", "type Host struct {\n\tRawOwner ownerLifecycle\n\tmu"}}},
 		{"sqlite_backend_selector", "internal/productionruntime/composition.go", "./internal/productionruntime", "TestProductionHostSurfaceHasNoRawAuthorityOrBackendSelector", "production surface leaked SQLiteFallback", []wp13SourceReplacement{{"type Config struct {\n", "type Config struct {\n\tSQLiteFallback any\n"}}},

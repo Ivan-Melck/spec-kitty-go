@@ -98,7 +98,7 @@ type Host struct {
 	projection   *projection.AuthorityV2
 	progress     *ProgressService
 	capabilities runtimeCapabilities
-	refresh      func(context.Context) (*projection.AuthorityV2, *ProgressService, error)
+	refresh      func(context.Context) error
 	monitorStop  context.CancelFunc
 	ownerKey     string
 	closeOnce    sync.Once
@@ -241,8 +241,7 @@ func (h *Host) refreshProjection(ctx context.Context) error {
 		h.degrade("projection_refresh")
 		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_refresh"}
 	}
-	authority, progress, err := h.refresh(ctx)
-	if err != nil || authority == nil || progress == nil {
+	if err := h.refresh(ctx); err != nil {
 		h.degrade("projection_refresh")
 		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "projection_refresh"}
 	}
@@ -252,8 +251,6 @@ func (h *Host) refreshProjection(ctx context.Context) error {
 		h.mu.Unlock()
 		return &Error{Kind: ErrorNotReady, State: state, Field: "projection_refresh"}
 	}
-	h.projection = authority
-	h.progress = progress
 	h.mu.Unlock()
 	return nil
 }
