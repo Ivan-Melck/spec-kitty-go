@@ -157,8 +157,7 @@ func admitTwoItemWork(t *testing.T, h *portableHarness, projectID, missionID str
 			if result.State.LogicalVersion == 0 || result.State.Fence == "" {
 				t.Fatalf("work admission %s omitted current authority", workID)
 			}
-			admitted[workID] = result.State
-			restartAfterDurableBoundary(t, h, projectID, missionID, "execution-admitted-"+workID.String(), true)
+			admitted[workID] = restartUnboundExecutionAfterDurableBoundary(t, h, result.State, governance, "execution-admitted-"+workID.String(), true)
 		}
 		return admitted
 	}
@@ -206,7 +205,6 @@ type terminalSemanticProgress struct {
 type terminalSemanticItem struct {
 	Family         string
 	AggregateID    string
-	LogicalVersion uint64
 	AuthorityState string
 	ObservedState  string
 }
@@ -215,7 +213,7 @@ func semanticTerminalProgress(progress productionruntime.MissionProgress) termin
 	items := make([]terminalSemanticItem, 0, len(progress.Items))
 	for _, item := range progress.Items {
 		items = append(items, terminalSemanticItem{
-			Family: item.Family, AggregateID: item.AggregateID, LogicalVersion: item.LogicalVersion,
+			Family: item.Family, AggregateID: item.AggregateID,
 			AuthorityState: item.AuthorityState, ObservedState: item.ObservedState,
 		})
 	}
