@@ -128,7 +128,7 @@ only the first two survive.
    hand off, review, accept, integrate, or mutate current authority.
 10. Exactly one current integration authority exists per repository/target ref,
     and Git observations remain evidence rather than authority.
-11. Universal invariants run after every admitted or refused phase and after
+11. Universal invariants run after every admitted or refused capability and after
     every restart/fault cut, not only at terminal success.
 12. Harness evidence is deterministic, bounded, machine-readable, and names the
     source revision, test, scenario, family, repetition, and outcome.
@@ -221,7 +221,9 @@ inventory entry to capability-level scenarios and observable M2 evidence.
 6. Require zero additional authority and external mutations for every refused
    case and exact replay for same-binding admitted operations.
 7. Keep storage or Python/Markdown mechanics explicitly classified as non-product
-   evidence rather than recreating them in the new harness.
+   evidence rather than recreating them in the new harness. This includes the
+   exclusive phase cursor, manual phase advancement, tracked derived lane
+   status, prompt-only evidence producers, and stack-specific artifact gates.
 8. Fail the census for duplicate identifiers, missing mappings, substitutions,
    uncovered refusal edges, or a test name that does not resolve.
 
@@ -242,16 +244,16 @@ inventory entry to capability-level scenarios and observable M2 evidence.
 
 #### Purpose
 
-Prove the full authority lifecycle reaches identical terminal facts for an
-uninterrupted two-item mission and variants that restart after every major
-phase.
+Prove the full authority model reaches identical terminal facts for an
+uninterrupted two-item mission and variants that restart after every durable
+authority/publication boundary.
 
 #### Steps
 
 1. Define one canonical fixture with two independent work items, explicit
    dependencies/scopes where relevant, complete artifact and WorkRevision
    evidence, distinct ActorIDs, and a deterministic fake tracker plan.
-2. Drive mission creation, lifecycle advance, decomposition, artifact publish /
+2. Drive mission creation, readiness evaluation, decomposition, artifact publish /
    validate / approve, WorkRevision finalization, work start, lease/workspace,
    concurrent execution, handoff, independent review, acceptance, integration,
    tracker effects, outbox resolution, and terminal query state.
@@ -261,7 +263,8 @@ phase.
    terminal authority, projection digest, operation results, external evidence,
    repository result, and event-family coverage.
 5. Run a variant that fully stops and restarts the production owner after each
-   major phase, discarding memory projection and reconnecting through readiness.
+   durable authority/publication boundary, discarding memory projection and
+   reconnecting through readiness.
 6. After every restart, assert a new RuntimeEpoch, refusal of predecessor
    capsules/authority, byte-identical recovered projection for the committed
    prefix, and no duplicate transition or effect.
@@ -278,7 +281,7 @@ phase.
 
 - Both items reach the qualified terminal state with exactly one current
   authority at every gate and no lost parallel progress.
-- Restart after every phase produces the same terminal semantic snapshot and
+- Restart after every authority/publication boundary produces the same terminal semantic snapshot and
   exactly one result per committed operation.
 - A stale pre-restart capsule fails before external or repository mutation.
 - The scenario makes no direct database call and parses no CLI prose.
@@ -397,11 +400,11 @@ long suite accidentally during ordinary focused iteration.
   versioned machine envelopes.
 - Every frozen Exact and Strengthen behavior maps to a passing capability test,
   refusal/mutation expectation, and evidence reference.
-- Uninterrupted and restart-after-each-phase two-item missions reach identical
+- Uninterrupted and restart-after-each-authority-boundary two-item missions reach identical
   semantic terminal facts with no duplicate authority or effects.
 - All required 100-run concurrency, owner replacement, crash, ambiguity, and
   lost-response campaigns pass with complete family coverage.
-- Universal invariants execute after every relevant phase/cut and all declared
+- Universal invariants execute after every relevant capability/cut and all declared
   mutant controls prove the assertions are capable of failing.
 - Focused tests, bounded race runs, architecture checks, `go vet`,
   `staticcheck`, and `git diff --check` pass.
@@ -449,7 +452,7 @@ not as a test-file port. Require direct evidence that:
    machine schema and semantic result kinds.
 5. The Exact/Strengthen census is complete and every refusal proves both its
    precedence and zero later authority/external mutations.
-6. The complete two-item mission covers every major phase and restart variants
+6. The complete two-item mission covers every authority capability and restart variants
    produce identical semantic terminal state with predecessor fencing.
 7. The 100-run campaigns demonstrate independent progress, same-head exclusion,
    zombie fencing, ActorID reviewer independence, and target-ref serialization.

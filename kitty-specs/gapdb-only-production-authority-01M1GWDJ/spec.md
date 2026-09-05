@@ -40,12 +40,12 @@ the redesign has not crossed its storage boundary.
 **Independent Test**: Start from an empty control root, exercise one complete
 two-item mission through definition finalization, concurrent execution,
 handoff, independent review, acceptance, and serialized integration, restart
-between every major phase, and obtain the same terminal facts without any SQL
+between every durable authority/publication boundary, and obtain the same terminal facts without any SQL
 implementation present.
 
 **Acceptance Scenarios**:
 
-1. **Given** an empty supported control root and the accepted M1 tuple, **When** an operator advances every lifecycle capability, **Then** each accepted transition records one atomic durable event/result/head publication before success is acknowledged.
+1. **Given** an empty supported control root and the accepted M1 tuple, **When** an autonomous driver executes every currently authorized capability, **Then** each accepted mutation records one atomic durable event/result/head publication before success is acknowledged, with no required manual phase advancement.
 2. **Given** two dependency-independent work items, **When** two agents claim and execute concurrently, **Then** both progress in distinct lease-scoped workspaces while each work revision has at most one current authority.
 3. **Given** completed candidates with independent approvals, **When** integration is requested concurrently, **Then** repository authority serializes publication and records each admitted candidate at most once.
 
@@ -202,7 +202,7 @@ fallback,” or “ticket status” as domain authority vocabulary.
 | FR-004 | Atomic authority publication | As a concurrent caller, publish each accepted command's complete events, result, heads, checkpoint metadata, and effect intents as one conditional durable mutation before success. | High | Open |
 | FR-005 | Stable operation replay | As a retrying caller, return the recorded result for the same OperationID and request digest with no duplicate transition or effect. | High | Open |
 | FR-006 | Idempotency conflict | As an operator, refuse reuse of an OperationID with different canonical input before mutation. | High | Open |
-| FR-007 | Mission lifecycle capability | As an operator, preserve mission creation, transitions, pause/resume, decisions, failure, cancellation, and completion as versioned events and typed refusals. | High | Open |
+| FR-007 | Autonomous mission readiness | As an operator, preserve mission creation, coarse open/paused/terminal lifecycle, activity history, blockers, decisions, failure, cancellation, completion, and a complete authorized/unavailable action census as versioned facts and typed refusals, without an exclusive phase cursor. | High | Open |
 | FR-008 | Artifact revision capability | As a maintainer, preserve artifact identity, revision, digest, provenance, and freshness checks across restart and concurrent updates. | High | Open |
 | FR-009 | WorkRevision finalization | As a scheduler, finalize one immutable graph generation with pinned work, dependencies, criteria, provider observations, and content digests. | High | Open |
 | FR-010 | WorkRevision reconciliation | As an operator, record continue, supersede, invalidate, or fork semantics and prevent stale generations from executing or crossing later gates. | High | Open |
@@ -317,7 +317,7 @@ fallback,” or “ticket status” as domain authority vocabulary.
 
 ### Measurable Outcomes
 
-- **SC-001**: A complete two-item mission reaches the same terminal facts across uninterrupted and restart-after-every-phase execution with zero duplicate authority transitions.
+- **SC-001**: A complete two-item mission reaches the same terminal facts across uninterrupted and restart-after-every-authority-boundary execution with zero duplicate authority transitions and no manual phase advancement.
 - **SC-002**: Every authority capability can create, mutate, query, checkpoint, restore, and refuse invalid transitions using one durable history and current projection.
 - **SC-003**: At least 100 repetitions of each authority-family crash/ambiguity cut yield zero partial accepted states and exactly one result per committed operation.
 - **SC-004**: At least 100 concurrent two-agent trials preserve parallel progress and at most one current authority per work item/generation.

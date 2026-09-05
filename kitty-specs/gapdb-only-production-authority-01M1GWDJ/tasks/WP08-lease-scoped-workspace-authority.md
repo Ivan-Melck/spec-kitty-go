@@ -38,6 +38,8 @@ create_intent:
 - internal/controljournal/v2/commit_plan_budget_test.go
 - internal/gitrepo/workspace_authority_v2.go
 - internal/gitrepo/workspace_authority_v2_test.go
+- internal/execution/authority_v2.go
+- internal/execution/authority_v2_test.go
 - internal/execution/workspace_authority_v2.go
 - internal/execution/workspace_authority_v2_test.go
 - internal/controlstore/gapdb/workspace_authority.go
