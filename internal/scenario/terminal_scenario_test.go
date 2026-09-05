@@ -31,7 +31,7 @@ type terminalWorkFacts struct {
 	accepted  integration.AcceptanceStateV2
 }
 
-func completeTwoItemMission(t *testing.T, h *portableHarness, missionState mission.ReadinessAuthorityStateV2, revision workgraph.RevisionV2, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2) {
+func completeTwoItemMission(t *testing.T, h *portableHarness, missionState mission.ReadinessAuthorityStateV2, revision workgraph.RevisionV2, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2, restartEveryBoundary bool) {
 	t.Helper()
 	repositoryID := ids.RepositoryID("repository-two-item")
 	targetRef := "refs/heads/main"
@@ -45,21 +45,24 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 		if !ok {
 			t.Fatalf("missing admission for %s", workID)
 		}
-		facts[workID] = runWorkspaceToReady(t, h, active, governance, repositoryID, base, index)
+		facts[workID] = runWorkspaceToReady(t, h, active, governance, repositoryID, base, index, restartEveryBoundary)
 	}
 
 	for index, workID := range workIDs {
 		candidate := fmt.Sprintf("%040x", index+11)
 		facts[workID].handoff = submitTerminalHandoff(t, h, facts[workID], revision, repositoryID, candidate, index)
+		restartAfterDurableBoundary(t, h, facts[workID].execution.ProjectID.String(), facts[workID].execution.MissionID.String(), "handoff-"+workID.String(), restartEveryBoundary)
 		facts[workID].review = submitTerminalReview(t, h, facts[workID], revision, index)
+		restartAfterDurableBoundary(t, h, facts[workID].execution.ProjectID.String(), facts[workID].execution.MissionID.String(), "review-"+workID.String(), restartEveryBoundary)
 		facts[workID].evidence = publishTerminalEvidence(t, h, facts[workID], index)
+		restartAfterDurableBoundary(t, h, facts[workID].execution.ProjectID.String(), facts[workID].execution.MissionID.String(), "artifact-"+workID.String(), restartEveryBoundary)
 	}
 
 	currentMission := missionState
 	for index, workID := range workIDs {
 		policyID := "policy-accept-" + workID.String()
 		request := terminalAcceptanceRequest(t, h, facts[workID], revision, repositoryID, policyID, index)
-		currentMission = recordResolvedPolicyFact(t, h, currentMission, request)
+		currentMission = recordResolvedPolicyFact(t, h, currentMission, request, restartEveryBoundary)
 		accepted, err := h.host.ExecuteAcceptance(t.Context(), h.host.RuntimeEpochID(), request)
 		if err != nil {
 			t.Fatalf("accept %s: %v", workID, err)
@@ -68,6 +71,7 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 			t.Fatalf("accept %s stage=%s", workID, accepted.State.Stage)
 		}
 		facts[workID].accepted = accepted.State
+		restartAfterDurableBoundary(t, h, accepted.State.ProjectID.String(), accepted.State.MissionID.String(), "acceptance-"+workID.String(), restartEveryBoundary)
 
 		integrated, err := h.host.ExecuteIntegration(t.Context(), h.host.RuntimeEpochID(), integration.IntegrationAuthorityRequestV2{
 			OperationID: journalv2.OperationID("operation-integrate-" + workID.String()),
@@ -85,13 +89,16 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 		if integrated.Stage != integration.IntegrationAttemptCompletedV2 {
 			t.Fatalf("integrate %s stage=%s", workID, integrated.Stage)
 		}
+		restartAfterDurableBoundary(t, h, accepted.State.ProjectID.String(), accepted.State.MissionID.String(), "integration-"+workID.String(), restartEveryBoundary)
 		markExecutionCompleted(t, h, facts[workID].execution, governance, index)
+		restartAfterDurableBoundary(t, h, accepted.State.ProjectID.String(), accepted.State.MissionID.String(), "execution-outcome-"+workID.String(), restartEveryBoundary)
 	}
 
 	completeMissionAuthority(t, h, currentMission, revision.ID())
+	restartAfterDurableBoundary(t, h, string(currentMission.ProjectID()), string(currentMission.MissionID()), "mission-completed", restartEveryBoundary)
 }
 
-func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.ExecutionSlotStateV2, governance governancecontext.Context, repositoryID ids.RepositoryID, pinnedBase string, index int) *terminalWorkFacts {
+func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.ExecutionSlotStateV2, governance governancecontext.Context, repositoryID ids.RepositoryID, pinnedBase string, index int, restartEveryBoundary bool) *terminalWorkFacts {
 	t.Helper()
 	managedRoot := filepath.Join(h.root, "workspaces")
 	canonicalPath := filepath.Join(managedRoot, active.WorkID.String())
@@ -131,6 +138,7 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 	if recordRevision == 0 {
 		t.Fatalf("bind workspace %s omitted reusable authority revision", active.WorkID)
 	}
+	restartAfterDurableBoundary(t, h, active.ProjectID.String(), active.MissionID.String(), "workspace-bound-"+active.WorkID.String(), restartEveryBoundary)
 	ready := workspace.ObservationV2{Registered: true, Head: binding.PinnedBase, Branch: binding.OwnedBranch, GitDirIdentity: "gitdir-" + active.WorkID.String(), IndexIdentity: "index-" + active.WorkID.String(), Clean: true, DependencyHead: binding.PinnedBase, TargetBefore: binding.PinnedBase, TargetAfter: binding.PinnedBase}
 	steps := []struct {
 		stage       workspace.StageV2
@@ -172,6 +180,7 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 		if recordRevision == 0 {
 			t.Fatalf("stage workspace %s %s omitted reusable authority revision", active.WorkID, step.stage)
 		}
+		restartAfterDurableBoundary(t, h, active.ProjectID.String(), active.MissionID.String(), fmt.Sprintf("workspace-%s-%s", active.WorkID, step.stage), restartEveryBoundary)
 	}
 	if current.Stage != workspace.StageReadyV2 {
 		t.Fatalf("workspace %s not ready: %s", active.WorkID, current.Stage)
@@ -334,7 +343,7 @@ func terminalAcceptanceRequest(t *testing.T, h *portableHarness, facts *terminal
 	}
 }
 
-func recordResolvedPolicyFact(t *testing.T, h *portableHarness, current mission.ReadinessAuthorityStateV2, request integration.AcceptanceAuthorityRequestV2) mission.ReadinessAuthorityStateV2 {
+func recordResolvedPolicyFact(t *testing.T, h *portableHarness, current mission.ReadinessAuthorityStateV2, request integration.AcceptanceAuthorityRequestV2, restartEveryBoundary bool) mission.ReadinessAuthorityStateV2 {
 	t.Helper()
 	openAt := request.ObservedAt.Add(-2 * time.Second)
 	openOperation := journalv2.OperationID("operation-open-" + request.PolicyFactID)
@@ -353,6 +362,7 @@ func recordResolvedPolicyFact(t *testing.T, h *portableHarness, current mission.
 	if err != nil {
 		t.Fatalf("open policy fact %s: %v", request.PolicyFactID, err)
 	}
+	restartAfterDurableBoundary(t, h, request.ProjectID.String(), request.MissionID.String(), "policy-open-"+request.WorkID.String(), restartEveryBoundary)
 
 	resolvedAt := request.ObservedAt.Add(-time.Second)
 	resolveOperation := journalv2.OperationID("operation-resolve-" + request.PolicyFactID)
@@ -365,7 +375,22 @@ func recordResolvedPolicyFact(t *testing.T, h *portableHarness, current mission.
 	if err != nil {
 		t.Fatalf("resolve policy fact %s: %v", request.PolicyFactID, err)
 	}
+	restartAfterDurableBoundary(t, h, request.ProjectID.String(), request.MissionID.String(), "policy-resolved-"+request.WorkID.String(), restartEveryBoundary)
 	return resolved.State()
+}
+
+func restartAfterDurableBoundary(t *testing.T, h *portableHarness, projectID, missionID, boundary string, enabled bool) {
+	t.Helper()
+	if !enabled {
+		return
+	}
+	before := semanticProgressDigest(t, h, projectID, missionID)
+	predecessor, _ := h.restart()
+	after := semanticProgressDigest(t, h, projectID, missionID)
+	if after != before {
+		t.Fatalf("boundary %s changed recovered projection: before=%s after=%s", boundary, before, after)
+	}
+	assertStaleEpochRefusesBeforeRepository(t, h, predecessor)
 }
 
 func cloneReadinessState(t *testing.T, prior mission.ReadinessAuthorityStateV2, version journalv2.LogicalVersion, lifecycle mission.MissionLifecycle, operation journalv2.OperationID, observedAt time.Time, facts []mission.ScopedMissionFactV2) mission.ReadinessAuthorityStateV2 {
