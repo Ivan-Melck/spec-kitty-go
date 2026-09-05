@@ -61,19 +61,30 @@ func TestHistoricalAndUnsafeRootsRefuseBeforeInstallationOrMutation(t *testing.T
 	repository := repositoryRoot(t)
 	binary := buildBinary(t, repository, "./cmd/spec-kitty")
 	parent := t.TempDir()
-	historical := filepath.Join(parent, "historical")
-	if err := os.Mkdir(historical, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	header := append([]byte("SQLite format 3\x00"), make([]byte, 128)...)
-	if err := os.WriteFile(filepath.Join(historical, "control.db"), header, 0o600); err != nil {
-		t.Fatal(err)
+	makeRoot := func(name string) string {
+		root := filepath.Join(parent, name)
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return root
 	}
+	historical := makeRoot("historical")
+	writeFixture(t, filepath.Join(historical, "control.db"), header)
+	renamed := makeRoot("renamed")
+	writeFixture(t, filepath.Join(renamed, "copied-authority.bin"), header)
+	mixed := makeRoot("mixed")
+	writeFixture(t, filepath.Join(mixed, "control.db"), header)
+	writeFixture(t, filepath.Join(mixed, "IDENTITY"), []byte("malformed-current-marker"))
+	malformed := makeRoot("malformed")
+	writeFixture(t, filepath.Join(malformed, "IDENTITY"), []byte("malformed-current-marker"))
+	ambiguous := makeRoot("ambiguous")
+	writeFixture(t, filepath.Join(ambiguous, "unknown-authority"), []byte("unknown"))
 	symlink := filepath.Join(parent, "unsafe")
 	if err := os.Symlink(historical, symlink); err != nil {
 		t.Fatal(err)
 	}
-	for _, root := range []string{historical, symlink} {
+	for _, root := range []string{historical, renamed, mixed, malformed, ambiguous, symlink} {
 		before := directoryFingerprint(t, parent)
 		command := exec.Command(binary, "--control-root", root, "status")
 		command.Env = []string{"PATH=" + os.Getenv("PATH")}
@@ -88,6 +99,13 @@ func TestHistoricalAndUnsafeRootsRefuseBeforeInstallationOrMutation(t *testing.T
 		if after := directoryFingerprint(t, parent); after != before {
 			t.Fatalf("root=%s mutated filesystem before refusal\nbefore=%s\nafter=%s", root, before, after)
 		}
+	}
+}
+
+func writeFixture(t *testing.T, path string, value []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, value, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -206,6 +206,44 @@ func TestOperationResumePreservesExactTypedIdentity(t *testing.T) {
 	}
 }
 
+func TestOperationIDReuseWithDifferentTypedRequestIsConflict(t *testing.T) {
+	request := missionCreateRequest(t, "operation-conflict-1")
+	var admittedSHA string
+	session := defaultSession()
+	session.executeFn = func(operation decodedOperation) (json.RawMessage, error) {
+		if admittedSHA == "" {
+			admittedSHA = operation.requestSHA
+			return json.RawMessage(`{"ok":true}`), nil
+		}
+		if operation.requestSHA != admittedSHA {
+			return nil, &mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityIdempotencyConflictV2, Field: "operation_id"}
+		}
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	factory := admittedFactory(session)
+	runner, _ := NewRunner(factory)
+	root := filepath.Join(t.TempDir(), "authority")
+	run := func(request OperationRequest) (int, Envelope) {
+		encoded, _ := json.Marshal(request)
+		var stdout bytes.Buffer
+		code := runner.Run(t.Context(), []string{"--control-root", root, "operation", "resume", "--request", "-"}, bytes.NewReader(encoded), &stdout, &bytes.Buffer{})
+		var envelope Envelope
+		_ = json.Unmarshal(stdout.Bytes(), &envelope)
+		return code, envelope
+	}
+	if code, _ := run(request); code != ExitSuccess {
+		t.Fatal(code)
+	}
+	var payload missionCommandWire
+	_ = json.Unmarshal(request.Payload, &payload)
+	payload.ActorID = "actor-2"
+	request.Payload, _ = json.Marshal(payload)
+	code, envelope := run(request)
+	if code != ExitConflict || envelope.Diagnostic == nil || envelope.Diagnostic.Kind != string(mission.MissionAuthorityIdempotencyConflictV2) {
+		t.Fatalf("exit=%d envelope=%+v", code, envelope)
+	}
+}
+
 func TestDriveStopsBeforeUnauthorizedMutation(t *testing.T) {
 	session := defaultSession()
 	session.progress.Actions = []productionruntime.ActionAvailability{{Action: string(mission.ActionMissionPause), Status: "unavailable", BlockingPredicates: []string{"provider"}}}

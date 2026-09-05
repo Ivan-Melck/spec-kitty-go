@@ -311,7 +311,12 @@ func prepare(options globalOptions, stdin io.Reader) (preparedCommand, error) {
 			if err := flags.Parse(options.args[1:]); err != nil || flags.NArg() != 0 || project == "" || missionID == "" || prepared.operationID == "" {
 				return prepared, errors.New("arguments")
 			}
-			prepared.projectID, prepared.missionID = journalv2.ProjectID(project), journalv2.MissionID(missionID)
+			projectID, projectErr := journalv2.NewProjectID(project)
+			mission, missionErr := journalv2.NewMissionID(missionID)
+			if _, operationErr := journalv2.NewOperationID(prepared.operationID); projectErr != nil || missionErr != nil || operationErr != nil {
+				return prepared, errors.New("identity")
+			}
+			prepared.projectID, prepared.missionID = projectID, mission
 		case "execute", "resume":
 			request, err := readOperationArg(prepared.subcommand, options.args[1:], stdin)
 			if err != nil {
@@ -426,7 +431,12 @@ func parseMissionIdentity(name string, args []string) (journalv2.ProjectID, jour
 	if err != nil || flags.NArg() != 0 || project == "" || missionID == "" {
 		return "", "", false, errors.New("project and mission are required")
 	}
-	return journalv2.ProjectID(project), journalv2.MissionID(missionID), false, nil
+	projectID, projectErr := journalv2.NewProjectID(project)
+	mission, missionErr := journalv2.NewMissionID(missionID)
+	if projectErr != nil || missionErr != nil {
+		return "", "", false, errors.New("project or mission identity is invalid")
+	}
+	return projectID, mission, false, nil
 }
 
 func render(stdout, stderr io.Writer, command, mode string, values ...any) int {
