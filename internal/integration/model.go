@@ -27,6 +27,9 @@ const (
 	KindIdempotencyConflict ErrorKind = "idempotency_conflict"
 	KindStoreFailure        ErrorKind = "control_store_failure"
 	KindGitFailure          ErrorKind = "git_failure"
+	KindStaleAuthority      ErrorKind = "stale_authority"
+	KindEvidenceUnavailable ErrorKind = "evidence_unavailable"
+	KindPolicyRefused       ErrorKind = "policy_refused"
 )
 
 type Error struct {
