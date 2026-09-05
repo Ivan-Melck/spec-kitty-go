@@ -1,7 +1,7 @@
 {
-  "event_count": 278,
-  "last_event_id": "01M1NG8VKRE36MM6Q4P6C08MHF",
-  "materialized_at": "2026-09-04T06:04:07.672378+00:00",
+  "event_count": 312,
+  "last_event_id": "01M1PG7P0ETZPHQ1PQGC5N5359",
+  "materialized_at": "2026-09-04T15:22:43.598648+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -10,11 +10,11 @@
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
-    "done": 0,
+    "done": 1,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 2,
     "in_review": 0,
-    "planned": 12
+    "planned": 9
   },
   "work_packages": {
     "WP01": {
@@ -104,15 +104,15 @@
       }
     },
     "WP02": {
-      "actor": "renata-gapdb-final-production-review",
-      "agent": "renata-gapdb-final-production-review",
+      "actor": "codex",
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan-gapdb-canonical-codecs",
-      "force_count": 20,
-      "lane": "approved",
-      "last_event_id": "01M1N01GCTEPC0A7GF0QJ1HPMJ",
-      "last_transition_at": "2026-09-04T01:20:29.594320+00:00",
+      "force_count": 21,
+      "lane": "in_progress",
+      "last_event_id": "01M1NQH950V6M1J5SYYAM8V7DA",
+      "last_transition_at": "2026-09-04T08:11:03.705503+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready at 5109f49: global operation binding/state, journal v2 codec and sealed commit plans, replay-before-epoch and closed reducer/event laws; package x20, race x5, architecture M2, vet, staticcheck, compile-only, gofmt, and diff checks pass.",
@@ -148,7 +148,8 @@
         "Cycle-14 address-specific recovery bounds repaired at e8a5fc8f; exact-max/over-limit/noncanonical identity tests and all v2/race/184-mutant/static gates pass.",
         "Repair review cycle 15: add the missing ordinary exact-256KiB live recovery constructor case.",
         "Cycle-15 adds the missing ordinary exact-256KiB live constructor evidence at 21b8cd43; focused/package/race/184-mutant/static gates pass.",
-        "Independent review passed: durable bytes canonical, digest preimages stable, address-specific recovery bounds exact, 184-mutant/v2/race/static gates green."
+        "Independent review passed: durable bytes canonical, digest preimages stable, address-specific recovery bounds exact, 184-mutant/v2/race/static gates green.",
+        "Reopened for bounded post-approval repair: add explicit permission-bound reconciliation resume under the same OperationID; generic transition remains forbidden."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -158,8 +159,8 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
         "T006": "done",
         "T007": "done",
@@ -170,15 +171,15 @@
       }
     },
     "WP03": {
-      "actor": "codex-wp03-witness-independent-reviewer",
-      "agent": "codex-wp03-witness-independent-reviewer",
+      "actor": "codex",
+      "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "codex-wp03-witness-gapdb",
-      "force_count": 6,
-      "lane": "approved",
-      "last_event_id": "01M1M97SDTW8TTYMNGMZ9KA931",
-      "last_transition_at": "2026-09-03T18:41:58.202282+00:00",
+      "force_count": 7,
+      "lane": "planned",
+      "last_event_id": "01M1PG7P0ETZPHQ1PQGC5N5359",
+      "last_transition_at": "2026-09-04T15:22:43.598648+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Dependency contract incomplete; no WP03 source edits were made. Resume only after bounded WP02 persistence-projection repair is independently approved.",
@@ -207,14 +208,14 @@
         "verdict": "approved"
       },
       "role": "implementer",
-      "shell_pid": 3753728,
-      "shell_pid_created_at": "1788448726.47",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T012": "done",
-        "T013": "done",
-        "T014": "done",
-        "T015": "done",
-        "T016": "done"
+        "T012": "planned",
+        "T013": "planned",
+        "T014": "planned",
+        "T015": "planned",
+        "T016": "planned"
       }
     },
     "WP04": {
@@ -262,32 +263,119 @@
       }
     },
     "WP05": {
-      "actor": "finalize-tasks",
-      "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0G42JA9DMYFDFN8V871WR",
-      "last_transition_at": "2026-09-02T12:11:30.770796+00:00"
+      "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 2,
+      "lane": "approved",
+      "last_event_id": "01M1NQEVJ51D5R505805J905GW",
+      "last_transition_at": "2026-09-04T08:09:44.261169+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Review-cycle-1 blockers repaired at 1db5dd3169b22e5190a3562a0ba15b0ff75e9a75; fresh provider state fenced and 15 controlled mutants executable.",
+        "Review-cycle-2 blocker repaired at 5ff93bc9 with typed provider-neutral mutation outcomes; definitive refusals reconcile and only explicit indeterminacy may use exact re-observation.",
+        "Independent cycle-3 review approved 5ff93bc9: seven provider outcome classes x20, 15 executable mutants, race, architecture, compile, vet, staticcheck, module, format, and ownership gates pass."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "reference": "5ff93bc9a9402c68aac45749ce140ea4d18c292d",
+        "reviewer": "codex-wp05-independent-reviewer",
+        "verdict": "approved"
+      },
+      "role": "implementer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
+      "subtasks": {
+        "T023": "done",
+        "T024": "done",
+        "T025": "done",
+        "T026": "done",
+        "T027": "done"
+      }
     },
     "WP06": {
-      "actor": "finalize-tasks",
+      "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0G7BG754BZGK54P3DSCK7",
-      "last_transition_at": "2026-09-02T12:11:34.128602+00:00"
+      "lane": "approved",
+      "last_event_id": "01M1NPQJQPJRC7AZ44EQD9W0ZK",
+      "last_transition_at": "2026-09-04T07:57:01.558987+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Implementation c33a1825 passed independent contract audit, focused repetitions, race, architecture, vet, staticcheck, formatting, compile, and module verification.",
+        "Independent review approved c33a1825; exact owned diff and all focused, race, architecture, vet, staticcheck, formatting, and recovery gates passed."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "reference": "c33a1825",
+        "reviewer": "maxwell-wp06-independent-reviewer",
+        "verdict": "approved"
+      },
+      "role": "implementer",
+      "shell_pid": 3753728,
+      "shell_pid_created_at": "1788448726.47",
+      "subtasks": {
+        "T028": "done",
+        "T029": "done",
+        "T030": "done",
+        "T031": "done",
+        "T032": "done",
+        "T033": "done"
+      }
     },
     "WP07": {
-      "actor": "finalize-tasks",
-      "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0GAY33VN3KMHTPVJVKQ2H",
-      "last_transition_at": "2026-09-02T12:11:37.795833+00:00"
+      "actor": "user",
+      "agent": "renata",
+      "agent_profile": "reviewer-renata",
+      "agent_profile_version": "1.0",
+      "force_count": 2,
+      "lane": "done",
+      "last_event_id": "01M1P3S16MXB8Q46E0Y2FHX9YV",
+      "last_transition_at": "2026-09-04T11:45:00.628215+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Recovered allocator-created blocked state after verified manual dependency merge; no WP07 implementation began and no contract guard is bypassed.",
+        "Implementation complete at 62b7ef98; T034-T039 and all required gates pass.",
+        "Independent review cycle 6 approved exact commit 62b7ef98; contract audit READY.",
+        "Approved WP07 code merged into mission coordination branch at 6acc6c13. | Done override: Lane tip is already an ancestor of coordination after merge 6acc6c13; post-merge ancestry check reports no commits beyond coordination."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
+      "review_result": {
+        "reference": "review-cycle-6:62b7ef980a7b74b5206fd66bc3fd5b54e9c76dd1",
+        "reviewer": "renata",
+        "verdict": "approved"
+      },
+      "role": "reviewer",
+      "shell_pid": 2616406,
+      "shell_pid_created_at": "1788522011.62",
+      "subtasks": {
+        "T034": "done",
+        "T035": "done",
+        "T036": "done",
+        "T037": "done",
+        "T038": "done",
+        "T039": "done"
+      }
     },
     "WP08": {
-      "actor": "finalize-tasks",
+      "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "implementer-ivan",
+      "agent_profile_version": "1.0",
       "force_count": 0,
-      "lane": "planned",
-      "last_event_id": "01M1H0GEDMRN0CTPNZ0R6WSYX4",
-      "last_transition_at": "2026-09-02T12:11:41.364139+00:00"
+      "lane": "in_progress",
+      "last_event_id": "01M1P3T8PMVWHPX7QG14MQSYDE",
+      "last_transition_at": "2026-09-04T11:45:41.075982+00:00",
+      "model": "__resolved_model_absent__",
+      "provider": "__resolved_provider_absent__",
+      "role": "implementer",
+      "shell_pid": 2626097,
+      "shell_pid_created_at": "1788522332.12"
     },
     "WP09": {
       "actor": "finalize-tasks",
