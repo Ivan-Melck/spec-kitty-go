@@ -383,6 +383,39 @@ func TestHostMonitorClosesBarrierOnOwnerLossAndShutdownIsIdempotent(t *testing.T
 	}
 }
 
+func TestHostMonitorDoesNotClassifyInFlightProviderStateAsOwnerLoss(t *testing.T) {
+	host, _ := hostFixture(t, "database-monitor-inflight")
+	owner := host.owner.(*hostOwnerProbe)
+	_ = host.transition(HostReconciling)
+	_ = host.transition(HostReady)
+	release, err := host.beginCommand("epoch-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			release()
+		}
+	}()
+	owner.fail.Store(true)
+	host.startMonitor(context.Background(), time.Millisecond)
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	time.Sleep(10 * time.Millisecond)
+	if host.State() != HostReady || owner.probes.Load() != 0 {
+		t.Fatalf("monitor crossed active command: state=%s probes=%d", host.State(), owner.probes.Load())
+	}
+	release()
+	released = true
+	deadline := time.Now().Add(time.Second)
+	for host.State() != HostDegraded && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if host.State() != HostDegraded || owner.probes.Load() == 0 {
+		t.Fatalf("monitor failed to resume after command: state=%s probes=%d", host.State(), owner.probes.Load())
+	}
+}
+
 func TestHostLifecycleRejectsBackwardAndCeremonyTransitions(t *testing.T) {
 	host, _ := hostFixture(t, "database-lifecycle")
 	defer host.Close(t.Context())
