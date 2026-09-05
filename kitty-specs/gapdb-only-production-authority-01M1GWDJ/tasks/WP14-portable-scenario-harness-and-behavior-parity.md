@@ -153,6 +153,21 @@ only the first two survive.
 - Historical owners, epochs, capsules, leases, workspaces, candidates, and
   fences cannot mutate current authority.
 
+## Ratified review clarifications
+
+- Production publication faults are qualified by the orthogonal family/cut
+  method in `research/compositional-fault-qualification.md`; no Cartesian label
+  is counted as an experiment.
+- Concurrency is qualified by the complete two-item scenario plus attributable
+  capability contention, host no-global-mutex, and mutant axes described in
+  `research/compositional-concurrency-qualification.md`.
+- The scenario's decomposition boundary is native autonomous readiness plus an
+  acknowledged finalized WorkRevision. Removed Python phase cursor, Markdown
+  task-list, and manual ceremony gates are not parity requirements.
+- The external-effect saga exercises the fake tracker. Outbox remains a
+  registered/replayed adapter capability without an M2 production Host command
+  surface and is not falsely reported as a scenario route.
+
 ### Subtask T070 - Replace SQLite harness setup and introspection
 
 #### Purpose
@@ -329,41 +344,54 @@ serialization.
 - Same-aggregate and integration conflicts yield stable typed results.
 - Zombie and same-ActorID reviewer mutants are detected on every repetition.
 
-### Subtask T074 - Qualify per-family faults and universal invariants
+### Subtask T074 - Qualify compositional publication faults and universal invariants
 
 #### Purpose
 
-Exercise crash, lost/malformed acknowledgement, ambiguous and dishonest external
-observations for every authority-changing family, backed by universal invariants
-and mutation controls.
+Exercise every authority family's semantic publication/replay behavior and
+exercise crash, lost/malformed acknowledgement, ambiguity, restart, and
+dishonest external observations at the single production publication boundary.
+Bind the two axes with an executable architecture guard and killed bypass
+mutant instead of claiming a synthetic Cartesian campaign.
 
 #### Steps
 
 1. Enumerate every authority-changing event family registered for M2 and fail
    setup if the scenario campaign omits, renames, duplicates, or substitutes one.
-2. For each applicable family, inject crash before publication, crash after
-   durable commit before response/projection publication, lost response,
-   malformed acknowledgement, restart before reconciliation, and restart after
-   reconciliation.
-3. Repeat each declared crash/ambiguity cut at least 100 times as required by
-   NFR-001, NFR-002, FR-025, and the mission success criteria.
-4. Script fake tracker observations for unavailable, stale, contradictory,
+2. For each family, execute its exact semantic publication, refusal,
+   replay/collision, and restore proof at least 100 times. A family row may name
+   only behavior the cited executable actually performs.
+3. At the sole production publication coordinator/GapDB committer boundary,
+   inject crash before publication, crash after durable commit before
+   response/projection publication, lost response, malformed acknowledgement,
+   restart before reconciliation, and restart after reconciliation. Repeat each
+   cut at least 100 times as required by NFR-001, NFR-002, FR-025, and the
+   mission success criteria.
+4. Add an executable composition guard and controlled bypass mutant proving
+   every host-served command capability reaches authority only through that
+   qualified boundary. Qualify `runtime_host` bootstrap at its pre-coordinator
+   sealed GapDB batch; treat `operation` as mandatory plan membership; and do
+   not claim a Host route for registered `outbox` until one exists. Do not add
+   a production fault-injection configuration surface.
+5. Script fake tracker observations for unavailable, stale, contradictory,
    unattributed, maliciously changed, and permanently ambiguous outcomes while
    preserving the existing fake tracker protocol.
-5. Assert committed operations have exactly one result and complete batch
+6. Assert committed operations have exactly one result and complete batch
    membership; absent operations have no authority fragments; ambiguous ones
    remain explicit with no blind retry or compensation.
-6. Run universal invariants after each cut and after recovery using only typed
+7. Run universal invariants after each cut and after recovery using only typed
    domain/projection queries plus attributable tracker/repository evidence.
-7. Add mutants for omitted intent, partial batch, duplicate transition, changed
+8. Add mutants for omitted intent, partial batch, duplicate transition, changed
    OperationID retry, projection-as-authority, stale epoch acceptance, stale
    WorkRevision/lease/candidate/policy/reviewer/fence acceptance, unsafe
    compensation, and integration fence bypass.
-8. Add harness-integrity mutants for SQLite/raw-key introspection, CLI prose
+9. Add harness-integrity mutants for SQLite/raw-key introspection, CLI prose
    parsing, missing family coverage, disabled repetition, swallowed typed
    refusal, and fake tracker contract drift.
-9. Emit a bounded machine-readable campaign census keyed by source revision,
-   authority family, fault cut, repetition count, test, mutants, and outcomes.
+10. Emit a bounded machine-readable campaign census with separate
+    family-semantic and publication-cut evidence, keyed by source revision,
+    family or cut, repetition count, executable test, mutants, and outcomes.
+    Never multiply labels to report executions that did not occur.
 
 #### Files
 
@@ -405,8 +433,9 @@ long suite accidentally during ordinary focused iteration.
   refusal/mutation expectation, and evidence reference.
 - Uninterrupted and restart-after-each-authority-boundary two-item missions reach identical
   semantic terminal facts with no duplicate authority or effects.
-- All required 100-run concurrency, owner replacement, crash, ambiguity, and
-  lost-response campaigns pass with complete family coverage.
+- All required 100-run family-semantic, concurrency, owner replacement, shared
+  publication-cut, ambiguity, and lost-response campaigns pass, and the
+  no-bypass proof binds complete family coverage to the qualified boundary.
 - Universal invariants execute after every relevant capability/cut and all declared
   mutant controls prove the assertions are capable of failing.
 - Focused tests, bounded race runs, architecture checks, `go vet`,
@@ -459,8 +488,9 @@ not as a test-file port. Require direct evidence that:
    produce identical semantic terminal state with predecessor fencing.
 7. The 100-run campaigns demonstrate independent progress, same-head exclusion,
    zombie fencing, ActorID reviewer independence, and target-ref serialization.
-8. Every authority family has applicable crash, ambiguity, restart, and
-   dishonest-observer coverage with exactly-one-result/all-or-nothing evidence.
+8. Every authority family has exact semantic/replay/restore evidence; every
+   publication cut has exactly-one-result/all-or-nothing evidence at the sole
+   production boundary; and an executable no-bypass proof binds the axes.
 9. Universal invariants run throughout the campaign and every named mutant is
    killed by an assertion tied to the violated product law.
 10. The diff is confined to `internal/scenario/**` and does not weaken product
@@ -468,5 +498,7 @@ not as a test-file port. Require direct evidence that:
 
 Reject if tests replace SQLite reads with raw GapDB reads, start a harness-only
 authority owner, parse CLI prose, silently reduce repetitions, omit an event
-family or frozen behavior, infer authority from tracker/Git/filesystem state, or
-claim parity without executable source-bound evidence and killed controls.
+family or frozen behavior, infer authority from tracker/Git/filesystem state,
+add a production fault-injection backdoor, multiply metadata labels into fake
+executions, or claim parity without executable source-bound evidence and killed
+controls.
