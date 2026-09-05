@@ -153,6 +153,21 @@ only the first two survive.
 - Historical owners, epochs, capsules, leases, workspaces, candidates, and
   fences cannot mutate current authority.
 
+## Ratified review clarifications
+
+- Production publication faults are qualified by the orthogonal family/cut
+  method in `research/compositional-fault-qualification.md`; no Cartesian label
+  is counted as an experiment.
+- Concurrency is qualified by the complete two-item scenario plus attributable
+  capability contention, host no-global-mutex, and mutant axes described in
+  `research/compositional-concurrency-qualification.md`.
+- The scenario's decomposition boundary is native autonomous readiness plus an
+  acknowledged finalized WorkRevision. Removed Python phase cursor, Markdown
+  task-list, and manual ceremony gates are not parity requirements.
+- The external-effect saga exercises the fake tracker. Outbox remains a
+  registered/replayed adapter capability without an M2 production Host command
+  surface and is not falsely reported as a scenario route.
+
 ### Subtask T070 - Replace SQLite harness setup and introspection
 
 #### Purpose
