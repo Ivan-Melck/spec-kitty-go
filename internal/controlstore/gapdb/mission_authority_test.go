@@ -411,11 +411,12 @@ func TestReadinessAuthorityPublishesResolvedPolicyFactInSameGapDBBatchV2(t *test
 	}
 	openCommand := readinessCommandGapDBFixtureV2(opened, created, mission.ReadinessEventFactOpenedV2)
 	openCommand.RelatedFact = &mission.MissionFactTransitionV2{Successor: openFact}
-	if _, err = service.Execute(t.Context(), openCommand); err != nil {
+	openResult, err := service.Execute(t.Context(), openCommand)
+	if err != nil {
 		t.Fatal(err)
 	}
 	observedOpen, err := authority.ObserveMissionFact(t.Context(), opened.ProjectID(), opened.MissionID(), mission.MissionFactDecisionV2, scoped.FactID)
-	if err != nil || !observedOpen.Found || observedOpen.State.Digest() != openFact.Digest() {
+	if err != nil || !observedOpen.Found || observedOpen.State.Digest() != openFact.Digest() || openResult.RecordRevision() != observedOpen.RecordRevision {
 		t.Fatalf("open fact was not atomically observable: %+v err=%v", observedOpen, err)
 	}
 
@@ -448,7 +449,7 @@ func TestReadinessAuthorityPublishesResolvedPolicyFactInSameGapDBBatchV2(t *test
 	}
 	beforeBatches := memory.batchCalls
 	replay, err := service.Execute(t.Context(), resolveCommand)
-	if err != nil || !replay.Replayed() || !bytes.Equal(replay.CanonicalBytes(), resolveResult.CanonicalBytes()) || memory.batchCalls != beforeBatches {
+	if err != nil || !replay.Replayed() || !bytes.Equal(replay.CanonicalBytes(), resolveResult.CanonicalBytes()) || replay.RecordRevision() != resolveResult.RecordRevision() || memory.batchCalls != beforeBatches {
 		t.Fatalf("fact-bearing operation did not replay exactly: replay=%s err=%v batches=%d/%d", replay.CanonicalBytes(), err, beforeBatches, memory.batchCalls)
 	}
 }

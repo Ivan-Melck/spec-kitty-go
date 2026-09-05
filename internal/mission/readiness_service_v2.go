@@ -70,11 +70,12 @@ type ReadinessAuthorityCommandV2 struct {
 }
 
 type ReadinessAuthorityResultV2 struct {
-	state         ReadinessAuthorityStateV2
-	operationID   journalv2.OperationID
-	publicationID journalv2.PublicationID
-	canonical     []byte
-	replayed      bool
+	state          ReadinessAuthorityStateV2
+	operationID    journalv2.OperationID
+	publicationID  journalv2.PublicationID
+	recordRevision uint64
+	canonical      []byte
+	replayed       bool
 }
 
 func (r ReadinessAuthorityResultV2) State() ReadinessAuthorityStateV2   { return r.state }
@@ -82,6 +83,7 @@ func (r ReadinessAuthorityResultV2) OperationID() journalv2.OperationID { return
 func (r ReadinessAuthorityResultV2) PublicationID() journalv2.PublicationID {
 	return r.publicationID
 }
+func (r ReadinessAuthorityResultV2) RecordRevision() uint64 { return r.recordRevision }
 func (r ReadinessAuthorityResultV2) CanonicalBytes() []byte { return bytes.Clone(r.canonical) }
 func (r ReadinessAuthorityResultV2) Replayed() bool         { return r.replayed }
 
@@ -121,6 +123,7 @@ func (s *ReadinessAuthorityServiceV2) Execute(ctx context.Context, command Readi
 		if decodeErr != nil || result.operationID != command.OperationID {
 			return ReadinessAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "operation_result", decodeErr)
 		}
+		result.recordRevision = resolution.StateRecordRevision
 		return result, nil
 	case OperationConflictV2:
 		return ReadinessAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityIdempotencyConflictV2, "operation_id", nil)
@@ -174,7 +177,7 @@ func (s *ReadinessAuthorityServiceV2) Execute(ctx context.Context, command Readi
 	if err := publication.validate(plan); err != nil {
 		return ReadinessAuthorityResultV2{}, err
 	}
-	return ReadinessAuthorityResultV2{state: command.Updated, operationID: command.OperationID, publicationID: plan.PublicationID(), canonical: resultBytes}, nil
+	return ReadinessAuthorityResultV2{state: command.Updated, operationID: command.OperationID, publicationID: plan.PublicationID(), recordRevision: publication.ProviderRevision, canonical: resultBytes}, nil
 }
 
 func validateReadinessAuthorityCommandV2(command ReadinessAuthorityCommandV2) (journalv2.OperationBindingV2, error) {
