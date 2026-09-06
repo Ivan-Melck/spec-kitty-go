@@ -197,11 +197,13 @@ func TestBeadsDocumentationLinksMermaidAndCommands(t *testing.T) {
 	if err := phase2ValidateQualificationCommand(readme, makefile, storageKeys); err != nil {
 		t.Error(err)
 	}
-	binary, help := phase2SmokeHelperAndInstaller(t, root)
-	if err := phase2ValidateHelperCommand(readme, help); err != nil {
-		t.Error(err)
+	_, help := phase2SmokeHelperAndInstaller(t, root)
+	if !strings.Contains(help, "native local mission authority") || !strings.Contains(help, "operation resume") {
+		t.Errorf("compatibility helper does not delegate to the native command surface: %q", help)
 	}
-	phase2SmokeDocumentedHelper(t, root, binary, readme)
+	if strings.Contains(help, "inspect-beads") {
+		t.Errorf("compatibility helper retained the retired inspect-beads surface: %q", help)
+	}
 	if err := phase2ValidateInstallerCommand(readme); err != nil {
 		t.Error(err)
 	}
@@ -849,9 +851,9 @@ func phase2SmokeHelperAndInstaller(t *testing.T, root string) (string, string) {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "spk-phase1-helper")
 	phase2RunCommand(t, root, 0, "go", "build", "-trimpath", "-o", binary, "./cmd/spk-phase1-helper")
-	help := phase2RunCommand(t, root, 2, binary, "tracker", "inspect-beads", "--help")
-	if !strings.Contains(help, "Usage of tracker inspect-beads") {
-		t.Fatalf("inspect-beads help seam returned unexpected output: %q", help)
+	help := phase2RunCommand(t, root, 0, binary, "--help")
+	if !strings.Contains(help, "spec-kitty") {
+		t.Fatalf("native helper help seam returned unexpected output: %q", help)
 	}
 	installer := filepath.Join(root, "scripts", "install-qualified-beads.sh")
 	relative := phase2RunCommand(t, root, 2, "sh", installer, "--dest", "relative")

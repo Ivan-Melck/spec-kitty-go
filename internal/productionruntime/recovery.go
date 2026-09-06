@@ -141,10 +141,14 @@ func (b AuthorityBindingV2) canonical() ([]byte, error) {
 }
 
 type authorityPort interface {
-	Get(context.Context, string) (storegapdb.Record, error)
+	authorityReader
 	ConditionalMutate(context.Context, string, storegapdb.Mutation, storegapdb.AckMode) (storegapdb.MutationResult, error)
 	AdmitRuntimeEpoch(context.Context, storegapdb.RuntimeEpochBatch) (storegapdb.MutationResult, error)
 	Inspect(context.Context) (storegapdb.Inspection, error)
+}
+
+type authorityReader interface {
+	Get(context.Context, string) (storegapdb.Record, error)
 }
 
 func ensureAuthorityBinding(ctx context.Context, port authorityPort, expected AuthorityBindingV2, initialize bool) error {
@@ -191,7 +195,7 @@ type runtimeCurrentV2 struct {
 	Status                 string                    `json:"status"`
 }
 
-func readCurrentEpoch(ctx context.Context, port authorityPort) (runtimeCurrentV2, uint64, error) {
+func readCurrentEpoch(ctx context.Context, port authorityReader) (runtimeCurrentV2, uint64, error) {
 	record, err := port.Get(ctx, runtimeCurrentKey)
 	if storegapdb.IsKind(err, storegapdb.OutcomeNotFound) {
 		return runtimeCurrentV2{}, 0, nil

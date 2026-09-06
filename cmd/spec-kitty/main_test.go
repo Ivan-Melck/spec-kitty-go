@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/helpercmd"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 )
 
 func TestNativeAndCompatibilityBinariesHaveOneClosedSurface(t *testing.T) {
@@ -109,7 +114,7 @@ func writeFixture(t *testing.T, path string, value []byte) {
 	}
 }
 
-func TestRealGapDBHostInitializesAndRestartsThroughNativeBinary(t *testing.T) {
+func TestRealGapDBMutationInitializesAndQueriesRemainPureAcrossRestart(t *testing.T) {
 	sidecar := os.Getenv("SPEC_KITTY_WP15_GAPDBD")
 	if sidecar == "" {
 		t.Skip("set SPEC_KITTY_WP15_GAPDBD to the exact admitted assertion-extension sidecar")
@@ -132,6 +137,16 @@ func TestRealGapDBHostInitializesAndRestartsThroughNativeBinary(t *testing.T) {
 		"SPEC_KITTY_EVIDENCE_ROOT="+evidence,
 		"SPEC_KITTY_RUNTIME_ROOT="+runtimeRoot,
 	)
+	initialize := exec.Command(binary, "--control-root", root, "initialize")
+	initialize.Env = environment
+	initializedBytes, initializeErr := initialize.Output()
+	if initializeErr != nil {
+		t.Fatalf("initialize: %v: %s", initializeErr, initializedBytes)
+	}
+	var initialized helpercmd.Envelope
+	if err := json.Unmarshal(initializedBytes, &initialized); err != nil || initialized.Host == nil || initialized.RuntimeEpochID == "" {
+		t.Fatalf("initialize envelope=%+v err=%v output=%s", initialized, err, initializedBytes)
+	}
 	var first helpercmd.Envelope
 	for run := 0; run < 2; run++ {
 		command := exec.Command(binary, "--control-root", root, "status")
@@ -146,10 +161,158 @@ func TestRealGapDBHostInitializesAndRestartsThroughNativeBinary(t *testing.T) {
 		}
 		if run == 0 {
 			first = current
-		} else if current.DatabaseID != first.DatabaseID || current.RuntimeEpochID == first.RuntimeEpochID || current.ProjectionRevision <= first.ProjectionRevision {
-			t.Fatalf("restart identity mismatch first=%+v second=%+v", first, current)
+		} else if current.DatabaseID != first.DatabaseID || current.RuntimeEpochID != first.RuntimeEpochID || current.ProjectionRevision != first.ProjectionRevision || current.Host.ProjectionSHA256 != first.Host.ProjectionSHA256 {
+			t.Fatalf("query mutated durable coordinate first=%+v second=%+v", first, current)
 		}
 	}
+	if first.RuntimeEpochID != initialized.RuntimeEpochID || first.ProjectionRevision != initialized.ProjectionRevision {
+		t.Fatalf("query changed initialization coordinate initialized=%+v queried=%+v", initialized, first)
+	}
+}
+
+func TestRealGapDBLostAcknowledgementRestartResumeAndConflict(t *testing.T) {
+	sidecar := os.Getenv("SPEC_KITTY_WP15_GAPDBD")
+	if sidecar == "" {
+		t.Skip("set SPEC_KITTY_WP15_GAPDBD to the exact admitted assertion-extension sidecar")
+	}
+	repository := repositoryRoot(t)
+	binary := buildBinary(t, repository, "./cmd/spec-kitty")
+	parent, err := os.MkdirTemp("/tmp", "spk-wp15-resume-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(parent) })
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "authority")
+	environment := append(os.Environ(),
+		"SPEC_KITTY_GAPDBD_PATH="+sidecar,
+		"SPEC_KITTY_EVIDENCE_ROOT="+filepath.Join(repository, "docs", "programs", "evidence"),
+		"SPEC_KITTY_RUNTIME_ROOT="+filepath.Join(parent, "runtime"),
+	)
+	initialize := exec.Command(binary, "--control-root", root, "initialize")
+	initialize.Env = environment
+	initializedBytes, err := initialize.Output()
+	if err != nil {
+		t.Fatalf("initialize: %v: %s", err, initializedBytes)
+	}
+	var initialized helpercmd.Envelope
+	if err := json.Unmarshal(initializedBytes, &initialized); err != nil || initialized.RuntimeEpochID == "" {
+		t.Fatalf("initialize envelope=%+v err=%v output=%s", initialized, err, initializedBytes)
+	}
+
+	operationID := journalv2.OperationID("operation-live-lost-ack")
+	definition := sha256.Sum256([]byte("live-lost-ack-definition"))
+	digest, err := journalv2.ParseDigest("definition", fmt.Sprintf("%x", definition))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := mission.NewMissionAuthorityStateV2(mission.MissionAuthorityStateInputV2{
+		ProjectID: "project-live", MissionID: "mission-live", DefinitionRevision: "definition-live", DefinitionDigest: digest,
+		Version: 1, Status: mission.AuthorityMissionActiveV2, Step: "initialized", LastOperationID: operationID, ObservedAt: "2026-09-05T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type missionWire struct {
+		SchemaVersion    uint32                     `json:"schema_version"`
+		OperationID      journalv2.OperationID      `json:"operation_id"`
+		ProjectID        journalv2.ProjectID        `json:"project_id"`
+		MissionID        journalv2.MissionID        `json:"mission_id"`
+		ActorID          journalv2.ActorID          `json:"actor_id"`
+		ProcessID        journalv2.ProcessID        `json:"process_id"`
+		RuntimeEpochID   journalv2.RuntimeEpochID   `json:"runtime_epoch_id"`
+		DoctrineRevision string                     `json:"doctrine_revision"`
+		ProfileRevision  string                     `json:"profile_revision"`
+		PolicyRevision   string                     `json:"policy_revision"`
+		ObservedAt       string                     `json:"observed_at"`
+		EventType        mission.MissionEventTypeV2 `json:"event_type"`
+		Successor        json.RawMessage            `json:"successor"`
+	}
+	wire := missionWire{
+		SchemaVersion: mission.MissionAuthoritySchemaVersionV2, OperationID: operationID, ProjectID: "project-live", MissionID: "mission-live",
+		ActorID: "actor-live", ProcessID: "process-live", RuntimeEpochID: initialized.RuntimeEpochID,
+		DoctrineRevision: "doctrine-live", ProfileRevision: "profile-live", PolicyRevision: "policy-live",
+		ObservedAt: "2026-09-05T12:00:00Z", EventType: mission.MissionEventCreatedV2, Successor: state.CanonicalBytes(),
+	}
+	requestFor := func(value missionWire) []byte {
+		payload, marshalErr := json.Marshal(value)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		request, marshalErr := json.Marshal(helpercmd.OperationRequest{SchemaVersion: 1, Action: string(mission.ActionMissionCreate), Scope: "mission:mission-live", Kind: helpercmd.OperationMission, Payload: payload})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		return request
+	}
+	run := func(verb string, request []byte) ([]byte, error) {
+		command := exec.Command(binary, "--control-root", root, "operation", verb, "--request", "-")
+		command.Env = environment
+		command.Stdin = bytes.NewReader(request)
+		return command.Output()
+	}
+
+	// A response-drop proxy accepts the command's success bytes, then cuts the
+	// transport before acknowledgement. Run therefore reports a transport
+	// failure even though the native process durably accepted the operation.
+	drop := &droppedAcknowledgementWriter{}
+	lost := exec.Command(binary, "--control-root", root, "operation", "execute", "--request", "-")
+	lost.Env = environment
+	lost.Stdin = bytes.NewReader(requestFor(wire))
+	lost.Stdout = drop
+	var lostStderr bytes.Buffer
+	lost.Stderr = &lostStderr
+	lostErr := lost.Run()
+	if lostErr == nil || !strings.Contains(lostErr.Error(), errAcknowledgementDropped.Error()) {
+		t.Fatalf("response-drop proxy did not cut acknowledgement: err=%v stderr=%s", lostErr, lostStderr.String())
+	}
+	lostAcknowledgement := drop.accepted.Bytes()
+	var accepted helpercmd.Envelope
+	if err := json.Unmarshal(lostAcknowledgement, &accepted); err != nil || accepted.Outcome != helpercmd.OutcomeSuccess || accepted.Result == nil {
+		t.Fatalf("transport cut before durable acceptance evidence: envelope=%+v err=%v bytes=%s", accepted, err, lostAcknowledgement)
+	}
+	resumedBytes, err := run("resume", requestFor(wire))
+	if err != nil {
+		t.Fatalf("restart resume: %v: %s", err, resumedBytes)
+	}
+	var committed, resumed helpercmd.Envelope
+	if err := json.Unmarshal(lostAcknowledgement, &committed); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(resumedBytes, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if committed.Result == nil || resumed.Result == nil || committed.Result.Kind != helpercmd.ResultMission || resumed.Result.Kind != helpercmd.ResultMission || !bytes.Equal(committed.Result.Payload, resumed.Result.Payload) || committed.RequestSHA256 != resumed.RequestSHA256 {
+		t.Fatalf("resume did not return exact committed result: committed=%+v resumed=%+v", committed, resumed)
+	}
+
+	wire.ActorID = "actor-conflicting"
+	conflictBytes, conflictErr := run("resume", requestFor(wire))
+	if conflictErr == nil {
+		t.Fatalf("changed request unexpectedly succeeded: %s", conflictBytes)
+	}
+	var conflict helpercmd.Envelope
+	if err := json.Unmarshal(conflictBytes, &conflict); err != nil || conflict.Outcome != helpercmd.OutcomeConflict || conflict.Diagnostic == nil || conflict.Diagnostic.Kind != string(mission.MissionAuthorityIdempotencyConflictV2) {
+		t.Fatalf("changed request conflict envelope=%+v decode=%v output=%s", conflict, err, conflictBytes)
+	}
+}
+
+var errAcknowledgementDropped = errors.New("test transport dropped acknowledgement")
+
+type droppedAcknowledgementWriter struct {
+	accepted bytes.Buffer
+	dropped  bool
+}
+
+func (w *droppedAcknowledgementWriter) Write(value []byte) (int, error) {
+	if w.dropped {
+		return 0, errAcknowledgementDropped
+	}
+	w.dropped = true
+	_, _ = w.accepted.Write(value)
+	return len(value), errAcknowledgementDropped
 }
 
 func TestNativeBinaryDependencyGraphContainsNoSQLite(t *testing.T) {

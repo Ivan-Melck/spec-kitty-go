@@ -62,7 +62,7 @@ type Envelope struct {
 	Host               *productionruntime.HostStatus      `json:"host,omitempty"`
 	Progress           *productionruntime.MissionProgress `json:"progress,omitempty"`
 	Item               *productionruntime.ProgressItem    `json:"item,omitempty"`
-	Result             json.RawMessage                    `json:"result,omitempty"`
+	Result             *TypedResult                       `json:"result,omitempty"`
 	Drive              *DriveResult                       `json:"drive,omitempty"`
 	Diagnostic         *Diagnostic                        `json:"diagnostic,omitempty"`
 }
@@ -70,15 +70,47 @@ type Envelope struct {
 type OperationKind string
 
 const (
-	OperationMission   OperationKind = "mission"
-	OperationReadiness OperationKind = "readiness"
+	OperationMission            OperationKind = "mission"
+	OperationReadiness          OperationKind = "readiness"
+	OperationExecution          OperationKind = "execution"
+	OperationWorkspaceRebind    OperationKind = "workspace_rebind"
+	OperationHandoff            OperationKind = "handoff"
+	OperationReview             OperationKind = "review"
+	OperationAcceptance         OperationKind = "acceptance"
+	OperationIntegration        OperationKind = "integration"
+	OperationIntegrationCleanup OperationKind = "integration_cleanup"
+	OperationEffect             OperationKind = "effect"
 )
+
+type ResultKind string
+
+const (
+	ResultMission            ResultKind = "mission"
+	ResultReadiness          ResultKind = "readiness"
+	ResultExecution          ResultKind = "execution"
+	ResultWorkspace          ResultKind = "workspace"
+	ResultHandoff            ResultKind = "handoff"
+	ResultReview             ResultKind = "review"
+	ResultAcceptance         ResultKind = "acceptance"
+	ResultIntegration        ResultKind = "integration"
+	ResultIntegrationCleanup ResultKind = "integration_cleanup"
+	ResultEffect             ResultKind = "effect"
+)
+
+// TypedResult is a closed discriminated result. Payload remains canonical
+// capability-owned JSON, but automation never has to infer its schema from
+// shape or from the command's prose name.
+type TypedResult struct {
+	Kind    ResultKind      `json:"kind"`
+	Payload json.RawMessage `json:"payload"`
+}
 
 // OperationRequest is a closed tagged union. Payload is decoded by the
 // matching capability adapter; unsupported variants fail closed.
 type OperationRequest struct {
 	SchemaVersion uint32          `json:"schema_version"`
 	Action        string          `json:"action"`
+	Scope         string          `json:"scope"`
 	Kind          OperationKind   `json:"kind"`
 	Payload       json.RawMessage `json:"payload"`
 }
@@ -90,6 +122,7 @@ type DrivePlan struct {
 
 type DriveStep struct {
 	Action        string  `json:"action"`
+	Scope         string  `json:"scope"`
 	OperationID   string  `json:"operation_id"`
 	RequestSHA256 string  `json:"request_sha256"`
 	Outcome       Outcome `json:"outcome"`

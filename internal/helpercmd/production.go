@@ -104,6 +104,31 @@ func (f *productionFactory) Start(ctx context.Context, root string) (hostSession
 	return productionSession{host: host}, nil
 }
 
+func (f *productionFactory) Observe(ctx context.Context, root string) (observationSession, error) {
+	installation, err := f.resolve(root)
+	if err != nil {
+		return nil, &productionruntime.Error{Kind: productionruntime.ErrorInvalidConfiguration, State: productionruntime.HostRecovering, Field: "installation"}
+	}
+	hostDigest := sha256.Sum256([]byte(filepath.Clean(root)))
+	policyDigest := sha256.Sum256([]byte(productPolicy))
+	runID, err := randomToken("observe-", 12)
+	if err != nil {
+		return nil, &productionruntime.Error{Kind: productionruntime.ErrorStartup, State: productionruntime.HostRecovering, Field: "run_identity"}
+	}
+	observation, err := productionruntime.Observe(ctx, productionruntime.Config{
+		ControlRoot: root, HostAuthorityID: journalv2.HostAuthorityID("host-" + hex.EncodeToString(hostDigest[:12])),
+		AuthorityBindingOperationID:          "bind-" + hex.EncodeToString(hostDigest[:12]),
+		M1AdoptionRecordPath:                 filepath.Join(installation.EvidenceRoot, "m1-adoption.json"),
+		AssertionExtensionAdoptionRecordPath: filepath.Join(installation.EvidenceRoot, "m1-assertion-extension-adoption.json"),
+		Sidecar:                              sidecargapdb.LifecycleConfig{ExecutablePath: installation.GapDBExecutable, AdmissionRecordPath: filepath.Join(installation.EvidenceRoot, "m1-assertion-extension-admission.json"), RuntimeRoot: installation.RuntimeRoot, DataDirectory: root, SupervisorRunID: runID, ProductPolicySHA256: hex.EncodeToString(policyDigest[:])},
+		CapabilityReadiness:                  unavailableReadinessSource{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return productionObservation{observation: observation}, nil
+}
+
 func (f *productionFactory) resolve(root string) (Installation, error) {
 	installation := f.installation
 	if installation.RuntimeRoot == "" {
@@ -127,6 +152,19 @@ func randomToken(prefix string, bytes int) (string, error) {
 
 type productionSession struct{ host *productionruntime.Host }
 
+type productionObservation struct {
+	observation *productionruntime.Observation
+}
+
+func (s productionObservation) Status() productionruntime.HostStatus { return s.observation.Status() }
+func (s productionObservation) Mission(project journalv2.ProjectID, missionID journalv2.MissionID) (productionruntime.MissionProgress, error) {
+	return s.observation.Progress().Mission(project, missionID)
+}
+func (s productionObservation) Operation(project journalv2.ProjectID, missionID journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
+	return s.observation.Progress().Get(project, missionID, productionruntime.ProgressOperations, operation)
+}
+func (s productionObservation) Close(ctx context.Context) error { return s.observation.Close(ctx) }
+
 func (s productionSession) Status() productionruntime.HostStatus { return s.host.Status() }
 func (s productionSession) Mission(project journalv2.ProjectID, missionID journalv2.MissionID) (productionruntime.MissionProgress, error) {
 	return s.host.Progress().Mission(project, missionID)
@@ -134,23 +172,96 @@ func (s productionSession) Mission(project journalv2.ProjectID, missionID journa
 func (s productionSession) Operation(project journalv2.ProjectID, missionID journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
 	return s.host.Progress().Get(project, missionID, productionruntime.ProgressOperations, operation)
 }
-func (s productionSession) Execute(ctx context.Context, operation decodedOperation) (json.RawMessage, error) {
+func (s productionSession) Execute(ctx context.Context, operation decodedOperation) (TypedResult, error) {
 	epoch := s.host.RuntimeEpochID()
 	if operation.mission != nil {
 		result, err := s.host.ExecuteMission(ctx, epoch, *operation.mission)
 		if err != nil {
-			return nil, err
+			return TypedResult{}, err
 		}
-		return result.CanonicalBytes(), nil
+		return TypedResult{Kind: ResultMission, Payload: result.CanonicalBytes()}, nil
 	}
 	if operation.readiness != nil {
 		result, err := s.host.ExecuteReadiness(ctx, epoch, *operation.readiness)
 		if err != nil {
-			return nil, err
+			return TypedResult{}, err
 		}
-		return result.CanonicalBytes(), nil
+		return TypedResult{Kind: ResultReadiness, Payload: result.CanonicalBytes()}, nil
 	}
-	return nil, errors.New("operation has no admitted capability")
+	if operation.execution != nil {
+		result, err := s.host.ExecuteWork(ctx, epoch, *operation.execution)
+		if err != nil {
+			return TypedResult{}, err
+		}
+		payload, err := journalv2.CanonicalObject(mustJSON(map[string]any{"schema_version": 1, "state": json.RawMessage(result.State.CanonicalBytes()), "replayed": result.Replayed}))
+		if err != nil {
+			return TypedResult{}, err
+		}
+		return TypedResult{Kind: ResultExecution, Payload: payload}, nil
+	}
+	if operation.rebind != nil {
+		result, err := s.host.RebindWorkspaceRuntimeEpoch(ctx, epoch, *operation.rebind)
+		if err != nil {
+			return TypedResult{}, err
+		}
+		payload, err := typedPayload(map[string]any{"schema_version": 1, "execution": json.RawMessage(result.Execution.CanonicalBytes()), "workspace": json.RawMessage(result.Workspace.CanonicalBytes()), "replayed": result.Replayed})
+		return TypedResult{Kind: ResultWorkspace, Payload: payload}, err
+	}
+	if operation.handoff != nil {
+		result, err := s.host.SubmitHandoff(ctx, epoch, *operation.handoff)
+		if err != nil {
+			return TypedResult{}, err
+		}
+		payload, err := typedPayload(map[string]any{"schema_version": 1, "state": json.RawMessage(result.State.CanonicalBytes()), "publication_id": result.PublicationID, "replayed": result.Replayed})
+		return TypedResult{Kind: ResultHandoff, Payload: payload}, err
+	}
+	if operation.review != nil {
+		result, err := s.host.SubmitReview(ctx, epoch, *operation.review)
+		if err != nil {
+			return TypedResult{}, err
+		}
+		payload, err := typedPayload(map[string]any{"schema_version": 1, "state": json.RawMessage(result.State.CanonicalBytes()), "publication_id": result.PublicationID, "replayed": result.Replayed})
+		return TypedResult{Kind: ResultReview, Payload: payload}, err
+	}
+	if operation.acceptance != nil {
+		result, err := s.host.ExecuteAcceptance(ctx, epoch, *operation.acceptance)
+		if err != nil {
+			return TypedResult{}, err
+		}
+		payload, err := typedPayload(map[string]any{"schema_version": 1, "state": json.RawMessage(result.State.CanonicalBytes()), "publication_id": result.PublicationID, "replayed": result.Replayed})
+		return TypedResult{Kind: ResultAcceptance, Payload: payload}, err
+	}
+	if operation.integration != nil {
+		result, err := s.host.ExecuteIntegration(ctx, epoch, *operation.integration)
+		if err != nil {
+			return TypedResult{}, err
+		}
+		return TypedResult{Kind: ResultIntegration, Payload: result.CanonicalBytes()}, nil
+	}
+	if operation.cleanup != nil {
+		result, err := s.host.ExecuteIntegrationCleanup(ctx, epoch, *operation.cleanup)
+		if err != nil {
+			return TypedResult{}, err
+		}
+		return TypedResult{Kind: ResultIntegrationCleanup, Payload: result.CanonicalBytes()}, nil
+	}
+	if operation.effect != nil {
+		result, err := s.host.ExecuteEffect(ctx, epoch, *operation.effect)
+		if err != nil {
+			return TypedResult{}, err
+		}
+		state, err := result.State.CanonicalResultBytesV2()
+		if err != nil {
+			return TypedResult{}, err
+		}
+		payload, err := typedPayload(map[string]any{"schema_version": 1, "state": json.RawMessage(state), "execution": json.RawMessage(result.ExecutionSlot.CanonicalBytes()), "replayed": result.Replayed})
+		return TypedResult{Kind: ResultEffect, Payload: payload}, err
+	}
+	return TypedResult{}, errors.New("operation has no admitted capability")
+}
+
+func typedPayload(value any) ([]byte, error) {
+	return journalv2.CanonicalObject(mustJSON(value))
 }
 func (s productionSession) Close(ctx context.Context) error { return s.host.Close(ctx) }
 

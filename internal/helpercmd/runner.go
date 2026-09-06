@@ -18,16 +18,21 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 )
 
-type hostSession interface {
+type observationSession interface {
 	Status() productionruntime.HostStatus
 	Mission(journalv2.ProjectID, journalv2.MissionID) (productionruntime.MissionProgress, error)
 	Operation(journalv2.ProjectID, journalv2.MissionID, string) (productionruntime.ProgressItem, error)
-	Execute(context.Context, decodedOperation) (json.RawMessage, error)
 	Close(context.Context) error
+}
+
+type hostSession interface {
+	observationSession
+	Execute(context.Context, decodedOperation) (TypedResult, error)
 }
 
 type HostFactory interface {
 	Classify(context.Context, string) (controlroot.Decision, error)
+	Observe(context.Context, string) (observationSession, error)
 	Start(context.Context, string) (hostSession, error)
 }
 
@@ -106,7 +111,17 @@ func (r *Runner) Run(ctx context.Context, args []string, stdin io.Reader, stdout
 	if decision.Action != controlroot.Initialize && decision.Action != controlroot.Recover {
 		return render(stdout, stderr, options.command, options.output, failureEnvelope(options.command, &controlroot.OfflineDispositionError{Code: controlroot.OfflineDispositionRequiredCode, Disposition: decision.Disposition}))
 	}
-	session, startErr := r.factory.Start(ctx, options.controlRoot)
+	queryOnly := options.command == "status" || options.command == "progress" || options.command == "operation" && prepared.subcommand == "inspect"
+	if queryOnly && decision.Action == controlroot.Initialize {
+		return render(stdout, stderr, options.command, options.output, failureEnvelope(options.command, &productionruntime.Error{Kind: productionruntime.ErrorNotReady, State: productionruntime.HostRecovering, Field: "control_root_uninitialized"}))
+	}
+	var session observationSession
+	var startErr error
+	if queryOnly {
+		session, startErr = r.factory.Observe(ctx, options.controlRoot)
+	} else {
+		session, startErr = r.factory.Start(ctx, options.controlRoot)
+	}
 	if startErr != nil {
 		return render(stdout, stderr, options.command, options.output, failureEnvelope(options.command, startErr))
 	}
@@ -120,17 +135,23 @@ func (r *Runner) Run(ctx context.Context, args []string, stdin io.Reader, stdout
 
 func knownCommand(command string) bool {
 	switch command {
-	case "status", "progress", "operation", "drive":
+	case "initialize", "status", "progress", "operation", "drive":
 		return true
 	default:
 		return false
 	}
 }
 
-func (r *Runner) invoke(ctx context.Context, session hostSession, options globalOptions, prepared preparedCommand) (Envelope, int) {
+func (r *Runner) invoke(ctx context.Context, session observationSession, options globalOptions, prepared preparedCommand) (Envelope, int) {
 	status := session.Status()
 	base := Envelope{SchemaVersion: EnvelopeSchemaVersion, Command: options.command, Outcome: OutcomeSuccess, DatabaseID: status.DatabaseID, RuntimeEpochID: status.RuntimeEpochID, ProjectionRevision: status.ProjectionRevision}
 	switch options.command {
+	case "initialize":
+		if len(options.args) != 0 {
+			return invalidEnvelope(options.command, "arguments"), ExitInvalid
+		}
+		base.Host = &status
+		return base, ExitSuccess
 	case "status":
 		if len(options.args) != 0 {
 			return invalidEnvelope(options.command, "arguments"), ExitInvalid
@@ -146,23 +167,28 @@ func (r *Runner) invoke(ctx context.Context, session hostSession, options global
 		base.ProjectionRevision = progress.ProjectionRevision
 		return base, ExitSuccess
 	case "operation":
-		return invokeOperation(ctx, session, base, prepared)
+		if prepared.subcommand == "inspect" {
+			return invokeOperationInspect(session, base, prepared)
+		}
+		return invokeOperation(ctx, session.(hostSession), base, prepared)
 	case "drive":
-		return invokeDrive(ctx, session, base, prepared)
+		return invokeDrive(ctx, session.(hostSession), base, prepared)
 	default:
 		return invalidEnvelope(options.command, "command"), ExitInvalid
 	}
 }
 
+func invokeOperationInspect(session observationSession, base Envelope, prepared preparedCommand) (Envelope, int) {
+	item, err := session.Operation(prepared.projectID, prepared.missionID, prepared.operationID)
+	if err != nil {
+		return failureEnvelope("operation.inspect", err), exitFor(err)
+	}
+	base.Command, base.Item = "operation.inspect", &item
+	return base, ExitSuccess
+}
+
 func invokeOperation(ctx context.Context, session hostSession, base Envelope, prepared preparedCommand) (Envelope, int) {
 	switch prepared.subcommand {
-	case "inspect":
-		item, err := session.Operation(prepared.projectID, prepared.missionID, prepared.operationID)
-		if err != nil {
-			return failureEnvelope("operation.inspect", err), exitFor(err)
-		}
-		base.Command, base.Item = "operation.inspect", &item
-		return base, ExitSuccess
 	case "execute", "resume":
 		decoded := *prepared.operation
 		result, executeErr := session.Execute(ctx, decoded)
@@ -172,10 +198,40 @@ func invokeOperation(ctx context.Context, session hostSession, base Envelope, pr
 			failed.RequestSHA256, failed.DatabaseID, failed.RuntimeEpochID = decoded.requestSHA, base.DatabaseID, base.RuntimeEpochID
 			return failed, exitFor(executeErr)
 		}
-		base.Result = result
+		if result.Kind != resultKindFor(decoded.request.Kind) || !json.Valid(result.Payload) {
+			return failureEnvelope(base.Command, errors.New("capability returned an invalid typed result")), ExitUnavailable
+		}
+		base.Result = &result
 		return base, ExitSuccess
 	default:
 		return invalidEnvelope("operation", "subcommand"), ExitInvalid
+	}
+}
+
+func resultKindFor(kind OperationKind) ResultKind {
+	switch kind {
+	case OperationMission:
+		return ResultMission
+	case OperationReadiness:
+		return ResultReadiness
+	case OperationExecution:
+		return ResultExecution
+	case OperationWorkspaceRebind:
+		return ResultWorkspace
+	case OperationHandoff:
+		return ResultHandoff
+	case OperationReview:
+		return ResultReview
+	case OperationAcceptance:
+		return ResultAcceptance
+	case OperationIntegration:
+		return ResultIntegration
+	case OperationIntegrationCleanup:
+		return ResultIntegrationCleanup
+	case OperationEffect:
+		return ResultEffect
+	default:
+		return ""
 	}
 }
 
@@ -185,26 +241,26 @@ func invokeDrive(ctx context.Context, session hostSession, base Envelope, prepar
 	touched := make(map[string]decodedOperation)
 	for len(pending) != 0 {
 		ready := make([]int, 0, len(pending))
-		seenMission := make(map[string]bool)
+		seenScope := make(map[string]bool)
 		stopReason, stopCode := "action_not_authorized", ExitRefused
 		for index, decoded := range pending {
-			key := string(decoded.projectID) + "\x00" + string(decoded.missionID)
-			if seenMission[key] {
+			key := string(decoded.projectID) + "\x00" + string(decoded.missionID) + "\x00" + decoded.scope
+			if seenScope[key] {
 				continue
 			}
 			progress, progressErr := session.Mission(decoded.projectID, decoded.missionID)
 			if progressErr != nil {
 				if decoded.request.Action == string(mission.ActionMissionCreate) && progressNotFound(progressErr) {
 					ready = append(ready, index)
-					seenMission[key] = true
+					seenScope[key] = true
 					continue
 				}
 				stopReason, stopCode = "mission_progress_unavailable", exitFor(progressErr)
 				continue
 			}
-			if actionAuthorized(progress.Actions, decoded.request.Action) {
+			if actionAuthorized(progress.Actions, decoded.request.Action, decoded.scope) {
 				ready = append(ready, index)
-				seenMission[key] = true
+				seenScope[key] = true
 			}
 		}
 		if len(ready) == 0 {
@@ -223,7 +279,7 @@ func invokeDrive(ctx context.Context, session hostSession, base Envelope, prepar
 			go func() {
 				defer wait.Done()
 				_, executeErr := session.Execute(ctx, decoded)
-				step := DriveStep{Action: decoded.request.Action, OperationID: string(decoded.operation), RequestSHA256: decoded.requestSHA, Outcome: OutcomeSuccess}
+				step := DriveStep{Action: decoded.request.Action, Scope: decoded.scope, OperationID: string(decoded.operation), RequestSHA256: decoded.requestSHA, Outcome: OutcomeSuccess}
 				if executeErr != nil {
 					step.Outcome = failureEnvelope("drive", executeErr).Outcome
 				}
@@ -285,6 +341,10 @@ func terminalLifecycle(lifecycle string) bool {
 func prepare(options globalOptions, stdin io.Reader) (preparedCommand, error) {
 	var prepared preparedCommand
 	switch options.command {
+	case "initialize":
+		if len(options.args) != 0 {
+			return prepared, errors.New("arguments")
+		}
 	case "status":
 		if len(options.args) != 0 {
 			return prepared, errors.New("arguments")
@@ -359,9 +419,9 @@ func prepare(options globalOptions, stdin io.Reader) (preparedCommand, error) {
 	return prepared, nil
 }
 
-func actionAuthorized(actions []productionruntime.ActionAvailability, action string) bool {
+func actionAuthorized(actions []productionruntime.ActionAvailability, action, scope string) bool {
 	for _, candidate := range actions {
-		if candidate.Action == action && candidate.Status == "authorized" {
+		if candidate.Action == action && candidate.Scope == scope && candidate.Status == "authorized" {
 			return true
 		}
 	}
@@ -448,7 +508,9 @@ func render(stdout, stderr io.Writer, command, mode string, values ...any) int {
 			envelope = typed
 			code = exitForOutcome(typed.Outcome)
 		case int:
-			code = typed
+			// Exit status is derived exclusively from the closed outcome. Callers
+			// may retain a local diagnostic code, but it cannot contradict JSON.
+			_ = typed
 		}
 	}
 	if mode == "human" {
@@ -555,6 +617,7 @@ func exitForOutcome(outcome Outcome) int {
 const usage = `spec-kitty — native local mission authority
 
 Usage:
+  spec-kitty --control-root ABSOLUTE_PATH [--output json|human] initialize
   spec-kitty --control-root ABSOLUTE_PATH [--output json|human] status
   spec-kitty --control-root ABSOLUTE_PATH [--output json|human] progress --project ID --mission ID
   spec-kitty --control-root ABSOLUTE_PATH [--output json|human] operation inspect --project ID --mission ID --operation ID

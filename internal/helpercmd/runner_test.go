@@ -15,6 +15,9 @@ import (
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 )
@@ -26,6 +29,7 @@ type factorySpy struct {
 	startErr    error
 	session     *sessionSpy
 	classified  int
+	observed    int
 	started     int
 }
 
@@ -44,6 +48,15 @@ func (f *factorySpy) Start(context.Context, string) (hostSession, error) {
 	}
 	return f.session, nil
 }
+func (f *factorySpy) Observe(context.Context, string) (observationSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.observed++
+	if f.startErr != nil {
+		return nil, f.startErr
+	}
+	return f.session, nil
+}
 
 type sessionSpy struct {
 	mu        sync.Mutex
@@ -51,7 +64,7 @@ type sessionSpy struct {
 	progress  productionruntime.MissionProgress
 	queryErr  error
 	missionFn func(journalv2.ProjectID, journalv2.MissionID) (productionruntime.MissionProgress, error)
-	executeFn func(decodedOperation) (json.RawMessage, error)
+	executeFn func(decodedOperation) (TypedResult, error)
 	queries   int
 	executes  int
 	closes    int
@@ -78,7 +91,7 @@ func (s *sessionSpy) Operation(_ journalv2.ProjectID, _ journalv2.MissionID, ope
 	}
 	return productionruntime.ProgressItem{Family: "operation", AggregateID: operation, LogicalVersion: 1, AuthorityState: "resolved", CanonicalState: []byte(`{"ok":true}`)}, nil
 }
-func (s *sessionSpy) Execute(_ context.Context, operation decodedOperation) (json.RawMessage, error) {
+func (s *sessionSpy) Execute(_ context.Context, operation decodedOperation) (TypedResult, error) {
 	s.mu.Lock()
 	s.executes++
 	fn := s.executeFn
@@ -86,7 +99,7 @@ func (s *sessionSpy) Execute(_ context.Context, operation decodedOperation) (jso
 	if fn != nil {
 		return fn(operation)
 	}
-	return json.RawMessage(`{"schema_version":1,"ok":true}`), nil
+	return TypedResult{Kind: ResultMission, Payload: json.RawMessage(`{"schema_version":1,"ok":true}`)}, nil
 }
 func (s *sessionSpy) Close(context.Context) error {
 	s.mu.Lock()
@@ -114,8 +127,8 @@ func TestQueriesUseOneHostAndNeverInvokeMutation(t *testing.T) {
 			t.Fatalf("args=%v envelope=%+v err=%v", args, envelope, err)
 		}
 	}
-	if factory.started != 3 || session.closes != 3 || session.executes != 0 {
-		t.Fatalf("start=%d close=%d execute=%d", factory.started, session.closes, session.executes)
+	if factory.observed != 3 || factory.started != 0 || session.closes != 3 || session.executes != 0 {
+		t.Fatalf("observe=%d start=%d close=%d execute=%d", factory.observed, factory.started, session.closes, session.executes)
 	}
 }
 
@@ -178,13 +191,13 @@ func TestOperationResumePreservesExactTypedIdentity(t *testing.T) {
 	request := missionCreateRequest(t, "operation-resume-1")
 	var firstSHA string
 	session := defaultSession()
-	session.executeFn = func(operation decodedOperation) (json.RawMessage, error) {
+	session.executeFn = func(operation decodedOperation) (TypedResult, error) {
 		if firstSHA == "" {
 			firstSHA = operation.requestSHA
 		} else if operation.requestSHA != firstSHA {
-			return nil, &mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityIdempotencyConflictV2, Field: "operation_id"}
+			return TypedResult{}, &mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityIdempotencyConflictV2, Field: "operation_id"}
 		}
-		return json.RawMessage(`{"operation_id":"operation-resume-1","replayed":true}`), nil
+		return TypedResult{Kind: ResultMission, Payload: json.RawMessage(`{"operation_id":"operation-resume-1","replayed":true}`)}, nil
 	}
 	factory := admittedFactory(session)
 	runner, _ := NewRunner(factory)
@@ -211,15 +224,15 @@ func TestOperationIDReuseWithDifferentTypedRequestIsConflict(t *testing.T) {
 	request := missionCreateRequest(t, "operation-conflict-1")
 	var admittedSHA string
 	session := defaultSession()
-	session.executeFn = func(operation decodedOperation) (json.RawMessage, error) {
+	session.executeFn = func(operation decodedOperation) (TypedResult, error) {
 		if admittedSHA == "" {
 			admittedSHA = operation.requestSHA
-			return json.RawMessage(`{"ok":true}`), nil
+			return TypedResult{Kind: ResultMission, Payload: json.RawMessage(`{"ok":true}`)}, nil
 		}
 		if operation.requestSHA != admittedSHA {
-			return nil, &mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityIdempotencyConflictV2, Field: "operation_id"}
+			return TypedResult{}, &mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityIdempotencyConflictV2, Field: "operation_id"}
 		}
-		return json.RawMessage(`{"ok":true}`), nil
+		return TypedResult{Kind: ResultMission, Payload: json.RawMessage(`{"ok":true}`)}, nil
 	}
 	factory := admittedFactory(session)
 	runner, _ := NewRunner(factory)
@@ -247,7 +260,7 @@ func TestOperationIDReuseWithDifferentTypedRequestIsConflict(t *testing.T) {
 
 func TestDriveStopsBeforeUnauthorizedMutation(t *testing.T) {
 	session := defaultSession()
-	session.progress.Actions = []productionruntime.ActionAvailability{{Action: string(mission.ActionMissionPause), Status: "unavailable", BlockingPredicates: []string{"provider"}}}
+	session.progress.Actions = []productionruntime.ActionAvailability{{Action: string(mission.ActionMissionPause), Scope: "mission:mission-1", Status: "unavailable", BlockingPredicates: []string{"provider"}}}
 	factory := admittedFactory(session)
 	runner, _ := NewRunner(factory)
 	request := missionCreateRequest(t, "operation-drive-1")
@@ -267,7 +280,7 @@ func TestDriveStopsBeforeUnauthorizedMutation(t *testing.T) {
 func TestDriveDoesNotClaimTerminalWhenBoundedPlanIsExhausted(t *testing.T) {
 	session := defaultSession()
 	session.progress.Lifecycle = string(mission.MissionOpen)
-	session.progress.Actions = []productionruntime.ActionAvailability{{Action: string(mission.ActionMissionCreate), Status: "authorized"}}
+	session.progress.Actions = []productionruntime.ActionAvailability{{Action: string(mission.ActionMissionCreate), Scope: "mission:mission-1", Status: "authorized"}}
 	factory := admittedFactory(session)
 	runner, _ := NewRunner(factory)
 	request := missionCreateRequest(t, "operation-drive-active")
@@ -281,20 +294,26 @@ func TestDriveDoesNotClaimTerminalWhenBoundedPlanIsExhausted(t *testing.T) {
 	}
 }
 
-func TestDriveExecutesIndependentMissionActionsConcurrently(t *testing.T) {
+func TestDriveExecutesIndependentWorkScopesInOneMissionConcurrently(t *testing.T) {
 	session := defaultSession()
 	session.missionFn = func(_ journalv2.ProjectID, _ journalv2.MissionID) (productionruntime.MissionProgress, error) {
-		return productionruntime.MissionProgress{}, &productionruntime.ProgressError{Kind: productionruntime.ProgressNotFound, Field: "mission_id"}
+		return productionruntime.MissionProgress{
+			Lifecycle: string(mission.MissionCompleted),
+			Actions: []productionruntime.ActionAvailability{
+				{Action: string(mission.ActionExecutionClaim), Scope: "work:work-left", Status: "authorized"},
+				{Action: string(mission.ActionExecutionClaim), Scope: "work:work-right", Status: "authorized"},
+			},
+		}, nil
 	}
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
-	session.executeFn = func(decodedOperation) (json.RawMessage, error) {
+	session.executeFn = func(decodedOperation) (TypedResult, error) {
 		entered <- struct{}{}
 		<-release
-		return json.RawMessage(`{"ok":true}`), nil
+		return TypedResult{Kind: ResultExecution, Payload: json.RawMessage(`{"ok":true}`)}, nil
 	}
-	left := missionCreateRequestFor(t, "mission-left", "operation-left")
-	right := missionCreateRequestFor(t, "mission-right", "operation-right")
+	left := executionClaimRequest(t, "work-left", "operation-left")
+	right := executionClaimRequest(t, "work-right", "operation-right")
 	plan, _ := json.Marshal(DrivePlan{SchemaVersion: 1, Operations: []OperationRequest{left, right}})
 	factory := admittedFactory(session)
 	runner, _ := NewRunner(factory)
@@ -311,11 +330,143 @@ func TestDriveExecutesIndependentMissionActionsConcurrently(t *testing.T) {
 		}
 	}
 	close(release)
-	if code := <-done; code != ExitRefused { // both creates succeeded; missing terminal progress is an honest stop.
+	if code := <-done; code != ExitSuccess {
 		t.Fatalf("exit=%d", code)
 	}
 	if session.executes != 2 {
 		t.Fatalf("executes=%d", session.executes)
+	}
+}
+
+func TestDriveRequiresExactAuthorizedScope(t *testing.T) {
+	session := defaultSession()
+	session.progress.Actions = []productionruntime.ActionAvailability{{Action: string(mission.ActionExecutionClaim), Scope: "work:other-work", Status: "authorized"}}
+	factory := admittedFactory(session)
+	runner, _ := NewRunner(factory)
+	plan, _ := json.Marshal(DrivePlan{SchemaVersion: 1, Operations: []OperationRequest{executionClaimRequest(t, "work-target", "operation-scope")}})
+	var stdout bytes.Buffer
+	code := runner.Run(t.Context(), []string{"--control-root", filepath.Join(t.TempDir(), "authority"), "drive", "--plan", "-"}, bytes.NewReader(plan), &stdout, &bytes.Buffer{})
+	if code != ExitRefused || session.executes != 0 {
+		t.Fatalf("scope mismatch crossed authority: exit=%d executes=%d output=%s", code, session.executes, stdout.String())
+	}
+}
+
+func TestClosedReadinessFactRetainsItsExactWorkScope(t *testing.T) {
+	digest, err := journalv2.ParseDigest("definition", strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped := mission.ScopedMissionFactV2{
+		Kind: mission.ScopedFactDecisionV2, FactID: "decision-close-scope",
+		Scope:            mission.ActionRef{ID: mission.ActionAcceptanceEvaluate, Scope: mission.AuthorityScope{Kind: mission.ScopeWork, Identity: "work-scoped"}},
+		EvidenceIdentity: "decision-evidence", EvidenceDigest: strings.Repeat("b", 64),
+	}
+	expected, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+		ProjectID: "project-1", MissionID: "mission-1", DefinitionRevision: "definition-1", DefinitionDigest: digest,
+		Version: 1, Lifecycle: mission.MissionOpen, ActiveFacts: []mission.ScopedMissionFactV2{scoped},
+		LastOperationID: "operation-fact-open", ObservedAt: "2026-09-05T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+		ProjectID: "project-1", MissionID: "mission-1", DefinitionRevision: "definition-1", DefinitionDigest: digest,
+		Version: 2, Lifecycle: mission.MissionOpen, LastOperationID: "operation-fact-close", ObservedAt: "2026-09-05T12:01:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := mission.NewMissionFactStateV2(mission.MissionFactStateInputV2{
+		ProjectID: "project-1", MissionID: "mission-1", FactID: scoped.FactID, Kind: mission.MissionFactDecisionV2,
+		Status: mission.MissionFactOpenV2, LogicalVersion: 1, DetailDigest: digest, LastOperationID: "operation-fact-open", ObservedAt: "2026-09-05T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor, err := mission.NewMissionFactStateV2(mission.MissionFactStateInputV2{
+		ProjectID: "project-1", MissionID: "mission-1", FactID: scoped.FactID, Kind: mission.MissionFactDecisionV2,
+		Status: mission.MissionFactResolvedV2, LogicalVersion: 2, DetailDigest: digest, LastOperationID: "operation-fact-close", ObservedAt: "2026-09-05T12:01:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(readinessCommandWire{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: "operation-fact-close", ProjectID: "project-1", MissionID: "mission-1",
+		ActorID: "actor-1", ProcessID: "process-1", RuntimeEpochID: "epoch-1", DoctrineRevision: "doctrine-1",
+		ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: "2026-09-05T12:01:00Z",
+		EventType: mission.ReadinessEventFactClosedV2, Expected: expected.CanonicalBytes(), Updated: updated.CanonicalBytes(),
+		RelatedFact: &readinessFactTransitionWire{Prior: prior.CanonicalBytes(), Successor: successor.CanonicalBytes(), ExpectedRecordRevision: 7},
+	})
+	request := OperationRequest{SchemaVersion: 1, Action: string(mission.ActionDecisionResolve), Scope: "mission:mission-1", Kind: OperationReadiness, Payload: payload}
+	if _, err := decodeOperation(request); err == nil || !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("closed fact accepted wrong mission scope: %v", err)
+	}
+	request.Scope = "work:work-scoped"
+	decoded, err := decodeOperation(request)
+	if err != nil || decoded.scope != request.Scope {
+		t.Fatalf("closed fact lost prior work scope: decoded=%+v err=%v", decoded, err)
+	}
+}
+
+func TestTypedResultDiscriminatorMustMatchOperationKind(t *testing.T) {
+	session := defaultSession()
+	session.executeFn = func(decodedOperation) (TypedResult, error) {
+		return TypedResult{Kind: ResultReadiness, Payload: json.RawMessage(`{"ok":true}`)}, nil
+	}
+	runner, _ := NewRunner(admittedFactory(session))
+	request := missionCreateRequest(t, "operation-result-kind")
+	encoded, _ := json.Marshal(request)
+	var stdout bytes.Buffer
+	code := runner.Run(t.Context(), []string{"--control-root", filepath.Join(t.TempDir(), "authority"), "operation", "execute", "--request", "-"}, bytes.NewReader(encoded), &stdout, &bytes.Buffer{})
+	var envelope Envelope
+	_ = json.Unmarshal(stdout.Bytes(), &envelope)
+	if code != ExitUnavailable || envelope.Outcome != OutcomeUnavailable || envelope.Result != nil {
+		t.Fatalf("mismatched result escaped: exit=%d envelope=%+v", code, envelope)
+	}
+}
+
+func TestEveryDeclaredNativeOperationHasAConstructibleWireAndResult(t *testing.T) {
+	governance, err := execution.ExecutionGovernanceFromContextV2(helperGovernanceContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		kind    OperationKind
+		action  string
+		scope   string
+		payload map[string]any
+		result  ResultKind
+	}{
+		{OperationWorkspaceRebind, string(mission.ActionWorkspaceAllocate), "work:work-1", map[string]any{"project_id": "project-1", "mission_id": "mission-1", "work_id": "work-1", "operation_id": "operation-rebind", "governance": governance}, ResultWorkspace},
+		{OperationHandoff, string(mission.ActionCandidateHandoff), "work:work-1", map[string]any{"project_id": "project-1", "mission_id": "mission-1", "work_id": "work-1", "operation_id": "operation-handoff", "governance": governance}, ResultHandoff},
+		{OperationReview, string(mission.ActionReviewRecord), "work:work-1", map[string]any{"project_id": "project-1", "mission_id": "mission-1", "work_id": "work-1", "operation_id": "operation-review", "governance": governance}, ResultReview},
+		{OperationAcceptance, string(mission.ActionAcceptanceEvaluate), "mission:mission-1", map[string]any{"project_id": "project-1", "mission_id": "mission-1", "operation_id": "operation-acceptance", "governance": governance}, ResultAcceptance},
+		{OperationIntegration, string(mission.ActionIntegrationPublish), "mission:mission-1", map[string]any{"project_id": "project-1", "mission_id": "mission-1", "operation_id": "operation-integration", "governance": governance}, ResultIntegration},
+		{OperationIntegrationCleanup, string(mission.ActionIntegrationPublish), "mission:mission-1", map[string]any{"project_id": "project-1", "mission_id": "mission-1", "cleanup_operation_id": "operation-cleanup", "governance": governance}, ResultIntegrationCleanup},
+		{OperationEffect, string(mission.ActionEffectReconcile), "action:effect.reconcile", map[string]any{
+			"action":         execution.EffectRequireReconcileV2,
+			"intent":         map[string]any{"operation_id": "operation-effect", "target": map[string]any{"ProjectID": "project-1"}, "governance": governance},
+			"execution_slot": map[string]any{"mission_id": "mission-1", "governance": governance},
+		}, ResultEffect},
+	}
+	for _, test := range tests {
+		t.Run(string(test.kind), func(t *testing.T) {
+			decoded, err := decodeOperation(OperationRequest{SchemaVersion: 1, Kind: test.kind, Action: test.action, Scope: test.scope, Payload: mustJSON(test.payload)})
+			if err != nil {
+				t.Fatalf("declared operation has no constructible wire: %v", err)
+			}
+			if decoded.operation == "" || decoded.projectID == "" || decoded.missionID == "" || resultKindFor(test.kind) != test.result {
+				t.Fatalf("declared operation is not closed: decoded=%+v result=%q", decoded, resultKindFor(test.kind))
+			}
+		})
+	}
+}
+
+func TestRenderExitCategoryAlwaysAgreesWithEnvelopeOutcome(t *testing.T) {
+	var stdout bytes.Buffer
+	code := render(&stdout, &bytes.Buffer{}, "drive", "json", Envelope{SchemaVersion: 1, Command: "drive", Outcome: OutcomeStopped}, ExitConflict)
+	if code != ExitRefused {
+		t.Fatalf("stopped outcome rendered contradictory exit=%d", code)
 	}
 }
 
@@ -339,8 +490,8 @@ func TestMachineEnvelopeDoesNotDependOnHumanRenderer(t *testing.T) {
 }
 
 func admittedFactory(session *sessionSpy) *factorySpy {
-	disposition := controlroot.Disposition{SchemaVersion: 1, ControlRootSHA256: strings.Repeat("a", 64), Classification: controlroot.EmptySupported, Findings: []controlroot.Finding{}, Action: controlroot.Initialize, DiagnosisCode: "EMPTY_SUPPORTED"}
-	return &factorySpy{decision: controlroot.Decision{Action: controlroot.Initialize, Disposition: disposition}, session: session}
+	disposition := controlroot.Disposition{SchemaVersion: 1, ControlRootSHA256: strings.Repeat("a", 64), Classification: controlroot.CurrentSupported, Findings: []controlroot.Finding{}, Action: controlroot.Recover, DiagnosisCode: "CURRENT_SUPPORTED"}
+	return &factorySpy{decision: controlroot.Decision{Action: controlroot.Recover, Disposition: disposition}, session: session}
 }
 
 func defaultSession() *sessionSpy {
@@ -376,7 +527,56 @@ func missionCreateRequestFor(t *testing.T, missionID journalv2.MissionID, operat
 	if err != nil {
 		t.Fatal(err)
 	}
-	return OperationRequest{SchemaVersion: 1, Action: string(mission.ActionMissionCreate), Kind: OperationMission, Payload: payload}
+	return OperationRequest{SchemaVersion: 1, Action: string(mission.ActionMissionCreate), Scope: "mission:" + string(missionID), Kind: OperationMission, Payload: payload}
+}
+
+func executionClaimRequest(t *testing.T, workID string, operationID journalv2.OperationID) OperationRequest {
+	t.Helper()
+	payload, err := json.Marshal(executionCommandWire{
+		Kind: execution.ExecutionAdmitV2, OperationID: operationID, ProjectID: "project-1", MissionID: "mission-1",
+		WorkRevisionID: "revision-1", WorkID: executionWorkID(workID), RunID: ids.RunID("run-" + workID),
+		ActorID: "actor-1", ProcessID: "process-1", LeaseID: ids.LeaseID("lease-" + workID), Generation: 1,
+		Fence: strings.Repeat("f", 32), ObservedAt: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
+		Deadline: time.Date(2026, 9, 5, 12, 5, 0, 0, time.UTC), RuntimeEpochID: "epoch-1",
+		Governance:       helperGovernanceContext(t),
+		OperationEventID: journalv2.EventID("event-operation-" + workID), SlotEventID: journalv2.EventID("event-slot-" + workID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return OperationRequest{SchemaVersion: 1, Action: string(mission.ActionExecutionClaim), Scope: "work:" + workID, Kind: OperationExecution, Payload: payload}
+}
+
+func executionWorkID(value string) ids.WorkID { return ids.WorkID(value) }
+
+func helperGovernanceContext(t *testing.T) governancecontext.Context {
+	t.Helper()
+	entries := make([]governancecontext.Entry, 0, 4)
+	for _, item := range []struct {
+		kind     governancecontext.EntryKind
+		ref      string
+		revision string
+	}{
+		{governancecontext.KindConfig, "config.helper", "policy-1"},
+		{governancecontext.KindDoctrine, "doctrine.helper", "doctrine-1"},
+		{governancecontext.KindProfile, "profile.helper", "profile-1"},
+		{governancecontext.KindMissionType, "mission-type.helper", "mission-type-1"},
+	} {
+		commitment, err := governancecontext.CommitSHA256([]byte(item.ref))
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry, err := governancecontext.NewEntry(item.kind, item.ref, item.revision, commitment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, entry)
+	}
+	value, err := governancecontext.NewContext("governance-helper", governancecontext.SchemaVersion, entries, time.Date(2026, 9, 5, 11, 59, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func bytesToHex(value []byte) string {
