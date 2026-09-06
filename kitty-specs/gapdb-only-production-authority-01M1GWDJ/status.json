@@ -724,7 +724,8 @@
         "Independent cycle-nineteen review rejected subshell return scope and bare Bash time function-lookup classification.",
         "Cycle-twenty exact-tree candidate f8ab9743c10efaa8cc741661acdb08fda0cd4f16 qualified; tree 4902d69c439c4df46842df5cd37e88192a85374d; manifest /tmp/go-kitty3-m2-absence.Uvo7PX/evidence/manifest.json; inventory 3276ea9322ccf4524a683588336b9318466deab699cc19ce71cbb3a6011cf3cf; observed absence 256/256, layers 8/8, runtime 23/23.",
         "Independent cycle-twenty review rejected shell-agnostic bare-time semantics; Dash and Bash lookup behavior must be distinguished by explicit interpreter identity.",
-        "Cycle-twenty-one exact-tree candidate a6806bb98a349942941c787e7472c8feb990fe40 qualified; tree 3e6fa5092a70e318a413fab30fdc6edcb9c665a7; manifest /tmp/go-kitty3-m2-absence.pmR3PL/evidence/manifest.json; inventory 20db5422bfe6f642d1dc66e4fe0cb809bb1d2bedbd20bcba5829efd782de4468; observed absence 274/274, layers 8/8, runtime 23/23."
+        "Cycle-twenty-one exact-tree candidate a6806bb98a349942941c787e7472c8feb990fe40 qualified; tree 3e6fa5092a70e318a413fab30fdc6edcb9c665a7; manifest /tmp/go-kitty3-m2-absence.pmR3PL/evidence/manifest.json; inventory 20db5422bfe6f642d1dc66e4fe0cb809bb1d2bedbd20bcba5829efd782de4468; observed absence 274/274, layers 8/8, runtime 23/23.",
+        "Independent cycle-twenty-one review rejected irrelevant generic-shell ambiguity and missing POSIX special-builtin prefix-assignment persistence."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -738,12 +739,12 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T080": "done",
-        "T081": "done",
-        "T082": "done",
-        "T083": "done",
-        "T084": "done",
-        "T085": "done"
+        "T080": "planned",
+        "T081": "planned",
+        "T082": "planned",
+        "T083": "planned",
+        "T084": "planned",
+        "T085": "planned"
       }
     },
     "WP17": {
