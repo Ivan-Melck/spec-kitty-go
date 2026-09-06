@@ -1,7 +1,7 @@
 {
-  "event_count": 548,
-  "last_event_id": "01M1TKPPKR6TJ2NVPXBAP6PV9R",
-  "materialized_at": "2026-09-06T05:40:19.192553+00:00",
+  "event_count": 550,
+  "last_event_id": "01M1TKQFX7081QB3EXEC5R5J74",
+  "materialized_at": "2026-09-06T05:40:45.082831+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -12,9 +12,9 @@
     "claimed": 0,
     "done": 10,
     "for_review": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "in_review": 0,
-    "planned": 2
+    "planned": 1
   },
   "work_packages": {
     "WP01": {
@@ -680,9 +680,9 @@
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 12,
-      "lane": "planned",
-      "last_event_id": "01M1TKPPKR6TJ2NVPXBAP6PV9R",
-      "last_transition_at": "2026-09-06T05:40:19.192553+00:00",
+      "lane": "in_progress",
+      "last_event_id": "01M1TKQFX7081QB3EXEC5R5J74",
+      "last_transition_at": "2026-09-06T05:40:45.082831+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Allocation blocker repaired: approved dependency lanes merged into lane-p, derived mission state restored from planning authority, and combined tree compiles.",
