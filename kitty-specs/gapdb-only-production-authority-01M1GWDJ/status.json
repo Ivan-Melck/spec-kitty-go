@@ -715,7 +715,8 @@
         "Cycle-fifteen exact-tree candidate 2962553f4ac5daf6b0b5618097bcfcb43fe26eb3 qualified; tree bce41d095649c5dbbd3739d3ffee123325d0441e; manifest /tmp/go-kitty3-m2-absence.NVbIGs/evidence/manifest.json; inventory 5bf71b6cedbe24f24464ff0942faeea510f8e94ea7c03326c64452aa119a63b5; observed absence 165/165, layers 8/8, runtime 23/23.",
         "Independent cycle-fifteen review rejected brace-group state escape when the group is a pipeline or background component; all evidence systems passed.",
         "Cycle-sixteen exact-tree candidate 7bf998632f96b4327e6c52146f6e0d80e79f38bf qualified; tree 847670d30d979de12475198d0e115f384b215226; manifest /tmp/go-kitty3-m2-absence.fIeFKw/evidence/manifest.json; inventory fab3b446fa0c173ca638f9a9b7f843434a3304c3a310ed733d8c06928c796d46; observed absence 177/177, layers 8/8, runtime 23/23.",
-        "Independent cycle-sixteen review rejected fd-duplication compound-tail escape and multiline POSIX function false positive; all baseline evidence passed."
+        "Independent cycle-sixteen review rejected fd-duplication compound-tail escape and multiline POSIX function false positive; all baseline evidence passed.",
+        "Cycle-seventeen exact-tree candidate 770e22c770b1479ddfc353ef4ae97abd3266dc1c qualified; tree 0070a1317f25f9489cc051d93f81003a240c0a4c; manifest /tmp/go-kitty3-m2-absence.aorSna/evidence/manifest.json; inventory 424c3fbf7740c8b18aaa6246cc6a965994b4b3766f96d17c58b2459f61dcd067; observed absence 193/193, layers 8/8, runtime 23/23."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
