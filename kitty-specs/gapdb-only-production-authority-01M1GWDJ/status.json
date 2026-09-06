@@ -687,7 +687,8 @@
       "notes": [
         "Allocation blocker repaired: approved dependency lanes merged into lane-p, derived mission state restored from planning authority, and combined tree compiles.",
         "SQLite subsystem removed; exact clean-candidate absence qualification and all parity, architecture, race, module, vet, and static checks pass.",
-        "Independent cycle-two review rejected the evidence proof; product deletion remains preserved."
+        "Independent cycle-two review rejected the evidence proof; product deletion remains preserved.",
+        "Cycle-three blockers resolved; exact final integrated tree 32de27cf qualified with closed 34-artifact manifest and detector-specific mutants."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
