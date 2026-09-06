@@ -719,7 +719,8 @@
         "Cycle-seventeen exact-tree candidate 770e22c770b1479ddfc353ef4ae97abd3266dc1c qualified; tree 0070a1317f25f9489cc051d93f81003a240c0a4c; manifest /tmp/go-kitty3-m2-absence.aorSna/evidence/manifest.json; inventory 424c3fbf7740c8b18aaa6246cc6a965994b4b3766f96d17c58b2459f61dcd067; observed absence 193/193, layers 8/8, runtime 23/23.",
         "Independent cycle-seventeen review rejected unmodeled invoked-function state effects; adjacent Bash redirection and heredoc false positives also require correction.",
         "Cycle-eighteen exact-tree candidate ef71cef90a22000cd328d757a8e9fa295bb9a636 qualified; tree 189b7b974be1ddbcd0ca1946ab6bd17797727634; manifest /tmp/go-kitty3-m2-absence.Cc6Eaw/evidence/manifest.json; inventory d00c48bb8796699108c3b558fbac97908e2b4619bdf58e0944ed9ac21ed7b697; observed absence 225/225, layers 8/8, runtime 23/23.",
-        "Independent cycle-eighteen review rejected unsound function-summary application across conditional, unreachable, and lookup-bypass paths."
+        "Independent cycle-eighteen review rejected unsound function-summary application across conditional, unreachable, and lookup-bypass paths.",
+        "Cycle-nineteen exact-tree candidate 118c65a55edef7288ad27ef8ea466b3f83497088 qualified; tree 3c47223d071492f34df49f675591ae20069f7af6; manifest /tmp/go-kitty3-m2-absence.WEQDWT/evidence/manifest.json; inventory 26ddd9434abb996c1c952877ecf35eaf24c19cb001b4622ff9579f12ca601b86; observed absence 243/243, layers 8/8, runtime 23/23."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
