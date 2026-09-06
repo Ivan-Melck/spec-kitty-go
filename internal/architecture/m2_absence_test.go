@@ -898,6 +898,7 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 	var bodies []m2ShellHeredocBody
 	var body strings.Builder
 	var commandQuote byte
+	commandContinued := false
 	for _, line := range lines {
 		if len(pending) != 0 {
 			candidate := strings.TrimSuffix(line, "\n")
@@ -933,10 +934,14 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 		if strings.HasSuffix(commandLine, "\r\n") {
 			commandLine = strings.TrimSuffix(commandLine, "\r\n") + "\n"
 		}
-		hasHeredoc, nextQuote, lexicalAmbiguity := m2ShellLineHeredocState(commandLine, commandQuote)
+		hasHeredoc, nextQuote, lineContinued, lexicalAmbiguity := m2ShellLineHeredocState(commandLine, commandQuote)
 		if lexicalAmbiguity != "" {
 			return "", nil, lexicalAmbiguity
 		}
+		if hasHeredoc && (commandContinued || lineContinued) {
+			return "", nil, "heredoc-declaration-line-continuation"
+		}
+		commandContinued = lineContinued
 		startedQuoted := commandQuote != 0
 		commandQuote = nextQuote
 		if !hasHeredoc {
@@ -959,8 +964,9 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 	return sanitized.String(), bodies, ""
 }
 
-func m2ShellLineHeredocState(line string, quote byte) (bool, byte, string) {
+func m2ShellLineHeredocState(line string, quote byte) (bool, byte, bool, string) {
 	hasHeredoc := false
+	continued := false
 	comment := false
 	wordStart := quote == 0
 	for index := 0; index < len(line); index++ {
@@ -974,7 +980,10 @@ func m2ShellLineHeredocState(line string, quote byte) (bool, byte, string) {
 		}
 		if current == '\\' && quote != '\'' {
 			if index+1 >= len(line) {
-				return false, quote, "unterminated-heredoc-scan-escape"
+				return false, quote, false, "unterminated-heredoc-scan-escape"
+			}
+			if line[index+1] == '\n' {
+				continued = true
 			}
 			index++
 			wordStart = false
@@ -1004,7 +1013,7 @@ func m2ShellLineHeredocState(line string, quote byte) (bool, byte, string) {
 			wordStart = false
 		}
 	}
-	return hasHeredoc, quote, ""
+	return hasHeredoc, quote, continued, ""
 }
 
 func m2ShellHeredocsOnCommandLine(line string) ([]m2ShellHeredoc, string) {

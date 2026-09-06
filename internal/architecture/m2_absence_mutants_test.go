@@ -234,6 +234,16 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 				t.Fatalf("%s continuation ambiguity=%q", label, got)
 			}
 		}
+		for label, declaration := range map[string]string{
+			"after-declaration":  "cat <<EOF \\\n; printf native\ndata\nEOF\n",
+			"before-declaration": "cat \\\n<<EOF\ndata\nEOF\n",
+			"inside-delimiter":   "cat <<EO\\\nF\ndata\nEOF\n",
+			"crlf":               "cat <<EOF \\\r\n; printf native\r\ndata\r\nEOF\r\n",
+		} {
+			if _, _, got := m2ShellWithoutHeredocBodies(declaration); got != "heredoc-declaration-line-continuation" {
+				t.Fatalf("%s declaration ambiguity=%q", label, got)
+			}
+		}
 		oversize := "cat <<EOF\n" + strings.Repeat("x", (8<<20)+1) + "\nEOF\n"
 		if _, _, budgetAmbiguity := m2ShellWithoutHeredocBodies(oversize); budgetAmbiguity != "heredoc-body-budget" {
 			t.Fatalf("oversize heredoc ambiguity=%q", budgetAmbiguity)
@@ -692,6 +702,15 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"heredoc-continuation-before-backtick-substitution":  "#!/bin/sh\ncat <<EOF\nprefix\\\n`printf native`\nEOF\n",
 		"heredoc-continuation-in-ordinary-data":              "#!/bin/sh\ncat <<EOF\nnative\\\ndata\nEOF\n",
 		"heredoc-second-body-continuation":                   "#!/bin/sh\ncat <<'FIRST' <<SECOND\nliteral\\\ndata\nFIRST\nactive\\\ndata\nSECOND\n",
+		"heredoc-declaration-continuation-after":             "#!/bin/sh\ncat <<EOF \\\n; sql\\ite3 /tmp/continued-command.db\ndata\nEOF\n",
+		"heredoc-declaration-continuation-before":            "#!/bin/sh\ncat \\\n<<EOF\ndata\nEOF\n",
+		"heredoc-declaration-continuation-inside-delimiter":  "#!/bin/sh\ncat <<EO\\\nF\ndata\nEOF\n",
+		"heredoc-multiple-declaration-continuation":          "#!/bin/sh\ncat <<FIRST <<SECOND \\\n; sql\\ite3 /tmp/continued-command.db\none\nFIRST\ntwo\nSECOND\n",
+		"heredoc-between-multiple-declaration-continuation":  "#!/bin/sh\ncat <<FIRST \\\n<<SECOND\none\nFIRST\ntwo\nSECOND\n",
+		"heredoc-tab-stripped-declaration-continuation":      "#!/bin/sh\ncat <<-EOF \\\n; sql\\ite3 /tmp/continued-command.db\n\tdata\n\tEOF\n",
+		"heredoc-crlf-declaration-continuation":              "#!/bin/sh\r\ncat <<EOF \\\r\n; sql\\ite3 /tmp/continued-command.db\r\ndata\r\nEOF\r\n",
+		"heredoc-quoted-declaration-continuation":            "#!/bin/sh\ncat <<'EOF' \\\n; sql\\ite3 /tmp/continued-command.db\ndata\nEOF\n",
+		"heredoc-escaped-delimiter-declaration-continuation": "#!/bin/sh\ncat <<\\EOF \\\n; sql\\ite3 /tmp/continued-command.db\ndata\nEOF\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()
@@ -744,11 +763,15 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		})
 	}
 	for name, content := range map[string]string{
-		"heredoc-double-quoted-body-is-data":                  "#!/bin/sh\ncat <<\"EOF\"\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
-		"heredoc-escaped-delimiter-body-is-data":              "#!/bin/sh\ncat <<\\EOF\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
-		"heredoc-unquoted-escaped-substitution-is-data":       "#!/bin/sh\ncat <<EOF\n\\$(printf native) \\`printf native\\`\nEOF\nprintf '%s' native\n",
-		"heredoc-quoted-delimiter-continuation-is-data":       "#!/bin/sh\ncat <<'EOF'\n$\\\n(printf native)\nEOF\n",
-		"heredoc-escaped-delimiter-crlf-continuation-is-data": "#!/bin/sh\r\ncat <<\\EOF\r\n$\\\r\n(printf native)\r\nEOF\r\n",
+		"heredoc-double-quoted-body-is-data":                   "#!/bin/sh\ncat <<\"EOF\"\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
+		"heredoc-escaped-delimiter-body-is-data":               "#!/bin/sh\ncat <<\\EOF\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
+		"heredoc-unquoted-escaped-substitution-is-data":        "#!/bin/sh\ncat <<EOF\n\\$(printf native) \\`printf native\\`\nEOF\nprintf '%s' native\n",
+		"heredoc-quoted-delimiter-continuation-is-data":        "#!/bin/sh\ncat <<'EOF'\n$\\\n(printf native)\nEOF\n",
+		"heredoc-escaped-delimiter-crlf-continuation-is-data":  "#!/bin/sh\r\ncat <<\\EOF\r\n$\\\r\n(printf native)\r\nEOF\r\n",
+		"heredoc-terminated-declaration-is-clean":              "#!/bin/sh\ncat <<EOF\ndata\nEOF\nprintf '%s' native\n",
+		"heredoc-terminated-multiple-declarations-are-clean":   "#!/bin/sh\ncat <<FIRST <<'SECOND'\none\nFIRST\ntwo\nSECOND\nprintf '%s' native\n",
+		"heredoc-terminated-tab-stripped-declaration-is-clean": "#!/bin/sh\ncat <<-EOF\n\tdata\n\tEOF\nprintf '%s' native\n",
+		"heredoc-terminated-quoted-declaration-is-clean":       "#!/bin/sh\ncat <<'EOF'\n$\\\n(printf native)\nEOF\nprintf '%s' native\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
