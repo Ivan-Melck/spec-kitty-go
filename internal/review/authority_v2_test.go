@@ -95,7 +95,7 @@ func TestReviewAuthorityStagesEveryCriterionThenOneTerminalVerdictAndReplaysV2(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.State.Stage != StageVerdictRecordedV2 || result.State.Verdict != Approved || len(result.State.Criteria) != 2 || len(port.plans) != 4 {
+	if result.State.Stage != StageVerdictRecordedV2 || result.State.Verdict != Approved || result.RecordRevision == 0 || len(result.State.Criteria) != 2 || len(port.plans) != 4 {
 		t.Fatalf("result=%+v plans=%d", result, len(port.plans))
 	}
 	for i, plan := range port.plans {
@@ -106,7 +106,7 @@ func TestReviewAuthorityStagesEveryCriterionThenOneTerminalVerdictAndReplaysV2(t
 	reads := port.authorityReads
 	port.authority = AuthorityObservationV2{}
 	replay, err := service.Submit(t.Context(), request)
-	if err != nil || !replay.Replayed || port.authorityReads != reads || len(port.plans) != 4 {
+	if err != nil || !replay.Replayed || replay.RecordRevision != result.RecordRevision || port.authorityReads != reads || len(port.plans) != 4 {
 		t.Fatalf("replay=%+v err=%v reads=%d/%d plans=%d", replay, err, reads, port.authorityReads, len(port.plans))
 	}
 }

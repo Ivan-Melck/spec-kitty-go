@@ -107,6 +107,63 @@ func TestMissionActionPolicyIsPerActionAndMinimal(t *testing.T) {
 	}
 }
 
+func TestCapabilityActionBindsScopedAuthorityWithoutPhase(t *testing.T) {
+	ctx := actionContext(t, "governance-capability", "profile-r2")
+	selected := make([]Entry, 0, 3)
+	for _, entry := range ctx.Entries() {
+		if entry.Kind() != KindConfig {
+			selected = append(selected, entry)
+		}
+	}
+	binding, err := NewCapabilityAction(CapabilityActionParams{
+		Source: ctx, MissionID: "mission-capability", ActionID: "execution.claim",
+		ScopeKind: "work", ScopeIdentity: "work-a", ScopeDigest: strings.Repeat("a", 64),
+		ActorID: "actor-capability", SelectedEntries: selected,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.SchemaVersion() != 2 || binding.ActionID() != "execution.claim" || binding.ScopeKind() != "work" || binding.ScopeIdentity() != "work-a" || binding.Validate() != nil {
+		t.Fatalf("invalid capability binding: %+v", binding)
+	}
+	encoded, err := json.Marshal(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"step", "successor", "phase"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("schema-v2 governance encoded ceremony %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestCapabilityActionRejectsUnknownActionScopeAndAuthorityDrift(t *testing.T) {
+	ctx := actionContext(t, "governance-capability-refusal", "profile-r2")
+	selected := make([]Entry, 0, 3)
+	for _, entry := range ctx.Entries() {
+		if entry.Kind() != KindConfig {
+			selected = append(selected, entry)
+		}
+	}
+	base := CapabilityActionParams{Source: ctx, MissionID: "mission-capability", ActionID: "review.record", ScopeKind: "work", ScopeIdentity: "work-a", ActorID: "actor-reviewer", SelectedEntries: selected}
+	for name, mutate := range map[string]func(*CapabilityActionParams){
+		"phase action":   func(p *CapabilityActionParams) { p.ActionID = "mission.plan" },
+		"unknown scope":  func(p *CapabilityActionParams) { p.ScopeKind = "phase" },
+		"blank identity": func(p *CapabilityActionParams) { p.ScopeIdentity = "" },
+		"bad digest":     func(p *CapabilityActionParams) { p.ScopeDigest = "projection-says-ready" },
+		"overcollection": func(p *CapabilityActionParams) { p.SelectedEntries = ctx.Entries() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			candidate.SelectedEntries = append([]Entry(nil), base.SelectedEntries...)
+			mutate(&candidate)
+			if _, err := NewCapabilityAction(candidate); err == nil {
+				t.Fatal("invalid capability governance accepted")
+			}
+		})
+	}
+}
+
 func actionContext(t *testing.T, id ids.GovernanceContextID, profileRevision string) Context {
 	t.Helper()
 	entries := []Entry{

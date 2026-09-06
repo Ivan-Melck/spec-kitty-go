@@ -38,6 +38,7 @@ const (
 type LifecycleConfig struct {
 	ExecutablePath      string
 	AdmissionRecordPath string
+	Admission           ExecutableAdmission
 	RuntimeRoot         string
 	DataDirectory       string
 	SupervisorRunID     string
@@ -260,7 +261,7 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 		return nil, err
 	}
 	verified, err := VerifyExecutable(VerifyConfig{
-		ExecutablePath: config.ExecutablePath, AdmissionRecordPath: config.AdmissionRecordPath,
+		ExecutablePath: config.ExecutablePath, AdmissionRecordPath: config.AdmissionRecordPath, Admission: config.Admission,
 	})
 	if err != nil {
 		return nil, err
@@ -390,7 +391,7 @@ func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvena
 	if err := normalizeLifecycleConfig(&config); err != nil {
 		return nil, err
 	}
-	verified, err := VerifyExecutable(VerifyConfig{ExecutablePath: config.ExecutablePath, AdmissionRecordPath: config.AdmissionRecordPath})
+	verified, err := VerifyExecutable(VerifyConfig{ExecutablePath: config.ExecutablePath, AdmissionRecordPath: config.AdmissionRecordPath, Admission: config.Admission})
 	if err != nil {
 		return nil, err
 	}

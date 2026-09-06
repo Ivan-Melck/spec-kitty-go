@@ -30,6 +30,13 @@ func newExecutionAuthorityV2(adapter *Adapter, coordinator *journalv2.Publicatio
 	return &executionAuthorityV2{adapter: adapter, publisher: coordinator, coordinator: coordinator}, nil
 }
 
+// ExecutionAuthorityPortV2 exposes the execution-owned semantic port while
+// retaining the provider implementation and raw database handle in this
+// package.
+func (a *Adapter) ExecutionAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2) (execution.ExecutionAuthorityPortV2, error) {
+	return newExecutionAuthorityV2(a, coordinator)
+}
+
 func newExecutionAuthorityV2ForTest(publisher executionPublicationPortV2) *executionAuthorityV2 {
 	return &executionAuthorityV2{publisher: publisher}
 }

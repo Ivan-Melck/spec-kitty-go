@@ -390,9 +390,10 @@ type RuntimeEpochSourceV2 interface {
 	CurrentRuntimeEpoch(context.Context) (journalv2.RuntimeEpochID, error)
 }
 type AuthorityResultV2 struct {
-	State         StateV2
-	PublicationID journalv2.PublicationID
-	Replayed      bool
+	State          StateV2
+	PublicationID  journalv2.PublicationID
+	RecordRevision uint64
+	Replayed       bool
 }
 type AuthorityServiceV2 struct {
 	port     AuthorityPortV2
@@ -435,7 +436,7 @@ func (s *AuthorityServiceV2) Submit(ctx context.Context, r AuthorityRequestV2) (
 			if e != nil || state.Stage != StageVerdictRecordedV2 || !sameReviewIdentityV2(seed, state) || !reviewResultMatchesRequestV2(r, state) {
 				return AuthorityResultV2{}, reviewAuthorityErrorV2(KindConflict, "operation_result", e)
 			}
-			return AuthorityResultV2{State: state, PublicationID: resolution.State.LastPublicationID(), Replayed: true}, nil
+			return AuthorityResultV2{State: state, PublicationID: resolution.State.LastPublicationID(), RecordRevision: resolution.RecordRevision, Replayed: true}, nil
 		}
 		observed, e := s.port.ObserveReview(ctx, coordinate)
 		if e != nil || observed.State == nil {
@@ -498,7 +499,7 @@ func (s *AuthorityServiceV2) Submit(ctx context.Context, r AuthorityRequestV2) (
 		operation = &state
 		operationRevision = ack.ProviderRevision
 		if next.Stage == StageVerdictRecordedV2 {
-			return AuthorityResultV2{State: next, PublicationID: ack.PublicationID}, nil
+			return AuthorityResultV2{State: next, PublicationID: ack.PublicationID, RecordRevision: ack.ProviderRevision}, nil
 		}
 	}
 }

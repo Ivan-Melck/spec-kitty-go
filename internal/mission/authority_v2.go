@@ -35,6 +35,7 @@ const (
 	MissionAuthorityTerminalV2            MissionAuthorityErrorKindV2 = "TERMINAL_MISSION"
 	MissionAuthorityAmbiguousV2           MissionAuthorityErrorKindV2 = "AMBIGUOUS"
 	MissionAuthorityCorruptV2             MissionAuthorityErrorKindV2 = "AUTHORITY_CORRUPT"
+	MissionAuthorityLegacyPhaseV2         MissionAuthorityErrorKindV2 = "LEGACY_PHASE_STATE"
 )
 
 type MissionAuthorityErrorV2 struct {
@@ -404,6 +405,12 @@ func DecodeMissionEventPayloadV2(encoded []byte) (MissionEventPayloadV2, error) 
 }
 
 func ReduceMissionEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte, error) {
+	var schema struct {
+		SchemaVersion uint32 `json:"schema_version"`
+	}
+	if json.Unmarshal(event.Payload(), &schema) == nil && schema.SchemaVersion == ReadinessAuthorityStateSchemaV2 {
+		return ReduceReadinessAuthorityEventV2(prior, event)
+	}
 	if event.Family() != "mission" || event.EventSchemaVersion() != 1 || event.ReducerVersion() != 1 || event.Coordinate().Kind != "mission" {
 		return nil, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "event_tuple", nil)
 	}
@@ -428,7 +435,7 @@ func ReduceMissionEventV2(prior []byte, event journalv2.EventEnvelopeV2) ([]byte
 }
 
 func MissionReducerImplementationDigestV2() journalv2.Digest {
-	digest, _ := journalv2.ReducerStateDigestV2([]byte(`{"implementation":"mission-authority-v2"}`))
+	digest, _ := journalv2.ReducerStateDigestV2([]byte(`{"implementation":"mission-capability-authority-v2"}`))
 	return digest
 }
 
@@ -514,16 +521,18 @@ type MissionAuthorityCommandV2 struct {
 }
 
 type MissionAuthorityResultV2 struct {
-	state         MissionAuthorityStateV2
-	operationID   journalv2.OperationID
-	publicationID journalv2.PublicationID
-	canonical     []byte
-	replayed      bool
+	state          MissionAuthorityStateV2
+	operationID    journalv2.OperationID
+	publicationID  journalv2.PublicationID
+	recordRevision uint64
+	canonical      []byte
+	replayed       bool
 }
 
 func (r MissionAuthorityResultV2) State() MissionAuthorityStateV2         { return r.state }
 func (r MissionAuthorityResultV2) OperationID() journalv2.OperationID     { return r.operationID }
 func (r MissionAuthorityResultV2) PublicationID() journalv2.PublicationID { return r.publicationID }
+func (r MissionAuthorityResultV2) RecordRevision() uint64                 { return r.recordRevision }
 func (r MissionAuthorityResultV2) CanonicalBytes() []byte                 { return append([]byte(nil), r.canonical...) }
 func (r MissionAuthorityResultV2) Replayed() bool                         { return r.replayed }
 
@@ -565,6 +574,7 @@ func (s *MissionAuthorityServiceV2) Execute(ctx context.Context, command Mission
 			if decodeErr != nil || result.operationID != command.OperationID {
 				return MissionAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "operation_result", decodeErr)
 			}
+			result.recordRevision = resolution.StateRecordRevision
 			return result, nil
 		}
 		return MissionAuthorityResultV2{}, missionAuthorityErrorV2(MissionAuthorityAmbiguousV2, "operation_in_progress", nil)
@@ -622,7 +632,7 @@ func (s *MissionAuthorityServiceV2) Execute(ctx context.Context, command Mission
 	if err := publication.validate(plan); err != nil {
 		return MissionAuthorityResultV2{}, err
 	}
-	return MissionAuthorityResultV2{state: command.Successor, operationID: command.OperationID, publicationID: plan.PublicationID(), canonical: canonicalResult}, nil
+	return MissionAuthorityResultV2{state: command.Successor, operationID: command.OperationID, publicationID: plan.PublicationID(), recordRevision: publication.ProviderRevision, canonical: canonicalResult}, nil
 }
 
 func validateMissionAuthorityCommandV2(command MissionAuthorityCommandV2) (journalv2.OperationBindingV2, journalv2.Digest, error) {

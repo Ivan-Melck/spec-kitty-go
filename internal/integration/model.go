@@ -27,6 +27,9 @@ const (
 	KindIdempotencyConflict ErrorKind = "idempotency_conflict"
 	KindStoreFailure        ErrorKind = "control_store_failure"
 	KindGitFailure          ErrorKind = "git_failure"
+	KindStaleAuthority      ErrorKind = "stale_authority"
+	KindEvidenceUnavailable ErrorKind = "evidence_unavailable"
+	KindPolicyRefused       ErrorKind = "policy_refused"
 )
 
 type Error struct {
@@ -34,13 +37,10 @@ type Error struct {
 	Message  string
 	Observed map[string]string
 	Expected map[string]string
-	Cause    error
+	Cause    error `json:"-"`
 }
 
 func (e *Error) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("%s: %s: %v", e.Kind, e.Message, e.Cause)
-	}
 	return fmt.Sprintf("%s: %s", e.Kind, e.Message)
 }
 

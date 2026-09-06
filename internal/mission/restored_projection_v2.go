@@ -9,8 +9,9 @@ import (
 // from WP04's already-validated, I/O-free playback result. It does not replay
 // events or retain provider handles.
 type MissionRestoredProjectionV2 struct {
-	missions map[string]MissionAuthorityStateV2
-	facts    map[string]MissionFactStateV2
+	missions  map[string]MissionAuthorityStateV2
+	readiness map[string]ReadinessAuthorityStateV2
+	facts     map[string]MissionFactStateV2
 }
 
 func NewMissionRestoredProjectionV2(result playback.ResultV2) (MissionRestoredProjectionV2, error) {
@@ -18,8 +19,9 @@ func NewMissionRestoredProjectionV2(result playback.ResultV2) (MissionRestoredPr
 		return MissionRestoredProjectionV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "playback_result", err)
 	}
 	projection := MissionRestoredProjectionV2{
-		missions: make(map[string]MissionAuthorityStateV2),
-		facts:    make(map[string]MissionFactStateV2),
+		missions:  make(map[string]MissionAuthorityStateV2),
+		readiness: make(map[string]ReadinessAuthorityStateV2),
+		facts:     make(map[string]MissionFactStateV2),
 	}
 	for _, restored := range result.States() {
 		coordinate := restored.Coordinate()
@@ -27,6 +29,14 @@ func NewMissionRestoredProjectionV2(result playback.ResultV2) (MissionRestoredPr
 			continue
 		}
 		if coordinate.ID == journalv2.AggregateID(coordinate.Scope.MissionID) {
+			readiness, readinessErr := DecodeReadinessAuthorityStateV2(restored.CanonicalState())
+			if readinessErr == nil {
+				if readiness.ProjectID() != coordinate.Scope.ProjectID || readiness.MissionID() != coordinate.Scope.MissionID || readiness.Version() != restored.LogicalVersion() || readiness.Digest() != restored.StateDigest() {
+					return MissionRestoredProjectionV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "restored_readiness", nil)
+				}
+				projection.readiness[missionProjectionKeyV2(readiness.ProjectID(), readiness.MissionID())] = readiness
+				continue
+			}
 			state, err := DecodeMissionAuthorityStateV2(restored.CanonicalState())
 			if err != nil || state.ProjectID() != coordinate.Scope.ProjectID || state.MissionID() != coordinate.Scope.MissionID || state.Version() != restored.LogicalVersion() || state.Digest() != restored.StateDigest() {
 				return MissionRestoredProjectionV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "restored_mission", err)
@@ -41,6 +51,11 @@ func NewMissionRestoredProjectionV2(result playback.ResultV2) (MissionRestoredPr
 		projection.facts[missionFactProjectionKeyV2(fact.input.ProjectID, fact.input.MissionID, fact.Kind(), fact.FactID())] = fact
 	}
 	return projection, nil
+}
+
+func (p MissionRestoredProjectionV2) Readiness(projectID journalv2.ProjectID, missionID journalv2.MissionID) (ReadinessAuthorityStateV2, bool) {
+	state, found := p.readiness[missionProjectionKeyV2(projectID, missionID)]
+	return state, found
 }
 
 func (p MissionRestoredProjectionV2) Mission(projectID journalv2.ProjectID, missionID journalv2.MissionID) (MissionAuthorityStateV2, bool) {
