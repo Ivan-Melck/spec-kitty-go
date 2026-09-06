@@ -676,7 +676,7 @@
     },
     "WP16": {
       "actor": "user",
-      "agent": "codex",
+      "agent": null,
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan",
@@ -729,7 +729,8 @@
         "Independent cycle-twenty-one review rejected irrelevant generic-shell ambiguity and missing POSIX special-builtin prefix-assignment persistence.",
         "Cycle-twenty-two exact-tree candidate 726ba2ab1ab211f6f84ce05c807cda2efd848dad qualified; tree 40bb9db6feaac3e4e2a41d22d588f04f17413330; manifest /tmp/go-kitty3-m2-absence.Ai1bH6/evidence/manifest.json; inventory 9169db990d61e26acac5e25a0d377b27485bcf8805efb05f15b4b1b6c384a812; observed absence 290/290, layers 8/8, runtime 23/23.",
         "Independent cycle-twenty-two review rejected missing Bash POSIX-mode state from shebang and runtime set transitions.",
-        "Cycle 23 exact candidate b898b04d23e8b7275a81910cfe176892f5f59476 tree 7d10e1b949e1258689fde3949ca3a016dcf8d413 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.hVNQ7J/evidence/manifest.json; inventory 1e8ca189f085788cc4c3e791e1ad7f254fb1e3668949c3383dcfc35bbe423c0b; receipts 309/309, layers 8/8, runtime 23/23; full architecture and race passed."
+        "Cycle 23 exact candidate b898b04d23e8b7275a81910cfe176892f5f59476 tree 7d10e1b949e1258689fde3949ca3a016dcf8d413 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.hVNQ7J/evidence/manifest.json; inventory 1e8ca189f085788cc4c3e791e1ad7f254fb1e3668949c3383dcfc35bbe423c0b; receipts 309/309, layers 8/8, runtime 23/23; full architecture and race passed.",
+        "Cycle 23 rejected: command set -o posix was incorrectly suppressed and set -- did not terminate option parsing."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -743,12 +744,12 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T080": "done",
-        "T081": "done",
-        "T082": "done",
-        "T083": "done",
-        "T084": "done",
-        "T085": "done"
+        "T080": "planned",
+        "T081": "planned",
+        "T082": "planned",
+        "T083": "planned",
+        "T084": "planned",
+        "T085": "planned"
       }
     },
     "WP17": {
