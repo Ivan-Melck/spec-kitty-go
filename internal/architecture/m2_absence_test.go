@@ -513,6 +513,11 @@ var m2ShellUtilityDispatch = map[string]bool{"command": true, "env": true, "exec
 var m2ShellInterpreters = map[string]bool{"bash": true, "dash": true, "ksh": true, "sh": true, "zsh": true}
 var m2ShellIndirectDispatch = map[string]bool{"eval": true, "xargs": true}
 var m2ShellKnownDataCommands = map[string]bool{"[": true, ":": true, "echo": true, "false": true, "printf": true, "test": true, "true": true}
+var m2ShellSpecialBuiltins = map[string]bool{
+	".": true, ":": true, "break": true, "continue": true, "eval": true,
+	"exec": true, "exit": true, "export": true, "readonly": true, "return": true,
+	"set": true, "shift": true, "trap": true, "unset": true,
+}
 var m2ShellStatefulBuiltins = map[string]bool{
 	".": true, "declare": true, "eval": true, "export": true, "local": true,
 	"readonly": true, "source": true, "typeset": true, "unset": true,
@@ -527,15 +532,24 @@ const (
 )
 
 type m2ShellIdentity struct {
-	timeMode m2ShellTimeMode
-	detail   string
+	timeMode   m2ShellTimeMode
+	prefixMode m2ShellPrefixMode
+	detail     string
 }
+
+type m2ShellPrefixMode uint8
+
+const (
+	m2ShellPrefixAmbiguous m2ShellPrefixMode = iota
+	m2ShellPrefixDiscard
+	m2ShellPrefixPersist
+)
 
 const m2ShellShebangMaxBytes = 4096
 
 func m2ShellIdentityFromSource(source string) m2ShellIdentity {
 	ambiguous := func(detail string) m2ShellIdentity {
-		return m2ShellIdentity{timeMode: m2ShellTimeAmbiguous, detail: detail}
+		return m2ShellIdentity{timeMode: m2ShellTimeAmbiguous, prefixMode: m2ShellPrefixAmbiguous, detail: detail}
 	}
 	if !strings.HasPrefix(source, "#!") {
 		return ambiguous("missing-shebang")
@@ -572,18 +586,18 @@ func m2ShellIdentityFromSource(source string) m2ShellIdentity {
 	}
 	switch interpreter {
 	case "/bin/bash", "/usr/bin/bash":
-		return m2ShellIdentity{timeMode: m2ShellTimeReserved, detail: "bash"}
+		return m2ShellIdentity{timeMode: m2ShellTimeReserved, prefixMode: m2ShellPrefixDiscard, detail: "bash"}
 	case "/bin/dash", "/usr/bin/dash":
-		return m2ShellIdentity{timeMode: m2ShellTimeExternal, detail: "dash"}
+		return m2ShellIdentity{timeMode: m2ShellTimeExternal, prefixMode: m2ShellPrefixPersist, detail: "dash"}
 	case "/bin/sh", "/usr/bin/sh":
 		return ambiguous("generic-sh")
 	case "bash":
 		if viaEnv {
-			return m2ShellIdentity{timeMode: m2ShellTimeReserved, detail: "bash"}
+			return m2ShellIdentity{timeMode: m2ShellTimeReserved, prefixMode: m2ShellPrefixDiscard, detail: "bash"}
 		}
 	case "dash":
 		if viaEnv {
-			return m2ShellIdentity{timeMode: m2ShellTimeExternal, detail: "dash"}
+			return m2ShellIdentity{timeMode: m2ShellTimeExternal, prefixMode: m2ShellPrefixPersist, detail: "dash"}
 		}
 	case "sh":
 		if viaEnv {
@@ -876,7 +890,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 			}
 		}
-		recordFunctionCall := func(name string) {
+		recordFunctionCall := func(name string, conditional bool) {
 			for index := len(scopes) - 1; index >= 0; index-- {
 				if scopes[index].functionName != "" {
 					if !scopes[index].functionReachable {
@@ -884,10 +898,33 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					}
 					scopes[index].functionOps = append(scopes[index].functionOps, shellFunctionOp{
 						call:        name,
-						conditional: scopes[index].functionConditional || commandConditional || controlDepth > scopes[index].functionControlBase,
+						conditional: conditional || scopes[index].functionConditional || commandConditional || controlDepth > scopes[index].functionControlBase,
 					})
 					return
 				}
+			}
+		}
+		applySpecialBuiltinPrefixes := func() {
+			if len(pendingAssignments) == 0 {
+				return
+			}
+			switch shellIdentity.prefixMode {
+			case m2ShellPrefixDiscard:
+				return
+			case m2ShellPrefixPersist:
+				for name, value := range pendingAssignments {
+					active[name] = value
+				}
+				recordFunctionEffects(pendingAssignments)
+			case m2ShellPrefixAmbiguous:
+				conditionalEffects := cloneValues(pendingAssignments)
+				for name, value := range conditionalEffects {
+					prior, exists := active[name]
+					active[name] = joinValue(prior, exists, value)
+					value.conditional = true
+					conditionalEffects[name] = value
+				}
+				recordFunctionEffects(conditionalEffects)
 			}
 		}
 		insideFunction := func() bool {
@@ -1211,12 +1248,12 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					}
 					continue
 				}
+				if !pathSpelled && !dispatchCapable && m2ShellSpecialBuiltins[commandName] {
+					applySpecialBuiltinPrefixes()
+				}
 				if _, exists := functions[commandName]; exists && !dispatchCapable {
-					if ambiguousTimeLookup {
-						return nil, "ambiguous-time-function-lookup:" + shellIdentity.detail
-					}
 					if insideFunction() {
-						recordFunctionCall(commandName)
+						recordFunctionCall(commandName, ambiguousTimeLookup)
 						commandStarted = true
 						commandPosition = false
 						continue
@@ -1232,7 +1269,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 						}
 						pendingFunctionEffects[name] = value
 					}
-					pendingFunctionJoin = pendingFunctionJoin || commandConditional
+					pendingFunctionJoin = pendingFunctionJoin || commandConditional || ambiguousTimeLookup
 					commandStarted = true
 					commandPosition = false
 					continue
@@ -1259,7 +1296,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					!m2ShellUtilityDispatch[commandName] && !m2ShellInterpreters[commandName] && !m2ShellIndirectDispatch[commandName] {
 					// An unqualified external-looking word can resolve to a function
 					// declared later. Resolve that relationship at invocation time.
-					recordFunctionCall(commandName)
+					recordFunctionCall(commandName, false)
 				}
 				switch {
 				case m2ShellUtilityDispatch[commandName]:

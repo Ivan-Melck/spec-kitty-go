@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -113,6 +114,18 @@ func TestM2GateSourcesDoNotShelterExecutableBehavior(t *testing.T) {
 }
 
 func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T) {
+	t.Run("special-builtin-registry-is-closed", func(t *testing.T) {
+		want := []string{".", ":", "break", "continue", "eval", "exec", "exit", "export", "readonly", "return", "set", "shift", "trap", "unset"}
+		got := make([]string, 0, len(m2ShellSpecialBuiltins))
+		for name := range m2ShellSpecialBuiltins {
+			got = append(got, name)
+		}
+		sort.Strings(got)
+		if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("special builtin registry=%v want=%v", got, want)
+		}
+	})
+
 	longGap := strings.Repeat("# intervening line\n", 65)
 	tests := []struct {
 		name, path, content string
@@ -326,6 +339,9 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"env-bash-time-invokes-function":                "#!/usr/bin/env bash\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3; }\ntime select_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 		"env-s-bash-time-invokes-function":              "#!/usr/bin/env -S bash -eu\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3; }\ntime select_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 		"env-option-bash-time-invokes-function":         "#!/usr/bin/env -i bash\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3; }\ntime select_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"dash-special-colon-prefix-persists":            "#!/bin/dash\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"dash-special-return-prefix-persists":           "#!/bin/dash\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 return 0; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"bash-special-colon-prefix-is-command-scoped":   "#!/bin/bash\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native :; }\nselect_native_cli\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -358,6 +374,14 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"quoted-time-bypasses-function":                    "#!/bin/bash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; }\n\"time\" -p helper || :\n\"$review_retired_cli\" /tmp/x\n",
 		"dash-time-bypasses-function":                      "#!/usr/bin/dash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; }\ntime -p helper || :\n\"$review_retired_cli\" /tmp/x\n",
 		"env-dash-time-bypasses-function":                  "#!/usr/bin/env -S dash -e\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; }\ntime helper || :\n\"$review_retired_cli\" /tmp/x\n",
+		"harmless-generic-time-helper":                     "#!/bin/sh\nshow(){ printf '%s\\n' native; }\ntime show\n",
+		"bash-special-colon-prefix-discards-retired":       "#!/bin/bash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"dash-regular-printf-prefix-is-command-scoped":     "#!/bin/dash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 printf '%s' native; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"dash-external-prefix-is-command-scoped":           "#!/bin/dash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 /bin/true; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"generic-special-prefix-same-value-is-stable":      "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=native :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"generic-special-prefix-irrelevant-data":           "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_other_cli=sql\\ite3 :; }\nhelper\nprintf '%s' \"$review_other_cli\"\n\"$review_retired_cli\" /tmp/x\n",
+		"generic-time-same-effect-is-stable":               "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=native; }\ntime helper\n\"$review_retired_cli\" /tmp/x\n",
+		"generic-time-irrelevant-effect-is-data":           "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_other_cli=sql\\ite3; }\ntime helper\nprintf '%s' \"$review_other_cli\"\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -395,6 +419,10 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"overbudget-shebang-time-function-lookup":     "#!/bin/bash " + strings.Repeat("x", 4096) + "\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\ntime helper\n\"$review_retired_cli\" /tmp/x\n",
 		"unsupported-env-option-time-function-lookup": "#!/usr/bin/env --review-unknown bash\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\ntime helper\n\"$review_retired_cli\" /tmp/x\n",
 		"quoted-env-interpreter-time-function-lookup": "#!/usr/bin/env \"bash\"\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\ntime helper\n\"$review_retired_cli\" /tmp/x\n",
+		"generic-special-colon-prefix-joins":          "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"missing-shell-special-colon-prefix-joins":    "review_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"dash-opaque-export-prefix":                   "#!/bin/dash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 export REVIEW_OTHER; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"dash-opaque-dot-prefix":                      "#!/bin/dash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 . ./review-env; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()
