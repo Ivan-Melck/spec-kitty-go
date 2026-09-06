@@ -689,7 +689,8 @@
         "SQLite subsystem removed; exact clean-candidate absence qualification and all parity, architecture, race, module, vet, and static checks pass.",
         "Independent cycle-two review rejected the evidence proof; product deletion remains preserved.",
         "Cycle-three blockers resolved; exact final integrated tree 32de27cf qualified with closed 34-artifact manifest and detector-specific mutants.",
-        "Independent cycle-three review rejected split-token detection and asserted runtime evidence; prior fixes preserved."
+        "Independent cycle-three review rejected split-token detection and asserted runtime evidence; prior fixes preserved.",
+        "Cycle-four exact final review tree 0026b488 qualified with semantic split-token detection and non-skippable observed runtime evidence."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
