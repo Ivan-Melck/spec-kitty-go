@@ -703,7 +703,8 @@
         "Cycle-nine exact final tree de2818f5 qualified; supported POSIX words resolve and unresolved command assignments fail closed.",
         "Independent cycle-nine review rejected reserved-word/list command-position blind spot; all other evidence remains accepted.",
         "Cycle-ten exact final tree 2cb8b9b3 qualified; canonical shell command-position engine covers reserved/list/pipeline/grouping contexts.",
-        "Independent cycle-ten review rejected case-action and utility-dispatch command positions; all other evidence remains accepted."
+        "Independent cycle-ten review rejected case-action and utility-dispatch command positions; all other evidence remains accepted.",
+        "Cycle-eleven exact final tree 9cffc182 qualified; case actions and utility-dispatch positions are modeled explicitly."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
