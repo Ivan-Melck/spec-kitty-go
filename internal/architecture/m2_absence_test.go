@@ -488,18 +488,33 @@ func m2GoConstantString(expression ast.Expr, values map[string]string) (string, 
 	}
 }
 
-var m2ShellAssignment = regexp.MustCompile(`(?m)(?:^|[;\n])[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*((?:'[^']*'|"[^"]*"|[A-Za-z0-9_./-]+)+)[ \t]*;([^\n]*)`)
+var m2ShellAssignment = regexp.MustCompile(`(?:^|;)[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*((?:'[^']*'|"[^"]*"|[A-Za-z0-9_./-]+)+)[ \t]*(?:;|$)`)
 
 func m2ShellResolvedExecutables(source string) []string {
 	var executables []string
-	for _, match := range m2ShellAssignment.FindAllStringSubmatch(source, 128) {
-		if len(match) != 4 {
-			continue
-		}
-		value := strings.NewReplacer("'", "", `"`, "").Replace(match[2])
-		use := "$" + match[1]
-		if strings.Contains(match[3], use) {
-			executables = append(executables, value)
+	lines := strings.Split(source, "\n")
+	for lineIndex, line := range lines {
+		for _, location := range m2ShellAssignment.FindAllStringSubmatchIndex(line, 128) {
+			if len(location) != 6 {
+				continue
+			}
+			value := strings.NewReplacer("'", "", `"`, "").Replace(line[location[4]:location[5]])
+			name := regexp.QuoteMeta(line[location[2]:location[3]])
+			command := regexp.MustCompile(`(?:^|;)[ \t]*(?:"?\$\{?` + name + `\}?"?)(?:[ \t;]|$)`)
+			last := lineIndex + 64
+			if last >= len(lines) {
+				last = len(lines) - 1
+			}
+			for candidate := lineIndex; candidate <= last; candidate++ {
+				candidateLine := lines[candidate]
+				if candidate == lineIndex {
+					candidateLine = line[location[1]:]
+				}
+				if command.MatchString(candidateLine) {
+					executables = append(executables, value)
+					break
+				}
+			}
 		}
 	}
 	sort.Strings(executables)

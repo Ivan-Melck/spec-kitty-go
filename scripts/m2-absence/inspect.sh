@@ -35,8 +35,29 @@ check_shell() {
   for assignment in $assignments; do
     name=${assignment%%=*}
     value=${assignment#*=}
-    if [ "$value" = "$legacy_cli" ] && printf '%s\n' "$normalized" | grep -Eq '\$\{?'"$name"'([^A-Za-z0-9_]|$)'; then
-      return 42
+    if [ "$value" = "$legacy_cli" ]; then
+      if printf '%s\n' "$normalized" | awk -v name="$name" -v expected="$legacy_cli" '
+        BEGIN {
+          assignment = "(^|;)[ \\t]*" name "[ \\t]*=[ \\t]*" expected "([ \\t]*;|[ \\t]*$)"
+          command = "(^|;)[ \\t]*\\$" name "([ \\t;]|$)"
+        }
+        {
+          if (match($0, assignment)) {
+            remaining = 65
+            suffix = substr($0, RSTART + RLENGTH)
+            if (suffix ~ command) found = 1
+          } else if (remaining > 0 && $0 ~ command) {
+            found = 1
+          }
+          if (remaining > 0) remaining--
+        }
+        END { exit found ? 0 : 1 }
+      '; then
+        return 42
+      else
+        status=$?
+        test "$status" -eq 1 || return "$status"
+      fi
     fi
   done
   return 0

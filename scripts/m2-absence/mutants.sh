@@ -11,7 +11,7 @@ run_layers() {
   cli=${legacy_word}3
   printf 'package mutant\nimport _ "%s"\n' "$driver" >"$fixture_root/source.go"
   printf 'example.test/mutant %s@v1.0.0\n' "$driver" >"$fixture_root/module.graph"
-  printf '#!/bin/sh\nretired_cli=%s%s; "$retired_cli" authority.db\n' "'sql'" "'ite3'" >"$fixture_root/command.sh"
+  printf '#!/bin/sh\nreview_retired_cli=%s%s\n"$review_retired_cli" /tmp/x\n' "'sql'" "'ite3'" >"$fixture_root/command.sh"
   printf 'ELF\\000%s\\000' "$driver" >"$fixture_root/binary"
   mkdir "$fixture_root/install"
   printf '%s' "$driver" >"$fixture_root/install/provider.bin"

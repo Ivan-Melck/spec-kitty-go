@@ -119,8 +119,11 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		{"go-concatenation", "internal/x/x.go", "package x\nimport \"os/exec\"\nfunc run(){ _ = exec.Command(\"sql\"+\"ite3\", \"authority.db\") }\n", true},
 		{"go-alias-flow", "internal/x/x.go", "package x\nimport command \"os/exec\"\nfunc run(){ retired := \"sql\"+\"ite3\"; _ = command.Command(retired) }\n", true},
 		{"shell-adjacent-quotes", "scripts/x.sh", "#!/bin/sh\nretired_cli='sql''ite3'; \"$retired_cli\" authority.db\n", true},
+		{"shell-multiline-adjacent-quotes", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n\"$review_retired_cli\" /tmp/x\n", true},
 		{"go-unrelated-concatenation", "internal/x/x.go", "package x\nimport \"os/exec\"\nfunc run(){ _ = exec.Command(\"sql\"+\"-formatter\") }\n", false},
 		{"shell-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nretired_cli='sql''ite3'; printf '%s' native\n", false},
+		{"shell-multiline-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\nprintf '%s' \"$review_retired_cli\"\n", false},
+		{"shell-command-before-assignment", "scripts/x.sh", "#!/bin/sh\n\"$review_retired_cli\" /tmp/x; review_retired_cli='sql''ite3'\n", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
