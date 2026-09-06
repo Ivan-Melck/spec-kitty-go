@@ -711,7 +711,8 @@
         "Cycle-thirteen exact-tree candidate 4892c886dac963045d04a9c5f3df045a41ae6314 qualified; tree 93e4351c948461024e55bf9dd706fb532a5e3bc6; manifest /tmp/go-kitty3-m2-absence.0Hl1KJ/evidence/manifest.json; inventory 741f434c60606016ac05c4356f1ac4adfd6408ce5473b37cba732fed63d0e3f7.",
         "Independent cycle-thirteen review rejected simple-command assignment expansion ordering and asserted mutant census evidence.",
         "Cycle-fourteen exact-tree candidate 805400bd4974d06a526aecde7fc15fa99ec31244 qualified; tree cc51d0303ff00dc1d579e2fb2c0a2ba198189a36; manifest /tmp/go-kitty3-m2-absence.NsdCQb/evidence/manifest.json; inventory 457de417a1ce4ed24bef1d663ac393a90812a0a9bc28df1ebb010089957449b8; observed absence 155/155 and layers 8/8 with zero anomalies.",
-        "Independent cycle-fourteen review rejected assignment propagation across pipeline and subshell isolation boundaries; receipt evidence passed."
+        "Independent cycle-fourteen review rejected assignment propagation across pipeline and subshell isolation boundaries; receipt evidence passed.",
+        "Cycle-fifteen exact-tree candidate 2962553f4ac5daf6b0b5618097bcfcb43fe26eb3 qualified; tree bce41d095649c5dbbd3739d3ffee123325d0441e; manifest /tmp/go-kitty3-m2-absence.NVbIGs/evidence/manifest.json; inventory 5bf71b6cedbe24f24464ff0942faeea510f8e94ea7c03326c64452aa119a63b5; observed absence 165/165, layers 8/8, runtime 23/23."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
