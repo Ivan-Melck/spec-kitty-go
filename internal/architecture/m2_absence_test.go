@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"io"
 	"io/fs"
@@ -23,6 +24,18 @@ import (
 const (
 	m2AbsenceMaxFiles = 50000
 	m2AbsenceMaxBytes = 256 << 20
+	m2LegacyWord      = "sql" + "ite"
+	m2LegacyTitle     = "SQL" + "ite"
+	m2ModerncDriver   = "modernc.org/" + m2LegacyWord
+	m2MattnDriver     = "github.com/mattn/go-" + m2LegacyWord + "3"
+	m2ZombiezenDriver = "zombiezen.com/go/" + m2LegacyWord
+	m2NcrucesDriver   = "github.com/ncruces/go-" + m2LegacyWord + "3"
+	m2GlebarezDriver  = "github.com/glebarez/" + m2LegacyWord
+	m2FallbackToken   = m2LegacyWord + "fallback"
+	m2LegacyCLI       = m2LegacyWord + "3"
+	m2JournalPragma   = "pragma journal_" + "mode"
+	m2CreateTable     = "create " + "table"
+	m2EmbedDatabase   = "go:embed *" + ".db"
 )
 
 var retiredSQLiteBlobs = map[string]string{
@@ -62,7 +75,7 @@ var retiredSQLiteBlobs = map[string]string{
 }
 
 var m2RetiredModules = []string{
-	"modernc.org/sqlite", "modernc.org/libc", "modernc.org/mathutil", "modernc.org/memory",
+	m2ModerncDriver, "modernc.org/libc", "modernc.org/mathutil", "modernc.org/memory",
 	"modernc.org/cc/v4", "modernc.org/ccgo/v4", "modernc.org/fileutil", "modernc.org/gc/v2",
 	"modernc.org/gc/v3", "modernc.org/goabi0", "modernc.org/opt", "modernc.org/sortutil",
 	"modernc.org/strutil", "modernc.org/token", "github.com/ncruces/go-strftime",
@@ -70,10 +83,10 @@ var m2RetiredModules = []string{
 }
 
 var m2ForbiddenImports = []string{
-	"database/sql", "modernc.org/sqlite", "github.com/mattn/go-sqlite3",
-	"github.com/glebarez/sqlite", "github.com/glebarez/go-sqlite",
-	"github.com/ncruces/go-sqlite3", "zombiezen.com/go/sqlite", "crawshaw.io/sqlite",
-	"gorm.io/driver/sqlite", "github.com/uptrace/bun/driver/sqlitedialect",
+	"database/sql", m2ModerncDriver, m2MattnDriver,
+	m2GlebarezDriver, "github.com/glebarez/go-" + m2LegacyWord,
+	m2NcrucesDriver, m2ZombiezenDriver, "crawshaw.io/" + m2LegacyWord,
+	"gorm.io/driver/" + m2LegacyWord, "github.com/uptrace/bun/driver/" + m2LegacyWord + "dialect",
 }
 
 // m2HistoricalExemptions is deliberately closed and token-specific. These are
@@ -82,52 +95,55 @@ var m2ForbiddenImports = []string{
 // imports are always parsed before this table is consulted, so an executable
 // edge cannot be sheltered by a textual exemption.
 var m2HistoricalExemptions = map[string]map[string]bool{
-	"cmd/spec-kitty/main_test.go":                {"sqlite format 3": true, "--db": true, "--backend": true},
-	"docs/phase1-evidence/closeout-results.json": {"modernc.org/sqlite": true},
-	"docs/phase1-evidence/results.json":          {"modernc.org/sqlite": true},
-	"internal/architecture/m1_crown_test.go":     {"modernc.org/sqlite": true, "sqlitefallback": true},
+	"cmd/spec-kitty/main_test.go":                {m2LegacyWord + " format 3": true, "--db": true, "--backend": true},
+	"docs/phase1-evidence/closeout-results.json": {m2ModerncDriver: true},
+	"docs/phase1-evidence/results.json":          {m2ModerncDriver: true},
+	"internal/architecture/m1_crown_test.go":     {m2ModerncDriver: true, m2FallbackToken: true},
 	"internal/architecture/m1_dependency_guard_test.go": {
-		"modernc.org/sqlite": true, "go-sqlite3": true, "zombiezen.com/go/sqlite": true,
-		"github.com/glebarez/sqlite": true, "github.com/ncruces/go-sqlite3": true,
-		"sqlitefallback": true, "fallbacktosqlite": true, "usesqlitefallback": true,
+		m2ModerncDriver: true, "go-" + m2LegacyWord + "3": true, m2ZombiezenDriver: true,
+		m2GlebarezDriver: true, m2NcrucesDriver: true,
+		m2FallbackToken: true, "fallbackto" + m2LegacyWord: true, "use" + m2FallbackToken: true, m2LegacyCLI: true,
 	},
 	"internal/architecture/m2_dependency_guard_test.go": {
-		"modernc.org/sqlite": true, "go-sqlite3": true, "zombiezen.com/go/sqlite": true,
-		"github.com/glebarez/sqlite": true, "github.com/ncruces/go-sqlite3": true,
+		m2ModerncDriver: true, "go-" + m2LegacyWord + "3": true, m2ZombiezenDriver: true,
+		m2GlebarezDriver: true, m2NcrucesDriver: true, m2LegacyCLI: true,
 	},
 	"internal/architecture/m2_mutant_control_test.go": {
-		"modernc.org/sqlite": true, "go-sqlite3": true, "zombiezen.com/go/sqlite": true,
-		"github.com/glebarez/sqlite": true, "github.com/ncruces/go-sqlite3": true,
+		m2ModerncDriver: true, "go-" + m2LegacyWord + "3": true, m2ZombiezenDriver: true,
+		m2GlebarezDriver: true, m2NcrucesDriver: true, m2LegacyCLI: true,
 	},
-	"internal/architecture/policy_test.go": {"modernc.org/sqlite": true},
+	"internal/architecture/policy_test.go": {m2ModerncDriver: true},
 	"internal/controlroot/classifier_test.go": {
-		"modernc.org/sqlite": true, "go-sqlite3": true, "sqlite format 3": true,
+		m2ModerncDriver: true, "go-" + m2LegacyWord + "3": true, m2LegacyWord + " format 3": true, m2LegacyCLI: true,
 	},
-	"internal/controlroot/signatures.go":                     {"sqlite format 3": true},
-	"internal/productionruntime/host_test.go":                {"sqlitefallback": true},
-	"kitty-specs/beads-tracker-integration-01M0YG7E/plan.md": {"modernc.org/sqlite": true},
+	"internal/controlroot/signatures.go":                     {m2LegacyWord + " format 3": true},
+	"internal/productionruntime/host_test.go":                {m2FallbackToken: true},
+	"kitty-specs/beads-tracker-integration-01M0YG7E/plan.md": {m2ModerncDriver: true},
 	"kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/tasks/WP01-frozen-journal-contracts-and-guards/review-cycle-5.md": {
-		"modernc.org/sqlite": true, "go-sqlite3": true,
+		m2ModerncDriver: true, "go-" + m2LegacyWord + "3": true, m2LegacyCLI: true,
 	},
-	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/plan.md":                                                                     {"modernc.org/sqlite": true},
-	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/post-approval-defect-12.md":                                                  {"modernc.org/sqlite": true},
-	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-1.md": {"modernc.org/sqlite": true},
-	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP12-historical-control-root-classification-and-refusal.md":            {"sqlite format 3": true},
-	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-5.md":  {"modernc.org/sqlite": true},
-	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof.md":               {"modernc.org/sqlite": true},
-	"kitty-specs/phase-one-architecture-closeout-01M0WZQ9/plan.md":                                                                     {"modernc.org/sqlite": true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/plan.md":                                                                         {m2ModerncDriver: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/post-approval-defect-12.md":                                                      {m2ModerncDriver: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP01-m2-contracts-and-permanent-architecture-guards/review-cycle-1.md":     {m2ModerncDriver: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP12-historical-control-root-classification-and-refusal.md":                {m2LegacyWord + " format 3": true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-5.md":      {m2ModerncDriver: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof.md":                   {m2ModerncDriver: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-2.md":    {m2ModerncDriver: true, m2LegacyCLI: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/scope-extension-1.md": {m2ModerncDriver: true},
+	"kitty-specs/phase-one-architecture-closeout-01M0WZQ9/plan.md":                                                                         {m2ModerncDriver: true},
 	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/plan.md": {
-		"modernc.org/sqlite": true, "go-sqlite3": true, "pragma journal_mode": true,
+		m2ModerncDriver: true, "go-" + m2LegacyWord + "3": true, m2JournalPragma: true, m2LegacyCLI: true,
 	},
 	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/research.md": {
-		"modernc.org/sqlite": true, "go-sqlite3": true, "pragma journal_mode": true,
+		m2ModerncDriver: true, "go-" + m2LegacyWord + "3": true, m2JournalPragma: true, m2LegacyCLI: true,
 	},
-	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/research/evidence-log.csv":                                             {"modernc.org/sqlite": true},
-	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/research/source-register.csv":                                          {"modernc.org/sqlite": true},
-	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP01-authority-seed-and-real-claim-race.md":                      {"modernc.org/sqlite": true},
-	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP02-stupid-tracker-and-attribution-safe-saga/review-cycle-1.md": {"create table": true},
-	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP02-stupid-tracker-and-attribution-safe-saga/review-cycle-2.md": {"create table": true},
-	"kitty-specs/software-development-mission-method-01M11EX2/plan.md":                                                                     {"modernc.org/sqlite": true},
+	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/research/evidence-log.csv":                                             {m2ModerncDriver: true},
+	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/research/source-register.csv":                                          {m2ModerncDriver: true},
+	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP01-authority-seed-and-real-claim-race.md":                      {m2ModerncDriver: true},
+	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP02-stupid-tracker-and-attribution-safe-saga/review-cycle-1.md": {m2CreateTable: true},
+	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/tasks/WP02-stupid-tracker-and-attribution-safe-saga/review-cycle-2.md": {m2CreateTable: true},
+	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/quickstart.md":                                                         {m2LegacyCLI: true},
+	"kitty-specs/software-development-mission-method-01M11EX2/plan.md":                                                                     {m2ModerncDriver: true},
 }
 
 type m2AbsenceFinding struct {
@@ -236,6 +252,7 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 
 func inspectM2Candidate(path string, data []byte, add func(string, string, string)) {
 	lower := strings.ToLower(string(data))
+	executable := lower
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".go" {
 		parsed, err := parser.ParseFile(token.NewFileSet(), path, data, parser.ImportsOnly)
@@ -249,26 +266,27 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 				add("go-import", path, value)
 			}
 		}
-	}
-	if m2GateSource(path) {
-		return
+		executable = strings.ToLower(m2GoExecutableText(data))
 	}
 	patterns := []struct{ kind, token string }{
-		{"driver", "modernc.org/sqlite"}, {"driver", "go-sqlite3"}, {"driver", "zombiezen.com/go/sqlite"},
-		{"driver", "github.com/glebarez/sqlite"}, {"driver", "github.com/ncruces/go-sqlite3"},
-		{"copied-schema", "sqlite_master"}, {"copied-schema", "pragma journal_mode"}, {"copied-schema", "sqlite format 3"}, {"copied-schema", "create table"},
-		{"subprocess", "exec.command(\"sqlite"}, {"subprocess", "commandcontext(\"sqlite"},
-		{"dynamic-load", "plugin.open"}, {"linkname", "go:linkname"}, {"cgo", "-lsqlite"},
-		{"fallback", "sqlitefallback"}, {"fallback", "fallbacktosqlite"}, {"fallback", "usesqlitefallback"},
-		{"comparison-read", "comparesqlite"}, {"rescue-read", "rescuesqlite"}, {"dual-write", "dualwritesqlite"},
-		{"shadow-write", "shadowwritesqlite"}, {"migration", "migratesqlite"}, {"automatic-import", "importsqlite"},
-		{"runtime-open", "opensqlite"},
-		{"embedded", "go:embed sqlite"}, {"embedded", "go:embed *.db"},
+		{"driver", m2ModerncDriver}, {"driver", "go-" + m2LegacyWord + "3"}, {"driver", m2ZombiezenDriver},
+		{"driver", m2GlebarezDriver}, {"driver", m2NcrucesDriver},
+		{"copied-schema", m2LegacyWord + "_master"}, {"copied-schema", m2JournalPragma}, {"copied-schema", m2LegacyWord + " format 3"}, {"copied-schema", m2CreateTable},
+		{"subprocess", "exec.command(\"" + m2LegacyWord}, {"subprocess", "commandcontext(\"" + m2LegacyWord}, {"subprocess", m2LegacyWord + "3"},
+		{"dynamic-load", "plugin" + ".open"}, {"linkname", "go:" + "linkname"}, {"cgo", "-l" + m2LegacyWord},
+		{"fallback", m2FallbackToken}, {"fallback", "fallbackto" + m2LegacyWord}, {"fallback", "use" + m2FallbackToken},
+		{"comparison-read", "compare" + m2LegacyWord}, {"rescue-read", "rescue" + m2LegacyWord}, {"dual-write", "dualwrite" + m2LegacyWord},
+		{"shadow-write", "shadowwrite" + m2LegacyWord}, {"migration", "migrate" + m2LegacyWord}, {"automatic-import", "import" + m2LegacyWord},
+		{"runtime-open", "open" + m2LegacyWord},
+		{"embedded", "go:embed " + m2LegacyWord}, {"embedded", m2EmbedDatabase},
 	}
 	for _, pattern := range patterns {
+		exempt := m2HistoricalExemptions[path][pattern.token]
+		if ext == ".go" && strings.Contains(executable, pattern.token) {
+			exempt = false
+		}
 		if strings.Contains(lower, pattern.token) &&
-			(pattern.kind != "linkname" || strings.Contains(lower, "sqlite")) &&
-			!m2HistoricalExemptions[path][pattern.token] {
+			(pattern.kind != "linkname" || strings.Contains(lower, m2LegacyWord)) && !exempt {
 			add(pattern.kind, path, pattern.token)
 		}
 	}
@@ -352,10 +370,22 @@ func m2ForbiddenImport(path string) bool {
 	return false
 }
 
-func m2GateSource(path string) bool {
-	return path == "internal/architecture/m2_absence_test.go" ||
-		path == "internal/architecture/m2_absence_mutants_test.go" ||
-		path == "scripts/m2-absence/inspect.sh" || path == "scripts/m2-absence/mutants.sh"
+func m2GoExecutableText(data []byte) string {
+	files := token.NewFileSet()
+	file := files.AddFile("candidate.go", files.Base(), len(data))
+	var scan scanner.Scanner
+	scan.Init(file, data, nil, scanner.ScanComments)
+	var executable strings.Builder
+	for {
+		_, tok, literal := scan.Scan()
+		if tok == token.EOF {
+			break
+		}
+		if tok != token.STRING && tok != token.CHAR && tok != token.COMMENT {
+			executable.WriteString(literal)
+		}
+	}
+	return executable.String()
 }
 
 func m2WithinRoot(root, path string) bool {

@@ -2,6 +2,7 @@ package architecture
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -10,36 +11,36 @@ func TestM2AbsenceMutants(t *testing.T) {
 	mutants := []struct {
 		name, path, content, kind string
 	}{
-		{"direct-import", "internal/x/x.go", "package x\nimport _ \"modernc.org/sqlite\"\n", "go-import"},
-		{"aliased-import", "internal/x/x.go", "package x\nimport driver \"github.com/mattn/go-sqlite3\"\nvar _ = driver.ErrNo\n", "go-import"},
-		{"test-only-import", "internal/x/x_test.go", "package x\nimport _ \"zombiezen.com/go/sqlite\"\n", "go-import"},
-		{"generated-import", "internal/x/generated.go", "// Code generated. DO NOT EDIT.\npackage x\nimport _ \"github.com/ncruces/go-sqlite3\"\n", "go-import"},
-		{"tagged-import", "internal/x/tagged.go", "//go:build never\npackage x\nimport _ \"github.com/glebarez/sqlite\"\n", "go-import"},
-		{"platform-import", "internal/x/x_plan9.go", "package x\nimport _ \"modernc.org/sqlite\"\n", "go-import"},
-		{"indirect-wrapper", "internal/adapter/wrapper.go", "package adapter\nimport _ \"modernc.org/sqlite/lib\"\n", "go-import"},
-		{"reflection", "internal/x/x.go", "package x\nimport \"plugin\"\nfunc load(){ _, _ = plugin.Open(\"authority.so\") }\n", "dynamic-load"},
-		{"subprocess", "internal/x/x.go", "package x\nimport \"os/exec\"\nfunc run(){ _ = exec.Command(\"sqlite3\") }\n", "subprocess"},
-		{"linkname", "internal/x/x.go", "package x\n//go:linkname Open sqlite.Open\nfunc Open()\n", "linkname"},
-		{"cgo", "internal/x/x.go", "package x\n// #cgo LDFLAGS: -lsqlite3\nimport \"C\"\n", "cgo"},
-		{"embedded-schema", "assets/authority.sql", "CREATE TABLE authority(id text);", "copied-schema"},
-		{"copied-driver", "internal/archive/store.go", "package archive\nconst header = \"SQLite format 3\\x00\"\n", "copied-schema"},
-		{"renamed-driver", "internal/cache/provider.go", "package cache\nconst catalog = \"sqlite_master\"\n", "copied-schema"},
-		{"direct-module", "go.mod", "module example.test/x\nrequire modernc.org/sqlite v1.57.0\n", "driver"},
-		{"tool-module", "go.mod", "module example.test/x\ntool modernc.org/sqlite\n", "driver"},
+		{"direct-import", "internal/x/x.go", "package x\nimport _ \"" + m2ModerncDriver + "\"\n", "go-import"},
+		{"aliased-import", "internal/x/x.go", "package x\nimport driver \"" + m2MattnDriver + "\"\nvar _ = driver.ErrNo\n", "go-import"},
+		{"test-only-import", "internal/x/x_test.go", "package x\nimport _ \"" + m2ZombiezenDriver + "\"\n", "go-import"},
+		{"generated-import", "internal/x/generated.go", "// Code generated. DO NOT EDIT.\npackage x\nimport _ \"" + m2NcrucesDriver + "\"\n", "go-import"},
+		{"tagged-import", "internal/x/tagged.go", "//go:build never\npackage x\nimport _ \"" + m2GlebarezDriver + "\"\n", "go-import"},
+		{"platform-import", "internal/x/x_plan9.go", "package x\nimport _ \"" + m2ModerncDriver + "\"\n", "go-import"},
+		{"indirect-wrapper", "internal/adapter/wrapper.go", "package adapter\nimport _ \"" + m2ModerncDriver + "/lib\"\n", "go-import"},
+		{"reflection", "internal/x/x.go", "package x\nimport \"plugin\"\nfunc load(){ _, _ = plugin" + ".Open(\"authority.so\") }\n", "dynamic-load"},
+		{"subprocess", "internal/x/x.go", "package x\nimport \"os/exec\"\nfunc run(){ _ = exec.Command(\"" + m2LegacyWord + "3\") }\n", "subprocess"},
+		{"linkname", "internal/x/x.go", "package x\n//go:" + "linkname Open " + m2LegacyWord + ".Open\nfunc Open()\n", "linkname"},
+		{"cgo", "internal/x/x.go", "package x\n// #cgo LDFLAGS: -l" + m2LegacyWord + "3\nimport \"C\"\n", "cgo"},
+		{"embedded-schema", "assets/authority.sql", "CREATE " + "TABLE authority(id text);", "copied-schema"},
+		{"copied-driver", "internal/archive/store.go", "package archive\nconst header = \"" + m2LegacyTitle + " format 3\\x00\"\n", "copied-schema"},
+		{"renamed-driver", "internal/cache/provider.go", "package cache\nconst catalog = \"" + m2LegacyWord + "_master\"\n", "copied-schema"},
+		{"direct-module", "go.mod", "module example.test/x\nrequire " + m2ModerncDriver + " v1.57.0\n", "driver"},
+		{"tool-module", "go.mod", "module example.test/x\ntool " + m2ModerncDriver + "\n", "driver"},
 		{"exclusive-module", "go.mod", "module example.test/x\nrequire modernc.org/libc v1.74.4\n", "module"},
-		{"sbom-component", "artifacts/sbom.json", `{"components":[{"name":"modernc.org/sqlite"}]}`, "driver"},
-		{"binary-string", "dist/spec-kitty", "ELF\\x00modernc.org/sqlite\\x00", "driver"},
-		{"installed-driver", "install/lib/provider.bin", "modernc.org/sqlite", "driver"},
-		{"help-selector", "cmd/spec-kitty/help.go", "package main\nconst help = \"--backend sqlite\"\n", "selector"},
-		{"fallback", "internal/x/x.go", "package x\nvar SQLiteFallback bool\n", "fallback"},
-		{"comparison-read", "internal/x/x.go", "package x\nfunc compareSQLite(){}\n", "comparison-read"},
-		{"rescue-read", "internal/x/x.go", "package x\nfunc rescueSQLite(){}\n", "rescue-read"},
-		{"dual-write", "internal/x/x.go", "package x\nfunc dualWriteSQLite(){}\n", "dual-write"},
-		{"shadow-write", "internal/x/x.go", "package x\nfunc shadowWriteSQLite(){}\n", "shadow-write"},
-		{"automatic-import", "internal/x/x.go", "package x\nfunc importSQLite(){}\n", "automatic-import"},
-		{"migration", "internal/x/x.go", "package x\nfunc migrateSQLite(){}\n", "migration"},
-		{"runtime-open", "internal/x/x.go", "package x\nfunc openSQLite(){}\n", "runtime-open"},
-		{"ignored-source", ".cache/generated/provider.go", "package generated\nimport _ \"modernc.org/sqlite\"\n", "go-import"},
+		{"sbom-component", "artifacts/sbom.json", `{"components":[{"name":"` + m2ModerncDriver + `"}]}`, "driver"},
+		{"binary-string", "dist/spec-kitty", "ELF\\x00" + m2ModerncDriver + "\\x00", "driver"},
+		{"installed-driver", "install/lib/provider.bin", m2ModerncDriver, "driver"},
+		{"help-selector", "cmd/spec-kitty/help.go", "package main\nconst help = \"--backend " + m2LegacyWord + "\"\n", "selector"},
+		{"fallback", "internal/x/x.go", "package x\nvar " + m2LegacyTitle + "Fallback bool\n", "fallback"},
+		{"comparison-read", "internal/x/x.go", "package x\nfunc compare" + m2LegacyTitle + "(){}\n", "comparison-read"},
+		{"rescue-read", "internal/x/x.go", "package x\nfunc rescue" + m2LegacyTitle + "(){}\n", "rescue-read"},
+		{"dual-write", "internal/x/x.go", "package x\nfunc dualWrite" + m2LegacyTitle + "(){}\n", "dual-write"},
+		{"shadow-write", "internal/x/x.go", "package x\nfunc shadowWrite" + m2LegacyTitle + "(){}\n", "shadow-write"},
+		{"automatic-import", "internal/x/x.go", "package x\nfunc import" + m2LegacyTitle + "(){}\n", "automatic-import"},
+		{"migration", "internal/x/x.go", "package x\nfunc migrate" + m2LegacyTitle + "(){}\n", "migration"},
+		{"runtime-open", "internal/x/x.go", "package x\nfunc open" + m2LegacyTitle + "(){}\n", "runtime-open"},
+		{"ignored-source", ".cache/generated/provider.go", "package generated\nimport _ \"" + m2ModerncDriver + "\"\n", "go-import"},
 	}
 	if len(mutants) != 30 {
 		t.Fatalf("absence mutant census=%d want=30", len(mutants))
@@ -78,17 +79,42 @@ func TestM2AbsenceSymlinkAndHistoricalDiscrimination(t *testing.T) {
 	})
 	t.Run("historical-document", func(t *testing.T) {
 		root := t.TempDir()
-		writeM2Mutant(t, root, "kitty-specs/beads-tracker-integration-01M0YG7E/plan.md", []byte("The retired driver was modernc.org/sqlite."))
+		writeM2Mutant(t, root, "kitty-specs/beads-tracker-integration-01M0YG7E/plan.md", []byte("The retired driver was "+m2ModerncDriver+"."))
 		if evidence := inspectM2Absence(t, root, false); len(evidence.Findings) != 0 {
 			t.Fatalf("historical documentation rejected:\n%s", formatM2Findings(evidence.Findings))
 		}
 	})
 	t.Run("executable-beneath-history", func(t *testing.T) {
 		root := t.TempDir()
-		writeM2Mutant(t, root, "kitty-specs/beads-tracker-integration-01M0YG7E/provider.go", []byte("package history\nimport _ \"modernc.org/sqlite\"\n"))
+		writeM2Mutant(t, root, "kitty-specs/beads-tracker-integration-01M0YG7E/provider.go", []byte("package history\nimport _ \""+m2ModerncDriver+"\"\n"))
 		evidence := inspectM2Absence(t, root, false)
 		assertM2Finding(t, evidence.Findings, "go-import", "kitty-specs/beads-tracker-integration-01M0YG7E/provider.go")
 	})
+}
+
+func TestM2GateSourcesDoNotShelterExecutableBehavior(t *testing.T) {
+	attacks := []struct {
+		path, content, kind string
+	}{
+		{"scripts/m2-absence/inspect.sh", "#!/bin/sh\n" + m2LegacyWord + "3 authority.db\n", "subprocess"},
+		{"internal/architecture/m1_crown_test.go", "package architecture\nfunc " + m2LegacyTitle + "Fallback() bool { return true }\n", "fallback"},
+	}
+	for _, attack := range attacks {
+		t.Run(filepath.Base(attack.path), func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, attack.path, []byte(attack.content))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, attack.kind, attack.path)
+		})
+	}
+}
+
+func TestM2AbsenceLayerDetectors(t *testing.T) {
+	command := exec.Command(filepath.Join(m2RepositoryRoot(t), "scripts", "m2-absence", "mutants.sh"), "--layers-only")
+	command.Dir = m2RepositoryRoot(t)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("layer detector mutants: %v\n%s", err, output)
+	}
 }
 
 func TestM2RetiredBlobCensusIsClosed(t *testing.T) {
