@@ -795,15 +795,17 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		}
 		markFunctionReturn := func(conditional bool) {
 			for index := len(scopes) - 1; index >= 0; index-- {
-				if scopes[index].functionName == "" {
-					continue
+				if scopes[index].functionName != "" {
+					if conditional {
+						scopes[index].functionConditional = true
+					} else {
+						scopes[index].functionReachable = false
+					}
+					return
 				}
-				if conditional {
-					scopes[index].functionConditional = true
-				} else {
-					scopes[index].functionReachable = false
+				if scopes[index].isolated {
+					return
 				}
-				return
 			}
 		}
 		var functionEffects func(string, map[string]bool) (map[string]shellValue, string)
@@ -1088,6 +1090,11 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			}
 			if commandName, pathSpelled, resolved := m2StaticShellCommandName(token); resolved {
 				executables = append(executables, commandName)
+				if commandName == "time" && token == "time" && !dispatchCapable {
+					commandStarted = true
+					dispatchMode = "reserved-time"
+					continue
+				}
 				if _, exists := functions[commandName]; exists && !dispatchCapable {
 					if insideFunction() {
 						recordFunctionCall(commandName)
