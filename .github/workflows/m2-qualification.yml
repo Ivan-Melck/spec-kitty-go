@@ -21,6 +21,9 @@ jobs:
     env:
       GOTOOLCHAIN: local
       M2_GAPDBD: /opt/spec-kitty/admitted/gapdbd-947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
+      M2_ACTOR_ID: github-actions
+      M2_PROCESS_ID: github-run-${{ github.run_id }}-${{ github.run_attempt }}
+      M2_PROFILE_REVISION: 5878a5a84f9f306a91d0895498984fb3523f1f12ba05cf7bb57576093f5722e5
     steps:
       - name: Check out exact source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
