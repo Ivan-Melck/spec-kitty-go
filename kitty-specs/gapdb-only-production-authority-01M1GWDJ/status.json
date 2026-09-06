@@ -674,15 +674,35 @@
     },
     "WP16": {
       "actor": "codex",
+      "agent": "codex",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 1,
       "lane": "planned",
       "last_event_id": "01M1T71N6XTFHJCNN735MNKMTX",
       "last_transition_at": "2026-09-06T01:59:06.717318+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "Allocation blocker repaired: approved dependency lanes merged into lane-p, derived mission state restored from planning authority, and combined tree compiles."
+      ],
+      "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-1.md",
         "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-1.md",
         "reviewer": "codex",
         "verdict": "changes_requested"
+      },
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
+      "subtasks": {
+        "T080": "planned",
+        "T081": "planned",
+        "T082": "planned",
+        "T083": "planned",
+        "T084": "planned",
+        "T085": "planned"
       }
     },
     "WP17": {
