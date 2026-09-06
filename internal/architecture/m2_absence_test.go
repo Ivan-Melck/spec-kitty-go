@@ -559,6 +559,53 @@ type m2ShellSetModeParser struct {
 	expectMode   m2ShellSetModeAction
 }
 
+type m2ShellCommandParseKind uint8
+
+const (
+	m2ShellCommandOption m2ShellCommandParseKind = iota
+	m2ShellCommandTarget
+	m2ShellCommandQueryTarget
+)
+
+type m2ShellCommandParseResult struct {
+	kind      m2ShellCommandParseKind
+	ambiguous bool
+}
+
+type m2ShellCommandParser struct {
+	options   bool
+	query     bool
+	ambiguous bool
+}
+
+func (parser *m2ShellCommandParser) consumeWord(word string, resolved bool) m2ShellCommandParseResult {
+	if !resolved {
+		parser.options = false
+		parser.ambiguous = true
+		return m2ShellCommandParseResult{kind: m2ShellCommandTarget, ambiguous: true}
+	}
+	if parser.options {
+		if word == "--" {
+			parser.options = false
+			return m2ShellCommandParseResult{kind: m2ShellCommandOption}
+		}
+		if strings.HasPrefix(word, "-") {
+			options := strings.TrimPrefix(word, "-")
+			if options == "" || strings.Trim(options, "pVv") != "" {
+				parser.ambiguous = true
+			} else if strings.ContainsAny(options, "Vv") {
+				parser.query = true
+			}
+			return m2ShellCommandParseResult{kind: m2ShellCommandOption}
+		}
+		parser.options = false
+	}
+	if parser.query {
+		return m2ShellCommandParseResult{kind: m2ShellCommandQueryTarget, ambiguous: parser.ambiguous}
+	}
+	return m2ShellCommandParseResult{kind: m2ShellCommandTarget, ambiguous: parser.ambiguous}
+}
+
 var m2ShellKnownSetOptions = map[string]bool{
 	"allexport": true, "braceexpand": true, "emacs": true, "errexit": true,
 	"errtrace": true, "functrace": true, "hashall": true, "histexpand": true,
@@ -997,9 +1044,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 		dispatchMode := ""
 		dispatchOptionArgument := false
 		commandBuiltinDispatch := false
-		commandDispatchQuery := false
-		commandDispatchAmbiguous := false
-		commandDispatchOptionsEnded := false
+		commandParser := m2ShellCommandParser{}
 		setModeParser := m2ShellSetModeParser{}
 		ambiguousTimeLookup := false
 		expansionValues := cloneValues(active)
@@ -1290,9 +1335,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				dispatchMode = ""
 				dispatchOptionArgument = false
 				commandBuiltinDispatch = false
-				commandDispatchQuery = false
-				commandDispatchAmbiguous = false
-				commandDispatchOptionsEnded = false
+				commandParser = m2ShellCommandParser{}
 				ambiguousTimeLookup = false
 				continue
 			case "&&", "||":
@@ -1306,9 +1349,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				dispatchMode = ""
 				dispatchOptionArgument = false
 				commandBuiltinDispatch = false
-				commandDispatchQuery = false
-				commandDispatchAmbiguous = false
-				commandDispatchOptionsEnded = false
+				commandParser = m2ShellCommandParser{}
 				ambiguousTimeLookup = false
 				continue
 			case "|":
@@ -1322,9 +1363,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				dispatchMode = ""
 				dispatchOptionArgument = false
 				commandBuiltinDispatch = false
-				commandDispatchQuery = false
-				commandDispatchAmbiguous = false
-				commandDispatchOptionsEnded = false
+				commandParser = m2ShellCommandParser{}
 				ambiguousTimeLookup = false
 				continue
 			case "&":
@@ -1338,9 +1377,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				dispatchMode = ""
 				dispatchOptionArgument = false
 				commandBuiltinDispatch = false
-				commandDispatchQuery = false
-				commandDispatchAmbiguous = false
-				commandDispatchOptionsEnded = false
+				commandParser = m2ShellCommandParser{}
 				ambiguousTimeLookup = false
 				continue
 			case "(":
@@ -1415,7 +1452,40 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			case "<>", ">|":
 				return nil, "unsupported-redirection:" + token
 			}
-			if dispatchCapable {
+			commandWrapperTarget := false
+			commandWrapperAmbiguous := false
+			commandWrapperResolved := true
+			commandWrapperWord := ""
+			if commandPosition && dispatchMode == "command" {
+				word, resolved := m2StaticShellWord(token)
+				if !resolved {
+					if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
+						name := command[1]
+						if name == "" {
+							name = command[2]
+						}
+						if value, exists := expansionValues[name]; exists && value.resolved {
+							word, resolved = value.value, true
+						}
+					}
+				}
+				parsed := commandParser.consumeWord(word, resolved)
+				switch parsed.kind {
+				case m2ShellCommandOption:
+					continue
+				case m2ShellCommandQueryTarget:
+					commandStarted = true
+					indirectCommand = "command-query"
+					commandPosition = false
+					continue
+				case m2ShellCommandTarget:
+					commandWrapperTarget = true
+					commandWrapperAmbiguous = parsed.ambiguous
+					commandWrapperResolved = resolved
+					commandWrapperWord = word
+				}
+			}
+			if dispatchCapable && !commandWrapperTarget {
 				if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
 					name := command[1]
 					if name == "" {
@@ -1432,7 +1502,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					return nil, "unsupported-dispatch-word:" + name
 				}
 			}
-			if commandPosition {
+			if commandPosition && !commandWrapperTarget {
 				switch token {
 				case "!", "if", "then", "elif", "else", "while", "until", "for", "do", "case-control":
 					indirectCommand = ""
@@ -1445,23 +1515,6 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					dispatchOptionArgument = false
 					continue
 				}
-				if dispatchMode == "command" && !commandDispatchOptionsEnded {
-					switch token {
-					case "--":
-						commandDispatchOptionsEnded = true
-						continue
-					}
-					if strings.HasPrefix(token, "-") {
-						options := strings.TrimPrefix(token, "-")
-						if options == "" || strings.Trim(options, "pVv") != "" {
-							commandDispatchAmbiguous = true
-						} else if strings.ContainsAny(options, "Vv") {
-							commandDispatchQuery = true
-						}
-						continue
-					}
-					commandDispatchOptionsEnded = true
-				}
 				if dispatchMode != "" && (token == "--" || strings.HasPrefix(token, "-")) {
 					if (dispatchMode == "env" && (token == "-u" || token == "--unset")) ||
 						(dispatchMode == "nice" && (token == "-n" || token == "--adjustment")) {
@@ -1469,6 +1522,9 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					}
 					continue
 				}
+			}
+			if commandWrapperTarget && !commandWrapperResolved {
+				queuePrefixMode(m2ShellPrefixAmbiguous, true)
 			}
 			if !commandPosition {
 				if indirectCommand == "set-mode" {
@@ -1514,7 +1570,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 				continue
 			}
-			if assignment := m2ShellAssignment.FindStringSubmatch(token); len(assignment) == 3 {
+			if assignment := m2ShellAssignment.FindStringSubmatch(token); !commandWrapperTarget && len(assignment) == 3 {
 				value, resolved := m2StaticShellWord(assignment[2])
 				if !commandStarted {
 					pendingAssignments[assignment[1]] = shellValue{
@@ -1525,14 +1581,14 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 				continue
 			}
-			if commandName, pathSpelled, resolved := m2StaticShellCommandName(token); resolved {
+			commandName, pathSpelled, resolved := m2StaticShellCommandName(token)
+			if commandWrapperTarget && commandWrapperResolved {
+				commandName = filepath.Base(commandWrapperWord)
+				pathSpelled = strings.Contains(commandWrapperWord, "/")
+				resolved = commandWrapperWord != ""
+			}
+			if resolved {
 				executables = append(executables, commandName)
-				if dispatchMode == "command" && commandDispatchQuery {
-					commandStarted = true
-					indirectCommand = "command-query"
-					commandPosition = false
-					continue
-				}
 				if commandName == "time" && token == "time" && !dispatchCapable {
 					commandStarted = true
 					dispatchMode = "reserved-time"
@@ -1551,7 +1607,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				commandSet := commandName == "set" && !pathSpelled &&
 					(!dispatchCapable || dispatchMode == "command" && commandBuiltinDispatch)
 				if commandSet {
-					if commandDispatchAmbiguous {
+					if commandWrapperAmbiguous {
 						pendingFunctionJoin = true
 					}
 					commandStarted = true
@@ -1622,9 +1678,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					dispatchMode = commandName
 					commandBuiltinDispatch = commandName == "command" && !pathSpelled &&
 						(!priorDispatchCapable || priorDispatchMode == "command" && priorCommandBuiltin)
-					commandDispatchQuery = false
-					commandDispatchOptionsEnded = false
-					commandDispatchAmbiguous = commandDispatchAmbiguous || ambiguousTimeLookup
+					commandParser = m2ShellCommandParser{options: true, ambiguous: commandWrapperAmbiguous || ambiguousTimeLookup}
 					continue
 				case m2ShellInterpreters[commandName]:
 					commandStarted = true
@@ -1641,26 +1695,28 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					indirectCommand = "unknown-path-dispatch"
 				}
 			}
-			if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
-				name := command[1]
-				if name == "" {
-					name = command[2]
-				}
-				if value, exists := expansionValues[name]; exists {
-					if !value.resolved {
-						if value.commandSafe {
-							commandPosition = false
-							continue
+			if !commandWrapperTarget || !commandWrapperResolved {
+				if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
+					name := command[1]
+					if name == "" {
+						name = command[2]
+					}
+					if value, exists := expansionValues[name]; exists {
+						if !value.resolved {
+							if value.commandSafe {
+								commandPosition = false
+								continue
+							}
+							return nil, "unresolved-command-assignment:" + name
 						}
-						return nil, "unresolved-command-assignment:" + name
+						if _, function := functions[value.value]; function {
+							return nil, "indirect-function-call:" + value.value
+						}
+						executables = append(executables, value.value)
 					}
-					if _, function := functions[value.value]; function {
-						return nil, "indirect-function-call:" + value.value
-					}
-					executables = append(executables, value.value)
+				} else if name := m2TrackedVariableInWord(token, expansionValues); name != "" {
+					return nil, "unsupported-command-word:" + name
 				}
-			} else if name := m2TrackedVariableInWord(token, expansionValues); name != "" {
-				return nil, "unsupported-command-word:" + name
 			}
 			commandStarted = true
 			dispatchMode = ""
