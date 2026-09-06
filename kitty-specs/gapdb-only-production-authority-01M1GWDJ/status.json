@@ -690,7 +690,8 @@
         "Independent cycle-two review rejected the evidence proof; product deletion remains preserved.",
         "Cycle-three blockers resolved; exact final integrated tree 32de27cf qualified with closed 34-artifact manifest and detector-specific mutants.",
         "Independent cycle-three review rejected split-token detection and asserted runtime evidence; prior fixes preserved.",
-        "Cycle-four exact final review tree 0026b488 qualified with semantic split-token detection and non-skippable observed runtime evidence."
+        "Cycle-four exact final review tree 0026b488 qualified with semantic split-token detection and non-skippable observed runtime evidence.",
+        "Independent cycle-four review rejected one multiline shell association hole; all other evidence remains accepted."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -704,12 +705,12 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T080": "done",
-        "T081": "done",
-        "T082": "done",
-        "T083": "done",
-        "T084": "done",
-        "T085": "done"
+        "T080": "planned",
+        "T081": "planned",
+        "T082": "planned",
+        "T083": "planned",
+        "T084": "planned",
+        "T085": "planned"
       }
     },
     "WP17": {
