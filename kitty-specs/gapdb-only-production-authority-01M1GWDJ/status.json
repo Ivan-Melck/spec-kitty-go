@@ -740,7 +740,8 @@
         "Cycle 27 exact candidate 314e781c0e05300f9bf6a7e15cabea15090bedeb tree c3b3f2e93996ab504e8e0365f015537adee7fe60 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.snXO8o/evidence/manifest.json; inventory 7f017622fdce647f851d0c0b0db64168818ea696c8ccdd95d6fd796564ec03b2; receipts 362/362, layers 8/8, runtime 23/23; full architecture and race passed.",
         "Cycle 27 rejected: direct quoted unresolved command targets did not share wrapper ambiguity semantics.",
         "Cycle 28 exact candidate dc1640abbfa31ad783c2a72e070a7231bb2430c3 tree 1c12408bdc82f08d223100307d7e754062115468 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.DaBDiO/evidence/manifest.json; inventory fc81e7c08e9137e5e2358ef2b9712c23507435f2992c449b588589bf89d4f048; receipts 385/385, layers 8/8, runtime 23/23; full architecture and race passed.",
-        "Cycle 28 rejected: composite/default parameter expansions bypassed the exact-variable command-target resolver."
+        "Cycle 28 rejected: composite/default parameter expansions bypassed the exact-variable command-target resolver.",
+        "Cycle 29 exact candidate a3736fefb4fca690dcfa2f7f1c305c632566c889 tree 09628b93c0f9375d5b028dbf3c3e3fdce532f31d qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.RbFkOC/evidence/manifest.json; inventory 91f594990067627d43c4895dea5b231543a400661aa6300ca376f9c803b7d51c; receipts 411/411, layers 8/8, runtime 23/23; full architecture and race passed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
