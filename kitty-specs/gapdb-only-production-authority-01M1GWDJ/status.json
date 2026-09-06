@@ -697,7 +697,8 @@
         "Cycle-six exact final tree 508d3590 qualified; full-file shell analysis fails closed at explicit byte budgets.",
         "Independent cycle-six review rejected delimiter-consuming shell assignment parsing; all other evidence remains accepted.",
         "Cycle-seven exact final tree be429473 qualified; delimiter-preserving full-file shell parser closes adjacent assignment hole.",
-        "Independent cycle-seven review rejected missing shell comment lexical state; all other evidence remains accepted."
+        "Independent cycle-seven review rejected missing shell comment lexical state; all other evidence remains accepted.",
+        "Cycle-eight exact final tree 303c5f6b qualified; bounded shell lexer handles comments/quotes/escapes and fails closed on ambiguity."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
