@@ -655,10 +655,12 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		resolved    bool
 		commandSafe bool
 		value       string
+		conditional bool
 	}
 	type shellFunctionOp struct {
-		call    string
-		effects map[string]shellValue
+		call        string
+		effects     map[string]shellValue
+		conditional bool
 	}
 	type shellScope struct {
 		kind                byte
@@ -668,11 +670,12 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		functionOps         []shellFunctionOp
 		functionConditional bool
 		functionOpaque      bool
+		functionReachable   bool
+		functionControlBase int
 	}
 	type shellFunction struct {
-		ops         []shellFunctionOp
-		conditional bool
-		opaque      bool
+		ops    []shellFunctionOp
+		opaque bool
 	}
 	var executables []string
 	active := map[string]shellValue{}
@@ -683,6 +686,12 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			clone[name] = value
 		}
 		return clone
+	}
+	joinValue := func(prior shellValue, priorExists bool, effect shellValue) shellValue {
+		if priorExists && prior.resolved && effect.resolved && prior.value == effect.value && prior.commandSafe == effect.commandSafe {
+			return prior
+		}
+		return shellValue{}
 	}
 	statements, ambiguity := m2ShellStatements(source)
 	if ambiguity != "" {
@@ -730,24 +739,26 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		pendingAssignments := map[string]shellValue{}
 		commandStarted := false
 		inPipeline := false
+		commandConditional := false
+		controlDepth := 0
 		var scopes []shellScope
 		pendingFunctionEffects := map[string]shellValue{}
+		pendingFunctionJoin := false
+		pendingFunctionReturn := false
 		recordFunctionEffects := func(effects map[string]shellValue) {
 			for index := len(scopes) - 1; index >= 0; index-- {
 				if scopes[index].functionName != "" {
-					operation := shellFunctionOp{effects: cloneValues(effects)}
+					if !scopes[index].functionReachable {
+						return
+					}
+					operation := shellFunctionOp{
+						effects:     cloneValues(effects),
+						conditional: scopes[index].functionConditional || commandConditional || controlDepth > scopes[index].functionControlBase,
+					}
 					scopes[index].functionOps = append(scopes[index].functionOps, operation)
 					return
 				}
 				if scopes[index].isolated {
-					return
-				}
-			}
-		}
-		markFunctionConditional := func() {
-			for index := len(scopes) - 1; index >= 0; index-- {
-				if scopes[index].functionName != "" {
-					scopes[index].functionConditional = true
 					return
 				}
 			}
@@ -763,7 +774,13 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		recordFunctionCall := func(name string) {
 			for index := len(scopes) - 1; index >= 0; index-- {
 				if scopes[index].functionName != "" {
-					scopes[index].functionOps = append(scopes[index].functionOps, shellFunctionOp{call: name})
+					if !scopes[index].functionReachable {
+						return
+					}
+					scopes[index].functionOps = append(scopes[index].functionOps, shellFunctionOp{
+						call:        name,
+						conditional: scopes[index].functionConditional || commandConditional || controlDepth > scopes[index].functionControlBase,
+					})
 					return
 				}
 			}
@@ -775,6 +792,19 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				}
 			}
 			return false
+		}
+		markFunctionReturn := func(conditional bool) {
+			for index := len(scopes) - 1; index >= 0; index-- {
+				if scopes[index].functionName == "" {
+					continue
+				}
+				if conditional {
+					scopes[index].functionConditional = true
+				} else {
+					scopes[index].functionReachable = false
+				}
+				return
+			}
 		}
 		var functionEffects func(string, map[string]bool) (map[string]shellValue, string)
 		functionEffects = func(name string, stack map[string]bool) (map[string]shellValue, string) {
@@ -791,28 +821,27 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			stack[name] = true
 			defer delete(stack, name)
 			effects := map[string]shellValue{}
+			applyEffects := func(operationEffects map[string]shellValue, operationConditional bool) {
+				for variable, value := range operationEffects {
+					value.conditional = value.conditional || operationConditional
+					if value.conditional {
+						if prior, exists := effects[variable]; exists {
+							value = joinValue(prior, true, value)
+						}
+					}
+					effects[variable] = value
+				}
+			}
 			for _, operation := range function.ops {
 				if operation.call != "" {
 					calledEffects, callAmbiguity := functionEffects(operation.call, stack)
 					if callAmbiguity != "" {
 						return nil, callAmbiguity
 					}
-					for variable, value := range calledEffects {
-						effects[variable] = value
-					}
+					applyEffects(calledEffects, operation.conditional)
 					continue
 				}
-				for variable, value := range operation.effects {
-					effects[variable] = value
-				}
-			}
-			if function.conditional {
-				for variable, value := range effects {
-					value.resolved = false
-					value.commandSafe = false
-					value.value = ""
-					effects[variable] = value
-				}
+				applyEffects(operation.effects, operation.conditional)
 			}
 			return effects, ""
 		}
@@ -823,15 +852,27 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				}
 				recordFunctionEffects(pendingAssignments)
 			}
-			if persistAssignments && commandStarted {
-				for name, value := range pendingFunctionEffects {
+			if commandStarted && len(pendingFunctionEffects) != 0 {
+				applied := cloneValues(pendingFunctionEffects)
+				if pendingFunctionJoin || !persistAssignments {
+					for name, value := range applied {
+						prior, exists := active[name]
+						applied[name] = joinValue(prior, exists, value)
+					}
+				}
+				for name, value := range applied {
 					active[name] = value
 				}
-				recordFunctionEffects(pendingFunctionEffects)
+				recordFunctionEffects(applied)
+			}
+			if pendingFunctionReturn {
+				markFunctionReturn(commandConditional || pendingFunctionJoin || !persistAssignments)
 			}
 			expansionValues = cloneValues(active)
 			pendingAssignments = map[string]shellValue{}
 			pendingFunctionEffects = map[string]shellValue{}
+			pendingFunctionJoin = false
+			pendingFunctionReturn = false
 			commandStarted = false
 		}
 		for tokenIndex, token := range tokens {
@@ -843,14 +884,22 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			if strings.HasPrefix(token, "function{:") {
 				structuralToken = "function{"
 			}
-			switch structuralToken {
-			case "if", "elif", "else", "while", "until", "for", "case-control", "&&", "||", "|", "&":
-				markFunctionConditional()
+			if commandPosition {
+				switch structuralToken {
+				case "if", "while", "until", "for", "case-control":
+					controlDepth++
+				case "fi", "done", "case-end":
+					if controlDepth == 0 {
+						return nil, "unmatched-shell-control:" + structuralToken
+					}
+					controlDepth--
+				}
 			}
 			switch structuralToken {
 			case ";", "\n":
 				finishSimpleCommand(!inPipeline)
 				inPipeline = false
+				commandConditional = controlDepth > 0
 				commandPosition = true
 				indirectCommand = ""
 				dispatchCapable = false
@@ -858,8 +907,10 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				dispatchOptionArgument = false
 				continue
 			case "&&", "||":
+				pendingFunctionJoin = true
 				finishSimpleCommand(!inPipeline)
 				inPipeline = false
+				commandConditional = true
 				commandPosition = true
 				indirectCommand = ""
 				dispatchCapable = false
@@ -867,8 +918,10 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				dispatchOptionArgument = false
 				continue
 			case "|":
+				pendingFunctionJoin = true
 				finishSimpleCommand(false)
 				inPipeline = true
+				commandConditional = true
 				commandPosition = true
 				indirectCommand = ""
 				dispatchCapable = false
@@ -876,8 +929,10 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				dispatchOptionArgument = false
 				continue
 			case "&":
+				pendingFunctionJoin = true
 				finishSimpleCommand(false)
 				inPipeline = false
+				commandConditional = controlDepth > 0
 				commandPosition = true
 				indirectCommand = ""
 				dispatchCapable = false
@@ -914,7 +969,8 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				}
 				isolated := functionName != "" || isolatedBraces[tokenIndex]
 				scopes = append(scopes, shellScope{
-					kind: '{', parent: active, isolated: isolated, functionName: functionName,
+					kind: '{', parent: active, isolated: isolated, functionName: functionName, functionReachable: true,
+					functionControlBase: controlDepth,
 				})
 				active = cloneValues(active)
 				expansionValues = cloneValues(active)
@@ -928,8 +984,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				scopes = scopes[:len(scopes)-1]
 				if scope.functionName != "" {
 					functions[scope.functionName] = shellFunction{
-						ops: append([]shellFunctionOp(nil), scope.functionOps...), conditional: scope.functionConditional,
-						opaque: scope.functionOpaque,
+						ops: append([]shellFunctionOp(nil), scope.functionOps...), opaque: scope.functionOpaque,
 					}
 				}
 				if !scope.isolated {
@@ -968,11 +1023,11 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			}
 			if commandPosition {
 				switch token {
-				case "!", "if", "then", "elif", "else", "while", "until", "do", "case-control":
+				case "!", "if", "then", "elif", "else", "while", "until", "for", "do", "case-control":
 					indirectCommand = ""
 					continue
-				case "fi", "done":
-					commandPosition = false
+				case "fi", "done", "case-end":
+					commandPosition = true
 					continue
 				}
 				if dispatchOptionArgument {
@@ -1033,7 +1088,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			}
 			if commandName, pathSpelled, resolved := m2StaticShellCommandName(token); resolved {
 				executables = append(executables, commandName)
-				if _, exists := functions[commandName]; exists {
+				if _, exists := functions[commandName]; exists && !dispatchCapable {
 					if insideFunction() {
 						recordFunctionCall(commandName)
 						commandStarted = true
@@ -1045,11 +1100,25 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 						return nil, effectAmbiguity
 					}
 					for name, value := range effects {
+						if value.conditional {
+							prior, exists := active[name]
+							value = joinValue(prior, exists, value)
+						}
 						pendingFunctionEffects[name] = value
 					}
+					pendingFunctionJoin = pendingFunctionJoin || commandConditional
 					commandStarted = true
 					commandPosition = false
 					continue
+				}
+				if insideFunction() && commandName == "return" && !dispatchCapable {
+					pendingFunctionReturn = true
+					commandStarted = true
+					commandPosition = false
+					continue
+				}
+				if insideFunction() && !dispatchCapable && (commandName == "exit" || commandName == "break" || commandName == "continue") {
+					pendingFunctionReturn = true
 				}
 				if insideFunction() && commandName == "read" {
 					commandStarted = true
@@ -1060,7 +1129,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				if insideFunction() && m2ShellStatefulBuiltins[commandName] {
 					markFunctionOpaque()
 				}
-				if insideFunction() && !pathSpelled && !m2ShellKnownDataCommands[commandName] &&
+				if insideFunction() && !dispatchCapable && !pathSpelled && !m2ShellKnownDataCommands[commandName] &&
 					!m2ShellUtilityDispatch[commandName] && !m2ShellInterpreters[commandName] && !m2ShellIndirectDispatch[commandName] {
 					// An unqualified external-looking word can resolve to a function
 					// declared later. Resolve that relationship at invocation time.
@@ -1211,6 +1280,7 @@ func m2ShellExecutableCaseTokens(tokens []string) ([]string, string) {
 			}
 		case "pattern":
 			if token == "esac" {
+				executable = append(executable, "case-end")
 				stack = stack[:len(stack)-1]
 			} else if token == ")" {
 				frame.phase = "action"
@@ -1221,6 +1291,7 @@ func m2ShellExecutableCaseTokens(tokens []string) ([]string, string) {
 				executable = append(executable, "case-control")
 				stack = append(stack, caseFrame{phase: "header"})
 			case "esac":
+				executable = append(executable, "case-end")
 				stack = stack[:len(stack)-1]
 			case ";;":
 				executable = append(executable, ";")

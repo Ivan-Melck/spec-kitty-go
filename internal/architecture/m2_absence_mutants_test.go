@@ -308,8 +308,12 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"invoked-nested-function-effect":          "#!/bin/sh\nreview_retired_cli=native\ninner(){ review_retired_cli=sql\\ite3; }\nouter(){ inner; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
 		"forward-nested-function-call":            "#!/bin/sh\nreview_retired_cli=native\nouter(){ inner; }\ninner(){ review_retired_cli=sql\\ite3; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
 		"nested-effect-order-is-preserved":        "#!/bin/sh\nreview_retired_cli=native\ninner(){ review_retired_cli=native; }\nouter(){ inner; review_retired_cli=sql\\ite3; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
-		"pipeline-function-effect-is-isolated":    "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\nhelper | true\n\"$review_retired_cli\" /tmp/x\n",
 		"subshell-function-effect-is-isolated":    "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\n( helper )\n\"$review_retired_cli\" /tmp/x\n",
+		"early-return-retains-prior-value":        "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ return 0; review_retired_cli=native; }\nselect_native_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"return-after-effect-stops-summary":       "#!/bin/sh\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3; return 0; review_retired_cli=native; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"command-bypasses-function-lookup":        "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native; }\ncommand select_native_cli || :\n\"$review_retired_cli\" /tmp/x\n",
+		"env-bypasses-function-lookup":            "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native; }\nenv select_native_cli || :\n\"$review_retired_cli\" /tmp/x\n",
+		"nested-command-bypasses-function-lookup": "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native; }\nouter(){ command select_native_cli || :; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -327,6 +331,12 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"function-called-before-definition":    "#!/bin/sh\nreview_retired_cli=native\nhelper\nhelper(){ review_retired_cli=sql\\ite3; }\n\"$review_retired_cli\" /tmp/x\n",
 		"invoked-function-clean-effect":        "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"nested-clean-effect-order":            "#!/bin/sh\nreview_retired_cli=sql\\ite3\ninner(){ review_retired_cli=sql\\ite3; }\nouter(){ inner; review_retired_cli=native; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
+		"return-before-effect-is-clean":        "#!/bin/sh\nreview_retired_cli=native\nhelper(){ return 0; review_retired_cli=sql\\ite3; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-bypass-keeps-clean-prior":     "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; }\ncommand helper || :\n\"$review_retired_cli\" /tmp/x\n",
+		"sequential-direct-call-is-certain":    "#!/bin/sh\nreview_retired_cli=sql\\ite3\ntrue\nhelper(){ review_retired_cli=native; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"short-circuit-same-effect-is-stable":  "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=native; }\nfalse && helper\n\"$review_retired_cli\" /tmp/x\n",
+		"conditional-same-effect-is-stable":    "#!/bin/sh\nreview_retired_cli=native\nhelper(){ if true; then review_retired_cli=native; fi; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"conditional-effect-used-as-data":      "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ if true; then review_retired_cli=native; fi; }\nhelper\nprintf '%s' \"$review_retired_cli\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -339,13 +349,21 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 	}
 
 	for name, content := range map[string]string{
-		"conditional-function-effect": "#!/bin/sh\nreview_retired_cli=native\nhelper(){ if true; then review_retired_cli=sql\\ite3; fi; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
-		"unresolved-function-effect":  "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=${review_source}; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
-		"recursive-function-effect":   "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; helper; }\nhelper\n",
-		"indirect-function-call":      "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; }\nselected=helper\n\"$selected\"\n",
-		"function-read-effect":        "#!/bin/sh\nreview_retired_cli=native\nhelper(){ read review_retired_cli; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
-		"opaque-function-effect":      "#!/bin/sh\nreview_retired_cli=native\nhelper(){ eval \"$review_payload\"; }\nhelper\n",
-		"conditional-case-effect":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ case native in other) review_retired_cli=native ;; esac; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"conditional-function-effect":              "#!/bin/sh\nreview_retired_cli=native\nhelper(){ if true; then review_retired_cli=sql\\ite3; fi; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"unresolved-function-effect":               "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=${review_source}; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"recursive-function-effect":                "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; helper; }\nhelper\n",
+		"indirect-function-call":                   "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; }\nselected=helper\n\"$selected\"\n",
+		"function-read-effect":                     "#!/bin/sh\nreview_retired_cli=native\nhelper(){ read review_retired_cli; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"opaque-function-effect":                   "#!/bin/sh\nreview_retired_cli=native\nhelper(){ eval \"$review_payload\"; }\nhelper\n",
+		"conditional-case-effect":                  "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ case native in other) review_retired_cli=native ;; esac; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"false-and-function-effect":                "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native; }\nfalse && select_native_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"or-function-effect":                       "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native; }\ntrue || select_native_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"if-branch-function-effect":                "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native; }\nif false; then select_native_cli; fi\n\"$review_retired_cli\" /tmp/x\n",
+		"loop-function-effect":                     "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native; }\nwhile false; do select_native_cli; done\n\"$review_retired_cli\" /tmp/x\n",
+		"pipeline-function-effect-is-isolated":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\nhelper | true\n\"$review_retired_cli\" /tmp/x\n",
+		"background-function-effect-join":          "#!/bin/sh\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native; }\nselect_native_cli & true\n\"$review_retired_cli\" /tmp/x\n",
+		"short-circuit-return-keeps-reachability":  "#!/bin/sh\nreview_retired_cli=native\nhelper(){ false && return 0; review_retired_cli=sql\\ite3; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"conditional-overwrite-joins-prior-effect": "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; false && review_retired_cli=native; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()
