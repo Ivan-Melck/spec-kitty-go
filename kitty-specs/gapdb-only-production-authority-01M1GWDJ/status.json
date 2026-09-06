@@ -735,7 +735,8 @@
         "Cycle 24 rejected: command -- did not fully terminate wrapper-option parsing; see review-feedback-24.md.",
         "Cycle 25 exact candidate a62190e977d904d22d15c1f855766a248b955a60 tree 3f60b1973789da36f90b6560bb1c8f925d164055 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.yK8kuf/evidence/manifest.json; inventory 352955aed68c14a63533f93c5ff95069944ac48ef3ffb87a41456514e79d39c3; receipts 343/343, layers 8/8, runtime 23/23; full architecture and race passed.",
         "Cycle 25 rejected: unquoted resolved command targets erased field-splitting semantics; see review-feedback-25.md.",
-        "Cycle 26 exact candidate 507f060393da1730954238c9cf1371829e8113be tree 499efc16a0204e7e9dea2c9f94cc7d06685fe1fb qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.l5sdjr/evidence/manifest.json; inventory 17e5deb3341c1223f150ee459f6ccc107abef30214c1ff4c1456ee386b6fbc77; receipts 353/353, layers 8/8, runtime 23/23; full architecture and race passed."
+        "Cycle 26 exact candidate 507f060393da1730954238c9cf1371829e8113be tree 499efc16a0204e7e9dea2c9f94cc7d06685fe1fb qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.l5sdjr/evidence/manifest.json; inventory 17e5deb3341c1223f150ee459f6ccc107abef30214c1ff4c1456ee386b6fbc77; receipts 353/353, layers 8/8, runtime 23/23; full architecture and race passed.",
+        "Cycle 26 rejected: safe-atom precision assumed incomplete IFS provenance; unquoted command targets must fail closed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -749,12 +750,12 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T080": "done",
-        "T081": "done",
-        "T082": "done",
-        "T083": "done",
-        "T084": "done",
-        "T085": "done"
+        "T080": "planned",
+        "T081": "planned",
+        "T082": "planned",
+        "T083": "planned",
+        "T084": "planned",
+        "T085": "planned"
       }
     },
     "WP17": {
