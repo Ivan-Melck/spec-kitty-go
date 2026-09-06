@@ -13,11 +13,14 @@ import (
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
+	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/integration"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
+	"github.com/spec-kitty/go-kitty3/internal/review"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
@@ -150,7 +153,25 @@ func randomToken(prefix string, bytes int) (string, error) {
 	return prefix + hex.EncodeToString(value), nil
 }
 
-type productionSession struct{ host *productionruntime.Host }
+type operationCapabilityHost interface {
+	RuntimeEpochID() journalv2.RuntimeEpochID
+	OperationOrigin(context.Context, journalv2.OperationID) (journalv2.RuntimeEpochID, bool, error)
+	ExecuteMission(context.Context, journalv2.RuntimeEpochID, mission.MissionAuthorityCommandV2) (mission.MissionAuthorityResultV2, error)
+	ExecuteReadiness(context.Context, journalv2.RuntimeEpochID, mission.ReadinessAuthorityCommandV2) (mission.ReadinessAuthorityResultV2, error)
+	ExecuteWork(context.Context, journalv2.RuntimeEpochID, execution.ExecutionAuthorityRequestV2) (execution.ExecutionAuthorityResultV2, error)
+	RebindWorkspaceRuntimeEpoch(context.Context, journalv2.RuntimeEpochID, execution.WorkspaceEpochRebindRequestV2) (execution.WorkspaceAuthorityResultV2, error)
+	SubmitHandoff(context.Context, journalv2.RuntimeEpochID, handoff.AuthorityRequestV2) (handoff.AuthorityResultV2, error)
+	SubmitReview(context.Context, journalv2.RuntimeEpochID, review.AuthorityRequestV2) (review.AuthorityResultV2, error)
+	ExecuteAcceptance(context.Context, journalv2.RuntimeEpochID, integration.AcceptanceAuthorityRequestV2) (integration.AcceptanceResultV2, error)
+	ExecuteIntegration(context.Context, journalv2.RuntimeEpochID, integration.IntegrationAuthorityRequestV2) (integration.IntegrationAttemptStateV2, error)
+	ExecuteIntegrationCleanup(context.Context, journalv2.RuntimeEpochID, integration.IntegrationCleanupRequestV2) (integration.IntegrationAttemptStateV2, error)
+	ExecuteEffect(context.Context, journalv2.RuntimeEpochID, execution.EffectAuthorityRequestV2) (execution.EffectAuthorityResultV2, error)
+}
+
+type productionSession struct {
+	host         *productionruntime.Host
+	capabilities operationCapabilityHost
+}
 
 type productionObservation struct {
 	observation *productionruntime.Observation
@@ -173,23 +194,34 @@ func (s productionSession) Operation(project journalv2.ProjectID, missionID jour
 	return s.host.Progress().Get(project, missionID, productionruntime.ProgressOperations, operation)
 }
 func (s productionSession) Execute(ctx context.Context, operation decodedOperation) (TypedResult, error) {
-	epoch := s.host.RuntimeEpochID()
+	capabilities := s.capabilities
+	if capabilities == nil {
+		capabilities = s.host
+	}
+	hostEpoch := capabilities.RuntimeEpochID()
+	originEpoch := hostEpoch
+	if origin, found, err := capabilities.OperationOrigin(ctx, operation.operation); err != nil {
+		return TypedResult{}, err
+	} else if found {
+		originEpoch = origin
+	}
+	rebindOperationEpoch(&operation, originEpoch)
 	if operation.mission != nil {
-		result, err := s.host.ExecuteMission(ctx, epoch, *operation.mission)
+		result, err := capabilities.ExecuteMission(ctx, hostEpoch, *operation.mission)
 		if err != nil {
 			return TypedResult{}, err
 		}
 		return TypedResult{Kind: ResultMission, Payload: result.CanonicalBytes()}, nil
 	}
 	if operation.readiness != nil {
-		result, err := s.host.ExecuteReadiness(ctx, epoch, *operation.readiness)
+		result, err := capabilities.ExecuteReadiness(ctx, hostEpoch, *operation.readiness)
 		if err != nil {
 			return TypedResult{}, err
 		}
 		return TypedResult{Kind: ResultReadiness, Payload: result.CanonicalBytes()}, nil
 	}
 	if operation.execution != nil {
-		result, err := s.host.ExecuteWork(ctx, epoch, *operation.execution)
+		result, err := capabilities.ExecuteWork(ctx, hostEpoch, *operation.execution)
 		if err != nil {
 			return TypedResult{}, err
 		}
@@ -200,7 +232,7 @@ func (s productionSession) Execute(ctx context.Context, operation decodedOperati
 		return TypedResult{Kind: ResultExecution, Payload: payload}, nil
 	}
 	if operation.rebind != nil {
-		result, err := s.host.RebindWorkspaceRuntimeEpoch(ctx, epoch, *operation.rebind)
+		result, err := capabilities.RebindWorkspaceRuntimeEpoch(ctx, hostEpoch, *operation.rebind)
 		if err != nil {
 			return TypedResult{}, err
 		}
@@ -208,7 +240,7 @@ func (s productionSession) Execute(ctx context.Context, operation decodedOperati
 		return TypedResult{Kind: ResultWorkspace, Payload: payload}, err
 	}
 	if operation.handoff != nil {
-		result, err := s.host.SubmitHandoff(ctx, epoch, *operation.handoff)
+		result, err := capabilities.SubmitHandoff(ctx, hostEpoch, *operation.handoff)
 		if err != nil {
 			return TypedResult{}, err
 		}
@@ -216,7 +248,7 @@ func (s productionSession) Execute(ctx context.Context, operation decodedOperati
 		return TypedResult{Kind: ResultHandoff, Payload: payload}, err
 	}
 	if operation.review != nil {
-		result, err := s.host.SubmitReview(ctx, epoch, *operation.review)
+		result, err := capabilities.SubmitReview(ctx, hostEpoch, *operation.review)
 		if err != nil {
 			return TypedResult{}, err
 		}
@@ -224,7 +256,7 @@ func (s productionSession) Execute(ctx context.Context, operation decodedOperati
 		return TypedResult{Kind: ResultReview, Payload: payload}, err
 	}
 	if operation.acceptance != nil {
-		result, err := s.host.ExecuteAcceptance(ctx, epoch, *operation.acceptance)
+		result, err := capabilities.ExecuteAcceptance(ctx, hostEpoch, *operation.acceptance)
 		if err != nil {
 			return TypedResult{}, err
 		}
@@ -232,21 +264,21 @@ func (s productionSession) Execute(ctx context.Context, operation decodedOperati
 		return TypedResult{Kind: ResultAcceptance, Payload: payload}, err
 	}
 	if operation.integration != nil {
-		result, err := s.host.ExecuteIntegration(ctx, epoch, *operation.integration)
+		result, err := capabilities.ExecuteIntegration(ctx, hostEpoch, *operation.integration)
 		if err != nil {
 			return TypedResult{}, err
 		}
 		return TypedResult{Kind: ResultIntegration, Payload: result.CanonicalBytes()}, nil
 	}
 	if operation.cleanup != nil {
-		result, err := s.host.ExecuteIntegrationCleanup(ctx, epoch, *operation.cleanup)
+		result, err := capabilities.ExecuteIntegrationCleanup(ctx, hostEpoch, *operation.cleanup)
 		if err != nil {
 			return TypedResult{}, err
 		}
 		return TypedResult{Kind: ResultIntegrationCleanup, Payload: result.CanonicalBytes()}, nil
 	}
 	if operation.effect != nil {
-		result, err := s.host.ExecuteEffect(ctx, epoch, *operation.effect)
+		result, err := capabilities.ExecuteEffect(ctx, hostEpoch, *operation.effect)
 		if err != nil {
 			return TypedResult{}, err
 		}
@@ -258,6 +290,40 @@ func (s productionSession) Execute(ctx context.Context, operation decodedOperati
 		return TypedResult{Kind: ResultEffect, Payload: payload}, err
 	}
 	return TypedResult{}, errors.New("operation has no admitted capability")
+}
+
+func rebindOperationEpoch(operation *decodedOperation, epoch journalv2.RuntimeEpochID) {
+	if operation.mission != nil {
+		operation.mission.OriginatingRuntimeEpochID = epoch
+	}
+	if operation.readiness != nil {
+		operation.readiness.OriginatingRuntimeEpochID = epoch
+	}
+	if operation.execution != nil {
+		operation.execution.RuntimeEpochID = epoch
+	}
+	if operation.rebind != nil {
+		operation.rebind.OriginatingRuntimeEpochID = epoch
+	}
+	if operation.handoff != nil {
+		operation.handoff.RuntimeEpochID = epoch
+	}
+	if operation.review != nil {
+		operation.review.RuntimeEpochID = epoch
+	}
+	if operation.acceptance != nil {
+		operation.acceptance.RuntimeEpochID = epoch
+	}
+	if operation.integration != nil {
+		operation.integration.RuntimeEpochID = epoch
+	}
+	if operation.cleanup != nil {
+		operation.cleanup.RuntimeEpochID = epoch
+	}
+	if operation.effect != nil {
+		operation.effect.RuntimeEpochID = epoch
+		operation.effect.Intent.OriginRuntimeEpochID = epoch
+	}
 }
 
 func typedPayload(value any) ([]byte, error) {

@@ -266,7 +266,7 @@ func TestRealGapDBLostAcknowledgementRestartResumeAndConflict(t *testing.T) {
 	lost.Stderr = &lostStderr
 	lostErr := lost.Run()
 	if lostErr == nil || !strings.Contains(lostErr.Error(), errAcknowledgementDropped.Error()) {
-		t.Fatalf("response-drop proxy did not cut acknowledgement: err=%v stderr=%s", lostErr, lostStderr.String())
+		t.Fatalf("response-drop proxy did not cut acknowledgement: err=%v stderr=%s accepted=%s", lostErr, lostStderr.String(), drop.accepted.Bytes())
 	}
 	lostAcknowledgement := drop.accepted.Bytes()
 	var accepted helpercmd.Envelope

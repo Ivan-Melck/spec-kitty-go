@@ -10,6 +10,7 @@ import (
 	journalrestore "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/projection"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
@@ -159,7 +160,14 @@ func restoreReadOnlyObservationWith(ctx context.Context, port readOnlyObservatio
 	if currentRevision != restored.StoreRevision().CurrentRevision() || current.RecoveredStoreRevision >= currentRevision || restored.Playback().CanonicalProjectionDigest().String() != current.ProjectionSHA256 {
 		return HostStatus{}, nil, journalrestore.ResultV2{}, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "observation_coordinate"}
 	}
-	_, progress, err := restoredAuthority(binding.DatabaseID, current.RuntimeEpochID, restored, registry, reducers)
+	authority, err := projection.NewAuthorityV2(binding.DatabaseID, registry, reducers)
+	if err != nil {
+		return HostStatus{}, nil, journalrestore.ResultV2{}, err
+	}
+	if err := authority.RestoreCurrentEpoch(current.RuntimeEpochID, restored); err != nil {
+		return HostStatus{}, nil, journalrestore.ResultV2{}, err
+	}
+	progress, err := NewProgressService(authority, nil)
 	if err != nil {
 		return HostStatus{}, nil, journalrestore.ResultV2{}, err
 	}

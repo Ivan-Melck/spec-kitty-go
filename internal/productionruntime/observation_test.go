@@ -3,11 +3,15 @@ package productionruntime
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	journalrestore "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
 // memoryObservationPort intentionally does not embed memoryAuthorityPort: its
@@ -17,6 +21,59 @@ type memoryObservationPort struct{ port *memoryAuthorityPort }
 
 func (p memoryObservationPort) Get(ctx context.Context, key string) (storegapdb.Record, error) {
 	return p.port.Get(ctx, key)
+}
+
+func TestReadOnlyObservationRealSidecarKeepsCurrentCoordinate(t *testing.T) {
+	binary := os.Getenv("SPEC_KITTY_WP13_GAPDBD")
+	if binary == "" {
+		t.Skip("set SPEC_KITTY_WP13_GAPDBD to the exact assertion-extension sidecar")
+	}
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp("/tmp", "spk-observe-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot := filepath.Join(root, "runtime")
+	if err := os.Mkdir(runtimeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := filepath.Join(root, "authority")
+	config := Config{
+		ControlRoot: data, HostAuthorityID: "host-observe-real", AuthorityBindingOperationID: "operation-bind-observe-real",
+		M1AdoptionRecordPath:                 filepath.Join(repository, "docs", "programs", "evidence", "m1-adoption.json"),
+		AssertionExtensionAdoptionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json"),
+		Sidecar: sidecargapdb.LifecycleConfig{
+			ExecutablePath: binary, AdmissionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-admission.json"),
+			RuntimeRoot: runtimeRoot, DataDirectory: data, SupervisorRunID: "supervisor-observe-mutate", ProductPolicySHA256: repeatByte('e', 64),
+		},
+		MonitorInterval: 250 * time.Millisecond, CapabilityReadiness: absentReadinessSource{},
+		DecompositionProvider: refusingDecompositionProvider{}, CandidateVerifier: refusingCandidateVerifier{}, IntegrationGit: refusingIntegrationGit{},
+	}
+	host, err := Start(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := host.Status()
+	if err := host.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	config.Sidecar.SupervisorRunID = "supervisor-observe-read"
+	observed, err := Observe(t.Context(), config)
+	if err != nil {
+		t.Fatalf("read-only observation: %T %v", err, err)
+	}
+	defer observed.Close(t.Context())
+	got := observed.Status()
+	if got.DatabaseID != want.DatabaseID || got.RuntimeEpochID != want.RuntimeEpochID || got.ProjectionRevision != want.ProjectionRevision || got.ProjectionSHA256 != want.ProjectionSHA256 {
+		t.Fatalf("observation changed coordinate: want=%+v got=%+v", want, got)
+	}
 }
 
 func (p memoryObservationPort) CaptureRevisionV2(ctx context.Context) (journalv2.StoreRevisionV2, error) {
@@ -40,11 +97,11 @@ func TestReadOnlyObservationDoesNotAdvanceProviderRevisionOrEpoch(t *testing.T) 
 	}
 	registry := journalv2.DefaultEventRegistryV2()
 	reducers := fixtureReducers(t, registry)
-	recovered, err := journalrestore.RestoreV2(t.Context(), journalrestore.InputV2{Reader: emptyRecoveryReader{port}, EventRegistry: registry, Reducers: reducers, HostAuthorityID: binding.HostAuthorityID, RecoveryAttemptID: "restore-observation-fixture", Budgets: journalrestore.DefaultBudgetsV2()})
+	epoch := journalv2.RuntimeEpochID("epoch-observation")
+	recovered, err := journalrestore.RestoreV2(t.Context(), journalrestore.InputV2{Reader: emptyRecoveryReader{port}, EventRegistry: registry, Reducers: reducers, HostAuthorityID: binding.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: "restore-observation-fixture", Budgets: journalrestore.DefaultBudgetsV2()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	epoch := journalv2.RuntimeEpochID("epoch-observation")
 	current := runtimeCurrentV2{SchemaVersion: 2, RuntimeEpochID: epoch, HostAuthorityID: binding.HostAuthorityID, DatabaseID: binding.DatabaseID, RecoveredStoreRevision: 0, ProjectionSHA256: recovered.Playback().CanonicalProjectionDigest().String(), CreatedOperationID: "runtime-observation", RecoveryAttemptID: "restore-observation-fixture", Status: "ready"}
 	encoded, _ := json.Marshal(current)
 	canonical, _ := journalv2.CanonicalObject(encoded)

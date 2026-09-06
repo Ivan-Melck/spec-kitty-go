@@ -17,9 +17,14 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
+	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/integration"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
+	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 type factorySpy struct {
@@ -319,8 +324,9 @@ func TestDriveExecutesIndependentWorkScopesInOneMissionConcurrently(t *testing.T
 	runner, _ := NewRunner(factory)
 	done := make(chan int, 1)
 	root := filepath.Join(t.TempDir(), "authority")
+	var stdout bytes.Buffer
 	go func() {
-		done <- runner.Run(t.Context(), []string{"--control-root", root, "drive", "--plan", "-"}, bytes.NewReader(plan), &bytes.Buffer{}, &bytes.Buffer{})
+		done <- runner.Run(t.Context(), []string{"--control-root", root, "drive", "--plan", "-"}, bytes.NewReader(plan), &stdout, &bytes.Buffer{})
 	}()
 	for index := 0; index < 2; index++ {
 		select {
@@ -335,6 +341,15 @@ func TestDriveExecutesIndependentWorkScopesInOneMissionConcurrently(t *testing.T
 	}
 	if session.executes != 2 {
 		t.Fatalf("executes=%d", session.executes)
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.Drive == nil || len(envelope.Drive.Steps) != 2 {
+		t.Fatalf("drive envelope=%+v err=%v output=%s", envelope, err, stdout.String())
+	}
+	for _, step := range envelope.Drive.Steps {
+		if step.Result == nil || step.Result.Kind != ResultExecution || !bytes.Equal(step.Result.Payload, []byte(`{"ok":true}`)) {
+			t.Fatalf("drive discarded typed result: %+v", step)
+		}
 	}
 }
 
@@ -430,6 +445,17 @@ func TestEveryDeclaredNativeOperationHasAConstructibleWireAndResult(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, request := range []OperationRequest{missionCreateRequest(t, "operation-wire-mission"), readinessCreateRequest(t), executionClaimRequest(t, "work-wire", "operation-wire-execution")} {
+		decoded, decodeErr := decodeOperation(request)
+		if decodeErr != nil {
+			t.Fatalf("%s wire: %v", request.Kind, decodeErr)
+		}
+		capabilities := &capabilityDispatchSpy{want: request.Kind}
+		_, executeErr := (productionSession{capabilities: capabilities}).Execute(t.Context(), decoded)
+		if !errors.Is(executeErr, errCapabilityReached) || capabilities.calls != 1 {
+			t.Fatalf("%s dispatch: err=%v calls=%d", request.Kind, executeErr, capabilities.calls)
+		}
+	}
 	tests := []struct {
 		kind    OperationKind
 		action  string
@@ -445,7 +471,7 @@ func TestEveryDeclaredNativeOperationHasAConstructibleWireAndResult(t *testing.T
 		{OperationIntegrationCleanup, string(mission.ActionIntegrationPublish), "mission:mission-1", map[string]any{"project_id": "project-1", "mission_id": "mission-1", "cleanup_operation_id": "operation-cleanup", "governance": governance}, ResultIntegrationCleanup},
 		{OperationEffect, string(mission.ActionEffectReconcile), "action:effect.reconcile", map[string]any{
 			"action":         execution.EffectRequireReconcileV2,
-			"intent":         map[string]any{"operation_id": "operation-effect", "target": map[string]any{"ProjectID": "project-1"}, "governance": governance},
+			"intent":         map[string]any{"operation_id": "operation-effect", "target": map[string]any{"project_id": "project-1"}, "governance": governance},
 			"execution_slot": map[string]any{"mission_id": "mission-1", "governance": governance},
 		}, ResultEffect},
 	}
@@ -458,8 +484,77 @@ func TestEveryDeclaredNativeOperationHasAConstructibleWireAndResult(t *testing.T
 			if decoded.operation == "" || decoded.projectID == "" || decoded.missionID == "" || resultKindFor(test.kind) != test.result {
 				t.Fatalf("declared operation is not closed: decoded=%+v result=%q", decoded, resultKindFor(test.kind))
 			}
+			capabilities := &capabilityDispatchSpy{want: test.kind}
+			_, executeErr := (productionSession{capabilities: capabilities}).Execute(t.Context(), decoded)
+			if !errors.Is(executeErr, errCapabilityReached) || capabilities.calls != 1 {
+				t.Fatalf("declared operation did not reach its real Host capability: err=%v calls=%d", executeErr, capabilities.calls)
+			}
 		})
 	}
+}
+
+func TestNativeWireRejectsCamelCaseAtNestedBoundaries(t *testing.T) {
+	governance, err := execution.ExecutionGovernanceFromContextV2(helperGovernanceContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := OperationRequest{SchemaVersion: 1, Kind: OperationEffect, Action: string(mission.ActionEffectReconcile), Scope: "action:effect.reconcile", Payload: mustJSON(map[string]any{
+		"action":         execution.EffectRequireReconcileV2,
+		"intent":         map[string]any{"operation_id": "operation-effect-camel", "target": map[string]any{"ProjectID": "project-1"}, "governance": governance},
+		"execution_slot": map[string]any{"mission_id": "mission-1", "governance": governance},
+	})}
+	if _, err := decodeOperation(request); err == nil || !strings.Contains(err.Error(), "ProjectID") {
+		t.Fatalf("nested non-snake-case field escaped strict DTO: %v", err)
+	}
+}
+
+var errCapabilityReached = errors.New("capability reached")
+
+type capabilityDispatchSpy struct {
+	want  OperationKind
+	calls int
+}
+
+func (s *capabilityDispatchSpy) reached(kind OperationKind) error {
+	if kind != s.want {
+		return errors.New("wrong capability")
+	}
+	s.calls++
+	return errCapabilityReached
+}
+func (*capabilityDispatchSpy) RuntimeEpochID() journalv2.RuntimeEpochID { return "epoch-current" }
+func (*capabilityDispatchSpy) OperationOrigin(context.Context, journalv2.OperationID) (journalv2.RuntimeEpochID, bool, error) {
+	return "", false, nil
+}
+func (s *capabilityDispatchSpy) ExecuteMission(context.Context, journalv2.RuntimeEpochID, mission.MissionAuthorityCommandV2) (mission.MissionAuthorityResultV2, error) {
+	return mission.MissionAuthorityResultV2{}, s.reached(OperationMission)
+}
+func (s *capabilityDispatchSpy) ExecuteReadiness(context.Context, journalv2.RuntimeEpochID, mission.ReadinessAuthorityCommandV2) (mission.ReadinessAuthorityResultV2, error) {
+	return mission.ReadinessAuthorityResultV2{}, s.reached(OperationReadiness)
+}
+func (s *capabilityDispatchSpy) ExecuteWork(context.Context, journalv2.RuntimeEpochID, execution.ExecutionAuthorityRequestV2) (execution.ExecutionAuthorityResultV2, error) {
+	return execution.ExecutionAuthorityResultV2{}, s.reached(OperationExecution)
+}
+func (s *capabilityDispatchSpy) RebindWorkspaceRuntimeEpoch(context.Context, journalv2.RuntimeEpochID, execution.WorkspaceEpochRebindRequestV2) (execution.WorkspaceAuthorityResultV2, error) {
+	return execution.WorkspaceAuthorityResultV2{}, s.reached(OperationWorkspaceRebind)
+}
+func (s *capabilityDispatchSpy) SubmitHandoff(context.Context, journalv2.RuntimeEpochID, handoff.AuthorityRequestV2) (handoff.AuthorityResultV2, error) {
+	return handoff.AuthorityResultV2{}, s.reached(OperationHandoff)
+}
+func (s *capabilityDispatchSpy) SubmitReview(context.Context, journalv2.RuntimeEpochID, review.AuthorityRequestV2) (review.AuthorityResultV2, error) {
+	return review.AuthorityResultV2{}, s.reached(OperationReview)
+}
+func (s *capabilityDispatchSpy) ExecuteAcceptance(context.Context, journalv2.RuntimeEpochID, integration.AcceptanceAuthorityRequestV2) (integration.AcceptanceResultV2, error) {
+	return integration.AcceptanceResultV2{}, s.reached(OperationAcceptance)
+}
+func (s *capabilityDispatchSpy) ExecuteIntegration(context.Context, journalv2.RuntimeEpochID, integration.IntegrationAuthorityRequestV2) (integration.IntegrationAttemptStateV2, error) {
+	return integration.IntegrationAttemptStateV2{}, s.reached(OperationIntegration)
+}
+func (s *capabilityDispatchSpy) ExecuteIntegrationCleanup(context.Context, journalv2.RuntimeEpochID, integration.IntegrationCleanupRequestV2) (integration.IntegrationAttemptStateV2, error) {
+	return integration.IntegrationAttemptStateV2{}, s.reached(OperationIntegrationCleanup)
+}
+func (s *capabilityDispatchSpy) ExecuteEffect(context.Context, journalv2.RuntimeEpochID, execution.EffectAuthorityRequestV2) (execution.EffectAuthorityResultV2, error) {
+	return execution.EffectAuthorityResultV2{}, s.reached(OperationEffect)
 }
 
 func TestRenderExitCategoryAlwaysAgreesWithEnvelopeOutcome(t *testing.T) {
@@ -547,6 +642,23 @@ func executionClaimRequest(t *testing.T, workID string, operationID journalv2.Op
 	return OperationRequest{SchemaVersion: 1, Action: string(mission.ActionExecutionClaim), Scope: "work:" + workID, Kind: OperationExecution, Payload: payload}
 }
 
+func readinessCreateRequest(t *testing.T) OperationRequest {
+	t.Helper()
+	digest, err := journalv2.ParseDigest("definition", strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{ProjectID: "project-1", MissionID: "mission-1", DefinitionRevision: "definition-1", DefinitionDigest: digest, Version: 1, Lifecycle: mission.MissionOpen, LastOperationID: "operation-wire-readiness", ObservedAt: "2026-09-05T12:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(readinessCommandWire{SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: "operation-wire-readiness", ProjectID: "project-1", MissionID: "mission-1", ActorID: "actor-1", ProcessID: "process-1", RuntimeEpochID: "epoch-1", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: "2026-09-05T12:00:00Z", EventType: mission.ReadinessEventCreatedV2, Updated: state.CanonicalBytes()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return OperationRequest{SchemaVersion: 1, Action: string(mission.ActionMissionCreate), Scope: "mission:mission-1", Kind: OperationReadiness, Payload: payload}
+}
+
 func executionWorkID(value string) ids.WorkID { return ids.WorkID(value) }
 
 func helperGovernanceContext(t *testing.T) governancecontext.Context {
@@ -593,17 +705,39 @@ func TestFailureClassificationIsClosed(t *testing.T) {
 		err     error
 		outcome Outcome
 		code    int
+		retry   string
 	}{
-		{&mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityIdempotencyConflictV2, Field: "operation_id"}, OutcomeConflict, ExitConflict},
-		{&mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityAmbiguousV2, Field: "operation"}, OutcomeAmbiguous, ExitAmbiguous},
-		{&productionruntime.ProgressError{Kind: productionruntime.ProgressNotFound, Field: "mission_id"}, OutcomeNotFound, ExitNotFound},
-		{context.Canceled, OutcomeCanceled, ExitCanceled},
-		{errors.New("provider prose must not escape"), OutcomeUnavailable, ExitUnavailable},
+		{&mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityIdempotencyConflictV2, Field: "operation_id"}, OutcomeConflict, ExitConflict, "same_operation_id"},
+		{&mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityAmbiguousV2, Field: "operation"}, OutcomeAmbiguous, ExitAmbiguous, "same_operation_id"},
+		{execution.NewError(execution.KindDecisionRequired, "hidden", execution.RetryDecisionRequired, nil), OutcomeAmbiguous, ExitAmbiguous, string(execution.RetryDecisionRequired)},
+		{&workspace.Error{Kind: workspace.KindCleanupRefused, Message: "hidden"}, OutcomeAmbiguous, ExitAmbiguous, "reconcile_same_operation"},
+		{&handoff.Error{Kind: handoff.KindNotFound, Message: "hidden"}, OutcomeNotFound, ExitNotFound, "same_operation_id"},
+		{&review.Error{Kind: review.KindReviewerNotIndependent, Message: "hidden"}, OutcomeRefused, ExitRefused, "same_operation_id"},
+		{&integration.Error{Kind: integration.KindRepairRequired, Message: "hidden"}, OutcomeAmbiguous, ExitAmbiguous, "reconcile_same_operation"},
+		{&integration.Error{Kind: integration.KindGitFailure, Message: "hidden"}, OutcomeUnavailable, ExitUnavailable, "reconcile_same_operation"},
+		{&workgraph.Error{Kind: workgraph.KindAmbiguousID, Message: "hidden"}, OutcomeAmbiguous, ExitAmbiguous, "same_operation_id"},
+		{&productionruntime.ProgressError{Kind: productionruntime.ProgressNotFound, Field: "mission_id"}, OutcomeNotFound, ExitNotFound, "read_only"},
+		{context.Canceled, OutcomeCanceled, ExitCanceled, "same_request"},
+		{errors.New("provider prose must not escape"), OutcomeUnavailable, ExitUnavailable, "after_diagnosis"},
 	}
 	for _, test := range tests {
 		outcome, diagnostic := classifyError(test.err)
-		if outcome != test.outcome || exitFor(test.err) != test.code || strings.Contains(diagnostic.Kind, "provider prose") {
+		if outcome != test.outcome || exitFor(test.err) != test.code || diagnostic.RetrySafety != test.retry || strings.Contains(diagnostic.Kind, "provider prose") {
 			t.Fatalf("err=%v outcome=%s diagnostic=%+v", test.err, outcome, diagnostic)
+		}
+	}
+}
+
+func TestMutationSensitiveFailuresNeverRecommendANewOperation(t *testing.T) {
+	for _, err := range []error{
+		&integration.Error{Kind: integration.KindRepairRequired, Message: "after external mutation"},
+		&integration.Error{Kind: integration.KindGitFailure, Message: "cleanup may be pending"},
+		&workspace.Error{Kind: workspace.KindCleanupRefused, Message: "cleanup may be pending"},
+		execution.NewError(execution.KindExternalAttributionLost, "provider state changed", execution.RetryDecisionRequired, nil),
+	} {
+		_, diagnostic := classifyError(err)
+		if strings.Contains(diagnostic.RetrySafety, "new") || diagnostic.RetrySafety == "never" || diagnostic.RetrySafety == "after_diagnosis" {
+			t.Fatalf("mutation-sensitive error permits unsafe retry: err=%v diagnostic=%+v", err, diagnostic)
 		}
 	}
 }

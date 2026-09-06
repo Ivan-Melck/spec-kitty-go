@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
-	"strings"
 	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
@@ -20,6 +18,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/integration"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/tracker"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 type decodedOperation struct {
@@ -108,6 +108,187 @@ type readinessFactTransitionWire struct {
 	ExpectedRecordRevision uint64          `json:"expected_record_revision"`
 }
 
+type workspaceRebindWire struct {
+	ProjectID                 ids.ProjectID                   `json:"project_id"`
+	MissionID                 ids.MissionID                   `json:"mission_id"`
+	WorkRevisionID            ids.WorkRevisionID              `json:"work_revision_id"`
+	WorkID                    ids.WorkID                      `json:"work_id"`
+	ActorID                   ids.ActorID                     `json:"actor_id"`
+	ProcessID                 ids.ProcessID                   `json:"process_id"`
+	OriginatingRuntimeEpochID journalv2.RuntimeEpochID        `json:"originating_runtime_epoch_id"`
+	OperationID               journalv2.OperationID           `json:"operation_id"`
+	OperationEventID          journalv2.EventID               `json:"operation_event_id"`
+	ExecutionEventID          journalv2.EventID               `json:"execution_event_id"`
+	WorkspaceEventID          journalv2.EventID               `json:"workspace_event_id"`
+	Governance                execution.ExecutionGovernanceV2 `json:"governance"`
+	ObservedAt                time.Time                       `json:"observed_at"`
+}
+
+type candidateReplacementWire struct {
+	PredecessorHandoffID      ids.HandoffID `json:"predecessor_handoff_id"`
+	PredecessorCandidate      string        `json:"predecessor_candidate"`
+	PredecessorLogicalVersion uint64        `json:"predecessor_logical_version"`
+	PredecessorStateDigest    string        `json:"predecessor_state_digest"`
+	Reason                    string        `json:"reason"`
+}
+type handoffWire struct {
+	OperationID                journalv2.OperationID           `json:"operation_id"`
+	HandoffID                  ids.HandoffID                   `json:"handoff_id"`
+	ProjectID                  ids.ProjectID                   `json:"project_id"`
+	MissionID                  ids.MissionID                   `json:"mission_id"`
+	WorkRevisionID             ids.WorkRevisionID              `json:"work_revision_id"`
+	WorkID                     ids.WorkID                      `json:"work_id"`
+	RunID                      ids.RunID                       `json:"run_id"`
+	RuntimeEpochID             journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
+	Workspace                  workspace.BindingV2             `json:"workspace"`
+	LeaseID                    ids.LeaseID                     `json:"lease_id"`
+	LeaseGeneration            uint64                          `json:"lease_generation"`
+	Fence                      string                          `json:"fence"`
+	ActorID                    ids.ActorID                     `json:"actor_id"`
+	ProcessID                  ids.ProcessID                   `json:"process_id"`
+	RepositoryID               ids.RepositoryID                `json:"repository_id"`
+	RepositoryPath             string                          `json:"repository_path"`
+	LaneID                     ids.LaneID                      `json:"lane_id"`
+	OwnedBranch                string                          `json:"owned_branch"`
+	PinnedBase                 string                          `json:"pinned_base"`
+	Candidate                  string                          `json:"candidate"`
+	Contributors               []ids.ActorID                   `json:"contributors"`
+	CriterionIDs               []string                        `json:"criterion_ids"`
+	CriteriaDigest             string                          `json:"criteria_digest"`
+	WorkRevisionCriteriaDigest string                          `json:"work_revision_criteria_digest"`
+	EvidenceDigest             string                          `json:"evidence_digest"`
+	Replacement                *candidateReplacementWire       `json:"replacement,omitempty"`
+	Governance                 execution.ExecutionGovernanceV2 `json:"governance"`
+	ObservedAt                 time.Time                       `json:"observed_at"`
+}
+type reviewWire struct {
+	OperationID                journalv2.OperationID           `json:"operation_id"`
+	ReviewID                   ids.ReviewID                    `json:"review_id"`
+	HandoffID                  ids.HandoffID                   `json:"handoff_id"`
+	ProjectID                  ids.ProjectID                   `json:"project_id"`
+	MissionID                  ids.MissionID                   `json:"mission_id"`
+	WorkRevisionID             ids.WorkRevisionID              `json:"work_revision_id"`
+	WorkID                     ids.WorkID                      `json:"work_id"`
+	RuntimeEpochID             journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
+	Workspace                  workspace.BindingV2             `json:"workspace"`
+	ReviewerActorID            ids.ActorID                     `json:"reviewer_actor_id"`
+	ReviewerProcessID          ids.ProcessID                   `json:"reviewer_process_id"`
+	Candidate                  string                          `json:"candidate"`
+	HandoffContributorDigest   string                          `json:"handoff_contributor_digest"`
+	WorkRevisionCriteriaDigest string                          `json:"work_revision_criteria_digest"`
+	Criteria                   []review.CriterionEvidenceV2    `json:"criteria"`
+	Verdict                    review.Verdict                  `json:"verdict"`
+	PolicyRevision             string                          `json:"policy_revision"`
+	Exception                  json.RawMessage                 `json:"exception,omitempty"`
+	Governance                 execution.ExecutionGovernanceV2 `json:"governance"`
+	ObservedAt                 time.Time                       `json:"observed_at"`
+}
+type acceptanceWire struct {
+	OperationID       journalv2.OperationID              `json:"operation_id"`
+	AcceptanceID      string                             `json:"acceptance_id"`
+	ProjectID         ids.ProjectID                      `json:"project_id"`
+	MissionID         ids.MissionID                      `json:"mission_id"`
+	WorkRevisionID    ids.WorkRevisionID                 `json:"work_revision_id"`
+	WorkID            ids.WorkID                         `json:"work_id"`
+	HandoffID         ids.HandoffID                      `json:"handoff_id"`
+	RepositoryID      ids.RepositoryID                   `json:"repository_id"`
+	Candidate         string                             `json:"candidate"`
+	ContributorDigest string                             `json:"contributor_digest"`
+	ReviewIDs         []ids.ReviewID                     `json:"review_ids"`
+	Evidence          []integration.AcceptanceEvidenceV2 `json:"evidence"`
+	Waivers           []integration.AcceptanceWaiverV2   `json:"waivers"`
+	PolicyRevision    string                             `json:"policy_revision"`
+	PolicyFactID      string                             `json:"policy_fact_id"`
+	RuntimeEpochID    journalv2.RuntimeEpochID           `json:"runtime_epoch_id"`
+	ActorID           ids.ActorID                        `json:"actor_id"`
+	ProcessID         ids.ProcessID                      `json:"process_id"`
+	Governance        execution.ExecutionGovernanceV2    `json:"governance"`
+	ObservedAt        time.Time                          `json:"observed_at"`
+}
+type integrationWire struct {
+	OperationID    journalv2.OperationID           `json:"operation_id"`
+	AttemptID      string                          `json:"attempt_id"`
+	ProjectID      ids.ProjectID                   `json:"project_id"`
+	MissionID      ids.MissionID                   `json:"mission_id"`
+	WorkRevisionID ids.WorkRevisionID              `json:"work_revision_id"`
+	WorkID         ids.WorkID                      `json:"work_id"`
+	AcceptanceID   string                          `json:"acceptance_id"`
+	RepositoryID   ids.RepositoryID                `json:"repository_id"`
+	TargetRef      string                          `json:"target_ref"`
+	Candidate      string                          `json:"candidate"`
+	RuntimeEpochID journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
+	ActorID        ids.ActorID                     `json:"actor_id"`
+	ProcessID      ids.ProcessID                   `json:"process_id"`
+	Governance     execution.ExecutionGovernanceV2 `json:"governance"`
+	ObservedAt     time.Time                       `json:"observed_at"`
+}
+type cleanupWire struct {
+	CleanupOperationID     journalv2.OperationID           `json:"cleanup_operation_id"`
+	IntegrationOperationID journalv2.OperationID           `json:"integration_operation_id"`
+	ProjectID              ids.ProjectID                   `json:"project_id"`
+	MissionID              ids.MissionID                   `json:"mission_id"`
+	WorkRevisionID         ids.WorkRevisionID              `json:"work_revision_id"`
+	WorkID                 ids.WorkID                      `json:"work_id"`
+	AttemptID              string                          `json:"attempt_id"`
+	RepositoryID           ids.RepositoryID                `json:"repository_id"`
+	TargetRef              string                          `json:"target_ref"`
+	RuntimeEpochID         journalv2.RuntimeEpochID        `json:"runtime_epoch_id"`
+	ActorID                ids.ActorID                     `json:"actor_id"`
+	ProcessID              ids.ProcessID                   `json:"process_id"`
+	Governance             execution.ExecutionGovernanceV2 `json:"governance"`
+	ObservedAt             time.Time                       `json:"observed_at"`
+}
+type externalWorkRefWire struct {
+	ProjectID          ids.ProjectID    `json:"project_id"`
+	WorkID             ids.WorkID       `json:"work_id"`
+	Provider           string           `json:"provider"`
+	ExternalID         string           `json:"external_id"`
+	MetadataSchema     uint16           `json:"metadata_schema"`
+	CreatedByOperation ids.OperationID  `json:"created_by_operation,omitempty"`
+	LastObservation    tracker.Revision `json:"last_observation,omitempty"`
+}
+
+func (w externalWorkRefWire) value() tracker.ExternalWorkRef {
+	return tracker.ExternalWorkRef{ProjectID: w.ProjectID, WorkID: w.WorkID, Provider: w.Provider, ExternalID: w.ExternalID, MetadataSchema: w.MetadataSchema, CreatedByOperation: w.CreatedByOperation, LastObservation: w.LastObservation}
+}
+
+type effectIntentWire struct {
+	EffectID                 journalv2.EffectID              `json:"effect_id"`
+	OperationID              journalv2.OperationID           `json:"operation_id"`
+	Target                   externalWorkRefWire             `json:"target"`
+	IntendedValue            string                          `json:"intended_value"`
+	ExpectedProviderRevision tracker.Revision                `json:"expected_provider_revision"`
+	ExpectedValue            string                          `json:"expected_value"`
+	ExpectedOperationMarker  string                          `json:"expected_operation_marker"`
+	RequiredGuarantee        tracker.AssignmentLevel         `json:"required_guarantee"`
+	CanonicalRequestDigest   string                          `json:"canonical_request_digest"`
+	ActorID                  ids.ActorID                     `json:"actor_id"`
+	ProcessID                ids.ProcessID                   `json:"process_id"`
+	Governance               execution.ExecutionGovernanceV2 `json:"governance"`
+	OriginRuntimeEpochID     journalv2.RuntimeEpochID        `json:"origin_runtime_epoch_id"`
+	OriginObservedCreatedAt  string                          `json:"origin_observed_created_at"`
+}
+type effectObservationWire struct {
+	Target           externalWorkRefWire `json:"target"`
+	ProviderRevision tracker.Revision    `json:"provider_revision"`
+	CanonicalDigest  string              `json:"canonical_digest,omitempty"`
+	Value            string              `json:"value,omitempty"`
+	OperationMarker  string              `json:"operation_marker,omitempty"`
+	Outcome          string              `json:"outcome"`
+}
+type effectWire struct {
+	Action           execution.EffectActionV2          `json:"action"`
+	Intent           effectIntentWire                  `json:"intent"`
+	RuntimeEpochID   journalv2.RuntimeEpochID          `json:"runtime_epoch_id"`
+	ExecutionSlot    execution.ExecutionSlotStateV2    `json:"execution_slot"`
+	ObservedAt       time.Time                         `json:"observed_at"`
+	Observation      *effectObservationWire            `json:"observation,omitempty"`
+	PermissionMarker string                            `json:"permission_marker,omitempty"`
+	Outcome          execution.EffectTerminalOutcomeV2 `json:"outcome,omitempty"`
+	OperationEventID journalv2.EventID                 `json:"operation_event_id"`
+	EffectEventID    journalv2.EventID                 `json:"effect_event_id"`
+}
+
 func readBoundedJSON(reader io.Reader, target any) error {
 	if reader == nil {
 		return errors.New("request reader is required")
@@ -173,54 +354,79 @@ func decodeOperation(request OperationRequest) (decodedOperation, error) {
 		decoded.execution = &command
 		decoded.projectID, decoded.missionID, decoded.operation = journalv2.ProjectID(command.ProjectID), journalv2.MissionID(command.MissionID), command.OperationID
 	case OperationWorkspaceRebind:
-		var command execution.WorkspaceEpochRebindRequestV2
-		if decodeErr := decodeStructWire(canonical, &command); decodeErr != nil || request.Action != string(mission.ActionWorkspaceAllocate) {
+		var wire workspaceRebindWire
+		if decodeErr := decodeStrict(canonical, &wire); decodeErr != nil || request.Action != string(mission.ActionWorkspaceAllocate) {
 			return decodedOperation{}, errors.New("workspace rebind request is invalid")
 		}
+		command := execution.WorkspaceEpochRebindRequestV2{ProjectID: wire.ProjectID, MissionID: wire.MissionID, WorkRevisionID: wire.WorkRevisionID, WorkID: wire.WorkID, ActorID: wire.ActorID, ProcessID: wire.ProcessID, OriginatingRuntimeEpochID: wire.OriginatingRuntimeEpochID, OperationID: wire.OperationID, OperationEventID: wire.OperationEventID, ExecutionEventID: wire.ExecutionEventID, WorkspaceEventID: wire.WorkspaceEventID, Governance: wire.Governance, ObservedAt: wire.ObservedAt}
 		decoded.rebind = &command
 		decoded.projectID, decoded.missionID, decoded.operation = journalv2.ProjectID(command.ProjectID), journalv2.MissionID(command.MissionID), command.OperationID
 	case OperationHandoff:
-		var command handoff.AuthorityRequestV2
-		if decodeErr := decodeStructWire(canonical, &command); decodeErr != nil || request.Action != string(mission.ActionCandidateHandoff) {
+		var wire handoffWire
+		if decodeErr := decodeStrict(canonical, &wire); decodeErr != nil || request.Action != string(mission.ActionCandidateHandoff) {
 			return decodedOperation{}, errors.New("handoff request is invalid")
+		}
+		command := handoff.AuthorityRequestV2{OperationID: wire.OperationID, HandoffID: wire.HandoffID, ProjectID: wire.ProjectID, MissionID: wire.MissionID, WorkRevisionID: wire.WorkRevisionID, WorkID: wire.WorkID, RunID: wire.RunID, RuntimeEpochID: wire.RuntimeEpochID, Workspace: wire.Workspace, LeaseID: wire.LeaseID, LeaseGeneration: wire.LeaseGeneration, Fence: wire.Fence, ActorID: wire.ActorID, ProcessID: wire.ProcessID, RepositoryID: wire.RepositoryID, RepositoryPath: wire.RepositoryPath, LaneID: wire.LaneID, OwnedBranch: wire.OwnedBranch, PinnedBase: wire.PinnedBase, Candidate: wire.Candidate, Contributors: wire.Contributors, CriterionIDs: wire.CriterionIDs, CriteriaDigest: wire.CriteriaDigest, WorkRevisionCriteriaDigest: wire.WorkRevisionCriteriaDigest, EvidenceDigest: wire.EvidenceDigest, Governance: wire.Governance, ObservedAt: wire.ObservedAt}
+		if wire.Replacement != nil {
+			command.Replacement = &handoff.CandidateReplacementRequestV2{PredecessorHandoffID: wire.Replacement.PredecessorHandoffID, PredecessorCandidate: wire.Replacement.PredecessorCandidate, PredecessorLogicalVersion: wire.Replacement.PredecessorLogicalVersion, PredecessorStateDigest: wire.Replacement.PredecessorStateDigest, Reason: wire.Replacement.Reason}
 		}
 		decoded.handoff = &command
 		decoded.projectID, decoded.missionID, decoded.operation = journalv2.ProjectID(command.ProjectID), journalv2.MissionID(command.MissionID), command.OperationID
 	case OperationReview:
-		var command review.AuthorityRequestV2
-		if decodeErr := decodeStructWire(canonical, &command); decodeErr != nil || request.Action != string(mission.ActionReviewRecord) {
+		var wire reviewWire
+		if decodeErr := decodeStrict(canonical, &wire); decodeErr != nil || request.Action != string(mission.ActionReviewRecord) {
 			return decodedOperation{}, errors.New("review request is invalid")
+		}
+		command := review.AuthorityRequestV2{OperationID: wire.OperationID, ReviewID: wire.ReviewID, HandoffID: wire.HandoffID, ProjectID: wire.ProjectID, MissionID: wire.MissionID, WorkRevisionID: wire.WorkRevisionID, WorkID: wire.WorkID, RuntimeEpochID: wire.RuntimeEpochID, Workspace: wire.Workspace, ReviewerActorID: wire.ReviewerActorID, ReviewerProcessID: wire.ReviewerProcessID, Candidate: wire.Candidate, HandoffContributorDigest: wire.HandoffContributorDigest, WorkRevisionCriteriaDigest: wire.WorkRevisionCriteriaDigest, Criteria: wire.Criteria, Verdict: wire.Verdict, PolicyRevision: wire.PolicyRevision, Governance: wire.Governance, ObservedAt: wire.ObservedAt}
+		if len(wire.Exception) != 0 {
+			exception, exceptionErr := review.DecodeIndependenceExceptionV2(wire.Exception)
+			if exceptionErr != nil {
+				return decodedOperation{}, errors.New("review request is invalid")
+			}
+			command.Exception = &exception
 		}
 		decoded.review = &command
 		decoded.projectID, decoded.missionID, decoded.operation = journalv2.ProjectID(command.ProjectID), journalv2.MissionID(command.MissionID), command.OperationID
 	case OperationAcceptance:
-		var command integration.AcceptanceAuthorityRequestV2
-		if decodeErr := decodeStructWire(canonical, &command); decodeErr != nil || request.Action != string(mission.ActionAcceptanceEvaluate) {
+		var wire acceptanceWire
+		if decodeErr := decodeStrict(canonical, &wire); decodeErr != nil || request.Action != string(mission.ActionAcceptanceEvaluate) {
 			return decodedOperation{}, errors.New("acceptance request is invalid")
 		}
+		command := integration.AcceptanceAuthorityRequestV2{OperationID: wire.OperationID, AcceptanceID: wire.AcceptanceID, ProjectID: wire.ProjectID, MissionID: wire.MissionID, WorkRevisionID: wire.WorkRevisionID, WorkID: wire.WorkID, HandoffID: wire.HandoffID, RepositoryID: wire.RepositoryID, Candidate: wire.Candidate, ContributorDigest: wire.ContributorDigest, ReviewIDs: wire.ReviewIDs, Evidence: wire.Evidence, Waivers: wire.Waivers, PolicyRevision: wire.PolicyRevision, PolicyFactID: wire.PolicyFactID, RuntimeEpochID: wire.RuntimeEpochID, ActorID: wire.ActorID, ProcessID: wire.ProcessID, Governance: wire.Governance, ObservedAt: wire.ObservedAt}
 		decoded.acceptance = &command
 		decoded.projectID, decoded.missionID, decoded.operation = journalv2.ProjectID(command.ProjectID), journalv2.MissionID(command.MissionID), command.OperationID
 	case OperationIntegration:
-		var command integration.IntegrationAuthorityRequestV2
-		if decodeErr := decodeStructWire(canonical, &command); decodeErr != nil || request.Action != string(mission.ActionIntegrationPublish) {
+		var wire integrationWire
+		if decodeErr := decodeStrict(canonical, &wire); decodeErr != nil || request.Action != string(mission.ActionIntegrationPublish) {
 			return decodedOperation{}, errors.New("integration request is invalid")
 		}
+		command := integration.IntegrationAuthorityRequestV2{OperationID: wire.OperationID, AttemptID: wire.AttemptID, ProjectID: wire.ProjectID, MissionID: wire.MissionID, WorkRevisionID: wire.WorkRevisionID, WorkID: wire.WorkID, AcceptanceID: wire.AcceptanceID, RepositoryID: wire.RepositoryID, TargetRef: wire.TargetRef, Candidate: wire.Candidate, RuntimeEpochID: wire.RuntimeEpochID, ActorID: wire.ActorID, ProcessID: wire.ProcessID, Governance: wire.Governance, ObservedAt: wire.ObservedAt}
 		decoded.integration = &command
 		decoded.projectID, decoded.missionID, decoded.operation = journalv2.ProjectID(command.ProjectID), journalv2.MissionID(command.MissionID), command.OperationID
 	case OperationIntegrationCleanup:
-		var command integration.IntegrationCleanupRequestV2
-		if decodeErr := decodeStructWire(canonical, &command); decodeErr != nil || request.Action != string(mission.ActionIntegrationPublish) {
+		var wire cleanupWire
+		if decodeErr := decodeStrict(canonical, &wire); decodeErr != nil || request.Action != string(mission.ActionIntegrationPublish) {
 			return decodedOperation{}, errors.New("integration cleanup request is invalid")
 		}
+		command := integration.IntegrationCleanupRequestV2{CleanupOperationID: wire.CleanupOperationID, IntegrationOperationID: wire.IntegrationOperationID, ProjectID: wire.ProjectID, MissionID: wire.MissionID, WorkRevisionID: wire.WorkRevisionID, WorkID: wire.WorkID, AttemptID: wire.AttemptID, RepositoryID: wire.RepositoryID, TargetRef: wire.TargetRef, RuntimeEpochID: wire.RuntimeEpochID, ActorID: wire.ActorID, ProcessID: wire.ProcessID, Governance: wire.Governance, ObservedAt: wire.ObservedAt}
 		decoded.cleanup = &command
 		decoded.projectID, decoded.missionID, decoded.operation = journalv2.ProjectID(command.ProjectID), journalv2.MissionID(command.MissionID), command.CleanupOperationID
 	case OperationEffect:
-		var command execution.EffectAuthorityRequestV2
-		if decodeErr := decodeStructWire(canonical, &command); decodeErr != nil {
+		var wire effectWire
+		if decodeErr := decodeStrict(canonical, &wire); decodeErr != nil {
 			return decodedOperation{}, fmt.Errorf("effect request is invalid: %w", decodeErr)
 		}
 		if request.Action != string(mission.ActionEffectDispatch) && request.Action != string(mission.ActionEffectReconcile) {
 			return decodedOperation{}, errors.New("effect request is invalid")
+		}
+		intent := execution.EffectIntentV2{EffectID: wire.Intent.EffectID, OperationID: wire.Intent.OperationID, Target: wire.Intent.Target.value(), IntendedValue: wire.Intent.IntendedValue, ExpectedProviderRevision: wire.Intent.ExpectedProviderRevision, ExpectedValue: wire.Intent.ExpectedValue, ExpectedOperationMarker: wire.Intent.ExpectedOperationMarker, RequiredGuarantee: wire.Intent.RequiredGuarantee, CanonicalRequestDigest: wire.Intent.CanonicalRequestDigest, ActorID: wire.Intent.ActorID, ProcessID: wire.Intent.ProcessID, Governance: wire.Intent.Governance, OriginRuntimeEpochID: wire.Intent.OriginRuntimeEpochID, OriginObservedCreatedAt: wire.Intent.OriginObservedCreatedAt}
+		command := execution.EffectAuthorityRequestV2{Action: wire.Action, Intent: intent, RuntimeEpochID: wire.RuntimeEpochID, ExecutionSlot: wire.ExecutionSlot, ObservedAt: wire.ObservedAt, PermissionMarker: wire.PermissionMarker, Outcome: wire.Outcome, OperationEventID: wire.OperationEventID, EffectEventID: wire.EffectEventID}
+		if wire.Observation != nil {
+			observation, observationErr := execution.NewEffectProviderObservationV2(wire.Observation.Target.value(), wire.Observation.ProviderRevision, wire.Observation.Value, wire.Observation.OperationMarker, wire.Observation.Outcome)
+			if observationErr != nil || observation.CanonicalDigest != wire.Observation.CanonicalDigest {
+				return decodedOperation{}, errors.New("effect request is invalid")
+			}
+			command.Observation = &observation
 		}
 		decoded.effect = &command
 		decoded.projectID, decoded.missionID, decoded.operation = journalv2.ProjectID(command.Intent.Target.ProjectID), journalv2.MissionID(command.ExecutionSlot.MissionID), command.Intent.OperationID
@@ -273,56 +479,6 @@ func decodedScope(decoded decodedOperation) string {
 		}
 	}
 	return "mission:" + string(command.MissionID)
-}
-
-func decodeStructWire(data []byte, target any) error {
-	typeOf := reflect.TypeOf(target)
-	if typeOf.Kind() != reflect.Pointer || typeOf.Elem().Kind() != reflect.Struct {
-		return errors.New("typed request target must be a struct pointer")
-	}
-	var source map[string]json.RawMessage
-	if err := decodeStrict(data, &source); err != nil {
-		return err
-	}
-	fields := make(map[string]string, typeOf.Elem().NumField())
-	for index := 0; index < typeOf.Elem().NumField(); index++ {
-		field := typeOf.Elem().Field(index)
-		if !field.IsExported() {
-			continue
-		}
-		fields[toSnakeCase(field.Name)] = field.Name
-	}
-	converted := make(map[string]json.RawMessage, len(source))
-	for key, value := range source {
-		name, ok := fields[key]
-		if !ok {
-			return fmt.Errorf("unknown typed request field %q", key)
-		}
-		converted[name] = value
-	}
-	encoded, err := json.Marshal(converted)
-	if err != nil {
-		return err
-	}
-	return decodeStrict(encoded, target)
-}
-
-func toSnakeCase(value string) string {
-	var result strings.Builder
-	runes := []rune(value)
-	for index, current := range runes {
-		if current >= 'A' && current <= 'Z' {
-			priorLowerOrDigit := index > 0 && (runes[index-1] >= 'a' && runes[index-1] <= 'z' || runes[index-1] >= '0' && runes[index-1] <= '9')
-			nextLower := index+1 < len(runes) && runes[index+1] >= 'a' && runes[index+1] <= 'z'
-			if index > 0 && (priorLowerOrDigit || nextLower) {
-				result.WriteByte('_')
-			}
-			result.WriteByte(byte(current - 'A' + 'a'))
-		} else {
-			result.WriteRune(current)
-		}
-	}
-	return result.String()
 }
 
 func decodeExecutionCommand(action string, payload []byte) (execution.ExecutionAuthorityRequestV2, error) {

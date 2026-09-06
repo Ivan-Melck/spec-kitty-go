@@ -58,6 +58,41 @@ type productionOwner struct {
 }
 
 func (o *productionOwner) DatabaseID() journalv2.DatabaseID { return o.database }
+func (o *productionOwner) OperationOrigin(ctx context.Context, operationID journalv2.OperationID) (journalv2.RuntimeEpochID, bool, error) {
+	if o == nil || o.adapter == nil || operationID == "" {
+		return "", false, &Error{Kind: ErrorNotReady, State: HostDegraded, Field: "operation_origin"}
+	}
+	revision, err := o.adapter.CaptureRevisionV2(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	address, err := journalv2.NewOperationBindingAddressV2(operationID)
+	if err != nil {
+		return "", false, err
+	}
+	request, err := journalv2.NewReadRequestV2(address, revision)
+	if err != nil {
+		return "", false, err
+	}
+	record, err := o.adapter.ReadV2(ctx, request)
+	if err != nil {
+		if journalv2.IsKind(err, journalv2.ErrorNotFound) {
+			if verifyErr := o.adapter.VerifyRevisionV2(ctx, revision); verifyErr != nil {
+				return "", false, verifyErr
+			}
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if err := o.adapter.VerifyRevisionV2(ctx, revision); err != nil {
+		return "", false, err
+	}
+	binding, err := journalv2.DecodeOperationBindingRecordV2(record)
+	if err != nil || binding.OperationID() != operationID {
+		return "", false, &Error{Kind: ErrorProjection, State: HostDegraded, Field: "operation_origin"}
+	}
+	return binding.OriginatingEpoch(), true, nil
+}
 func (o *productionOwner) Probe(ctx context.Context) error {
 	if o == nil || o.lifecycle == nil || o.adapter == nil {
 		return &Error{Kind: ErrorNotReady, State: HostDegraded, Field: "owner"}

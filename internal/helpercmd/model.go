@@ -121,11 +121,12 @@ type DrivePlan struct {
 }
 
 type DriveStep struct {
-	Action        string  `json:"action"`
-	Scope         string  `json:"scope"`
-	OperationID   string  `json:"operation_id"`
-	RequestSHA256 string  `json:"request_sha256"`
-	Outcome       Outcome `json:"outcome"`
+	Action        string       `json:"action"`
+	Scope         string       `json:"scope"`
+	OperationID   string       `json:"operation_id"`
+	RequestSHA256 string       `json:"request_sha256"`
+	Outcome       Outcome      `json:"outcome"`
+	Result        *TypedResult `json:"result,omitempty"`
 }
 
 type DriveResult struct {

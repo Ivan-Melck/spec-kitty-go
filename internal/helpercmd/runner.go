@@ -14,8 +14,14 @@ import (
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controlroot"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/handoff"
+	"github.com/spec-kitty/go-kitty3/internal/integration"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
+	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/workgraph"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 type observationSession interface {
@@ -278,10 +284,15 @@ func invokeDrive(ctx context.Context, session hostSession, base Envelope, prepar
 			wait.Add(1)
 			go func() {
 				defer wait.Done()
-				_, executeErr := session.Execute(ctx, decoded)
+				typedResult, executeErr := session.Execute(ctx, decoded)
 				step := DriveStep{Action: decoded.request.Action, Scope: decoded.scope, OperationID: string(decoded.operation), RequestSHA256: decoded.requestSHA, Outcome: OutcomeSuccess}
 				if executeErr != nil {
 					step.Outcome = failureEnvelope("drive", executeErr).Outcome
+				} else if typedResult.Kind != resultKindFor(decoded.request.Kind) || !json.Valid(typedResult.Payload) {
+					executeErr = errors.New("capability returned an invalid typed result")
+					step.Outcome = OutcomeUnavailable
+				} else {
+					step.Result = &typedResult
 				}
 				wave[outputIndex] = waveResult{step: step, err: executeErr}
 			}()
@@ -585,7 +596,115 @@ func classifyError(err error) (Outcome, Diagnostic) {
 		}
 		return outcome, Diagnostic{Kind: string(missionErr.Kind), Field: missionErr.Field, RetrySafety: "same_operation_id"}
 	}
+	var executionErr *execution.DiagnosticError
+	if errors.As(err, &executionErr) {
+		outcome := outcomeForExecution(executionErr.Kind)
+		recovery := append([]string(nil), executionErr.RecoveryActions...)
+		return outcome, Diagnostic{Kind: string(executionErr.Kind), RetrySafety: string(executionErr.RetrySafety), RecoveryActions: recovery}
+	}
+	var workspaceErr *workspace.Error
+	if errors.As(err, &workspaceErr) {
+		return classifyWorkspaceError(workspaceErr)
+	}
+	var handoffErr *handoff.Error
+	if errors.As(err, &handoffErr) {
+		outcome := OutcomeRefused
+		switch handoffErr.Kind {
+		case handoff.KindInvalid:
+			outcome = OutcomeInvalid
+		case handoff.KindNotFound:
+			outcome = OutcomeNotFound
+		case handoff.KindIdempotencyConflict, handoff.KindConflict, handoff.KindCandidateMismatch:
+			outcome = OutcomeConflict
+		case handoff.KindStaleAuthority:
+			outcome = OutcomeUnavailable
+		}
+		return outcome, Diagnostic{Kind: string(handoffErr.Kind), RetrySafety: "same_operation_id", RecoveryActions: append([]string(nil), handoffErr.RecoveryActions...)}
+	}
+	var reviewErr *review.Error
+	if errors.As(err, &reviewErr) {
+		outcome := OutcomeRefused
+		switch reviewErr.Kind {
+		case review.KindInvalid:
+			outcome = OutcomeInvalid
+		case review.KindNotFound:
+			outcome = OutcomeNotFound
+		case review.KindIdempotencyConflict, review.KindConflict, review.KindCandidateMismatch:
+			outcome = OutcomeConflict
+		case review.KindStaleAuthority:
+			outcome = OutcomeUnavailable
+		}
+		return outcome, Diagnostic{Kind: string(reviewErr.Kind), RetrySafety: "same_operation_id"}
+	}
+	var integrationErr *integration.Error
+	if errors.As(err, &integrationErr) {
+		outcome := OutcomeRefused
+		switch integrationErr.Kind {
+		case integration.KindInvalid:
+			outcome = OutcomeInvalid
+		case integration.KindIdempotencyConflict, integration.KindConflict, integration.KindTargetMoved, integration.KindAuthorityBusy:
+			outcome = OutcomeConflict
+		case integration.KindRepairRequired:
+			outcome = OutcomeAmbiguous
+		case integration.KindStoreFailure, integration.KindGitFailure, integration.KindStaleAuthority, integration.KindEvidenceUnavailable:
+			outcome = OutcomeUnavailable
+		}
+		// Integration and cleanup can leave durable intent or pending-cleanup
+		// facts. Never advise a fresh request after a typed failure.
+		return outcome, Diagnostic{Kind: string(integrationErr.Kind), RetrySafety: "reconcile_same_operation", RecoveryActions: []string{"inspect_operation", "resume_same_operation_id"}}
+	}
+	var graphErr *workgraph.Error
+	if errors.As(err, &graphErr) {
+		outcome := OutcomeInvalid
+		switch graphErr.Kind {
+		case workgraph.KindNotFound, workgraph.KindMissingNode:
+			outcome = OutcomeNotFound
+		case workgraph.KindAmbiguousID:
+			outcome = OutcomeAmbiguous
+		case workgraph.KindRevisionConflict, workgraph.KindReconciliationConflict, workgraph.KindProviderChanged:
+			outcome = OutcomeConflict
+		case workgraph.KindFinalized:
+			outcome = OutcomeRefused
+		}
+		return outcome, Diagnostic{Kind: string(graphErr.Kind), RetrySafety: "same_operation_id"}
+	}
 	return OutcomeUnavailable, Diagnostic{Kind: "COMMAND_UNAVAILABLE", RetrySafety: "after_diagnosis"}
+}
+
+func outcomeForExecution(kind execution.ErrorKind) Outcome {
+	switch kind {
+	case execution.KindInvalidCommand:
+		return OutcomeInvalid
+	case execution.KindNotFound:
+		return OutcomeNotFound
+	case execution.KindIdempotencyConflict, execution.KindAuthorityConflict, execution.KindRepositoryConflict, execution.KindTargetChanged, execution.KindDependencyConflict:
+		return OutcomeConflict
+	case execution.KindExternalAttributionLost, execution.KindDecisionRequired, execution.KindSafeCompensationUnsupported:
+		return OutcomeAmbiguous
+	case execution.KindControlStoreBusy, execution.KindStaleAuthority, execution.KindGitFailure, execution.KindTrackerUnavailable:
+		return OutcomeUnavailable
+	default:
+		return OutcomeRefused
+	}
+}
+
+func classifyWorkspaceError(err *workspace.Error) (Outcome, Diagnostic) {
+	outcome := OutcomeRefused
+	switch err.Kind {
+	case workspace.KindInvalid, workspace.KindPathUnsafe:
+		outcome = OutcomeInvalid
+	case workspace.KindBindingConflict, workspace.KindWorkspaceConflict, workspace.KindTargetMoved, workspace.KindDependencyConflict:
+		outcome = OutcomeConflict
+	case workspace.KindStaleAuthority, workspace.KindGitFailure:
+		outcome = OutcomeUnavailable
+	case workspace.KindCleanupRefused:
+		outcome = OutcomeAmbiguous
+	}
+	retry := "same_operation_id"
+	if err.Kind == workspace.KindCleanupRefused {
+		retry = "reconcile_same_operation"
+	}
+	return outcome, Diagnostic{Kind: string(err.Kind), RetrySafety: retry}
 }
 
 func exitFor(err error) int {
