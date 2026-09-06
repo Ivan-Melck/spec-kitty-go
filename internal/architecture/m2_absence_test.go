@@ -899,6 +899,7 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 	var body strings.Builder
 	var commandQuote byte
 	commandContinued := false
+	continuedOperatorTail := ""
 	for _, line := range lines {
 		if len(pending) != 0 {
 			candidate := strings.TrimSuffix(line, "\n")
@@ -934,7 +935,11 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 		if strings.HasSuffix(commandLine, "\r\n") {
 			commandLine = strings.TrimSuffix(commandLine, "\r\n") + "\n"
 		}
-		hasHeredoc, nextQuote, lineContinued, lexicalAmbiguity := m2ShellLineHeredocState(commandLine, commandQuote)
+		hasHeredoc, nextQuote, lineContinued, nextOperatorTail, lexicalAmbiguity := m2ShellLineHeredocState(
+			commandLine,
+			commandQuote,
+			continuedOperatorTail,
+		)
 		if lexicalAmbiguity != "" {
 			return "", nil, lexicalAmbiguity
 		}
@@ -942,6 +947,7 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 			return "", nil, "heredoc-declaration-line-continuation"
 		}
 		commandContinued = lineContinued
+		continuedOperatorTail = nextOperatorTail
 		startedQuoted := commandQuote != 0
 		commandQuote = nextQuote
 		if !hasHeredoc {
@@ -964,11 +970,12 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 	return sanitized.String(), bodies, ""
 }
 
-func m2ShellLineHeredocState(line string, quote byte) (bool, byte, bool, string) {
+func m2ShellLineHeredocState(line string, quote byte, operatorTail string) (bool, byte, bool, string, string) {
 	hasHeredoc := false
 	continued := false
 	comment := false
 	wordStart := quote == 0
+	crossingContinuation := operatorTail != ""
 	for index := 0; index < len(line); index++ {
 		current := line[index]
 		if comment {
@@ -976,32 +983,49 @@ func m2ShellLineHeredocState(line string, quote byte) (bool, byte, bool, string)
 				comment = false
 				wordStart = true
 			}
+			operatorTail = ""
+			crossingContinuation = false
 			continue
 		}
 		if current == '\\' && quote != '\'' {
 			if index+1 >= len(line) {
-				return false, quote, false, "unterminated-heredoc-scan-escape"
+				return false, quote, false, "", "unterminated-heredoc-scan-escape"
 			}
 			if line[index+1] == '\n' {
 				continued = true
+				index++
+				continue
 			}
 			index++
+			operatorTail = ""
+			crossingContinuation = false
 			wordStart = false
 			continue
 		}
 		if quote != 0 {
+			operatorTail = ""
+			crossingContinuation = false
 			if current == quote {
 				quote = 0
 			}
 			continue
 		}
+		if crossingContinuation {
+			if (current == '<' && strings.HasSuffix(operatorTail, "<")) ||
+				(current == '-' && operatorTail == "<<") {
+				return false, quote, false, "", "heredoc-declaration-line-continuation"
+			}
+			crossingContinuation = false
+		}
 		if current == '\'' || current == '"' {
 			quote = current
+			operatorTail = ""
 			wordStart = false
 			continue
 		}
 		if current == '#' && wordStart {
 			comment = true
+			operatorTail = ""
 			continue
 		}
 		if current == '<' && index+1 < len(line) && line[index+1] == '<' {
@@ -1012,8 +1036,21 @@ func m2ShellLineHeredocState(line string, quote byte) (bool, byte, bool, string)
 		} else {
 			wordStart = false
 		}
+		switch {
+		case current == '<' && operatorTail == "<":
+			operatorTail = "<<"
+		case current == '<':
+			operatorTail = "<"
+		case current == '-' && operatorTail == "<<":
+			operatorTail = "<<-"
+		default:
+			operatorTail = ""
+		}
 	}
-	return hasHeredoc, quote, continued, ""
+	if !continued {
+		operatorTail = ""
+	}
+	return hasHeredoc, quote, continued, operatorTail, ""
 }
 
 func m2ShellHeredocsOnCommandLine(line string) ([]m2ShellHeredoc, string) {

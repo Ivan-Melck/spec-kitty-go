@@ -244,6 +244,28 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 				t.Fatalf("%s declaration ambiguity=%q", label, got)
 			}
 		}
+		for label, splitOperator := range map[string]string{
+			"lf":                 "cat <\\\n<EOF\ndata\nEOF\n",
+			"crlf":               "cat <\\\r\n<EOF\r\ndata\r\nEOF\r\n",
+			"tab-stripped":       "cat <\\\n<-EOF\n\tdata\n\tEOF\n",
+			"quoted-delimiter":   "cat <\\\n<'EOF'\ndata\nEOF\n",
+			"multiple-operators": "cat <\\\n<ONE <\\\n<TWO\none\nONE\ntwo\nTWO\n",
+		} {
+			if _, _, got := m2ShellWithoutHeredocBodies(splitOperator); got != "heredoc-declaration-line-continuation" {
+				t.Fatalf("%s split-operator ambiguity=%q", label, got)
+			}
+		}
+		for label, literal := range map[string]string{
+			"single-quoted":         "printf '%s' '<\\\n<EOF'\n",
+			"double-quoted":         "printf '%s' \"<\\\n<EOF\"\n",
+			"comment":               "# <\\\n<EOF\nprintf '%s' native\n",
+			"redirection-near-miss": "cat <\\\ninput.txt\n",
+			"comparison-near-miss":  "[ 1 <\\\n= 2 ]\n",
+		} {
+			if _, _, got := m2ShellWithoutHeredocBodies(literal); got != "" {
+				t.Fatalf("%s literal split-operator control ambiguity=%q", label, got)
+			}
+		}
 		oversize := "cat <<EOF\n" + strings.Repeat("x", (8<<20)+1) + "\nEOF\n"
 		if _, _, budgetAmbiguity := m2ShellWithoutHeredocBodies(oversize); budgetAmbiguity != "heredoc-body-budget" {
 			t.Fatalf("oversize heredoc ambiguity=%q", budgetAmbiguity)
@@ -711,6 +733,13 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"heredoc-crlf-declaration-continuation":              "#!/bin/sh\r\ncat <<EOF \\\r\n; sql\\ite3 /tmp/continued-command.db\r\ndata\r\nEOF\r\n",
 		"heredoc-quoted-declaration-continuation":            "#!/bin/sh\ncat <<'EOF' \\\n; sql\\ite3 /tmp/continued-command.db\ndata\nEOF\n",
 		"heredoc-escaped-delimiter-declaration-continuation": "#!/bin/sh\ncat <<\\EOF \\\n; sql\\ite3 /tmp/continued-command.db\ndata\nEOF\n",
+		"heredoc-split-operator-lf":                          "#!/bin/sh\ncat <\\\n<EOF\nsql\\ite3 --not-executed data\nEOF\nprintf '%s\\n' native\n",
+		"heredoc-split-operator-crlf":                        "#!/bin/sh\r\ncat <\\\r\n<EOF\r\nsql\\ite3 --not-executed data\r\nEOF\r\nprintf '%s\\n' native\r\n",
+		"heredoc-split-operator-tab-stripped":                "#!/bin/sh\ncat <\\\n<-EOF\n\tsql\\ite3 --not-executed data\n\tEOF\nprintf '%s\\n' native\n",
+		"heredoc-split-operator-quoted-delimiter":            "#!/bin/sh\ncat <\\\n<'EOF'\nsql\\ite3 --not-executed data\nEOF\nprintf '%s\\n' native\n",
+		"heredoc-split-operator-multiple":                    "#!/bin/sh\ncat <\\\n<ONE <\\\n<TWO\none\nONE\nsql\\ite3 --not-executed data\nTWO\nprintf '%s\\n' native\n",
+		"heredoc-split-second-operator":                      "#!/bin/sh\ncat <<ONE <\\\n<TWO\none\nONE\nsql\\ite3 --not-executed data\nTWO\nprintf '%s\\n' native\n",
+		"heredoc-split-operator-leading-whitespace":          "#!/bin/sh\ncat   <\\\n<EOF\nsql\\ite3 --not-executed data\nEOF\nprintf '%s\\n' native\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()
@@ -772,6 +801,11 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"heredoc-terminated-multiple-declarations-are-clean":   "#!/bin/sh\ncat <<FIRST <<'SECOND'\none\nFIRST\ntwo\nSECOND\nprintf '%s' native\n",
 		"heredoc-terminated-tab-stripped-declaration-is-clean": "#!/bin/sh\ncat <<-EOF\n\tdata\n\tEOF\nprintf '%s' native\n",
 		"heredoc-terminated-quoted-declaration-is-clean":       "#!/bin/sh\ncat <<'EOF'\n$\\\n(printf native)\nEOF\nprintf '%s' native\n",
+		"heredoc-split-marker-single-quoted-is-data":           "#!/bin/sh\nprintf '%s' '<\\\n<EOF'\n",
+		"heredoc-split-marker-double-quoted-is-data":           "#!/bin/sh\nprintf '%s' \"<\\\n<EOF\"\n",
+		"heredoc-split-marker-comment-is-data":                 "#!/bin/sh\n# <\\\n<EOF\nprintf '%s' native\n",
+		"heredoc-split-marker-escaped-is-data":                 "#!/bin/sh\nprintf '%s' \\<\\\\\n\\<EOF\n",
+		"heredoc-split-operator-near-miss-is-redirection":      "#!/bin/sh\ncat <\\\ninput.txt\nprintf '%s' native\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
