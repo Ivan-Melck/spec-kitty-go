@@ -148,7 +148,7 @@ if ! go test -json ./internal/architecture -count=1 -run "$absence_selector" >"$
   exit 1
 fi
 derive_receipts "$source_root/scripts/m2-absence/expected-absence-tests.txt" "$evidence_root/absence-events.jsonl" "$evidence_root/absence-tests.json" absence
-if ! "$source_root/scripts/m2-absence/mutants.sh" --layers-json >"$evidence_root/layer-mutant-events.jsonl"; then
+if ! (cd -- "$source_root" && scripts/m2-absence/mutants.sh --layers-json) >"$evidence_root/layer-mutant-events.jsonl"; then
   echo "required detector-layer mutants failed" >&2
   exit 1
 fi
@@ -218,9 +218,9 @@ while IFS= read -r name; do
   readelf -d -W "$binary" >"$evidence_root/$name.dynamic.txt"
   ldd "$binary" >"$evidence_root/$name.libraries.txt" 2>&1 || true
   case "$name" in
-    spec-kitty) "$build_root/spec-kitty" --help >"$evidence_root/$name.help.txt" 2>&1 || true ;;
-    spk-m1-proving-ground) "$build_root/spk-m1-proving-ground" --help >"$evidence_root/$name.help.txt" 2>&1 || true ;;
-    spk-phase1-helper) "$build_root/spk-phase1-helper" --help >"$evidence_root/$name.help.txt" 2>&1 || true ;;
+    spec-kitty) (cd -- "$build_root" && ./spec-kitty --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
+    spk-m1-proving-ground) (cd -- "$build_root" && ./spk-m1-proving-ground --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
+    spk-phase1-helper) (cd -- "$build_root" && ./spk-phase1-helper --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
     *) echo "unexpected command binary: $name" >&2; exit 1 ;;
   esac
   check_binary "$evidence_root/$name.version.txt"

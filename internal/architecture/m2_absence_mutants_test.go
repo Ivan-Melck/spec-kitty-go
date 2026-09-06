@@ -160,11 +160,16 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 			resolved, ambiguous bool
 			value               string
 		}{
-			"literal":        {token: "native"},
+			"literal":        {token: "native", resolved: true, value: "native"},
 			"unquoted-known": {token: "$KNOWN", expanded: true, ambiguous: true},
 			"quoted-known":   {token: `"$KNOWN"`, expanded: true, quoted: true, resolved: true, value: "native"},
 			"quoted-empty":   {token: `"${EMPTY}"`, expanded: true, quoted: true, resolved: true},
 			"quoted-unknown": {token: `"$UNKNOWN"`, expanded: true, quoted: true, ambiguous: true},
+			"parameter":      {token: `"${UNKNOWN:-native}"`, expanded: true, ambiguous: true},
+			"command-subst":  {token: `"$(printf native)"`, expanded: true, ambiguous: true},
+			"arithmetic":     {token: `"$((1 + 2))"`, expanded: true, ambiguous: true},
+			"single-quoted":  {token: `'${UNKNOWN:-native}'`, resolved: true, value: "${UNKNOWN:-native}"},
+			"escaped-dollar": {token: `\$UNKNOWN`, resolved: true, value: "$UNKNOWN"},
 		} {
 			t.Run(name, func(t *testing.T) {
 				got := m2ResolveShellCommandTarget(test.token, lookup)
@@ -497,6 +502,11 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"local-quoted-native-command-wrapper":              "#!/bin/sh\nREVIEW_COMMAND=native\ncommand \"$REVIEW_COMMAND\" /tmp/x\n",
 		"unset-quoted-query-is-data":                       "#!/bin/sh\ncommand -v \"$REVIEW_COMMAND\" >/dev/null || :\n",
 		"unset-quoted-ordinary-argument-is-data":           "#!/bin/sh\nprintf '%s' \"$REVIEW_COMMAND\"\n",
+		"single-quoted-parameter-syntax-is-literal":        "#!/bin/sh\n'${REVIEW_COMMAND:-native}' /tmp/x\n",
+		"escaped-dollar-simple-variable-is-literal":        "#!/bin/sh\n\\$REVIEW_COMMAND /tmp/x\n",
+		"single-quoted-command-substitution-is-literal":    "#!/bin/sh\n'$(printf native)' /tmp/x\n",
+		"runtime-expansion-query-is-data":                  "#!/bin/sh\ncommand -v \"${REVIEW_COMMAND:-native}\" >/dev/null || :\n",
+		"runtime-expansion-ordinary-argument-is-data":      "#!/bin/sh\nprintf '%s' \"${REVIEW_COMMAND:-native}\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -564,6 +574,20 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"env-quoted-unset":                            "#!/bin/sh\nenv \"$REVIEW_COMMAND\" /tmp/x\n",
 		"nested-wrapper-quoted-unset":                 "#!/bin/sh\nenv command -- \"$REVIEW_COMMAND\" /tmp/x\n",
 		"direct-quoted-locally-unresolved":            "#!/bin/sh\nREVIEW_COMMAND=${REVIEW_SOURCE}\n\"$REVIEW_COMMAND\" /tmp/x\n",
+		"parameter-default-direct":                    "#!/bin/sh\n\"${REVIEW_COMMAND:-native}\" /tmp/x\n",
+		"parameter-alternate-direct":                  "#!/bin/sh\n\"${REVIEW_COMMAND:+native}\" /tmp/x\n",
+		"parameter-assignment-direct":                 "#!/bin/sh\n\"${REVIEW_COMMAND:=native}\" /tmp/x\n",
+		"parameter-error-direct":                      "#!/bin/sh\n\"${REVIEW_COMMAND:?required}\" /tmp/x\n",
+		"parameter-concatenated-direct":               "#!/bin/sh\n\"${REVIEW_COMMAND_PREFIX}3\" /tmp/x\n",
+		"parameter-substring-direct":                  "#!/bin/bash\n\"${REVIEW_COMMAND:0:3}\" /tmp/x\n",
+		"parameter-transformation-direct":             "#!/bin/bash\n\"${REVIEW_COMMAND^^}\" /tmp/x\n",
+		"parameter-nested-direct":                     "#!/bin/sh\n\"${REVIEW_COMMAND:-${REVIEW_DEFAULT}}\" /tmp/x\n",
+		"command-substitution-direct":                 "#!/bin/sh\n\"$(printf native)\" /tmp/x\n",
+		"backtick-substitution-direct":                "#!/bin/sh\n\"`printf native`\" /tmp/x\n",
+		"arithmetic-expansion-direct":                 "#!/bin/sh\n\"$((1 + 2))\" /tmp/x\n",
+		"parameter-default-command-wrapper":           "#!/bin/sh\ncommand \"${REVIEW_COMMAND:-native}\" /tmp/x\n",
+		"parameter-default-env-wrapper":               "#!/bin/sh\nenv \"${REVIEW_COMMAND:-native}\" /tmp/x\n",
+		"parameter-default-nested-wrapper":            "#!/bin/sh\nenv command -- \"${REVIEW_COMMAND:-native}\" /tmp/x\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()
@@ -580,6 +604,21 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		evidence := inspectM2Absence(t, root, false)
 		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 	})
+
+	for name, test := range map[string]struct {
+		environmentName, environmentValue, source string
+	}{
+		"environment-default-parameter-fails-closed":   {"REVIEW_COMMAND", m2LegacyCLI, "#!/bin/bash\n\"${REVIEW_COMMAND:-native}\" /tmp/x\n"},
+		"environment-concatenated-prefix-fails-closed": {"REVIEW_COMMAND_PREFIX", m2LegacyWord, "#!/bin/bash\n\"${REVIEW_COMMAND_PREFIX}3\" /tmp/x\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(test.environmentName, test.environmentValue)
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(test.source))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+		})
+	}
 
 	for name, content := range map[string]string{
 		"bash-current-shell-output-redirect":    "#!/bin/bash\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; } &>/tmp/x\n\"$review_retired_cli\" /tmp/x\n",

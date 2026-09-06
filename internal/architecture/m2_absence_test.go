@@ -133,8 +133,10 @@ var m2HistoricalExemptions = map[string]map[string]bool{
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof.md":                    {m2ModerncDriver: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-2.md":     {m2ModerncDriver: true, m2LegacyCLI: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-27.md":    {m2LegacyCLI: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-28.md":    {m2LegacyCLI: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-feedback-2.md":  {m2ModerncDriver: true, m2LegacyCLI: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-feedback-27.md": {m2LegacyCLI: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-feedback-28.md": {m2LegacyCLI: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/scope-extension-1.md":  {m2ModerncDriver: true},
 	"kitty-specs/phase-one-architecture-closeout-01M0WZQ9/plan.md":                                                                          {m2ModerncDriver: true},
 	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/plan.md": {
@@ -172,7 +174,7 @@ type m2AbsenceEvidence struct {
 func TestM2SQLiteAbsence(t *testing.T) {
 	root := m2RepositoryRoot(t)
 	evidence := inspectM2Absence(t, root, true)
-	const expectedRetiredBlobs, expectedHistoricalExemptions = 33, 34
+	const expectedRetiredBlobs, expectedHistoricalExemptions = 33, 36
 	if len(retiredSQLiteBlobs) != expectedRetiredBlobs || len(m2HistoricalExemptions) != expectedHistoricalExemptions {
 		t.Fatalf("closed absence census blobs=%d/%d historical_exemptions=%d/%d",
 			len(retiredSQLiteBlobs), expectedRetiredBlobs, len(m2HistoricalExemptions), expectedHistoricalExemptions)
@@ -516,7 +518,7 @@ var m2ShellName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var m2ShellUtilityDispatch = map[string]bool{"command": true, "env": true, "exec": true, "nice": true, "nohup": true, "time": true}
 var m2ShellInterpreters = map[string]bool{"bash": true, "dash": true, "ksh": true, "sh": true, "zsh": true}
 var m2ShellIndirectDispatch = map[string]bool{"eval": true, "xargs": true}
-var m2ShellKnownDataCommands = map[string]bool{"[": true, ":": true, "echo": true, "false": true, "printf": true, "test": true, "true": true}
+var m2ShellKnownDataCommands = map[string]bool{"[": true, ":": true, "echo": true, "false": true, "inspect.sh": true, "printf": true, "test": true, "true": true}
 var m2ShellSpecialBuiltins = map[string]bool{
 	".": true, ":": true, "break": true, "continue": true, "eval": true,
 	"exec": true, "exit": true, "export": true, "readonly": true, "return": true,
@@ -589,27 +591,36 @@ type m2ShellCommandTargetResolution struct {
 
 func m2ResolveShellCommandTarget(token string, lookup func(string) (string, bool)) m2ShellCommandTargetResolution {
 	match := m2ShellCommandVariable.FindStringSubmatch(token)
-	if len(match) != 3 {
+	if len(match) == 3 {
+		name := match[1]
+		if name == "" {
+			name = match[2]
+		}
+		quoted := len(token) >= 2 && token[0] == '"' && token[len(token)-1] == '"'
+		resolution := m2ShellCommandTargetResolution{name: name, expanded: true, quoted: quoted}
+		if !quoted {
+			resolution.ambiguity = "ambiguous-command-expansion:unquoted:" + name
+			return resolution
+		}
+		value, resolved := lookup(name)
+		if !resolved {
+			resolution.ambiguity = "ambiguous-command-expansion:quoted:" + name
+			return resolution
+		}
+		resolution.value = value
+		resolution.resolved = true
+		return resolution
+	}
+	if value, resolved := m2StaticShellWord(token); resolved {
+		return m2ShellCommandTargetResolution{value: value, resolved: true}
+	}
+	if token == "[" {
+		return m2ShellCommandTargetResolution{value: token, resolved: true}
+	}
+	if m2ShellAssignment.MatchString(token) {
 		return m2ShellCommandTargetResolution{}
 	}
-	name := match[1]
-	if name == "" {
-		name = match[2]
-	}
-	quoted := len(token) >= 2 && token[0] == '"' && token[len(token)-1] == '"'
-	resolution := m2ShellCommandTargetResolution{name: name, expanded: true, quoted: quoted}
-	if !quoted {
-		resolution.ambiguity = "ambiguous-command-expansion:unquoted:" + name
-		return resolution
-	}
-	value, resolved := lookup(name)
-	if !resolved {
-		resolution.ambiguity = "ambiguous-command-expansion:quoted:" + name
-		return resolution
-	}
-	resolution.value = value
-	resolution.resolved = true
-	return resolution
+	return m2ShellCommandTargetResolution{expanded: true, ambiguity: "ambiguous-command-expansion:runtime-word"}
 }
 
 type m2ShellCommandParser struct {
@@ -1504,10 +1515,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			commandWrapperResolved := true
 			commandWrapperWord := ""
 			if commandPosition && dispatchMode == "command" {
-				word, resolved := m2StaticShellWord(token)
-				if commandTarget.expanded {
-					word, resolved = commandTarget.value, commandTarget.resolved
-				}
+				word, resolved := commandTarget.value, commandTarget.resolved
 				parsed := commandParser.consumeWord(word, resolved, commandTarget.quoted, commandTarget.expanded)
 				switch parsed.kind {
 				case m2ShellCommandOption:
@@ -1616,7 +1624,11 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 				continue
 			}
-			commandName, pathSpelled, resolved := m2StaticShellCommandName(token)
+			commandName, pathSpelled, resolved := "", false, commandTarget.resolved
+			if resolved {
+				commandName = filepath.Base(commandTarget.value)
+				pathSpelled = strings.Contains(commandTarget.value, "/")
+			}
 			if commandWrapperTarget && commandWrapperResolved {
 				commandName = filepath.Base(commandWrapperWord)
 				pathSpelled = strings.Contains(commandWrapperWord, "/")
@@ -1654,7 +1666,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					commandPosition = false
 					continue
 				}
-				if _, exists := functions[commandName]; exists && !dispatchCapable {
+				if _, exists := functions[commandName]; exists && !dispatchCapable && !commandTarget.expanded {
 					if insideFunction() {
 						recordFunctionCall(commandName, ambiguousTimeLookup)
 						commandStarted = true
@@ -1871,14 +1883,6 @@ func m2ShellExecutableCaseTokens(tokens []string) ([]string, string) {
 		return nil, "unterminated-case"
 	}
 	return executable, ""
-}
-
-func m2StaticShellCommandName(word string) (name string, pathSpelled bool, resolved bool) {
-	value, resolved := m2StaticShellWord(word)
-	if !resolved || value == "" {
-		return "", false, false
-	}
-	return filepath.Base(value), strings.Contains(value, "/"), true
 }
 
 func m2TrackedVariableInWord[T any](word string, active map[string]T) string {
