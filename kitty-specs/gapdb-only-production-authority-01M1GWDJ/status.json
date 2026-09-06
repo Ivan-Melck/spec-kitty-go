@@ -705,7 +705,8 @@
         "Cycle-ten exact final tree 2cb8b9b3 qualified; canonical shell command-position engine covers reserved/list/pipeline/grouping contexts.",
         "Independent cycle-ten review rejected case-action and utility-dispatch command positions; all other evidence remains accepted.",
         "Cycle-eleven exact final tree 9cffc182 qualified; case actions and utility-dispatch positions are modeled explicitly.",
-        "Independent cycle-eleven review rejected shell -c and path-spelled wrapper dispatch gaps; all other evidence remains accepted."
+        "Independent cycle-eleven review rejected shell -c and path-spelled wrapper dispatch gaps; all other evidence remains accepted.",
+        "Cycle-twelve exact final tree 82782598 qualified; command-text and path-spelled wrapper dispatch registry fails closed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
