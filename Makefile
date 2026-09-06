@@ -80,7 +80,7 @@ race-m1: ## Run the bounded concurrency-sensitive M1 package census under the ra
 		./cmd/spk-m1-proving-ground
 
 race: race-m1 ## Run the authority-critical packages under the race detector.
-	$(GO) test -race -p=1 -count=1 ./internal/mission ./internal/artifact ./internal/workgraph ./internal/governancecontext ./internal/tracker/fake ./internal/controlstore/sqlite ./internal/execution ./internal/helpercmd ./internal/testcampaign
+	$(GO) test -race -p=1 -count=1 ./internal/mission ./internal/artifact ./internal/workgraph ./internal/governancecontext ./internal/tracker/fake ./internal/controlstore/gapdb ./internal/productionruntime ./internal/sidecar/gapdb ./internal/execution ./internal/helpercmd ./internal/testcampaign
 
 static: ## Run vet and staticcheck over all packages.
 	@command -v $(STATICCHECK) >/dev/null 2>&1 || { echo "required tool missing: $(STATICCHECK) (install honnef.co/go/tools/cmd/staticcheck@v0.7.0)"; exit 1; }
