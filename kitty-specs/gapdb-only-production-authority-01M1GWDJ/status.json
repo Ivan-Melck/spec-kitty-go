@@ -699,7 +699,8 @@
         "Cycle-seven exact final tree be429473 qualified; delimiter-preserving full-file shell parser closes adjacent assignment hole.",
         "Independent cycle-seven review rejected missing shell comment lexical state; all other evidence remains accepted.",
         "Cycle-eight exact final tree 303c5f6b qualified; bounded shell lexer handles comments/quotes/escapes and fails closed on ambiguity.",
-        "Independent cycle-eight review rejected silently ignored unquoted-backslash command assignment; all other evidence remains accepted."
+        "Independent cycle-eight review rejected silently ignored unquoted-backslash command assignment; all other evidence remains accepted.",
+        "Cycle-nine exact final tree de2818f5 qualified; supported POSIX words resolve and unresolved command assignments fail closed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
