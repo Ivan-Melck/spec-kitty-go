@@ -1,7 +1,7 @@
 {
-  "event_count": 627,
-  "last_event_id": "01M1W2W3XBV8PMBG5W7XD45QC0",
-  "materialized_at": "2026-09-06T19:24:39.723954+00:00",
+  "event_count": 628,
+  "last_event_id": "01M1W3AV7SWMPFPV8MXNSX74CT",
+  "materialized_at": "2026-09-06T19:32:42.361936+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,10 +11,10 @@
     "canceled": 0,
     "claimed": 0,
     "done": 10,
-    "for_review": 1,
+    "for_review": 0,
     "in_progress": 0,
     "in_review": 0,
-    "planned": 1
+    "planned": 2
   },
   "work_packages": {
     "WP01": {
@@ -680,10 +680,10 @@
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
       "assignee": "ivan",
-      "force_count": 31,
-      "lane": "for_review",
-      "last_event_id": "01M1W2W3XBV8PMBG5W7XD45QC0",
-      "last_transition_at": "2026-09-06T19:24:39.723954+00:00",
+      "force_count": 32,
+      "lane": "planned",
+      "last_event_id": "01M1W3AV7SWMPFPV8MXNSX74CT",
+      "last_transition_at": "2026-09-06T19:32:42.361936+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Allocation blocker repaired: approved dependency lanes merged into lane-p, derived mission state restored from planning authority, and combined tree compiles.",
@@ -752,8 +752,8 @@
       "provider": "__resolved_provider_absent__",
       "review": null,
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-31.md",
-        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-31.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-32.md",
+        "reference": "review-cycle://gapdb-only-production-authority-01M1GWDJ/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-32.md",
         "reviewer": "maxwell",
         "verdict": "changes_requested"
       },
