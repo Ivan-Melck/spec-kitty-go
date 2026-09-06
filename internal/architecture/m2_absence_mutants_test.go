@@ -226,6 +226,14 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		if strings.Contains(sanitized, "printf native") || strings.Contains(sanitized, "printf literal") {
 			t.Fatalf("sanitized command stream retained heredoc body: %q", sanitized)
 		}
+		for label, continued := range map[string]string{
+			"lf":   "$\\\n(printf native)\n",
+			"crlf": "$\\\r\n(printf native)\r\n",
+		} {
+			if got := m2ShellHeredocSubstitutionAmbiguity(continued); got != "heredoc-line-continuation" {
+				t.Fatalf("%s continuation ambiguity=%q", label, got)
+			}
+		}
 		oversize := "cat <<EOF\n" + strings.Repeat("x", (8<<20)+1) + "\nEOF\n"
 		if _, _, budgetAmbiguity := m2ShellWithoutHeredocBodies(oversize); budgetAmbiguity != "heredoc-body-budget" {
 			t.Fatalf("oversize heredoc ambiguity=%q", budgetAmbiguity)
@@ -676,6 +684,14 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"heredoc-substitution-precedes-query-classification": "#!/bin/sh\ncommand -v native <<EOF\n$(printf native)\nEOF\n",
 		"heredoc-unterminated-command-substitution":          "#!/bin/sh\ncat <<EOF\n$(printf native\nEOF\n",
 		"heredoc-unterminated-backtick-substitution":         "#!/bin/sh\ncat <<EOF\n`printf native\nEOF\n",
+		"heredoc-lf-continuation":                            "#!/bin/bash\nREVIEW_COMMAND=sql\\ite3\ncat <<EOF\n$\\\n(\"$REVIEW_COMMAND\" /tmp/continued.db)\nEOF\n",
+		"heredoc-crlf-continuation":                          "#!/bin/sh\r\ncat <<EOF\r\n$\\\r\n(printf native)\r\nEOF\r\n",
+		"heredoc-tab-stripped-continuation":                  "#!/bin/sh\ncat <<-EOF\n\t$\\\n\t(printf native)\n\tEOF\n",
+		"heredoc-multiple-continuations":                     "#!/bin/sh\ncat <<EOF\nfirst\\\nsecond\\\nthird\nEOF\n",
+		"heredoc-continuation-before-dollar-substitution":    "#!/bin/sh\ncat <<EOF\nprefix\\\n$(printf native)\nEOF\n",
+		"heredoc-continuation-before-backtick-substitution":  "#!/bin/sh\ncat <<EOF\nprefix\\\n`printf native`\nEOF\n",
+		"heredoc-continuation-in-ordinary-data":              "#!/bin/sh\ncat <<EOF\nnative\\\ndata\nEOF\n",
+		"heredoc-second-body-continuation":                   "#!/bin/sh\ncat <<'FIRST' <<SECOND\nliteral\\\ndata\nFIRST\nactive\\\ndata\nSECOND\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()
@@ -728,9 +744,11 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		})
 	}
 	for name, content := range map[string]string{
-		"heredoc-double-quoted-body-is-data":            "#!/bin/sh\ncat <<\"EOF\"\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
-		"heredoc-escaped-delimiter-body-is-data":        "#!/bin/sh\ncat <<\\EOF\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
-		"heredoc-unquoted-escaped-substitution-is-data": "#!/bin/sh\ncat <<EOF\n\\$(printf native) \\`printf native\\`\nEOF\nprintf '%s' native\n",
+		"heredoc-double-quoted-body-is-data":                  "#!/bin/sh\ncat <<\"EOF\"\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
+		"heredoc-escaped-delimiter-body-is-data":              "#!/bin/sh\ncat <<\\EOF\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
+		"heredoc-unquoted-escaped-substitution-is-data":       "#!/bin/sh\ncat <<EOF\n\\$(printf native) \\`printf native\\`\nEOF\nprintf '%s' native\n",
+		"heredoc-quoted-delimiter-continuation-is-data":       "#!/bin/sh\ncat <<'EOF'\n$\\\n(printf native)\nEOF\n",
+		"heredoc-escaped-delimiter-crlf-continuation-is-data": "#!/bin/sh\r\ncat <<\\EOF\r\n$\\\r\n(printf native)\r\nEOF\r\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

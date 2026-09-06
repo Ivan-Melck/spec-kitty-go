@@ -901,6 +901,7 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 	for _, line := range lines {
 		if len(pending) != 0 {
 			candidate := strings.TrimSuffix(line, "\n")
+			candidate = strings.TrimSuffix(candidate, "\r")
 			if pending[0].stripTabs {
 				candidate = strings.TrimLeft(candidate, "\t")
 			}
@@ -928,24 +929,28 @@ func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, s
 			}
 			continue
 		}
-		hasHeredoc, nextQuote, lexicalAmbiguity := m2ShellLineHeredocState(line, commandQuote)
+		commandLine := line
+		if strings.HasSuffix(commandLine, "\r\n") {
+			commandLine = strings.TrimSuffix(commandLine, "\r\n") + "\n"
+		}
+		hasHeredoc, nextQuote, lexicalAmbiguity := m2ShellLineHeredocState(commandLine, commandQuote)
 		if lexicalAmbiguity != "" {
 			return "", nil, lexicalAmbiguity
 		}
 		startedQuoted := commandQuote != 0
 		commandQuote = nextQuote
 		if !hasHeredoc {
-			sanitized.WriteString(line)
+			sanitized.WriteString(commandLine)
 			continue
 		}
 		if startedQuoted || commandQuote != 0 {
 			return "", nil, "heredoc-with-multiline-quote"
 		}
-		documents, ambiguity := m2ShellHeredocsOnCommandLine(line)
+		documents, ambiguity := m2ShellHeredocsOnCommandLine(commandLine)
 		if ambiguity != "" {
 			return "", nil, ambiguity
 		}
-		sanitized.WriteString(line)
+		sanitized.WriteString(commandLine)
 		pending = append(pending, documents...)
 	}
 	if len(pending) != 0 {
@@ -1047,6 +1052,9 @@ func m2ShellHeredocSubstitutionAmbiguity(body string) string {
 		if current == '\\' {
 			if index+1 >= len(body) {
 				return "unterminated-heredoc-expansion-escape"
+			}
+			if body[index+1] == '\n' || body[index+1] == '\r' && index+2 < len(body) && body[index+2] == '\n' {
+				return "heredoc-line-continuation"
 			}
 			index++
 			continue
