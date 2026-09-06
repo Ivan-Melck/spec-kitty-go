@@ -276,7 +276,12 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 		}
 		executable = strings.ToLower(m2GoExecutableText(data) + "\n" + strings.Join(m2GoResolvedExecutables(parsed), "\n"))
 	} else if ext == ".sh" {
-		executable += "\n" + strings.Join(m2ShellResolvedExecutables(string(data)), "\n")
+		resolved, ambiguity := m2ShellResolvedExecutables(string(data))
+		if ambiguity != "" {
+			add("ambiguous-shell", path, ambiguity)
+			return
+		}
+		executable += "\n" + strings.Join(resolved, "\n")
 	}
 	patterns := []struct{ kind, token string }{
 		{"driver", m2ModerncDriver}, {"driver", "go-" + m2LegacyWord + "3"}, {"driver", m2ZombiezenDriver},
@@ -495,10 +500,14 @@ func m2GoConstantString(expression ast.Expr, values map[string]string) (string, 
 var m2ShellAssignment = regexp.MustCompile(`^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*((?:'[^']*'|"[^"]*"|[A-Za-z0-9_./-]+)+)[ \t]*$`)
 var m2ShellCommandVariable = regexp.MustCompile(`^[ \t]*"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?(?:[ \t]|$)`)
 
-func m2ShellResolvedExecutables(source string) []string {
+func m2ShellResolvedExecutables(source string) ([]string, string) {
 	var executables []string
 	active := map[string]string{}
-	for _, statement := range m2ShellStatements(source) {
+	statements, ambiguity := m2ShellStatements(source)
+	if ambiguity != "" {
+		return nil, ambiguity
+	}
+	for _, statement := range statements {
 		if assignment := m2ShellAssignment.FindStringSubmatch(statement); len(assignment) == 3 {
 			active[assignment[1]] = strings.NewReplacer("'", "", `"`, "").Replace(assignment[2])
 			continue
@@ -514,28 +523,52 @@ func m2ShellResolvedExecutables(source string) []string {
 		}
 	}
 	sort.Strings(executables)
-	return executables
+	return executables, ""
 }
 
 // m2ShellStatements preserves statement order without consuming the delimiter
 // needed to recognize an adjacent assignment. The repository's explicit byte
 // budgets bound this single pass over the complete candidate source.
-func m2ShellStatements(source string) []string {
+func m2ShellStatements(source string) ([]string, string) {
 	statements := make([]string, 0, strings.Count(source, "\n")+strings.Count(source, ";")+1)
-	start := 0
+	var statement strings.Builder
+	statement.Grow(len(source))
 	var quote byte
-	escaped := false
+	comment := false
+	wordStart := true
+	flush := func() {
+		statements = append(statements, statement.String())
+		statement.Reset()
+		wordStart = true
+	}
 	for index := 0; index < len(source); index++ {
 		current := source[index]
-		if escaped {
-			escaped = false
+		if comment {
+			if current == '\n' {
+				comment = false
+				flush()
+			}
 			continue
 		}
 		if current == '\\' && quote != '\'' {
-			escaped = true
+			if index+1 >= len(source) {
+				return nil, "unterminated-escape"
+			}
+			if source[index+1] == '\n' {
+				index++
+				continue
+			}
+			statement.WriteByte(current)
+			index++
+			statement.WriteByte(source[index])
+			wordStart = false
 			continue
 		}
+		if current == '`' && quote != '\'' {
+			return nil, "unsupported-backtick-substitution"
+		}
 		if quote != 0 {
+			statement.WriteByte(current)
 			if current == quote {
 				quote = 0
 			}
@@ -543,14 +576,33 @@ func m2ShellStatements(source string) []string {
 		}
 		if current == '\'' || current == '"' {
 			quote = current
+			statement.WriteByte(current)
+			wordStart = false
+			continue
+		}
+		if current == '#' && wordStart {
+			comment = true
 			continue
 		}
 		if current == ';' || current == '\n' {
-			statements = append(statements, source[start:index])
-			start = index + 1
+			flush()
+			continue
+		}
+		statement.WriteByte(current)
+		if current == ' ' || current == '\t' || strings.ContainsRune("|&()<>", rune(current)) {
+			wordStart = true
+		} else {
+			wordStart = false
 		}
 	}
-	return append(statements, source[start:])
+	if quote == '\'' {
+		return nil, "unterminated-single-quote"
+	}
+	if quote == '"' {
+		return nil, "unterminated-double-quote"
+	}
+	flush()
+	return statements, ""
 }
 
 func m2WithinRoot(root, path string) bool {

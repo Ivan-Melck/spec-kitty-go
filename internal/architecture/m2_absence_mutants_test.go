@@ -130,6 +130,13 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		{"shell-adjacent-benign-assignment", "scripts/x.sh", "#!/bin/sh\nreview_benign=native; review_retired_cli='sql''ite3'; \"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-newline-separated-assignments", "scripts/x.sh", "#!/bin/sh\nreview_benign=native\nreview_retired_cli='sql''ite3'\n\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-mixed-whitespace-assignments", "scripts/x.sh", "#!/bin/sh\n review_benign=native ;\treview_retired_cli='sql''ite3' ; \t\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-apostrophe-in-comment", "scripts/x.sh", "#!/bin/sh\n# don't merge comment quoting into executable parsing\nreview_retired_cli='sql''ite3'\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-comment-after-statement", "scripts/x.sh", "#!/bin/sh\nreview_benign=native # comment's quote is inert\nreview_retired_cli='sql''ite3'; \"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-indented-comment", "scripts/x.sh", "#!/bin/sh\n  # comment's quote is inert\nreview_retired_cli='sql''ite3'; \"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-quoted-hash", "scripts/x.sh", "#!/bin/sh\nreview_benign='# literal; not a boundary'; review_retired_cli='sql''ite3'; \"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-escaped-hash", "scripts/x.sh", "#!/bin/sh\nprintf '%s' \\#; review_retired_cli='sql''ite3'; \"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-comment-between-assignment-and-command", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n# don't disturb active assignments\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-backslash-newline", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'; \\\n\"$review_retired_cli\" /tmp/x\n", true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -150,6 +157,20 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		evidence := inspectM2Absence(t, root, false)
 		assertM2Finding(t, evidence.Findings, "malformed-go", "internal/x/x.go")
 	})
+
+	for name, content := range map[string]string{
+		"unterminated-single-quote": "#!/bin/sh\nvalue='unterminated\n",
+		"unterminated-double-quote": "#!/bin/sh\nvalue=\"unterminated\n",
+		"unterminated-escape":       "#!/bin/sh\nvalue=native\\",
+		"unsupported-backtick":      "#!/bin/sh\nvalue=`command`\n",
+	} {
+		t.Run(name+"-fails-closed", func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+		})
+	}
 
 	t.Run("oversize-shell-is-explicit-budget-refusal", func(t *testing.T) {
 		root := t.TempDir()
