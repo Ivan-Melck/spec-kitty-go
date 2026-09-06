@@ -497,19 +497,24 @@ func m2GoConstantString(expression ast.Expr, values map[string]string) (string, 
 	}
 }
 
-var m2ShellAssignment = regexp.MustCompile(`^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*((?:'[^']*'|"[^"]*"|[A-Za-z0-9_./-]+)+)[ \t]*$`)
+var m2ShellAssignment = regexp.MustCompile(`(?s)^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.*)[ \t]*$`)
 var m2ShellCommandVariable = regexp.MustCompile(`^[ \t]*"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?(?:[ \t]|$)`)
 
 func m2ShellResolvedExecutables(source string) ([]string, string) {
+	type shellValue struct {
+		resolved bool
+		value    string
+	}
 	var executables []string
-	active := map[string]string{}
+	active := map[string]shellValue{}
 	statements, ambiguity := m2ShellStatements(source)
 	if ambiguity != "" {
 		return nil, ambiguity
 	}
 	for _, statement := range statements {
 		if assignment := m2ShellAssignment.FindStringSubmatch(statement); len(assignment) == 3 {
-			active[assignment[1]] = strings.NewReplacer("'", "", `"`, "").Replace(assignment[2])
+			value, resolved := m2StaticShellWord(strings.Trim(assignment[2], " \t"))
+			active[assignment[1]] = shellValue{resolved: resolved, value: value}
 			continue
 		}
 		if command := m2ShellCommandVariable.FindStringSubmatch(statement); len(command) == 3 {
@@ -518,12 +523,69 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				name = command[2]
 			}
 			if value, exists := active[name]; exists {
-				executables = append(executables, value)
+				if !value.resolved {
+					return nil, "unresolved-command-assignment:" + name
+				}
+				executables = append(executables, value.value)
 			}
 		}
 	}
 	sort.Strings(executables)
 	return executables, ""
+}
+
+func m2StaticShellWord(word string) (string, bool) {
+	var value strings.Builder
+	var quote byte
+	for index := 0; index < len(word); index++ {
+		current := word[index]
+		switch quote {
+		case '\'':
+			if current == '\'' {
+				quote = 0
+			} else {
+				value.WriteByte(current)
+			}
+		case '"':
+			switch current {
+			case '"':
+				quote = 0
+			case '$', '`':
+				return "", false
+			case '\\':
+				if index+1 >= len(word) {
+					return "", false
+				}
+				index++
+				next := word[index]
+				if strings.ContainsRune(`$\"`, rune(next)) {
+					value.WriteByte(next)
+				} else {
+					value.WriteByte('\\')
+					value.WriteByte(next)
+				}
+			default:
+				value.WriteByte(current)
+			}
+		default:
+			switch current {
+			case '\'', '"':
+				quote = current
+			case '\\':
+				if index+1 >= len(word) {
+					return "", false
+				}
+				index++
+				value.WriteByte(word[index])
+			default:
+				if current == ' ' || current == '\t' || strings.ContainsRune("$`*?[]~{}();|&<>", rune(current)) {
+					return "", false
+				}
+				value.WriteByte(current)
+			}
+		}
+	}
+	return value.String(), quote == 0
 }
 
 // m2ShellStatements preserves statement order without consuming the delimiter

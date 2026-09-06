@@ -2,7 +2,6 @@
 set -eu
 
 repository=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
-inspector=$repository/scripts/m2-absence/inspect.sh
 
 run_layers() {
   fixture_root=$(mktemp -d /tmp/go-kitty3-m2-mutants.XXXXXX)
@@ -12,7 +11,7 @@ run_layers() {
   printf 'package mutant\nimport _ "%s"\n' "$driver" >"$fixture_root/source.go"
   printf 'example.test/mutant %s@v1.0.0\n' "$driver" >"$fixture_root/module.graph"
   {
-    printf '#!/bin/sh\nreview_retired_cli=%s%s\n' "'sql'" "'ite3'"
+    printf '#!/bin/sh\nreview_retired_cli=sql\\ite3\n'
     line=0
     while [ "$line" -lt 65 ]; do printf '# intervening line\n'; line=$((line + 1)); done
     printf '"$review_retired_cli" /tmp/x\n'
@@ -36,7 +35,7 @@ run_layers() {
       runtime) target=$fixture_root/runtime.json ;;
     esac
     set +e
-    "$inspector" --probe "$layer" "$target"
+    "$repository/scripts/m2-absence/inspect.sh" --probe "$layer" "$target"
     status=$?
     set -e
     if [ "$status" -eq 0 ]; then echo "M2 detector mutant survived: $layer" >&2; exit 1; fi
@@ -45,8 +44,8 @@ run_layers() {
 
   printf 'package native\nconst Store = "gapdb"\n' >"$fixture_root/clean.go"
   printf '{"schema_version":2,"expected":["T"],"run":["T"],"passed":["T"],"skipped":[],"failed":[],"unmatched":[],"verdict":"pass"}\n' >"$fixture_root/runtime-clean.json"
-  "$inspector" --probe source "$fixture_root/clean.go"
-  "$inspector" --probe runtime "$fixture_root/runtime-clean.json"
+  "$repository/scripts/m2-absence/inspect.sh" --probe source "$fixture_root/clean.go"
+  "$repository/scripts/m2-absence/inspect.sh" --probe runtime "$fixture_root/runtime-clean.json"
   printf 'M2 layer mutants passed: 8/8\n'
 }
 

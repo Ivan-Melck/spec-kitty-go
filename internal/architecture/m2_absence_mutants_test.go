@@ -137,6 +137,12 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		{"shell-escaped-hash", "scripts/x.sh", "#!/bin/sh\nprintf '%s' \\#; review_retired_cli='sql''ite3'; \"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-comment-between-assignment-and-command", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n# don't disturb active assignments\n\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-backslash-newline", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'; \\\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-unquoted-backslash-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-single-quoted-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-double-quoted-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=\"sql\"\"ite3\"\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-concatenated-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql'ite'3\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-unquoted-backslash-uninvoked", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3\nprintf '%s' native\n", false},
+		{"shell-unquoted-backslash-non-command", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3\nprintf '%s' \"$review_retired_cli\"\n", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -156,6 +162,39 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		writeM2Mutant(t, root, "internal/x/x.go", []byte("package x\nfunc broken("))
 		evidence := inspectM2Absence(t, root, false)
 		assertM2Finding(t, evidence.Findings, "malformed-go", "internal/x/x.go")
+	})
+
+	t.Run("supported-static-shell-words", func(t *testing.T) {
+		for name, word := range map[string]string{
+			"unquoted":      m2LegacyCLI,
+			"single-quoted": "'sql''ite3'",
+			"double-quoted": `"sql""ite3"`,
+			"concatenated":  "sql'ite'3",
+			"escaped":       `sql\ite3`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				value, resolved := m2StaticShellWord(word)
+				if !resolved || value != m2LegacyCLI {
+					t.Fatalf("static shell word resolved=(%q,%v), want admitted forbidden executable", value, resolved)
+				}
+			})
+		}
+	})
+
+	t.Run("unsupported-invoked-assignment-fails-closed", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=$(printf '%s%s' sql ite3)\n\"$review_retired_cli\" /tmp/x\n"))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+	})
+
+	t.Run("unsupported-uninvoked-assignment-is-data", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=$(printf '%s%s' sql ite3)\nprintf '%s' native\n"))
+		evidence := inspectM2Absence(t, root, false)
+		if len(evidence.Findings) != 0 {
+			t.Fatalf("uninvoked unsupported assignment rejected: %s", formatM2Findings(evidence.Findings))
+		}
 	})
 
 	for name, content := range map[string]string{
