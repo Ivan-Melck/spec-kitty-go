@@ -710,7 +710,8 @@
         "Independent cycle-twelve review rejected interpreter/wrapper option-state escape; all other evidence remains accepted.",
         "Cycle-thirteen exact-tree candidate 4892c886dac963045d04a9c5f3df045a41ae6314 qualified; tree 93e4351c948461024e55bf9dd706fb532a5e3bc6; manifest /tmp/go-kitty3-m2-absence.0Hl1KJ/evidence/manifest.json; inventory 741f434c60606016ac05c4356f1ac4adfd6408ce5473b37cba732fed63d0e3f7.",
         "Independent cycle-thirteen review rejected simple-command assignment expansion ordering and asserted mutant census evidence.",
-        "Cycle-fourteen exact-tree candidate 805400bd4974d06a526aecde7fc15fa99ec31244 qualified; tree cc51d0303ff00dc1d579e2fb2c0a2ba198189a36; manifest /tmp/go-kitty3-m2-absence.NsdCQb/evidence/manifest.json; inventory 457de417a1ce4ed24bef1d663ac393a90812a0a9bc28df1ebb010089957449b8; observed absence 155/155 and layers 8/8 with zero anomalies."
+        "Cycle-fourteen exact-tree candidate 805400bd4974d06a526aecde7fc15fa99ec31244 qualified; tree cc51d0303ff00dc1d579e2fb2c0a2ba198189a36; manifest /tmp/go-kitty3-m2-absence.NsdCQb/evidence/manifest.json; inventory 457de417a1ce4ed24bef1d663ac393a90812a0a9bc28df1ebb010089957449b8; observed absence 155/155 and layers 8/8 with zero anomalies.",
+        "Independent cycle-fourteen review rejected assignment propagation across pipeline and subshell isolation boundaries; receipt evidence passed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -724,12 +725,12 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T080": "done",
-        "T081": "done",
-        "T082": "done",
-        "T083": "done",
-        "T084": "done",
-        "T085": "done"
+        "T080": "planned",
+        "T081": "planned",
+        "T082": "planned",
+        "T083": "planned",
+        "T084": "planned",
+        "T085": "planned"
       }
     },
     "WP17": {
