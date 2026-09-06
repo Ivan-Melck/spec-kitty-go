@@ -1,0 +1,8 @@
+M2LayerMutant/binary
+M2LayerMutant/graph-module
+M2LayerMutant/help-config
+M2LayerMutant/install
+M2LayerMutant/runtime
+M2LayerMutant/sbom
+M2LayerMutant/shell
+M2LayerMutant/source

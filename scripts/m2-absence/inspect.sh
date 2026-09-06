@@ -61,6 +61,17 @@ check_runtime() {
   ' "$1" >/dev/null; then return 0; else status=$?; test "$status" -eq 1 && return 42; return "$status"; fi
 }
 
+derive_receipts() {
+  expected_file=$1
+  raw_file=$2
+  result_file=$3
+  receipt_kind=$4
+  raw_sha=$(sha256sum "$raw_file" | awk '{print $1}')
+  jq -s -S --rawfile expected_text "$expected_file" --arg receipt_kind "$receipt_kind" --arg raw_sha "$raw_sha" \
+    -f "$source_root/scripts/m2-absence/receipt-result.jq" "$raw_file" >"$result_file"
+  jq -e '.verdict == "pass"' "$result_file" >/dev/null
+}
+
 run_probe() {
   case "$1" in
     source) check_source "$2" ;;
@@ -131,11 +142,17 @@ check_graph_module "$evidence_root/package-graph.txt"
 check_graph_module "$evidence_root/modules.json"
 check_graph_module "$evidence_root/module-graph.txt"
 
-absence_selector='^(TestM2SQLiteAbsence|TestM2AbsenceMutants|TestM2AbsenceSymlinkAndHistoricalDiscrimination|TestM2GateSourcesDoNotShelterExecutableBehavior|TestM2SplitExecutableTokensFailClosedWithoutOverNormalization|TestM2AbsenceLayerDetectors|TestM2QualificationRequiresAdmittedSidecar|TestM2RetiredBlobCensusIsClosed|TestM2ResurrectedSQLiteAdapterAndLaterCapabilityBothFailClosed)$'
-go test ./internal/architecture -count=1 -run "$absence_selector" >/dev/null
-printf '{"schema_version":1,"status":"pass","mutants":47}\n' >"$evidence_root/absence-tests.json"
-"$source_root/scripts/m2-absence/mutants.sh" --layers-only >/dev/null
-printf '{"schema_version":1,"status":"pass","layers":8}\n' >"$evidence_root/layer-mutants.json"
+absence_selector='^(TestM2SQLiteAbsence|TestM2AbsenceMutants|TestM2AbsenceSymlinkAndHistoricalDiscrimination|TestM2GateSourcesDoNotShelterExecutableBehavior|TestM2SplitExecutableTokensFailClosedWithoutOverNormalization|TestM2AbsenceLayerDetectors|TestM2ObservedReceiptVerifier|TestM2QualificationRequiresAdmittedSidecar|TestM2RetiredBlobCensusIsClosed|TestM2ResurrectedSQLiteAdapterAndLaterCapabilityBothFailClosed)$'
+if ! go test -json ./internal/architecture -count=1 -run "$absence_selector" >"$evidence_root/absence-events.jsonl"; then
+  echo "required absence tests failed" >&2
+  exit 1
+fi
+derive_receipts "$source_root/scripts/m2-absence/expected-absence-tests.txt" "$evidence_root/absence-events.jsonl" "$evidence_root/absence-tests.json" absence
+if ! "$source_root/scripts/m2-absence/mutants.sh" --layers-json >"$evidence_root/layer-mutant-events.jsonl"; then
+  echo "required detector-layer mutants failed" >&2
+  exit 1
+fi
+derive_receipts "$source_root/scripts/m2-absence/expected-layer-mutants.txt" "$evidence_root/layer-mutant-events.jsonl" "$evidence_root/layer-mutants.json" detector-layer
 
 runtime_selector='^(TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation|TestHistoricalAndUnsafeRootsRefuseBeforeInstallationOrMutation|TestRealGapDBMutationInitializesAndQueriesRemainPureAcrossRestart|TestRealGapDBLostAcknowledgementRestartResumeAndConflict|TestCurrentRootAcceptsIdentityReservationGenerationAheadOfManifest|TestHistoricalSQLiteSignatureAndCompanions|TestClassificationIsReadOnly)$'
 runtime_expected=$(jq -n '[
@@ -245,17 +262,22 @@ jq -n -S \
   --arg install_sha256 "$(sha256sum "$evidence_root/install-sha256.txt" | awk '{print $1}')" \
   --arg runtime_sha256 "$(sha256sum "$evidence_root/runtime-result.json" | awk '{print $1}')" \
   --arg runtime_raw_sha256 "$(sha256sum "$evidence_root/runtime-events.jsonl" | awk '{print $1}')" \
-  --arg mutant_sha256 "$(sha256sum "$evidence_root/layer-mutants.json" | awk '{print $1}')" \
+  --arg absence_sha256 "$(sha256sum "$evidence_root/absence-tests.json" | awk '{print $1}')" \
+  --arg absence_raw_sha256 "$(sha256sum "$evidence_root/absence-events.jsonl" | awk '{print $1}')" \
+  --arg layer_mutant_sha256 "$(sha256sum "$evidence_root/layer-mutants.json" | awk '{print $1}')" \
+  --arg layer_mutant_raw_sha256 "$(sha256sum "$evidence_root/layer-mutant-events.jsonl" | awk '{print $1}')" \
+  --argjson absence_receipts "$(jq '.counts.expected' "$evidence_root/absence-tests.json")" \
+  --argjson detector_layers "$(jq '.counts.expected' "$evidence_root/layer-mutants.json")" \
   --arg module_graph_sha256 "$(sha256sum "$evidence_root/module-graph.txt" | awk '{print $1}')" \
   --arg sbom_sha256 "$(sha256sum "$evidence_root/sbom.cdx.json" | awk '{print $1}')" \
   --arg inventory_sha256 "$inventory_sha" \
-  '{schema_version:2,verdict:"pass",source:{commit:$commit,tree:$tree,go_mod_sha256:$go_mod_sha256,go_sum_sha256:$go_sum_sha256},toolchain:{version:$go_version,environment:$go_env},qualification:{source:true,module:true,vendor_like:true,mutants:47,detector_layers:8,binaries:true,sbom:true,install:true,help_config:true,runtime:"observed",runtime_tests:23,historical_exemptions:"closed-token-and-path-map"},digests:{commands_sha256:$commands_sha256,binary_results_sha256:$binary_results_sha256,install_sha256:$install_sha256,runtime_sha256:$runtime_sha256,runtime_raw_sha256:$runtime_raw_sha256,mutant_sha256:$mutant_sha256,module_graph_sha256:$module_graph_sha256,sbom_sha256:$sbom_sha256,evidence_inventory_sha256:$inventory_sha256}}' >"$evidence_root/manifest.json"
+  '{schema_version:3,verdict:"pass",source:{commit:$commit,tree:$tree,go_mod_sha256:$go_mod_sha256,go_sum_sha256:$go_sum_sha256},toolchain:{version:$go_version,environment:$go_env},qualification:{source:true,module:true,vendor_like:true,absence_receipts:$absence_receipts,detector_layers:$detector_layers,binaries:true,sbom:true,install:true,help_config:true,runtime:"observed",runtime_tests:23,historical_exemptions:"closed-token-and-path-map"},digests:{commands_sha256:$commands_sha256,binary_results_sha256:$binary_results_sha256,install_sha256:$install_sha256,runtime_sha256:$runtime_sha256,runtime_raw_sha256:$runtime_raw_sha256,absence_sha256:$absence_sha256,absence_raw_sha256:$absence_raw_sha256,layer_mutant_sha256:$layer_mutant_sha256,layer_mutant_raw_sha256:$layer_mutant_raw_sha256,module_graph_sha256:$module_graph_sha256,sbom_sha256:$sbom_sha256,evidence_inventory_sha256:$inventory_sha256}}' >"$evidence_root/manifest.json"
 (cd "$evidence_root" && sha256sum manifest.json >manifest-sha256.txt)
 
 # Independent completed-set verification after every output is closed.
 (cd "$artifacts" && sha256sum -c evidence/evidence-sha256.txt >/dev/null)
 test "$(sha256sum "$evidence_root/evidence-sha256.txt" | awk '{print $1}')" = "$(jq -r '.digests.evidence_inventory_sha256' "$evidence_root/manifest.json")"
-for tuple in commands:commands.txt binary_results:binary-results.txt install:install-sha256.txt runtime:runtime-result.json runtime_raw:runtime-events.jsonl mutant:layer-mutants.json module_graph:module-graph.txt sbom:sbom.cdx.json; do
+for tuple in commands:commands.txt binary_results:binary-results.txt install:install-sha256.txt runtime:runtime-result.json runtime_raw:runtime-events.jsonl absence:absence-tests.json absence_raw:absence-events.jsonl layer_mutant:layer-mutants.json layer_mutant_raw:layer-mutant-events.jsonl module_graph:module-graph.txt sbom:sbom.cdx.json; do
   key=${tuple%%:*}; file=${tuple#*:}
   test "$(sha256sum "$evidence_root/$file" | awk '{print $1}')" = "$(jq -r ".digests.${key}_sha256" "$evidence_root/manifest.json")"
 done

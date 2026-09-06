@@ -1,6 +1,7 @@
 package architecture
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -232,6 +233,34 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		}
 	})
 
+	for name, content := range map[string]string{
+		"direct-prefix-uses-pre-command-value":  "#!/bin/sh\nreview_retired_cli=sql\\ite3; review_retired_cli=native \"$review_retired_cli\" /tmp/x\n",
+		"wrapped-prefix-uses-pre-command-value": "#!/bin/sh\nreview_retired_cli=sql\\ite3; env review_retired_cli=native \"$review_retired_cli\" /tmp/x\n",
+		"prefix-does-not-persist-after-command": "#!/bin/sh\nreview_retired_cli=sql\\ite3\nreview_retired_cli=native true\n\"$review_retired_cli\" /tmp/x\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, "subprocess", "scripts/x.sh")
+		})
+	}
+
+	for name, content := range map[string]string{
+		"assignment-only-persists-at-boundary": "#!/bin/sh\nreview_retired_cli=sql\\ite3\nreview_retired_cli=native\n\"$review_retired_cli\" /tmp/x\n",
+		"direct-prefix-expands-clean-prior":    "#!/bin/sh\nreview_retired_cli=native\nreview_retired_cli=sql\\ite3 \"$review_retired_cli\" /tmp/x\n",
+		"wrapped-prefix-expands-clean-prior":   "#!/bin/sh\nreview_retired_cli=native\nenv review_retired_cli=sql\\ite3 \"$review_retired_cli\" /tmp/x\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			if len(evidence.Findings) != 0 {
+				t.Fatalf("clean assignment-expansion control rejected: %s", formatM2Findings(evidence.Findings))
+			}
+		})
+	}
+
 	t.Run("malformed-go-fails-closed", func(t *testing.T) {
 		root := t.TempDir()
 		writeM2Mutant(t, root, "internal/x/x.go", []byte("package x\nfunc broken("))
@@ -316,11 +345,68 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 }
 
 func TestM2AbsenceLayerDetectors(t *testing.T) {
-	command := exec.Command(filepath.Join(m2RepositoryRoot(t), "scripts", "m2-absence", "mutants.sh"), "--layers-only")
+	root := m2RepositoryRoot(t)
+	command := exec.Command(filepath.Join(root, "scripts", "m2-absence", "mutants.sh"), "--layers-json")
 	command.Dir = m2RepositoryRoot(t)
-	if output, err := command.CombinedOutput(); err != nil {
+	output, err := command.CombinedOutput()
+	if err != nil {
 		t.Fatalf("layer detector mutants: %v\n%s", err, output)
 	}
+	result := m2VerifyObservedReceipts(t, filepath.Join(root, "scripts", "m2-absence", "expected-layer-mutants.txt"), output)
+	if result.Verdict != "pass" || result.Counts.Expected != 8 || result.Counts.Passed != 8 {
+		t.Fatalf("layer receipt census rejected: %+v", result)
+	}
+}
+
+func TestM2ObservedReceiptVerifier(t *testing.T) {
+	expected := filepath.Join(t.TempDir(), "expected.txt")
+	if err := os.WriteFile(expected, []byte("Receipt/A\nReceipt/B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, events := range map[string]string{
+		"missing":       `{"Action":"run","Test":"Receipt/A"}` + "\n" + `{"Action":"pass","Test":"Receipt/A"}` + "\n",
+		"renamed":       `{"Action":"run","Test":"Receipt/A"}` + "\n" + `{"Action":"pass","Test":"Receipt/A"}` + "\n" + `{"Action":"run","Test":"Receipt/C"}` + "\n" + `{"Action":"pass","Test":"Receipt/C"}` + "\n",
+		"skipped":       `{"Action":"run","Test":"Receipt/A"}` + "\n" + `{"Action":"pass","Test":"Receipt/A"}` + "\n" + `{"Action":"run","Test":"Receipt/B"}` + "\n" + `{"Action":"skip","Test":"Receipt/B"}` + "\n",
+		"extra":         `{"Action":"run","Test":"Receipt/A"}` + "\n" + `{"Action":"pass","Test":"Receipt/A"}` + "\n" + `{"Action":"run","Test":"Receipt/B"}` + "\n" + `{"Action":"pass","Test":"Receipt/B"}` + "\n" + `{"Action":"run","Test":"Receipt/C"}` + "\n" + `{"Action":"pass","Test":"Receipt/C"}` + "\n",
+		"duplicate":     `{"Action":"run","Test":"Receipt/A"}` + "\n" + `{"Action":"run","Test":"Receipt/A"}` + "\n" + `{"Action":"pass","Test":"Receipt/A"}` + "\n" + `{"Action":"run","Test":"Receipt/B"}` + "\n" + `{"Action":"pass","Test":"Receipt/B"}` + "\n",
+		"claimed-count": `{"Action":"run","Test":"Receipt/A"}` + "\n" + `{"Action":"pass","Test":"Receipt/A"}` + "\n" + `{"mutants":2,"status":"pass"}` + "\n",
+	} {
+		t.Run(name+"-fails", func(t *testing.T) {
+			if result := m2VerifyObservedReceipts(t, expected, []byte(events)); result.Verdict != "fail" {
+				t.Fatalf("receipt substitution unexpectedly passed: %+v", result)
+			}
+		})
+	}
+	passing := `{"Action":"run","Test":"Receipt/A"}` + "\n" + `{"Action":"pass","Test":"Receipt/A"}` + "\n" + `{"Action":"run","Test":"Receipt/B"}` + "\n" + `{"Action":"pass","Test":"Receipt/B"}` + "\n"
+	if result := m2VerifyObservedReceipts(t, expected, []byte(passing)); result.Verdict != "pass" || result.Counts.Expected != 2 || result.Counts.Passed != 2 {
+		t.Fatalf("complete observed receipt census rejected: %+v", result)
+	}
+}
+
+type m2ReceiptResult struct {
+	Verdict string `json:"verdict"`
+	Counts  struct {
+		Expected int `json:"expected"`
+		Passed   int `json:"passed"`
+	} `json:"counts"`
+}
+
+func m2VerifyObservedReceipts(t *testing.T, expectedPath string, events []byte) m2ReceiptResult {
+	t.Helper()
+	rawPath := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(rawPath, events, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("jq", "-s", "-S", "--rawfile", "expected_text", expectedPath, "--arg", "receipt_kind", "test", "--arg", "raw_sha", "fixture", "-f", filepath.Join(m2RepositoryRoot(t), "scripts", "m2-absence", "receipt-result.jq"), rawPath)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("derive observed receipts: %v\n%s", err, output)
+	}
+	var result m2ReceiptResult
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode observed receipt result: %v\n%s", err, output)
+	}
+	return result
 }
 
 func TestM2ShellProbe(t *testing.T) {

@@ -2,6 +2,15 @@
 set -eu
 
 repository=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+receipt_mode=human
+
+emit_receipt() {
+  action=$1
+  layer=$2
+  if [ "$receipt_mode" = json ]; then
+    printf '{"Action":"%s","Test":"M2LayerMutant/%s"}\n' "$action" "$layer"
+  fi
+}
 
 run_layers() {
   fixture_root=$(mktemp -d /tmp/go-kitty3-m2-mutants.XXXXXX)
@@ -24,6 +33,7 @@ run_layers() {
   printf '{"schema_version":2,"expected":["T"],"run":["T"],"passed":[],"skipped":["T"],"failed":[],"unmatched":[],"verdict":"fail"}\n' >"$fixture_root/runtime.json"
 
   for layer in source graph-module shell binary install sbom help-config runtime; do
+    emit_receipt run "$layer"
     case "$layer" in
       source) target=$fixture_root/source.go ;;
       graph-module) target=$fixture_root/module.graph ;;
@@ -38,18 +48,20 @@ run_layers() {
     "$repository/scripts/m2-absence/inspect.sh" --probe "$layer" "$target"
     status=$?
     set -e
-    if [ "$status" -eq 0 ]; then echo "M2 detector mutant survived: $layer" >&2; exit 1; fi
-    if [ "$status" -ne 42 ]; then echo "M2 detector failed instead of rejecting $layer: status=$status" >&2; exit 1; fi
+    if [ "$status" -eq 0 ]; then emit_receipt fail "$layer"; echo "M2 detector mutant survived: $layer" >&2; exit 1; fi
+    if [ "$status" -ne 42 ]; then emit_receipt fail "$layer"; echo "M2 detector failed instead of rejecting $layer: status=$status" >&2; exit 1; fi
+    emit_receipt pass "$layer"
   done
 
   printf 'package native\nconst Store = "gapdb"\n' >"$fixture_root/clean.go"
   printf '{"schema_version":2,"expected":["T"],"run":["T"],"passed":["T"],"skipped":[],"failed":[],"unmatched":[],"verdict":"pass"}\n' >"$fixture_root/runtime-clean.json"
   "$repository/scripts/m2-absence/inspect.sh" --probe source "$fixture_root/clean.go"
   "$repository/scripts/m2-absence/inspect.sh" --probe runtime "$fixture_root/runtime-clean.json"
-  printf 'M2 layer mutants passed: 8/8\n'
+  if [ "$receipt_mode" = human ]; then printf 'M2 layer mutants passed\n'; fi
 }
 
 if [ "${1:-}" = --layers-only ]; then run_layers; exit 0; fi
+if [ "${1:-}" = --layers-json ]; then receipt_mode=json; run_layers; exit 0; fi
 cd -- "$repository"
 run_layers
 exec go test ./internal/architecture -count=1 \

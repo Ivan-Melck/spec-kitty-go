@@ -512,6 +512,13 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 	}
 	var executables []string
 	active := map[string]shellValue{}
+	cloneValues := func(source map[string]shellValue) map[string]shellValue {
+		clone := make(map[string]shellValue, len(source))
+		for name, value := range source {
+			clone[name] = value
+		}
+		return clone
+	}
 	statements, ambiguity := m2ShellStatements(source)
 	if ambiguity != "" {
 		return nil, ambiguity
@@ -554,6 +561,19 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		dispatchCapable := false
 		dispatchMode := ""
 		dispatchOptionArgument := false
+		expansionValues := cloneValues(active)
+		pendingAssignments := map[string]shellValue{}
+		commandStarted := false
+		finishSimpleCommand := func() {
+			if !commandStarted {
+				for name, value := range pendingAssignments {
+					active[name] = value
+				}
+			}
+			expansionValues = cloneValues(active)
+			pendingAssignments = map[string]shellValue{}
+			commandStarted = false
+		}
 		for _, token := range tokens {
 			if skipRedirectionTarget {
 				skipRedirectionTarget = false
@@ -561,6 +581,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			}
 			switch token {
 			case "&&", "||", "|":
+				finishSimpleCommand()
 				commandPosition = true
 				indirectCommand = ""
 				dispatchCapable = false
@@ -580,14 +601,14 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 					if name == "" {
 						name = command[2]
 					}
-					if value, exists := active[name]; exists {
+					if value, exists := expansionValues[name]; exists {
 						if !value.resolved {
 							return nil, "unresolved-dispatch-assignment:" + name
 						}
 						executables = append(executables, value.value)
 						continue
 					}
-				} else if name := m2TrackedVariableInWord(token, active); name != "" {
+				} else if name := m2TrackedVariableInWord(token, expansionValues); name != "" {
 					return nil, "unsupported-dispatch-word:" + name
 				}
 			}
@@ -624,7 +645,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 					continue
 				}
 				if indirectCommand != "" {
-					if name := m2TrackedVariableInWord(token, active); name != "" {
+					if name := m2TrackedVariableInWord(token, expansionValues); name != "" {
 						return nil, "unsupported-" + indirectCommand + ":" + name
 					}
 					if indirectCommand == "command-text" {
@@ -635,28 +656,34 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			}
 			if assignment := m2ShellAssignment.FindStringSubmatch(token); len(assignment) == 3 {
 				value, resolved := m2StaticShellWord(assignment[2])
-				active[assignment[1]] = shellValue{
-					resolved:    resolved,
-					commandSafe: !resolved && m2StaticShellCommandBasenameSafe(assignment[2]),
-					value:       value,
+				if !commandStarted {
+					pendingAssignments[assignment[1]] = shellValue{
+						resolved:    resolved,
+						commandSafe: !resolved && m2StaticShellCommandBasenameSafe(assignment[2]),
+						value:       value,
+					}
 				}
 				continue
 			}
 			if commandName, pathSpelled, resolved := m2StaticShellCommandName(token); resolved {
 				switch {
 				case m2ShellUtilityDispatch[commandName]:
+					commandStarted = true
 					dispatchCapable = true
 					dispatchMode = commandName
 					continue
 				case m2ShellInterpreters[commandName]:
+					commandStarted = true
 					dispatchCapable = true
 					indirectCommand = "interpreter"
 					commandPosition = false
 					continue
 				case m2ShellIndirectDispatch[commandName]:
+					commandStarted = true
 					dispatchCapable = true
 					indirectCommand = commandName
 				case pathSpelled && !m2ShellKnownDataCommands[commandName]:
+					commandStarted = true
 					indirectCommand = "unknown-path-dispatch"
 				}
 			}
@@ -665,7 +692,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				if name == "" {
 					name = command[2]
 				}
-				if value, exists := active[name]; exists {
+				if value, exists := expansionValues[name]; exists {
 					if !value.resolved {
 						if value.commandSafe {
 							commandPosition = false
@@ -675,12 +702,14 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 					}
 					executables = append(executables, value.value)
 				}
-			} else if name := m2TrackedVariableInWord(token, active); name != "" {
+			} else if name := m2TrackedVariableInWord(token, expansionValues); name != "" {
 				return nil, "unsupported-command-word:" + name
 			}
+			commandStarted = true
 			dispatchMode = ""
 			commandPosition = false
 		}
+		finishSimpleCommand()
 	}
 	sort.Strings(executables)
 	return executables, ""
@@ -812,6 +841,15 @@ func m2ShellTokens(statement string) ([]string, string) {
 			flush()
 			continue
 		}
+		if current == '$' && index+1 < len(statement) && statement[index+1] == '(' {
+			closing, ambiguity := m2ShellCommandSubstitutionEnd(statement, index+2)
+			if ambiguity != "" {
+				return nil, ambiguity
+			}
+			word.WriteString(statement[index : closing+1])
+			index = closing
+			continue
+		}
 		if current == '$' && index+1 < len(statement) && statement[index+1] == '{' {
 			closing := strings.IndexByte(statement[index+2:], '}')
 			if closing < 0 {
@@ -843,6 +881,41 @@ func m2ShellTokens(statement string) ([]string, string) {
 	}
 	flush()
 	return tokens, ""
+}
+
+func m2ShellCommandSubstitutionEnd(source string, start int) (int, string) {
+	depth := 1
+	var quote byte
+	for index := start; index < len(source); index++ {
+		current := source[index]
+		if current == '\\' && quote != '\'' {
+			if index+1 >= len(source) {
+				return 0, "unterminated-command-substitution-escape"
+			}
+			index++
+			continue
+		}
+		if quote != 0 {
+			if current == quote {
+				quote = 0
+			}
+			continue
+		}
+		if current == '\'' || current == '"' {
+			quote = current
+			continue
+		}
+		switch current {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return index, ""
+			}
+		}
+	}
+	return 0, "unterminated-command-substitution"
 }
 
 // m2ShellStatements preserves statement order without consuming the delimiter
