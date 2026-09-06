@@ -302,6 +302,14 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"single-line-function-variable-execution": "#!/bin/sh\nhelper() { review_retired_cli=sql\\ite3; \"$review_retired_cli\" /tmp/x; }\n",
 		"multiline-function-variable-execution":   "#!/bin/sh\nhelper()\n{\nreview_retired_cli=sql\\ite3\n\"$review_retired_cli\" /tmp/x\n}\n",
 		"function-followed-by-parent-command":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper()\n{ review_retired_cli=native; }\n\"$review_retired_cli\" /tmp/x\n",
+		"invoked-function-applies-direct-effect":  "#!/bin/sh\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"reviewer-exact-invoked-function-effect":  "#!/bin/sh\nreview_retired_cli=native\nselect(){ review_retired_cli=sql\\ite3; }\nselect\n\"$review_retired_cli\" /tmp/x\n",
+		"invoked-multiline-function-effect":       "#!/bin/sh\nreview_retired_cli=native\nselect_retired_cli()\n{\nreview_retired_cli=sql\\ite3\n}\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"invoked-nested-function-effect":          "#!/bin/sh\nreview_retired_cli=native\ninner(){ review_retired_cli=sql\\ite3; }\nouter(){ inner; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
+		"forward-nested-function-call":            "#!/bin/sh\nreview_retired_cli=native\nouter(){ inner; }\ninner(){ review_retired_cli=sql\\ite3; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
+		"nested-effect-order-is-preserved":        "#!/bin/sh\nreview_retired_cli=native\ninner(){ review_retired_cli=native; }\nouter(){ inner; review_retired_cli=sql\\ite3; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
+		"pipeline-function-effect-is-isolated":    "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\nhelper | true\n\"$review_retired_cli\" /tmp/x\n",
+		"subshell-function-effect-is-isolated":    "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\n( helper )\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -315,6 +323,10 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"safe-single-line-function":            "#!/bin/sh\nhelper() { printf '%s' native; }\n",
 		"safe-multiline-spaced-function":       "#!/bin/sh\nhelper ()\n{\nprintf '%s' native\n}\n",
 		"function-definition-does-not-persist": "#!/bin/sh\nreview_retired_cli=native\nhelper() { review_retired_cli=sql\\ite3; }\n\"$review_retired_cli\" /tmp/x\n",
+		"safe-invoked-function-no-effect":      "#!/bin/sh\nreview_retired_cli=native\nhelper(){ printf '%s' native; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"function-called-before-definition":    "#!/bin/sh\nreview_retired_cli=native\nhelper\nhelper(){ review_retired_cli=sql\\ite3; }\n\"$review_retired_cli\" /tmp/x\n",
+		"invoked-function-clean-effect":        "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ review_retired_cli=native; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"nested-clean-effect-order":            "#!/bin/sh\nreview_retired_cli=sql\\ite3\ninner(){ review_retired_cli=sql\\ite3; }\nouter(){ inner; review_retired_cli=native; }\nouter\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -323,6 +335,68 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 			if len(evidence.Findings) != 0 {
 				t.Fatalf("clean function-definition control rejected: %s", formatM2Findings(evidence.Findings))
 			}
+		})
+	}
+
+	for name, content := range map[string]string{
+		"conditional-function-effect": "#!/bin/sh\nreview_retired_cli=native\nhelper(){ if true; then review_retired_cli=sql\\ite3; fi; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"unresolved-function-effect":  "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=${review_source}; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"recursive-function-effect":   "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; helper; }\nhelper\n",
+		"indirect-function-call":      "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3; }\nselected=helper\n\"$selected\"\n",
+		"function-read-effect":        "#!/bin/sh\nreview_retired_cli=native\nhelper(){ read review_retired_cli; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"opaque-function-effect":      "#!/bin/sh\nreview_retired_cli=native\nhelper(){ eval \"$review_payload\"; }\nhelper\n",
+		"conditional-case-effect":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\nhelper(){ case native in other) review_retired_cli=native ;; esac; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+	} {
+		t.Run(name+"-fails-closed", func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+		})
+	}
+
+	for name, content := range map[string]string{
+		"bash-current-shell-output-redirect":    "#!/bin/bash\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; } &>/tmp/x\n\"$review_retired_cli\" /tmp/x\n",
+		"bash-current-shell-append-redirect":    "#!/bin/bash\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; } &>>/tmp/x\n\"$review_retired_cli\" /tmp/x\n",
+		"bash-background-after-output-redirect": "#!/bin/bash\nreview_retired_cli=native\n{ review_retired_cli=sql\\ite3; } &>/tmp/x & \"$review_retired_cli\" /tmp/x\n",
+		"bash-background-after-append-redirect": "#!/bin/bash\nreview_retired_cli=native\n{ review_retired_cli=sql\\ite3; } &>>/tmp/x & \"$review_retired_cli\" /tmp/x\n",
+		"heredoc-unquoted-body-is-data":         "#!/bin/sh\ncat <<EOF\n" + m2LegacyCLI + " --not-executed; '$unterminated\nEOF\nprintf '%s' native\n",
+		"heredoc-quoted-body-is-data":           "#!/bin/sh\ncat <<'EOF'\n" + m2ModerncDriver + "\n$(" + m2LegacyCLI + ")\nEOF\nprintf '%s' native\n",
+		"heredoc-tab-stripped-body-is-data":     "#!/bin/sh\ncat <<-'EOF'\n\t" + m2LegacyCLI + " | unexpected && punctuation\n\tEOF\nprintf '%s' native\n",
+		"multiple-heredoc-bodies-are-data":      "#!/bin/sh\ncat <<FIRST <<'SECOND'\n" + m2LegacyCLI + "\nFIRST\n" + m2ModerncDriver + "\nSECOND\nprintf '%s' native\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			if len(evidence.Findings) != 0 {
+				t.Fatalf("clean function/redirection/heredoc control rejected: %s", formatM2Findings(evidence.Findings))
+			}
+		})
+	}
+
+	for name, content := range map[string]string{
+		"forbidden-command-before-heredoc": "#!/bin/sh\nsql\\ite3 /tmp/x; cat <<EOF\ndata\nEOF\n",
+		"forbidden-command-after-heredoc":  "#!/bin/sh\ncat <<EOF\ndata\nEOF\nsql\\ite3 /tmp/x\n",
+		"quoted-heredoc-marker-is-data":    "#!/bin/sh\nprintf '%s' '<<EOF'\nsql\\ite3 /tmp/x\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, "subprocess", "scripts/x.sh")
+		})
+	}
+
+	for name, content := range map[string]string{
+		"unterminated-heredoc": "#!/bin/sh\ncat <<EOF\ndata\n",
+		"dynamic-heredoc":      "#!/bin/sh\nmarker=EOF\ncat <<\"$marker\"\ndata\nEOF\n",
+	} {
+		t.Run(name+"-fails-closed", func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 		})
 	}
 
