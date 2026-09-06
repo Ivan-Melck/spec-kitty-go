@@ -588,7 +588,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				continue
 			}
 			switch token {
-			case ";":
+			case ";", "\n":
 				finishSimpleCommand(!inPipeline)
 				inPipeline = false
 				commandPosition = true
@@ -671,9 +671,11 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				commandStarted = true
 				commandPosition = false
 				continue
-			case "<", ">", "<<", ">>":
+			case "<", ">", "<<", ">>", "<&", ">&":
 				skipRedirectionTarget = true
 				continue
+			case "<>", ">|":
+				return nil, "unsupported-redirection:" + token
 			}
 			if dispatchCapable {
 				if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
@@ -746,6 +748,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				continue
 			}
 			if commandName, pathSpelled, resolved := m2StaticShellCommandName(token); resolved {
+				executables = append(executables, commandName)
 				switch {
 				case m2ShellUtilityDispatch[commandName]:
 					commandStarted = true
@@ -804,11 +807,16 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 func m2ShellFunctionTokens(tokens []string) []string {
 	normalized := make([]string, 0, len(tokens))
 	for index := 0; index < len(tokens); index++ {
-		if index+3 < len(tokens) && m2ShellName.MatchString(tokens[index]) &&
-			tokens[index+1] == "(" && tokens[index+2] == ")" && tokens[index+3] == "{" {
-			normalized = append(normalized, "function{")
-			index += 3
-			continue
+		if index+3 < len(tokens) && m2ShellName.MatchString(tokens[index]) && tokens[index+1] == "(" && tokens[index+2] == ")" {
+			opening := index + 3
+			for opening < len(tokens) && tokens[opening] == "\n" {
+				opening++
+			}
+			if opening < len(tokens) && tokens[opening] == "{" {
+				normalized = append(normalized, "function{")
+				index = opening
+				continue
+			}
 		}
 		normalized = append(normalized, tokens[index])
 	}
@@ -817,28 +825,46 @@ func m2ShellFunctionTokens(tokens []string) []string {
 
 func m2ShellCompoundTailOperator(tokens []string, start int) (string, string) {
 	for index := start; index < len(tokens); {
-		redirection := tokens[index] == "<" || tokens[index] == ">" || tokens[index] == "<<" || tokens[index] == ">>"
-		if redirection {
-			if index+1 >= len(tokens) {
-				return "", "unterminated-compound-redirection"
+		fileDescriptor := strings.Trim(tokens[index], `"'`)
+		if fileDescriptor != "" && strings.Trim(fileDescriptor, "0123456789") == "" && index+1 < len(tokens) && m2ShellRedirection(tokens[index+1]) {
+			if len(fileDescriptor) > 9 {
+				return "", "io-number-budget"
+			}
+			index++
+		}
+		if m2ShellUnsupportedRedirection(tokens[index]) {
+			return "", "unsupported-compound-redirection:" + tokens[index]
+		}
+		if m2ShellRedirection(tokens[index]) {
+			if index+1 >= len(tokens) || !m2ShellRedirectionTarget(tokens[index], tokens[index+1]) {
+				return "", "invalid-compound-redirection:" + tokens[index]
 			}
 			index += 2
 			continue
 		}
-		fileDescriptor := strings.Trim(tokens[index], `"'`)
-		if fileDescriptor != "" && strings.Trim(fileDescriptor, "0123456789") == "" && index+1 < len(tokens) {
-			next := tokens[index+1]
-			if next == "<" || next == ">" || next == "<<" || next == ">>" {
-				if index+2 >= len(tokens) {
-					return "", "unterminated-compound-redirection"
-				}
-				index += 3
-				continue
-			}
-		}
 		return tokens[index], ""
 	}
 	return "", ""
+}
+
+func m2ShellRedirection(token string) bool {
+	return token == "<" || token == ">" || token == "<<" || token == ">>" || token == "<&" || token == ">&"
+}
+
+func m2ShellUnsupportedRedirection(token string) bool {
+	return token == "<>" || token == ">|"
+}
+
+func m2ShellRedirectionTarget(operator, target string) bool {
+	if target == "" || target == ";" || target == "\n" || target == "|" || target == "||" || target == "&" || target == "&&" ||
+		m2ShellRedirection(target) || m2ShellUnsupportedRedirection(target) {
+		return false
+	}
+	if operator != "<&" && operator != ">&" {
+		return true
+	}
+	value, resolved := m2StaticShellWord(target)
+	return resolved && (value == "-" || (value != "" && len(value) <= 9 && strings.Trim(value, "0123456789") == ""))
 }
 
 func m2ShellExecutableCaseTokens(tokens []string) ([]string, string) {
@@ -1009,8 +1035,11 @@ func m2ShellTokens(statement string) ([]string, string) {
 			word.WriteByte(current)
 			continue
 		}
-		if current == ' ' || current == '\t' {
+		if current == ' ' || current == '\t' || current == '\n' {
 			flush()
+			if current == '\n' {
+				tokens = append(tokens, "\n")
+			}
 			continue
 		}
 		if current == '$' && index+1 < len(statement) && statement[index+1] == '(' {
@@ -1039,6 +1068,8 @@ func m2ShellTokens(statement string) ([]string, string) {
 				next := statement[index+1]
 				if (current == '&' && next == '&') || (current == '|' && next == '|') ||
 					(current == '<' && next == '<') || (current == '>' && next == '>') ||
+					(current == '<' && (next == '&' || next == '>')) ||
+					(current == '>' && (next == '&' || next == '|')) ||
 					(current == ';' && next == ';') {
 					operator += string(next)
 					index++
@@ -1106,7 +1137,7 @@ func m2ShellStatements(source string) ([]string, string) {
 		if comment {
 			if current == '\n' {
 				comment = false
-				statement.WriteString(" ; ")
+				statement.WriteByte('\n')
 				wordStart = true
 			}
 			continue
@@ -1170,7 +1201,7 @@ func m2ShellStatements(source string) ([]string, string) {
 			if current == ';' {
 				statement.WriteByte(';')
 			} else {
-				statement.WriteString(" ; ")
+				statement.WriteByte('\n')
 			}
 			wordStart = true
 			continue
