@@ -143,6 +143,7 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		{"shell-concatenated-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql'ite'3\n\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-unquoted-backslash-uninvoked", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3\nprintf '%s' native\n", false},
 		{"shell-unquoted-backslash-non-command", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3\nprintf '%s' \"$review_retired_cli\"\n", false},
+		{"shell-case-pattern-data", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3\ncase \"$review_retired_cli\" in \"$review_retired_cli\") printf '%s' native ;; esac\n", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -160,21 +161,32 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 	t.Run("supported-command-positions", func(t *testing.T) {
 		assignment := "#!/bin/sh\nreview_retired_cli=sql\\ite3\n"
 		for name, invocation := range map[string]string{
-			"if":        "if \"$review_retired_cli\" /tmp/x; then :; fi\n",
-			"then":      "if true; then \"$review_retired_cli\" /tmp/x; fi\n",
-			"elif":      "if false; then :; elif \"$review_retired_cli\" /tmp/x; then :; fi\n",
-			"else":      "if false; then :; else \"$review_retired_cli\" /tmp/x; fi\n",
-			"while":     "while \"$review_retired_cli\" /tmp/x; do :; done\n",
-			"until":     "until \"$review_retired_cli\" /tmp/x; do :; done\n",
-			"do":        "while true; do \"$review_retired_cli\" /tmp/x; done\n",
-			"negation":  "! \"$review_retired_cli\" /tmp/x\n",
-			"and-list":  "true && \"$review_retired_cli\" /tmp/x\n",
-			"or-list":   "false || \"$review_retired_cli\" /tmp/x\n",
-			"pipeline":  "true | \"$review_retired_cli\" /tmp/x\n",
-			"semicolon": "true; \"$review_retired_cli\" /tmp/x\n",
-			"newline":   "true\n\"$review_retired_cli\" /tmp/x\n",
-			"subshell":  "( \"$review_retired_cli\" /tmp/x )\n",
-			"group":     "{ \"$review_retired_cli\" /tmp/x; }\n",
+			"if":             "if \"$review_retired_cli\" /tmp/x; then :; fi\n",
+			"then":           "if true; then \"$review_retired_cli\" /tmp/x; fi\n",
+			"elif":           "if false; then :; elif \"$review_retired_cli\" /tmp/x; then :; fi\n",
+			"else":           "if false; then :; else \"$review_retired_cli\" /tmp/x; fi\n",
+			"while":          "while \"$review_retired_cli\" /tmp/x; do :; done\n",
+			"until":          "until \"$review_retired_cli\" /tmp/x; do :; done\n",
+			"do":             "while true; do \"$review_retired_cli\" /tmp/x; done\n",
+			"negation":       "! \"$review_retired_cli\" /tmp/x\n",
+			"and-list":       "true && \"$review_retired_cli\" /tmp/x\n",
+			"or-list":        "false || \"$review_retired_cli\" /tmp/x\n",
+			"pipeline":       "true | \"$review_retired_cli\" /tmp/x\n",
+			"semicolon":      "true; \"$review_retired_cli\" /tmp/x\n",
+			"newline":        "true\n\"$review_retired_cli\" /tmp/x\n",
+			"subshell":       "( \"$review_retired_cli\" /tmp/x )\n",
+			"group":          "{ \"$review_retired_cli\" /tmp/x; }\n",
+			"case-same-line": "case native in native) \"$review_retired_cli\" /tmp/x ;; esac\n",
+			"case-multiline": "case native in\n  native)\n    \"$review_retired_cli\" /tmp/x\n    ;;\nesac\n",
+			"command":        "command \"$review_retired_cli\" /tmp/x\n",
+			"command-option": "command -p -- \"$review_retired_cli\" /tmp/x\n",
+			"exec":           "exec \"$review_retired_cli\" /tmp/x\n",
+			"env":            "env \"$review_retired_cli\" /tmp/x\n",
+			"env-prefixes":   "env -i -u OTHER REVIEW=native \"$review_retired_cli\" /tmp/x\n",
+			"nohup":          "nohup \"$review_retired_cli\" /tmp/x\n",
+			"nice":           "nice -n 5 \"$review_retired_cli\" /tmp/x\n",
+			"time":           "time -p \"$review_retired_cli\" /tmp/x\n",
+			"nested-wrapper": "env REVIEW=native command -- \"$review_retired_cli\" /tmp/x\n",
 		} {
 			t.Run(name, func(t *testing.T) {
 				root := t.TempDir()

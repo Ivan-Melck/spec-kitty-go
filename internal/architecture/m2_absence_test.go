@@ -520,7 +520,17 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		}
 		if len(tokens) != 0 && tokens[0] == "case" {
 			inCase = true
-			continue
+			inIndex := -1
+			for index, token := range tokens[1:] {
+				if token == "in" {
+					inIndex = index + 1
+					break
+				}
+			}
+			if inIndex < 0 {
+				continue
+			}
+			tokens = tokens[inIndex+1:]
 		}
 		if inCase {
 			if len(tokens) != 0 && tokens[0] == "esac" {
@@ -537,6 +547,8 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		commandPosition := true
 		skipRedirectionTarget := false
 		indirectCommand := false
+		dispatchMode := ""
+		dispatchOptionArgument := false
 		for _, token := range tokens {
 			if skipRedirectionTarget {
 				skipRedirectionTarget = false
@@ -546,6 +558,8 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			case "&&", "||", "|":
 				commandPosition = true
 				indirectCommand = false
+				dispatchMode = ""
+				dispatchOptionArgument = false
 				continue
 			case ")", "}":
 				commandPosition = false
@@ -561,6 +575,17 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 					continue
 				case "fi", "done":
 					commandPosition = false
+					continue
+				}
+				if dispatchOptionArgument {
+					dispatchOptionArgument = false
+					continue
+				}
+				if dispatchMode != "" && (token == "--" || strings.HasPrefix(token, "-")) {
+					if (dispatchMode == "env" && (token == "-u" || token == "--unset")) ||
+						(dispatchMode == "nice" && (token == "-n" || token == "--adjustment")) {
+						dispatchOptionArgument = true
+					}
 					continue
 				}
 			}
@@ -579,6 +604,10 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 					commandSafe: !resolved && m2StaticShellCommandBasenameSafe(assignment[2]),
 					value:       value,
 				}
+				continue
+			}
+			if token == "command" || token == "exec" || token == "env" || token == "nohup" || token == "nice" || token == "time" {
+				dispatchMode = token
 				continue
 			}
 			if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
@@ -600,6 +629,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				return nil, "unsupported-command-word:" + name
 			}
 			indirectCommand = token == "eval" || token == "xargs"
+			dispatchMode = ""
 			commandPosition = false
 		}
 	}
