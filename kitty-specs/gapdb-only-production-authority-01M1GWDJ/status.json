@@ -647,7 +647,8 @@
       "last_transition_at": "2026-09-06T00:31:50.965886+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review. Scoped helper/native CLI tests, vet, and staticcheck pass at 3cba5bf7. Cross-lane architecture smoke still expects retired inspect-beads documentation; README ownership is WP17 and must reconcile that historical contract before M2 crown qualification."
+        "Ready for independent review. Scoped helper/native CLI tests, vet, and staticcheck pass at 3cba5bf7. Cross-lane architecture smoke still expects retired inspect-beads documentation; README ownership is WP17 and must reconcile that historical contract before M2 crown qualification.",
+        "Native GapDB composition rework complete; approved WP14 portable scenarios incorporated"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
