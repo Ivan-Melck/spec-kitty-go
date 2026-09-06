@@ -868,48 +868,6 @@ func phase2SmokeHelperAndInstaller(t *testing.T, root string) (string, string) {
 	return binary, help
 }
 
-func phase2SmokeDocumentedHelper(t *testing.T, root, binary, document string) {
-	t.Helper()
-	block, err := phase2FencedBlockContaining(document, "tracker inspect-beads")
-	if err != nil {
-		t.Fatal(err)
-	}
-	options := phase2DocumentedOptions(block)
-	fixture := t.TempDir()
-	marker := filepath.Join(fixture, "provider-started")
-	executable := filepath.Join(fixture, "bd")
-	script := "#!/bin/sh\nprintf started > " + strconv.Quote(marker) + "\nexit 97\n"
-	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	payload, err := os.ReadFile(executable)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(payload)
-	workspace := filepath.Join(fixture, "workspace")
-	if err := os.Mkdir(workspace, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	missingDatabase := filepath.Join(workspace, "missing-database")
-	output := phase2RunCommand(t, root, 1, binary,
-		"tracker", "inspect-beads",
-		"--project", options["--project"],
-		"--executable", executable,
-		"--workspace", workspace,
-		"--database-identity", missingDatabase,
-		"--protocol-schema", options["--protocol-schema"],
-		"--mode", options["--mode"],
-		"--read-only="+options["--read-only"],
-		"--expected-digest", hex.EncodeToString(digest[:]))
-	if !strings.Contains(output, `"ok":false`) || !strings.Contains(output, `"kind":"invalid_request"`) || !strings.Contains(output, "provider database path cannot be resolved") {
-		t.Fatalf("documented inspect-beads invocation did not reach the expected pre-provider validation boundary: %q", output)
-	}
-	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("documented helper smoke reached provider state: %v", err)
-	}
-}
-
 func phase2ExpectedInspectHelp() string {
 	return strings.Join([]string{
 		"--project", "--executable", "--workspace", "--database-identity", "--protocol-schema",
