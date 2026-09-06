@@ -160,6 +160,10 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 
 	t.Run("supported-command-positions", func(t *testing.T) {
 		assignment := "#!/bin/sh\nreview_retired_cli=sql\\ite3\n"
+		ambiguous := map[string]bool{
+			"bash-command": true, "dash-command": true, "eval": true, "ksh-command": true,
+			"path-sh": true, "sh-command": true, "xargs": true, "zsh-command": true,
+		}
 		for name, invocation := range map[string]string{
 			"if":             "if \"$review_retired_cli\" /tmp/x; then :; fi\n",
 			"then":           "if true; then \"$review_retired_cli\" /tmp/x; fi\n",
@@ -187,13 +191,46 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 			"nice":           "nice -n 5 \"$review_retired_cli\" /tmp/x\n",
 			"time":           "time -p \"$review_retired_cli\" /tmp/x\n",
 			"nested-wrapper": "env REVIEW=native command -- \"$review_retired_cli\" /tmp/x\n",
+			"path-env":       "/usr/bin/env \"$review_retired_cli\" /tmp/x\n",
+			"path-nested":    "/usr/bin/env -- REVIEW=native command -- \"$review_retired_cli\" /tmp/x\n",
+			"path-nohup":     "/usr/bin/nohup \"$review_retired_cli\" /tmp/x\n",
+			"path-nice":      "/usr/bin/nice -n 5 \"$review_retired_cli\" /tmp/x\n",
+			"path-time":      "/usr/bin/time -p \"$review_retired_cli\" /tmp/x\n",
+			"sh-command":     "sh -c \"$review_retired_cli\"\n",
+			"dash-command":   "dash -c \"$review_retired_cli\"\n",
+			"bash-command":   "bash --noprofile -c \"$review_retired_cli\"\n",
+			"ksh-command":    "ksh -c \"$review_retired_cli\"\n",
+			"zsh-command":    "zsh -c \"$review_retired_cli\"\n",
+			"path-sh":        "/bin/sh -c \"$review_retired_cli\"\n",
+			"eval":           "eval \"$review_retired_cli\"\n",
+			"xargs":          "printf '%s' native | xargs \"$review_retired_cli\"\n",
 		} {
 			t.Run(name, func(t *testing.T) {
 				root := t.TempDir()
 				writeM2Mutant(t, root, "scripts/x.sh", []byte(assignment+invocation))
 				evidence := inspectM2Absence(t, root, false)
-				assertM2Finding(t, evidence.Findings, "subprocess", "scripts/x.sh")
+				kind := "subprocess"
+				if ambiguous[name] {
+					kind = "ambiguous-shell"
+				}
+				assertM2Finding(t, evidence.Findings, kind, "scripts/x.sh")
 			})
+		}
+	})
+
+	t.Run("unknown-path-dispatch-with-tracked-argument-fails-closed", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=sql\\ite3\n/usr/bin/custom-wrapper \"$review_retired_cli\"\n"))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+	})
+
+	t.Run("known-path-data-command-keeps-tracked-value-as-data", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=sql\\ite3\n/usr/bin/printf '%s' \"$review_retired_cli\"\n"))
+		evidence := inspectM2Absence(t, root, false)
+		if len(evidence.Findings) != 0 {
+			t.Fatalf("known data command rejected: %s", formatM2Findings(evidence.Findings))
 		}
 	})
 

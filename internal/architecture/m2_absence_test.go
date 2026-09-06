@@ -499,6 +499,10 @@ func m2GoConstantString(expression ast.Expr, values map[string]string) (string, 
 
 var m2ShellAssignment = regexp.MustCompile(`(?s)^([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
 var m2ShellCommandVariable = regexp.MustCompile(`^"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?$`)
+var m2ShellUtilityDispatch = map[string]bool{"command": true, "env": true, "exec": true, "nice": true, "nohup": true, "time": true}
+var m2ShellInterpreters = map[string]bool{"bash": true, "dash": true, "ksh": true, "sh": true, "zsh": true}
+var m2ShellIndirectDispatch = map[string]bool{"eval": true, "xargs": true}
+var m2ShellKnownDataCommands = map[string]bool{"[": true, "echo": true, "false": true, "printf": true, "test": true, "true": true}
 
 func m2ShellResolvedExecutables(source string) ([]string, string) {
 	type shellValue struct {
@@ -546,7 +550,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		}
 		commandPosition := true
 		skipRedirectionTarget := false
-		indirectCommand := false
+		indirectCommand := ""
 		dispatchMode := ""
 		dispatchOptionArgument := false
 		for _, token := range tokens {
@@ -557,7 +561,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			switch token {
 			case "&&", "||", "|":
 				commandPosition = true
-				indirectCommand = false
+				indirectCommand = ""
 				dispatchMode = ""
 				dispatchOptionArgument = false
 				continue
@@ -571,7 +575,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			if commandPosition {
 				switch token {
 				case "!", "(", "{", "if", "then", "elif", "else", "while", "until", "do":
-					indirectCommand = false
+					indirectCommand = ""
 					continue
 				case "fi", "done":
 					commandPosition = false
@@ -590,9 +594,22 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				}
 			}
 			if !commandPosition {
-				if indirectCommand {
+				if indirectCommand == "interpreter" {
+					if strings.HasPrefix(token, "-") {
+						if token != "--" && strings.Contains(strings.TrimLeft(token, "-"), "c") {
+							indirectCommand = "command-text"
+						}
+						continue
+					}
+					indirectCommand = ""
+					continue
+				}
+				if indirectCommand != "" {
 					if name := m2TrackedVariableInWord(token, active); name != "" {
-						return nil, "unsupported-indirect-command:" + name
+						return nil, "unsupported-" + indirectCommand + ":" + name
+					}
+					if indirectCommand == "command-text" {
+						indirectCommand = ""
 					}
 				}
 				continue
@@ -606,9 +623,20 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				}
 				continue
 			}
-			if token == "command" || token == "exec" || token == "env" || token == "nohup" || token == "nice" || token == "time" {
-				dispatchMode = token
-				continue
+			if commandName, pathSpelled, resolved := m2StaticShellCommandName(token); resolved {
+				switch {
+				case m2ShellUtilityDispatch[commandName]:
+					dispatchMode = commandName
+					continue
+				case m2ShellInterpreters[commandName]:
+					indirectCommand = "interpreter"
+					commandPosition = false
+					continue
+				case m2ShellIndirectDispatch[commandName]:
+					indirectCommand = commandName
+				case pathSpelled && !m2ShellKnownDataCommands[commandName]:
+					indirectCommand = "unknown-path-dispatch"
+				}
 			}
 			if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
 				name := command[1]
@@ -628,7 +656,6 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			} else if name := m2TrackedVariableInWord(token, active); name != "" {
 				return nil, "unsupported-command-word:" + name
 			}
-			indirectCommand = token == "eval" || token == "xargs"
 			dispatchMode = ""
 			commandPosition = false
 		}
@@ -644,6 +671,14 @@ func m2StaticShellCommandBasenameSafe(word string) bool {
 	}
 	basename, resolved := m2StaticShellWord(strings.Trim(word[separator+1:], `"'`))
 	return resolved && basename != "" && basename != m2LegacyCLI
+}
+
+func m2StaticShellCommandName(word string) (name string, pathSpelled bool, resolved bool) {
+	value, resolved := m2StaticShellWord(word)
+	if !resolved || value == "" {
+		return "", false, false
+	}
+	return filepath.Base(value), strings.Contains(value, "/"), true
 }
 
 func m2TrackedVariableInWord[T any](word string, active map[string]T) string {

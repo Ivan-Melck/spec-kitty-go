@@ -14,7 +14,7 @@ run_layers() {
     printf '#!/bin/sh\nreview_retired_cli=sql\\ite3\n'
     line=0
     while [ "$line" -lt 65 ]; do printf '# intervening line\n'; line=$((line + 1)); done
-    printf 'if "$review_retired_cli" /tmp/x; then :; fi\n'
+    printf '/usr/bin/env "$review_retired_cli" /tmp/x\n'
   } >"$fixture_root/command.sh"
   printf 'ELF\\000%s\\000' "$driver" >"$fixture_root/binary"
   mkdir "$fixture_root/install"
