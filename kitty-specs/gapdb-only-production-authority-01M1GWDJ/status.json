@@ -707,7 +707,8 @@
         "Cycle-eleven exact final tree 9cffc182 qualified; case actions and utility-dispatch positions are modeled explicitly.",
         "Independent cycle-eleven review rejected shell -c and path-spelled wrapper dispatch gaps; all other evidence remains accepted.",
         "Cycle-twelve exact final tree 82782598 qualified; command-text and path-spelled wrapper dispatch registry fails closed.",
-        "Independent cycle-twelve review rejected interpreter/wrapper option-state escape; all other evidence remains accepted."
+        "Independent cycle-twelve review rejected interpreter/wrapper option-state escape; all other evidence remains accepted.",
+        "Cycle-thirteen exact-tree candidate 4892c886dac963045d04a9c5f3df045a41ae6314 qualified; tree 93e4351c948461024e55bf9dd706fb532a5e3bc6; manifest /tmp/go-kitty3-m2-absence.0Hl1KJ/evidence/manifest.json; inventory 741f434c60606016ac05c4356f1ac4adfd6408ce5473b37cba732fed63d0e3f7."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
