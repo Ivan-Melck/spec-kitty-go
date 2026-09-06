@@ -276,14 +276,16 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 		}
 		executable = strings.ToLower(m2GoExecutableText(data) + "\n" + strings.Join(m2GoResolvedExecutables(parsed), "\n"))
 	} else if ext == ".sh" {
-		shellSource, ambiguity := m2ShellWithoutHeredocBodies(string(data))
+		rawShell := string(data)
+		shellIdentity := m2ShellIdentityFromSource(rawShell)
+		shellSource, ambiguity := m2ShellWithoutHeredocBodies(rawShell)
 		if ambiguity != "" {
 			add("ambiguous-shell", path, ambiguity)
 			return
 		}
 		lower = strings.ToLower(shellSource)
 		executable = lower
-		resolved, ambiguity := m2ShellResolvedExecutables(shellSource)
+		resolved, ambiguity := m2ShellResolvedExecutables(shellSource, shellIdentity)
 		if ambiguity != "" {
 			add("ambiguous-shell", path, ambiguity)
 			return
@@ -516,6 +518,108 @@ var m2ShellStatefulBuiltins = map[string]bool{
 	"readonly": true, "source": true, "typeset": true, "unset": true,
 }
 
+type m2ShellTimeMode uint8
+
+const (
+	m2ShellTimeAmbiguous m2ShellTimeMode = iota
+	m2ShellTimeReserved
+	m2ShellTimeExternal
+)
+
+type m2ShellIdentity struct {
+	timeMode m2ShellTimeMode
+	detail   string
+}
+
+const m2ShellShebangMaxBytes = 4096
+
+func m2ShellIdentityFromSource(source string) m2ShellIdentity {
+	ambiguous := func(detail string) m2ShellIdentity {
+		return m2ShellIdentity{timeMode: m2ShellTimeAmbiguous, detail: detail}
+	}
+	if !strings.HasPrefix(source, "#!") {
+		return ambiguous("missing-shebang")
+	}
+	lineEnd := strings.IndexByte(source, '\n')
+	if lineEnd < 0 {
+		lineEnd = len(source)
+	}
+	if lineEnd > m2ShellShebangMaxBytes {
+		return ambiguous("shebang-budget")
+	}
+	line := strings.TrimSpace(strings.TrimSuffix(source[2:lineEnd], "\r"))
+	if line == "" || strings.IndexByte(line, 0) >= 0 {
+		return ambiguous("malformed-shebang")
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 || len(fields) > 32 {
+		return ambiguous("shebang-field-budget")
+	}
+	for _, field := range fields {
+		if strings.ContainsAny(field, `"'\\$`+"`") {
+			return ambiguous("dynamic-or-quoted-shebang")
+		}
+	}
+	interpreter := fields[0]
+	viaEnv := false
+	if interpreter == "/usr/bin/env" || interpreter == "/bin/env" {
+		viaEnv = true
+		var detail string
+		interpreter, detail = m2ShellEnvInterpreter(fields[1:])
+		if detail != "" {
+			return ambiguous(detail)
+		}
+	}
+	switch interpreter {
+	case "/bin/bash", "/usr/bin/bash":
+		return m2ShellIdentity{timeMode: m2ShellTimeReserved, detail: "bash"}
+	case "/bin/dash", "/usr/bin/dash":
+		return m2ShellIdentity{timeMode: m2ShellTimeExternal, detail: "dash"}
+	case "/bin/sh", "/usr/bin/sh":
+		return ambiguous("generic-sh")
+	case "bash":
+		if viaEnv {
+			return m2ShellIdentity{timeMode: m2ShellTimeReserved, detail: "bash"}
+		}
+	case "dash":
+		if viaEnv {
+			return m2ShellIdentity{timeMode: m2ShellTimeExternal, detail: "dash"}
+		}
+	case "sh":
+		if viaEnv {
+			return ambiguous("generic-sh")
+		}
+	default:
+	}
+	return ambiguous("unknown-interpreter")
+}
+
+func m2ShellEnvInterpreter(arguments []string) (string, string) {
+	for index := 0; index < len(arguments); index++ {
+		argument := arguments[index]
+		switch {
+		case argument == "-S" || argument == "--split-string" || argument == "--" ||
+			argument == "-i" || argument == "--ignore-environment":
+			continue
+		case argument == "-u" || argument == "--unset" || argument == "-C" || argument == "--chdir":
+			index++
+			if index >= len(arguments) {
+				return "", "missing-env-option-argument"
+			}
+			continue
+		case strings.HasPrefix(argument, "--unset=") || strings.HasPrefix(argument, "--chdir="):
+			continue
+		case m2ShellAssignment.MatchString(argument):
+			continue
+		case strings.HasPrefix(argument, "-"):
+			return "", "unsupported-env-option"
+		default:
+			return argument, ""
+		}
+	}
+	return "", "missing-env-interpreter"
+}
+
 type m2ShellHeredoc struct {
 	delimiter string
 	stripTabs bool
@@ -650,7 +754,7 @@ func m2ShellHeredocsOnCommandLine(line string) ([]m2ShellHeredoc, string) {
 	return documents, ""
 }
 
-func m2ShellResolvedExecutables(source string) ([]string, string) {
+func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([]string, string) {
 	type shellValue struct {
 		resolved    bool
 		commandSafe bool
@@ -735,6 +839,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		dispatchCapable := false
 		dispatchMode := ""
 		dispatchOptionArgument := false
+		ambiguousTimeLookup := false
 		expansionValues := cloneValues(active)
 		pendingAssignments := map[string]shellValue{}
 		commandStarted := false
@@ -907,6 +1012,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
+				ambiguousTimeLookup = false
 				continue
 			case "&&", "||":
 				pendingFunctionJoin = true
@@ -918,6 +1024,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
+				ambiguousTimeLookup = false
 				continue
 			case "|":
 				pendingFunctionJoin = true
@@ -929,6 +1036,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
+				ambiguousTimeLookup = false
 				continue
 			case "&":
 				pendingFunctionJoin = true
@@ -940,6 +1048,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
+				ambiguousTimeLookup = false
 				continue
 			case "(":
 				if commandStarted || len(pendingAssignments) != 0 {
@@ -1093,9 +1202,19 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				if commandName == "time" && token == "time" && !dispatchCapable {
 					commandStarted = true
 					dispatchMode = "reserved-time"
+					switch shellIdentity.timeMode {
+					case m2ShellTimeReserved:
+					case m2ShellTimeExternal:
+						dispatchCapable = true
+					case m2ShellTimeAmbiguous:
+						ambiguousTimeLookup = true
+					}
 					continue
 				}
 				if _, exists := functions[commandName]; exists && !dispatchCapable {
+					if ambiguousTimeLookup {
+						return nil, "ambiguous-time-function-lookup:" + shellIdentity.detail
+					}
 					if insideFunction() {
 						recordFunctionCall(commandName)
 						commandStarted = true
