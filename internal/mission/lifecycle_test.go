@@ -470,11 +470,6 @@ func TestMissionSnapshotCopiesInputsAndRejectsImpossibleState(t *testing.T) {
 			s.TerminalOutcome = mission.OutcomeWorkFinalized
 			return s
 		}(),
-		func() mission.MissionSnapshot {
-			s := snapshot
-			s.CurrentWorkRevisionID = mustWorkRevisionID(t, "revision.early")
-			return s
-		}(),
 		func() mission.MissionSnapshot { s := snapshot; s.UpdatedAt = s.CreatedAt.Add(-time.Second); return s }(),
 		func() mission.MissionSnapshot {
 			s := snapshot

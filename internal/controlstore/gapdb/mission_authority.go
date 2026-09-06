@@ -13,6 +13,21 @@ type missionAuthorityJournalV2 interface {
 	ReconcileCommitV2(context.Context, journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error)
 }
 
+type readinessObservationAdapterV2 struct{ reader restore.ReaderV2 }
+
+var _ mission.ReadinessAuthorityObserverV2 = (*readinessObservationAdapterV2)(nil)
+
+func NewReadinessObservationPortV2(reader restore.ReaderV2) (mission.ReadinessAuthorityObserverV2, error) {
+	if reader == nil {
+		return nil, adapterError("readiness_observer_new", "", OutcomeInvalid, RecoveryFixRequest, "reader is required", nil)
+	}
+	return &readinessObservationAdapterV2{reader: reader}, nil
+}
+
+func (a *readinessObservationAdapterV2) ObserveReadinessAuthority(ctx context.Context, projectID journalv2.ProjectID, missionID journalv2.MissionID) (mission.ReadinessAuthorityObservationV2, error) {
+	return observeReadinessAuthorityV2(ctx, a.reader, projectID, missionID)
+}
+
 // missionAuthorityAdapterV2 implements only the mission-owned semantic port.
 // Provider keys, revisions, and ambiguity mechanics remain inside this
 // adapter; mission policy remains in internal/mission.
@@ -22,6 +37,7 @@ type missionAuthorityAdapterV2 struct {
 }
 
 var _ mission.MissionAuthorityPortV2 = (*missionAuthorityAdapterV2)(nil)
+var _ mission.ReadinessAuthorityPortV2 = (*missionAuthorityAdapterV2)(nil)
 
 // NewMissionAuthorityPortV2 assembles the provider adapter without exposing a
 // GapDB implementation type in the mission/foundation contract. The supplied
@@ -109,6 +125,43 @@ func (a *missionAuthorityAdapterV2) ObserveMission(ctx context.Context, projectI
 	return mission.MissionObservationV2{State: state, RecordRevision: record.RecordRevision(), LastEventID: head.LastEventID()}, nil
 }
 
+func (a *missionAuthorityAdapterV2) ObserveReadinessAuthority(ctx context.Context, projectID journalv2.ProjectID, missionID journalv2.MissionID) (mission.ReadinessAuthorityObservationV2, error) {
+	return observeReadinessAuthorityV2(ctx, a.store, projectID, missionID)
+}
+
+func observeReadinessAuthorityV2(ctx context.Context, reader restore.ReaderV2, projectID journalv2.ProjectID, missionID journalv2.MissionID) (mission.ReadinessAuthorityObservationV2, error) {
+	attempt, err := reader.CaptureRevisionV2(ctx)
+	if err != nil {
+		return mission.ReadinessAuthorityObservationV2{}, err
+	}
+	coordinate, err := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID(missionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: projectID, MissionID: missionID})
+	if err != nil {
+		return mission.ReadinessAuthorityObservationV2{}, adapterError("readiness_observe", string(missionID), OutcomeInvalid, RecoveryFixRequest, "readiness coordinate is invalid", err)
+	}
+	address, _ := journalv2.NewAggregateHeadAddressV2(coordinate)
+	request, _ := journalv2.NewReadRequestV2(address, attempt)
+	record, err := reader.ReadV2(ctx, request)
+	if err != nil {
+		return mission.ReadinessAuthorityObservationV2{}, err
+	}
+	head, err := journalv2.DecodeAggregateHeadV2(record.CanonicalValue())
+	if err != nil || head.Coordinate() != coordinate || head.LogicalVersion() == 0 || record.ExpiresAt() != "" {
+		return mission.ReadinessAuthorityObservationV2{}, adapterError("readiness_observe", string(missionID), OutcomeMalformedResponse, RecoveryOperator, "readiness head is malformed", err)
+	}
+	state, err := mission.DecodeReadinessAuthorityStateV2(head.AuthoritySummary())
+	if err != nil || state.ProjectID() != projectID || state.MissionID() != missionID || state.Version() != head.LogicalVersion() || state.Digest() != head.CanonicalStateDigest() {
+		return mission.ReadinessAuthorityObservationV2{}, adapterError("readiness_observe", string(missionID), OutcomeMalformedResponse, RecoveryOperator, "readiness authority summary is invalid", err)
+	}
+	if err := reader.VerifyRevisionV2(ctx, attempt); err != nil {
+		return mission.ReadinessAuthorityObservationV2{}, err
+	}
+	observation, err := mission.NewReadinessAuthorityObservationV2(state, attempt, record.RecordRevision(), head.LastEventID())
+	if err != nil {
+		return mission.ReadinessAuthorityObservationV2{}, adapterError("readiness_observe", string(missionID), OutcomeMalformedResponse, RecoveryOperator, "readiness observation is invalid", err)
+	}
+	return observation, nil
+}
+
 func (a *missionAuthorityAdapterV2) ObserveMissionFact(ctx context.Context, projectID journalv2.ProjectID, missionID journalv2.MissionID, kind mission.MissionFactKindV2, factID string) (mission.MissionFactObservationV2, error) {
 	if kind != mission.MissionFactBlockerV2 && kind != mission.MissionFactDecisionV2 {
 		return mission.MissionFactObservationV2{}, adapterError("mission_fact_observe", factID, OutcomeInvalid, RecoveryFixRequest, "mission fact kind is invalid", nil)
@@ -167,4 +220,8 @@ func (a *missionAuthorityAdapterV2) PublishMission(ctx context.Context, plan jou
 		PublicationID: plan.PublicationID(), ProviderRevision: acknowledgement.ProviderRevision(),
 		DurableThroughRevision: acknowledgement.DurableThroughRevision(), MutationCount: acknowledgement.MutationCount(),
 	}, nil
+}
+
+func (a *missionAuthorityAdapterV2) PublishReadinessAuthority(ctx context.Context, plan journalv2.SealedCommitPlanV2) (mission.MissionPublicationV2, error) {
+	return a.PublishMission(ctx, plan)
 }

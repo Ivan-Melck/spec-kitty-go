@@ -7,6 +7,7 @@ import (
 	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
@@ -39,14 +40,22 @@ type WorkspaceAuthorityAckV2 struct {
 	planDigest       journalv2.Digest
 	mutationCount    int
 	providerRevision uint64
+	recordRevision   uint64
 }
 
-func NewWorkspaceAuthorityAckV2(plan WorkspaceAuthorityPlanV2, ack journalv2.AcknowledgedPublicationV2) (WorkspaceAuthorityAckV2, error) {
+func NewWorkspaceAuthorityAckV2(plan WorkspaceAuthorityPlanV2, ack journalv2.AcknowledgedPublicationV2, observedRecordRevision ...uint64) (WorkspaceAuthorityAckV2, error) {
 	sealed, err := plan.Publication()
 	if err != nil || ack.PublicationID() != sealed.PublicationID() || ack.PlanDigest() != sealed.Digest() || ack.MutationCount() != sealed.MutationCount() || ack.ProviderRevision() == 0 || ack.DurableThroughRevision() < ack.ProviderRevision() {
 		return WorkspaceAuthorityAckV2{}, executionV2Error(KindAuthorityConflict, "workspace_ack", err)
 	}
-	return WorkspaceAuthorityAckV2{ack.PublicationID(), ack.PlanDigest(), ack.MutationCount(), ack.ProviderRevision()}, nil
+	recordRevision := ack.ProviderRevision()
+	if len(observedRecordRevision) > 1 || len(observedRecordRevision) == 1 && observedRecordRevision[0] == 0 {
+		return WorkspaceAuthorityAckV2{}, executionV2Error(KindAuthorityConflict, "workspace_record_revision", nil)
+	}
+	if len(observedRecordRevision) == 1 {
+		recordRevision = observedRecordRevision[0]
+	}
+	return WorkspaceAuthorityAckV2{ack.PublicationID(), ack.PlanDigest(), ack.MutationCount(), ack.ProviderRevision(), recordRevision}, nil
 }
 
 func (a WorkspaceAuthorityAckV2) matches(plan WorkspaceAuthorityPlanV2) bool {
@@ -59,6 +68,7 @@ type WorkspaceAuthorityCommandKindV2 string
 const (
 	WorkspaceBindV2       WorkspaceAuthorityCommandKindV2 = "bind"
 	WorkspaceQuarantineV2 WorkspaceAuthorityCommandKindV2 = "expire_and_quarantine"
+	WorkspaceRebindV2     WorkspaceAuthorityCommandKindV2 = "rebind_runtime_epoch"
 )
 
 type WorkspaceAuthorityRequestV2 struct {
@@ -72,9 +82,33 @@ type WorkspaceAuthorityRequestV2 struct {
 }
 
 type WorkspaceAuthorityResultV2 struct {
-	Execution ExecutionSlotStateV2
-	Workspace workspace.StateV2
-	Replayed  bool
+	Execution      ExecutionSlotStateV2
+	Workspace      workspace.StateV2
+	RecordRevision uint64
+	Replayed       bool
+}
+
+// WorkspaceEpochRebindRequestV2 names only the execution authority to recover.
+// The service derives the workspace binding, storage revision, and prior state
+// from the durable authority observations. Callers therefore cannot use
+// recovery to rewrite repository or filesystem authority.
+type WorkspaceEpochRebindRequestV2 struct {
+	ProjectID      ids.ProjectID
+	MissionID      ids.MissionID
+	WorkRevisionID ids.WorkRevisionID
+	WorkID         ids.WorkID
+	ActorID        ids.ActorID
+	ProcessID      ids.ProcessID
+	// OriginatingRuntimeEpochID is the immutable target selected when this
+	// operation was created. It does not change when a later host retries the
+	// same OperationID after another epoch rotation.
+	OriginatingRuntimeEpochID journalv2.RuntimeEpochID
+	OperationID               journalv2.OperationID
+	OperationEventID          journalv2.EventID
+	ExecutionEventID          journalv2.EventID
+	WorkspaceEventID          journalv2.EventID
+	Governance                ExecutionGovernanceV2
+	ObservedAt                time.Time
 }
 
 type WorkspaceAuthorityServiceV2 struct {
@@ -96,6 +130,9 @@ func NewWorkspaceAuthorityServiceV2(port WorkspaceAuthorityPortV2, epochs Execut
 }
 
 func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request WorkspaceAuthorityRequestV2) (WorkspaceAuthorityResultV2, error) {
+	if request.Kind == WorkspaceRebindV2 {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindInvalidCommand, "workspace_rebind_requires_observed_authority", nil)
+	}
 	workspaceState, err := request.Contribution.State()
 	if err != nil || request.OperationID == "" || request.OperationEventID == "" || request.ExecutionEventID == "" || request.ObservedAt.IsZero() {
 		return WorkspaceAuthorityResultV2{}, executionV2Error(KindInvalidCommand, "workspace_request", err)
@@ -119,6 +156,7 @@ func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request Works
 		if err := strictExecutionJSONV2(resolution.State.Result(), &result); err != nil || result.Execution.Validate() != nil || result.Workspace.Validate() != nil {
 			return WorkspaceAuthorityResultV2{}, executionV2Error(KindAuthorityConflict, "workspace_result", err)
 		}
+		result.RecordRevision = resolution.RecordRevision
 		result.Replayed = true
 		return result, nil
 	}
@@ -154,27 +192,162 @@ func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request Works
 	if err != nil || !ack.matches(plan) {
 		return WorkspaceAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "workspace_publication", err)
 	}
-	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: workspaceState}, nil
+	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: workspaceState, RecordRevision: ack.recordRevision}, nil
+}
+
+// RebindRuntimeEpoch transfers one still-live execution/workspace pair to the
+// currently admitted host epoch. All mutable workspace facts and both CAS
+// revisions come from the port observations made in this call.
+func (s *WorkspaceAuthorityServiceV2) RebindRuntimeEpoch(ctx context.Context, request WorkspaceEpochRebindRequestV2) (WorkspaceAuthorityResultV2, error) {
+	if request.OperationID == "" || request.OperationEventID == "" || request.ExecutionEventID == "" || request.WorkspaceEventID == "" || request.ActorID == "" || request.ProcessID == "" || request.OriginatingRuntimeEpochID == "" || request.ObservedAt.IsZero() || request.Governance.validate() != nil {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindInvalidCommand, "workspace_epoch_rebind_request", nil)
+	}
+	binding, err := workspaceEpochRebindOperationBindingV2(request)
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, err
+	}
+	resolution, err := s.port.ResolveExecutionOperation(ctx, binding)
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, err
+	}
+	if resolution.Kind == ExecutionOperationConflictV2 {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindIdempotencyConflict, "operation_id", nil)
+	}
+	if resolution.Kind == ExecutionOperationExactV2 {
+		if resolution.State.Status() != journalv2.StatusResolved || resolution.State.ResultKind() != "workspace.result" || resolution.State.ResultSchemaVersion() != workspaceAuthorityResultSchemaV2 {
+			return WorkspaceAuthorityResultV2{}, executionV2Error(KindDecisionRequired, "operation_progress", nil)
+		}
+		var result WorkspaceAuthorityResultV2
+		if err := strictExecutionJSONV2(resolution.State.Result(), &result); err != nil || result.Execution.Validate() != nil || result.Workspace.Validate() != nil {
+			return WorkspaceAuthorityResultV2{}, executionV2Error(KindAuthorityConflict, "workspace_result", err)
+		}
+		result.Replayed = true
+		return result, nil
+	}
+	currentEpoch, err := s.epochs.CurrentRuntimeEpoch(ctx)
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "runtime_epoch", err)
+	}
+	if currentEpoch != request.OriginatingRuntimeEpochID {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "runtime_epoch", nil)
+	}
+	executionCoordinate, err := ExecutionSlotCoordinateV2(request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID)
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, err
+	}
+	executionObserved, err := s.port.ObserveExecutionSlot(ctx, executionCoordinate)
+	if err != nil || executionObserved.State == nil {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "execution_slot", err)
+	}
+	priorExecution := *executionObserved.State
+	if !equalExecutionGovernanceV2(request.Governance, priorExecution.Governance) || priorExecution.ActorID != request.ActorID || priorExecution.ProcessID != request.ProcessID || priorExecution.WorkspaceID == "" || priorExecution.WorkspacePathClaimDigest.IsZero() {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
+	}
+	workspaceCoordinate, err := workspace.WorkspaceCoordinateV2(workspace.BindingV2{WorkspaceID: priorExecution.WorkspaceID})
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, err
+	}
+	workspaceObserved, err := s.port.ObserveWorkspace(ctx, workspaceCoordinate)
+	if err != nil || workspaceObserved.State == nil || workspaceObserved.RecordRevision == 0 {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace", err)
+	}
+	if priorExecution.Status != ExecutionActiveV2 || priorExecution.RuntimeEpochID == currentEpoch || !request.ObservedAt.Before(mustExecutionTimeV2(priorExecution.Deadline)) {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace_epoch_rebind", nil)
+	}
+	priorWorkspace := *workspaceObserved.State
+	if priorWorkspace.Validate() != nil || priorWorkspace.Stage == workspace.StageQuarantinedV2 || !workspaceBindingMatchesExecutionV2(priorWorkspace.Binding, priorExecution) {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace_epoch_rebind", nil)
+	}
+	contribution, err := workspace.NewEpochRebindContributionV2(workspace.EpochRebindContributionInputV2{
+		Prior: priorWorkspace, RecordRevision: workspaceObserved.RecordRevision,
+		EventID: request.WorkspaceEventID, RuntimeEpochID: currentEpoch,
+		Observation: priorWorkspace.Observation, OccurredAt: request.ObservedAt,
+	})
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindStaleAuthority, "workspace_epoch_rebind", err)
+	}
+	nextWorkspace, _ := contribution.State()
+	nextExecution, err := composeWorkspaceExecutionTransitionV2(WorkspaceRebindV2, request.ObservedAt, priorExecution, nextWorkspace, workspaceObserved)
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, err
+	}
+	internalRequest := WorkspaceAuthorityRequestV2{
+		Kind: WorkspaceRebindV2, OperationID: request.OperationID,
+		OperationEventID: request.OperationEventID, ExecutionEventID: request.ExecutionEventID,
+		Governance: request.Governance, Contribution: contribution, ObservedAt: request.ObservedAt,
+	}
+	plan, err := buildWorkspaceAuthorityPlanV2(internalRequest, binding, nextExecution, executionObserved, workspaceObserved, s.registry)
+	if err != nil {
+		return WorkspaceAuthorityResultV2{}, err
+	}
+	ack, err := s.port.PublishWorkspace(ctx, plan)
+	if err != nil || !ack.matches(plan) {
+		return WorkspaceAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "workspace_publication", err)
+	}
+	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: nextWorkspace, RecordRevision: ack.recordRevision}, nil
+}
+
+func workspaceEpochRebindOperationBindingV2(request WorkspaceEpochRebindRequestV2) (journalv2.OperationBindingV2, error) {
+	command, err := journalv2.CanonicalObject(mustJSONV2(struct {
+		Kind           WorkspaceAuthorityCommandKindV2 `json:"kind"`
+		ProjectID      ids.ProjectID                   `json:"project_id"`
+		MissionID      ids.MissionID                   `json:"mission_id"`
+		WorkRevisionID ids.WorkRevisionID              `json:"work_revision_id"`
+		WorkID         ids.WorkID                      `json:"work_id"`
+		TargetEpoch    journalv2.RuntimeEpochID        `json:"target_runtime_epoch_id"`
+	}{WorkspaceRebindV2, request.ProjectID, request.MissionID, request.WorkRevisionID, request.WorkID, request.OriginatingRuntimeEpochID}))
+	if err != nil {
+		return journalv2.OperationBindingV2{}, err
+	}
+	scope := journalv2.Scope{Kind: journalv2.ScopeHost}
+	digest, err := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "workspace." + string(WorkspaceRebindV2), CommandSchemaVersion: 1, Scope: scope, Command: command})
+	if err != nil {
+		return journalv2.OperationBindingV2{}, err
+	}
+	return journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{
+		OperationID: request.OperationID, CommandKind: "workspace." + string(WorkspaceRebindV2), CommandSchemaVersion: 1,
+		CanonicalIntentDigest: digest, Scope: scope, ActorID: journalv2.ActorID(request.ActorID), ProcessID: journalv2.ProcessID(request.ProcessID),
+		DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.Governance.PolicyRevision,
+		OriginatingRuntimeEpochID: request.OriginatingRuntimeEpochID, ObservedCreatedAt: request.ObservedAt.UTC().Truncate(time.Second).Format(time.RFC3339),
+	})
+}
+
+func workspaceBindingMatchesExecutionV2(binding workspace.BindingV2, execution ExecutionSlotStateV2) bool {
+	return binding.ProjectID == execution.ProjectID && binding.MissionID == execution.MissionID && binding.WorkRevisionID == execution.WorkRevisionID && binding.WorkID == execution.WorkID &&
+		binding.RunID == execution.RunID && binding.LeaseID == execution.LeaseID && binding.WorkspaceID == execution.WorkspaceID && binding.Generation == execution.Generation && binding.Fence == execution.Fence &&
+		binding.RuntimeEpochID == execution.RuntimeEpochID && binding.ActorID == execution.ActorID && binding.ProcessID == execution.ProcessID && binding.PathClaimDigest == execution.WorkspacePathClaimDigest
 }
 
 func composeWorkspaceExecutionTransitionV2(kind WorkspaceAuthorityCommandKindV2, observedAt time.Time, prior ExecutionSlotStateV2, nextWorkspace workspace.StateV2, observed WorkspaceAuthorityObservationV2) (ExecutionSlotStateV2, error) {
 	b := nextWorkspace.Binding
-	if prior.ProjectID != b.ProjectID || prior.MissionID != b.MissionID || prior.WorkRevisionID != b.WorkRevisionID || prior.WorkID != b.WorkID || prior.RunID != b.RunID || prior.LeaseID != b.LeaseID || prior.Generation != b.Generation || prior.Fence != b.Fence || prior.RuntimeEpochID != b.RuntimeEpochID || prior.ActorID != b.ActorID || prior.ProcessID != b.ProcessID {
+	if prior.ProjectID != b.ProjectID || prior.MissionID != b.MissionID || prior.WorkRevisionID != b.WorkRevisionID || prior.WorkID != b.WorkID || prior.RunID != b.RunID || prior.LeaseID != b.LeaseID || prior.Generation != b.Generation || prior.Fence != b.Fence || prior.ActorID != b.ActorID || prior.ProcessID != b.ProcessID {
 		return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
 	}
 	next := prior
 	next.LogicalVersion++
 	switch kind {
 	case WorkspaceBindV2:
+		if prior.RuntimeEpochID != b.RuntimeEpochID {
+			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
+		}
 		if prior.Status != ExecutionActiveV2 || prior.WorkspaceID != "" || !prior.WorkspacePathClaimDigest.IsZero() || observed.State != nil || nextWorkspace.Stage != workspace.StageCreationRequestedV2 || nextWorkspace.LogicalVersion != 1 || !observedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
 			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_bind", nil)
 		}
 		next.WorkspaceID, next.WorkspacePathClaimDigest = b.WorkspaceID, b.PathClaimDigest
 	case WorkspaceQuarantineV2:
+		if prior.RuntimeEpochID != b.RuntimeEpochID {
+			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_binding", nil)
+		}
 		if prior.Status != ExecutionActiveV2 || prior.WorkspaceID != b.WorkspaceID || prior.WorkspacePathClaimDigest != b.PathClaimDigest || observed.State == nil || observed.RecordRevision == 0 || nextWorkspace.Stage != workspace.StageQuarantinedV2 || observedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
 			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_expiry", nil)
 		}
 		next.Status = ExecutionExpiredV2
+	case WorkspaceRebindV2:
+		if prior.Status != ExecutionActiveV2 || prior.RuntimeEpochID == b.RuntimeEpochID || prior.WorkspaceID != b.WorkspaceID || prior.WorkspacePathClaimDigest != b.PathClaimDigest || observed.State == nil || observed.RecordRevision == 0 || observed.State.LogicalVersion+1 != nextWorkspace.LogicalVersion || observed.State.Stage != nextWorkspace.Stage || observed.State.Binding.RuntimeEpochID != prior.RuntimeEpochID || !observedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
+			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "workspace_epoch_rebind", nil)
+		}
+		next.RuntimeEpochID = b.RuntimeEpochID
+		next.HeartbeatAt, next.Deadline = prior.HeartbeatAt, prior.Deadline
 	default:
 		return ExecutionSlotStateV2{}, executionV2Error(KindInvalidCommand, "workspace_command", nil)
 	}
@@ -241,6 +414,8 @@ func workspaceAuthorityPlanInputV2(request WorkspaceAuthorityRequestV2, binding 
 	kind := "workspace_bound"
 	if request.Kind == WorkspaceQuarantineV2 {
 		kind = "lease_expired"
+	} else if request.Kind == WorkspaceRebindV2 {
+		kind = "runtime_epoch_rebound"
 	}
 	pred := executionCoordinatesV2(*executionObserved.State)
 	execEventBytes, err := encodeExecutionEventV2(ExecutionSlotEventV2{SchemaVersion: 1, Kind: kind, ObservedAt: request.ObservedAt.UTC().Format(time.RFC3339Nano), Predecessor: &pred, State: nextExecution})
@@ -295,6 +470,12 @@ func validateWorkspaceAuthorityPlanInputV2(kind WorkspaceAuthorityCommandKindV2,
 		expectedTypes["workspace"] = "workspace.quarantined"
 		if input.WorkspacePathClaim != nil || len(input.EffectIntents) != 0 {
 			return executionV2Error(KindInvalidCommand, "workspace_quarantine_membership", nil)
+		}
+	case WorkspaceRebindV2:
+		expectedTypes["execution_slot"] = "execution_slot.runtime_epoch_rebound"
+		expectedTypes["workspace"] = "workspace.runtime_epoch_rebound"
+		if input.WorkspacePathClaim != nil || len(input.EffectIntents) != 0 {
+			return executionV2Error(KindInvalidCommand, "workspace_rebind_membership", nil)
 		}
 	default:
 		return executionV2Error(KindInvalidCommand, "workspace_command", nil)

@@ -125,6 +125,12 @@ func TestOperationBindingCollisionIntentAndGlobalKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bindingAddress, _ := NewOperationBindingAddressV2(binding.OperationID())
+	bindingRecord, _ := NewRecoveryRecordV2(bindingAddress, encoded, 1, "")
+	trustedBinding, err := DecodeOperationBindingRecordV2(bindingRecord)
+	if err != nil || trustedBinding.OperationID() != binding.OperationID() || trustedBinding.IntentDigest() != binding.IntentDigest() {
+		t.Fatalf("trusted binding decode=%+v err=%v", trustedBinding, err)
+	}
 	if resolution, err := ResolveOperationBinding(decoded, encoded, true); err != nil || resolution != BindingExact {
 		t.Fatalf("exact resolution=%s err=%v", resolution, err)
 	}
@@ -199,6 +205,12 @@ func TestOperationStateTransitionTerminalAndAmbiguousLaws(t *testing.T) {
 	decoded, err := DecodeOperationStateV2(encoded)
 	if err != nil || !bytes.Equal(decoded.Result(), resolved.Result()) {
 		t.Fatalf("state roundtrip err=%v", err)
+	}
+	stateAddress, _ := NewOperationHeadAddressV2(resolved.OperationID())
+	stateRecord, _ := NewRecoveryRecordV2(stateAddress, encoded, 1, "")
+	trustedState, err := DecodeOperationStateRecordV2(stateRecord)
+	if err != nil || !EqualOperationStatesV2(trustedState, resolved) {
+		t.Fatalf("trusted state decode=%+v err=%v", trustedState, err)
 	}
 	if _, err := AdvanceOperationState(resolved, OperationTransition{3, 4, StatusResolved, "mission.result", 1, []byte(`{"ok":false}`), []EventID{"event-01", "event-02"}, nil, ""}); !IsKind(err, ErrorInvalidTransition) {
 		t.Fatal("terminal result mutation accepted")
@@ -540,6 +552,18 @@ func TestCommitPlanPublicationSealMembershipAndImmutability(t *testing.T) {
 		if err != nil || decoded.CanonicalDigest() != event.CanonicalDigest() {
 			t.Fatalf("event roundtrip err=%v", err)
 		}
+		address, _ := NewJournalEventAddressV2(event.Coordinate(), event.LogicalVersion())
+		record, _ := NewRecoveryRecordV2(address, encoded, 1, "")
+		trusted, trustedErr := DecodeEventEnvelopeRecordV2(record, registry)
+		if trustedErr != nil || trusted.CanonicalDigest() != event.CanonicalDigest() || trusted.CanonicalSizeV2() != len(encoded) {
+			t.Fatalf("trusted event roundtrip err=%v", trustedErr)
+		}
+		if event.Family() == "operation" {
+			state, stateErr := ReconstructOperationStateFromEventV2(trusted)
+			if stateErr != nil || state.OperationID() != event.OperationID() {
+				t.Fatalf("trusted operation event state=%+v err=%v", state, stateErr)
+			}
+		}
 	}
 }
 
@@ -768,7 +792,7 @@ func TestPublicationWitnessRoundTripAndSealedProjectionSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonical witness did not cross the public recovery record boundary: %v", err)
 	}
-	recovered, err := DecodePublicationWitnessV2(recoveryRecord.CanonicalValue())
+	recovered, err := DecodePublicationWitnessRecordV2(recoveryRecord)
 	if err != nil || recovered != witness || recovered.WitnessDigest() != witness.WitnessDigest() {
 		t.Fatalf("recovery record changed witness semantics or digest: %+v %v", recovered, err)
 	}

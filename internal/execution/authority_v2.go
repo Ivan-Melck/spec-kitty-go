@@ -33,6 +33,7 @@ const (
 	ExecutionHeartbeatV2 ExecutionCommandKindV2 = "heartbeat"
 	ExecutionExpireV2    ExecutionCommandKindV2 = "expire"
 	ExecutionReplaceV2   ExecutionCommandKindV2 = "replace"
+	ExecutionRebindV2    ExecutionCommandKindV2 = "rebind_runtime_epoch"
 	ExecutionOutcomeV2   ExecutionCommandKindV2 = "outcome"
 )
 
@@ -705,6 +706,11 @@ func decideExecutionTransitionV2(r ExecutionAuthorityRequestV2, governance Execu
 		}
 		next.WorkspaceID = ""
 		next.WorkspacePathClaimDigest = journalv2.Digest{}
+	case ExecutionRebindV2:
+		if prior.Status != ExecutionActiveV2 || prior.RuntimeEpochID == r.RuntimeEpochID || prior.WorkspaceID != "" || !prior.WorkspacePathClaimDigest.IsZero() || !sameExecutionAuthorityIgnoringRuntimeEpochV2(*prior, next) || !r.ObservedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
+			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "runtime_epoch_rebind", nil)
+		}
+		next.HeartbeatAt, next.Deadline = prior.HeartbeatAt, prior.Deadline
 	case ExecutionOutcomeV2:
 		if !sameAuthority || prior.Status != ExecutionActiveV2 || !r.ObservedAt.Before(mustExecutionTimeV2(prior.Deadline)) {
 			return ExecutionSlotStateV2{}, executionV2Error(KindStaleAuthority, "lease", nil)
@@ -757,6 +763,7 @@ func buildExecutionAuthorityPlanV2(prepared preparedExecutionRequestV2, state Ex
 	eventKind := map[ExecutionCommandKindV2]string{
 		ExecutionAdmitV2: "run_admitted_lease_granted", ExecutionHeartbeatV2: "lease_renewed",
 		ExecutionExpireV2: "lease_expired", ExecutionReplaceV2: "run_replaced_lease_granted",
+		ExecutionRebindV2:  "runtime_epoch_rebound",
 		ExecutionOutcomeV2: "outcome_recorded",
 	}[prepared.kind]
 	eventPayload := ExecutionSlotEventV2{SchemaVersion: 1, Kind: eventKind, ObservedAt: prepared.observedAt, State: state}
@@ -849,7 +856,8 @@ func ReduceExecutionSlotEventV2(prior []byte, event journalv2.EventEnvelopeV2) (
 			renewed := payload.Kind == "lease_renewed" && event.EventType() == "execution_slot.lease_renewed" && mustExecutionTimeV2(next.Deadline).After(mustExecutionTimeV2(previous.Deadline)) && observedAt.Equal(mustExecutionTimeV2(next.HeartbeatAt)) && observedAt.After(mustExecutionTimeV2(previous.HeartbeatAt)) && observedAt.Before(mustExecutionTimeV2(previous.Deadline))
 			effectAuthorized := payload.Kind == "effect_authorized" && event.EventType() == "execution_slot.effect_authorized" && next.HeartbeatAt == previous.HeartbeatAt && next.Deadline == previous.Deadline && observedAt.Before(mustExecutionTimeV2(previous.Deadline))
 			workspaceBound := payload.Kind == "workspace_bound" && event.EventType() == "execution_slot.workspace_bound" && previous.WorkspaceID == "" && previous.WorkspacePathClaimDigest.IsZero() && next.WorkspaceID != "" && !next.WorkspacePathClaimDigest.IsZero() && next.HeartbeatAt == previous.HeartbeatAt && next.Deadline == previous.Deadline && sameExecutionAuthorityIgnoringWorkspaceV2(previous, next)
-			if (!workspaceBound && !sameExecutionAuthorityV2(previous, next)) || (!renewed && !effectAuthorized && !workspaceBound) {
+			epochRebound := payload.Kind == "runtime_epoch_rebound" && event.EventType() == "execution_slot.runtime_epoch_rebound" && previous.RuntimeEpochID != next.RuntimeEpochID && next.HeartbeatAt == previous.HeartbeatAt && next.Deadline == previous.Deadline && observedAt.Before(mustExecutionTimeV2(previous.Deadline)) && sameExecutionAuthorityIgnoringRuntimeEpochV2(previous, next)
+			if (!workspaceBound && !epochRebound && !sameExecutionAuthorityV2(previous, next)) || (!renewed && !effectAuthorized && !workspaceBound && !epochRebound) {
 				return nil, executionV2Error(KindStaleAuthority, "lease", nil)
 			}
 		} else if previous.Status == ExecutionExpiredV2 {
@@ -874,7 +882,7 @@ func ReduceExecutionSlotEventV2(prior []byte, event journalv2.EventEnvelopeV2) (
 }
 
 func ExecutionReducerRegistrationsV2() []journalv2.ReducerRegistration {
-	sum := sha256.Sum256([]byte("spec-kitty/execution-slot-reducer/1.1"))
+	sum := sha256.Sum256([]byte("spec-kitty/execution-slot-reducer/1.2"))
 	digest, _ := journalv2.ParseDigest("execution_reducer", hex.EncodeToString(sum[:]))
 	return []journalv2.ReducerRegistration{{Family: "execution_slot", EventSchemaVersion: 1, ReducerVersion: 1, Owner: "internal/execution", ImplementationDigest: digest, Reduce: ReduceExecutionSlotEventV2}}
 }
@@ -920,6 +928,10 @@ func sameExecutionAuthorityV2(a, b ExecutionSlotStateV2) bool {
 func sameExecutionAuthorityIgnoringWorkspaceV2(a, b ExecutionSlotStateV2) bool {
 	a.WorkspaceID, b.WorkspaceID = "", ""
 	a.WorkspacePathClaimDigest, b.WorkspacePathClaimDigest = journalv2.Digest{}, journalv2.Digest{}
+	return sameExecutionAuthorityV2(a, b)
+}
+func sameExecutionAuthorityIgnoringRuntimeEpochV2(a, b ExecutionSlotStateV2) bool {
+	a.RuntimeEpochID, b.RuntimeEpochID = "", ""
 	return sameExecutionAuthorityV2(a, b)
 }
 func stringSlicesEqualV2(a, b []string) bool {

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "mission_id": "M1-assertion-extension",
+  "decision": "adopt",
+  "base_adoption_sha256": "b6506abc327ed2b22c6b51b4069cb0b8edb0af5ac2ea26a1aa3a33de6bca30de",
+  "extension_admission_sha256": "b4fdad208882a9257953582fd3d4d8533ff57945b9c358727cc748ce5600d232",
+  "upstream_qualification_sha256": "546e60d63f86b37a9914d2726f7babe02c30cf93141e2ebd7d0c298c384491da",
+  "external_consumption_sha256": "6f4fc5925597abb3c11b2250886bdd2794d6a1657f6ea37d7778f08a3e50b8cd",
+  "source_commit": "4d88094749e0f6fdb38a4786708d920fb51966a1",
+  "source_tree": "a109220e3dae287e321fb37e904d3bea0802b911",
+  "module_version": "v0.0.0-20260904151017-4d88094749e0",
+  "sidecar_sha256": "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad",
+  "sidecar_size_bytes": 5327126,
+  "signer": "github:lynncoleart",
+  "rationale": "The project owner granted Codex blanket authority to make all calls needed to finish the project and explicitly required GapDB to be the production authority because a SQLite-dependent application is broken for this workload. This chained decision promotes only the independently qualified assertion extension required by the ratified M2 authority protocol; the original M1 record remains immutable.",
+  "signed_at": "2026-09-05T13:25:05Z",
+  "signature": {
+    "kind": "delegated-conversation-authority",
+    "value": "conversation-authorization:2026-09-05"
+  }
+}

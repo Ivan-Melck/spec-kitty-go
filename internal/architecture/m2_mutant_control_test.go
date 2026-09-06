@@ -18,7 +18,7 @@ import (
 
 const (
 	m2MutantCensusCount  = 185
-	m2MutantCensusSHA256 = "bb4e46d391a130b5050eab4ee4a1193755e4747dac09537d52636a953f194379"
+	m2MutantCensusSHA256 = "ee2e99efbd66a2f2b40dafd3bcb301f2ae4ba237ca6aba801ede3f2609a85330"
 )
 
 const (
