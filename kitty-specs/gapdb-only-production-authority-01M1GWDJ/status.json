@@ -695,7 +695,8 @@
         "Cycle-five exact completion tree 6156276a qualified; multiline shell execution mutant and observed runtime evidence pass.",
         "Independent cycle-five review rejected silent 64-line shell analysis truncation; all other evidence remains accepted.",
         "Cycle-six exact final tree 508d3590 qualified; full-file shell analysis fails closed at explicit byte budgets.",
-        "Independent cycle-six review rejected delimiter-consuming shell assignment parsing; all other evidence remains accepted."
+        "Independent cycle-six review rejected delimiter-consuming shell assignment parsing; all other evidence remains accepted.",
+        "Cycle-seven exact final tree be429473 qualified; delimiter-preserving full-file shell parser closes adjacent assignment hole."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
