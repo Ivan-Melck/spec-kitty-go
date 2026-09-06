@@ -492,58 +492,65 @@ func m2GoConstantString(expression ast.Expr, values map[string]string) (string, 
 	}
 }
 
-var m2ShellAssignment = regexp.MustCompile(`(?:^|;)[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*((?:'[^']*'|"[^"]*"|[A-Za-z0-9_./-]+)+)[ \t]*(?:;|$)`)
-var m2ShellCommandVariable = regexp.MustCompile(`(?:^|;)[ \t]*"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?(?:[ \t;]|$)`)
+var m2ShellAssignment = regexp.MustCompile(`^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*((?:'[^']*'|"[^"]*"|[A-Za-z0-9_./-]+)+)[ \t]*$`)
+var m2ShellCommandVariable = regexp.MustCompile(`^[ \t]*"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?(?:[ \t]|$)`)
 
 func m2ShellResolvedExecutables(source string) []string {
-	type shellEvent struct {
-		offset     int
-		assignment bool
-		name       string
-		value      string
-	}
 	var executables []string
 	active := map[string]string{}
-	lines := strings.Split(source, "\n")
-	for _, line := range lines {
-		var events []shellEvent
-		for _, location := range m2ShellAssignment.FindAllStringSubmatchIndex(line, 128) {
-			if len(location) != 6 {
-				continue
-			}
-			events = append(events, shellEvent{
-				offset:     location[0],
-				assignment: true,
-				name:       line[location[2]:location[3]],
-				value:      strings.NewReplacer("'", "", `"`, "").Replace(line[location[4]:location[5]]),
-			})
+	for _, statement := range m2ShellStatements(source) {
+		if assignment := m2ShellAssignment.FindStringSubmatch(statement); len(assignment) == 3 {
+			active[assignment[1]] = strings.NewReplacer("'", "", `"`, "").Replace(assignment[2])
+			continue
 		}
-		for _, location := range m2ShellCommandVariable.FindAllStringSubmatchIndex(line, 128) {
-			if len(location) != 6 {
-				continue
+		if command := m2ShellCommandVariable.FindStringSubmatch(statement); len(command) == 3 {
+			name := command[1]
+			if name == "" {
+				name = command[2]
 			}
-			nameStart, nameEnd := location[2], location[3]
-			if nameStart < 0 {
-				nameStart, nameEnd = location[4], location[5]
-			}
-			events = append(events, shellEvent{offset: location[0], name: line[nameStart:nameEnd]})
-		}
-		sort.SliceStable(events, func(left, right int) bool {
-			if events[left].offset == events[right].offset {
-				return events[left].assignment && !events[right].assignment
-			}
-			return events[left].offset < events[right].offset
-		})
-		for _, event := range events {
-			if event.assignment {
-				active[event.name] = event.value
-			} else if value, exists := active[event.name]; exists {
+			if value, exists := active[name]; exists {
 				executables = append(executables, value)
 			}
 		}
 	}
 	sort.Strings(executables)
 	return executables
+}
+
+// m2ShellStatements preserves statement order without consuming the delimiter
+// needed to recognize an adjacent assignment. The repository's explicit byte
+// budgets bound this single pass over the complete candidate source.
+func m2ShellStatements(source string) []string {
+	statements := make([]string, 0, strings.Count(source, "\n")+strings.Count(source, ";")+1)
+	start := 0
+	var quote byte
+	escaped := false
+	for index := 0; index < len(source); index++ {
+		current := source[index]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if current == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if current == quote {
+				quote = 0
+			}
+			continue
+		}
+		if current == '\'' || current == '"' {
+			quote = current
+			continue
+		}
+		if current == ';' || current == '\n' {
+			statements = append(statements, source[start:index])
+			start = index + 1
+		}
+	}
+	return append(statements, source[start:])
 }
 
 func m2WithinRoot(root, path string) bool {

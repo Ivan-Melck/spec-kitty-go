@@ -127,6 +127,9 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		{"shell-command-before-assignment", "scripts/x.sh", "#!/bin/sh\n\"$review_retired_cli\" /tmp/x; review_retired_cli='sql''ite3'\n", false},
 		{"shell-beyond-former-line-horizon", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n" + longGap + "\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-long-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n" + longGap + "printf '%s' native\n", false},
+		{"shell-adjacent-benign-assignment", "scripts/x.sh", "#!/bin/sh\nreview_benign=native; review_retired_cli='sql''ite3'; \"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-newline-separated-assignments", "scripts/x.sh", "#!/bin/sh\nreview_benign=native\nreview_retired_cli='sql''ite3'\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-mixed-whitespace-assignments", "scripts/x.sh", "#!/bin/sh\n review_benign=native ;\treview_retired_cli='sql''ite3' ; \t\"$review_retired_cli\" /tmp/x\n", true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
