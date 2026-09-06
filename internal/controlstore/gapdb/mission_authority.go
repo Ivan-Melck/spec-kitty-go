@@ -13,13 +13,11 @@ type missionAuthorityJournalV2 interface {
 	ReconcileCommitV2(context.Context, journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error)
 }
 
-type ReadinessObservationPortV2 interface {
-	ObserveReadinessAuthority(context.Context, journalv2.ProjectID, journalv2.MissionID) (mission.ReadinessAuthorityObservationV2, error)
-}
-
 type readinessObservationAdapterV2 struct{ reader restore.ReaderV2 }
 
-func NewReadinessObservationPortV2(reader restore.ReaderV2) (ReadinessObservationPortV2, error) {
+var _ mission.ReadinessAuthorityObserverV2 = (*readinessObservationAdapterV2)(nil)
+
+func NewReadinessObservationPortV2(reader restore.ReaderV2) (mission.ReadinessAuthorityObserverV2, error) {
 	if reader == nil {
 		return nil, adapterError("readiness_observer_new", "", OutcomeInvalid, RecoveryFixRequest, "reader is required", nil)
 	}
