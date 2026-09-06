@@ -616,7 +616,8 @@
         "Independent review passed by Maxwell for product/test revision 0234a7461f326f633b6082384e57b5d903f54cb3. Full scenario suite 435.602s; all six mapped cut proofs, dishonest-provider saga, same-state recovery classification, capability order, vet, staticcheck, diff and cleanliness verified. Subsequent lane commit is orchestration-artifact hygiene only; internal/scenario remains byte-identical.",
         "Post-approval dependency ancestry guard ready for independent review",
         "Independent review passed: exact 22-blob retirement census, killing mutants, executable 59-row parity, production-faithful smoke, and combined WP15 compile all verified",
-        "Ready for independent defect-12 review: executable Beads and race consumers ported from SQLite to provider-owned plus GapDB production proofs."
+        "Ready for independent defect-12 review: executable Beads and race consumers ported from SQLite to provider-owned plus GapDB production proofs.",
+        "Independent defect-12 review passed at candidate 0e7c57e1: Beads semantics preserved and executable SQLite consumers removed in favor of admitted GapDB production proofs."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
