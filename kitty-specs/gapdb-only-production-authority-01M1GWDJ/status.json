@@ -685,7 +685,8 @@
       "last_transition_at": "2026-09-06T03:02:12.945833+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Allocation blocker repaired: approved dependency lanes merged into lane-p, derived mission state restored from planning authority, and combined tree compiles."
+        "Allocation blocker repaired: approved dependency lanes merged into lane-p, derived mission state restored from planning authority, and combined tree compiles.",
+        "SQLite subsystem removed; exact clean-candidate absence qualification and all parity, architecture, race, module, vet, and static checks pass."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
