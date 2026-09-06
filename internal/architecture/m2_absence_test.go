@@ -129,6 +129,7 @@ var m2HistoricalExemptions = map[string]map[string]bool{
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-5.md":      {m2ModerncDriver: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof.md":                   {m2ModerncDriver: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-2.md":    {m2ModerncDriver: true, m2LegacyCLI: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-feedback-2.md": {m2ModerncDriver: true, m2LegacyCLI: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/scope-extension-1.md": {m2ModerncDriver: true},
 	"kitty-specs/phase-one-architecture-closeout-01M0WZQ9/plan.md":                                                                         {m2ModerncDriver: true},
 	"kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/plan.md": {
