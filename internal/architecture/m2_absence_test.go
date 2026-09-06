@@ -612,8 +612,6 @@ func (parser *m2ShellCommandParser) consumeWord(word string, resolved, quoted, e
 	return m2ShellCommandParseResult{kind: m2ShellCommandTarget, ambiguous: parser.ambiguous, quoted: quoted, expanded: expanded}
 }
 
-var m2ShellSafeUnquotedCommandAtom = regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`)
-
 var m2ShellKnownSetOptions = map[string]bool{
 	"allexport": true, "braceexpand": true, "emacs": true, "errexit": true,
 	"errtrace": true, "functrace": true, "hashall": true, "histexpand": true,
@@ -1478,13 +1476,8 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 						}
 						expanded = true
 						quoted = len(token) >= 2 && token[0] == '"' && token[len(token)-1] == '"'
-						if value, exists := expansionValues[expansionName]; exists && value.resolved {
-							_, ifsChanged := expansionValues["IFS"]
-							if quoted || !ifsChanged && m2ShellSafeUnquotedCommandAtom.MatchString(value.value) {
-								word, resolved = value.value, true
-							} else {
-								expansionUnsafe = true
-							}
+						if value, exists := expansionValues[expansionName]; exists && value.resolved && quoted {
+							word, resolved = value.value, true
 						} else {
 							expansionUnsafe = true
 						}
@@ -1518,6 +1511,9 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					name := command[1]
 					if name == "" {
 						name = command[2]
+					}
+					if len(token) < 2 || token[0] != '"' || token[len(token)-1] != '"' {
+						return nil, "ambiguous-command-expansion:unquoted:" + name
 					}
 					if value, exists := expansionValues[name]; exists {
 						if !value.resolved {
@@ -1728,6 +1724,9 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					name := command[1]
 					if name == "" {
 						name = command[2]
+					}
+					if len(token) < 2 || token[0] != '"' || token[len(token)-1] != '"' {
+						return nil, "ambiguous-command-expansion:unquoted:" + name
 					}
 					if value, exists := expansionValues[name]; exists {
 						if !value.resolved {
