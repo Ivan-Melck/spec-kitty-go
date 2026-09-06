@@ -693,7 +693,8 @@
         "Cycle-four exact final review tree 0026b488 qualified with semantic split-token detection and non-skippable observed runtime evidence.",
         "Independent cycle-four review rejected one multiline shell association hole; all other evidence remains accepted.",
         "Cycle-five exact completion tree 6156276a qualified; multiline shell execution mutant and observed runtime evidence pass.",
-        "Independent cycle-five review rejected silent 64-line shell analysis truncation; all other evidence remains accepted."
+        "Independent cycle-five review rejected silent 64-line shell analysis truncation; all other evidence remains accepted.",
+        "Cycle-six exact final tree 508d3590 qualified; full-file shell analysis fails closed at explicit byte budgets."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
