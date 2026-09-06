@@ -39,7 +39,9 @@ eligibility guard. Each assertion binds:
 
 - the semantic target;
 - `absent` or an exact positive provider record revision;
-- the expected logical version when the target is present; and
+- the expected logical version when a present target is an aggregate head
+  (eligibility shards have no aggregate logical version and bind their
+  canonical schema/policy/value through the digest instead); and
 - a digest of the canonical value observed at that revision.
 
 The complete assertion set is sorted, duplicate-free, included in the plan

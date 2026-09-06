@@ -40,14 +40,22 @@ type WorkspaceAuthorityAckV2 struct {
 	planDigest       journalv2.Digest
 	mutationCount    int
 	providerRevision uint64
+	recordRevision   uint64
 }
 
-func NewWorkspaceAuthorityAckV2(plan WorkspaceAuthorityPlanV2, ack journalv2.AcknowledgedPublicationV2) (WorkspaceAuthorityAckV2, error) {
+func NewWorkspaceAuthorityAckV2(plan WorkspaceAuthorityPlanV2, ack journalv2.AcknowledgedPublicationV2, observedRecordRevision ...uint64) (WorkspaceAuthorityAckV2, error) {
 	sealed, err := plan.Publication()
 	if err != nil || ack.PublicationID() != sealed.PublicationID() || ack.PlanDigest() != sealed.Digest() || ack.MutationCount() != sealed.MutationCount() || ack.ProviderRevision() == 0 || ack.DurableThroughRevision() < ack.ProviderRevision() {
 		return WorkspaceAuthorityAckV2{}, executionV2Error(KindAuthorityConflict, "workspace_ack", err)
 	}
-	return WorkspaceAuthorityAckV2{ack.PublicationID(), ack.PlanDigest(), ack.MutationCount(), ack.ProviderRevision()}, nil
+	recordRevision := ack.ProviderRevision()
+	if len(observedRecordRevision) > 1 || len(observedRecordRevision) == 1 && observedRecordRevision[0] == 0 {
+		return WorkspaceAuthorityAckV2{}, executionV2Error(KindAuthorityConflict, "workspace_record_revision", nil)
+	}
+	if len(observedRecordRevision) == 1 {
+		recordRevision = observedRecordRevision[0]
+	}
+	return WorkspaceAuthorityAckV2{ack.PublicationID(), ack.PlanDigest(), ack.MutationCount(), ack.ProviderRevision(), recordRevision}, nil
 }
 
 func (a WorkspaceAuthorityAckV2) matches(plan WorkspaceAuthorityPlanV2) bool {
@@ -74,9 +82,10 @@ type WorkspaceAuthorityRequestV2 struct {
 }
 
 type WorkspaceAuthorityResultV2 struct {
-	Execution ExecutionSlotStateV2
-	Workspace workspace.StateV2
-	Replayed  bool
+	Execution      ExecutionSlotStateV2
+	Workspace      workspace.StateV2
+	RecordRevision uint64
+	Replayed       bool
 }
 
 // WorkspaceEpochRebindRequestV2 names only the execution authority to recover.
@@ -147,6 +156,7 @@ func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request Works
 		if err := strictExecutionJSONV2(resolution.State.Result(), &result); err != nil || result.Execution.Validate() != nil || result.Workspace.Validate() != nil {
 			return WorkspaceAuthorityResultV2{}, executionV2Error(KindAuthorityConflict, "workspace_result", err)
 		}
+		result.RecordRevision = resolution.RecordRevision
 		result.Replayed = true
 		return result, nil
 	}
@@ -182,7 +192,7 @@ func (s *WorkspaceAuthorityServiceV2) Execute(ctx context.Context, request Works
 	if err != nil || !ack.matches(plan) {
 		return WorkspaceAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "workspace_publication", err)
 	}
-	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: workspaceState}, nil
+	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: workspaceState, RecordRevision: ack.recordRevision}, nil
 }
 
 // RebindRuntimeEpoch transfers one still-live execution/workspace pair to the
@@ -274,7 +284,7 @@ func (s *WorkspaceAuthorityServiceV2) RebindRuntimeEpoch(ctx context.Context, re
 	if err != nil || !ack.matches(plan) {
 		return WorkspaceAuthorityResultV2{}, executionV2Error(KindControlStoreBusy, "workspace_publication", err)
 	}
-	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: nextWorkspace}, nil
+	return WorkspaceAuthorityResultV2{Execution: nextExecution, Workspace: nextWorkspace, RecordRevision: ack.recordRevision}, nil
 }
 
 func workspaceEpochRebindOperationBindingV2(request WorkspaceEpochRebindRequestV2) (journalv2.OperationBindingV2, error) {

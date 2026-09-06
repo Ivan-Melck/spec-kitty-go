@@ -1,388 +1,341 @@
 package scenario
 
 import (
-	"context"
-	"database/sql"
-	"errors"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
+	"testing"
 
+	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/execution"
-	"github.com/spec-kitty/go-kitty3/internal/gitrepo"
-	"github.com/spec-kitty/go-kitty3/internal/ids"
-	"github.com/spec-kitty/go-kitty3/internal/tracker/fake"
-	"github.com/spec-kitty/go-kitty3/internal/workspace"
-	_ "modernc.org/sqlite"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 )
 
-// universalAssertionState is the evidence visible at one named fault. The
-// optional probes must be read-only or expected-to-refuse public operations.
-type universalAssertionState struct {
-	ScenarioID            string
-	FaultID               string
-	Database              string
-	TrackerPath           string
-	RepositoryPath        string
-	Repository            gitrepo.Repository
-	ExpectedPrimary       workspace.PrimarySnapshot
-	ExpectedWorkspaces    map[ids.WorkspaceID]workspaceBindingFact
-	ExpectedAuthority     map[string]activeLeaseFact
-	CandidateCommits      []string
-	StaleProbe            func(context.Context) error
-	RequireStaleProbe     bool
-	AttributionProbe      func(context.Context) error
-	ProviderTopologyProbe func(context.Context) error
+type invariantEvidence struct {
+	SchemaVersion      uint32                   `json:"schema_version"`
+	Scenario           string                   `json:"scenario"`
+	Cut                string                   `json:"cut"`
+	DatabaseID         journalv2.DatabaseID     `json:"database_id"`
+	RuntimeEpochID     journalv2.RuntimeEpochID `json:"runtime_epoch_id"`
+	ProjectionRevision uint64                   `json:"projection_revision"`
+	ProjectionSHA256   string                   `json:"projection_sha256"`
+	Families           []string                 `json:"families"`
+	AggregateCount     int                      `json:"aggregate_count"`
+	OperationCount     int                      `json:"operation_count"`
+	RepositoryCalls    int                      `json:"repository_calls"`
 }
 
-type workspaceBindingFact struct {
-	RepositoryID ids.RepositoryID
-	OperationID  ids.OperationID
-	RunID        ids.RunID
-	LeaseID      ids.LeaseID
-	Generation   int64
-	LaneID       ids.LaneID
-	Path         string
-	Branch       string
-	GitDir       string
-	IndexPath    string
-	PinnedBase   string
-}
-
-type activeLeaseFact struct {
-	WorkRevisionID ids.WorkRevisionID
-	WorkID         ids.WorkID
-	LeaseID        ids.LeaseID
-	Generation     int64
-	TokenDigest    string
-	Deadline       string
-}
-
-type pendingAttributionFact struct {
-	PriorRevision int64
-	Assignee      string
-}
-
-func assertUniversalInvariants(ctx context.Context, state universalAssertionState) error {
-	if state.ScenarioID == "" || state.FaultID == "" {
-		return fmt.Errorf("scenario_id=%q fault_id=%q invariant=envelope recovery=record stable scenario and fault IDs", state.ScenarioID, state.FaultID)
-	}
-	if state.ExpectedAuthority == nil {
-		return invariantFailure(state, "one_valid_lease", errors.New("expected authority map is absent"), "wire independently derived exact authority expectations into the scenario")
-	}
-	if state.ExpectedWorkspaces == nil {
-		return invariantFailure(state, "immutable_workspace_binding", errors.New("expected workspace map is absent"), "wire independently derived exact workspace expectations into the scenario")
-	}
-	if err := assertPrimaryIsolation(ctx, state); err != nil {
-		return invariantFailure(state, "primary_isolation", err, "quarantine the mutator and preserve the primary checkout")
-	}
-	db, err := sql.Open("sqlite", state.Database)
+// assertUniversalInvariants observes only the public readiness and progress
+// views. The returned bytes are stable evidence suitable for campaign census
+// records; they contain no process path or provider transcript.
+func assertUniversalInvariants(t *testing.T, h *portableHarness, project, missionID, cut string) []byte {
+	t.Helper()
+	status := h.host.Status()
+	progress, err := h.host.Progress().Mission(journalv2.ProjectID(project), journalv2.MissionID(missionID))
 	if err != nil {
-		return invariantFailure(state, "control_store_read", err, "preserve the database and retry the read-only audit")
+		t.Fatalf("scenario=%s cut=%s progress: %v", t.Name(), cut, err)
 	}
-	defer db.Close()
-	if err := assertLeaseCardinality(ctx, db, state.ExpectedAuthority); err != nil {
-		return invariantFailure(state, "one_valid_lease", err, "expire conflicting authority before any publication")
+	evidence, err := validateUniversalSnapshot(status, progress, project, missionID, h.git.count())
+	if err != nil {
+		t.Fatalf("scenario=%s cut=%s universal invariant: %v", t.Name(), cut, err)
 	}
-	if err := assertWorkspaceBindings(ctx, db, state.ExpectedWorkspaces); err != nil {
-		return invariantFailure(state, "immutable_workspace_binding", err, "quarantine the workspace and retain its branch and commit evidence")
+	evidence.Scenario = t.Name()
+	evidence.Cut = cut
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := assertTargetSerialization(ctx, db); err != nil {
-		return invariantFailure(state, "target_ref_serialization", err, "stop integration and recover from the repository fence")
+	var roundTrip invariantEvidence
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil || roundTrip.SchemaVersion != productionScenarioSchemaVersion || roundTrip.Scenario == "" || roundTrip.Cut == "" {
+		t.Fatalf("invalid invariant evidence schema: %s err=%v", encoded, err)
 	}
-	if err := assertCandidateReachability(ctx, db, state.RepositoryPath, state.CandidateCommits); err != nil {
-		return invariantFailure(state, "candidate_reachability", err, "retain candidate and conflict refs until reconciliation")
-	}
-	if err := assertAttributionFacts(ctx, db, state.TrackerPath); err != nil {
-		return invariantFailure(state, "attribution_safe_compensation", err, "preserve provider state and require compare-before-compensate evidence")
-	}
-	if state.ProviderTopologyProbe != nil {
-		if err := state.ProviderTopologyProbe(ctx); err != nil {
-			return invariantFailure(state, "provider_topology", err, "bind the provider operation and observation to this lease-scoped workspace")
-		}
-	}
-	if state.RequireStaleProbe && state.StaleProbe == nil {
-		return invariantFailure(state, "stale_token_refusal", errors.New("required stale probe is absent"), "provision expired authority in this scenario fixture")
-	}
-	if state.StaleProbe != nil {
-		err := state.StaleProbe(ctx)
-		var diagnostic *execution.DiagnosticError
-		if !errors.As(err, &diagnostic) || diagnostic.Kind != execution.KindStaleAuthority || diagnostic.RetrySafety != execution.RetryDecisionRequired || len(diagnostic.RecoveryActions) == 0 {
-			return invariantFailure(state, "stale_token_refusal", fmt.Errorf("diagnostic=%v", err), "reject the old generation and inspect current authority")
-		}
-	}
-	if state.AttributionProbe != nil {
-		if err := state.AttributionProbe(ctx); err != nil {
-			return invariantFailure(state, "attribution_safe_compensation", err, "leave the human/provider assignment unchanged")
-		}
-	}
-	return nil
+	return encoded
 }
 
-func assertPrimaryIsolation(ctx context.Context, state universalAssertionState) error {
-	observed, err := state.Repository.SnapshotPrimary(ctx)
-	if err != nil {
-		return err
+// validateUniversalSnapshot is the pure, adversarially testable half of the
+// scenario oracle. It accepts only the public host/progress DTOs; no raw
+// GapDB, projection repository, or provider transcript can satisfy a law.
+func validateUniversalSnapshot(status productionruntime.HostStatus, progress productionruntime.MissionProgress, project, missionID string, repositoryCalls int) (invariantEvidence, error) {
+	if status.State != productionruntime.HostReady || status.DatabaseID == "" || status.RuntimeEpochID == "" || status.ProjectionRevision == 0 || status.ProjectionSHA256 == "" {
+		return invariantEvidence{}, fmt.Errorf("incomplete readiness")
 	}
-	if observed != state.ExpectedPrimary {
-		return fmt.Errorf("expected_head=%s observed_head=%s expected_index=%s observed_index=%s expected_tree=%s observed_tree=%s", state.ExpectedPrimary.Head, observed.Head, state.ExpectedPrimary.IndexDigest, observed.IndexDigest, state.ExpectedPrimary.TreeDigest, observed.TreeDigest)
+	if progress.SchemaVersion != productionruntime.ProgressSchemaVersion || progress.DatabaseID != status.DatabaseID || progress.RuntimeEpochID != status.RuntimeEpochID || progress.ProjectionRevision != status.ProjectionRevision || progress.ProjectionSHA256 != status.ProjectionSHA256 || progress.SnapshotSHA256 == "" || string(progress.ProjectID) != project || string(progress.MissionID) != missionID {
+		return invariantEvidence{}, fmt.Errorf("readiness/progress disagreement")
 	}
-	return nil
-}
-
-func assertLeaseCardinality(ctx context.Context, db *sql.DB, expected map[string]activeLeaseFact) error {
-	rows, err := db.QueryContext(ctx, `SELECT work_revision_id,work_id,COUNT(*),GROUP_CONCAT(lease_id),GROUP_CONCAT(generation) FROM leases WHERE status='active' GROUP BY work_revision_id,work_id HAVING COUNT(*)>1`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	if rows.Next() {
-		var revision, work, leases, generations string
-		var count int
-		if err := rows.Scan(&revision, &work, &count, &leases, &generations); err != nil {
-			return err
+	seen := make(map[string]struct{}, len(progress.Items))
+	families := make(map[string]struct{})
+	work := make(map[string]map[string]map[string]any)
+	itemKeys := make(map[string]productionruntime.ProgressItem, len(progress.Items))
+	states := make(map[string]map[string]any, len(progress.Items))
+	operations := make(map[string]journalv2.OperationStateV2)
+	eventOwners := make(map[journalv2.EventID]string)
+	operationCount := 0
+	for _, item := range progress.Items {
+		key := item.Family + "\x00" + item.AggregateID
+		if item.Family == "" || item.AggregateID == "" || item.LogicalVersion == 0 || len(item.CanonicalState) == 0 {
+			return invariantEvidence{}, fmt.Errorf("incomplete authority item %q", key)
 		}
-		return fmt.Errorf("revision=%s work=%s active=%d leases=%s generations=%s", revision, work, count, leases, generations)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	observedRows, err := db.QueryContext(ctx, `SELECT work_revision_id,work_id,lease_id,generation,token_digest,deadline FROM leases WHERE status='active' ORDER BY work_revision_id,work_id`)
-	if err != nil {
-		return err
-	}
-	defer observedRows.Close()
-	observed := make(map[string]activeLeaseFact)
-	for observedRows.Next() {
-		var fact activeLeaseFact
-		if err := observedRows.Scan(&fact.WorkRevisionID, &fact.WorkID, &fact.LeaseID, &fact.Generation, &fact.TokenDigest, &fact.Deadline); err != nil {
-			return err
+		if _, duplicate := seen[key]; duplicate {
+			return invariantEvidence{}, fmt.Errorf("duplicate aggregate %q", key)
 		}
-		observed[leaseFactKey(fact.WorkRevisionID, fact.WorkID)] = fact
-	}
-	if err := observedRows.Err(); err != nil {
-		return err
-	}
-	if expected != nil {
-		if len(observed) != len(expected) {
-			return fmt.Errorf("expected_active=%v observed_active=%v", expected, observed)
+		seen[key] = struct{}{}
+		itemKeys[key] = item
+		families[item.Family] = struct{}{}
+		canonical, canonicalErr := journalv2.CanonicalObject(item.CanonicalState)
+		if canonicalErr != nil {
+			return invariantEvidence{}, fmt.Errorf("noncanonical %s state: %w", key, canonicalErr)
 		}
-		for key, want := range expected {
-			if got, ok := observed[key]; !ok || got != want {
-				return fmt.Errorf("authority_key=%s expected=%+v observed=%+v present=%t", key, want, got, ok)
+		if !bytes.Equal(canonical, item.CanonicalState) {
+			return invariantEvidence{}, fmt.Errorf("noncanonical %s state", key)
+		}
+		if item.LastPublicationID == "" {
+			return invariantEvidence{}, fmt.Errorf("authority item has no publication: %s", key)
+		}
+		if _, decodeErr := journalv2.DecodePublicationID(item.LastPublicationID); decodeErr != nil {
+			return invariantEvidence{}, fmt.Errorf("invalid publication %s: %w", key, decodeErr)
+		}
+		var state map[string]any
+		if err := json.Unmarshal(item.CanonicalState, &state); err != nil {
+			return invariantEvidence{}, fmt.Errorf("decode %s: %w", key, err)
+		}
+		states[key] = state
+		stateVersion, versionPresent := uintField(state, "logical_version")
+		if !versionPresent {
+			stateVersion, versionPresent = uintField(state, "version")
+		}
+		if !versionPresent || stateVersion != item.LogicalVersion {
+			return invariantEvidence{}, fmt.Errorf("projection/head version mismatch %s", key)
+		}
+		if value, ok := textField(state, "project_id"); ok && value != project {
+			return invariantEvidence{}, fmt.Errorf("cross-project state %s", key)
+		}
+		if value, ok := textField(state, "mission_id"); ok && value != missionID {
+			return invariantEvidence{}, fmt.Errorf("cross-mission state %s", key)
+		}
+		if item.Family == "operation" {
+			operation, decodeErr := journalv2.DecodeOperationStateV2(item.CanonicalState)
+			if decodeErr != nil || string(operation.OperationID()) != item.AggregateID || uint64(operation.LogicalVersion()) != item.LogicalVersion || string(operation.LastPublicationID()) != item.LastPublicationID {
+				return invariantEvidence{}, fmt.Errorf("operation binding/result mismatch %s", key)
 			}
+			if operation.Status() == journalv2.StatusResolved || operation.Status() == journalv2.StatusRefused {
+				if operation.ResultKind() == "" || operation.ResultSchemaVersion() == 0 || len(operation.Result()) == 0 || operation.ResultDigest().IsZero() {
+					return invariantEvidence{}, fmt.Errorf("terminal operation has no immutable result: %s", key)
+				}
+			}
+			if len(operation.EventIDs()) == 0 {
+				return invariantEvidence{}, fmt.Errorf("operation has no complete batch membership: %s", key)
+			}
+			for _, eventID := range operation.EventIDs() {
+				if owner, duplicate := eventOwners[eventID]; duplicate && owner != item.AggregateID {
+					return invariantEvidence{}, fmt.Errorf("event %s belongs to operations %s and %s", eventID, owner, item.AggregateID)
+				}
+				eventOwners[eventID] = item.AggregateID
+			}
+			operations[item.AggregateID] = operation
+			operationCount++
+		}
+		if workID, ok := nestedTextField(state, "work_id"); ok {
+			if work[workID] == nil {
+				work[workID] = make(map[string]map[string]any)
+			}
+			work[workID][item.Family] = state
 		}
 	}
-	return nil
-}
-
-func leaseFactKey(revision ids.WorkRevisionID, work ids.WorkID) string {
-	return revision.String() + "/" + work.String()
-}
-
-func assertWorkspaceBindings(ctx context.Context, db *sql.DB, expected map[ids.WorkspaceID]workspaceBindingFact) error {
-	var triggerCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('immutable_workspace_binding_update','immutable_workspace_binding_delete')`).Scan(&triggerCount); err != nil {
-		return err
+	if err := validateProgressFamilyMembership(progress, itemKeys); err != nil {
+		return invariantEvidence{}, err
 	}
-	if triggerCount != 2 {
-		return fmt.Errorf("immutable_triggers=%d expected=2", triggerCount)
-	}
-	rows, err := db.QueryContext(ctx, `SELECT workspace_id,repository_id,operation_id,run_id,lease_id,lease_generation,lane_id,canonical_path,owned_branch,git_dir,index_path,pinned_base FROM workspaces ORDER BY workspace_id`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	seenPaths, seenBranches := map[string]string{}, map[string]string{}
-	observed := make(map[ids.WorkspaceID]workspaceBindingFact)
-	for rows.Next() {
-		var workspaceID ids.WorkspaceID
-		var fact workspaceBindingFact
-		if err := rows.Scan(&workspaceID, &fact.RepositoryID, &fact.OperationID, &fact.RunID, &fact.LeaseID, &fact.Generation, &fact.LaneID, &fact.Path, &fact.Branch, &fact.GitDir, &fact.IndexPath, &fact.PinnedBase); err != nil {
-			return err
-		}
-		if workspaceID == "" || fact.RepositoryID == "" || fact.OperationID == "" || fact.RunID == "" || fact.LeaseID == "" || fact.Generation <= 0 || fact.LaneID == "" || fact.Path == "" || fact.Branch == "" || fact.PinnedBase == "" {
-			return fmt.Errorf("workspace=%s incomplete_binding=%+v", workspaceID, fact)
-		}
-		if fact.GitDir == "" != (fact.IndexPath == "") {
-			return fmt.Errorf("workspace=%s partial_git_metadata git_dir=%q index_path=%q", workspaceID, fact.GitDir, fact.IndexPath)
-		}
-		if prior := seenPaths[fact.Path]; prior != "" {
-			return fmt.Errorf("workspace=%s path=%s already_owned_by=%s", workspaceID, fact.Path, prior)
-		}
-		if prior := seenBranches[fact.Branch]; prior != "" {
-			return fmt.Errorf("workspace=%s branch=%s already_owned_by=%s", workspaceID, fact.Branch, prior)
-		}
-		seenPaths[fact.Path], seenBranches[fact.Branch] = workspaceID.String(), workspaceID.String()
-		observed[workspaceID] = fact
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if expected != nil && len(observed) != len(expected) {
-		return fmt.Errorf("expected_workspace_count=%d observed_workspace_count=%d expected=%v observed=%v", len(expected), len(observed), expected, observed)
-	}
-	for workspaceID, want := range expected {
-		got, ok := observed[workspaceID]
-		if !ok || got != want {
-			return fmt.Errorf("workspace=%s expected=%+v observed=%+v present=%t", workspaceID, want, got, ok)
-		}
-	}
-	return nil
-}
-
-func assertTargetSerialization(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SELECT repository_id,target_ref,COUNT(*),GROUP_CONCAT(operation_id),GROUP_CONCAT(generation) FROM integration_mutation_leases WHERE status IN ('pending','active') GROUP BY repository_id,target_ref HAVING COUNT(*)>1`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	if rows.Next() {
-		var repository, target, operations, generations string
-		var count int
-		if err := rows.Scan(&repository, &target, &count, &operations, &generations); err != nil {
-			return err
-		}
-		return fmt.Errorf("repository=%s target=%s authorities=%d operations=%s generations=%s", repository, target, count, operations, generations)
-	}
-	return rows.Err()
-}
-
-func assertCandidateReachability(ctx context.Context, db *sql.DB, repository string, supplied []string) error {
-	commits := append([]string(nil), supplied...)
-	rows, err := db.QueryContext(ctx, `SELECT candidate,result_commit FROM integrations`)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var candidate, result string
-		if err := rows.Scan(&candidate, &result); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		commits = append(commits, candidate)
-		if result != "" {
-			commits = append(commits, result)
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	sort.Strings(commits)
-	runner := gitrepo.Runner{}
-	for index, commit := range commits {
-		if commit == "" || (index > 0 && commits[index-1] == commit) {
+	for key, state := range states {
+		item := itemKeys[key]
+		if item.Family == "operation" {
 			continue
 		}
-		if _, err := runner.Run(ctx, repository, "cat-file", "-e", commit+"^{commit}"); err != nil {
-			return fmt.Errorf("commit=%s reachable=false error=%v", commit, err)
+		if operationID, ok := nestedTextField(state, "last_operation_id"); ok && operationID != "" && len(operations) != 0 {
+			if _, present := operations[operationID]; !present {
+				return invariantEvidence{}, fmt.Errorf("%s names absent operation %s", key, operationID)
+			}
 		}
-		refs, err := runner.Run(ctx, repository, "for-each-ref", "--format=%(refname)", "--contains", commit)
-		if err != nil {
-			return fmt.Errorf("commit=%s retained_ref_query=%v", commit, err)
+		if item.Family == "external_effect" {
+			effect, decodeErr := execution.DecodeExternalEffectStateV2(item.CanonicalState)
+			if decodeErr != nil {
+				return invariantEvidence{}, fmt.Errorf("decode %s: %w", key, decodeErr)
+			}
+			if operation, present := operations[string(effect.Intent.OperationID)]; present {
+				foundEffect := false
+				for _, effectID := range operation.EffectIDs() {
+					if string(effectID) == item.AggregateID {
+						foundEffect = true
+						break
+					}
+				}
+				if !foundEffect {
+					return invariantEvidence{}, fmt.Errorf("effect %s is absent from operation batch membership", item.AggregateID)
+				}
+			}
+			if (effect.Stage == execution.EffectAmbiguousV2 || effect.Stage == execution.EffectReconciliationRequiredV2) && (effect.PermissionMarker != "" || effect.Outcome != "") {
+				return invariantEvidence{}, fmt.Errorf("ambiguous effect %s acquired retry, compensation, or terminal authority", item.AggregateID)
+			}
 		}
-		if strings.TrimSpace(refs) == "" {
-			return fmt.Errorf("commit=%s object_exists=true retained_by_ref=false", commit)
+	}
+	for workID, byFamily := range work {
+		if err := validateWorkCoordinateAgreement(workID, byFamily); err != nil {
+			return invariantEvidence{}, err
+		}
+	}
+	familyList := make([]string, 0, len(families))
+	for family := range families {
+		familyList = append(familyList, family)
+	}
+	sort.Strings(familyList)
+	return invariantEvidence{
+		SchemaVersion: productionScenarioSchemaVersion,
+		DatabaseID:    status.DatabaseID, RuntimeEpochID: status.RuntimeEpochID,
+		ProjectionRevision: status.ProjectionRevision, ProjectionSHA256: status.ProjectionSHA256,
+		Families: familyList, AggregateCount: len(progress.Items), OperationCount: operationCount, RepositoryCalls: repositoryCalls,
+	}, nil
+}
+
+func validateProgressFamilyMembership(progress productionruntime.MissionProgress, all map[string]productionruntime.ProgressItem) error {
+	checks := []struct {
+		name     string
+		items    []productionruntime.ProgressItem
+		families map[string]struct{}
+	}{
+		{"effects", progress.Effects, map[string]struct{}{"external_effect": {}}},
+		{"reviews", progress.Reviews, map[string]struct{}{"review_slot": {}}},
+		{"acceptance", progress.Acceptance, map[string]struct{}{"acceptance": {}}},
+		{"integration", progress.Integration, map[string]struct{}{"integration_target": {}, "integration_attempt": {}}},
+		{"operations", progress.Operations, map[string]struct{}{"operation": {}}},
+	}
+	for _, check := range checks {
+		expected := make(map[string]struct{})
+		for key, item := range all {
+			if _, include := check.families[item.Family]; include {
+				expected[key] = struct{}{}
+			}
+		}
+		actual := make(map[string]struct{}, len(check.items))
+		for _, item := range check.items {
+			key := item.Family + "\x00" + item.AggregateID
+			if _, allowed := check.families[item.Family]; !allowed {
+				return fmt.Errorf("%s contains foreign family %s", check.name, item.Family)
+			}
+			canonical, present := all[key]
+			if !present || canonical.LogicalVersion != item.LogicalVersion || canonical.LastPublicationID != item.LastPublicationID || !bytes.Equal(canonical.CanonicalState, item.CanonicalState) {
+				return fmt.Errorf("%s contains an unbound or stale member %s", check.name, key)
+			}
+			if _, duplicate := actual[key]; duplicate {
+				return fmt.Errorf("%s duplicates member %s", check.name, key)
+			}
+			actual[key] = struct{}{}
+		}
+		if len(actual) != len(expected) {
+			return fmt.Errorf("%s membership incomplete: got=%d want=%d", check.name, len(actual), len(expected))
 		}
 	}
 	return nil
 }
 
-func assertAttributionFacts(ctx context.Context, db *sql.DB, trackerPath string) error {
-	providerStore, err := fake.Open(trackerPath)
-	if err != nil {
-		return err
-	}
-	provider := fake.NewProvider(providerStore)
-	rows, err := db.QueryContext(ctx, `SELECT operation_id,work_key,marker,prior_revision,prior_value,applied_revision,applied_value,compensation_status,compensation_revision,conflict_revision,conflict_value,conflict_marker FROM external_effects ORDER BY operation_id`)
-	if err != nil {
-		return err
-	}
-	allowedByWork := map[string]map[string]bool{}
-	pendingByWork := map[string]map[string]pendingAttributionFact{}
-	operationsByWork := map[string][]string{}
-	for rows.Next() {
-		var operation, workKey, marker, priorValue, appliedValue, status, conflictValue, conflictMarker string
-		var prior, applied, compensation, conflict int64
-		if err := rows.Scan(&operation, &workKey, &marker, &prior, &priorValue, &applied, &appliedValue, &status, &compensation, &conflict, &conflictValue, &conflictMarker); err != nil {
-			return err
-		}
-		// Several intent-qualified effects may project to one physical provider
-		// work item. Attribution is therefore audited over that canonical
-		// provider lineage, not one synthetic intent key at a time.
-		providerKey, _, _ := strings.Cut(workKey, "#spec-kitty-intent=")
-		allowed := allowedByWork[providerKey]
-		if allowed == nil {
-			allowed = map[string]bool{}
-			allowedByWork[providerKey] = allowed
-		}
-		operationsByWork[providerKey] = append(operationsByWork[providerKey], operation)
-		allowed[providerFactKey(prior, priorValue, "")] = true
-		if applied > 0 {
-			allowed[providerFactKey(applied, appliedValue, marker)] = true
-		} else if status == string(execution.CompensationPending) && compensation == 0 && conflict == 0 {
-			pending := pendingByWork[providerKey]
-			if pending == nil {
-				pending = map[string]pendingAttributionFact{}
-				pendingByWork[providerKey] = pending
+func validateWorkCoordinateAgreement(workID string, states map[string]map[string]any) error {
+	fields := []string{"work_revision_id", "run_id", "lease_id", "generation", "fence", "candidate", "policy_revision"}
+	for _, field := range fields {
+		var expected string
+		for family, state := range states {
+			value, ok := nestedScalarField(state, field)
+			if !ok || value == "" {
+				continue
 			}
-			pending[marker] = pendingAttributionFact{PriorRevision: prior, Assignee: appliedValue}
-		}
-		if compensation > 0 {
-			allowed[providerFactKey(compensation, priorValue, "")] = true
-		}
-		if conflict > 0 {
-			allowed[providerFactKey(conflict, conflictValue, conflictMarker)] = true
-		}
-		observations, err := db.QueryContext(ctx, `SELECT provider_revision,provider_value,provider_marker FROM external_effect_observations WHERE operation_id=? ORDER BY sequence`, operation)
-		if err != nil {
-			return err
-		}
-		for observations.Next() {
-			var revision int64
-			var value, observedMarker string
-			if err := observations.Scan(&revision, &value, &observedMarker); err != nil {
-				_ = observations.Close()
-				return err
+			if expected == "" {
+				expected = value
+				continue
 			}
-			allowed[providerFactKey(revision, value, observedMarker)] = true
-		}
-		if err := observations.Close(); err != nil {
-			return err
-		}
-		switch status {
-		case string(execution.CompensationDone):
-			if compensation <= applied || marker == "" || conflict != 0 {
-				return fmt.Errorf("operation=%s marker=%s applied_revision=%d compensation_revision=%d conflict_revision=%d", operation, marker, applied, compensation, conflict)
-			}
-		case string(execution.CompensationAttributionLost):
-			if conflict <= applied || strings.TrimSpace(conflictValue) == "" || conflictMarker == marker {
-				return fmt.Errorf("operation=%s marker=%s applied_revision=%d conflict_revision=%d conflict_value=%q conflict_marker=%q", operation, marker, applied, conflict, conflictValue, conflictMarker)
+			if value != expected {
+				return fmt.Errorf("work=%s coordinate=%s disagreement in %s", workID, field, family)
 			}
 		}
 	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for providerKey, allowed := range allowedByWork {
-		work, err := provider.Read(ctx, providerKey)
-		if err != nil {
-			return fmt.Errorf("work=%s provider_read=%v", providerKey, err)
-		}
-		current := providerFactKey(int64(work.Revision), work.Assignee, work.AssignmentMarker)
-		pending, pendingOK := pendingByWork[providerKey][work.AssignmentMarker]
-		inFlight := pendingOK && work.AssignmentMarker != "" && work.Assignee == pending.Assignee && int64(work.Revision) > pending.PriorRevision
-		if !allowed[current] && !inFlight {
-			return fmt.Errorf("operations=%v work=%s provider_current=%s attributable_facts=%v", operationsByWork[providerKey], providerKey, current, allowed)
+	if executionState := states["execution_slot"]; executionState != nil {
+		contributor, _ := nestedTextField(executionState, "actor_id")
+		if reviewState := states["review_slot"]; reviewState != nil {
+			reviewer, _ := nestedTextField(reviewState, "reviewer_actor_id")
+			if contributor != "" && reviewer == contributor {
+				return fmt.Errorf("work=%s reviewer actor equals contributor actor", workID)
+			}
 		}
 	}
 	return nil
 }
 
-func providerFactKey(revision int64, value, marker string) string {
-	return fmt.Sprintf("%d/%s/%s", revision, value, marker)
+func textField(value map[string]any, name string) (string, bool) {
+	text, ok := value[name].(string)
+	return text, ok
 }
 
-func invariantFailure(state universalAssertionState, invariant string, cause error, recovery string) error {
-	return fmt.Errorf("scenario_id=%s fault_id=%s invariant=%s state=%v recovery=%s", state.ScenarioID, state.FaultID, invariant, cause, recovery)
+func uintField(value map[string]any, name string) (uint64, bool) {
+	number, ok := value[name].(float64)
+	return uint64(number), ok && number >= 0 && number == float64(uint64(number))
+}
+
+func nestedTextField(value map[string]any, name string) (string, bool) {
+	if text, ok := textField(value, name); ok {
+		return text, true
+	}
+	for _, nestedName := range []string{"binding", "governance", "workspace"} {
+		if nested, ok := value[nestedName].(map[string]any); ok {
+			if text, found := nestedTextField(nested, name); found {
+				return text, true
+			}
+		}
+	}
+	return "", false
+}
+
+func nestedScalarField(value map[string]any, name string) (string, bool) {
+	if text, ok := nestedTextField(value, name); ok {
+		return text, true
+	}
+	if number, ok := uintField(value, name); ok {
+		return fmt.Sprint(number), true
+	}
+	for _, nestedName := range []string{"binding", "governance", "workspace"} {
+		if nested, ok := value[nestedName].(map[string]any); ok {
+			if scalar, found := nestedScalarField(nested, name); found {
+				return scalar, true
+			}
+		}
+	}
+	return "", false
+}
+
+func semanticProgressDigest(t *testing.T, h *portableHarness, project, missionID string) string {
+	t.Helper()
+	progress, err := h.host.Progress().Mission(journalv2.ProjectID(project), journalv2.MissionID(missionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.ProjectionSHA256 == "" {
+		t.Fatal("progress omitted canonical projection digest")
+	}
+	return progress.ProjectionSHA256
+}
+
+func assertStaleEpochRefusesBeforeRepository(t *testing.T, h *portableHarness, stale journalv2.RuntimeEpochID) {
+	t.Helper()
+	status := h.host.Status()
+	beforeRevision, beforeDigest, beforeCalls := status.ProjectionRevision, status.ProjectionSHA256, h.git.count()
+	_, err := h.host.ExecuteReadiness(t.Context(), stale, zeroReadinessCommand())
+	if !productionruntime.IsKind(err, productionruntime.ErrorStaleEpoch) {
+		t.Fatalf("stale epoch returned %v", err)
+	}
+	after := h.host.Status()
+	if after.ProjectionRevision != beforeRevision || after.ProjectionSHA256 != beforeDigest || h.git.count() != beforeCalls {
+		t.Fatalf("stale epoch changed authority or crossed repository boundary: before=(%d,%s,%d) after=(%d,%s,%d)", beforeRevision, beforeDigest, beforeCalls, after.ProjectionRevision, after.ProjectionSHA256, h.git.count())
+	}
+}
+
+func zeroReadinessCommand() mission.ReadinessAuthorityCommandV2 {
+	// Kept separate only to make accidental command construction at this probe
+	// a compile-time error. The caller converts no untrusted or textual input.
+	return mission.ReadinessAuthorityCommandV2{}
 }

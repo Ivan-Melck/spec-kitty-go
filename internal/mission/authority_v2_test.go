@@ -69,7 +69,7 @@ func TestMissionAuthorityLifecycleAtomicReplayAndRefusalOrderV2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.State().Version() != 1 || result.Replayed() || len(port.publishes) != 1 {
+	if result.State().Version() != 1 || result.RecordRevision() != 1 || result.Replayed() || len(port.publishes) != 1 {
 		t.Fatalf("result=%+v publishes=%d", result, len(port.publishes))
 	}
 	plan := port.publishes[0]
@@ -77,11 +77,11 @@ func TestMissionAuthorityLifecycleAtomicReplayAndRefusalOrderV2(t *testing.T) {
 		t.Fatalf("events=%d mutations=%d status=%s", len(plan.Events()), plan.MutationCount(), plan.OperationState().Status())
 	}
 
-	port.resolution = OperationResolutionV2{Kind: OperationExactV2, State: plan.OperationState()}
+	port.resolution = OperationResolutionV2{Kind: OperationExactV2, State: plan.OperationState(), StateRecordRevision: 17}
 	epoch.epoch = "replacement-epoch"
 	beforeReads := port.reads
 	replayed, err := service.Execute(t.Context(), command)
-	if err != nil || !replayed.Replayed() || replayed.State().Digest() != result.State().Digest() {
+	if err != nil || !replayed.Replayed() || replayed.RecordRevision() != 17 || replayed.State().Digest() != result.State().Digest() {
 		t.Fatalf("replay=%+v err=%v", replayed, err)
 	}
 	if port.reads != beforeReads+1 || len(port.publishes) != 1 || epoch.calls.Load() != 1 {
