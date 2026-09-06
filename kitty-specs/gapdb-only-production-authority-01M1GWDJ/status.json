@@ -726,7 +726,8 @@
         "Independent cycle-twenty review rejected shell-agnostic bare-time semantics; Dash and Bash lookup behavior must be distinguished by explicit interpreter identity.",
         "Cycle-twenty-one exact-tree candidate a6806bb98a349942941c787e7472c8feb990fe40 qualified; tree 3e6fa5092a70e318a413fab30fdc6edcb9c665a7; manifest /tmp/go-kitty3-m2-absence.pmR3PL/evidence/manifest.json; inventory 20db5422bfe6f642d1dc66e4fe0cb809bb1d2bedbd20bcba5829efd782de4468; observed absence 274/274, layers 8/8, runtime 23/23.",
         "Independent cycle-twenty-one review rejected irrelevant generic-shell ambiguity and missing POSIX special-builtin prefix-assignment persistence.",
-        "Cycle-twenty-two exact-tree candidate 726ba2ab1ab211f6f84ce05c807cda2efd848dad qualified; tree 40bb9db6feaac3e4e2a41d22d588f04f17413330; manifest /tmp/go-kitty3-m2-absence.Ai1bH6/evidence/manifest.json; inventory 9169db990d61e26acac5e25a0d377b27485bcf8805efb05f15b4b1b6c384a812; observed absence 290/290, layers 8/8, runtime 23/23."
+        "Cycle-twenty-two exact-tree candidate 726ba2ab1ab211f6f84ce05c807cda2efd848dad qualified; tree 40bb9db6feaac3e4e2a41d22d588f04f17413330; manifest /tmp/go-kitty3-m2-absence.Ai1bH6/evidence/manifest.json; inventory 9169db990d61e26acac5e25a0d377b27485bcf8805efb05f15b4b1b6c384a812; observed absence 290/290, layers 8/8, runtime 23/23.",
+        "Independent cycle-twenty-two review rejected missing Bash POSIX-mode state from shebang and runtime set transitions."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -740,12 +741,12 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T080": "done",
-        "T081": "done",
-        "T082": "done",
-        "T083": "done",
-        "T084": "done",
-        "T085": "done"
+        "T080": "planned",
+        "T081": "planned",
+        "T082": "planned",
+        "T083": "planned",
+        "T084": "planned",
+        "T085": "planned"
       }
     },
     "WP17": {
