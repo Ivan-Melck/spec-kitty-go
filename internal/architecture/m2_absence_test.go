@@ -132,6 +132,7 @@ var m2HistoricalExemptions = map[string]map[string]bool{
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP14-portable-scenario-harness-and-behavior-parity/review-cycle-5.md":      {m2ModerncDriver: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof.md":                   {m2ModerncDriver: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-2.md":    {m2ModerncDriver: true, m2LegacyCLI: true},
+	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-cycle-27.md":   {m2LegacyCLI: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-feedback-2.md": {m2ModerncDriver: true, m2LegacyCLI: true},
 	"kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/scope-extension-1.md": {m2ModerncDriver: true},
 	"kitty-specs/phase-one-architecture-closeout-01M0WZQ9/plan.md":                                                                         {m2ModerncDriver: true},
@@ -574,6 +575,40 @@ type m2ShellCommandParseResult struct {
 	expanded  bool
 }
 
+type m2ShellCommandTargetResolution struct {
+	name      string
+	value     string
+	expanded  bool
+	quoted    bool
+	resolved  bool
+	ambiguity string
+}
+
+func m2ResolveShellCommandTarget(token string, lookup func(string) (string, bool)) m2ShellCommandTargetResolution {
+	match := m2ShellCommandVariable.FindStringSubmatch(token)
+	if len(match) != 3 {
+		return m2ShellCommandTargetResolution{}
+	}
+	name := match[1]
+	if name == "" {
+		name = match[2]
+	}
+	quoted := len(token) >= 2 && token[0] == '"' && token[len(token)-1] == '"'
+	resolution := m2ShellCommandTargetResolution{name: name, expanded: true, quoted: quoted}
+	if !quoted {
+		resolution.ambiguity = "ambiguous-command-expansion:unquoted:" + name
+		return resolution
+	}
+	value, resolved := lookup(name)
+	if !resolved {
+		resolution.ambiguity = "ambiguous-command-expansion:quoted:" + name
+		return resolution
+	}
+	resolution.value = value
+	resolution.resolved = true
+	return resolution
+}
+
 type m2ShellCommandParser struct {
 	options   bool
 	query     bool
@@ -952,7 +987,6 @@ func m2ShellHeredocsOnCommandLine(line string) ([]m2ShellHeredoc, string) {
 func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([]string, string) {
 	type shellValue struct {
 		resolved    bool
-		commandSafe bool
 		value       string
 		conditional bool
 	}
@@ -996,7 +1030,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 		return clone
 	}
 	joinValue := func(prior shellValue, priorExists bool, effect shellValue) shellValue {
-		if priorExists && prior.resolved && effect.resolved && prior.value == effect.value && prior.commandSafe == effect.commandSafe {
+		if priorExists && prior.resolved && effect.resolved && prior.value == effect.value {
 			return prior
 		}
 		return shellValue{}
@@ -1458,32 +1492,20 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			case "<>", ">|":
 				return nil, "unsupported-redirection:" + token
 			}
+			commandTarget := m2ResolveShellCommandTarget(token, func(name string) (string, bool) {
+				value, exists := expansionValues[name]
+				return value.value, exists && value.resolved
+			})
 			commandWrapperTarget := false
 			commandWrapperAmbiguous := false
 			commandWrapperResolved := true
 			commandWrapperWord := ""
 			if commandPosition && dispatchMode == "command" {
 				word, resolved := m2StaticShellWord(token)
-				expanded := false
-				quoted := false
-				expansionUnsafe := false
-				expansionName := ""
-				if !resolved {
-					if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
-						expansionName = command[1]
-						if expansionName == "" {
-							expansionName = command[2]
-						}
-						expanded = true
-						quoted = len(token) >= 2 && token[0] == '"' && token[len(token)-1] == '"'
-						if value, exists := expansionValues[expansionName]; exists && value.resolved && quoted {
-							word, resolved = value.value, true
-						} else {
-							expansionUnsafe = true
-						}
-					}
+				if commandTarget.expanded {
+					word, resolved = commandTarget.value, commandTarget.resolved
 				}
-				parsed := commandParser.consumeWord(word, resolved, quoted, expanded)
+				parsed := commandParser.consumeWord(word, resolved, commandTarget.quoted, commandTarget.expanded)
 				switch parsed.kind {
 				case m2ShellCommandOption:
 					continue
@@ -1493,12 +1515,8 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					commandPosition = false
 					continue
 				case m2ShellCommandTarget:
-					if parsed.expanded && expansionUnsafe {
-						context := "unquoted"
-						if parsed.quoted {
-							context = "quoted"
-						}
-						return nil, "ambiguous-command-expansion:" + context + ":" + expansionName
+					if parsed.expanded && commandTarget.ambiguity != "" {
+						return nil, commandTarget.ambiguity
 					}
 					commandWrapperTarget = true
 					commandWrapperAmbiguous = parsed.ambiguous
@@ -1507,21 +1525,12 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 			}
 			if dispatchCapable && !commandWrapperTarget {
-				if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
-					name := command[1]
-					if name == "" {
-						name = command[2]
+				if commandTarget.expanded {
+					if commandTarget.ambiguity != "" {
+						return nil, commandTarget.ambiguity
 					}
-					if len(token) < 2 || token[0] != '"' || token[len(token)-1] != '"' {
-						return nil, "ambiguous-command-expansion:unquoted:" + name
-					}
-					if value, exists := expansionValues[name]; exists {
-						if !value.resolved {
-							return nil, "unresolved-dispatch-assignment:" + name
-						}
-						executables = append(executables, value.value)
-						continue
-					}
+					executables = append(executables, commandTarget.value)
+					continue
 				} else if name := m2TrackedVariableInWord(token, expansionValues); name != "" {
 					return nil, "unsupported-dispatch-word:" + name
 				}
@@ -1598,9 +1607,8 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				value, resolved := m2StaticShellWord(assignment[2])
 				if !commandStarted {
 					pendingAssignments[assignment[1]] = shellValue{
-						resolved:    resolved,
-						commandSafe: !resolved && m2StaticShellCommandBasenameSafe(assignment[2]),
-						value:       value,
+						resolved: resolved,
+						value:    value,
 					}
 				}
 				continue
@@ -1720,27 +1728,14 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 			}
 			if !commandWrapperTarget || !commandWrapperResolved {
-				if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
-					name := command[1]
-					if name == "" {
-						name = command[2]
+				if commandTarget.expanded {
+					if commandTarget.ambiguity != "" {
+						return nil, commandTarget.ambiguity
 					}
-					if len(token) < 2 || token[0] != '"' || token[len(token)-1] != '"' {
-						return nil, "ambiguous-command-expansion:unquoted:" + name
+					if _, function := functions[commandTarget.value]; function {
+						return nil, "indirect-function-call:" + commandTarget.value
 					}
-					if value, exists := expansionValues[name]; exists {
-						if !value.resolved {
-							if value.commandSafe {
-								commandPosition = false
-								continue
-							}
-							return nil, "unresolved-command-assignment:" + name
-						}
-						if _, function := functions[value.value]; function {
-							return nil, "indirect-function-call:" + value.value
-						}
-						executables = append(executables, value.value)
-					}
+					executables = append(executables, commandTarget.value)
 				} else if name := m2TrackedVariableInWord(token, expansionValues); name != "" {
 					return nil, "unsupported-command-word:" + name
 				}
@@ -1873,15 +1868,6 @@ func m2ShellExecutableCaseTokens(tokens []string) ([]string, string) {
 		return nil, "unterminated-case"
 	}
 	return executable, ""
-}
-
-func m2StaticShellCommandBasenameSafe(word string) bool {
-	separator := strings.LastIndexByte(word, '/')
-	if separator < 0 {
-		return false
-	}
-	basename, resolved := m2StaticShellWord(strings.Trim(word[separator+1:], `"'`))
-	return resolved && basename != "" && basename != m2LegacyCLI
 }
 
 func m2StaticShellCommandName(word string) (name string, pathSpelled bool, resolved bool) {

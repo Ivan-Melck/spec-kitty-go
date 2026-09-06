@@ -126,6 +126,34 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		}
 	})
 
+	t.Run("command-target-resolution-contract-is-closed", func(t *testing.T) {
+		values := map[string]string{"KNOWN": "native", "EMPTY": ""}
+		lookup := func(name string) (string, bool) {
+			value, exists := values[name]
+			return value, exists
+		}
+		for name, test := range map[string]struct {
+			token               string
+			expanded, quoted    bool
+			resolved, ambiguous bool
+			value               string
+		}{
+			"literal":        {token: "native"},
+			"unquoted-known": {token: "$KNOWN", expanded: true, ambiguous: true},
+			"quoted-known":   {token: `"$KNOWN"`, expanded: true, quoted: true, resolved: true, value: "native"},
+			"quoted-empty":   {token: `"${EMPTY}"`, expanded: true, quoted: true, resolved: true},
+			"quoted-unknown": {token: `"$UNKNOWN"`, expanded: true, quoted: true, ambiguous: true},
+		} {
+			t.Run(name, func(t *testing.T) {
+				got := m2ResolveShellCommandTarget(test.token, lookup)
+				if got.expanded != test.expanded || got.quoted != test.quoted || got.resolved != test.resolved ||
+					(got.ambiguity != "") != test.ambiguous || got.value != test.value {
+					t.Fatalf("resolution=%+v", got)
+				}
+			})
+		}
+	})
+
 	longGap := strings.Repeat("# intervening line\n", 65)
 	tests := []struct {
 		name, path, content string
@@ -138,7 +166,6 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		{"go-unrelated-concatenation", "internal/x/x.go", "package x\nimport \"os/exec\"\nfunc run(){ _ = exec.Command(\"sql\"+\"-formatter\") }\n", false},
 		{"shell-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nretired_cli='sql''ite3'; printf '%s' native\n", false},
 		{"shell-multiline-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\nprintf '%s' \"$review_retired_cli\"\n", false},
-		{"shell-command-before-assignment", "scripts/x.sh", "#!/bin/sh\n\"$review_retired_cli\" /tmp/x; review_retired_cli='sql''ite3'\n", false},
 		{"shell-beyond-former-line-horizon", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n" + longGap + "\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-long-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n" + longGap + "printf '%s' native\n", false},
 		{"shell-adjacent-benign-assignment", "scripts/x.sh", "#!/bin/sh\nreview_benign=native; review_retired_cli='sql''ite3'; \"$review_retired_cli\" /tmp/x\n", true},
@@ -173,6 +200,13 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 			}
 		})
 	}
+
+	t.Run("shell-command-before-assignment", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\n\"$review_retired_cli\" /tmp/x; review_retired_cli='sql''ite3'\n"))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+	})
 
 	t.Run("supported-command-positions", func(t *testing.T) {
 		assignment := "#!/bin/sh\nreview_retired_cli=sql\\ite3\n"
@@ -364,6 +398,9 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"command-variable-p-option-enables-posix":       "#!/bin/bash\nreview_command=-p\ncommand \"$review_command\" set -o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 		"command-variable-target-keeps-posix":           "#!/bin/bash --posix\nreview_command=-p\ncommand -- \"$review_command\" set +o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 		"command-quoted-set-with-changed-ifs":           "#!/bin/bash\nIFS=:\nreview_command=set\ncommand \"$review_command\" -o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"local-quoted-retired-direct":                   "#!/bin/sh\nREVIEW_COMMAND=sql\\ite3\n\"$REVIEW_COMMAND\" /tmp/x\n",
+		"local-quoted-retired-command-wrapper":          "#!/bin/sh\nREVIEW_COMMAND=sql\\ite3\ncommand \"$REVIEW_COMMAND\" /tmp/x\n",
+		"local-quoted-retired-nested-wrapper":           "#!/bin/sh\nREVIEW_COMMAND=sql\\ite3\nenv command -- \"$REVIEW_COMMAND\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -433,6 +470,11 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"command-query-multiword-is-data":                  "#!/bin/bash\nreview_command='set -o posix'\ncommand -v $review_command >/dev/null || :\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"command-quoted-multiword-ignores-changed-ifs":     "#!/bin/bash\nIFS=:\nreview_command='set:-o:posix'\ncommand \"$review_command\" || :\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"ordinary-unquoted-expansion-is-data":              "#!/bin/bash\nreview_command='set -o posix'\nprintf '%s' $review_command\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"local-quoted-native-direct":                       "#!/bin/sh\nREVIEW_COMMAND=native\n\"$REVIEW_COMMAND\" /tmp/x\n",
+		"local-quoted-empty-direct":                        "#!/bin/sh\nREVIEW_COMMAND=''\n\"$REVIEW_COMMAND\" /tmp/x\n",
+		"local-quoted-native-command-wrapper":              "#!/bin/sh\nREVIEW_COMMAND=native\ncommand \"$REVIEW_COMMAND\" /tmp/x\n",
+		"unset-quoted-query-is-data":                       "#!/bin/sh\ncommand -v \"$REVIEW_COMMAND\" >/dev/null || :\n",
+		"unset-quoted-ordinary-argument-is-data":           "#!/bin/sh\nprintf '%s' \"$REVIEW_COMMAND\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -495,6 +537,11 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"direct-unquoted-glob-looking":                "#!/bin/sh\nreview_command='review-*'\n$review_command /tmp/x\n",
 		"direct-unquoted-unresolved":                  "#!/bin/sh\n$review_command /tmp/x\n",
 		"env-unquoted-one-word-looking":               "#!/bin/sh\nreview_command=native\nenv $review_command /tmp/x\n",
+		"direct-quoted-unset":                         "#!/bin/sh\n\"$REVIEW_COMMAND\" /tmp/x\n",
+		"command-quoted-unset":                        "#!/bin/sh\ncommand \"$REVIEW_COMMAND\" /tmp/x\n",
+		"env-quoted-unset":                            "#!/bin/sh\nenv \"$REVIEW_COMMAND\" /tmp/x\n",
+		"nested-wrapper-quoted-unset":                 "#!/bin/sh\nenv command -- \"$REVIEW_COMMAND\" /tmp/x\n",
+		"direct-quoted-locally-unresolved":            "#!/bin/sh\nREVIEW_COMMAND=${REVIEW_SOURCE}\n\"$REVIEW_COMMAND\" /tmp/x\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()
@@ -503,6 +550,14 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 			assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 		})
 	}
+
+	t.Run("environment-provided-direct-quoted-target-fails-closed", func(t *testing.T) {
+		t.Setenv("REVIEW_COMMAND", m2LegacyCLI)
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/bash\n\"$REVIEW_COMMAND\" /tmp/x\n"))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+	})
 
 	for name, content := range map[string]string{
 		"bash-current-shell-output-redirect":    "#!/bin/bash\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; } &>/tmp/x\n\"$review_retired_cli\" /tmp/x\n",
