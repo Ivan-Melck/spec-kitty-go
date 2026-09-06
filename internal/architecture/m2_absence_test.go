@@ -545,6 +545,94 @@ const (
 	m2ShellPrefixPersist
 )
 
+type m2ShellSetModeAction uint8
+
+const (
+	m2ShellSetModeNone m2ShellSetModeAction = iota
+	m2ShellSetModeEnable
+	m2ShellSetModeDisable
+	m2ShellSetModeAmbiguous
+)
+
+type m2ShellSetModeParser struct {
+	optionsEnded bool
+	expectMode   m2ShellSetModeAction
+}
+
+var m2ShellKnownSetOptions = map[string]bool{
+	"allexport": true, "braceexpand": true, "emacs": true, "errexit": true,
+	"errtrace": true, "functrace": true, "hashall": true, "histexpand": true,
+	"history": true, "ignoreeof": true, "interactive-comments": true, "keyword": true,
+	"monitor": true, "noclobber": true, "noexec": true, "noglob": true,
+	"nolog": true, "notify": true, "nounset": true, "onecmd": true,
+	"physical": true, "pipefail": true, "privileged": true, "verbose": true,
+	"vi": true, "xtrace": true,
+}
+
+func (parser *m2ShellSetModeParser) consume(token string) m2ShellSetModeAction {
+	if parser.optionsEnded {
+		return m2ShellSetModeNone
+	}
+	word, resolved := m2StaticShellWord(token)
+	if !resolved {
+		parser.optionsEnded = true
+		parser.expectMode = m2ShellSetModeNone
+		return m2ShellSetModeAmbiguous
+	}
+	if parser.expectMode != m2ShellSetModeNone {
+		action := parser.expectMode
+		parser.expectMode = m2ShellSetModeNone
+		if word == "posix" {
+			return action
+		}
+		if m2ShellKnownSetOptions[word] {
+			return m2ShellSetModeNone
+		}
+		parser.optionsEnded = true
+		return m2ShellSetModeAmbiguous
+	}
+	switch word {
+	case "--", "-", "+":
+		parser.optionsEnded = true
+		return m2ShellSetModeNone
+	case "-o":
+		parser.expectMode = m2ShellSetModeEnable
+		return m2ShellSetModeNone
+	case "+o":
+		parser.expectMode = m2ShellSetModeDisable
+		return m2ShellSetModeNone
+	}
+	if !strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "+") {
+		parser.optionsEnded = true
+		return m2ShellSetModeNone
+	}
+	compact := word[1:]
+	if compact == "" {
+		parser.optionsEnded = true
+		return m2ShellSetModeNone
+	}
+	const ordinaryOptions = "abefhkmnptuvxBCEHPT"
+	for index, option := range compact {
+		if option == 'o' {
+			if index != len(compact)-1 {
+				parser.optionsEnded = true
+				return m2ShellSetModeAmbiguous
+			}
+			if word[0] == '-' {
+				parser.expectMode = m2ShellSetModeEnable
+			} else {
+				parser.expectMode = m2ShellSetModeDisable
+			}
+			return m2ShellSetModeNone
+		}
+		if !strings.ContainsRune(ordinaryOptions, option) {
+			parser.optionsEnded = true
+			return m2ShellSetModeAmbiguous
+		}
+	}
+	return m2ShellSetModeNone
+}
+
 const m2ShellShebangMaxBytes = 4096
 
 func m2ShellIdentityFromSource(source string) m2ShellIdentity {
@@ -908,6 +996,11 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 		dispatchCapable := false
 		dispatchMode := ""
 		dispatchOptionArgument := false
+		commandBuiltinDispatch := false
+		commandDispatchQuery := false
+		commandDispatchAmbiguous := false
+		commandDispatchOptionsEnded := false
+		setModeParser := m2ShellSetModeParser{}
 		ambiguousTimeLookup := false
 		expansionValues := cloneValues(active)
 		pendingAssignments := map[string]shellValue{}
@@ -1196,6 +1289,10 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
+				commandBuiltinDispatch = false
+				commandDispatchQuery = false
+				commandDispatchAmbiguous = false
+				commandDispatchOptionsEnded = false
 				ambiguousTimeLookup = false
 				continue
 			case "&&", "||":
@@ -1208,6 +1305,10 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
+				commandBuiltinDispatch = false
+				commandDispatchQuery = false
+				commandDispatchAmbiguous = false
+				commandDispatchOptionsEnded = false
 				ambiguousTimeLookup = false
 				continue
 			case "|":
@@ -1220,6 +1321,10 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
+				commandBuiltinDispatch = false
+				commandDispatchQuery = false
+				commandDispatchAmbiguous = false
+				commandDispatchOptionsEnded = false
 				ambiguousTimeLookup = false
 				continue
 			case "&":
@@ -1232,6 +1337,10 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
+				commandBuiltinDispatch = false
+				commandDispatchQuery = false
+				commandDispatchAmbiguous = false
+				commandDispatchOptionsEnded = false
 				ambiguousTimeLookup = false
 				continue
 			case "(":
@@ -1336,6 +1445,23 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					dispatchOptionArgument = false
 					continue
 				}
+				if dispatchMode == "command" && !commandDispatchOptionsEnded {
+					switch token {
+					case "--":
+						commandDispatchOptionsEnded = true
+						continue
+					}
+					if strings.HasPrefix(token, "-") {
+						options := strings.TrimPrefix(token, "-")
+						if options == "" || strings.Trim(options, "pVv") != "" {
+							commandDispatchAmbiguous = true
+						} else if strings.ContainsAny(options, "Vv") {
+							commandDispatchQuery = true
+						}
+						continue
+					}
+					commandDispatchOptionsEnded = true
+				}
 				if dispatchMode != "" && (token == "--" || strings.HasPrefix(token, "-")) {
 					if (dispatchMode == "env" && (token == "-u" || token == "--unset")) ||
 						(dispatchMode == "nice" && (token == "-n" || token == "--adjustment")) {
@@ -1345,27 +1471,14 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 			}
 			if !commandPosition {
-				if strings.HasPrefix(indirectCommand, "set-mode") {
-					switch indirectCommand {
-					case "set-mode-enable", "set-mode-disable":
-						if token == "posix" {
-							queueSetPosixMode(indirectCommand == "set-mode-enable")
-						} else {
-							queuePrefixMode(m2ShellPrefixAmbiguous, true)
-						}
-						indirectCommand = "set-mode"
-					case "set-mode":
-						switch token {
-						case "-o":
-							indirectCommand = "set-mode-enable"
-						case "+o":
-							indirectCommand = "set-mode-disable"
-						default:
-							trimmed := strings.TrimLeft(token, "+-")
-							if token != "--" && len(trimmed) != len(token) && strings.Contains(trimmed, "o") {
-								queuePrefixMode(m2ShellPrefixAmbiguous, true)
-							}
-						}
+				if indirectCommand == "set-mode" {
+					switch setModeParser.consume(token) {
+					case m2ShellSetModeEnable:
+						queueSetPosixMode(true)
+					case m2ShellSetModeDisable:
+						queueSetPosixMode(false)
+					case m2ShellSetModeAmbiguous:
+						queuePrefixMode(m2ShellPrefixAmbiguous, true)
 					}
 					continue
 				}
@@ -1414,6 +1527,12 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			}
 			if commandName, pathSpelled, resolved := m2StaticShellCommandName(token); resolved {
 				executables = append(executables, commandName)
+				if dispatchMode == "command" && commandDispatchQuery {
+					commandStarted = true
+					indirectCommand = "command-query"
+					commandPosition = false
+					continue
+				}
 				if commandName == "time" && token == "time" && !dispatchCapable {
 					commandStarted = true
 					dispatchMode = "reserved-time"
@@ -1429,9 +1548,18 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				if !pathSpelled && !dispatchCapable && m2ShellSpecialBuiltins[commandName] {
 					applySpecialBuiltinPrefixes()
 				}
-				if commandName == "set" && !pathSpelled && !dispatchCapable {
+				commandSet := commandName == "set" && !pathSpelled &&
+					(!dispatchCapable || dispatchMode == "command" && commandBuiltinDispatch)
+				if commandSet {
+					if commandDispatchAmbiguous {
+						pendingFunctionJoin = true
+					}
 					commandStarted = true
 					indirectCommand = "set-mode"
+					setModeParser = m2ShellSetModeParser{}
+					dispatchCapable = false
+					dispatchMode = ""
+					commandBuiltinDispatch = false
 					commandPosition = false
 					continue
 				}
@@ -1486,9 +1614,17 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 				switch {
 				case m2ShellUtilityDispatch[commandName]:
+					priorDispatchCapable := dispatchCapable
+					priorDispatchMode := dispatchMode
+					priorCommandBuiltin := commandBuiltinDispatch
 					commandStarted = true
 					dispatchCapable = true
 					dispatchMode = commandName
+					commandBuiltinDispatch = commandName == "command" && !pathSpelled &&
+						(!priorDispatchCapable || priorDispatchMode == "command" && priorCommandBuiltin)
+					commandDispatchQuery = false
+					commandDispatchOptionsEnded = false
+					commandDispatchAmbiguous = commandDispatchAmbiguous || ambiguousTimeLookup
 					continue
 				case m2ShellInterpreters[commandName]:
 					commandStarted = true
