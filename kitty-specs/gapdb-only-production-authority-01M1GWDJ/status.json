@@ -734,7 +734,8 @@
         "Cycle 24 exact candidate 4c45ee69380c7b6a33d0a09ad34559bb7522e49d tree 97188efa8dcf894a128862ce649f2bc9f7d2b503 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.MvwOCc/evidence/manifest.json; inventory c6ec3a55378df982ef861f4eb44357492467b8fecdc87c802147ccc6da526af1; receipts 329/329, layers 8/8, runtime 23/23; full architecture and race passed.",
         "Cycle 24 rejected: command -- did not fully terminate wrapper-option parsing; see review-feedback-24.md.",
         "Cycle 25 exact candidate a62190e977d904d22d15c1f855766a248b955a60 tree 3f60b1973789da36f90b6560bb1c8f925d164055 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.yK8kuf/evidence/manifest.json; inventory 352955aed68c14a63533f93c5ff95069944ac48ef3ffb87a41456514e79d39c3; receipts 343/343, layers 8/8, runtime 23/23; full architecture and race passed.",
-        "Cycle 25 rejected: unquoted resolved command targets erased field-splitting semantics; see review-feedback-25.md."
+        "Cycle 25 rejected: unquoted resolved command targets erased field-splitting semantics; see review-feedback-25.md.",
+        "Cycle 26 exact candidate 507f060393da1730954238c9cf1371829e8113be tree 499efc16a0204e7e9dea2c9f94cc7d06685fe1fb qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.l5sdjr/evidence/manifest.json; inventory 17e5deb3341c1223f150ee459f6ccc107abef30214c1ff4c1456ee386b6fbc77; receipts 353/353, layers 8/8, runtime 23/23; full architecture and race passed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
