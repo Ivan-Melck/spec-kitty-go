@@ -284,10 +284,19 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 	} else if ext == ".sh" {
 		rawShell := string(data)
 		shellIdentity := m2ShellIdentityFromSource(rawShell)
-		shellSource, ambiguity := m2ShellWithoutHeredocBodies(rawShell)
+		shellSource, heredocBodies, ambiguity := m2ShellWithoutHeredocBodies(rawShell)
 		if ambiguity != "" {
 			add("ambiguous-shell", path, ambiguity)
 			return
+		}
+		for _, body := range heredocBodies {
+			if !body.expansionEnabled {
+				continue
+			}
+			if ambiguity := m2ShellHeredocSubstitutionAmbiguity(body.content); ambiguity != "" {
+				add("ambiguous-shell", path, "heredoc:"+ambiguity)
+				return
+			}
 		}
 		lower = strings.ToLower(shellSource)
 		executable = lower
@@ -865,19 +874,29 @@ func m2ShellBashPrefixMode(arguments []string, posixEnvironment bool) m2ShellPre
 }
 
 type m2ShellHeredoc struct {
-	delimiter string
-	stripTabs bool
+	delimiter        string
+	stripTabs        bool
+	expansionEnabled bool
+}
+
+type m2ShellHeredocBody struct {
+	delimiter        string
+	stripTabs        bool
+	expansionEnabled bool
+	content          string
 }
 
 // m2ShellWithoutHeredocBodies preserves command bytes but replaces heredoc
 // bodies and delimiter lines with newlines. This keeps executable syntax on
 // both sides ordered while preventing data from entering either the lexical
 // detector or command-state evaluator.
-func m2ShellWithoutHeredocBodies(source string) (string, string) {
+func m2ShellWithoutHeredocBodies(source string) (string, []m2ShellHeredocBody, string) {
 	lines := strings.SplitAfter(source, "\n")
 	var sanitized strings.Builder
 	sanitized.Grow(len(source))
 	var pending []m2ShellHeredoc
+	var bodies []m2ShellHeredocBody
+	var body strings.Builder
 	var commandQuote byte
 	for _, line := range lines {
 		if len(pending) != 0 {
@@ -886,7 +905,23 @@ func m2ShellWithoutHeredocBodies(source string) (string, string) {
 				candidate = strings.TrimLeft(candidate, "\t")
 			}
 			if candidate == pending[0].delimiter {
+				bodies = append(bodies, m2ShellHeredocBody{
+					delimiter:        pending[0].delimiter,
+					stripTabs:        pending[0].stripTabs,
+					expansionEnabled: pending[0].expansionEnabled,
+					content:          body.String(),
+				})
+				body.Reset()
 				pending = pending[1:]
+			} else {
+				bodyLine := line
+				if pending[0].stripTabs {
+					bodyLine = strings.TrimLeft(bodyLine, "\t")
+				}
+				if body.Len()+len(bodyLine) > 8<<20 {
+					return "", nil, "heredoc-body-budget"
+				}
+				body.WriteString(bodyLine)
 			}
 			if strings.HasSuffix(line, "\n") {
 				sanitized.WriteByte('\n')
@@ -895,7 +930,7 @@ func m2ShellWithoutHeredocBodies(source string) (string, string) {
 		}
 		hasHeredoc, nextQuote, lexicalAmbiguity := m2ShellLineHeredocState(line, commandQuote)
 		if lexicalAmbiguity != "" {
-			return "", lexicalAmbiguity
+			return "", nil, lexicalAmbiguity
 		}
 		startedQuoted := commandQuote != 0
 		commandQuote = nextQuote
@@ -904,19 +939,19 @@ func m2ShellWithoutHeredocBodies(source string) (string, string) {
 			continue
 		}
 		if startedQuoted || commandQuote != 0 {
-			return "", "heredoc-with-multiline-quote"
+			return "", nil, "heredoc-with-multiline-quote"
 		}
 		documents, ambiguity := m2ShellHeredocsOnCommandLine(line)
 		if ambiguity != "" {
-			return "", ambiguity
+			return "", nil, ambiguity
 		}
 		sanitized.WriteString(line)
 		pending = append(pending, documents...)
 	}
 	if len(pending) != 0 {
-		return "", "unterminated-heredoc:" + pending[0].delimiter
+		return "", nil, "unterminated-heredoc:" + pending[0].delimiter
 	}
-	return sanitized.String(), ""
+	return sanitized.String(), bodies, ""
 }
 
 func m2ShellLineHeredocState(line string, quote byte) (bool, byte, string) {
@@ -992,10 +1027,46 @@ func m2ShellHeredocsOnCommandLine(line string) ([]m2ShellHeredoc, string) {
 			if len(delimiter) > 1024 || strings.ContainsAny(delimiter, "\r\n") {
 				return nil, "heredoc-delimiter-budget"
 			}
-			documents = append(documents, m2ShellHeredoc{delimiter: delimiter, stripTabs: token == "<<-"})
+			documents = append(documents, m2ShellHeredoc{
+				delimiter:        delimiter,
+				stripTabs:        token == "<<-",
+				expansionEnabled: !m2ShellWordHasQuoting(tokens[index+1]),
+			})
 		}
 	}
 	return documents, ""
+}
+
+func m2ShellWordHasQuoting(word string) bool {
+	return strings.ContainsAny(word, "\\'\"")
+}
+
+func m2ShellHeredocSubstitutionAmbiguity(body string) string {
+	for index := 0; index < len(body); index++ {
+		current := body[index]
+		if current == '\\' {
+			if index+1 >= len(body) {
+				return "unterminated-heredoc-expansion-escape"
+			}
+			index++
+			continue
+		}
+		if ambiguity := m2ShellActiveSubstitutionAt(body, index); ambiguity != "" {
+			return ambiguity
+		}
+	}
+	return ""
+}
+
+func m2ShellActiveSubstitutionAt(source string, index int) string {
+	if source[index] == '`' {
+		return "executable-command-substitution:backtick"
+	}
+	if source[index] == '$' && index+1 < len(source) && source[index+1] == '(' &&
+		(index+2 >= len(source) || source[index+2] != '(') {
+		return "executable-command-substitution:dollar-paren"
+	}
+	return ""
 }
 
 // m2ShellExecutableSubstitutionAmbiguity rejects nested command execution
@@ -1035,12 +1106,8 @@ func m2ShellExecutableSubstitutionAmbiguity(source string) string {
 				quote = 0
 				continue
 			}
-			if current == '`' {
-				return "executable-command-substitution:backtick"
-			}
-			if current == '$' && index+1 < len(source) && source[index+1] == '(' &&
-				(index+2 >= len(source) || source[index+2] != '(') {
-				return "executable-command-substitution:dollar-paren"
+			if ambiguity := m2ShellActiveSubstitutionAt(source, index); ambiguity != "" {
+				return ambiguity
 			}
 			continue
 		}
@@ -1054,12 +1121,8 @@ func m2ShellExecutableSubstitutionAmbiguity(source string) string {
 			wordStart = false
 			continue
 		}
-		if current == '`' {
-			return "executable-command-substitution:backtick"
-		}
-		if current == '$' && index+1 < len(source) && source[index+1] == '(' &&
-			(index+2 >= len(source) || source[index+2] != '(') {
-			return "executable-command-substitution:dollar-paren"
+		if ambiguity := m2ShellActiveSubstitutionAt(source, index); ambiguity != "" {
+			return ambiguity
 		}
 		if current == '#' && wordStart {
 			comment = true

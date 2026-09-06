@@ -206,6 +206,32 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		}
 	})
 
+	t.Run("heredoc-body-metadata-is-closed", func(t *testing.T) {
+		source := "cat <<EOF <<-'LITERAL'\n$(printf native)\nEOF\n\t$(printf literal)\n\tLITERAL\n"
+		sanitized, bodies, ambiguity := m2ShellWithoutHeredocBodies(source)
+		if ambiguity != "" {
+			t.Fatalf("sanitize heredocs: %s", ambiguity)
+		}
+		if len(bodies) != 2 {
+			t.Fatalf("heredoc bodies=%d want=2", len(bodies))
+		}
+		if bodies[0].delimiter != "EOF" || bodies[0].stripTabs || !bodies[0].expansionEnabled ||
+			bodies[0].content != "$(printf native)\n" {
+			t.Fatalf("unquoted heredoc metadata=%+v", bodies[0])
+		}
+		if bodies[1].delimiter != "LITERAL" || !bodies[1].stripTabs || bodies[1].expansionEnabled ||
+			bodies[1].content != "$(printf literal)\n" {
+			t.Fatalf("quoted heredoc metadata=%+v", bodies[1])
+		}
+		if strings.Contains(sanitized, "printf native") || strings.Contains(sanitized, "printf literal") {
+			t.Fatalf("sanitized command stream retained heredoc body: %q", sanitized)
+		}
+		oversize := "cat <<EOF\n" + strings.Repeat("x", (8<<20)+1) + "\nEOF\n"
+		if _, _, budgetAmbiguity := m2ShellWithoutHeredocBodies(oversize); budgetAmbiguity != "heredoc-body-budget" {
+			t.Fatalf("oversize heredoc ambiguity=%q", budgetAmbiguity)
+		}
+	})
+
 	longGap := strings.Repeat("# intervening line\n", 65)
 	tests := []struct {
 		name, path, content string
@@ -639,6 +665,25 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 			assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 		})
 	}
+	for name, content := range map[string]string{
+		"heredoc-command-substitution":                       "#!/bin/bash\nREVIEW_COMMAND=sql\\ite3\ncat <<EOF\n$(\"$REVIEW_COMMAND\" /tmp/heredoc.db)\nEOF\n",
+		"heredoc-backtick-substitution":                      "#!/bin/sh\ncat <<EOF\n`printf native`\nEOF\n",
+		"heredoc-tab-stripped-command-substitution":          "#!/bin/sh\ncat <<-EOF\n\t$(printf native)\n\tEOF\n",
+		"heredoc-multiple-second-expands":                    "#!/bin/sh\ncat <<'FIRST' <<SECOND\n$(printf literal)\nFIRST\n$(printf native)\nSECOND\n",
+		"heredoc-nested-command-substitution":                "#!/bin/sh\ncat <<EOF\n$(printf '%s' \"$(printf native)\")\nEOF\n",
+		"heredoc-single-quotes-do-not-disable-expansion":     "#!/bin/sh\ncat <<EOF\n'$(printf native)'\nEOF\n",
+		"heredoc-comment-text-does-not-disable-expansion":    "#!/bin/sh\ncat <<EOF\n# $(printf native)\nEOF\n",
+		"heredoc-substitution-precedes-query-classification": "#!/bin/sh\ncommand -v native <<EOF\n$(printf native)\nEOF\n",
+		"heredoc-unterminated-command-substitution":          "#!/bin/sh\ncat <<EOF\n$(printf native\nEOF\n",
+		"heredoc-unterminated-backtick-substitution":         "#!/bin/sh\ncat <<EOF\n`printf native\nEOF\n",
+	} {
+		t.Run(name+"-fails-closed", func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+		})
+	}
 
 	t.Run("environment-provided-direct-quoted-target-fails-closed", func(t *testing.T) {
 		t.Setenv("REVIEW_COMMAND", m2LegacyCLI)
@@ -679,6 +724,20 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 			evidence := inspectM2Absence(t, root, false)
 			if len(evidence.Findings) != 0 {
 				t.Fatalf("clean function/redirection/heredoc control rejected: %s", formatM2Findings(evidence.Findings))
+			}
+		})
+	}
+	for name, content := range map[string]string{
+		"heredoc-double-quoted-body-is-data":            "#!/bin/sh\ncat <<\"EOF\"\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
+		"heredoc-escaped-delimiter-body-is-data":        "#!/bin/sh\ncat <<\\EOF\n$(printf native) `printf native`\nEOF\nprintf '%s' native\n",
+		"heredoc-unquoted-escaped-substitution-is-data": "#!/bin/sh\ncat <<EOF\n\\$(printf native) \\`printf native\\`\nEOF\nprintf '%s' native\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			if len(evidence.Findings) != 0 {
+				t.Fatalf("clean heredoc expansion control rejected: %s", formatM2Findings(evidence.Findings))
 			}
 		})
 	}
