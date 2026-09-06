@@ -12,11 +12,19 @@ QUALIFIED_BEADS_DIGEST := 0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff
 BEADS_BIN ?=
 BEADS_INSTALL_RESULT ?=
 OFFLINE_ENFORCED ?=
+M2_GAPDBD ?= /tmp/spec-kitty-gapdb-assertion-sidecar/gapdbd
+M2_RUN_ID ?= m2-$$(git rev-parse --short=12 HEAD)-$$(date -u +%Y%m%dT%H%M%SZ)
+M2_EVIDENCE_ROOT ?= $(ARTIFACT_DIR)/m2
+M2_PRODUCT_BINARY ?= $(BUILD_DIR)/spec-kitty
+M2_QUALIFIER_BINARY ?= $(BUILD_DIR)/spk-m2-qualification
+M2_ACTOR_ID ?=
+M2_PROCESS_ID ?=
+M2_PROFILE_REVISION ?=
 
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all
+.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race m2-fault m2-mutants m2-absence m2-sbom m2-performance m2-short m2-qualification m2-verify-evidence
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -31,6 +39,8 @@ build: ## Compile every package and command without running tests.
 	$(GO) test -run '^$$' ./...
 	@mkdir -p "$(BUILD_DIR)"
 	$(GO) build -trimpath -o "$(BUILD_DIR)/spk-phase1-helper" ./cmd/spk-phase1-helper
+	CGO_ENABLED=0 $(GO) build -trimpath -o "$(BUILD_DIR)/spec-kitty" ./cmd/spec-kitty
+	CGO_ENABLED=0 $(GO) build -trimpath -o "$(BUILD_DIR)/spk-m2-qualification" ./cmd/spk-m2-qualification
 
 tools:
 	@command -v $(GO) >/dev/null 2>&1 || { echo "required tool missing: $(GO)"; exit 1; }
@@ -143,3 +153,74 @@ full-campaign: quality ## Run quality plus the exhaustive scenario/fault/soak ca
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign full_campaign -artifact-dir "$(ARTIFACT_DIR)" -timeout 60m
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign mission_full -artifact-dir "$(ARTIFACT_DIR)" -timeout 20m
 	@printf 'full campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
+
+m2-contract: ## Verify frozen M2 contracts, family registry, manifest, census, and source binding.
+	$(GO) test -count=1 ./internal/testcampaign/m2 ./internal/architecture \
+		-run '^(TestManifest|TestFrozenCensus|TestM2Contract|TestM2DependencyRestoreDeadline|TestM2DependencyRestoreTimeUse)'
+
+m2-capabilities: ## Run stack-neutral capability and autonomous-readiness contracts.
+	$(GO) test -count=1 ./internal/helpercmd ./internal/productionruntime ./internal/scenario \
+		-run '^(TestDriveExecutesIndependentWorkScopesInOneMissionConcurrently|TestProgressReportsCompleteMissionWithoutExclusiveCurrentStep|TestConcurrentIndependentAuthoritySmoke)$$'
+
+m2-recovery: ## Run the checkpoint-plus-10k recovery qualification and deadline laws.
+	$(GO) test -count=1 ./internal/controljournal/v2/restore ./internal/controljournal/v2/playback \
+		-run '^(TestQualificationFixtureCheckpointPlus10000Operations30Runs|TestRestoreDeadline|TestPlaybackFullHistoryIsDeterministicAndZeroIO)'
+
+m2-race: ## Run bounded M2 authority/restart/concurrency smoke under the race detector.
+	SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="$(M2_GAPDBD)" $(GO) test -race -p=1 -count=1 -timeout=20m \
+		./internal/scenario ./internal/productionruntime ./internal/testcampaign/m2 \
+		-run '^(TestTwoItemMissionRestartAfterEachDurableBoundary|TestConcurrentIndependentAuthoritySmoke|TestConcurrentSameAggregateConflictSmoke|TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch|TestManifestCensusVerifyRoundTripIsCanonicalAndSourceBound|TestFrozenCensusRejectsDeletionReorderAndSubstitution)$$'
+
+m2-fault: ## Run exact 100-trial fault, ambiguity, tracker, concurrency, and restart campaigns.
+	SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="$(M2_GAPDBD)" SPEC_KITTY_WP13_GAPDBD="$(M2_GAPDBD)" \
+	SPEC_KITTY_WP14_CAMPAIGN=100 SPEC_KITTY_WP14_SOURCE_REVISION="$$(git rev-parse HEAD)" \
+	$(GO) test -count=1 -timeout=60m ./internal/scenario \
+		-run '^(TestZombieOwnerReplacementCampaign100|TestConcurrentIndependentAuthorityCampaign100|TestConcurrentSameAggregateConflictCampaign100|TestCrashAmbiguousDishonestUniversalCampaign100)$$'
+
+m2-mutants: ## Kill M2 restore, autonomy, runtime, and SQLite-absence mutants.
+	$(GO) test -count=1 ./internal/architecture ./internal/productionruntime \
+		-run '^(TestM2DependencyRestoreDeadlineIsOneExactEdge|TestM2DependencyRestoreTimeUseIsDeadlineBudgetOnly|TestM2AutonomyMutationCampaignCoversCeremonyFailureClasses|TestM2AbsenceLayerDetectors|TestWP13MandatoryProductionMutantCampaign)$$'
+
+m2-absence: ## Qualify source/module/binary/install/help/runtime SQLite absence from a clean archive.
+	@mkdir -p "$(M2_EVIDENCE_ROOT)"
+	SPEC_KITTY_WP15_GAPDBD="$(M2_GAPDBD)" scripts/m2-absence/inspect.sh "$(M2_EVIDENCE_ROOT)/absence"
+
+m2-sbom: ## Generate deterministic CycloneDX twice and require byte identity.
+	@mkdir -p "$(M2_EVIDENCE_ROOT)"
+	$(GO) run ./cmd/spk-m2-qualification sbom --repository "$(CURDIR)" --output "$(M2_EVIDENCE_ROOT)/sbom-1.cdx.json"
+	$(GO) run ./cmd/spk-m2-qualification sbom --repository "$(CURDIR)" --output "$(M2_EVIDENCE_ROOT)/sbom-2.cdx.json"
+	cmp "$(M2_EVIDENCE_ROOT)/sbom-1.cdx.json" "$(M2_EVIDENCE_ROOT)/sbom-2.cdx.json"
+
+m2-performance: ## Run independently observed recovery/query/durable-mutation qualification.
+	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
+	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
+	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
+	"$(M2_QUALIFIER_BINARY)" measure --repository "$(CURDIR)" --sidecar "$(M2_GAPDBD)" --run-id "$(M2_RUN_ID)" --output "$(M2_EVIDENCE_ROOT)/performance.json"
+
+m2-short: m2-contract m2-capabilities m2-mutants ## Run bounded PR M2 contracts, capability, mutant, static, and module gates.
+	$(GO) test -run '^$$' ./...
+	$(GO) vet ./...
+	@command -v $(STATICCHECK) >/dev/null 2>&1 || { echo "required tool missing: $(STATICCHECK)"; exit 1; }
+	$(STATICCHECK) ./...
+	$(GO) mod verify
+	@git diff --exit-code -- go.mod go.sum
+
+m2-qualification: ## Produce one immutable technical-pass bundle eligible for independent review.
+	@test -n "$(M2_ACTOR_ID)" || { echo 'M2_ACTOR_ID is required' >&2; exit 1; }
+	@test -n "$(M2_PROCESS_ID)" || { echo 'M2_PROCESS_ID is required' >&2; exit 1; }
+	@test -n "$(M2_PROFILE_REVISION)" || { echo 'M2_PROFILE_REVISION is required' >&2; exit 1; }
+	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
+	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
+	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
+	"$(M2_QUALIFIER_BINARY)" run --repository "$(CURDIR)" --output "$(M2_EVIDENCE_ROOT)" \
+		--sidecar "$(M2_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" \
+		--actor-id "$(M2_ACTOR_ID)" --process-id "$(M2_PROCESS_ID)" \
+		--profile-revision "$(M2_PROFILE_REVISION)" --timeout 60m
+
+m2-verify-evidence: ## Independently recompute one immutable M2 producer bundle against trusted identities.
+	@test -n "$(M2_EVIDENCE)" || { echo 'M2_EVIDENCE is required' >&2; exit 1; }
+	@test -n "$(M2_EXPECTED_COMMIT)" -a -n "$(M2_EXPECTED_TREE)" -a -n "$(M2_EXPECTED_MANIFEST_SHA256)" -a -n "$(M2_EXPECTED_ARCHIVE_SHA256)" || { echo 'M2 trusted commit/tree/manifest/archive identities are required' >&2; exit 1; }
+	$(GO) run ./cmd/spk-m2-qualification verify --evidence "$(M2_EVIDENCE)/evidence" \
+		--archive "$(M2_EVIDENCE)/producer.tar" --archive-receipt "$(M2_EVIDENCE)/producer.sha256.json" \
+		--expected-commit "$(M2_EXPECTED_COMMIT)" --expected-tree "$(M2_EXPECTED_TREE)" \
+		--expected-manifest-sha256 "$(M2_EXPECTED_MANIFEST_SHA256)" --expected-archive-sha256 "$(M2_EXPECTED_ARCHIVE_SHA256)"

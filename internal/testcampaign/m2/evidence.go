@@ -1,0 +1,721 @@
+package m2
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+)
+
+const (
+	ManifestName = "manifest.json"
+	CensusName   = "census.json"
+	maximumFile  = 64 << 20
+	maximumFiles = 2048
+	maximumTotal = 256 << 20
+
+	AdmittedM1AdoptionSHA256 = "b6506abc327ed2b22c6b51b4069cb0b8edb0af5ac2ea26a1aa3a33de6bca30de"
+	AdmittedM1EvidenceSHA256 = "397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309"
+	AdmittedM1TupleSHA256    = "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
+	AdmittedSidecarSHA256    = "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad"
+)
+
+type ArtifactInput struct {
+	Path string
+	Kind string
+	Data []byte
+}
+
+type Publication struct {
+	Directory             string `json:"directory"`
+	ManifestPath          string `json:"manifest_path"`
+	ManifestSHA256        string `json:"manifest_sha256"`
+	ProducerArchivePath   string `json:"producer_archive_path"`
+	ProducerArchiveSHA256 string `json:"producer_archive_sha256"`
+	ProducerReceiptPath   string `json:"producer_receipt_path"`
+}
+
+type Verification struct {
+	RunID          string `json:"run_id"`
+	SourceCommit   string `json:"source_commit"`
+	SourceTree     string `json:"source_tree"`
+	ManifestSHA256 string `json:"manifest_sha256"`
+	Verdict        string `json:"verdict"`
+	ReviewEligible bool   `json:"review_eligible"`
+	ReleaseReady   bool   `json:"release_ready"`
+	Adopted        bool   `json:"adopted"`
+}
+
+type RawPerformance struct {
+	SchemaVersion      int       `json:"schema_version"`
+	RunID              string    `json:"run_id"`
+	SourceCommit       string    `json:"source_commit"`
+	SourceTree         string    `json:"source_tree"`
+	RecoveryOperations int       `json:"recovery_operations"`
+	RecoveryMS         []float64 `json:"recovery_ms"`
+	QueryMS            []float64 `json:"query_ms"`
+	MutationMS         []float64 `json:"mutation_ms"`
+	WarmupExcluded     int       `json:"warmup_excluded"`
+	Failures           int       `json:"failures"`
+	Method             string    `json:"method"`
+}
+
+func SummarizePerformance(raw RawPerformance) (Performance, error) {
+	result := Performance{
+		RecoveryOperations: raw.RecoveryOperations,
+		RecoveryRuns:       len(raw.RecoveryMS), RecoveryP95MS: percentile(raw.RecoveryMS, 95),
+		QueryObservations: len(raw.QueryMS), QueryP95MS: percentile(raw.QueryMS, 95),
+		MutationObservations: len(raw.MutationMS), MutationP95MS: percentile(raw.MutationMS, 95),
+	}
+	if raw.SchemaVersion != 1 || raw.RunID == "" || !isHex(raw.SourceCommit, 40) || !isHex(raw.SourceTree, 40) || raw.Method != "monotonic-nearest-rank-inclusive" || raw.Failures != 0 || raw.RecoveryOperations < 10000 || len(raw.RecoveryMS) < 30 || len(raw.QueryMS) < 10000 || len(raw.MutationMS) < 10000 {
+		return result, fmt.Errorf("performance observation census or identity is incomplete")
+	}
+	for _, observations := range [][]float64{raw.RecoveryMS, raw.QueryMS, raw.MutationMS} {
+		for _, observation := range observations {
+			if observation < 0 {
+				return result, fmt.Errorf("performance observation is negative")
+			}
+		}
+	}
+	if result.RecoveryP95MS > 2000 || result.QueryP95MS > 2 || result.MutationP95MS > 8 {
+		return result, fmt.Errorf("performance threshold exceeded")
+	}
+	return result, nil
+}
+
+func percentile(values []float64, percent int) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	ordered := append([]float64(nil), values...)
+	slices.Sort(ordered)
+	index := (percent*len(ordered) + 99) / 100
+	if index < 1 {
+		index = 1
+	}
+	return ordered[index-1]
+}
+
+func Publish(outputRoot string, manifest Manifest, census Census, inputs []ArtifactInput) (Publication, error) {
+	if !filepath.IsAbs(outputRoot) || manifest.RunID == "" || census.RunID != manifest.RunID || census.SourceCommit != manifest.Source.Commit || census.SourceTree != manifest.Source.Tree {
+		return Publication{}, fmt.Errorf("absolute output root and one RunID/source identity are required")
+	}
+	if len(inputs)+1 > maximumFiles {
+		return Publication{}, fmt.Errorf("artifact census exceeds %d", maximumFiles)
+	}
+	attempt, err := ReserveAttempt(outputRoot, manifest.RunID, manifest.Source)
+	if err != nil {
+		return Publication{}, err
+	}
+	return PublishReserved(attempt, manifest, census, inputs)
+}
+
+func PublishReserved(attempt *Attempt, manifest Manifest, census Census, inputs []ArtifactInput) (Publication, error) {
+	if attempt == nil || attempt.RunID != manifest.RunID || attempt.Source != manifest.Source {
+		return Publication{}, fmt.Errorf("reserved attempt differs from manifest")
+	}
+	target := attempt.Directory
+	events, terminal, err := attempt.TerminalBytes("pass", nil)
+	if err != nil {
+		return Publication{}, err
+	}
+	inputs = append(inputs,
+		ArtifactInput{Path: AttemptEventsName, Kind: "attempt-index", Data: events},
+		ArtifactInput{Path: "terminal.json", Kind: "attempt-terminal", Data: terminal},
+	)
+
+	manifest.Artifacts = nil
+	paths := make(map[string]struct{}, len(inputs)+1)
+	totalBytes := 0
+	for _, input := range inputs {
+		totalBytes += len(input.Data)
+		if !safeRelativePath(input.Path) || !validKind(input.Kind) || len(input.Data) > maximumFile || totalBytes > maximumTotal || input.Path == ManifestName || input.Path == CensusName {
+			return Publication{}, fmt.Errorf("unsafe or oversized artifact %q", input.Path)
+		}
+		if _, duplicate := paths[input.Path]; duplicate {
+			return Publication{}, fmt.Errorf("duplicate artifact path %q", input.Path)
+		}
+		paths[input.Path] = struct{}{}
+		if err := writeCreateOnce(filepath.Join(target, filepath.FromSlash(input.Path)), input.Data); err != nil {
+			return Publication{}, err
+		}
+		manifest.Artifacts = append(manifest.Artifacts, Artifact{Path: input.Path, Kind: input.Kind, SHA256: SHA256(input.Data)})
+	}
+	censusBytes, err := CanonicalJSON(census)
+	if err != nil {
+		return Publication{}, err
+	}
+	if err := writeCreateOnce(filepath.Join(target, CensusName), censusBytes); err != nil {
+		return Publication{}, err
+	}
+	manifest.Artifacts = append(manifest.Artifacts, Artifact{Path: CensusName, Kind: "census", SHA256: SHA256(censusBytes)})
+	slices.SortFunc(manifest.Artifacts, func(a, b Artifact) int { return strings.Compare(a.Path, b.Path) })
+	manifestBytes, err := CanonicalJSON(manifest)
+	if err != nil {
+		return Publication{}, err
+	}
+	if err := writeCreateOnce(filepath.Join(target, ManifestName), manifestBytes); err != nil {
+		return Publication{}, err
+	}
+	if _, _, err := Verify(context.Background(), target, filepath.Join(target, "contract-m2.json"), &manifest.Source); err != nil {
+		return Publication{}, fmt.Errorf("prepared pass evidence did not verify: %w", err)
+	}
+	archive, members, err := BuildDeterministicArchive(target)
+	if err != nil {
+		return Publication{}, err
+	}
+	receipt := ProducerArchiveReceipt{SchemaVersion: 1, RunID: manifest.RunID, SourceCommit: manifest.Source.Commit, SourceTree: manifest.Source.Tree, ManifestSHA256: SHA256(manifestBytes), ArchiveSHA256: SHA256(archive), Members: members}
+	receiptBytes, err := CanonicalJSON(receipt)
+	if err != nil {
+		return Publication{}, err
+	}
+	stagedArchive := filepath.Join(attempt.BundleDirectory, "producer.tar")
+	stagedReceipt := filepath.Join(attempt.BundleDirectory, "producer.sha256.json")
+	if err := writeCreateOnce(stagedArchive, archive); err != nil {
+		return Publication{}, err
+	}
+	if err := writeCreateOnce(stagedReceipt, receiptBytes); err != nil {
+		return Publication{}, err
+	}
+	if err := attempt.PublishPass(); err != nil {
+		return Publication{}, err
+	}
+	return Publication{Directory: attempt.FinalDirectory, ManifestPath: filepath.Join(attempt.FinalDirectory, ManifestName), ManifestSHA256: SHA256(manifestBytes), ProducerArchivePath: filepath.Join(attempt.FinalBundle, "producer.tar"), ProducerArchiveSHA256: SHA256(archive), ProducerReceiptPath: filepath.Join(attempt.FinalBundle, "producer.sha256.json")}, nil
+}
+
+func Verify(ctx context.Context, directory, schemaPath string, expectedSource *Source) (Verification, Manifest, error) {
+	_ = ctx
+	if !filepath.IsAbs(directory) || !filepath.IsAbs(schemaPath) {
+		return Verification{}, Manifest{}, fmt.Errorf("evidence and schema paths must be absolute")
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return Verification{}, Manifest{}, err
+	}
+	defer root.Close()
+	manifestBytes, err := readRegular(root, ManifestName, 8<<20)
+	if err != nil {
+		return Verification{}, Manifest{}, err
+	}
+	var manifest Manifest
+	if err := DecodeStrict(manifestBytes, &manifest); err != nil {
+		return Verification{}, manifest, fmt.Errorf("decode manifest: %w", err)
+	}
+	canonical, err := CanonicalJSON(manifest)
+	if err != nil || !bytes.Equal(canonical, manifestBytes) {
+		return Verification{}, manifest, fmt.Errorf("manifest is not canonical JSON")
+	}
+	if err := validateSchema(schemaPath, manifestBytes); err != nil {
+		return Verification{}, manifest, err
+	}
+	directoryRunID := filepath.Base(directory)
+	if directoryRunID == "evidence" {
+		directoryRunID = filepath.Base(filepath.Dir(directory))
+	}
+	if directoryRunID != manifest.RunID || manifest.SchemaVersion != 1 || manifest.ProgramID != ProgramID || manifest.MissionID != MissionID {
+		return Verification{}, manifest, fmt.Errorf("manifest identity is invalid")
+	}
+	if err := validateSource(manifest.Source); err != nil {
+		return Verification{}, manifest, err
+	}
+	if expectedSource != nil && *expectedSource != manifest.Source {
+		return Verification{}, manifest, fmt.Errorf("expected source differs from manifest")
+	}
+	if manifest.M1Admission != (M1Admission{AdmittedM1AdoptionSHA256, AdmittedM1EvidenceSHA256, AdmittedM1TupleSHA256, AdmittedSidecarSHA256}) {
+		return Verification{}, manifest, fmt.Errorf("M1 admission chain differs from frozen adoption and assertion extension")
+	}
+	if len(manifest.Artifacts) == 0 || len(manifest.Artifacts) > maximumFiles {
+		return Verification{}, manifest, fmt.Errorf("artifact census is empty or over budget")
+	}
+	paths, kinds := map[string]Artifact{}, map[string]int{}
+	var totalBytes int64
+	previous := ""
+	for _, artifact := range manifest.Artifacts {
+		if !safeRelativePath(artifact.Path) || !validKind(artifact.Kind) || !validDigest(artifact.SHA256) || artifact.Path <= previous {
+			return Verification{}, manifest, fmt.Errorf("artifact census is unsafe, unordered, or duplicated at %q", artifact.Path)
+		}
+		previous = artifact.Path
+		contents, readErr := readRegular(root, filepath.FromSlash(artifact.Path), maximumFile)
+		totalBytes += int64(len(contents))
+		if totalBytes > maximumTotal {
+			return Verification{}, manifest, fmt.Errorf("aggregate evidence exceeds %d bytes", maximumTotal)
+		}
+		if readErr != nil || SHA256(contents) != artifact.SHA256 {
+			return Verification{}, manifest, fmt.Errorf("artifact %q is absent or changed: %w", artifact.Path, readErr)
+		}
+		paths[artifact.Path] = artifact
+		kinds[artifact.Kind]++
+	}
+	if kinds["census"] != 1 || kinds["performance"] != 1 || kinds["source"] != 1 || kinds["m1-admission"] != 1 || kinds["sbom"] != 1 || kinds["sbom-raw"] != 1 || kinds["binary"] < 2 || kinds["campaign"] < 1 || kinds["acceptance-matrix"] != 1 || kinds["successor-contract"] != 1 || kinds["attempt-index"] != 1 || kinds["attempt-terminal"] != 1 || kinds["producer-identity"] != 1 || kinds["sidecar"] != 1 || kinds["install"] != 1 || kinds["install-smoke"] != 1 || kinds["review-input"] != 1 || kinds["race"] != 1 || kinds["race-raw"] != 1 || kinds["absence-evidence"] < 1 || kinds["contract"] < 2 {
+		return Verification{}, manifest, fmt.Errorf("mandatory artifact kind census is incomplete")
+	}
+	if err := verifyClosedDirectory(directory, paths); err != nil {
+		return Verification{}, manifest, err
+	}
+	sourceArtifact, err := oneArtifactByKind(paths, "source")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	sourceBytes, err := readRegular(root, filepath.FromSlash(sourceArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	var recordedSource Source
+	if err := DecodeStrict(sourceBytes, &recordedSource); err != nil || recordedSource != manifest.Source {
+		return Verification{}, manifest, fmt.Errorf("source artifact differs from manifest")
+	}
+	producerArtifact, err := oneArtifactByKind(paths, "producer-identity")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	producerBytes, err := readRegular(root, filepath.FromSlash(producerArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	var producer ProducerIdentity
+	if err := DecodeStrict(producerBytes, &producer); err != nil || producer.SchemaVersion != 1 || producer.ActorID == "" || producer.ProcessID == "" || producer.ProfileID == "" || producer.ProfileRevision == "" {
+		return Verification{}, manifest, fmt.Errorf("producer identity is absent or incomplete")
+	}
+	terminalArtifact, err := oneArtifactByKind(paths, "attempt-terminal")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	terminalBytes, err := readRegular(root, filepath.FromSlash(terminalArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	var terminal AttemptTerminal
+	if err := DecodeStrict(terminalBytes, &terminal); err != nil || terminal.Verdict != "pass" || terminal.RunID != manifest.RunID || terminal.SourceCommit != manifest.Source.Commit || terminal.SourceTree != manifest.Source.Tree {
+		return Verification{}, manifest, fmt.Errorf("attempt terminal differs from technical pass")
+	}
+	censusBytes, err := readRegular(root, CensusName, maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	var census Census
+	if err := DecodeStrict(censusBytes, &census); err != nil {
+		return Verification{}, manifest, fmt.Errorf("decode census: %w", err)
+	}
+	if census.SchemaVersion != 1 || census.RunID != manifest.RunID || census.SourceCommit != manifest.Source.Commit || census.SourceTree != manifest.Source.Tree {
+		return Verification{}, manifest, fmt.Errorf("census identity differs from manifest")
+	}
+	definitions := FrozenDefinitions()
+	if len(census.Entries) != len(definitions) {
+		return Verification{}, manifest, fmt.Errorf("campaign census length differs from frozen definitions")
+	}
+	for _, entry := range census.Entries {
+		artifact, ok := paths[entry.ArtifactPath]
+		if !ok || artifact.SHA256 != entry.ArtifactSHA256 {
+			return Verification{}, manifest, fmt.Errorf("census entry %q does not bind one exact artifact", entry.ID)
+		}
+	}
+	for index, definition := range definitions {
+		entry := census.Entries[index]
+		receiptBytes, err := readRegular(root, filepath.FromSlash(entry.ArtifactPath), maximumFile)
+		if err != nil {
+			return Verification{}, manifest, err
+		}
+		var claimed GoTestReceipt
+		if err := DecodeStrict(receiptBytes, &claimed); err != nil {
+			return Verification{}, manifest, err
+		}
+		rawPath := "campaigns/" + safeID(definition.ID) + ".go-test.jsonl"
+		rawArtifact, ok := paths[rawPath]
+		if !ok || rawArtifact.Kind != "campaign-raw" {
+			return Verification{}, manifest, fmt.Errorf("campaign %s raw transcript is absent", definition.ID)
+		}
+		raw, err := readRegular(root, filepath.FromSlash(rawPath), maximumFile)
+		if err != nil {
+			return Verification{}, manifest, err
+		}
+		recomputed, err := VerifyGoTestReceipt(raw, manifest.RunID, manifest.Source, definition, definition.ExpectedRepetitions/definition.TrialsPerRun, claimed.ProcessExit)
+		if err != nil {
+			return Verification{}, manifest, fmt.Errorf("campaign %s receipt did not recompute: %w", definition.ID, err)
+		}
+		recomputedBytes, _ := CanonicalJSON(recomputed)
+		if !bytes.Equal(recomputedBytes, receiptBytes) {
+			return Verification{}, manifest, fmt.Errorf("campaign %s receipt is forged or substituted", definition.ID)
+		}
+	}
+	structuredArtifact, err := oneArtifactByKind(paths, "campaign-structure")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	structuredBytes, err := readRegular(root, filepath.FromSlash(structuredArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	wp14RawPath := "campaigns/" + safeID("fault/adversarial-tracker") + ".go-test.jsonl"
+	wp14Raw, err := readRegular(root, filepath.FromSlash(wp14RawPath), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	contractSourceArtifact, err := oneArtifactByKind(paths, "campaign-contract-source")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	contractSource, err := readRegular(root, filepath.FromSlash(contractSourceArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	structured, err := VerifyWP14CampaignReceiptBytes(contractSource, wp14Raw)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	wantStructured, _ := CanonicalJSON(structured)
+	if !bytes.Equal(wantStructured, structuredBytes) {
+		return Verification{}, manifest, fmt.Errorf("WP14 structured family/cut receipt is forged or substituted")
+	}
+	raceArtifact, err := oneArtifactByKind(paths, "race")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	raceRawArtifact, err := oneArtifactByKind(paths, "race-raw")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	raceBytes, err := readRegular(root, filepath.FromSlash(raceArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	raceRaw, err := readRegular(root, filepath.FromSlash(raceRawArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	var claimedRace CommandReceipt
+	if err := DecodeStrict(raceBytes, &claimedRace); err != nil {
+		return Verification{}, manifest, fmt.Errorf("decode race receipt: %w", err)
+	}
+	recomputedRace, err := VerifyRaceReceipt(raceRaw, claimedRace.ExitCode)
+	if err != nil {
+		return Verification{}, manifest, fmt.Errorf("race receipt did not recompute: %w", err)
+	}
+	recomputedRaceBytes, _ := CanonicalJSON(recomputedRace)
+	if !bytes.Equal(recomputedRaceBytes, raceBytes) {
+		return Verification{}, manifest, fmt.Errorf("race receipt is forged or substituted")
+	}
+	sbomArtifact, err := oneArtifactByKind(paths, "sbom")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	sbomRawArtifact, err := oneArtifactByKind(paths, "sbom-raw")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	sbomBytes, err := readRegular(root, filepath.FromSlash(sbomArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	sbomRaw, err := readRegular(root, filepath.FromSlash(sbomRawArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	if err := VerifySBOMEvidence(sbomRaw, sbomBytes); err != nil {
+		return Verification{}, manifest, err
+	}
+	if err := verifyNestedAbsence(root, paths, manifest.Source); err != nil {
+		return Verification{}, manifest, err
+	}
+	qualifier, ok := paths["bin/spk-m2-qualification"]
+	if !ok || qualifier.Kind != "binary" {
+		return Verification{}, manifest, fmt.Errorf("qualification binary is absent")
+	}
+	product, ok := paths["bin/spec-kitty"]
+	if !ok || product.Kind != "binary" {
+		return Verification{}, manifest, fmt.Errorf("product binary is absent")
+	}
+	installed, ok := paths["install/spec-kitty"]
+	if !ok || installed.Kind != "install" {
+		return Verification{}, manifest, fmt.Errorf("fresh-install product is absent")
+	}
+	qualifierBytes, err := readRegular(root, filepath.FromSlash(qualifier.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	productBytes, err := readRegular(root, filepath.FromSlash(product.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	installedBytes, err := readRegular(root, filepath.FromSlash(installed.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	if !bytes.Equal(productBytes, installedBytes) {
+		return Verification{}, manifest, fmt.Errorf("fresh-install product differs from qualified product bytes")
+	}
+	if err := VerifyBuiltBinaryData(qualifierBytes, manifest.Source); err != nil {
+		return Verification{}, manifest, fmt.Errorf("qualification binary: %w", err)
+	}
+	if err := VerifyBuiltBinaryData(productBytes, manifest.Source); err != nil {
+		return Verification{}, manifest, fmt.Errorf("product binary: %w", err)
+	}
+	helpArtifact, err := oneArtifactByKind(paths, "install-smoke")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	helpRawArtifact, err := oneArtifactByKind(paths, "install-smoke-raw")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	helpReceiptBytes, err := readRegular(root, filepath.FromSlash(helpArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	helpRaw, err := readRegular(root, filepath.FromSlash(helpRawArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	var helpReceipt struct {
+		SchemaVersion     int      `json:"schema_version"`
+		InstalledPathKind string   `json:"installed_path_kind"`
+		Argv              []string `json:"argv"`
+		ExitCode          int      `json:"exit_code"`
+		StdoutSHA256      string   `json:"stdout_sha256"`
+		Verdict           string   `json:"verdict"`
+	}
+	if err := DecodeStrict(helpReceiptBytes, &helpReceipt); err != nil || helpReceipt.SchemaVersion != 1 || helpReceipt.InstalledPathKind != "fresh-private-root" || !slices.Equal(helpReceipt.Argv, []string{"--help"}) || helpReceipt.ExitCode != 0 || helpReceipt.StdoutSHA256 != SHA256(helpRaw) || helpReceipt.Verdict != "pass" {
+		return Verification{}, manifest, fmt.Errorf("fresh-install help receipt is forged or incomplete")
+	}
+	summary, censusErr := Summarize(census.Entries, manifest.Census.SQLiteEdges)
+	performanceArtifact, err := oneArtifactByKind(paths, "performance")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	performanceBytes, err := readRegular(root, filepath.FromSlash(performanceArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	var raw RawPerformance
+	if err := DecodeStrict(performanceBytes, &raw); err != nil {
+		return Verification{}, manifest, err
+	}
+	if raw.RunID != manifest.RunID || raw.SourceCommit != manifest.Source.Commit || raw.SourceTree != manifest.Source.Tree {
+		return Verification{}, manifest, fmt.Errorf("performance evidence identity differs from manifest")
+	}
+	performance, performanceErr := SummarizePerformance(raw)
+	semantic := "pass"
+	if censusErr != nil || performanceErr != nil || summary != manifest.Census || performance != manifest.Performance {
+		semantic = "fail"
+	}
+	if manifest.Verdict != semantic {
+		return Verification{}, manifest, fmt.Errorf("claimed verdict %q differs from recomputed %q", manifest.Verdict, semantic)
+	}
+	acceptanceArtifact, err := oneArtifactByKind(paths, "acceptance-matrix")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	acceptanceBytes, err := readRegular(root, filepath.FromSlash(acceptanceArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	if err := VerifyAcceptanceMatrix(acceptanceBytes, manifest, census, paths); err != nil {
+		return Verification{}, manifest, err
+	}
+	verification := Verification{RunID: manifest.RunID, SourceCommit: manifest.Source.Commit, SourceTree: manifest.Source.Tree, ManifestSHA256: SHA256(manifestBytes), Verdict: semantic, ReviewEligible: semantic == "pass", ReleaseReady: false, Adopted: false}
+	return verification, manifest, nil
+}
+
+func verifyClosedDirectory(directory string, artifacts map[string]Artifact) error {
+	want := make(map[string]struct{}, len(artifacts)+1)
+	want[ManifestName] = struct{}{}
+	for path := range artifacts {
+		want[filepath.FromSlash(path)] = struct{}{}
+	}
+	seen := map[string]struct{}{}
+	err := filepath.WalkDir(directory, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == directory {
+			return nil
+		}
+		relative, err := filepath.Rel(directory, path)
+		if err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("evidence contains symlink %q", relative)
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if _, ok := want[relative]; !ok {
+			return fmt.Errorf("unmanifested evidence member %q", relative)
+		}
+		seen[relative] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(seen) != len(want) {
+		return fmt.Errorf("closed evidence census saw %d files, want %d", len(seen), len(want))
+	}
+	return nil
+}
+
+func ObserveCleanSource(repositoryRoot string) (Source, error) {
+	commit, err := git(repositoryRoot, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return Source{}, err
+	}
+	tree, err := git(repositoryRoot, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return Source{}, err
+	}
+	status, err := git(repositoryRoot, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil || status != "" {
+		return Source{}, fmt.Errorf("source tree is dirty or contains untracked bytes")
+	}
+	goMod, err := os.ReadFile(filepath.Join(repositoryRoot, "go.mod"))
+	if err != nil {
+		return Source{}, err
+	}
+	goSum, err := os.ReadFile(filepath.Join(repositoryRoot, "go.sum"))
+	if err != nil {
+		return Source{}, err
+	}
+	return Source{Commit: commit, Tree: tree, GoVersion: runtime.Version(), GoModSHA256: SHA256(goMod), GoSumSHA256: SHA256(goSum)}, nil
+}
+
+func git(repositoryRoot string, arguments ...string) (string, error) {
+	command := exec.Command("git", append([]string{"-C", repositoryRoot}, arguments...)...)
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(arguments, " "), err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func validateSource(source Source) error {
+	if !isHex(source.Commit, 40) || !isHex(source.Tree, 40) || source.GoVersion == "" || !validDigest(source.GoModSHA256) || !validDigest(source.GoSumSHA256) {
+		return fmt.Errorf("source identity is incomplete")
+	}
+	return nil
+}
+
+func validateSchema(path string, document []byte) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var schema any
+	if err := jsonUnmarshal(contents, &schema); err != nil {
+		return err
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource("m2.json", schema); err != nil {
+		return err
+	}
+	compiled, err := compiler.Compile("m2.json")
+	if err != nil {
+		return err
+	}
+	var value any
+	if err := jsonUnmarshal(document, &value); err != nil {
+		return err
+	}
+	if err := compiled.Validate(value); err != nil {
+		return fmt.Errorf("manifest violates M2 schema: %w", err)
+	}
+	return nil
+}
+
+func jsonUnmarshal(data []byte, destination any) error {
+	return DecodeStrict(data, destination)
+}
+
+func oneArtifactByKind(paths map[string]Artifact, kind string) (Artifact, error) {
+	var result Artifact
+	count := 0
+	for _, artifact := range paths {
+		if artifact.Kind == kind {
+			result, count = artifact, count+1
+		}
+	}
+	if count != 1 {
+		return Artifact{}, fmt.Errorf("artifact kind %q count=%d want=1", kind, count)
+	}
+	return result, nil
+}
+
+func safeRelativePath(path string) bool {
+	if path == "" || filepath.IsAbs(path) || filepath.Clean(path) != filepath.FromSlash(path) || strings.Contains(path, "\\") {
+		return false
+	}
+	parts := strings.Split(path, "/")
+	return !slices.Contains(parts, "") && !slices.Contains(parts, ".") && !slices.Contains(parts, "..")
+}
+
+func readRegular(root *os.Root, path string, maximum int64) ([]byte, error) {
+	file, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maximum {
+		return nil, fmt.Errorf("evidence member is not a bounded regular file")
+	}
+	return io.ReadAll(io.LimitReader(file, maximum+1))
+}
+
+func writeCreateOnce(path string, data []byte) error {
+	if existing, err := os.ReadFile(path); err == nil {
+		if bytes.Equal(existing, data) {
+			return nil
+		}
+		return fmt.Errorf("immutable evidence member already exists: %s", filepath.Base(path))
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func isHex(value string, size int) bool {
+	if len(value) != size {
+		return false
+	}
+	for _, character := range value {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validKind(kind string) bool {
+	if len(kind) == 0 || len(kind) > 64 || kind[0] < 'a' || kind[0] > 'z' {
+		return false
+	}
+	for _, character := range kind[1:] {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' && character != '.' && character != '-' {
+			return false
+		}
+	}
+	return true
+}

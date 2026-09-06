@@ -5,10 +5,10 @@
 
 Spec Kitty Redesign preserves the original product's mission discipline,
 isolated parallel work, independent review, and controlled integration without
-copying the Python package structure. The repository has a substantial,
-qualified Phase 1–3 implementation today. It also has a ratified production
-architecture whose GapDB host, API 2.0, neutral acceptance engine, and optional
-MCP adapter are deliberately described as target work rather than shipped code.
+copying the Python package structure. The repository contains the Go-native
+GapDB authority host and an executable M2 crown qualifier. Public API, neutral
+acceptance, real-agent composition, and optional MCP delivery remain explicit
+successor missions and are not inferred from an M2 result.
 
 ## Status at a glance
 
@@ -17,8 +17,8 @@ MCP adapter are deliberately described as target work rather than shipped code.
 | Authority and concurrency | Phase 1: leases, lease-scoped workspaces, quarantine, stale-authority refusal, ActorID-independent review, and serialized Git integration at the exact evidence boundary | Retain the laws and requalify them on the GapDB production host |
 | Work substrate | Phase 2: provider-neutral ports and the exact Beads 1.2.2 JSON adapter tuple | Beads remains the default mutable work/discussion substrate, never mission or execution authority |
 | Mission method | Phase 3: specification, plan, provider-neutral decomposition, immutable WorkRevision generations, drift reconciliation, typed `next`, and derived task projection | Compose the complete execution, review, acceptance, integration, progress, and recovery path |
-| Control state | SQLite is the observed and qualified Phase 1–3 implementation | GapDB is the only approved production control-state substrate; M2 removes SQLite completely, with no fallback or dual write |
-| Application surface | `cmd/spk-phase1-helper` is a proving and diagnostic helper | A production `spec-kitty` host exposes Orchestrator API 2.0 and the normal CLI |
+| Control state | GapDB is the sole compiled production authority; M2 has no SQLite package, module, fallback, importer, selector, or test driver | Release readiness requires the exact M2 crown evidence and independent review |
+| Application surface | `cmd/spec-kitty` is the native authority command surface; `cmd/spk-m2-qualification` is release tooling and grants no authority | Orchestrator API 2.0 and the complete normal CLI remain M5 |
 | Acceptance | Repository-specific Go campaigns and candidate-bound evidence | Stack-neutral claims, approved provider bindings, typed evidence envelopes, and a policy gate |
 | MCP | Not shipped and not required | Optional, separately packaged MCP `2026-07-28` adapter with Tasks as a projection of native operations |
 | Host boundary | The delivered boundary is one machine and one filesystem authority | Same first-release boundary; remote callers use the application API |
@@ -136,7 +136,7 @@ flowchart TB
     subgraph Kernel[Delivered provider-neutral authority capabilities]
         Mission[mission and workgraph]
         Execution[execution workspace handoff review integration]
-        Store[current SQLite control adapter]
+		Store[GapDB authority host]
     end
 
     subgraph Providers[Tracker adapters and conformance]
@@ -218,10 +218,10 @@ normal CLI and API remain complete when MCP is absent.
 
 ## Build and run the current repository
 
-The module declares Go 1.26. The current checkout contains one buildable command,
-`cmd/spk-phase1-helper`. You also need Git. After module download, portable
-development and Beads contract proof require neither a Beads binary nor a
-hosted service.
+The module declares Go 1.26. The current checkout builds the native
+`spec-kitty` authority command, the M2 qualifier, and historical proving
+helpers. You also need Git. Portable development and Beads contract proof
+require neither a Beads binary nor a hosted service.
 
 ```bash
 go mod download
@@ -229,21 +229,70 @@ make preflight
 make beads-contract
 ```
 
-Build all packages and the current helper into an explicit directory:
+Build the production and qualification commands into an explicit directory:
 
 ```bash
 make build BUILD_DIR="$(pwd)/bin"
+CGO_ENABLED=0 go build -trimpath -o bin/spec-kitty ./cmd/spec-kitty
+CGO_ENABLED=0 go build -trimpath -o bin/spk-m2-qualification ./cmd/spk-m2-qualification
 ```
 
-Or install only the current helper into the selected Go binary directory:
+Or install the native commands into the selected Go binary directory:
 
 ```bash
-go install ./cmd/spk-phase1-helper
+go install ./cmd/spec-kitty ./cmd/spk-m2-qualification
 ```
 
-The current helper is not named `spec-kitty`. Production `spec-kitty`,
-`gapdbd` packaging, API 2.0 serving, and `spec-kitty-mcp` are future M1–M7
-outcomes and therefore have no present-tense install commands here.
+The producer qualifier emits an immutable technical pass with
+`review_eligible=true` and `release_ready=false`. A different `ActorID` must
+review that exact producer archive; only the outer release finalizer may emit
+`release_ready=true`. Neither stage creates human adoption. API 2.0 serving,
+stack-neutral acceptance, Team Kitty, real-agent composition, and
+`spec-kitty-mcp` remain later program outcomes.
+
+### M2 qualification
+
+The pull-request tier is bounded and does not substitute for the release crown:
+
+```bash
+GOTOOLCHAIN=go1.26.7 make m2-short
+```
+
+The full run requires the exact admitted assertion-extension sidecar at an
+absolute path. It executes the real two-item mission, closed 15-family census,
+fault/concurrency/restart campaigns, restore-deadline and absence mutants,
+10,000 query and durable-mutation observations, 30 recoveries, deterministic
+CycloneDX generation, and independent manifest verification.
+
+```bash
+GOTOOLCHAIN=go1.26.7 make m2-qualification \
+  M2_GAPDBD=/absolute/path/to/gapdbd \
+  M2_RUN_ID=m2-unique-run \
+  M2_EVIDENCE_ROOT=/absolute/private/evidence \
+  M2_ACTOR_ID=implementing-agent \
+  M2_PROCESS_ID=exact-process-id \
+  M2_PROFILE_REVISION=exact-profile-revision
+
+GOTOOLCHAIN=go1.26.7 make m2-verify-evidence \
+  M2_EVIDENCE=/absolute/private/evidence/m2-unique-run \
+  M2_EXPECTED_COMMIT=<trusted-commit> \
+  M2_EXPECTED_TREE=<trusted-tree> \
+  M2_EXPECTED_MANIFEST_SHA256=<trusted-manifest-digest> \
+  M2_EXPECTED_ARCHIVE_SHA256=<trusted-producer-archive-digest>
+```
+
+Evidence directories are immutable and source-bound. Failed, incomplete, and
+non-admissible attempts are retained under their original RunIDs. A passing
+machine run makes one source tree eligible for independent review; it does not
+approve, merge, tag, release, or adopt that tree.
+
+After review, `spk-m2-qualification finalize-review` consumes the untouched
+producer bundle and a bounded structured review bundle. The reviewer records
+their distinct actor/process/profile identity, machine command outputs, and
+structured findings. `verify-release` recursively verifies the resulting
+outer archive using externally supplied source, manifest, producer-archive,
+and release-archive digests. A later documentation commit may project those
+identities, but it is not retroactively the source tree that was qualified.
 
 ## Qualified Beads operating contract
 
@@ -396,26 +445,26 @@ tree is retained in the content-addressed
 [`m1-gapdb-evidence-v1`](https://github.com/spec-kitty/spec-kitty-redesign/releases/tag/m1-gapdb-evidence-v1)
 release.
 
-That decision admits M2 to replace every authority capability and prove SQLite
-absent from source, module graph, SBOM, binaries, install, configuration,
-fallback, and migration paths. It does not claim that replacement has already
-shipped. There is no dual-write interval.
+That decision admitted M2. The repository now contains the GapDB authority
+capabilities and closed qualifier for source, module graph, SBOM, binaries,
+install, configuration, fallback, and migration absence. Source presence alone
+does not make an exact tree release-ready. There is no dual-write interval.
 
 This is a gated implementation sequence, not uncertainty about the target.
-Until M2 passes, SQLite remains only the current Phase 1–3 implementation and
-historical evidence boundary.
+The former store remains only an immutable Phase 1–3 evidence boundary; it is
+not compiled, selectable, importable, or available as production fallback.
 
 ## What happens next
 
-M1 is complete and adopted. The next mission is M2, **GapDB-Only Production
-Authority**. Its falsification target is deliberately stronger than “the new
-adapter works”: every authority capability must preserve its behavioral and
-refusal contract on the M1 event/CAS substrate while SQLite disappears from
-every production surface.
+M1 is complete and adopted. M2, **GapDB-Only Production Authority**, is in its
+qualification/review boundary. Its falsification target remains deliberately
+stronger than “the new adapter works”: every authority capability preserves its
+behavioral and refusal contract on the M1 event/CAS substrate while the retired
+store disappears from every production surface.
 
-If M2 cannot prove complete authority behavior and structural SQLite absence,
-the unshipped M2 branch is rejected as a unit. It may not introduce dual write,
-read fallback, automatic legacy import, or a runtime backend-selection escape
+If the full crown or independent review fails, retain that immutable attempt and
+repair a new source candidate. Do not admit M3/M4, introduce dual write, add
+read fallback, import legacy state, or create a runtime backend-selection escape
 hatch. The complete dependency graph, exit evidence, and rollback rules are in
 the production runtime program.
 
@@ -435,6 +484,8 @@ the verdict automatically.
 - [Mini review resolution](docs/MINI_REVIEW_RESOLUTION.md)
 - [Concurrency scenario catalog](docs/CONCURRENCY_SCENARIOS.md)
 - [Technical project plan](docs/TECHNICAL_PROJECT_PLAN.md)
+- [M2 acceptance mapping](docs/programs/evidence/m2-acceptance-matrix.json)
+  and [independent review input](docs/programs/evidence/m2-independent-review-input.md)
 
 ## License
 
