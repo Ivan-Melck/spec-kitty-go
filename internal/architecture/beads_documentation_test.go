@@ -197,11 +197,13 @@ func TestBeadsDocumentationLinksMermaidAndCommands(t *testing.T) {
 	if err := phase2ValidateQualificationCommand(readme, makefile, storageKeys); err != nil {
 		t.Error(err)
 	}
-	binary, help := phase2SmokeHelperAndInstaller(t, root)
-	if err := phase2ValidateHelperCommand(readme, help); err != nil {
-		t.Error(err)
+	_, help := phase2SmokeHelperAndInstaller(t, root)
+	if !strings.Contains(help, "native local mission authority") || !strings.Contains(help, "operation resume") {
+		t.Errorf("compatibility helper does not delegate to the native command surface: %q", help)
 	}
-	phase2SmokeDocumentedHelper(t, root, binary, readme)
+	if strings.Contains(help, "inspect-beads") {
+		t.Errorf("compatibility helper retained the retired inspect-beads surface: %q", help)
+	}
 	if err := phase2ValidateInstallerCommand(readme); err != nil {
 		t.Error(err)
 	}
@@ -849,9 +851,9 @@ func phase2SmokeHelperAndInstaller(t *testing.T, root string) (string, string) {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "spk-phase1-helper")
 	phase2RunCommand(t, root, 0, "go", "build", "-trimpath", "-o", binary, "./cmd/spk-phase1-helper")
-	help := phase2RunCommand(t, root, 2, binary, "tracker", "inspect-beads", "--help")
-	if !strings.Contains(help, "Usage of tracker inspect-beads") {
-		t.Fatalf("inspect-beads help seam returned unexpected output: %q", help)
+	help := phase2RunCommand(t, root, 0, binary, "--help")
+	if !strings.Contains(help, "spec-kitty") {
+		t.Fatalf("native helper help seam returned unexpected output: %q", help)
 	}
 	installer := filepath.Join(root, "scripts", "install-qualified-beads.sh")
 	relative := phase2RunCommand(t, root, 2, "sh", installer, "--dest", "relative")
@@ -864,48 +866,6 @@ func phase2SmokeHelperAndInstaller(t *testing.T, root string) (string, string) {
 		t.Fatalf("installer --offline parser seam returned unexpected output: %q", offline)
 	}
 	return binary, help
-}
-
-func phase2SmokeDocumentedHelper(t *testing.T, root, binary, document string) {
-	t.Helper()
-	block, err := phase2FencedBlockContaining(document, "tracker inspect-beads")
-	if err != nil {
-		t.Fatal(err)
-	}
-	options := phase2DocumentedOptions(block)
-	fixture := t.TempDir()
-	marker := filepath.Join(fixture, "provider-started")
-	executable := filepath.Join(fixture, "bd")
-	script := "#!/bin/sh\nprintf started > " + strconv.Quote(marker) + "\nexit 97\n"
-	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	payload, err := os.ReadFile(executable)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(payload)
-	workspace := filepath.Join(fixture, "workspace")
-	if err := os.Mkdir(workspace, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	missingDatabase := filepath.Join(workspace, "missing-database")
-	output := phase2RunCommand(t, root, 1, binary,
-		"tracker", "inspect-beads",
-		"--project", options["--project"],
-		"--executable", executable,
-		"--workspace", workspace,
-		"--database-identity", missingDatabase,
-		"--protocol-schema", options["--protocol-schema"],
-		"--mode", options["--mode"],
-		"--read-only="+options["--read-only"],
-		"--expected-digest", hex.EncodeToString(digest[:]))
-	if !strings.Contains(output, `"ok":false`) || !strings.Contains(output, `"kind":"invalid_request"`) || !strings.Contains(output, "provider database path cannot be resolved") {
-		t.Fatalf("documented inspect-beads invocation did not reach the expected pre-provider validation boundary: %q", output)
-	}
-	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("documented helper smoke reached provider state: %v", err)
-	}
 }
 
 func phase2ExpectedInspectHelp() string {

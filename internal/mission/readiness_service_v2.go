@@ -48,6 +48,13 @@ type ReadinessAuthorityPortV2 interface {
 	PublishReadinessAuthority(context.Context, journalv2.SealedCommitPlanV2) (MissionPublicationV2, error)
 }
 
+// ReadinessAuthorityObserverV2 is the query-only authority view used by
+// observational compositions. It deliberately excludes operation resolution,
+// publication, and mission-fact mutation capabilities.
+type ReadinessAuthorityObserverV2 interface {
+	ObserveReadinessAuthority(context.Context, journalv2.ProjectID, journalv2.MissionID) (ReadinessAuthorityObservationV2, error)
+}
+
 type ReadinessAuthorityCommandV2 struct {
 	SchemaVersion             uint32
 	OperationID               journalv2.OperationID

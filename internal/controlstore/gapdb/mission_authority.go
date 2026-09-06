@@ -13,6 +13,21 @@ type missionAuthorityJournalV2 interface {
 	ReconcileCommitV2(context.Context, journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error)
 }
 
+type readinessObservationAdapterV2 struct{ reader restore.ReaderV2 }
+
+var _ mission.ReadinessAuthorityObserverV2 = (*readinessObservationAdapterV2)(nil)
+
+func NewReadinessObservationPortV2(reader restore.ReaderV2) (mission.ReadinessAuthorityObserverV2, error) {
+	if reader == nil {
+		return nil, adapterError("readiness_observer_new", "", OutcomeInvalid, RecoveryFixRequest, "reader is required", nil)
+	}
+	return &readinessObservationAdapterV2{reader: reader}, nil
+}
+
+func (a *readinessObservationAdapterV2) ObserveReadinessAuthority(ctx context.Context, projectID journalv2.ProjectID, missionID journalv2.MissionID) (mission.ReadinessAuthorityObservationV2, error) {
+	return observeReadinessAuthorityV2(ctx, a.reader, projectID, missionID)
+}
+
 // missionAuthorityAdapterV2 implements only the mission-owned semantic port.
 // Provider keys, revisions, and ambiguity mechanics remain inside this
 // adapter; mission policy remains in internal/mission.
@@ -111,7 +126,11 @@ func (a *missionAuthorityAdapterV2) ObserveMission(ctx context.Context, projectI
 }
 
 func (a *missionAuthorityAdapterV2) ObserveReadinessAuthority(ctx context.Context, projectID journalv2.ProjectID, missionID journalv2.MissionID) (mission.ReadinessAuthorityObservationV2, error) {
-	attempt, err := a.store.CaptureRevisionV2(ctx)
+	return observeReadinessAuthorityV2(ctx, a.store, projectID, missionID)
+}
+
+func observeReadinessAuthorityV2(ctx context.Context, reader restore.ReaderV2, projectID journalv2.ProjectID, missionID journalv2.MissionID) (mission.ReadinessAuthorityObservationV2, error) {
+	attempt, err := reader.CaptureRevisionV2(ctx)
 	if err != nil {
 		return mission.ReadinessAuthorityObservationV2{}, err
 	}
@@ -121,7 +140,7 @@ func (a *missionAuthorityAdapterV2) ObserveReadinessAuthority(ctx context.Contex
 	}
 	address, _ := journalv2.NewAggregateHeadAddressV2(coordinate)
 	request, _ := journalv2.NewReadRequestV2(address, attempt)
-	record, err := a.store.ReadV2(ctx, request)
+	record, err := reader.ReadV2(ctx, request)
 	if err != nil {
 		return mission.ReadinessAuthorityObservationV2{}, err
 	}
@@ -133,7 +152,7 @@ func (a *missionAuthorityAdapterV2) ObserveReadinessAuthority(ctx context.Contex
 	if err != nil || state.ProjectID() != projectID || state.MissionID() != missionID || state.Version() != head.LogicalVersion() || state.Digest() != head.CanonicalStateDigest() {
 		return mission.ReadinessAuthorityObservationV2{}, adapterError("readiness_observe", string(missionID), OutcomeMalformedResponse, RecoveryOperator, "readiness authority summary is invalid", err)
 	}
-	if err := a.store.VerifyRevisionV2(ctx, attempt); err != nil {
+	if err := reader.VerifyRevisionV2(ctx, attempt); err != nil {
 		return mission.ReadinessAuthorityObservationV2{}, err
 	}
 	observation, err := mission.NewReadinessAuthorityObservationV2(state, attempt, record.RecordRevision(), head.LastEventID())

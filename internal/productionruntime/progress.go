@@ -179,12 +179,16 @@ type ActionCensusSource interface {
 // the complete membership, and only then invokes the pure evaluator. Callers
 // cannot inject a precomputed census or an editable projection as authority.
 type authorityActionCensusSource struct {
-	readiness  mission.ReadinessAuthorityPortV2
+	readiness  readinessAuthorityObserver
 	observer   *mission.CapabilityAuthorityObserverV2
 	definition mission.CapabilityDefinition
 }
 
-func newAuthorityActionCensusSource(readiness mission.ReadinessAuthorityPortV2, source mission.CapabilityReadinessSourceV2) (*authorityActionCensusSource, error) {
+type readinessAuthorityObserver interface {
+	ObserveReadinessAuthority(context.Context, journalv2.ProjectID, journalv2.MissionID) (mission.ReadinessAuthorityObservationV2, error)
+}
+
+func newAuthorityActionCensusSource(readiness readinessAuthorityObserver, source mission.CapabilityReadinessSourceV2) (*authorityActionCensusSource, error) {
 	if readiness == nil || source == nil {
 		return nil, &ProgressError{Kind: ProgressIncomplete, Field: "readiness_authority"}
 	}

@@ -64,6 +64,10 @@ type ownerLifecycle interface {
 	Close(context.Context) error
 }
 
+type operationOriginReader interface {
+	OperationOrigin(context.Context, journalv2.OperationID) (journalv2.RuntimeEpochID, bool, error)
+}
+
 // CommandContext is the copy-only authority capsule supplied after the common
 // host barrier. Capability services must still evaluate their own predicates.
 type CommandContext struct {
@@ -179,6 +183,18 @@ func (h *Host) RuntimeEpochID() journalv2.RuntimeEpochID {
 }
 
 func (h *Host) DatabaseID() journalv2.DatabaseID { return h.databaseID }
+
+// OperationOrigin returns the immutable epoch attribution already bound to an
+// operation. An absent operation is deliberately distinct from a failed read:
+// command adapters use the current epoch only for the first durable attempt,
+// and preserve the original attribution on every replay after restart.
+func (h *Host) OperationOrigin(ctx context.Context, operationID journalv2.OperationID) (journalv2.RuntimeEpochID, bool, error) {
+	reader, ok := h.owner.(operationOriginReader)
+	if !ok {
+		return "", false, &Error{Kind: ErrorInvalidConfiguration, State: h.State(), Field: "operation_origin"}
+	}
+	return reader.OperationOrigin(ctx, operationID)
+}
 
 func (h *Host) Status() HostStatus {
 	h.mu.Lock()
