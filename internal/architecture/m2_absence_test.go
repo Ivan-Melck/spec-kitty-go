@@ -998,6 +998,82 @@ func m2ShellHeredocsOnCommandLine(line string) ([]m2ShellHeredoc, string) {
 	return documents, ""
 }
 
+// m2ShellExecutableSubstitutionAmbiguity rejects nested command execution
+// before the outer command is classified as a target, query, or data-only
+// utility. Heredoc bodies have already been removed when this runs. The proof
+// deliberately does not interpret the nested program: observing active
+// command-substitution syntax is enough to make absence unknowable.
+func m2ShellExecutableSubstitutionAmbiguity(source string) string {
+	var quote byte
+	comment := false
+	wordStart := true
+	for index := 0; index < len(source); index++ {
+		current := source[index]
+		if comment {
+			if current == '\n' {
+				comment = false
+				wordStart = true
+			}
+			continue
+		}
+		if current == '\\' && quote != '\'' {
+			if index+1 >= len(source) {
+				return "unterminated-command-substitution-scan-escape"
+			}
+			index++
+			wordStart = false
+			continue
+		}
+		if quote == '\'' {
+			if current == '\'' {
+				quote = 0
+			}
+			continue
+		}
+		if quote == '"' {
+			if current == '"' {
+				quote = 0
+				continue
+			}
+			if current == '`' {
+				return "executable-command-substitution:backtick"
+			}
+			if current == '$' && index+1 < len(source) && source[index+1] == '(' &&
+				(index+2 >= len(source) || source[index+2] != '(') {
+				return "executable-command-substitution:dollar-paren"
+			}
+			continue
+		}
+		if current == '\'' {
+			quote = current
+			wordStart = false
+			continue
+		}
+		if current == '"' {
+			quote = current
+			wordStart = false
+			continue
+		}
+		if current == '`' {
+			return "executable-command-substitution:backtick"
+		}
+		if current == '$' && index+1 < len(source) && source[index+1] == '(' &&
+			(index+2 >= len(source) || source[index+2] != '(') {
+			return "executable-command-substitution:dollar-paren"
+		}
+		if current == '#' && wordStart {
+			comment = true
+			continue
+		}
+		if current == ' ' || current == '\t' || current == '\n' || strings.ContainsRune(";(){}|&<>", rune(current)) {
+			wordStart = true
+		} else {
+			wordStart = false
+		}
+	}
+	return ""
+}
+
 func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([]string, string) {
 	type shellValue struct {
 		resolved    bool
@@ -1054,6 +1130,9 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			return left
 		}
 		return m2ShellPrefixAmbiguous
+	}
+	if ambiguity := m2ShellExecutableSubstitutionAmbiguity(source); ambiguity != "" {
+		return nil, ambiguity
 	}
 	statements, ambiguity := m2ShellStatements(source)
 	if ambiguity != "" {

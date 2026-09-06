@@ -1,9 +1,16 @@
 #!/bin/sh
 set -eu
 
-repository=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+script_directory=${0%/*}
+if [ "$script_directory" = "$0" ]; then script_directory=.; fi
+CDPATH= cd -- "$script_directory/../.."
+repository=$PWD
 cd -- "$repository"
 receipt_mode=human
+capture_root=${TMPDIR:-/tmp}/go-kitty3-m2-mutants-capture.$$
+(umask 077 && mkdir -- "$capture_root")
+capture_file=$capture_root/value
+trap 'rm -f -- "$capture_file"; rmdir -- "$capture_root" 2>/dev/null || true' EXIT HUP INT TERM
 
 emit_receipt() {
   action=$1
@@ -14,7 +21,8 @@ emit_receipt() {
 }
 
 run_layers() {
-  fixture_root=$(mktemp -d /tmp/go-kitty3-m2-mutants.XXXXXX)
+  mktemp -d /tmp/go-kitty3-m2-mutants.XXXXXX >"$capture_file"
+  IFS= read -r fixture_root <"$capture_file"
   legacy_word='sql''ite'
   driver=modernc.org/$legacy_word
   cli=${legacy_word}3

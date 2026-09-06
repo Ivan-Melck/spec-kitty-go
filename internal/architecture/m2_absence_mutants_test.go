@@ -181,6 +181,31 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		}
 	})
 
+	t.Run("command-substitution-scan-contract-is-closed", func(t *testing.T) {
+		for name, test := range map[string]struct {
+			source string
+			want   bool
+		}{
+			"dollar-paren":           {source: "printf '%s' $(printf native)", want: true},
+			"double-quoted-dollar":   {source: `printf '%s' "$(printf native)"`, want: true},
+			"backtick":               {source: "printf '%s' `printf native`", want: true},
+			"double-quoted-backtick": {source: "printf '%s' \"`printf native`\"", want: true},
+			"single-quoted-dollar":   {source: `printf '%s' '$(printf native)'`},
+			"single-quoted-backtick": {source: "printf '%s' '`printf native`'"},
+			"escaped-dollar":         {source: `printf '%s' "\$(printf native)"`},
+			"escaped-backtick":       {source: "printf '%s' \"\\`printf native\\`\""},
+			"comment":                {source: "# $(printf native) `printf native`\nprintf '%s' native\n"},
+			"arithmetic":             {source: `printf '%s' "$((1 + 2))"`},
+		} {
+			t.Run(name, func(t *testing.T) {
+				got := m2ShellExecutableSubstitutionAmbiguity(test.source) != ""
+				if got != test.want {
+					t.Fatalf("command substitution ambiguity=%t want=%t", got, test.want)
+				}
+			})
+		}
+	})
+
 	longGap := strings.Repeat("# intervening line\n", 65)
 	tests := []struct {
 		name, path, content string
@@ -505,6 +530,10 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"single-quoted-parameter-syntax-is-literal":        "#!/bin/sh\n'${REVIEW_COMMAND:-native}' /tmp/x\n",
 		"escaped-dollar-simple-variable-is-literal":        "#!/bin/sh\n\\$REVIEW_COMMAND /tmp/x\n",
 		"single-quoted-command-substitution-is-literal":    "#!/bin/sh\n'$(printf native)' /tmp/x\n",
+		"single-quoted-backtick-substitution-is-literal":   "#!/bin/sh\nprintf '%s' '`printf native`'\n",
+		"escaped-dollar-command-substitution-is-literal":   "#!/bin/sh\nprintf '%s' \"\\$(printf native)\"\n",
+		"escaped-backtick-substitution-is-literal":         "#!/bin/sh\nprintf '%s' \"\\`printf native\\`\"\n",
+		"commented-command-substitution-is-inert":          "#!/bin/sh\n# $(printf native) `printf native`\nprintf '%s' native\n",
 		"runtime-expansion-query-is-data":                  "#!/bin/sh\ncommand -v \"${REVIEW_COMMAND:-native}\" >/dev/null || :\n",
 		"runtime-expansion-ordinary-argument-is-data":      "#!/bin/sh\nprintf '%s' \"${REVIEW_COMMAND:-native}\"\n",
 	} {
@@ -584,6 +613,20 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"parameter-nested-direct":                     "#!/bin/sh\n\"${REVIEW_COMMAND:-${REVIEW_DEFAULT}}\" /tmp/x\n",
 		"command-substitution-direct":                 "#!/bin/sh\n\"$(printf native)\" /tmp/x\n",
 		"backtick-substitution-direct":                "#!/bin/sh\n\"`printf native`\" /tmp/x\n",
+		"command-substitution-argument":               "#!/bin/sh\nREVIEW_COMMAND=sql\\ite3\nprintf '%s\\n' \"$(\"$REVIEW_COMMAND\" /tmp/data.db)\"\n",
+		"backtick-substitution-argument":              "#!/bin/sh\nprintf '%s\\n' \"`printf native`\"\n",
+		"command-substitution-assignment":             "#!/bin/sh\nreview_value=$(printf native)\nprintf '%s' native\n",
+		"backtick-substitution-assignment":            "#!/bin/sh\nreview_value=`printf native`\nprintf '%s' native\n",
+		"command-substitution-redirection":            "#!/bin/sh\nprintf '%s' native >\"$(printf native)\"\n",
+		"backtick-substitution-redirection":           "#!/bin/sh\nprintf '%s' native >\"`printf native`\"\n",
+		"command-substitution-query":                  "#!/bin/sh\nREVIEW_COMMAND=sql\\ite3\ncommand -v \"$(\"$REVIEW_COMMAND\" /tmp/query.db)\"\n",
+		"backtick-substitution-query":                 "#!/bin/sh\ncommand -v \"`printf native`\"\n",
+		"command-substitution-nested":                 "#!/bin/sh\nprintf '%s' \"$(printf '%s' \"$(printf native)\")\"\n",
+		"backtick-substitution-nested":                "#!/bin/sh\nprintf '%s' \"`printf '%s' \\`printf native\\``\"\n",
+		"command-substitution-group-scope":            "#!/bin/sh\n{ printf '%s' \"$(printf native)\"; }\n",
+		"backtick-substitution-subshell-scope":        "#!/bin/sh\n( printf '%s' \"`printf native`\" )\n",
+		"unterminated-command-substitution":           "#!/bin/sh\nprintf '%s' \"$(printf native\"\n",
+		"unterminated-backtick-substitution":          "#!/bin/sh\nprintf '%s' \"`printf native\"\n",
 		"arithmetic-expansion-direct":                 "#!/bin/sh\n\"$((1 + 2))\" /tmp/x\n",
 		"parameter-default-command-wrapper":           "#!/bin/sh\ncommand \"${REVIEW_COMMAND:-native}\" /tmp/x\n",
 		"parameter-default-env-wrapper":               "#!/bin/sh\nenv \"${REVIEW_COMMAND:-native}\" /tmp/x\n",
@@ -732,13 +775,11 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 	})
 
-	t.Run("unsupported-uninvoked-assignment-is-data", func(t *testing.T) {
+	t.Run("command-substitution-in-uninvoked-assignment-fails-closed", func(t *testing.T) {
 		root := t.TempDir()
 		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=$(printf '%s%s' sql ite3)\nprintf '%s' native\n"))
 		evidence := inspectM2Absence(t, root, false)
-		if len(evidence.Findings) != 0 {
-			t.Fatalf("uninvoked unsupported assignment rejected: %s", formatM2Findings(evidence.Findings))
-		}
+		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 	})
 
 	for name, content := range map[string]string{
