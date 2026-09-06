@@ -231,14 +231,14 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				Packages: []PackagePattern{
 					PackagePrefix(modulePath + "/internal/controlstore/gapdb"),
 					PackagePrefix(modulePath + "/internal/sidecar/gapdb"),
-					pkg("internal/controlstore/sqlite"), pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
+					pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
 				},
 				AllowedLocalTargets: []TierName{
 					TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority,
 					TierMissionAuthority, TierProviderContract, TierAdapter,
 				},
-				AllowedExternalPrefixes: []string{"github.com/spec-kitty/gapdb", "modernc.org/sqlite"},
+				AllowedExternalPrefixes: []string{"github.com/spec-kitty/gapdb"},
 			},
 			{
 				Name: TierProjection, Production: true,
@@ -265,7 +265,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 					PackagePrefix(modulePath + "/cmd/spk-m2-qualification"),
 				},
 				AllowedLocalTargets:     append(append([]TierName(nil), allRuntime...), TierQuality),
-				AllowedExternalPrefixes: []string{"modernc.org/sqlite", "github.com/spec-kitty/gapdb", "github.com/santhosh-tekuri/jsonschema/v6"},
+				AllowedExternalPrefixes: []string{"github.com/spec-kitty/gapdb", "github.com/santhosh-tekuri/jsonschema/v6"},
 			},
 		},
 		ForbiddenLocalDirections: []ForbiddenLocalDirection{
