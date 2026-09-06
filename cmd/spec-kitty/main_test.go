@@ -232,7 +232,7 @@ func TestRealGapDBLostAcknowledgementRestartResumeAndConflict(t *testing.T) {
 	}
 	wire := missionWire{
 		SchemaVersion: mission.MissionAuthoritySchemaVersionV2, OperationID: operationID, ProjectID: "project-live", MissionID: "mission-live",
-		ActorID: "actor-live", ProcessID: "process-live", RuntimeEpochID: initialized.RuntimeEpochID,
+		ActorID: "actor-live", ProcessID: "process-live", RuntimeEpochID: helpercmd.RuntimeEpochCurrent,
 		DoctrineRevision: "doctrine-live", ProfileRevision: "profile-live", PolicyRevision: "policy-live",
 		ObservedAt: "2026-09-05T12:00:00Z", EventType: mission.MissionEventCreatedV2, Successor: state.CanonicalBytes(),
 	}
@@ -253,6 +253,13 @@ func TestRealGapDBLostAcknowledgementRestartResumeAndConflict(t *testing.T) {
 		command.Stdin = bytes.NewReader(request)
 		return command.Output()
 	}
+	wire.RuntimeEpochID = "epoch-forged-stale"
+	staleBytes, staleErr := run("execute", requestFor(wire))
+	var stale helpercmd.Envelope
+	if staleErr == nil || json.Unmarshal(staleBytes, &stale) != nil || stale.Outcome != helpercmd.OutcomeUnavailable || stale.Diagnostic == nil || stale.Diagnostic.Kind != string(mission.MissionAuthorityStaleEpochV2) {
+		t.Fatalf("absent stale epoch was normalized: err=%v envelope=%+v output=%s", staleErr, stale, staleBytes)
+	}
+	wire.RuntimeEpochID = helpercmd.RuntimeEpochCurrent
 
 	// A response-drop proxy accepts the command's success bytes, then cuts the
 	// transport before acknowledgement. Run therefore reports a transport
@@ -288,7 +295,9 @@ func TestRealGapDBLostAcknowledgementRestartResumeAndConflict(t *testing.T) {
 		t.Fatalf("resume did not return exact committed result: committed=%+v resumed=%+v", committed, resumed)
 	}
 
-	wire.ActorID = "actor-conflicting"
+	// Supplying the concrete origin in place of the original symbolic selector
+	// is still a different canonical request and must not collapse to a replay.
+	wire.RuntimeEpochID = committed.RuntimeEpochID
 	conflictBytes, conflictErr := run("resume", requestFor(wire))
 	if conflictErr == nil {
 		t.Fatalf("changed request unexpectedly succeeded: %s", conflictBytes)

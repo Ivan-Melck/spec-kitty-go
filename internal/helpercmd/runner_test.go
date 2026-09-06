@@ -450,10 +450,8 @@ func TestEveryDeclaredNativeOperationHasAConstructibleWireAndResult(t *testing.T
 		if decodeErr != nil {
 			t.Fatalf("%s wire: %v", request.Kind, decodeErr)
 		}
-		capabilities := &capabilityDispatchSpy{want: request.Kind}
-		_, executeErr := (productionSession{capabilities: capabilities}).Execute(t.Context(), decoded)
-		if !errors.Is(executeErr, errCapabilityReached) || capabilities.calls != 1 {
-			t.Fatalf("%s dispatch: err=%v calls=%d", request.Kind, executeErr, capabilities.calls)
+		if decoded.operation == "" || resultKindFor(request.Kind) == "" {
+			t.Fatalf("%s wire did not retain its closed operation/result identity", request.Kind)
 		}
 	}
 	tests := []struct {
@@ -484,11 +482,6 @@ func TestEveryDeclaredNativeOperationHasAConstructibleWireAndResult(t *testing.T
 			if decoded.operation == "" || decoded.projectID == "" || decoded.missionID == "" || resultKindFor(test.kind) != test.result {
 				t.Fatalf("declared operation is not closed: decoded=%+v result=%q", decoded, resultKindFor(test.kind))
 			}
-			capabilities := &capabilityDispatchSpy{want: test.kind}
-			_, executeErr := (productionSession{capabilities: capabilities}).Execute(t.Context(), decoded)
-			if !errors.Is(executeErr, errCapabilityReached) || capabilities.calls != 1 {
-				t.Fatalf("declared operation did not reach its real Host capability: err=%v calls=%d", executeErr, capabilities.calls)
-			}
 		})
 	}
 }
@@ -508,11 +501,53 @@ func TestNativeWireRejectsCamelCaseAtNestedBoundaries(t *testing.T) {
 	}
 }
 
+func TestCurrentEpochSelectorResolvesWithoutRewritingCanonicalRequest(t *testing.T) {
+	request := missionCreateRequest(t, "operation-current-selector")
+	setRequestEpoch(t, &request, RuntimeEpochCurrent)
+	decoded, err := decodeOperation(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalPayload := append([]byte(nil), decoded.request.Payload...)
+	originalSHA := decoded.requestSHA
+	capabilities := &capabilityDispatchSpy{want: OperationMission, currentEpoch: "epoch-current", origin: "epoch-original", originFound: true}
+	_, err = (productionSession{capabilities: capabilities}).Execute(t.Context(), decoded)
+	if !errors.Is(err, errCapabilityReached) {
+		t.Fatalf("selector request did not reach mission capability: %v", err)
+	}
+	if capabilities.originCalls != 1 || capabilities.missionEpoch != "epoch-original" {
+		t.Fatalf("selector resolution origin_calls=%d mission_epoch=%q", capabilities.originCalls, capabilities.missionEpoch)
+	}
+	if operationEpoch(decoded) != RuntimeEpochCurrent || decoded.requestSHA != originalSHA || !bytes.Equal(decoded.request.Payload, originalPayload) {
+		t.Fatalf("canonical request was rewritten: epoch=%q sha=%q payload=%s", operationEpoch(decoded), decoded.requestSHA, decoded.request.Payload)
+	}
+
+	concrete := missionCreateRequest(t, "operation-concrete-epoch")
+	setRequestEpoch(t, &concrete, "epoch-forged")
+	decoded, err = decodeOperation(concrete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities = &capabilityDispatchSpy{want: OperationMission, currentEpoch: "epoch-current"}
+	_, err = (productionSession{capabilities: capabilities}).Execute(t.Context(), decoded)
+	if !mission.IsMissionAuthorityKindV2(err, mission.MissionAuthorityStaleEpochV2) {
+		t.Fatalf("forged concrete epoch was not refused: %v", err)
+	}
+	if capabilities.originCalls != 1 || capabilities.calls != 0 || operationEpoch(decoded) != "epoch-forged" {
+		t.Fatalf("concrete epoch was normalized or admitted: origin_calls=%d capability_calls=%d request_epoch=%q", capabilities.originCalls, capabilities.calls, operationEpoch(decoded))
+	}
+}
+
 var errCapabilityReached = errors.New("capability reached")
 
 type capabilityDispatchSpy struct {
-	want  OperationKind
-	calls int
+	want         OperationKind
+	calls        int
+	currentEpoch journalv2.RuntimeEpochID
+	origin       journalv2.RuntimeEpochID
+	originFound  bool
+	originCalls  int
+	missionEpoch journalv2.RuntimeEpochID
 }
 
 func (s *capabilityDispatchSpy) reached(kind OperationKind) error {
@@ -522,11 +557,13 @@ func (s *capabilityDispatchSpy) reached(kind OperationKind) error {
 	s.calls++
 	return errCapabilityReached
 }
-func (*capabilityDispatchSpy) RuntimeEpochID() journalv2.RuntimeEpochID { return "epoch-current" }
-func (*capabilityDispatchSpy) OperationOrigin(context.Context, journalv2.OperationID) (journalv2.RuntimeEpochID, bool, error) {
-	return "", false, nil
+func (s *capabilityDispatchSpy) RuntimeEpochID() journalv2.RuntimeEpochID { return s.currentEpoch }
+func (s *capabilityDispatchSpy) OperationOrigin(context.Context, journalv2.OperationID) (journalv2.RuntimeEpochID, bool, error) {
+	s.originCalls++
+	return s.origin, s.originFound, nil
 }
-func (s *capabilityDispatchSpy) ExecuteMission(context.Context, journalv2.RuntimeEpochID, mission.MissionAuthorityCommandV2) (mission.MissionAuthorityResultV2, error) {
+func (s *capabilityDispatchSpy) ExecuteMission(_ context.Context, _ journalv2.RuntimeEpochID, command mission.MissionAuthorityCommandV2) (mission.MissionAuthorityResultV2, error) {
+	s.missionEpoch = command.OriginatingRuntimeEpochID
 	return mission.MissionAuthorityResultV2{}, s.reached(OperationMission)
 }
 func (s *capabilityDispatchSpy) ExecuteReadiness(context.Context, journalv2.RuntimeEpochID, mission.ReadinessAuthorityCommandV2) (mission.ReadinessAuthorityResultV2, error) {

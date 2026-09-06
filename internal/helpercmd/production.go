@@ -199,13 +199,22 @@ func (s productionSession) Execute(ctx context.Context, operation decodedOperati
 		capabilities = s.host
 	}
 	hostEpoch := capabilities.RuntimeEpochID()
-	originEpoch := hostEpoch
-	if origin, found, err := capabilities.OperationOrigin(ctx, operation.operation); err != nil {
+	callerEpoch := operationEpoch(operation)
+	origin, found, err := capabilities.OperationOrigin(ctx, operation.operation)
+	if err != nil {
 		return TypedResult{}, err
-	} else if found {
-		originEpoch = origin
 	}
-	rebindOperationEpoch(&operation, originEpoch)
+	if found {
+		if callerEpoch != RuntimeEpochCurrent {
+			return TypedResult{}, &mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityIdempotencyConflictV2, Field: "operation_id"}
+		}
+		operation = resolveCurrentEpochSelector(operation, origin)
+	} else {
+		if callerEpoch != RuntimeEpochCurrent {
+			return TypedResult{}, &mission.MissionAuthorityErrorV2{Kind: mission.MissionAuthorityStaleEpochV2, Field: "runtime_epoch"}
+		}
+		operation = resolveCurrentEpochSelector(operation, hostEpoch)
+	}
 	if operation.mission != nil {
 		result, err := capabilities.ExecuteMission(ctx, hostEpoch, *operation.mission)
 		if err != nil {
@@ -292,38 +301,97 @@ func (s productionSession) Execute(ctx context.Context, operation decodedOperati
 	return TypedResult{}, errors.New("operation has no admitted capability")
 }
 
-func rebindOperationEpoch(operation *decodedOperation, epoch journalv2.RuntimeEpochID) {
+func operationEpoch(operation decodedOperation) journalv2.RuntimeEpochID {
+	switch {
+	case operation.mission != nil:
+		return operation.mission.OriginatingRuntimeEpochID
+	case operation.readiness != nil:
+		return operation.readiness.OriginatingRuntimeEpochID
+	case operation.execution != nil:
+		return operation.execution.RuntimeEpochID
+	case operation.rebind != nil:
+		return operation.rebind.OriginatingRuntimeEpochID
+	case operation.handoff != nil:
+		return operation.handoff.RuntimeEpochID
+	case operation.review != nil:
+		return operation.review.RuntimeEpochID
+	case operation.acceptance != nil:
+		return operation.acceptance.RuntimeEpochID
+	case operation.integration != nil:
+		return operation.integration.RuntimeEpochID
+	case operation.cleanup != nil:
+		return operation.cleanup.RuntimeEpochID
+	case operation.effect != nil:
+		return operation.effect.RuntimeEpochID
+	default:
+		return ""
+	}
+}
+
+func resolveCurrentEpochSelector(operation decodedOperation, epoch journalv2.RuntimeEpochID) decodedOperation {
 	if operation.mission != nil {
-		operation.mission.OriginatingRuntimeEpochID = epoch
+		command := *operation.mission
+		command.OriginatingRuntimeEpochID = epoch
+		operation.mission = &command
 	}
 	if operation.readiness != nil {
-		operation.readiness.OriginatingRuntimeEpochID = epoch
+		command := *operation.readiness
+		command.OriginatingRuntimeEpochID = epoch
+		operation.readiness = &command
 	}
 	if operation.execution != nil {
-		operation.execution.RuntimeEpochID = epoch
+		command := *operation.execution
+		command.RuntimeEpochID = epoch
+		operation.execution = &command
 	}
 	if operation.rebind != nil {
-		operation.rebind.OriginatingRuntimeEpochID = epoch
+		command := *operation.rebind
+		command.OriginatingRuntimeEpochID = epoch
+		operation.rebind = &command
 	}
 	if operation.handoff != nil {
-		operation.handoff.RuntimeEpochID = epoch
+		command := *operation.handoff
+		command.RuntimeEpochID = epoch
+		if command.Workspace.RuntimeEpochID == RuntimeEpochCurrent {
+			command.Workspace.RuntimeEpochID = epoch
+		}
+		operation.handoff = &command
 	}
 	if operation.review != nil {
-		operation.review.RuntimeEpochID = epoch
+		command := *operation.review
+		command.RuntimeEpochID = epoch
+		if command.Workspace.RuntimeEpochID == RuntimeEpochCurrent {
+			command.Workspace.RuntimeEpochID = epoch
+		}
+		operation.review = &command
 	}
 	if operation.acceptance != nil {
-		operation.acceptance.RuntimeEpochID = epoch
+		command := *operation.acceptance
+		command.RuntimeEpochID = epoch
+		operation.acceptance = &command
 	}
 	if operation.integration != nil {
-		operation.integration.RuntimeEpochID = epoch
+		command := *operation.integration
+		command.RuntimeEpochID = epoch
+		operation.integration = &command
 	}
 	if operation.cleanup != nil {
-		operation.cleanup.RuntimeEpochID = epoch
+		command := *operation.cleanup
+		command.RuntimeEpochID = epoch
+		operation.cleanup = &command
 	}
 	if operation.effect != nil {
-		operation.effect.RuntimeEpochID = epoch
-		operation.effect.Intent.OriginRuntimeEpochID = epoch
+		command := *operation.effect
+		command.RuntimeEpochID = epoch
+		if command.Intent.OriginRuntimeEpochID == RuntimeEpochCurrent {
+			command.Intent.OriginRuntimeEpochID = epoch
+		}
+		if command.ExecutionSlot.RuntimeEpochID == RuntimeEpochCurrent {
+			command.ExecutionSlot.RuntimeEpochID = epoch
+		}
+		operation.effect = &command
 	}
+	return operation
 }
 
 func typedPayload(value any) ([]byte, error) {

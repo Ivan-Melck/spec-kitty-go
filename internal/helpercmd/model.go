@@ -15,6 +15,10 @@ const (
 	RequestSchemaVersion  = uint32(1)
 	MaxRequestBytes       = int64(4 << 20)
 	MaxDriveOperations    = 256
+	// RuntimeEpochCurrent is the only native first-attempt epoch selector.
+	// It remains in the canonical request; resolution changes only an execution
+	// copy after the exact selector identity is proven against OperationID.
+	RuntimeEpochCurrent journalv2.RuntimeEpochID = "current"
 )
 
 type Outcome string
