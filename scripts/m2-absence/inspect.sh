@@ -29,51 +29,11 @@ check_common_file() {
 check_source() { check_common_file "$1"; }
 check_graph_module() { check_common_file "$1"; }
 check_shell() {
-  check_common_file "$1"
-  if tr -d "'\"" <"$1" | awk -v expected="$legacy_cli" '
-    function static_word(word,    result, offset, current) {
-      result = ""
-      for (offset = 1; offset <= length(word); offset++) {
-        current = substr(word, offset, 1)
-        if (current == "\\") {
-          if (offset == length(word)) return "!ambiguous!"
-          offset++
-          result = result substr(word, offset, 1)
-        } else if (current ~ /[$`*?\[\]~{}()|&<>]/) {
-          return "!ambiguous!"
-        } else {
-          result = result current
-        }
-      }
-      return result
-    }
-    {
-      count = split($0, statements, ";")
-      for (part = 1; part <= count; part++) {
-        statement = statements[part]
-        sub(/^[ \t]*/, "", statement)
-        if (statement ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) {
-          name = statement
-          sub(/[ \t]*=.*/, "", name)
-          value = statement
-          sub(/^[^=]*=[ \t]*/, "", value)
-          sub(/[ \t].*$/, "", value)
-          value = static_word(value)
-          if (value == expected) { active[name] = 1; delete ambiguous[name] }
-          else if (value == "!ambiguous!") { ambiguous[name] = 1; delete active[name] }
-          else { delete active[name]; delete ambiguous[name] }
-        } else if (statement ~ /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?([ \t]|$)/) {
-          name = statement
-          sub(/[ \t].*$/, "", name)
-          sub(/^\$\{?/, "", name)
-          sub(/\}$/, "", name)
-          if (active[name] || ambiguous[name]) found = 1
-        }
-      }
-    }
-    END { exit found ? 0 : 1 }
-  '; then return 42; else status=$?; test "$status" -eq 1 || return "$status"; fi
-  return 0
+  probe_repository=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+  if (cd "$probe_repository" && M2_SHELL_PROBE="$1" go test ./internal/architecture -run '^TestM2ShellProbe$' -count=1 >/dev/null); then
+    return 0
+  fi
+  return 42
 }
 check_binary() { check_common_file "$1"; }
 check_sbom() { check_common_file "$1"; }
@@ -128,7 +88,7 @@ fi
 
 repository=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 candidate=${M2_CANDIDATE:-HEAD}
-for tool in git go jq sha256sum tar strings readelf ldd find sort awk sed grep cmp xargs paste tr; do
+for tool in git go jq sha256sum tar strings readelf ldd find sort awk sed grep cmp xargs paste; do
   command -v "$tool" >/dev/null 2>&1 || { echo "M2 qualification requires $tool" >&2; exit 1; }
 done
 check_admitted_sidecar

@@ -497,13 +497,14 @@ func m2GoConstantString(expression ast.Expr, values map[string]string) (string, 
 	}
 }
 
-var m2ShellAssignment = regexp.MustCompile(`(?s)^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.*)[ \t]*$`)
-var m2ShellCommandVariable = regexp.MustCompile(`^[ \t]*"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?(?:[ \t]|$)`)
+var m2ShellAssignment = regexp.MustCompile(`(?s)^([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
+var m2ShellCommandVariable = regexp.MustCompile(`^"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?$`)
 
 func m2ShellResolvedExecutables(source string) ([]string, string) {
 	type shellValue struct {
-		resolved bool
-		value    string
+		resolved    bool
+		commandSafe bool
+		value       string
 	}
 	var executables []string
 	active := map[string]shellValue{}
@@ -511,27 +512,126 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 	if ambiguity != "" {
 		return nil, ambiguity
 	}
+	inCase := false
 	for _, statement := range statements {
-		if assignment := m2ShellAssignment.FindStringSubmatch(statement); len(assignment) == 3 {
-			value, resolved := m2StaticShellWord(strings.Trim(assignment[2], " \t"))
-			active[assignment[1]] = shellValue{resolved: resolved, value: value}
+		tokens, tokenAmbiguity := m2ShellTokens(statement)
+		if tokenAmbiguity != "" {
+			return nil, tokenAmbiguity
+		}
+		if len(tokens) != 0 && tokens[0] == "case" {
+			inCase = true
 			continue
 		}
-		if command := m2ShellCommandVariable.FindStringSubmatch(statement); len(command) == 3 {
-			name := command[1]
-			if name == "" {
-				name = command[2]
+		if inCase {
+			if len(tokens) != 0 && tokens[0] == "esac" {
+				inCase = false
+				continue
 			}
-			if value, exists := active[name]; exists {
-				if !value.resolved {
-					return nil, "unresolved-command-assignment:" + name
+			for index, token := range tokens {
+				if token == ")" {
+					tokens = tokens[index+1:]
+					break
 				}
-				executables = append(executables, value.value)
 			}
+		}
+		commandPosition := true
+		skipRedirectionTarget := false
+		indirectCommand := false
+		for _, token := range tokens {
+			if skipRedirectionTarget {
+				skipRedirectionTarget = false
+				continue
+			}
+			switch token {
+			case "&&", "||", "|":
+				commandPosition = true
+				indirectCommand = false
+				continue
+			case ")", "}":
+				commandPosition = false
+				continue
+			case "<", ">", "<<", ">>":
+				skipRedirectionTarget = true
+				continue
+			}
+			if commandPosition {
+				switch token {
+				case "!", "(", "{", "if", "then", "elif", "else", "while", "until", "do":
+					indirectCommand = false
+					continue
+				case "fi", "done":
+					commandPosition = false
+					continue
+				}
+			}
+			if !commandPosition {
+				if indirectCommand {
+					if name := m2TrackedVariableInWord(token, active); name != "" {
+						return nil, "unsupported-indirect-command:" + name
+					}
+				}
+				continue
+			}
+			if assignment := m2ShellAssignment.FindStringSubmatch(token); len(assignment) == 3 {
+				value, resolved := m2StaticShellWord(assignment[2])
+				active[assignment[1]] = shellValue{
+					resolved:    resolved,
+					commandSafe: !resolved && m2StaticShellCommandBasenameSafe(assignment[2]),
+					value:       value,
+				}
+				continue
+			}
+			if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
+				name := command[1]
+				if name == "" {
+					name = command[2]
+				}
+				if value, exists := active[name]; exists {
+					if !value.resolved {
+						if value.commandSafe {
+							commandPosition = false
+							continue
+						}
+						return nil, "unresolved-command-assignment:" + name
+					}
+					executables = append(executables, value.value)
+				}
+			} else if name := m2TrackedVariableInWord(token, active); name != "" {
+				return nil, "unsupported-command-word:" + name
+			}
+			indirectCommand = token == "eval" || token == "xargs"
+			commandPosition = false
 		}
 	}
 	sort.Strings(executables)
 	return executables, ""
+}
+
+func m2StaticShellCommandBasenameSafe(word string) bool {
+	separator := strings.LastIndexByte(word, '/')
+	if separator < 0 {
+		return false
+	}
+	basename, resolved := m2StaticShellWord(strings.Trim(word[separator+1:], `"'`))
+	return resolved && basename != "" && basename != m2LegacyCLI
+}
+
+func m2TrackedVariableInWord[T any](word string, active map[string]T) string {
+	word = strings.Trim(word, `"`)
+	for name := range active {
+		for _, reference := range []string{"$" + name, "${" + name + "}"} {
+			if strings.HasPrefix(word, reference+"/") {
+				suffix := strings.TrimPrefix(word, reference+"/")
+				if !strings.ContainsAny(suffix, "$`*?[]~{}();|&<>") && filepath.Base(suffix) != m2LegacyCLI {
+					continue
+				}
+			}
+			if strings.Contains(word, reference) {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func m2StaticShellWord(word string) (string, bool) {
@@ -586,6 +686,76 @@ func m2StaticShellWord(word string) (string, bool) {
 		}
 	}
 	return value.String(), quote == 0
+}
+
+func m2ShellTokens(statement string) ([]string, string) {
+	var tokens []string
+	var word strings.Builder
+	var quote byte
+	flush := func() {
+		if word.Len() != 0 {
+			tokens = append(tokens, word.String())
+			word.Reset()
+		}
+	}
+	for index := 0; index < len(statement); index++ {
+		current := statement[index]
+		if current == '\\' && quote != '\'' {
+			if index+1 >= len(statement) {
+				return nil, "unterminated-token-escape"
+			}
+			word.WriteByte(current)
+			index++
+			word.WriteByte(statement[index])
+			continue
+		}
+		if quote != 0 {
+			word.WriteByte(current)
+			if current == quote {
+				quote = 0
+			}
+			continue
+		}
+		if current == '\'' || current == '"' {
+			quote = current
+			word.WriteByte(current)
+			continue
+		}
+		if current == ' ' || current == '\t' {
+			flush()
+			continue
+		}
+		if current == '$' && index+1 < len(statement) && statement[index+1] == '{' {
+			closing := strings.IndexByte(statement[index+2:], '}')
+			if closing < 0 {
+				return nil, "unterminated-parameter-expansion"
+			}
+			closing += index + 2
+			word.WriteString(statement[index : closing+1])
+			index = closing
+			continue
+		}
+		if strings.ContainsRune("!(){}<>|&", rune(current)) {
+			flush()
+			operator := string(current)
+			if index+1 < len(statement) {
+				next := statement[index+1]
+				if (current == '&' && next == '&') || (current == '|' && next == '|') ||
+					(current == '<' && next == '<') || (current == '>' && next == '>') {
+					operator += string(next)
+					index++
+				}
+			}
+			tokens = append(tokens, operator)
+			continue
+		}
+		word.WriteByte(current)
+	}
+	if quote != 0 {
+		return nil, "unterminated-token-quote"
+	}
+	flush()
+	return tokens, ""
 }
 
 // m2ShellStatements preserves statement order without consuming the delimiter

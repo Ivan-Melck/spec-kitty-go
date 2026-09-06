@@ -157,6 +157,34 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		})
 	}
 
+	t.Run("supported-command-positions", func(t *testing.T) {
+		assignment := "#!/bin/sh\nreview_retired_cli=sql\\ite3\n"
+		for name, invocation := range map[string]string{
+			"if":        "if \"$review_retired_cli\" /tmp/x; then :; fi\n",
+			"then":      "if true; then \"$review_retired_cli\" /tmp/x; fi\n",
+			"elif":      "if false; then :; elif \"$review_retired_cli\" /tmp/x; then :; fi\n",
+			"else":      "if false; then :; else \"$review_retired_cli\" /tmp/x; fi\n",
+			"while":     "while \"$review_retired_cli\" /tmp/x; do :; done\n",
+			"until":     "until \"$review_retired_cli\" /tmp/x; do :; done\n",
+			"do":        "while true; do \"$review_retired_cli\" /tmp/x; done\n",
+			"negation":  "! \"$review_retired_cli\" /tmp/x\n",
+			"and-list":  "true && \"$review_retired_cli\" /tmp/x\n",
+			"or-list":   "false || \"$review_retired_cli\" /tmp/x\n",
+			"pipeline":  "true | \"$review_retired_cli\" /tmp/x\n",
+			"semicolon": "true; \"$review_retired_cli\" /tmp/x\n",
+			"newline":   "true\n\"$review_retired_cli\" /tmp/x\n",
+			"subshell":  "( \"$review_retired_cli\" /tmp/x )\n",
+			"group":     "{ \"$review_retired_cli\" /tmp/x; }\n",
+		} {
+			t.Run(name, func(t *testing.T) {
+				root := t.TempDir()
+				writeM2Mutant(t, root, "scripts/x.sh", []byte(assignment+invocation))
+				evidence := inspectM2Absence(t, root, false)
+				assertM2Finding(t, evidence.Findings, "subprocess", "scripts/x.sh")
+			})
+		}
+	})
+
 	t.Run("malformed-go-fails-closed", func(t *testing.T) {
 		root := t.TempDir()
 		writeM2Mutant(t, root, "internal/x/x.go", []byte("package x\nfunc broken("))
@@ -184,6 +212,13 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 	t.Run("unsupported-invoked-assignment-fails-closed", func(t *testing.T) {
 		root := t.TempDir()
 		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=$(printf '%s%s' sql ite3)\n\"$review_retired_cli\" /tmp/x\n"))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+	})
+
+	t.Run("unsupported-indirect-command-fails-closed", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=sql\\ite3\neval \"$review_retired_cli\"\n"))
 		evidence := inspectM2Absence(t, root, false)
 		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 	})
@@ -224,6 +259,24 @@ func TestM2AbsenceLayerDetectors(t *testing.T) {
 	command.Dir = m2RepositoryRoot(t)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("layer detector mutants: %v\n%s", err, output)
+	}
+}
+
+func TestM2ShellProbe(t *testing.T) {
+	path := os.Getenv("M2_SHELL_PROBE")
+	if path == "" {
+		t.Skip("shell probe path is supplied only by the qualification wrapper")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var findings []m2AbsenceFinding
+	inspectM2Candidate(filepath.ToSlash(path), data, func(kind, candidate, detail string) {
+		findings = append(findings, m2AbsenceFinding{Kind: kind, Path: candidate, Detail: detail})
+	})
+	if len(findings) != 0 {
+		t.Fatalf("shell candidate rejected: %s", formatM2Findings(findings))
 	}
 }
 
