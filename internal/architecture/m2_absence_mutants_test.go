@@ -247,6 +247,38 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 	}
 
 	for name, content := range map[string]string{
+		"pipeline-sibling-uses-parent-value":         "#!/bin/sh\nreview_retired_cli=sql\\ite3; review_retired_cli=native | \"$review_retired_cli\" /tmp/x\n",
+		"pipeline-assignment-does-not-persist":       "#!/bin/sh\nreview_retired_cli=sql\\ite3\nreview_retired_cli=native | true\n\"$review_retired_cli\" /tmp/x\n",
+		"subshell-assignment-does-not-escape":        "#!/bin/sh\nreview_retired_cli=sql\\ite3; ( review_retired_cli=native ); \"$review_retired_cli\" /tmp/x\n",
+		"nested-subshell-assignment-does-not-escape": "#!/bin/sh\nreview_retired_cli=sql\\ite3\n( ( review_retired_cli=native ) )\n\"$review_retired_cli\" /tmp/x\n",
+		"current-shell-group-persists":               "#!/bin/sh\nreview_retired_cli=native\n{ review_retired_cli=sql\\ite3; }\n\"$review_retired_cli\" /tmp/x\n",
+		"background-assignment-does-not-persist":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\nreview_retired_cli=native & true\n\"$review_retired_cli\" /tmp/x\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			assertM2Finding(t, evidence.Findings, "subprocess", "scripts/x.sh")
+		})
+	}
+
+	for name, content := range map[string]string{
+		"pipeline-left-does-not-reach-sibling": "#!/bin/sh\nreview_retired_cli=native; review_retired_cli=sql\\ite3 | \"$review_retired_cli\" /tmp/x\n",
+		"subshell-assignment-is-isolated":      "#!/bin/sh\nreview_retired_cli=native\n( review_retired_cli=sql\\ite3 )\n\"$review_retired_cli\" /tmp/x\n",
+		"current-shell-group-clean-update":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; }\n\"$review_retired_cli\" /tmp/x\n",
+		"background-left-is-isolated":          "#!/bin/sh\nreview_retired_cli=native\nreview_retired_cli=sql\\ite3 & \"$review_retired_cli\" /tmp/x\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, "scripts/x.sh", []byte(content))
+			evidence := inspectM2Absence(t, root, false)
+			if len(evidence.Findings) != 0 {
+				t.Fatalf("clean shell-scope control rejected: %s", formatM2Findings(evidence.Findings))
+			}
+		})
+	}
+
+	for name, content := range map[string]string{
 		"assignment-only-persists-at-boundary": "#!/bin/sh\nreview_retired_cli=sql\\ite3\nreview_retired_cli=native\n\"$review_retired_cli\" /tmp/x\n",
 		"direct-prefix-expands-clean-prior":    "#!/bin/sh\nreview_retired_cli=native\nreview_retired_cli=sql\\ite3 \"$review_retired_cli\" /tmp/x\n",
 		"wrapped-prefix-expands-clean-prior":   "#!/bin/sh\nreview_retired_cli=native\nenv review_retired_cli=sql\\ite3 \"$review_retired_cli\" /tmp/x\n",

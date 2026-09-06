@@ -499,6 +499,7 @@ func m2GoConstantString(expression ast.Expr, values map[string]string) (string, 
 
 var m2ShellAssignment = regexp.MustCompile(`(?s)^([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
 var m2ShellCommandVariable = regexp.MustCompile(`^"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?$`)
+var m2ShellName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var m2ShellUtilityDispatch = map[string]bool{"command": true, "env": true, "exec": true, "nice": true, "nohup": true, "time": true}
 var m2ShellInterpreters = map[string]bool{"bash": true, "dash": true, "ksh": true, "sh": true, "zsh": true}
 var m2ShellIndirectDispatch = map[string]bool{"eval": true, "xargs": true}
@@ -524,6 +525,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		return nil, ambiguity
 	}
 	inCase := false
+	var subshellParents []map[string]shellValue
 	for _, statement := range statements {
 		tokens, tokenAmbiguity := m2ShellTokens(statement)
 		if tokenAmbiguity != "" {
@@ -555,6 +557,11 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				}
 			}
 		}
+		// A function declaration's name and () pair are grammar, not a
+		// command/subshell execution boundary. Its body remains fully scanned.
+		if len(tokens) >= 3 && m2ShellName.MatchString(tokens[0]) && tokens[1] == "(" && tokens[2] == ")" {
+			tokens = tokens[3:]
+		}
 		commandPosition := true
 		skipRedirectionTarget := false
 		indirectCommand := ""
@@ -564,8 +571,9 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		expansionValues := cloneValues(active)
 		pendingAssignments := map[string]shellValue{}
 		commandStarted := false
-		finishSimpleCommand := func() {
-			if !commandStarted {
+		inPipeline := false
+		finishSimpleCommand := func(persistAssignments bool) {
+			if persistAssignments && !commandStarted {
 				for name, value := range pendingAssignments {
 					active[name] = value
 				}
@@ -580,15 +588,54 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				continue
 			}
 			switch token {
-			case "&&", "||", "|":
-				finishSimpleCommand()
+			case "&&", "||":
+				finishSimpleCommand(!inPipeline)
+				inPipeline = false
 				commandPosition = true
 				indirectCommand = ""
 				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
 				continue
-			case ")", "}":
+			case "|":
+				finishSimpleCommand(false)
+				inPipeline = true
+				commandPosition = true
+				indirectCommand = ""
+				dispatchCapable = false
+				dispatchMode = ""
+				dispatchOptionArgument = false
+				continue
+			case "&":
+				finishSimpleCommand(false)
+				inPipeline = false
+				commandPosition = true
+				indirectCommand = ""
+				dispatchCapable = false
+				dispatchMode = ""
+				dispatchOptionArgument = false
+				continue
+			case "(":
+				if commandStarted || len(pendingAssignments) != 0 {
+					return nil, "unsupported-subshell-boundary"
+				}
+				subshellParents = append(subshellParents, active)
+				active = cloneValues(active)
+				expansionValues = cloneValues(active)
+				continue
+			case ")":
+				finishSimpleCommand(!inPipeline)
+				if len(subshellParents) == 0 {
+					return nil, "unmatched-subshell-close"
+				}
+				active = subshellParents[len(subshellParents)-1]
+				subshellParents = subshellParents[:len(subshellParents)-1]
+				expansionValues = cloneValues(active)
+				inPipeline = false
+				commandStarted = true
+				commandPosition = false
+				continue
+			case "}":
 				commandPosition = false
 				continue
 			case "<", ">", "<<", ">>":
@@ -614,7 +661,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			}
 			if commandPosition {
 				switch token {
-				case "!", "(", "{", "if", "then", "elif", "else", "while", "until", "do":
+				case "!", "{", "if", "then", "elif", "else", "while", "until", "do":
 					indirectCommand = ""
 					continue
 				case "fi", "done":
@@ -709,7 +756,10 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			dispatchMode = ""
 			commandPosition = false
 		}
-		finishSimpleCommand()
+		finishSimpleCommand(!inPipeline)
+	}
+	if len(subshellParents) != 0 {
+		return nil, "unterminated-subshell"
 	}
 	sort.Strings(executables)
 	return executables, ""
