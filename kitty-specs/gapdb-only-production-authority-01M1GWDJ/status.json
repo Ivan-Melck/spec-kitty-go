@@ -701,7 +701,8 @@
         "Cycle-eight exact final tree 303c5f6b qualified; bounded shell lexer handles comments/quotes/escapes and fails closed on ambiguity.",
         "Independent cycle-eight review rejected silently ignored unquoted-backslash command assignment; all other evidence remains accepted.",
         "Cycle-nine exact final tree de2818f5 qualified; supported POSIX words resolve and unresolved command assignments fail closed.",
-        "Independent cycle-nine review rejected reserved-word/list command-position blind spot; all other evidence remains accepted."
+        "Independent cycle-nine review rejected reserved-word/list command-position blind spot; all other evidence remains accepted.",
+        "Cycle-ten exact final tree 2cb8b9b3 qualified; canonical shell command-position engine covers reserved/list/pipeline/grouping contexts."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
