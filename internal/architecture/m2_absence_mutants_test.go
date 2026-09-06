@@ -138,6 +138,8 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		{"shell-comment-between-assignment-and-command", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n# don't disturb active assignments\n\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-backslash-newline", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'; \\\n\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-unquoted-backslash-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3\n\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-interpreter-option-arity", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3; /bin/sh -o errexit -c \"$review_retired_cli\"\n", true},
+		{"shell-env-option-arity", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql\\ite3; /usr/bin/env -C . \"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-single-quoted-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-double-quoted-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=\"sql\"\"ite3\"\n\"$review_retired_cli\" /tmp/x\n", true},
 		{"shell-concatenated-word", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli=sql'ite'3\n\"$review_retired_cli\" /tmp/x\n", true},
@@ -160,60 +162,56 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 
 	t.Run("supported-command-positions", func(t *testing.T) {
 		assignment := "#!/bin/sh\nreview_retired_cli=sql\\ite3\n"
-		ambiguous := map[string]bool{
-			"bash-command": true, "dash-command": true, "eval": true, "ksh-command": true,
-			"path-sh": true, "sh-command": true, "xargs": true, "zsh-command": true,
-		}
 		for name, invocation := range map[string]string{
-			"if":             "if \"$review_retired_cli\" /tmp/x; then :; fi\n",
-			"then":           "if true; then \"$review_retired_cli\" /tmp/x; fi\n",
-			"elif":           "if false; then :; elif \"$review_retired_cli\" /tmp/x; then :; fi\n",
-			"else":           "if false; then :; else \"$review_retired_cli\" /tmp/x; fi\n",
-			"while":          "while \"$review_retired_cli\" /tmp/x; do :; done\n",
-			"until":          "until \"$review_retired_cli\" /tmp/x; do :; done\n",
-			"do":             "while true; do \"$review_retired_cli\" /tmp/x; done\n",
-			"negation":       "! \"$review_retired_cli\" /tmp/x\n",
-			"and-list":       "true && \"$review_retired_cli\" /tmp/x\n",
-			"or-list":        "false || \"$review_retired_cli\" /tmp/x\n",
-			"pipeline":       "true | \"$review_retired_cli\" /tmp/x\n",
-			"semicolon":      "true; \"$review_retired_cli\" /tmp/x\n",
-			"newline":        "true\n\"$review_retired_cli\" /tmp/x\n",
-			"subshell":       "( \"$review_retired_cli\" /tmp/x )\n",
-			"group":          "{ \"$review_retired_cli\" /tmp/x; }\n",
-			"case-same-line": "case native in native) \"$review_retired_cli\" /tmp/x ;; esac\n",
-			"case-multiline": "case native in\n  native)\n    \"$review_retired_cli\" /tmp/x\n    ;;\nesac\n",
-			"command":        "command \"$review_retired_cli\" /tmp/x\n",
-			"command-option": "command -p -- \"$review_retired_cli\" /tmp/x\n",
-			"exec":           "exec \"$review_retired_cli\" /tmp/x\n",
-			"env":            "env \"$review_retired_cli\" /tmp/x\n",
-			"env-prefixes":   "env -i -u OTHER REVIEW=native \"$review_retired_cli\" /tmp/x\n",
-			"nohup":          "nohup \"$review_retired_cli\" /tmp/x\n",
-			"nice":           "nice -n 5 \"$review_retired_cli\" /tmp/x\n",
-			"time":           "time -p \"$review_retired_cli\" /tmp/x\n",
-			"nested-wrapper": "env REVIEW=native command -- \"$review_retired_cli\" /tmp/x\n",
-			"path-env":       "/usr/bin/env \"$review_retired_cli\" /tmp/x\n",
-			"path-nested":    "/usr/bin/env -- REVIEW=native command -- \"$review_retired_cli\" /tmp/x\n",
-			"path-nohup":     "/usr/bin/nohup \"$review_retired_cli\" /tmp/x\n",
-			"path-nice":      "/usr/bin/nice -n 5 \"$review_retired_cli\" /tmp/x\n",
-			"path-time":      "/usr/bin/time -p \"$review_retired_cli\" /tmp/x\n",
-			"sh-command":     "sh -c \"$review_retired_cli\"\n",
-			"dash-command":   "dash -c \"$review_retired_cli\"\n",
-			"bash-command":   "bash --noprofile -c \"$review_retired_cli\"\n",
-			"ksh-command":    "ksh -c \"$review_retired_cli\"\n",
-			"zsh-command":    "zsh -c \"$review_retired_cli\"\n",
-			"path-sh":        "/bin/sh -c \"$review_retired_cli\"\n",
-			"eval":           "eval \"$review_retired_cli\"\n",
-			"xargs":          "printf '%s' native | xargs \"$review_retired_cli\"\n",
+			"if":                  "if \"$review_retired_cli\" /tmp/x; then :; fi\n",
+			"then":                "if true; then \"$review_retired_cli\" /tmp/x; fi\n",
+			"elif":                "if false; then :; elif \"$review_retired_cli\" /tmp/x; then :; fi\n",
+			"else":                "if false; then :; else \"$review_retired_cli\" /tmp/x; fi\n",
+			"while":               "while \"$review_retired_cli\" /tmp/x; do :; done\n",
+			"until":               "until \"$review_retired_cli\" /tmp/x; do :; done\n",
+			"do":                  "while true; do \"$review_retired_cli\" /tmp/x; done\n",
+			"negation":            "! \"$review_retired_cli\" /tmp/x\n",
+			"and-list":            "true && \"$review_retired_cli\" /tmp/x\n",
+			"or-list":             "false || \"$review_retired_cli\" /tmp/x\n",
+			"pipeline":            "true | \"$review_retired_cli\" /tmp/x\n",
+			"semicolon":           "true; \"$review_retired_cli\" /tmp/x\n",
+			"newline":             "true\n\"$review_retired_cli\" /tmp/x\n",
+			"subshell":            "( \"$review_retired_cli\" /tmp/x )\n",
+			"group":               "{ \"$review_retired_cli\" /tmp/x; }\n",
+			"case-same-line":      "case native in native) \"$review_retired_cli\" /tmp/x ;; esac\n",
+			"case-multiline":      "case native in\n  native)\n    \"$review_retired_cli\" /tmp/x\n    ;;\nesac\n",
+			"command":             "command \"$review_retired_cli\" /tmp/x\n",
+			"command-option":      "command -p -- \"$review_retired_cli\" /tmp/x\n",
+			"exec":                "exec \"$review_retired_cli\" /tmp/x\n",
+			"env":                 "env \"$review_retired_cli\" /tmp/x\n",
+			"env-prefixes":        "env -i -u OTHER REVIEW=native \"$review_retired_cli\" /tmp/x\n",
+			"nohup":               "nohup \"$review_retired_cli\" /tmp/x\n",
+			"nice":                "nice -n 5 \"$review_retired_cli\" /tmp/x\n",
+			"time":                "time -p \"$review_retired_cli\" /tmp/x\n",
+			"nested-wrapper":      "env REVIEW=native command -- \"$review_retired_cli\" /tmp/x\n",
+			"path-env":            "/usr/bin/env \"$review_retired_cli\" /tmp/x\n",
+			"path-nested":         "/usr/bin/env -- REVIEW=native command -- \"$review_retired_cli\" /tmp/x\n",
+			"path-nohup":          "/usr/bin/nohup \"$review_retired_cli\" /tmp/x\n",
+			"path-nice":           "/usr/bin/nice -n 5 \"$review_retired_cli\" /tmp/x\n",
+			"path-time":           "/usr/bin/time -p \"$review_retired_cli\" /tmp/x\n",
+			"sh-command":          "sh -c \"$review_retired_cli\"\n",
+			"dash-command":        "dash -c \"$review_retired_cli\"\n",
+			"bash-command":        "bash --noprofile -c \"$review_retired_cli\"\n",
+			"ksh-command":         "ksh -c \"$review_retired_cli\"\n",
+			"zsh-command":         "zsh -c \"$review_retired_cli\"\n",
+			"path-sh":             "/bin/sh -c \"$review_retired_cli\"\n",
+			"path-sh-options":     "/bin/sh -o errexit -c \"$review_retired_cli\"\n",
+			"sh-unknown-options":  "sh --review-unknown native \"$review_retired_cli\"\n",
+			"eval":                "eval \"$review_retired_cli\"\n",
+			"xargs":               "printf '%s' native | xargs \"$review_retired_cli\"\n",
+			"env-directory":       "/usr/bin/env -C . \"$review_retired_cli\" /tmp/x\n",
+			"env-unknown-options": "env --review-unknown native \"$review_retired_cli\" /tmp/x\n",
 		} {
 			t.Run(name, func(t *testing.T) {
 				root := t.TempDir()
 				writeM2Mutant(t, root, "scripts/x.sh", []byte(assignment+invocation))
 				evidence := inspectM2Absence(t, root, false)
-				kind := "subprocess"
-				if ambiguous[name] {
-					kind = "ambiguous-shell"
-				}
-				assertM2Finding(t, evidence.Findings, kind, "scripts/x.sh")
+				assertM2Finding(t, evidence.Findings, "subprocess", "scripts/x.sh")
 			})
 		}
 	})
@@ -265,9 +263,23 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 	})
 
-	t.Run("unsupported-indirect-command-fails-closed", func(t *testing.T) {
+	t.Run("resolved-indirect-command-is-inspected", func(t *testing.T) {
 		root := t.TempDir()
 		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=sql\\ite3\neval \"$review_retired_cli\"\n"))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "subprocess", "scripts/x.sh")
+	})
+
+	t.Run("unsupported-indirect-command-fails-closed", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=${review_source}\neval \"$review_retired_cli\"\n"))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
+	})
+
+	t.Run("unsupported-wrapper-value-fails-closed-after-options", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte("#!/bin/sh\nreview_retired_cli=${review_source}\n/usr/bin/env -C . \"$review_retired_cli\" /tmp/x\n"))
 		evidence := inspectM2Absence(t, root, false)
 		assertM2Finding(t, evidence.Findings, "ambiguous-shell", "scripts/x.sh")
 	})

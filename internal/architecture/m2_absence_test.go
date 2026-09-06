@@ -551,6 +551,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		commandPosition := true
 		skipRedirectionTarget := false
 		indirectCommand := ""
+		dispatchCapable := false
 		dispatchMode := ""
 		dispatchOptionArgument := false
 		for _, token := range tokens {
@@ -562,6 +563,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			case "&&", "||", "|":
 				commandPosition = true
 				indirectCommand = ""
+				dispatchCapable = false
 				dispatchMode = ""
 				dispatchOptionArgument = false
 				continue
@@ -571,6 +573,23 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			case "<", ">", "<<", ">>":
 				skipRedirectionTarget = true
 				continue
+			}
+			if dispatchCapable {
+				if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
+					name := command[1]
+					if name == "" {
+						name = command[2]
+					}
+					if value, exists := active[name]; exists {
+						if !value.resolved {
+							return nil, "unresolved-dispatch-assignment:" + name
+						}
+						executables = append(executables, value.value)
+						continue
+					}
+				} else if name := m2TrackedVariableInWord(token, active); name != "" {
+					return nil, "unsupported-dispatch-word:" + name
+				}
 			}
 			if commandPosition {
 				switch token {
@@ -626,13 +645,16 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			if commandName, pathSpelled, resolved := m2StaticShellCommandName(token); resolved {
 				switch {
 				case m2ShellUtilityDispatch[commandName]:
+					dispatchCapable = true
 					dispatchMode = commandName
 					continue
 				case m2ShellInterpreters[commandName]:
+					dispatchCapable = true
 					indirectCommand = "interpreter"
 					commandPosition = false
 					continue
 				case m2ShellIndirectDispatch[commandName]:
+					dispatchCapable = true
 					indirectCommand = commandName
 				case pathSpelled && !m2ShellKnownDataCommands[commandName]:
 					indirectCommand = "unknown-path-dispatch"
