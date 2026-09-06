@@ -88,6 +88,28 @@ func TestM2AbsenceSymlinkAndHistoricalDiscrimination(t *testing.T) {
 			t.Fatalf("historical documentation rejected:\n%s", formatM2Findings(evidence.Findings))
 		}
 	})
+	t.Run("exact-review-feedback-document", func(t *testing.T) {
+		root := t.TempDir()
+		path := "kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-feedback-27.md"
+		writeM2Mutant(t, root, path, []byte("The retired executable was "+m2LegacyCLI+"."))
+		if evidence := inspectM2Absence(t, root, false); len(evidence.Findings) != 0 {
+			t.Fatalf("exact historical review feedback rejected:\n%s", formatM2Findings(evidence.Findings))
+		}
+	})
+	t.Run("review-feedback-other-token", func(t *testing.T) {
+		root := t.TempDir()
+		path := "kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-feedback-27.md"
+		writeM2Mutant(t, root, path, []byte("An unapproved driver reference: "+m2ModerncDriver))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "driver", path)
+	})
+	t.Run("review-feedback-near-path", func(t *testing.T) {
+		root := t.TempDir()
+		path := "kitty-specs/gapdb-only-production-authority-01M1GWDJ/tasks/WP16-structural-sqlite-eradication-and-absence-proof/review-feedback-27-copy.md"
+		writeM2Mutant(t, root, path, []byte("The retired executable was "+m2LegacyCLI+"."))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "subprocess", path)
+	})
 	t.Run("executable-beneath-history", func(t *testing.T) {
 		root := t.TempDir()
 		writeM2Mutant(t, root, "kitty-specs/beads-tracker-integration-01M0YG7E/provider.go", []byte("package history\nimport _ \""+m2ModerncDriver+"\"\n"))
