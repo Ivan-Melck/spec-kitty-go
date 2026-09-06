@@ -253,6 +253,13 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"nested-subshell-assignment-does-not-escape": "#!/bin/sh\nreview_retired_cli=sql\\ite3\n( ( review_retired_cli=native ) )\n\"$review_retired_cli\" /tmp/x\n",
 		"current-shell-group-persists":               "#!/bin/sh\nreview_retired_cli=native\n{ review_retired_cli=sql\\ite3; }\n\"$review_retired_cli\" /tmp/x\n",
 		"background-assignment-does-not-persist":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\nreview_retired_cli=native & true\n\"$review_retired_cli\" /tmp/x\n",
+		"group-pipeline-assignment-is-isolated":      "#!/bin/sh\nreview_retired_cli=sql\\ite3; { review_retired_cli=native; } | \"$review_retired_cli\" /tmp/x\n",
+		"group-background-assignment-is-isolated":    "#!/bin/sh\nreview_retired_cli=sql\\ite3; { review_retired_cli=native; } & \"$review_retired_cli\" /tmp/x\n",
+		"nested-group-pipeline-is-isolated":          "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ { review_retired_cli=native; }; } | \"$review_retired_cli\" /tmp/x\n",
+		"pipeline-inside-group-does-not-persist":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native | true; }\n\"$review_retired_cli\" /tmp/x\n",
+		"subshell-inside-group-remains-isolated":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ ( review_retired_cli=native ); }\n\"$review_retired_cli\" /tmp/x\n",
+		"redirected-group-pipeline-is-isolated":      "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; } >/dev/null | \"$review_retired_cli\" /tmp/x\n",
+		"redirected-group-background-is-isolated":    "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; } 2>/dev/null & \"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -263,10 +270,15 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 	}
 
 	for name, content := range map[string]string{
-		"pipeline-left-does-not-reach-sibling": "#!/bin/sh\nreview_retired_cli=native; review_retired_cli=sql\\ite3 | \"$review_retired_cli\" /tmp/x\n",
-		"subshell-assignment-is-isolated":      "#!/bin/sh\nreview_retired_cli=native\n( review_retired_cli=sql\\ite3 )\n\"$review_retired_cli\" /tmp/x\n",
-		"current-shell-group-clean-update":     "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; }\n\"$review_retired_cli\" /tmp/x\n",
-		"background-left-is-isolated":          "#!/bin/sh\nreview_retired_cli=native\nreview_retired_cli=sql\\ite3 & \"$review_retired_cli\" /tmp/x\n",
+		"pipeline-left-does-not-reach-sibling":         "#!/bin/sh\nreview_retired_cli=native; review_retired_cli=sql\\ite3 | \"$review_retired_cli\" /tmp/x\n",
+		"subshell-assignment-is-isolated":              "#!/bin/sh\nreview_retired_cli=native\n( review_retired_cli=sql\\ite3 )\n\"$review_retired_cli\" /tmp/x\n",
+		"current-shell-group-clean-update":             "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ review_retired_cli=native; }\n\"$review_retired_cli\" /tmp/x\n",
+		"background-left-is-isolated":                  "#!/bin/sh\nreview_retired_cli=native\nreview_retired_cli=sql\\ite3 & \"$review_retired_cli\" /tmp/x\n",
+		"group-pipeline-left-is-isolated":              "#!/bin/sh\nreview_retired_cli=native; { review_retired_cli=sql\\ite3; } | \"$review_retired_cli\" /tmp/x\n",
+		"group-background-left-is-isolated":            "#!/bin/sh\nreview_retired_cli=native; { review_retired_cli=sql\\ite3; } & \"$review_retired_cli\" /tmp/x\n",
+		"nested-current-shell-groups-persist":          "#!/bin/sh\nreview_retired_cli=sql\\ite3\n{ { review_retired_cli=native; }; }\n\"$review_retired_cli\" /tmp/x\n",
+		"group-inside-subshell-remains-isolated":       "#!/bin/sh\nreview_retired_cli=native\n( { review_retired_cli=sql\\ite3; } )\n\"$review_retired_cli\" /tmp/x\n",
+		"redirected-group-left-does-not-reach-sibling": "#!/bin/sh\nreview_retired_cli=native\n{ review_retired_cli=sql\\ite3; } >/dev/null | \"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

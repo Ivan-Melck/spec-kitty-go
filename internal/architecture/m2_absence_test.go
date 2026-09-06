@@ -511,6 +511,11 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		commandSafe bool
 		value       string
 	}
+	type shellScope struct {
+		kind     byte
+		parent   map[string]shellValue
+		isolated bool
+	}
 	var executables []string
 	active := map[string]shellValue{}
 	cloneValues := func(source map[string]shellValue) map[string]shellValue {
@@ -524,43 +529,37 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 	if ambiguity != "" {
 		return nil, ambiguity
 	}
-	inCase := false
-	var subshellParents []map[string]shellValue
 	for _, statement := range statements {
 		tokens, tokenAmbiguity := m2ShellTokens(statement)
 		if tokenAmbiguity != "" {
 			return nil, tokenAmbiguity
 		}
-		if len(tokens) != 0 && tokens[0] == "case" {
-			inCase = true
-			inIndex := -1
-			for index, token := range tokens[1:] {
-				if token == "in" {
-					inIndex = index + 1
-					break
-				}
-			}
-			if inIndex < 0 {
-				continue
-			}
-			tokens = tokens[inIndex+1:]
+		tokens = m2ShellFunctionTokens(tokens)
+		tokens, tokenAmbiguity = m2ShellExecutableCaseTokens(tokens)
+		if tokenAmbiguity != "" {
+			return nil, tokenAmbiguity
 		}
-		if inCase {
-			if len(tokens) != 0 && tokens[0] == "esac" {
-				inCase = false
-				continue
-			}
-			for index, token := range tokens {
-				if token == ")" {
-					tokens = tokens[index+1:]
-					break
+		isolatedBraces := map[int]bool{}
+		var braceOpenings []int
+		for index, token := range tokens {
+			switch token {
+			case "{", "function{":
+				braceOpenings = append(braceOpenings, index)
+			case "}":
+				if len(braceOpenings) == 0 {
+					return nil, "unmatched-group-close"
 				}
+				opening := braceOpenings[len(braceOpenings)-1]
+				braceOpenings = braceOpenings[:len(braceOpenings)-1]
+				operator, tailAmbiguity := m2ShellCompoundTailOperator(tokens, index+1)
+				if tailAmbiguity != "" {
+					return nil, tailAmbiguity
+				}
+				isolatedBraces[opening] = operator == "|" || operator == "&"
 			}
 		}
-		// A function declaration's name and () pair are grammar, not a
-		// command/subshell execution boundary. Its body remains fully scanned.
-		if len(tokens) >= 3 && m2ShellName.MatchString(tokens[0]) && tokens[1] == "(" && tokens[2] == ")" {
-			tokens = tokens[3:]
+		if len(braceOpenings) != 0 {
+			return nil, "unterminated-group"
 		}
 		commandPosition := true
 		skipRedirectionTarget := false
@@ -572,6 +571,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 		pendingAssignments := map[string]shellValue{}
 		commandStarted := false
 		inPipeline := false
+		var scopes []shellScope
 		finishSimpleCommand := func(persistAssignments bool) {
 			if persistAssignments && !commandStarted {
 				for name, value := range pendingAssignments {
@@ -582,12 +582,21 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			pendingAssignments = map[string]shellValue{}
 			commandStarted = false
 		}
-		for _, token := range tokens {
+		for tokenIndex, token := range tokens {
 			if skipRedirectionTarget {
 				skipRedirectionTarget = false
 				continue
 			}
 			switch token {
+			case ";":
+				finishSimpleCommand(!inPipeline)
+				inPipeline = false
+				commandPosition = true
+				indirectCommand = ""
+				dispatchCapable = false
+				dispatchMode = ""
+				dispatchOptionArgument = false
+				continue
 			case "&&", "||":
 				finishSimpleCommand(!inPipeline)
 				inPipeline = false
@@ -619,23 +628,47 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 				if commandStarted || len(pendingAssignments) != 0 {
 					return nil, "unsupported-subshell-boundary"
 				}
-				subshellParents = append(subshellParents, active)
+				scopes = append(scopes, shellScope{kind: '(', parent: active, isolated: true})
 				active = cloneValues(active)
 				expansionValues = cloneValues(active)
 				continue
 			case ")":
 				finishSimpleCommand(!inPipeline)
-				if len(subshellParents) == 0 {
+				if len(scopes) == 0 || scopes[len(scopes)-1].kind != '(' {
 					return nil, "unmatched-subshell-close"
 				}
-				active = subshellParents[len(subshellParents)-1]
-				subshellParents = subshellParents[:len(subshellParents)-1]
+				active = scopes[len(scopes)-1].parent
+				scopes = scopes[:len(scopes)-1]
 				expansionValues = cloneValues(active)
 				inPipeline = false
 				commandStarted = true
 				commandPosition = false
 				continue
+			case "{", "function{":
+				if commandStarted || len(pendingAssignments) != 0 {
+					return nil, "unsupported-group-boundary"
+				}
+				isolated := token == "function{" || isolatedBraces[tokenIndex]
+				scopes = append(scopes, shellScope{kind: '{', parent: active, isolated: isolated})
+				active = cloneValues(active)
+				expansionValues = cloneValues(active)
+				continue
 			case "}":
+				finishSimpleCommand(!inPipeline)
+				if len(scopes) == 0 || scopes[len(scopes)-1].kind != '{' {
+					return nil, "unmatched-group-close"
+				}
+				scope := scopes[len(scopes)-1]
+				scopes = scopes[:len(scopes)-1]
+				if !scope.isolated {
+					for name, value := range active {
+						scope.parent[name] = value
+					}
+				}
+				active = scope.parent
+				expansionValues = cloneValues(active)
+				inPipeline = false
+				commandStarted = true
 				commandPosition = false
 				continue
 			case "<", ">", "<<", ">>":
@@ -661,7 +694,7 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			}
 			if commandPosition {
 				switch token {
-				case "!", "{", "if", "then", "elif", "else", "while", "until", "do":
+				case "!", "if", "then", "elif", "else", "while", "until", "do":
 					indirectCommand = ""
 					continue
 				case "fi", "done":
@@ -757,12 +790,101 @@ func m2ShellResolvedExecutables(source string) ([]string, string) {
 			commandPosition = false
 		}
 		finishSimpleCommand(!inPipeline)
-	}
-	if len(subshellParents) != 0 {
-		return nil, "unterminated-subshell"
+		if len(scopes) != 0 {
+			if scopes[len(scopes)-1].kind == '(' {
+				return nil, "unterminated-subshell"
+			}
+			return nil, "unterminated-group"
+		}
 	}
 	sort.Strings(executables)
 	return executables, ""
+}
+
+func m2ShellFunctionTokens(tokens []string) []string {
+	normalized := make([]string, 0, len(tokens))
+	for index := 0; index < len(tokens); index++ {
+		if index+3 < len(tokens) && m2ShellName.MatchString(tokens[index]) &&
+			tokens[index+1] == "(" && tokens[index+2] == ")" && tokens[index+3] == "{" {
+			normalized = append(normalized, "function{")
+			index += 3
+			continue
+		}
+		normalized = append(normalized, tokens[index])
+	}
+	return normalized
+}
+
+func m2ShellCompoundTailOperator(tokens []string, start int) (string, string) {
+	for index := start; index < len(tokens); {
+		redirection := tokens[index] == "<" || tokens[index] == ">" || tokens[index] == "<<" || tokens[index] == ">>"
+		if redirection {
+			if index+1 >= len(tokens) {
+				return "", "unterminated-compound-redirection"
+			}
+			index += 2
+			continue
+		}
+		fileDescriptor := strings.Trim(tokens[index], `"'`)
+		if fileDescriptor != "" && strings.Trim(fileDescriptor, "0123456789") == "" && index+1 < len(tokens) {
+			next := tokens[index+1]
+			if next == "<" || next == ">" || next == "<<" || next == ">>" {
+				if index+2 >= len(tokens) {
+					return "", "unterminated-compound-redirection"
+				}
+				index += 3
+				continue
+			}
+		}
+		return tokens[index], ""
+	}
+	return "", ""
+}
+
+func m2ShellExecutableCaseTokens(tokens []string) ([]string, string) {
+	type caseFrame struct{ phase string }
+	var executable []string
+	var stack []caseFrame
+	for index := 0; index < len(tokens); index++ {
+		token := tokens[index]
+		if len(stack) == 0 {
+			if token == "case" {
+				stack = append(stack, caseFrame{phase: "header"})
+			} else {
+				executable = append(executable, token)
+			}
+			continue
+		}
+		frame := &stack[len(stack)-1]
+		switch frame.phase {
+		case "header":
+			if token == "in" {
+				frame.phase = "pattern"
+			}
+		case "pattern":
+			if token == "esac" {
+				stack = stack[:len(stack)-1]
+			} else if token == ")" {
+				frame.phase = "action"
+			}
+		case "action":
+			switch token {
+			case "case":
+				stack = append(stack, caseFrame{phase: "header"})
+			case "esac":
+				stack = stack[:len(stack)-1]
+			case ";;":
+				executable = append(executable, ";")
+				frame.phase = "pattern"
+			default:
+				executable = append(executable, token)
+			}
+		}
+	}
+	if len(stack) != 0 {
+		return nil, "unterminated-case"
+	}
+	return executable, ""
 }
 
 func m2StaticShellCommandBasenameSafe(word string) bool {
@@ -910,13 +1032,14 @@ func m2ShellTokens(statement string) ([]string, string) {
 			index = closing
 			continue
 		}
-		if strings.ContainsRune("!(){}<>|&", rune(current)) {
+		if strings.ContainsRune(";!(){}<>|&", rune(current)) {
 			flush()
 			operator := string(current)
 			if index+1 < len(statement) {
 				next := statement[index+1]
 				if (current == '&' && next == '&') || (current == '|' && next == '|') ||
-					(current == '<' && next == '<') || (current == '>' && next == '>') {
+					(current == '<' && next == '<') || (current == '>' && next == '>') ||
+					(current == ';' && next == ';') {
 					operator += string(next)
 					index++
 				}
@@ -968,9 +1091,9 @@ func m2ShellCommandSubstitutionEnd(source string, start int) (int, string) {
 	return 0, "unterminated-command-substitution"
 }
 
-// m2ShellStatements preserves statement order without consuming the delimiter
-// needed to recognize an adjacent assignment. The repository's explicit byte
-// budgets bound this single pass over the complete candidate source.
+// m2ShellStatements preserves one ordered command stream, including explicit
+// semicolon/newline boundaries, so compound scope can be classified before a
+// pending assignment commits. The repository byte budgets bound this pass.
 func m2ShellStatements(source string) ([]string, string) {
 	statements := make([]string, 0, strings.Count(source, "\n")+strings.Count(source, ";")+1)
 	var statement strings.Builder
@@ -978,17 +1101,13 @@ func m2ShellStatements(source string) ([]string, string) {
 	var quote byte
 	comment := false
 	wordStart := true
-	flush := func() {
-		statements = append(statements, statement.String())
-		statement.Reset()
-		wordStart = true
-	}
 	for index := 0; index < len(source); index++ {
 		current := source[index]
 		if comment {
 			if current == '\n' {
 				comment = false
-				flush()
+				statement.WriteString(" ; ")
+				wordStart = true
 			}
 			continue
 		}
@@ -1022,12 +1141,38 @@ func m2ShellStatements(source string) ([]string, string) {
 			wordStart = false
 			continue
 		}
+		if current == '$' && index+1 < len(source) && source[index+1] == '(' {
+			closing, ambiguity := m2ShellCommandSubstitutionEnd(source, index+2)
+			if ambiguity != "" {
+				return nil, ambiguity
+			}
+			statement.WriteString(source[index : closing+1])
+			index = closing
+			wordStart = false
+			continue
+		}
+		if current == '$' && index+1 < len(source) && source[index+1] == '{' {
+			closing := strings.IndexByte(source[index+2:], '}')
+			if closing < 0 {
+				return nil, "unterminated-parameter-expansion"
+			}
+			closing += index + 2
+			statement.WriteString(source[index : closing+1])
+			index = closing
+			wordStart = false
+			continue
+		}
 		if current == '#' && wordStart {
 			comment = true
 			continue
 		}
 		if current == ';' || current == '\n' {
-			flush()
+			if current == ';' {
+				statement.WriteByte(';')
+			} else {
+				statement.WriteString(" ; ")
+			}
+			wordStart = true
 			continue
 		}
 		statement.WriteByte(current)
@@ -1043,7 +1188,7 @@ func m2ShellStatements(source string) ([]string, string) {
 	if quote == '"' {
 		return nil, "unterminated-double-quote"
 	}
-	flush()
+	statements = append(statements, statement.String())
 	return statements, ""
 }
 
