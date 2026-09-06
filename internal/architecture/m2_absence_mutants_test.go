@@ -342,6 +342,14 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"dash-special-colon-prefix-persists":            "#!/bin/dash\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 		"dash-special-return-prefix-persists":           "#!/bin/dash\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 return 0; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 		"bash-special-colon-prefix-is-command-scoped":   "#!/bin/bash\nreview_retired_cli=sql\\ite3\nselect_native_cli(){ review_retired_cli=native :; }\nselect_native_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"bash-posix-shebang-prefix-persists":            "#!/bin/bash --posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"bash-o-posix-shebang-prefix-persists":          "#!/usr/bin/bash -o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"env-s-bash-posix-prefix-persists":              "#!/usr/bin/env -S bash --posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"env-posixly-correct-prefix-persists":           "#!/usr/bin/env -S POSIXLY_CORRECT=1 bash\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"runtime-set-posix-prefix-persists":             "#!/bin/bash\nset -o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"function-set-posix-prefix-persists":            "#!/bin/bash\nreview_retired_cli=native\nselect_retired_cli(){ set -o posix; review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"current-group-set-posix-persists":              "#!/bin/bash\n{ set -o posix; }\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"called-function-set-posix-persists":            "#!/bin/bash\nenable_posix(){ set -o posix; }\nenable_posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -382,6 +390,13 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"generic-special-prefix-irrelevant-data":           "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_other_cli=sql\\ite3 :; }\nhelper\nprintf '%s' \"$review_other_cli\"\n\"$review_retired_cli\" /tmp/x\n",
 		"generic-time-same-effect-is-stable":               "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_retired_cli=native; }\ntime helper\n\"$review_retired_cli\" /tmp/x\n",
 		"generic-time-irrelevant-effect-is-data":           "#!/bin/sh\nreview_retired_cli=native\nhelper(){ review_other_cli=sql\\ite3; }\ntime helper\nprintf '%s' \"$review_other_cli\"\n\"$review_retired_cli\" /tmp/x\n",
+		"runtime-posix-toggle-off-restores-bash-default":   "#!/bin/bash\nset -o posix\nset +o posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"shebang-posix-toggle-off-restores-bash-default":   "#!/bin/bash --posix\nset +o posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"subshell-set-posix-does-not-escape":               "#!/bin/bash\n( set -o posix )\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"pipeline-set-posix-does-not-escape":               "#!/bin/bash\nset -o posix | true\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"background-set-posix-does-not-escape":             "#!/bin/bash\nset -o posix & true\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"function-disable-posix-persists-to-caller":        "#!/bin/bash --posix\ndisable_posix(){ set +o posix; }\ndisable_posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"irrelevant-posix-mode-change":                     "#!/bin/bash\nset -o posix\nprintf '%s' native\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -423,6 +438,10 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"missing-shell-special-colon-prefix-joins":    "review_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"dash-opaque-export-prefix":                   "#!/bin/dash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 export REVIEW_OTHER; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"dash-opaque-dot-prefix":                      "#!/bin/dash\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 . ./review-env; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"conditional-set-posix-mode":                  "#!/bin/bash\nfalse && set -o posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"unknown-runtime-set-option":                  "#!/bin/bash\nset -o review_unknown\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"unknown-shebang-set-option":                  "#!/bin/bash -o review_unknown\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"generic-shell-runtime-set-posix":             "#!/bin/sh\nset -o posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()

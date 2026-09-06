@@ -575,25 +575,27 @@ func m2ShellIdentityFromSource(source string) m2ShellIdentity {
 		}
 	}
 	interpreter := fields[0]
+	interpreterArguments := fields[1:]
 	viaEnv := false
+	posixEnvironment := false
 	if interpreter == "/usr/bin/env" || interpreter == "/bin/env" {
 		viaEnv = true
 		var detail string
-		interpreter, detail = m2ShellEnvInterpreter(fields[1:])
+		interpreter, interpreterArguments, posixEnvironment, detail = m2ShellEnvInterpreter(fields[1:])
 		if detail != "" {
 			return ambiguous(detail)
 		}
 	}
 	switch interpreter {
 	case "/bin/bash", "/usr/bin/bash":
-		return m2ShellIdentity{timeMode: m2ShellTimeReserved, prefixMode: m2ShellPrefixDiscard, detail: "bash"}
+		return m2ShellIdentity{timeMode: m2ShellTimeReserved, prefixMode: m2ShellBashPrefixMode(interpreterArguments, posixEnvironment), detail: "bash"}
 	case "/bin/dash", "/usr/bin/dash":
 		return m2ShellIdentity{timeMode: m2ShellTimeExternal, prefixMode: m2ShellPrefixPersist, detail: "dash"}
 	case "/bin/sh", "/usr/bin/sh":
 		return ambiguous("generic-sh")
 	case "bash":
 		if viaEnv {
-			return m2ShellIdentity{timeMode: m2ShellTimeReserved, prefixMode: m2ShellPrefixDiscard, detail: "bash"}
+			return m2ShellIdentity{timeMode: m2ShellTimeReserved, prefixMode: m2ShellBashPrefixMode(interpreterArguments, posixEnvironment), detail: "bash"}
 		}
 	case "dash":
 		if viaEnv {
@@ -608,7 +610,8 @@ func m2ShellIdentityFromSource(source string) m2ShellIdentity {
 	return ambiguous("unknown-interpreter")
 }
 
-func m2ShellEnvInterpreter(arguments []string) (string, string) {
+func m2ShellEnvInterpreter(arguments []string) (string, []string, bool, string) {
+	posixEnvironment := false
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
 		switch {
@@ -618,20 +621,57 @@ func m2ShellEnvInterpreter(arguments []string) (string, string) {
 		case argument == "-u" || argument == "--unset" || argument == "-C" || argument == "--chdir":
 			index++
 			if index >= len(arguments) {
-				return "", "missing-env-option-argument"
+				return "", nil, false, "missing-env-option-argument"
 			}
 			continue
 		case strings.HasPrefix(argument, "--unset=") || strings.HasPrefix(argument, "--chdir="):
 			continue
 		case m2ShellAssignment.MatchString(argument):
+			if strings.HasPrefix(argument, "POSIXLY_CORRECT=") {
+				posixEnvironment = true
+			}
 			continue
 		case strings.HasPrefix(argument, "-"):
-			return "", "unsupported-env-option"
+			return "", nil, false, "unsupported-env-option"
 		default:
-			return argument, ""
+			return argument, arguments[index+1:], posixEnvironment, ""
 		}
 	}
-	return "", "missing-env-interpreter"
+	return "", nil, false, "missing-env-interpreter"
+}
+
+func m2ShellBashPrefixMode(arguments []string, posixEnvironment bool) m2ShellPrefixMode {
+	mode := m2ShellPrefixDiscard
+	if posixEnvironment {
+		mode = m2ShellPrefixPersist
+	}
+	for index := 0; index < len(arguments); index++ {
+		switch arguments[index] {
+		case "--posix":
+			mode = m2ShellPrefixPersist
+		case "-o", "+o":
+			enable := arguments[index] == "-o"
+			index++
+			if index >= len(arguments) || arguments[index] != "posix" {
+				return m2ShellPrefixAmbiguous
+			}
+			if enable {
+				mode = m2ShellPrefixPersist
+			} else {
+				mode = m2ShellPrefixDiscard
+			}
+		case "--", "--noprofile", "--norc":
+		case "":
+		default:
+			argument := arguments[index]
+			if strings.HasPrefix(argument, "--") ||
+				(strings.HasPrefix(argument, "-") || strings.HasPrefix(argument, "+")) &&
+					strings.Trim(argument[1:], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
+				return m2ShellPrefixAmbiguous
+			}
+		}
+	}
+	return mode
 }
 
 type m2ShellHeredoc struct {
@@ -776,9 +816,12 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 		conditional bool
 	}
 	type shellFunctionOp struct {
-		call        string
-		effects     map[string]shellValue
-		conditional bool
+		call           string
+		effects        map[string]shellValue
+		specialEffects map[string]shellValue
+		prefixMode     m2ShellPrefixMode
+		hasPrefixMode  bool
+		conditional    bool
 	}
 	type shellScope struct {
 		kind                byte
@@ -790,13 +833,19 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 		functionOpaque      bool
 		functionReachable   bool
 		functionControlBase int
+		parentPrefixMode    m2ShellPrefixMode
 	}
 	type shellFunction struct {
 		ops    []shellFunctionOp
 		opaque bool
 	}
+	type shellFunctionSummary struct {
+		effects    map[string]shellValue
+		prefixMode m2ShellPrefixMode
+	}
 	var executables []string
 	active := map[string]shellValue{}
+	prefixMode := shellIdentity.prefixMode
 	functions := map[string]shellFunction{}
 	cloneValues := func(source map[string]shellValue) map[string]shellValue {
 		clone := make(map[string]shellValue, len(source))
@@ -810,6 +859,12 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			return prior
 		}
 		return shellValue{}
+	}
+	joinPrefixMode := func(left, right m2ShellPrefixMode) m2ShellPrefixMode {
+		if left == right {
+			return left
+		}
+		return m2ShellPrefixAmbiguous
 	}
 	statements, ambiguity := m2ShellStatements(source)
 	if ambiguity != "" {
@@ -864,6 +919,9 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 		pendingFunctionEffects := map[string]shellValue{}
 		pendingFunctionJoin := false
 		pendingFunctionReturn := false
+		pendingPrefixMode := prefixMode
+		pendingPrefixModeSet := false
+		pendingPrefixModeUnknown := false
 		recordFunctionEffects := func(effects map[string]shellValue) {
 			for index := len(scopes) - 1; index >= 0; index-- {
 				if scopes[index].functionName != "" {
@@ -875,6 +933,40 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 						conditional: scopes[index].functionConditional || commandConditional || controlDepth > scopes[index].functionControlBase,
 					}
 					scopes[index].functionOps = append(scopes[index].functionOps, operation)
+					return
+				}
+				if scopes[index].isolated {
+					return
+				}
+			}
+		}
+		recordFunctionSpecialEffects := func(effects map[string]shellValue) {
+			for index := len(scopes) - 1; index >= 0; index-- {
+				if scopes[index].functionName != "" {
+					if !scopes[index].functionReachable {
+						return
+					}
+					scopes[index].functionOps = append(scopes[index].functionOps, shellFunctionOp{
+						specialEffects: cloneValues(effects),
+						conditional:    scopes[index].functionConditional || commandConditional || controlDepth > scopes[index].functionControlBase,
+					})
+					return
+				}
+				if scopes[index].isolated {
+					return
+				}
+			}
+		}
+		recordFunctionPrefixMode := func(mode m2ShellPrefixMode, conditional bool) {
+			for index := len(scopes) - 1; index >= 0; index-- {
+				if scopes[index].functionName != "" {
+					if !scopes[index].functionReachable {
+						return
+					}
+					scopes[index].functionOps = append(scopes[index].functionOps, shellFunctionOp{
+						prefixMode: mode, hasPrefixMode: true,
+						conditional: conditional || scopes[index].functionConditional || commandConditional || controlDepth > scopes[index].functionControlBase,
+					})
 					return
 				}
 				if scopes[index].isolated {
@@ -908,23 +1000,19 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			if len(pendingAssignments) == 0 {
 				return
 			}
-			switch shellIdentity.prefixMode {
+			recordFunctionSpecialEffects(pendingAssignments)
+			switch prefixMode {
 			case m2ShellPrefixDiscard:
 				return
 			case m2ShellPrefixPersist:
 				for name, value := range pendingAssignments {
 					active[name] = value
 				}
-				recordFunctionEffects(pendingAssignments)
 			case m2ShellPrefixAmbiguous:
-				conditionalEffects := cloneValues(pendingAssignments)
-				for name, value := range conditionalEffects {
+				for name, value := range pendingAssignments {
 					prior, exists := active[name]
 					active[name] = joinValue(prior, exists, value)
-					value.conditional = true
-					conditionalEffects[name] = value
 				}
-				recordFunctionEffects(conditionalEffects)
 			}
 		}
 		insideFunction := func() bool {
@@ -950,21 +1038,45 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 			}
 		}
-		var functionEffects func(string, map[string]bool) (map[string]shellValue, string)
-		functionEffects = func(name string, stack map[string]bool) (map[string]shellValue, string) {
+		queuePrefixMode := func(mode m2ShellPrefixMode, unknown bool) {
+			if pendingPrefixModeUnknown {
+				return
+			}
+			pendingPrefixMode = mode
+			pendingPrefixModeSet = true
+			pendingPrefixModeUnknown = unknown
+		}
+		queueSetPosixMode := func(enable bool) {
+			switch shellIdentity.timeMode {
+			case m2ShellTimeReserved:
+				mode := m2ShellPrefixDiscard
+				if enable {
+					mode = m2ShellPrefixPersist
+				}
+				queuePrefixMode(mode, false)
+			case m2ShellTimeExternal:
+				// Dash rejects this Bash option before subsequent commands;
+				// retaining its persistent mode is conservative.
+			case m2ShellTimeAmbiguous:
+				queuePrefixMode(m2ShellPrefixAmbiguous, true)
+			}
+		}
+		var functionEffects func(string, map[string]bool, m2ShellPrefixMode) (shellFunctionSummary, string)
+		functionEffects = func(name string, stack map[string]bool, initialPrefixMode m2ShellPrefixMode) (shellFunctionSummary, string) {
 			if stack[name] {
-				return nil, "recursive-function-call:" + name
+				return shellFunctionSummary{}, "recursive-function-call:" + name
 			}
 			function, exists := functions[name]
 			if !exists {
-				return map[string]shellValue{}, ""
+				return shellFunctionSummary{effects: map[string]shellValue{}, prefixMode: initialPrefixMode}, ""
 			}
 			if function.opaque {
-				return nil, "ambiguous-function-effects:" + name
+				return shellFunctionSummary{}, "ambiguous-function-effects:" + name
 			}
 			stack[name] = true
 			defer delete(stack, name)
 			effects := map[string]shellValue{}
+			resultPrefixMode := initialPrefixMode
 			applyEffects := func(operationEffects map[string]shellValue, operationConditional bool) {
 				for variable, value := range operationEffects {
 					value.conditional = value.conditional || operationConditional
@@ -978,16 +1090,39 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			}
 			for _, operation := range function.ops {
 				if operation.call != "" {
-					calledEffects, callAmbiguity := functionEffects(operation.call, stack)
+					called, callAmbiguity := functionEffects(operation.call, stack, resultPrefixMode)
 					if callAmbiguity != "" {
-						return nil, callAmbiguity
+						return shellFunctionSummary{}, callAmbiguity
 					}
-					applyEffects(calledEffects, operation.conditional)
+					applyEffects(called.effects, operation.conditional)
+					if operation.conditional {
+						resultPrefixMode = joinPrefixMode(resultPrefixMode, called.prefixMode)
+					} else {
+						resultPrefixMode = called.prefixMode
+					}
+					continue
+				}
+				if operation.specialEffects != nil {
+					switch resultPrefixMode {
+					case m2ShellPrefixDiscard:
+					case m2ShellPrefixPersist:
+						applyEffects(operation.specialEffects, operation.conditional)
+					case m2ShellPrefixAmbiguous:
+						applyEffects(operation.specialEffects, true)
+					}
+					continue
+				}
+				if operation.hasPrefixMode {
+					if operation.conditional {
+						resultPrefixMode = joinPrefixMode(resultPrefixMode, operation.prefixMode)
+					} else {
+						resultPrefixMode = operation.prefixMode
+					}
 					continue
 				}
 				applyEffects(operation.effects, operation.conditional)
 			}
-			return effects, ""
+			return shellFunctionSummary{effects: effects, prefixMode: resultPrefixMode}, ""
 		}
 		finishSimpleCommand := func(persistAssignments bool) {
 			if persistAssignments && !commandStarted {
@@ -1012,11 +1147,23 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			if pendingFunctionReturn {
 				markFunctionReturn(commandConditional || pendingFunctionJoin || !persistAssignments)
 			}
+			if pendingPrefixModeSet && persistAssignments {
+				conditional := commandConditional || pendingFunctionJoin
+				if conditional {
+					prefixMode = joinPrefixMode(prefixMode, pendingPrefixMode)
+				} else {
+					prefixMode = pendingPrefixMode
+				}
+				recordFunctionPrefixMode(pendingPrefixMode, conditional)
+			}
 			expansionValues = cloneValues(active)
 			pendingAssignments = map[string]shellValue{}
 			pendingFunctionEffects = map[string]shellValue{}
 			pendingFunctionJoin = false
 			pendingFunctionReturn = false
+			pendingPrefixMode = prefixMode
+			pendingPrefixModeSet = false
+			pendingPrefixModeUnknown = false
 			commandStarted = false
 		}
 		for tokenIndex, token := range tokens {
@@ -1091,7 +1238,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				if commandStarted || len(pendingAssignments) != 0 {
 					return nil, "unsupported-subshell-boundary"
 				}
-				scopes = append(scopes, shellScope{kind: '(', parent: active, isolated: true})
+				scopes = append(scopes, shellScope{kind: '(', parent: active, isolated: true, parentPrefixMode: prefixMode})
 				active = cloneValues(active)
 				expansionValues = cloneValues(active)
 				continue
@@ -1101,6 +1248,7 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					return nil, "unmatched-subshell-close"
 				}
 				active = scopes[len(scopes)-1].parent
+				prefixMode = scopes[len(scopes)-1].parentPrefixMode
 				scopes = scopes[:len(scopes)-1]
 				expansionValues = cloneValues(active)
 				inPipeline = false
@@ -1118,9 +1266,12 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				isolated := functionName != "" || isolatedBraces[tokenIndex]
 				scopes = append(scopes, shellScope{
 					kind: '{', parent: active, isolated: isolated, functionName: functionName, functionReachable: true,
-					functionControlBase: controlDepth,
+					functionControlBase: controlDepth, parentPrefixMode: prefixMode,
 				})
 				active = cloneValues(active)
+				if functionName != "" {
+					prefixMode = m2ShellPrefixAmbiguous
+				}
 				expansionValues = cloneValues(active)
 				continue
 			case "}":
@@ -1141,6 +1292,9 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					}
 				}
 				active = scope.parent
+				if scope.isolated {
+					prefixMode = scope.parentPrefixMode
+				}
 				expansionValues = cloneValues(active)
 				inPipeline = false
 				commandStarted = true
@@ -1191,6 +1345,30 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				}
 			}
 			if !commandPosition {
+				if strings.HasPrefix(indirectCommand, "set-mode") {
+					switch indirectCommand {
+					case "set-mode-enable", "set-mode-disable":
+						if token == "posix" {
+							queueSetPosixMode(indirectCommand == "set-mode-enable")
+						} else {
+							queuePrefixMode(m2ShellPrefixAmbiguous, true)
+						}
+						indirectCommand = "set-mode"
+					case "set-mode":
+						switch token {
+						case "-o":
+							indirectCommand = "set-mode-enable"
+						case "+o":
+							indirectCommand = "set-mode-disable"
+						default:
+							trimmed := strings.TrimLeft(token, "+-")
+							if token != "--" && len(trimmed) != len(token) && strings.Contains(trimmed, "o") {
+								queuePrefixMode(m2ShellPrefixAmbiguous, true)
+							}
+						}
+					}
+					continue
+				}
 				if indirectCommand == "stateful-read" {
 					if strings.HasPrefix(token, "-") {
 						continue
@@ -1251,6 +1429,12 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 				if !pathSpelled && !dispatchCapable && m2ShellSpecialBuiltins[commandName] {
 					applySpecialBuiltinPrefixes()
 				}
+				if commandName == "set" && !pathSpelled && !dispatchCapable {
+					commandStarted = true
+					indirectCommand = "set-mode"
+					commandPosition = false
+					continue
+				}
 				if _, exists := functions[commandName]; exists && !dispatchCapable {
 					if insideFunction() {
 						recordFunctionCall(commandName, ambiguousTimeLookup)
@@ -1258,11 +1442,11 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 						commandPosition = false
 						continue
 					}
-					effects, effectAmbiguity := functionEffects(commandName, map[string]bool{})
+					summary, effectAmbiguity := functionEffects(commandName, map[string]bool{}, prefixMode)
 					if effectAmbiguity != "" {
 						return nil, effectAmbiguity
 					}
-					for name, value := range effects {
+					for name, value := range summary.effects {
 						if value.conditional {
 							prior, exists := active[name]
 							value = joinValue(prior, exists, value)
@@ -1270,6 +1454,8 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 						pendingFunctionEffects[name] = value
 					}
 					pendingFunctionJoin = pendingFunctionJoin || commandConditional || ambiguousTimeLookup
+					pendingPrefixMode = summary.prefixMode
+					pendingPrefixModeSet = true
 					commandStarted = true
 					commandPosition = false
 					continue
