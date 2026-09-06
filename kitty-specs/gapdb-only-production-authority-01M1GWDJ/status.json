@@ -748,7 +748,8 @@
         "Cycle 31 exact candidate eb6e3faf3a84edd3eed43f5da95c398a43a6378d tree be1ffb177409bed89e708ddf0a4160aee223f6c6 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.44KF2y/evidence/manifest.json; inventory d1b5d3d3488a4fa3b3b36e74d824dec5162158fe8f33ca15c103889672e20e8a; receipts 454/454, layers 8/8, runtime 23/23; full architecture and race passed.",
         "Cycle 31 rejected: backslash-newline preprocessing in expansion-enabled heredocs could synthesize command substitution.",
         "Cycle 32 exact candidate dc261676541d732b48b2b5898422d6815e0b2e3b tree 6d357cd11ee2a685cf53256bd044deac67f3de88 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.Zcy5lu/evidence/manifest.json; inventory 25533b500938fbb4e964e05f765f3f9a511e4ee99aaaf13124b5a4950120c001; receipts 464/464, layers 8/8, runtime 23/23; full architecture and race passed.",
-        "Cycle 32 rejected: heredoc body mode began before a continued logical declaration command terminated."
+        "Cycle 32 rejected: heredoc body mode began before a continued logical declaration command terminated.",
+        "Cycle 33 exact candidate ec4031cef203726ee31ea82ee1892ab1cb8c0de9 tree 72ad4ae45385a0f6c29edc81af63b97053e585b1 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.LL4Ih9/evidence/manifest.json; inventory e780fb3f91c9daa81d04fcc598ee6d07a27efe9d7b32aff7b0f07294fbd63556; receipts 477/477, layers 8/8, runtime 23/23; full architecture and race passed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
