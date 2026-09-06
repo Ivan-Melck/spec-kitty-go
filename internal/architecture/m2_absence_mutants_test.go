@@ -363,6 +363,8 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"command-quoted-p-option-enables-posix":         "#!/bin/bash\ncommand \"-p\" set -o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 		"command-variable-p-option-enables-posix":       "#!/bin/bash\nreview_command=-p\ncommand \"$review_command\" set -o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 		"command-variable-target-keeps-posix":           "#!/bin/bash --posix\nreview_command=-p\ncommand -- \"$review_command\" set +o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"command-safe-unquoted-set-enables-posix":       "#!/bin/bash\nreview_command=set\ncommand $review_command -o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
+		"command-quoted-set-with-changed-ifs":           "#!/bin/bash\nIFS=:\nreview_command=set\ncommand \"$review_command\" -o posix\nreview_retired_cli=native\nselect_retired_cli(){ review_retired_cli=sql\\ite3 :; }\nselect_retired_cli\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -428,6 +430,9 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"command-terminator-missing-keeps-mode":            "#!/bin/bash\ncommand --\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"command-dash-p-target-keeps-default":              "#!/bin/bash\ncommand -- -p set -o posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"command-quoted-target-keeps-default":              "#!/bin/bash\ncommand -- \"-p\" set -o posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-quoted-multiword-is-scalar":               "#!/bin/bash\nreview_command='set -o posix'\ncommand \"$review_command\" || :\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-query-multiword-is-data":                  "#!/bin/bash\nreview_command='set -o posix'\ncommand -v $review_command >/dev/null || :\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-quoted-multiword-ignores-changed-ifs":     "#!/bin/bash\nIFS=:\nreview_command='set:-o:posix'\ncommand \"$review_command\" || :\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -476,6 +481,11 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		"unknown-command-set-option":                  "#!/bin/bash\ncommand --review-unknown set -o posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"dynamic-set-option":                          "#!/bin/bash\nreview_set_option=-o\nset \"$review_set_option\" posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 		"dynamic-command-target":                      "#!/bin/bash\ncommand \"$review_unknown_command\" set -o posix\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-unquoted-multiword":                  "#!/bin/bash\nreview_command='set -o posix'\ncommand $review_command\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-unquoted-tab":                        "#!/bin/bash\nreview_command='set\t-o\tposix'\ncommand $review_command\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-unquoted-newline":                    "#!/bin/bash\nreview_command='set\n-o\nposix'\ncommand $review_command\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-unquoted-glob":                       "#!/bin/bash\nreview_command='review-*'\ncommand $review_command\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
+		"command-unquoted-changed-ifs":                "#!/bin/bash\nIFS=:\nreview_command='set:-o:posix'\ncommand $review_command\nreview_retired_cli=native\nhelper(){ review_retired_cli=sql\\ite3 :; }\nhelper\n\"$review_retired_cli\" /tmp/x\n",
 	} {
 		t.Run(name+"-fails-closed", func(t *testing.T) {
 			root := t.TempDir()

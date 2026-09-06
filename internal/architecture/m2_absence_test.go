@@ -570,6 +570,8 @@ const (
 type m2ShellCommandParseResult struct {
 	kind      m2ShellCommandParseKind
 	ambiguous bool
+	quoted    bool
+	expanded  bool
 }
 
 type m2ShellCommandParser struct {
@@ -578,16 +580,20 @@ type m2ShellCommandParser struct {
 	ambiguous bool
 }
 
-func (parser *m2ShellCommandParser) consumeWord(word string, resolved bool) m2ShellCommandParseResult {
+func (parser *m2ShellCommandParser) consumeWord(word string, resolved, quoted, expanded bool) m2ShellCommandParseResult {
 	if !resolved {
 		parser.options = false
 		parser.ambiguous = true
-		return m2ShellCommandParseResult{kind: m2ShellCommandTarget, ambiguous: true}
+		kind := m2ShellCommandTarget
+		if parser.query {
+			kind = m2ShellCommandQueryTarget
+		}
+		return m2ShellCommandParseResult{kind: kind, ambiguous: true, quoted: quoted, expanded: expanded}
 	}
 	if parser.options {
 		if word == "--" {
 			parser.options = false
-			return m2ShellCommandParseResult{kind: m2ShellCommandOption}
+			return m2ShellCommandParseResult{kind: m2ShellCommandOption, quoted: quoted, expanded: expanded}
 		}
 		if strings.HasPrefix(word, "-") {
 			options := strings.TrimPrefix(word, "-")
@@ -596,15 +602,17 @@ func (parser *m2ShellCommandParser) consumeWord(word string, resolved bool) m2Sh
 			} else if strings.ContainsAny(options, "Vv") {
 				parser.query = true
 			}
-			return m2ShellCommandParseResult{kind: m2ShellCommandOption}
+			return m2ShellCommandParseResult{kind: m2ShellCommandOption, quoted: quoted, expanded: expanded}
 		}
 		parser.options = false
 	}
 	if parser.query {
-		return m2ShellCommandParseResult{kind: m2ShellCommandQueryTarget, ambiguous: parser.ambiguous}
+		return m2ShellCommandParseResult{kind: m2ShellCommandQueryTarget, ambiguous: parser.ambiguous, quoted: quoted, expanded: expanded}
 	}
-	return m2ShellCommandParseResult{kind: m2ShellCommandTarget, ambiguous: parser.ambiguous}
+	return m2ShellCommandParseResult{kind: m2ShellCommandTarget, ambiguous: parser.ambiguous, quoted: quoted, expanded: expanded}
 }
+
+var m2ShellSafeUnquotedCommandAtom = regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`)
 
 var m2ShellKnownSetOptions = map[string]bool{
 	"allexport": true, "braceexpand": true, "emacs": true, "errexit": true,
@@ -1458,18 +1466,31 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 			commandWrapperWord := ""
 			if commandPosition && dispatchMode == "command" {
 				word, resolved := m2StaticShellWord(token)
+				expanded := false
+				quoted := false
+				expansionUnsafe := false
+				expansionName := ""
 				if !resolved {
 					if command := m2ShellCommandVariable.FindStringSubmatch(token); len(command) == 3 {
-						name := command[1]
-						if name == "" {
-							name = command[2]
+						expansionName = command[1]
+						if expansionName == "" {
+							expansionName = command[2]
 						}
-						if value, exists := expansionValues[name]; exists && value.resolved {
-							word, resolved = value.value, true
+						expanded = true
+						quoted = len(token) >= 2 && token[0] == '"' && token[len(token)-1] == '"'
+						if value, exists := expansionValues[expansionName]; exists && value.resolved {
+							_, ifsChanged := expansionValues["IFS"]
+							if quoted || !ifsChanged && m2ShellSafeUnquotedCommandAtom.MatchString(value.value) {
+								word, resolved = value.value, true
+							} else {
+								expansionUnsafe = true
+							}
+						} else {
+							expansionUnsafe = true
 						}
 					}
 				}
-				parsed := commandParser.consumeWord(word, resolved)
+				parsed := commandParser.consumeWord(word, resolved, quoted, expanded)
 				switch parsed.kind {
 				case m2ShellCommandOption:
 					continue
@@ -1479,6 +1500,13 @@ func m2ShellResolvedExecutables(source string, shellIdentity m2ShellIdentity) ([
 					commandPosition = false
 					continue
 				case m2ShellCommandTarget:
+					if parsed.expanded && expansionUnsafe {
+						context := "unquoted"
+						if parsed.quoted {
+							context = "quoted"
+						}
+						return nil, "ambiguous-command-expansion:" + context + ":" + expansionName
+					}
 					commandWrapperTarget = true
 					commandWrapperAmbiguous = parsed.ambiguous
 					commandWrapperResolved = resolved
