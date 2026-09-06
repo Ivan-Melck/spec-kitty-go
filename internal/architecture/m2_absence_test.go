@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/scanner"
 	"go/token"
@@ -15,7 +16,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -256,7 +259,7 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 	executable := lower
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".go" {
-		parsed, err := parser.ParseFile(token.NewFileSet(), path, data, parser.ImportsOnly)
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, data, parser.ParseComments)
 		if err != nil {
 			add("malformed-go", path, "parse")
 			return
@@ -267,7 +270,9 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 				add("go-import", path, value)
 			}
 		}
-		executable = strings.ToLower(m2GoExecutableText(data))
+		executable = strings.ToLower(m2GoExecutableText(data) + "\n" + strings.Join(m2GoResolvedExecutables(parsed), "\n"))
+	} else if ext == ".sh" {
+		executable += "\n" + strings.Join(m2ShellResolvedExecutables(string(data)), "\n")
 	}
 	patterns := []struct{ kind, token string }{
 		{"driver", m2ModerncDriver}, {"driver", "go-" + m2LegacyWord + "3"}, {"driver", m2ZombiezenDriver},
@@ -286,7 +291,8 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 		if ext == ".go" && strings.Contains(executable, pattern.token) {
 			exempt = false
 		}
-		if strings.Contains(lower, pattern.token) &&
+		present := strings.Contains(lower, pattern.token) || strings.Contains(executable, pattern.token)
+		if present &&
 			(pattern.kind != "linkname" || strings.Contains(lower, m2LegacyWord)) && !exempt {
 			add(pattern.kind, path, pattern.token)
 		}
@@ -387,6 +393,117 @@ func m2GoExecutableText(data []byte) string {
 		}
 	}
 	return executable.String()
+}
+
+func m2GoResolvedExecutables(file *ast.File) []string {
+	aliases := map[string]bool{}
+	for _, imported := range file.Imports {
+		path, err := strconv.Unquote(imported.Path.Value)
+		if err != nil || path != "os/exec" {
+			continue
+		}
+		name := "exec"
+		if imported.Name != nil {
+			name = imported.Name.Name
+		}
+		aliases[name] = true
+	}
+	values := map[string]string{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.ValueSpec:
+			for index, name := range typed.Names {
+				if _, exists := values[name.Name]; !exists && index < len(typed.Values) {
+					if value, ok := m2GoConstantString(typed.Values[index], values); ok {
+						values[name.Name] = value
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			for index, left := range typed.Lhs {
+				name, ok := left.(*ast.Ident)
+				if !ok || index >= len(typed.Rhs) {
+					continue
+				}
+				if _, exists := values[name.Name]; !exists {
+					if value, resolved := m2GoConstantString(typed.Rhs[index], values); resolved {
+						values[name.Name] = value
+					}
+				}
+			}
+		}
+		return true
+	})
+	var executables []string
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || (selector.Sel.Name != "Command" && selector.Sel.Name != "CommandContext") {
+			return true
+		}
+		owner, ok := selector.X.(*ast.Ident)
+		if !ok || !aliases[owner.Name] {
+			return true
+		}
+		index := 0
+		if selector.Sel.Name == "CommandContext" {
+			index = 1
+		}
+		if index < len(call.Args) {
+			if value, resolved := m2GoConstantString(call.Args[index], values); resolved {
+				executables = append(executables, value)
+			}
+		}
+		return true
+	})
+	sort.Strings(executables)
+	return executables
+}
+
+func m2GoConstantString(expression ast.Expr, values map[string]string) (string, bool) {
+	switch typed := expression.(type) {
+	case *ast.BasicLit:
+		if typed.Kind != token.STRING {
+			return "", false
+		}
+		value, err := strconv.Unquote(typed.Value)
+		return value, err == nil
+	case *ast.BinaryExpr:
+		if typed.Op != token.ADD {
+			return "", false
+		}
+		left, leftOK := m2GoConstantString(typed.X, values)
+		right, rightOK := m2GoConstantString(typed.Y, values)
+		return left + right, leftOK && rightOK
+	case *ast.ParenExpr:
+		return m2GoConstantString(typed.X, values)
+	case *ast.Ident:
+		value, ok := values[typed.Name]
+		return value, ok
+	default:
+		return "", false
+	}
+}
+
+var m2ShellAssignment = regexp.MustCompile(`(?m)(?:^|[;\n])[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*((?:'[^']*'|"[^"]*"|[A-Za-z0-9_./-]+)+)[ \t]*;([^\n]*)`)
+
+func m2ShellResolvedExecutables(source string) []string {
+	var executables []string
+	for _, match := range m2ShellAssignment.FindAllStringSubmatch(source, 128) {
+		if len(match) != 4 {
+			continue
+		}
+		value := strings.NewReplacer("'", "", `"`, "").Replace(match[2])
+		use := "$" + match[1]
+		if strings.Contains(match[3], use) {
+			executables = append(executables, value)
+		}
+	}
+	sort.Strings(executables)
+	return executables
 }
 
 func m2WithinRoot(root, path string) bool {

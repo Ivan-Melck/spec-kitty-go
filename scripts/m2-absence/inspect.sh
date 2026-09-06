@@ -9,6 +9,14 @@ modernc_driver=modernc.org/$legacy_word
 catalog_name=${legacy_word}_master
 journal_pragma='pragma journal_''mode'
 sql_package=database/sql
+admitted_sidecar_sha=947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
+
+check_admitted_sidecar() {
+  sidecar=${SPEC_KITTY_WP15_GAPDBD:-}
+  case "$sidecar" in /*) ;; *) return 64 ;; esac
+  test -f "$sidecar" && test -x "$sidecar" || return 64
+  test "$(sha256sum "$sidecar" | awk '{print $1}')" = "$admitted_sidecar_sha" || return 64
+}
 
 check_common_file() {
   candidate_file=$1
@@ -20,7 +28,19 @@ check_common_file() {
 
 check_source() { check_common_file "$1"; }
 check_graph_module() { check_common_file "$1"; }
-check_shell() { check_common_file "$1"; }
+check_shell() {
+  check_common_file "$1"
+  normalized=$(tr -d "'\"" <"$1")
+  assignments=$(printf '%s\n' "$normalized" | grep -Eo '[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./-]+' || true)
+  for assignment in $assignments; do
+    name=${assignment%%=*}
+    value=${assignment#*=}
+    if [ "$value" = "$legacy_cli" ] && printf '%s\n' "$normalized" | grep -Eq '\$\{?'"$name"'([^A-Za-z0-9_]|$)'; then
+      return 42
+    fi
+  done
+  return 0
+}
 check_binary() { check_common_file "$1"; }
 check_sbom() { check_common_file "$1"; }
 
@@ -41,10 +61,9 @@ check_help_config() {
 
 check_runtime() {
   if jq -e '
-    .schema_version == 1 and
-    .forbidden_loads == 0 and .forbidden_opens == 0 and
-    .forbidden_subprocesses == 0 and .forbidden_imports == 0 and
-    .current_mutations_on_refused_roots == 0 and .fallback_attempts == 0
+    .schema_version == 2 and .verdict == "pass" and
+    (.expected|length) > 0 and .run == .expected and .passed == .expected and
+    (.skipped|length) == 0 and (.failed|length) == 0 and (.unmatched|length) == 0
   ' "$1" >/dev/null; then return 0; else status=$?; test "$status" -eq 1 && return 42; return "$status"; fi
 }
 
@@ -67,12 +86,18 @@ if [ "${1:-}" = --probe ]; then
   run_probe "$2" "$3"
   exit $?
 fi
+if [ "${1:-}" = --check-sidecar ]; then
+  test "$#" -eq 1
+  check_admitted_sidecar
+  exit $?
+fi
 
 repository=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 candidate=${M2_CANDIDATE:-HEAD}
-for tool in git go jq sha256sum tar strings readelf ldd find sort awk sed grep cmp xargs paste; do
+for tool in git go jq sha256sum tar strings readelf ldd find sort awk sed grep cmp xargs paste tr; do
   command -v "$tool" >/dev/null 2>&1 || { echo "M2 qualification requires $tool" >&2; exit 1; }
 done
+check_admitted_sidecar
 
 git -C "$repository" diff --quiet
 git -C "$repository" diff --cached --quiet
@@ -112,16 +137,56 @@ check_graph_module "$evidence_root/package-graph.txt"
 check_graph_module "$evidence_root/modules.json"
 check_graph_module "$evidence_root/module-graph.txt"
 
-absence_selector='^(TestM2SQLiteAbsence|TestM2AbsenceMutants|TestM2AbsenceSymlinkAndHistoricalDiscrimination|TestM2GateSourcesDoNotShelterExecutableBehavior|TestM2AbsenceLayerDetectors|TestM2RetiredBlobCensusIsClosed|TestM2ResurrectedSQLiteAdapterAndLaterCapabilityBothFailClosed)$'
+absence_selector='^(TestM2SQLiteAbsence|TestM2AbsenceMutants|TestM2AbsenceSymlinkAndHistoricalDiscrimination|TestM2GateSourcesDoNotShelterExecutableBehavior|TestM2SplitExecutableTokensFailClosedWithoutOverNormalization|TestM2AbsenceLayerDetectors|TestM2QualificationRequiresAdmittedSidecar|TestM2RetiredBlobCensusIsClosed|TestM2ResurrectedSQLiteAdapterAndLaterCapabilityBothFailClosed)$'
 go test ./internal/architecture -count=1 -run "$absence_selector" >/dev/null
-printf '{"schema_version":1,"status":"pass","mutants":40}\n' >"$evidence_root/absence-tests.json"
+printf '{"schema_version":1,"status":"pass","mutants":47}\n' >"$evidence_root/absence-tests.json"
 "$source_root/scripts/m2-absence/mutants.sh" --layers-only >/dev/null
 printf '{"schema_version":1,"status":"pass","layers":8}\n' >"$evidence_root/layer-mutants.json"
 
-go test ./cmd/spec-kitty ./internal/controlroot -count=1 >/dev/null
-cat >"$evidence_root/runtime-result.json" <<'EOF'
-{"schema_version":1,"forbidden_loads":0,"forbidden_opens":0,"forbidden_subprocesses":0,"forbidden_imports":0,"current_mutations_on_refused_roots":0,"fallback_attempts":0}
-EOF
+runtime_selector='^(TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation|TestHistoricalAndUnsafeRootsRefuseBeforeInstallationOrMutation|TestRealGapDBMutationInitializesAndQueriesRemainPureAcrossRestart|TestRealGapDBLostAcknowledgementRestartResumeAndConflict|TestCurrentRootAcceptsIdentityReservationGenerationAheadOfManifest|TestHistoricalSQLiteSignatureAndCompanions|TestClassificationIsReadOnly)$'
+runtime_expected=$(jq -n '[
+  "TestClassificationIsReadOnly",
+  "TestCurrentRootAcceptsIdentityReservationGenerationAheadOfManifest",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/acceptance",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/effect",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/execution",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/handoff",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/integration",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/integration_cleanup",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/mission",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/readiness",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/review",
+  "TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation/workspace_rebind",
+  "TestHistoricalAndUnsafeRootsRefuseBeforeInstallationOrMutation",
+  "TestHistoricalSQLiteSignatureAndCompanions",
+  "TestHistoricalSQLiteSignatureAndCompanions/exact",
+  "TestHistoricalSQLiteSignatureAndCompanions/offset-one",
+  "TestHistoricalSQLiteSignatureAndCompanions/one-byte-short",
+  "TestHistoricalSQLiteSignatureAndCompanions/phrase",
+  "TestHistoricalSQLiteSignatureAndCompanions/random-near-prefix",
+  "TestHistoricalSQLiteSignatureAndCompanions/wrong-nul",
+  "TestRealGapDBLostAcknowledgementRestartResumeAndConflict",
+  "TestRealGapDBMutationInitializesAndQueriesRemainPureAcrossRestart"
+]')
+if ! SPEC_KITTY_WP15_GAPDBD="$sidecar" go test -json -count=1 -run "$runtime_selector" \
+  ./cmd/spec-kitty ./internal/helpercmd ./internal/controlroot >"$evidence_root/runtime-events.jsonl"; then
+  echo "required production runtime tests failed" >&2
+  exit 1
+fi
+runtime_raw_sha=$(sha256sum "$evidence_root/runtime-events.jsonl" | awk '{print $1}')
+jq -s -S --argjson expected "$runtime_expected" --arg sidecar_sha "$admitted_sidecar_sha" --arg raw_sha "$runtime_raw_sha" '
+  [.[] | select(.Test != null)] as $events |
+  ([$events[] | select(.Action == "run") | .Test] | sort) as $run |
+  ([$events[] | select(.Action == "pass") | .Test] | sort) as $pass |
+  ([$events[] | select(.Action == "skip") | .Test] | sort) as $skipped |
+  ([$events[] | select(.Action == "fail") | .Test] | sort) as $failed |
+  (($run + $pass + $skipped + $failed) | map(select(. as $name | $expected | index($name) | not)) | unique) as $unmatched |
+  {schema_version:2, expected:$expected, run:$run, passed:$pass, skipped:$skipped, failed:$failed,
+   unmatched:$unmatched, sidecar_sha256:$sidecar_sha, raw_events_sha256:$raw_sha,
+   verdict:(if $run == $expected and $pass == $expected and ($skipped|length)==0 and ($failed|length)==0 and ($unmatched|length)==0 then "pass" else "fail" end)}
+' "$evidence_root/runtime-events.jsonl" >"$evidence_root/runtime-result.json"
+jq -e '.verdict == "pass" and (.run|length)==23 and (.passed|length)==23 and (.skipped|length)==0 and (.failed|length)==0 and (.unmatched|length)==0' "$evidence_root/runtime-result.json" >/dev/null
 check_runtime "$evidence_root/runtime-result.json"
 
 go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./cmd/... | sed '/^$/d' | LC_ALL=C sort >"$evidence_root/commands.txt"
@@ -180,17 +245,18 @@ jq -n -S \
   --arg binary_results_sha256 "$(sha256sum "$evidence_root/binary-results.txt" | awk '{print $1}')" \
   --arg install_sha256 "$(sha256sum "$evidence_root/install-sha256.txt" | awk '{print $1}')" \
   --arg runtime_sha256 "$(sha256sum "$evidence_root/runtime-result.json" | awk '{print $1}')" \
+  --arg runtime_raw_sha256 "$(sha256sum "$evidence_root/runtime-events.jsonl" | awk '{print $1}')" \
   --arg mutant_sha256 "$(sha256sum "$evidence_root/layer-mutants.json" | awk '{print $1}')" \
   --arg module_graph_sha256 "$(sha256sum "$evidence_root/module-graph.txt" | awk '{print $1}')" \
   --arg sbom_sha256 "$(sha256sum "$evidence_root/sbom.cdx.json" | awk '{print $1}')" \
   --arg inventory_sha256 "$inventory_sha" \
-  '{schema_version:2,verdict:"pass",source:{commit:$commit,tree:$tree,go_mod_sha256:$go_mod_sha256,go_sum_sha256:$go_sum_sha256},toolchain:{version:$go_version,environment:$go_env},qualification:{source:true,module:true,vendor_like:true,mutants:40,detector_layers:8,binaries:true,sbom:true,install:true,help_config:true,runtime:true,historical_exemptions:"closed-token-and-path-map"},digests:{commands_sha256:$commands_sha256,binary_results_sha256:$binary_results_sha256,install_sha256:$install_sha256,runtime_sha256:$runtime_sha256,mutant_sha256:$mutant_sha256,module_graph_sha256:$module_graph_sha256,sbom_sha256:$sbom_sha256,evidence_inventory_sha256:$inventory_sha256}}' >"$evidence_root/manifest.json"
+  '{schema_version:2,verdict:"pass",source:{commit:$commit,tree:$tree,go_mod_sha256:$go_mod_sha256,go_sum_sha256:$go_sum_sha256},toolchain:{version:$go_version,environment:$go_env},qualification:{source:true,module:true,vendor_like:true,mutants:47,detector_layers:8,binaries:true,sbom:true,install:true,help_config:true,runtime:"observed",runtime_tests:23,historical_exemptions:"closed-token-and-path-map"},digests:{commands_sha256:$commands_sha256,binary_results_sha256:$binary_results_sha256,install_sha256:$install_sha256,runtime_sha256:$runtime_sha256,runtime_raw_sha256:$runtime_raw_sha256,mutant_sha256:$mutant_sha256,module_graph_sha256:$module_graph_sha256,sbom_sha256:$sbom_sha256,evidence_inventory_sha256:$inventory_sha256}}' >"$evidence_root/manifest.json"
 (cd "$evidence_root" && sha256sum manifest.json >manifest-sha256.txt)
 
 # Independent completed-set verification after every output is closed.
 (cd "$artifacts" && sha256sum -c evidence/evidence-sha256.txt >/dev/null)
 test "$(sha256sum "$evidence_root/evidence-sha256.txt" | awk '{print $1}')" = "$(jq -r '.digests.evidence_inventory_sha256' "$evidence_root/manifest.json")"
-for tuple in commands:commands.txt binary_results:binary-results.txt install:install-sha256.txt runtime:runtime-result.json mutant:layer-mutants.json module_graph:module-graph.txt sbom:sbom.cdx.json; do
+for tuple in commands:commands.txt binary_results:binary-results.txt install:install-sha256.txt runtime:runtime-result.json runtime_raw:runtime-events.jsonl mutant:layer-mutants.json module_graph:module-graph.txt sbom:sbom.cdx.json; do
   key=${tuple%%:*}; file=${tuple#*:}
   test "$(sha256sum "$evidence_root/$file" | awk '{print $1}')" = "$(jq -r ".digests.${key}_sha256" "$evidence_root/manifest.json")"
 done

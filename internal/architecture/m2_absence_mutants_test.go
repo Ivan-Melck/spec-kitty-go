@@ -1,9 +1,11 @@
 package architecture
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -109,12 +111,84 @@ func TestM2GateSourcesDoNotShelterExecutableBehavior(t *testing.T) {
 	}
 }
 
+func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T) {
+	tests := []struct {
+		name, path, content string
+		want                bool
+	}{
+		{"go-concatenation", "internal/x/x.go", "package x\nimport \"os/exec\"\nfunc run(){ _ = exec.Command(\"sql\"+\"ite3\", \"authority.db\") }\n", true},
+		{"go-alias-flow", "internal/x/x.go", "package x\nimport command \"os/exec\"\nfunc run(){ retired := \"sql\"+\"ite3\"; _ = command.Command(retired) }\n", true},
+		{"shell-adjacent-quotes", "scripts/x.sh", "#!/bin/sh\nretired_cli='sql''ite3'; \"$retired_cli\" authority.db\n", true},
+		{"go-unrelated-concatenation", "internal/x/x.go", "package x\nimport \"os/exec\"\nfunc run(){ _ = exec.Command(\"sql\"+\"-formatter\") }\n", false},
+		{"shell-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nretired_cli='sql''ite3'; printf '%s' native\n", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, test.path, []byte(test.content))
+			evidence := inspectM2Absence(t, root, false)
+			if test.want {
+				assertM2Finding(t, evidence.Findings, "subprocess", test.path)
+			} else if len(evidence.Findings) != 0 {
+				t.Fatalf("clean split-token control rejected: %s", formatM2Findings(evidence.Findings))
+			}
+		})
+	}
+
+	t.Run("malformed-go-fails-closed", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "internal/x/x.go", []byte("package x\nfunc broken("))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "malformed-go", "internal/x/x.go")
+	})
+}
+
 func TestM2AbsenceLayerDetectors(t *testing.T) {
 	command := exec.Command(filepath.Join(m2RepositoryRoot(t), "scripts", "m2-absence", "mutants.sh"), "--layers-only")
 	command.Dir = m2RepositoryRoot(t)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("layer detector mutants: %v\n%s", err, output)
 	}
+}
+
+func TestM2QualificationRequiresAdmittedSidecar(t *testing.T) {
+	root := t.TempDir()
+	wrong := filepath.Join(root, "wrong-gapdbd")
+	writeM2Mutant(t, root, "wrong-gapdbd", []byte("#!/bin/sh\nexit 0\n"))
+	if err := os.Chmod(wrong, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	unexecutable := filepath.Join(root, "unexecutable-gapdbd")
+	writeM2Mutant(t, root, "unexecutable-gapdbd", []byte("not executable"))
+
+	for name, sidecar := range map[string]string{
+		"missing":      "",
+		"relative":     "gapdbd",
+		"nonexistent":  filepath.Join(root, "absent-gapdbd"),
+		"unexecutable": unexecutable,
+		"wrong-digest": wrong,
+	} {
+		t.Run(name, func(t *testing.T) {
+			command := exec.Command(filepath.Join(m2RepositoryRoot(t), "scripts", "m2-absence", "inspect.sh"), "--check-sidecar")
+			command.Dir = m2RepositoryRoot(t)
+			command.Env = m2EnvironmentWithSidecar(sidecar)
+			err := command.Run()
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) || exitError.ExitCode() != 64 {
+				t.Fatalf("inadmissible sidecar did not fail closed with status 64: %v", err)
+			}
+		})
+	}
+}
+
+func m2EnvironmentWithSidecar(sidecar string) []string {
+	environment := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "SPEC_KITTY_WP15_GAPDBD=") {
+			environment = append(environment, entry)
+		}
+	}
+	return append(environment, "SPEC_KITTY_WP15_GAPDBD="+sidecar)
 }
 
 func TestM2RetiredBlobCensusIsClosed(t *testing.T) {
