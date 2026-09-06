@@ -112,6 +112,7 @@ func TestM2GateSourcesDoNotShelterExecutableBehavior(t *testing.T) {
 }
 
 func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T) {
+	longGap := strings.Repeat("# intervening line\n", 65)
 	tests := []struct {
 		name, path, content string
 		want                bool
@@ -124,6 +125,8 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		{"shell-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nretired_cli='sql''ite3'; printf '%s' native\n", false},
 		{"shell-multiline-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\nprintf '%s' \"$review_retired_cli\"\n", false},
 		{"shell-command-before-assignment", "scripts/x.sh", "#!/bin/sh\n\"$review_retired_cli\" /tmp/x; review_retired_cli='sql''ite3'\n", false},
+		{"shell-beyond-former-line-horizon", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n" + longGap + "\"$review_retired_cli\" /tmp/x\n", true},
+		{"shell-long-uninvoked-data", "scripts/x.sh", "#!/bin/sh\nreview_retired_cli='sql''ite3'\n" + longGap + "printf '%s' native\n", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -143,6 +146,13 @@ func TestM2SplitExecutableTokensFailClosedWithoutOverNormalization(t *testing.T)
 		writeM2Mutant(t, root, "internal/x/x.go", []byte("package x\nfunc broken("))
 		evidence := inspectM2Absence(t, root, false)
 		assertM2Finding(t, evidence.Findings, "malformed-go", "internal/x/x.go")
+	})
+
+	t.Run("oversize-shell-is-explicit-budget-refusal", func(t *testing.T) {
+		root := t.TempDir()
+		writeM2Mutant(t, root, "scripts/x.sh", []byte(strings.Repeat("#", (8<<20)+1)))
+		evidence := inspectM2Absence(t, root, false)
+		assertM2Finding(t, evidence.Findings, "budget", "scripts/x.sh")
 	})
 }
 

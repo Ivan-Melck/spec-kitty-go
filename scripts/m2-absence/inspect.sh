@@ -30,36 +30,31 @@ check_source() { check_common_file "$1"; }
 check_graph_module() { check_common_file "$1"; }
 check_shell() {
   check_common_file "$1"
-  normalized=$(tr -d "'\"" <"$1")
-  assignments=$(printf '%s\n' "$normalized" | grep -Eo '[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./-]+' || true)
-  for assignment in $assignments; do
-    name=${assignment%%=*}
-    value=${assignment#*=}
-    if [ "$value" = "$legacy_cli" ]; then
-      if printf '%s\n' "$normalized" | awk -v name="$name" -v expected="$legacy_cli" '
-        BEGIN {
-          assignment = "(^|;)[ \\t]*" name "[ \\t]*=[ \\t]*" expected "([ \\t]*;|[ \\t]*$)"
-          command = "(^|;)[ \\t]*\\$" name "([ \\t;]|$)"
+  if tr -d "'\"" <"$1" | awk -v expected="$legacy_cli" '
+    {
+      count = split($0, statements, ";")
+      for (part = 1; part <= count; part++) {
+        statement = statements[part]
+        sub(/^[ \t]*/, "", statement)
+        if (statement ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) {
+          name = statement
+          sub(/[ \t]*=.*/, "", name)
+          value = statement
+          sub(/^[^=]*=[ \t]*/, "", value)
+          sub(/[ \t].*$/, "", value)
+          if (value == expected) active[name] = 1
+          else delete active[name]
+        } else if (statement ~ /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?([ \t]|$)/) {
+          name = statement
+          sub(/[ \t].*$/, "", name)
+          sub(/^\$\{?/, "", name)
+          sub(/\}$/, "", name)
+          if (active[name]) found = 1
         }
-        {
-          if (match($0, assignment)) {
-            remaining = 65
-            suffix = substr($0, RSTART + RLENGTH)
-            if (suffix ~ command) found = 1
-          } else if (remaining > 0 && $0 ~ command) {
-            found = 1
-          }
-          if (remaining > 0) remaining--
-        }
-        END { exit found ? 0 : 1 }
-      '; then
-        return 42
-      else
-        status=$?
-        test "$status" -eq 1 || return "$status"
-      fi
-    fi
-  done
+      }
+    }
+    END { exit found ? 0 : 1 }
+  '; then return 42; else status=$?; test "$status" -eq 1 || return "$status"; fi
   return 0
 }
 check_binary() { check_common_file "$1"; }

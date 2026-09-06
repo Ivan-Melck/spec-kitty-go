@@ -11,7 +11,12 @@ run_layers() {
   cli=${legacy_word}3
   printf 'package mutant\nimport _ "%s"\n' "$driver" >"$fixture_root/source.go"
   printf 'example.test/mutant %s@v1.0.0\n' "$driver" >"$fixture_root/module.graph"
-  printf '#!/bin/sh\nreview_retired_cli=%s%s\n"$review_retired_cli" /tmp/x\n' "'sql'" "'ite3'" >"$fixture_root/command.sh"
+  {
+    printf '#!/bin/sh\nreview_retired_cli=%s%s\n' "'sql'" "'ite3'"
+    line=0
+    while [ "$line" -lt 65 ]; do printf '# intervening line\n'; line=$((line + 1)); done
+    printf '"$review_retired_cli" /tmp/x\n'
+  } >"$fixture_root/command.sh"
   printf 'ELF\\000%s\\000' "$driver" >"$fixture_root/binary"
   mkdir "$fixture_root/install"
   printf '%s' "$driver" >"$fixture_root/install/provider.bin"

@@ -227,7 +227,11 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 			}
 			return nil
 		}
-		if !info.Mode().IsRegular() || info.Size() > 8<<20 {
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if info.Size() > 8<<20 {
+			add("budget", rel, "file-bytes")
 			return nil
 		}
 		evidence.Bytes += info.Size()
@@ -489,31 +493,52 @@ func m2GoConstantString(expression ast.Expr, values map[string]string) (string, 
 }
 
 var m2ShellAssignment = regexp.MustCompile(`(?:^|;)[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*((?:'[^']*'|"[^"]*"|[A-Za-z0-9_./-]+)+)[ \t]*(?:;|$)`)
+var m2ShellCommandVariable = regexp.MustCompile(`(?:^|;)[ \t]*"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?(?:[ \t;]|$)`)
 
 func m2ShellResolvedExecutables(source string) []string {
+	type shellEvent struct {
+		offset     int
+		assignment bool
+		name       string
+		value      string
+	}
 	var executables []string
+	active := map[string]string{}
 	lines := strings.Split(source, "\n")
-	for lineIndex, line := range lines {
+	for _, line := range lines {
+		var events []shellEvent
 		for _, location := range m2ShellAssignment.FindAllStringSubmatchIndex(line, 128) {
 			if len(location) != 6 {
 				continue
 			}
-			value := strings.NewReplacer("'", "", `"`, "").Replace(line[location[4]:location[5]])
-			name := regexp.QuoteMeta(line[location[2]:location[3]])
-			command := regexp.MustCompile(`(?:^|;)[ \t]*(?:"?\$\{?` + name + `\}?"?)(?:[ \t;]|$)`)
-			last := lineIndex + 64
-			if last >= len(lines) {
-				last = len(lines) - 1
+			events = append(events, shellEvent{
+				offset:     location[0],
+				assignment: true,
+				name:       line[location[2]:location[3]],
+				value:      strings.NewReplacer("'", "", `"`, "").Replace(line[location[4]:location[5]]),
+			})
+		}
+		for _, location := range m2ShellCommandVariable.FindAllStringSubmatchIndex(line, 128) {
+			if len(location) != 6 {
+				continue
 			}
-			for candidate := lineIndex; candidate <= last; candidate++ {
-				candidateLine := lines[candidate]
-				if candidate == lineIndex {
-					candidateLine = line[location[1]:]
-				}
-				if command.MatchString(candidateLine) {
-					executables = append(executables, value)
-					break
-				}
+			nameStart, nameEnd := location[2], location[3]
+			if nameStart < 0 {
+				nameStart, nameEnd = location[4], location[5]
+			}
+			events = append(events, shellEvent{offset: location[0], name: line[nameStart:nameEnd]})
+		}
+		sort.SliceStable(events, func(left, right int) bool {
+			if events[left].offset == events[right].offset {
+				return events[left].assignment && !events[right].assignment
+			}
+			return events[left].offset < events[right].offset
+		})
+		for _, event := range events {
+			if event.assignment {
+				active[event.name] = event.value
+			} else if value, exists := active[event.name]; exists {
+				executables = append(executables, value)
 			}
 		}
 	}
