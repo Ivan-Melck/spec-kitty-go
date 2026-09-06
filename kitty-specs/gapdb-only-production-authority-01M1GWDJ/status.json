@@ -750,7 +750,8 @@
         "Cycle 32 exact candidate dc261676541d732b48b2b5898422d6815e0b2e3b tree 6d357cd11ee2a685cf53256bd044deac67f3de88 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.Zcy5lu/evidence/manifest.json; inventory 25533b500938fbb4e964e05f765f3f9a511e4ee99aaaf13124b5a4950120c001; receipts 464/464, layers 8/8, runtime 23/23; full architecture and race passed.",
         "Cycle 32 rejected: heredoc body mode began before a continued logical declaration command terminated.",
         "Cycle 33 exact candidate ec4031cef203726ee31ea82ee1892ab1cb8c0de9 tree 72ad4ae45385a0f6c29edc81af63b97053e585b1 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.LL4Ih9/evidence/manifest.json; inventory e780fb3f91c9daa81d04fcc598ee6d07a27efe9d7b32aff7b0f07294fbd63556; receipts 477/477, layers 8/8, runtime 23/23; full architecture and race passed.",
-        "Cycle 33 rejected: a continued split heredoc operator leaked inert body text into subprocess scanning."
+        "Cycle 33 rejected: a continued split heredoc operator leaked inert body text into subprocess scanning.",
+        "Cycle 34 exact candidate cd7c7920eff0562c3ce0536d4f7801039bd0fc54 tree e2c6d42c996ecca70c191c7c0ce98af87fc66182 qualified with pinned Gapdb sidecar sha256 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad; manifest /tmp/go-kitty3-m2-absence.ZYdfBP/evidence/manifest.json; inventory 3e065273c88aeb431efacec5f37587772254493abcc23a475658b90a235e1470; receipts 489/489, layers 8/8, runtime 23/23; full architecture and race passed."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
