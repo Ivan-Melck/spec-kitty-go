@@ -175,6 +175,15 @@
       "reason": "all 45 crown campaigns passed, but cleanup of the private nested absence module cache failed because the Go toolchain download retained read-only cache directories",
       "attempt_events_sha256": "e057441a2520822ec3a7dabbaf6acd1adccbf830f6d5be4fcf3227a17322dcde",
       "terminal_sha256": "6617c63ebf5d4c95a926618e33964bd37775551d319615c904746f757b4e3f24"
+    },
+    {
+      "run_id": "wp17-qualification-4b4d1926-final13",
+      "source_commit": "4b4d19269ccc93790c44d17ad5e29ecd83c74bc6",
+      "source_tree": "588692847a93dc4e491c9ee7aab21f364015c73f",
+      "outcome": "fail",
+      "reason": "all 45 crown campaigns passed, but Go's toolchain module remained read-only because the module-cache writable flag does not govern downloaded toolchains, so attempt-local absence cleanup still failed",
+      "attempt_events_sha256": "6727bd0b65b460180f3e1371be64a59d58091f2ffe6b1f4ddc57204cf34df9ac",
+      "terminal_sha256": "44d63d7dc64b274984a4ff9e7ad9b7fb2200e6699feeab28dd97446a9934bb72"
     }
   ]
 }

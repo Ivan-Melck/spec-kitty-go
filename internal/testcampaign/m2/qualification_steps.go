@@ -59,12 +59,62 @@ func RunAbsenceQualification(ctx context.Context, repository, sidecar string, at
 		}
 		inputs = append(inputs, ArtifactInput{Path: "absence/" + name, Kind: "absence-contract", Data: data})
 	}
-	if err := os.RemoveAll(working); err != nil {
+	if err := removePrivateWorkingTree(attempt.Directory, working); err != nil {
 		return nil, err
 	}
 	inputs = append(inputs, ArtifactInput{Path: "logs/absence-command.txt", Kind: "absence-command", Data: raw})
 	slices.SortFunc(inputs, func(a, b ArtifactInput) int { return strings.Compare(a.Path, b.Path) })
 	return inputs, nil
+}
+
+func removePrivateWorkingTree(attemptRoot, root string) error {
+	if !filepath.IsAbs(attemptRoot) || filepath.Clean(attemptRoot) != attemptRoot ||
+		filepath.Base(attemptRoot) != "evidence" || filepath.Base(filepath.Dir(filepath.Dir(attemptRoot))) != ".attempts" {
+		return fmt.Errorf("private working tree requires a narrow absolute attempt root")
+	}
+	attemptInfo, err := os.Lstat(attemptRoot)
+	if err != nil {
+		return err
+	}
+	if attemptInfo.Mode()&os.ModeSymlink != 0 || !attemptInfo.IsDir() {
+		return fmt.Errorf("private working tree attempt root must be a real directory")
+	}
+	resolvedAttempt, err := filepath.EvalSymlinks(attemptRoot)
+	if err != nil || resolvedAttempt != attemptRoot {
+		return fmt.Errorf("private working tree attempt root must not traverse symbolic links")
+	}
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root != filepath.Join(attemptRoot, ".working-absence") {
+		return fmt.Errorf("private working tree must be the reserved attempt absence directory")
+	}
+	rootInfo, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return fmt.Errorf("private working tree must be a real directory")
+	}
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		// WalkDir never follows symbolic links. Only directories need owner
+		// permissions restored for unlinking read-only Go module/toolchain
+		// caches; files and external symlink targets remain untouched.
+		if entry.IsDir() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			return os.Chmod(path, info.Mode().Perm()|0o700)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return os.RemoveAll(root)
 }
 
 func RunRaceQualification(ctx context.Context, repository, sidecar string, attempt *Attempt) ([]ArtifactInput, error) {
