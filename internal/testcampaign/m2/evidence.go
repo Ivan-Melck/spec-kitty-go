@@ -29,7 +29,7 @@ const (
 	AdmittedM1EvidenceSHA256            = "397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309"
 	AdmittedM1TupleSHA256               = "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
 	AdmittedM1SidecarSHA256             = "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad"
-	QualificationCandidateSidecarSHA256 = "366a893d36c7c60282e84f43e67674c5d5e9a63b6e092227fffcdf861014ce21"
+	QualificationCandidateSidecarSHA256 = "54d3c80dd225a5e58f1488f0ce62fd6b95a6bb0ecf95b541e211b199555d8eaf"
 )
 
 type ArtifactInput struct {
