@@ -153,7 +153,7 @@ func verifyNestedAbsence(root *os.Root, paths map[string]Artifact, source Source
 	if err := verifyRuntimeAbsenceReceipt(read, qualificationSidecarSHA256); err != nil {
 		return err
 	}
-	sidecar, err := readRegular(root, "sidecar/gapdbd", maximumFile)
+	sidecar, err := readRegular(root, "sidecar/wp16-gapdbd", maximumFile)
 	if err != nil || SHA256(sidecar) != qualificationSidecarSHA256 {
 		return fmt.Errorf("WP16 admitted sidecar bytes differ")
 	}

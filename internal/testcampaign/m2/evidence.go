@@ -60,12 +60,14 @@ type Verification struct {
 }
 
 type evidenceVerificationPolicy struct {
+	candidateSidecarSHA256   string
 	wp16AbsenceSidecarSHA256 string
 	verifyCandidateAdmission func(string) error
 }
 
 func frozenEvidenceVerificationPolicy() evidenceVerificationPolicy {
 	return evidenceVerificationPolicy{
+		candidateSidecarSHA256:   QualificationCandidateSidecarSHA256,
 		wp16AbsenceSidecarSHA256: WP16AbsenceSidecarSHA256,
 		verifyCandidateAdmission: func(path string) error {
 			_, err := sidecargapdb.VerifyM2QualificationCandidateAdmission(path)
@@ -491,7 +493,7 @@ func publishReservedWithPolicy(attempt *Attempt, manifest Manifest, census Censu
 	totalBytes := 0
 	for _, input := range inputs {
 		totalBytes += len(input.Data)
-		if !safeRelativePath(input.Path) || !validKind(input.Kind) || len(input.Data) > maximumFile || totalBytes > maximumTotal || input.Path == ManifestName || input.Path == CensusName {
+		if !safeRelativePath(input.Path) || !validArtifactKind(input.Kind) || len(input.Data) > maximumFile || totalBytes > maximumTotal || input.Path == ManifestName || input.Path == CensusName {
 			return Publication{}, fmt.Errorf("unsafe or oversized artifact %q", input.Path)
 		}
 		if _, duplicate := paths[input.Path]; duplicate {
@@ -600,7 +602,7 @@ func verifyWithPolicy(ctx context.Context, directory, schemaPath string, expecte
 	var totalBytes int64
 	previous := ""
 	for _, artifact := range manifest.Artifacts {
-		if !safeRelativePath(artifact.Path) || !validKind(artifact.Kind) || !validDigest(artifact.SHA256) || artifact.Path <= previous {
+		if !safeRelativePath(artifact.Path) || !validArtifactKind(artifact.Kind) || !validDigest(artifact.SHA256) || artifact.Path <= previous {
 			return Verification{}, manifest, fmt.Errorf("artifact census is unsafe, unordered, or duplicated at %q", artifact.Path)
 		}
 		previous = artifact.Path
@@ -615,8 +617,30 @@ func verifyWithPolicy(ctx context.Context, directory, schemaPath string, expecte
 		paths[artifact.Path] = artifact
 		kinds[artifact.Kind]++
 	}
-	if kinds["census"] != 1 || kinds["performance"] != 1 || kinds["performance-raw"] != 1 || kinds["performance-reference"] != 1 || kinds["source"] != 1 || kinds["m1-admission"] != 1 || kinds["qualification-admission"] != 1 || kinds["sbom"] != 1 || kinds["sbom-raw"] != 1 || kinds["binary"] < 2 || kinds["campaign"] < 1 || kinds["campaign-composition"] != 1 || kinds["acceptance-matrix"] != 1 || kinds["successor-contract"] != 1 || kinds["attempt-index"] != 1 || kinds["attempt-terminal"] != 1 || kinds["producer-identity"] != 1 || kinds["producer-profile"] != 1 || kinds["sidecar"] != 1 || kinds["install"] != 1 || kinds["install-smoke"] != 1 || kinds["review-input"] != 1 || kinds["race"] != 1 || kinds["race-raw"] != 1 || kinds["absence-evidence"] < 1 || kinds["contract"] < 2 {
+	if kinds["census"] != 1 || kinds["performance"] != 1 || kinds["performance-raw"] != 1 || kinds["performance-reference"] != 1 || kinds["source"] != 1 || kinds["m1-admission"] != 1 || kinds["qualification-admission"] != 1 || kinds["sbom"] != 1 || kinds["sbom-raw"] != 1 || kinds["binary"] < 2 || kinds["campaign"] < 1 || kinds["campaign-composition"] != 1 || kinds["acceptance-matrix"] != 1 || kinds["successor-contract"] != 1 || kinds["attempt-index"] != 1 || kinds["attempt-terminal"] != 1 || kinds["producer-identity"] != 1 || kinds["producer-profile"] != 1 || kinds["sidecar"] != 1 || kinds["wp16-sidecar"] != 1 || kinds["install"] != 1 || kinds["install-smoke"] != 1 || kinds["review-input"] != 1 || kinds["race"] != 1 || kinds["race-raw"] != 1 || kinds["absence-evidence"] < 1 || kinds["contract"] < 2 {
 		return Verification{}, manifest, fmt.Errorf("mandatory artifact kind census is incomplete")
+	}
+	candidateSidecarArtifact, err := oneArtifactByKind(paths, "sidecar")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	wp16SidecarArtifact, err := oneArtifactByKind(paths, "wp16-sidecar")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	if candidateSidecarArtifact.Path != "sidecar/gapdbd" || wp16SidecarArtifact.Path != "sidecar/wp16-gapdbd" || candidateSidecarArtifact.Path == wp16SidecarArtifact.Path {
+		return Verification{}, manifest, fmt.Errorf("candidate and WP16 sidecar artifact roles are absent, aliased, or substituted")
+	}
+	candidateSidecarBytes, err := readRegular(root, filepath.FromSlash(candidateSidecarArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	wp16SidecarBytes, err := readRegular(root, filepath.FromSlash(wp16SidecarArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	if SHA256(candidateSidecarBytes) != policy.candidateSidecarSHA256 || SHA256(wp16SidecarBytes) != policy.wp16AbsenceSidecarSHA256 || bytes.Equal(candidateSidecarBytes, wp16SidecarBytes) {
+		return Verification{}, manifest, fmt.Errorf("candidate and WP16 sidecar bytes are absent, aliased, or substituted")
 	}
 	candidateArtifact, err := oneArtifactByKind(paths, "qualification-admission")
 	if err != nil {
@@ -1125,14 +1149,21 @@ func isHex(value string, size int) bool {
 	return true
 }
 
-func validKind(kind string) bool {
-	if len(kind) == 0 || len(kind) > 64 || kind[0] < 'a' || kind[0] > 'z' {
+func validArtifactKind(kind string) bool {
+	switch kind {
+	case "absence-command", "absence-contract", "absence-evidence",
+		"acceptance-matrix", "attempt-index", "attempt-terminal", "binary",
+		"campaign", "campaign-boundary-source", "campaign-composition",
+		"campaign-contract-source", "campaign-cut-source", "campaign-raw",
+		"campaign-structure", "census", "contract", "install",
+		"install-smoke", "install-smoke-raw", "m1-admission", "m1-admission-part",
+		"performance", "performance-raw", "performance-reference",
+		"producer-identity", "producer-profile", "qualification-admission",
+		"race", "race-raw", "review-input", "sbom", "sbom-raw",
+		"sidecar", "source", "successor-contract", "successor-contract-part",
+		"wp16-sidecar":
+		return true
+	default:
 		return false
 	}
-	for _, character := range kind[1:] {
-		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' && character != '.' && character != '-' {
-			return false
-		}
-	}
-	return true
 }

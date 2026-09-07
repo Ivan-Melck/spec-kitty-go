@@ -1054,13 +1054,13 @@ func TestM2QualificationRequiresAdmittedSidecar(t *testing.T) {
 }
 
 func m2EnvironmentWithSidecar(sidecar string) []string {
-	environment := make([]string, 0, len(os.Environ())+1)
+	environment := make([]string, 0, len(os.Environ())+2)
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "SPEC_KITTY_WP15_GAPDBD=") {
+		if !strings.HasPrefix(entry, "SPEC_KITTY_WP15_GAPDBD=") && !strings.HasPrefix(entry, "SPEC_KITTY_M2_GO_VERSION=") {
 			environment = append(environment, entry)
 		}
 	}
-	return append(environment, "SPEC_KITTY_WP15_GAPDBD="+sidecar)
+	return append(environment, "SPEC_KITTY_WP15_GAPDBD="+sidecar, "SPEC_KITTY_M2_GO_VERSION=go1.26.7")
 }
 
 func TestM2RetiredBlobCensusIsClosed(t *testing.T) {

@@ -213,6 +213,15 @@
       "reason": "all campaign, nested absence, race, and performance gates passed, but final semantic verification strictly decoded standard go test JSON against an incomplete envelope type that omitted the Time field",
       "attempt_events_sha256": "1d96460aae9183f11cd2159532e89e81bd29e76c16dd16533372d3d1a44a81a4",
       "terminal_sha256": "c2c6d42660162406e08d9fada27fc29a38b58e0b9581fcf1d055e416228388ce"
+    },
+    {
+      "run_id": "wp17-qualification-63549f4f-final17",
+      "source_commit": "63549f4fccc5500eb799757a0956593260a3a824",
+      "source_tree": "5310af1ef4bd70d088bd7e8084238928a2431baa",
+      "outcome": "fail",
+      "reason": "all campaign, nested absence, race, and performance gates passed, but final semantic verification looked for the frozen WP16 bytes at the M2 candidate sidecar artifact path instead of preserving the two independently bound sidecar roles",
+      "attempt_events_sha256": "53ada491d0d81200d38cf5e4d8fa25b59b15d282e4b35fb5e988233ce2b60ac9",
+      "terminal_sha256": "0dfd2a633bd8605546b6b8a5cff0b4c72ff0841475bea42af4b2261f41968992"
     }
   ]
 }

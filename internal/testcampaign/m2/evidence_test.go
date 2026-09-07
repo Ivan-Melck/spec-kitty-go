@@ -168,6 +168,46 @@ func TestManifestCensusAndArtifactMutantsFailClosed(t *testing.T) {
 				}
 			}
 		},
+		"missing-wp16-sidecar": func(_ *Manifest, _ *Census, inputs *[]ArtifactInput) {
+			*inputs = slices.DeleteFunc(*inputs, func(input ArtifactInput) bool { return input.Kind == "wp16-sidecar" })
+		},
+		"unknown-wp16-sidecar-kind": func(_ *Manifest, _ *Census, inputs *[]ArtifactInput) {
+			for index := range *inputs {
+				if (*inputs)[index].Kind == "wp16-sidecar" {
+					(*inputs)[index].Kind = "unknown-sidecar-kind"
+				}
+			}
+		},
+		"aliased-wp16-sidecar-bytes": func(_ *Manifest, _ *Census, inputs *[]ArtifactInput) {
+			var candidate []byte
+			for index := range *inputs {
+				if (*inputs)[index].Kind == "sidecar" {
+					candidate = (*inputs)[index].Data
+				}
+			}
+			for index := range *inputs {
+				if (*inputs)[index].Kind == "wp16-sidecar" {
+					(*inputs)[index].Data = candidate
+				}
+			}
+		},
+		"swapped-sidecar-roles": func(_ *Manifest, _ *Census, inputs *[]ArtifactInput) {
+			for index := range *inputs {
+				switch (*inputs)[index].Kind {
+				case "sidecar":
+					(*inputs)[index].Kind = "wp16-sidecar"
+				case "wp16-sidecar":
+					(*inputs)[index].Kind = "sidecar"
+				}
+			}
+		},
+		"substituted-wp16-sidecar-path": func(_ *Manifest, _ *Census, inputs *[]ArtifactInput) {
+			for index := range *inputs {
+				if (*inputs)[index].Kind == "wp16-sidecar" {
+					(*inputs)[index].Path = "sidecar/frozen-copy"
+				}
+			}
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -599,8 +639,10 @@ func completeFixtureWithPolicy(t *testing.T, sidecarFree bool) (Manifest, Census
 	profileBytes := []byte("{\"profile_id\":\"implementer-ivan\"}\n")
 	producerBytes, _ := CanonicalJSON(ProducerIdentity{SchemaVersion: 1, ExecutorActorID: "executor", ProcessID: "process-1", ImplementationContributors: []string{"implementer"}, ProfileID: "implementer-ivan", ProfileRevision: SHA256(profileBytes)})
 	var sidecarBytes []byte
+	var wp16SidecarBytes []byte
 	if sidecarFree {
 		sidecarBytes = []byte("sidecar-free structural fixture\n")
+		wp16SidecarBytes = []byte("frozen WP16 structural fixture\n")
 	} else {
 		sidecarPath := os.Getenv("SPEC_KITTY_M2_GAPDBD")
 		if sidecarPath == "" {
@@ -609,6 +651,14 @@ func completeFixtureWithPolicy(t *testing.T, sidecarFree bool) (Manifest, Census
 		sidecarBytes, err = os.ReadFile(sidecarPath)
 		if err != nil || SHA256(sidecarBytes) != QualificationCandidateSidecarSHA256 {
 			t.Fatalf("qualification fixture sidecar unavailable: %v", err)
+		}
+		wp16SidecarPath := os.Getenv("SPEC_KITTY_WP16_GAPDBD")
+		if wp16SidecarPath == "" {
+			wp16SidecarPath = "/tmp/spec-kitty-gapdb-assertion-sidecar/gapdbd"
+		}
+		wp16SidecarBytes, err = os.ReadFile(wp16SidecarPath)
+		if err != nil || SHA256(wp16SidecarBytes) != WP16AbsenceSidecarSHA256 {
+			t.Fatalf("frozen WP16 fixture sidecar unavailable: %v", err)
 		}
 	}
 	sbomRaw := []byte(`{"ImportPath":"github.com/spec-kitty/go-kitty3/cmd/spec-kitty","Module":{"Path":"github.com/spec-kitty/go-kitty3","Main":true}}` + "\n")
@@ -633,7 +683,7 @@ func completeFixtureWithPolicy(t *testing.T, sidecarFree bool) (Manifest, Census
 	inputs := append([]ArtifactInput(nil), campaignInputs...)
 	qualificationSHA := WP16AbsenceSidecarSHA256
 	if sidecarFree {
-		qualificationSHA = SHA256(sidecarBytes)
+		qualificationSHA = SHA256(wp16SidecarBytes)
 	}
 	inputs = append(inputs, fixtureAbsenceInputs(t, source, qualificationSHA)...)
 	inputs = append(inputs,
@@ -658,6 +708,7 @@ func completeFixtureWithPolicy(t *testing.T, sidecarFree bool) (Manifest, Census
 		ArtifactInput{Path: "m1-assertion-extension.json", Kind: "m1-admission-part", Data: []byte("{}\n")},
 		fileFixtureInput(t, "m2-gapdb-qualification-candidate.json", "qualification-admission", "docs/programs/evidence/m2-gapdb-qualification-candidate.json"),
 		ArtifactInput{Path: "sidecar/gapdbd", Kind: "sidecar", Data: sidecarBytes},
+		ArtifactInput{Path: "sidecar/wp16-gapdbd", Kind: "wp16-sidecar", Data: wp16SidecarBytes},
 		ArtifactInput{Path: "producer-identity.json", Kind: "producer-identity", Data: producerBytes},
 		ArtifactInput{Path: "producer-profile.json", Kind: "producer-profile", Data: profileBytes},
 		ArtifactInput{Path: "contract-events.json", Kind: "contract", Data: []byte("{}\n")},
@@ -673,6 +724,7 @@ func completeFixtureWithPolicy(t *testing.T, sidecarFree bool) (Manifest, Census
 	if sidecarFree {
 		candidateBytes := fileFixtureInput(t, "unused", "unused", "docs/programs/evidence/m2-gapdb-qualification-candidate.json").Data
 		policy = evidenceVerificationPolicy{
+			candidateSidecarSHA256:   SHA256(sidecarBytes),
 			wp16AbsenceSidecarSHA256: qualificationSHA,
 			verifyCandidateAdmission: func(path string) error {
 				observed, err := os.ReadFile(path)

@@ -460,6 +460,10 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 	if err != nil {
 		return publication, err
 	}
+	wp16SidecarBytes, err := os.ReadFile(config.WP16SidecarPath)
+	if err != nil {
+		return publication, err
+	}
 	inputs := append([]m2.ArtifactInput(nil), campaign.Inputs...)
 	inputs = append(inputs, absenceInputs...)
 	inputs = append(inputs, raceInputs...)
@@ -487,6 +491,7 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 		m2.ArtifactInput{Path: "producer-identity.json", Kind: "producer-identity", Data: producerIdentity},
 		m2.ArtifactInput{Path: "producer-profile.json", Kind: "producer-profile", Data: profileBytes},
 		m2.ArtifactInput{Path: "sidecar/gapdbd", Kind: "sidecar", Data: sidecarBytes},
+		m2.ArtifactInput{Path: "sidecar/wp16-gapdbd", Kind: "wp16-sidecar", Data: wp16SidecarBytes},
 	)
 	for _, input := range inputs {
 		if input.Data == nil {
