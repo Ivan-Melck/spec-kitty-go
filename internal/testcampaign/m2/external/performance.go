@@ -510,6 +510,8 @@ func performanceTestArguments(timeout time.Duration) []string {
 
 func performanceChildEnvironment(base []string, config PerformanceConfig, output string) []string {
 	keys := []string{
+		"CGO_ENABLED",
+		"GOTOOLCHAIN",
 		"SPEC_KITTY_M2_PERFORMANCE_OUTPUT",
 		"SPEC_KITTY_M2_PERFORMANCE_RUN_ID",
 		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_COMMIT",
@@ -534,6 +536,8 @@ func performanceChildEnvironment(base []string, config PerformanceConfig, output
 		result = append(result, entry)
 	}
 	return append(result,
+		"CGO_ENABLED=0",
+		"GOTOOLCHAIN="+config.Source.GoVersion,
 		"SPEC_KITTY_M2_PERFORMANCE_OUTPUT="+output,
 		"SPEC_KITTY_M2_PERFORMANCE_RUN_ID="+config.RunID,
 		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_COMMIT="+config.Source.Commit,

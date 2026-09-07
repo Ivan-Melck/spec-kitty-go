@@ -408,7 +408,7 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 		_ = attempt.Capture("performance.json", performanceBytes)
 	}
 	if err != nil {
-		return publication, err
+		return publication, preserveFailedPerformanceTranscript(attempt, performanceTranscript, err)
 	}
 	performanceSummary, err := m2.SummarizePerformance(performance)
 	if err != nil {
@@ -519,6 +519,16 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 	}
 	_, _, err = m2.Verify(ctx, publication.Directory, filepath.Join(publication.Directory, "contract-m2.json"), &preflight.Source)
 	return publication, err
+}
+
+func preserveFailedPerformanceTranscript(attempt *m2.Attempt, transcript []byte, scenarioErr error) error {
+	if scenarioErr == nil || len(transcript) == 0 {
+		return scenarioErr
+	}
+	if err := attempt.Capture("performance.json.events.jsonl", transcript); err != nil {
+		return fmt.Errorf("%w; preserve performance transcript: %v", scenarioErr, err)
+	}
+	return scenarioErr
 }
 
 func execProductHelp(ctx context.Context, product string) ([]byte, error) {

@@ -20,15 +20,20 @@ func TestPerformanceChildEnvironmentSuppliesExactProductionAuthorityExecutable(t
 		Reference:           "/evidence/reference.json",
 		QualifierExecutable: "/bin/qualifier",
 		ProductExecutable:   "/bin/spec-kitty",
+		Source:              m2.Source{GoVersion: "go1.26.7"},
 	}
 	environment := performanceChildEnvironment([]string{
 		"PATH=/usr/bin",
+		"CGO_ENABLED=1",
+		"GOTOOLCHAIN=local",
 		"SPEC_KITTY_WP13_GAPDBD=/stale/wp13",
 		"SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE=/stale/wp14",
 		"SPEC_KITTY_WP15_GAPDBD=/stale/wp15",
 	}, config, "/private/performance.json")
 
 	want := map[string]string{
+		"CGO_ENABLED":                          "0",
+		"GOTOOLCHAIN":                          "go1.26.7",
 		"SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE": "/admitted/gapdbd",
 		"SPEC_KITTY_WP15_GAPDBD":               "/admitted/gapdbd",
 	}

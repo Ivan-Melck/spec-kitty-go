@@ -222,6 +222,19 @@
       "reason": "all campaign, nested absence, race, and performance gates passed, but final semantic verification looked for the frozen WP16 bytes at the M2 candidate sidecar artifact path instead of preserving the two independently bound sidecar roles",
       "attempt_events_sha256": "53ada491d0d81200d38cf5e4d8fa25b59b15d282e4b35fb5e988233ce2b60ac9",
       "terminal_sha256": "0dfd2a633bd8605546b6b8a5cff0b4c72ff0841475bea42af4b2261f41968992"
+    },
+    {
+      "run_id": "wp17-qualification-eaac5065-final18",
+      "source_commit": "eaac50656fd4f6fe10c819d61ce673cea9d24fab",
+      "source_tree": "76f87e81bf1e742cd7e30a868dd9f2bece7c880a",
+      "outcome": "fail",
+      "reason": "all 45 campaigns, nested WP16 absence, and the 19-test race census passed; the performance child refused its pre-run environment because child toolchain and CGO controls were inherited rather than source-bound, and the qualifier exposed a second preservation defect by dropping the private Go test transcript on failure",
+      "diagnostic_transcript_path": "/tmp/go-kitty3-performance-diagnostic-eaac5065.json.events.jsonl",
+      "diagnostic_transcript_sha256": "66c1525232f66569f9d5ca761aa0740008fcc23b97cdfe47278d1698b2669bcf",
+      "diagnostic_transcript_bytes": 1830,
+      "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
+      "attempt_events_sha256": "243d4817c41f576d4ea96214d7380d95715a0f1502be94cff035ee105dcd41d7",
+      "terminal_sha256": "59ea564ff563e76e27bbf62a6dddd2496d7ead9dbefd980829ba4f4d19febe5e"
     }
   ]
 }

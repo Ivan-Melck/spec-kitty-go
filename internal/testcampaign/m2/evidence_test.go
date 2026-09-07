@@ -63,6 +63,46 @@ func TestPerformanceTranscriptRequiresOneObservedSelectorPass(t *testing.T) {
 	}
 }
 
+func TestPerformanceEnvironmentReferenceReportsExactDriftFields(t *testing.T) {
+	referenceBytes, err := os.ReadFile(filepath.Join(repositoryRoot(t), "docs/programs/evidence/m2-performance-reference.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reference PerformanceReference
+	if err := DecodeStrict(referenceBytes, &reference); err != nil {
+		t.Fatal(err)
+	}
+	valid := PerformanceEnvironment{
+		CPUModel: reference.CPUModel, LogicalCPUs: reference.LogicalCPUs, PhysicalCores: reference.PhysicalCores,
+		MemoryBytes: reference.MemoryMinBytes, KernelSystem: reference.KernelSystem, KernelRelease: reference.KernelRelease,
+		Architecture: reference.Architecture, Filesystem: reference.Filesystem, StorageDevice: reference.StorageDevicePrefix + "0n1p1",
+		PowerGovernor: reference.PowerGovernor, BoostEnabled: reference.BoostEnabled, Load1: 0.1,
+		GoVersion: reference.GoVersion, CGOEnabled: reference.CGOEnabled, SidecarSHA256: QualificationCandidateSidecarSHA256,
+		QualifierSHA256: strings.Repeat("a", 64), ProductSHA256: strings.Repeat("b", 64),
+	}
+	if err := VerifyPerformanceEnvironmentReference(referenceBytes, valid); err != nil {
+		t.Fatalf("valid reference environment rejected: %v", err)
+	}
+	mutants := map[string]struct {
+		field string
+		apply func(*PerformanceEnvironment)
+	}{
+		"toolchain": {field: "go_version=go1.26.4", apply: func(value *PerformanceEnvironment) { value.GoVersion = "go1.26.4" }},
+		"cgo":       {field: "cgo_enabled=1", apply: func(value *PerformanceEnvironment) { value.CGOEnabled = "1" }},
+		"load":      {field: "load1=5", apply: func(value *PerformanceEnvironment) { value.Load1 = 5 }},
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			observed := valid
+			mutant.apply(&observed)
+			err := VerifyPerformanceEnvironmentReference(referenceBytes, observed)
+			if err == nil || !strings.Contains(err.Error(), mutant.field) {
+				t.Fatalf("drift diagnostic=%v want field %q", err, mutant.field)
+			}
+		})
+	}
+}
+
 func TestPerformanceReplayExclusionCannotClaimDurableMutation(t *testing.T) {
 	referenceBytes, err := os.ReadFile(filepath.Join(repositoryRoot(t), "docs/programs/evidence/m2-performance-reference.json"))
 	if err != nil {

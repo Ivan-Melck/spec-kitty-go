@@ -252,8 +252,43 @@ func VerifyPerformanceEnvironmentReference(referenceBytes []byte, environment Pe
 	if reference.SchemaVersion != 1 || reference.CPUModel == "" || reference.LogicalCPUs <= 0 || reference.PhysicalCores <= 0 || reference.MemoryMinBytes == 0 || reference.MemoryMaxBytes < reference.MemoryMinBytes || reference.KernelSystem == "" || reference.KernelRelease == "" || reference.Architecture == "" || reference.Filesystem == "" || reference.StorageDevicePrefix == "" || reference.PowerGovernor == "" || reference.Load1Maximum <= 0 || reference.GoVersion != "go1.26.7" || reference.CGOEnabled != "0" || reference.DatasetGenerator == "" || !slices.Equal(reference.FamilyIDs, wantFamilies) {
 		return fmt.Errorf("performance reference profile is incomplete or differs from the frozen family registry")
 	}
-	if environment.CPUModel != reference.CPUModel || environment.LogicalCPUs != reference.LogicalCPUs || environment.PhysicalCores != reference.PhysicalCores || environment.MemoryBytes < reference.MemoryMinBytes || environment.MemoryBytes > reference.MemoryMaxBytes || environment.KernelSystem != reference.KernelSystem || environment.KernelRelease != reference.KernelRelease || environment.Architecture != reference.Architecture || environment.Filesystem != reference.Filesystem || !strings.HasPrefix(environment.StorageDevice, reference.StorageDevicePrefix) || environment.PowerGovernor != reference.PowerGovernor || environment.BoostEnabled != reference.BoostEnabled || environment.Load1 > reference.Load1Maximum || environment.GoVersion != reference.GoVersion || environment.CGOEnabled != reference.CGOEnabled || environment.SidecarSHA256 != QualificationCandidateSidecarSHA256 || !validDigest(environment.QualifierSHA256) || !validDigest(environment.ProductSHA256) {
-		return fmt.Errorf("observed performance environment is outside the source-bound reference profile")
+	var mismatches []string
+	addExactMismatch := func(field string, observed, expected any) {
+		if observed != expected {
+			mismatches = append(mismatches, fmt.Sprintf("%s=%v want=%v", field, observed, expected))
+		}
+	}
+	addExactMismatch("cpu_model", environment.CPUModel, reference.CPUModel)
+	addExactMismatch("logical_cpus", environment.LogicalCPUs, reference.LogicalCPUs)
+	addExactMismatch("physical_cores", environment.PhysicalCores, reference.PhysicalCores)
+	if environment.MemoryBytes < reference.MemoryMinBytes || environment.MemoryBytes > reference.MemoryMaxBytes {
+		mismatches = append(mismatches, fmt.Sprintf("memory_bytes=%d want=[%d,%d]", environment.MemoryBytes, reference.MemoryMinBytes, reference.MemoryMaxBytes))
+	}
+	addExactMismatch("kernel_system", environment.KernelSystem, reference.KernelSystem)
+	addExactMismatch("kernel_release", environment.KernelRelease, reference.KernelRelease)
+	addExactMismatch("architecture", environment.Architecture, reference.Architecture)
+	addExactMismatch("filesystem", environment.Filesystem, reference.Filesystem)
+	if !strings.HasPrefix(environment.StorageDevice, reference.StorageDevicePrefix) {
+		mismatches = append(mismatches, fmt.Sprintf("storage_device=%q want_prefix=%q", environment.StorageDevice, reference.StorageDevicePrefix))
+	}
+	addExactMismatch("power_governor", environment.PowerGovernor, reference.PowerGovernor)
+	addExactMismatch("boost_enabled", environment.BoostEnabled, reference.BoostEnabled)
+	if environment.Load1 > reference.Load1Maximum {
+		mismatches = append(mismatches, fmt.Sprintf("load1=%g want<=%g", environment.Load1, reference.Load1Maximum))
+	}
+	addExactMismatch("go_version", environment.GoVersion, reference.GoVersion)
+	addExactMismatch("cgo_enabled", environment.CGOEnabled, reference.CGOEnabled)
+	if environment.SidecarSHA256 != QualificationCandidateSidecarSHA256 {
+		mismatches = append(mismatches, "sidecar_sha256 differs")
+	}
+	if !validDigest(environment.QualifierSHA256) {
+		mismatches = append(mismatches, "qualifier_sha256 is invalid")
+	}
+	if !validDigest(environment.ProductSHA256) {
+		mismatches = append(mismatches, "product_sha256 is invalid")
+	}
+	if len(mismatches) != 0 {
+		return fmt.Errorf("observed performance environment is outside the source-bound reference profile: %s", strings.Join(mismatches, "; "))
 	}
 	return nil
 }
