@@ -54,7 +54,7 @@ run_layers() {
       runtime) target=$fixture_root/runtime.json ;;
     esac
     set +e
-    scripts/m2-absence/inspect.sh --probe "$layer" "$target"
+    SPEC_KITTY_M2_GO_VERSION=go1.26.7 scripts/m2-absence/inspect.sh --probe "$layer" "$target"
     status=$?
     set -e
     if [ "$status" -eq 0 ]; then emit_receipt fail "$layer"; echo "M2 detector mutant survived: $layer" >&2; exit 1; fi
@@ -64,8 +64,8 @@ run_layers() {
 
   printf 'package native\nconst Store = "gapdb"\n' >"$fixture_root/clean.go"
   printf '{"schema_version":2,"expected":["T"],"run":["T"],"passed":["T"],"skipped":[],"failed":[],"unmatched":[],"verdict":"pass"}\n' >"$fixture_root/runtime-clean.json"
-  scripts/m2-absence/inspect.sh --probe source "$fixture_root/clean.go"
-  scripts/m2-absence/inspect.sh --probe runtime "$fixture_root/runtime-clean.json"
+  SPEC_KITTY_M2_GO_VERSION=go1.26.7 scripts/m2-absence/inspect.sh --probe source "$fixture_root/clean.go"
+  SPEC_KITTY_M2_GO_VERSION=go1.26.7 scripts/m2-absence/inspect.sh --probe runtime "$fixture_root/runtime-clean.json"
   if [ "$receipt_mode" = human ]; then printf 'M2 layer mutants passed\n'; fi
 }
 

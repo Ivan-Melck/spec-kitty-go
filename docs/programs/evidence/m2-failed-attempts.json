@@ -193,6 +193,17 @@
       "reason": "all 45 crown campaigns, nested absence cleanup, race, and the 10k/10k/30 performance proof passed, but the nested absence script overrode the source-bound Go 1.26.7 toolchain with local Go 1.26.4 and final semantic verification refused the mismatch",
       "attempt_events_sha256": "d9e3e0cef04e561583137811f628fab6157bdc5722a688ab83bcbeec0606ecb8",
       "terminal_sha256": "f7b92c4a8624a29ae10d7d4d7586591d06d4dfd8fb2922fb3527a796770a3dac"
+    },
+    {
+      "run_id": "wp17-qualification-f357a0a6-final15",
+      "source_commit": "f357a0a68f80c7aee1bcab409ab856a3f3fb1f5b",
+      "source_tree": "d22389b5fecd61376244d7d08af05450fc617ad2",
+      "outcome": "fail",
+      "reason": "the source-bound toolchain refusal worked, but the closed SQLite-absence layer-mutant driver had not yet supplied that new explicit input and correctly failed before probing its first mutant",
+      "transcript_path": "/tmp/go-kitty3-qualification-f357a0a6-final15/m2/wp17-qualification-f357a0a6-final15/evidence/campaigns/mutant-sqlite-absence-layers.go-test.jsonl",
+      "transcript_sha256": "ebce0a2284cd9ca7d47a891650c033499a4a052abe000c46242679b37460fda9",
+      "attempt_events_sha256": "3e40e20ced1ac969d2661980bfea958157d957b7822e99cc29f5e6748b1132ea",
+      "terminal_sha256": "5ab83baff2b034a12cfc85de8f2f4e8c99d34da64eeacc79e391ca531c3633e4"
     }
   ]
 }
