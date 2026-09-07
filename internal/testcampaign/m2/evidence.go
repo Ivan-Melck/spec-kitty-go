@@ -276,6 +276,9 @@ func validatePerformanceSamples(raw RawPerformance) error {
 			if sample.Kind != "mutation" || sample.ExclusionReason != "warmup" && sample.ExclusionReason != "idempotent_replay" {
 				return fmt.Errorf("performance sample %d has unapproved exclusion", index)
 			}
+			if sample.ExclusionReason == "warmup" && (sample.Family != "" || len(sample.EmittedFamilies) != 0 || sample.BeforeRevision != 0 || sample.AfterRevision != 0 || sample.ProjectionRevision != 0 || sample.MutationCount != 0 || sample.PublicationCount != 0 || len(sample.PublicationIDs) != 0) {
+				return fmt.Errorf("performance warmup sample %d claims post-checkpoint authority evidence", index)
+			}
 			if sample.ExclusionReason == "idempotent_replay" && (sample.AfterRevision != sample.BeforeRevision || sample.MutationCount != 0 || sample.PublicationCount != 0 || len(sample.PublicationIDs) != 0 || len(sample.EmittedFamilies) != 0) {
 				return fmt.Errorf("performance replay sample %d fabricates a durable acknowledgement", index)
 			}

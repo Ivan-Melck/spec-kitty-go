@@ -409,6 +409,20 @@ func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2extern
 	for index := range c.samples {
 		sample := &c.samples[index]
 		sample.Index = index
+		if sample.ExclusionReason == "warmup" {
+			// Warmups precede the qualified checkpoint. Retain their timing, but
+			// do not project pre-checkpoint observer labels or publication facts
+			// into the post-checkpoint evidence census.
+			sample.Family = ""
+			sample.EmittedFamilies = nil
+			sample.BeforeRevision = 0
+			sample.AfterRevision = 0
+			sample.ProjectionRevision = 0
+			sample.MutationCount = 0
+			sample.PublicationCount = 0
+			sample.PublicationIDs = nil
+			continue
+		}
 		if sample.ExclusionReason == "idempotent_replay" {
 			continue
 		}

@@ -113,6 +113,14 @@ func TestPerformanceRuntimeHostIsBoundOnlyToObservedRecovery(t *testing.T) {
 			t.Fatal("runtime_host recovery family omission verified")
 		}
 	})
+	t.Run("warmup-label-claims-post-checkpoint-evidence", func(t *testing.T) {
+		mutant := fixtureRawPerformance(t, "run-performance-warmup-claim", source, referenceBytes)
+		mutant.Samples[0].Family = "family/mission"
+		mutant.Samples[0].EmittedFamilies = []string{"family/mission", "family/operation"}
+		if _, err := SummarizePerformance(mutant); err == nil {
+			t.Fatal("pre-checkpoint warmup label became suffix evidence")
+		}
+	})
 }
 
 func TestManifestCensusAndArtifactMutantsFailClosed(t *testing.T) {
@@ -635,8 +643,7 @@ func fixtureRawPerformance(t *testing.T, runID string, source Source, referenceB
 		RecoveryOperations:     10000, WarmupExcluded: 10, Method: "monotonic-nearest-rank-inclusive",
 	}
 	for index := 0; index < 10; index++ {
-		family := operationFamilies[index%len(operationFamilies)]
-		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "mutation", Family: family, OperationID: fmt.Sprintf("warmup-%d", index), EmittedFamilies: []string{family}, DurationNS: int64(time.Millisecond), Included: false, ExclusionReason: "warmup", BeforeRevision: uint64(index + 1), AfterRevision: uint64(index + 2), MutationCount: 1, PublicationCount: 1, ProjectionRevision: uint64(index + 2), PublicationIDs: []string{fmt.Sprintf("publication-warmup-%d", index)}})
+		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "mutation", OperationID: fmt.Sprintf("warmup-%d", index), DurationNS: int64(time.Millisecond), Included: false, ExclusionReason: "warmup"})
 	}
 	for index := 0; index < 10000; index++ {
 		family := operationFamilies[index%len(operationFamilies)]
