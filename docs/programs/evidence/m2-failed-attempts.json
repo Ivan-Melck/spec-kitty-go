@@ -47,6 +47,16 @@
         "recovery_p95_ms": 2104.798478,
         "recovery_limit_ms": 2000
       }
+    },
+    {
+      "run_id": "wp17-performance-a8539a03-final-03",
+      "source_commit": "a8539a034e745947f599417026ff2f96726b7b01",
+      "source_tree": "97582fa10ef7c207cca17b8beafaaa00560c164d",
+      "outcome": "non_admissible",
+      "reason": "pre-run environment observation was outside the source-bound reference profile after the architecture qualification load; no performance workload executed",
+      "transcript_path": "/tmp/go-kitty3-m2-performance-a8539a03.2oTwro/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "fee804d7b1c9ead9b687c3efba2304cb1b5395f6e0f4f0626aafa21b340e94c5",
+      "transcript_bytes": 1829
     }
   ]
 }
