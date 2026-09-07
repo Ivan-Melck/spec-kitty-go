@@ -687,14 +687,17 @@ func rebindUnboundExecutionToCurrent(t *testing.T, h *portableHarness, state exe
 		// later deterministic event timestamp collide with the heartbeat.
 		observedAt = heartbeatAt.Add(time.Nanosecond)
 	}
+	operationID := journalv2.OperationID("operation-rebind-" + boundary)
+	started := time.Now()
 	result, err := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
-		Kind: execution.ExecutionRebindV2, OperationID: journalv2.OperationID("operation-rebind-" + boundary),
+		Kind: execution.ExecutionRebindV2, OperationID: operationID,
 		ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID,
 		RunID: state.RunID, ActorID: state.ActorID, ProcessID: state.ProcessID, LeaseID: state.LeaseID,
 		Generation: state.Generation, Fence: state.Fence, ObservedAt: observedAt, Deadline: deadline,
 		RuntimeEpochID: h.host.RuntimeEpochID(), Governance: governance,
 		OperationEventID: journalv2.EventID("event-operation-rebind-" + boundary), SlotEventID: journalv2.EventID("event-slot-rebind-" + boundary),
 	})
+	h.observeMutation([]string{"execution_slot", "operation"}, string(operationID), started, err)
 	if err != nil {
 		t.Fatalf("rebind execution after %s: %v", boundary, err)
 	}
@@ -724,13 +727,16 @@ func rebindBoundWorkspaceToCurrent(t *testing.T, h *portableHarness, state execu
 	if !observedAt.After(heartbeatAt) {
 		observedAt = heartbeatAt.Add(time.Nanosecond)
 	}
+	operationID := journalv2.OperationID("operation-workspace-rebind-" + boundary)
+	started := time.Now()
 	result, err := h.host.RebindWorkspaceRuntimeEpoch(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceEpochRebindRequestV2{
 		ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID,
 		ActorID: state.ActorID, ProcessID: state.ProcessID, OriginatingRuntimeEpochID: h.host.RuntimeEpochID(),
-		OperationID:      journalv2.OperationID("operation-workspace-rebind-" + boundary),
+		OperationID:      operationID,
 		OperationEventID: journalv2.EventID("event-operation-workspace-rebind-" + boundary), ExecutionEventID: journalv2.EventID("event-execution-workspace-rebind-" + boundary),
 		WorkspaceEventID: journalv2.EventID("event-workspace-rebind-" + boundary), Governance: state.Governance, ObservedAt: observedAt,
 	})
+	h.observeMutation([]string{"execution_slot", "workspace", "operation"}, string(operationID), started, err)
 	if err != nil {
 		t.Fatalf("rebind workspace after %s: %v", boundary, err)
 	}

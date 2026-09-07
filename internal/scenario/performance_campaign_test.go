@@ -152,6 +152,7 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 		fillMissions[slot] = h.recordMissionActivity(fillMissions[slot], operationID, index)
 	}
 	collector.finishSuffix(performanceSuffixOps)
+	collector.assertPublicationCoverage()
 
 	querySamples := make([]m2.PerformanceSample, 0, performanceQueries)
 	for index := 0; index < performanceQueries; index++ {
@@ -229,11 +230,25 @@ type performanceCollector struct {
 	mode                 performanceCollectMode
 	samples              []m2.PerformanceSample
 	byOperation          map[string]int
+	publishedOperations  map[string]int
+	checkpointOperations map[string]int
 	sourcePlan           journalv2.SealedCommitPlanV2
 	sourceRecordRevision uint64
 }
 
 func (c *performanceCollector) ObservePublicationBoundary(_ context.Context, snapshot journalv2.PublicationBoundarySnapshotV2) {
+	if snapshot.Stage == journalv2.PublicationAckCreatedBeforeProjectionV2 && snapshot.Ack != nil {
+		operation := string(snapshot.Plan.OperationState().OperationID())
+		c.mu.Lock()
+		if c.mode == performanceCollectSuffix {
+			if isPerformanceCheckpointPlan(snapshot.Plan) {
+				c.checkpointOperations[operation]++
+			} else {
+				c.publishedOperations[operation]++
+			}
+		}
+		c.mu.Unlock()
+	}
 	if snapshot.Stage != journalv2.PublicationDurableObservedBeforeAckV2 || len(snapshot.Plan.EffectIntents()) != 1 || snapshot.Observation == nil {
 		return
 	}
@@ -280,6 +295,7 @@ func (c *performanceCollector) appendDirect(t *testing.T, sample m2.PerformanceS
 	c.samples = append(c.samples, sample)
 	if c.mode == performanceCollectSuffix {
 		c.byOperation[sample.OperationID] = len(c.samples) - 1
+		c.publishedOperations[sample.OperationID]++
 	}
 }
 
@@ -307,7 +323,7 @@ func infoMode(info os.FileInfo) os.FileMode {
 }
 
 func newPerformanceCollector(t *testing.T) *performanceCollector {
-	return &performanceCollector{t: t, byOperation: map[string]int{}}
+	return &performanceCollector{t: t, byOperation: map[string]int{}, publishedOperations: map[string]int{}, checkpointOperations: map[string]int{}}
 }
 
 func TestPerformanceCollectorClassifiesIdempotentReplayWithoutInventingPublication(t *testing.T) {
@@ -345,11 +361,49 @@ func (c *performanceCollector) startSuffix(checkpointRevision uint64) {
 	c.mu.Lock()
 	c.mode = performanceCollectSuffix
 	c.byOperation = map[string]int{}
+	c.publishedOperations = map[string]int{}
+	c.checkpointOperations = map[string]int{}
 	for index := range c.samples {
 		c.samples[index].Index = index
 	}
 	c.mu.Unlock()
 	_ = checkpointRevision
+}
+
+func (c *performanceCollector) assertPublicationCoverage() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for operation := range c.byOperation {
+		if c.publishedOperations[operation] == 0 {
+			c.t.Fatalf("timed performance operation %s has no acknowledged publication trace", operation)
+		}
+	}
+	for operation := range c.publishedOperations {
+		if _, timed := c.byOperation[operation]; !timed {
+			c.t.Fatalf("acknowledged performance operation %s has no timing observation", operation)
+		}
+	}
+	if len(c.checkpointOperations) > 1 {
+		c.t.Fatalf("performance suffix checkpoint operation census=%d want<=1", len(c.checkpointOperations))
+	}
+	for operation, count := range c.checkpointOperations {
+		if count != 1 {
+			c.t.Fatalf("performance checkpoint %s publication count=%d want=1", operation, count)
+		}
+	}
+}
+
+func isPerformanceCheckpointPlan(plan journalv2.SealedCommitPlanV2) bool {
+	binding := plan.BindingCreate()
+	if binding == nil {
+		return false
+	}
+	scope := binding.Scope()
+	return len(plan.Events()) == 1 && plan.Events()[0].Family() == "operation" && plan.Events()[0].EventType() == "operation.accepted" &&
+		len(plan.Checkpoints()) == 1 && binding.CommandKind() == "checkpoint.write" && binding.CommandSchemaVersion() == 2 &&
+		scope == (journalv2.Scope{Kind: journalv2.ScopeHost}) && binding.ActorID() == "runtime-checkpoint" && binding.ProcessID() == "runtime-checkpoint" &&
+		binding.DoctrineRevision() == "runtime-v2" && binding.ProfileRevision() == "runtime-v2" && binding.PolicyRevision() == "runtime-v2" &&
+		binding.OriginatingEpoch() == plan.Events()[0].CommittedRuntimeEpochID()
 }
 
 func (c *performanceCollector) observe(observation MutationObservation) {

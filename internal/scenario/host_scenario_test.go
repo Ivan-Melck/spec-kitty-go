@@ -256,7 +256,9 @@ func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance go
 			request.ObservedAt = at.Add(500 * time.Millisecond)
 			request.OperationEventID = journalv2.EventID("event-effect-adopt-operation-" + workID.String())
 			request.EffectEventID = journalv2.EventID("event-effect-adopt-" + workID.String())
+			started = time.Now()
 			adopted, adoptErr := h.host.ExecuteEffect(t.Context(), h.host.RuntimeEpochID(), request)
+			h.observeMutation([]string{"external_effect", "operation"}, string(request.Intent.OperationID), started, adoptErr)
 			if adoptErr != nil {
 				t.Fatalf("adopt tracker effect %s after restart: %v", workID, adoptErr)
 			}
