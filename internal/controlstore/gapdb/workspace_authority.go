@@ -26,6 +26,15 @@ type WorkspaceRestoreConfigurationV2 struct {
 	Budgets         restore.BudgetsV2
 }
 
+// workspaceRecoveryReaderV2 keeps the capability-owned observation compatible
+// with the adopted provider command set. Workspace observation needs the
+// provider-neutral stable-revision reader only; exposing optional candidate
+// methods here would let a nested restore select commands that an adopted
+// authority does not implement.
+type workspaceRecoveryReaderV2 struct {
+	restore.ReaderV2
+}
+
 // WorkspaceAuthorityPortsV2 is the callable GapDB composition seam. The final
 // process host owns construction and lifecycle; this method exposes only the
 // two provider-neutral capability ports.
@@ -90,7 +99,7 @@ func (a *workspaceAuthorityV2) ObserveWorkspace(ctx context.Context, coordinate 
 		return execution.WorkspaceAuthorityObservationV2{}, err
 	}
 	attemptSum := sha256.Sum256(append([]byte("spec-kitty/workspace-observe/v1\x00"), coordinateBytes...))
-	restored, err := restore.RestoreV2(ctx, restore.InputV2{Reader: a.adapter, EventRegistry: a.restore.EventRegistry, Reducers: a.restore.Reducers, HostAuthorityID: a.restore.HostAuthorityID, RecoveryAttemptID: "workspace-" + hex.EncodeToString(attemptSum[:16]), Budgets: a.restore.Budgets})
+	restored, err := restore.RestoreV2(ctx, restore.InputV2{Reader: workspaceRecoveryReaderV2{ReaderV2: a.adapter}, EventRegistry: a.restore.EventRegistry, Reducers: a.restore.Reducers, HostAuthorityID: a.restore.HostAuthorityID, RecoveryAttemptID: "workspace-" + hex.EncodeToString(attemptSum[:16]), Budgets: a.restore.Budgets})
 	if err != nil {
 		return execution.WorkspaceAuthorityObservationV2{}, err
 	}

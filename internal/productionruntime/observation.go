@@ -153,7 +153,7 @@ func restoreReadOnlyObservationWith(ctx context.Context, port readOnlyObservatio
 	if err != nil {
 		return HostStatus{}, nil, journalrestore.ResultV2{}, err
 	}
-	restored, err := restore(ctx, journalrestore.InputV2{Reader: port, EventRegistry: registry, Reducers: reducers, HostAuthorityID: binding.HostAuthorityID, PriorRuntimeEpochID: current.RuntimeEpochID, RecoveryAttemptID: attemptID, Budgets: budgets})
+	restored, err := restore(ctx, journalrestore.InputV2{Reader: recoveryReaderForModeV2(port, false), EventRegistry: registry, Reducers: reducers, HostAuthorityID: binding.HostAuthorityID, PriorRuntimeEpochID: current.RuntimeEpochID, RecoveryAttemptID: attemptID, Budgets: budgets})
 	if err != nil {
 		return HostStatus{}, nil, journalrestore.ResultV2{}, err
 	}

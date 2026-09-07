@@ -193,6 +193,7 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 		return nil, err
 	}
 	owner.adapter, owner.closer, owner.database = adapter, closer, databaseID
+	recoveryReader := recoveryReaderForModeV2(adapter, qualificationCandidate)
 	binding := AuthorityBindingV2{SchemaVersion: 2, HostAuthorityID: config.HostAuthorityID, DatabaseID: databaseID, AdmittedTupleSHA: storegapdb.AdmittedTupleSHA256, SidecarSHA: storegapdb.AdmittedSidecarSHA256, WireProtocol: storegapdb.AdmittedWireVersion, StorageProtocol: storegapdb.AdmittedStorageVersion, CreatedOperationID: config.AuthorityBindingOperationID}
 	if err := ensureAuthorityBinding(ctx, adapter, binding, decision.Action == controlroot.Initialize); err != nil {
 		return nil, err
@@ -214,7 +215,7 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 	if budgets == (journalrestore.BudgetsV2{}) {
 		budgets = productionRecoveryBudgetsV2()
 	}
-	restored, err := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: prior.RuntimeEpochID, RecoveryAttemptID: attemptID, Budgets: budgets})
+	restored, err := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: recoveryReader, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: prior.RuntimeEpochID, RecoveryAttemptID: attemptID, Budgets: budgets})
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +227,7 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 	// second stable restore coordinate so the memory snapshot is attributed to
 	// the exact post-admission durable revision before readiness opens.
 	postAttemptID, _ := randomIdentity[string]("restore-post-epoch-")
-	postRestore, err := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: prior.RuntimeEpochID, RecoveryAttemptID: postAttemptID, Budgets: budgets})
+	postRestore, err := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: recoveryReader, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: prior.RuntimeEpochID, RecoveryAttemptID: postAttemptID, Budgets: budgets})
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +277,7 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 		// Reconciliation is not trusted to mutate query memory. Rebuild from a
 		// fresh stable durable coordinate and judge the resulting facts.
 		reconcileAttemptID, _ := randomIdentity[string]("restore-post-reconcile-")
-		reconciled, restoreErr := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: reconcileAttemptID, Budgets: budgets})
+		reconciled, restoreErr := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: recoveryReader, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: reconcileAttemptID, Budgets: budgets})
 		if restoreErr != nil {
 			host.degrade("reconciliation_restore")
 			_ = host.Close(context.Background())
@@ -308,7 +309,7 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 		if identityErr != nil {
 			return identityErr
 		}
-		result, restoreErr := journalrestore.RestoreV2(refreshContext, journalrestore.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: attempt, Budgets: budgets})
+		result, restoreErr := journalrestore.RestoreV2(refreshContext, journalrestore.InputV2{Reader: recoveryReader, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: attempt, Budgets: budgets})
 		if restoreErr != nil {
 			return restoreErr
 		}
