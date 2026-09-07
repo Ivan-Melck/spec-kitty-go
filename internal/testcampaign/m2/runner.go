@@ -1,8 +1,10 @@
 package m2
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
@@ -44,7 +47,7 @@ func RunCampaigns(ctx context.Context, config CampaignConfig) (CampaignResult, e
 	}
 	for _, definition := range definitions {
 		executions := definition.ExpectedRepetitions / definition.TrialsPerRun
-		raw, exit := runDefinitionProcesses(ctx, config, definition, executions)
+		raw, exit, captureErr := runDefinitionProcesses(ctx, config, definition, executions)
 		receipt, receiptErr := VerifyGoTestReceipt(raw, config.RunID, config.Source, definition, executions, exit)
 		rawPath := "campaigns/" + safeID(definition.ID) + ".go-test.jsonl"
 		receiptPath := "campaigns/" + safeID(definition.ID) + ".receipt.json"
@@ -65,8 +68,11 @@ func RunCampaigns(ctx context.Context, config CampaignConfig) (CampaignResult, e
 			}
 		}
 		result.Census.Entries = append(result.Census.Entries, CensusEntry{ID: definition.ID, Category: definition.Category, OwnerWP: definition.OwnerWP, Package: definition.Package, Selector: definition.Selector, ExpectedRepetitions: definition.ExpectedRepetitions, TrialsPerRun: definition.TrialsPerRun, ObservedCount: receipt.CertifiedRepetitions, PassedCount: receipt.CertifiedRepetitions, FailedCount: receipt.FailedExecutions, SkippedCount: receipt.SkippedExecutions, Substituted: false, ArtifactPath: receiptPath, ArtifactSHA256: SHA256(receiptBytes)})
+		if captureErr != nil {
+			return result, fmt.Errorf("campaign %s raw=%s sha256=%s: %w", definition.ID, rawPath, SHA256(raw), captureErr)
+		}
 		if receiptErr != nil {
-			return result, fmt.Errorf("campaign %s: %w", definition.ID, receiptErr)
+			return result, fmt.Errorf("campaign %s raw=%s sha256=%s: %w", definition.ID, rawPath, SHA256(raw), receiptErr)
 		}
 		if definition.ID == "fault/adversarial-tracker" {
 			contractSource, err := os.ReadFile(filepath.Join(config.Repository, "internal/scenario/campaign_test.go"))
@@ -129,19 +135,57 @@ func RunCampaigns(ctx context.Context, config CampaignConfig) (CampaignResult, e
 	return result, nil
 }
 
-func runDefinitionProcesses(ctx context.Context, config CampaignConfig, definition Definition, executions int) ([]byte, int) {
+var errGoTestTranscriptTotalBudget = errors.New("go test transcript total budget exceeded")
+
+type boundedTranscriptWriter struct {
+	mu       sync.Mutex
+	buffer   bytes.Buffer
+	limit    int
+	overflow bool
+}
+
+func (w *boundedTranscriptWriter) Write(value []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.overflow || len(value) > w.limit-w.buffer.Len() {
+		w.overflow = true
+		return 0, errGoTestTranscriptTotalBudget
+	}
+	return w.buffer.Write(value)
+}
+
+func (w *boundedTranscriptWriter) Bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.buffer.Bytes()...)
+}
+
+func (w *boundedTranscriptWriter) Err() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.overflow {
+		return errGoTestTranscriptTotalBudget
+	}
+	return nil
+}
+
+func runDefinitionProcesses(ctx context.Context, config CampaignConfig, definition Definition, executions int) ([]byte, int, error) {
 	var aggregate []byte
+	limits := admittedGoTestReceiptLimits(definition, executions)
 	for index := range executions {
 		pattern := "^" + regexp.QuoteMeta(definition.Selector) + "$"
 		seed := SHA256([]byte(fmt.Sprintf("%s\x00%s\x00%d", config.RunID, definition.ID, index)))
 		shuffleNumber, parseErr := strconv.ParseUint(seed[:15], 16, 64)
 		if parseErr != nil {
-			return aggregate, 1
+			return aggregate, 1, parseErr
 		}
 		commandCtx, cancel := context.WithTimeout(ctx, config.Timeout)
 		shuffle := strconv.FormatUint(shuffleNumber, 10)
 		command := exec.CommandContext(commandCtx, "go", "test", "-json", "-count=1", "-shuffle="+shuffle, "-run", pattern, definition.Package)
 		command.Dir = config.Repository
+		transcript := &boundedTranscriptWriter{limit: limits.transcriptBytes - len(aggregate)}
+		command.Stdout = transcript
+		command.Stderr = transcript
 		command.Env = append(os.Environ(),
 			"SPEC_KITTY_M2_DEFINITION_ID="+definition.ID,
 			"SPEC_KITTY_M2_ITERATION_SEED="+seed,
@@ -158,7 +202,7 @@ func runDefinitionProcesses(ctx context.Context, config CampaignConfig, definiti
 			assertionDataRoot, tempErr = os.MkdirTemp("", "spk-m2-assertion-cut-")
 			if tempErr != nil {
 				cancel()
-				return aggregate, 1
+				return aggregate, 1, tempErr
 			}
 			command.Env = append(command.Env,
 				"SPEC_KITTY_ASSERTION_CANDIDATE_QUALIFICATION=true",
@@ -166,7 +210,8 @@ func runDefinitionProcesses(ctx context.Context, config CampaignConfig, definiti
 			)
 		}
 		started := time.Now()
-		raw, commandErr := command.CombinedOutput()
+		commandErr := command.Run()
+		raw := transcript.Bytes()
 		duration := time.Since(started)
 		timedOut := commandCtx.Err() != nil
 		cancel()
@@ -174,11 +219,14 @@ func runDefinitionProcesses(ctx context.Context, config CampaignConfig, definiti
 			_ = os.RemoveAll(assertionDataRoot)
 		}
 		aggregate = append(aggregate, raw...)
+		if captureErr := transcript.Err(); captureErr != nil {
+			return aggregate, 125, fmt.Errorf("%w: bytes=%d limit=%d", captureErr, len(aggregate), limits.transcriptBytes)
+		}
 		if commandErr != nil {
 			if timedOut {
-				return aggregate, 124
+				return aggregate, 124, nil
 			}
-			return aggregate, 1
+			return aggregate, 1, nil
 		}
 		if definition.TrialsPerRun == 1 {
 			record, err := iterationreceipt.New(
@@ -187,7 +235,7 @@ func runDefinitionProcesses(ctx context.Context, config CampaignConfig, definiti
 				map[string]any{"selected_test": definition.Selector, "process_exit": 0},
 			)
 			if err != nil {
-				return aggregate, 1
+				return aggregate, 1, err
 			}
 			encoded, _ := iterationreceipt.Encode(record)
 			output := "SPK M2 runner: " + iterationreceipt.Prefix + string(encoded) + "\n"
@@ -195,7 +243,7 @@ func runDefinitionProcesses(ctx context.Context, config CampaignConfig, definiti
 			aggregate = append(aggregate, append(event, '\n')...)
 		}
 	}
-	return aggregate, 0
+	return aggregate, 0, nil
 }
 
 func shortDefinitions(definitions []Definition) []Definition {

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -180,6 +181,64 @@ func observationForStageFixtureV2(binding BindingV2, stage StageV2) ObservationV
 		observation.TargetAfter = binding.PinnedBase
 	}
 	return observation
+}
+
+func TestWorkspaceObservationPathIdentitiesUsePathBudgetV2(t *testing.T) {
+	observation := ObservationV2{
+		GitDirIdentity: strings.Repeat("g", MaxWorkspacePathBytesV2),
+		IndexIdentity:  strings.Repeat("i", MaxWorkspacePathBytesV2),
+	}
+	if err := observation.validate(); err != nil {
+		t.Fatalf("path-sized Git observation identities refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*ObservationV2){
+		"gitdir-over-budget": func(value *ObservationV2) { value.GitDirIdentity += "g" },
+		"index-over-budget":  func(value *ObservationV2) { value.IndexIdentity += "i" },
+		"gitdir-invalid-utf8": func(value *ObservationV2) {
+			value.GitDirIdentity = string([]byte{0xff})
+		},
+		"index-invalid-utf8": func(value *ObservationV2) {
+			value.IndexIdentity = string([]byte{0xff})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := observation
+			mutate(&changed)
+			if err := changed.validate(); !IsKind(err, KindInvalid) {
+				t.Fatalf("invalid path identity accepted: %v", err)
+			}
+		})
+	}
+	tooLongOrdinaryIdentity := observation
+	tooLongOrdinaryIdentity.Head = strings.Repeat("h", journalv2.MaxIdentityBytes+1)
+	if err := tooLongOrdinaryIdentity.validate(); !IsKind(err, KindInvalid) {
+		t.Fatalf("ordinary observation identity inherited path budget: %v", err)
+	}
+}
+
+func TestWorkspaceTransitionAcceptsRealGitPathIdentitiesOverJournalIdentityBudgetV2(t *testing.T) {
+	binding := workspaceBindingFixtureV2(t, "path-budget", "/srv/spec-kitty/workspaces/path-budget")
+	prior := StateV2{
+		SchemaVersion: 1, LogicalVersion: 4, Binding: binding,
+		Stage:       StageDependenciesRequestedV2,
+		Observation: ObservationV2{Registered: true, Head: binding.PinnedBase},
+		EffectID:    "effect-dependencies", OccurredAt: "2026-09-04T12:00:00Z",
+	}
+	gitDir := filepath.Join("/tmp", strings.Repeat("real-git-crown-restart-", 6), "repository", ".git", "worktrees", binding.WorkspaceID.String())
+	index := filepath.Join(gitDir, "index")
+	if len(gitDir) <= journalv2.MaxIdentityBytes || len(index) <= journalv2.MaxIdentityBytes {
+		t.Fatalf("fixture does not cross journal identity boundary: gitdir=%d index=%d", len(gitDir), len(index))
+	}
+	observation := readyObservationFixtureV2(binding)
+	observation.GitDirIdentity = gitDir
+	observation.IndexIdentity = index
+	if _, err := NewTransitionContributionV2(TransitionContributionInputV2{
+		Prior: prior, RecordRevision: 11, EventID: "event-dependencies-observed",
+		NextStage: StageDependenciesObservedV2, Observation: observation,
+		OccurredAt: time.Date(2026, 9, 4, 12, 1, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("real absolute Git path observation refused: %v", err)
+	}
 }
 
 func TestCurrentWorkspacePredicateUsesWholeCapsuleV2(t *testing.T) {

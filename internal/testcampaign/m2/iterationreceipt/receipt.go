@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	SchemaVersion   = 1
-	Prefix          = "SPK_M2_ITERATION_V1 "
-	FamilyCutPrefix = "SPK_M2_FAMILY_CUT_V1 "
-	maxText         = 256
-	maxEvidence     = 16 << 10
+	SchemaVersion    = 1
+	Prefix           = "SPK_M2_ITERATION_V1 "
+	FamilyCutPrefix  = "SPK_M2_FAMILY_CUT_V1 "
+	MaxTextBytes     = 256
+	MaxEvidenceBytes = 16 << 10
 )
 
 // FamilyCutRecord is emitted by the executing family-bound coordinator
@@ -67,7 +67,7 @@ func (r FamilyCutRecord) Validate() error {
 		digest string
 	}{{r.ObservedFacts, r.ObservedFactsSHA256}, {r.InvariantEvidence, r.InvariantSHA256}} {
 		canonical, err := canonicalJSON(json.RawMessage(pair.raw))
-		if err != nil || len(pair.raw) == 0 || len(pair.raw) > maxEvidence || !jsonEqual(canonical, pair.raw) || !digestText(pair.digest) {
+		if err != nil || len(pair.raw) == 0 || len(pair.raw) > MaxEvidenceBytes || !jsonEqual(canonical, pair.raw) || !digestText(pair.digest) {
 			return fmt.Errorf("invalid M2 family/cut evidence")
 		}
 		sum := sha256.Sum256(canonical)
@@ -161,7 +161,7 @@ func (r Record) Validate() error {
 		"invariant-evidence": {r.InvariantEvidence, r.InvariantEvidenceSHA256},
 	} {
 		canonical, err := canonicalJSON(json.RawMessage(pair.raw))
-		if err != nil || len(pair.raw) == 0 || len(pair.raw) > maxEvidence || !jsonEqual(canonical, pair.raw) || len(pair.digest) != sha256.Size*2 {
+		if err != nil || len(pair.raw) == 0 || len(pair.raw) > MaxEvidenceBytes || !jsonEqual(canonical, pair.raw) || len(pair.digest) != sha256.Size*2 {
 			return fmt.Errorf("invalid %s evidence", field)
 		}
 		sum := sha256.Sum256(canonical)
@@ -194,7 +194,7 @@ func Emit(log Logger, record Record) {
 }
 
 func bounded(value string) bool {
-	return value != "" && len(value) <= maxText && strings.TrimSpace(value) == value
+	return value != "" && len(value) <= MaxTextBytes && strings.TrimSpace(value) == value
 }
 
 func canonicalJSON(value any) ([]byte, error) {

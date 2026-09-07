@@ -2,6 +2,7 @@ package m2
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -32,6 +33,46 @@ func TestSourceBoundReceiptRequiresExactRunPassCensus(t *testing.T) {
 				t.Fatal("mutated receipt passed")
 			}
 		})
+	}
+}
+
+func TestGoTestReceiptBoundsAndFailedProcessDiagnostics(t *testing.T) {
+	source := Source{Commit: stringOf('a', 40), Tree: stringOf('b', 40)}
+	definition := Definition{ID: "behavior/example", Package: "./internal/example", Selector: "TestExact", ExpectedRepetitions: 1, TrialsPerRun: 1}
+	limits := goTestReceiptLimits{recordBytes: 256, transcriptBytes: 4096}
+	failure := []byte(event("run", "TestExact") + fmt.Sprintf("{\"Action\":\"output\",\"Package\":\"github.com/spec-kitty/go-kitty3/internal/example\",\"Test\":\"TestExact\",\"Output\":%q}\n", "workspace contribution refused: workspace authority refused: event\n") + event("fail", "TestExact"))
+	if _, err := verifyGoTestReceiptWithLimits(failure, "run", source, definition, 1, 1, limits); err == nil || !strings.Contains(err.Error(), "TestExact") || !strings.Contains(err.Error(), SHA256(failure)) || strings.Contains(err.Error(), "workspace authority refused") || strings.Contains(err.Error(), "unterminated process transcript") {
+		t.Fatalf("nonzero process lost bounded failure diagnostic: %v", err)
+	}
+
+	unterminated := []byte(strings.TrimSuffix(event("run", "TestExact"), "\n"))
+	if _, err := verifyGoTestReceiptWithLimits(unterminated, "run", source, definition, 1, 0, limits); err == nil || !strings.Contains(err.Error(), "unterminated go test JSON record") {
+		t.Fatalf("unterminated record was not distinguished: %v", err)
+	}
+	oversizeRecord := []byte(strings.Repeat("x", 257) + "\n")
+	if _, err := verifyGoTestReceiptWithLimits(oversizeRecord, "run", source, definition, 1, 0, limits); err == nil || !strings.Contains(err.Error(), "record budget exceeded") {
+		t.Fatalf("oversize record was not distinguished: %v", err)
+	}
+	complete := []byte(event("run", "TestExact") + event("pass", "TestExact"))
+	tooSmall := goTestReceiptLimits{recordBytes: 256, transcriptBytes: len(complete) - 1}
+	if _, err := verifyGoTestReceiptWithLimits(complete, "run", source, definition, 1, 0, tooSmall); err == nil || !strings.Contains(err.Error(), "total budget exceeded") {
+		t.Fatalf("terminal event after total overflow was accepted: %v", err)
+	}
+}
+
+func TestBoundedTranscriptWriterNeverSilentlyTruncates(t *testing.T) {
+	writer := &boundedTranscriptWriter{limit: 4}
+	if written, err := writer.Write([]byte("1234")); err != nil || written != 4 {
+		t.Fatalf("bounded write=%d err=%v", written, err)
+	}
+	if written, err := writer.Write([]byte("5")); !errors.Is(err, errGoTestTranscriptTotalBudget) || written != 0 {
+		t.Fatalf("overflow write=%d err=%v", written, err)
+	}
+	if got := string(writer.Bytes()); got != "1234" {
+		t.Fatalf("overflow changed captured prefix: %q", got)
+	}
+	if !errors.Is(writer.Err(), errGoTestTranscriptTotalBudget) {
+		t.Fatalf("overflow was not retained: %v", writer.Err())
 	}
 }
 

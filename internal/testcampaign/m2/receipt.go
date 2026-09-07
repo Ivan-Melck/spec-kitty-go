@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -65,8 +66,43 @@ var childContracts = map[string][]string{
 	},
 }
 
+const (
+	// A machine record can carry two independently bounded canonical evidence
+	// objects. JSON string escaping can double those bytes; the remaining fixed
+	// fields and go-test envelope are bounded by the text contract.
+	maxGoTestRecordBytes = 4*iterationreceipt.MaxEvidenceBytes + 16*iterationreceipt.MaxTextBytes + (8 << 10)
+	// Each process admits a closed amount of go-test control/output envelopes in
+	// addition to the exact iteration receipt census. The aggregate remains
+	// capped by the evidence member budget.
+	maxGoTestAuxiliaryRecordsPerProcess = 512
+)
+
+type goTestReceiptLimits struct {
+	recordBytes     int
+	transcriptBytes int
+}
+
+func admittedGoTestReceiptLimits(definition Definition, executions int) goTestReceiptLimits {
+	records := definition.ExpectedRepetitions + executions*maxGoTestAuxiliaryRecordsPerProcess
+	if records < 1 {
+		records = 1
+	}
+	total := int64(records) * int64(maxGoTestRecordBytes)
+	if total > maximumFile {
+		total = maximumFile
+	}
+	return goTestReceiptLimits{recordBytes: maxGoTestRecordBytes, transcriptBytes: int(total)}
+}
+
 func VerifyGoTestReceipt(raw []byte, runID string, source Source, definition Definition, executions, exit int) (GoTestReceipt, error) {
+	return verifyGoTestReceiptWithLimits(raw, runID, source, definition, executions, exit, admittedGoTestReceiptLimits(definition, executions))
+}
+
+func verifyGoTestReceiptWithLimits(raw []byte, runID string, source Source, definition Definition, executions, exit int, limits goTestReceiptLimits) (GoTestReceipt, error) {
 	receipt := GoTestReceipt{SchemaVersion: 1, RunID: runID, SourceCommit: source.Commit, SourceTree: source.Tree, DefinitionID: definition.ID, Package: definition.Package, Selector: definition.Selector, ExpectedExecutions: executions, ProcessExit: exit, RawTranscriptSHA256: SHA256(raw), CertificationMode: "direct-process-repetitions", Verdict: "fail"}
+	if limits.recordBytes <= 0 || limits.transcriptBytes <= 0 || len(raw) > limits.transcriptBytes {
+		return receipt, fmt.Errorf("go test transcript total budget exceeded: bytes=%d limit=%d", len(raw), limits.transcriptBytes)
+	}
 	if definition.ExpectedRepetitions <= 0 || definition.TrialsPerRun <= 0 || definition.ExpectedRepetitions%definition.TrialsPerRun != 0 {
 		return receipt, fmt.Errorf("frozen trial accounting is invalid")
 	}
@@ -74,17 +110,36 @@ func VerifyGoTestReceipt(raw []byte, runID string, source Source, definition Def
 	if executions != expectedProcesses {
 		return receipt, fmt.Errorf("executed processes=%d want frozen=%d", executions, expectedProcesses)
 	}
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	scanner.Buffer(make([]byte, 64<<10), 16<<20)
+	reader := bufio.NewReaderSize(bytes.NewReader(raw), limits.recordBytes+1)
 	unexpected := map[string]struct{}{}
 	childRuns := map[string]int{}
 	childPasses := map[string]int{}
+	var failedTests []string
 	var processTranscript bytes.Buffer
-	for scanner.Scan() {
-		line := append(append([]byte(nil), scanner.Bytes()...), '\n')
+	for {
+		line, readErr := reader.ReadSlice('\n')
+		if errors.Is(readErr, bufio.ErrBufferFull) {
+			return receipt, fmt.Errorf("go test JSON record budget exceeded: limit=%d", limits.recordBytes)
+		}
+		if errors.Is(readErr, io.EOF) {
+			if len(line) != 0 {
+				return receipt, fmt.Errorf("unterminated go test JSON record: bytes=%d", len(line))
+			}
+			break
+		}
+		if readErr != nil {
+			return receipt, fmt.Errorf("read go test JSON record: %w", readErr)
+		}
+		if len(line) > limits.recordBytes {
+			return receipt, fmt.Errorf("go test JSON record budget exceeded: bytes=%d limit=%d", len(line), limits.recordBytes)
+		}
+		eventBytes := bytes.TrimSuffix(line, []byte{'\n'})
 		var event goTestEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+		if err := json.Unmarshal(eventBytes, &event); err != nil {
 			return receipt, fmt.Errorf("malformed go test JSON: %w", err)
+		}
+		if event.Action == "fail" && event.Test != "" {
+			failedTests = append(failedTests, event.Test)
 		}
 		if index := strings.Index(event.Output, iterationreceipt.Prefix); index >= 0 {
 			_, internal := iterationContracts[definition.ID]
@@ -172,8 +227,9 @@ func VerifyGoTestReceipt(raw []byte, runID string, source Source, definition Def
 			receipt.SkippedExecutions++
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return receipt, err
+	if exit != 0 {
+		sort.Strings(failedTests)
+		return receipt, fmt.Errorf("go test process failed: exit=%d failed_tests=%v skip_events=%d started=%d passed=%d raw_sha256=%s", exit, failedTests, receipt.SkippedExecutions, receipt.StartedExecutions, receipt.PassedExecutions, receipt.RawTranscriptSHA256)
 	}
 	if requiresProcessIterationReceipts(definition) && processTranscript.Len() != 0 {
 		return receipt, fmt.Errorf("unterminated process transcript bytes=%d", processTranscript.Len())
@@ -182,7 +238,7 @@ func VerifyGoTestReceipt(raw []byte, runID string, source Source, definition Def
 		receipt.UnexpectedTests = append(receipt.UnexpectedTests, name)
 	}
 	sort.Strings(receipt.UnexpectedTests)
-	if exit != 0 || receipt.StartedExecutions != executions || receipt.PassedExecutions != executions || receipt.FailedExecutions != 0 || receipt.SkippedExecutions != 0 || len(receipt.UnexpectedTests) != 0 || receipt.ChildStarted != receipt.ChildPassed {
+	if receipt.StartedExecutions != executions || receipt.PassedExecutions != executions || receipt.FailedExecutions != 0 || receipt.SkippedExecutions != 0 || len(receipt.UnexpectedTests) != 0 || receipt.ChildStarted != receipt.ChildPassed {
 		return receipt, fmt.Errorf("test receipt is incomplete: start=%d pass=%d fail=%d skip=%d child=%d/%d exit=%d unexpected=%v", receipt.StartedExecutions, receipt.PassedExecutions, receipt.FailedExecutions, receipt.SkippedExecutions, receipt.ChildStarted, receipt.ChildPassed, exit, receipt.UnexpectedTests)
 	}
 	if expectedChildren, exact := childContracts[definition.ID]; exact {

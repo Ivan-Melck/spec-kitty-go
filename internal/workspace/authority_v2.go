@@ -162,9 +162,14 @@ type ObservationV2 struct {
 }
 
 func (o ObservationV2) validate() error {
-	for _, value := range []string{o.Head, o.Branch, o.GitDirIdentity, o.IndexIdentity, o.DependencyHead, o.TargetBefore, o.TargetAfter} {
+	for _, value := range []string{o.Head, o.Branch, o.DependencyHead, o.TargetBefore, o.TargetAfter} {
 		if len(value) > journalv2.MaxIdentityBytes || !utf8.ValidString(value) {
 			return workspaceV2Error(KindInvalid, "observation", nil)
+		}
+	}
+	for _, value := range []string{o.GitDirIdentity, o.IndexIdentity} {
+		if len(value) > MaxWorkspacePathBytesV2 || !utf8.ValidString(value) {
+			return workspaceV2Error(KindInvalid, "observation_path_identity", nil)
 		}
 	}
 	return nil
@@ -266,8 +271,11 @@ type EventV2 struct {
 }
 
 func encodeEventV2(event EventV2) ([]byte, error) {
-	if event.SchemaVersion != 1 || event.State.Validate() != nil || len(event.Kind) == 0 || len(event.Kind) > 64 {
+	if event.SchemaVersion != 1 || len(event.Kind) == 0 || len(event.Kind) > 64 {
 		return nil, workspaceV2Error(KindInvalid, "event", nil)
+	}
+	if err := event.State.Validate(); err != nil {
+		return nil, workspaceV2Error(KindInvalid, "event", err)
 	}
 	raw, err := json.Marshal(event)
 	if err != nil {
