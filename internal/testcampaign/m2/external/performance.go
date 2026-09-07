@@ -180,6 +180,11 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 	if err != nil {
 		return nil, err
 	}
+	emptyOperationsBytes, err := m2.CanonicalJSON(map[string]RecoveredOperation{})
+	if err != nil {
+		return nil, err
+	}
+	emptyOperationsSHA := m2.SHA256(emptyOperationsBytes)
 	observations := make([]RecoveryObservation, 0, config.RecoveryRuns)
 	var projectionSHA string
 	postCheckpointStates := 0
@@ -203,7 +208,7 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 		if receipt.PostCheckpointStates != postCheckpointStates {
 			return observations, fmt.Errorf("recovery run %d operation-state census=%d want=%d", run, receipt.PostCheckpointStates, postCheckpointStates)
 		}
-		if run > 0 && receipt.OperationsSHA256 != m2.SHA256([]byte("{}")) {
+		if run > 0 && receipt.OperationsSHA256 != emptyOperationsSHA {
 			return observations, fmt.Errorf("recovery run %d operation evidence digest differs", run)
 		}
 		observations = append(observations, observation)

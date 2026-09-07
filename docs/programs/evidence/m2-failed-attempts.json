@@ -79,6 +79,16 @@
         "recovery_p95_ms": 2181.454797,
         "recovery_limit_ms": 2000
       }
+    },
+    {
+      "run_id": "wp17-performance-a14a1b4a-final05",
+      "source_commit": "a14a1b4a3a7e4fecf2eaefd089a817b8217c806d",
+      "source_tree": "4eca03827cf5812db80c18335ab3a06a45d0fb58",
+      "outcome": "fail",
+      "reason": "fresh-process recovery receipt verifier compared the later-child empty operation census against noncanonical JSON bytes",
+      "transcript_path": "/tmp/go-kitty3-campaign-a14a1b4a.sSkKcr/m2/performance.json.events.jsonl",
+      "transcript_sha256": "5a498314ebe1549a8f25d1d40be31fffa28e4d78f04adb75c4518cd450746e26",
+      "transcript_bytes": 6559
     }
   ]
 }
