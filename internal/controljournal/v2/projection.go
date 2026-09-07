@@ -186,11 +186,15 @@ func (t *ProjectionTrackerV2) Restore(seed ProjectionRestoreSeedV2) error {
 }
 
 func (t *ProjectionTrackerV2) registerPublication(plan SealedCommitPlanV2) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	if err := validateSealedPlanIdentity(plan); err != nil {
 		return err
 	}
+	return t.registerValidatedPublication(cloneSealedCommitPlanV2(plan))
+}
+
+func (t *ProjectionTrackerV2) registerValidatedPublication(plan SealedCommitPlanV2) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if _, exists := t.pending[plan.publicationID]; exists {
 		return invalid(ErrorAmbiguous, "projection_publication_registered")
 	}
@@ -202,6 +206,10 @@ func (t *ProjectionTrackerV2) applyAcknowledged(ack AcknowledgedPublicationV2) e
 	if err := validateAcknowledgement(ack); err != nil {
 		return err
 	}
+	return t.applyValidatedAcknowledged(ack)
+}
+
+func (t *ProjectionTrackerV2) applyValidatedAcknowledged(ack AcknowledgedPublicationV2) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	plan := ack.plan

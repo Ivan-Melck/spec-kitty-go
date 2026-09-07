@@ -416,6 +416,45 @@ type SealedCommitPlanV2 struct {
 	canonical              []byte
 }
 
+// cloneSealedCommitPlanV2 freezes a coordinator-owned snapshot after the
+// caller's seal has been fully validated. The package-private members make a
+// sealed plan unforgeable outside this authority package; the deep copy also
+// prevents a later alias mutation by package-local tests or qualification
+// probes from changing the registered authority.
+func cloneSealedCommitPlanV2(source SealedCommitPlanV2) SealedCommitPlanV2 {
+	result := source
+	result.binding = cloneBinding(source.binding)
+	result.operationState = cloneOperationStateV2(source.operationState)
+	result.events = append([]EventEnvelopeV2(nil), source.events...)
+	for index := range result.events {
+		result.events[index].input.GovernanceRevisions = append([]string(nil), source.events[index].input.GovernanceRevisions...)
+		result.events[index].payload = append([]byte(nil), source.events[index].payload...)
+		result.events[index].observations = append([]byte(nil), source.events[index].observations...)
+	}
+	result.heads = cloneHeadTransitions(source.heads)
+	result.effects = cloneEffectIntents(source.effects)
+	result.eligibility = cloneEligibilityGuards(source.eligibility)
+	result.checkpoints = cloneCheckpoints(source.checkpoints)
+	result.conditions = append([]ProviderCondition(nil), source.conditions...)
+	result.assertions = append([]AuthorityAssertionV2(nil), source.assertions...)
+	result.workspaceClaim = cloneWorkspacePathClaim(source.workspaceClaim)
+	result.effectPermissionResume = cloneEffectPermission(source.effectPermissionResume)
+	result.records = append([]SealedRecordV2(nil), source.records...)
+	for index := range result.records {
+		result.records[index].canonical = append([]byte(nil), source.records[index].canonical...)
+	}
+	result.canonical = append([]byte(nil), source.canonical...)
+	return result
+}
+
+func cloneOperationStateV2(source OperationStateV2) OperationStateV2 {
+	result := source
+	result.canonicalResult = append([]byte(nil), source.canonicalResult...)
+	result.eventIDs = append([]EventID(nil), source.eventIDs...)
+	result.effectIDs = append([]EffectID(nil), source.effectIDs...)
+	return result
+}
+
 func SealCommitPlanV2(input CommitPlanInput, registry EventRegistryV2) (SealedCommitPlanV2, error) {
 	if err := preflightCommitPlan(input); err != nil {
 		return SealedCommitPlanV2{}, err

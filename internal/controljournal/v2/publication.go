@@ -138,6 +138,13 @@ func acknowledgementSeal(plan SealedCommitPlanV2, observation CommitObservationV
 	if err := validateSealedPlanIdentity(plan); err != nil {
 		return Digest{}, err
 	}
+	return acknowledgementSealValidated(plan, observation)
+}
+
+// acknowledgementSealValidated is reachable only after the coordinator has
+// admitted and frozen a fully validated sealed plan. It binds the small
+// provider observation without re-encoding the complete plan.
+func acknowledgementSealValidated(plan SealedCommitPlanV2, observation CommitObservationV2) (Digest, error) {
 	canonical, err := marshalCanonical(struct {
 		PublicationID   string `json:"publication_id"`
 		PlanSHA256      string `json:"plan_sha256"`
@@ -188,7 +195,14 @@ func validateSealedPlanIdentity(plan SealedCommitPlanV2) error {
 }
 
 func validateAcknowledgement(ack AcknowledgedPublicationV2) error {
-	seal, err := acknowledgementSeal(ack.plan, ack.observation)
+	if err := validateSealedPlanIdentity(ack.plan); err != nil {
+		return err
+	}
+	return validateAcknowledgementForRegisteredPlan(ack)
+}
+
+func validateAcknowledgementForRegisteredPlan(ack AcknowledgedPublicationV2) error {
+	seal, err := acknowledgementSealValidated(ack.plan, ack.observation)
 	if err != nil || seal.IsZero() || seal != ack.seal || ack.observation.publicationID != ack.plan.publicationID ||
 		ack.observation.planDigest != ack.plan.digest || ack.observation.recordSetDigest != ack.plan.recordSetDigest ||
 		ack.observation.mutationCount != len(ack.plan.records) || ack.observation.assertionCount != len(ack.plan.assertions) || ack.observation.revision == 0 ||
@@ -199,8 +213,8 @@ func validateAcknowledgement(ack AcknowledgedPublicationV2) error {
 }
 
 type publicationProjectionV2 interface {
-	registerPublication(SealedCommitPlanV2) error
-	applyAcknowledged(AcknowledgedPublicationV2) error
+	registerValidatedPublication(SealedCommitPlanV2) error
+	applyValidatedAcknowledged(AcknowledgedPublicationV2) error
 	sealPrefix() (SealedProjectionPrefixV2, error)
 }
 
@@ -269,54 +283,68 @@ func NewPublicationCoordinatorWithObserverAndSinkV2(port DurablePublicationPortV
 // mutex across provider I/O. Any uncertain or malformed outcome remains
 // registered and therefore blocks a checkpoint barrier.
 func (c *PublicationCoordinatorV2) Publish(ctx context.Context, plan SealedCommitPlanV2) (AcknowledgedPublicationV2, error) {
-	if err := c.register(plan); err != nil {
-		return AcknowledgedPublicationV2{}, err
-	}
-	if err := c.probeBoundary(ctx, PublicationBoundarySnapshotV2{Stage: PublicationRegisteredBeforeCommitV2, Plan: plan}); err != nil {
-		return AcknowledgedPublicationV2{}, err
-	}
-	observation, err := c.port.Commit(ctx, plan)
+	registered, err := c.register(plan)
 	if err != nil {
 		return AcknowledgedPublicationV2{}, err
 	}
-	return c.applyObservation(ctx, plan, observation)
+	if err := c.probeBoundary(ctx, PublicationBoundarySnapshotV2{Stage: PublicationRegisteredBeforeCommitV2, Plan: registered}); err != nil {
+		return AcknowledgedPublicationV2{}, err
+	}
+	observation, err := c.port.Commit(ctx, registered)
+	if err != nil {
+		return AcknowledgedPublicationV2{}, err
+	}
+	return c.applyObservation(ctx, registered, observation)
 }
 
-func (c *PublicationCoordinatorV2) register(plan SealedCommitPlanV2) error {
+func (c *PublicationCoordinatorV2) register(plan SealedCommitPlanV2) (SealedCommitPlanV2, error) {
 	if err := validateSealedPlanIdentity(plan); err != nil {
-		return err
+		return SealedCommitPlanV2{}, err
 	}
+	plan = cloneSealedCommitPlanV2(plan)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.unresolved >= MaxInFlightPublicationsV2 {
-		return invalid(ErrorBudgetExceeded, "in_flight_publications")
+		return SealedCommitPlanV2{}, invalid(ErrorBudgetExceeded, "in_flight_publications")
 	}
 	if _, exists := c.registered[plan.publicationID]; exists {
-		return invalid(ErrorAmbiguous, "publication_registered")
+		return SealedCommitPlanV2{}, invalid(ErrorAmbiguous, "publication_registered")
 	}
-	if err := c.projection.registerPublication(plan); err != nil {
-		return err
+	if err := c.projection.registerValidatedPublication(plan); err != nil {
+		return SealedCommitPlanV2{}, err
 	}
 	c.registered[plan.publicationID] = registeredPublicationV2{plan: plan}
 	c.unresolved++
-	return nil
+	return plan, nil
 }
 
 // ReconcileComplete accepts the same exact observation proof as a successful
 // delivery response. It cannot acknowledge an unregistered or substituted
 // plan.
 func (c *PublicationCoordinatorV2) ReconcileComplete(plan SealedCommitPlanV2, observation CommitObservationV2) (AcknowledgedPublicationV2, error) {
-	return c.applyObservation(context.Background(), plan, observation)
+	if err := validateSealedPlanIdentity(plan); err != nil {
+		return AcknowledgedPublicationV2{}, err
+	}
+	c.mu.Lock()
+	registered, exists := c.registered[plan.publicationID]
+	c.mu.Unlock()
+	if !exists || registered.resolved || registered.plan.digest != plan.digest || registered.plan.recordSetDigest != plan.recordSetDigest ||
+		!bytes.Equal(registered.plan.canonical, plan.canonical) {
+		return AcknowledgedPublicationV2{}, invalid(ErrorAmbiguous, "publication_not_registered")
+	}
+	return c.applyObservation(context.Background(), registered.plan, observation)
 }
 
 func (c *PublicationCoordinatorV2) applyObservation(ctx context.Context, plan SealedCommitPlanV2, observation CommitObservationV2) (AcknowledgedPublicationV2, error) {
-	if err := c.validateObservation(plan, observation); err != nil {
+	registeredPlan, err := c.validateObservation(plan, observation)
+	if err != nil {
 		return AcknowledgedPublicationV2{}, err
 	}
+	plan = registeredPlan
 	if err := c.probeBoundary(ctx, PublicationBoundarySnapshotV2{Stage: PublicationDurableObservedBeforeAckV2, Plan: plan, Observation: &observation}); err != nil {
 		return AcknowledgedPublicationV2{}, err
 	}
-	seal, err := acknowledgementSeal(plan, observation)
+	seal, err := acknowledgementSealValidated(plan, observation)
 	if err != nil {
 		return AcknowledgedPublicationV2{}, err
 	}
@@ -327,30 +355,31 @@ func (c *PublicationCoordinatorV2) applyObservation(ctx context.Context, plan Se
 	return c.applyAcknowledgement(ctx, plan, ack)
 }
 
-func (c *PublicationCoordinatorV2) validateObservation(plan SealedCommitPlanV2, observation CommitObservationV2) error {
+func (c *PublicationCoordinatorV2) validateObservation(plan SealedCommitPlanV2, observation CommitObservationV2) (SealedCommitPlanV2, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	registered, exists := c.registered[plan.publicationID]
-	if !exists || registered.resolved || registered.plan.digest != plan.digest || registered.plan.recordSetDigest != plan.recordSetDigest {
-		return invalid(ErrorAmbiguous, "publication_not_registered")
+	if !exists || registered.resolved || registered.plan.digest != plan.digest || registered.plan.recordSetDigest != plan.recordSetDigest ||
+		!bytes.Equal(registered.plan.canonical, plan.canonical) {
+		return SealedCommitPlanV2{}, invalid(ErrorAmbiguous, "publication_not_registered")
 	}
 	if observation.publicationID != plan.publicationID || observation.planDigest != plan.digest ||
 		observation.recordSetDigest != plan.recordSetDigest || observation.mutationCount != len(plan.records) ||
 		observation.assertionCount != len(plan.assertions) ||
 		observation.revision == 0 || observation.durableThrough < observation.revision {
-		return invalid(ErrorInvalidDigest, "commit_observation_attribution")
+		return SealedCommitPlanV2{}, invalid(ErrorInvalidDigest, "commit_observation_attribution")
 	}
-	return nil
+	return registered.plan, nil
 }
 
 func (c *PublicationCoordinatorV2) applyAcknowledgement(ctx context.Context, plan SealedCommitPlanV2, ack AcknowledgedPublicationV2) (AcknowledgedPublicationV2, error) {
 	c.mu.Lock()
 	registered, exists := c.registered[plan.publicationID]
-	if !exists || registered.resolved || registered.plan.digest != plan.digest || registered.plan.recordSetDigest != plan.recordSetDigest || validateAcknowledgement(ack) != nil {
+	if !exists || registered.resolved || registered.plan.digest != plan.digest || registered.plan.recordSetDigest != plan.recordSetDigest || validateAcknowledgementForRegisteredPlan(ack) != nil {
 		c.mu.Unlock()
 		return AcknowledgedPublicationV2{}, invalid(ErrorAmbiguous, "publication_not_registered")
 	}
-	if err := c.projection.applyAcknowledged(ack); err != nil {
+	if err := c.projection.applyValidatedAcknowledged(ack); err != nil {
 		c.mu.Unlock()
 		return AcknowledgedPublicationV2{}, err
 	}

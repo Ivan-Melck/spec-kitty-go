@@ -138,7 +138,7 @@ func TestQualificationProbeConcurrentReconciliationStillProjectsExactlyOnce(t *t
 	probe := reconcileBarrierProbeV2{entered: make(chan struct{}, 2), release: make(chan struct{})}
 	coordinator, _ := NewQualificationPublicationCoordinatorV2(&boundaryPortV2{}, tracker, probe)
 	plan := projectionPlan(t, "operation-reconcile-race", "mission-reconcile-race", "planned")
-	if err := coordinator.register(plan); err != nil {
+	if _, err := coordinator.register(plan); err != nil {
 		t.Fatal(err)
 	}
 	observation, _ := NewCommitObservationV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount())
@@ -348,7 +348,7 @@ func TestAcknowledgementAttributionAndOpaqueSealMutants(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tracker := fixtureProjectionTracker(t)
 			coordinator, _ := NewPublicationCoordinatorV2(&observingPortV2{tracker: tracker}, tracker)
-			if err := coordinator.register(plan); err != nil {
+			if _, err := coordinator.register(plan); err != nil {
 				t.Fatal(err)
 			}
 			candidate := valid
@@ -365,6 +365,32 @@ func TestAcknowledgementAttributionAndOpaqueSealMutants(t *testing.T) {
 	partial := AcknowledgedPublicationV2{plan: plan, observation: valid}
 	if err := tracker.applyAcknowledged(partial); err == nil {
 		t.Fatal("partial acknowledgement seal accepted")
+	}
+}
+
+func TestCoordinatorFreezesValidatedRegistrationAndRejectsLaterCallerMutation(t *testing.T) {
+	plan := projectionPlan(t, "operation-frozen-registration", "mission-frozen-registration", "planned")
+	clean := cloneSealedCommitPlanV2(plan)
+	tracker := fixtureProjectionTracker(t)
+	coordinator, _ := NewPublicationCoordinatorV2(&boundaryPortV2{}, tracker)
+	registered, err := coordinator.register(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mutate the pre-registration caller alias and the defensive bytes exposed
+	// by the registered plan. Neither is allowed to rewrite the coordinator's
+	// frozen registration.
+	plan.records[0].canonical[0] ^= 1
+	exposed := registered.CanonicalBytes()
+	exposed[0] ^= 1
+	observation, _ := NewCommitObservationV2(clean.PublicationID(), clean.Digest(), clean.RecordSetDigest(), 1, 1, clean.MutationCount())
+	if _, err := coordinator.ReconcileComplete(plan, observation); !IsKind(err, ErrorInvalidDigest) {
+		t.Fatalf("mutated caller plan reconciled: %v", err)
+	}
+	ack, err := coordinator.ReconcileComplete(clean, observation)
+	if err != nil || ack.PlanDigest() != clean.Digest() || tracker.LedgerSize() != 1 || coordinator.UnresolvedCount() != 0 {
+		t.Fatalf("frozen registration was not recoverable: ack=%+v ledger=%d unresolved=%d err=%v", ack, tracker.LedgerSize(), coordinator.UnresolvedCount(), err)
 	}
 }
 
