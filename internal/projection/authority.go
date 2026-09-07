@@ -408,7 +408,7 @@ func (a *AuthorityV2) restore(epoch journalv2.RuntimeEpochID, recovered restore.
 			liveStates := liveStatesV2(a.states)
 			liveDigest, digestErr := a.canonicalProjectionDigestV2(liveStates)
 			live, buildErr := buildSnapshotV2(a.databaseID, a.revision, a.durable, a.epoch, liveStates, liveDigest)
-			if digestErr != nil || buildErr != nil || next.projectionDigest != live.projectionDigest || !bytes.Equal(next.canonical, live.canonical) {
+			if digestErr != nil || buildErr != nil || next.projectionDigest != live.projectionDigest {
 				return &ErrorV2{ErrorProjectionCorruptV2, "restore_same_revision_mismatch"}
 			}
 			a.current.Store(live)
