@@ -57,6 +57,28 @@
       "transcript_path": "/tmp/go-kitty3-m2-performance-a8539a03.2oTwro/evidence/performance.json.events.jsonl",
       "transcript_sha256": "fee804d7b1c9ead9b687c3efba2304cb1b5395f6e0f4f0626aafa21b340e94c5",
       "transcript_bytes": 1829
+    },
+    {
+      "run_id": "wp17-performance-85b8acef-final-04",
+      "source_commit": "85b8acef674950c928bf5005c0d09fe9cddfcbc2",
+      "source_tree": "a7c1f6a6d92b0052df40331ff72bc984e65239c2",
+      "outcome": "fail",
+      "reason": "mutation and recovery p95 exceeded the frozen reference thresholds; query p95 passed",
+      "transcript_path": "/tmp/go-kitty3-m2-performance-85b8acef.iDOOXK/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "5f000695fcf9a75383c7c3d741dd6b01ece34e40c9528d3256c97ec6f23e04cd",
+      "transcript_bytes": 6258,
+      "failed_observation_path": "/tmp/go-kitty3-m2-performance-85b8acef.iDOOXK/evidence/performance.json.failed.json",
+      "failed_observation_sha256": "449a0c4c6ac5c79733b8f36631f71abd1ab90053e923007e7e40cf26c09483d5",
+      "failed_observation_bytes": 5268423,
+      "retained_private_root": "/tmp/spk-m2-measure-93687388",
+      "statistics": {
+        "mutation_p95_ms": 8.960949,
+        "mutation_limit_ms": 8,
+        "query_p95_ms": 1.994779,
+        "query_limit_ms": 2,
+        "recovery_p95_ms": 2181.454797,
+        "recovery_limit_ms": 2000
+      }
     }
   ]
 }
