@@ -3822,7 +3822,11 @@ func m2IsAdmittedM1RawBridge(importPath, module, owner string, candidate types.T
 		got = append(got, set.At(index).Obj().Name())
 	}
 	slices.Sort(got)
-	want := []string{"AtomicBatch", "CompareAndSwap", "DeleteIfRevision", "DescribeConfig", "Get", "Health", "Put", "PutIfAbsent", "ScanPrefix", "Status", "Watch"}
+	// ReadMany is the only M2 addition to the exact provider bridge. It accepts
+	// typed recovery requests at the adapter boundary; no domain package gains
+	// a raw-key capability. Exact equality keeps a renamed or extra god-store
+	// method from being sheltered by this path allowance.
+	want := []string{"AtomicBatch", "CompareAndSwap", "DeleteIfRevision", "DescribeConfig", "Get", "Health", "Put", "PutIfAbsent", "ReadMany", "ScanPrefix", "Status", "Watch"}
 	return slices.Equal(got, want)
 }
 

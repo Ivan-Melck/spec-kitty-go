@@ -31,7 +31,7 @@ func TestAdmissionPinnedPublicModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, line := range []string{
-		AdmittedModulePath + " " + QualificationClientModuleVersion + " h1:C3ToqJBFCeXoeLPeUoVI7Esrmsd1chIy/78u5T6IYG0=",
+		AdmittedModulePath + " " + QualificationClientModuleVersion + " h1:VrH2atGoPNzd2YhK0jUlfqflzSx/tnWdocSIXosxJCw=",
 		AdmittedModulePath + " " + QualificationClientModuleVersion + "/go.mod h1:8xNZ3k+SQIqcxLkS8bjbooOAv9xzZcbg5arjKaV6fcQ=",
 	} {
 		if !strings.Contains(string(sums), line) {

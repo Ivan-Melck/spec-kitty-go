@@ -35,13 +35,21 @@ func TestProductionCapabilityCompositionBoundaryBypassMutant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := "storegapdb.NewArtifactAuthorityPortV2(coordinator)"
-	mutant := strings.Replace(string(source), old, "storegapdb.NewArtifactAuthorityPortV2(nil)", 1)
-	if mutant == string(source) {
-		t.Fatal("composition mutant anchor was not reached")
-	}
-	if err := validateProductionCapabilityComposition([]byte(mutant)); err == nil || !strings.Contains(err.Error(), "NewArtifactAuthorityPortV2") {
-		t.Fatalf("publication-boundary bypass mutant survived: %v", err)
+	for _, mutant := range []struct {
+		name, old, replacement, want string
+	}{
+		{"authority-port-bypass", "storegapdb.NewArtifactAuthorityPortV2(coordinator)", "storegapdb.NewArtifactAuthorityPortV2(nil)", "NewArtifactAuthorityPortV2"},
+		{"projection-sink-bypass", "config.PublicationBoundaryObserver, authority)", "config.PublicationBoundaryObserver, nil)", "projection sink"},
+	} {
+		t.Run(mutant.name, func(t *testing.T) {
+			changed := strings.Replace(string(source), mutant.old, mutant.replacement, 1)
+			if changed == string(source) {
+				t.Fatal("composition mutant anchor was not reached")
+			}
+			if err := validateProductionCapabilityComposition([]byte(changed)); err == nil || !strings.Contains(err.Error(), mutant.want) {
+				t.Fatalf("publication-boundary bypass mutant survived: %v", err)
+			}
+		})
 	}
 }
 
@@ -82,9 +90,10 @@ func validateProductionCapabilityComposition(source []byte) error {
 			return true
 		}
 		name := calledName(call.Fun)
-		if name == "NewPublicationCoordinatorV2" {
-			if len(call.Args) != 2 || identifierName(call.Args[0]) != "adapter" || identifierName(call.Args[1]) != "tracker" {
-				err = fmt.Errorf("publication coordinator is not bound to adapter and tracker")
+		if name == "NewPublicationCoordinatorWithObserverAndSinkV2" {
+			if len(call.Args) != 4 || identifierName(call.Args[0]) != "adapter" || identifierName(call.Args[1]) != "tracker" ||
+				selectorName(call.Args[2]) != "config.PublicationBoundaryObserver" || identifierName(call.Args[3]) != "authority" {
+				err = fmt.Errorf("publication coordinator is not bound to adapter, tracker, observer, and projection sink")
 				return false
 			}
 			coordinatorConstructors++
@@ -131,4 +140,12 @@ func identifierName(expression ast.Expr) string {
 		return ""
 	}
 	return identifier.Name
+}
+
+func selectorName(expression ast.Expr) string {
+	selector, _ := expression.(*ast.SelectorExpr)
+	if selector == nil {
+		return ""
+	}
+	return identifierName(selector.X) + "." + selector.Sel.Name
 }
