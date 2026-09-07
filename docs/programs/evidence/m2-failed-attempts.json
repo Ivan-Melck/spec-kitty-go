@@ -166,6 +166,15 @@
       "reason": "all 45 crown campaigns passed, but nested WP16 runtime absence proof was incorrectly supplied the non-adopted M2 GapDB candidate instead of the frozen adopted assertion-extension sidecar and correctly refused its executable metadata",
       "attempt_events_sha256": "c51e0eb5b3f5932a75f3d10caa64b4a6d982e182d4c85df4c6f6ec000fb3729d",
       "terminal_sha256": "6ed9f90efed115581f08256ec136c4c805f827ec6334941d5bf54f99e687c2a2"
+    },
+    {
+      "run_id": "wp17-qualification-984ccd1a-final12",
+      "source_commit": "984ccd1a18ec16d1f9c9d84da9b18788c607cae7",
+      "source_tree": "9862dfc5f491beec25b53fd533fef9d4a8de2ab1",
+      "outcome": "fail",
+      "reason": "all 45 crown campaigns passed, but cleanup of the private nested absence module cache failed because the Go toolchain download retained read-only cache directories",
+      "attempt_events_sha256": "e057441a2520822ec3a7dabbaf6acd1adccbf830f6d5be4fcf3227a17322dcde",
+      "terminal_sha256": "6617c63ebf5d4c95a926618e33964bd37775551d319615c904746f757b4e3f24"
     }
   ]
 }

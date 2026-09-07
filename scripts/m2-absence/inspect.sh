@@ -143,7 +143,7 @@ git -C "$source_root" write-tree >"$capture_file"
 IFS= read -r archive_tree <"$capture_file"
 if [ "$archive_tree" != "$tree" ]; then echo "archived source tree mismatch: got=$archive_tree want=$tree" >&2; exit 1; fi
 
-export GOMODCACHE=$cache_root/mod GOCACHE=$cache_root/build GOPATH=$cache_root/gopath GOTOOLCHAIN=local GOFLAGS=-buildvcs=false
+export GOMODCACHE=$cache_root/mod GOCACHE=$cache_root/build GOPATH=$cache_root/gopath GOTOOLCHAIN=local GOFLAGS='-buildvcs=false -modcacherw'
 cd -- "$source_root"
 go version >"$capture_file"
 IFS= read -r go_version <"$capture_file"
