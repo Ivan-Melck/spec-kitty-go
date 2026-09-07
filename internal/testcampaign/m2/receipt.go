@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -82,6 +83,123 @@ type goTestReceiptLimits struct {
 	transcriptBytes int
 }
 
+type goTestOutputStream struct {
+	packageName string
+	testName    string
+}
+
+type machineOutputKind uint8
+
+const (
+	machineOutputNone machineOutputKind = iota
+	machineOutputIteration
+	machineOutputFamilyCut
+)
+
+type assembledMachineOutput struct {
+	kind    machineOutputKind
+	test    string
+	payload []byte
+}
+
+type pendingMachineOutput struct {
+	stream  goTestOutputStream
+	kind    machineOutputKind
+	payload []byte
+}
+
+type goTestOutputAssembler struct {
+	limit          int
+	pendingMachine *pendingMachineOutput
+	partialPlain   map[goTestOutputStream]bool
+}
+
+var goTestLogPreamble = regexp.MustCompile(`^[ \t]+[A-Za-z0-9_./-]+\.go:[0-9]+: $`)
+
+func (a *goTestOutputAssembler) consume(event goTestEvent) (assembledMachineOutput, bool, error) {
+	if a.partialPlain == nil {
+		a.partialPlain = map[goTestOutputStream]bool{}
+	}
+	stream := goTestOutputStream{packageName: event.Package, testName: event.Test}
+	if a.pendingMachine != nil {
+		if event.Action != "output" || stream != a.pendingMachine.stream {
+			return assembledMachineOutput{}, false, fmt.Errorf("machine receipt output was interleaved across test streams")
+		}
+		if strings.Contains(event.Output, iterationreceipt.Prefix) || strings.Contains(event.Output, iterationreceipt.FamilyCutPrefix) {
+			return assembledMachineOutput{}, false, fmt.Errorf("machine receipt prefix appeared in a continuation fragment")
+		}
+		if len(a.pendingMachine.payload)+len(event.Output) > a.limit {
+			return assembledMachineOutput{}, false, fmt.Errorf("assembled machine receipt budget exceeded: limit=%d", a.limit)
+		}
+		newline := strings.IndexByte(event.Output, '\n')
+		if newline < 0 {
+			a.pendingMachine.payload = append(a.pendingMachine.payload, event.Output...)
+			return assembledMachineOutput{}, true, nil
+		}
+		if newline != len(event.Output)-1 {
+			return assembledMachineOutput{}, false, fmt.Errorf("machine receipt continuation contains multiple logical lines")
+		}
+		pending := a.pendingMachine
+		pending.payload = append(pending.payload, event.Output[:newline]...)
+		a.pendingMachine = nil
+		return assembledMachineOutput{kind: pending.kind, test: pending.stream.testName, payload: pending.payload}, true, nil
+	}
+	if event.Action != "output" || event.Output == "" {
+		return assembledMachineOutput{}, false, nil
+	}
+	if a.partialPlain[stream] {
+		if strings.Contains(event.Output, iterationreceipt.Prefix) || strings.Contains(event.Output, iterationreceipt.FamilyCutPrefix) {
+			return assembledMachineOutput{}, false, fmt.Errorf("machine receipt prefix appeared after a non-machine continuation")
+		}
+		if strings.Contains(event.Output, "\n") {
+			delete(a.partialPlain, stream)
+		}
+		return assembledMachineOutput{}, false, nil
+	}
+	iterationIndex := strings.Index(event.Output, iterationreceipt.Prefix)
+	familyCutIndex := strings.Index(event.Output, iterationreceipt.FamilyCutPrefix)
+	if iterationIndex < 0 && familyCutIndex < 0 {
+		if !strings.HasSuffix(event.Output, "\n") {
+			a.partialPlain[stream] = true
+		}
+		return assembledMachineOutput{}, false, nil
+	}
+	if iterationIndex >= 0 && familyCutIndex >= 0 {
+		return assembledMachineOutput{}, false, fmt.Errorf("multiple machine receipt prefixes in one output fragment")
+	}
+	kind, index, prefix := machineOutputIteration, iterationIndex, iterationreceipt.Prefix
+	if familyCutIndex >= 0 {
+		kind, index, prefix = machineOutputFamilyCut, familyCutIndex, iterationreceipt.FamilyCutPrefix
+	}
+	preamble := event.Output[:index]
+	if preamble != "" && preamble != "SPK M2 runner: " && !goTestLogPreamble.MatchString(preamble) {
+		return assembledMachineOutput{}, false, fmt.Errorf("machine receipt prefix has inadmissible logical-line preamble")
+	}
+	fragment := event.Output[index+len(prefix):]
+	newline := strings.IndexByte(fragment, '\n')
+	if newline >= 0 {
+		if newline != len(fragment)-1 {
+			return assembledMachineOutput{}, false, fmt.Errorf("machine receipt output contains multiple logical lines")
+		}
+		return assembledMachineOutput{kind: kind, test: event.Test, payload: []byte(fragment[:newline])}, true, nil
+	}
+	if len(fragment) > a.limit {
+		return assembledMachineOutput{}, false, fmt.Errorf("assembled machine receipt budget exceeded: limit=%d", a.limit)
+	}
+	a.pendingMachine = &pendingMachineOutput{stream: stream, kind: kind, payload: []byte(fragment)}
+	return assembledMachineOutput{}, true, nil
+}
+
+func (a *goTestOutputAssembler) finish() error {
+	if a.pendingMachine != nil {
+		return fmt.Errorf("unterminated machine receipt logical line")
+	}
+	if len(a.partialPlain) != 0 {
+		return fmt.Errorf("unterminated go test output logical line")
+	}
+	return nil
+}
+
 func admittedGoTestReceiptLimits(definition Definition, executions int) goTestReceiptLimits {
 	records := definition.ExpectedRepetitions + executions*maxGoTestAuxiliaryRecordsPerProcess
 	if records < 1 {
@@ -116,6 +234,7 @@ func verifyGoTestReceiptWithLimits(raw []byte, runID string, source Source, defi
 	childPasses := map[string]int{}
 	var failedTests []string
 	var processTranscript bytes.Buffer
+	assembler := goTestOutputAssembler{limit: limits.recordBytes}
 	for {
 		line, readErr := reader.ReadSlice('\n')
 		if errors.Is(readErr, bufio.ErrBufferFull) {
@@ -141,27 +260,32 @@ func verifyGoTestReceiptWithLimits(raw []byte, runID string, source Source, defi
 		if event.Action == "fail" && event.Test != "" {
 			failedTests = append(failedTests, event.Test)
 		}
-		if index := strings.Index(event.Output, iterationreceipt.Prefix); index >= 0 {
+		assembled, machineFragment, assembleErr := assembler.consume(event)
+		if assembleErr != nil {
+			return receipt, assembleErr
+		}
+		process := requiresProcessIterationReceipts(definition)
+		if process && !(machineFragment && event.Test == definition.Selector) {
+			_, _ = processTranscript.Write(line)
+		}
+		if assembled.kind == machineOutputIteration {
 			_, internal := iterationContracts[definition.ID]
-			process := requiresProcessIterationReceipts(definition)
-			if process && event.Test != definition.Selector && definition.ID == "fault/adversarial-tracker" {
-				_, _ = processTranscript.Write(line)
-				continue // nested receipts are owned by the WP14 structured verifier
+			if process && assembled.test != definition.Selector && definition.ID == "fault/adversarial-tracker" {
+				// Nested receipts are retained byte-for-byte in the process transcript
+				// and verified by the separately sealed WP14 structured verifier.
+				goto census
 			}
 			if !internal && !process {
-				if definition.ID == "fault/adversarial-tracker" && event.Test != definition.Selector {
-					continue // verified by the separately sealed WP14 structured receipt
+				if definition.ID == "fault/adversarial-tracker" && assembled.test != definition.Selector {
+					goto census
 				}
 				return receipt, fmt.Errorf("unexpected iteration receipt for %q", definition.ID)
 			}
-			if event.Test != definition.Selector {
-				return receipt, fmt.Errorf("iteration receipt is not bound to exact parent %q", event.Test)
+			if assembled.test != definition.Selector {
+				return receipt, fmt.Errorf("iteration receipt is not bound to exact parent %q", assembled.test)
 			}
 			var iteration iterationreceipt.Record
-			payload := strings.TrimSpace(event.Output[index+len(iterationreceipt.Prefix):])
-			decoder := json.NewDecoder(strings.NewReader(payload))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&iteration); err != nil || iteration.Validate() != nil {
+			if err := strictJSON(assembled.payload, &iteration); err != nil || iteration.Validate() != nil {
 				return receipt, fmt.Errorf("malformed iteration receipt")
 			}
 			if process {
@@ -171,20 +295,17 @@ func verifyGoTestReceiptWithLimits(raw []byte, runID string, source Source, defi
 				processTranscript.Reset()
 			}
 			receipt.Iterations = append(receipt.Iterations, iteration)
-		} else if index := strings.Index(event.Output, iterationreceipt.FamilyCutPrefix); index >= 0 {
-			if !isFamilyCutDefinition(definition.ID) || event.Test != definition.Selector {
+		} else if assembled.kind == machineOutputFamilyCut {
+			if !isFamilyCutDefinition(definition.ID) || assembled.test != definition.Selector {
 				return receipt, fmt.Errorf("unexpected family/cut iteration receipt for %q", definition.ID)
 			}
 			var iteration iterationreceipt.FamilyCutRecord
-			decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(event.Output[index+len(iterationreceipt.FamilyCutPrefix):])))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&iteration); err != nil || iteration.Validate() != nil {
+			if err := strictJSON(assembled.payload, &iteration); err != nil || iteration.Validate() != nil {
 				return receipt, fmt.Errorf("malformed family/cut iteration receipt")
 			}
 			receipt.FamilyCutIterations = append(receipt.FamilyCutIterations, iteration)
-		} else if requiresProcessIterationReceipts(definition) {
-			_, _ = processTranscript.Write(line)
 		}
+	census:
 		if event.Test == "" {
 			continue
 		}
@@ -226,6 +347,9 @@ func verifyGoTestReceiptWithLimits(raw []byte, runID string, source Source, defi
 		case "skip":
 			receipt.SkippedExecutions++
 		}
+	}
+	if err := assembler.finish(); err != nil {
+		return receipt, err
 	}
 	if exit != 0 {
 		sort.Strings(failedTests)

@@ -2,8 +2,10 @@ package m2
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -76,6 +78,112 @@ func TestBoundedTranscriptWriterNeverSilentlyTruncates(t *testing.T) {
 	}
 }
 
+func TestGoTestLogicalOutputAssemblerReassemblesSplitMachineReceipts(t *testing.T) {
+	source := Source{Commit: stringOf('a', 40), Tree: stringOf('b', 40)}
+	definition := Definition{ID: "behavior/zombie-workspace-isolation", Package: "./internal/scenario", Selector: "TestZombieOwnerReplacementCampaign100", ExpectedRepetitions: 100, TrialsPerRun: 100}
+	raw := append([]byte(nil), fixtureEvent(definition.Package, "run", definition.Selector)...)
+	for index := range 100 {
+		record, err := iterationreceipt.New(definition.ID, index, fmt.Sprintf("seed-%03d", index), "runtime-epoch-replacement", "stale-refused-authority-unchanged", time.Duration(index+1), map[string]int{"index": index}, map[string]bool{"universal": true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := iterationreceipt.Encode(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cut := len(encoded) / 2
+		raw = append(raw, outputChunkEvent(definition.Package, definition.Selector, "    authority_laws_test.go:76: "+iterationreceipt.Prefix+string(encoded[:cut]))...)
+		raw = append(raw, outputChunkEvent(definition.Package, definition.Selector, string(encoded[cut:])+"\n")...)
+	}
+	raw = append(raw, fixtureEvent(definition.Package, "pass", definition.Selector)...)
+	receipt, err := VerifyGoTestReceipt(raw, "run", source, definition, 1, 0)
+	if err != nil || receipt.CertifiedRepetitions != 100 {
+		t.Fatalf("split logical receipts were not reassembled: receipt=%+v err=%v", receipt, err)
+	}
+}
+
+func TestGoTestLogicalOutputAssemblerRejectsAmbiguousChunking(t *testing.T) {
+	prefix := "    authority_laws_test.go:76: " + iterationreceipt.Prefix
+	stream := goTestEvent{Action: "output", Package: "github.com/spec-kitty/go-kitty3/internal/scenario", Test: "TestExact"}
+	for name, run := range map[string]func(*goTestOutputAssembler) error{
+		"interleaved-test": func(assembler *goTestOutputAssembler) error {
+			first := stream
+			first.Output = prefix + `{\"schema_version\":1,`
+			if _, _, err := assembler.consume(first); err != nil {
+				return err
+			}
+			other := stream
+			other.Test = "TestOther"
+			other.Output = `\"index\":0}` + "\n"
+			_, _, err := assembler.consume(other)
+			return err
+		},
+		"cross-package": func(assembler *goTestOutputAssembler) error {
+			first := stream
+			first.Output = prefix + `{\"schema_version\":1,`
+			if _, _, err := assembler.consume(first); err != nil {
+				return err
+			}
+			other := stream
+			other.Package += "/foreign"
+			other.Output = `\"index\":0}` + "\n"
+			_, _, err := assembler.consume(other)
+			return err
+		},
+		"multiple-lines": func(assembler *goTestOutputAssembler) error {
+			event := stream
+			event.Output = prefix + `{}` + "\nforged\n"
+			_, _, err := assembler.consume(event)
+			return err
+		},
+		"forged-prefix-in-later-fragment": func(assembler *goTestOutputAssembler) error {
+			first := stream
+			first.Output = "ordinary partial output"
+			if _, _, err := assembler.consume(first); err != nil {
+				return err
+			}
+			second := stream
+			second.Output = iterationreceipt.Prefix + `{}` + "\n"
+			_, _, err := assembler.consume(second)
+			return err
+		},
+		"assembled-over-budget": func(assembler *goTestOutputAssembler) error {
+			first := stream
+			first.Output = prefix + "1234"
+			if _, _, err := assembler.consume(first); err != nil {
+				return err
+			}
+			second := stream
+			second.Output = "56789\n"
+			_, _, err := assembler.consume(second)
+			return err
+		},
+		"unterminated": func(assembler *goTestOutputAssembler) error {
+			first := stream
+			first.Output = prefix + `{\"schema_version\":1}`
+			if _, _, err := assembler.consume(first); err != nil {
+				return err
+			}
+			return assembler.finish()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			limit := 8 << 10
+			if name == "assembled-over-budget" {
+				limit = 8
+			}
+			if err := run(&goTestOutputAssembler{limit: limit}); err == nil {
+				t.Fatal("ambiguous machine output chunking was accepted")
+			}
+		})
+	}
+}
+
+func outputChunkEvent(packagePath, test, output string) []byte {
+	encoded, _ := json.Marshal(goTestEvent{Action: "output", Package: strings.TrimPrefix(packagePath, "./"), Test: test, Output: output})
+	return append(encoded, '\n')
+}
+
 func TestExecutingIterationReceiptsRejectMissingDuplicateAndForgedFacts(t *testing.T) {
 	source := Source{Commit: stringOf('a', 40), Tree: stringOf('b', 40)}
 	definition := Definition{ID: "fault/concurrent-claims", Package: "./internal/scenario", Selector: "TestConcurrentSameAggregateConflictCampaign100", ExpectedRepetitions: 100, TrialsPerRun: 100}
@@ -113,23 +221,28 @@ func TestExecutingIterationReceiptsRejectMissingDuplicateAndForgedFacts(t *testi
 }
 
 func TestExecutingIterationReceiptParsesRealCampaignTranscript(t *testing.T) {
-	definition := FrozenDefinitions()[0]
-	for _, candidate := range FrozenDefinitions() {
-		if candidate.ID == "behavior/serialized-integration" {
-			definition = candidate
-			break
-		}
-	}
-	command := exec.Command("go", "test", "-json", "-count=1", "-run", "^"+definition.Selector+"$", definition.Package)
-	command.Dir = repositoryRoot(t)
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("execute real campaign: %v\n%s", err, raw)
-	}
-	source := Source{Commit: stringOf('a', 40), Tree: stringOf('b', 40)}
-	receipt, err := VerifyGoTestReceipt(raw, "run", source, definition, 1, 0)
-	if err != nil || receipt.CertifiedRepetitions != 100 || len(receipt.Iterations) != 100 {
-		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	for _, definitionID := range []string{"behavior/serialized-integration", "behavior/zombie-workspace-isolation"} {
+		t.Run(safeID(definitionID), func(t *testing.T) {
+			definition := FrozenDefinitions()[0]
+			for _, candidate := range FrozenDefinitions() {
+				if candidate.ID == definitionID {
+					definition = candidate
+					break
+				}
+			}
+			command := exec.Command("go", "test", "-json", "-count=1", "-run", "^"+definition.Selector+"$", definition.Package)
+			command.Dir = repositoryRoot(t)
+			command.Env = append(os.Environ(), "SPEC_KITTY_WP14_CAMPAIGN=100")
+			raw, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("execute real campaign: %v\n%s", err, raw)
+			}
+			source := Source{Commit: stringOf('a', 40), Tree: stringOf('b', 40)}
+			receipt, err := VerifyGoTestReceipt(raw, "run", source, definition, 1, 0)
+			if err != nil || receipt.CertifiedRepetitions != 100 || len(receipt.Iterations) != 100 {
+				t.Fatalf("receipt=%+v err=%v", receipt, err)
+			}
+		})
 	}
 }
 
