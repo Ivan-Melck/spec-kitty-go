@@ -72,7 +72,8 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 	h = newPortableHarness(t, ProductionConfig{
 		ExecutablePath: productionExecutable(t), RepositoryRoot: identity.repository,
 		Seed: identity.runID + "-performance", CandidateVerifier: sourceBoundCandidateVerifier{},
-		Reconciler: &scenarioEffectReconciler{}, MutationObserver: collector.observe, PublicationBoundaryObserver: collector,
+		CheckpointEvery: performanceWarmups + 1,
+		Reconciler:      &scenarioEffectReconciler{}, MutationObserver: collector.observe, PublicationBoundaryObserver: collector,
 		AfterEffectIntent: func(ctx context.Context, workID ids.WorkID) (bool, error) {
 			if workID != "work-a" {
 				return false, nil
@@ -106,6 +107,12 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare performance checkpoint: %v", err)
 	}
+	// The live warmup Host emitted the one qualified checkpoint at its exact
+	// 101-publication threshold (startup plus 100 warmups). A restarted suffix
+	// Host uses the maximum bounded interval; its direct outbox append and
+	// mandatory mid-suffix restart keep each in-memory ledger below that bound,
+	// so recovery must replay the complete 10,000-operation suffix.
+	h.config.CheckpointEvery = journalv2.MaxAcknowledgementsBetweenSeals
 	collector.startSuffix(checkpoint.Revision)
 	h.observationRevision = checkpoint.Revision
 	h.start()

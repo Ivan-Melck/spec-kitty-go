@@ -18,7 +18,6 @@ import (
 	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
-	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/checkpoint"
 	restorev2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	"github.com/spec-kitty/go-kitty3/internal/controlstore"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
@@ -201,9 +200,10 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 	return observations, nil
 }
 
-// PreparePerformanceCheckpoint seals the exact production reducer projection
-// already written by the scenario and publishes one real checkpoint before
-// the measured suffix. It owns no domain transition and invents no payload.
+// PreparePerformanceCheckpoint independently restores and observes the exact
+// production checkpoint emitted by the live Host after the warmup. A restored
+// tracker deliberately has no unsealed acknowledgement ledger, so the
+// qualifier must never manufacture a new checkpoint after restart.
 func PreparePerformanceCheckpoint(ctx context.Context, config PerformanceConfig, hostAuthorityID string) (CheckpointResult, error) {
 	state, err := startPerformanceRuntime(ctx, config)
 	if err != nil {
@@ -214,19 +214,17 @@ func PreparePerformanceCheckpoint(ctx context.Context, config PerformanceConfig,
 	if err != nil {
 		return CheckpointResult{}, err
 	}
-	tracker, err := restoredPerformanceTracker(state.reducers, recovered)
-	if err != nil {
-		return CheckpointResult{}, err
+	checkpointOperations := 0
+	for _, state := range recovered.Playback().States() {
+		coordinate := state.Coordinate()
+		if coordinate.Kind == "operation" && strings.HasPrefix(string(coordinate.ID), "operation-checkpoint-") {
+			checkpointOperations++
+		}
 	}
-	coordinator, err := journalv2.NewPublicationCoordinatorV2(state.adapter, tracker)
-	if err != nil {
-		return CheckpointResult{}, err
+	if checkpointOperations != 1 {
+		return CheckpointResult{}, fmt.Errorf("performance warmup checkpoint census=%d want=1", checkpointOperations)
 	}
-	state.tracker, state.coordinator = tracker, coordinator
-	if _, err := state.publishCheckpoint(ctx); err != nil {
-		return CheckpointResult{}, err
-	}
-	return CheckpointResult{Revision: tracker.HighestObservedRevision(), ProjectionSHA256: recovered.Playback().CanonicalProjectionDigest().String(), OperationCount: countOperationStates(recovered) + 1}, nil
+	return CheckpointResult{Revision: recovered.StoreRevision().CurrentRevision(), ProjectionSHA256: recovered.Playback().CanonicalProjectionDigest().String(), OperationCount: countOperationStates(recovered)}, nil
 }
 
 func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result restorev2.ResultV2, afterRevision uint64) (map[string]RecoveredOperation, []string, error) {
@@ -318,13 +316,11 @@ func restoredPerformanceTracker(reducers journalv2.ReducerSetV2, recovered resto
 }
 
 type performanceRuntime struct {
-	lifecycle   *sidecargapdb.Lifecycle
-	adapter     *storegapdb.Adapter
-	closer      interface{ Close() error }
-	registry    journalv2.EventRegistryV2
-	reducers    journalv2.ReducerSetV2
-	tracker     *journalv2.ProjectionTrackerV2
-	coordinator *journalv2.PublicationCoordinatorV2
+	lifecycle *sidecargapdb.Lifecycle
+	adapter   *storegapdb.Adapter
+	closer    interface{ Close() error }
+	registry  journalv2.EventRegistryV2
+	reducers  journalv2.ReducerSetV2
 }
 
 // MeasurePerformance times real accepted publication plans against the
@@ -476,19 +472,7 @@ func startPerformanceRuntime(ctx context.Context, config PerformanceConfig) (*pe
 		_ = lifecycle.Stop(context.Background())
 		return nil, err
 	}
-	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
-	if err != nil {
-		_ = closer.Close()
-		_ = lifecycle.Stop(context.Background())
-		return nil, err
-	}
-	coordinator, err := journalv2.NewPublicationCoordinatorV2(adapter, tracker)
-	if err != nil {
-		_ = closer.Close()
-		_ = lifecycle.Stop(context.Background())
-		return nil, err
-	}
-	return &performanceRuntime{lifecycle: lifecycle, adapter: adapter, closer: closer, registry: registry, reducers: reducers, tracker: tracker, coordinator: coordinator}, nil
+	return &performanceRuntime{lifecycle: lifecycle, adapter: adapter, closer: closer, registry: registry, reducers: reducers}, nil
 }
 
 func (r *performanceRuntime) close() {
@@ -501,72 +485,6 @@ func (r *performanceRuntime) close() {
 	if r.lifecycle != nil {
 		_ = r.lifecycle.Stop(context.Background())
 	}
-}
-
-func checkpointOperationInput(registry journalv2.EventRegistryV2) (journalv2.CommitPlanInput, journalv2.AggregateCoordinate, error) {
-	const operation = "operation-checkpoint-performance"
-	operationID := journalv2.OperationID(operation)
-	operationEventID := journalv2.EventID("event-operation-" + operation)
-	scope := journalv2.Scope{Kind: journalv2.ScopeHost}
-	intent, err := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "m2.performance.checkpoint", CommandSchemaVersion: 1, Scope: scope, Command: []byte(`{"checkpoint":"performance"}`)})
-	if err != nil {
-		return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
-	}
-	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "m2.performance.checkpoint", CommandSchemaVersion: 1, CanonicalIntentDigest: intent, Scope: scope, ActorID: "m2-performance", ProcessID: "m2-performance", DoctrineRevision: "m2", ProfileRevision: "m2", PolicyRevision: "m2", OriginatingRuntimeEpochID: "epoch-performance", ObservedCreatedAt: "2026-09-06T00:00:00Z"})
-	if err != nil {
-		return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
-	}
-	state, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: operationID, LogicalVersion: 1, Status: journalv2.StatusAccepted, EventIDs: []journalv2.EventID{operationEventID}})
-	if err != nil {
-		return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
-	}
-	operationPayload, err := journalv2.EncodeOperationStateEventPayloadV2(state)
-	if err != nil {
-		return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
-	}
-	operationCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(operationID), scope)
-	operationDigest, _ := journalv2.ReducerStateDigestV2(operationPayload)
-	drafts := []journalv2.EventDraftV2{{EventID: operationEventID, EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-performance", ActorID: "m2-performance", ProcessID: "m2-performance", PolicyRevision: "m2", GovernanceRevisions: []string{"m2"}, Payload: operationPayload}}
-	heads := []journalv2.HeadTransitionV2{{Coordinate: operationCoordinate, NextLogicalVersion: 1, EventID: operationEventID, CommittedRuntimeEpochID: "epoch-performance", CanonicalStateDigest: operationDigest, AuthoritySummary: operationPayload}}
-	conditions := make([]journalv2.ProviderCondition, len(heads))
-	for index, head := range heads {
-		conditions[index], err = journalv2.ConditionForHeadTransitionV2(head)
-		if err != nil {
-			return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
-		}
-	}
-	return journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: state, Events: drafts, Heads: heads, Conditions: conditions}, operationCoordinate, nil
-}
-
-func (r *performanceRuntime) publishCheckpoint(ctx context.Context) (journalv2.AggregateCoordinate, error) {
-	sealed, err := r.coordinator.SealProjectionPrefix()
-	if err != nil {
-		return journalv2.AggregateCoordinate{}, err
-	}
-	value, err := checkpoint.BuildV2("checkpoint-performance", sealed)
-	if err != nil {
-		return journalv2.AggregateCoordinate{}, err
-	}
-	slot, slotBytes, err := checkpoint.NewSlotV2("checkpoint-slot-performance", value)
-	if err != nil {
-		return journalv2.AggregateCoordinate{}, err
-	}
-	input, coordinate, err := checkpointOperationInput(r.registry)
-	if err != nil {
-		return journalv2.AggregateCoordinate{}, err
-	}
-	input.Checkpoints = []journalv2.CheckpointRecord{{CheckpointID: value.CheckpointID(), Canonical: value.CanonicalBytes(), SlotID: slot.SlotID(), SlotCanonical: slotBytes, ExpectedSlotRecordRevision: 0}}
-	condition, err := journalv2.ConditionForCheckpointRecordV2(input.Checkpoints[0])
-	if err != nil {
-		return journalv2.AggregateCoordinate{}, err
-	}
-	input.Conditions = append(input.Conditions, condition)
-	plan, err := journalv2.SealCommitPlanV2(input, r.registry)
-	if err != nil {
-		return journalv2.AggregateCoordinate{}, err
-	}
-	_, err = r.coordinator.Publish(ctx, plan)
-	return coordinate, err
 }
 
 func countOperationStates(result restorev2.ResultV2) int {
