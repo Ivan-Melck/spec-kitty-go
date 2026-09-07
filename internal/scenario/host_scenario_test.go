@@ -477,7 +477,16 @@ func admitTwoItemWork(t *testing.T, h *portableHarness, projectID, missionID str
 			t.Fatal("concurrent work admission omitted current authority")
 		}
 		admitted[result.State.WorkID] = result.State
-		assertUniversalInvariants(t, h, projectID, missionID, "execution-admitted-"+result.State.WorkID.String())
+	}
+	// Both concurrent commands must cross their complete acknowledgement and
+	// projection boundaries before a universal point-in-time assertion. The
+	// first buffered result does not prove its sibling has stopped mutating.
+	for _, workID := range workIDs {
+		result, ok := admitted[workID]
+		if !ok {
+			t.Fatalf("concurrent work admission omitted %s", workID)
+		}
+		assertUniversalInvariants(t, h, projectID, missionID, "execution-admitted-"+result.WorkID.String())
 	}
 	return admitted
 }
