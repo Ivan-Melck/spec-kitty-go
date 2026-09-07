@@ -175,11 +175,6 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 			state.close()
 			return observations, fmt.Errorf("recovery revision precedes the qualified checkpoint")
 		}
-		observed := countOperationStates(recovered) - config.CheckpointOperations
-		if observed != config.Observations {
-			state.close()
-			return observations, fmt.Errorf("recovery run %d restored %d/%d suffix operations", run, observed, config.Observations)
-		}
 		digest := recovered.Playback().CanonicalProjectionDigest().String()
 		if run == 0 {
 			projectionSHA = digest
@@ -187,13 +182,27 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 			state.close()
 			return observations, fmt.Errorf("recovery run %d projection differs from run zero", run)
 		}
-		observation := RecoveryObservation{DurationNS: duration.Nanoseconds(), ProjectionSHA256: digest, ObservedOperations: observed}
+		operationStates := countOperationStates(recovered) - config.CheckpointOperations
+		observation := RecoveryObservation{DurationNS: duration.Nanoseconds(), ProjectionSHA256: digest}
 		if run == 0 {
 			observation.Operations, observation.RuntimeOperations, err = operationsFromEvents(ctx, state.adapter, recovered, config.CheckpointRevision)
 			if err != nil {
 				state.close()
 				return observations, err
 			}
+		}
+		runtimeOperations := 0
+		if run == 0 {
+			runtimeOperations = len(observation.RuntimeOperations)
+		} else {
+			// Equal canonical projection identity binds the same closed
+			// runtime-host history established from run zero's event envelopes.
+			runtimeOperations = len(observations[0].RuntimeOperations)
+		}
+		observation.ObservedOperations = operationStates + runtimeOperations
+		if observation.ObservedOperations != config.Observations {
+			state.close()
+			return observations, fmt.Errorf("recovery run %d restored %d operation states + %d runtime publications = %d/%d suffix operations", run, operationStates, runtimeOperations, observation.ObservedOperations, config.Observations)
 		}
 		state.close()
 		observations = append(observations, observation)
@@ -294,8 +303,8 @@ func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result
 		}
 		return strings.Compare(left, right)
 	})
-	if len(runtimeOperations) == 0 {
-		return nil, nil, fmt.Errorf("performance restore omitted post-checkpoint runtime_host publication")
+	if len(runtimeOperations) != 1 {
+		return nil, nil, fmt.Errorf("performance post-checkpoint runtime_host publication census=%d want=1", len(runtimeOperations))
 	}
 	return resultMap, runtimeOperations, nil
 }
