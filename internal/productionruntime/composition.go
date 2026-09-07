@@ -240,7 +240,7 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 		_ = host.Close(context.Background())
 		return nil, err
 	}
-	capabilities, err := composeRuntimeCapabilities(adapter, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
+	capabilities, err := composeRuntimeCapabilities(adapter, authority, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
 	if err != nil {
 		_ = host.Close(context.Background())
 		return nil, err
@@ -269,7 +269,7 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 			return nil, err
 		}
 		postRestore = reconciled
-		capabilities, err = composeRuntimeCapabilities(adapter, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
+		capabilities, err = composeRuntimeCapabilities(adapter, authority, registry, reducers, budgets, config.HostAuthorityID, epoch, postRestore, config)
 		if err != nil {
 			_ = host.Close(context.Background())
 			return nil, err
@@ -319,7 +319,7 @@ func restoredAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeE
 	return authority, progress, nil
 }
 
-func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, budgets journalrestore.BudgetsV2, hostAuthorityID journalv2.HostAuthorityID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, config Config) (runtimeCapabilities, error) {
+func composeRuntimeCapabilities(adapter *storegapdb.Adapter, authority *projection.AuthorityV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, budgets journalrestore.BudgetsV2, hostAuthorityID journalv2.HostAuthorityID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, config Config) (runtimeCapabilities, error) {
 	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
 	if err != nil {
 		return runtimeCapabilities{}, err
@@ -333,7 +333,7 @@ func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.
 	if err := tracker.Restore(seed); err != nil {
 		return runtimeCapabilities{}, err
 	}
-	coordinator, err := journalv2.NewPublicationCoordinatorWithObserverV2(adapter, tracker, config.PublicationBoundaryObserver)
+	coordinator, err := journalv2.NewPublicationCoordinatorWithObserverAndSinkV2(adapter, tracker, config.PublicationBoundaryObserver, authority)
 	if err != nil {
 		return runtimeCapabilities{}, err
 	}

@@ -10,7 +10,7 @@ type NotificationV2 struct {
 	DatabaseID       journalv2.DatabaseID     `json:"database_id"`
 	Revision         uint64                   `json:"revision"`
 	RuntimeEpochID   journalv2.RuntimeEpochID `json:"runtime_epoch_id"`
-	ProjectionDigest string                   `json:"projection_digest_sha256"`
+	ProjectionPrefix string                   `json:"projection_prefix_sha256"`
 	ResyncRequired   bool                     `json:"resync_required"`
 }
 type WatchV2 struct {
@@ -40,14 +40,13 @@ func (a *AuthorityV2) Watch(databaseID journalv2.DatabaseID, afterRevision uint6
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	snapshot := a.current.Load()
-	if snapshot == nil || databaseID != snapshot.databaseID || afterRevision != snapshot.revision || len(a.watches) >= MaxProjectionWatchesV2 {
+	if a.revision == 0 || databaseID != a.databaseID || afterRevision != a.revision || len(a.watches) >= MaxProjectionWatchesV2 {
 		return nil, &ErrorV2{ErrorResyncRequiredV2, "watch_start"}
 	}
 	a.nextWatch++
 	id := a.nextWatch
 	channel := make(chan NotificationV2, 1)
-	a.watches[id] = &watchStateV2{channel, snapshot.epoch}
+	a.watches[id] = &watchStateV2{channel, a.epoch}
 	return &WatchV2{C: channel, cancel: func() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -58,7 +57,8 @@ func (a *AuthorityV2) Watch(databaseID journalv2.DatabaseID, afterRevision uint6
 	}}, nil
 }
 
-func (a *AuthorityV2) notifyLocked(snapshot *SnapshotV2, epochChanged bool) {
+func (a *AuthorityV2) notifyAttributionLocked(current AttributionV2, epochChanged bool) {
+	snapshot := &SnapshotV2{databaseID: current.DatabaseID, revision: current.Revision, durableThrough: current.DurableThrough, epoch: current.RuntimeEpochID, projectionDigest: current.CursorToken, canonical: []byte(`{}`)}
 	for id, watch := range a.watches {
 		notification := NotificationV2{snapshot.databaseID, snapshot.revision, snapshot.epoch, snapshot.projectionDigest.String(), epochChanged || watch.epoch != snapshot.epoch}
 		select {

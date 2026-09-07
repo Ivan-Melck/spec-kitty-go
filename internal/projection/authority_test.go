@@ -97,6 +97,67 @@ func TestProjectionRefusesARevisionGapWithoutPoisoningLaterAdmission(t *testing.
 	}
 }
 
+func TestProjectionSinkWaitsForAndDrainsReverseAcknowledgementsContiguously(t *testing.T) {
+	authority, coordinator := projectionFixtureV2(t)
+	first := publishProjectionFixtureV2(t, coordinator, "reverse-a", "mission", "mission-reverse")
+	second := publishProjectionFixtureV2(t, coordinator, "reverse-b", "workgraph", "graph-reverse")
+	third := publishProjectionFixtureV2(t, coordinator, "reverse-c", "artifact_catalog", "catalog-reverse")
+	if err := authority.AdvanceAcknowledgedPublicationV2(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	thirdDone := make(chan error, 1)
+	go func() { thirdDone <- authority.AdvanceAcknowledgedPublicationV2(t.Context(), third) }()
+	select {
+	case err := <-thirdDone:
+		t.Fatalf("revision three returned before its predecessor: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	if got := authority.Attribution().Revision; got != 1 {
+		t.Fatalf("noncontiguous revision became visible: %d", got)
+	}
+	if err := authority.AdvanceAcknowledgedPublicationV2(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-thirdDone; err != nil {
+		t.Fatal(err)
+	}
+	if got := authority.Attribution().Revision; got != 3 {
+		t.Fatalf("contiguous drain stopped at revision %d", got)
+	}
+}
+
+func TestProgressBaseUsesMissionIndexAcrossTenThousandUnrelatedAggregates(t *testing.T) {
+	authority, _ := projectionFixtureV2(t)
+	authority.mu.Lock()
+	authority.revision, authority.durable, authority.epoch = 1, 1, "epoch-1"
+	for index := 0; index < 10_000; index++ {
+		missionID := fmt.Sprintf("mission-index-%05d", index)
+		coordinate, err := journalv2.NewAggregateCoordinate("mission", journalv2.AggregateID(missionID), journalv2.Scope{Kind: journalv2.ScopeMission, ProjectID: "project-index", MissionID: journalv2.MissionID(missionID)})
+		if err != nil {
+			authority.mu.Unlock()
+			t.Fatal(err)
+		}
+		keyBytes, err := journalv2.CanonicalAggregateCoordinate(coordinate)
+		if err != nil {
+			authority.mu.Unlock()
+			t.Fatal(err)
+		}
+		key := string(keyBytes)
+		view := AggregateViewV2{Coordinate: coordinate}
+		authority.views[key] = view
+		authority.indexViewLockedV2(key, view)
+	}
+	authority.mu.Unlock()
+	started := time.Now()
+	progress, err := authority.ProgressBase("mission-index-09999")
+	if err != nil || progress.MissionID != "mission-index-09999" {
+		t.Fatalf("indexed progress=%+v err=%v", progress, err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("mission index lookup scanned unrelated aggregates: %s", elapsed)
+	}
+}
+
 func TestProjectionListCursorIsBoundedStableAndRevisionScoped(t *testing.T) {
 	authority, coordinator := projectionFixtureV2(t)
 	ack := publishProjectionFixtureV2(t, coordinator, "a", "mission", "mission-1")
@@ -268,7 +329,7 @@ func TestWatchCannotBecomeRecoveryStreamMutant(t *testing.T) {
 	}
 	observedValue := reflect.ValueOf(observed)
 	notification := reflect.TypeOf(NotificationV2{})
-	want := map[string]bool{"DatabaseID": true, "Revision": true, "RuntimeEpochID": true, "ProjectionDigest": true, "ResyncRequired": true}
+	want := map[string]bool{"DatabaseID": true, "Revision": true, "RuntimeEpochID": true, "ProjectionPrefix": true, "ResyncRequired": true}
 	for index := 0; index < notification.NumField(); index++ {
 		field := notification.Field(index)
 		lower := strings.ToLower(field.Name + " " + field.Type.String())

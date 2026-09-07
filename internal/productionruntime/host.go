@@ -73,7 +73,12 @@ type operationOriginReader interface {
 type CommandContext struct {
 	RuntimeEpochID     journalv2.RuntimeEpochID
 	ProjectionRevision uint64
-	ProjectionDigest   journalv2.Digest
+	ProjectionCursor   journalv2.Digest
+}
+
+type ProjectionCursor struct {
+	Revision uint64
+	Token    string
 }
 
 // HostStatus is a copy-only observation of the local owner barrier. It is not
@@ -207,6 +212,14 @@ func (h *Host) Status() HostStatus {
 	return status
 }
 
+// LiveProjectionCursor is the constant-size acknowledged-prefix identity used
+// by runtime instrumentation and cursors. It is deliberately distinct from
+// Status.ProjectionSHA256, which remains the canonical flat projection digest.
+func (h *Host) LiveProjectionCursor() ProjectionCursor {
+	attribution := h.projection.Attribution()
+	return ProjectionCursor{Revision: attribution.Revision, Token: attribution.CursorToken.String()}
+}
+
 func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), error) {
 	// Independent commands share this read lock. The health monitor takes the
 	// write side so a transient provider state inside an admitted atomic command
@@ -224,8 +237,8 @@ func (h *Host) beginCommand(expectedEpoch journalv2.RuntimeEpochID) (func(), err
 		h.commandMu.RUnlock()
 		return nil, &Error{Kind: ErrorStaleEpoch, State: HostReady, Field: "runtime_epoch_id"}
 	}
-	snapshot := h.projection.Snapshot()
-	if snapshot == nil || snapshot.RuntimeEpochID() != h.epoch || snapshot.DatabaseID() != h.databaseID || snapshot.Revision() == 0 || snapshot.DurableThroughRevision() < snapshot.Revision() {
+	attribution := h.projection.Attribution()
+	if attribution.RuntimeEpochID != h.epoch || attribution.DatabaseID != h.databaseID || attribution.Revision == 0 || attribution.DurableThrough < attribution.Revision {
 		h.mu.Unlock()
 		h.commandMu.RUnlock()
 		h.degrade("projection_binding")
@@ -253,8 +266,8 @@ func (h *Host) executeBarrierProbe(expectedEpoch journalv2.RuntimeEpochID, comma
 	}
 	defer release()
 	h.mu.Lock()
-	snapshot := h.projection.Snapshot()
-	capsule := CommandContext{RuntimeEpochID: h.epoch, ProjectionRevision: snapshot.Revision(), ProjectionDigest: snapshot.ProjectionDigest()}
+	attribution := h.projection.Attribution()
+	capsule := CommandContext{RuntimeEpochID: h.epoch, ProjectionRevision: attribution.Revision, ProjectionCursor: attribution.CursorToken}
 	h.mu.Unlock()
 	return command(capsule)
 }

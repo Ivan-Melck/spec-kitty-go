@@ -221,7 +221,7 @@ func (h *portableHarness) observeMutation(families []string, operation string, s
 	if h != nil && h.config.MutationObserver != nil {
 		after := uint64(0)
 		if h.host != nil {
-			after = h.host.Status().ProjectionRevision
+			after = h.host.LiveProjectionCursor().Revision
 		}
 		before := h.observationRevision
 		mutationCount := uint64(0)

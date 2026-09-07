@@ -541,6 +541,32 @@ func TestPossibleMutationRefreshesDurableTruthDespiteTypedErrorAndCancellation(t
 	}
 }
 
+func TestTenThousandSuccessfulMutationBoundariesPerformZeroHotJournalRestores(t *testing.T) {
+	host, _ := hostFixture(t, "database-zero-hot-restores")
+	defer host.Close(t.Context())
+	if err := host.transition(HostReconciling); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.transition(HostReady); err != nil {
+		t.Fatal(err)
+	}
+	checkpoints := &checkpointProbe{}
+	host.capabilities.checkpoints = checkpoints
+	var restores atomic.Int64
+	host.refresh = func(context.Context) error {
+		restores.Add(1)
+		return nil
+	}
+	for index := 0; index < 10_000; index++ {
+		if err := host.afterMutation(t.Context()); err != nil {
+			t.Fatalf("mutation boundary %d: %v", index, err)
+		}
+	}
+	if restores.Load() != 0 || checkpoints.calls.Load() != 10_000 {
+		t.Fatalf("successful hot path restores=%d checkpoint_checks=%d", restores.Load(), checkpoints.calls.Load())
+	}
+}
+
 type possibleMutationContextKey struct{}
 
 func TestHostIntegrationCleanupPublishesPendingProgressDespiteFailureAndCancellation(t *testing.T) {

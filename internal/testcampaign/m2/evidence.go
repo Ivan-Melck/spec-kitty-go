@@ -71,6 +71,7 @@ type RawPerformance struct {
 	Samples                []PerformanceSample     `json:"samples"`
 	Statistics             []PerformanceStatistics `json:"statistics"`
 	WarmupExcluded         int                     `json:"warmup_excluded"`
+	ReplayExcluded         int                     `json:"replay_excluded"`
 	Failures               int                     `json:"failures"`
 	Method                 string                  `json:"method"`
 }
@@ -249,7 +250,7 @@ func VerifyPerformanceTranscript(raw []byte) error {
 }
 
 func validatePerformanceSamples(raw RawPerformance) error {
-	wantTotal := raw.WarmupExcluded + len(raw.MutationMS) + len(raw.QueryMS) + len(raw.RecoveryMS)
+	wantTotal := raw.WarmupExcluded + raw.ReplayExcluded + len(raw.MutationMS) + len(raw.QueryMS) + len(raw.RecoveryMS)
 	if len(raw.Samples) != wantTotal || raw.Dataset.SuffixOperations != len(raw.MutationMS) || raw.RecoveryOperations != raw.Dataset.SuffixOperations || raw.WarmupExcluded < 0 {
 		return fmt.Errorf("performance raw sample census is incomplete")
 	}
@@ -266,10 +267,14 @@ func validatePerformanceSamples(raw RawPerformance) error {
 			return fmt.Errorf("performance sample %d has unknown kind %q", index, sample.Kind)
 		}
 		if !sample.Included {
-			if sample.Kind != "mutation" || sample.ExclusionReason != "warmup" {
+			if sample.Kind != "mutation" || sample.ExclusionReason != "warmup" && sample.ExclusionReason != "idempotent_replay" {
 				return fmt.Errorf("performance sample %d has unapproved exclusion", index)
 			}
+			if sample.ExclusionReason == "idempotent_replay" && (sample.AfterRevision != sample.BeforeRevision || sample.MutationCount != 0 || sample.PublicationCount != 0 || len(sample.PublicationIDs) != 0 || len(sample.EmittedFamilies) != 0) {
+				return fmt.Errorf("performance replay sample %d fabricates a durable acknowledgement", index)
+			}
 			excluded[sample.Kind]++
+			excluded[sample.ExclusionReason]++
 			continue
 		}
 		if sample.Kind == "mutation" {
@@ -300,7 +305,7 @@ func validatePerformanceSamples(raw RawPerformance) error {
 			}
 		}
 	}
-	if excluded["mutation"] != raw.WarmupExcluded || !slices.Equal(observed["mutation"], raw.MutationMS) || !slices.Equal(observed["query"], raw.QueryMS) || !slices.Equal(observed["recovery"], raw.RecoveryMS) {
+	if excluded["warmup"] != raw.WarmupExcluded || excluded["idempotent_replay"] != raw.ReplayExcluded || !slices.Equal(observed["mutation"], raw.MutationMS) || !slices.Equal(observed["query"], raw.QueryMS) || !slices.Equal(observed["recovery"], raw.RecoveryMS) {
 		return fmt.Errorf("performance arrays are not a projection of the retained raw samples")
 	}
 	if len(familyCounts) != len(raw.Dataset.FamilyOperationCounts) {

@@ -69,7 +69,7 @@ func TestWP11ProductionMutantCampaignV2(t *testing.T) {
 		{
 			id: "watch_becomes_recovery", source: "internal/projection/watch.go", pkg: "./internal/projection", killer: "TestWatchCannotBecomeRecoveryStreamMutant", wantFailure: "watch recovery mutant populated RecoverySnapshot",
 			replacements: []wp11SourceReplacementV2{
-				{"\tProjectionDigest string                   `json:\"projection_digest_sha256\"`", "\tProjectionDigest string                   `json:\"projection_digest_sha256\"`\n\tRecoverySnapshot []byte                   `json:\"recovery_snapshot,omitempty\"`"},
+				{"\tProjectionPrefix string                   `json:\"projection_prefix_sha256\"`", "\tProjectionPrefix string                   `json:\"projection_prefix_sha256\"`\n\tRecoverySnapshot []byte                   `json:\"recovery_snapshot,omitempty\"`"},
 				{"notification := NotificationV2{snapshot.databaseID, snapshot.revision, snapshot.epoch, snapshot.projectionDigest.String(), epochChanged || watch.epoch != snapshot.epoch}", "notification := NotificationV2{snapshot.databaseID, snapshot.revision, snapshot.epoch, snapshot.projectionDigest.String(), snapshot.CanonicalBytes(), epochChanged || watch.epoch != snapshot.epoch}"},
 			},
 		},

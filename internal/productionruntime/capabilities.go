@@ -54,7 +54,15 @@ func (h *Host) afterMutation(ctx context.Context) error {
 		h.degrade("checkpoint")
 		return &Error{Kind: ErrorProjection, State: HostDegraded, Field: "checkpoint"}
 	}
-	return h.refreshProjection(ctx)
+	h.projection.NotifyCurrent()
+	return nil
+}
+
+func (h *Host) finishMutation(ctx context.Context, primary error) error {
+	if primary != nil {
+		return h.afterPossibleMutation(ctx, primary)
+	}
+	return h.afterMutation(ctx)
 }
 
 // afterPossibleMutation refreshes from durable truth even when a capability
@@ -211,10 +219,7 @@ func (h *Host) ExecuteMission(ctx context.Context, expected journalv2.RuntimeEpo
 	}
 	defer release()
 	result, err := h.capabilities.mission.Execute(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) ExecuteReadiness(ctx context.Context, expected journalv2.RuntimeEpochID, command mission.ReadinessAuthorityCommandV2) (mission.ReadinessAuthorityResultV2, error) {
@@ -224,10 +229,7 @@ func (h *Host) ExecuteReadiness(ctx context.Context, expected journalv2.RuntimeE
 	}
 	defer release()
 	result, err := h.capabilities.readiness.Execute(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) ExecuteDecomposition(ctx context.Context, expected journalv2.RuntimeEpochID, command mission.DecompositionAuthorityRequestV2) (mission.DecompositionAuthorityResultV2, error) {
@@ -247,10 +249,7 @@ func (h *Host) ExecuteWork(ctx context.Context, expected journalv2.RuntimeEpochI
 	}
 	defer release()
 	result, err := h.capabilities.execution.Execute(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) ExecuteWorkspace(ctx context.Context, expected journalv2.RuntimeEpochID, command execution.WorkspaceAuthorityRequestV2) (execution.WorkspaceAuthorityResultV2, error) {
@@ -260,10 +259,7 @@ func (h *Host) ExecuteWorkspace(ctx context.Context, expected journalv2.RuntimeE
 	}
 	defer release()
 	result, err := h.capabilities.workspace.Execute(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) RebindWorkspaceRuntimeEpoch(ctx context.Context, expected journalv2.RuntimeEpochID, command execution.WorkspaceEpochRebindRequestV2) (execution.WorkspaceAuthorityResultV2, error) {
@@ -273,10 +269,7 @@ func (h *Host) RebindWorkspaceRuntimeEpoch(ctx context.Context, expected journal
 	}
 	defer release()
 	result, err := h.capabilities.workspace.RebindRuntimeEpoch(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) ExecuteWorkspaceStage(ctx context.Context, expected journalv2.RuntimeEpochID, command workspace.StageAuthorityRequestV2) (workspace.StageAuthorityResultV2, error) {
@@ -286,10 +279,7 @@ func (h *Host) ExecuteWorkspaceStage(ctx context.Context, expected journalv2.Run
 	}
 	defer release()
 	result, err := h.capabilities.stage.Execute(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) SubmitHandoff(ctx context.Context, expected journalv2.RuntimeEpochID, command handoff.AuthorityRequestV2) (handoff.AuthorityResultV2, error) {
@@ -299,10 +289,7 @@ func (h *Host) SubmitHandoff(ctx context.Context, expected journalv2.RuntimeEpoc
 	}
 	defer release()
 	result, err := h.capabilities.handoff.Submit(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) SubmitReview(ctx context.Context, expected journalv2.RuntimeEpochID, command review.AuthorityRequestV2) (review.AuthorityResultV2, error) {
@@ -312,10 +299,7 @@ func (h *Host) SubmitReview(ctx context.Context, expected journalv2.RuntimeEpoch
 	}
 	defer release()
 	result, err := h.capabilities.review.Submit(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) ExecuteAcceptance(ctx context.Context, expected journalv2.RuntimeEpochID, command integration.AcceptanceAuthorityRequestV2) (integration.AcceptanceResultV2, error) {
@@ -325,10 +309,7 @@ func (h *Host) ExecuteAcceptance(ctx context.Context, expected journalv2.Runtime
 	}
 	defer release()
 	result, err := h.capabilities.acceptance.Accept(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) ExecuteIntegration(ctx context.Context, expected journalv2.RuntimeEpochID, command integration.IntegrationAuthorityRequestV2) (integration.IntegrationAttemptStateV2, error) {
@@ -338,10 +319,7 @@ func (h *Host) ExecuteIntegration(ctx context.Context, expected journalv2.Runtim
 	}
 	defer release()
 	result, err := h.capabilities.integration.Integrate(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) ExecuteEffect(ctx context.Context, expected journalv2.RuntimeEpochID, command execution.EffectAuthorityRequestV2) (execution.EffectAuthorityResultV2, error) {
@@ -351,10 +329,7 @@ func (h *Host) ExecuteEffect(ctx context.Context, expected journalv2.RuntimeEpoc
 	}
 	defer release()
 	result, err := h.capabilities.effect.Execute(ctx, command)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 // ExecuteEffectDispatch is the sole production route from durable effect
@@ -389,10 +364,7 @@ func (h *Host) PublishArtifact(ctx context.Context, expected journalv2.RuntimeEp
 	}
 	defer release()
 	result, err := h.capabilities.artifact.Publish(ctx, plan)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }
 
 func (h *Host) PublishWorkgraph(ctx context.Context, expected journalv2.RuntimeEpochID, plan workgraph.AuthorityPlanV2) (journalv2.AcknowledgedPublicationV2, error) {
@@ -402,8 +374,5 @@ func (h *Host) PublishWorkgraph(ctx context.Context, expected journalv2.RuntimeE
 	}
 	defer release()
 	result, err := h.capabilities.workgraph.Publish(ctx, plan)
-	if err == nil {
-		err = h.afterMutation(ctx)
-	}
-	return result, err
+	return result, h.finishMutation(ctx, err)
 }

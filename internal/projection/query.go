@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
@@ -16,19 +17,24 @@ type GetQueryV2 struct {
 }
 
 func (a *AuthorityV2) Get(query GetQueryV2) (AggregateViewV2, error) {
-	snapshot := a.current.Load()
-	if snapshot == nil || query.AtRevision != 0 && query.AtRevision != snapshot.revision {
+	snapshot := a.Snapshot()
+	if snapshot == nil {
+		return AggregateViewV2{}, &ErrorV2{ErrorProjectionCorruptV2, "snapshot"}
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if snapshot.revision != a.revision || query.AtRevision != 0 && query.AtRevision != a.revision {
 		return AggregateViewV2{}, &ErrorV2{ErrorStaleCursorV2, "revision"}
 	}
 	keyBytes, err := journalv2.CanonicalAggregateCoordinate(query.Coordinate)
 	if err != nil {
 		return AggregateViewV2{}, &ErrorV2{ErrorInvalidQueryV2, "coordinate"}
 	}
-	position, ok := snapshot.byCoordinate[string(keyBytes)]
+	view, ok := a.views[string(keyBytes)]
 	if !ok {
 		return AggregateViewV2{}, &ErrorV2{ErrorNotFoundV2, "aggregate"}
 	}
-	return cloneViewV2(snapshot.views[position]), nil
+	return a.attributedViewLockedV2(view, snapshot.projectionDigest), nil
 }
 
 type ListQueryV2 struct {
@@ -62,14 +68,19 @@ func (a *AuthorityV2) List(query ListQueryV2) (ListResultV2, error) {
 		len(query.ProjectID) > journalv2.MaxIdentityBytes || len(query.MissionID) > journalv2.MaxIdentityBytes || len(query.WorkID) > journalv2.MaxIdentityBytes {
 		return ListResultV2{}, &ErrorV2{ErrorInvalidQueryV2, "budget"}
 	}
-	snapshot := a.current.Load()
+	snapshot := a.Snapshot()
 	if snapshot == nil {
+		return ListResultV2{}, &ErrorV2{ErrorProjectionCorruptV2, "snapshot"}
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.revision == 0 || snapshot.revision != a.revision {
 		return ListResultV2{}, &ErrorV2{ErrorProjectionCorruptV2, "snapshot"}
 	}
 	after := ""
 	if query.Cursor != "" {
 		cursor, err := decodeCursorV2(query.Cursor)
-		if err != nil || cursor.DatabaseID != snapshot.databaseID || cursor.Revision != snapshot.revision || cursor.ProjectionDigest != snapshot.projectionDigest.String() || cursor.FilterDigest != listFilterDigestV2(query) {
+		if err != nil || cursor.DatabaseID != a.databaseID || cursor.Revision != a.revision || cursor.ProjectionDigest != a.liveToken.String() || cursor.FilterDigest != listFilterDigestV2(query) {
 			return ListResultV2{}, &ErrorV2{ErrorStaleCursorV2, "cursor"}
 		}
 		after = cursor.After
@@ -77,10 +88,24 @@ func (a *AuthorityV2) List(query ListQueryV2) (ListResultV2, error) {
 	items := make([]AggregateViewV2, 0, query.Limit)
 	total := 0
 	next := ""
-	for _, view := range snapshot.views {
+	keys := a.candidateKeysLockedV2(query)
+	matching := make([]AggregateViewV2, 0, len(keys))
+	for key := range keys {
+		view := a.views[key]
+		view = a.attributedViewLockedV2(view, snapshot.projectionDigest)
+		if matchesListV2(view, query) {
+			matching = append(matching, view)
+		}
+	}
+	sort.Slice(matching, func(i, j int) bool {
+		left, _ := journalv2.CanonicalAggregateCoordinate(matching[i].Coordinate)
+		right, _ := journalv2.CanonicalAggregateCoordinate(matching[j].Coordinate)
+		return bytes.Compare(left, right) < 0
+	})
+	for _, view := range matching {
 		keyBytes, _ := journalv2.CanonicalAggregateCoordinate(view.Coordinate)
 		key := string(keyBytes)
-		if key <= after || !matchesListV2(view, query) {
+		if key <= after {
 			continue
 		}
 		if len(items) == query.Limit {
@@ -94,12 +119,12 @@ func (a *AuthorityV2) List(query ListQueryV2) (ListResultV2, error) {
 		items = append(items, cloneViewV2(view))
 		next = key
 	}
-	if len(items) < query.Limit || !hasMatchAfterV2(snapshot.views, query, next) {
+	if len(items) < query.Limit || !hasMatchAfterV2(matching, query, next) {
 		next = ""
 	}
-	result := ListResultV2{snapshot.databaseID, snapshot.revision, snapshot.epoch, items, ""}
+	result := ListResultV2{a.databaseID, a.revision, a.epoch, items, ""}
 	if next != "" {
-		result.NextCursor = encodeCursorV2(listCursorV2{DatabaseID: snapshot.databaseID, Revision: snapshot.revision, ProjectionDigest: snapshot.projectionDigest.String(), FilterDigest: listFilterDigestV2(query), After: next})
+		result.NextCursor = encodeCursorV2(listCursorV2{DatabaseID: a.databaseID, Revision: a.revision, ProjectionDigest: a.liveToken.String(), FilterDigest: listFilterDigestV2(query), After: next})
 	}
 	if encoded, err := json.Marshal(result); err != nil || len(encoded) > MaxQueryResponseV2 {
 		return ListResultV2{}, &ErrorV2{ErrorInvalidQueryV2, "response_budget"}
@@ -133,12 +158,14 @@ type ProgressBaseV2 struct {
 }
 
 func (a *AuthorityV2) ProgressBase(missionID string) (ProgressBaseV2, error) {
-	snapshot := a.current.Load()
-	if snapshot == nil || missionID == "" || len(missionID) > journalv2.MaxIdentityBytes {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.revision == 0 || missionID == "" || len(missionID) > journalv2.MaxIdentityBytes {
 		return ProgressBaseV2{}, &ErrorV2{ErrorInvalidQueryV2, "mission_id"}
 	}
 	found := false
-	for _, view := range snapshot.views {
+	for key := range a.byMission[missionID] {
+		view := a.views[key]
 		if view.Coordinate.Kind == "mission" && string(view.Coordinate.ID) == missionID && string(view.Coordinate.Scope.MissionID) == missionID {
 			found = true
 			break
@@ -147,7 +174,35 @@ func (a *AuthorityV2) ProgressBase(missionID string) (ProgressBaseV2, error) {
 	if !found {
 		return ProgressBaseV2{}, &ErrorV2{ErrorNotFoundV2, "mission"}
 	}
-	return ProgressBaseV2{snapshot.databaseID, snapshot.revision, snapshot.epoch, missionID}, nil
+	return ProgressBaseV2{a.databaseID, a.revision, a.epoch, missionID}, nil
+}
+
+func (a *AuthorityV2) candidateKeysLockedV2(query ListQueryV2) map[string]struct{} {
+	if query.WorkID != "" {
+		return a.byWork[string(query.WorkID)]
+	}
+	if query.MissionID != "" {
+		return a.byMission[string(query.MissionID)]
+	}
+	if query.ProjectID != "" {
+		return a.byProject[string(query.ProjectID)]
+	}
+	if query.Family != "" {
+		return a.byFamily[query.Family]
+	}
+	all := make(map[string]struct{}, len(a.views))
+	for key := range a.views {
+		all[key] = struct{}{}
+	}
+	return all
+}
+
+func (a *AuthorityV2) attributedViewLockedV2(view AggregateViewV2, canonicalDigest journalv2.Digest) AggregateViewV2 {
+	view.DatabaseID = a.databaseID
+	view.ProjectionRevision = a.revision
+	view.RuntimeEpochID = a.epoch
+	view.ProjectionDigest = canonicalDigest.String()
+	return cloneViewV2(view)
 }
 
 type listCursorV2 struct {

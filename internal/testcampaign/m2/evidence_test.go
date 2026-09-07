@@ -61,6 +61,27 @@ func TestPerformanceTranscriptRequiresOneObservedSelectorPass(t *testing.T) {
 	}
 }
 
+func TestPerformanceReplayExclusionCannotClaimDurableMutation(t *testing.T) {
+	referenceBytes, err := os.ReadFile(filepath.Join(repositoryRoot(t), "docs/programs/evidence/m2-performance-reference.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := fixtureRawPerformance(t, "run-performance-replay", Source{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40), GoVersion: "go1.26.7", GoModSHA256: strings.Repeat("c", 64), GoSumSHA256: strings.Repeat("d", 64)}, referenceBytes)
+	replay := PerformanceSample{Index: len(raw.Samples), Kind: "mutation", OperationID: "operation-idempotent-replay", Included: false, ExclusionReason: "idempotent_replay", BeforeRevision: raw.Dataset.FinalRevision, AfterRevision: raw.Dataset.FinalRevision, ProjectionRevision: raw.Dataset.FinalRevision}
+	raw.Samples = append(raw.Samples, replay)
+	raw.ReplayExcluded = 1
+	raw.Statistics[0] = PerformanceStatisticsFor("mutation", raw.MutationMS, raw.WarmupExcluded+raw.ReplayExcluded)
+	if _, err := SummarizePerformance(raw); err != nil {
+		t.Fatalf("truthful replay exclusion rejected: %v", err)
+	}
+	raw.Samples[len(raw.Samples)-1].MutationCount = 1
+	raw.Samples[len(raw.Samples)-1].PublicationCount = 1
+	raw.Samples[len(raw.Samples)-1].PublicationIDs = []string{"forged-publication"}
+	if _, err := SummarizePerformance(raw); err == nil {
+		t.Fatal("replay mutant fabricated a durable publication")
+	}
+}
+
 func TestManifestCensusAndArtifactMutantsFailClosed(t *testing.T) {
 	root := repositoryRoot(t)
 	schema := filepath.Join(root, "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/m2-qualification-v1.schema.json")

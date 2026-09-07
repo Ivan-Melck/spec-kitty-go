@@ -2,6 +2,7 @@ package projection
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -114,7 +115,20 @@ type AuthorityV2 struct {
 	eventDigest   journalv2.Digest
 	reducerDigest journalv2.Digest
 	current       atomic.Pointer[SnapshotV2]
-	mu            sync.Mutex
+	mu            sync.RWMutex
+	revision      uint64
+	durable       uint64
+	epoch         journalv2.RuntimeEpochID
+	liveToken     journalv2.Digest
+	states        map[string]playback.StateV2
+	views         map[string]AggregateViewV2
+	byFamily      map[string]map[string]struct{}
+	byProject     map[string]map[string]struct{}
+	byMission     map[string]map[string]struct{}
+	byWork        map[string]map[string]struct{}
+	pending       map[uint64]journalv2.AcknowledgedPublicationV2
+	notified      uint64
+	advanced      chan struct{}
 	watches       map[uint64]*watchStateV2
 	nextWatch     uint64
 }
@@ -131,7 +145,7 @@ func NewAuthorityV2(databaseID journalv2.DatabaseID, registry journalv2.EventReg
 	if err != nil {
 		return nil, err
 	}
-	a := &AuthorityV2{databaseID: databaseID, registry: registry, reducers: reducers, eventDigest: eventDescriptor.Digest(), reducerDigest: reducerDescriptor.Digest(), watches: make(map[uint64]*watchStateV2)}
+	a := &AuthorityV2{databaseID: databaseID, registry: registry, reducers: reducers, eventDigest: eventDescriptor.Digest(), reducerDigest: reducerDescriptor.Digest(), liveToken: journalv2.ProjectionPrefixGenesisV2(), states: make(map[string]playback.StateV2), views: make(map[string]AggregateViewV2), byFamily: make(map[string]map[string]struct{}), byProject: make(map[string]map[string]struct{}), byMission: make(map[string]map[string]struct{}), byWork: make(map[string]map[string]struct{}), pending: make(map[uint64]journalv2.AcknowledgedPublicationV2), advanced: make(chan struct{}), watches: make(map[uint64]*watchStateV2)}
 	genesis, err := buildSnapshotV2(databaseID, 0, 0, "", nil, journalv2.Digest{})
 	if err != nil {
 		return nil, err
@@ -140,7 +154,47 @@ func NewAuthorityV2(databaseID journalv2.DatabaseID, registry journalv2.EventReg
 	return a, nil
 }
 
-func (a *AuthorityV2) Snapshot() *SnapshotV2 { return a.current.Load() }
+func (a *AuthorityV2) Snapshot() *SnapshotV2 {
+	if a == nil {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if cached := a.current.Load(); cached != nil && cached.revision == a.revision {
+		return cached
+	}
+	states := liveStatesV2(a.states)
+	digest, err := a.canonicalProjectionDigestV2(states)
+	if err != nil {
+		return nil
+	}
+	next, err := buildSnapshotV2(a.databaseID, a.revision, a.durable, a.epoch, states, digest)
+	if err != nil {
+		return nil
+	}
+	a.current.Store(next)
+	return next
+}
+
+// AttributionV2 is the constant-size identity of the current contiguous live
+// projection. CursorToken is the rolling acknowledged-publication prefix. The
+// canonical flat projection digest remains a checkpoint/recovery artifact.
+type AttributionV2 struct {
+	DatabaseID     journalv2.DatabaseID
+	Revision       uint64
+	DurableThrough uint64
+	RuntimeEpochID journalv2.RuntimeEpochID
+	CursorToken    journalv2.Digest
+}
+
+func (a *AuthorityV2) Attribution() AttributionV2 {
+	if a == nil {
+		return AttributionV2{}
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return AttributionV2{a.databaseID, a.revision, a.durable, a.epoch, a.liveToken}
+}
 
 // PublishAcknowledged publishes exactly one complete provider revision. All
 // reducers run against a candidate; readers keep seeing the predecessor until
@@ -151,9 +205,62 @@ func (a *AuthorityV2) PublishAcknowledged(ack journalv2.AcknowledgedPublicationV
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	current := a.current.Load()
+	if ack.ProviderRevision() != a.revision+1 {
+		return &ErrorV2{ErrorIncompleteRevisionV2, "acknowledgement"}
+	}
+	return a.applyAcknowledgedLockedV2(ack, true)
+}
+
+// AdvanceAcknowledgedPublicationV2 is the coordinator sink. Provider commits
+// may complete out of order, so acknowledgements are retained by revision and
+// only the contiguous prefix becomes query-visible.
+func (a *AuthorityV2) AdvanceAcknowledgedPublicationV2(ctx context.Context, ack journalv2.AcknowledgedPublicationV2) error {
+	if a == nil {
+		return &ErrorV2{ErrorProjectionCorruptV2, "authority"}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a.mu.Lock()
+	if ack.ProviderRevision() <= a.revision || ack.ProviderRevision() > a.revision+journalv2.MaxAcknowledgementsBetweenSeals {
+		a.mu.Unlock()
+		return &ErrorV2{ErrorIncompleteRevisionV2, "acknowledgement"}
+	}
+	if _, exists := a.pending[ack.ProviderRevision()]; exists {
+		a.mu.Unlock()
+		return &ErrorV2{ErrorIncompleteRevisionV2, "duplicate_acknowledgement"}
+	}
+	a.pending[ack.ProviderRevision()] = ack
+	for {
+		next, ok := a.pending[a.revision+1]
+		if !ok {
+			break
+		}
+		if err := a.applyAcknowledgedLockedV2(next, false); err != nil {
+			a.mu.Unlock()
+			return err
+		}
+		delete(a.pending, next.ProviderRevision())
+		close(a.advanced)
+		a.advanced = make(chan struct{})
+	}
+	for a.revision < ack.ProviderRevision() {
+		advanced := a.advanced
+		a.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-advanced:
+		}
+		a.mu.Lock()
+	}
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *AuthorityV2) applyAcknowledgedLockedV2(ack journalv2.AcknowledgedPublicationV2, notify bool) error {
 	plan := ack.Plan()
-	if current == nil || ack.ProviderRevision() != current.revision+1 || ack.DurableThroughRevision() < ack.ProviderRevision() ||
+	if ack.ProviderRevision() != a.revision+1 || ack.DurableThroughRevision() < ack.ProviderRevision() ||
 		ack.PublicationID() != plan.PublicationID() || ack.PlanDigest() != plan.Digest() || ack.RecordSetDigest() != plan.RecordSetDigest() || ack.MutationCount() != plan.MutationCount() {
 		return &ErrorV2{ErrorIncompleteRevisionV2, "acknowledgement"}
 	}
@@ -168,9 +275,11 @@ func (a *AuthorityV2) PublishAcknowledged(ack journalv2.AcknowledgedPublicationV
 		}
 		headByEvent[head.EventID] = head
 	}
-	materialized := make([]playback.MaterializedEventV2, 0, len(plan.Events()))
+	events := plan.Events()
+	materialized := make([]playback.MaterializedEventV2, 0, len(events))
+	baseByCoordinate := make(map[string]playback.StateV2, len(events))
 	var epoch journalv2.RuntimeEpochID
-	for _, event := range plan.Events() {
+	for _, event := range events {
 		head, ok := headByEvent[event.EventID()]
 		if !ok || head.Coordinate != event.Coordinate() || head.NextLogicalVersion != event.LogicalVersion() || head.CommittedRuntimeEpochID != event.CommittedRuntimeEpochID() {
 			return &ErrorV2{ErrorIncompleteRevisionV2, "head_event_mismatch"}
@@ -185,8 +294,19 @@ func (a *AuthorityV2) PublishAcknowledged(ack journalv2.AcknowledgedPublicationV
 			return err
 		}
 		materialized = append(materialized, item)
+		key, _ := journalv2.CanonicalAggregateCoordinate(event.Coordinate())
+		if prior, ok := a.states[string(key)]; ok {
+			baseByCoordinate[string(key)] = prior
+		}
 	}
-	result, err := playback.RunV2(playback.InputV2{Base: current.states, Events: materialized, EventRegistry: a.registry, Reducers: a.reducers, ExpectedEventRegistryDigest: a.eventDigest, ExpectedReducerRegistryDigest: a.reducerDigest})
+	if a.epoch != "" && epoch != a.epoch {
+		return &ErrorV2{ErrorProjectionCorruptV2, "runtime_epoch"}
+	}
+	base := make([]playback.StateV2, 0, len(baseByCoordinate))
+	for _, state := range baseByCoordinate {
+		base = append(base, state)
+	}
+	result, err := playback.RunV2(playback.InputV2{Base: base, Events: materialized, EventRegistry: a.registry, Reducers: a.reducers, ExpectedEventRegistryDigest: a.eventDigest, ExpectedReducerRegistryDigest: a.reducerDigest})
 	if err != nil || result.Validate() != nil || result.ThroughRecordRevision() != ack.ProviderRevision() {
 		return &ErrorV2{ErrorProjectionCorruptV2, "playback"}
 	}
@@ -207,14 +327,40 @@ func (a *AuthorityV2) PublishAcknowledged(ack journalv2.AcknowledgedPublicationV
 			return &ErrorV2{ErrorProjectionCorruptV2, "head_projection_digest"}
 		}
 	}
-	next, err := buildSnapshotV2(a.databaseID, ack.ProviderRevision(), ack.DurableThroughRevision(), epoch, result.States(), result.CanonicalProjectionDigest())
+	nextToken, err := journalv2.AdvanceProjectionPrefixV2(a.liveToken, ack.ProviderRevision(), ack.PublicationID(), ack.PlanDigest(), ack.RecordSetDigest())
 	if err != nil {
 		return err
 	}
-	oldEpoch := current.epoch
-	a.current.Store(next)
-	a.notifyLocked(next, oldEpoch != "" && oldEpoch != next.epoch)
+	for key, state := range resultByCoordinate {
+		a.states[key] = state
+		view := viewFromStateV2(a.databaseID, ack.ProviderRevision(), epoch, journalv2.Digest{}, state)
+		a.views[key] = view
+		a.indexViewLockedV2(key, view)
+	}
+	a.revision = ack.ProviderRevision()
+	a.durable = ack.DurableThroughRevision()
+	a.epoch = epoch
+	a.liveToken = nextToken
+	if notify {
+		a.notifyAttributionLocked(AttributionV2{a.databaseID, a.revision, a.durable, a.epoch, a.liveToken}, false)
+		a.notified = a.revision
+	}
 	return nil
+}
+
+// NotifyCurrent publishes one coalesced watch boundary after a complete Host
+// command, including any checkpoint publication triggered by that command.
+func (a *AuthorityV2) NotifyCurrent() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.revision == 0 || a.revision == a.notified {
+		return
+	}
+	a.notifyAttributionLocked(AttributionV2{a.databaseID, a.revision, a.durable, a.epoch, a.liveToken}, false)
+	a.notified = a.revision
 }
 
 // Restore replaces empty memory from WP04's sealed restore result. The durable
@@ -254,20 +400,87 @@ func (a *AuthorityV2) restore(epoch journalv2.RuntimeEpochID, recovered restore.
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	old := a.current.Load()
-	if old != nil && old.revision != 0 {
-		if !currentEpoch || old.epoch != epoch || next.revision < old.revision {
+	if a.revision != 0 {
+		if !currentEpoch || a.epoch != epoch || next.revision < a.revision {
 			return &ErrorV2{ErrorProjectionCorruptV2, "restore_over_live_projection"}
 		}
-		if next.revision == old.revision {
-			if next.projectionDigest != old.projectionDigest || !bytes.Equal(next.canonical, old.canonical) {
+		if next.revision == a.revision {
+			liveStates := liveStatesV2(a.states)
+			liveDigest, digestErr := a.canonicalProjectionDigestV2(liveStates)
+			live, buildErr := buildSnapshotV2(a.databaseID, a.revision, a.durable, a.epoch, liveStates, liveDigest)
+			if digestErr != nil || buildErr != nil || next.projectionDigest != live.projectionDigest || !bytes.Equal(next.canonical, live.canonical) {
 				return &ErrorV2{ErrorProjectionCorruptV2, "restore_same_revision_mismatch"}
 			}
+			a.current.Store(live)
 			return nil
 		}
 	}
+	a.revision = next.revision
+	a.durable = next.durableThrough
+	a.epoch = next.epoch
+	a.liveToken = recovered.RollingPrefixDigest()
+	a.states = make(map[string]playback.StateV2, len(next.states))
+	a.views = make(map[string]AggregateViewV2, len(next.views))
+	a.byFamily = make(map[string]map[string]struct{})
+	a.byProject = make(map[string]map[string]struct{})
+	a.byMission = make(map[string]map[string]struct{})
+	a.byWork = make(map[string]map[string]struct{})
+	for _, state := range next.states {
+		key, _ := journalv2.CanonicalAggregateCoordinate(state.Coordinate())
+		a.states[string(key)] = state
+	}
+	for _, view := range next.views {
+		key, _ := journalv2.CanonicalAggregateCoordinate(view.Coordinate)
+		a.views[string(key)] = view
+		a.indexViewLockedV2(string(key), view)
+	}
+	a.pending = make(map[uint64]journalv2.AcknowledgedPublicationV2)
+	close(a.advanced)
+	a.advanced = make(chan struct{})
+	a.notified = next.revision
 	a.current.Store(next)
-	a.notifyLocked(next, old != nil && old.epoch != "" && old.epoch != next.epoch)
+	a.notifyAttributionLocked(AttributionV2{next.databaseID, next.revision, next.durableThrough, next.epoch, a.liveToken}, old != nil && old.epoch != "" && old.epoch != next.epoch)
 	return nil
+}
+
+func (a *AuthorityV2) canonicalProjectionDigestV2(states []playback.StateV2) (journalv2.Digest, error) {
+	if len(states) == 0 {
+		return journalv2.Digest{}, nil
+	}
+	result, err := playback.RunV2(playback.InputV2{Base: states, EventRegistry: a.registry, Reducers: a.reducers, ExpectedEventRegistryDigest: a.eventDigest, ExpectedReducerRegistryDigest: a.reducerDigest})
+	if err != nil || result.Validate() != nil {
+		return journalv2.Digest{}, &ErrorV2{ErrorProjectionCorruptV2, "snapshot_playback"}
+	}
+	return result.CanonicalProjectionDigest(), nil
+}
+
+func (a *AuthorityV2) indexViewLockedV2(key string, view AggregateViewV2) {
+	addProjectionIndexV2(a.byFamily, string(view.Coordinate.Kind), key)
+	addProjectionIndexV2(a.byProject, string(view.Coordinate.Scope.ProjectID), key)
+	addProjectionIndexV2(a.byMission, string(view.Coordinate.Scope.MissionID), key)
+	addProjectionIndexV2(a.byWork, string(view.Coordinate.Scope.WorkID), key)
+}
+
+func addProjectionIndexV2(index map[string]map[string]struct{}, value, key string) {
+	if value == "" {
+		return
+	}
+	if index[value] == nil {
+		index[value] = make(map[string]struct{})
+	}
+	index[value][key] = struct{}{}
+}
+
+func liveStatesV2(states map[string]playback.StateV2) []playback.StateV2 {
+	result := make([]playback.StateV2, 0, len(states))
+	for _, state := range states {
+		result = append(result, state)
+	}
+	return result
+}
+
+func viewFromStateV2(databaseID journalv2.DatabaseID, revision uint64, epoch journalv2.RuntimeEpochID, digest journalv2.Digest, state playback.StateV2) AggregateViewV2 {
+	return AggregateViewV2{DatabaseID: databaseID, ProjectionRevision: revision, RuntimeEpochID: epoch, ProjectionDigest: digest.String(), Coordinate: state.Coordinate(), LogicalVersion: state.LogicalVersion(), LastEventID: state.LastEventID(), LastPublicationID: state.LastPublicationID(), StateDigest: state.StateDigest().String(), Tombstone: state.Tombstone(), CanonicalState: state.CanonicalState()}
 }
 
 func buildSnapshotV2(databaseID journalv2.DatabaseID, revision, durable uint64, epoch journalv2.RuntimeEpochID, states []playback.StateV2, digest journalv2.Digest) (*SnapshotV2, error) {

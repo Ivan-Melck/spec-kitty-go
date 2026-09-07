@@ -204,6 +204,15 @@ type publicationProjectionV2 interface {
 	sealPrefix() (SealedProjectionPrefixV2, error)
 }
 
+// AcknowledgedPublicationSinkV2 receives only a fully validated
+// acknowledgement after the coordinator's projection tracker has reduced it.
+// It cannot alter the sealed plan, provider observation, acknowledgement, or
+// durable result. Production uses this narrow seam to advance query memory
+// without replaying the complete journal after every successful command.
+type AcknowledgedPublicationSinkV2 interface {
+	AdvanceAcknowledgedPublicationV2(context.Context, AcknowledgedPublicationV2) error
+}
+
 type registeredPublicationV2 struct {
 	plan     SealedCommitPlanV2
 	resolved bool
@@ -216,6 +225,7 @@ type PublicationCoordinatorV2 struct {
 	registered map[PublicationID]registeredPublicationV2
 	unresolved int
 	probe      QualificationPublicationBoundaryProbeV2
+	sink       AcknowledgedPublicationSinkV2
 }
 
 func NewPublicationCoordinatorV2(port DurablePublicationPortV2, projection *ProjectionTrackerV2) (*PublicationCoordinatorV2, error) {
@@ -237,10 +247,22 @@ func newPublicationCoordinatorWithProbeV2(port DurablePublicationPortV2, project
 }
 
 func NewPublicationCoordinatorWithObserverV2(port DurablePublicationPortV2, projection *ProjectionTrackerV2, observer PublicationBoundaryObserverV2) (*PublicationCoordinatorV2, error) {
+	return NewPublicationCoordinatorWithObserverAndSinkV2(port, projection, observer, nil)
+}
+
+func NewPublicationCoordinatorWithObserverAndSinkV2(port DurablePublicationPortV2, projection *ProjectionTrackerV2, observer PublicationBoundaryObserverV2, sink AcknowledgedPublicationSinkV2) (*PublicationCoordinatorV2, error) {
+	var coordinator *PublicationCoordinatorV2
+	var err error
 	if observer == nil {
-		return NewPublicationCoordinatorV2(port, projection)
+		coordinator, err = NewPublicationCoordinatorV2(port, projection)
+	} else {
+		coordinator, err = newPublicationCoordinatorWithProbeV2(port, projection, publicationBoundaryObserverProbeV2{observer: observer})
 	}
-	return newPublicationCoordinatorWithProbeV2(port, projection, publicationBoundaryObserverProbeV2{observer: observer})
+	if err != nil {
+		return nil, err
+	}
+	coordinator.sink = sink
+	return coordinator, nil
 }
 
 // Publish registers before invoking the port and never holds the coordinator
@@ -302,7 +324,7 @@ func (c *PublicationCoordinatorV2) applyObservation(ctx context.Context, plan Se
 	if err := c.probeBoundary(ctx, PublicationBoundarySnapshotV2{Stage: PublicationAckCreatedBeforeProjectionV2, Plan: plan, Observation: &observation, Ack: &ack}); err != nil {
 		return AcknowledgedPublicationV2{}, err
 	}
-	return c.applyAcknowledgement(plan, ack)
+	return c.applyAcknowledgement(ctx, plan, ack)
 }
 
 func (c *PublicationCoordinatorV2) validateObservation(plan SealedCommitPlanV2, observation CommitObservationV2) error {
@@ -321,19 +343,30 @@ func (c *PublicationCoordinatorV2) validateObservation(plan SealedCommitPlanV2, 
 	return nil
 }
 
-func (c *PublicationCoordinatorV2) applyAcknowledgement(plan SealedCommitPlanV2, ack AcknowledgedPublicationV2) (AcknowledgedPublicationV2, error) {
+func (c *PublicationCoordinatorV2) applyAcknowledgement(ctx context.Context, plan SealedCommitPlanV2, ack AcknowledgedPublicationV2) (AcknowledgedPublicationV2, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	registered, exists := c.registered[plan.publicationID]
 	if !exists || registered.resolved || registered.plan.digest != plan.digest || registered.plan.recordSetDigest != plan.recordSetDigest || validateAcknowledgement(ack) != nil {
+		c.mu.Unlock()
 		return AcknowledgedPublicationV2{}, invalid(ErrorAmbiguous, "publication_not_registered")
 	}
 	if err := c.projection.applyAcknowledged(ack); err != nil {
+		c.mu.Unlock()
 		return AcknowledgedPublicationV2{}, err
 	}
 	registered.resolved = true
 	c.registered[plan.publicationID] = registered
 	c.unresolved--
+	sink := c.sink
+	c.mu.Unlock()
+	// The tracker owns durable acknowledgement validity. The query sink runs
+	// outside the coordinator lock so a later provider revision may wait for an
+	// earlier concurrent acknowledgement without preventing it from draining.
+	if sink != nil {
+		if err := sink.AdvanceAcknowledgedPublicationV2(ctx, ack); err != nil {
+			return AcknowledgedPublicationV2{}, err
+		}
+	}
 	return ack, nil
 }
 
