@@ -3,6 +3,8 @@ set -eu
 
 # Detector words are assembled so this executable source remains inspectable;
 # there is no whole-file exemption for the gate itself.
+required_go_version=${SPEC_KITTY_M2_GO_VERSION-}
+if [ "$required_go_version" != go1.26.7 ]; then echo "M2 absence requires source-bound go1.26.7" >&2; exit 1; fi
 legacy_word='sql''ite'
 legacy_cli=${legacy_word}3
 modernc_driver=modernc.org/$legacy_word
@@ -143,7 +145,7 @@ git -C "$source_root" write-tree >"$capture_file"
 IFS= read -r archive_tree <"$capture_file"
 if [ "$archive_tree" != "$tree" ]; then echo "archived source tree mismatch: got=$archive_tree want=$tree" >&2; exit 1; fi
 
-export GOMODCACHE=$cache_root/mod GOCACHE=$cache_root/build GOPATH=$cache_root/gopath GOTOOLCHAIN=local GOFLAGS=-buildvcs=false
+export GOMODCACHE=$cache_root/mod GOCACHE=$cache_root/build GOPATH=$cache_root/gopath GOTOOLCHAIN=$required_go_version GOFLAGS=-buildvcs=false
 cd -- "$source_root"
 go version >"$capture_file"
 IFS= read -r go_version <"$capture_file"

@@ -2,9 +2,85 @@ package m2
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestNestedAbsenceScriptPinsSourceBoundToolchain(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "m2-absence", "inspect.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	for _, required := range []string{"SPEC_KITTY_M2_GO_VERSION", "!= go1.26.7", "GOTOOLCHAIN=$required_go_version"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("nested absence proof does not enforce source toolchain contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{"GOTOOLCHAIN=local", "-modcacherw"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("nested absence proof retains ineffective toolchain setting %q", forbidden)
+		}
+	}
+}
+
+func TestAbsenceQualificationEnvironmentRefusesMissingOrWrongToolchainAndAmbientSubstitution(t *testing.T) {
+	for _, version := range []string{"", "go1.26.4", "go1.27.0"} {
+		if _, err := absenceQualificationEnvironment(nil, "/sidecar", version); err == nil {
+			t.Fatalf("toolchain %q accepted", version)
+		}
+	}
+	environment, err := absenceQualificationEnvironment([]string{
+		"PATH=/bin",
+		"GOTOOLCHAIN=local",
+		"SPEC_KITTY_M2_GO_VERSION=go1.26.4",
+		"SPEC_KITTY_WP15_GAPDBD=/wrong",
+	}, "/exact/sidecar", "go1.26.7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{
+		"PATH=/bin":                             1,
+		"SPEC_KITTY_M2_GO_VERSION=go1.26.7":     1,
+		"SPEC_KITTY_WP15_GAPDBD=/exact/sidecar": 1,
+	}
+	for _, value := range environment {
+		if strings.HasPrefix(value, "GOTOOLCHAIN=") {
+			t.Fatalf("ambient toolchain leaked into nested proof: %q", value)
+		}
+		if _, ok := want[value]; ok {
+			want[value]--
+		}
+	}
+	for value, count := range want {
+		if count != 0 {
+			t.Fatalf("nested proof environment does not contain exactly one %q", value)
+		}
+	}
+}
+
+func TestNestedAbsenceScriptRefusesMissingOrWrongToolchainBeforeCreatingTarget(t *testing.T) {
+	script, err := filepath.Abs(filepath.Join("..", "..", "..", "scripts", "m2-absence", "inspect.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range [][]string{
+		{"PATH=" + os.Getenv("PATH")},
+		{"PATH=" + os.Getenv("PATH"), "SPEC_KITTY_M2_GO_VERSION=go1.26.4"},
+	} {
+		target := filepath.Join(t.TempDir(), "must-not-exist")
+		command := exec.Command(script, target)
+		command.Env = environment
+		if output, err := command.CombinedOutput(); err == nil {
+			t.Fatalf("invalid toolchain started nested absence proof: %s", output)
+		}
+		if _, err := os.Lstat(target); !os.IsNotExist(err) {
+			t.Fatalf("invalid toolchain created target: %v", err)
+		}
+	}
+}
 
 func TestRemovePrivateWorkingTreeHandlesReadOnlyToolchainCacheWithoutFollowingSymlinks(t *testing.T) {
 	parent := t.TempDir()

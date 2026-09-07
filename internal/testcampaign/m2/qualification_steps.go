@@ -37,7 +37,11 @@ func RunAbsenceQualification(ctx context.Context, repository, sidecar string, at
 	working := filepath.Join(attempt.Directory, ".working-absence")
 	command := exec.CommandContext(ctx, filepath.Join(repository, "scripts/m2-absence/inspect.sh"), working)
 	command.Dir = repository
-	command.Env = append(os.Environ(), "SPEC_KITTY_WP15_GAPDBD="+sidecar)
+	environment, err := absenceQualificationEnvironment(os.Environ(), sidecar, attempt.Source.GoVersion)
+	if err != nil {
+		return nil, err
+	}
+	command.Env = environment
 	raw, err := command.CombinedOutput()
 	if captureErr := attempt.Capture("logs/absence-command.txt", raw); captureErr != nil {
 		return nil, captureErr
@@ -65,6 +69,17 @@ func RunAbsenceQualification(ctx context.Context, repository, sidecar string, at
 	inputs = append(inputs, ArtifactInput{Path: "logs/absence-command.txt", Kind: "absence-command", Data: raw})
 	slices.SortFunc(inputs, func(a, b ArtifactInput) int { return strings.Compare(a.Path, b.Path) })
 	return inputs, nil
+}
+
+func absenceQualificationEnvironment(base []string, sidecar, goVersion string) ([]string, error) {
+	if goVersion != "go1.26.7" {
+		return nil, fmt.Errorf("nested absence qualification requires source-bound go1.26.7")
+	}
+	environment := slices.DeleteFunc(append([]string(nil), base...), func(value string) bool {
+		name, _, _ := strings.Cut(value, "=")
+		return name == "GOTOOLCHAIN" || name == "SPEC_KITTY_M2_GO_VERSION" || name == "SPEC_KITTY_WP15_GAPDBD"
+	})
+	return append(environment, "SPEC_KITTY_M2_GO_VERSION="+goVersion, "SPEC_KITTY_WP15_GAPDBD="+sidecar), nil
 }
 
 func removePrivateWorkingTree(attemptRoot, root string) error {

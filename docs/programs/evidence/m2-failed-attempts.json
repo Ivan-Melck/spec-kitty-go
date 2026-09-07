@@ -184,6 +184,15 @@
       "reason": "all 45 crown campaigns passed, but Go's toolchain module remained read-only because the module-cache writable flag does not govern downloaded toolchains, so attempt-local absence cleanup still failed",
       "attempt_events_sha256": "6727bd0b65b460180f3e1371be64a59d58091f2ffe6b1f4ddc57204cf34df9ac",
       "terminal_sha256": "44d63d7dc64b274984a4ff9e7ad9b7fb2200e6699feeab28dd97446a9934bb72"
+    },
+    {
+      "run_id": "wp17-qualification-e8e018b7-final14",
+      "source_commit": "e8e018b77d0fc9f269e41fd3a01315801f469e6c",
+      "source_tree": "bb47ad64af4c0151022e8505a6dc39dc33a25e8b",
+      "outcome": "fail",
+      "reason": "all 45 crown campaigns, nested absence cleanup, race, and the 10k/10k/30 performance proof passed, but the nested absence script overrode the source-bound Go 1.26.7 toolchain with local Go 1.26.4 and final semantic verification refused the mismatch",
+      "attempt_events_sha256": "d9e3e0cef04e561583137811f628fab6157bdc5722a688ab83bcbeec0606ecb8",
+      "terminal_sha256": "f7b92c4a8624a29ae10d7d4d7586591d06d4dfd8fb2922fb3527a796770a3dac"
     }
   ]
 }
