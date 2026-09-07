@@ -190,17 +190,11 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 				state.close()
 				return observations, err
 			}
-			bootstrap := 0
-			for _, operation := range observation.Operations {
-				if slices.Equal(operation.Families, []string{"family/operation"}) {
-					bootstrap++
-				}
-			}
-			if bootstrap != 1 || len(observation.Operations) != postCheckpointStates {
+			if len(observation.Operations) != postCheckpointStates {
 				state.close()
-				return observations, fmt.Errorf("recovery bootstrap census=%d post-checkpoint events=%d states=%d", bootstrap, len(observation.Operations), postCheckpointStates)
+				return observations, fmt.Errorf("recovery post-checkpoint event census=%d states=%d", len(observation.Operations), postCheckpointStates)
 			}
-			observation.ObservedOperations = len(observation.Operations) - bootstrap
+			observation.ObservedOperations = len(observation.Operations)
 		} else {
 			if postCheckpointStates != len(observations[0].Operations) {
 				state.close()
