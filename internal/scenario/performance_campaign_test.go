@@ -127,9 +127,10 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 	// mandatory mid-suffix restart keep each in-memory ledger below that bound,
 	// so recovery must replay the complete 10,000-operation suffix.
 	h.config.CheckpointEvery = journalv2.MaxAcknowledgementsBetweenSeals
-	collector.startSuffix(checkpoint.Revision)
+	collector.setMode(performanceCollectIdle)
 	h.observationRevision = checkpoint.Revision
 	h.start()
+	collector.startSuffix(checkpoint.Revision)
 
 	projectID, missionID := "project-performance", "mission-performance"
 	revision, governance := twoItemRevision(t, projectID, missionID)
@@ -460,7 +461,7 @@ func buildRawPerformance(t *testing.T, identity performanceIdentity, config m2ex
 	raw := m2.RawPerformance{
 		SchemaVersion: 1, RunID: identity.runID, SourceCommit: identity.source.Commit, SourceTree: identity.source.Tree,
 		ReferenceProfileSHA256: m2.SHA256(reference), Environment: environment,
-		Dataset:            m2.PerformanceDataset{Generator: m2external.PerformanceGenerator, WarmupOperations: performanceWarmups, SuffixOperations: performanceSuffixOps, CheckpointRevision: checkpoint.Revision, FamilyOperationCounts: familyCounts, ExpectedProjectionSHA: final.ProjectionSHA256, FinalRevision: final.ProjectionRevision},
+		Dataset:            m2.PerformanceDataset{Generator: m2external.PerformanceGenerator, WarmupOperations: performanceWarmups, SuffixOperations: performanceSuffixOps, CheckpointRevision: checkpoint.Revision, FamilyOperationCounts: familyCounts, FamilyRecoveryCounts: map[string]int{"family/runtime_host": len(recoveries)}, ExpectedProjectionSHA: final.ProjectionSHA256, FinalRevision: final.ProjectionRevision},
 		RecoveryOperations: performanceSuffixOps, WarmupExcluded: performanceWarmups, ReplayExcluded: countReplayExclusions(mutations), Method: "monotonic-nearest-rank-inclusive",
 	}
 	raw.Samples = append(raw.Samples, mutations...)
@@ -475,7 +476,7 @@ func buildRawPerformance(t *testing.T, identity performanceIdentity, config m2ex
 		raw.QueryMS = append(raw.QueryMS, float64(queries[index].DurationNS)/float64(time.Millisecond))
 	}
 	for _, recovered := range recoveries {
-		sample := m2.PerformanceSample{Index: len(raw.Samples), Kind: "recovery", DurationNS: recovered.DurationNS, Included: true, ProjectionSHA256: recovered.ProjectionSHA256, ObservedOperations: recovered.ObservedOperations, ProjectionRevision: final.ProjectionRevision}
+		sample := m2.PerformanceSample{Index: len(raw.Samples), Kind: "recovery", Family: "family/runtime_host", EmittedFamilies: []string{"family/runtime_host"}, DurationNS: recovered.DurationNS, Included: true, ProjectionSHA256: recovered.ProjectionSHA256, ObservedOperations: recovered.ObservedOperations, ProjectionRevision: final.ProjectionRevision}
 		raw.Samples = append(raw.Samples, sample)
 		raw.RecoveryMS = append(raw.RecoveryMS, float64(recovered.DurationNS)/float64(time.Millisecond))
 	}

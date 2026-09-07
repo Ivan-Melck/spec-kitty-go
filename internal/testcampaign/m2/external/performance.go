@@ -183,7 +183,7 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 			return observations, fmt.Errorf("recovery run %d projection differs from run zero", run)
 		}
 		operationStates := countOperationStates(recovered) - config.CheckpointOperations
-		observation := RecoveryObservation{DurationNS: duration.Nanoseconds(), ProjectionSHA256: digest}
+		observation := RecoveryObservation{DurationNS: duration.Nanoseconds(), ProjectionSHA256: digest, ObservedOperations: operationStates}
 		if run == 0 {
 			observation.Operations, observation.RuntimeOperations, err = operationsFromEvents(ctx, state.adapter, recovered, config.CheckpointRevision)
 			if err != nil {
@@ -191,18 +191,9 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 				return observations, err
 			}
 		}
-		runtimeOperations := 0
-		if run == 0 {
-			runtimeOperations = len(observation.RuntimeOperations)
-		} else {
-			// Equal canonical projection identity binds the same closed
-			// runtime-host history established from run zero's event envelopes.
-			runtimeOperations = len(observations[0].RuntimeOperations)
-		}
-		observation.ObservedOperations = operationStates + runtimeOperations
 		if observation.ObservedOperations != config.Observations {
 			state.close()
-			return observations, fmt.Errorf("recovery run %d restored %d operation states + %d runtime publications = %d/%d suffix operations", run, operationStates, runtimeOperations, observation.ObservedOperations, config.Observations)
+			return observations, fmt.Errorf("recovery run %d restored %d/%d suffix operations", run, observation.ObservedOperations, config.Observations)
 		}
 		state.close()
 		observations = append(observations, observation)
@@ -303,8 +294,8 @@ func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result
 		}
 		return strings.Compare(left, right)
 	})
-	if len(runtimeOperations) != 1 {
-		return nil, nil, fmt.Errorf("performance post-checkpoint runtime_host publication census=%d want=1", len(runtimeOperations))
+	if len(runtimeOperations) != 0 {
+		return nil, nil, fmt.Errorf("performance post-checkpoint runtime_host event census=%d want=0", len(runtimeOperations))
 	}
 	return resultMap, runtimeOperations, nil
 }

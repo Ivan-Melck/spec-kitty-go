@@ -82,6 +82,39 @@ func TestPerformanceReplayExclusionCannotClaimDurableMutation(t *testing.T) {
 	}
 }
 
+func TestPerformanceRuntimeHostIsBoundOnlyToObservedRecovery(t *testing.T) {
+	referenceBytes, err := os.ReadFile(filepath.Join(repositoryRoot(t), "docs/programs/evidence/m2-performance-reference.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := Source{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40), GoVersion: "go1.26.7", GoModSHA256: strings.Repeat("c", 64), GoSumSHA256: strings.Repeat("d", 64)}
+	baseline := fixtureRawPerformance(t, "run-performance-runtime", source, referenceBytes)
+	if _, err := SummarizePerformance(baseline); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("startup-label-cannot-become-operation", func(t *testing.T) {
+		mutant := fixtureRawPerformance(t, "run-performance-runtime-operation", source, referenceBytes)
+		mutant.Dataset.FamilyOperationCounts["family/runtime_host"] = 1
+		delete(mutant.Dataset.FamilyRecoveryCounts, "family/runtime_host")
+		if _, err := SummarizePerformance(mutant); err == nil {
+			t.Fatal("runtime_host startup label became mutation evidence")
+		}
+	})
+	t.Run("recovery-family-receipt-omitted", func(t *testing.T) {
+		mutant := fixtureRawPerformance(t, "run-performance-runtime-missing", source, referenceBytes)
+		for index := range mutant.Samples {
+			if mutant.Samples[index].Kind == "recovery" {
+				mutant.Samples[index].Family = ""
+				mutant.Samples[index].EmittedFamilies = nil
+				break
+			}
+		}
+		if _, err := SummarizePerformance(mutant); err == nil {
+			t.Fatal("runtime_host recovery family omission verified")
+		}
+	})
+}
+
 func TestManifestCensusAndArtifactMutantsFailClosed(t *testing.T) {
 	root := repositoryRoot(t)
 	schema := filepath.Join(root, "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/m2-qualification-v1.schema.json")
@@ -593,19 +626,20 @@ func fixtureRawPerformance(t *testing.T, runID string, source Source, referenceB
 		t.Fatal(err)
 	}
 	familyCounts := map[string]int{}
+	operationFamilies := slices.DeleteFunc(append([]string(nil), reference.FamilyIDs...), func(family string) bool { return family == "family/runtime_host" })
 	raw := RawPerformance{
 		SchemaVersion: 1, RunID: runID, SourceCommit: source.Commit, SourceTree: source.Tree,
 		ReferenceProfileSHA256: SHA256(referenceBytes),
 		Environment:            PerformanceEnvironment{CPUModel: reference.CPUModel, LogicalCPUs: reference.LogicalCPUs, PhysicalCores: reference.PhysicalCores, MemoryBytes: reference.MemoryMinBytes, KernelSystem: reference.KernelSystem, KernelRelease: reference.KernelRelease, Architecture: reference.Architecture, Filesystem: reference.Filesystem, StorageDevice: reference.StorageDevicePrefix + "0n1p1", PowerGovernor: reference.PowerGovernor, BoostEnabled: reference.BoostEnabled, Load1: 0.1, GoVersion: reference.GoVersion, CGOEnabled: reference.CGOEnabled, SidecarSHA256: AdmittedSidecarSHA256, QualifierSHA256: SHA256(fixtureBinary), ProductSHA256: SHA256(fixtureBinary)},
-		Dataset:                PerformanceDataset{Generator: reference.DatasetGenerator, WarmupOperations: 10, SuffixOperations: 10000, CheckpointRevision: 100, FamilyOperationCounts: familyCounts, ExpectedProjectionSHA: stringOf('3', 64), FinalRevision: 100100},
+		Dataset:                PerformanceDataset{Generator: reference.DatasetGenerator, WarmupOperations: 10, SuffixOperations: 10000, CheckpointRevision: 100, FamilyOperationCounts: familyCounts, FamilyRecoveryCounts: map[string]int{"family/runtime_host": 30}, ExpectedProjectionSHA: stringOf('3', 64), FinalRevision: 100100},
 		RecoveryOperations:     10000, WarmupExcluded: 10, Method: "monotonic-nearest-rank-inclusive",
 	}
 	for index := 0; index < 10; index++ {
-		family := reference.FamilyIDs[index%len(reference.FamilyIDs)]
+		family := operationFamilies[index%len(operationFamilies)]
 		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "mutation", Family: family, OperationID: fmt.Sprintf("warmup-%d", index), EmittedFamilies: []string{family}, DurationNS: int64(time.Millisecond), Included: false, ExclusionReason: "warmup", BeforeRevision: uint64(index + 1), AfterRevision: uint64(index + 2), MutationCount: 1, PublicationCount: 1, ProjectionRevision: uint64(index + 2), PublicationIDs: []string{fmt.Sprintf("publication-warmup-%d", index)}})
 	}
 	for index := 0; index < 10000; index++ {
-		family := reference.FamilyIDs[index%len(reference.FamilyIDs)]
+		family := operationFamilies[index%len(operationFamilies)]
 		familyCounts[family]++
 		raw.MutationMS = append(raw.MutationMS, .2)
 		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "mutation", Family: family, OperationID: fmt.Sprintf("suffix-%d", index), EmittedFamilies: []string{family}, DurationNS: int64(200 * time.Microsecond), Included: true, BeforeRevision: uint64(100 + index), AfterRevision: uint64(101 + index), MutationCount: 1, PublicationCount: 1, ProjectionRevision: uint64(101 + index), PublicationIDs: []string{fmt.Sprintf("publication-suffix-%d", index)}})
@@ -616,7 +650,7 @@ func fixtureRawPerformance(t *testing.T, runID string, source Source, referenceB
 	}
 	for index := 0; index < 30; index++ {
 		raw.RecoveryMS = append(raw.RecoveryMS, 1)
-		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "recovery", DurationNS: int64(time.Millisecond), Included: true, ProjectionSHA256: raw.Dataset.ExpectedProjectionSHA, ObservedOperations: 10000, ProjectionRevision: raw.Dataset.FinalRevision})
+		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "recovery", Family: "family/runtime_host", EmittedFamilies: []string{"family/runtime_host"}, DurationNS: int64(time.Millisecond), Included: true, ProjectionSHA256: raw.Dataset.ExpectedProjectionSHA, ObservedOperations: 10000, ProjectionRevision: raw.Dataset.FinalRevision})
 	}
 	raw.Statistics = []PerformanceStatistics{PerformanceStatisticsFor("mutation", raw.MutationMS, 10), PerformanceStatisticsFor("query", raw.QueryMS, 0), PerformanceStatisticsFor("recovery", raw.RecoveryMS, 0)}
 	return raw

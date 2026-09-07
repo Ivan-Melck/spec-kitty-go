@@ -126,6 +126,7 @@ type PerformanceDataset struct {
 	SuffixOperations      int            `json:"suffix_operations"`
 	CheckpointRevision    uint64         `json:"checkpoint_revision"`
 	FamilyOperationCounts map[string]int `json:"family_operation_counts"`
+	FamilyRecoveryCounts  map[string]int `json:"family_recovery_counts"`
 	ExpectedProjectionSHA string         `json:"expected_projection_sha256"`
 	FinalRevision         uint64         `json:"final_revision"`
 }
@@ -205,13 +206,17 @@ func VerifyPerformanceReference(referenceBytes []byte, raw RawPerformance) error
 	if environment.CPUModel != reference.CPUModel || environment.LogicalCPUs != reference.LogicalCPUs || environment.PhysicalCores != reference.PhysicalCores || environment.MemoryBytes < reference.MemoryMinBytes || environment.MemoryBytes > reference.MemoryMaxBytes || environment.KernelSystem != reference.KernelSystem || environment.KernelRelease != reference.KernelRelease || environment.Architecture != reference.Architecture || environment.Filesystem != reference.Filesystem || !strings.HasPrefix(environment.StorageDevice, reference.StorageDevicePrefix) || environment.PowerGovernor != reference.PowerGovernor || environment.BoostEnabled != reference.BoostEnabled || environment.Load1 > reference.Load1Maximum || environment.GoVersion != reference.GoVersion || environment.CGOEnabled != reference.CGOEnabled || environment.SidecarSHA256 != AdmittedSidecarSHA256 || !validDigest(environment.QualifierSHA256) || !validDigest(environment.ProductSHA256) {
 		return fmt.Errorf("observed performance environment is outside the source-bound reference profile")
 	}
-	if raw.Dataset.Generator != reference.DatasetGenerator || raw.Dataset.WarmupOperations != raw.WarmupExcluded || raw.Dataset.SuffixOperations != len(raw.MutationMS) || len(raw.Dataset.FamilyOperationCounts) != len(wantFamilies) || !validDigest(raw.Dataset.ExpectedProjectionSHA) {
+	if raw.Dataset.Generator != reference.DatasetGenerator || raw.Dataset.WarmupOperations != raw.WarmupExcluded || raw.Dataset.SuffixOperations != len(raw.MutationMS) || len(raw.Dataset.FamilyOperationCounts)+len(raw.Dataset.FamilyRecoveryCounts) != len(wantFamilies) || !validDigest(raw.Dataset.ExpectedProjectionSHA) {
 		return fmt.Errorf("performance dataset differs from the source-bound reference")
 	}
 	for _, family := range wantFamilies {
-		if raw.Dataset.FamilyOperationCounts[family] <= 0 {
+		operations, recoveries := raw.Dataset.FamilyOperationCounts[family], raw.Dataset.FamilyRecoveryCounts[family]
+		if operations <= 0 && recoveries <= 0 || operations > 0 && recoveries > 0 {
 			return fmt.Errorf("performance dataset omitted authority family %s", family)
 		}
+	}
+	if len(raw.Dataset.FamilyRecoveryCounts) != 1 || raw.Dataset.FamilyRecoveryCounts["family/runtime_host"] != len(raw.RecoveryMS) || raw.Dataset.FamilyOperationCounts["family/runtime_host"] != 0 {
+		return fmt.Errorf("runtime_host must be bound only to the closed restart/recovery census")
 	}
 	return nil
 }
@@ -257,6 +262,7 @@ func validatePerformanceSamples(raw RawPerformance) error {
 	observed := map[string][]float64{"mutation": {}, "query": {}, "recovery": {}}
 	excluded := map[string]int{}
 	familyCounts := map[string]int{}
+	recoveryFamilyCounts := map[string]int{}
 	operationIDs := map[string]struct{}{}
 	publicationIDs := map[string]struct{}{}
 	for index, sample := range raw.Samples {
@@ -295,6 +301,9 @@ func validatePerformanceSamples(raw RawPerformance) error {
 				publicationIDs[publication] = struct{}{}
 			}
 		}
+		if sample.Kind == "recovery" && (sample.Family != "family/runtime_host" || !slices.Equal(sample.EmittedFamilies, []string{"family/runtime_host"}) || sample.ObservedOperations != raw.RecoveryOperations || !validDigest(sample.ProjectionSHA256)) {
+			return fmt.Errorf("performance recovery sample %d lacks runtime_host restart evidence", index)
+		}
 		if sample.ExclusionReason != "" {
 			return fmt.Errorf("included performance sample %d has an exclusion reason", index)
 		}
@@ -303,6 +312,8 @@ func validatePerformanceSamples(raw RawPerformance) error {
 			for _, family := range sample.EmittedFamilies {
 				familyCounts[family]++
 			}
+		} else if sample.Kind == "recovery" {
+			recoveryFamilyCounts[sample.Family]++
 		}
 	}
 	if excluded["warmup"] != raw.WarmupExcluded || excluded["idempotent_replay"] != raw.ReplayExcluded || !slices.Equal(observed["mutation"], raw.MutationMS) || !slices.Equal(observed["query"], raw.QueryMS) || !slices.Equal(observed["recovery"], raw.RecoveryMS) {
@@ -314,6 +325,14 @@ func validatePerformanceSamples(raw RawPerformance) error {
 	for family, count := range raw.Dataset.FamilyOperationCounts {
 		if familyCounts[family] != count {
 			return fmt.Errorf("performance family %s count=%d want=%d", family, familyCounts[family], count)
+		}
+	}
+	if len(recoveryFamilyCounts) != len(raw.Dataset.FamilyRecoveryCounts) {
+		return fmt.Errorf("performance recovery family census differs from retained samples")
+	}
+	for family, count := range raw.Dataset.FamilyRecoveryCounts {
+		if recoveryFamilyCounts[family] != count {
+			return fmt.Errorf("performance recovery family %s count=%d want=%d", family, recoveryFamilyCounts[family], count)
 		}
 	}
 	wantStatistics := []PerformanceStatistics{
