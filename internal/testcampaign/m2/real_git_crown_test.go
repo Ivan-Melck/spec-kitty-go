@@ -163,7 +163,7 @@ func requireAdmittedCrownSidecar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if SHA256(data) != AdmittedSidecarSHA256 {
+	if SHA256(data) != QualificationCandidateSidecarSHA256 {
 		t.Fatal("real-Git crown sidecar differs from admitted assertion extension")
 	}
 }

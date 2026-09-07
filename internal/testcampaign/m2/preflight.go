@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+
+	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
 type PreflightConfig struct {
@@ -22,13 +24,14 @@ type PreflightConfig struct {
 }
 
 type PreflightResult struct {
-	SchemaVersion int         `json:"schema_version"`
-	RunID         string      `json:"run_id"`
-	Source        Source      `json:"source"`
-	SidecarSHA256 string      `json:"sidecar_sha256"`
-	ProductSHA256 string      `json:"product_sha256"`
-	M1Admission   M1Admission `json:"m1_admission"`
-	Ready         bool        `json:"ready"`
+	SchemaVersion                int         `json:"schema_version"`
+	RunID                        string      `json:"run_id"`
+	Source                       Source      `json:"source"`
+	SidecarSHA256                string      `json:"sidecar_sha256"`
+	QualificationAdmissionSHA256 string      `json:"qualification_admission_sha256"`
+	ProductSHA256                string      `json:"product_sha256"`
+	M1Admission                  M1Admission `json:"m1_admission"`
+	Ready                        bool        `json:"ready"`
 }
 
 func Preflight(config PreflightConfig) (PreflightResult, error) {
@@ -76,8 +79,8 @@ func Preflight(config PreflightConfig) (PreflightResult, error) {
 	if result.Source, err = ObserveCleanSource(config.Repository); err != nil {
 		return result, err
 	}
-	if result.SidecarSHA256, err = fileDigest(config.SidecarPath); err != nil || result.SidecarSHA256 != AdmittedSidecarSHA256 {
-		return result, fmt.Errorf("sidecar digest differs from admitted assertion extension")
+	if result.SidecarSHA256, err = fileDigest(config.SidecarPath); err != nil || result.SidecarSHA256 != QualificationCandidateSidecarSHA256 {
+		return result, fmt.Errorf("sidecar digest differs from the M2 qualification candidate")
 	}
 	if result.ProductSHA256, err = fileDigest(config.ProductBinary); err != nil {
 		return result, err
@@ -111,7 +114,12 @@ func Preflight(config PreflightConfig) (PreflightResult, error) {
 	if err != nil || SHA256(extensionBytes) != "da2180ce1373ee187bd33b6e8bfcfc942551841657149b1b99d34639141bd374" {
 		return result, fmt.Errorf("M1 assertion extension record differs")
 	}
-	result.M1Admission = M1Admission{AdmittedM1AdoptionSHA256, AdmittedM1EvidenceSHA256, AdmittedM1TupleSHA256, AdmittedSidecarSHA256}
+	candidatePath := filepath.Join(config.Repository, "docs/programs/evidence/m2-gapdb-qualification-candidate.json")
+	if _, err := sidecargapdb.VerifyM2QualificationCandidateAdmission(candidatePath); err != nil {
+		return result, fmt.Errorf("M2 qualification candidate admission differs: %w", err)
+	}
+	result.QualificationAdmissionSHA256 = sidecargapdb.M2QualificationCandidateRecordSHA256
+	result.M1Admission = M1Admission{AdmittedM1AdoptionSHA256, AdmittedM1EvidenceSHA256, AdmittedM1TupleSHA256, AdmittedM1SidecarSHA256}
 	result.Ready = true
 	return result, nil
 }

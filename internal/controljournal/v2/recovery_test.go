@@ -119,6 +119,55 @@ func TestRecoveryValuesAreBoundedAndDefensive(t *testing.T) {
 	}
 }
 
+func TestRecoveryReadManyContractIsExactBoundedAndDefensive(t *testing.T) {
+	attempt, err := NewStoreRevisionV2("database-01", 17, 17)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAddress, _ := NewOperationHeadAddressV2("operation-01")
+	secondAddress, _ := NewOperationBindingAddressV2("operation-01")
+	firstRequest, _ := NewReadRequestV2(firstAddress, attempt)
+	secondRequest, _ := NewReadRequestV2(secondAddress, attempt)
+	request, err := NewReadManyRequestV2([]ReadRequestV2{firstRequest, secondRequest}, MaxRecoveryReadManyBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRecord, _ := NewRecoveryRecordV2(firstAddress, []byte(`{"status":"resolved"}`), 16, "")
+	secondRecord, _ := NewRecoveryRecordV2(secondAddress, []byte(`{"binding":"bound"}`), 15, "")
+	result, err := NewRecoveryReadManyResultV2(17, "2026-09-02T12:00:00Z", []RecoveryRecordV2{firstRecord, secondRecord})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests, records := request.Requests(), result.Records()
+	requests[0] = ReadRequestV2{}
+	records[0].canonical[0] = 'x'
+	if request.Requests()[0].Address() != firstAddress || string(result.Records()[0].CanonicalValue()) != `{"status":"resolved"}` || result.ObservedRevision() != 17 || result.AsOf() != "2026-09-02T12:00:00Z" || request.MaxBytes() != MaxRecoveryReadManyBytes {
+		t.Fatal("read-many contract exposed aliases or lost frozen identity")
+	}
+
+	if _, err := NewReadManyRequestV2(nil, 1); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("empty request accepted: %v", err)
+	}
+	if _, err := NewReadManyRequestV2([]ReadRequestV2{firstRequest, firstRequest}, 1); !IsKind(err, ErrorInvalidCanonicalData) {
+		t.Fatalf("duplicate request accepted: %v", err)
+	}
+	otherAttempt, _ := NewStoreRevisionV2("database-01", 18, 18)
+	otherRequest, _ := NewReadRequestV2(secondAddress, otherAttempt)
+	if _, err := NewReadManyRequestV2([]ReadRequestV2{firstRequest, otherRequest}, 1); !IsKind(err, ErrorRevisionMoved) {
+		t.Fatalf("mixed revision request accepted: %v", err)
+	}
+	if _, err := NewReadManyRequestV2([]ReadRequestV2{firstRequest}, MaxRecoveryReadManyBytes+1); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("oversized byte request accepted: %v", err)
+	}
+	if _, err := NewRecoveryReadManyResultV2(17, "2026-09-02T12:00:00Z", []RecoveryRecordV2{firstRecord, firstRecord}); !IsKind(err, ErrorMalformed) {
+		t.Fatalf("duplicate result accepted: %v", err)
+	}
+	if _, err := NewRecoveryReadManyResultV2(17, "2026-09-02T12:00:00Z", nil); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("empty result accepted: %v", err)
+	}
+}
+
 func TestRecoveryRecordUsesSemanticAddressValueCeilings(t *testing.T) {
 	coordinate, err := NewAggregateCoordinate("mission", "mission-01", Scope{Kind: ScopeMission, ProjectID: "project-01", MissionID: "mission-01"})
 	if err != nil {

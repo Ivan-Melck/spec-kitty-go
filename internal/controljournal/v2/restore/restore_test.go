@@ -113,6 +113,8 @@ func TestRestoreFinalRevisionMovementExhaustsBoundedAttempts(t *testing.T) {
 type journalReader struct {
 	emptyReader
 	revision   uint64
+	batchReads int
+	maxBatch   int
 	records    map[journal.RecordAddressV2]journal.RecoveryRecordV2
 	aggregates []journal.RecoveryRecordV2
 	operations []journal.RecoveryRecordV2
@@ -150,6 +152,41 @@ func (r *journalReader) ReadV2(_ context.Context, request journal.ReadRequestV2)
 		return journal.RecoveryRecordV2{}, &journal.Error{Kind: journal.ErrorNotFound, Field: "read"}
 	}
 	return record, nil
+}
+func (r *journalReader) ReadManyV2(_ context.Context, request journal.ReadManyRequestV2) (journal.RecoveryReadManyResultV2, error) {
+	r.batchReads++
+	if r.maxBatch > 0 && len(request.Requests()) > r.maxBatch {
+		return journal.RecoveryReadManyResultV2{}, &journal.Error{Kind: journal.ErrorBudgetExceeded, Field: "read_many"}
+	}
+	records := make([]journal.RecoveryRecordV2, len(request.Requests()))
+	for index, item := range request.Requests() {
+		record, ok := r.records[item.Address()]
+		if !ok {
+			return journal.RecoveryReadManyResultV2{}, &journal.Error{Kind: journal.ErrorNotFound, Field: "read_many"}
+		}
+		records[index] = record
+	}
+	return journal.NewRecoveryReadManyResultV2(request.AttemptRevision().CurrentRevision(), "2026-09-03T12:00:00Z", records)
+}
+
+func TestReadManyRequiredSplitsOnlyTypedBudgetFailuresAndPreservesOrder(t *testing.T) {
+	attempt, _ := journal.NewStoreRevisionV2("database-1", 7, 7)
+	addresses := make([]journal.RecordAddressV2, 2)
+	addresses[0], _ = journal.NewOperationHeadAddressV2("operation-a")
+	addresses[1], _ = journal.NewOperationHeadAddressV2("operation-b")
+	requests := make([]journal.ReadRequestV2, len(addresses))
+	reader := &journalReader{revision: 7, maxBatch: 1, records: make(map[journal.RecordAddressV2]journal.RecoveryRecordV2)}
+	for index, address := range addresses {
+		requests[index], _ = journal.NewReadRequestV2(address, attempt)
+		reader.records[address] = recoveryRecord(t, address, []byte(fmt.Sprintf(`{"index":%d}`, index)), uint64(6-index))
+	}
+	records, err := readManyRequired(t.Context(), reader, requests, journal.MaxRecoveryReadManyBytes)
+	if err != nil || len(records) != len(requests) || records[0].Address() != addresses[0] || records[1].Address() != addresses[1] {
+		t.Fatalf("records=%+v err=%v", records, err)
+	}
+	if reader.batchReads != 3 {
+		t.Fatalf("batch calls=%d, want rejected pair plus two exact singletons", reader.batchReads)
+	}
 }
 func (r *journalReader) ScanV2(_ context.Context, request journal.ScanRequestV2) (journal.RecoveryPageV2, error) {
 	var records []journal.RecoveryRecordV2
@@ -288,6 +325,9 @@ func TestRestoreSuffixMembershipOrderingTerminalAndRollingPrefix(t *testing.T) {
 	}
 	if result.RollingPrefixDigest() != want || result.Playback().EventCount() != 2 {
 		t.Fatalf("prefix=%s want=%s events=%d", result.RollingPrefixDigest(), want, result.Playback().EventCount())
+	}
+	if reader.batchReads != 2 {
+		t.Fatalf("batch reads=%d, want events+witnesses", reader.batchReads)
 	}
 }
 

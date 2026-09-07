@@ -338,40 +338,37 @@ func actionAvailability(census mission.ActionCensus) []ActionAvailability {
 }
 
 func (s *ProgressService) listAll(projectID journalv2.ProjectID, missionID journalv2.MissionID, revision uint64) ([]ProgressItem, string, error) {
-	families := []string{"mission", "artifact_catalog", "artifact_revision", "workgraph", "execution_slot", "workspace", "handoff_slot", "review_slot", "acceptance", "integration_target", "integration_attempt", "external_effect", "operation", "outbox"}
 	items := make([]ProgressItem, 0, 64)
 	projectionDigest := ""
-	for _, family := range families {
-		cursor := ""
-		for page := 0; page < MaxProgressPages; page++ {
-			result, err := s.query.List(projection.ListQueryV2{Family: family, ProjectID: projectID, MissionID: missionID, Limit: projection.MaxQueryPageV2, Cursor: cursor})
-			if err != nil {
-				if projection.IsKindV2(err, projection.ErrorStaleCursorV2) {
-					return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_cursor"}
-				}
-				return nil, "", &ProgressError{Kind: ProgressIncomplete, Field: "projection_list"}
+	cursor := ""
+	for page := 0; page < MaxProgressPages; page++ {
+		result, err := s.query.List(projection.ListQueryV2{ProjectID: projectID, MissionID: missionID, Limit: projection.MaxQueryPageV2, Cursor: cursor})
+		if err != nil {
+			if projection.IsKindV2(err, projection.ErrorStaleCursorV2) {
+				return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_cursor"}
 			}
-			if result.Revision != revision {
-				return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_revision"}
+			return nil, "", &ProgressError{Kind: ProgressIncomplete, Field: "projection_list"}
+		}
+		if result.Revision != revision {
+			return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_revision"}
+		}
+		for _, view := range result.Items {
+			if len(items) >= MaxProgressItems {
+				return nil, "", &ProgressError{Kind: ProgressIncomplete, Field: "item_budget"}
 			}
-			for _, view := range result.Items {
-				if len(items) >= MaxProgressItems {
-					return nil, "", &ProgressError{Kind: ProgressIncomplete, Field: "item_budget"}
-				}
-				if projectionDigest == "" {
-					projectionDigest = view.ProjectionDigest
-				} else if view.ProjectionDigest != projectionDigest {
-					return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_digest"}
-				}
-				items = append(items, progressItem(view))
+			if projectionDigest == "" {
+				projectionDigest = view.ProjectionDigest
+			} else if view.ProjectionDigest != projectionDigest {
+				return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_digest"}
 			}
-			cursor = result.NextCursor
-			if cursor == "" {
-				break
-			}
-			if page == MaxProgressPages-1 {
-				return nil, "", &ProgressError{Kind: ProgressIncomplete, Field: "page_budget"}
-			}
+			items = append(items, progressItem(view))
+		}
+		cursor = result.NextCursor
+		if cursor == "" {
+			break
+		}
+		if page == MaxProgressPages-1 {
+			return nil, "", &ProgressError{Kind: ProgressIncomplete, Field: "page_budget"}
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {

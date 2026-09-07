@@ -9,7 +9,7 @@ modernc_driver=modernc.org/$legacy_word
 catalog_name=${legacy_word}_master
 journal_pragma='pragma journal_''mode'
 sql_package=database/sql
-admitted_sidecar_sha=947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
+qualification_sidecar_sha=4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2
 script_directory=${0%/*}
 if [ "$script_directory" = "$0" ]; then script_directory=.; fi
 CDPATH= cd -- "$script_directory/../.."
@@ -25,7 +25,7 @@ check_admitted_sidecar() {
   test -f "$sidecar" && test -x "$sidecar" || return 64
   sha256sum "$sidecar" >"$capture_file" || return 64
   IFS=' ' read -r observed_sidecar_sha ignored_sidecar_path <"$capture_file" || return 64
-  test "$observed_sidecar_sha" = "$admitted_sidecar_sha" || return 64
+  test "$observed_sidecar_sha" = "$qualification_sidecar_sha" || return 64
 }
 
 check_common_file() {

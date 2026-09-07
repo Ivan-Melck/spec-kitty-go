@@ -35,7 +35,7 @@ func RunCampaigns(ctx context.Context, config CampaignConfig) (CampaignResult, e
 	if config.RunID == "" || !filepath.IsAbs(config.Repository) || !filepath.IsAbs(config.SidecarPath) || config.Timeout <= 0 {
 		return result, fmt.Errorf("campaign configuration is incomplete")
 	}
-	if digest, err := fileDigest(config.SidecarPath); err != nil || digest != AdmittedSidecarSHA256 {
+	if digest, err := fileDigest(config.SidecarPath); err != nil || digest != QualificationCandidateSidecarSHA256 {
 		return result, fmt.Errorf("sidecar differs from admitted assertion extension")
 	}
 	definitions := FrozenDefinitions()

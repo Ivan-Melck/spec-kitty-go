@@ -585,9 +585,8 @@ func (b *boundedBuffer) Write(value []byte) (int, error) {
 }
 
 func startPerformanceRuntime(ctx context.Context, config PerformanceConfig) (*performanceRuntime, error) {
-	adoption := filepath.Join(config.Repository, "docs/programs/evidence/m1-assertion-extension-adoption.json")
-	admissionRecord := filepath.Join(config.Repository, "docs/programs/evidence/m1-assertion-extension-admission.json")
-	admission, err := sidecargapdb.VerifyAssertionExtensionAdoption(adoption, admissionRecord)
+	admissionRecord := filepath.Join(config.Repository, "docs/programs/evidence/m2-gapdb-qualification-candidate.json")
+	admission, err := sidecargapdb.VerifyM2QualificationCandidateAdmission(admissionRecord)
 	if err != nil {
 		return nil, err
 	}

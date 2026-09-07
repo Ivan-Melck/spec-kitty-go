@@ -86,7 +86,7 @@ var absenceDigestFiles = map[string]string{
 	"module_graph": "module-graph.txt", "sbom": "sbom.cdx.json", "evidence_inventory": "evidence-sha256.txt",
 }
 
-func verifyNestedAbsence(root *os.Root, paths map[string]Artifact, source Source) error {
+func verifyNestedAbsence(root *os.Root, paths map[string]Artifact, source Source, qualificationSidecarSHA256 string) error {
 	read := func(name string) ([]byte, error) {
 		artifact, ok := paths["absence/"+name]
 		if !ok || (artifact.Kind != "absence-evidence" && artifact.Kind != "absence-contract") {
@@ -150,11 +150,11 @@ func verifyNestedAbsence(root *os.Root, paths map[string]Artifact, source Source
 	if err := verifyObservedAbsenceReceipt(read, "layer-mutant", 8); err != nil {
 		return err
 	}
-	if err := verifyRuntimeAbsenceReceipt(read); err != nil {
+	if err := verifyRuntimeAbsenceReceipt(read, qualificationSidecarSHA256); err != nil {
 		return err
 	}
 	sidecar, err := readRegular(root, "sidecar/gapdbd", maximumFile)
-	if err != nil || SHA256(sidecar) != AdmittedSidecarSHA256 {
+	if err != nil || SHA256(sidecar) != qualificationSidecarSHA256 {
 		return fmt.Errorf("WP16 admitted sidecar bytes differ")
 	}
 	return nil
@@ -196,7 +196,7 @@ func verifyObservedAbsenceReceipt(read func(string) ([]byte, error), stem string
 	return nil
 }
 
-func verifyRuntimeAbsenceReceipt(read func(string) ([]byte, error)) error {
+func verifyRuntimeAbsenceReceipt(read func(string) ([]byte, error), qualificationSidecarSHA256 string) error {
 	data, err := read("runtime-result.json")
 	if err != nil {
 		return err
@@ -221,7 +221,7 @@ func verifyRuntimeAbsenceReceipt(read func(string) ([]byte, error)) error {
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != 2 || result.Verdict != "pass" || result.SidecarSHA256 != AdmittedSidecarSHA256 || result.RawEventsSHA256 != SHA256(raw) || len(expected) != 23 || !slices.Equal(result.Expected, expected) || !slices.Equal(result.Run, expected) || !slices.Equal(result.Passed, expected) || !slices.Equal(run, expected) || !slices.Equal(passed, expected) || len(skipped)+len(failed)+len(result.Skipped)+len(result.Failed)+len(result.Unmatched) != 0 {
+	if result.SchemaVersion != 2 || result.Verdict != "pass" || result.SidecarSHA256 != qualificationSidecarSHA256 || result.RawEventsSHA256 != SHA256(raw) || len(expected) != 23 || !slices.Equal(result.Expected, expected) || !slices.Equal(result.Run, expected) || !slices.Equal(result.Passed, expected) || !slices.Equal(run, expected) || !slices.Equal(passed, expected) || len(skipped)+len(failed)+len(result.Skipped)+len(result.Failed)+len(result.Unmatched) != 0 {
 		return fmt.Errorf("WP16 runtime receipt is not an observed closed 23-test census")
 	}
 	return nil

@@ -26,6 +26,13 @@ type ReaderV2 interface {
 	ScanV2(context.Context, journal.ScanRequestV2) (journal.RecoveryPageV2, error)
 }
 
+// ReadManyReaderV2 is the optional exact-read accelerator. Restore preserves
+// the ReaderV2 path for provider-neutral fixtures, while production readers
+// can collapse a bounded key set into one stable provider observation.
+type ReadManyReaderV2 interface {
+	ReadManyV2(context.Context, journal.ReadManyRequestV2) (journal.RecoveryReadManyResultV2, error)
+}
+
 type BudgetsV2 struct {
 	MaximumRestarts     int
 	MaximumPages        int
@@ -631,6 +638,10 @@ func exactEvent(ctx context.Context, reader ReaderV2, attempt journal.StoreRevis
 		}
 		return journal.RecoveryRecordV2{}, journal.EventEnvelopeV2{}, err
 	}
+	return decodeExactEvent(record, address, registry, coordinate, version, lower, upper)
+}
+
+func decodeExactEvent(record journal.RecoveryRecordV2, address journal.RecordAddressV2, registry journal.EventRegistryV2, coordinate journal.AggregateCoordinate, version journal.LogicalVersion, lower, upper uint64) (journal.RecoveryRecordV2, journal.EventEnvelopeV2, error) {
 	if record.Address() != address || record.ExpiresAt() != "" || record.RecordRevision() <= lower || record.RecordRevision() > upper {
 		return journal.RecoveryRecordV2{}, journal.EventEnvelopeV2{}, corrupt("event_record")
 	}
@@ -661,6 +672,36 @@ func fetchEvents(ctx context.Context, reader ReaderV2, attempt journal.StoreRevi
 			return nil, nil, budget("suffix_key_bytes")
 		}
 		keyBytes += size
+	}
+	if batchReader, ok := reader.(ReadManyReaderV2); ok {
+		readRequests := make([]journal.ReadRequestV2, len(requests))
+		for index, item := range requests {
+			address, _ := journal.NewJournalEventAddressV2(item.coordinate, item.version)
+			readRequests[index], _ = journal.NewReadRequestV2(address, attempt)
+		}
+		records, err := readManyRequired(ctx, batchReader, readRequests, budgets.MaximumValueBytes)
+		if err != nil {
+			if journal.IsKind(err, journal.ErrorNotFound) {
+				return nil, nil, corrupt("missing_event")
+			}
+			return nil, nil, err
+		}
+		fetched := make([]fetchedEvent, len(records))
+		for index, record := range records {
+			item := requests[index]
+			address := readRequests[index].Address()
+			_, event, decodeErr := decodeExactEvent(record, address, registry, item.coordinate, item.version, watermark, attempt.CurrentRevision())
+			if decodeErr != nil {
+				return nil, nil, decodeErr
+			}
+			material, materialErr := playback.NewMaterializedEventV2(record.RecordRevision(), event, item.terminalTombstone)
+			if materialErr != nil {
+				return nil, nil, materialErr
+			}
+			fetched[index] = fetchedEvent{material, record}
+		}
+		sort.Slice(fetched, func(i, k int) bool { return compareEvents(fetched[i].material, fetched[k].material) < 0 })
+		return fetched, records, nil
 	}
 	workers := min(budgets.MaximumWorkers, len(requests))
 	ctx, cancel := context.WithCancel(ctx)
@@ -752,6 +793,62 @@ func fetchEvents(ctx context.Context, reader ReaderV2, attempt journal.StoreRevi
 	return fetched, records, nil
 }
 
+func readManyRequired(ctx context.Context, reader ReadManyReaderV2, requests []journal.ReadRequestV2, maximumBytes int) ([]journal.RecoveryRecordV2, error) {
+	if len(requests) == 0 {
+		return nil, nil
+	}
+	attempt := requests[0].AttemptRevision()
+	remainingBytes := maximumBytes
+	result := make([]journal.RecoveryRecordV2, 0, len(requests))
+	for start := 0; start < len(requests); {
+		end := min(start+journal.MaxRecoveryReadManyRecords, len(requests))
+		chunk, err := readManyChunk(ctx, reader, requests[start:end], min(remainingBytes, journal.MaxRecoveryReadManyBytes))
+		if err != nil {
+			return nil, err
+		}
+		for index, record := range chunk {
+			if record.Address() != requests[start+index].Address() || record.RecordRevision() > attempt.CurrentRevision() {
+				return nil, corrupt("read_many_membership")
+			}
+			if record.CanonicalSizeV2() > remainingBytes {
+				return nil, budget("read_many_bytes")
+			}
+			remainingBytes -= record.CanonicalSizeV2()
+			result = append(result, record)
+		}
+		start = end
+	}
+	return result, nil
+}
+
+func readManyChunk(ctx context.Context, reader ReadManyReaderV2, requests []journal.ReadRequestV2, maximumBytes int) ([]journal.RecoveryRecordV2, error) {
+	request, err := journal.NewReadManyRequestV2(requests, maximumBytes)
+	if err != nil {
+		return nil, err
+	}
+	result, err := reader.ReadManyV2(ctx, request)
+	if err != nil {
+		if journal.IsKind(err, journal.ErrorBudgetExceeded) && len(requests) > 1 {
+			middle := len(requests) / 2
+			left, leftErr := readManyChunk(ctx, reader, requests[:middle], maximumBytes)
+			if leftErr != nil {
+				return nil, leftErr
+			}
+			right, rightErr := readManyChunk(ctx, reader, requests[middle:], maximumBytes)
+			if rightErr != nil {
+				return nil, rightErr
+			}
+			return append(left, right...), nil
+		}
+		return nil, err
+	}
+	records := result.Records()
+	if result.ObservedRevision() != request.AttemptRevision().CurrentRevision() || len(records) != len(request.Requests()) {
+		return nil, corrupt("read_many_result")
+	}
+	return records, nil
+}
+
 func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.StoreRevisionV2, fetched []fetchedEvent, operations map[journal.OperationID]operationCurrent, boundaryStates map[journal.OperationID]journal.OperationStateV2, prefix journal.Digest, watermark uint64, budgets BudgetsV2) ([]playback.MaterializedEventV2, map[journal.OperationID]journal.OperationStateV2, journal.Digest, []journal.RecoveryRecordV2, error) {
 	type group struct {
 		events           []fetchedEvent
@@ -789,6 +886,25 @@ func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.St
 		}
 		return orderedGroups[i].id < orderedGroups[k].id
 	})
+	var batchedWitnesses map[journal.PublicationID]journal.RecoveryRecordV2
+	if batchReader, ok := reader.(ReadManyReaderV2); ok && len(orderedGroups) != 0 {
+		requests := make([]journal.ReadRequestV2, len(orderedGroups))
+		for index, entry := range orderedGroups {
+			address, _ := entry.id.WitnessAddressV2()
+			requests[index], _ = journal.NewReadRequestV2(address, attempt)
+		}
+		records, err := readManyRequired(ctx, batchReader, requests, budgets.MaximumValueBytes)
+		if err != nil {
+			if journal.IsKind(err, journal.ErrorNotFound) {
+				return nil, nil, journal.Digest{}, nil, corrupt("missing_publication_witness")
+			}
+			return nil, nil, journal.Digest{}, nil, err
+		}
+		batchedWitnesses = make(map[journal.PublicationID]journal.RecoveryRecordV2, len(records))
+		for index, record := range records {
+			batchedWitnesses[orderedGroups[index].id] = record
+		}
+	}
 	states := make(map[journal.OperationID]journal.OperationStateV2, len(boundaryStates))
 	for id, state := range boundaryStates {
 		states[id] = state
@@ -848,13 +964,17 @@ func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.St
 		states[g.operationID] = state
 		g.state = state
 		address, _ := id.WitnessAddressV2()
-		request, _ := journal.NewReadRequestV2(address, attempt)
-		record, err := reader.ReadV2(ctx, request)
-		if err != nil {
-			if journal.IsKind(err, journal.ErrorNotFound) {
-				return nil, nil, journal.Digest{}, nil, corrupt("missing_publication_witness")
+		record, batched := batchedWitnesses[id]
+		if !batched {
+			request, _ := journal.NewReadRequestV2(address, attempt)
+			var err error
+			record, err = reader.ReadV2(ctx, request)
+			if err != nil {
+				if journal.IsKind(err, journal.ErrorNotFound) {
+					return nil, nil, journal.Digest{}, nil, corrupt("missing_publication_witness")
+				}
+				return nil, nil, journal.Digest{}, nil, err
 			}
-			return nil, nil, journal.Digest{}, nil, err
 		}
 		if record.Address() != address || record.ExpiresAt() != "" || record.RecordRevision() != g.revision {
 			return nil, nil, journal.Digest{}, nil, corrupt("publication_witness_record")

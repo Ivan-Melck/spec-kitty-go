@@ -12,34 +12,39 @@ import (
 )
 
 const (
-	AdmittedModulePath               = "github.com/spec-kitty/gapdb"
-	AdmittedModuleVersion            = "v0.0.0-20260824033134-ff3dd478f87c"
-	AdmittedSourceRevision           = "ff3dd478f87c6b4cbb1dcc168562f99879ba8c25"
-	AdmittedSourceTree               = "64ada3cd6328aca73ef902e4ab9fe0405823841c"
-	AdmittedSidecarSHA256            = "62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e"
-	AdmittedTupleSHA256              = "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
-	AdmittedWireVersion              = 1
-	AdmittedStorageVersion           = 1
-	AssertionCandidateModuleVersion  = "v0.0.0-20260904151017-4d88094749e0"
-	AssertionCandidateSourceRevision = "4d88094749e0f6fdb38a4786708d920fb51966a1"
-	AssertionCandidateSourceTree     = "a109220e3dae287e321fb37e904d3bea0802b911"
-	AssertionCandidateSidecarSHA256  = "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad"
-	AssertionCandidateSidecarBytes   = 5_327_126
-	MaxKeyBytes                      = 1 << 10
-	MaxOrdinaryValueBytes            = 256 << 10
-	MaxCheckpointValueBytes          = 4 << 20
-	MaxEventsPerCommand              = 128
-	MaxHeadsPerCommand               = 32
-	MaxIntentsPerCommand             = 16
-	MaxMutationsPerBatch             = 256
-	MaxRawBatchBytes                 = 6 << 20
-	MaxWireFrameBytes                = 12 << 20
-	MaxScanRecords                   = 500
-	MaxScanBytes                     = 8 << 20
-	MaxDiagnosticBytes               = 2 << 10
-	MaxOperationIDBytes              = 256
-	MaxCursorBytes                   = 16 << 10
-	DefaultRequestTimeout            = 5 * time.Second
+	AdmittedModulePath                = "github.com/spec-kitty/gapdb"
+	AdmittedModuleVersion             = "v0.0.0-20260824033134-ff3dd478f87c"
+	AdmittedSourceRevision            = "ff3dd478f87c6b4cbb1dcc168562f99879ba8c25"
+	AdmittedSourceTree                = "64ada3cd6328aca73ef902e4ab9fe0405823841c"
+	AdmittedSidecarSHA256             = "62219cfddbc72467bd491e8ca2309b49cfc935b68df51b5500b31c51c4c84a1e"
+	AdmittedTupleSHA256               = "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
+	AdmittedWireVersion               = 1
+	AdmittedStorageVersion            = 1
+	AssertionCandidateModuleVersion   = "v0.0.0-20260904151017-4d88094749e0"
+	AssertionCandidateSourceRevision  = "4d88094749e0f6fdb38a4786708d920fb51966a1"
+	AssertionCandidateSourceTree      = "a109220e3dae287e321fb37e904d3bea0802b911"
+	AssertionCandidateSidecarSHA256   = "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad"
+	AssertionCandidateSidecarBytes    = 5_327_126
+	QualificationClientModuleVersion  = "v0.0.0-20260907061131-c27646533cde"
+	QualificationClientSourceRevision = "c27646533cde29bcc9840b4d5feac54aa2215d04"
+	QualificationClientSourceTree     = "093d22c790d90859aec5ecb8d53912122688994d"
+	QualificationSidecarSHA256        = "4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2"
+	QualificationSidecarBytes         = 5_357_809
+	MaxKeyBytes                       = 1 << 10
+	MaxOrdinaryValueBytes             = 256 << 10
+	MaxCheckpointValueBytes           = 4 << 20
+	MaxEventsPerCommand               = 128
+	MaxHeadsPerCommand                = 32
+	MaxIntentsPerCommand              = 16
+	MaxMutationsPerBatch              = 256
+	MaxRawBatchBytes                  = 6 << 20
+	MaxWireFrameBytes                 = 12 << 20
+	MaxScanRecords                    = 500
+	MaxScanBytes                      = 8 << 20
+	MaxDiagnosticBytes                = 2 << 10
+	MaxOperationIDBytes               = 256
+	MaxCursorBytes                    = 16 << 10
+	DefaultRequestTimeout             = 5 * time.Second
 )
 
 // OutcomeKind is storage-neutral. In particular, unavailable carries no

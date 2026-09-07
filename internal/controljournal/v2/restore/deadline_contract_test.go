@@ -53,6 +53,15 @@ func (r *deadlineRecordingReader) ReadV2(ctx context.Context, request journal.Re
 	return r.ReaderV2.ReadV2(ctx, request)
 }
 
+func (r *deadlineRecordingReader) ReadManyV2(ctx context.Context, request journal.ReadManyRequestV2) (journal.RecoveryReadManyResultV2, error) {
+	r.observe("read_many", ctx)
+	reader, ok := r.ReaderV2.(ReadManyReaderV2)
+	if !ok {
+		return journal.RecoveryReadManyResultV2{}, &journal.Error{Kind: journal.ErrorMalformed, Field: "read_many_fixture"}
+	}
+	return reader.ReadManyV2(ctx, request)
+}
+
 func (r *deadlineRecordingReader) ScanV2(ctx context.Context, request journal.ScanRequestV2) (journal.RecoveryPageV2, error) {
 	r.observe("scan", ctx)
 	return r.ReaderV2.ScanV2(ctx, request)
@@ -118,7 +127,7 @@ func TestRestoreDeadlinePropagatesExactAttemptDeadline(t *testing.T) {
 			t.Fatalf("evidence=RESTORE-DEADLINE-PROPAGATION method=%s deadline=%v want=%v", call.method, call.deadline, want)
 		}
 	}
-	for _, method := range []string{"capture", "scan", "read", "verify"} {
+	for _, method := range []string{"capture", "scan", "read", "read_many", "verify"} {
 		if !seen[method] {
 			t.Fatalf("evidence=RESTORE-DEADLINE-PROPAGATION method=%s was not exercised", method)
 		}

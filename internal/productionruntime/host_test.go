@@ -1329,7 +1329,7 @@ func (f *fakeProgressQuery) List(query projection.ListQueryV2) (projection.ListR
 	f.queryCalls.Add(1)
 	result := projection.ListResultV2{DatabaseID: f.base.DatabaseID, Revision: f.base.Revision, RuntimeEpochID: f.base.RuntimeEpochID}
 	for _, item := range f.items {
-		if string(item.Coordinate.Kind) == query.Family && (query.ProjectID == "" || item.Coordinate.Scope.ProjectID == query.ProjectID) && (query.MissionID == "" || item.Coordinate.Scope.MissionID == query.MissionID) {
+		if (query.Family == "" || string(item.Coordinate.Kind) == query.Family) && (query.ProjectID == "" || item.Coordinate.Scope.ProjectID == query.ProjectID) && (query.MissionID == "" || item.Coordinate.Scope.MissionID == query.MissionID) {
 			item.CanonicalState = append([]byte(nil), item.CanonicalState...)
 			result.Items = append(result.Items, item)
 		}
@@ -1415,6 +1415,21 @@ func TestProgressReportsCompleteMissionWithoutExclusiveCurrentStep(t *testing.T)
 	}
 	if delta := query.queryCalls.Load() - before; delta != 1 {
 		t.Fatalf("immutable revision cache performed %d projection calls, want one base check", delta)
+	}
+}
+
+func TestProgressMissionUsesOneFamilyAgnosticProjectionStream(t *testing.T) {
+	query := progressFixture()
+	service, err := NewProgressService(query, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress, err := service.Mission("project-1", "mission-1")
+	if err != nil || len(progress.Items) != len(query.items) {
+		t.Fatalf("progress items=%d want=%d err=%v", len(progress.Items), len(query.items), err)
+	}
+	if calls := query.queryCalls.Load(); calls != 2 {
+		t.Fatalf("progress used %d query calls, want one base plus one family-agnostic list", calls)
 	}
 }
 

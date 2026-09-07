@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "mission_id": "gapdb-only-production-authority-01M1GWDJ",
+  "decision": "qualify",
+  "qualification_state": "technical_candidate_requires_independent_review",
+  "release_ready": false,
+  "adopted": false,
+  "gapdb_tuple": {
+    "source_revision": "c27646533cde29bcc9840b4d5feac54aa2215d04",
+    "source_tree": "093d22c790d90859aec5ecb8d53912122688994d",
+    "module_version": "v0.0.0-20260907061131-c27646533cde",
+    "sidecar": {
+      "command": "gapdbd",
+      "sha256": "4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2",
+      "size_bytes": 5357809
+    },
+    "protocol": {
+      "wire_version": 1,
+      "storage_version": 1
+    },
+    "platform": {
+      "os": "linux",
+      "arch": "amd64"
+    }
+  }
+}

@@ -1,11 +1,11 @@
-// Package gapdb owns the Linux lifecycle of the exact GapDB sidecar admitted
-// by M1. It deliberately does not discover executables or services.
+// Package gapdb owns the Linux lifecycle of exact GapDB sidecars bound by a
+// frozen admission record. It deliberately does not discover executables or
+// services, and a technical qualification capability never implies adoption.
 package gapdb
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -150,9 +150,14 @@ func identityFromInfo(info os.FileInfo) (fileIdentity, error) {
 }
 
 type admissionRecord struct {
-	SchemaVersion uint64 `json:"schema_version"`
-	Decision      string `json:"decision"`
-	GapDBTuple    struct {
+	SchemaVersion      uint64 `json:"schema_version"`
+	ProgramID          string `json:"program_id"`
+	MissionID          string `json:"mission_id"`
+	Decision           string `json:"decision"`
+	QualificationState string `json:"qualification_state"`
+	ReleaseReady       bool   `json:"release_ready"`
+	Adopted            bool   `json:"adopted"`
+	GapDBTuple         struct {
 		SourceRevision string `json:"source_revision"`
 		SourceTree     string `json:"source_tree"`
 		ModuleVersion  string `json:"module_version"`
@@ -203,8 +208,8 @@ func VerifyExecutable(config VerifyConfig) (*VerifiedExecutable, error) {
 		return nil, failure(FailureAdmissionMismatch, "verify", "admission record digest differs", nil)
 	}
 	var record admissionRecord
-	if err := json.Unmarshal(recordBytes, &record); err != nil {
-		return nil, failure(FailureAdmissionMismatch, "verify", "admission record is malformed", err)
+	if !singleStrictJSONValue(recordBytes, &record) {
+		return nil, failure(FailureAdmissionMismatch, "verify", "admission record is malformed", nil)
 	}
 	if err := validateAdmission(record, admission); err != nil {
 		return nil, failure(FailureAdmissionMismatch, "verify", "admission tuple differs", err)
@@ -395,7 +400,11 @@ func sameExecutableIdentity(first, second fileIdentity) bool {
 }
 
 func validateAdmission(record admissionRecord, admission ExecutableAdmission) error {
-	if record.SchemaVersion != 1 || record.Decision != "admitted" ||
+	decision := admission.decision
+	if decision == "" {
+		decision = "admitted"
+	}
+	if record.SchemaVersion != 1 || record.Decision != decision ||
 		record.GapDBTuple.SourceRevision != admission.sourceRevision ||
 		record.GapDBTuple.SourceTree != admission.sourceTree ||
 		record.GapDBTuple.ModuleVersion != admission.moduleVersion ||

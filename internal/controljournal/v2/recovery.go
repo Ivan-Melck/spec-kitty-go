@@ -3,9 +3,11 @@ package v2
 import "bytes"
 
 const (
-	MaxRecoveryPageRecords = 500
-	MaxRecoveryPageBytes   = 8 * 1024 * 1024
-	MaxRecoveryCursorBytes = 16 * 1024
+	MaxRecoveryPageRecords     = 500
+	MaxRecoveryPageBytes       = 8 * 1024 * 1024
+	MaxRecoveryCursorBytes     = 16 * 1024
+	MaxRecoveryReadManyRecords = 10_000
+	MaxRecoveryReadManyBytes   = 64 * 1024 * 1024
 )
 
 // DatabaseID is the durable store incarnation identity. A revision is only
@@ -185,6 +187,48 @@ func NewReadRequestV2(address RecordAddressV2, attempt StoreRevisionV2) (ReadReq
 func (r ReadRequestV2) Address() RecordAddressV2         { return r.address }
 func (r ReadRequestV2) AttemptRevision() StoreRevisionV2 { return r.attempt }
 
+// ReadManyRequestV2 is an exact, ordered set of reads against one captured
+// store revision. Providers must return the complete set or one typed error;
+// partial success is never evidence for recovery.
+type ReadManyRequestV2 struct {
+	requests []ReadRequestV2
+	maxBytes int
+}
+
+func NewReadManyRequestV2(requests []ReadRequestV2, maxBytes int) (ReadManyRequestV2, error) {
+	if len(requests) == 0 || len(requests) > MaxRecoveryReadManyRecords || maxBytes <= 0 || maxBytes > MaxRecoveryReadManyBytes {
+		return ReadManyRequestV2{}, invalid(ErrorBudgetExceeded, "read_many_request")
+	}
+	attempt := requests[0].attempt
+	seen := make(map[RecordAddressV2]struct{}, len(requests))
+	owned := make([]ReadRequestV2, len(requests))
+	for index, request := range requests {
+		if err := request.address.validate(); err != nil {
+			return ReadManyRequestV2{}, err
+		}
+		if request.attempt != attempt {
+			return ReadManyRequestV2{}, invalid(ErrorRevisionMoved, "read_many_attempt")
+		}
+		if _, duplicate := seen[request.address]; duplicate {
+			return ReadManyRequestV2{}, invalid(ErrorInvalidCanonicalData, "read_many_duplicate")
+		}
+		seen[request.address] = struct{}{}
+		owned[index] = request
+	}
+	return ReadManyRequestV2{requests: owned, maxBytes: maxBytes}, nil
+}
+
+func (r ReadManyRequestV2) Requests() []ReadRequestV2 {
+	return append([]ReadRequestV2(nil), r.requests...)
+}
+func (r ReadManyRequestV2) AttemptRevision() StoreRevisionV2 {
+	if len(r.requests) == 0 {
+		return StoreRevisionV2{}
+	}
+	return r.requests[0].attempt
+}
+func (r ReadManyRequestV2) MaxBytes() int { return r.maxBytes }
+
 type ScanRequestV2 struct {
 	target   ScanTargetV2
 	attempt  StoreRevisionV2
@@ -262,6 +306,50 @@ func (r RecoveryRecordV2) CanonicalValue() []byte   { return append([]byte(nil),
 func (r RecoveryRecordV2) CanonicalSizeV2() int     { return len(r.canonical) }
 func (r RecoveryRecordV2) RecordRevision() uint64   { return r.revision }
 func (r RecoveryRecordV2) ExpiresAt() string        { return r.expiresAt }
+
+// RecoveryReadManyResultV2 is one complete provider observation. Records are
+// retained in request order by the reader implementation and are immutable to
+// callers. Missing records are represented by a typed read error, never by a
+// shorter result.
+type RecoveryReadManyResultV2 struct {
+	observedRevision uint64
+	asOf             string
+	records          []RecoveryRecordV2
+}
+
+func NewRecoveryReadManyResultV2(observedRevision uint64, asOf string, records []RecoveryRecordV2) (RecoveryReadManyResultV2, error) {
+	if observedRevision == 0 || !canonicalUTCInstant(asOf) || len(records) == 0 || len(records) > MaxRecoveryReadManyRecords {
+		return RecoveryReadManyResultV2{}, invalid(ErrorBudgetExceeded, "read_many_result")
+	}
+	seen := make(map[RecordAddressV2]struct{}, len(records))
+	owned := make([]RecoveryRecordV2, len(records))
+	bytesUsed := 0
+	for index, record := range records {
+		if err := record.address.validate(); err != nil || record.revision == 0 || record.revision > observedRevision || len(record.canonical) == 0 {
+			return RecoveryReadManyResultV2{}, invalid(ErrorMalformed, "read_many_record")
+		}
+		if _, duplicate := seen[record.address]; duplicate {
+			return RecoveryReadManyResultV2{}, invalid(ErrorMalformed, "read_many_duplicate")
+		}
+		seen[record.address] = struct{}{}
+		bytesUsed += record.CanonicalSizeV2()
+		if bytesUsed > MaxRecoveryReadManyBytes {
+			return RecoveryReadManyResultV2{}, invalid(ErrorBudgetExceeded, "read_many_bytes")
+		}
+		owned[index] = cloneRecoveryRecord(record)
+	}
+	return RecoveryReadManyResultV2{observedRevision: observedRevision, asOf: asOf, records: owned}, nil
+}
+
+func (r RecoveryReadManyResultV2) ObservedRevision() uint64 { return r.observedRevision }
+func (r RecoveryReadManyResultV2) AsOf() string             { return r.asOf }
+func (r RecoveryReadManyResultV2) Records() []RecoveryRecordV2 {
+	result := make([]RecoveryRecordV2, len(r.records))
+	for index := range r.records {
+		result[index] = cloneRecoveryRecord(r.records[index])
+	}
+	return result
+}
 
 type RecoveryPageV2 struct {
 	observedRevision uint64

@@ -22,12 +22,12 @@ import (
 func TestManifestCensusVerifyRoundTripIsCanonicalAndSourceBound(t *testing.T) {
 	root := repositoryRoot(t)
 	output := t.TempDir()
-	manifest, census, inputs := completeFixture(t)
-	publication, err := Publish(output, manifest, census, inputs)
+	manifest, census, inputs, policy := completeSidecarFreeFixture(t)
+	publication, err := publishWithPolicy(output, manifest, census, inputs, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	verification, verified, err := Verify(context.Background(), publication.Directory, filepath.Join(root, "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/m2-qualification-v1.schema.json"), &manifest.Source)
+	verification, verified, err := verifyWithPolicy(context.Background(), publication.Directory, filepath.Join(root, "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/m2-qualification-v1.schema.json"), &manifest.Source, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,16 +158,26 @@ func TestManifestCensusAndArtifactMutantsFailClosed(t *testing.T) {
 		"wrong-admission": func(manifest *Manifest, _ *Census, _ *[]ArtifactInput) {
 			manifest.M1Admission.SidecarSHA256 = stringOf('0', 64)
 		},
+		"missing-qualification-candidate": func(_ *Manifest, _ *Census, inputs *[]ArtifactInput) {
+			*inputs = slices.DeleteFunc(*inputs, func(input ArtifactInput) bool { return input.Kind == "qualification-admission" })
+		},
+		"mutated-qualification-candidate": func(_ *Manifest, _ *Census, inputs *[]ArtifactInput) {
+			for index := range *inputs {
+				if (*inputs)[index].Kind == "qualification-admission" {
+					(*inputs)[index].Data = bytes.Replace((*inputs)[index].Data, []byte(`"release_ready": false`), []byte(`"release_ready": true`), 1)
+				}
+			}
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			manifest, census, inputs := completeFixture(t)
+			manifest, census, inputs, policy := completeSidecarFreeFixture(t)
 			mutate(&manifest, &census, &inputs)
-			publication, err := Publish(t.TempDir(), manifest, census, inputs)
+			publication, err := publishWithPolicy(t.TempDir(), manifest, census, inputs, policy)
 			if err != nil {
 				return
 			}
-			if _, _, err := Verify(context.Background(), publication.Directory, schema, nil); err == nil {
+			if _, _, err := verifyWithPolicy(context.Background(), publication.Directory, schema, nil, policy); err == nil {
 				t.Fatal("mutant verified")
 			}
 		})
@@ -440,6 +450,15 @@ func replaceInput(inputs []ArtifactInput, path string, data []byte) {
 }
 
 func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
+	manifest, census, inputs, _ := completeFixtureWithPolicy(t, false)
+	return manifest, census, inputs
+}
+
+func completeSidecarFreeFixture(t *testing.T) (Manifest, Census, []ArtifactInput, evidenceVerificationPolicy) {
+	return completeFixtureWithPolicy(t, true)
+}
+
+func completeFixtureWithPolicy(t *testing.T, sidecarFree bool) (Manifest, Census, []ArtifactInput, evidenceVerificationPolicy) {
 	t.Helper()
 	fixtureBinaryOnce.Do(buildFixtureBinary)
 	if fixtureBinaryErr != nil {
@@ -579,9 +598,18 @@ func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
 	sourceBytes, _ := CanonicalJSON(source)
 	profileBytes := []byte("{\"profile_id\":\"implementer-ivan\"}\n")
 	producerBytes, _ := CanonicalJSON(ProducerIdentity{SchemaVersion: 1, ExecutorActorID: "executor", ProcessID: "process-1", ImplementationContributors: []string{"implementer"}, ProfileID: "implementer-ivan", ProfileRevision: SHA256(profileBytes)})
-	sidecarBytes, err := os.ReadFile("/tmp/spec-kitty-gapdb-assertion-sidecar/gapdbd")
-	if err != nil || SHA256(sidecarBytes) != AdmittedSidecarSHA256 {
-		t.Fatalf("admitted fixture sidecar unavailable: %v", err)
+	var sidecarBytes []byte
+	if sidecarFree {
+		sidecarBytes = []byte("sidecar-free structural fixture\n")
+	} else {
+		sidecarPath := os.Getenv("SPEC_KITTY_M2_GAPDBD")
+		if sidecarPath == "" {
+			t.Skip("SPEC_KITTY_M2_GAPDBD must name the exact M2 qualification candidate")
+		}
+		sidecarBytes, err = os.ReadFile(sidecarPath)
+		if err != nil || SHA256(sidecarBytes) != QualificationCandidateSidecarSHA256 {
+			t.Fatalf("qualification fixture sidecar unavailable: %v", err)
+		}
 	}
 	sbomRaw := []byte(`{"ImportPath":"github.com/spec-kitty/go-kitty3/cmd/spec-kitty","Module":{"Path":"github.com/spec-kitty/go-kitty3","Main":true}}` + "\n")
 	sbom, err := SBOMFromGoList(sbomRaw)
@@ -603,7 +631,11 @@ func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
 		t.Fatal(err)
 	}
 	inputs := append([]ArtifactInput(nil), campaignInputs...)
-	inputs = append(inputs, fixtureAbsenceInputs(t, source)...)
+	qualificationSHA := QualificationCandidateSidecarSHA256
+	if sidecarFree {
+		qualificationSHA = SHA256(sidecarBytes)
+	}
+	inputs = append(inputs, fixtureAbsenceInputs(t, source, qualificationSHA)...)
 	inputs = append(inputs,
 		ArtifactInput{Path: "contract-m2.json", Kind: "contract", Data: schemaBytes},
 		ArtifactInput{Path: "m1.json", Kind: "m1-admission", Data: []byte("{}\n")},
@@ -624,19 +656,43 @@ func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
 		ArtifactInput{Path: "race/events.jsonl", Kind: "race-raw", Data: raceRaw},
 		ArtifactInput{Path: "m1-adoption.json", Kind: "m1-admission-part", Data: []byte("{}\n")},
 		ArtifactInput{Path: "m1-assertion-extension.json", Kind: "m1-admission-part", Data: []byte("{}\n")},
+		fileFixtureInput(t, "m2-gapdb-qualification-candidate.json", "qualification-admission", "docs/programs/evidence/m2-gapdb-qualification-candidate.json"),
 		ArtifactInput{Path: "sidecar/gapdbd", Kind: "sidecar", Data: sidecarBytes},
 		ArtifactInput{Path: "producer-identity.json", Kind: "producer-identity", Data: producerBytes},
 		ArtifactInput{Path: "producer-profile.json", Kind: "producer-profile", Data: profileBytes},
 		ArtifactInput{Path: "contract-events.json", Kind: "contract", Data: []byte("{}\n")},
 		ArtifactInput{Path: "independent-review-input.md", Kind: "review-input", Data: []byte("review instructions only\n")},
 	)
-	manifest := Manifest{SchemaVersion: 1, ProgramID: ProgramID, MissionID: MissionID, RunID: runID, Source: source, M1Admission: M1Admission{AdmittedM1AdoptionSHA256, AdmittedM1EvidenceSHA256, AdmittedM1TupleSHA256, AdmittedSidecarSHA256}, Census: summary, Performance: performance, Verdict: "pass"}
+	manifest := Manifest{SchemaVersion: 1, ProgramID: ProgramID, MissionID: MissionID, RunID: runID, Source: source, M1Admission: M1Admission{AdmittedM1AdoptionSHA256, AdmittedM1EvidenceSHA256, AdmittedM1TupleSHA256, AdmittedM1SidecarSHA256}, Census: summary, Performance: performance, Verdict: "pass"}
 	acceptance, err := BuildAcceptanceMatrix(manifest, census, inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	inputs = append(inputs, ArtifactInput{Path: "acceptance-matrix.json", Kind: "acceptance-matrix", Data: acceptance})
-	return manifest, census, inputs
+	policy := frozenEvidenceVerificationPolicy()
+	if sidecarFree {
+		candidateBytes := fileFixtureInput(t, "unused", "unused", "docs/programs/evidence/m2-gapdb-qualification-candidate.json").Data
+		policy = evidenceVerificationPolicy{
+			qualificationSidecarSHA256: qualificationSHA,
+			verifyCandidateAdmission: func(path string) error {
+				observed, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(observed, candidateBytes) {
+					return fmt.Errorf("fixture candidate admission differs")
+				}
+				return nil
+			},
+		}
+	}
+	return manifest, census, inputs, policy
+}
+
+func fileFixtureInput(t *testing.T, path, kind, repositoryPath string) ArtifactInput {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), filepath.FromSlash(repositoryPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ArtifactInput{Path: path, Kind: kind, Data: data}
 }
 
 func fixtureFamilyCutEvent(pkg, test string, record iterationreceipt.FamilyCutRecord) []byte {
@@ -656,7 +712,7 @@ func fixtureRawPerformance(t *testing.T, runID string, source Source, referenceB
 	raw := RawPerformance{
 		SchemaVersion: 1, RunID: runID, SourceCommit: source.Commit, SourceTree: source.Tree,
 		ReferenceProfileSHA256: SHA256(referenceBytes),
-		Environment:            PerformanceEnvironment{CPUModel: reference.CPUModel, LogicalCPUs: reference.LogicalCPUs, PhysicalCores: reference.PhysicalCores, MemoryBytes: reference.MemoryMinBytes, KernelSystem: reference.KernelSystem, KernelRelease: reference.KernelRelease, Architecture: reference.Architecture, Filesystem: reference.Filesystem, StorageDevice: reference.StorageDevicePrefix + "0n1p1", PowerGovernor: reference.PowerGovernor, BoostEnabled: reference.BoostEnabled, Load1: 0.1, GoVersion: reference.GoVersion, CGOEnabled: reference.CGOEnabled, SidecarSHA256: AdmittedSidecarSHA256, QualifierSHA256: SHA256(fixtureBinary), ProductSHA256: SHA256(fixtureBinary)},
+		Environment:            PerformanceEnvironment{CPUModel: reference.CPUModel, LogicalCPUs: reference.LogicalCPUs, PhysicalCores: reference.PhysicalCores, MemoryBytes: reference.MemoryMinBytes, KernelSystem: reference.KernelSystem, KernelRelease: reference.KernelRelease, Architecture: reference.Architecture, Filesystem: reference.Filesystem, StorageDevice: reference.StorageDevicePrefix + "0n1p1", PowerGovernor: reference.PowerGovernor, BoostEnabled: reference.BoostEnabled, Load1: 0.1, GoVersion: reference.GoVersion, CGOEnabled: reference.CGOEnabled, SidecarSHA256: QualificationCandidateSidecarSHA256, QualifierSHA256: SHA256(fixtureBinary), ProductSHA256: SHA256(fixtureBinary)},
 		Dataset:                PerformanceDataset{Generator: reference.DatasetGenerator, WarmupOperations: 10, SuffixOperations: 10000, CheckpointRevision: 100, FamilyOperationCounts: familyCounts, FamilyRecoveryCounts: map[string]int{"family/runtime_host": 30}, ExpectedProjectionSHA: stringOf('3', 64), FinalRevision: 100100},
 		RecoveryOperations:     10000, WarmupExcluded: 10, Method: "monotonic-nearest-rank-inclusive",
 	}
@@ -693,7 +749,7 @@ func fixturePerformanceTranscript() []byte {
 	return transcript.Bytes()
 }
 
-func fixtureAbsenceInputs(t *testing.T, source Source) []ArtifactInput {
+func fixtureAbsenceInputs(t *testing.T, source Source, qualificationSidecarSHA256 string) []ArtifactInput {
 	t.Helper()
 	root := repositoryRoot(t)
 	absenceContract, err := os.ReadFile(filepath.Join(root, "scripts/m2-absence/expected-absence-tests.txt"))
@@ -729,7 +785,7 @@ func fixtureAbsenceInputs(t *testing.T, source Source) []ArtifactInput {
 	layerResult, layerRaw := makeReceipt("detector-layer", layerContract)
 	runtimeRaw := makeEvents(runtimeExpected)
 	expectedBytes, _ := CanonicalJSON(runtimeExpected)
-	runtimeResult, _ := CanonicalJSON(absenceRuntimeReceipt{SchemaVersion: 2, Expected: runtimeExpected, Run: runtimeExpected, Passed: runtimeExpected, SidecarSHA256: AdmittedSidecarSHA256, RawEventsSHA256: SHA256(runtimeRaw), Verdict: "pass"})
+	runtimeResult, _ := CanonicalJSON(absenceRuntimeReceipt{SchemaVersion: 2, Expected: runtimeExpected, Run: runtimeExpected, Passed: runtimeExpected, SidecarSHA256: qualificationSidecarSHA256, RawEventsSHA256: SHA256(runtimeRaw), Verdict: "pass"})
 	data := map[string][]byte{"commands.txt": []byte("spec-kitty\n"), "binary-results.txt": []byte("pass\n"), "install-sha256.txt": []byte("pass\n"), "runtime-result.json": runtimeResult, "runtime-events.jsonl": runtimeRaw, "runtime-expected.json": expectedBytes, "absence-tests.json": absenceResult, "absence-events.jsonl": absenceRaw, "layer-mutants.json": layerResult, "layer-mutant-events.jsonl": layerRaw, "module-graph.txt": []byte("example.invalid/m2fixture\n"), "sbom.cdx.json": []byte("{}\n")}
 	var inventory strings.Builder
 	names := make([]string, 0, len(data))

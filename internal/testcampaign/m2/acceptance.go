@@ -152,7 +152,7 @@ func requirementProofs() map[string]requirementProof {
 			result[id] = requirementProof{class: class, censusIDs: slices.Clone(census), paths: slices.Clone(paths)}
 		}
 	}
-	add("admission", []string{"FR-001", "C-001"}, nil, "m1-adoption.json", "m1-assertion-extension.json", "sidecar/gapdbd")
+	add("admission", []string{"FR-001", "C-001"}, nil, "m1-adoption.json", "m1-assertion-extension.json", "m2-gapdb-qualification-candidate.json", "sidecar/gapdbd")
 	add("authority", []string{"FR-002", "C-002", "C-005", "SC-002"}, []string{"family/mission", "family/operation", "family/runtime_host"})
 	add("recovery", []string{"FR-003", "FR-020", "FR-021", "NFR-007", "NFR-008", "SC-005"}, []string{"family/runtime_host", "fault/clean-unclean-restart", "behavior/restore-deadline-runtime"})
 	add("publication", []string{"FR-004", "FR-005", "FR-006", "NFR-001", "NFR-002", "SC-003"}, []string{"family/operation", "fault/family-bound-publication-cuts", "fault/outbox-bound-publication-cuts", "fault/cut-before-publication", "fault/cut-durable-before-response", "fault/cut-lost-response", "fault/cut-malformed-ack", "fault/cut-restart-reconciliation", "fault/external-before-call", "fault/external-after-success-before-observation", "fault/external-after-observation-before-result", "fault/acknowledgement-ambiguity"}, "campaigns/family-cut-applicability.json")

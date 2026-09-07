@@ -19,7 +19,7 @@ func TestAdmissionPinnedPublicModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(module)
-	want := AdmittedModulePath + " " + AssertionCandidateModuleVersion
+	want := AdmittedModulePath + " " + QualificationClientModuleVersion
 	if !strings.Contains(text, want) {
 		t.Fatalf("go.mod does not pin %q", want)
 	}
@@ -31,8 +31,8 @@ func TestAdmissionPinnedPublicModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, line := range []string{
-		AdmittedModulePath + " " + AssertionCandidateModuleVersion + " h1:x/zAH/n0M/nA1RQpi1ubRETo8OLcEyRBsaDUsd1TuU4=",
-		AdmittedModulePath + " " + AssertionCandidateModuleVersion + "/go.mod h1:8xNZ3k+SQIqcxLkS8bjbooOAv9xzZcbg5arjKaV6fcQ=",
+		AdmittedModulePath + " " + QualificationClientModuleVersion + " h1:C3ToqJBFCeXoeLPeUoVI7Esrmsd1chIy/78u5T6IYG0=",
+		AdmittedModulePath + " " + QualificationClientModuleVersion + "/go.mod h1:8xNZ3k+SQIqcxLkS8bjbooOAv9xzZcbg5arjKaV6fcQ=",
 	} {
 		if !strings.Contains(string(sums), line) {
 			t.Fatalf("go.sum does not contain admitted line %q", line)
@@ -60,6 +60,18 @@ func TestAdmissionAssertionCandidateDoesNotReplaceFrozenM1Tuple(t *testing.T) {
 		AssertionCandidateSourceTree != "a109220e3dae287e321fb37e904d3bea0802b911" ||
 		AssertionCandidateSidecarSHA256 != "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad" || AssertionCandidateSidecarBytes != 5_327_126 {
 		t.Fatal("assertion candidate tuple drifted")
+	}
+}
+
+func TestQualificationCandidateMatchesClientAndOwnerWithoutRewritingM1(t *testing.T) {
+	if QualificationClientModuleVersion != "v0.0.0-20260907061131-c27646533cde" ||
+		QualificationClientSourceRevision != "c27646533cde29bcc9840b4d5feac54aa2215d04" ||
+		QualificationClientSourceTree != "093d22c790d90859aec5ecb8d53912122688994d" ||
+		QualificationSidecarSHA256 != "4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2" || QualificationSidecarBytes != 5_357_809 {
+		t.Fatal("qualification candidate identity drifted")
+	}
+	if AssertionCandidateModuleVersion == QualificationClientModuleVersion || AssertionCandidateSourceRevision == QualificationClientSourceRevision {
+		t.Fatal("M2 qualification candidate rewrote the independently adopted M1 assertion extension")
 	}
 }
 

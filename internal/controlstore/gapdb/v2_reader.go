@@ -77,6 +77,73 @@ func (a *Adapter) ReadV2(ctx context.Context, request journalv2.ReadRequestV2) (
 	return convertV2RecoveryRecord(record, key, request.Address(), request.AttemptRevision().CurrentRevision())
 }
 
+// ReadManyV2 translates one exact semantic read set into GapDB's atomic
+// ordered observation. Missing members fail the complete domain read; no
+// partial prefix is returned to recovery.
+func (a *Adapter) ReadManyV2(ctx context.Context, request journalv2.ReadManyRequestV2) (journalv2.RecoveryReadManyResultV2, error) {
+	requests := request.Requests()
+	if len(requests) == 0 || request.AttemptRevision().CurrentRevision() == 0 || request.MaxBytes() <= 0 {
+		return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorInvalidCanonicalData, "read_many_request")
+	}
+	keys := make([]string, len(requests))
+	keyModels := make([]v2Key, len(requests))
+	for index, item := range requests {
+		key, err := v2KeyForRecoveryAddress(item.Address())
+		if err != nil || item.AttemptRevision() != request.AttemptRevision() {
+			return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorInvalidCanonicalData, "read_many_request")
+		}
+		keys[index], keyModels[index] = key.String(), key
+	}
+	ctx, cancel := a.requestContext(ctx)
+	defer cancel()
+	observed, err := a.client.ReadMany(ctx, keys)
+	if err != nil {
+		return journalv2.RecoveryReadManyResultV2{}, translateReadManyRecoveryError(err)
+	}
+	if uint64(observed.ObservedRevision) != request.AttemptRevision().CurrentRevision() || observed.AsOf.IsZero() || len(observed.Entries) != len(requests) {
+		return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorMalformed, "read_many_result")
+	}
+	asOf := observed.AsOf.UTC().Format(time.RFC3339Nano)
+	records := make([]journalv2.RecoveryRecordV2, len(observed.Entries))
+	bytesUsed := 0
+	for index, entry := range observed.Entries {
+		if entry.Key != keys[index] || !entry.Found || entry.Record == nil {
+			if entry.Key == keys[index] && !entry.Found && entry.Record == nil {
+				return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorNotFound, "read_many")
+			}
+			return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorMalformed, "read_many_membership")
+		}
+		record, convertErr := convertV2RecoveryRecord(*entry.Record, keyModels[index], requests[index].Address(), request.AttemptRevision().CurrentRevision())
+		if convertErr != nil {
+			return journalv2.RecoveryReadManyResultV2{}, convertErr
+		}
+		if record.ExpiresAt() != "" {
+			expires, parseErr := time.Parse(time.RFC3339Nano, record.ExpiresAt())
+			if parseErr != nil || !expires.After(observed.AsOf) {
+				return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorMalformed, "read_many_expiry")
+			}
+		}
+		bytesUsed += record.CanonicalSizeV2()
+		if bytesUsed > request.MaxBytes() {
+			return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorBudgetExceeded, "read_many_bytes")
+		}
+		records[index] = record
+	}
+	result, err := journalv2.NewRecoveryReadManyResultV2(uint64(observed.ObservedRevision), asOf, records)
+	if err != nil {
+		return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorMalformed, "read_many_result")
+	}
+	return result, nil
+}
+
+func translateReadManyRecoveryError(err error) error {
+	var providerErr *gapdbapi.Error
+	if errors.As(err, &providerErr) && (providerErr.Code == gapdbapi.CodeFrameTooLarge || providerErr.Code == gapdbapi.CodeBatchTooLarge) {
+		return recoveryError(journalv2.ErrorBudgetExceeded, "read_many")
+	}
+	return translateRecoveryError("read_many", err)
+}
+
 // ScanV2 translates a provider-pinned prefix page into the foundation
 // recovery contract. Every returned page must report the attempt's R.
 func (a *Adapter) ScanV2(ctx context.Context, request journalv2.ScanRequestV2) (journalv2.RecoveryPageV2, error) {

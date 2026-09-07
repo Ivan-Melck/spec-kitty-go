@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
 const (
@@ -24,10 +25,11 @@ const (
 	maximumFiles = 2048
 	maximumTotal = 256 << 20
 
-	AdmittedM1AdoptionSHA256 = "b6506abc327ed2b22c6b51b4069cb0b8edb0af5ac2ea26a1aa3a33de6bca30de"
-	AdmittedM1EvidenceSHA256 = "397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309"
-	AdmittedM1TupleSHA256    = "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
-	AdmittedSidecarSHA256    = "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad"
+	AdmittedM1AdoptionSHA256            = "b6506abc327ed2b22c6b51b4069cb0b8edb0af5ac2ea26a1aa3a33de6bca30de"
+	AdmittedM1EvidenceSHA256            = "397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309"
+	AdmittedM1TupleSHA256               = "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
+	AdmittedM1SidecarSHA256             = "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad"
+	QualificationCandidateSidecarSHA256 = "4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2"
 )
 
 type ArtifactInput struct {
@@ -54,6 +56,21 @@ type Verification struct {
 	ReviewEligible bool   `json:"review_eligible"`
 	ReleaseReady   bool   `json:"release_ready"`
 	Adopted        bool   `json:"adopted"`
+}
+
+type evidenceVerificationPolicy struct {
+	qualificationSidecarSHA256 string
+	verifyCandidateAdmission   func(string) error
+}
+
+func frozenEvidenceVerificationPolicy() evidenceVerificationPolicy {
+	return evidenceVerificationPolicy{
+		qualificationSidecarSHA256: QualificationCandidateSidecarSHA256,
+		verifyCandidateAdmission: func(path string) error {
+			_, err := sidecargapdb.VerifyM2QualificationCandidateAdmission(path)
+			return err
+		},
+	}
 }
 
 type RawPerformance struct {
@@ -232,7 +249,7 @@ func VerifyPerformanceEnvironmentReference(referenceBytes []byte, environment Pe
 	if reference.SchemaVersion != 1 || reference.CPUModel == "" || reference.LogicalCPUs <= 0 || reference.PhysicalCores <= 0 || reference.MemoryMinBytes == 0 || reference.MemoryMaxBytes < reference.MemoryMinBytes || reference.KernelSystem == "" || reference.KernelRelease == "" || reference.Architecture == "" || reference.Filesystem == "" || reference.StorageDevicePrefix == "" || reference.PowerGovernor == "" || reference.Load1Maximum <= 0 || reference.GoVersion != "go1.26.7" || reference.CGOEnabled != "0" || reference.DatasetGenerator == "" || !slices.Equal(reference.FamilyIDs, wantFamilies) {
 		return fmt.Errorf("performance reference profile is incomplete or differs from the frozen family registry")
 	}
-	if environment.CPUModel != reference.CPUModel || environment.LogicalCPUs != reference.LogicalCPUs || environment.PhysicalCores != reference.PhysicalCores || environment.MemoryBytes < reference.MemoryMinBytes || environment.MemoryBytes > reference.MemoryMaxBytes || environment.KernelSystem != reference.KernelSystem || environment.KernelRelease != reference.KernelRelease || environment.Architecture != reference.Architecture || environment.Filesystem != reference.Filesystem || !strings.HasPrefix(environment.StorageDevice, reference.StorageDevicePrefix) || environment.PowerGovernor != reference.PowerGovernor || environment.BoostEnabled != reference.BoostEnabled || environment.Load1 > reference.Load1Maximum || environment.GoVersion != reference.GoVersion || environment.CGOEnabled != reference.CGOEnabled || environment.SidecarSHA256 != AdmittedSidecarSHA256 || !validDigest(environment.QualifierSHA256) || !validDigest(environment.ProductSHA256) {
+	if environment.CPUModel != reference.CPUModel || environment.LogicalCPUs != reference.LogicalCPUs || environment.PhysicalCores != reference.PhysicalCores || environment.MemoryBytes < reference.MemoryMinBytes || environment.MemoryBytes > reference.MemoryMaxBytes || environment.KernelSystem != reference.KernelSystem || environment.KernelRelease != reference.KernelRelease || environment.Architecture != reference.Architecture || environment.Filesystem != reference.Filesystem || !strings.HasPrefix(environment.StorageDevice, reference.StorageDevicePrefix) || environment.PowerGovernor != reference.PowerGovernor || environment.BoostEnabled != reference.BoostEnabled || environment.Load1 > reference.Load1Maximum || environment.GoVersion != reference.GoVersion || environment.CGOEnabled != reference.CGOEnabled || environment.SidecarSHA256 != QualificationCandidateSidecarSHA256 || !validDigest(environment.QualifierSHA256) || !validDigest(environment.ProductSHA256) {
 		return fmt.Errorf("observed performance environment is outside the source-bound reference profile")
 	}
 	return nil
@@ -433,6 +450,10 @@ func percentile(values []float64, percent int) float64 {
 }
 
 func Publish(outputRoot string, manifest Manifest, census Census, inputs []ArtifactInput) (Publication, error) {
+	return publishWithPolicy(outputRoot, manifest, census, inputs, frozenEvidenceVerificationPolicy())
+}
+
+func publishWithPolicy(outputRoot string, manifest Manifest, census Census, inputs []ArtifactInput, policy evidenceVerificationPolicy) (Publication, error) {
 	if !filepath.IsAbs(outputRoot) || manifest.RunID == "" || census.RunID != manifest.RunID || census.SourceCommit != manifest.Source.Commit || census.SourceTree != manifest.Source.Tree {
 		return Publication{}, fmt.Errorf("absolute output root and one RunID/source identity are required")
 	}
@@ -443,10 +464,14 @@ func Publish(outputRoot string, manifest Manifest, census Census, inputs []Artif
 	if err != nil {
 		return Publication{}, err
 	}
-	return PublishReserved(attempt, manifest, census, inputs)
+	return publishReservedWithPolicy(attempt, manifest, census, inputs, policy)
 }
 
 func PublishReserved(attempt *Attempt, manifest Manifest, census Census, inputs []ArtifactInput) (Publication, error) {
+	return publishReservedWithPolicy(attempt, manifest, census, inputs, frozenEvidenceVerificationPolicy())
+}
+
+func publishReservedWithPolicy(attempt *Attempt, manifest Manifest, census Census, inputs []ArtifactInput, policy evidenceVerificationPolicy) (Publication, error) {
 	if attempt == nil || attempt.RunID != manifest.RunID || attempt.Source != manifest.Source {
 		return Publication{}, fmt.Errorf("reserved attempt differs from manifest")
 	}
@@ -493,7 +518,7 @@ func PublishReserved(attempt *Attempt, manifest Manifest, census Census, inputs 
 	if err := writeCreateOnce(filepath.Join(target, ManifestName), manifestBytes); err != nil {
 		return Publication{}, err
 	}
-	if _, _, err := Verify(context.Background(), target, filepath.Join(target, "contract-m2.json"), &manifest.Source); err != nil {
+	if _, _, err := verifyWithPolicy(context.Background(), target, filepath.Join(target, "contract-m2.json"), &manifest.Source, policy); err != nil {
 		return Publication{}, fmt.Errorf("prepared pass evidence did not verify: %w", err)
 	}
 	archive, members, err := BuildDeterministicArchive(target)
@@ -520,7 +545,14 @@ func PublishReserved(attempt *Attempt, manifest Manifest, census Census, inputs 
 }
 
 func Verify(ctx context.Context, directory, schemaPath string, expectedSource *Source) (Verification, Manifest, error) {
+	return verifyWithPolicy(ctx, directory, schemaPath, expectedSource, frozenEvidenceVerificationPolicy())
+}
+
+func verifyWithPolicy(ctx context.Context, directory, schemaPath string, expectedSource *Source, policy evidenceVerificationPolicy) (Verification, Manifest, error) {
 	_ = ctx
+	if !validDigest(policy.qualificationSidecarSHA256) || policy.verifyCandidateAdmission == nil {
+		return Verification{}, Manifest{}, fmt.Errorf("evidence verification policy is incomplete")
+	}
 	if !filepath.IsAbs(directory) || !filepath.IsAbs(schemaPath) {
 		return Verification{}, Manifest{}, fmt.Errorf("evidence and schema paths must be absolute")
 	}
@@ -557,7 +589,7 @@ func Verify(ctx context.Context, directory, schemaPath string, expectedSource *S
 	if expectedSource != nil && *expectedSource != manifest.Source {
 		return Verification{}, manifest, fmt.Errorf("expected source differs from manifest")
 	}
-	if manifest.M1Admission != (M1Admission{AdmittedM1AdoptionSHA256, AdmittedM1EvidenceSHA256, AdmittedM1TupleSHA256, AdmittedSidecarSHA256}) {
+	if manifest.M1Admission != (M1Admission{AdmittedM1AdoptionSHA256, AdmittedM1EvidenceSHA256, AdmittedM1TupleSHA256, AdmittedM1SidecarSHA256}) {
 		return Verification{}, manifest, fmt.Errorf("M1 admission chain differs from frozen adoption and assertion extension")
 	}
 	if len(manifest.Artifacts) == 0 || len(manifest.Artifacts) > maximumFiles {
@@ -582,8 +614,16 @@ func Verify(ctx context.Context, directory, schemaPath string, expectedSource *S
 		paths[artifact.Path] = artifact
 		kinds[artifact.Kind]++
 	}
-	if kinds["census"] != 1 || kinds["performance"] != 1 || kinds["performance-raw"] != 1 || kinds["performance-reference"] != 1 || kinds["source"] != 1 || kinds["m1-admission"] != 1 || kinds["sbom"] != 1 || kinds["sbom-raw"] != 1 || kinds["binary"] < 2 || kinds["campaign"] < 1 || kinds["campaign-composition"] != 1 || kinds["acceptance-matrix"] != 1 || kinds["successor-contract"] != 1 || kinds["attempt-index"] != 1 || kinds["attempt-terminal"] != 1 || kinds["producer-identity"] != 1 || kinds["producer-profile"] != 1 || kinds["sidecar"] != 1 || kinds["install"] != 1 || kinds["install-smoke"] != 1 || kinds["review-input"] != 1 || kinds["race"] != 1 || kinds["race-raw"] != 1 || kinds["absence-evidence"] < 1 || kinds["contract"] < 2 {
+	if kinds["census"] != 1 || kinds["performance"] != 1 || kinds["performance-raw"] != 1 || kinds["performance-reference"] != 1 || kinds["source"] != 1 || kinds["m1-admission"] != 1 || kinds["qualification-admission"] != 1 || kinds["sbom"] != 1 || kinds["sbom-raw"] != 1 || kinds["binary"] < 2 || kinds["campaign"] < 1 || kinds["campaign-composition"] != 1 || kinds["acceptance-matrix"] != 1 || kinds["successor-contract"] != 1 || kinds["attempt-index"] != 1 || kinds["attempt-terminal"] != 1 || kinds["producer-identity"] != 1 || kinds["producer-profile"] != 1 || kinds["sidecar"] != 1 || kinds["install"] != 1 || kinds["install-smoke"] != 1 || kinds["review-input"] != 1 || kinds["race"] != 1 || kinds["race-raw"] != 1 || kinds["absence-evidence"] < 1 || kinds["contract"] < 2 {
 		return Verification{}, manifest, fmt.Errorf("mandatory artifact kind census is incomplete")
+	}
+	candidateArtifact, err := oneArtifactByKind(paths, "qualification-admission")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	candidatePath := filepath.Join(directory, filepath.FromSlash(candidateArtifact.Path))
+	if err := policy.verifyCandidateAdmission(candidatePath); err != nil {
+		return Verification{}, manifest, fmt.Errorf("M2 qualification candidate admission differs: %w", err)
 	}
 	if err := verifyClosedDirectory(directory, paths); err != nil {
 		return Verification{}, manifest, err
@@ -772,7 +812,7 @@ func Verify(ctx context.Context, directory, schemaPath string, expectedSource *S
 	if err := VerifySBOMEvidence(sbomRaw, sbomBytes); err != nil {
 		return Verification{}, manifest, err
 	}
-	if err := verifyNestedAbsence(root, paths, manifest.Source); err != nil {
+	if err := verifyNestedAbsence(root, paths, manifest.Source, policy.qualificationSidecarSHA256); err != nil {
 		return Verification{}, manifest, err
 	}
 	qualifier, ok := paths["bin/spk-m2-qualification"]

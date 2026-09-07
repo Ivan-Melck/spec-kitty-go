@@ -25,6 +25,7 @@ const (
 // coordinates are private so callers cannot construct a compatible-looking
 // tuple and pass it to the lifecycle.
 type ExecutableAdmission struct {
+	decision       string
 	recordSHA256   string
 	sourceRevision string
 	sourceTree     string
@@ -35,6 +36,7 @@ type ExecutableAdmission struct {
 
 func historicalM1ExecutableAdmission() ExecutableAdmission {
 	return ExecutableAdmission{
+		decision:       "admitted",
 		recordSHA256:   storegapdb.AdmittedTupleSHA256,
 		sourceRevision: storegapdb.AdmittedSourceRevision,
 		sourceTree:     storegapdb.AdmittedSourceTree,
@@ -92,6 +94,7 @@ func VerifyAssertionExtensionAdoption(adoptionPath, admissionPath string) (Execu
 		return ExecutableAdmission{}, failure(FailureAdmissionMismatch, "verify_extension_adoption", "extension admission record differs", err)
 	}
 	return ExecutableAdmission{
+		decision:       "admitted",
 		recordSHA256:   admissionDigest,
 		sourceRevision: storegapdb.AssertionCandidateSourceRevision,
 		sourceTree:     storegapdb.AssertionCandidateSourceTree,

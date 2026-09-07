@@ -332,6 +332,59 @@ func TestV2ReaderPreservesMetadataAndCopiesBuffers(t *testing.T) {
 	}
 }
 
+func TestV2ReadManyPreservesExactOrderRevisionAndMissingEvidence(t *testing.T) {
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 17, 17)
+	firstAddress, _ := journalv2.NewOperationHeadAddressV2("operation-1")
+	secondAddress, _ := journalv2.NewOperationBindingAddressV2("operation-1")
+	firstRead, _ := journalv2.NewReadRequestV2(firstAddress, attempt)
+	secondRead, _ := journalv2.NewReadRequestV2(secondAddress, attempt)
+	request, _ := journalv2.NewReadManyRequestV2([]journalv2.ReadRequestV2{firstRead, secondRead}, journalv2.MaxRecoveryReadManyBytes)
+	firstKey, _ := v2OperationHeadKey("operation-1")
+	secondKey, _ := v2OperationBindingKey("operation-1")
+	asOf := time.Date(2026, 9, 7, 1, 2, 3, 456, time.UTC)
+	firstValue := []byte(`{"status":"accepted"}`)
+	secondValue := []byte(`{"binding":"bound"}`)
+
+	provider := &fakeProvider{readManyFn: func(_ context.Context, keys []string) (gapdbapi.ReadManyResult, error) {
+		if fmt.Sprint(keys) != fmt.Sprint([]string{firstKey.String(), secondKey.String()}) {
+			t.Fatalf("keys=%v", keys)
+		}
+		first := gapdbapi.NewRecord(keys[0], firstValue, 16, nil)
+		second := gapdbapi.NewRecord(keys[1], secondValue, 15, nil)
+		return gapdbapi.ReadManyResult{ObservedRevision: 17, AsOf: asOf, Entries: []gapdbapi.ReadManyEntry{{Key: keys[0], Found: true, Record: &first}, {Key: keys[1], Found: true, Record: &second}}}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	result, err := adapter.ReadManyV2(t.Context(), request)
+	if err != nil || result.ObservedRevision() != 17 || result.AsOf() != asOf.Format(time.RFC3339Nano) {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	records := result.Records()
+	if len(records) != 2 || records[0].Address() != firstAddress || records[1].Address() != secondAddress || string(records[0].CanonicalValue()) != string(firstValue) {
+		t.Fatalf("records=%+v", records)
+	}
+	firstValue[0] = 'x'
+	if string(result.Records()[0].CanonicalValue()) != `{"status":"accepted"}` {
+		t.Fatal("provider value alias escaped exact batch read")
+	}
+
+	provider.readManyFn = func(_ context.Context, keys []string) (gapdbapi.ReadManyResult, error) {
+		first := gapdbapi.NewRecord(keys[0], []byte(`{"status":"accepted"}`), 16, nil)
+		return gapdbapi.ReadManyResult{ObservedRevision: 17, AsOf: asOf, Entries: []gapdbapi.ReadManyEntry{{Key: keys[0], Found: true, Record: &first}, {Key: keys[1]}}}, nil
+	}
+	if _, err := adapter.ReadManyV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorNotFound) {
+		t.Fatalf("missing member admitted as partial read: %v", err)
+	}
+
+	provider.readManyFn = func(_ context.Context, keys []string) (gapdbapi.ReadManyResult, error) {
+		first := gapdbapi.NewRecord(keys[0], []byte(`{"status":"accepted"}`), 16, nil)
+		second := gapdbapi.NewRecord(keys[1], []byte(`{"binding":"bound"}`), 15, nil)
+		return gapdbapi.ReadManyResult{ObservedRevision: 18, AsOf: asOf, Entries: []gapdbapi.ReadManyEntry{{Key: keys[0], Found: true, Record: &first}, {Key: keys[1], Found: true, Record: &second}}}, nil
+	}
+	if _, err := adapter.ReadManyV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorMalformed) {
+		t.Fatalf("moved observation admitted: %v", err)
+	}
+}
+
 func TestV2ReaderUsesFoundationPublicationWitnessAddressAndRejectsExpiry(t *testing.T) {
 	plan := v2TestPlan(t)
 	key, err := v2PublicationWitnessKey(plan.PublicationID())

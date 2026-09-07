@@ -469,6 +469,7 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 		fileInput("m1-admission.json", "m1-admission-part", filepath.Join(config.Repository, "docs/programs/evidence/m1-admission.json")),
 		fileInput("m1-assertion-extension.json", "m1-admission-part", filepath.Join(config.Repository, "docs/programs/evidence/m1-assertion-extension-adoption.json")),
 		fileInput("m1-assertion-extension-admission.json", "m1-admission-part", filepath.Join(config.Repository, "docs/programs/evidence/m1-assertion-extension-admission.json")),
+		fileInput("m2-gapdb-qualification-candidate.json", "qualification-admission", filepath.Join(config.Repository, "docs/programs/evidence/m2-gapdb-qualification-candidate.json")),
 		fileInput("contract-m2.json", "contract", filepath.Join(config.Repository, "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/m2-qualification-v1.schema.json")),
 		fileInput("contract-events.json", "contract", filepath.Join(config.Repository, "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/event-family-registry-v2.json")),
 		fileInput("independent-review-input.md", "review-input", filepath.Join(config.Repository, "docs/programs/evidence/m2-independent-review-input.md")),

@@ -54,6 +54,81 @@ func TestAssertionExtensionAdoptionChainsM1AndExactExecutable(t *testing.T) {
 	}
 }
 
+func TestM2QualificationCandidateIsExactAndNotAnAdoption(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(root, "docs", "programs", "evidence", "m2-gapdb-qualification-candidate.json")
+	admission, err := VerifyM2QualificationCandidateAdmission(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admission.decision != "qualify" || admission.recordSHA256 != M2QualificationCandidateRecordSHA256 ||
+		admission.sidecarSHA256 == "" || admission.executableSize == 0 {
+		t.Fatalf("incomplete or over-promoted M2 candidate: %+v", admission)
+	}
+	if _, err := VerifyAssertionExtensionAdoption(recordPath, recordPath); !IsFailure(err, FailureAdmissionMismatch) {
+		t.Fatalf("M2 candidate was accepted as the adopted M1 extension: %v", err)
+	}
+
+	binary := os.Getenv("SPEC_KITTY_M2_GAPDBD")
+	if binary == "" {
+		return
+	}
+	binary, err = filepath.Abs(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := VerifyExecutable(VerifyConfig{ExecutablePath: binary, AdmissionRecordPath: recordPath, Admission: admission})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verified.Close()
+	provenance := verified.Provenance()
+	if provenance.SHA256 != admission.sidecarSHA256 || provenance.SourceRevision != admission.sourceRevision || provenance.AdmissionRecordSHA256 != admission.recordSHA256 {
+		t.Fatalf("M2 candidate executable provenance differs: %+v", provenance)
+	}
+}
+
+func TestM2QualificationCandidateRejectsPromotionAndTupleMutation(t *testing.T) {
+	root, _ := filepath.Abs(filepath.Join("..", "..", ".."))
+	source := filepath.Join(root, "docs", "programs", "evidence", "m2-gapdb-qualification-candidate.json")
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]func(map[string]any){
+		"decision":      func(v map[string]any) { v["decision"] = "adopt" },
+		"release_ready": func(v map[string]any) { v["release_ready"] = true },
+		"adopted":       func(v map[string]any) { v["adopted"] = true },
+		"source": func(v map[string]any) {
+			v["gapdb_tuple"].(map[string]any)["source_revision"] = stringOf('0', 40)
+		},
+		"sidecar": func(v map[string]any) {
+			v["gapdb_tuple"].(map[string]any)["sidecar"].(map[string]any)["sha256"] = stringOf('0', 64)
+		},
+		"unknown": func(v map[string]any) { v["operator_approval"] = true },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			var value map[string]any
+			if err := json.Unmarshal(raw, &value); err != nil {
+				t.Fatal(err)
+			}
+			mutate(value)
+			encoded, _ := json.Marshal(value)
+			path := filepath.Join(t.TempDir(), "candidate.json")
+			if err := os.WriteFile(path, encoded, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := VerifyM2QualificationCandidateAdmission(path); !IsFailure(err, FailureAdmissionMismatch) {
+				t.Fatalf("mutated candidate admitted: %v", err)
+			}
+		})
+	}
+}
+
 func TestAssertionExtensionAdoptionRejectsRecordMutation(t *testing.T) {
 	root, _ := filepath.Abs(filepath.Join("..", "..", ".."))
 	adoptionSource := filepath.Join(root, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json")
