@@ -182,14 +182,31 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 			state.close()
 			return observations, fmt.Errorf("recovery run %d projection differs from run zero", run)
 		}
-		operationStates := countOperationStates(recovered) - config.CheckpointOperations
-		observation := RecoveryObservation{DurationNS: duration.Nanoseconds(), ProjectionSHA256: digest, ObservedOperations: operationStates}
+		postCheckpointStates := countOperationStates(recovered) - config.CheckpointOperations
+		observation := RecoveryObservation{DurationNS: duration.Nanoseconds(), ProjectionSHA256: digest}
 		if run == 0 {
 			observation.Operations, observation.RuntimeOperations, err = operationsFromEvents(ctx, state.adapter, recovered, config.CheckpointRevision)
 			if err != nil {
 				state.close()
 				return observations, err
 			}
+			bootstrap := 0
+			for _, operation := range observation.Operations {
+				if slices.Equal(operation.Families, []string{"family/operation"}) {
+					bootstrap++
+				}
+			}
+			if bootstrap != 1 || len(observation.Operations) != postCheckpointStates {
+				state.close()
+				return observations, fmt.Errorf("recovery bootstrap census=%d post-checkpoint events=%d states=%d", bootstrap, len(observation.Operations), postCheckpointStates)
+			}
+			observation.ObservedOperations = len(observation.Operations) - bootstrap
+		} else {
+			if postCheckpointStates != len(observations[0].Operations) {
+				state.close()
+				return observations, fmt.Errorf("recovery run %d operation-state census=%d want=%d", run, postCheckpointStates, len(observations[0].Operations))
+			}
+			observation.ObservedOperations = observations[0].ObservedOperations
 		}
 		if observation.ObservedOperations != config.Observations {
 			state.close()
@@ -251,6 +268,9 @@ func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result
 			if err != nil {
 				return nil, nil, err
 			}
+			if record.RecordRevision() <= afterRevision {
+				continue
+			}
 			event, err := journalv2.DecodeEventEnvelopeRecordV2(record, journalv2.DefaultEventRegistryV2())
 			if err != nil {
 				return nil, nil, err
@@ -262,7 +282,7 @@ func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result
 			}
 			byOperation[operation]["family/"+event.Family()] = struct{}{}
 			publications[operation][string(event.PublicationID())] = struct{}{}
-			if event.Family() == "runtime_host" && record.RecordRevision() > afterRevision && (runtimeRevisions[operation] == 0 || record.RecordRevision() < runtimeRevisions[operation]) {
+			if event.Family() == "runtime_host" && (runtimeRevisions[operation] == 0 || record.RecordRevision() < runtimeRevisions[operation]) {
 				runtimeRevisions[operation] = record.RecordRevision()
 			}
 		}
