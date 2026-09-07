@@ -46,6 +46,7 @@ type PerformanceConfig struct {
 	CheckpointOperations int
 	StartTimeout         time.Duration
 	StopTimeout          time.Duration
+	TestTimeout          time.Duration
 }
 
 type CheckpointResult struct {
@@ -329,14 +330,14 @@ type performanceRuntime struct {
 // are deliberately not performance evidence.
 func MeasurePerformance(ctx context.Context, config PerformanceConfig) (m2.RawPerformance, []byte, error) {
 	var result m2.RawPerformance
-	if config.RunID == "" || config.Repository == "" || config.Executable == "" || config.QualifierExecutable == "" || config.ProductExecutable == "" || config.Reference == "" || config.Observations != 10_000 || config.RecoveryRuns != 30 || config.Warmup != 100 {
+	if config.RunID == "" || config.Repository == "" || config.Executable == "" || config.QualifierExecutable == "" || config.ProductExecutable == "" || config.Reference == "" || config.Observations != 10_000 || config.RecoveryRuns != 30 || config.Warmup != 100 || config.TestTimeout <= 0 || config.TestTimeout > 60*time.Minute {
 		return result, nil, fmt.Errorf("M2 performance configuration is incomplete")
 	}
 	if err := os.MkdirAll(config.RuntimeRoot, 0o700); err != nil {
 		return result, nil, err
 	}
 	output := filepath.Join(config.RuntimeRoot, "performance.raw.json")
-	command := exec.CommandContext(ctx, "go", "test", "-json", "./internal/scenario", "-run", "^TestM2AcceptedAuthorityPerformanceCampaign$", "-count=1")
+	command := exec.CommandContext(ctx, "go", performanceTestArguments(config.TestTimeout)...)
 	command.Dir = config.Repository
 	command.Env = performanceChildEnvironment(os.Environ(), config, output)
 	var transcript boundedBuffer
@@ -376,6 +377,10 @@ func MeasurePerformance(ctx context.Context, config PerformanceConfig) (m2.RawPe
 		return result, transcript.Bytes(), err
 	}
 	return result, transcript.Bytes(), nil
+}
+
+func performanceTestArguments(timeout time.Duration) []string {
+	return []string{"test", "-json", "./internal/scenario", "-run", "^TestM2AcceptedAuthorityPerformanceCampaign$", "-count=1", "-timeout=" + timeout.String()}
 }
 
 func performanceChildEnvironment(base []string, config PerformanceConfig, output string) []string {

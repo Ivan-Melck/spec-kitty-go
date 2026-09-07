@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -87,9 +88,13 @@ func run(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		raw, _, err := m2external.MeasurePerformance(context.Background(), m2external.PerformanceConfig{RunID: *runID, Repository: *repository, Executable: *sidecar, QualifierExecutable: qualifier, ProductExecutable: *product, Reference: filepath.Join(*repository, "docs/programs/evidence/m2-performance-reference.json"), RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second})
+		raw, transcript, err := m2external.MeasurePerformance(context.Background(), m2external.PerformanceConfig{RunID: *runID, Repository: *repository, Executable: *sidecar, QualifierExecutable: qualifier, ProductExecutable: *product, Reference: filepath.Join(*repository, "docs/programs/evidence/m2-performance-reference.json"), RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second, TestTimeout: 60 * time.Minute})
+		transcriptPath := *output + ".events.jsonl"
+		if transcriptErr := atomicWrite(transcriptPath, transcript); transcriptErr != nil {
+			return errors.Join(err, fmt.Errorf("retain performance transcript: %w", transcriptErr))
+		}
 		if err != nil {
-			return err
+			return fmt.Errorf("%w (transcript=%s)", err, transcriptPath)
 		}
 		if _, err := m2.SummarizePerformance(raw); err != nil {
 			return err
@@ -352,7 +357,7 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 	if err != nil {
 		return m2.Publication{}, err
 	}
-	performance, performanceTranscript, err := m2external.MeasurePerformance(ctx, m2external.PerformanceConfig{RunID: config.RunID, Repository: config.Repository, Executable: config.SidecarPath, QualifierExecutable: qualifierPath, ProductExecutable: config.ProductBinary, Reference: referencePath, RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: preflight.Source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second})
+	performance, performanceTranscript, err := m2external.MeasurePerformance(ctx, m2external.PerformanceConfig{RunID: config.RunID, Repository: config.Repository, Executable: config.SidecarPath, QualifierExecutable: qualifierPath, ProductExecutable: config.ProductBinary, Reference: referencePath, RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: preflight.Source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second, TestTimeout: 60 * time.Minute})
 	performanceBytes, marshalPerformanceErr := m2.CanonicalJSON(performance)
 	if marshalPerformanceErr == nil {
 		_ = attempt.Capture("performance.json", performanceBytes)

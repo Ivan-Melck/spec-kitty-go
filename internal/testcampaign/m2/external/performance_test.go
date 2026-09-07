@@ -1,8 +1,10 @@
 package external
 
 import (
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPerformanceChildEnvironmentSuppliesExactProductionAuthorityExecutable(t *testing.T) {
@@ -44,5 +46,12 @@ func TestPerformanceChildEnvironmentSuppliesExactProductionAuthorityExecutable(t
 		if counts[key] != 1 {
 			t.Fatalf("%s occurrence count=%d want=1", key, counts[key])
 		}
+	}
+}
+
+func TestPerformanceChildCommandHasExplicitBoundedTimeoutAndExactSelector(t *testing.T) {
+	want := []string{"test", "-json", "./internal/scenario", "-run", "^TestM2AcceptedAuthorityPerformanceCampaign$", "-count=1", "-timeout=1h0m0s"}
+	if got := performanceTestArguments(60 * time.Minute); !slices.Equal(got, want) {
+		t.Fatalf("performance child argv=%q want=%q", got, want)
 	}
 }
