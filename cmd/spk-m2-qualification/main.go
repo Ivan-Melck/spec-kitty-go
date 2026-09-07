@@ -315,6 +315,7 @@ func flags(arguments []string) (m2.PreflightConfig, time.Duration, error) {
 	repository := set.String("repository", "", "absolute repository root")
 	output := set.String("output", "", "absolute immutable evidence root")
 	sidecar := set.String("sidecar", "", "absolute admitted gapdbd")
+	wp16Sidecar := set.String("wp16-sidecar", "", "absolute frozen WP16 assertion-extension gapdbd")
 	product := set.String("product-binary", "", "absolute production binary")
 	runID := set.String("run-id", "", "unique qualification RunID")
 	actorID := set.String("actor-id", "", "implementation ActorID")
@@ -331,7 +332,7 @@ func flags(arguments []string) (m2.PreflightConfig, time.Duration, error) {
 		contributorIDs[index] = strings.TrimSpace(contributorIDs[index])
 	}
 	slices.Sort(contributorIDs)
-	return m2.PreflightConfig{RunID: *runID, Repository: *repository, OutputRoot: *output, SidecarPath: *sidecar, ProductBinary: *product, ProfileDocument: *profileDocument, Producer: m2.ProducerIdentity{SchemaVersion: 1, ExecutorActorID: *actorID, ProcessID: *processID, ImplementationContributors: contributorIDs, ProfileID: "implementer-ivan", ProfileRevision: *profileRevision}}, *timeout, nil
+	return m2.PreflightConfig{RunID: *runID, Repository: *repository, OutputRoot: *output, SidecarPath: *sidecar, WP16SidecarPath: *wp16Sidecar, ProductBinary: *product, ProfileDocument: *profileDocument, Producer: m2.ProducerIdentity{SchemaVersion: 1, ExecutorActorID: *actorID, ProcessID: *processID, ImplementationContributors: contributorIDs, ProfileID: "implementer-ivan", ProfileRevision: *profileRevision}}, *timeout, nil
 }
 
 func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Duration) (publication m2.Publication, resultErr error) {
@@ -374,7 +375,7 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 	if err := attempt.Record("absence", "running", ""); err != nil {
 		return publication, err
 	}
-	absenceInputs, err := m2.RunAbsenceQualification(ctx, config.Repository, config.SidecarPath, attempt)
+	absenceInputs, err := m2.RunAbsenceQualification(ctx, config.Repository, config.WP16SidecarPath, attempt)
 	if err != nil {
 		return publication, err
 	}

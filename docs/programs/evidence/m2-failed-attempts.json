@@ -157,6 +157,15 @@
       "transcript_bytes": 1289439,
       "attempt_events_sha256": "ed2ecb4ce1cafa9e4cae7f14bffbfa2a2e627f11bf056487d075961c8c347885",
       "terminal_sha256": "7d9d09e6dd67e0ec9e20602fc47ae422981adb132c827d1b8571fd2259654225"
+    },
+    {
+      "run_id": "wp17-qualification-50e7753e-final11",
+      "source_commit": "50e7753e5e2eaeea4a029d28c312dbb5d1068dfe",
+      "source_tree": "750fad58902c755edf5a7cdba59562267c7665d0",
+      "outcome": "fail",
+      "reason": "all 45 crown campaigns passed, but nested WP16 runtime absence proof was incorrectly supplied the non-adopted M2 GapDB candidate instead of the frozen adopted assertion-extension sidecar and correctly refused its executable metadata",
+      "attempt_events_sha256": "c51e0eb5b3f5932a75f3d10caa64b4a6d982e182d4c85df4c6f6ec000fb3729d",
+      "terminal_sha256": "6ed9f90efed115581f08256ec136c4c805f827ec6334941d5bf54f99e687c2a2"
     }
   ]
 }

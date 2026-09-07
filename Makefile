@@ -13,6 +13,7 @@ BEADS_BIN ?=
 BEADS_INSTALL_RESULT ?=
 OFFLINE_ENFORCED ?=
 M2_GAPDBD ?= /tmp/gapdb-m2-recovery-reviewed.2gq1WX/gapdbd
+M2_WP16_GAPDBD ?= /tmp/spec-kitty-gapdb-assertion-sidecar/gapdbd
 M2_RUN_ID ?= m2-$$(git rev-parse --short=12 HEAD)-$$(date -u +%Y%m%dT%H%M%SZ)
 M2_EVIDENCE_ROOT ?= $(ARTIFACT_DIR)/m2
 M2_PRODUCT_BINARY ?= $(BUILD_DIR)/spec-kitty
@@ -196,7 +197,7 @@ m2-mutants-smoke: ## Strictly prove the sidecar-free PR mutant census with no mi
 
 m2-absence: ## Qualify source/module/binary/install/help/runtime SQLite absence from a clean archive.
 	@mkdir -p "$(M2_EVIDENCE_ROOT)"
-	SPEC_KITTY_WP15_GAPDBD="$(M2_GAPDBD)" scripts/m2-absence/inspect.sh "$(M2_EVIDENCE_ROOT)/absence"
+	SPEC_KITTY_WP15_GAPDBD="$(M2_WP16_GAPDBD)" scripts/m2-absence/inspect.sh "$(M2_EVIDENCE_ROOT)/absence"
 
 m2-absence-source: ## Run the sidecar-free structural source and module-graph absence gate.
 	$(GO) test -count=1 ./internal/architecture \
@@ -256,7 +257,7 @@ m2-qualification: ## Produce one immutable technical-pass bundle eligible for in
 	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
 	@$(MAKE) --no-print-directory m2-build-candidate
 	"$(M2_QUALIFIER_BINARY)" run --repository "$(CURDIR)" --output "$(M2_EVIDENCE_ROOT)" \
-		--sidecar "$(M2_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" \
+		--sidecar "$(M2_GAPDBD)" --wp16-sidecar "$(M2_WP16_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" \
 		--actor-id "$(M2_ACTOR_ID)" --process-id "$(M2_PROCESS_ID)" \
 		--implementation-contributors "$(M2_IMPLEMENTATION_CONTRIBUTORS)" \
 		--profile-document "$(M2_PROFILE_DOCUMENT)" --profile-revision "$(M2_PROFILE_REVISION)" --timeout 60m

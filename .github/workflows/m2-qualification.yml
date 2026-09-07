@@ -20,7 +20,8 @@ jobs:
     timeout-minutes: 180
     env:
       GOTOOLCHAIN: local
-      M2_GAPDBD: /opt/spec-kitty/admitted/gapdbd-947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
+      M2_GAPDBD: /opt/spec-kitty/admitted/gapdbd-54d3c80dd225a5e58f1488f0ce62fd6b95a6bb0ecf95b541e211b199555d8eaf
+      M2_WP16_GAPDBD: /opt/spec-kitty/admitted/gapdbd-947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
       M2_ACTOR_ID: github-actions
       M2_PROCESS_ID: github-run-${{ github.run_id }}-${{ github.run_attempt }}
       M2_IMPLEMENTATION_CONTRIBUTORS: codex
@@ -50,7 +51,8 @@ jobs:
         run: |
           set -euo pipefail
           test -x "$M2_GAPDBD"
-          test "$(sha256sum "$M2_GAPDBD" | awk '{print $1}')" = 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
+          test "$(sha256sum "$M2_GAPDBD" | awk '{print $1}')" = 54d3c80dd225a5e58f1488f0ce62fd6b95a6bb0ecf95b541e211b199555d8eaf
+          test "$(sha256sum "$M2_WP16_GAPDBD" | awk '{print $1}')" = 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
       - name: Run required sidecar-free short tier
         run: make m2-short
       - name: Run complete crown once

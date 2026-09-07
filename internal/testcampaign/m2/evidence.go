@@ -29,6 +29,7 @@ const (
 	AdmittedM1EvidenceSHA256            = "397f93a9b0f1ea24715ba57b0cb58aeb489e13a7e27e8bc76259597f36f2f309"
 	AdmittedM1TupleSHA256               = "4ddf904a48c83fe343ea9589bdf6ef7108af71b4b8140d76da68abdaf9d5824d"
 	AdmittedM1SidecarSHA256             = "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad"
+	WP16AbsenceSidecarSHA256            = AdmittedM1SidecarSHA256
 	QualificationCandidateSidecarSHA256 = "54d3c80dd225a5e58f1488f0ce62fd6b95a6bb0ecf95b541e211b199555d8eaf"
 )
 
@@ -59,13 +60,13 @@ type Verification struct {
 }
 
 type evidenceVerificationPolicy struct {
-	qualificationSidecarSHA256 string
-	verifyCandidateAdmission   func(string) error
+	wp16AbsenceSidecarSHA256 string
+	verifyCandidateAdmission func(string) error
 }
 
 func frozenEvidenceVerificationPolicy() evidenceVerificationPolicy {
 	return evidenceVerificationPolicy{
-		qualificationSidecarSHA256: QualificationCandidateSidecarSHA256,
+		wp16AbsenceSidecarSHA256: WP16AbsenceSidecarSHA256,
 		verifyCandidateAdmission: func(path string) error {
 			_, err := sidecargapdb.VerifyM2QualificationCandidateAdmission(path)
 			return err
@@ -550,7 +551,7 @@ func Verify(ctx context.Context, directory, schemaPath string, expectedSource *S
 
 func verifyWithPolicy(ctx context.Context, directory, schemaPath string, expectedSource *Source, policy evidenceVerificationPolicy) (Verification, Manifest, error) {
 	_ = ctx
-	if !validDigest(policy.qualificationSidecarSHA256) || policy.verifyCandidateAdmission == nil {
+	if !validDigest(policy.wp16AbsenceSidecarSHA256) || policy.verifyCandidateAdmission == nil {
 		return Verification{}, Manifest{}, fmt.Errorf("evidence verification policy is incomplete")
 	}
 	if !filepath.IsAbs(directory) || !filepath.IsAbs(schemaPath) {
@@ -812,7 +813,7 @@ func verifyWithPolicy(ctx context.Context, directory, schemaPath string, expecte
 	if err := VerifySBOMEvidence(sbomRaw, sbomBytes); err != nil {
 		return Verification{}, manifest, err
 	}
-	if err := verifyNestedAbsence(root, paths, manifest.Source, policy.qualificationSidecarSHA256); err != nil {
+	if err := verifyNestedAbsence(root, paths, manifest.Source, policy.wp16AbsenceSidecarSHA256); err != nil {
 		return Verification{}, manifest, err
 	}
 	qualifier, ok := paths["bin/spk-m2-qualification"]

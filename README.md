@@ -269,8 +269,9 @@ The pull-request tier is bounded and does not substitute for the release crown:
 GOTOOLCHAIN=go1.26.7 make m2-short
 ```
 
-The full run requires the exact admitted assertion-extension sidecar at an
-absolute path. It executes the real two-item mission, closed 15-family census,
+The full run requires both the exact M2 qualification-candidate sidecar and
+the frozen adopted WP16 assertion-extension sidecar at distinct absolute
+paths. It executes the real two-item mission, closed 15-family census,
 fault/concurrency/restart campaigns, restore-deadline and absence mutants,
 10,000 query and durable-mutation observations, 30 recoveries, deterministic
 CycloneDX generation, and independent manifest verification.
@@ -278,6 +279,7 @@ CycloneDX generation, and independent manifest verification.
 ```bash
 GOTOOLCHAIN=go1.26.7 make m2-qualification \
   M2_GAPDBD=/absolute/path/to/gapdbd \
+  M2_WP16_GAPDBD=/absolute/path/to/frozen-wp16-gapdbd \
   M2_RUN_ID=m2-unique-run \
   M2_EVIDENCE_ROOT=/absolute/private/evidence \
   M2_ACTOR_ID=implementing-agent \

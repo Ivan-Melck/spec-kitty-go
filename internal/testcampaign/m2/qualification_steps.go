@@ -31,6 +31,9 @@ func RunAbsenceQualification(ctx context.Context, repository, sidecar string, at
 	if attempt == nil || !filepath.IsAbs(repository) || !filepath.IsAbs(sidecar) {
 		return nil, fmt.Errorf("absence qualification requires absolute paths and a reserved attempt")
 	}
+	if digest, err := fileDigest(sidecar); err != nil || digest != WP16AbsenceSidecarSHA256 {
+		return nil, fmt.Errorf("absence qualification requires the frozen WP16 sidecar")
+	}
 	working := filepath.Join(attempt.Directory, ".working-absence")
 	command := exec.CommandContext(ctx, filepath.Join(repository, "scripts/m2-absence/inspect.sh"), working)
 	command.Dir = repository

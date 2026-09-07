@@ -631,7 +631,7 @@ func completeFixtureWithPolicy(t *testing.T, sidecarFree bool) (Manifest, Census
 		t.Fatal(err)
 	}
 	inputs := append([]ArtifactInput(nil), campaignInputs...)
-	qualificationSHA := QualificationCandidateSidecarSHA256
+	qualificationSHA := WP16AbsenceSidecarSHA256
 	if sidecarFree {
 		qualificationSHA = SHA256(sidecarBytes)
 	}
@@ -673,7 +673,7 @@ func completeFixtureWithPolicy(t *testing.T, sidecarFree bool) (Manifest, Census
 	if sidecarFree {
 		candidateBytes := fileFixtureInput(t, "unused", "unused", "docs/programs/evidence/m2-gapdb-qualification-candidate.json").Data
 		policy = evidenceVerificationPolicy{
-			qualificationSidecarSHA256: qualificationSHA,
+			wp16AbsenceSidecarSHA256: qualificationSHA,
 			verifyCandidateAdmission: func(path string) error {
 				observed, err := os.ReadFile(path)
 				if err != nil || !bytes.Equal(observed, candidateBytes) {

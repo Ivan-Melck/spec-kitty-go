@@ -18,6 +18,7 @@ type PreflightConfig struct {
 	Repository      string
 	OutputRoot      string
 	SidecarPath     string
+	WP16SidecarPath string
 	ProductBinary   string
 	ProfileDocument string
 	Producer        ProducerIdentity
@@ -28,6 +29,7 @@ type PreflightResult struct {
 	RunID                        string      `json:"run_id"`
 	Source                       Source      `json:"source"`
 	SidecarSHA256                string      `json:"sidecar_sha256"`
+	WP16SidecarSHA256            string      `json:"wp16_sidecar_sha256"`
 	QualificationAdmissionSHA256 string      `json:"qualification_admission_sha256"`
 	ProductSHA256                string      `json:"product_sha256"`
 	M1Admission                  M1Admission `json:"m1_admission"`
@@ -36,7 +38,7 @@ type PreflightResult struct {
 
 func Preflight(config PreflightConfig) (PreflightResult, error) {
 	result := PreflightResult{SchemaVersion: 1, RunID: config.RunID}
-	for name, path := range map[string]string{"repository": config.Repository, "output": config.OutputRoot, "sidecar": config.SidecarPath, "product": config.ProductBinary, "profile-document": config.ProfileDocument} {
+	for name, path := range map[string]string{"repository": config.Repository, "output": config.OutputRoot, "sidecar": config.SidecarPath, "wp16-sidecar": config.WP16SidecarPath, "product": config.ProductBinary, "profile-document": config.ProfileDocument} {
 		if !filepath.IsAbs(path) {
 			return result, fmt.Errorf("%s path must be absolute", name)
 		}
@@ -69,6 +71,9 @@ func Preflight(config PreflightConfig) (PreflightResult, error) {
 	if stat, err := os.Stat(config.SidecarPath); err != nil || !stat.Mode().IsRegular() || stat.Mode()&0o111 == 0 {
 		return result, fmt.Errorf("sidecar is not an executable regular file")
 	}
+	if stat, err := os.Stat(config.WP16SidecarPath); err != nil || !stat.Mode().IsRegular() || stat.Mode()&0o111 == 0 {
+		return result, fmt.Errorf("WP16 sidecar is not an executable regular file")
+	}
 	if stat, err := os.Stat(config.ProductBinary); err != nil || !stat.Mode().IsRegular() || stat.Mode()&0o111 == 0 {
 		return result, fmt.Errorf("product is not an executable regular file")
 	}
@@ -81,6 +86,12 @@ func Preflight(config PreflightConfig) (PreflightResult, error) {
 	}
 	if result.SidecarSHA256, err = fileDigest(config.SidecarPath); err != nil || result.SidecarSHA256 != QualificationCandidateSidecarSHA256 {
 		return result, fmt.Errorf("sidecar digest differs from the M2 qualification candidate")
+	}
+	if result.WP16SidecarSHA256, err = fileDigest(config.WP16SidecarPath); err != nil {
+		return result, fmt.Errorf("WP16 sidecar digest: %w", err)
+	}
+	if err := validateQualificationSidecarPair(result.SidecarSHA256, result.WP16SidecarSHA256); err != nil {
+		return result, err
 	}
 	if result.ProductSHA256, err = fileDigest(config.ProductBinary); err != nil {
 		return result, err
@@ -122,6 +133,19 @@ func Preflight(config PreflightConfig) (PreflightResult, error) {
 	result.M1Admission = M1Admission{AdmittedM1AdoptionSHA256, AdmittedM1EvidenceSHA256, AdmittedM1TupleSHA256, AdmittedM1SidecarSHA256}
 	result.Ready = true
 	return result, nil
+}
+
+func validateQualificationSidecarPair(candidateSHA256, wp16SHA256 string) error {
+	if candidateSHA256 != QualificationCandidateSidecarSHA256 {
+		return fmt.Errorf("M2 qualification candidate digest differs")
+	}
+	if wp16SHA256 != WP16AbsenceSidecarSHA256 {
+		return fmt.Errorf("WP16 absence sidecar digest differs from the frozen adopted assertion extension")
+	}
+	if candidateSHA256 == wp16SHA256 {
+		return fmt.Errorf("M2 candidate and WP16 absence sidecars must remain distinct")
+	}
+	return nil
 }
 
 func VerifyBuiltBinary(path string, source Source) error {
