@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "mission_id": "gapdb-only-production-authority-01M1GWDJ",
+  "evidence_class": "non_admissible_attempt_history",
+  "release_ready": false,
+  "adopted": false,
+  "attempts": [
+    {
+      "run_id": "wp17-performance-1b3fbf5a",
+      "source_commit": "1b3fbf5a51ee610d4e382239edb703cfe7401b04",
+      "source_tree": "f97e6cd6f3f2fb2fc084c9b32952f48cdb9e4dec",
+      "outcome": "timeout",
+      "reason": "quadratic full journal restore after each accepted mutation",
+      "transcript_path": "/tmp/go-kitty3-m2-performance.7Ag6lQ/performance.json.events.jsonl",
+      "transcript_sha256": "e426553c379609f46eebfe0357b2e5ac7913f2736950779a7804e0ea89ed92c4",
+      "transcript_bytes": 53302
+    },
+    {
+      "run_id": "wp17-performance-9a9037fe-final-01",
+      "source_commit": "9a9037fed1472dfd88f808fdc8f86631f1f7fff6",
+      "source_tree": "b65a82e16519805a54eb59811fb7e934079b400b",
+      "outcome": "fail",
+      "reason": "preflight candidate admission record digest was stale",
+      "transcript_path": "/tmp/go-kitty3-m2-performance-9a9037fe.FfS4qk/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "2bacf3e02568c3e90fb62dd826ee2249c21740bcd0544393b57be9ab3d9f8c6a",
+      "transcript_bytes": 1825
+    },
+    {
+      "run_id": "wp17-performance-215cc4df-final-02",
+      "source_commit": "215cc4df01c0652cfe75826852251dde12186d78",
+      "source_tree": "c5c2dd6192841ef00652be25d811d28a718599ea",
+      "outcome": "fail",
+      "reason": "mutation and recovery p95 exceeded the frozen reference thresholds",
+      "transcript_path": "/tmp/go-kitty3-m2-performance-215cc4df.0JTObd/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "bb27be6c65dce8c996385e79000e6ee1192b4e174f31120af94c0cff4b262a9e",
+      "transcript_bytes": 6262,
+      "failed_observation_path": "/tmp/go-kitty3-m2-performance-215cc4df.0JTObd/evidence/performance.json.failed.json",
+      "failed_observation_sha256": "bdc16467134fba994fd63cbdb63ac8cabe77a7607cce89884073764e9c8c4a3f",
+      "failed_observation_bytes": 5273223,
+      "retained_private_root": "/tmp/spk-m2-measure-636524007",
+      "statistics": {
+        "mutation_p95_ms": 11.381904,
+        "mutation_limit_ms": 8,
+        "query_p95_ms": 1.819115,
+        "query_limit_ms": 2,
+        "recovery_p95_ms": 2104.798478,
+        "recovery_limit_ms": 2000
+      }
+    }
+  ]
+}
