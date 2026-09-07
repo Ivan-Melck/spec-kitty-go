@@ -121,6 +121,18 @@
       "transcript_path": "/tmp/go-kitty3-campaign-dd6fdb4d-final07/m2/performance.json.events.jsonl",
       "transcript_sha256": "e29fd3016ed5f88aa2670dab5b3ebb5b242780c079df83c3f78586ea06b962df",
       "transcript_bytes": 1827
+    },
+    {
+      "run_id": "wp17-qualification-049ebd92-final08",
+      "source_commit": "049ebd9259d1351f8de07de2d1cfa1bb1a5e9a31",
+      "source_tree": "8a8d9cf88aaeda5170feec9124ee5dc5dd8562f5",
+      "outcome": "fail",
+      "reason": "real Git and GapDB crown restart at workspace dependencies_requested restored a contribution that workspace authority refused as invalid_command; qualifier additionally misreported the missing success-only process receipt as an unterminated process transcript",
+      "transcript_path": "/tmp/go-kitty3-qualification-049ebd92-final08/m2/wp17-qualification-049ebd92-final08/evidence/campaigns/behavior-real-git-gapdb-two-item-crown.go-test.jsonl",
+      "transcript_sha256": "141c79f19dfd20d3718b26b17334e5ad4ac76bd6e0520d8f73689d467dae1fe2",
+      "transcript_bytes": 20480,
+      "attempt_events_sha256": "671bb1ee77a5428edbf439f83fe4c749f0eb6676fd2b147630e095acbb3b2eca",
+      "terminal_sha256": "6af650246e211425a7fd3817db00b258b201b92dd9750f77712c828274a6dbe9"
     }
   ]
 }
