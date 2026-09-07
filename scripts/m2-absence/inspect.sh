@@ -216,7 +216,7 @@ if ! SPEC_KITTY_WP15_GAPDBD="$sidecar" go test -json -count=1 -run "$runtime_sel
 fi
 sha256sum "$evidence_root/runtime-events.jsonl" >"$capture_file"
 IFS=' ' read -r runtime_raw_sha ignored_runtime_path <"$capture_file"
-jq -s -S --slurpfile expected_file "$evidence_root/runtime-expected.json" --arg sidecar_sha "$admitted_sidecar_sha" --arg raw_sha "$runtime_raw_sha" '
+jq -s -S --slurpfile expected_file "$evidence_root/runtime-expected.json" --arg sidecar_sha "$qualification_sidecar_sha" --arg raw_sha "$runtime_raw_sha" '
   ($expected_file[0]) as $expected |
   [.[] | select(.Test != null)] as $events |
   ([$events[] | select(.Action == "run") | .Test] | sort) as $run |
