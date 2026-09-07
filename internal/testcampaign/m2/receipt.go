@@ -42,10 +42,13 @@ type GoTestReceipt struct {
 }
 
 type goTestEvent struct {
-	Action  string `json:"Action"`
-	Package string `json:"Package"`
-	Test    string `json:"Test"`
-	Output  string `json:"Output"`
+	Time        string  `json:"Time"`
+	Action      string  `json:"Action"`
+	Package     string  `json:"Package"`
+	Test        string  `json:"Test"`
+	Elapsed     float64 `json:"Elapsed"`
+	Output      string  `json:"Output"`
+	FailedBuild string  `json:"FailedBuild"`
 }
 
 type iterationContract struct {

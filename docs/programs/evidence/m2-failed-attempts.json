@@ -204,6 +204,15 @@
       "transcript_sha256": "ebce0a2284cd9ca7d47a891650c033499a4a052abe000c46242679b37460fda9",
       "attempt_events_sha256": "3e40e20ced1ac969d2661980bfea958157d957b7822e99cc29f5e6748b1132ea",
       "terminal_sha256": "5ab83baff2b034a12cfc85de8f2f4e8c99d34da64eeacc79e391ca531c3633e4"
+    },
+    {
+      "run_id": "wp17-qualification-9e36bcc5-final16",
+      "source_commit": "9e36bcc53a3d135f68eba90556477326ad0a440f",
+      "source_tree": "59cb31a1304bdd60bcfb96603ab58a7f767702ca",
+      "outcome": "fail",
+      "reason": "all campaign, nested absence, race, and performance gates passed, but final semantic verification strictly decoded standard go test JSON against an incomplete envelope type that omitted the Time field",
+      "attempt_events_sha256": "1d96460aae9183f11cd2159532e89e81bd29e76c16dd16533372d3d1a44a81a4",
+      "terminal_sha256": "c2c6d42660162406e08d9fada27fc29a38b58e0b9581fcf1d055e416228388ce"
     }
   ]
 }
