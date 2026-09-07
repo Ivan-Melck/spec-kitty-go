@@ -17,18 +17,17 @@ M2_RUN_ID ?= m2-$$(git rev-parse --short=12 HEAD)-$$(date -u +%Y%m%dT%H%M%SZ)
 M2_EVIDENCE_ROOT ?= $(ARTIFACT_DIR)/m2
 M2_PRODUCT_BINARY ?= $(BUILD_DIR)/spec-kitty
 M2_QUALIFIER_BINARY ?= $(BUILD_DIR)/spk-m2-qualification
+M2_BUILD_SOURCE ?= $(BUILD_DIR)/candidate-source
 M2_ACTOR_ID ?=
 M2_PROCESS_ID ?=
 M2_PROFILE_REVISION ?=
 M2_IMPLEMENTATION_CONTRIBUTORS ?=
 M2_PROFILE_DOCUMENT ?= $(CURDIR)/docs/programs/evidence/m2-producer-profile.json
-M2_GIT_DIR := $(shell git rev-parse --absolute-git-dir)
-M2_BUILD_ENV := GIT_DIR="$(M2_GIT_DIR)" GIT_WORK_TREE="$(CURDIR)" CGO_ENABLED=0
 
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-performance m2-short m2-qualification m2-verify-evidence
+.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-build-candidate m2-performance m2-short m2-qualification m2-verify-evidence
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -209,10 +208,35 @@ m2-sbom: ## Generate deterministic CycloneDX twice and require byte identity.
 	$(GO) run ./cmd/spk-m2-qualification sbom --repository "$(CURDIR)" --output "$(M2_EVIDENCE_ROOT)/sbom-2.cdx.json"
 	cmp "$(M2_EVIDENCE_ROOT)/sbom-1.cdx.json" "$(M2_EVIDENCE_ROOT)/sbom-2.cdx.json"
 
+m2-build-candidate: ## Build exact-source M2 binaries from a clean standalone clone.
+	@mkdir -p "$(BUILD_DIR)"
+	@test -z "$$(git -C "$(CURDIR)" status --porcelain=v1 --untracked-files=all)" || { echo 'M2 candidate source is not clean' >&2; exit 1; }
+	@test ! -e "$(M2_BUILD_SOURCE)" || { echo 'M2_BUILD_SOURCE already exists; use a fresh BUILD_DIR' >&2; exit 1; }
+	@umask 077; git clone --quiet --no-hardlinks --no-checkout "$(CURDIR)" "$(M2_BUILD_SOURCE)"
+	@candidate="$$(git -C "$(CURDIR)" rev-parse HEAD)"; \
+	tree="$$(git -C "$(CURDIR)" rev-parse 'HEAD^{tree}')"; \
+	git -C "$(M2_BUILD_SOURCE)" checkout --quiet --detach "$$candidate"; \
+	test -d "$(M2_BUILD_SOURCE)/.git"; \
+	test "$$(git -C "$(M2_BUILD_SOURCE)" rev-parse HEAD)" = "$$candidate"; \
+	test "$$(git -C "$(M2_BUILD_SOURCE)" rev-parse 'HEAD^{tree}')" = "$$tree"; \
+	test -z "$$(git -C "$(M2_BUILD_SOURCE)" status --porcelain=v1 --untracked-files=all)"; \
+	printf 'm2 candidate build source: commit=%s tree=%s\n' "$$candidate" "$$tree"
+	@toolchain="$$(cd "$(M2_BUILD_SOURCE)" && $(GO) version | awk '{print $$3}')"; \
+	test "$$toolchain" = go1.26.7 || { echo "M2 candidate build requires go1.26.7, got $$toolchain" >&2; exit 1; }
+	@cd "$(M2_BUILD_SOURCE)" && CGO_ENABLED=0 $(GO) build -trimpath -o "$(abspath $(M2_PRODUCT_BINARY))" ./cmd/spec-kitty
+	@cd "$(M2_BUILD_SOURCE)" && CGO_ENABLED=0 $(GO) build -trimpath -o "$(abspath $(M2_QUALIFIER_BINARY))" ./cmd/spk-m2-qualification
+	@candidate="$$(git -C "$(CURDIR)" rev-parse HEAD)"; \
+	for binary in "$(abspath $(M2_PRODUCT_BINARY))" "$(abspath $(M2_QUALIFIER_BINARY))"; do \
+		metadata="$$(go version -m "$$binary")"; \
+		printf '%s\n' "$$metadata" | grep -Fq "vcs.revision=$$candidate"; \
+		printf '%s\n' "$$metadata" | grep -Fq 'vcs.modified=false'; \
+		printf '%s\n' "$$metadata" | grep -Fq -- '-trimpath=true'; \
+		printf '%s\n' "$$metadata" | grep -Fq 'CGO_ENABLED=0'; \
+	done
+
 m2-performance: ## Run independently observed recovery/query/durable-mutation qualification.
 	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
-	$(M2_BUILD_ENV) $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
-	$(M2_BUILD_ENV) $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
+	@$(MAKE) --no-print-directory m2-build-candidate
 	"$(M2_QUALIFIER_BINARY)" measure --repository "$(CURDIR)" --sidecar "$(M2_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" --output "$(M2_EVIDENCE_ROOT)/performance.json"
 
 m2-short: m2-mutants-smoke ## Run the strict sidecar-free PR contracts, structural absence, bounded race, mutant, static, and module gates.
@@ -230,8 +254,7 @@ m2-qualification: ## Produce one immutable technical-pass bundle eligible for in
 	@test -n "$(M2_PROFILE_REVISION)" || { echo 'M2_PROFILE_REVISION is required' >&2; exit 1; }
 	@test -n "$(M2_IMPLEMENTATION_CONTRIBUTORS)" || { echo 'M2_IMPLEMENTATION_CONTRIBUTORS is required' >&2; exit 1; }
 	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
-	$(M2_BUILD_ENV) $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
-	$(M2_BUILD_ENV) $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
+	@$(MAKE) --no-print-directory m2-build-candidate
 	"$(M2_QUALIFIER_BINARY)" run --repository "$(CURDIR)" --output "$(M2_EVIDENCE_ROOT)" \
 		--sidecar "$(M2_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" \
 		--actor-id "$(M2_ACTOR_ID)" --process-id "$(M2_PROCESS_ID)" \
