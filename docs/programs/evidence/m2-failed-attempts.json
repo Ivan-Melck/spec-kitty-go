@@ -111,6 +111,16 @@
         "recovery_p95_ms": 2416.207486,
         "recovery_limit_ms": 2000
       }
+    },
+    {
+      "run_id": "wp17-performance-dd6fdb4d-final07",
+      "source_commit": "dd6fdb4dd1f74ba66387815036c055cf491917ae",
+      "source_tree": "edd000e8defbdc48497ee2fe5bda584e15f8736a",
+      "outcome": "non_admissible",
+      "reason": "pre-run environment observation was outside the source-bound reference profile; no performance workload executed",
+      "transcript_path": "/tmp/go-kitty3-campaign-dd6fdb4d-final07/m2/performance.json.events.jsonl",
+      "transcript_sha256": "e29fd3016ed5f88aa2670dab5b3ebb5b242780c079df83c3f78586ea06b962df",
+      "transcript_bytes": 1827
     }
   ]
 }
