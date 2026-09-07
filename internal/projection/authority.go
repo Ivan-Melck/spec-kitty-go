@@ -444,9 +444,6 @@ func (a *AuthorityV2) restore(epoch journalv2.RuntimeEpochID, recovered restore.
 }
 
 func (a *AuthorityV2) canonicalProjectionDigestV2(states []playback.StateV2) (journalv2.Digest, error) {
-	if len(states) == 0 {
-		return journalv2.Digest{}, nil
-	}
 	result, err := playback.RunV2(playback.InputV2{Base: states, EventRegistry: a.registry, Reducers: a.reducers, ExpectedEventRegistryDigest: a.eventDigest, ExpectedReducerRegistryDigest: a.reducerDigest})
 	if err != nil || result.Validate() != nil {
 		return journalv2.Digest{}, &ErrorV2{ErrorProjectionCorruptV2, "snapshot_playback"}

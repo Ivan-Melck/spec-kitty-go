@@ -15,6 +15,7 @@ import (
 	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	playback "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/playback"
 )
 
 type projectionCommitPortV2 struct {
@@ -478,6 +479,26 @@ func projectionFixtureV2(t *testing.T) (*AuthorityV2, *journalv2.PublicationCoor
 		t.Fatal(err)
 	}
 	return authority, coordinator
+}
+
+func TestSameRevisionEmptyProductProjectionUsesCanonicalEmptyDigest(t *testing.T) {
+	authority, _ := projectionFixtureV2(t)
+	digest, err := authority.canonicalProjectionDigestV2(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := playback.RunV2(playback.InputV2{
+		EventRegistry:                 authority.registry,
+		Reducers:                      authority.reducers,
+		ExpectedEventRegistryDigest:   authority.eventDigest,
+		ExpectedReducerRegistryDigest: authority.reducerDigest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest == (journalv2.Digest{}) || digest != empty.CanonicalProjectionDigest() {
+		t.Fatalf("live empty digest=%s restore empty digest=%s", digest, empty.CanonicalProjectionDigest())
+	}
 }
 
 func projectionReducersFixtureV2(registry journalv2.EventRegistryV2) (journalv2.ReducerSetV2, error) {
