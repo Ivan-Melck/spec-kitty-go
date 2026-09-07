@@ -197,7 +197,7 @@ m2-mutants-smoke: ## Strictly prove the sidecar-free PR mutant census with no mi
 
 m2-absence: ## Qualify source/module/binary/install/help/runtime SQLite absence from a clean archive.
 	@mkdir -p "$(M2_EVIDENCE_ROOT)"
-	SPEC_KITTY_WP15_GAPDBD="$(M2_WP16_GAPDBD)" scripts/m2-absence/inspect.sh "$(M2_EVIDENCE_ROOT)/absence"
+	SPEC_KITTY_M2_GO_VERSION=go1.26.7 SPEC_KITTY_WP15_GAPDBD="$(M2_WP16_GAPDBD)" scripts/m2-absence/inspect.sh "$(M2_EVIDENCE_ROOT)/absence"
 
 m2-absence-source: ## Run the sidecar-free structural source and module-graph absence gate.
 	$(GO) test -count=1 ./internal/architecture \
