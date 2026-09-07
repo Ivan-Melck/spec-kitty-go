@@ -535,6 +535,9 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 	}
 	resolution, err := s.port.ResolveIntegrationOperation(ctx, binding)
 	if err != nil {
+		if state, concurrentErr, ok := s.resolveConcurrentIntegrationV2(ctx, binding, seed); ok {
+			return state, concurrentErr
+		}
 		return IntegrationAttemptStateV2{}, acceptanceErrorV2(KindStoreFailure, "integration_operation")
 	}
 	if resolution.Kind == AcceptanceOperationConflictV2 {
@@ -577,6 +580,14 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 		}
 		proof, err := s.requireIntegrationAuthorityV2(ctx, request)
 		if err != nil {
+			// A concurrent identical first attempt can publish the operation
+			// between this caller's initial absence read and its source-bound
+			// acceptance snapshot. Only an exact same-binding operation turns
+			// that observation error into target contention; genuine provider
+			// failure, collision, and foreign authority retain their errors.
+			if state, concurrentErr, ok := s.resolveConcurrentIntegrationV2(ctx, binding, seed); ok {
+				return state, concurrentErr
+			}
 			return IntegrationAttemptStateV2{}, err
 		}
 		if observed.Attempt == nil {
@@ -604,6 +615,9 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 			}
 			ack, publishErr := s.publish(ctx, plan)
 			if publishErr != nil {
+				if state, concurrentErr, ok := s.resolveConcurrentIntegrationV2(ctx, binding, seed); ok {
+					return state, concurrentErr
+				}
 				return IntegrationAttemptStateV2{}, publishErr
 			}
 			sealed, _ := plan.Publication()
@@ -809,6 +823,26 @@ func (s *IntegrationAuthorityServiceV2) Integrate(ctx context.Context, request I
 			return next, nil
 		}
 	}
+}
+
+// resolveConcurrentIntegrationV2 recognizes only an exact operation binding
+// that became durable while this caller was observing or publishing its first
+// attempt. A resolved, request-identical result is replayed; an exact
+// non-terminal operation is target contention. Absence, binding conflict, and
+// provider failure remain owned by the original error path.
+func (s *IntegrationAuthorityServiceV2) resolveConcurrentIntegrationV2(ctx context.Context, binding journalv2.OperationBindingV2, seed IntegrationAttemptStateV2) (IntegrationAttemptStateV2, error, bool) {
+	concurrent, err := s.port.ResolveIntegrationOperation(ctx, binding)
+	if err != nil || concurrent.Kind != AcceptanceOperationExactV2 {
+		return IntegrationAttemptStateV2{}, nil, false
+	}
+	if concurrent.State.Status() == journalv2.StatusResolved {
+		state, decodeErr := DecodeIntegrationAttemptStateV2(concurrent.State.Result())
+		if decodeErr == nil && sameIntegrationAttemptRequestV2(seed, state) {
+			return state, nil, true
+		}
+		return IntegrationAttemptStateV2{}, nil, false
+	}
+	return IntegrationAttemptStateV2{}, acceptanceErrorV2(KindAuthorityBusy, "integration_operation"), true
 }
 
 type integrationAuthorityProofV2 struct {

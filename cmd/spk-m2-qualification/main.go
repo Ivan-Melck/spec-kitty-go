@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,6 +30,22 @@ func run(arguments []string) error {
 		return fmt.Errorf("command required: preflight, run, verify, diagnose, finalize-review, or verify-release")
 	}
 	switch arguments[0] {
+	case "short":
+		set := flag.NewFlagSet("short", flag.ContinueOnError)
+		repository := set.String("repository", "", "absolute repository root")
+		group := set.String("group", "core", "closed gate group: core, mutants, capabilities-full, or mutants-full")
+		timeout := set.Duration("timeout", 8*time.Minute, "per-package bound")
+		if err := set.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if !filepath.IsAbs(*repository) {
+			return fmt.Errorf("absolute repository path is required")
+		}
+		report, err := m2.RunShortGate(context.Background(), *repository, *group, *timeout)
+		if encodeErr := json.NewEncoder(os.Stdout).Encode(report); encodeErr != nil && err == nil {
+			err = encodeErr
+		}
+		return err
 	case "sbom":
 		set := flag.NewFlagSet("sbom", flag.ContinueOnError)
 		repository := set.String("repository", "", "absolute repository root")
@@ -49,11 +66,12 @@ func run(arguments []string) error {
 		repository := set.String("repository", "", "absolute repository root")
 		output := set.String("output", "", "absolute output path")
 		sidecar := set.String("sidecar", "", "absolute admitted sidecar")
+		product := set.String("product-binary", "", "absolute production binary")
 		runID := set.String("run-id", "", "unique RunID")
 		if err := set.Parse(arguments[1:]); err != nil {
 			return err
 		}
-		if !filepath.IsAbs(*repository) || !filepath.IsAbs(*output) || !filepath.IsAbs(*sidecar) || *runID == "" {
+		if !filepath.IsAbs(*repository) || !filepath.IsAbs(*output) || !filepath.IsAbs(*sidecar) || !filepath.IsAbs(*product) || *runID == "" {
 			return fmt.Errorf("absolute paths and RunID are required")
 		}
 		source, err := m2.ObserveCleanSource(*repository)
@@ -65,7 +83,11 @@ func run(arguments []string) error {
 			return err
 		}
 		defer os.RemoveAll(privateRoot)
-		raw, err := m2external.MeasurePerformance(context.Background(), m2external.PerformanceConfig{RunID: *runID, Repository: *repository, Executable: *sidecar, RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second})
+		qualifier, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		raw, _, err := m2external.MeasurePerformance(context.Background(), m2external.PerformanceConfig{RunID: *runID, Repository: *repository, Executable: *sidecar, QualifierExecutable: qualifier, ProductExecutable: *product, Reference: filepath.Join(*repository, "docs/programs/evidence/m2-performance-reference.json"), RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second})
 		if err != nil {
 			return err
 		}
@@ -249,14 +271,28 @@ func flags(arguments []string) (m2.PreflightConfig, time.Duration, error) {
 	actorID := set.String("actor-id", "", "implementation ActorID")
 	processID := set.String("process-id", "", "implementation ProcessID")
 	profileRevision := set.String("profile-revision", "", "resolved implementation profile revision")
+	profileDocument := set.String("profile-document", "", "absolute immutable resolved profile JSON")
+	contributors := set.String("implementation-contributors", "", "comma-separated complete implementation ActorID census")
 	timeout := set.Duration("timeout", 45*time.Minute, "per-selector timeout")
 	if err := set.Parse(arguments); err != nil {
 		return m2.PreflightConfig{}, 0, err
 	}
-	return m2.PreflightConfig{RunID: *runID, Repository: *repository, OutputRoot: *output, SidecarPath: *sidecar, ProductBinary: *product, Producer: m2.ProducerIdentity{SchemaVersion: 1, ActorID: *actorID, ProcessID: *processID, ProfileID: "implementer-ivan", ProfileRevision: *profileRevision}}, *timeout, nil
+	contributorIDs := strings.Split(*contributors, ",")
+	for index := range contributorIDs {
+		contributorIDs[index] = strings.TrimSpace(contributorIDs[index])
+	}
+	slices.Sort(contributorIDs)
+	return m2.PreflightConfig{RunID: *runID, Repository: *repository, OutputRoot: *output, SidecarPath: *sidecar, ProductBinary: *product, ProfileDocument: *profileDocument, Producer: m2.ProducerIdentity{SchemaVersion: 1, ExecutorActorID: *actorID, ProcessID: *processID, ImplementationContributors: contributorIDs, ProfileID: "implementer-ivan", ProfileRevision: *profileRevision}}, *timeout, nil
 }
 
 func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Duration) (publication m2.Publication, resultErr error) {
+	profileBytes, err := os.ReadFile(config.ProfileDocument)
+	if err != nil {
+		return m2.Publication{}, err
+	}
+	if m2.SHA256(profileBytes) != config.Producer.ProfileRevision {
+		return m2.Publication{}, fmt.Errorf("profile revision differs from exact raw profile-show bytes")
+	}
 	preflight, err := m2.Preflight(config)
 	if err != nil {
 		return m2.Publication{}, err
@@ -311,7 +347,12 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 		return m2.Publication{}, err
 	}
 	defer os.RemoveAll(privateRoot)
-	performance, err := m2external.MeasurePerformance(ctx, m2external.PerformanceConfig{RunID: config.RunID, Repository: config.Repository, Executable: config.SidecarPath, RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: preflight.Source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second})
+	referencePath := filepath.Join(config.Repository, "docs/programs/evidence/m2-performance-reference.json")
+	qualifierPath, err := os.Executable()
+	if err != nil {
+		return m2.Publication{}, err
+	}
+	performance, performanceTranscript, err := m2external.MeasurePerformance(ctx, m2external.PerformanceConfig{RunID: config.RunID, Repository: config.Repository, Executable: config.SidecarPath, QualifierExecutable: qualifierPath, ProductExecutable: config.ProductBinary, Reference: referencePath, RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: preflight.Source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second})
 	performanceBytes, marshalPerformanceErr := m2.CanonicalJSON(performance)
 	if marshalPerformanceErr == nil {
 		_ = attempt.Capture("performance.json", performanceBytes)
@@ -320,6 +361,10 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 		return publication, err
 	}
 	performanceSummary, err := m2.SummarizePerformance(performance)
+	if err != nil {
+		return m2.Publication{}, err
+	}
+	referenceBytes, err := os.ReadFile(referencePath)
 	if err != nil {
 		return m2.Publication{}, err
 	}
@@ -333,10 +378,6 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 	}
 	if err := m2.VerifySBOMEvidence(sbomRaw, sbom); err != nil || len(secondRaw) == 0 {
 		return m2.Publication{}, fmt.Errorf("CycloneDX evidence is not reproducible: %w", err)
-	}
-	qualifierPath, err := os.Executable()
-	if err != nil {
-		return m2.Publication{}, err
 	}
 	if err := m2.VerifyBuiltBinary(qualifierPath, preflight.Source); err != nil {
 		return m2.Publication{}, fmt.Errorf("qualifier binary binding: %w", err)
@@ -383,6 +424,8 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 		fileInput("contract-events.json", "contract", filepath.Join(config.Repository, "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/event-family-registry-v2.json")),
 		fileInput("independent-review-input.md", "review-input", filepath.Join(config.Repository, "docs/programs/evidence/m2-independent-review-input.md")),
 		m2.ArtifactInput{Path: "performance.json", Kind: "performance", Data: performanceBytes},
+		m2.ArtifactInput{Path: "performance.go-test.jsonl", Kind: "performance-raw", Data: performanceTranscript},
+		m2.ArtifactInput{Path: "performance-reference.json", Kind: "performance-reference", Data: referenceBytes},
 		m2.ArtifactInput{Path: "sbom.cdx.json", Kind: "sbom", Data: sbom},
 		m2.ArtifactInput{Path: "sbom.go-list.json", Kind: "sbom-raw", Data: sbomRaw},
 		m2.ArtifactInput{Path: "bin/spk-m2-qualification", Kind: "binary", Data: qualifier},
@@ -391,6 +434,7 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 		m2.ArtifactInput{Path: "install/help.stdout", Kind: "install-smoke-raw", Data: helpOutput},
 		m2.ArtifactInput{Path: "install/runtime-smoke.json", Kind: "install-smoke", Data: helpReceipt},
 		m2.ArtifactInput{Path: "producer-identity.json", Kind: "producer-identity", Data: producerIdentity},
+		m2.ArtifactInput{Path: "producer-profile.json", Kind: "producer-profile", Data: profileBytes},
 		m2.ArtifactInput{Path: "sidecar/gapdbd", Kind: "sidecar", Data: sidecarBytes},
 	)
 	for _, input := range inputs {

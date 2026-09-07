@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 )
 
 func TestConcurrentIndependentAuthoritySmoke(t *testing.T) {
@@ -56,6 +58,7 @@ func runSameAggregateConflicts(t *testing.T, trials int) {
 	t.Helper()
 	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: fmt.Sprintf("%s-%d", t.Name(), trials)})
 	for trial := range trials {
+		started := time.Now()
 		missionID := fmt.Sprintf("contended-%03d", trial)
 		commands := []mission.ReadinessAuthorityCommandV2{
 			missionCreateCommand(t, h.host.RuntimeEpochID(), missionID, fmt.Sprintf("contender-%03d-a", trial)),
@@ -76,7 +79,17 @@ func runSameAggregateConflicts(t *testing.T, trials int) {
 		if winners != 1 || losers != 1 {
 			t.Fatalf("trial=%d winners=%d losers=%d", trial, winners, losers)
 		}
-		assertUniversalInvariants(t, h, "project-concurrency", missionID, fmt.Sprintf("same-aggregate-%03d", trial))
+		invariants := assertUniversalInvariants(t, h, "project-concurrency", missionID, fmt.Sprintf("same-aggregate-%03d", trial))
+		if trials == 100 {
+			receipt, err := iterationreceipt.New(
+				iterationreceipt.DefinitionID("fault/concurrent-claims"), trial, missionID, "mission-head-cas", "one-winner-one-version-conflict",
+				time.Since(started), map[string]int{"winners": winners, "typed_losers": losers}, json.RawMessage(invariants),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			iterationreceipt.Emit(t, receipt)
+		}
 	}
 	t.Logf("campaign seed=%s trials=%d one_winner=%d typed_losers=%d", t.Name(), trials, trials, trials)
 }

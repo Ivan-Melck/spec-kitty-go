@@ -3,13 +3,163 @@ package gapdb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controlstore"
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 )
+
+func TestM2OutboxFamilyBoundPublicationCutCampaign(t *testing.T) {
+	registry := journalv2.DefaultEventRegistryV2()
+	executionSource, effectSource, coordinates := outboxGapDBSourceFixtureV2(t, registry)
+	intent, err := controlstore.BindDurableOutboxIntentV2(effectSource, 19, coordinates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := bindGapDBOutboxCommandV2(t, controlstore.OutboxCommandV2{Action: controlstore.OutboxStartAttemptV2, Intent: intent, AttemptID: "attempt-m2-family-cut", RuntimeEpochID: "epoch-outbox", OperationEventID: "event-m2-outbox-operation", OutboxEventID: "event-m2-outbox"}, "m2-family-cut")
+	capability, err := controlstore.BuildOutboxAuthorityPlanV2(command, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := capability.Publication()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionID := iterationreceipt.DefinitionID("fault/outbox-bound-publication-cuts")
+	cuts := []string{"before-publication", "durable-before-acknowledgement", "acknowledgement-before-projection", "lost-acknowledgement", "malformed-acknowledgement"}
+	for _, cut := range cuts {
+		for trial := 0; trial < 100; trial++ {
+			started := time.Now()
+			facts, invariants := executeOutboxPublicationCutV2(t, []journalv2.SealedCommitPlanV2{executionSource, effectSource}, capability, plan, cut)
+			record, err := iterationreceipt.NewFamilyCut(definitionID, "outbox", cut, trial, fmt.Sprintf("outbox/%s/%03d", cut, trial), plan.Digest().String(), string(plan.PublicationID()), []string{"operation", "outbox"}, "interrupted-reconciled-once", time.Since(started), facts, invariants)
+			if err != nil {
+				t.Fatal(err)
+			}
+			iterationreceipt.EmitFamilyCut(t, record)
+		}
+	}
+}
+
+type outboxCutProbeV2 struct {
+	publication journalv2.PublicationID
+	stage       journalv2.PublicationBoundaryStageV2
+	fired       bool
+}
+
+func (p *outboxCutProbeV2) PublicationBoundary(_ context.Context, snapshot journalv2.PublicationBoundarySnapshotV2) error {
+	if !p.fired && snapshot.Plan.PublicationID() == p.publication && snapshot.Stage == p.stage {
+		p.fired = true
+		return journalv2.InterruptQualificationPublicationV2(snapshot.Stage)
+	}
+	return nil
+}
+
+type outboxCutPortV2 struct {
+	revision    uint64
+	target      journalv2.PublicationID
+	mode        string
+	calls       int
+	observation journalv2.CommitObservationV2
+}
+
+func (p *outboxCutPortV2) Commit(_ context.Context, plan journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error) {
+	p.calls++
+	p.revision++
+	observation, err := journalv2.NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), p.revision, p.revision, plan.MutationCount(), plan.AssertionCount())
+	if err != nil {
+		return journalv2.CommitObservationV2{}, err
+	}
+	if plan.PublicationID() != p.target {
+		return observation, nil
+	}
+	p.observation = observation
+	switch p.mode {
+	case "lost-acknowledgement":
+		return journalv2.CommitObservationV2{}, errors.New("qualification outbox acknowledgement lost")
+	case "malformed-acknowledgement":
+		return journalv2.NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.RecordSetDigest(), plan.RecordSetDigest(), p.revision, p.revision, plan.MutationCount(), plan.AssertionCount())
+	default:
+		return observation, nil
+	}
+}
+
+func executeOutboxPublicationCutV2(t *testing.T, prefix []journalv2.SealedCommitPlanV2, capability controlstore.OutboxAuthorityPlanV2, target journalv2.SealedCommitPlanV2, cut string) (map[string]any, map[string]any) {
+	t.Helper()
+	tracker, coordinator, port, authority := newOutboxCutReplayV2(t, target, cut)
+	for _, prerequisite := range prefix {
+		if _, err := coordinator.Publish(t.Context(), prerequisite); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beforeCalls, beforeLedger := port.calls, tracker.LedgerSize()
+	if _, err := authority.PublishOutbox(t.Context(), capability); err == nil {
+		t.Fatalf("outbox cut %s did not interrupt", cut)
+	}
+	wantCalls := beforeCalls + 1
+	if cut == "before-publication" {
+		wantCalls = beforeCalls
+	}
+	if port.calls != wantCalls || coordinator.UnresolvedCount() != 1 || tracker.LedgerSize() != beforeLedger {
+		t.Fatalf("outbox cut %s escaped boundary: calls=%d/%d unresolved=%d ledger=%d/%d", cut, port.calls, wantCalls, coordinator.UnresolvedCount(), tracker.LedgerSize(), beforeLedger)
+	}
+	if cut == "before-publication" {
+		tracker, coordinator, port, authority = newOutboxCutReplayV2(t, target, "")
+		for _, prerequisite := range prefix {
+			if _, err := coordinator.Publish(t.Context(), prerequisite); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := authority.PublishOutbox(t.Context(), capability); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if port.observation.PublicationID() == "" {
+			t.Fatal("outbox cut omitted durable observation")
+		}
+		foreign, _ := journalv2.NewCommitObservationWithAssertionsV2(target.PublicationID(), target.RecordSetDigest(), target.RecordSetDigest(), port.observation.Revision(), port.observation.DurableThroughRevision(), target.MutationCount(), target.AssertionCount())
+		if _, err := coordinator.ReconcileComplete(target, foreign); err == nil {
+			t.Fatal("outbox substituted observation reconciled")
+		}
+		if _, err := coordinator.ReconcileComplete(target, port.observation); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := coordinator.ReconcileComplete(target, port.observation); err == nil {
+			t.Fatal("outbox duplicate reconciliation succeeded")
+		}
+	}
+	if coordinator.UnresolvedCount() != 0 || tracker.LedgerSize() != len(prefix)+1 {
+		t.Fatal("outbox cut did not reach one terminal projection")
+	}
+	return map[string]any{"cut": cut, "qualified_family": "outbox", "plan_index": 2, "provider_calls": port.calls, "publication_id": target.PublicationID(), "emitted_families": []string{"operation", "outbox"}}, map[string]any{"unresolved": 0, "ledger_size": tracker.LedgerSize(), "expected_ledger_size": len(prefix) + 1, "one_terminal_projection": true, "substitution_refused": true}
+}
+
+func newOutboxCutReplayV2(t *testing.T, target journalv2.SealedCommitPlanV2, cut string) (*journalv2.ProjectionTrackerV2, *journalv2.PublicationCoordinatorV2, *outboxCutPortV2, *outboxAuthorityV2) {
+	t.Helper()
+	registry := journalv2.DefaultEventRegistryV2()
+	tracker, err := journalv2.NewProjectionTrackerV2(outboxProjectionReducersV2(t, registry), journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := &outboxCutPortV2{target: target.PublicationID(), mode: cut}
+	var probe journalv2.QualificationPublicationBoundaryProbeV2
+	switch cut {
+	case "before-publication":
+		probe = &outboxCutProbeV2{publication: target.PublicationID(), stage: journalv2.PublicationRegisteredBeforeCommitV2}
+	case "durable-before-acknowledgement":
+		probe = &outboxCutProbeV2{publication: target.PublicationID(), stage: journalv2.PublicationDurableObservedBeforeAckV2}
+	case "acknowledgement-before-projection":
+		probe = &outboxCutProbeV2{publication: target.PublicationID(), stage: journalv2.PublicationAckCreatedBeforeProjectionV2}
+	}
+	coordinator, err := journalv2.NewQualificationPublicationCoordinatorV2(port, tracker, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tracker, coordinator, port, newOutboxAuthorityV2ForTest(coordinator)
+}
 
 func TestOutboxAdapterAdmitsOnlyExactCapabilityPlanV2(t *testing.T) {
 	registry := journalv2.DefaultEventRegistryV2()

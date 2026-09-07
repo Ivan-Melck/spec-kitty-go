@@ -14,11 +14,12 @@ import (
 )
 
 type ProducerIdentity struct {
-	SchemaVersion   int    `json:"schema_version"`
-	ActorID         string `json:"actor_id"`
-	ProcessID       string `json:"process_id"`
-	ProfileID       string `json:"profile_id"`
-	ProfileRevision string `json:"profile_revision"`
+	SchemaVersion              int      `json:"schema_version"`
+	ExecutorActorID            string   `json:"executor_actor_id"`
+	ProcessID                  string   `json:"process_id"`
+	ImplementationContributors []string `json:"implementation_contributors"`
+	ProfileID                  string   `json:"profile_id"`
+	ProfileRevision            string   `json:"profile_revision"`
 }
 
 type ProducerArchiveReceipt struct {
@@ -32,22 +33,22 @@ type ProducerArchiveReceipt struct {
 }
 
 type IndependentReviewReceipt struct {
-	SchemaVersion       int                    `json:"schema_version"`
-	RunID               string                 `json:"run_id"`
-	SourceCommit        string                 `json:"source_commit"`
-	SourceTree          string                 `json:"source_tree"`
-	ManifestSHA256      string                 `json:"manifest_sha256"`
-	ProducerArchiveSHA  string                 `json:"producer_archive_sha256"`
-	ImplementationActor string                 `json:"implementation_actor_id"`
-	ReviewerActor       string                 `json:"reviewer_actor_id"`
-	ReviewerProcess     string                 `json:"reviewer_process_id"`
-	ReviewerProfile     string                 `json:"reviewer_profile_id"`
-	ProfileRevision     string                 `json:"profile_revision"`
-	Commands            []ReviewCommandReceipt `json:"commands"`
-	Findings            []ReviewFinding        `json:"findings"`
-	CriticalOpen        int                    `json:"critical_open"`
-	HighOpen            int                    `json:"high_open"`
-	Verdict             string                 `json:"verdict"`
+	SchemaVersion              int                    `json:"schema_version"`
+	RunID                      string                 `json:"run_id"`
+	SourceCommit               string                 `json:"source_commit"`
+	SourceTree                 string                 `json:"source_tree"`
+	ManifestSHA256             string                 `json:"manifest_sha256"`
+	ProducerArchiveSHA         string                 `json:"producer_archive_sha256"`
+	ImplementationContributors []string               `json:"implementation_contributors"`
+	ReviewerActor              string                 `json:"reviewer_actor_id"`
+	ReviewerProcess            string                 `json:"reviewer_process_id"`
+	ReviewerProfile            string                 `json:"reviewer_profile_id"`
+	ProfileRevision            string                 `json:"profile_revision"`
+	Commands                   []ReviewCommandReceipt `json:"commands"`
+	Findings                   []ReviewFinding        `json:"findings"`
+	CriticalOpen               int                    `json:"critical_open"`
+	HighOpen                   int                    `json:"high_open"`
+	Verdict                    string                 `json:"verdict"`
 }
 
 type ReviewCommandReceipt struct {
@@ -133,7 +134,7 @@ func FinalizeIndependentReview(outputRoot, evidenceDirectory, producerArchivePat
 	if err := DecodeStrict(reviewBytes, &review); err != nil {
 		return ReleaseReceipt{}, err
 	}
-	if review.SchemaVersion != 1 || review.RunID != producer.RunID || review.SourceCommit != expected.Commit || review.SourceTree != expected.Tree || review.ManifestSHA256 != expectedManifestSHA || review.ProducerArchiveSHA != expectedArchiveSHA || review.ImplementationActor != implementation.ActorID || review.ReviewerActor == "" || review.ReviewerActor == implementation.ActorID || review.ReviewerProcess == "" || review.ReviewerProfile == "" || review.ProfileRevision == "" || len(review.Commands) == 0 || review.Verdict != "pass" {
+	if review.SchemaVersion != 1 || review.RunID != producer.RunID || review.SourceCommit != expected.Commit || review.SourceTree != expected.Tree || review.ManifestSHA256 != expectedManifestSHA || review.ProducerArchiveSHA != expectedArchiveSHA || !slices.Equal(review.ImplementationContributors, implementation.ImplementationContributors) || review.ReviewerActor == "" || slices.Contains(implementation.ImplementationContributors, review.ReviewerActor) || review.ReviewerProcess == "" || review.ReviewerProfile == "" || review.ProfileRevision == "" || len(review.Commands) == 0 || review.Verdict != "pass" {
 		return ReleaseReceipt{}, fmt.Errorf("independent review receipt is absent, non-independent, mismatched, or non-pass")
 	}
 	reviewMembers, criticalOpen, highOpen, err := verifyReviewBundle(reviewBundle, review)
@@ -291,7 +292,7 @@ func VerifyReleaseArchive(archivePath, receiptPath string, expected Source, expe
 		return receipt, err
 	}
 	_, critical, high, err := verifyReviewBundle(reviewRoot, review)
-	if err != nil || critical != 0 || high != 0 || review.CriticalOpen != 0 || review.HighOpen != 0 || review.Verdict != "pass" || review.ImplementationActor != producerIdentity.ActorID || review.ReviewerActor == "" || review.ReviewerActor == producerIdentity.ActorID || review.ReviewerProcess == "" || review.ReviewerProfile == "" || review.ProfileRevision == "" || review.RunID != receipt.RunID || review.SourceCommit != expected.Commit || review.SourceTree != expected.Tree || review.ManifestSHA256 != expectedManifestSHA || review.ProducerArchiveSHA != expectedProducerSHA {
+	if err != nil || critical != 0 || high != 0 || review.CriticalOpen != 0 || review.HighOpen != 0 || review.Verdict != "pass" || !slices.Equal(review.ImplementationContributors, producerIdentity.ImplementationContributors) || review.ReviewerActor == "" || slices.Contains(producerIdentity.ImplementationContributors, review.ReviewerActor) || review.ReviewerProcess == "" || review.ReviewerProfile == "" || review.ProfileRevision == "" || review.RunID != receipt.RunID || review.SourceCommit != expected.Commit || review.SourceTree != expected.Tree || review.ManifestSHA256 != expectedManifestSHA || review.ProducerArchiveSHA != expectedProducerSHA {
 		return receipt, fmt.Errorf("nested independent review did not verify: %w", err)
 	}
 	wantMatrix, err := buildFinalAcceptanceMatrix(filepath.Join(evidenceRoot, "acceptance-matrix.json"), members["review/review.json"])

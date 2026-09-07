@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -33,12 +34,21 @@ type terminalWorkFacts struct {
 	operations              []terminalOperationEvidence
 }
 
+func scenarioRepositoryPath(h *portableHarness) string {
+	if path := h.git.repositoryPath(); path != "" {
+		return path
+	}
+	return h.root
+}
+
 func completeTwoItemMission(t *testing.T, h *portableHarness, missionState mission.ReadinessAuthorityStateV2, revision workgraph.RevisionV2, governance governancecontext.Context, admitted map[ids.WorkID]execution.ExecutionSlotStateV2, restartEveryBoundary bool) []terminalOperationEvidence {
 	t.Helper()
 	repositoryID := ids.RepositoryID("repository-two-item")
 	targetRef := "refs/heads/main"
-	base := strings.Repeat("a", 40)
-	h.git.enable(repositoryID, targetRef, base)
+	base, err := h.git.enable(repositoryID, targetRef, strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	workIDs := []ids.WorkID{"work-a", "work-b"}
 	facts := make(map[ids.WorkID]*terminalWorkFacts, len(workIDs))
@@ -52,7 +62,10 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 
 	for index, workID := range workIDs {
 		ensureWorkCurrent(t, h, facts[workID], governance, "before-handoff-"+workID.String())
-		candidate := fmt.Sprintf("%040x", index+11)
+		candidate, err := h.git.createCandidate(t.Context(), facts[workID].binding, index)
+		if err != nil {
+			t.Fatal(err)
+		}
 		facts[workID].handoff = submitTerminalHandoff(t, h, facts[workID], revision, repositoryID, candidate, index)
 		assertUniversalInvariants(t, h, facts[workID].execution.ProjectID.String(), facts[workID].execution.MissionID.String(), "handoff-"+workID.String())
 		restartWorkAfterDurableBoundary(t, h, facts[workID], governance, "handoff-"+workID.String(), restartEveryBoundary)
@@ -70,7 +83,9 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 		request := terminalAcceptanceRequest(t, h, facts[workID], revision, repositoryID, policyID, index)
 		currentMission = recordResolvedPolicyFact(t, h, currentMission, request, facts[workID], governance, restartEveryBoundary)
 		request.RuntimeEpochID = h.host.RuntimeEpochID()
+		started := time.Now()
 		accepted, err := h.host.ExecuteAcceptance(t.Context(), h.host.RuntimeEpochID(), request)
+		h.observeMutation([]string{"acceptance", "operation"}, string(request.OperationID), started, err)
 		if err != nil {
 			t.Fatalf("accept %s: %v", workID, err)
 		}
@@ -81,7 +96,7 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 		assertUniversalInvariants(t, h, accepted.State.ProjectID.String(), accepted.State.MissionID.String(), "acceptance-"+workID.String())
 		restartWorkAfterDurableBoundary(t, h, facts[workID], governance, "acceptance-"+workID.String(), restartEveryBoundary)
 
-		integrated, err := h.host.ExecuteIntegration(t.Context(), h.host.RuntimeEpochID(), integration.IntegrationAuthorityRequestV2{
+		integrationRequest := integration.IntegrationAuthorityRequestV2{
 			OperationID: journalv2.OperationID("operation-integrate-" + workID.String()),
 			AttemptID:   "attempt-" + workID.String(), ProjectID: accepted.State.ProjectID,
 			MissionID: accepted.State.MissionID, WorkRevisionID: accepted.State.WorkRevisionID,
@@ -89,10 +104,18 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 			RepositoryID: repositoryID, TargetRef: targetRef, Candidate: accepted.State.Candidate,
 			RuntimeEpochID: h.host.RuntimeEpochID(), ActorID: "actor-integrator",
 			ProcessID: ids.ProcessID("process-integrator-" + workID.String()), Governance: accepted.State.Governance,
-			ObservedAt: terminalTime(index, 40),
-		})
-		if err != nil {
-			t.Fatalf("integrate %s: %v", workID, err)
+			ObservedAt: scenarioTerminalTime(h, index, 40),
+		}
+		var integrated integration.IntegrationAttemptStateV2
+		if index == 0 && h.config.ExerciseLeaseReplacement {
+			integrated = executeConcurrentFirstIntegration(t, h, integrationRequest)
+		} else {
+			started := time.Now()
+			integrated, err = h.host.ExecuteIntegration(t.Context(), h.host.RuntimeEpochID(), integrationRequest)
+			h.observeMutation([]string{"integration_attempt", "integration_target", "operation"}, string(integrationRequest.OperationID), started, err)
+			if err != nil {
+				t.Fatalf("integrate %s: %v", workID, err)
+			}
 		}
 		if integrated.Stage != integration.IntegrationAttemptCompletedV2 {
 			t.Fatalf("integrate %s stage=%s", workID, integrated.Stage)
@@ -114,44 +137,108 @@ func completeTwoItemMission(t *testing.T, h *portableHarness, missionState missi
 	return operations
 }
 
+// executeConcurrentFirstIntegration launches two identical first attempts
+// before publication. Exactly one may mutate Git; the loser either observes
+// the completed operation (exact replay) or a typed busy/stale contention and
+// then reaches that same terminal result by retrying the same operation ID.
+func executeConcurrentFirstIntegration(t *testing.T, h *portableHarness, request integration.IntegrationAuthorityRequestV2) integration.IntegrationAttemptStateV2 {
+	t.Helper()
+	before := h.git.terminalEvidence()
+	type outcome struct {
+		state integration.IntegrationAttemptStateV2
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, 2)
+	for range 2 {
+		go func() {
+			<-start
+			state, err := h.host.ExecuteIntegration(t.Context(), h.host.RuntimeEpochID(), request)
+			results <- outcome{state: state, err: err}
+		}()
+	}
+	close(start)
+	completed := make([]integration.IntegrationAttemptStateV2, 0, 2)
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			if !integration.IsKind(result.err, integration.KindAuthorityBusy) {
+				t.Fatalf("concurrent integration loser was not typed contention: %v", result.err)
+			}
+			replayed, err := h.host.ExecuteIntegration(t.Context(), h.host.RuntimeEpochID(), request)
+			if err != nil || replayed.Stage != integration.IntegrationAttemptCompletedV2 {
+				t.Fatalf("same-operation retry did not reach terminal replay: state=%+v err=%v", replayed, err)
+			}
+			completed = append(completed, replayed)
+			continue
+		}
+		if result.state.Stage != integration.IntegrationAttemptCompletedV2 || result.state.OperationID != request.OperationID {
+			t.Fatalf("concurrent integration returned incomplete authority: %+v", result.state)
+		}
+		completed = append(completed, result.state)
+	}
+	after := h.git.terminalEvidence()
+	if len(completed) != 2 || len(after.Publications)-len(before.Publications) != 1 {
+		t.Fatalf("concurrent integration did not serialize one real Git publication: completed=%d before=%+v after=%+v", len(completed), before, after)
+	}
+	if completed[0].Result != completed[1].Result || completed[0].OperationID != completed[1].OperationID {
+		t.Fatalf("concurrent integration retry/replay diverged: first=%+v second=%+v", completed[0], completed[1])
+	}
+	return completed[0]
+}
+
 func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.ExecutionSlotStateV2, governance governancecontext.Context, repositoryID ids.RepositoryID, pinnedBase string, index int, restartEveryBoundary bool) *terminalWorkFacts {
 	t.Helper()
 	if active.RuntimeEpochID != h.host.RuntimeEpochID() {
 		active = rebindUnboundExecutionToCurrent(t, h, active, governance, "before-workspace-"+active.WorkID.String())
 	}
-	managedRoot := filepath.Join(h.root, "workspaces")
-	canonicalPath := filepath.Join(managedRoot, active.WorkID.String())
+	managedRoot := h.git.managedRoot()
+	if managedRoot == "" {
+		managedRoot = filepath.Join(h.root, "workspaces")
+	}
+	generationSuffix := ""
+	if active.Generation > 1 {
+		generationSuffix = fmt.Sprintf("-g%d", active.Generation)
+	}
+	authoritySuffix := active.WorkID.String() + generationSuffix
+	workspaceTime := func(second int) time.Time {
+		return scenarioTerminalTime(h, index, second)
+	}
+	workspaceID := ids.WorkspaceID("workspace-" + active.WorkID.String() + generationSuffix)
+	canonicalPath := filepath.Join(managedRoot, workspaceID.String())
 	claim, err := workspace.WorkspacePathClaimDigestV2(repositoryID, managedRoot, canonicalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding := workspace.BindingV2{
-		WorkspaceID: ids.WorkspaceID("workspace-" + active.WorkID.String()), ProjectID: active.ProjectID,
+		WorkspaceID: workspaceID, ProjectID: active.ProjectID,
 		MissionID: active.MissionID, WorkRevisionID: active.WorkRevisionID, WorkID: active.WorkID,
 		RunID: active.RunID, LeaseID: active.LeaseID, Generation: active.Generation, Fence: active.Fence,
 		RuntimeEpochID: active.RuntimeEpochID, ActorID: active.ActorID, ProcessID: active.ProcessID,
-		RepositoryID: repositoryID, LaneID: ids.LaneID("lane-" + active.WorkID.String()),
+		RepositoryID: repositoryID, LaneID: ids.LaneID("lane-" + active.WorkID.String() + generationSuffix),
 		ManagedRoot: managedRoot, CanonicalPath: canonicalPath,
 		PathIdentity:    workspace.PathIdentityV2{Absolute: true, Canonical: true, WithinManagedRoot: true, AliasFree: true, SymlinkFree: true},
-		PathClaimDigest: claim, OwnedBranch: "kitty/" + active.WorkID.String(), PinnedBase: pinnedBase,
+		PathClaimDigest: claim, OwnedBranch: "kitty/" + active.WorkID.String() + generationSuffix, PinnedBase: pinnedBase,
 	}
 	contribution, err := workspace.NewBindingContributionV2(workspace.BindingContributionInputV2{
-		Binding: binding, EffectID: journalv2.EffectID("effect-create-" + active.WorkID.String()),
-		EventID: journalv2.EventID("event-workspace-bind-" + active.WorkID.String()), OccurredAt: terminalTime(index, 1),
+		Binding: binding, EffectID: journalv2.EffectID("effect-create-" + authoritySuffix),
+		EventID: journalv2.EventID("event-workspace-bind-" + authoritySuffix), OccurredAt: workspaceTime(1),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 	bound, err := h.host.ExecuteWorkspace(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceAuthorityRequestV2{
-		Kind: execution.WorkspaceBindV2, OperationID: journalv2.OperationID("operation-workspace-bind-" + active.WorkID.String()),
-		OperationEventID: journalv2.EventID("event-operation-workspace-bind-" + active.WorkID.String()),
-		ExecutionEventID: journalv2.EventID("event-execution-workspace-bind-" + active.WorkID.String()),
-		Governance:       active.Governance, Contribution: contribution, ObservedAt: terminalTime(index, 1),
+		Kind: execution.WorkspaceBindV2, OperationID: journalv2.OperationID("operation-workspace-bind-" + authoritySuffix),
+		OperationEventID: journalv2.EventID("event-operation-workspace-bind-" + authoritySuffix),
+		ExecutionEventID: journalv2.EventID("event-execution-workspace-bind-" + authoritySuffix),
+		Governance:       active.Governance, Contribution: contribution, ObservedAt: workspaceTime(1),
 	})
+	h.observeMutation([]string{"execution_slot", "workspace", "operation"}, "operation-workspace-bind-"+authoritySuffix, started, err)
 	if err != nil {
 		t.Fatalf("bind workspace %s: %v", active.WorkID, err)
 	}
-	assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), "workspace-bound-"+active.WorkID.String())
+	assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), "workspace-bound-"+authoritySuffix)
 
 	current := bound.Workspace
 	currentExecution := bound.Execution
@@ -159,8 +246,11 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 	if recordRevision == 0 {
 		t.Fatalf("bind workspace %s omitted reusable authority revision", active.WorkID)
 	}
-	currentExecution, current, recordRevision = restartBoundWorkspaceAfterDurableBoundary(t, h, currentExecution, current, recordRevision, "workspace-bound-"+active.WorkID.String(), restartEveryBoundary)
-	ready := workspace.ObservationV2{Registered: true, Head: binding.PinnedBase, Branch: binding.OwnedBranch, GitDirIdentity: "gitdir-" + active.WorkID.String(), IndexIdentity: "index-" + active.WorkID.String(), Clean: true, DependencyHead: binding.PinnedBase, TargetBefore: binding.PinnedBase, TargetAfter: binding.PinnedBase}
+	currentExecution, current, recordRevision = restartBoundWorkspaceAfterDurableBoundary(t, h, currentExecution, current, recordRevision, "workspace-bound-"+authoritySuffix, restartEveryBoundary)
+	ready, err := h.git.prepareWorkspace(t.Context(), binding)
+	if err != nil {
+		t.Fatalf("prepare physical workspace %s: %v", active.WorkID, err)
+	}
 	steps := []struct {
 		stage       workspace.StageV2
 		observation workspace.ObservationV2
@@ -168,16 +258,16 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 	}{
 		{workspace.StageWorktreeObservedV2, workspace.ObservationV2{Registered: true}, ""},
 		{workspace.StageBaseVerifiedV2, workspace.ObservationV2{Registered: true, Head: binding.PinnedBase}, ""},
-		{workspace.StageDependenciesRequestedV2, workspace.ObservationV2{Registered: true, Head: binding.PinnedBase}, journalv2.EffectID("effect-dependencies-" + active.WorkID.String())},
+		{workspace.StageDependenciesRequestedV2, workspace.ObservationV2{Registered: true, Head: binding.PinnedBase}, journalv2.EffectID("effect-dependencies-" + authoritySuffix)},
 		{workspace.StageDependenciesObservedV2, ready, ""},
 		{workspace.StageOwnershipVerifiedV2, ready, ""},
 		{workspace.StageReadyV2, ready, ""},
 	}
 	for stepIndex, step := range steps {
-		occurredAt := terminalTime(index, stepIndex+2)
+		occurredAt := workspaceTime(stepIndex + 2)
 		transition, transitionErr := workspace.NewTransitionContributionV2(workspace.TransitionContributionInputV2{
 			Prior: current, RecordRevision: recordRevision,
-			EventID:   journalv2.EventID(fmt.Sprintf("event-workspace-stage-%s-%d", active.WorkID, stepIndex)),
+			EventID:   journalv2.EventID(fmt.Sprintf("event-workspace-stage-%s-%d", authoritySuffix, stepIndex)),
 			NextStage: step.stage, Observation: step.observation, EffectID: step.effectID, OccurredAt: occurredAt,
 		})
 		if transitionErr != nil {
@@ -186,13 +276,15 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 		governanceRevisions := []string{active.Governance.DoctrineRevision, active.Governance.ProfileRevision}
 		sort.Strings(governanceRevisions)
 		request := workspace.StageAuthorityRequestV2{
-			OperationID:      journalv2.OperationID(fmt.Sprintf("operation-workspace-stage-%s-%d", active.WorkID, stepIndex)),
-			OperationEventID: journalv2.EventID(fmt.Sprintf("event-operation-workspace-stage-%s-%d", active.WorkID, stepIndex)),
+			OperationID:      journalv2.OperationID(fmt.Sprintf("operation-workspace-stage-%s-%d", authoritySuffix, stepIndex)),
+			OperationEventID: journalv2.EventID(fmt.Sprintf("event-operation-workspace-stage-%s-%d", authoritySuffix, stepIndex)),
 			Contribution:     transition, PolicyRevision: active.Governance.PolicyRevision,
 			DoctrineRevision: active.Governance.DoctrineRevision, ProfileRevision: active.Governance.ProfileRevision,
 			GovernanceRevisions: governanceRevisions, ObservedAt: occurredAt,
 		}
+		started := time.Now()
 		staged, stageErr := h.host.ExecuteWorkspaceStage(t.Context(), h.host.RuntimeEpochID(), request)
+		h.observeMutation([]string{"workspace", "operation"}, string(request.OperationID), started, stageErr)
 		if stageErr != nil {
 			t.Fatalf("stage workspace %s %s: %v host=%+v", active.WorkID, step.stage, stageErr, h.host.Status())
 		}
@@ -201,13 +293,100 @@ func runWorkspaceToReady(t *testing.T, h *portableHarness, active execution.Exec
 		if recordRevision == 0 {
 			t.Fatalf("stage workspace %s %s omitted reusable authority revision", active.WorkID, step.stage)
 		}
-		assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), fmt.Sprintf("workspace-%s-%s", active.WorkID, step.stage))
-		currentExecution, current, recordRevision = restartBoundWorkspaceAfterDurableBoundary(t, h, currentExecution, current, recordRevision, fmt.Sprintf("workspace-%s-%s", active.WorkID, step.stage), restartEveryBoundary)
+		assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), fmt.Sprintf("workspace-%s-%s", authoritySuffix, step.stage))
+		currentExecution, current, recordRevision = restartBoundWorkspaceAfterDurableBoundary(t, h, currentExecution, current, recordRevision, fmt.Sprintf("workspace-%s-%s", authoritySuffix, step.stage), restartEveryBoundary)
 	}
 	if current.Stage != workspace.StageReadyV2 {
 		t.Fatalf("workspace %s not ready: %s", active.WorkID, current.Stage)
 	}
 	return &terminalWorkFacts{execution: currentExecution, workspace: current, workspaceRecordRevision: recordRevision, binding: current.Binding}
+}
+
+// exerciseLeaseScopedReplacement proves the filesystem half of fencing in the
+// same mission that later hands off, reviews, accepts, and integrates. The old
+// mutable worktree is never transferred: it is quarantined, a simulated zombie
+// writes to it, and generation two receives a distinct workspace.
+func exerciseLeaseScopedReplacement(t *testing.T, h *portableHarness, active execution.ExecutionSlotStateV2, governance governancecontext.Context, restartEveryBoundary bool) (execution.ExecutionSlotStateV2, string) {
+	t.Helper()
+	base, err := h.git.enable("repository-two-item", "refs/heads/main", strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior := runWorkspaceToReady(t, h, active, governance, "repository-two-item", base, 0, restartEveryBoundary)
+	deadline, err := time.Parse(time.RFC3339Nano, prior.execution.Deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := deadline.Add(time.Second)
+	quarantine, err := workspace.NewQuarantineContributionV2(workspace.QuarantineContributionInputV2{
+		Prior: prior.workspace, RecordRevision: prior.workspaceRecordRevision,
+		EventID: "event-crown-quarantine-work-a", Reason: workspace.QuarantineLeaseExpired, OccurredAt: expiredAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired, err := h.host.ExecuteWorkspace(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceAuthorityRequestV2{
+		Kind: execution.WorkspaceQuarantineV2, OperationID: "operation-crown-quarantine-work-a",
+		OperationEventID: "event-operation-crown-quarantine-work-a", ExecutionEventID: "event-execution-crown-quarantine-work-a",
+		Governance: prior.execution.Governance, Contribution: quarantine, ObservedAt: expiredAt,
+	})
+	if err != nil {
+		t.Fatalf("expire and quarantine crown workspace: %v", err)
+	}
+	if expired.Execution.Status != execution.ExecutionExpiredV2 || expired.Workspace.Stage != workspace.StageQuarantinedV2 {
+		t.Fatalf("lease expiry was not atomic with quarantine: %+v", expired)
+	}
+	assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), "crown-workspace-quarantined")
+
+	zombiePath := filepath.Join(prior.binding.CanonicalPath, "zombie-write.txt")
+	if err := os.WriteFile(zombiePath, []byte("stale process remained isolated\n"), 0o600); err != nil {
+		t.Fatalf("simulate stale writer: %v", err)
+	}
+	repositoryCalls := h.git.count()
+	staleDeadline, _ := time.Parse(time.RFC3339Nano, prior.execution.Deadline)
+	_, staleErr := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
+		Kind: execution.ExecutionHeartbeatV2, OperationID: "operation-crown-zombie-heartbeat",
+		ProjectID: prior.execution.ProjectID, MissionID: prior.execution.MissionID, WorkRevisionID: prior.execution.WorkRevisionID, WorkID: prior.execution.WorkID,
+		RunID: prior.execution.RunID, ActorID: prior.execution.ActorID, ProcessID: prior.execution.ProcessID, LeaseID: prior.execution.LeaseID,
+		Generation: prior.execution.Generation, Fence: prior.execution.Fence, ObservedAt: expiredAt.Add(time.Second), Deadline: staleDeadline.Add(time.Hour),
+		RuntimeEpochID: h.host.RuntimeEpochID(), Governance: governance,
+		OperationEventID: "event-operation-crown-zombie-heartbeat", SlotEventID: "event-slot-crown-zombie-heartbeat",
+	})
+	if !execution.IsKind(staleErr, execution.KindStaleAuthority) || h.git.count() != repositoryCalls {
+		t.Fatalf("zombie authority crossed repository boundary: err=%v calls_before=%d calls_after=%d", staleErr, repositoryCalls, h.git.count())
+	}
+
+	if restartEveryBoundary {
+		restartAfterDurableBoundary(t, h, active.ProjectID.String(), active.MissionID.String(), "crown-workspace-quarantined", true)
+	}
+	replaced, err := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
+		Kind: execution.ExecutionReplaceV2, OperationID: "operation-crown-replace-work-a",
+		ProjectID: expired.Execution.ProjectID, MissionID: expired.Execution.MissionID, WorkRevisionID: expired.Execution.WorkRevisionID, WorkID: expired.Execution.WorkID,
+		RunID: "run-work-a-replacement", ActorID: expired.Execution.ActorID, ProcessID: "process-work-a-replacement", LeaseID: "lease-work-a-replacement",
+		Generation: expired.Execution.Generation + 1, ObservedAt: expiredAt.Add(2 * time.Second), Deadline: expiredAt.Add(4 * time.Hour),
+		RuntimeEpochID: h.host.RuntimeEpochID(), Governance: governance,
+		OperationEventID: "event-operation-crown-replace-work-a", SlotEventID: "event-slot-crown-replace-work-a",
+	})
+	if err != nil {
+		t.Fatalf("replace expired crown execution: %v", err)
+	}
+	if replaced.State.WorkspaceID != "" || !replaced.State.WorkspacePathClaimDigest.IsZero() || replaced.State.Generation != active.Generation+1 || replaced.State.LeaseID == active.LeaseID {
+		t.Fatalf("replacement inherited stale workspace authority: %+v", replaced.State)
+	}
+	assertUniversalInvariants(t, h, active.ProjectID.String(), active.MissionID.String(), "crown-execution-replaced")
+	if restartEveryBoundary {
+		replaced.State = restartUnboundExecutionAfterDurableBoundary(t, h, replaced.State, governance, "crown-execution-replaced", true)
+	}
+	h.crownClockOffset = 2 * time.Hour
+	return replaced.State, zombiePath
+}
+
+func assertQuarantinedZombieSurvived(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil || string(raw) != "stale process remained isolated\n" {
+		t.Fatalf("quarantined zombie evidence changed: path=%s value=%q err=%v", path, raw, err)
+	}
 }
 
 func submitTerminalHandoff(t *testing.T, h *portableHarness, facts *terminalWorkFacts, revision workgraph.RevisionV2, repositoryID ids.RepositoryID, candidate string, index int) handoff.StateV2 {
@@ -217,6 +396,7 @@ func submitTerminalHandoff(t *testing.T, h *portableHarness, facts *terminalWork
 	if err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 	result, err := h.host.SubmitHandoff(t.Context(), h.host.RuntimeEpochID(), handoff.AuthorityRequestV2{
 		OperationID: journalv2.OperationID("operation-handoff-" + facts.execution.WorkID.String()),
 		HandoffID:   ids.HandoffID("handoff-" + facts.execution.WorkID.String()),
@@ -225,13 +405,14 @@ func submitTerminalHandoff(t *testing.T, h *portableHarness, facts *terminalWork
 		RunID: facts.execution.RunID, RuntimeEpochID: h.host.RuntimeEpochID(), Workspace: facts.binding,
 		LeaseID: facts.execution.LeaseID, LeaseGeneration: facts.execution.Generation, Fence: facts.execution.Fence,
 		ActorID: facts.execution.ActorID, ProcessID: facts.execution.ProcessID,
-		RepositoryID: repositoryID, RepositoryPath: h.root, LaneID: facts.binding.LaneID,
+		RepositoryID: repositoryID, RepositoryPath: scenarioRepositoryPath(h), LaneID: facts.binding.LaneID,
 		OwnedBranch: facts.binding.OwnedBranch, PinnedBase: facts.binding.PinnedBase, Candidate: candidate,
 		Contributors: []ids.ActorID{facts.execution.ActorID}, CriterionIDs: []string{criterionID},
 		CriteriaDigest: criteriaDigest, WorkRevisionCriteriaDigest: revision.CriteriaDigest(),
 		EvidenceDigest: strings.Repeat(fmt.Sprintf("%x", index+1), 64), Governance: facts.execution.Governance,
-		ObservedAt: terminalTime(index, 20),
+		ObservedAt: scenarioTerminalTime(h, index, 20),
 	})
+	h.observeMutation([]string{"handoff_slot", "operation"}, "operation-handoff-"+facts.execution.WorkID.String(), started, err)
 	if err != nil {
 		t.Fatalf("handoff %s: %v", facts.execution.WorkID, err)
 	}
@@ -244,6 +425,7 @@ func submitTerminalHandoff(t *testing.T, h *portableHarness, facts *terminalWork
 func submitTerminalReview(t *testing.T, h *portableHarness, facts *terminalWorkFacts, revision workgraph.RevisionV2, index int) review.StateV2 {
 	t.Helper()
 	criterionID := "criterion-" + strings.TrimPrefix(facts.execution.WorkID.String(), "work-")
+	started := time.Now()
 	result, err := h.host.SubmitReview(t.Context(), h.host.RuntimeEpochID(), review.AuthorityRequestV2{
 		OperationID: journalv2.OperationID("operation-review-" + facts.execution.WorkID.String()),
 		ReviewID:    ids.ReviewID("review-" + facts.execution.WorkID.String()), HandoffID: facts.handoff.HandoffID,
@@ -257,8 +439,9 @@ func submitTerminalReview(t *testing.T, h *portableHarness, facts *terminalWorkF
 			ArtifactDigest: strings.Repeat("f", 64), Candidate: facts.handoff.Candidate,
 			PolicyRevision: facts.execution.Governance.PolicyRevision,
 		}}, Verdict: review.Approved, PolicyRevision: facts.execution.Governance.PolicyRevision,
-		Governance: facts.execution.Governance, ObservedAt: terminalTime(index, 25),
+		Governance: facts.execution.Governance, ObservedAt: scenarioTerminalTime(h, index, 25),
 	})
+	h.observeMutation([]string{"review_slot", "operation"}, "operation-review-"+facts.execution.WorkID.String(), started, err)
 	if err != nil {
 		t.Fatalf("review %s: %v", facts.execution.WorkID, err)
 	}
@@ -286,7 +469,7 @@ func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWo
 	revision, err := artifact.NewArtifactRevision(artifact.ArtifactRevisionParams{
 		ID: revisionID, MissionID: facts.execution.MissionID.String(), Kind: kind, RevisionNumber: 1,
 		ContentDigest: content.Digest(), SourceRef: "scenario/evidence/" + facts.execution.WorkID.String(),
-		SourceRevision: facts.handoff.Candidate, CreatedBy: "actor-independent-reviewer", CreatedAt: terminalTime(index, 26),
+		SourceRevision: facts.handoff.Candidate, CreatedBy: "actor-independent-reviewer", CreatedAt: scenarioTerminalTime(h, index, 26),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +479,7 @@ func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWo
 		t.Fatal(err)
 	}
 	validation, err := artifact.NewValidationResult(artifact.ValidationResultParams{
-		ArtifactRevisionID: revisionID, Verdict: artifact.ValidationPass, Policy: policy, ValidatedAt: terminalTime(index, 27),
+		ArtifactRevisionID: revisionID, Verdict: artifact.ValidationPass, Policy: policy, ValidatedAt: scenarioTerminalTime(h, index, 27),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +496,7 @@ func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWo
 			ProjectID: journalv2.ProjectID(facts.execution.ProjectID), OperationID: journalv2.OperationID("operation-evidence-" + facts.execution.WorkID.String()),
 			RuntimeEpochID: h.host.RuntimeEpochID(), ActorID: "actor-independent-reviewer", ProcessID: journalv2.ProcessID("process-evidence-" + facts.execution.WorkID.String()),
 			DoctrineRevision: facts.execution.Governance.DoctrineRevision, ProfileRevision: facts.execution.Governance.ProfileRevision,
-			PolicyRevision: facts.execution.Governance.PolicyRevision, Governance: governanceRevisions, ObservedCreatedAt: terminalTime(index, 27).Format(time.RFC3339Nano),
+			PolicyRevision: facts.execution.Governance.PolicyRevision, Governance: governanceRevisions, ObservedCreatedAt: scenarioTerminalTime(h, index, 27).Format(time.RFC3339Nano),
 			OperationEventID: journalv2.EventID("event-operation-evidence-" + facts.execution.WorkID.String()),
 			CatalogEventID:   journalv2.EventID("event-catalog-evidence-" + facts.execution.WorkID.String()), RevisionEventID: journalv2.EventID("event-revision-evidence-" + facts.execution.WorkID.String()),
 		},
@@ -326,7 +509,9 @@ func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWo
 	if err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 	ack, err := h.host.PublishArtifact(t.Context(), h.host.RuntimeEpochID(), plan)
+	h.observeMutation([]string{"artifact_catalog", "artifact_revision", "operation"}, "operation-evidence-"+facts.execution.WorkID.String(), started, err)
 	if err != nil {
 		t.Fatalf("publish evidence %s: %v", facts.execution.WorkID, err)
 	}
@@ -350,7 +535,7 @@ func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWo
 		ID: "approval-" + facts.execution.WorkID.String(), ArtifactRevisionID: revisionID,
 		Verdict: artifact.VerdictApproved, ActorID: "actor-artifact-approver",
 		EvidenceDigest: content.Digest(), GovernanceContextID: "config." + facts.execution.Governance.PolicyRevision,
-		SubmittedAt: terminalTime(index, 28),
+		SubmittedAt: scenarioTerminalTime(h, index, 28),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -360,7 +545,7 @@ func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWo
 			ProjectID: journalv2.ProjectID(facts.execution.ProjectID), OperationID: journalv2.OperationID("operation-evidence-decision-" + facts.execution.WorkID.String()),
 			RuntimeEpochID: h.host.RuntimeEpochID(), ActorID: "actor-artifact-approver", ProcessID: journalv2.ProcessID("process-evidence-decision-" + facts.execution.WorkID.String()),
 			DoctrineRevision: facts.execution.Governance.DoctrineRevision, ProfileRevision: facts.execution.Governance.ProfileRevision,
-			PolicyRevision: facts.execution.Governance.PolicyRevision, Governance: governanceRevisions, ObservedCreatedAt: terminalTime(index, 28).Format(time.RFC3339Nano),
+			PolicyRevision: facts.execution.Governance.PolicyRevision, Governance: governanceRevisions, ObservedCreatedAt: scenarioTerminalTime(h, index, 28).Format(time.RFC3339Nano),
 			OperationEventID: journalv2.EventID("event-operation-evidence-decision-" + facts.execution.WorkID.String()),
 			RevisionEventID:  journalv2.EventID("event-revision-evidence-decision-" + facts.execution.WorkID.String()),
 		},
@@ -374,7 +559,9 @@ func publishTerminalEvidence(t *testing.T, h *portableHarness, facts *terminalWo
 	if err != nil {
 		t.Fatal(err)
 	}
+	started = time.Now()
 	decisionAck, err := h.host.PublishArtifact(t.Context(), h.host.RuntimeEpochID(), decisionPlan)
+	h.observeMutation([]string{"artifact_revision", "operation"}, "operation-evidence-decision-"+facts.execution.WorkID.String(), started, err)
 	if err != nil {
 		t.Fatalf("decide evidence %s: %v", facts.execution.WorkID, err)
 	}
@@ -413,7 +600,7 @@ func terminalAcceptanceRequest(t *testing.T, h *portableHarness, facts *terminal
 		PolicyRevision: facts.execution.Governance.PolicyRevision, PolicyFactID: policyID,
 		RuntimeEpochID: h.host.RuntimeEpochID(), ActorID: "actor-acceptor",
 		ProcessID: ids.ProcessID("process-acceptor-" + facts.execution.WorkID.String()), Governance: facts.execution.Governance,
-		ObservedAt: terminalTime(index, 30),
+		ObservedAt: scenarioTerminalTime(h, index, 30),
 	}
 }
 
@@ -432,7 +619,9 @@ func recordResolvedPolicyFact(t *testing.T, h *portableHarness, current mission.
 	if err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 	openResult, err := h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: openOperation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-policy", ProcessID: "process-policy", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.PolicyRevision, ObservedAt: openAt.Format(time.RFC3339Nano), EventType: mission.ReadinessEventFactOpenedV2, Expected: current, Updated: openState, RelatedFact: &mission.MissionFactTransitionV2{Successor: openFact}})
+	h.observeMutation([]string{"mission", "operation"}, string(openOperation), started, err)
 	if err != nil {
 		t.Fatalf("open policy fact %s: %v", request.PolicyFactID, err)
 	}
@@ -445,7 +634,9 @@ func recordResolvedPolicyFact(t *testing.T, h *portableHarness, current mission.
 	if err != nil {
 		t.Fatal(err)
 	}
+	started = time.Now()
 	resolved, err := h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: resolveOperation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-policy", ProcessID: "process-policy", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: request.Governance.DoctrineRevision, ProfileRevision: request.Governance.ProfileRevision, PolicyRevision: request.PolicyRevision, ObservedAt: resolvedAt.Format(time.RFC3339Nano), EventType: mission.ReadinessEventFactClosedV2, Expected: openResult.State(), Updated: resolvedState, RelatedFact: &mission.MissionFactTransitionV2{Prior: openFact, Successor: resolvedFact, ExpectedRecordRevision: openResult.RecordRevision()}})
+	h.observeMutation([]string{"mission", "operation"}, string(resolveOperation), started, err)
 	if err != nil {
 		t.Fatalf("resolve policy fact %s: %v", request.PolicyFactID, err)
 	}
@@ -486,6 +677,16 @@ func rebindUnboundExecutionToCurrent(t *testing.T, h *portableHarness, state exe
 		t.Fatal(err)
 	}
 	observedAt := time.Date(2026, 9, 5, 12, 20, 0, 0, time.UTC)
+	heartbeatAt, err := time.Parse(time.RFC3339Nano, state.HeartbeatAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observedAt.After(heartbeatAt) {
+		// Keep the rebind strictly ordered without consuming the next whole-second
+		// scenario boundary; repeated restart qualification otherwise makes a
+		// later deterministic event timestamp collide with the heartbeat.
+		observedAt = heartbeatAt.Add(time.Nanosecond)
+	}
 	result, err := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
 		Kind: execution.ExecutionRebindV2, OperationID: journalv2.OperationID("operation-rebind-" + boundary),
 		ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID,
@@ -516,6 +717,13 @@ func restartBoundWorkspaceAfterDurableBoundary(t *testing.T, h *portableHarness,
 func rebindBoundWorkspaceToCurrent(t *testing.T, h *portableHarness, state execution.ExecutionSlotStateV2, workspaceState workspace.StateV2, recordRevision uint64, boundary string) (execution.ExecutionSlotStateV2, workspace.StateV2, uint64) {
 	t.Helper()
 	observedAt := time.Date(2026, 9, 5, 12, 20, 0, 0, time.UTC)
+	heartbeatAt, err := time.Parse(time.RFC3339Nano, state.HeartbeatAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observedAt.After(heartbeatAt) {
+		observedAt = heartbeatAt.Add(time.Nanosecond)
+	}
 	result, err := h.host.RebindWorkspaceRuntimeEpoch(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceEpochRebindRequestV2{
 		ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID,
 		ActorID: state.ActorID, ProcessID: state.ProcessID, OriginatingRuntimeEpochID: h.host.RuntimeEpochID(),
@@ -571,8 +779,10 @@ func cloneReadinessState(t *testing.T, prior mission.ReadinessAuthorityStateV2, 
 
 func markExecutionCompleted(t *testing.T, h *portableHarness, state execution.ExecutionSlotStateV2, governance governancecontext.Context, index int) {
 	t.Helper()
-	observedAt := terminalTime(index, 50)
+	observedAt := scenarioTerminalTime(h, index, 50)
+	started := time.Now()
 	result, err := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{Kind: execution.ExecutionOutcomeV2, OperationID: journalv2.OperationID("operation-outcome-" + state.WorkID.String()), ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID, RunID: state.RunID, ActorID: state.ActorID, ProcessID: state.ProcessID, LeaseID: state.LeaseID, Generation: state.Generation, Fence: state.Fence, ObservedAt: observedAt, Deadline: observedAt.Add(time.Minute), RuntimeEpochID: h.host.RuntimeEpochID(), Outcome: "completed", Governance: governance, OperationEventID: journalv2.EventID("event-operation-outcome-" + state.WorkID.String()), SlotEventID: journalv2.EventID("event-slot-outcome-" + state.WorkID.String())})
+	h.observeMutation([]string{"execution_slot", "operation"}, "operation-outcome-"+state.WorkID.String(), started, err)
 	if err != nil {
 		t.Fatalf("complete execution %s: %v", state.WorkID, err)
 	}
@@ -583,10 +793,12 @@ func markExecutionCompleted(t *testing.T, h *portableHarness, state execution.Ex
 
 func completeMissionAuthority(t *testing.T, h *portableHarness, current mission.ReadinessAuthorityStateV2, revisionID ids.WorkRevisionID) {
 	t.Helper()
-	observedAt := terminalTime(2, 55)
+	observedAt := time.Date(2026, 9, 5, 16, 0, 0, 0, time.UTC)
 	operation := journalv2.OperationID("operation-mission-complete")
 	next := cloneReadinessState(t, current, current.Version()+1, mission.MissionCompleted, operation, observedAt, nil)
+	started := time.Now()
 	result, err := h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: operation, ProjectID: current.ProjectID(), MissionID: current.MissionID(), ActorID: "actor-orchestrator", ProcessID: "process-orchestrator", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: observedAt.Format(time.RFC3339Nano), EventType: mission.ReadinessEventCompletedV2, Expected: current, Updated: next})
+	h.observeMutation([]string{"mission", "operation"}, string(operation), started, err)
 	if err != nil {
 		t.Fatalf("complete mission revision %s: %v", revisionID, err)
 	}
@@ -597,4 +809,8 @@ func completeMissionAuthority(t *testing.T, h *portableHarness, current mission.
 
 func terminalTime(index, second int) time.Time {
 	return time.Date(2026, 9, 5, 12, 10+index, second, 0, time.UTC)
+}
+
+func scenarioTerminalTime(h *portableHarness, index, second int) time.Time {
+	return terminalTime(index, second).Add(h.crownClockOffset)
 }

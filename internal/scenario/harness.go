@@ -23,6 +23,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 	sidecar "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
 
 const productionScenarioSchemaVersion uint32 = 1
@@ -37,18 +38,66 @@ type ProductionConfig struct {
 	CheckpointEvery   int
 	CandidateVerifier handoff.CandidateVerifier
 	Reconciler        productionruntime.Reconciler
+	IntegrationGit    scenarioGit
+	// ExerciseLeaseReplacement enables the crown-only stale-writer sequence.
+	// It is explicit so ordinary portable scenarios retain their established
+	// topology while the integrated qualification proves the stronger law.
+	ExerciseLeaseReplacement bool
+	// MutationObserver is qualification-only instrumentation around accepted
+	// production Host calls. It receives the exact event families the typed
+	// capability plan publishes; ordinary scenarios leave it nil.
+	MutationObserver func(MutationObservation)
+	// PublicationBoundaryObserver is qualification-only, observer-only
+	// instrumentation used to capture the exact sealed production plans.
+	PublicationBoundaryObserver journalv2.PublicationBoundaryObserverV2
+	// AfterEffectIntent is qualification-only orchestration around a durable
+	// effect intent. Returning true means the hook appended authority state
+	// outside the live Host projection, so the scenario restarts and adopts the
+	// effect before continuing. Ordinary scenarios leave it nil.
+	AfterEffectIntent func(context.Context, ids.WorkID) (bool, error)
+}
+
+// MutationObservation is one acknowledged typed Host call. Record revision
+// movement is retained as evidence about the complete sealed batch; it is not
+// mistaken for an operation count because a single authority call may append
+// several records atomically.
+type MutationObservation struct {
+	Families                 []string
+	OperationID              string
+	Duration                 time.Duration
+	Err                      error
+	BeforeRecordRevision     uint64
+	AfterRecordRevision      uint64
+	MutationCount            uint64
+	ProjectedThroughRevision uint64
+}
+
+// scenarioGit is the narrow test-harness composition seam. Production still
+// consumes only IntegrationGitPortV2; the additional methods let the crown
+// prove that workspace and candidate facts came from the same repository.
+type scenarioGit interface {
+	integration.IntegrationGitPortV2
+	enable(ids.RepositoryID, string, string) (string, error)
+	managedRoot() string
+	repositoryPath() string
+	prepareWorkspace(context.Context, workspace.BindingV2) (workspace.ObservationV2, error)
+	createCandidate(context.Context, workspace.BindingV2, int) (string, error)
+	count() int
+	terminalEvidence() repositoryTerminalEvidence
 }
 
 type portableHarness struct {
-	t       *testing.T
-	config  ProductionConfig
-	root    string
-	runtime string
-	data    string
-	host    *productionruntime.Host
-	epochs  []journalv2.RuntimeEpochID
-	starts  int
-	git     *attributableGit
+	t                   *testing.T
+	config              ProductionConfig
+	root                string
+	runtime             string
+	data                string
+	host                *productionruntime.Host
+	epochs              []journalv2.RuntimeEpochID
+	starts              int
+	git                 scenarioGit
+	crownClockOffset    time.Duration
+	observationRevision uint64
 }
 
 // absentCapabilityReadiness is an explicit, source-bound absence observer for
@@ -105,9 +154,13 @@ func newPortableHarness(t *testing.T, config ProductionConfig) *portableHarness 
 	if err := os.Mkdir(runtimeRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	git := config.IntegrationGit
+	if git == nil {
+		git = newAttributableGit()
+	}
 	h := &portableHarness{
 		t: t, config: config, root: root, runtime: runtimeRoot,
-		data: filepath.Join(root, "authority"), git: newAttributableGit(),
+		data: filepath.Join(root, "authority"), git: git,
 	}
 	h.start()
 	t.Cleanup(func() {
@@ -140,14 +193,16 @@ func (h *portableHarness) start() {
 			SupervisorRunID:     fmt.Sprintf("scenario-%s-%d", shortDigest(h.config.Seed), h.starts),
 			ProductPolicySHA256: strings.Repeat("e", 64),
 		},
-		CapabilityReadiness:   absentCapabilityReadiness{},
-		DecompositionProvider: unavailableDecomposition{},
-		CandidateVerifier:     verifier,
-		IntegrationGit:        h.git,
-		Reconciler:            h.config.Reconciler,
-		CheckpointEvery:       h.config.CheckpointEvery,
-		MonitorInterval:       25 * time.Millisecond,
+		CapabilityReadiness:         absentCapabilityReadiness{},
+		DecompositionProvider:       unavailableDecomposition{},
+		CandidateVerifier:           verifier,
+		IntegrationGit:              h.git,
+		Reconciler:                  h.config.Reconciler,
+		CheckpointEvery:             h.config.CheckpointEvery,
+		MonitorInterval:             25 * time.Millisecond,
+		PublicationBoundaryObserver: h.config.PublicationBoundaryObserver,
 	}
+	started := time.Now()
 	host, err := productionruntime.Start(h.t.Context(), config)
 	if err != nil {
 		h.t.Fatalf("start production authority host: %v", err)
@@ -158,7 +213,31 @@ func (h *portableHarness) start() {
 		h.t.Fatalf("incomplete typed readiness: %+v", status)
 	}
 	h.host = host
+	h.observeMutation([]string{"runtime_host", "operation"}, fmt.Sprintf("runtime-host-start-%d", h.starts), started, err)
 	h.epochs = append(h.epochs, status.RuntimeEpochID)
+}
+
+func (h *portableHarness) observeMutation(families []string, operation string, started time.Time, err error) {
+	if h != nil && h.config.MutationObserver != nil {
+		after := uint64(0)
+		if h.host != nil {
+			after = h.host.Status().ProjectionRevision
+		}
+		before := h.observationRevision
+		mutationCount := uint64(0)
+		if after >= before {
+			mutationCount = after - before
+		}
+		h.config.MutationObserver(MutationObservation{
+			Families: append([]string(nil), families...), OperationID: operation,
+			Duration: time.Since(started), Err: err,
+			BeforeRecordRevision: before, AfterRecordRevision: after,
+			MutationCount: mutationCount, ProjectedThroughRevision: after,
+		})
+		if err == nil {
+			h.observationRevision = after
+		}
+	}
 }
 
 func (h *portableHarness) restart() (journalv2.RuntimeEpochID, journalv2.RuntimeEpochID) {
@@ -204,6 +283,7 @@ func (h *portableHarness) createMission(project, missionID, operation string) mi
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	started := time.Now()
 	result, err := h.host.ExecuteReadiness(h.t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{
 		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: journalv2.OperationID(operation),
 		ProjectID: journalv2.ProjectID(project), MissionID: journalv2.MissionID(missionID),
@@ -212,6 +292,7 @@ func (h *portableHarness) createMission(project, missionID, operation string) mi
 		ProfileRevision: "profile-1", PolicyRevision: "policy-1", ObservedAt: now.Format(time.RFC3339),
 		EventType: mission.ReadinessEventCreatedV2, Updated: state,
 	})
+	h.observeMutation([]string{"mission", "operation"}, operation, started, err)
 	if err != nil {
 		h.t.Fatalf("create mission %s: %v", missionID, err)
 	}
@@ -299,7 +380,7 @@ func newAttributableGit() *attributableGit { return &attributableGit{} }
 func integrationTargetKey(repository ids.RepositoryID, target string) string {
 	return repository.String() + "\x00" + target
 }
-func (g *attributableGit) enable(repository ids.RepositoryID, target, head string) {
+func (g *attributableGit) enable(repository ids.RepositoryID, target, head string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.enabled = true
@@ -307,6 +388,15 @@ func (g *attributableGit) enable(repository ids.RepositoryID, target, head strin
 	g.fences = make(map[journalv2.OperationID]integration.IntegrationFenceObservationV2)
 	g.publications = make(map[journalv2.EffectID]integration.IntegrationPublishObservationV2)
 	g.cleanups = make(map[journalv2.EffectID]integration.IntegrationCleanupObservationV2)
+	return head, nil
+}
+func (g *attributableGit) managedRoot() string    { return "" }
+func (g *attributableGit) repositoryPath() string { return "" }
+func (g *attributableGit) prepareWorkspace(_ context.Context, binding workspace.BindingV2) (workspace.ObservationV2, error) {
+	return workspace.ObservationV2{Registered: true, Head: binding.PinnedBase, Branch: binding.OwnedBranch, GitDirIdentity: "gitdir-" + binding.WorkID.String(), IndexIdentity: "index-" + binding.WorkID.String(), Clean: true, DependencyHead: binding.PinnedBase, TargetBefore: binding.PinnedBase, TargetAfter: binding.PinnedBase}, nil
+}
+func (g *attributableGit) createCandidate(_ context.Context, _ workspace.BindingV2, index int) (string, error) {
+	return fmt.Sprintf("%040x", index+11), nil
 }
 func (g *attributableGit) record(name string) {
 	g.mu.Lock()

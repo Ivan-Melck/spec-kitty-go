@@ -2,15 +2,20 @@ package m2
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 )
 
 func TestManifestCensusVerifyRoundTripIsCanonicalAndSourceBound(t *testing.T) {
@@ -32,6 +37,27 @@ func TestManifestCensusVerifyRoundTripIsCanonicalAndSourceBound(t *testing.T) {
 	canonical, _ := CanonicalJSON(verified)
 	if string(first) != string(canonical) {
 		t.Fatal("manifest is not stable canonical JSON")
+	}
+}
+
+func TestPerformanceTranscriptRequiresOneObservedSelectorPass(t *testing.T) {
+	good := fixturePerformanceTranscript()
+	if err := VerifyPerformanceTranscript(good); err != nil {
+		t.Fatal(err)
+	}
+	mutants := map[string][]byte{
+		"missing":   nil,
+		"renamed":   []byte("{\"Action\":\"run\",\"Test\":\"TestRenamed\"}\n{\"Action\":\"pass\",\"Test\":\"TestRenamed\"}\n"),
+		"skipped":   []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n{\"Action\":\"skip\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n"),
+		"duplicate": append(append([]byte(nil), good...), good...),
+		"subtest":   []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign/forged\"}\n{\"Action\":\"pass\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n"),
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if err := VerifyPerformanceTranscript(mutant); err == nil {
+				t.Fatal("mutant transcript verified")
+			}
+		})
 	}
 }
 
@@ -145,6 +171,48 @@ func TestAcceptanceMatrixRejectsMissingGenericAndSubstitutedMappings(t *testing.
 	}
 }
 
+func TestPublicationAcceptanceRequiresFamilyOutboxAndExternalCutEvidence(t *testing.T) {
+	required := []string{
+		"fault/family-bound-publication-cuts",
+		"fault/outbox-bound-publication-cuts",
+		"fault/external-before-call",
+		"fault/external-after-success-before-observation",
+		"fault/external-after-observation-before-result",
+	}
+	for _, requirementID := range []string{"FR-004", "FR-025"} {
+		proof := proofForRequirement(requirementID)
+		for _, evidenceID := range required {
+			if !slices.Contains(proof.censusIDs, evidenceID) {
+				t.Fatalf("%s omitted mandatory publication-cut evidence %s", requirementID, evidenceID)
+			}
+		}
+	}
+
+	manifest, census, inputs := completeFixture(t)
+	artifacts := make(map[string]Artifact, len(inputs))
+	var matrix AcceptanceMatrix
+	for _, input := range inputs {
+		artifacts[input.Path] = Artifact{Path: input.Path, Kind: input.Kind, SHA256: SHA256(input.Data)}
+		if input.Kind == "acceptance-matrix" {
+			if err := DecodeStrict(input.Data, &matrix); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for index := range matrix.Requirements {
+		if matrix.Requirements[index].ID != "FR-025" {
+			continue
+		}
+		matrix.Requirements[index].Evidence = slices.DeleteFunc(matrix.Requirements[index].Evidence, func(evidence AcceptanceEvidence) bool {
+			return evidence.CensusID == "fault/family-bound-publication-cuts" || evidence.CensusID == "fault/outbox-bound-publication-cuts"
+		})
+	}
+	mutant, _ := CanonicalJSON(matrix)
+	if err := VerifyAcceptanceMatrix(mutant, manifest, census, artifacts); err == nil {
+		t.Fatal("acceptance matrix verified after both family-bound campaigns were omitted")
+	}
+}
+
 func TestSemanticEvidenceMutantsCannotBecomeTechnicalPass(t *testing.T) {
 	mutants := map[string]func([]ArtifactInput){
 		"forged-race": func(inputs []ArtifactInput) {
@@ -182,6 +250,106 @@ func TestSemanticEvidenceMutantsCannotBecomeTechnicalPass(t *testing.T) {
 	}
 }
 
+func TestFamilyCutApplicabilityMatrixIsClosedAndRecomputed(t *testing.T) {
+	manifest, census, inputs := completeFixture(t)
+	artifacts := make(map[string]Artifact, len(inputs))
+	var matrix FamilyCutMatrix
+	for _, input := range inputs {
+		artifacts[input.Path] = Artifact{Path: input.Path, Kind: input.Kind, SHA256: SHA256(input.Data)}
+		if input.Kind == "campaign-composition" {
+			if err := DecodeStrict(input.Data, &matrix); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	encoded, _ := CanonicalJSON(matrix)
+	if err := VerifyFamilyCutMatrix(encoded, manifest, census, artifacts); err != nil {
+		t.Fatal(err)
+	}
+	mutants := map[string]func(*FamilyCutMatrix){
+		"missing-family": func(value *FamilyCutMatrix) { value.Families = value.Families[1:] },
+		"substituted-cut": func(value *FamilyCutMatrix) {
+			for _, candidate := range value.Families {
+				if candidate.FamilyID == "family/outbox" {
+					value.Families[0].Cuts[0].ArtifactPath = candidate.Cuts[0].ArtifactPath
+					value.Families[0].Cuts[0].ArtifactSHA256 = candidate.Cuts[0].ArtifactSHA256
+				}
+			}
+		},
+		"false-non-applicability": func(value *FamilyCutMatrix) {
+			value.Families[0].Cuts[0] = CutEvidence{CutID: value.Families[0].Cuts[0].CutID, Applicability: "not_applicable", Reason: "invented"}
+		},
+		"runtime-bootstrap-overclaim": func(value *FamilyCutMatrix) {
+			for index := range value.Families {
+				if value.Families[index].FamilyID == "family/runtime_host" {
+					value.Families[index].Cuts[0] = value.Families[0].Cuts[0]
+					value.Families[index].Cuts[0].CutID = familyCutIDs[0]
+				}
+			}
+		},
+		"campaign-source-substitution": func(value *FamilyCutMatrix) {
+			value.Families[0].CampaignSourceSHA256 = strings.Repeat("f", 64)
+		},
+		"boundary-source-substitution": func(value *FamilyCutMatrix) {
+			value.BoundarySourceSHA256 = strings.Repeat("f", 64)
+		},
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			clone := matrix
+			clone.Families = append([]FamilyCutEvidence(nil), matrix.Families...)
+			for index := range clone.Families {
+				clone.Families[index].Cuts = append([]CutEvidence(nil), matrix.Families[index].Cuts...)
+			}
+			mutate(&clone)
+			data, _ := CanonicalJSON(clone)
+			if err := VerifyFamilyCutMatrix(data, manifest, census, artifacts); err == nil {
+				t.Fatal("family/cut mutant verified")
+			}
+		})
+	}
+}
+
+func TestFamilyCutReceiptRejectsSeedAndInvariantSubstitution(t *testing.T) {
+	_, _, inputs := completeFixture(t)
+	var receipt GoTestReceipt
+	for _, input := range inputs {
+		if input.Path == "campaigns/fault-family-bound-publication-cuts.receipt.json" {
+			if err := DecodeStrict(input.Data, &receipt); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	definition := FrozenDefinitions()[0]
+	for _, candidate := range FrozenDefinitions() {
+		if candidate.ID == "fault/family-bound-publication-cuts" {
+			definition = candidate
+		}
+	}
+	if len(receipt.FamilyCutIterations) == 0 {
+		t.Fatal("fixture omitted family/cut receipts")
+	}
+	seedMutant := append([]iterationreceipt.FamilyCutRecord(nil), receipt.FamilyCutIterations...)
+	seedMutant[0].Seed = "substituted"
+	if err := validateFamilyCutIterations(definition, seedMutant); err == nil {
+		t.Fatal("family/cut seed mutant survived")
+	}
+	original := receipt.FamilyCutIterations[0]
+	var facts map[string]any
+	if err := json.Unmarshal(original.ObservedFacts, &facts); err != nil {
+		t.Fatal(err)
+	}
+	missingLedger, err := iterationreceipt.NewFamilyCut(original.DefinitionID, original.Family, original.Cut, original.Index, original.Seed, original.PlanSHA256, original.PublicationID, original.EmittedFamilies, original.Outcome, time.Duration(original.DurationNanoseconds), facts, map[string]any{"unresolved": 0, "ledger_size": 2, "one_terminal_projection": true, "substitution_refused": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invariantMutant := append([]iterationreceipt.FamilyCutRecord(nil), receipt.FamilyCutIterations...)
+	invariantMutant[0] = missingLedger
+	if err := validateFamilyCutIterations(definition, invariantMutant); err == nil {
+		t.Fatal("family/cut invariant-field mutant survived")
+	}
+}
+
 func replaceInput(inputs []ArtifactInput, path string, data []byte) {
 	for index := range inputs {
 		if inputs[index].Path == path {
@@ -204,15 +372,81 @@ func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
 	for _, definition := range FrozenDefinitions() {
 		processes := definition.ExpectedRepetitions / definition.TrialsPerRun
 		var raw []byte
-		for range processes {
-			raw = append(raw, fixtureEvent(definition.Package, "run", definition.Selector)...)
-			if definition.ID == "fault/adversarial-tracker" {
-				for _, child := range expectedWP14Children() {
-					raw = append(raw, fixtureEvent(definition.Package, "run", child)...)
-					raw = append(raw, fixtureEvent(definition.Package, "pass", child)...)
+		for processIndex := range processes {
+			processRaw := append([]byte(nil), fixtureEvent(definition.Package, "run", definition.Selector)...)
+			if isFamilyCutDefinition(definition.ID) {
+				families := []string{"acceptance", "artifact_catalog", "artifact_revision", "execution_slot", "external_effect", "handoff_slot", "integration_attempt", "integration_target", "mission", "operation", "review_slot", "workgraph", "workspace"}
+				if definition.ID == "fault/outbox-bound-publication-cuts" {
+					families = []string{"outbox"}
+				}
+				cuts := []string{"acknowledgement-before-projection", "before-publication", "durable-before-acknowledgement", "lost-acknowledgement", "malformed-acknowledgement"}
+				for _, family := range families {
+					emitted := []string{"operation"}
+					if family != "operation" {
+						emitted = append(emitted, family)
+						slices.Sort(emitted)
+					}
+					for _, cut := range cuts {
+						for index := 0; index < 100; index++ {
+							seed := fmt.Sprintf("%s/%s/%03d/%d", family, cut, index, 1)
+							if family == "outbox" {
+								seed = fmt.Sprintf("outbox/%s/%03d", cut, index)
+							}
+							record, err := iterationreceipt.NewFamilyCut(definition.ID, family, cut, index, seed, strings.Repeat("a", 64), strings.Repeat("b", 64), emitted, "interrupted-reconciled-once", time.Duration(index+1), map[string]any{"cut": cut, "qualified_family": family, "plan_index": 1, "provider_calls": 1, "publication_id": strings.Repeat("b", 64), "emitted_families": emitted}, map[string]any{"unresolved": 0, "ledger_size": 2, "expected_ledger_size": 2, "one_terminal_projection": true, "substitution_refused": true})
+							if err != nil {
+								t.Fatal(err)
+							}
+							processRaw = append(processRaw, fixtureFamilyCutEvent(definition.Package, definition.Selector, record)...)
+						}
+					}
 				}
 			}
-			raw = append(raw, fixtureEvent(definition.Package, "pass", definition.Selector)...)
+			for _, child := range childContracts[definition.ID] {
+				processRaw = append(processRaw, fixtureEvent(definition.Package, "run", child)...)
+				processRaw = append(processRaw, fixtureEvent(definition.Package, "pass", child)...)
+			}
+			if contract, ok := iterationContracts[definition.ID]; ok {
+				outcomes := make([]string, 0, len(contract.outcomes))
+				for outcome := range contract.outcomes {
+					outcomes = append(outcomes, outcome)
+				}
+				slices.Sort(outcomes)
+				for index := range definition.ExpectedRepetitions {
+					record, err := iterationreceipt.New(definition.ID, index, fmt.Sprintf("fixture-seed-%03d", index), contract.boundary, outcomes[index%len(outcomes)], time.Duration(index+1), map[string]any{"index": index}, map[string]any{"verified": true})
+					if err != nil {
+						t.Fatal(err)
+					}
+					processRaw = append(processRaw, fixtureIterationEvent(definition.Package, definition.Selector, record)...)
+				}
+			}
+			if definition.ID == "fault/adversarial-tracker" {
+				for _, child := range expectedWP14Children() {
+					processRaw = append(processRaw, fixtureEvent(definition.Package, "run", child)...)
+					selector := child[strings.LastIndex(child, "/")+1:]
+					if contract, ok := wp14IterationContracts[selector]; ok {
+						boundaries, outcomes := keys(contract.boundaries), keys(contract.outcomes)
+						for index := range contract.count {
+							record, err := iterationreceipt.New(child, index, fmt.Sprintf("wp14-seed-%03d", index), boundaries[index%len(boundaries)], outcomes[index%len(outcomes)], time.Duration(index+1), map[string]any{"index": index}, map[string]bool{"verified": true})
+							if err != nil {
+								t.Fatal(err)
+							}
+							processRaw = append(processRaw, fixtureIterationEvent(definition.Package, child, record)...)
+						}
+					}
+					processRaw = append(processRaw, fixtureEvent(definition.Package, "pass", child)...)
+				}
+			}
+			processRaw = append(processRaw, fixtureEvent(definition.Package, "pass", definition.Selector)...)
+			raw = append(raw, processRaw...)
+			if requiresProcessIterationReceipts(definition) {
+				seed := SHA256([]byte(fmt.Sprintf("%s\x00%s\x00%d", runID, definition.ID, processIndex)))
+				shuffleNumber, _ := strconv.ParseUint(seed[:15], 16, 64)
+				record, err := iterationreceipt.New(definition.ID, processIndex, seed, "go-test-process", "pass", time.Duration(processIndex+1), map[string]any{"process_transcript_sha256": SHA256(processRaw), "process_index": processIndex, "shuffle_seed": strconv.FormatUint(shuffleNumber, 10)}, map[string]any{"selected_test": definition.Selector, "process_exit": 0})
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = append(raw, fixtureIterationEvent(definition.Package, definition.Selector, record)...)
+			}
 		}
 		receipt, err := VerifyGoTestReceipt(raw, runID, source, definition, processes, 0)
 		if err != nil {
@@ -238,18 +472,33 @@ func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
 		entries = append(entries, CensusEntry{ID: definition.ID, Category: definition.Category, OwnerWP: definition.OwnerWP, Package: definition.Package, Selector: definition.Selector, ExpectedRepetitions: definition.ExpectedRepetitions, TrialsPerRun: definition.TrialsPerRun, ObservedCount: definition.ExpectedRepetitions, PassedCount: definition.ExpectedRepetitions, ArtifactPath: receiptPath, ArtifactSHA256: SHA256(receiptBytes)})
 	}
 	census := Census{SchemaVersion: 1, RunID: runID, SourceCommit: source.Commit, SourceTree: source.Tree, Entries: entries}
+	campaignInputs = append(campaignInputs,
+		ArtifactInput{Path: "contracts/family-bound-publication-cuts-source.go", Kind: "campaign-cut-source", Data: []byte("package scenario\n")},
+		ArtifactInput{Path: "contracts/outbox-bound-publication-cuts-source.go", Kind: "campaign-cut-source", Data: []byte("package gapdb\n")},
+		ArtifactInput{Path: "contracts/publication-boundary-source.go", Kind: "campaign-boundary-source", Data: []byte("package v2\n")},
+	)
+	familyCutBytes, err := BuildFamilyCutMatrix(runID, source, census, campaignInputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	campaignInputs = append(campaignInputs, ArtifactInput{Path: "campaigns/family-cut-applicability.json", Kind: "campaign-composition", Data: familyCutBytes})
 	summary, err := Summarize(entries, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := RawPerformance{SchemaVersion: 1, RunID: runID, SourceCommit: source.Commit, SourceTree: source.Tree, RecoveryOperations: 10000, RecoveryMS: repeated(30, 1), QueryMS: repeated(10000, .1), MutationMS: repeated(10000, .2), WarmupExcluded: 10, Method: "monotonic-nearest-rank-inclusive"}
+	referenceBytes, err := os.ReadFile(filepath.Join(repositoryRoot(t), "docs/programs/evidence/m2-performance-reference.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := fixtureRawPerformance(t, runID, source, referenceBytes)
 	performance, err := SummarizePerformance(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rawBytes, _ := CanonicalJSON(raw)
 	sourceBytes, _ := CanonicalJSON(source)
-	producerBytes, _ := CanonicalJSON(ProducerIdentity{SchemaVersion: 1, ActorID: "implementer", ProcessID: "process-1", ProfileID: "implementer-ivan", ProfileRevision: stringOf('e', 64)})
+	profileBytes := []byte("{\"profile_id\":\"implementer-ivan\"}\n")
+	producerBytes, _ := CanonicalJSON(ProducerIdentity{SchemaVersion: 1, ExecutorActorID: "executor", ProcessID: "process-1", ImplementationContributors: []string{"implementer"}, ProfileID: "implementer-ivan", ProfileRevision: SHA256(profileBytes)})
 	sidecarBytes, err := os.ReadFile("/tmp/spec-kitty-gapdb-assertion-sidecar/gapdbd")
 	if err != nil || SHA256(sidecarBytes) != AdmittedSidecarSHA256 {
 		t.Fatalf("admitted fixture sidecar unavailable: %v", err)
@@ -279,6 +528,8 @@ func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
 		ArtifactInput{Path: "contract-m2.json", Kind: "contract", Data: schemaBytes},
 		ArtifactInput{Path: "m1.json", Kind: "m1-admission", Data: []byte("{}\n")},
 		ArtifactInput{Path: "performance.json", Kind: "performance", Data: rawBytes},
+		ArtifactInput{Path: "performance.go-test.jsonl", Kind: "performance-raw", Data: fixturePerformanceTranscript()},
+		ArtifactInput{Path: "performance-reference.json", Kind: "performance-reference", Data: referenceBytes},
 		ArtifactInput{Path: "bin/spk-m2-qualification", Kind: "binary", Data: fixtureBinary},
 		ArtifactInput{Path: "bin/spec-kitty", Kind: "binary", Data: fixtureBinary},
 		ArtifactInput{Path: "install/spec-kitty", Kind: "install", Data: fixtureBinary},
@@ -295,6 +546,7 @@ func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
 		ArtifactInput{Path: "m1-assertion-extension.json", Kind: "m1-admission-part", Data: []byte("{}\n")},
 		ArtifactInput{Path: "sidecar/gapdbd", Kind: "sidecar", Data: sidecarBytes},
 		ArtifactInput{Path: "producer-identity.json", Kind: "producer-identity", Data: producerBytes},
+		ArtifactInput{Path: "producer-profile.json", Kind: "producer-profile", Data: profileBytes},
 		ArtifactInput{Path: "contract-events.json", Kind: "contract", Data: []byte("{}\n")},
 		ArtifactInput{Path: "independent-review-input.md", Kind: "review-input", Data: []byte("review instructions only\n")},
 	)
@@ -305,6 +557,52 @@ func completeFixture(t *testing.T) (Manifest, Census, []ArtifactInput) {
 	}
 	inputs = append(inputs, ArtifactInput{Path: "acceptance-matrix.json", Kind: "acceptance-matrix", Data: acceptance})
 	return manifest, census, inputs
+}
+
+func fixtureFamilyCutEvent(pkg, test string, record iterationreceipt.FamilyCutRecord) []byte {
+	encoded, _ := iterationreceipt.EncodeFamilyCut(record)
+	event, _ := json.Marshal(goTestEvent{Action: "output", Package: strings.TrimPrefix(pkg, "./"), Test: test, Output: iterationreceipt.FamilyCutPrefix + string(encoded) + "\n"})
+	return append(event, '\n')
+}
+
+func fixtureRawPerformance(t *testing.T, runID string, source Source, referenceBytes []byte) RawPerformance {
+	t.Helper()
+	var reference PerformanceReference
+	if err := DecodeStrict(referenceBytes, &reference); err != nil {
+		t.Fatal(err)
+	}
+	familyCounts := map[string]int{}
+	raw := RawPerformance{
+		SchemaVersion: 1, RunID: runID, SourceCommit: source.Commit, SourceTree: source.Tree,
+		ReferenceProfileSHA256: SHA256(referenceBytes),
+		Environment:            PerformanceEnvironment{CPUModel: reference.CPUModel, LogicalCPUs: reference.LogicalCPUs, PhysicalCores: reference.PhysicalCores, MemoryBytes: reference.MemoryMinBytes, KernelSystem: reference.KernelSystem, KernelRelease: reference.KernelRelease, Architecture: reference.Architecture, Filesystem: reference.Filesystem, StorageDevice: reference.StorageDevicePrefix + "0n1p1", PowerGovernor: reference.PowerGovernor, BoostEnabled: reference.BoostEnabled, Load1: 0.1, GoVersion: reference.GoVersion, CGOEnabled: reference.CGOEnabled, SidecarSHA256: AdmittedSidecarSHA256, QualifierSHA256: SHA256(fixtureBinary), ProductSHA256: SHA256(fixtureBinary)},
+		Dataset:                PerformanceDataset{Generator: reference.DatasetGenerator, WarmupOperations: 10, SuffixOperations: 10000, CheckpointRevision: 100, FamilyOperationCounts: familyCounts, ExpectedProjectionSHA: stringOf('3', 64), FinalRevision: 100100},
+		RecoveryOperations:     10000, WarmupExcluded: 10, Method: "monotonic-nearest-rank-inclusive",
+	}
+	for index := 0; index < 10; index++ {
+		family := reference.FamilyIDs[index%len(reference.FamilyIDs)]
+		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "mutation", Family: family, OperationID: fmt.Sprintf("warmup-%d", index), EmittedFamilies: []string{family}, DurationNS: int64(time.Millisecond), Included: false, ExclusionReason: "warmup", BeforeRevision: uint64(index + 1), AfterRevision: uint64(index + 2), MutationCount: 1, PublicationCount: 1, ProjectionRevision: uint64(index + 2), PublicationIDs: []string{fmt.Sprintf("publication-warmup-%d", index)}})
+	}
+	for index := 0; index < 10000; index++ {
+		family := reference.FamilyIDs[index%len(reference.FamilyIDs)]
+		familyCounts[family]++
+		raw.MutationMS = append(raw.MutationMS, .2)
+		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "mutation", Family: family, OperationID: fmt.Sprintf("suffix-%d", index), EmittedFamilies: []string{family}, DurationNS: int64(200 * time.Microsecond), Included: true, BeforeRevision: uint64(100 + index), AfterRevision: uint64(101 + index), MutationCount: 1, PublicationCount: 1, ProjectionRevision: uint64(101 + index), PublicationIDs: []string{fmt.Sprintf("publication-suffix-%d", index)}})
+	}
+	for index := 0; index < 10000; index++ {
+		raw.QueryMS = append(raw.QueryMS, .1)
+		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "query", Family: "family/mission", DurationNS: int64(100 * time.Microsecond), Included: true})
+	}
+	for index := 0; index < 30; index++ {
+		raw.RecoveryMS = append(raw.RecoveryMS, 1)
+		raw.Samples = append(raw.Samples, PerformanceSample{Index: len(raw.Samples), Kind: "recovery", DurationNS: int64(time.Millisecond), Included: true, ProjectionSHA256: raw.Dataset.ExpectedProjectionSHA, ObservedOperations: 10000, ProjectionRevision: raw.Dataset.FinalRevision})
+	}
+	raw.Statistics = []PerformanceStatistics{PerformanceStatisticsFor("mutation", raw.MutationMS, 10), PerformanceStatisticsFor("query", raw.QueryMS, 0), PerformanceStatisticsFor("recovery", raw.RecoveryMS, 0)}
+	return raw
+}
+
+func fixturePerformanceTranscript() []byte {
+	return []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n{\"Action\":\"pass\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n")
 }
 
 func fixtureAbsenceInputs(t *testing.T, source Source) []ArtifactInput {
@@ -455,6 +753,21 @@ func fixtureEvent(pkg, action, test string) []byte {
 	return []byte(fmt.Sprintf("{\"Action\":%q,\"Package\":%q,\"Test\":%q}\n", action, "github.com/spec-kitty/go-kitty3/"+strings.TrimPrefix(pkg, "./"), test))
 }
 
+func fixtureIterationEvent(pkg, test string, record iterationreceipt.Record) []byte {
+	encoded, _ := iterationreceipt.Encode(record)
+	output := "    receipt_test.go:1: " + iterationreceipt.Prefix + string(encoded) + "\n"
+	return []byte(fmt.Sprintf("{\"Action\":\"output\",\"Package\":%q,\"Test\":%q,\"Output\":%q}\n", "github.com/spec-kitty/go-kitty3/"+strings.TrimPrefix(pkg, "./"), test, output))
+}
+
+func keys(input map[string]struct{}) []string {
+	result := make([]string, 0, len(input))
+	for value := range input {
+		result = append(result, value)
+	}
+	slices.Sort(result)
+	return result
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
@@ -462,14 +775,6 @@ func repositoryRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
-}
-
-func repeated(count int, value float64) []float64 {
-	result := make([]float64, count)
-	for index := range result {
-		result[index] = value
-	}
-	return result
 }
 
 func stringOf(character byte, count int) string {

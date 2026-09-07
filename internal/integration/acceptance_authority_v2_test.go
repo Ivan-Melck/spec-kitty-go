@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
@@ -110,6 +111,7 @@ func TestAcceptanceIsExactEvidenceReadinessNotPhaseCeremonyV2(t *testing.T) {
 
 func TestAcceptanceLostAuthorityResponsesReconcileOneHundredTrialsV2(t *testing.T) {
 	for trial := 0; trial < 100; trial++ {
+		started := time.Now()
 		request, authority := acceptanceFixtureV2(t)
 		request.OperationID = journalv2.OperationID(fmt.Sprintf("operation-acceptance-lost-%03d", trial))
 		request.AcceptanceID = fmt.Sprintf("acceptance-lost-%03d", trial)
@@ -119,6 +121,16 @@ func TestAcceptanceLostAuthorityResponsesReconcileOneHundredTrialsV2(t *testing.
 		if err != nil || result.State.Stage != AcceptanceGrantedV2 || len(port.plans) != 2 {
 			t.Fatalf("trial=%d stage=%d result=%+v error=%v plans=%d", trial, port.dropAckAt, result, err, len(port.plans))
 		}
+		receipt, err := iterationreceipt.New(
+			iterationreceipt.DefinitionID("wp14/acceptance-lost-ack"), trial, string(request.OperationID), "acceptance-publication-ack",
+			"reconciled-lost-ack", time.Since(started),
+			map[string]any{"drop_stage": port.dropAckAt, "plans": len(port.plans), "acceptance_stage": result.State.Stage},
+			map[string]bool{"granted": result.State.Stage == AcceptanceGrantedV2, "exact_plan_count": len(port.plans) == 2},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		iterationreceipt.Emit(t, receipt)
 	}
 }
 

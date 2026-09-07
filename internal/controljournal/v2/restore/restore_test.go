@@ -17,6 +17,7 @@ import (
 	journal "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/checkpoint"
 	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/playback"
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 )
 
 type emptyReader struct {
@@ -342,6 +343,7 @@ func raceBuild() bool {
 func TestRestoreParallelWorkerDeterminism100Runs(t *testing.T) {
 	input, uninterrupted, wantPrefix := qualificationRestoreFixture(t, 1, 1, false)
 	for run := 0; run < 100; run++ {
+		started := time.Now()
 		input.Budgets = DefaultBudgetsV2()
 		input.Budgets.MaximumWorkers = 1 + 7*(run%2)
 		result, err := RestoreV2(t.Context(), input)
@@ -351,6 +353,16 @@ func TestRestoreParallelWorkerDeterminism100Runs(t *testing.T) {
 		if result.Playback().CanonicalProjectionDigest() != uninterrupted.CanonicalProjectionDigest() || result.RollingPrefixDigest() != wantPrefix {
 			t.Fatalf("run %d workers=%d produced nondeterministic authority", run, input.Budgets.MaximumWorkers)
 		}
+		receipt, err := iterationreceipt.New(
+			iterationreceipt.DefinitionID("fault/clean-unclean-restart"), run, fmt.Sprintf("run-%03d-workers-%d", run, input.Budgets.MaximumWorkers),
+			"restore-parallel-replay", "terminal-equivalent", time.Since(started),
+			map[string]any{"workers": input.Budgets.MaximumWorkers, "projection": result.Playback().CanonicalProjectionDigest().String(), "prefix": result.RollingPrefixDigest().String()},
+			map[string]any{"projection_equal": true, "rolling_prefix_equal": true, "authority_complete": true},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		iterationreceipt.Emit(t, receipt)
 	}
 }
 

@@ -65,7 +65,7 @@ func RunAbsenceQualification(ctx context.Context, repository, sidecar string, at
 }
 
 func RunRaceQualification(ctx context.Context, repository, sidecar string, attempt *Attempt) ([]ArtifactInput, error) {
-	arguments := []string{"test", "-json", "-race", "-p=1", "-count=1", "-timeout=20m", "./internal/scenario", "./internal/productionruntime", "./internal/testcampaign/m2", "-run", "^(TestTwoItemMissionRestartAfterEachDurableBoundary|TestConcurrentIndependentAuthoritySmoke|TestConcurrentSameAggregateConflictSmoke|TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch|TestManifestCensusVerifyRoundTripIsCanonicalAndSourceBound|TestFrozenCensusRejectsDeletionReorderAndSubstitution)$"}
+	arguments := []string{"test", "-json", "-race", "-p=1", "-count=1", "-timeout=20m", "./internal/scenario", "./internal/productionruntime", "./internal/testcampaign/m2", "-run", "^(TestTwoItemMissionRestartAfterEachDurableBoundary|TestConcurrentIndependentAuthoritySmoke|TestConcurrentSameAggregateConflictSmoke|TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch|TestManifestCensusVerifyRoundTripIsCanonicalAndSourceBound|TestFrozenCensusRejectsDeletionReorderAndSubstitution|TestRealGitTwoItemCrownUsesConcreteAdapterAndWorktrees|TestTwoItemRealGitGapDBCrown)$"}
 	command := exec.CommandContext(ctx, "go", arguments...)
 	command.Dir = repository
 	command.Env = append(os.Environ(), "SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="+sidecar)
@@ -96,11 +96,13 @@ func RunRaceQualification(ctx context.Context, repository, sidecar string, attem
 
 var raceExpected = map[string]string{
 	"TestTwoItemMissionRestartAfterEachDurableBoundary":                 "github.com/spec-kitty/go-kitty3/internal/scenario",
+	"TestTwoItemRealGitGapDBCrown":                                      "github.com/spec-kitty/go-kitty3/internal/scenario",
 	"TestConcurrentIndependentAuthoritySmoke":                           "github.com/spec-kitty/go-kitty3/internal/scenario",
 	"TestConcurrentSameAggregateConflictSmoke":                          "github.com/spec-kitty/go-kitty3/internal/scenario",
 	"TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch": "github.com/spec-kitty/go-kitty3/internal/productionruntime",
 	"TestManifestCensusVerifyRoundTripIsCanonicalAndSourceBound":        "github.com/spec-kitty/go-kitty3/internal/testcampaign/m2",
 	"TestFrozenCensusRejectsDeletionReorderAndSubstitution":             "github.com/spec-kitty/go-kitty3/internal/testcampaign/m2",
+	"TestRealGitTwoItemCrownUsesConcreteAdapterAndWorktrees":            "github.com/spec-kitty/go-kitty3/internal/testcampaign/m2",
 }
 
 func VerifyRaceReceipt(raw []byte, exitCode int) (CommandReceipt, error) {

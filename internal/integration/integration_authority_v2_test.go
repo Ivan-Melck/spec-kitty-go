@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
@@ -29,16 +31,19 @@ func (e *providerJSONCauseV2) MarshalJSON() ([]byte, error) {
 }
 
 type integrationPortV2 struct {
-	mu          sync.Mutex
-	operations  map[journalv2.OperationID]IntegrationOperationResolutionV2
-	targets     map[journalv2.AggregateCoordinate]IntegrationTargetStateV2
-	targetRevs  map[journalv2.AggregateCoordinate]uint64
-	attempts    map[journalv2.AggregateCoordinate]IntegrationAttemptStateV2
-	attemptRevs map[journalv2.AggregateCoordinate]uint64
-	authority   IntegrationAuthorityObservationV2
-	plans       []journalv2.SealedCommitPlanV2
-	revision    uint64
-	dropAckAt   int
+	mu              sync.Mutex
+	operations      map[journalv2.OperationID]IntegrationOperationResolutionV2
+	targets         map[journalv2.AggregateCoordinate]IntegrationTargetStateV2
+	targetRevs      map[journalv2.AggregateCoordinate]uint64
+	attempts        map[journalv2.AggregateCoordinate]IntegrationAttemptStateV2
+	attemptRevs     map[journalv2.AggregateCoordinate]uint64
+	authority       IntegrationAuthorityObservationV2
+	authorityErr    error
+	authorityHook   func(IntegrationAuthorityRequestV2)
+	plans           []journalv2.SealedCommitPlanV2
+	revision        uint64
+	dropAckAt       int
+	rejectReconcile bool
 }
 
 func newIntegrationPortV2(authority IntegrationAuthorityObservationV2) *integrationPortV2 {
@@ -68,8 +73,11 @@ func (p *integrationPortV2) ObserveIntegration(_ context.Context, target, attemp
 	}
 	return result, nil
 }
-func (p *integrationPortV2) ObserveIntegrationAuthority(context.Context, IntegrationAuthorityRequestV2) (IntegrationAuthorityObservationV2, error) {
-	return p.authority, nil
+func (p *integrationPortV2) ObserveIntegrationAuthority(_ context.Context, request IntegrationAuthorityRequestV2) (IntegrationAuthorityObservationV2, error) {
+	if p.authorityHook != nil {
+		p.authorityHook(request)
+	}
+	return p.authority, p.authorityErr
 }
 func (p *integrationPortV2) PublishIntegration(_ context.Context, capability IntegrationPlanV2) (IntegrationAckV2, error) {
 	sealed, err := capability.Publication()
@@ -132,6 +140,9 @@ func (p *integrationPortV2) ReconcileIntegration(_ context.Context, capability I
 	sealed, _ := capability.Publication()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.rejectReconcile {
+		return IntegrationAckV2{}, errors.New("reconciliation temporarily unavailable")
+	}
 	if len(p.plans) == 0 || p.plans[len(p.plans)-1].PublicationID() != sealed.PublicationID() {
 		return IntegrationAckV2{}, errors.New("publication absent")
 	}
@@ -317,6 +328,54 @@ func TestIntegrationAuthorityStagesIntentBeforeEffectsAndReplaysV2(t *testing.T)
 	}
 }
 
+func TestIntegrationConcurrentIdenticalFirstAttemptClassifiesExactInFlightOperationBusyV2(t *testing.T) {
+	request, authority := integrationFixtureV2(t)
+	port := newIntegrationPortV2(authority)
+	port.authorityErr = errors.New("captured acceptance revision moved")
+	port.authorityHook = func(observed IntegrationAuthorityRequestV2) {
+		binding, _, err := prepareIntegrationAuthorityRequestV2(observed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		port.mu.Lock()
+		port.operations[binding.OperationID()] = IntegrationOperationResolutionV2{Kind: AcceptanceOperationExactV2}
+		port.mu.Unlock()
+	}
+	git := newIntegrationGitFixtureV2(request)
+	service, err := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Integrate(t.Context(), request); !IsKind(err, KindAuthorityBusy) || git.calls != 0 || len(port.plans) != 0 {
+		t.Fatalf("identical in-flight operation err=%v git=%d plans=%d", err, git.calls, len(port.plans))
+	}
+
+	port = newIntegrationPortV2(authority)
+	port.authorityErr = errors.New("genuine provider failure")
+	service, _ = NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
+	if _, err := service.Integrate(t.Context(), request); !IsKind(err, KindEvidenceUnavailable) {
+		t.Fatalf("genuine authority read failure was remapped: %v", err)
+	}
+}
+
+func TestIntegrationConcurrentIdenticalFirstPublicationClassifiesExactInFlightOperationBusyV2(t *testing.T) {
+	request, authority := integrationFixtureV2(t)
+	port := newIntegrationPortV2(authority)
+	port.dropAckAt = 1
+	port.rejectReconcile = true
+	git := newIntegrationGitFixtureV2(request)
+	service, err := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Integrate(t.Context(), request); !IsKind(err, KindAuthorityBusy) {
+		t.Fatalf("exact first-publication collision was not typed busy: %v", err)
+	}
+	if git.calls != 1 || len(port.plans) != 1 {
+		t.Fatalf("first publication collision effects git=%d plans=%d", git.calls, len(port.plans))
+	}
+}
+
 func TestIntegrationRefusesBeforeAnyRepositoryObservationV2(t *testing.T) {
 	request, authority := integrationFixtureV2(t)
 	authority.Acceptance.State = nil
@@ -486,6 +545,7 @@ func TestIntegrationLostFenceResponseReconcilesByExactObservationV2(t *testing.T
 
 func TestIntegrationLostAuthorityResponseAtEveryStageOneHundredTrialsV2(t *testing.T) {
 	for trial := 0; trial < 100; trial++ {
+		started := time.Now()
 		request, authority := integrationFixtureV2(t)
 		request.OperationID = journalv2.OperationID(fmt.Sprintf("operation-lost-authority-%03d", trial))
 		request.AttemptID = fmt.Sprintf("attempt-lost-authority-%03d", trial)
@@ -497,6 +557,16 @@ func TestIntegrationLostAuthorityResponseAtEveryStageOneHundredTrialsV2(t *testi
 		if err != nil || result.Stage != IntegrationAttemptCompletedV2 || len(port.plans) != 5 {
 			t.Fatalf("trial=%d stage=%d result=%+v error=%v plans=%d", trial, port.dropAckAt, result, err, len(port.plans))
 		}
+		receipt, err := iterationreceipt.New(
+			iterationreceipt.DefinitionID("wp14/integration-lost-ack"), trial, string(request.OperationID), "integration-publication-ack",
+			"reconciled-lost-ack", time.Since(started),
+			map[string]any{"drop_stage": port.dropAckAt, "plans": len(port.plans), "integration_stage": result.Stage},
+			map[string]bool{"completed": result.Stage == IntegrationAttemptCompletedV2, "exact_plan_count": len(port.plans) == 5},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		iterationreceipt.Emit(t, receipt)
 	}
 }
 
@@ -507,40 +577,72 @@ func TestIntegrationTargetAuthorityAdmitsOneOfOneHundredContendersV2(t *testing.
 	git.blockFence = make(chan struct{})
 	git.fenceEntered = make(chan struct{}, 1)
 	winner, _ := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(request.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
-	winnerDone := make(chan error, 1)
+	type contenderOutcome struct {
+		index    int
+		err      error
+		duration time.Duration
+	}
+	winnerDone := make(chan contenderOutcome, 1)
 	go func() {
+		started := time.Now()
 		_, err := winner.Integrate(t.Context(), request)
-		winnerDone <- err
+		winnerDone <- contenderOutcome{index: 0, err: err, duration: time.Since(started)}
 	}()
 	<-git.fenceEntered
 
 	var group sync.WaitGroup
-	results := make(chan error, 99)
+	results := make(chan contenderOutcome, 99)
 	for index := 1; index < 100; index++ {
 		contender := request
 		contender.OperationID = journalv2.OperationID(fmt.Sprintf("operation-integration-%03d", index))
 		contender.AttemptID = fmt.Sprintf("attempt-%03d", index)
 		group.Add(1)
-		go func(candidate IntegrationAuthorityRequestV2) {
+		go func(index int, candidate IntegrationAuthorityRequestV2) {
 			defer group.Done()
+			started := time.Now()
 			service, _ := NewIntegrationAuthorityServiceV2(port, acceptanceEpochV2(candidate.RuntimeEpochID), gitAdapterV2{integrationGitV2: git}, journalv2.DefaultEventRegistryV2())
 			_, err := service.Integrate(t.Context(), candidate)
-			results <- err
-		}(contender)
+			results <- contenderOutcome{index: index, err: err, duration: time.Since(started)}
+		}(index, contender)
 	}
 	group.Wait()
 	close(results)
-	for err := range results {
-		if !IsKind(err, KindConflict) {
-			t.Fatalf("contender was not refused by target CAS: %v", err)
+	outcomes := make([]contenderOutcome, 0, 100)
+	for result := range results {
+		if !IsKind(result.err, KindConflict) {
+			t.Fatalf("contender was not refused by target CAS: %v", result.err)
 		}
+		outcomes = append(outcomes, result)
 	}
 	close(git.blockFence)
-	if err := <-winnerDone; err != nil {
-		t.Fatalf("target authority winner failed: %v", err)
+	winnerResult := <-winnerDone
+	if winnerResult.err != nil {
+		t.Fatalf("target authority winner failed: %v", winnerResult.err)
 	}
+	outcomes = append(outcomes, winnerResult)
 	if len(port.plans) != 5 {
 		t.Fatalf("unexpected admitted publication count: %d", len(port.plans))
+	}
+	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].index < outcomes[j].index })
+	for _, result := range outcomes {
+		outcome := "target-cas-conflict"
+		if result.index == 0 {
+			outcome = "target-authority-completed"
+		}
+		seed := string(request.OperationID)
+		if result.index > 0 {
+			seed = fmt.Sprintf("operation-integration-%03d", result.index)
+		}
+		receipt, err := iterationreceipt.New(
+			iterationreceipt.DefinitionID("behavior/serialized-integration"), result.index, seed,
+			"integration-target-authority", outcome, result.duration,
+			map[string]any{"contender": result.index, "publication_plans": len(port.plans), "git_calls": git.calls},
+			map[string]any{"one_target_mutator": len(port.plans) == 5, "typed_loser": result.index == 0 || IsKind(result.err, KindConflict)},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		iterationreceipt.Emit(t, receipt)
 	}
 }
 

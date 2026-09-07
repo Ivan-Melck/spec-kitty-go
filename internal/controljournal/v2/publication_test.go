@@ -21,6 +21,160 @@ type assertionObservingPortV2 struct {
 	assertionCount int
 }
 
+type boundaryProbeV2 struct {
+	interrupt PublicationBoundaryStageV2
+	once      bool
+	snapshots []PublicationBoundarySnapshotV2
+}
+
+func (p *boundaryProbeV2) PublicationBoundary(_ context.Context, snapshot PublicationBoundarySnapshotV2) error {
+	p.snapshots = append(p.snapshots, snapshot)
+	if snapshot.Stage == p.interrupt && !p.once {
+		p.once = true
+		return InterruptQualificationPublicationV2(snapshot.Stage)
+	}
+	return nil
+}
+
+type boundaryPortV2 struct {
+	calls    int
+	lastPlan SealedCommitPlanV2
+}
+
+func (p *boundaryPortV2) Commit(_ context.Context, plan SealedCommitPlanV2) (CommitObservationV2, error) {
+	p.calls++
+	p.lastPlan = plan
+	return NewCommitObservationV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), uint64(p.calls), uint64(p.calls), plan.MutationCount())
+}
+
+func TestPublicationBoundaryProbeIsZeroDefaultAndInterruptsWithoutMintingAuthority(t *testing.T) {
+	for _, stage := range []PublicationBoundaryStageV2{
+		PublicationRegisteredBeforeCommitV2,
+		PublicationDurableObservedBeforeAckV2,
+		PublicationAckCreatedBeforeProjectionV2,
+	} {
+		t.Run(string(stage), func(t *testing.T) {
+			tracker := fixtureProjectionTracker(t)
+			port := &boundaryPortV2{}
+			probe := &boundaryProbeV2{interrupt: stage}
+			coordinator, err := NewQualificationPublicationCoordinatorV2(port, tracker, probe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := projectionPlan(t, OperationID("operation-boundary-"+string(stage)), "mission-boundary", "planned")
+			if _, err := coordinator.Publish(t.Context(), plan); err == nil {
+				t.Fatal("configured publication interruption reported success")
+			} else if _, ok := err.(*QualificationPublicationInterruptionV2); !ok {
+				t.Fatalf("publication interruption lost its typed identity: %T %v", err, err)
+			}
+			wantCalls := 1
+			if stage == PublicationRegisteredBeforeCommitV2 {
+				wantCalls = 0
+			}
+			if port.calls != wantCalls || coordinator.UnresolvedCount() != 1 || tracker.LedgerSize() != 0 {
+				t.Fatalf("interruption escaped its boundary: calls=%d unresolved=%d ledger=%d", port.calls, coordinator.UnresolvedCount(), tracker.LedgerSize())
+			}
+			if len(probe.snapshots) == 0 || probe.snapshots[len(probe.snapshots)-1].Plan.Digest() != plan.Digest() {
+				t.Fatal("probe did not receive the exact immutable sealed plan")
+			}
+
+			// The before-commit cut has no durable observation to reconcile. A
+			// retry must remain a duplicate registration rather than fabricating
+			// delivery authority.
+			if stage == PublicationRegisteredBeforeCommitV2 {
+				if _, err := coordinator.Publish(t.Context(), plan); !IsKind(err, ErrorAmbiguous) {
+					t.Fatalf("registered interruption was retried as new authority: %v", err)
+				}
+				return
+			}
+			observation, err := NewCommitObservationV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ack, err := coordinator.ReconcileComplete(plan, observation)
+			if err != nil || ack.PlanDigest() != plan.Digest() || coordinator.UnresolvedCount() != 0 || tracker.LedgerSize() != 1 {
+				t.Fatalf("exact reconciliation failed: ack=%+v unresolved=%d ledger=%d err=%v", ack, coordinator.UnresolvedCount(), tracker.LedgerSize(), err)
+			}
+		})
+	}
+}
+
+func TestPublicationBoundaryProbeRejectsUntypedOrWrongStageErrors(t *testing.T) {
+	tests := map[string]QualificationPublicationBoundaryProbeV2{
+		"untyped": publicationProbeFuncV2(func(context.Context, PublicationBoundarySnapshotV2) error {
+			return errors.New("raw probe failure with secret material")
+		}),
+		"wrong_stage": publicationProbeFuncV2(func(context.Context, PublicationBoundarySnapshotV2) error {
+			return InterruptQualificationPublicationV2(PublicationAckCreatedBeforeProjectionV2)
+		}),
+	}
+	for name, probe := range tests {
+		t.Run(name, func(t *testing.T) {
+			tracker := fixtureProjectionTracker(t)
+			coordinator, _ := NewQualificationPublicationCoordinatorV2(&boundaryPortV2{}, tracker, probe)
+			plan := projectionPlan(t, OperationID("operation-probe-"+name), "mission-probe", "planned")
+			if _, err := coordinator.Publish(t.Context(), plan); !IsKind(err, ErrorInvalidCanonicalData) || coordinator.UnresolvedCount() != 1 || tracker.LedgerSize() != 0 {
+				t.Fatalf("invalid probe result escaped fail-closed normalization: %v", err)
+			}
+		})
+	}
+}
+
+type reconcileBarrierProbeV2 struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p reconcileBarrierProbeV2) PublicationBoundary(_ context.Context, snapshot PublicationBoundarySnapshotV2) error {
+	if snapshot.Stage == PublicationAckCreatedBeforeProjectionV2 {
+		p.entered <- struct{}{}
+		<-p.release
+	}
+	return nil
+}
+
+func TestQualificationProbeConcurrentReconciliationStillProjectsExactlyOnce(t *testing.T) {
+	tracker := fixtureProjectionTracker(t)
+	probe := reconcileBarrierProbeV2{entered: make(chan struct{}, 2), release: make(chan struct{})}
+	coordinator, _ := NewQualificationPublicationCoordinatorV2(&boundaryPortV2{}, tracker, probe)
+	plan := projectionPlan(t, "operation-reconcile-race", "mission-reconcile-race", "planned")
+	if err := coordinator.register(plan); err != nil {
+		t.Fatal(err)
+	}
+	observation, _ := NewCommitObservationV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount())
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() { _, err := coordinator.ReconcileComplete(plan, observation); errs <- err }()
+	}
+	for range 2 {
+		select {
+		case <-probe.entered:
+		case <-time.After(time.Second):
+			t.Fatal("concurrent reconciliation did not reach the probe boundary")
+		}
+	}
+	close(probe.release)
+	success, refused := 0, 0
+	for range 2 {
+		if err := <-errs; err == nil {
+			success++
+		} else if IsKind(err, ErrorAmbiguous) {
+			refused++
+		} else {
+			t.Fatalf("unexpected reconciliation result: %v", err)
+		}
+	}
+	if success != 1 || refused != 1 || coordinator.UnresolvedCount() != 0 || tracker.LedgerSize() != 1 {
+		t.Fatalf("concurrent reconciliation minted authority: success=%d refused=%d unresolved=%d ledger=%d", success, refused, coordinator.UnresolvedCount(), tracker.LedgerSize())
+	}
+}
+
+type publicationProbeFuncV2 func(context.Context, PublicationBoundarySnapshotV2) error
+
+func (f publicationProbeFuncV2) PublicationBoundary(ctx context.Context, snapshot PublicationBoundarySnapshotV2) error {
+	return f(ctx, snapshot)
+}
+
 func (p assertionObservingPortV2) Commit(_ context.Context, plan SealedCommitPlanV2) (CommitObservationV2, error) {
 	return NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount(), p.assertionCount)
 }

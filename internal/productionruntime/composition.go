@@ -47,6 +47,10 @@ type Config struct {
 	IntegrationGit                       integration.IntegrationGitPortV2
 	CheckpointEvery                      int
 	MonitorInterval                      time.Duration
+	// PublicationBoundaryObserver is an internal qualification seam.
+	// Production callers leave it nil; it cannot alter publication control
+	// flow or sealed data.
+	PublicationBoundaryObserver journalv2.PublicationBoundaryObserverV2
 }
 
 type productionOwner struct {
@@ -329,7 +333,7 @@ func composeRuntimeCapabilities(adapter *storegapdb.Adapter, registry journalv2.
 	if err := tracker.Restore(seed); err != nil {
 		return runtimeCapabilities{}, err
 	}
-	coordinator, err := journalv2.NewPublicationCoordinatorV2(adapter, tracker)
+	coordinator, err := journalv2.NewPublicationCoordinatorWithObserverV2(adapter, tracker, config.PublicationBoundaryObserver)
 	if err != nil {
 		return runtimeCapabilities{}, err
 	}

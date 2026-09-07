@@ -8,15 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 )
 
 type PreflightConfig struct {
-	RunID         string
-	Repository    string
-	OutputRoot    string
-	SidecarPath   string
-	ProductBinary string
-	Producer      ProducerIdentity
+	RunID           string
+	Repository      string
+	OutputRoot      string
+	SidecarPath     string
+	ProductBinary   string
+	ProfileDocument string
+	Producer        ProducerIdentity
 }
 
 type PreflightResult struct {
@@ -31,7 +33,7 @@ type PreflightResult struct {
 
 func Preflight(config PreflightConfig) (PreflightResult, error) {
 	result := PreflightResult{SchemaVersion: 1, RunID: config.RunID}
-	for name, path := range map[string]string{"repository": config.Repository, "output": config.OutputRoot, "sidecar": config.SidecarPath, "product": config.ProductBinary} {
+	for name, path := range map[string]string{"repository": config.Repository, "output": config.OutputRoot, "sidecar": config.SidecarPath, "product": config.ProductBinary, "profile-document": config.ProfileDocument} {
 		if !filepath.IsAbs(path) {
 			return result, fmt.Errorf("%s path must be absolute", name)
 		}
@@ -39,8 +41,13 @@ func Preflight(config PreflightConfig) (PreflightResult, error) {
 	if config.RunID == "" || len(config.RunID) > 128 {
 		return result, fmt.Errorf("bounded RunID is required")
 	}
-	if config.Producer.SchemaVersion != 1 || config.Producer.ActorID == "" || config.Producer.ProcessID == "" || config.Producer.ProfileID == "" || config.Producer.ProfileRevision == "" {
+	if config.Producer.SchemaVersion != 1 || config.Producer.ExecutorActorID == "" || config.Producer.ProcessID == "" || len(config.Producer.ImplementationContributors) == 0 || !slices.IsSorted(config.Producer.ImplementationContributors) || len(slices.Compact(append([]string(nil), config.Producer.ImplementationContributors...))) != len(config.Producer.ImplementationContributors) || config.Producer.ProfileID == "" || !validDigest(config.Producer.ProfileRevision) {
 		return result, fmt.Errorf("bounded producer actor/process/profile identity is required")
+	}
+	for _, actor := range config.Producer.ImplementationContributors {
+		if !safeToken(actor) {
+			return result, fmt.Errorf("implementation contributor identity is invalid")
+		}
 	}
 	if err := ValidateDefinitions(FrozenDefinitions()); err != nil {
 		return result, err
@@ -62,7 +69,10 @@ func Preflight(config PreflightConfig) (PreflightResult, error) {
 	if stat, err := os.Stat(config.ProductBinary); err != nil || !stat.Mode().IsRegular() || stat.Mode()&0o111 == 0 {
 		return result, fmt.Errorf("product is not an executable regular file")
 	}
-	var err error
+	profileBytes, err := os.ReadFile(config.ProfileDocument)
+	if err != nil || SHA256(profileBytes) != config.Producer.ProfileRevision {
+		return result, fmt.Errorf("profile document differs from declared immutable revision")
+	}
 	if result.Source, err = ObserveCleanSource(config.Repository); err != nil {
 		return result, err
 	}

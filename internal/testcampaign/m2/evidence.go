@@ -3,6 +3,7 @@ package m2
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -55,17 +57,106 @@ type Verification struct {
 }
 
 type RawPerformance struct {
-	SchemaVersion      int       `json:"schema_version"`
-	RunID              string    `json:"run_id"`
-	SourceCommit       string    `json:"source_commit"`
-	SourceTree         string    `json:"source_tree"`
-	RecoveryOperations int       `json:"recovery_operations"`
-	RecoveryMS         []float64 `json:"recovery_ms"`
-	QueryMS            []float64 `json:"query_ms"`
-	MutationMS         []float64 `json:"mutation_ms"`
-	WarmupExcluded     int       `json:"warmup_excluded"`
-	Failures           int       `json:"failures"`
-	Method             string    `json:"method"`
+	SchemaVersion          int                     `json:"schema_version"`
+	RunID                  string                  `json:"run_id"`
+	SourceCommit           string                  `json:"source_commit"`
+	SourceTree             string                  `json:"source_tree"`
+	ReferenceProfileSHA256 string                  `json:"reference_profile_sha256"`
+	Environment            PerformanceEnvironment  `json:"environment"`
+	Dataset                PerformanceDataset      `json:"dataset"`
+	RecoveryOperations     int                     `json:"recovery_operations"`
+	RecoveryMS             []float64               `json:"recovery_ms"`
+	QueryMS                []float64               `json:"query_ms"`
+	MutationMS             []float64               `json:"mutation_ms"`
+	Samples                []PerformanceSample     `json:"samples"`
+	Statistics             []PerformanceStatistics `json:"statistics"`
+	WarmupExcluded         int                     `json:"warmup_excluded"`
+	Failures               int                     `json:"failures"`
+	Method                 string                  `json:"method"`
+}
+
+// PerformanceReference is the source-bound admission predicate for one
+// reproducible M2 timing host. Ranges are intentional only where ambient
+// conditions cannot be bit-for-bit stable; everything else is exact.
+type PerformanceReference struct {
+	SchemaVersion       int      `json:"schema_version"`
+	CPUModel            string   `json:"cpu_model"`
+	LogicalCPUs         int      `json:"logical_cpus"`
+	PhysicalCores       int      `json:"physical_cores"`
+	MemoryMinBytes      uint64   `json:"memory_min_bytes"`
+	MemoryMaxBytes      uint64   `json:"memory_max_bytes"`
+	KernelSystem        string   `json:"kernel_system"`
+	KernelRelease       string   `json:"kernel_release"`
+	Architecture        string   `json:"architecture"`
+	Filesystem          string   `json:"filesystem"`
+	StorageDevicePrefix string   `json:"storage_device_prefix"`
+	PowerGovernor       string   `json:"power_governor"`
+	BoostEnabled        bool     `json:"boost_enabled"`
+	Load1Maximum        float64  `json:"load1_maximum"`
+	GoVersion           string   `json:"go_version"`
+	CGOEnabled          string   `json:"cgo_enabled"`
+	DatasetGenerator    string   `json:"dataset_generator"`
+	FamilyIDs           []string `json:"family_ids"`
+}
+
+type PerformanceEnvironment struct {
+	CPUModel        string  `json:"cpu_model"`
+	LogicalCPUs     int     `json:"logical_cpus"`
+	PhysicalCores   int     `json:"physical_cores"`
+	MemoryBytes     uint64  `json:"memory_bytes"`
+	KernelSystem    string  `json:"kernel_system"`
+	KernelRelease   string  `json:"kernel_release"`
+	Architecture    string  `json:"architecture"`
+	Filesystem      string  `json:"filesystem"`
+	StorageDevice   string  `json:"storage_device"`
+	PowerGovernor   string  `json:"power_governor"`
+	BoostEnabled    bool    `json:"boost_enabled"`
+	Load1           float64 `json:"load1"`
+	GoVersion       string  `json:"go_version"`
+	CGOEnabled      string  `json:"cgo_enabled"`
+	SidecarSHA256   string  `json:"sidecar_sha256"`
+	QualifierSHA256 string  `json:"qualifier_sha256"`
+	ProductSHA256   string  `json:"product_sha256"`
+}
+
+type PerformanceDataset struct {
+	Generator             string         `json:"generator"`
+	WarmupOperations      int            `json:"warmup_operations"`
+	SuffixOperations      int            `json:"suffix_operations"`
+	CheckpointRevision    uint64         `json:"checkpoint_revision"`
+	FamilyOperationCounts map[string]int `json:"family_operation_counts"`
+	ExpectedProjectionSHA string         `json:"expected_projection_sha256"`
+	FinalRevision         uint64         `json:"final_revision"`
+}
+
+type PerformanceSample struct {
+	Index              int      `json:"index"`
+	Kind               string   `json:"kind"`
+	Family             string   `json:"family,omitempty"`
+	OperationID        string   `json:"operation_id,omitempty"`
+	EmittedFamilies    []string `json:"emitted_families,omitempty"`
+	DurationNS         int64    `json:"duration_ns"`
+	Included           bool     `json:"included"`
+	ExclusionReason    string   `json:"exclusion_reason,omitempty"`
+	ProjectionSHA256   string   `json:"projection_sha256,omitempty"`
+	ObservedOperations int      `json:"observed_operations,omitempty"`
+	PublicationCount   int      `json:"publication_count,omitempty"`
+	ProjectionRevision uint64   `json:"projection_revision,omitempty"`
+	BeforeRevision     uint64   `json:"before_revision,omitempty"`
+	AfterRevision      uint64   `json:"after_revision,omitempty"`
+	MutationCount      uint64   `json:"mutation_count,omitempty"`
+	PublicationIDs     []string `json:"publication_ids,omitempty"`
+}
+
+type PerformanceStatistics struct {
+	Kind      string  `json:"kind"`
+	Count     int     `json:"count"`
+	MinimumMS float64 `json:"minimum_ms"`
+	MedianMS  float64 `json:"median_ms"`
+	P95MS     float64 `json:"p95_ms"`
+	P99MS     float64 `json:"p99_ms"`
+	MaximumMS float64 `json:"maximum_ms"`
+	Excluded  int     `json:"excluded"`
 }
 
 func SummarizePerformance(raw RawPerformance) (Performance, error) {
@@ -75,8 +166,11 @@ func SummarizePerformance(raw RawPerformance) (Performance, error) {
 		QueryObservations: len(raw.QueryMS), QueryP95MS: percentile(raw.QueryMS, 95),
 		MutationObservations: len(raw.MutationMS), MutationP95MS: percentile(raw.MutationMS, 95),
 	}
-	if raw.SchemaVersion != 1 || raw.RunID == "" || !isHex(raw.SourceCommit, 40) || !isHex(raw.SourceTree, 40) || raw.Method != "monotonic-nearest-rank-inclusive" || raw.Failures != 0 || raw.RecoveryOperations < 10000 || len(raw.RecoveryMS) < 30 || len(raw.QueryMS) < 10000 || len(raw.MutationMS) < 10000 {
+	if raw.SchemaVersion != 1 || raw.RunID == "" || !isHex(raw.SourceCommit, 40) || !isHex(raw.SourceTree, 40) || !validDigest(raw.ReferenceProfileSHA256) || raw.Method != "monotonic-nearest-rank-inclusive" || raw.Failures != 0 || raw.RecoveryOperations < 10000 || len(raw.RecoveryMS) < 30 || len(raw.QueryMS) < 10000 || len(raw.MutationMS) < 10000 {
 		return result, fmt.Errorf("performance observation census or identity is incomplete")
+	}
+	if err := validatePerformanceSamples(raw); err != nil {
+		return result, err
 	}
 	for _, observations := range [][]float64{raw.RecoveryMS, raw.QueryMS, raw.MutationMS} {
 		for _, observation := range observations {
@@ -89,6 +183,162 @@ func SummarizePerformance(raw RawPerformance) (Performance, error) {
 		return result, fmt.Errorf("performance threshold exceeded")
 	}
 	return result, nil
+}
+
+func VerifyPerformanceReference(referenceBytes []byte, raw RawPerformance) error {
+	var reference PerformanceReference
+	if err := DecodeStrict(referenceBytes, &reference); err != nil {
+		return fmt.Errorf("performance reference: %w", err)
+	}
+	if raw.ReferenceProfileSHA256 != SHA256(referenceBytes) {
+		return fmt.Errorf("performance reference digest differs from raw evidence")
+	}
+	wantFamilies := make([]string, len(authorityFamilies))
+	for index, definition := range authorityFamilies {
+		wantFamilies[index] = definition.ID
+	}
+	if reference.SchemaVersion != 1 || reference.CPUModel == "" || reference.LogicalCPUs <= 0 || reference.PhysicalCores <= 0 || reference.MemoryMinBytes == 0 || reference.MemoryMaxBytes < reference.MemoryMinBytes || reference.KernelSystem == "" || reference.KernelRelease == "" || reference.Architecture == "" || reference.Filesystem == "" || reference.StorageDevicePrefix == "" || reference.PowerGovernor == "" || reference.Load1Maximum <= 0 || reference.GoVersion != "go1.26.7" || reference.CGOEnabled != "0" || reference.DatasetGenerator == "" || !slices.Equal(reference.FamilyIDs, wantFamilies) {
+		return fmt.Errorf("performance reference profile is incomplete or differs from the frozen family registry")
+	}
+	environment := raw.Environment
+	if environment.CPUModel != reference.CPUModel || environment.LogicalCPUs != reference.LogicalCPUs || environment.PhysicalCores != reference.PhysicalCores || environment.MemoryBytes < reference.MemoryMinBytes || environment.MemoryBytes > reference.MemoryMaxBytes || environment.KernelSystem != reference.KernelSystem || environment.KernelRelease != reference.KernelRelease || environment.Architecture != reference.Architecture || environment.Filesystem != reference.Filesystem || !strings.HasPrefix(environment.StorageDevice, reference.StorageDevicePrefix) || environment.PowerGovernor != reference.PowerGovernor || environment.BoostEnabled != reference.BoostEnabled || environment.Load1 > reference.Load1Maximum || environment.GoVersion != reference.GoVersion || environment.CGOEnabled != reference.CGOEnabled || environment.SidecarSHA256 != AdmittedSidecarSHA256 || !validDigest(environment.QualifierSHA256) || !validDigest(environment.ProductSHA256) {
+		return fmt.Errorf("observed performance environment is outside the source-bound reference profile")
+	}
+	if raw.Dataset.Generator != reference.DatasetGenerator || raw.Dataset.WarmupOperations != raw.WarmupExcluded || raw.Dataset.SuffixOperations != len(raw.MutationMS) || len(raw.Dataset.FamilyOperationCounts) != len(wantFamilies) || !validDigest(raw.Dataset.ExpectedProjectionSHA) {
+		return fmt.Errorf("performance dataset differs from the source-bound reference")
+	}
+	for _, family := range wantFamilies {
+		if raw.Dataset.FamilyOperationCounts[family] <= 0 {
+			return fmt.Errorf("performance dataset omitted authority family %s", family)
+		}
+	}
+	return nil
+}
+
+// VerifyPerformanceTranscript proves the gated real-authority performance
+// scenario actually ran once. The raw machine stream, rather than a producer
+// summary, is the authority for run/pass/skip/fail membership.
+func VerifyPerformanceTranscript(raw []byte) error {
+	const selector = "TestM2AcceptedAuthorityPerformanceCampaign"
+	counts := map[string]int{}
+	for _, line := range bytes.Split(raw, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var event struct {
+			Action string `json:"Action"`
+			Test   string `json:"Test"`
+		}
+		if err := json.Unmarshal(line, &event); err != nil {
+			return fmt.Errorf("performance transcript contains non-JSON event: %w", err)
+		}
+		if event.Test == selector {
+			counts[event.Action]++
+			if event.Action == "skip" || event.Action == "fail" {
+				return fmt.Errorf("performance selector action=%s", event.Action)
+			}
+		} else if event.Test != "" && strings.HasPrefix(event.Test, selector+"/") {
+			return fmt.Errorf("performance selector emitted unexpected subtest %q", event.Test)
+		}
+	}
+	if counts["run"] != 1 || counts["pass"] != 1 || counts["skip"] != 0 || counts["fail"] != 0 {
+		return fmt.Errorf("performance selector receipt run=%d pass=%d skip=%d fail=%d", counts["run"], counts["pass"], counts["skip"], counts["fail"])
+	}
+	return nil
+}
+
+func validatePerformanceSamples(raw RawPerformance) error {
+	wantTotal := raw.WarmupExcluded + len(raw.MutationMS) + len(raw.QueryMS) + len(raw.RecoveryMS)
+	if len(raw.Samples) != wantTotal || raw.Dataset.SuffixOperations != len(raw.MutationMS) || raw.RecoveryOperations != raw.Dataset.SuffixOperations || raw.WarmupExcluded < 0 {
+		return fmt.Errorf("performance raw sample census is incomplete")
+	}
+	observed := map[string][]float64{"mutation": {}, "query": {}, "recovery": {}}
+	excluded := map[string]int{}
+	familyCounts := map[string]int{}
+	operationIDs := map[string]struct{}{}
+	publicationIDs := map[string]struct{}{}
+	for index, sample := range raw.Samples {
+		if sample.Index != index || sample.DurationNS < 0 {
+			return fmt.Errorf("performance sample %d has invalid identity or duration", index)
+		}
+		if _, ok := observed[sample.Kind]; !ok {
+			return fmt.Errorf("performance sample %d has unknown kind %q", index, sample.Kind)
+		}
+		if !sample.Included {
+			if sample.Kind != "mutation" || sample.ExclusionReason != "warmup" {
+				return fmt.Errorf("performance sample %d has unapproved exclusion", index)
+			}
+			excluded[sample.Kind]++
+			continue
+		}
+		if sample.Kind == "mutation" {
+			if len(sample.PublicationIDs) == 0 || len(sample.EmittedFamilies) == 0 || sample.MutationCount == 0 || sample.AfterRevision <= sample.BeforeRevision || sample.ProjectionRevision != sample.AfterRevision {
+				return fmt.Errorf("performance mutation sample %d lacks acknowledged publication evidence", index)
+			}
+			if _, duplicate := operationIDs[sample.OperationID]; duplicate || sample.OperationID == "" || sample.PublicationCount != len(sample.PublicationIDs) || !slices.IsSorted(sample.PublicationIDs) || !slices.IsSorted(sample.EmittedFamilies) || !slices.Contains(sample.EmittedFamilies, sample.Family) {
+				return fmt.Errorf("performance mutation sample %d has duplicate or noncanonical authority identity", index)
+			}
+			operationIDs[sample.OperationID] = struct{}{}
+			for _, publication := range sample.PublicationIDs {
+				if publication == "" {
+					return fmt.Errorf("performance mutation sample %d has empty publication identity", index)
+				}
+				if _, duplicate := publicationIDs[publication]; duplicate {
+					return fmt.Errorf("performance publication %q is duplicated", publication)
+				}
+				publicationIDs[publication] = struct{}{}
+			}
+		}
+		if sample.ExclusionReason != "" {
+			return fmt.Errorf("included performance sample %d has an exclusion reason", index)
+		}
+		observed[sample.Kind] = append(observed[sample.Kind], float64(sample.DurationNS)/float64(time.Millisecond))
+		if sample.Kind == "mutation" {
+			for _, family := range sample.EmittedFamilies {
+				familyCounts[family]++
+			}
+		}
+	}
+	if excluded["mutation"] != raw.WarmupExcluded || !slices.Equal(observed["mutation"], raw.MutationMS) || !slices.Equal(observed["query"], raw.QueryMS) || !slices.Equal(observed["recovery"], raw.RecoveryMS) {
+		return fmt.Errorf("performance arrays are not a projection of the retained raw samples")
+	}
+	if len(familyCounts) != len(raw.Dataset.FamilyOperationCounts) {
+		return fmt.Errorf("performance family census differs from retained suffix samples")
+	}
+	for family, count := range raw.Dataset.FamilyOperationCounts {
+		if familyCounts[family] != count {
+			return fmt.Errorf("performance family %s count=%d want=%d", family, familyCounts[family], count)
+		}
+	}
+	wantStatistics := []PerformanceStatistics{
+		performanceStatistics("mutation", raw.MutationMS, excluded["mutation"]),
+		performanceStatistics("query", raw.QueryMS, 0),
+		performanceStatistics("recovery", raw.RecoveryMS, 0),
+	}
+	if !slices.Equal(raw.Statistics, wantStatistics) {
+		return fmt.Errorf("performance statistics differ from retained raw samples")
+	}
+	return nil
+}
+
+func performanceStatistics(kind string, values []float64, excluded int) PerformanceStatistics {
+	result := PerformanceStatistics{Kind: kind, Count: len(values), Excluded: excluded}
+	if len(values) == 0 {
+		return result
+	}
+	ordered := append([]float64(nil), values...)
+	slices.Sort(ordered)
+	result.MinimumMS = ordered[0]
+	result.MedianMS = percentile(ordered, 50)
+	result.P95MS = percentile(ordered, 95)
+	result.P99MS = percentile(ordered, 99)
+	result.MaximumMS = ordered[len(ordered)-1]
+	return result
+}
+
+func PerformanceStatisticsFor(kind string, values []float64, excluded int) PerformanceStatistics {
+	return performanceStatistics(kind, values, excluded)
 }
 
 func percentile(values []float64, percent int) float64 {
@@ -254,7 +504,7 @@ func Verify(ctx context.Context, directory, schemaPath string, expectedSource *S
 		paths[artifact.Path] = artifact
 		kinds[artifact.Kind]++
 	}
-	if kinds["census"] != 1 || kinds["performance"] != 1 || kinds["source"] != 1 || kinds["m1-admission"] != 1 || kinds["sbom"] != 1 || kinds["sbom-raw"] != 1 || kinds["binary"] < 2 || kinds["campaign"] < 1 || kinds["acceptance-matrix"] != 1 || kinds["successor-contract"] != 1 || kinds["attempt-index"] != 1 || kinds["attempt-terminal"] != 1 || kinds["producer-identity"] != 1 || kinds["sidecar"] != 1 || kinds["install"] != 1 || kinds["install-smoke"] != 1 || kinds["review-input"] != 1 || kinds["race"] != 1 || kinds["race-raw"] != 1 || kinds["absence-evidence"] < 1 || kinds["contract"] < 2 {
+	if kinds["census"] != 1 || kinds["performance"] != 1 || kinds["performance-raw"] != 1 || kinds["performance-reference"] != 1 || kinds["source"] != 1 || kinds["m1-admission"] != 1 || kinds["sbom"] != 1 || kinds["sbom-raw"] != 1 || kinds["binary"] < 2 || kinds["campaign"] < 1 || kinds["campaign-composition"] != 1 || kinds["acceptance-matrix"] != 1 || kinds["successor-contract"] != 1 || kinds["attempt-index"] != 1 || kinds["attempt-terminal"] != 1 || kinds["producer-identity"] != 1 || kinds["producer-profile"] != 1 || kinds["sidecar"] != 1 || kinds["install"] != 1 || kinds["install-smoke"] != 1 || kinds["review-input"] != 1 || kinds["race"] != 1 || kinds["race-raw"] != 1 || kinds["absence-evidence"] < 1 || kinds["contract"] < 2 {
 		return Verification{}, manifest, fmt.Errorf("mandatory artifact kind census is incomplete")
 	}
 	if err := verifyClosedDirectory(directory, paths); err != nil {
@@ -281,8 +531,20 @@ func Verify(ctx context.Context, directory, schemaPath string, expectedSource *S
 		return Verification{}, manifest, err
 	}
 	var producer ProducerIdentity
-	if err := DecodeStrict(producerBytes, &producer); err != nil || producer.SchemaVersion != 1 || producer.ActorID == "" || producer.ProcessID == "" || producer.ProfileID == "" || producer.ProfileRevision == "" {
+	if err := DecodeStrict(producerBytes, &producer); err != nil || producer.SchemaVersion != 1 || producer.ExecutorActorID == "" || producer.ProcessID == "" || len(producer.ImplementationContributors) == 0 || !slices.IsSorted(producer.ImplementationContributors) || len(slices.Compact(append([]string(nil), producer.ImplementationContributors...))) != len(producer.ImplementationContributors) || producer.ProfileID != "implementer-ivan" || !validDigest(producer.ProfileRevision) {
 		return Verification{}, manifest, fmt.Errorf("producer identity is absent or incomplete")
+	}
+	profileArtifact, err := oneArtifactByKind(paths, "producer-profile")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	profileBytes, err := readRegular(root, filepath.FromSlash(profileArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	var profile map[string]any
+	if err := jsonUnmarshal(profileBytes, &profile); err != nil || profile["profile_id"] != "implementer-ivan" || SHA256(profileBytes) != producer.ProfileRevision {
+		return Verification{}, manifest, fmt.Errorf("producer profile bytes do not bind profile revision")
 	}
 	terminalArtifact, err := oneArtifactByKind(paths, "attempt-terminal")
 	if err != nil {
@@ -373,6 +635,17 @@ func Verify(ctx context.Context, directory, schemaPath string, expectedSource *S
 	wantStructured, _ := CanonicalJSON(structured)
 	if !bytes.Equal(wantStructured, structuredBytes) {
 		return Verification{}, manifest, fmt.Errorf("WP14 structured family/cut receipt is forged or substituted")
+	}
+	matrixArtifact, err := oneArtifactByKind(paths, "campaign-composition")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	matrixBytes, err := readRegular(root, filepath.FromSlash(matrixArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	if err := VerifyFamilyCutMatrix(matrixBytes, manifest, census, paths); err != nil {
+		return Verification{}, manifest, err
 	}
 	raceArtifact, err := oneArtifactByKind(paths, "race")
 	if err != nil {
@@ -497,8 +770,33 @@ func Verify(ctx context.Context, directory, schemaPath string, expectedSource *S
 	if err := DecodeStrict(performanceBytes, &raw); err != nil {
 		return Verification{}, manifest, err
 	}
+	transcriptArtifact, err := oneArtifactByKind(paths, "performance-raw")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	transcript, err := readRegular(root, filepath.FromSlash(transcriptArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	if err := VerifyPerformanceTranscript(transcript); err != nil {
+		return Verification{}, manifest, err
+	}
+	referenceArtifact, err := oneArtifactByKind(paths, "performance-reference")
+	if err != nil {
+		return Verification{}, manifest, err
+	}
+	referenceBytes, err := readRegular(root, filepath.FromSlash(referenceArtifact.Path), maximumFile)
+	if err != nil {
+		return Verification{}, manifest, err
+	}
 	if raw.RunID != manifest.RunID || raw.SourceCommit != manifest.Source.Commit || raw.SourceTree != manifest.Source.Tree {
 		return Verification{}, manifest, fmt.Errorf("performance evidence identity differs from manifest")
+	}
+	if raw.Environment.QualifierSHA256 != SHA256(qualifierBytes) || raw.Environment.ProductSHA256 != SHA256(productBytes) {
+		return Verification{}, manifest, fmt.Errorf("performance environment binary identities differ from qualified artifacts")
+	}
+	if err := VerifyPerformanceReference(referenceBytes, raw); err != nil {
+		return Verification{}, manifest, err
 	}
 	performance, performanceErr := SummarizePerformance(raw)
 	semantic := "pass"

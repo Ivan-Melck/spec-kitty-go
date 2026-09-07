@@ -1,10 +1,15 @@
 package scenario
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 )
 
 func TestZombieWorkspaceRemainsWritableButAuthorityIsFenced(t *testing.T) {
@@ -49,6 +54,7 @@ func TestZombieOwnerReplacementCampaign100(t *testing.T) {
 	want := semanticProgressDigest(t, h, "project-replacement", "mission-replacement")
 	seen := map[string]struct{}{string(h.host.RuntimeEpochID()): {}}
 	for trial := range 100 {
+		started := time.Now()
 		stale, current := h.restart()
 		if _, duplicate := seen[string(current)]; duplicate {
 			t.Fatalf("trial=%d reused owner epoch %s", trial, current)
@@ -58,6 +64,16 @@ func TestZombieOwnerReplacementCampaign100(t *testing.T) {
 		if got := semanticProgressDigest(t, h, "project-replacement", "mission-replacement"); got != want {
 			t.Fatalf("trial=%d replacement changed authority: want=%s got=%s", trial, want, got)
 		}
+		invariants := assertUniversalInvariants(t, h, "project-replacement", "mission-replacement", fmt.Sprintf("replacement-%03d", trial))
+		receipt, err := iterationreceipt.New(
+			iterationreceipt.DefinitionID("behavior/zombie-workspace-isolation"), trial, fmt.Sprintf("scenario-%s-%d", shortDigest(h.config.Seed), h.starts), "runtime-epoch-replacement",
+			"stale-refused-authority-unchanged", time.Since(started),
+			map[string]any{"prior_epoch": stale, "current_epoch": current, "authority_digest": want}, json.RawMessage(invariants),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		iterationreceipt.Emit(t, receipt)
 	}
 	t.Logf("campaign seed=%s replacements=100 distinct_epochs=%d outcome=pass", t.Name(), len(seen))
 }

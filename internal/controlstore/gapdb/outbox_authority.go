@@ -20,6 +20,13 @@ func newOutboxAuthorityV2(adapter *Adapter, coordinator *journalv2.PublicationCo
 	return &outboxAuthorityV2{adapter: adapter, publisher: coordinator, coordinator: coordinator}, nil
 }
 
+// OutboxAuthorityPortV2 exposes the direct provider capability without
+// inventing a Host route for outbox. The returned port accepts only the exact
+// sealed outbox plan and retains the raw GapDB adapter inside this package.
+func (a *Adapter) OutboxAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2) (controlstore.OutboxAuthorityPortV2, error) {
+	return newOutboxAuthorityV2(a, coordinator)
+}
+
 func newOutboxAuthorityV2ForTest(publisher executionPublicationPortV2) *outboxAuthorityV2 {
 	return &outboxAuthorityV2{publisher: publisher}
 }

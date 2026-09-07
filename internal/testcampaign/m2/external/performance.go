@@ -3,152 +3,672 @@
 package external
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
+	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/controljournal/v2/checkpoint"
+	restorev2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
+	"github.com/spec-kitty/go-kitty3/internal/controlstore"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
+	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	m2 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m2"
 )
 
-const performancePrefix = "m2/performance/"
+const PerformanceGenerator = "m2-authority-families-checkpoint-suffix-v1"
 
 type PerformanceConfig struct {
-	RunID        string
-	Repository   string
-	Executable   string
-	RuntimeRoot  string
-	DataRoot     string
-	Source       m2.Source
-	Warmup       int
-	Observations int
-	RecoveryRuns int
-	StartTimeout time.Duration
-	StopTimeout  time.Duration
+	RunID                string
+	Repository           string
+	Executable           string
+	QualifierExecutable  string
+	ProductExecutable    string
+	Reference            string
+	RuntimeRoot          string
+	DataRoot             string
+	Source               m2.Source
+	Warmup               int
+	Observations         int
+	RecoveryRuns         int
+	CheckpointRevision   uint64
+	CheckpointOperations int
+	StartTimeout         time.Duration
+	StopTimeout          time.Duration
 }
 
-// MeasurePerformance measures the admitted external process and storage-neutral
-// adapter. Every sample is retained. The caller, not this function, decides
-// whether the reference host is admissible.
-func MeasurePerformance(ctx context.Context, config PerformanceConfig) (m2.RawPerformance, error) {
-	result := m2.RawPerformance{SchemaVersion: 1, RunID: config.RunID, SourceCommit: config.Source.Commit, SourceTree: config.Source.Tree, RecoveryOperations: config.Observations, WarmupExcluded: config.Warmup, Method: "monotonic-nearest-rank-inclusive"}
-	if config.RunID == "" || config.Repository == "" || config.Executable == "" || config.Observations < 10_000 || config.RecoveryRuns < 30 || config.Warmup < 0 {
-		return result, fmt.Errorf("M2 performance configuration is incomplete")
+type CheckpointResult struct {
+	Revision         uint64
+	ProjectionSHA256 string
+	OperationCount   int
+}
+
+type RecoveryObservation struct {
+	DurationNS         int64
+	ProjectionSHA256   string
+	ObservedOperations int
+	Operations         map[string]RecoveredOperation
+	RuntimeOperations  []string
+}
+
+type RecoveredOperation struct {
+	Families       []string
+	PublicationIDs []string
+}
+
+// PublishPerformanceOutboxConnected executes one real direct-provider outbox
+// authority mutation against the already-running admitted Host database.
+// Outbox deliberately has no Host route; the caller must restart the Host
+// after this append so its in-memory projection cannot remain stale.
+func PublishPerformanceOutboxConnected(ctx context.Context, socketPath string, source journalv2.SealedCommitPlanV2, sourceRecordRevision uint64, operationID string, hostAuthorityID journalv2.HostAuthorityID) (m2.PerformanceSample, error) {
+	adapter, closer, err := storegapdb.Dial(socketPath, 5*time.Second)
+	if err != nil {
+		return m2.PerformanceSample{}, err
 	}
+	defer closer.Close()
+	registry := journalv2.DefaultEventRegistryV2()
+	reducers, err := productionruntime.BuildReducerSetV2(registry)
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	recovered, err := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: hostAuthorityID, PriorRuntimeEpochID: "epoch-performance-outbox-observer", RecoveryAttemptID: "performance-outbox-source-restore", Budgets: restorev2.DefaultBudgetsV2()})
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	tracker, err := restoredPerformanceTracker(reducers, recovered)
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(adapter, tracker)
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	if len(source.EffectIntents()) != 1 || source.BindingCreate() == nil || sourceRecordRevision == 0 || operationID == "" {
+		return m2.PerformanceSample{}, fmt.Errorf("performance outbox source is incomplete")
+	}
+	var intent execution.EffectIntentV2
+	if err := json.Unmarshal(source.EffectIntents()[0].Canonical, &intent); err != nil || len(intent.CanonicalBytesV2()) == 0 {
+		return m2.PerformanceSample{}, fmt.Errorf("performance outbox source intent: %w", err)
+	}
+	revision, err := adapter.CaptureRevisionV2(ctx)
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	durable, err := controlstore.BindDurableOutboxIntentV2(source, sourceRecordRevision, controlstore.OutboxIntentCoordinatesV2{
+		EffectID: intent.EffectID, SourceOperationID: intent.OperationID, CanonicalIntent: intent.CanonicalBytesV2(),
+		IntendedMutationDigest: intent.CanonicalRequestDigest, IntendedValue: intent.IntendedValue,
+		ExpectedProviderRevision: uint64(intent.ExpectedProviderRevision), ExpectedValue: intent.ExpectedValue,
+		ExpectedOperationMarker: intent.ExpectedOperationMarker, AttributionMarker: string(intent.OperationID),
+		ActorID: journalv2.ActorID(intent.ActorID.String()), Capability: source.BindingCreate().CommandKind(),
+	})
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	command := controlstore.OutboxCommandV2{Action: controlstore.OutboxStartAttemptV2, Intent: durable, AttemptID: "attempt-" + operationID, RuntimeEpochID: "epoch-performance-outbox", OperationEventID: journalv2.EventID("event-" + operationID + "-operation"), OutboxEventID: journalv2.EventID("event-" + operationID + "-outbox")}
+	command, err = controlstore.BindOutboxCommandOperationV2(command, controlstore.OutboxOperationCoordinatesV2{OperationID: journalv2.OperationID(operationID), ProcessID: "process-performance-outbox", DoctrineRevision: "doctrine-performance", ProfileRevision: "profile-performance", PolicyRevision: "policy-performance", ObservedCreatedAt: "2026-09-06T00:00:00Z"})
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	capability, err := controlstore.BuildOutboxAuthorityPlanV2(command, registry)
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	plan, err := capability.Publication()
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	port, err := adapter.OutboxAuthorityPortV2(coordinator)
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	started := time.Now()
+	ack, err := port.PublishOutbox(ctx, capability)
+	duration := time.Since(started)
+	if err != nil {
+		return m2.PerformanceSample{}, err
+	}
+	families := make([]string, 0, len(plan.Events()))
+	for _, event := range plan.Events() {
+		families = append(families, "family/"+event.Family())
+	}
+	slices.Sort(families)
+	families = slices.Compact(families)
+	return m2.PerformanceSample{Kind: "mutation", Family: "family/outbox", OperationID: operationID, EmittedFamilies: families, DurationNS: duration.Nanoseconds(), Included: true, BeforeRevision: revision.CurrentRevision(), AfterRevision: ack.AuthorityRevision, MutationCount: uint64(ack.MutationCount), PublicationCount: 1, ProjectionRevision: ack.AuthorityRevision, PublicationIDs: []string{string(ack.PublicationID)}}, nil
+}
+
+func ObservePerformanceEnvironment(config PerformanceConfig) (m2.PerformanceEnvironment, error) {
+	return observeEnvironment(config)
+}
+
+// RecoverPerformance starts a fresh admitted sidecar process for every run
+// and performs the production reducer restore into clean process memory.
+func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAuthorityID string) ([]RecoveryObservation, error) {
+	observations := make([]RecoveryObservation, 0, config.RecoveryRuns)
+	var projectionSHA string
+	for run := 0; run < config.RecoveryRuns; run++ {
+		runConfig := config
+		runConfig.RuntimeRoot = filepath.Join(config.RuntimeRoot, fmt.Sprintf("recovery-%02d", run))
+		state, err := startPerformanceRuntime(ctx, runConfig)
+		if err != nil {
+			return observations, err
+		}
+		started := time.Now()
+		recovered, restoreErr := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: state.adapter, EventRegistry: state.registry, Reducers: state.reducers, HostAuthorityID: journalv2.HostAuthorityID(hostAuthorityID), PriorRuntimeEpochID: "epoch-performance-before-checkpoint", RecoveryAttemptID: fmt.Sprintf("performance-recovery-%02d", run), Budgets: restorev2.DefaultBudgetsV2()})
+		duration := time.Since(started)
+		if restoreErr != nil {
+			state.close()
+			return observations, restoreErr
+		}
+		if recovered.StoreRevision().CurrentRevision() < config.CheckpointRevision {
+			state.close()
+			return observations, fmt.Errorf("recovery revision precedes the qualified checkpoint")
+		}
+		observed := countOperationStates(recovered) - config.CheckpointOperations
+		if observed != config.Observations {
+			state.close()
+			return observations, fmt.Errorf("recovery run %d restored %d/%d suffix operations", run, observed, config.Observations)
+		}
+		digest := recovered.Playback().CanonicalProjectionDigest().String()
+		if run == 0 {
+			projectionSHA = digest
+		} else if digest != projectionSHA {
+			state.close()
+			return observations, fmt.Errorf("recovery run %d projection differs from run zero", run)
+		}
+		observation := RecoveryObservation{DurationNS: duration.Nanoseconds(), ProjectionSHA256: digest, ObservedOperations: observed}
+		if run == 0 {
+			observation.Operations, observation.RuntimeOperations, err = operationsFromEvents(ctx, state.adapter, recovered, config.CheckpointRevision)
+			if err != nil {
+				state.close()
+				return observations, err
+			}
+		}
+		state.close()
+		observations = append(observations, observation)
+	}
+	return observations, nil
+}
+
+// PreparePerformanceCheckpoint seals the exact production reducer projection
+// already written by the scenario and publishes one real checkpoint before
+// the measured suffix. It owns no domain transition and invents no payload.
+func PreparePerformanceCheckpoint(ctx context.Context, config PerformanceConfig, hostAuthorityID string) (CheckpointResult, error) {
+	state, err := startPerformanceRuntime(ctx, config)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	defer state.close()
+	recovered, err := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: state.adapter, EventRegistry: state.registry, Reducers: state.reducers, HostAuthorityID: journalv2.HostAuthorityID(hostAuthorityID), PriorRuntimeEpochID: "epoch-performance-before-checkpoint", RecoveryAttemptID: "performance-checkpoint-restore", Budgets: restorev2.DefaultBudgetsV2()})
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	tracker, err := restoredPerformanceTracker(state.reducers, recovered)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(state.adapter, tracker)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	state.tracker, state.coordinator = tracker, coordinator
+	if _, err := state.publishCheckpoint(ctx); err != nil {
+		return CheckpointResult{}, err
+	}
+	return CheckpointResult{Revision: tracker.HighestObservedRevision(), ProjectionSHA256: recovered.Playback().CanonicalProjectionDigest().String(), OperationCount: countOperationStates(recovered) + 1}, nil
+}
+
+func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result restorev2.ResultV2, afterRevision uint64) (map[string]RecoveredOperation, []string, error) {
+	byOperation := map[string]map[string]struct{}{}
+	publications := map[string]map[string]struct{}{}
+	runtimeRevisions := map[string]uint64{}
+	seen := 0
+	for _, state := range result.Playback().States() {
+		for version := journalv2.LogicalVersion(1); version <= state.LogicalVersion(); version++ {
+			seen++
+			if seen > 100_000 {
+				return nil, nil, fmt.Errorf("performance event census exceeds 100000")
+			}
+			address, err := journalv2.NewJournalEventAddressV2(state.Coordinate(), version)
+			if err != nil {
+				return nil, nil, err
+			}
+			request, err := journalv2.NewReadRequestV2(address, result.StoreRevision())
+			if err != nil {
+				return nil, nil, err
+			}
+			record, err := reader.ReadV2(ctx, request)
+			if err != nil {
+				return nil, nil, err
+			}
+			event, err := journalv2.DecodeEventEnvelopeRecordV2(record, journalv2.DefaultEventRegistryV2())
+			if err != nil {
+				return nil, nil, err
+			}
+			operation := string(event.OperationID())
+			if byOperation[operation] == nil {
+				byOperation[operation] = map[string]struct{}{}
+				publications[operation] = map[string]struct{}{}
+			}
+			byOperation[operation]["family/"+event.Family()] = struct{}{}
+			publications[operation][string(event.PublicationID())] = struct{}{}
+			if event.Family() == "runtime_host" && record.RecordRevision() > afterRevision && (runtimeRevisions[operation] == 0 || record.RecordRevision() < runtimeRevisions[operation]) {
+				runtimeRevisions[operation] = record.RecordRevision()
+			}
+		}
+	}
+	resultMap := make(map[string]RecoveredOperation, len(byOperation))
+	for operation, set := range byOperation {
+		families := make([]string, 0, len(set))
+		for family := range set {
+			families = append(families, family)
+		}
+		slices.Sort(families)
+		publicationIDs := make([]string, 0, len(publications[operation]))
+		for publication := range publications[operation] {
+			publicationIDs = append(publicationIDs, publication)
+		}
+		slices.Sort(publicationIDs)
+		resultMap[operation] = RecoveredOperation{Families: families, PublicationIDs: publicationIDs}
+	}
+	runtimeOperations := make([]string, 0, len(runtimeRevisions))
+	for operation := range runtimeRevisions {
+		runtimeOperations = append(runtimeOperations, operation)
+	}
+	slices.SortFunc(runtimeOperations, func(left, right string) int {
+		if runtimeRevisions[left] < runtimeRevisions[right] {
+			return -1
+		}
+		if runtimeRevisions[left] > runtimeRevisions[right] {
+			return 1
+		}
+		return strings.Compare(left, right)
+	})
+	if len(runtimeOperations) == 0 {
+		return nil, nil, fmt.Errorf("performance restore omitted post-checkpoint runtime_host publication")
+	}
+	return resultMap, runtimeOperations, nil
+}
+
+func restoredPerformanceTracker(reducers journalv2.ReducerSetV2, recovered restorev2.ResultV2) (*journalv2.ProjectionTrackerV2, error) {
+	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		return nil, err
+	}
+	states := recovered.Playback().States()
+	entries := make([]journalv2.ProjectionRestoreEntryV2, len(states))
+	for index, state := range states {
+		entries[index] = journalv2.ProjectionRestoreEntryV2{Coordinate: state.Coordinate(), LogicalVersion: state.LogicalVersion(), LastEventID: state.LastEventID(), CanonicalState: state.CanonicalState(), StateDigest: state.StateDigest(), Tombstone: state.Tombstone()}
+	}
+	if err := tracker.Restore(journalv2.ProjectionRestoreSeedV2{ThroughRecordRevision: recovered.StoreRevision().CurrentRevision(), RollingPrefixDigest: recovered.RollingPrefixDigest(), CanonicalProjectionDigest: recovered.Playback().CanonicalProjectionDigest(), Entries: entries}); err != nil {
+		return nil, err
+	}
+	return tracker, nil
+}
+
+type performanceRuntime struct {
+	lifecycle   *sidecargapdb.Lifecycle
+	adapter     *storegapdb.Adapter
+	closer      interface{ Close() error }
+	registry    journalv2.EventRegistryV2
+	reducers    journalv2.ReducerSetV2
+	tracker     *journalv2.ProjectionTrackerV2
+	coordinator *journalv2.PublicationCoordinatorV2
+}
+
+// MeasurePerformance times real accepted publication plans against the
+// admitted GapDB sidecar. Every durable mutation crosses the foundation
+// coordinator and its acknowledgement projection; raw Adapter Put/Get calls
+// are deliberately not performance evidence.
+func MeasurePerformance(ctx context.Context, config PerformanceConfig) (m2.RawPerformance, []byte, error) {
+	var result m2.RawPerformance
+	if config.RunID == "" || config.Repository == "" || config.Executable == "" || config.QualifierExecutable == "" || config.ProductExecutable == "" || config.Reference == "" || config.Observations != 10_000 || config.RecoveryRuns != 30 || config.Warmup != 100 {
+		return result, nil, fmt.Errorf("M2 performance configuration is incomplete")
+	}
+	if err := os.MkdirAll(config.RuntimeRoot, 0o700); err != nil {
+		return result, nil, err
+	}
+	output := filepath.Join(config.RuntimeRoot, "performance.raw.json")
+	command := exec.CommandContext(ctx, "go", "test", "-json", "./internal/scenario", "-run", "^TestM2AcceptedAuthorityPerformanceCampaign$", "-count=1")
+	command.Dir = config.Repository
+	command.Env = append(os.Environ(),
+		"SPEC_KITTY_M2_PERFORMANCE_OUTPUT="+output,
+		"SPEC_KITTY_M2_PERFORMANCE_RUN_ID="+config.RunID,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_COMMIT="+config.Source.Commit,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_TREE="+config.Source.Tree,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GO="+config.Source.GoVersion,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOMOD="+config.Source.GoModSHA256,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOSUM="+config.Source.GoSumSHA256,
+		"SPEC_KITTY_M2_PERFORMANCE_REFERENCE="+config.Reference,
+		"SPEC_KITTY_M2_PERFORMANCE_QUALIFIER="+config.QualifierExecutable,
+		"SPEC_KITTY_M2_PERFORMANCE_PRODUCT="+config.ProductExecutable,
+		"SPEC_KITTY_WP15_GAPDBD="+config.Executable,
+	)
+	var transcript boundedBuffer
+	transcript.limit = 64 << 20
+	command.Stdout, command.Stderr = &transcript, &transcript
+	err := command.Run()
+	if transcript.exceeded {
+		return result, transcript.Bytes(), fmt.Errorf("performance test transcript exceeds 64 MiB")
+	}
+	if err != nil {
+		return result, transcript.Bytes(), fmt.Errorf("performance scenario: %w", err)
+	}
+	if err := m2.VerifyPerformanceTranscript(transcript.Bytes()); err != nil {
+		return result, transcript.Bytes(), err
+	}
+	raw, err := os.ReadFile(output)
+	if err != nil {
+		return result, transcript.Bytes(), err
+	}
+	if len(raw) > 64<<20 {
+		return result, transcript.Bytes(), fmt.Errorf("performance artifact exceeds 64 MiB")
+	}
+	if err := m2.DecodeStrict(raw, &result); err != nil {
+		return result, transcript.Bytes(), err
+	}
+	if result.RunID != config.RunID || result.SourceCommit != config.Source.Commit || result.SourceTree != config.Source.Tree {
+		return result, transcript.Bytes(), fmt.Errorf("performance artifact identity differs from the requested run/source")
+	}
+	reference, err := os.ReadFile(config.Reference)
+	if err != nil {
+		return result, transcript.Bytes(), err
+	}
+	if err := m2.VerifyPerformanceReference(reference, result); err != nil {
+		return result, transcript.Bytes(), err
+	}
+	if _, err := m2.SummarizePerformance(result); err != nil {
+		return result, transcript.Bytes(), err
+	}
+	return result, transcript.Bytes(), nil
+}
+
+type boundedBuffer struct {
+	bytes.Buffer
+	limit    int
+	exceeded bool
+}
+
+func (b *boundedBuffer) Write(value []byte) (int, error) {
+	if b.Buffer.Len()+len(value) > b.limit {
+		b.exceeded = true
+		return len(value), fmt.Errorf("bounded transcript exceeded")
+	}
+	return b.Buffer.Write(value)
+}
+
+func startPerformanceRuntime(ctx context.Context, config PerformanceConfig) (*performanceRuntime, error) {
 	adoption := filepath.Join(config.Repository, "docs/programs/evidence/m1-assertion-extension-adoption.json")
 	admissionRecord := filepath.Join(config.Repository, "docs/programs/evidence/m1-assertion-extension-admission.json")
 	admission, err := sidecargapdb.VerifyAssertionExtensionAdoption(adoption, admissionRecord)
 	if err != nil {
-		return result, err
+		return nil, err
 	}
-	if err := os.MkdirAll(config.RuntimeRoot, 0o700); err != nil {
-		return result, err
+	for _, path := range []string{config.RuntimeRoot, config.DataRoot} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return nil, err
+		}
 	}
-	if err := os.MkdirAll(config.DataRoot, 0o700); err != nil {
-		return result, err
+	lifecycle, err := sidecargapdb.Start(ctx, sidecargapdb.LifecycleConfig{
+		ExecutablePath: config.Executable, AdmissionRecordPath: admissionRecord, Admission: admission,
+		RuntimeRoot: config.RuntimeRoot, DataDirectory: config.DataRoot, SupervisorRunID: config.RunID + "-performance",
+		ProductPolicySHA256: m2.SHA256([]byte("m2-performance-policy-v1")), StartTimeout: config.StartTimeout, StopTimeout: config.StopTimeout,
+	})
+	if err != nil {
+		return nil, err
 	}
+	evidence, err := lifecycle.Evidence()
+	if err != nil {
+		_ = lifecycle.Stop(context.Background())
+		return nil, err
+	}
+	adapter, closer, err := storegapdb.Dial(evidence.ConfiguredDaemonSocketPath, 5*time.Second)
+	if err != nil {
+		_ = lifecycle.Stop(context.Background())
+		return nil, err
+	}
+	registry := journalv2.DefaultEventRegistryV2()
+	reducers, err := productionruntime.BuildReducerSetV2(registry)
+	if err != nil {
+		_ = closer.Close()
+		_ = lifecycle.Stop(context.Background())
+		return nil, err
+	}
+	tracker, err := journalv2.NewProjectionTrackerV2(reducers, journalv2.CanonicalCodecVersionV2)
+	if err != nil {
+		_ = closer.Close()
+		_ = lifecycle.Stop(context.Background())
+		return nil, err
+	}
+	coordinator, err := journalv2.NewPublicationCoordinatorV2(adapter, tracker)
+	if err != nil {
+		_ = closer.Close()
+		_ = lifecycle.Stop(context.Background())
+		return nil, err
+	}
+	return &performanceRuntime{lifecycle: lifecycle, adapter: adapter, closer: closer, registry: registry, reducers: reducers, tracker: tracker, coordinator: coordinator}, nil
+}
 
-	start := func(sequence int) (*sidecargapdb.Lifecycle, *storegapdb.Adapter, func(), error) {
-		lifecycle, startErr := sidecargapdb.Start(ctx, sidecargapdb.LifecycleConfig{
-			ExecutablePath: config.Executable, AdmissionRecordPath: admissionRecord, Admission: admission,
-			RuntimeRoot: config.RuntimeRoot, DataDirectory: config.DataRoot,
-			SupervisorRunID:     fmt.Sprintf("%s-performance-%02d", config.RunID, sequence),
-			ProductPolicySHA256: m2.SHA256([]byte("m2-performance-policy-v1")),
-			StartTimeout:        config.StartTimeout, StopTimeout: config.StopTimeout,
-		})
-		if startErr != nil {
-			return nil, nil, nil, startErr
-		}
-		evidence, evidenceErr := lifecycle.Evidence()
-		if evidenceErr != nil {
-			_ = lifecycle.Stop(context.Background())
-			return nil, nil, nil, evidenceErr
-		}
-		adapter, closer, dialErr := storegapdb.Dial(evidence.ConfiguredDaemonSocketPath, 5*time.Second)
-		if dialErr != nil {
-			_ = lifecycle.Stop(context.Background())
-			return nil, nil, nil, dialErr
-		}
-		closeAll := func() {
-			_ = closer.Close()
-			_ = lifecycle.Stop(context.Background())
-		}
-		return lifecycle, adapter, closeAll, nil
+func (r *performanceRuntime) close() {
+	if r == nil {
+		return
 	}
+	if r.closer != nil {
+		_ = r.closer.Close()
+	}
+	if r.lifecycle != nil {
+		_ = r.lifecycle.Stop(context.Background())
+	}
+}
 
-	_, adapter, closeAll, err := start(0)
+func checkpointOperationInput(registry journalv2.EventRegistryV2) (journalv2.CommitPlanInput, journalv2.AggregateCoordinate, error) {
+	const operation = "operation-checkpoint-performance"
+	operationID := journalv2.OperationID(operation)
+	operationEventID := journalv2.EventID("event-operation-" + operation)
+	scope := journalv2.Scope{Kind: journalv2.ScopeHost}
+	intent, err := journalv2.CanonicalIntentDigest(journalv2.StableIntentInput{CommandKind: "m2.performance.checkpoint", CommandSchemaVersion: 1, Scope: scope, Command: []byte(`{"checkpoint":"performance"}`)})
+	if err != nil {
+		return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
+	}
+	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "m2.performance.checkpoint", CommandSchemaVersion: 1, CanonicalIntentDigest: intent, Scope: scope, ActorID: "m2-performance", ProcessID: "m2-performance", DoctrineRevision: "m2", ProfileRevision: "m2", PolicyRevision: "m2", OriginatingRuntimeEpochID: "epoch-performance", ObservedCreatedAt: "2026-09-06T00:00:00Z"})
+	if err != nil {
+		return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
+	}
+	state, err := journalv2.NewOperationStateV2(journalv2.OperationStateInput{OperationID: operationID, LogicalVersion: 1, Status: journalv2.StatusAccepted, EventIDs: []journalv2.EventID{operationEventID}})
+	if err != nil {
+		return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
+	}
+	operationPayload, err := journalv2.EncodeOperationStateEventPayloadV2(state)
+	if err != nil {
+		return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
+	}
+	operationCoordinate, _ := journalv2.NewAggregateCoordinate("operation", journalv2.AggregateID(operationID), scope)
+	operationDigest, _ := journalv2.ReducerStateDigestV2(operationPayload)
+	drafts := []journalv2.EventDraftV2{{EventID: operationEventID, EventType: "operation.accepted", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 1, CommittedRuntimeEpochID: "epoch-performance", ActorID: "m2-performance", ProcessID: "m2-performance", PolicyRevision: "m2", GovernanceRevisions: []string{"m2"}, Payload: operationPayload}}
+	heads := []journalv2.HeadTransitionV2{{Coordinate: operationCoordinate, NextLogicalVersion: 1, EventID: operationEventID, CommittedRuntimeEpochID: "epoch-performance", CanonicalStateDigest: operationDigest, AuthoritySummary: operationPayload}}
+	conditions := make([]journalv2.ProviderCondition, len(heads))
+	for index, head := range heads {
+		conditions[index], err = journalv2.ConditionForHeadTransitionV2(head)
+		if err != nil {
+			return journalv2.CommitPlanInput{}, journalv2.AggregateCoordinate{}, err
+		}
+	}
+	return journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: state, Events: drafts, Heads: heads, Conditions: conditions}, operationCoordinate, nil
+}
+
+func (r *performanceRuntime) publishCheckpoint(ctx context.Context) (journalv2.AggregateCoordinate, error) {
+	sealed, err := r.coordinator.SealProjectionPrefix()
+	if err != nil {
+		return journalv2.AggregateCoordinate{}, err
+	}
+	value, err := checkpoint.BuildV2("checkpoint-performance", sealed)
+	if err != nil {
+		return journalv2.AggregateCoordinate{}, err
+	}
+	slot, slotBytes, err := checkpoint.NewSlotV2("checkpoint-slot-performance", value)
+	if err != nil {
+		return journalv2.AggregateCoordinate{}, err
+	}
+	input, coordinate, err := checkpointOperationInput(r.registry)
+	if err != nil {
+		return journalv2.AggregateCoordinate{}, err
+	}
+	input.Checkpoints = []journalv2.CheckpointRecord{{CheckpointID: value.CheckpointID(), Canonical: value.CanonicalBytes(), SlotID: slot.SlotID(), SlotCanonical: slotBytes, ExpectedSlotRecordRevision: 0}}
+	condition, err := journalv2.ConditionForCheckpointRecordV2(input.Checkpoints[0])
+	if err != nil {
+		return journalv2.AggregateCoordinate{}, err
+	}
+	input.Conditions = append(input.Conditions, condition)
+	plan, err := journalv2.SealCommitPlanV2(input, r.registry)
+	if err != nil {
+		return journalv2.AggregateCoordinate{}, err
+	}
+	_, err = r.coordinator.Publish(ctx, plan)
+	return coordinate, err
+}
+
+func countOperationStates(result restorev2.ResultV2) int {
+	count := 0
+	for _, state := range result.Playback().States() {
+		if state.Coordinate().Kind == "operation" {
+			count++
+		}
+	}
+	return count
+}
+
+func observeEnvironment(config PerformanceConfig) (m2.PerformanceEnvironment, error) {
+	result := m2.PerformanceEnvironment{KernelSystem: runtime.GOOS, Architecture: runtime.GOARCH, GoVersion: runtime.Version()}
+	if err := m2.VerifyBuiltBinary(config.QualifierExecutable, config.Source); err != nil {
+		return result, fmt.Errorf("performance qualifier build identity: %w", err)
+	}
+	if err := m2.VerifyBuiltBinary(config.ProductExecutable, config.Source); err != nil {
+		return result, fmt.Errorf("performance product build identity: %w", err)
+	}
+	qualifier, err := os.ReadFile(config.QualifierExecutable)
 	if err != nil {
 		return result, err
 	}
-	for index := 0; index < config.Warmup+config.Observations; index++ {
-		key := fmt.Sprintf("%s%05d", performancePrefix, index%config.Observations)
-		started := time.Now()
-		_, mutateErr := adapter.ConditionalMutate(ctx, fmt.Sprintf("%s-put-%05d", config.RunID, index), storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: key, Condition: storegapdb.Condition{Kind: storegapdb.ConditionAny}, Value: []byte(fmt.Sprintf("value-%05d", index))}, storegapdb.AckDurable)
-		elapsed := time.Since(started)
-		if mutateErr != nil {
-			result.Failures++
-			closeAll()
-			return result, mutateErr
+	product, err := os.ReadFile(config.ProductExecutable)
+	if err != nil {
+		return result, err
+	}
+	result.CGOEnabled = "0"
+	result.QualifierSHA256 = m2.SHA256(qualifier)
+	result.ProductSHA256 = m2.SHA256(product)
+	cpu, err := os.Open("/proc/cpuinfo")
+	if err != nil {
+		return result, err
+	}
+	physical := map[string]struct{}{}
+	var physicalID, coreID string
+	scanner := bufio.NewScanner(cpu)
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, found := strings.Cut(line, ":")
+		if !found {
+			if physicalID != "" && coreID != "" {
+				physical[physicalID+":"+coreID] = struct{}{}
+			}
+			physicalID, coreID = "", ""
+			continue
 		}
-		if index >= config.Warmup {
-			result.MutationMS = append(result.MutationMS, milliseconds(elapsed))
+		switch strings.TrimSpace(key) {
+		case "model name":
+			if result.CPUModel == "" {
+				result.CPUModel = strings.TrimSpace(value)
+			}
+		case "physical id":
+			physicalID = strings.TrimSpace(value)
+		case "core id":
+			coreID = strings.TrimSpace(value)
 		}
 	}
-	for index := 0; index < config.Warmup+config.Observations; index++ {
-		key := fmt.Sprintf("%s%05d", performancePrefix, index%config.Observations)
-		started := time.Now()
-		record, getErr := adapter.Get(ctx, key)
-		elapsed := time.Since(started)
-		if getErr != nil || record.Key != key {
-			result.Failures++
-			closeAll()
-			return result, fmt.Errorf("query observation %d failed: %w", index, getErr)
-		}
-		if index >= config.Warmup {
-			result.QueryMS = append(result.QueryMS, milliseconds(elapsed))
+	_ = cpu.Close()
+	if physicalID != "" && coreID != "" {
+		physical[physicalID+":"+coreID] = struct{}{}
+	}
+	if err := scanner.Err(); err != nil {
+		return result, err
+	}
+	result.LogicalCPUs = runtime.NumCPU()
+	result.PhysicalCores = len(physical)
+	if result.PhysicalCores == 0 {
+		result.PhysicalCores = result.LogicalCPUs
+	}
+	meminfo, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return result, err
+	}
+	for _, line := range strings.Split(string(meminfo), "\n") {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				return result, fmt.Errorf("MemTotal is malformed")
+			}
+			kilobytes, parseErr := strconv.ParseUint(fields[1], 10, 64)
+			if parseErr != nil {
+				return result, parseErr
+			}
+			result.MemoryBytes = kilobytes * 1024
 		}
 	}
-	closeAll()
-
-	for run := 0; run < config.RecoveryRuns; run++ {
-		started := time.Now()
-		_, recovered, stop, startErr := start(run + 1)
-		if startErr != nil {
-			result.Failures++
-			return result, startErr
-		}
-		count, scanErr := scanAll(ctx, recovered)
-		result.RecoveryMS = append(result.RecoveryMS, milliseconds(time.Since(started)))
-		stop()
-		if scanErr != nil || count != config.Observations {
-			result.Failures++
-			return result, fmt.Errorf("recovery run %d restored %d/%d records: %w", run, count, config.Observations, scanErr)
-		}
+	if release, readErr := os.ReadFile("/proc/sys/kernel/osrelease"); readErr == nil {
+		result.KernelRelease = strings.TrimSpace(string(release))
+	} else {
+		return result, readErr
 	}
+	governor, err := os.ReadFile("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+	if err != nil {
+		return result, err
+	}
+	result.PowerGovernor = strings.TrimSpace(string(governor))
+	boost, err := os.ReadFile("/sys/devices/system/cpu/cpufreq/boost")
+	if err != nil {
+		return result, err
+	}
+	result.BoostEnabled = strings.TrimSpace(string(boost)) == "1"
+	load, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return result, err
+	}
+	result.Load1, err = strconv.ParseFloat(strings.Fields(string(load))[0], 64)
+	if err != nil {
+		return result, err
+	}
+	result.Filesystem, err = commandField(config.DataRoot, "findmnt", "-T", config.DataRoot, "-no", "FSTYPE")
+	if err != nil {
+		return result, err
+	}
+	result.StorageDevice, err = commandField(config.DataRoot, "findmnt", "-T", config.DataRoot, "-no", "SOURCE")
+	if err != nil {
+		return result, err
+	}
+	sidecar, err := os.ReadFile(config.Executable)
+	if err != nil {
+		return result, err
+	}
+	result.SidecarSHA256 = m2.SHA256(sidecar)
 	return result, nil
 }
 
-func scanAll(ctx context.Context, adapter *storegapdb.Adapter) (int, error) {
-	count, cursor := 0, ""
-	for {
-		page, err := adapter.Scan(ctx, storegapdb.ScanRequest{Prefix: performancePrefix, Limit: 500, Cursor: cursor, MaxBytes: 8 << 20})
-		if err != nil {
-			return count, err
-		}
-		count += len(page.Records)
-		if !page.Truncated {
-			return count, nil
-		}
-		if page.Cursor == "" || page.Cursor == cursor {
-			return count, fmt.Errorf("scan cursor did not advance")
-		}
-		cursor = page.Cursor
+func commandField(directory, name string, args ...string) (string, error) {
+	command := exec.Command(name, args...)
+	command.Dir = directory
+	output, err := command.Output()
+	if err != nil {
+		return "", err
 	}
-}
-
-func milliseconds(duration time.Duration) float64 {
-	return float64(duration.Nanoseconds()) / float64(time.Millisecond)
+	return strings.TrimSpace(string(output)), nil
 }

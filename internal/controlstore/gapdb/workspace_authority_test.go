@@ -567,6 +567,7 @@ func TestWorkspacePathClaimContentionAndIndependentProgressV2(t *testing.T) {
 
 func TestWorkspacePathClaimAndIndependentWorkspaceCampaignV2(t *testing.T) {
 	for trial := 0; trial < 100; trial++ {
+		started := time.Now()
 		memory := newV2AtomicMemory()
 		memory.revision = 17
 		provider := memory.provider()
@@ -616,6 +617,7 @@ func TestWorkspacePathClaimAndIndependentWorkspaceCampaignV2(t *testing.T) {
 				t.Fatalf("trial %d index %d partial workspace result", trial, index)
 			}
 		}
+		emitGapDBIteration(t, trial, fmt.Sprintf("path-%03d", trial), "workspace-path-claim", "one-shared-one-independent", started, map[string]any{"shared_winners": sharedWinners, "independent_committed": errs[2] == nil})
 	}
 }
 

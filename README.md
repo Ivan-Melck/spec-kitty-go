@@ -12,11 +12,11 @@ successor missions and are not inferred from an M2 result.
 
 ## Status at a glance
 
-| Surface | Delivered and qualified now | Ratified production target |
+| Surface | Delivered implementation and evidence boundary | Ratified successor target |
 |---|---|---|
-| Authority and concurrency | Phase 1: leases, lease-scoped workspaces, quarantine, stale-authority refusal, ActorID-independent review, and serialized Git integration at the exact evidence boundary | Retain the laws and requalify them on the GapDB production host |
-| Work substrate | Phase 2: provider-neutral ports and the exact Beads 1.2.2 JSON adapter tuple | Beads remains the default mutable work/discussion substrate, never mission or execution authority |
-| Mission method | Phase 3: specification, plan, provider-neutral decomposition, immutable WorkRevision generations, drift reconciliation, typed `next`, and derived task projection | Compose the complete execution, review, acceptance, integration, progress, and recovery path |
+| Authority and concurrency | The GapDB production host implements leases, lease-scoped workspaces, quarantine, stale-authority refusal, ActorID-independent review, and serialized Git integration; Phase 1 remains the historical source-bound proof | The M2 crown requalifies the complete laws on the sole production store before M3/M4 admission |
+| Work substrate | Provider-neutral ports and the exact Beads 1.2.2 JSON adapter tuple are delivered | M3 composes the admitted provider with the production host; Beads remains mutable work/discussion, never mission or execution authority |
+| Mission method | Specification, plan, provider-neutral decomposition, immutable WorkRevision generations, drift reconciliation, typed `next`, execution, review, acceptance, integration, progress, and recovery are implemented as native capabilities | M3 adds real-agent/provider composition without changing these authority laws |
 | Control state | GapDB is the sole compiled production authority; M2 has no SQLite package, module, fallback, importer, selector, or test driver | Release readiness requires the exact M2 crown evidence and independent review |
 | Application surface | `cmd/spec-kitty` is the native authority command surface; `cmd/spk-m2-qualification` is release tooling and grants no authority | Orchestrator API 2.0 and the complete normal CLI remain M5 |
 | Acceptance | Repository-specific Go campaigns and candidate-bound evidence | Stack-neutral claims, approved provider bindings, typed evidence envelopes, and a policy gate |
@@ -32,7 +32,7 @@ claim.
 Read these in order to answer what works, what is approved, what remains, and
 what happens next:
 
-1. This status table and [Delivered Phase 1–3](#delivered-phase-13).
+1. This status table and [Delivered native runtime](#delivered-native-runtime).
 2. [Production Orchestration Architecture](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md)
    and [ADR 0002](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/adr/0002-production-orchestration-architecture.md)
    for the sole normative target.
@@ -47,7 +47,7 @@ what happens next:
    [Python behavior inventory](docs/PYTHON_BEHAVIOR_INVENTORY.md) for provenance.
 6. [Build and run the current repository](#build-and-run-the-current-repository)
    and [Evidence](#evidence) for reproducible present-tense claims.
-7. [What happens next](#what-happens-next) for M1 admission and its stop rule.
+7. [What happens next](#what-happens-next) for the M2 review boundary and M3/M4 stop rule.
 
 ## What makes this port distinct
 
@@ -101,9 +101,11 @@ Consequences:
 - An approved candidate is not an integrated Git fact.
 - GapDB ordering cannot decide whether a transition is legal.
 
-## Delivered Phase 1–3
+## Delivered native runtime
 
-The completed work is useful in its own right rather than “an incomplete app”:
+The repository is a native authority application, not a collection of planned
+packages. Its earlier phases established the laws now composed by the GapDB
+production host:
 
 - **Phase 1 authority proving ground:** real Git repositories and worktrees,
   concurrent claims, lease generations, quarantine and fresh replacement
@@ -118,25 +120,29 @@ The completed work is useful in its own right rather than “an incomplete app�
   projection. Portable and real-Beads two-item scenarios pass at the recorded
   evidence boundary.
 
-Current packages and `cmd/spk-phase1-helper` are proving/composition surfaces.
-They are not the production host, API 2.0 server, GapDB runtime, neutral
-acceptance engine, or MCP adapter. No command below implies those target
-components already exist.
+`cmd/spec-kitty` is the production authority command surface. It composes the
+GapDB lifecycle, memory projection, mission/workgraph, execution/workspace,
+handoff/review, acceptance/integration, external-effect, and progress
+capabilities. `cmd/spk-m2-qualification` independently qualifies that runtime;
+`cmd/spk-phase1-helper` and historical campaigns remain evidence tools. The
+process-complete API 2.0 transport, stack-neutral acceptance providers, and
+optional MCP adapter are distinct M4/M5 successors.
 
 The delivered source keeps its helper/campaign surface outside the authority
 kernel and keeps concrete tracker providers behind provider-neutral contracts:
 
 ```mermaid
 flowchart TB
-    subgraph Surface[Current proving and qualification surfaces]
-        Helper[cmd spk-phase1-helper]
-        Campaign[internal testcampaign]
+    subgraph Surface[Native application and qualification surfaces]
+        App[cmd spec-kitty]
+        Qualifier[cmd spk-m2-qualification]
+        Historical[historical helpers and campaigns]
     end
 
     subgraph Kernel[Delivered provider-neutral authority capabilities]
         Mission[mission and workgraph]
         Execution[execution workspace handoff review integration]
-		Store[GapDB authority host]
+        Store[GapDB authority host]
     end
 
     subgraph Providers[Tracker adapters and conformance]
@@ -145,8 +151,13 @@ flowchart TB
         Beads[qualified Beads adapter]
     end
 
-    Surface --> Kernel
-    Kernel --> Ports
+    App --> Mission
+    App --> Execution
+    App --> Store
+    Qualifier --> Store
+    Historical --> Execution
+    Mission --> Ports
+    Execution --> Ports
     Fake --> Ports
     Beads --> Ports
 ```
@@ -271,7 +282,9 @@ GOTOOLCHAIN=go1.26.7 make m2-qualification \
   M2_EVIDENCE_ROOT=/absolute/private/evidence \
   M2_ACTOR_ID=implementing-agent \
   M2_PROCESS_ID=exact-process-id \
-  M2_PROFILE_REVISION=exact-profile-revision
+  M2_IMPLEMENTATION_CONTRIBUTORS=codex \
+  M2_PROFILE_DOCUMENT="$(pwd)/docs/programs/evidence/m2-producer-profile.json" \
+  M2_PROFILE_REVISION=94c8fd94c5e237df5b4e256a595804c6bae685e5a4a57417275c74c0b604a378
 
 GOTOOLCHAIN=go1.26.7 make m2-verify-evidence \
   M2_EVIDENCE=/absolute/private/evidence/m2-unique-run \

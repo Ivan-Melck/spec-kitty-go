@@ -9,24 +9,49 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 )
 
-const wp14CampaignSourceSHA256 = "a8917de26648c54aca5bc1b730594a7482576254a7fde25c8ae8f7b844d7c470"
+const wp14CampaignSourceSHA256 = "3d79d11c6eee3686fdfb8d043eeb80d93031922a3ff8f766c7e0a3a1bc6a76c6"
 
 type WP14CampaignReceipt struct {
-	SchemaVersion    int      `json:"schema_version"`
-	SourceSHA256     string   `json:"source_sha256"`
-	RawSHA256        string   `json:"raw_sha256"`
-	ExpectedChildren []string `json:"expected_children"`
-	RunChildren      []string `json:"run_children"`
-	PassedChildren   []string `json:"passed_children"`
-	Families         int      `json:"families"`
-	FamilyClaims     int      `json:"family_claims"`
-	PublicationCuts  int      `json:"publication_cuts"`
-	MutantSuites     int      `json:"mutant_suites"`
-	Concurrency      int      `json:"concurrency"`
-	Universal        int      `json:"universal"`
-	Verdict          string   `json:"verdict"`
+	SchemaVersion    int                   `json:"schema_version"`
+	SourceSHA256     string                `json:"source_sha256"`
+	RawSHA256        string                `json:"raw_sha256"`
+	ExpectedChildren []string              `json:"expected_children"`
+	RunChildren      []string              `json:"run_children"`
+	PassedChildren   []string              `json:"passed_children"`
+	Families         int                   `json:"families"`
+	FamilyClaims     int                   `json:"family_claims"`
+	PublicationCuts  int                   `json:"publication_cuts"`
+	MutantSuites     int                   `json:"mutant_suites"`
+	Concurrency      int                   `json:"concurrency"`
+	Universal        int                   `json:"universal"`
+	IterationCensus  []WP14IterationCensus `json:"iteration_census"`
+	Verdict          string                `json:"verdict"`
+}
+
+type WP14IterationCensus struct {
+	Child         string `json:"child"`
+	Expected      int    `json:"expected"`
+	Observed      int    `json:"observed"`
+	RecordsSHA256 string `json:"records_sha256"`
+}
+
+type wp14IterationContract struct {
+	count      int
+	boundaries map[string]struct{}
+	outcomes   map[string]struct{}
+}
+
+var wp14IterationContracts = map[string]wp14IterationContract{
+	"TestAcceptanceLostAuthorityResponsesReconcileOneHundredTrialsV2":    {100, stringSet("acceptance-publication-ack"), stringSet("reconciled-lost-ack")},
+	"TestIntegrationLostAuthorityResponseAtEveryStageOneHundredTrialsV2": {100, stringSet("integration-publication-ack"), stringSet("reconciled-lost-ack")},
+	"TestIntegrationTargetAuthorityAdmitsOneOfOneHundredContendersV2":    {100, stringSet("integration-target-authority"), stringSet("target-authority-completed", "target-cas-conflict")},
+	"TestExecutionAuthorityProductionContentionMatrixV2":                 {400, stringSet("execution-concurrent-claim", "execution-renew-vs-expire", "execution-replacement", "execution-independent-slots"), stringSet("one-winner", "two-winners")},
+	"TestEffectAuthoritySameSlotAndUnrelatedSlotContentionCampaignV2":    {100, stringSet("effect-slot-contention"), stringSet("one-shared-two-independent")},
+	"TestWorkspacePathClaimAndIndependentWorkspaceCampaignV2":            {100, stringSet("workspace-path-claim"), stringSet("one-shared-one-independent")},
 }
 
 var wp14FamilyClaims = map[string][]string{
@@ -71,6 +96,7 @@ func VerifyWP14CampaignReceiptBytes(source, raw []byte) (WP14CampaignReceipt, er
 	receipt.FamilyClaims = len(wp14FamilyClaims) * 3
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
+	iterations := make(map[string][]iterationreceipt.Record)
 	for scanner.Scan() {
 		var event goTestEvent
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -78,6 +104,15 @@ func VerifyWP14CampaignReceiptBytes(source, raw []byte) (WP14CampaignReceipt, er
 		}
 		if !strings.HasPrefix(event.Test, parent+"/") {
 			continue
+		}
+		if index := strings.Index(event.Output, iterationreceipt.Prefix); index >= 0 {
+			var record iterationreceipt.Record
+			decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(event.Output[index+len(iterationreceipt.Prefix):])))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&record); err != nil || record.Validate() != nil || record.DefinitionID != event.Test {
+				return receipt, fmt.Errorf("WP14 campaign iteration receipt is malformed or unbound")
+			}
+			iterations[event.Test] = append(iterations[event.Test], record)
 		}
 		switch event.Action {
 		case "run":
@@ -96,8 +131,51 @@ func VerifyWP14CampaignReceiptBytes(source, raw []byte) (WP14CampaignReceipt, er
 	if !slices.Equal(receipt.RunChildren, receipt.ExpectedChildren) || !slices.Equal(receipt.PassedChildren, receipt.ExpectedChildren) {
 		return receipt, fmt.Errorf("WP14 campaign child census is missing, duplicated, extra, or substituted")
 	}
+	for _, child := range receipt.ExpectedChildren {
+		selector := child[strings.LastIndex(child, "/")+1:]
+		contract, required := wp14IterationContracts[selector]
+		if !required {
+			continue
+		}
+		records := iterations[child]
+		if err := validateWP14Iterations(child, contract, records); err != nil {
+			return receipt, err
+		}
+		encoded, _ := CanonicalJSON(records)
+		receipt.IterationCensus = append(receipt.IterationCensus, WP14IterationCensus{child, contract.count, len(records), SHA256(encoded)})
+	}
+	if len(receipt.IterationCensus) != 8 { // lost-integration is required by two families and the concurrency axis.
+		return receipt, fmt.Errorf("WP14 internal iteration contract census is incomplete")
+	}
 	receipt.Verdict = "pass"
 	return receipt, nil
+}
+
+func validateWP14Iterations(child string, contract wp14IterationContract, records []iterationreceipt.Record) error {
+	if len(records) != contract.count {
+		return fmt.Errorf("WP14 campaign child %s iteration receipts=%d want=%d", child, len(records), contract.count)
+	}
+	indices := make(map[int]struct{}, len(records))
+	seeds := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		if record.DefinitionID != child || record.Index < 0 || record.Index >= contract.count {
+			return fmt.Errorf("WP14 campaign child %s has foreign iteration", child)
+		}
+		if _, ok := contract.boundaries[record.FaultBoundary]; !ok {
+			return fmt.Errorf("WP14 campaign child %s has foreign boundary %s", child, record.FaultBoundary)
+		}
+		if _, ok := contract.outcomes[record.Outcome]; !ok {
+			return fmt.Errorf("WP14 campaign child %s has foreign outcome %s", child, record.Outcome)
+		}
+		if _, duplicate := indices[record.Index]; duplicate {
+			return fmt.Errorf("WP14 campaign child %s duplicates index %d", child, record.Index)
+		}
+		if _, duplicate := seeds[record.Seed]; duplicate {
+			return fmt.Errorf("WP14 campaign child %s duplicates seed %s", child, record.Seed)
+		}
+		indices[record.Index], seeds[record.Seed] = struct{}{}, struct{}{}
+	}
+	return nil
 }
 
 func expectedWP14Children() []string {

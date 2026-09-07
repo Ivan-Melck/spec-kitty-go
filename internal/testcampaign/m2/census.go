@@ -30,20 +30,40 @@ var authorityFamilies = []Definition{
 	{"family/workspace", "authority_family", "WP08", "./internal/workspace", "TestWritableZombieWorkspaceNeverRegainsAuthorityCampaignV2", 100, 1},
 }
 
+func AuthorityFamilyIDs() []string {
+	result := make([]string, len(authorityFamilies))
+	for index, definition := range authorityFamilies {
+		result[index] = definition.ID
+	}
+	return result
+}
+
 var crownDefinitions = []Definition{
 	{"behavior/autonomous-capability-readiness", "behavior", "WP15", "./internal/helpercmd", "TestDriveExecutesIndependentWorkScopesInOneMissionConcurrently", 1, 1},
 	{"behavior/two-item-restart-every-boundary", "behavior", "WP14", "./internal/scenario", "TestTwoItemMissionRestartAfterEachDurableBoundary", 1, 1},
+	{"behavior/real-git-gapdb-two-item-crown", "behavior", "WP17", "./internal/scenario", "TestTwoItemRealGitGapDBCrown", 1, 1},
 	{"behavior/zombie-workspace-isolation", "behavior", "WP08", "./internal/scenario", "TestZombieOwnerReplacementCampaign100", 100, 100},
 	{"behavior/reviewer-independence", "behavior", "WP09", "./internal/review", "TestReviewerIndependenceUsesActorIDNotProcessAndNeedsExactNarrowExceptionV2", 100, 1},
 	{"behavior/serialized-integration", "behavior", "WP10", "./internal/integration", "TestIntegrationTargetAuthorityAdmitsOneOfOneHundredContendersV2", 100, 100},
 	{"behavior/restore-deadline-structural", "behavior", "WP01", "./internal/architecture", "TestM2DependencyRestoreTimeUseIsDeadlineBudgetOnly", 1, 1},
 	{"behavior/restore-deadline-runtime", "behavior", "WP04", "./internal/controljournal/v2/restore", "TestRestoreDeadlineInputSensitiveAndBeforeFirstIO", 1, 1},
 	{"behavior/sqlite-absence", "behavior", "WP16", "./internal/architecture", "TestM2SQLiteAbsence", 1, 1},
-	{"fault/publication-boundaries", "fault_cut", "WP04", "./internal/testcampaign/m1/faults", "TestProductionFaultRecordsAreMintedByExactExecutionReceipts", 100, 1},
+	{"fault/cut-before-publication", "fault_cut", "WP04", "./internal/controlstore/gapdb", "TestV2CommitCanceledBeforeDeliveryMakesNoProviderCall", 100, 1},
+	{"fault/cut-durable-before-response", "fault_cut", "WP04", "./internal/controlstore/gapdb", "TestV2AssertionCandidateSidecarQualification", 100, 1},
+	{"fault/cut-lost-response", "fault_cut", "WP04", "./internal/controlstore/gapdb", "TestV2AmbiguousCommitCanBeFollowedByPublicReconciliation", 100, 1},
+	{"fault/cut-malformed-ack", "fault_cut", "WP04", "./internal/controlstore/gapdb", "TestV2CommitRefusesWireBudgetBeforeProviderAndValidatesAck", 100, 1},
+	{"fault/cut-restart-reconciliation", "fault_cut", "WP04", "./internal/controlstore/gapdb", "TestProductionPublicationRecoveryAcrossOwnerRestartCuts", 100, 1},
+	{"fault/external-before-call", "fault_cut", "WP07", "./internal/execution", "TestM2ExternalEffectCutBeforeProviderCall", 100, 1},
+	{"fault/external-after-success-before-observation", "fault_cut", "WP07", "./internal/execution", "TestM2ExternalEffectCutAfterCallBeforeDurableObservation", 100, 1},
+	{"fault/external-after-observation-before-result", "fault_cut", "WP07", "./internal/execution", "TestM2ExternalEffectCutAfterObservationBeforeResultPublication", 100, 1},
 	{"fault/acknowledgement-ambiguity", "fault_cut", "WP04", "./internal/controljournal/application", "TestServiceAmbiguityVisibleThenSameIDReadReconciles", 100, 1},
 	{"fault/concurrent-claims", "fault_cut", "WP07", "./internal/scenario", "TestConcurrentSameAggregateConflictCampaign100", 100, 100},
 	{"fault/clean-unclean-restart", "fault_cut", "WP04", "./internal/controljournal/v2/restore", "TestRestoreParallelWorkerDeterminism100Runs", 100, 100},
-	{"fault/adversarial-tracker", "fault_cut", "WP14", "./internal/scenario", "TestCrashAmbiguousDishonestUniversalCampaign100", 100, 100},
+	// The wrapper executes and verifies WP14's own closed structured 100-trial
+	// family/cut census. Its single process is not itself a synthetic 100 trials.
+	{"fault/adversarial-tracker", "fault_cut", "WP14", "./internal/scenario", "TestCrashAmbiguousDishonestUniversalCampaign100", 1, 1},
+	{"fault/family-bound-publication-cuts", "fault_cut", "WP17", "./internal/scenario", "TestM2FamilyBoundPublicationCutCampaign", 6500, 6500},
+	{"fault/outbox-bound-publication-cuts", "fault_cut", "WP17", "./internal/controlstore/gapdb", "TestM2OutboxFamilyBoundPublicationCutCampaign", 500, 500},
 	{"mutant/restore-deadline-overlay", "mutant", "WP04", "./internal/controljournal/v2/restore", "TestRestoreDeadlineSourceOverlayMutants", 7, 7},
 	{"mutant/autonomy-ceremony", "mutant", "WP15", "./internal/architecture", "TestM2AutonomyMutationCampaignCoversCeremonyFailureClasses", 1, 1},
 	{"mutant/sqlite-absence-layers", "mutant", "WP16", "./internal/architecture", "TestM2AbsenceLayerDetectors", 8, 8},
@@ -73,6 +93,35 @@ func ValidateDefinitions(definitions []Definition) error {
 			return fmt.Errorf("definition %q is duplicated", definition.ID)
 		}
 		seen[definition.ID] = struct{}{}
+	}
+	return validateIterationContractCensus(definitions, iterationContracts)
+}
+
+func validateIterationContractCensus(definitions []Definition, contracts map[string]iterationContract) error {
+	expected := map[string]struct{}{
+		"behavior/zombie-workspace-isolation": {},
+		"behavior/serialized-integration":     {},
+		"fault/concurrent-claims":             {},
+		"fault/clean-unclean-restart":         {},
+	}
+	if len(contracts) != len(expected) {
+		return fmt.Errorf("iteration receipt contract census=%d want=%d", len(contracts), len(expected))
+	}
+	definitionsByID := make(map[string]Definition, len(definitions))
+	for _, definition := range definitions {
+		definitionsByID[definition.ID] = definition
+	}
+	for id := range expected {
+		definition, ok := definitionsByID[id]
+		contract, contracted := contracts[id]
+		if !ok || !contracted || definition.ExpectedRepetitions != 100 || definition.TrialsPerRun != 100 || contract.boundary == "" || len(contract.outcomes) == 0 {
+			return fmt.Errorf("iteration receipt contract %q is missing or incomplete", id)
+		}
+	}
+	for id := range contracts {
+		if _, ok := expected[id]; !ok {
+			return fmt.Errorf("foreign iteration receipt contract %q", id)
+		}
 	}
 	return nil
 }

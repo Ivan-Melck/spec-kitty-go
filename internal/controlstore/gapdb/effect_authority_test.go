@@ -807,6 +807,7 @@ func gapdbExecutionProjectionTrackerV2() (*journalv2.ProjectionTrackerV2, error)
 
 func TestEffectAuthoritySameSlotAndUnrelatedSlotContentionCampaignV2(t *testing.T) {
 	for trial := 0; trial < 100; trial++ {
+		started := time.Now()
 		left := gapdbEffectPlanFixtureNamedV2(t, fmt.Sprintf("left-%03d", trial), "work-shared")
 		right := gapdbEffectPlanFixtureNamedV2(t, fmt.Sprintf("right-%03d", trial), "work-shared")
 		leftSealed, _ := left.Publication()
@@ -849,6 +850,7 @@ func TestEffectAuthoritySameSlotAndUnrelatedSlotContentionCampaignV2(t *testing.
 				t.Fatalf("trial %d unrelated plan %d failed: %v", trial, index, err)
 			}
 		}
+		emitGapDBIteration(t, trial, fmt.Sprintf("left-%03d", trial), "effect-slot-contention", "one-shared-two-independent", started, map[string]any{"shared_winners": winners, "independent_winners": 2})
 	}
 }
 

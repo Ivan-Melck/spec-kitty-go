@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/governancecontext"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 	"github.com/spec-kitty/go-kitty3/internal/workgraph"
 )
 
@@ -61,6 +62,7 @@ func TestExecutionAuthorityConstructorsRemainNarrowV2(t *testing.T) {
 func TestExecutionAuthorityProductionContentionMatrixV2(t *testing.T) {
 	t.Run("concurrent_claim", func(t *testing.T) {
 		for trial := 0; trial < 100; trial++ {
+			started := time.Now()
 			left, _, request, eligibility := gapdbExecutionAdmissionPlanFixtureV2(t, fmt.Sprintf("claim-left-%03d", trial), fmt.Sprintf("work-claim-%03d", trial))
 			rightRequest := request
 			rightRequest.OperationID = journalv2.OperationID(fmt.Sprintf("operation-execution-claim-right-%03d", trial))
@@ -71,11 +73,13 @@ func TestExecutionAuthorityProductionContentionMatrixV2(t *testing.T) {
 			right, _ := gapdbCaptureExecutionPlanV2(t, rightRequest, eligibility, execution.ExecutionSlotObservationV2{})
 			authority, memory, _ := gapdbExecutionAuthorityHarnessV2(t, left)
 			assertExecutionRaceResultsV2(t, trial, 1, memory, []execution.ExecutionAuthorityPlanV2{left, right}, publishExecutionCapabilitiesTogetherV2(t, authority, left, right))
+			emitGapDBIteration(t, trial, fmt.Sprintf("claim-left-%03d", trial), "execution-concurrent-claim", "one-winner", started, map[string]any{"expected_winners": 1})
 		}
 	})
 
 	t.Run("renew_vs_expire", func(t *testing.T) {
 		for trial := 0; trial < 100; trial++ {
+			started := time.Now()
 			label := fmt.Sprintf("renew-expire-%03d", trial)
 			admit, active, request, _ := gapdbExecutionAdmissionPlanFixtureV2(t, label, "work-"+label)
 			authority, memory, _ := gapdbExecutionAuthorityHarnessV2(t, admit)
@@ -92,11 +96,13 @@ func TestExecutionAuthorityProductionContentionMatrixV2(t *testing.T) {
 			renew, _ := gapdbCaptureExecutionPlanV2(t, renewRequest, workgraph.ObservedEligibilityShardV2{}, execution.ExecutionSlotObservationV2{State: &active, RecordRevision: uint64(memory.revision)})
 			expire, _ := gapdbCaptureExecutionPlanV2(t, expireRequest, workgraph.ObservedEligibilityShardV2{}, execution.ExecutionSlotObservationV2{State: &active, RecordRevision: uint64(memory.revision)})
 			assertExecutionRaceResultsV2(t, trial, 1, memory, []execution.ExecutionAuthorityPlanV2{renew, expire}, publishExecutionCapabilitiesTogetherV2(t, authority, renew, expire))
+			emitGapDBIteration(t, 100+trial, label, "execution-renew-vs-expire", "one-winner", started, map[string]any{"expected_winners": 1})
 		}
 	})
 
 	t.Run("duplicate_replacement_and_expire_then_replace", func(t *testing.T) {
 		for trial := 0; trial < 100; trial++ {
+			started := time.Now()
 			label := fmt.Sprintf("replacement-%03d", trial)
 			admit, active, request, _ := gapdbExecutionAdmissionPlanFixtureV2(t, label, "work-"+label)
 			authority, memory, _ := gapdbExecutionAuthorityHarnessV2(t, admit)
@@ -128,11 +134,13 @@ func TestExecutionAuthorityProductionContentionMatrixV2(t *testing.T) {
 			}
 			left, right := makeReplacement("left"), makeReplacement("right")
 			assertExecutionRaceResultsV2(t, trial, 1, memory, []execution.ExecutionAuthorityPlanV2{left, right}, publishExecutionCapabilitiesTogetherV2(t, authority, left, right))
+			emitGapDBIteration(t, 200+trial, label, "execution-replacement", "one-winner", started, map[string]any{"expected_winners": 1, "expired_generation": expired.Generation})
 		}
 	})
 
 	t.Run("unrelated_slots_progress", func(t *testing.T) {
 		for trial := 0; trial < 100; trial++ {
+			started := time.Now()
 			left, _, _, _ := gapdbExecutionAdmissionPlanFixtureV2(t, fmt.Sprintf("unrelated-left-%03d", trial), fmt.Sprintf("work-unrelated-left-%03d", trial))
 			var right execution.ExecutionAuthorityPlanV2
 			for index := 0; index < 256; index++ {
@@ -147,8 +155,21 @@ func TestExecutionAuthorityProductionContentionMatrixV2(t *testing.T) {
 			}
 			authority, memory, _ := gapdbExecutionAuthorityHarnessV2(t, left, right)
 			assertExecutionRaceResultsV2(t, trial, 2, memory, []execution.ExecutionAuthorityPlanV2{left, right}, publishExecutionCapabilitiesTogetherV2(t, authority, left, right))
+			emitGapDBIteration(t, 300+trial, fmt.Sprintf("unrelated-left-%03d", trial), "execution-independent-slots", "two-winners", started, map[string]any{"expected_winners": 2})
 		}
 	})
+}
+
+func emitGapDBIteration(t *testing.T, index int, seed, boundary, outcome string, started time.Time, facts any) {
+	t.Helper()
+	receipt, err := iterationreceipt.New(
+		iterationreceipt.DefinitionID("wp14/gapdb-contention"), index, seed, boundary, outcome, time.Since(started), facts,
+		map[string]any{"atomic_batch": true, "durable_head_consistent": true, "no_partial_authority": true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iterationreceipt.Emit(t, receipt)
 }
 
 func executionRequestFromStateV2(base execution.ExecutionAuthorityRequestV2, state execution.ExecutionSlotStateV2, kind execution.ExecutionCommandKindV2, label string) execution.ExecutionAuthorityRequestV2 {

@@ -60,7 +60,12 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	missionResult := h.createMission(projectID, missionID, "operation-mission-create")
 	assertUniversalInvariants(t, h, projectID, missionID, "mission-publication")
 	restartAfterDurableBoundary(t, h, projectID, missionID, "mission-created", restartEveryBoundary)
+	return continueTwoItemMissionScenario(t, h, missionResult, revision, governance, effectReconciler, restartEveryBoundary)
+}
 
+func continueTwoItemMissionScenario(t *testing.T, h *portableHarness, missionResult mission.ReadinessAuthorityResultV2, revision workgraph.RevisionV2, governance governancecontext.Context, effectReconciler *scenarioEffectReconciler, restartEveryBoundary bool) terminalSemanticProgress {
+	t.Helper()
+	projectID, missionID := string(missionResult.State().ProjectID()), string(missionResult.State().MissionID())
 	plan, err := workgraph.BuildFinalizationAuthorityV2(workgraph.FinalizationPlanInputV2{
 		Context: workgraph.AuthorityContextV2{
 			OperationID: "operation-workgraph", RuntimeEpochID: h.host.RuntimeEpochID(),
@@ -74,7 +79,9 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	if err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 	acknowledgedWorkgraph, err := h.host.PublishWorkgraph(t.Context(), h.host.RuntimeEpochID(), plan)
+	h.observeMutation([]string{"workgraph", "operation"}, "operation-workgraph", started, err)
 	if err != nil {
 		t.Fatalf("publish two-item graph: %v", err)
 	}
@@ -102,6 +109,7 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 	if err != nil {
 		t.Fatal(err)
 	}
+	started = time.Now()
 	missionResult, err = h.host.ExecuteReadiness(t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{
 		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: selectedState.LastOperationID(),
 		ProjectID: selectedState.ProjectID(), MissionID: selectedState.MissionID(), ActorID: "actor-planner", ProcessID: "process-planner",
@@ -109,6 +117,7 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 		ObservedAt: selectedState.ObservedAt(), EventType: mission.ReadinessEventWorkRevisionSelectedV2,
 		Expected: missionResult.State(), Updated: selectedState, WorkRevisionSelection: &selection,
 	})
+	h.observeMutation([]string{"mission", "operation"}, "operation-mission-select-workgraph", started, err)
 	if err != nil {
 		t.Fatalf("select acknowledged two-item graph: %v", err)
 	}
@@ -117,6 +126,10 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 
 	admitted := admitTwoItemWork(t, h, projectID, missionID, revision, governance, restartEveryBoundary)
 	trackerEvidence := assignTwoItemTrackerEffects(t, h, governance, admitted, effectReconciler, restartEveryBoundary)
+	var quarantinedWorkspace string
+	if h.config.ExerciseLeaseReplacement {
+		admitted["work-a"], quarantinedWorkspace = exerciseLeaseScopedReplacement(t, h, admitted["work-a"], governance, restartEveryBoundary)
+	}
 	progress, err := h.host.Progress().Mission(journalv2.ProjectID(projectID), journalv2.MissionID(missionID))
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +138,9 @@ func runTwoItemMissionScenario(t *testing.T, restartEveryBoundary bool) terminal
 		t.Fatalf("two-item progress lost parallel authority: total=%d running=%d progress=%+v", progress.TotalWork, len(progress.Running), progress)
 	}
 	operationEvidence = append(operationEvidence, completeTwoItemMission(t, h, missionResult.State(), revision, governance, admitted, restartEveryBoundary)...)
+	if quarantinedWorkspace != "" {
+		assertQuarantinedZombieSurvived(t, quarantinedWorkspace)
+	}
 	terminal, err := h.host.Progress().Mission(journalv2.ProjectID(projectID), journalv2.MissionID(missionID))
 	if err != nil {
 		t.Fatal(err)
@@ -204,13 +220,36 @@ func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance go
 			Action: execution.EffectRecordIntentV2, Intent: intent, RuntimeEpochID: h.host.RuntimeEpochID(), ExecutionSlot: slot, ObservedAt: at,
 			OperationEventID: journalv2.EventID("event-effect-intent-operation-" + workID.String()), EffectEventID: journalv2.EventID("event-effect-intent-" + workID.String()),
 		}
+		started := time.Now()
 		recorded, err := h.host.ExecuteEffect(t.Context(), h.host.RuntimeEpochID(), request)
+		h.observeMutation([]string{"external_effect", "operation"}, string(request.Intent.OperationID), started, err)
 		if err != nil {
 			t.Fatalf("record tracker effect %s: %v", workID, err)
 		}
 		assertUniversalInvariants(t, h, slot.ProjectID.String(), slot.MissionID.String(), "effect-intent-"+workID.String())
-		if restartEveryBoundary {
-			slot = restartUnboundExecutionAfterDurableBoundary(t, h, recorded.ExecutionSlot, governance, "effect-intent-"+workID.String(), true)
+		restartAfterIntent := restartEveryBoundary
+		externalAuthorityChanged := false
+		if h.config.AfterEffectIntent != nil {
+			changed, hookErr := h.config.AfterEffectIntent(t.Context(), workID)
+			if hookErr != nil {
+				t.Fatalf("after durable tracker effect %s: %v", workID, hookErr)
+			}
+			restartAfterIntent = restartAfterIntent || changed
+			externalAuthorityChanged = changed
+		}
+		if restartAfterIntent {
+			if externalAuthorityChanged {
+				// The direct provider capability deliberately appended outbox
+				// authority outside the live Host projection. Restart restores
+				// that new durable state; semantic equality with the pre-append
+				// projection would therefore be the wrong invariant.
+				predecessor, _ := h.restart()
+				assertStaleEpochRefusesBeforeRepository(t, h, predecessor)
+				assertUniversalInvariants(t, h, slot.ProjectID.String(), slot.MissionID.String(), "effect-intent-external-authority-restored-"+workID.String())
+				slot = rebindUnboundExecutionToCurrent(t, h, recorded.ExecutionSlot, governance, "effect-intent-"+workID.String())
+			} else {
+				slot = restartUnboundExecutionAfterDurableBoundary(t, h, recorded.ExecutionSlot, governance, "effect-intent-"+workID.String(), true)
+			}
 			request.Action = execution.EffectAdoptRecoveryV2
 			request.RuntimeEpochID = h.host.RuntimeEpochID()
 			request.ExecutionSlot = slot
@@ -231,10 +270,12 @@ func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance go
 		request.ObservedAt = at.Add(time.Second)
 		request.OperationEventID = journalv2.EventID("event-effect-attempt-operation-" + workID.String())
 		request.EffectEventID = journalv2.EventID("event-effect-attempt-" + workID.String())
+		started = time.Now()
 		applied, err := h.host.ExecuteEffectDispatch(t.Context(), h.host.RuntimeEpochID(), execution.EffectDispatchCommandV2{
 			Authorization: request, ObservationOperationEventID: journalv2.EventID("event-effect-observation-operation-" + workID.String()),
 			ObservationEffectEventID: journalv2.EventID("event-effect-observation-" + workID.String()), ObservationAt: at.Add(2 * time.Second),
 		}, dispatcher)
+		h.observeMutation([]string{"external_effect", "operation"}, string(request.Intent.OperationID), started, err)
 		if err != nil || applied.State.AppliedObservation == nil || applied.State.AppliedObservation.Value != intent.IntendedValue || applied.State.AppliedObservation.OperationMarker != string(intent.OperationID) {
 			t.Fatalf("apply tracker effect %s: result=%+v err=%v", workID, applied, err)
 		}
@@ -266,7 +307,9 @@ func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance go
 		request.ObservedAt = at.Add(3 * time.Second)
 		request.OperationEventID = journalv2.EventID("event-effect-reconcile-operation-" + workID.String())
 		request.EffectEventID = journalv2.EventID("event-effect-reconcile-" + workID.String())
+		started = time.Now()
 		reconciled, err := h.host.ExecuteEffect(t.Context(), h.host.RuntimeEpochID(), request)
+		h.observeMutation([]string{"external_effect", "operation"}, string(request.Intent.OperationID), started, err)
 		if err != nil {
 			t.Fatalf("require tracker reconciliation %s: %v", workID, err)
 		}
@@ -276,7 +319,9 @@ func assignTwoItemTrackerEffects(t *testing.T, h *portableHarness, governance go
 		request.Outcome = execution.EffectOutcomeAppliedV2
 		request.OperationEventID = journalv2.EventID("event-effect-resolve-operation-" + workID.String())
 		request.EffectEventID = journalv2.EventID("event-effect-resolve-" + workID.String())
+		started = time.Now()
 		resolved, err := h.host.ExecuteEffect(t.Context(), h.host.RuntimeEpochID(), request)
+		h.observeMutation([]string{"external_effect", "operation"}, string(request.Intent.OperationID), started, err)
 		if err != nil || resolved.State.Stage != execution.EffectResolvedV2 || resolved.State.Outcome != execution.EffectOutcomeAppliedV2 {
 			t.Fatalf("resolve tracker effect %s: result=%+v err=%v", workID, resolved, err)
 		}
@@ -375,13 +420,20 @@ func admitTwoItemWork(t *testing.T, h *portableHarness, projectID, missionID str
 	workIDs := []ids.WorkID{"work-a", "work-b"}
 	admit := func(index int, workID ids.WorkID) (execution.ExecutionAuthorityResultV2, error) {
 		now := time.Date(2026, 9, 5, 12, 2, index, 0, time.UTC)
-		return h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
+		deadline := now.Add(time.Hour)
+		if h.config.ExerciseLeaseReplacement && workID == "work-b" {
+			deadline = now.Add(6 * time.Hour)
+		}
+		started := time.Now()
+		result, err := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
 			Kind: execution.ExecutionAdmitV2, OperationID: journalv2.OperationID("operation-admit-" + workID.String()),
 			ProjectID: ids.ProjectID(projectID), MissionID: ids.MissionID(missionID), WorkRevisionID: revision.ID(), WorkID: workID,
 			RunID: ids.RunID("run-" + workID.String()), ActorID: ids.ActorID("actor-" + workID.String()), ProcessID: ids.ProcessID("process-" + workID.String()),
-			LeaseID: ids.LeaseID("lease-" + workID.String()), Generation: 1, ObservedAt: now, Deadline: now.Add(time.Hour), RuntimeEpochID: h.host.RuntimeEpochID(),
+			LeaseID: ids.LeaseID("lease-" + workID.String()), Generation: 1, ObservedAt: now, Deadline: deadline, RuntimeEpochID: h.host.RuntimeEpochID(),
 			Governance: governance, OperationEventID: journalv2.EventID("event-operation-" + workID.String()), SlotEventID: journalv2.EventID("event-slot-" + workID.String()),
 		})
+		h.observeMutation([]string{"execution_slot", "operation"}, "operation-admit-"+workID.String(), started, err)
+		return result, err
 	}
 	admitted := make(map[ids.WorkID]execution.ExecutionSlotStateV2, len(workIDs))
 	if restartEveryBoundary {

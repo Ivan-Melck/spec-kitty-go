@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 )
 
 type executableProof struct {
@@ -170,9 +172,9 @@ var controlledMutantSuites = []mutantSuite{
 var concurrencyProofs = []executableProof{
 	proof("./internal/review", "TestReviewerIndependenceUsesActorIDNotProcessAndNeedsExactNarrowExceptionV2"),
 	proofTrials("./internal/integration", "TestIntegrationTargetAuthorityAdmitsOneOfOneHundredContendersV2", 100),
-	proofTrials("./internal/integration", "TestIndependentTargetsProgressConcurrentlyWithoutGlobalLockV2", 100),
+	proof("./internal/integration", "TestIndependentTargetsProgressConcurrentlyWithoutGlobalLockV2"),
 	proofTrials("./internal/integration", "TestIntegrationLostAuthorityResponseAtEveryStageOneHundredTrialsV2", 100),
-	proofTrials("./internal/controlstore/gapdb", "TestExecutionAuthorityProductionContentionMatrixV2", 100),
+	proofTrials("./internal/controlstore/gapdb", "TestExecutionAuthorityProductionContentionMatrixV2", 400),
 	proofTrials("./internal/controlstore/gapdb", "TestEffectAuthoritySameSlotAndUnrelatedSlotContentionCampaignV2", 100),
 	proofTrials("./internal/controlstore/gapdb", "TestWorkspacePathClaimAndIndependentWorkspaceCampaignV2", 100),
 	proof("./internal/productionruntime", "TestHostIndependentCommandsRunConcurrentlyWithoutGlobalCommandMutex"),
@@ -430,6 +432,7 @@ func runExecutableProof(t *testing.T, root string, proof executableProof, repeti
 	command := exec.CommandContext(ctx, "go", "test", "-json", fmt.Sprintf("-count=%d", externalRuns), "-run", "^"+proof.Test+"$", proof.Package)
 	command.Dir = root
 	command.Env = append(os.Environ(), "SPEC_KITTY_WP14_CAMPAIGN=", "SPEC_KITTY_WP13_GAPDBD="+os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE"), "SPEC_KITTY_M1_GAPDBD="+os.Getenv("SPEC_KITTY_WP14_BASE_AUTHORITY_EXECUTABLE"))
+	command.Env = append(command.Env, "SPEC_KITTY_M2_DEFINITION_ID="+t.Name())
 	switch proof.Test {
 	case "TestV2AssertionCandidateSidecarQualification":
 		dataRoot, err := os.MkdirTemp("/tmp", "spk-wp14-cut-")
@@ -475,8 +478,52 @@ func runExecutableProof(t *testing.T, root string, proof executableProof, repeti
 	if err != nil || ctx.Err() != nil || passes != externalRuns || skips != 0 || failures != 0 {
 		t.Fatalf("qualification proof %s %s: passes=%d skips=%d failures=%d err=%v context=%v output=%s", proof.Package, proof.Test, passes, skips, failures, err, ctx.Err(), boundedCampaignOutput(output))
 	}
+	if proof.TrialsPerRun > 1 {
+		records, receiptErr := executingIterationRecords(output, t.Name())
+		expected := proof.TrialsPerRun * externalRuns
+		if receiptErr != nil || len(records) != expected {
+			t.Fatalf("qualification proof %s iteration receipts=%d want=%d err=%v", proof.Test, len(records), expected, receiptErr)
+		}
+		seenIndex := make(map[int]struct{}, len(records))
+		seenSeed := make(map[string]struct{}, len(records))
+		for _, record := range records {
+			if _, duplicate := seenIndex[record.Index]; duplicate {
+				t.Fatalf("qualification proof %s duplicate iteration index=%d", proof.Test, record.Index)
+			}
+			if _, duplicate := seenSeed[record.Seed]; duplicate {
+				t.Fatalf("qualification proof %s duplicate iteration seed=%q", proof.Test, record.Seed)
+			}
+			seenIndex[record.Index], seenSeed[record.Seed] = struct{}{}, struct{}{}
+			encoded, _ := iterationreceipt.Encode(record)
+			t.Logf("%s%s", iterationreceipt.Prefix, encoded)
+		}
+	}
 	digest := sha256.Sum256(output)
 	t.Logf("proof package=%s test=%s requested_trials=%d trials_per_run=%d external_runs=%d output_sha256=%s", proof.Package, proof.Test, repetitions, proof.TrialsPerRun, externalRuns, hex.EncodeToString(digest[:]))
+}
+
+func executingIterationRecords(output []byte, definitionID string) ([]iterationreceipt.Record, error) {
+	var records []iterationreceipt.Record
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		var event struct {
+			Output string `json:"Output"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			return nil, err
+		}
+		index := strings.Index(event.Output, iterationreceipt.Prefix)
+		if index < 0 {
+			continue
+		}
+		var record iterationreceipt.Record
+		decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(event.Output[index+len(iterationreceipt.Prefix):])))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&record); err != nil || record.Validate() != nil || record.DefinitionID != definitionID {
+			return nil, fmt.Errorf("invalid executing iteration receipt")
+		}
+		records = append(records, record)
+	}
+	return records, nil
 }
 
 func boundedCampaignOutput(output []byte) string {

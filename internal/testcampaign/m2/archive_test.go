@@ -27,7 +27,7 @@ func TestIndependentReviewIsSeparateActorAndOuterArchiveRecomputesEverything(t *
 	review := IndependentReviewReceipt{
 		SchemaVersion: 1, RunID: manifest.RunID, SourceCommit: manifest.Source.Commit, SourceTree: manifest.Source.Tree,
 		ManifestSHA256: publication.ManifestSHA256, ProducerArchiveSHA: publication.ProducerArchiveSHA256,
-		ImplementationActor: "implementer", ReviewerActor: "reviewer", ReviewerProcess: "review-process", ReviewerProfile: "reviewer-renata", ProfileRevision: stringOf('f', 64),
+		ImplementationContributors: []string{"implementer"}, ReviewerActor: "reviewer", ReviewerProcess: "review-process", ReviewerProfile: "reviewer-renata", ProfileRevision: stringOf('f', 64),
 		Commands: []ReviewCommandReceipt{{ID: "verify", Argv: []string{"spk-m2-qualification", "verify"}, ExitCode: 0, OutputPath: "commands/verify.jsonl", OutputSHA256: SHA256(commandOutput)}},
 		Verdict:  "pass",
 	}
@@ -60,7 +60,7 @@ func TestReleaseVerifierKillsSelfConsistentOuterMutants(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reviewRoot, "verify.out"), commandOutput, 0o400); err != nil {
 		t.Fatal(err)
 	}
-	review := IndependentReviewReceipt{SchemaVersion: 1, RunID: manifest.RunID, SourceCommit: manifest.Source.Commit, SourceTree: manifest.Source.Tree, ManifestSHA256: publication.ManifestSHA256, ProducerArchiveSHA: publication.ProducerArchiveSHA256, ImplementationActor: "implementer", ReviewerActor: "reviewer", ReviewerProcess: "p", ReviewerProfile: "reviewer-renata", ProfileRevision: "v1", Commands: []ReviewCommandReceipt{{ID: "verify", Argv: []string{"verify"}, OutputPath: "verify.out", OutputSHA256: SHA256(commandOutput)}}, Verdict: "pass"}
+	review := IndependentReviewReceipt{SchemaVersion: 1, RunID: manifest.RunID, SourceCommit: manifest.Source.Commit, SourceTree: manifest.Source.Tree, ManifestSHA256: publication.ManifestSHA256, ProducerArchiveSHA: publication.ProducerArchiveSHA256, ImplementationContributors: []string{"implementer"}, ReviewerActor: "reviewer", ReviewerProcess: "p", ReviewerProfile: "reviewer-renata", ProfileRevision: "v1", Commands: []ReviewCommandReceipt{{ID: "verify", Argv: []string{"verify"}, OutputPath: "verify.out", OutputSHA256: SHA256(commandOutput)}}, Verdict: "pass"}
 	reviewBytes, _ := CanonicalJSON(review)
 	if err := os.WriteFile(filepath.Join(reviewRoot, "review.json"), reviewBytes, 0o400); err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestIndependentReviewRejectsSameActorOpenFindingsAndMissingOutput(t *testin
 		t.Fatal(err)
 	}
 	commandOutput := []byte("pass\n")
-	base := IndependentReviewReceipt{SchemaVersion: 1, RunID: manifest.RunID, SourceCommit: manifest.Source.Commit, SourceTree: manifest.Source.Tree, ManifestSHA256: publication.ManifestSHA256, ProducerArchiveSHA: publication.ProducerArchiveSHA256, ImplementationActor: "implementer", ReviewerActor: "reviewer", ReviewerProcess: "p", ReviewerProfile: "reviewer-renata", ProfileRevision: "v1", Commands: []ReviewCommandReceipt{{ID: "verify", Argv: []string{"verify"}, OutputPath: "verify.out", OutputSHA256: SHA256(commandOutput)}}, Verdict: "pass"}
+	base := IndependentReviewReceipt{SchemaVersion: 1, RunID: manifest.RunID, SourceCommit: manifest.Source.Commit, SourceTree: manifest.Source.Tree, ManifestSHA256: publication.ManifestSHA256, ProducerArchiveSHA: publication.ProducerArchiveSHA256, ImplementationContributors: []string{"implementer"}, ReviewerActor: "reviewer", ReviewerProcess: "p", ReviewerProfile: "reviewer-renata", ProfileRevision: "v1", Commands: []ReviewCommandReceipt{{ID: "verify", Argv: []string{"verify"}, OutputPath: "verify.out", OutputSHA256: SHA256(commandOutput)}}, Verdict: "pass"}
 	for name, mutate := range map[string]func(*IndependentReviewReceipt){
 		"same-actor": func(value *IndependentReviewReceipt) { value.ReviewerActor = "implementer" },
 		"open-high": func(value *IndependentReviewReceipt) {

@@ -20,11 +20,13 @@ M2_QUALIFIER_BINARY ?= $(BUILD_DIR)/spk-m2-qualification
 M2_ACTOR_ID ?=
 M2_PROCESS_ID ?=
 M2_PROFILE_REVISION ?=
+M2_IMPLEMENTATION_CONTRIBUTORS ?=
+M2_PROFILE_DOCUMENT ?= $(CURDIR)/docs/programs/evidence/m2-producer-profile.json
 
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race m2-fault m2-mutants m2-absence m2-sbom m2-performance m2-short m2-qualification m2-verify-evidence
+.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-performance m2-short m2-qualification m2-verify-evidence
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -158,13 +160,19 @@ m2-contract: ## Verify frozen M2 contracts, family registry, manifest, census, a
 	$(GO) test -count=1 ./internal/testcampaign/m2 ./internal/architecture \
 		-run '^(TestManifest|TestFrozenCensus|TestM2Contract|TestM2DependencyRestoreDeadline|TestM2DependencyRestoreTimeUse)'
 
-m2-capabilities: ## Run stack-neutral capability and autonomous-readiness contracts.
-	$(GO) test -count=1 ./internal/helpercmd ./internal/productionruntime ./internal/scenario \
-		-run '^(TestDriveExecutesIndependentWorkScopesInOneMissionConcurrently|TestProgressReportsCompleteMissionWithoutExclusiveCurrentStep|TestConcurrentIndependentAuthoritySmoke)$$'
+m2-capabilities: ## Strictly run capability/readiness contracts, including the admitted-sidecar real-host concurrency scenario.
+	@test -x "$(M2_GAPDBD)" || { echo 'm2-capabilities requires executable M2_GAPDBD' >&2; exit 1; }
+	@test "$$(sha256sum "$(M2_GAPDBD)" | awk '{print $$1}')" = 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad || { echo 'M2_GAPDBD is not the admitted sidecar' >&2; exit 1; }
+	SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="$(M2_GAPDBD)" $(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group capabilities-full --timeout 8m
 
 m2-recovery: ## Run the checkpoint-plus-10k recovery qualification and deadline laws.
 	$(GO) test -count=1 ./internal/controljournal/v2/restore ./internal/controljournal/v2/playback \
 		-run '^(TestQualificationFixtureCheckpointPlus10000Operations30Runs|TestRestoreDeadline|TestPlaybackFullHistoryIsDeterministicAndZeroIO)'
+
+m2-race-smoke: ## Run the sidecar-free bounded PR concurrency slice under the race detector.
+	$(GO) test -race -p=1 -count=1 -timeout=8m \
+		./internal/controljournal/application ./internal/integration ./internal/testcampaign/m2/iterationreceipt \
+		-run '^(TestServiceAggregateConcurrencyIsPerHeadNotGlobal|TestIntegrationTargetAuthorityAdmitsOneOfOneHundredContendersV2|TestRecordBindsExecutingIterationFacts)$$'
 
 m2-race: ## Run bounded M2 authority/restart/concurrency smoke under the race detector.
 	SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="$(M2_GAPDBD)" $(GO) test -race -p=1 -count=1 -timeout=20m \
@@ -177,13 +185,21 @@ m2-fault: ## Run exact 100-trial fault, ambiguity, tracker, concurrency, and res
 	$(GO) test -count=1 -timeout=60m ./internal/scenario \
 		-run '^(TestZombieOwnerReplacementCampaign100|TestConcurrentIndependentAuthorityCampaign100|TestConcurrentSameAggregateConflictCampaign100|TestCrashAmbiguousDishonestUniversalCampaign100)$$'
 
-m2-mutants: ## Kill M2 restore, autonomy, runtime, and SQLite-absence mutants.
-	$(GO) test -count=1 ./internal/architecture ./internal/productionruntime \
-		-run '^(TestM2DependencyRestoreDeadlineIsOneExactEdge|TestM2DependencyRestoreTimeUseIsDeadlineBudgetOnly|TestM2AutonomyMutationCampaignCoversCeremonyFailureClasses|TestM2AbsenceLayerDetectors|TestWP13MandatoryProductionMutantCampaign)$$'
+m2-mutants: m2-mutants-smoke ## Kill the full M2 mutant census, including exact admitted-sidecar production-runtime mutants.
+	@test -x "$(M2_GAPDBD)" || { echo 'm2-mutants requires executable M2_GAPDBD' >&2; exit 1; }
+	@test "$$(sha256sum "$(M2_GAPDBD)" | awk '{print $$1}')" = 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad || { echo 'M2_GAPDBD is not the admitted sidecar' >&2; exit 1; }
+	SPEC_KITTY_WP13_GAPDBD="$(M2_GAPDBD)" $(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group mutants-full --timeout 8m
+
+m2-mutants-smoke: ## Strictly prove the sidecar-free PR mutant census with no missing or skipped selector.
+	$(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group mutants --timeout 8m
 
 m2-absence: ## Qualify source/module/binary/install/help/runtime SQLite absence from a clean archive.
 	@mkdir -p "$(M2_EVIDENCE_ROOT)"
 	SPEC_KITTY_WP15_GAPDBD="$(M2_GAPDBD)" scripts/m2-absence/inspect.sh "$(M2_EVIDENCE_ROOT)/absence"
+
+m2-absence-source: ## Run the sidecar-free structural source and module-graph absence gate.
+	$(GO) test -count=1 ./internal/architecture \
+		-run '^(TestM2SQLiteAbsence|TestM2GateSourcesDoNotShelterExecutableBehavior|TestM2DependencyPolicyAcceptsOnlyBoundedProviderComposition)$$'
 
 m2-sbom: ## Generate deterministic CycloneDX twice and require byte identity.
 	@mkdir -p "$(M2_EVIDENCE_ROOT)"
@@ -195,9 +211,10 @@ m2-performance: ## Run independently observed recovery/query/durable-mutation qu
 	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
 	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
 	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
-	"$(M2_QUALIFIER_BINARY)" measure --repository "$(CURDIR)" --sidecar "$(M2_GAPDBD)" --run-id "$(M2_RUN_ID)" --output "$(M2_EVIDENCE_ROOT)/performance.json"
+	"$(M2_QUALIFIER_BINARY)" measure --repository "$(CURDIR)" --sidecar "$(M2_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" --output "$(M2_EVIDENCE_ROOT)/performance.json"
 
-m2-short: m2-contract m2-capabilities m2-mutants ## Run bounded PR M2 contracts, capability, mutant, static, and module gates.
+m2-short: m2-mutants-smoke ## Run the strict sidecar-free PR contracts, structural absence, bounded race, mutant, static, and module gates.
+	$(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group core --timeout 8m
 	$(GO) test -run '^$$' ./...
 	$(GO) vet ./...
 	@command -v $(STATICCHECK) >/dev/null 2>&1 || { echo "required tool missing: $(STATICCHECK)"; exit 1; }
@@ -209,13 +226,15 @@ m2-qualification: ## Produce one immutable technical-pass bundle eligible for in
 	@test -n "$(M2_ACTOR_ID)" || { echo 'M2_ACTOR_ID is required' >&2; exit 1; }
 	@test -n "$(M2_PROCESS_ID)" || { echo 'M2_PROCESS_ID is required' >&2; exit 1; }
 	@test -n "$(M2_PROFILE_REVISION)" || { echo 'M2_PROFILE_REVISION is required' >&2; exit 1; }
+	@test -n "$(M2_IMPLEMENTATION_CONTRIBUTORS)" || { echo 'M2_IMPLEMENTATION_CONTRIBUTORS is required' >&2; exit 1; }
 	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
 	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
 	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
 	"$(M2_QUALIFIER_BINARY)" run --repository "$(CURDIR)" --output "$(M2_EVIDENCE_ROOT)" \
 		--sidecar "$(M2_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" \
 		--actor-id "$(M2_ACTOR_ID)" --process-id "$(M2_PROCESS_ID)" \
-		--profile-revision "$(M2_PROFILE_REVISION)" --timeout 60m
+		--implementation-contributors "$(M2_IMPLEMENTATION_CONTRIBUTORS)" \
+		--profile-document "$(M2_PROFILE_DOCUMENT)" --profile-revision "$(M2_PROFILE_REVISION)" --timeout 60m
 
 m2-verify-evidence: ## Independently recompute one immutable M2 producer bundle against trusted identities.
 	@test -n "$(M2_EVIDENCE)" || { echo 'M2_EVIDENCE is required' >&2; exit 1; }
