@@ -145,6 +145,18 @@
       "transcript_bytes": 163102,
       "attempt_events_sha256": "c52af711ad6a2a1283c0bb078e1a3df9191443b885c788d07ebd11d50f529973",
       "terminal_sha256": "b415e79d775c0697b0c840826a0f16c445c14b4a564eaa60de2f3dc546c01c43"
+    },
+    {
+      "run_id": "wp17-qualification-c0190e4b-final10",
+      "source_commit": "c0190e4b8989e2fbd0bc6764a5c41c047d4e661f",
+      "source_tree": "cd53f86a3ca02ab005e293cd35433af80e3baa18",
+      "outcome": "fail",
+      "reason": "the exact WP14 adversarial tracker campaign rejected two stale readiness source-mutant anchors after the underlying code evolved; all preceding crown and campaign evidence remained immutable and non-admissible",
+      "transcript_path": "/tmp/go-kitty3-qualification-c0190e4b-final10/m2/wp17-qualification-c0190e4b-final10/evidence/campaigns/fault-adversarial-tracker.go-test.jsonl",
+      "transcript_sha256": "cbfb48dfae7f0a065e7fe720f6cb16319303c60d2e48e3dda2af6c62a456b886",
+      "transcript_bytes": 1289439,
+      "attempt_events_sha256": "ed2ecb4ce1cafa9e4cae7f14bffbfa2a2e627f11bf056487d075961c8c347885",
+      "terminal_sha256": "7d9d09e6dd67e0ec9e20602fc47ae422981adb132c827d1b8571fd2259654225"
     }
   ]
 }
