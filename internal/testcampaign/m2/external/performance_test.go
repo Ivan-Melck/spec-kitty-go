@@ -1,12 +1,16 @@
 package external
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	m2 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m2"
 )
 
 func TestPerformanceChildEnvironmentSuppliesExactProductionAuthorityExecutable(t *testing.T) {
@@ -48,6 +52,141 @@ func TestPerformanceChildEnvironmentSuppliesExactProductionAuthorityExecutable(t
 		if counts[key] != 1 {
 			t.Fatalf("%s occurrence count=%d want=1", key, counts[key])
 		}
+	}
+}
+
+func TestPerformanceRecoveryReceiptRejectsMalformedSubstitutedAndStaleEvidence(t *testing.T) {
+	request := performanceRecoveryRequestV1{
+		SchemaVersion: 1, RunID: "run-1", RunIndex: 3,
+		Source:             m2.Source{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40)},
+		CheckpointRevision: 9, ExpectedOperationIDs: []string{"operation-1"}, DatasetSHA256: strings.Repeat("c", 64),
+		IncludeOperations: true, ChildExecutable: "/exact/scenario.test", ChildSHA256: strings.Repeat("d", 64),
+	}
+	operations := map[string]RecoveredOperation{"operation-1": {Families: []string{"family/operation"}}}
+	operationBytes, err := m2.CanonicalJSON(operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestSHA := strings.Repeat("e", 64)
+	valid := performanceRecoveryReceiptV1{
+		SchemaVersion: 1, RunID: request.RunID, RunIndex: request.RunIndex,
+		SourceCommit: request.Source.Commit, SourceTree: request.Source.Tree,
+		DatasetSHA256: request.DatasetSHA256, RequestSHA256: requestSHA,
+		ProcessID: 17, ChildExecutable: request.ChildExecutable, ChildSHA256: request.ChildSHA256,
+		StoreRevision: 10, ProjectionSHA256: strings.Repeat("f", 64), ObservedOperations: 1,
+		PostCheckpointStates: 1, OperationsSHA256: m2.SHA256(operationBytes), DurationNS: 1,
+		RuntimeOperations: []string{}, Operations: operations,
+	}
+	encoded, err := m2.CanonicalJSON(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodePerformanceRecoveryReceipt(request, requestSHA, encoded); err != nil {
+		t.Fatalf("valid recovery receipt rejected: %v", err)
+	}
+	summaryRequest := request
+	summaryRequest.IncludeOperations = false
+	emptyOperations := map[string]RecoveredOperation{}
+	emptyBytes, err := m2.CanonicalJSON(emptyOperations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := valid
+	summary.Operations = emptyOperations
+	summary.OperationsSHA256 = m2.SHA256(emptyBytes)
+	summaryBytes, err := m2.CanonicalJSON(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodePerformanceRecoveryReceipt(summaryRequest, requestSHA, summaryBytes); err != nil {
+		t.Fatalf("valid summary-only recovery receipt rejected: %v", err)
+	}
+	if _, err := decodePerformanceRecoveryReceipt(summaryRequest, requestSHA, encoded); err == nil {
+		t.Fatal("later recovery child was allowed to repeat the full operation census")
+	}
+	if _, err := decodePerformanceRecoveryReceiptBounded(request, requestSHA, encoded, len(encoded)-1); err == nil {
+		t.Fatal("oversized recovery receipt accepted")
+	}
+	for name, mutant := range map[string][]byte{
+		"truncated": encoded[:len(encoded)/2],
+		"malformed": []byte(`{"schema_version":1,}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodePerformanceRecoveryReceipt(request, requestSHA, mutant); err == nil {
+				t.Fatal("invalid recovery receipt accepted")
+			}
+		})
+	}
+	mutants := map[string]func(*performanceRecoveryReceiptV1){
+		"run":                  func(v *performanceRecoveryReceiptV1) { v.RunIndex++ },
+		"source":               func(v *performanceRecoveryReceiptV1) { v.SourceTree = strings.Repeat("0", 40) },
+		"dataset":              func(v *performanceRecoveryReceiptV1) { v.DatasetSHA256 = strings.Repeat("0", 64) },
+		"request":              func(v *performanceRecoveryReceiptV1) { v.RequestSHA256 = strings.Repeat("0", 64) },
+		"child_path":           func(v *performanceRecoveryReceiptV1) { v.ChildExecutable = "/substituted/scenario.test" },
+		"child_digest":         func(v *performanceRecoveryReceiptV1) { v.ChildSHA256 = strings.Repeat("0", 64) },
+		"process":              func(v *performanceRecoveryReceiptV1) { v.ProcessID = 0 },
+		"stale_revision":       func(v *performanceRecoveryReceiptV1) { v.StoreRevision = 8 },
+		"projection":           func(v *performanceRecoveryReceiptV1) { v.ProjectionSHA256 = "" },
+		"missing_operation":    func(v *performanceRecoveryReceiptV1) { v.ObservedOperations = 0 },
+		"state_census":         func(v *performanceRecoveryReceiptV1) { v.PostCheckpointStates = 3 },
+		"operation_digest":     func(v *performanceRecoveryReceiptV1) { v.OperationsSHA256 = strings.Repeat("0", 64) },
+		"runtime_operation":    func(v *performanceRecoveryReceiptV1) { v.RuntimeOperations = []string{"forged"} },
+		"nonpositive_duration": func(v *performanceRecoveryReceiptV1) { v.DurationNS = 0 },
+	}
+	for name, mutate := range mutants {
+		t.Run(name, func(t *testing.T) {
+			candidate := valid
+			mutate(&candidate)
+			candidateBytes, encodeErr := m2.CanonicalJSON(candidate)
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			if _, err := decodePerformanceRecoveryReceipt(request, requestSHA, candidateBytes); err == nil {
+				t.Fatal("substituted recovery receipt accepted")
+			}
+		})
+	}
+}
+
+func TestPerformanceRecoveryArtifactsAreCreateOnceBoundedRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "receipt.json")
+	if err := writePerformanceRecoveryCreateOnce(path, []byte(`{"first":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePerformanceRecoveryCreateOnce(path, []byte(`{"second":true}`)); err == nil {
+		t.Fatal("create-once recovery artifact was overwritten")
+	}
+	linked := filepath.Join(root, "linked.json")
+	if err := os.Symlink(path, linked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPerformanceRecoveryArtifact(linked); err == nil {
+		t.Fatal("symlink recovery artifact was read")
+	}
+}
+
+func TestPerformanceRecoveryChildFailureCannotProduceObservation(t *testing.T) {
+	root := t.TempDir()
+	executable, err := filepath.EvalSymlinks("/bin/false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	childSHA, err := digestPerformanceRecoveryExecutable(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := PerformanceConfig{
+		RunID: "run-child-failure", Repository: root, Executable: executable,
+		RecoveryExecutable: executable, RuntimeRoot: filepath.Join(root, "runtime"), DataRoot: filepath.Join(root, "data"),
+		Source:             m2.Source{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40)},
+		CheckpointRevision: 1, ExpectedOperationIDs: []string{"operation-1"}, StartTimeout: time.Second, StopTimeout: time.Second,
+	}
+	if _, _, err := runPerformanceRecoveryChild(context.Background(), config, "host-1", 0, strings.Repeat("c", 64), childSHA); err == nil || !strings.Contains(err.Error(), "recovery child") {
+		t.Fatalf("failed child produced an observation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(config.RuntimeRoot, "recovery-00", "receipt.json")); !os.IsNotExist(err) {
+		t.Fatalf("failed child produced a receipt: %v", err)
 	}
 }
 

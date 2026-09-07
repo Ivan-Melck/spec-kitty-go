@@ -75,12 +75,26 @@ func TestPerformanceSuffixReusesBoundedMissionWithRealActivityMutations(t *testi
 // qualifier invokes this one selector in a fresh process and retains both its
 // go-test JSON transcript and the create-once raw sample artifact.
 func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
+	if requested, err := m2external.RunPerformanceRecoverySampleChildIfRequested(t.Context()); requested {
+		if err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	output := os.Getenv("SPEC_KITTY_M2_PERFORMANCE_OUTPUT")
 	if output == "" {
 		t.Skip("M2 performance campaign is invoked only by the qualifier")
 	}
 	identity := performanceIdentityFromEnvironment(t, output)
 	collector := newPerformanceCollector(t)
+	recoveryExecutable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryExecutable, err = filepath.EvalSymlinks(recoveryExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var h *portableHarness
 	h = newPortableHarness(t, ProductionConfig{
 		ExecutablePath: productionExecutable(t), RepositoryRoot: identity.repository,
@@ -106,6 +120,7 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 		RuntimeRoot: filepath.Join(h.root, "performance-runtime"), DataRoot: h.data, Source: identity.source,
 		Warmup: performanceWarmups, Observations: performanceSuffixOps, RecoveryRuns: performanceRecoveries,
 		StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second,
+		RecoveryExecutable: recoveryExecutable,
 	}
 	environment, err := m2external.ObservePerformanceEnvironment(config)
 	if err != nil {

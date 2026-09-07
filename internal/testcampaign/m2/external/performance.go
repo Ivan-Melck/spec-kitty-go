@@ -49,6 +49,7 @@ type PerformanceConfig struct {
 	StartTimeout         time.Duration
 	StopTimeout          time.Duration
 	TestTimeout          time.Duration
+	RecoveryExecutable   string
 }
 
 type CheckpointResult struct {
@@ -159,10 +160,11 @@ func ObservePerformanceEnvironment(config PerformanceConfig) (m2.PerformanceEnvi
 	return observeEnvironment(config)
 }
 
-// RecoverPerformance starts a fresh admitted sidecar process for every run
-// and performs the production reducer restore into clean process memory.
+// RecoverPerformance starts a fresh exact Go test process and admitted
+// sidecar for every sample. The child times only RestoreV2 and returns a
+// bounded source- and dataset-bound machine receipt.
 func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAuthorityID string) ([]RecoveryObservation, error) {
-	if len(config.ExpectedOperationIDs) != config.Observations || !slices.IsSorted(config.ExpectedOperationIDs) {
+	if len(config.ExpectedOperationIDs) != config.Observations || !slices.IsSorted(config.ExpectedOperationIDs) || !filepath.IsAbs(config.RecoveryExecutable) {
 		return nil, fmt.Errorf("performance expected operation census is incomplete")
 	}
 	for index, operation := range config.ExpectedOperationIDs {
@@ -170,64 +172,40 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 			return nil, fmt.Errorf("performance expected operation census is noncanonical")
 		}
 	}
+	datasetSHA, err := performanceRecoveryDatasetSHA256(config, hostAuthorityID)
+	if err != nil {
+		return nil, err
+	}
+	childSHA, err := digestPerformanceRecoveryExecutable(config.RecoveryExecutable)
+	if err != nil {
+		return nil, err
+	}
 	observations := make([]RecoveryObservation, 0, config.RecoveryRuns)
 	var projectionSHA string
+	postCheckpointStates := 0
+	childPIDs := make(map[int]struct{}, config.RecoveryRuns)
 	for run := 0; run < config.RecoveryRuns; run++ {
-		runConfig := config
-		runConfig.RuntimeRoot = filepath.Join(config.RuntimeRoot, fmt.Sprintf("recovery-%02d", run))
-		state, err := startPerformanceRuntime(ctx, runConfig)
+		observation, receipt, err := runPerformanceRecoveryChild(ctx, config, hostAuthorityID, run, datasetSHA, childSHA)
 		if err != nil {
 			return observations, err
 		}
-		started := time.Now()
-		recovered, restoreErr := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: state.adapter, EventRegistry: state.registry, Reducers: state.reducers, HostAuthorityID: journalv2.HostAuthorityID(hostAuthorityID), PriorRuntimeEpochID: "epoch-performance-before-checkpoint", RecoveryAttemptID: fmt.Sprintf("performance-recovery-%02d", run), Budgets: restorev2.BudgetsForLogicalCPUsV2(runtime.GOMAXPROCS(0))})
-		duration := time.Since(started)
-		if restoreErr != nil {
-			state.close()
-			return observations, restoreErr
+		if _, duplicate := childPIDs[receipt.ProcessID]; duplicate || receipt.ProcessID == os.Getpid() {
+			return observations, fmt.Errorf("performance recovery child process identity was reused")
 		}
-		if recovered.StoreRevision().CurrentRevision() < config.CheckpointRevision {
-			state.close()
-			return observations, fmt.Errorf("recovery revision precedes the qualified checkpoint")
-		}
-		digest := recovered.Playback().CanonicalProjectionDigest().String()
+		childPIDs[receipt.ProcessID] = struct{}{}
+		digest := observation.ProjectionSHA256
 		if run == 0 {
 			projectionSHA = digest
+			postCheckpointStates = receipt.PostCheckpointStates
 		} else if digest != projectionSHA {
-			state.close()
 			return observations, fmt.Errorf("recovery run %d projection differs from run zero", run)
 		}
-		postCheckpointStates := countOperationStates(recovered) - config.CheckpointOperations
-		observation := RecoveryObservation{DurationNS: duration.Nanoseconds(), ProjectionSHA256: digest}
-		if run == 0 {
-			observation.Operations, observation.RuntimeOperations, err = operationsFromEvents(ctx, state.adapter, recovered, config.CheckpointRevision)
-			if err != nil {
-				state.close()
-				return observations, err
-			}
-			if len(observation.Operations) != postCheckpointStates {
-				state.close()
-				return observations, fmt.Errorf("recovery post-checkpoint event census=%d states=%d", len(observation.Operations), postCheckpointStates)
-			}
-			if err := validatePerformanceOperationCensus(observation.Operations, config.ExpectedOperationIDs, func(operation string) (journalv2.OperationBindingV2, error) {
-				return readPerformanceOperationBinding(ctx, state.adapter, recovered.StoreRevision(), operation)
-			}); err != nil {
-				state.close()
-				return observations, err
-			}
-			observation.ObservedOperations = len(config.ExpectedOperationIDs)
-		} else {
-			if postCheckpointStates != len(observations[0].Operations) {
-				state.close()
-				return observations, fmt.Errorf("recovery run %d operation-state census=%d want=%d", run, postCheckpointStates, len(observations[0].Operations))
-			}
-			observation.ObservedOperations = observations[0].ObservedOperations
+		if receipt.PostCheckpointStates != postCheckpointStates {
+			return observations, fmt.Errorf("recovery run %d operation-state census=%d want=%d", run, receipt.PostCheckpointStates, postCheckpointStates)
 		}
-		if observation.ObservedOperations != config.Observations {
-			state.close()
-			return observations, fmt.Errorf("recovery run %d restored %d/%d suffix operations", run, observation.ObservedOperations, config.Observations)
+		if run > 0 && receipt.OperationsSHA256 != m2.SHA256([]byte("{}")) {
+			return observations, fmt.Errorf("recovery run %d operation evidence digest differs", run)
 		}
-		state.close()
 		observations = append(observations, observation)
 	}
 	return observations, nil
