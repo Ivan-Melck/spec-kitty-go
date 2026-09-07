@@ -117,7 +117,7 @@ func Observe(ctx context.Context, config Config) (_ *Observation, resultErr erro
 	}
 	budgets := config.RestoreBudgets
 	if budgets == (journalrestore.BudgetsV2{}) {
-		budgets = journalrestore.DefaultBudgetsV2()
+		budgets = productionRecoveryBudgetsV2()
 	}
 	status, progress, _, err := restoreReadOnlyObservation(ctx, adapter, binding, registry, reducers, budgets)
 	if err != nil {

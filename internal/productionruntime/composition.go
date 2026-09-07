@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/artifact"
@@ -211,7 +212,7 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 	}
 	budgets := config.RestoreBudgets
 	if budgets == (journalrestore.BudgetsV2{}) {
-		budgets = journalrestore.DefaultBudgetsV2()
+		budgets = productionRecoveryBudgetsV2()
 	}
 	restored, err := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: prior.RuntimeEpochID, RecoveryAttemptID: attemptID, Budgets: budgets})
 	if err != nil {
@@ -319,6 +320,10 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 	}
 	host.startMonitor(context.Background(), config.MonitorInterval)
 	return host, nil
+}
+
+func productionRecoveryBudgetsV2() journalrestore.BudgetsV2 {
+	return journalrestore.BudgetsForLogicalCPUsV2(runtime.GOMAXPROCS(0))
 }
 
 func restoredAuthority(databaseID journalv2.DatabaseID, epoch journalv2.RuntimeEpochID, restored journalrestore.ResultV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2) (*projection.AuthorityV2, *ProgressService, error) {
@@ -469,7 +474,7 @@ func pendingReconciliation(query projection.QueryPortV2) bool {
 // BuildReducerSetV2 composes the exact closed registry. It is intentionally
 // explicit so adding a family without its capability-owned reducer fails.
 func BuildReducerSetV2(registry journalv2.EventRegistryV2) (journalv2.ReducerSetV2, error) {
-	missionRegistration := journalv2.ReducerRegistration{Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Owner: "internal/mission", ImplementationDigest: mission.MissionReducerImplementationDigestV2(), Reduce: mission.ReduceMissionEventV2}
+	missionRegistration := journalv2.ReducerRegistration{Family: "mission", EventSchemaVersion: 1, ReducerVersion: 1, Owner: "internal/mission", ImplementationDigest: mission.MissionReducerImplementationDigestV2(), Reduce: mission.ReduceMissionEventV2, ReducePlaybackSequence: mission.ReduceMissionEventSequenceV2}
 	registrations := []journalv2.ReducerRegistration{RuntimeReducerRegistrationV2(), {Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Owner: "internal/controljournal/application", ImplementationDigest: journalv2.OperationReducerImplementationDigestV2(), Reduce: journalv2.ReduceOperationStateV2}, missionRegistration}
 	registrations = append(registrations, artifact.ReducerRegistrationsV2()...)
 	registrations = append(registrations, workgraph.ReducerRegistrationsV2()...)

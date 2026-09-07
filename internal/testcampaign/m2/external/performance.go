@@ -90,7 +90,7 @@ func PublishPerformanceOutboxConnected(ctx context.Context, socketPath string, s
 	if err != nil {
 		return m2.PerformanceSample{}, err
 	}
-	recovered, err := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: hostAuthorityID, PriorRuntimeEpochID: "epoch-performance-outbox-observer", RecoveryAttemptID: "performance-outbox-source-restore", Budgets: restorev2.DefaultBudgetsV2()})
+	recovered, err := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: adapter, EventRegistry: registry, Reducers: reducers, HostAuthorityID: hostAuthorityID, PriorRuntimeEpochID: "epoch-performance-outbox-observer", RecoveryAttemptID: "performance-outbox-source-restore", Budgets: restorev2.BudgetsForLogicalCPUsV2(runtime.GOMAXPROCS(0))})
 	if err != nil {
 		return m2.PerformanceSample{}, err
 	}
@@ -180,7 +180,7 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 			return observations, err
 		}
 		started := time.Now()
-		recovered, restoreErr := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: state.adapter, EventRegistry: state.registry, Reducers: state.reducers, HostAuthorityID: journalv2.HostAuthorityID(hostAuthorityID), PriorRuntimeEpochID: "epoch-performance-before-checkpoint", RecoveryAttemptID: fmt.Sprintf("performance-recovery-%02d", run), Budgets: restorev2.DefaultBudgetsV2()})
+		recovered, restoreErr := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: state.adapter, EventRegistry: state.registry, Reducers: state.reducers, HostAuthorityID: journalv2.HostAuthorityID(hostAuthorityID), PriorRuntimeEpochID: "epoch-performance-before-checkpoint", RecoveryAttemptID: fmt.Sprintf("performance-recovery-%02d", run), Budgets: restorev2.BudgetsForLogicalCPUsV2(runtime.GOMAXPROCS(0))})
 		duration := time.Since(started)
 		if restoreErr != nil {
 			state.close()
@@ -243,7 +243,7 @@ func PreparePerformanceCheckpoint(ctx context.Context, config PerformanceConfig,
 		return CheckpointResult{}, err
 	}
 	defer state.close()
-	recovered, err := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: state.adapter, EventRegistry: state.registry, Reducers: state.reducers, HostAuthorityID: journalv2.HostAuthorityID(hostAuthorityID), PriorRuntimeEpochID: "epoch-performance-before-checkpoint", RecoveryAttemptID: "performance-checkpoint-restore", Budgets: restorev2.DefaultBudgetsV2()})
+	recovered, err := restorev2.RestoreV2(ctx, restorev2.InputV2{Reader: state.adapter, EventRegistry: state.registry, Reducers: state.reducers, HostAuthorityID: journalv2.HostAuthorityID(hostAuthorityID), PriorRuntimeEpochID: "epoch-performance-before-checkpoint", RecoveryAttemptID: "performance-checkpoint-restore", Budgets: restorev2.BudgetsForLogicalCPUsV2(runtime.GOMAXPROCS(0))})
 	if err != nil {
 		return CheckpointResult{}, err
 	}

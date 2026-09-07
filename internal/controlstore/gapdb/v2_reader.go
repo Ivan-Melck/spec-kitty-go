@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -151,6 +152,118 @@ func translateReadManyRecoveryError(err error) error {
 	return translateRecoveryError("read_many", err)
 }
 
+// ReadRecoverySnapshotV2 translates the provider's bounded binary record
+// census into the provider-neutral recovery model. Non-journal v2 records are
+// recognized and excluded by their closed key kinds; unknown keys fail closed.
+func (a *Adapter) ReadRecoverySnapshotV2(ctx context.Context, request journalv2.RecoverySnapshotRequestV2) (journalv2.RecoverySnapshotV2, error) {
+	attempt := request.AttemptRevision()
+	if attempt.CurrentRevision() == 0 || request.MaxRecords() <= 0 || request.MaxBytes() <= 0 {
+		return journalv2.RecoverySnapshotV2{}, recoveryError(journalv2.ErrorInvalidCanonicalData, "recovery_snapshot_request")
+	}
+	capability, ok := a.client.(recoverySnapshotProvider)
+	if !ok {
+		return journalv2.RecoverySnapshotV2{}, recoveryError(journalv2.ErrorUnavailable, "recovery_snapshot_capability")
+	}
+	ctx, cancel := a.requestContext(ctx)
+	defer cancel()
+	observed, err := capability.ReadRecoverySnapshot(ctx, gapdbapi.RecoverySnapshotRequest{
+		Prefix: "spk/v2/", ExpectedRevision: gapdbapi.Revision(attempt.CurrentRevision()),
+		MaxRecords: request.MaxRecords(), MaxBytes: request.MaxBytes(),
+	})
+	if err != nil {
+		return journalv2.RecoverySnapshotV2{}, translateRecoveryError("recovery_snapshot", err)
+	}
+	if observed.DatabaseID != string(attempt.DatabaseID()) || uint64(observed.ObservedRevision) != attempt.CurrentRevision() || observed.AsOf.IsZero() || len(observed.Records) > request.MaxRecords() {
+		return journalv2.RecoverySnapshotV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_snapshot_result")
+	}
+	asOf := observed.AsOf.UTC().Format(time.RFC3339Nano)
+	type convertedSnapshotRecord struct {
+		record  journalv2.RecoveryRecordV2
+		include bool
+		err     error
+	}
+	converted := make([]convertedSnapshotRecord, len(observed.Records))
+	previous := ""
+	for _, providerRecord := range observed.Records {
+		if providerRecord.Key <= previous || !strings.HasPrefix(providerRecord.Key, "spk/v2/") || providerRecord.Revision == 0 || uint64(providerRecord.Revision) > attempt.CurrentRevision() {
+			return journalv2.RecoverySnapshotV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_snapshot_order")
+		}
+		previous = providerRecord.Key
+	}
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	convert := func() {
+		defer workers.Done()
+		for index := range jobs {
+			providerRecord := &observed.Records[index]
+			key, parseErr := parseV2Key(providerRecord.Key)
+			if parseErr != nil {
+				if v2NonRecoverySnapshotKey(providerRecord.Key) {
+					continue
+				}
+				converted[index].err = recoveryError(journalv2.ErrorMalformed, "recovery_snapshot_key")
+				continue
+			}
+			address, addressErr := v2RecoveryAddressForKey(key)
+			if addressErr != nil {
+				switch key.Kind() {
+				case v2KeyAuthorityBinding, v2KeyRuntimeCurrent, v2KeyRuntimeEpoch, v2KeyEffectIntent, v2KeyEligibilityGuard, v2KeyWorkspacePathClaim:
+					continue
+				default:
+					converted[index].err = recoveryError(journalv2.ErrorMalformed, "recovery_snapshot_address")
+					continue
+				}
+			}
+			record, convertErr := convertOwnedV2RecoveryRecord(providerRecord, key, address, attempt.CurrentRevision())
+			if convertErr != nil {
+				converted[index].err = convertErr
+				continue
+			}
+			if record.ExpiresAt() != "" {
+				expires, parseErr := time.Parse(time.RFC3339Nano, record.ExpiresAt())
+				if parseErr != nil || !expires.After(observed.AsOf) {
+					converted[index].err = recoveryError(journalv2.ErrorMalformed, "recovery_snapshot_expiry")
+					continue
+				}
+			}
+			converted[index].record, converted[index].include = record, true
+		}
+	}
+	workerCount := min(32, len(observed.Records))
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		go convert()
+	}
+	for index := range observed.Records {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	records := make([]journalv2.RecoveryRecordV2, 0, len(observed.Records))
+	for _, item := range converted {
+		if item.err != nil {
+			return journalv2.RecoverySnapshotV2{}, item.err
+		}
+		if item.include {
+			records = append(records, item.record)
+		}
+	}
+	result, err := journalv2.NewRecoverySnapshotV2(uint64(observed.ObservedRevision), asOf, records)
+	if err != nil {
+		return journalv2.RecoverySnapshotV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_snapshot_result")
+	}
+	return result, nil
+}
+
+func v2NonRecoverySnapshotKey(encoded string) bool {
+	const prefix = "spk/v2/runtime/epochs/"
+	if !strings.HasPrefix(encoded, prefix) || strings.Contains(encoded[len(prefix):], "/") {
+		return false
+	}
+	_, err := journalv2.NewRuntimeEpochID(encoded[len(prefix):])
+	return err == nil
+}
+
 // ScanV2 translates a provider-pinned prefix page into the foundation
 // recovery contract. Every returned page must report the attempt's R.
 func (a *Adapter) ScanV2(ctx context.Context, request journalv2.ScanRequestV2) (journalv2.RecoveryPageV2, error) {
@@ -249,14 +362,29 @@ func convertV2RecoveryPage(page gapdbapi.ScanPage, prefix v2Prefix, target journ
 }
 
 func convertV2RecoveryRecord(record gapdbapi.Record, expected v2Key, address journalv2.RecordAddressV2, maximumRevision uint64) (journalv2.RecoveryRecordV2, error) {
+	return convertV2RecoveryRecordBytes(&record, expected, address, maximumRevision, false, false)
+}
+
+func convertOwnedV2RecoveryRecord(record *gapdbapi.Record, expected v2Key, address journalv2.RecordAddressV2, maximumRevision uint64) (journalv2.RecoveryRecordV2, error) {
+	// ReadRecoverySnapshotV2 parsed this exact raw key immediately before
+	// conversion; retain that sealed result instead of parsing every key twice.
+	return convertV2RecoveryRecordBytes(record, expected, address, maximumRevision, true, true)
+}
+
+func convertV2RecoveryRecordBytes(record *gapdbapi.Record, expected v2Key, address journalv2.RecordAddressV2, maximumRevision uint64, takeOwnership, keyValidated bool) (journalv2.RecoveryRecordV2, error) {
+	if record == nil {
+		return journalv2.RecoveryRecordV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_record")
+	}
 	if record.Key != expected.String() || record.Revision == 0 || uint64(record.Revision) > maximumRevision ||
 		len(record.Value) == 0 || len(record.Value) > v2ValueMaximum(expected.Kind()) ||
 		expected.Kind() == v2KeyPublicationWitness && record.ExpiresAt != nil {
 		return journalv2.RecoveryRecordV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_record")
 	}
-	parsed, err := parseV2Key(record.Key)
-	if err != nil || parsed.String() != expected.String() || parsed.Kind() != expected.Kind() {
-		return journalv2.RecoveryRecordV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_record_key")
+	if !keyValidated {
+		parsed, err := parseV2Key(record.Key)
+		if err != nil || parsed.String() != expected.String() || parsed.Kind() != expected.Kind() {
+			return journalv2.RecoveryRecordV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_record_key")
+		}
 	}
 	expiresAt := ""
 	if record.ExpiresAt != nil {
@@ -265,7 +393,13 @@ func convertV2RecoveryRecord(record gapdbapi.Record, expected v2Key, address jou
 		}
 		expiresAt = record.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	converted, err := journalv2.NewRecoveryRecordV2(address, record.Value, uint64(record.Revision), expiresAt)
+	var converted journalv2.RecoveryRecordV2
+	var err error
+	if takeOwnership {
+		converted, err = journalv2.TakeRecoveryRecordV2(address, &record.Value, uint64(record.Revision), expiresAt)
+	} else {
+		converted, err = journalv2.NewRecoveryRecordV2(address, record.Value, uint64(record.Revision), expiresAt)
+	}
 	if err != nil {
 		return journalv2.RecoveryRecordV2{}, recoveryError(journalv2.ErrorMalformed, "recovery_record")
 	}
