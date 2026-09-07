@@ -322,8 +322,8 @@ func TestRestoreDeadlineSourceOverlayMutants(t *testing.T) {
 		},
 		{
 			id:          "M-RESTORE-DEADLINE-PARTIAL-BYPASS",
-			anchor:      "if err := input.Reader.VerifyRevisionV2(ctx, attempt); err != nil {",
-			replacement: "if err := input.Reader.VerifyRevisionV2(parent, attempt); err != nil {",
+			anchor:      "if err := reader.VerifyRevisionV2(ctx, attempt); err != nil {",
+			replacement: "if err := reader.VerifyRevisionV2(parent, attempt); err != nil {",
 			killer:      "TestRestoreDeadlinePropagatesExactAttemptDeadline",
 			evidence:    "evidence=RESTORE-DEADLINE-PROPAGATION",
 		},

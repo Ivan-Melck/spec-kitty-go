@@ -20,6 +20,20 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
 )
 
+func TestDefaultRecoveryWorkersFollowBoundedSchedulerCapacity(t *testing.T) {
+	for _, test := range []struct {
+		logicalCPUs int
+		want        int
+	}{{-1, 8}, {0, 8}, {1, 8}, {2, 16}, {4, 32}, {8, 64}, {12, 64}, {128, 64}} {
+		if got := BudgetsForLogicalCPUsV2(test.logicalCPUs).MaximumWorkers; got != test.want {
+			t.Fatalf("logical CPUs=%d: workers=%d want=%d", test.logicalCPUs, got, test.want)
+		}
+	}
+	if workers := DefaultBudgetsV2().MaximumWorkers; workers != 8 {
+		t.Fatalf("provider-neutral default changed without admitted capacity: %d", workers)
+	}
+}
+
 type emptyReader struct {
 	mu                        sync.Mutex
 	captures, verifies, scans int

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestIdentityScopeCodecAndKeyBudgets(t *testing.T) {
@@ -112,6 +113,49 @@ func TestIdentityScopeCodecAndKeyBudgets(t *testing.T) {
 	_, err := CanonicalObject([]byte(payload))
 	if err == nil || len(err.Error()) > 128 || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("diagnostic is unbounded or leaked payload: %v", err)
+	}
+}
+
+func TestIdentityASCIIAllowlistSubsumesUTF8Validation(t *testing.T) {
+	reference := func(value string) bool {
+		if len(value) == 0 || len(value) > MaxIdentityBytes || !utf8.ValidString(value) {
+			return false
+		}
+		for index := range len(value) {
+			char := value[index]
+			ok := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9'
+			if index > 0 {
+				ok = ok || char == '.' || char == '_' || char == ':' || char == '-'
+			}
+			if !ok {
+				return false
+			}
+		}
+		return true
+	}
+	assertEquivalent := func(value string) {
+		t.Helper()
+		got := validateIdentity("identity", value) == nil
+		if got != reference(value) {
+			t.Fatalf("identity byte-class equivalence differs for %x: got=%t", []byte(value), got)
+		}
+	}
+	assertEquivalent("")
+	for first := 0; first <= 0xff; first++ {
+		assertEquivalent(string([]byte{byte(first)}))
+		for second := 0; second <= 0xff; second++ {
+			assertEquivalent(string([]byte{byte(first), byte(second)}))
+		}
+	}
+	for _, value := range []string{
+		strings.Repeat("a", MaxIdentityBytes),
+		strings.Repeat("a", MaxIdentityBytes+1),
+		string([]byte{0xc0, 0x80}),
+		string([]byte{0xed, 0xa0, 0x80}),
+		string([]byte{0xf4, 0x90, 0x80, 0x80}),
+		"a" + string([]byte{0xff}) + "b",
+	} {
+		assertEquivalent(value)
 	}
 }
 
@@ -558,12 +602,41 @@ func TestCommitPlanPublicationSealMembershipAndImmutability(t *testing.T) {
 		if trustedErr != nil || trusted.CanonicalDigest() != event.CanonicalDigest() || trusted.CanonicalSizeV2() != len(encoded) {
 			t.Fatalf("trusted event roundtrip err=%v", trustedErr)
 		}
+		reencoded, reencodeErr := EncodeEventEnvelopeV2(trusted)
+		if reencodeErr != nil || !bytes.Equal(reencoded, encoded) {
+			t.Fatalf("trusted typed decoder changed event semantics: err=%v", reencodeErr)
+		}
 		if event.Family() == "operation" {
 			state, stateErr := ReconstructOperationStateFromEventV2(trusted)
 			if stateErr != nil || state.OperationID() != event.OperationID() {
 				t.Fatalf("trusted operation event state=%+v err=%v", state, stateErr)
 			}
 		}
+	}
+
+	encoded, err := EncodeEventEnvelopeV2(first.Events()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["zz_unknown"] = json.RawMessage(`true`)
+	unknown, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, _ := NewJournalEventAddressV2(first.Events()[0].Coordinate(), first.Events()[0].LogicalVersion())
+	record, err := NewRecoveryRecordV2(address, unknown, 1, "")
+	if err != nil {
+		t.Fatalf("canonical unknown-field mutant was not admitted to the typed boundary: %v", err)
+	}
+	if _, err := DecodeEventEnvelopeRecordV2(record, registry); err == nil {
+		t.Fatal("sealed internal decoder accepted an unknown event field")
+	}
+	if _, err := NewRecoveryRecordV2(address, []byte(`{"a":1,"a":2}`), 1, ""); err == nil {
+		t.Fatal("duplicate-field event bytes reached the sealed typed decoder")
 	}
 }
 
@@ -2357,5 +2430,82 @@ func TestCanonicalJSONPropertyCorpus(t *testing.T) {
 		if err != nil || !bytes.Equal(canonical, again) {
 			t.Fatalf("canonical instability at %d", index)
 		}
+	}
+}
+
+func TestCanonicalObjectFastPathMatchesReferenceBoundary(t *testing.T) {
+	sawFast := false
+	inputs := [][]byte{
+		[]byte(`{"a":1,"b":{"c":true,"d":[null,"plain",-0,1.0,1e2,1E+2]}}`),
+		[]byte(`{"a":-0,"b":0,"c":0.0,"d":1e-9,"e":9E+9}`),
+		[]byte(`{"é":1,"界":2}`),
+		[]byte(`{"b":1,"a":2}`),
+		[]byte(`{"a":1,"a":2}`),
+		[]byte(`{"a":{"b":1,"b":2}}`),
+		[]byte(`{"a":"line\\n"}`),
+		[]byte(`{"a":"\\u0061"}`),
+		[]byte(`{"a":"<html>"}`),
+		[]byte("{\"a\":\"\u2028\"}"),
+		[]byte(` {"a":1}`),
+		[]byte("{\n\"a\":1}"),
+		[]byte(`{"a" :1}`),
+		[]byte(`{"a":01}`),
+		[]byte(`{"a":+1}`),
+		[]byte(`{"a":1.}`),
+		[]byte(`{"a":NaN}`),
+		[]byte(`[]`),
+		{'{', '"', 'a', '"', ':', '"', 0xff, '"', '}'},
+	}
+	for _, encoded := range inputs {
+		valid := utf8.Valid(encoded) && json.Valid(encoded)
+		fast := valid && canonicalObjectFastPath(encoded)
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		value, err := decodeUniqueValue(decoder)
+		if err != nil || !valid {
+			if fast {
+				t.Fatalf("fast path admitted invalid input %q", encoded)
+			}
+			continue
+		}
+		object, objectOK := value.(map[string]any)
+		canonical, marshalErr := json.Marshal(object)
+		wantFast := objectOK && marshalErr == nil && bytes.Equal(canonical, encoded)
+		if fast && !wantFast {
+			t.Fatalf("fast path admitted noncanonical input=%q canonical=%q", encoded, canonical)
+		}
+		got, gotErr := CanonicalObject(encoded)
+		if objectOK && marshalErr == nil {
+			if gotErr != nil || !bytes.Equal(got, canonical) {
+				t.Fatalf("canonical equivalence input=%q got=%q err=%v want=%q", encoded, got, gotErr, canonical)
+			}
+		} else if gotErr == nil {
+			t.Fatalf("non-object canonical input accepted: %q", encoded)
+		}
+		sawFast = sawFast || fast
+	}
+	if !sawFast {
+		t.Fatal("fast path did not admit the canonical no-escape control")
+	}
+}
+
+func TestTakeRecoveryRecordValidatesBeforeSealingAndKeepsPublicCopiesDefensive(t *testing.T) {
+	address, err := NewOperationBindingAddressV2("operation-owned-record")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidBytes := []byte(`{"z":1,"a":2}`)
+	if _, err := TakeRecoveryRecordV2(address, &invalidBytes, 1, ""); err == nil || invalidBytes == nil {
+		t.Fatal("unchecked or consumed invalid provider bytes")
+	}
+	owned := []byte(`{"a":1}`)
+	record, err := TakeRecoveryRecordV2(address, &owned, 1, "")
+	if err != nil || owned != nil {
+		t.Fatalf("owned seal err=%v retained_input=%t", err, owned != nil)
+	}
+	public := record.CanonicalValue()
+	public[2] = 'x'
+	if string(record.CanonicalValue()) != `{"a":1}` {
+		t.Fatal("public canonical bytes mutated the sealed record")
 	}
 }

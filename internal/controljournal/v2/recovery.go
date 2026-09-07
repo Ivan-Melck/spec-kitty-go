@@ -1,6 +1,8 @@
 package v2
 
-import "bytes"
+import (
+	"bytes"
+)
 
 const (
 	MaxRecoveryPageRecords     = 500
@@ -8,6 +10,8 @@ const (
 	MaxRecoveryCursorBytes     = 16 * 1024
 	MaxRecoveryReadManyRecords = 10_000
 	MaxRecoveryReadManyBytes   = 64 * 1024 * 1024
+	MaxRecoverySnapshotRecords = 200_000
+	MaxRecoverySnapshotBytes   = 256 * 1024 * 1024
 )
 
 // DatabaseID is the durable store incarnation identity. A revision is only
@@ -257,13 +261,39 @@ func (r ScanRequestV2) Limit() int                       { return r.limit }
 func (r ScanRequestV2) MaxBytes() int                    { return r.maxBytes }
 
 type RecoveryRecordV2 struct {
-	address   RecordAddressV2
-	canonical []byte
-	revision  uint64
-	expiresAt string
+	address     RecordAddressV2
+	canonical   []byte
+	revision    uint64
+	expiresAt   string
+	addressSize int
 }
 
 func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	record, err := newRecoveryRecordV2(address, canonical, revision, expiresAt)
+	if err != nil {
+		return RecoveryRecordV2{}, err
+	}
+	record.canonical = append([]byte(nil), canonical...)
+	return record, nil
+}
+
+// TakeRecoveryRecordV2 validates and consumes caller-owned bytes. It is
+// restricted by Go's internal package boundary and clears the supplied slice;
+// all public record access remains defensive.
+func TakeRecoveryRecordV2(address RecordAddressV2, canonical *[]byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	if canonical == nil {
+		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
+	}
+	owned := *canonical
+	record, err := newRecoveryRecordV2(address, owned, revision, expiresAt)
+	if err != nil {
+		return RecoveryRecordV2{}, err
+	}
+	*canonical = nil
+	return record, nil
+}
+
+func newRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
 	if err := address.validate(); err != nil {
 		return RecoveryRecordV2{}, err
 	}
@@ -281,7 +311,11 @@ func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uin
 	if expiresAt != "" && !canonicalUTCInstant(expiresAt) {
 		return RecoveryRecordV2{}, invalid(ErrorInvalidCanonicalData, "recovery_record_expiry")
 	}
-	return RecoveryRecordV2{address: address, canonical: append([]byte(nil), canonical...), revision: revision, expiresAt: expiresAt}, nil
+	addressSize := semanticRecoveryAddressSizeV2(address)
+	if addressSize <= 0 || addressSize >= MaxRecoverySnapshotBytes {
+		return RecoveryRecordV2{}, invalid(ErrorBudgetExceeded, "recovery_record_address")
+	}
+	return RecoveryRecordV2{address: address, canonical: canonical, revision: revision, expiresAt: expiresAt, addressSize: addressSize}, nil
 }
 
 func recoveryRecordMaximumV2(kind RecordAddressKindV2) (int, error) {
@@ -306,6 +340,126 @@ func (r RecoveryRecordV2) CanonicalValue() []byte   { return append([]byte(nil),
 func (r RecoveryRecordV2) CanonicalSizeV2() int     { return len(r.canonical) }
 func (r RecoveryRecordV2) RecordRevision() uint64   { return r.revision }
 func (r RecoveryRecordV2) ExpiresAt() string        { return r.expiresAt }
+
+// RecoverySnapshotRequestV2 asks an optional provider capability for one
+// complete, immutable record census at the already captured revision. The
+// provider supplies bytes only; RestoreV2 remains the semantic verifier.
+type RecoverySnapshotRequestV2 struct {
+	attempt    StoreRevisionV2
+	maxRecords int
+	maxBytes   int
+}
+
+func NewRecoverySnapshotRequestV2(attempt StoreRevisionV2, maxRecords, maxBytes int) (RecoverySnapshotRequestV2, error) {
+	if _, err := NewStoreRevisionV2(attempt.databaseID, attempt.currentRevision, attempt.durableThrough); err != nil {
+		return RecoverySnapshotRequestV2{}, err
+	}
+	if maxRecords <= 0 || maxRecords > MaxRecoverySnapshotRecords || maxBytes <= 0 || maxBytes > MaxRecoverySnapshotBytes {
+		return RecoverySnapshotRequestV2{}, invalid(ErrorBudgetExceeded, "recovery_snapshot_request")
+	}
+	return RecoverySnapshotRequestV2{attempt: attempt, maxRecords: maxRecords, maxBytes: maxBytes}, nil
+}
+
+func (r RecoverySnapshotRequestV2) AttemptRevision() StoreRevisionV2 { return r.attempt }
+func (r RecoverySnapshotRequestV2) MaxRecords() int                  { return r.maxRecords }
+func (r RecoverySnapshotRequestV2) MaxBytes() int                    { return r.maxBytes }
+
+// RecoverySnapshotV2 owns the complete provider-neutral record set. Its
+// constructor validates identity, revision, expiry, uniqueness, and budgets;
+// downstream recovery still validates every record's domain meaning.
+type RecoverySnapshotV2 struct {
+	observedRevision uint64
+	asOf             string
+	records          []RecoveryRecordV2
+	byAddress        map[RecordAddressV2]RecoveryRecordV2
+}
+
+func NewRecoverySnapshotV2(observedRevision uint64, asOf string, records []RecoveryRecordV2) (RecoverySnapshotV2, error) {
+	if observedRevision == 0 || !canonicalUTCInstant(asOf) || len(records) > MaxRecoverySnapshotRecords {
+		return RecoverySnapshotV2{}, invalid(ErrorBudgetExceeded, "recovery_snapshot")
+	}
+	byAddress := make(map[RecordAddressV2]RecoveryRecordV2, len(records))
+	owned := make([]RecoveryRecordV2, len(records))
+	bytesUsed := 0
+	for index, record := range records {
+		// RecoveryRecordV2's private fields can only be sealed by its validating
+		// constructor outside this package. Do not revalidate every address at
+		// the aggregate snapshot boundary.
+		if record.addressSize <= 0 || record.revision == 0 || record.revision > observedRevision || len(record.canonical) == 0 {
+			return RecoverySnapshotV2{}, invalid(ErrorMalformed, "recovery_snapshot_record")
+		}
+		if _, duplicate := byAddress[record.address]; duplicate {
+			return RecoverySnapshotV2{}, invalid(ErrorMalformed, "recovery_snapshot_duplicate")
+		}
+		byAddress[record.address] = record
+		if record.expiresAt != "" {
+			if !canonicalUTCInstantAfter(record.expiresAt, asOf) {
+				return RecoverySnapshotV2{}, invalid(ErrorMalformed, "recovery_snapshot_expiry")
+			}
+		}
+		bytesUsed += record.CanonicalSizeV2() + record.addressSize
+		if bytesUsed > MaxRecoverySnapshotBytes {
+			return RecoverySnapshotV2{}, invalid(ErrorBudgetExceeded, "recovery_snapshot_bytes")
+		}
+		// RecoveryRecordV2 already owns sealed canonical bytes and exposes only
+		// defensive copies. Copy the record table, not every immutable payload.
+		owned[index] = record
+	}
+	return RecoverySnapshotV2{observedRevision: observedRevision, asOf: asOf, records: owned, byAddress: byAddress}, nil
+}
+
+func (r RecoverySnapshotV2) ObservedRevision() uint64 { return r.observedRevision }
+func (r RecoverySnapshotV2) AsOf() string             { return r.asOf }
+func (r RecoverySnapshotV2) Records() []RecoveryRecordV2 {
+	result := make([]RecoveryRecordV2, len(r.records))
+	for index := range r.records {
+		result[index] = cloneRecoveryRecord(r.records[index])
+	}
+	return result
+}
+
+// VisitRecordsV2 provides bounded read-only iteration without cloning the
+// entire snapshot payload set. RecoveryRecordV2 keeps its fields private and
+// CanonicalValue still returns a defensive copy.
+func (r RecoverySnapshotV2) VisitRecordsV2(visit func(RecoveryRecordV2) error) error {
+	if visit == nil {
+		return invalid(ErrorInvalidCanonicalData, "recovery_snapshot_visitor")
+	}
+	for _, record := range r.records {
+		if err := visit(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LookupRecordV2 returns an immutable sealed record value; its byte accessor
+// remains defensive.
+func (r RecoverySnapshotV2) LookupRecordV2(address RecordAddressV2) (RecoveryRecordV2, bool) {
+	record, ok := r.byAddress[address]
+	return record, ok
+}
+
+func semanticRecoveryAddressSizeV2(address RecordAddressV2) int {
+	switch address.kind {
+	case AddressAggregateHead, AddressJournalEvent:
+		encoded, err := CanonicalAggregateCoordinate(address.coordinate)
+		if err != nil {
+			return MaxRecoverySnapshotBytes
+		}
+		return len(encoded) + 16
+	case AddressOperationBinding, AddressOperationHead:
+		return len(address.operationID) + 8
+	case AddressCheckpointRecord:
+		return len(address.checkpointID) + 8
+	case AddressCheckpointSlot:
+		return len(address.checkpointSlotID) + 8
+	case AddressPublicationWitness:
+		return len(address.publicationID) + 8
+	default:
+		return MaxRecoverySnapshotBytes
+	}
+}
 
 // RecoveryReadManyResultV2 is one complete provider observation. Records are
 // retained in request order by the reader implementation and are immutable to
@@ -425,6 +579,27 @@ func canonicalUTCRecoverySecond(value string) bool {
 		days[2] = 29
 	}
 	return day >= 1 && day <= days[month]
+}
+
+func canonicalUTCInstantAfter(left, right string) bool {
+	if !canonicalUTCInstant(left) || !canonicalUTCInstant(right) {
+		return false
+	}
+	if left[:19] != right[:19] {
+		return left[:19] > right[:19]
+	}
+	fraction := func(value string, index int) byte {
+		if len(value) == 20 || index >= len(value)-21 {
+			return '0'
+		}
+		return value[20+index]
+	}
+	for index := 0; index < 9; index++ {
+		if l, r := fraction(left, index), fraction(right, index); l != r {
+			return l > r
+		}
+	}
+	return false
 }
 
 func cloneRecoveryRecord(record RecoveryRecordV2) RecoveryRecordV2 {

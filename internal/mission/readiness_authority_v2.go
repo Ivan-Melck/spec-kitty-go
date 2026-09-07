@@ -73,6 +73,10 @@ type readinessAuthorityStateWireV2 struct {
 }
 
 func NewReadinessAuthorityStateV2(input ReadinessAuthorityStateInputV2) (ReadinessAuthorityStateV2, error) {
+	return newReadinessAuthorityStateV2(input, nil)
+}
+
+func newReadinessAuthorityStateV2(input ReadinessAuthorityStateInputV2, trustedCanonical []byte) (ReadinessAuthorityStateV2, error) {
 	if _, err := journalv2.NewProjectID(string(input.ProjectID)); err != nil {
 		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityInvalidRequestV2, "project_id", err)
 	}
@@ -97,6 +101,13 @@ func NewReadinessAuthorityStateV2(input ReadinessAuthorityStateInputV2) (Readine
 	}
 	input.ActiveFacts = nil
 	state := ReadinessAuthorityStateV2{input: input, facts: facts}
+	if trustedCanonical != nil {
+		// The enclosing sealed EventEnvelopeV2 has already established exact
+		// recursive canonical JSON. Semantic construction above remains
+		// mandatory; hashes unused by playback need not be recomputed.
+		state.canonical = trustedCanonical
+		return state, nil
+	}
 	canonical, err := canonicalReadinessAuthorityStateV2(state)
 	if err != nil {
 		return ReadinessAuthorityStateV2{}, err
@@ -143,11 +154,27 @@ func (s ReadinessAuthorityStateV2) AuthorityFactSetDigest() journalv2.Digest {
 func (s ReadinessAuthorityStateV2) CanonicalBytes() []byte { return bytes.Clone(s.canonical) }
 
 func canonicalReadinessAuthorityStateV2(state ReadinessAuthorityStateV2) ([]byte, error) {
-	wire := readinessAuthorityStateWireV2{
-		SchemaVersion: ReadinessAuthorityStateSchemaV2, ProjectID: state.input.ProjectID, MissionID: state.input.MissionID,
-		DefinitionRevision: state.input.DefinitionRevision, DefinitionSHA256: state.input.DefinitionDigest.String(), Version: uint64(state.input.Version),
-		Lifecycle: state.input.Lifecycle, CurrentWorkRevision: state.input.CurrentWorkRevision.CanonicalBytes(), ActivityCount: state.input.ActivityCount,
-		ActiveFacts: append([]ScopedMissionFactV2(nil), state.facts...), LastOperationID: state.input.LastOperationID, ObservedAt: state.input.ObservedAt,
+	// Field declaration order is the canonical JSON key order. Keep the decode
+	// wire independent so changing encoder layout cannot weaken strict decoding.
+	wire := struct {
+		ActiveFacts         []ScopedMissionFactV2 `json:"active_facts"`
+		ActivityCount       uint64                `json:"activity_count"`
+		CurrentWorkRevision json.RawMessage       `json:"current_work_revision,omitempty"`
+		DefinitionRevision  string                `json:"definition_revision"`
+		DefinitionSHA256    string                `json:"definition_sha256"`
+		LastOperationID     journalv2.OperationID `json:"last_operation_id"`
+		Lifecycle           MissionLifecycle      `json:"lifecycle"`
+		MissionID           journalv2.MissionID   `json:"mission_id"`
+		ObservedAt          string                `json:"observed_at"`
+		ProjectID           journalv2.ProjectID   `json:"project_id"`
+		SchemaVersion       uint32                `json:"schema_version"`
+		Version             uint64                `json:"version"`
+	}{
+		ActiveFacts: append([]ScopedMissionFactV2(nil), state.facts...), ActivityCount: state.input.ActivityCount,
+		CurrentWorkRevision: state.input.CurrentWorkRevision.CanonicalBytes(), DefinitionRevision: state.input.DefinitionRevision,
+		DefinitionSHA256: state.input.DefinitionDigest.String(), LastOperationID: state.input.LastOperationID,
+		Lifecycle: state.input.Lifecycle, MissionID: state.input.MissionID, ObservedAt: state.input.ObservedAt,
+		ProjectID: state.input.ProjectID, SchemaVersion: ReadinessAuthorityStateSchemaV2, Version: uint64(state.input.Version),
 	}
 	encoded, err := json.Marshal(wire)
 	if err != nil {
@@ -158,14 +185,18 @@ func canonicalReadinessAuthorityStateV2(state ReadinessAuthorityStateV2) ([]byte
 
 func canonicalReadinessFactSetV2(state ReadinessAuthorityStateV2) ([]byte, error) {
 	encoded, err := json.Marshal(struct {
-		ProjectID           journalv2.ProjectID   `json:"project_id"`
-		MissionID           journalv2.MissionID   `json:"mission_id"`
+		ActiveFacts         []ScopedMissionFactV2 `json:"active_facts"`
+		CurrentWorkRevision json.RawMessage       `json:"current_work_revision,omitempty"`
 		DefinitionRevision  string                `json:"definition_revision"`
 		DefinitionSHA256    string                `json:"definition_sha256"`
 		Lifecycle           MissionLifecycle      `json:"lifecycle"`
-		CurrentWorkRevision json.RawMessage       `json:"current_work_revision,omitempty"`
-		ActiveFacts         []ScopedMissionFactV2 `json:"active_facts"`
-	}{state.input.ProjectID, state.input.MissionID, state.input.DefinitionRevision, state.input.DefinitionDigest.String(), state.input.Lifecycle, state.input.CurrentWorkRevision.CanonicalBytes(), state.facts})
+		MissionID           journalv2.MissionID   `json:"mission_id"`
+		ProjectID           journalv2.ProjectID   `json:"project_id"`
+	}{
+		ActiveFacts: append([]ScopedMissionFactV2(nil), state.facts...), CurrentWorkRevision: state.input.CurrentWorkRevision.CanonicalBytes(),
+		DefinitionRevision: state.input.DefinitionRevision, DefinitionSHA256: state.input.DefinitionDigest.String(),
+		Lifecycle: state.input.Lifecycle, MissionID: state.input.MissionID, ProjectID: state.input.ProjectID,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -173,12 +204,21 @@ func canonicalReadinessFactSetV2(state ReadinessAuthorityStateV2) ([]byte, error
 }
 
 func DecodeReadinessAuthorityStateV2(encoded []byte) (ReadinessAuthorityStateV2, error) {
+	return decodeReadinessAuthorityStateV2(encoded, false)
+}
+
+func decodeReadinessAuthorityStateV2(encoded []byte, trustedCanonical bool) (ReadinessAuthorityStateV2, error) {
 	if len(encoded) == 0 || len(encoded) > journalv2.MaxCanonicalPayloadBytes {
 		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", nil)
 	}
-	canonical, err := journalv2.CanonicalObject(encoded)
-	if err != nil || !bytes.Equal(canonical, encoded) {
-		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
+	if !trustedCanonical {
+		canonical, err := journalv2.CanonicalObject(encoded)
+		if err != nil || !bytes.Equal(canonical, encoded) {
+			return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
+		}
+	}
+	if trustedCanonical && !readinessStateRequiredFieldsV2(encoded) {
+		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state_fields", nil)
 	}
 	var header struct {
 		SchemaVersion uint32 `json:"schema_version"`
@@ -192,11 +232,17 @@ func DecodeReadinessAuthorityStateV2(encoded []byte) (ReadinessAuthorityStateV2,
 	if header.SchemaVersion != ReadinessAuthorityStateSchemaV2 {
 		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", nil)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
 	var wire readinessAuthorityStateWireV2
-	if err := decoder.Decode(&wire); err != nil {
-		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
+	var decodeErr error
+	if trustedCanonical {
+		decodeErr = decodeCanonicalSealedV2(encoded, &wire)
+	} else {
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.DisallowUnknownFields()
+		decodeErr = decoder.Decode(&wire)
+	}
+	if decodeErr != nil {
+		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", decodeErr)
 	}
 	digest, err := journalv2.ParseDigest("definition_sha256", wire.DefinitionSHA256)
 	if err != nil {
@@ -213,15 +259,34 @@ func DecodeReadinessAuthorityStateV2(encoded []byte) (ReadinessAuthorityStateV2,
 			return ReadinessAuthorityStateV2{}, err
 		}
 	}
-	state, err := NewReadinessAuthorityStateV2(ReadinessAuthorityStateInputV2{
+	input := ReadinessAuthorityStateInputV2{
 		ProjectID: wire.ProjectID, MissionID: wire.MissionID, DefinitionRevision: wire.DefinitionRevision, DefinitionDigest: digest,
 		Version: journalv2.LogicalVersion(wire.Version), Lifecycle: wire.Lifecycle, CurrentWorkRevision: current,
 		ActivityCount: wire.ActivityCount, ActiveFacts: wire.ActiveFacts, LastOperationID: wire.LastOperationID, ObservedAt: wire.ObservedAt,
-	})
-	if err != nil || !bytes.Equal(state.CanonicalBytes(), encoded) {
+	}
+	var state ReadinessAuthorityStateV2
+	if trustedCanonical {
+		state, err = newReadinessAuthorityStateV2(input, encoded)
+	} else {
+		state, err = NewReadinessAuthorityStateV2(input)
+	}
+	if err != nil || !trustedCanonical && !bytes.Equal(state.CanonicalBytes(), encoded) {
 		return ReadinessAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
 	}
 	return state, nil
+}
+
+func readinessStateRequiredFieldsV2(encoded []byte) bool {
+	for _, field := range [...]string{
+		`"active_facts":`, `"activity_count":`, `"definition_revision":`, `"definition_sha256":`,
+		`"last_operation_id":`, `"lifecycle":`, `"mission_id":`, `"observed_at":`, `"project_id":`,
+		`"schema_version":`, `"version":`,
+	} {
+		if !bytes.Contains(encoded, []byte(field)) {
+			return false
+		}
+	}
+	return true
 }
 
 type ReadinessEventTypeV2 string
@@ -383,9 +448,15 @@ func EncodeReadinessAuthorityEventV2(event ReadinessAuthorityEventV2) ([]byte, e
 }
 
 func DecodeReadinessAuthorityEventV2(encoded []byte) (ReadinessAuthorityEventV2, error) {
-	canonical, err := journalv2.CanonicalObject(encoded)
-	if err != nil || !bytes.Equal(canonical, encoded) {
-		return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "readiness_event", err)
+	return decodeReadinessAuthorityEventV2(encoded, false)
+}
+
+func decodeReadinessAuthorityEventV2(encoded []byte, trustedCanonical bool) (ReadinessAuthorityEventV2, error) {
+	if !trustedCanonical {
+		canonical, err := journalv2.CanonicalObject(encoded)
+		if err != nil || !bytes.Equal(canonical, encoded) {
+			return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "readiness_event", err)
+		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
@@ -394,13 +465,14 @@ func DecodeReadinessAuthorityEventV2(encoded []byte) (ReadinessAuthorityEventV2,
 		return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "readiness_event", err)
 	}
 	var prior ReadinessAuthorityStateV2
+	var err error
 	if len(wire.Prior) != 0 {
-		prior, err = DecodeReadinessAuthorityStateV2(wire.Prior)
+		prior, err = decodeReadinessAuthorityStateV2(wire.Prior, trustedCanonical)
 		if err != nil {
 			return ReadinessAuthorityEventV2{}, err
 		}
 	}
-	next, err := DecodeReadinessAuthorityStateV2(wire.Next)
+	next, err := decodeReadinessAuthorityStateV2(wire.Next, trustedCanonical)
 	if err != nil {
 		return ReadinessAuthorityEventV2{}, err
 	}
@@ -421,7 +493,10 @@ func ReduceReadinessAuthorityEventV2(prior []byte, event journalv2.EventEnvelope
 	if event.Family() != "mission" || event.EventSchemaVersion() != 1 || event.ReducerVersion() != 1 || event.Coordinate().Kind != "mission" {
 		return nil, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "event_tuple", nil)
 	}
-	payload, err := DecodeReadinessAuthorityEventV2(event.Payload())
+	// EventEnvelopeV2 construction already establishes recursively canonical
+	// payload bytes. The reducer keeps full strict semantic decoding but avoids
+	// validating the same JSON bytes a second time during playback.
+	payload, err := decodeReadinessAuthorityEventV2(event.Payload(), true)
 	if err != nil || string(payload.eventType) != event.EventType() || payload.next.Version() != event.LogicalVersion() || payload.next.MissionID() != journalv2.MissionID(event.Coordinate().ID) {
 		return nil, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "event_membership", err)
 	}
@@ -429,13 +504,115 @@ func ReduceReadinessAuthorityEventV2(prior []byte, event journalv2.EventEnvelope
 		if !bytes.Equal(prior, []byte(`{}`)) && len(prior) != 0 {
 			return nil, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "prior_state", nil)
 		}
-	} else {
-		decoded, decodeErr := DecodeReadinessAuthorityStateV2(prior)
-		if decodeErr != nil || decoded.Digest() != payload.prior.Digest() {
-			return nil, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "prior_state", decodeErr)
-		}
+	} else if !bytes.Equal(prior, payload.prior.CanonicalBytes()) {
+		// DecodeReadinessAuthorityEventV2 already strictly decoded and validated
+		// the embedded prior state. Exact canonical-byte continuity is stronger
+		// than decoding the playback state a second time and comparing its digest.
+		return nil, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "prior_state", nil)
 	}
 	return payload.next.CanonicalBytes(), nil
+}
+
+// ReduceMissionEventSequenceV2 preserves one decoded readiness state across an
+// already ordered playback chain. Each event remains strictly decoded and its
+// exact embedded prior bytes, transition, membership, and next state are
+// checked; only the duplicate decode of next-as-following-prior is removed.
+func ReduceMissionEventSequenceV2(prior []byte, events []journalv2.EventEnvelopeV2) ([]byte, error) {
+	currentBytes := prior
+	var current ReadinessAuthorityStateV2
+	var currentMission MissionAuthorityStateV2
+	for _, envelope := range events {
+		if envelope.Family() != "mission" || envelope.EventSchemaVersion() != 1 || envelope.ReducerVersion() != 1 || envelope.Coordinate().Kind != "mission" {
+			return nil, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "event_tuple", nil)
+		}
+		payloadBytes := envelope.Payload()
+		readinessSchema := bytes.HasSuffix(payloadBytes, []byte(`,"schema_version":2}`))
+		missionSchema := bytes.HasSuffix(payloadBytes, []byte(`,"schema_version":1}`))
+		if missionSchema && !(envelope.Coordinate().Scope.Kind == journalv2.ScopeMission && envelope.Coordinate().ID != journalv2.AggregateID(envelope.Coordinate().Scope.MissionID)) {
+			if currentMission.IsZero() && len(currentBytes) != 0 && !bytes.Equal(currentBytes, []byte(`{}`)) {
+				var decodeErr error
+				currentMission, decodeErr = DecodeMissionAuthorityStateV2(currentBytes)
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+			}
+			payload, decodeErr := decodeMissionAuthoritySequenceEventV2(payloadBytes, currentBytes, currentMission)
+			if decodeErr != nil || string(payload.eventType) != envelope.EventType() || payload.next.Version() != envelope.LogicalVersion() || payload.next.MissionID() != journalv2.MissionID(envelope.Coordinate().ID) {
+				return nil, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "event_membership", decodeErr)
+			}
+			currentMission, currentBytes = payload.next, payload.next.canonical
+			continue
+		}
+		if !readinessSchema {
+			output, reduceErr := ReduceMissionEventV2(currentBytes, envelope)
+			if reduceErr != nil {
+				return nil, reduceErr
+			}
+			current, currentBytes = ReadinessAuthorityStateV2{}, output
+			continue
+		}
+		if current.IsZero() && len(currentBytes) != 0 && !bytes.Equal(currentBytes, []byte(`{}`)) {
+			var decodeErr error
+			current, decodeErr = DecodeReadinessAuthorityStateV2(currentBytes)
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+		}
+		payload, decodeErr := decodeReadinessAuthoritySequenceEventV2(payloadBytes, currentBytes, current)
+		if decodeErr != nil || string(payload.eventType) != envelope.EventType() || payload.next.Version() != envelope.LogicalVersion() || payload.next.MissionID() != journalv2.MissionID(envelope.Coordinate().ID) {
+			return nil, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "event_membership", decodeErr)
+		}
+		current, currentBytes = payload.next, payload.next.canonical
+	}
+	return currentBytes, nil
+}
+
+func decodeMissionAuthoritySequenceEventV2(encoded, priorBytes []byte, prior MissionAuthorityStateV2) (MissionEventPayloadV2, error) {
+	var wire missionEventPayloadWireV2
+	if err := decodeCanonicalSealedV2(encoded, &wire); err != nil || wire.SchemaVersion != MissionAuthoritySchemaVersionV2 {
+		return MissionEventPayloadV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_event", err)
+	}
+	if prior.IsZero() {
+		if len(wire.Prior) != 0 || len(priorBytes) != 0 && !bytes.Equal(priorBytes, []byte(`{}`)) {
+			return MissionEventPayloadV2{}, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "prior_state", nil)
+		}
+	} else if !bytes.Equal(wire.Prior, priorBytes) {
+		return MissionEventPayloadV2{}, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "prior_state", nil)
+	}
+	next, err := decodeMissionAuthorityStateV2(wire.Next, true)
+	if err != nil {
+		return MissionEventPayloadV2{}, err
+	}
+	return NewMissionEventPayloadV2(wire.EventType, prior, next)
+}
+
+func decodeReadinessAuthoritySequenceEventV2(encoded, priorBytes []byte, prior ReadinessAuthorityStateV2) (ReadinessAuthorityEventV2, error) {
+	var wire readinessAuthorityEventWireV2
+	if err := decodeCanonicalSealedV2(encoded, &wire); err != nil || wire.SchemaVersion != ReadinessAuthorityStateSchemaV2 {
+		return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "readiness_event", err)
+	}
+	if prior.IsZero() {
+		if len(wire.Prior) != 0 || len(priorBytes) != 0 && !bytes.Equal(priorBytes, []byte(`{}`)) {
+			return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "prior_state", nil)
+		}
+	} else if !bytes.Equal(wire.Prior, priorBytes) {
+		return ReadinessAuthorityEventV2{}, missionAuthorityErrorV2(MissionAuthorityVersionConflictV2, "prior_state", nil)
+	}
+	next, err := decodeReadinessAuthorityStateV2(wire.Next, true)
+	if err != nil {
+		return ReadinessAuthorityEventV2{}, err
+	}
+	if wire.Activity != nil {
+		return NewReadinessActivityEventV2(prior, next, *wire.Activity)
+	}
+	if len(wire.WorkRevision) != 0 {
+		selection, decodeErr := decodeWorkRevisionSelectionV2(wire.WorkRevision)
+		if decodeErr != nil {
+			return ReadinessAuthorityEventV2{}, decodeErr
+		}
+		return NewReadinessWorkRevisionEventV2(prior, next, selection)
+	}
+	return NewReadinessAuthorityEventV2(wire.EventType, prior, next)
 }
 
 func validateReadinessTransitionV2(event ReadinessEventTypeV2, prior, next ReadinessAuthorityStateV2) error {

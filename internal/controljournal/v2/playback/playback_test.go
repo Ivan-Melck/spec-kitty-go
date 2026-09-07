@@ -104,7 +104,9 @@ func TestPlaybackProductionSurfaceHasStructurallyNoIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed := map[string]bool{`"bytes"`: true, `"crypto/sha256"`: true, `"encoding/json"`: true, `"sort"`: true, `"github.com/spec-kitty/go-kitty3/internal/controljournal/v2"`: true}
+	// sync permits bounded in-memory reducer parallelism; it conveys no storage,
+	// network, filesystem, clock, randomness, or other external capability.
+	allowed := map[string]bool{`"bytes"`: true, `"crypto/sha256"`: true, `"encoding/json"`: true, `"sort"`: true, `"sync"`: true, `"github.com/spec-kitty/go-kitty3/internal/controljournal/v2"`: true}
 	for _, item := range parsed.Imports {
 		if !allowed[item.Path.Value] {
 			t.Fatalf("I/O-capable import %s", item.Path.Value)

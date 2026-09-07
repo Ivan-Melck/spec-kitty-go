@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode/utf8"
 )
 
 const (
@@ -155,7 +154,7 @@ func NewAggregateKind(v string) (AggregateKind, error) {
 func NewAggregateID(v string) (AggregateID, error) { return identity[AggregateID]("aggregate_id", v) }
 
 func validateIdentity(field, value string) error {
-	if len(value) == 0 || len(value) > MaxIdentityBytes || !utf8.ValidString(value) {
+	if len(value) == 0 || len(value) > MaxIdentityBytes {
 		return invalid(ErrorInvalidIdentity, field)
 	}
 	for index := 0; index < len(value); index++ {
@@ -628,6 +627,10 @@ func validateEventAggregateAuthority(family string, coordinate AggregateCoordina
 }
 
 func NewEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2) (EventEnvelopeV2, error) {
+	return newEventEnvelopeV2(input, registry, false)
+}
+
+func newEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2, canonicalInputsSealed bool) (EventEnvelopeV2, error) {
 	if err := preflightGovernanceRevisions(input.GovernanceRevisions); err != nil {
 		return EventEnvelopeV2{}, err
 	}
@@ -671,16 +674,22 @@ func NewEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2) (Eve
 			return EventEnvelopeV2{}, invalid(ErrorInvalidCanonicalData, "governance_revisions")
 		}
 	}
-	payload, err := CanonicalObject(input.Payload)
-	if err != nil {
-		return EventEnvelopeV2{}, err
-	}
+	payload := append([]byte(nil), input.Payload...)
 	observations := []byte("{}")
-	if len(input.Observations) != 0 {
-		observations, err = CanonicalObject(input.Observations)
+	if !canonicalInputsSealed {
+		var err error
+		payload, err = CanonicalObject(input.Payload)
 		if err != nil {
 			return EventEnvelopeV2{}, err
 		}
+		if len(input.Observations) != 0 {
+			observations, err = CanonicalObject(input.Observations)
+			if err != nil {
+				return EventEnvelopeV2{}, err
+			}
+		}
+	} else if len(input.Observations) != 0 {
+		observations = append([]byte(nil), input.Observations...)
 	}
 	input.Payload, input.Observations, input.GovernanceRevisions = nil, nil, governance
 	envelope := EventEnvelopeV2{input: input, payload: append([]byte(nil), payload...), observations: append([]byte(nil), observations...)}
@@ -796,14 +805,14 @@ func decodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2, canonicalSe
 	if err != nil {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
 	}
-	envelope, err := NewEventEnvelopeV2(EventEnvelopeInput{
+	envelope, err := newEventEnvelopeV2(EventEnvelopeInput{
 		EventID: EventID(wire.EventID), EventType: wire.EventType, Family: wire.Family, EventSchemaVersion: wire.EventSchemaVersion,
 		ReducerVersion: wire.ReducerVersion, Coordinate: wire.Coordinate, AggregateLogicalVersion: LogicalVersion(wire.AggregateLogicalVersion),
 		OperationID: OperationID(wire.OperationID), OperationLogicalVersion: LogicalVersion(wire.OperationLogicalVersion), PublicationID: PublicationID(wire.PublicationID),
 		CommittedRuntimeEpochID: RuntimeEpochID(wire.CommittedRuntimeEpochID), EventIndex: wire.EventIndex, EventCount: wire.EventCount,
 		ActorID: ActorID(wire.ActorID), ProcessID: ProcessID(wire.ProcessID), WorkRevisionID: WorkRevisionID(wire.WorkRevisionID),
 		PolicyRevision: wire.PolicyRevision, GovernanceRevisions: wire.GovernanceRevisions, Observations: wire.Observations, Payload: wire.Payload,
-	}, registry)
+	}, registry, canonicalSealed)
 	if err != nil || envelope.digest != want {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
 	}
@@ -1004,13 +1013,18 @@ func OperationReducerImplementationDigestV2() Digest {
 }
 
 type ReducerRegistration struct {
-	Family               string
-	EventSchemaVersion   uint32
-	ReducerVersion       uint32
-	Owner                string
-	ImplementationDigest Digest
-	Reduce               Reducer
+	Family                 string
+	EventSchemaVersion     uint32
+	ReducerVersion         uint32
+	Owner                  string
+	ImplementationDigest   Digest
+	Reduce                 Reducer
+	ReducePlaybackSequence PlaybackSequenceReducerV2
 }
+
+// PlaybackSequenceReducerV2 is an optional behavior-equivalent replay
+// optimization for one aggregate's already ordered, immutable event chain.
+type PlaybackSequenceReducerV2 func(prior []byte, events []EventEnvelopeV2) ([]byte, error)
 
 type ReducerRegistryDescriptorV2 struct {
 	canonical []byte
@@ -1027,6 +1041,7 @@ func (d ReducerRegistryDescriptorV2) Digest() Digest { return d.digest }
 type ReducerSetV2 struct {
 	registry   EventRegistryV2
 	reducers   map[string]Reducer
+	sequences  map[string]PlaybackSequenceReducerV2
 	descriptor ReducerRegistryDescriptorV2
 }
 
@@ -1038,6 +1053,7 @@ func NewReducerSetV2(registry EventRegistryV2, registrations []ReducerRegistrati
 		return ReducerSetV2{}, invalid(ErrorUnknownEventTuple, "reducers")
 	}
 	reducers := make(map[string]Reducer, len(registrations))
+	sequences := make(map[string]PlaybackSequenceReducerV2)
 	descriptors := make([]struct {
 		Family               string `json:"family"`
 		EventSchemaVersion   uint32 `json:"event_schema_version"`
@@ -1055,6 +1071,9 @@ func NewReducerSetV2(registry EventRegistryV2, registrations []ReducerRegistrati
 			return ReducerSetV2{}, invalid(ErrorUnknownEventTuple, "reducer_owner")
 		}
 		reducers[key] = registration.Reduce
+		if registration.ReducePlaybackSequence != nil {
+			sequences[key] = registration.ReducePlaybackSequence
+		}
 		descriptors = append(descriptors, struct {
 			Family               string `json:"family"`
 			EventSchemaVersion   uint32 `json:"event_schema_version"`
@@ -1078,9 +1097,49 @@ func NewReducerSetV2(registry EventRegistryV2, registrations []ReducerRegistrati
 	if err != nil {
 		return ReducerSetV2{}, err
 	}
-	return ReducerSetV2{registry: registry, reducers: reducers, descriptor: ReducerRegistryDescriptorV2{
+	return ReducerSetV2{registry: registry, reducers: reducers, sequences: sequences, descriptor: ReducerRegistryDescriptorV2{
 		canonical: canonical, digest: digest("spec-kitty.reducer-registry-descriptor.v2", canonical),
 	}}, nil
+}
+
+// ApplyPlaybackSequenceV2 applies one ordered aggregate chain. Definitions
+// without a specialized sequence reducer retain exact per-event behavior.
+func (r ReducerSetV2) ApplyPlaybackSequenceV2(prior []byte, events []EventEnvelopeV2) ([]byte, Digest, error) {
+	if len(events) == 0 {
+		return nil, Digest{}, invalid(ErrorInvalidTransition, "reducer_sequence")
+	}
+	first := events[0]
+	key := eventTupleKey(first.input.Family, first.input.EventSchemaVersion, first.input.ReducerVersion)
+	sequence := r.sequences[key]
+	if sequence == nil {
+		current := prior
+		var digest Digest
+		for _, event := range events {
+			var err error
+			current, digest, err = r.ApplyPlaybackV2(current, event)
+			if err != nil {
+				return nil, Digest{}, err
+			}
+		}
+		return current, digest, nil
+	}
+	for _, event := range events {
+		if event.digest.IsZero() || eventTupleKey(event.input.Family, event.input.EventSchemaVersion, event.input.ReducerVersion) != key {
+			return nil, Digest{}, invalid(ErrorUnknownEventTuple, "reducer_sequence")
+		}
+		if _, err := r.registry.Resolve(event.input.Family, event.input.EventSchemaVersion, event.input.ReducerVersion); err != nil {
+			return nil, Digest{}, err
+		}
+	}
+	output, err := sequence(append([]byte(nil), prior...), events)
+	if err != nil {
+		return nil, Digest{}, err
+	}
+	output, err = canonicalObjectOwned(output, MaxCanonicalPayloadBytes)
+	if err != nil {
+		return nil, Digest{}, err
+	}
+	return output, reducerStateDigestCanonicalV2(output), nil
 }
 
 func (r ReducerSetV2) Apply(prior []byte, event EventEnvelopeV2) ([]byte, Digest, error) {
@@ -1122,12 +1181,14 @@ func (r ReducerSetV2) apply(prior []byte, event EventEnvelopeV2, priorIsCanonica
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	output, err = CanonicalObject(output)
+	output, err = canonicalObjectOwned(output, MaxCanonicalPayloadBytes)
 	if err != nil {
 		return nil, Digest{}, err
 	}
 	outputDigest := reducerStateDigestCanonicalV2(output)
-	return append([]byte(nil), output...), outputDigest, nil
+	// CanonicalObject returned a newly owned slice; transfer it to playback
+	// instead of immediately cloning the same validated bytes again.
+	return output, outputDigest, nil
 }
 
 // Reduce is retained as the stateless runtime spelling used by existing

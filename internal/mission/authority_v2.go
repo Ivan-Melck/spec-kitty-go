@@ -156,6 +156,10 @@ type missionAuthorityStateWireV2 struct {
 }
 
 func NewMissionAuthorityStateV2(input MissionAuthorityStateInputV2) (MissionAuthorityStateV2, error) {
+	return newMissionAuthorityStateV2(input, nil)
+}
+
+func newMissionAuthorityStateV2(input MissionAuthorityStateInputV2, trustedCanonical []byte) (MissionAuthorityStateV2, error) {
 	if input.Decomposition == "" {
 		input.Decomposition = DecompositionNoneV2
 	}
@@ -200,6 +204,12 @@ func NewMissionAuthorityStateV2(input MissionAuthorityStateInputV2) (MissionAuth
 	}
 	input.ActiveBlockerIDs, input.OpenDecisionIDs, input.EffectIDs = nil, nil, nil
 	state := MissionAuthorityStateV2{input: input, blockers: blockers, decisions: decisions, effects: effects}
+	if trustedCanonical != nil {
+		// trustedCanonical is an owned json.RawMessage produced by strict event
+		// decoding; retain it internally and copy only at public accessors.
+		state.canonical = trustedCanonical
+		return state, nil
+	}
 	canonical, err := canonicalMissionAuthorityStateV2(state)
 	if err != nil {
 		return MissionAuthorityStateV2{}, err
@@ -262,30 +272,54 @@ func canonicalMissionAuthorityStateV2(s MissionAuthorityStateV2) ([]byte, error)
 }
 
 func DecodeMissionAuthorityStateV2(encoded []byte) (MissionAuthorityStateV2, error) {
+	return decodeMissionAuthorityStateV2(encoded, false)
+}
+
+func decodeMissionAuthorityStateV2(encoded []byte, trustedCanonical bool) (MissionAuthorityStateV2, error) {
 	if len(encoded) == 0 || len(encoded) > journalv2.MaxCanonicalPayloadBytes {
 		return MissionAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", nil)
 	}
-	canonical, err := journalv2.CanonicalObject(encoded)
-	if err != nil || !bytes.Equal(canonical, encoded) {
-		return MissionAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
+	if !trustedCanonical {
+		canonical, err := journalv2.CanonicalObject(encoded)
+		if err != nil || !bytes.Equal(canonical, encoded) {
+			return MissionAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
+		}
+	} else {
+		for _, field := range [...]string{`"action_count":`, `"active_blocker_ids":`, `"decomposition":`, `"definition_revision":`, `"definition_sha256":`, `"effect_ids":`, `"last_operation_id":`, `"mission_id":`, `"observed_at":`, `"open_decision_ids":`, `"project_id":`, `"schema_version":`, `"status":`, `"step":`, `"version":`} {
+			if !bytes.Contains(encoded, []byte(field)) {
+				return MissionAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state_fields", nil)
+			}
+		}
 	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
 	var wire missionAuthorityStateWireV2
-	if err := decoder.Decode(&wire); err != nil || wire.SchemaVersion != MissionAuthoritySchemaVersionV2 {
-		return MissionAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
+	var decodeErr error
+	if trustedCanonical {
+		decodeErr = decodeCanonicalSealedV2(encoded, &wire)
+	} else {
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.DisallowUnknownFields()
+		decodeErr = decoder.Decode(&wire)
+	}
+	if decodeErr != nil || wire.SchemaVersion != MissionAuthoritySchemaVersionV2 {
+		return MissionAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", decodeErr)
 	}
 	digest, err := journalv2.ParseDigest("definition_sha256", wire.DefinitionSHA256)
 	if err != nil {
 		return MissionAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
 	}
-	state, err := NewMissionAuthorityStateV2(MissionAuthorityStateInputV2{
+	input := MissionAuthorityStateInputV2{
 		ProjectID: wire.ProjectID, MissionID: wire.MissionID, DefinitionRevision: wire.DefinitionRevision, DefinitionDigest: digest,
 		Version: journalv2.LogicalVersion(wire.Version), Status: wire.Status, Step: wire.Step, CurrentWorkRevisionID: wire.CurrentWorkRevisionID,
 		ActionCount: wire.ActionCount, ActiveBlockerIDs: wire.ActiveBlockerIDs, OpenDecisionIDs: wire.OpenDecisionIDs,
 		Decomposition: wire.Decomposition, EffectIDs: wire.EffectIDs, LastOperationID: wire.LastOperationID, ObservedAt: wire.ObservedAt,
-	})
-	if err != nil || !bytes.Equal(state.canonical, encoded) {
+	}
+	var state MissionAuthorityStateV2
+	if trustedCanonical {
+		state, err = newMissionAuthorityStateV2(input, encoded)
+	} else {
+		state, err = NewMissionAuthorityStateV2(input)
+	}
+	if err != nil || !trustedCanonical && !bytes.Equal(state.canonical, encoded) {
 		return MissionAuthorityStateV2{}, missionAuthorityErrorV2(MissionAuthorityCorruptV2, "mission_state", err)
 	}
 	return state, nil
