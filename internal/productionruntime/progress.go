@@ -345,7 +345,13 @@ func (s *ProgressService) listAll(projectID journalv2.ProjectID, missionID journ
 		cursor := ""
 		for page := 0; page < MaxProgressPages; page++ {
 			result, err := s.query.List(projection.ListQueryV2{Family: family, ProjectID: projectID, MissionID: missionID, Limit: projection.MaxQueryPageV2, Cursor: cursor})
-			if err != nil || result.Revision != revision {
+			if err != nil {
+				if projection.IsKindV2(err, projection.ErrorStaleCursorV2) {
+					return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_cursor"}
+				}
+				return nil, "", &ProgressError{Kind: ProgressIncomplete, Field: "projection_list"}
+			}
+			if result.Revision != revision {
 				return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_revision"}
 			}
 			for _, view := range result.Items {

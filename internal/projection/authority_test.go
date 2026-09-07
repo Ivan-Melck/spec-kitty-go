@@ -501,6 +501,29 @@ func TestSameRevisionEmptyProductProjectionUsesCanonicalEmptyDigest(t *testing.T
 	}
 }
 
+func TestIncrementalProjectionRefusesAggregateBudgetBeforePublishing(t *testing.T) {
+	authority, coordinator := projectionFixtureV2(t)
+	canonical := []byte(`{"name":"bounded"}`)
+	digest, err := journalv2.ReducerStateDigestV2(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < playback.MaxPlaybackAggregates; index++ {
+		coordinate := projectionCoordinateFixtureV2(t, "mission", fmt.Sprintf("mission-budget-%05d", index))
+		state, stateErr := playback.NewStateV2(coordinate, 1, journalv2.EventID(fmt.Sprintf("event-budget-%05d", index)), canonical, digest, false)
+		if stateErr != nil {
+			t.Fatal(stateErr)
+		}
+		key, _ := journalv2.CanonicalAggregateCoordinate(coordinate)
+		authority.states[string(key)] = state
+	}
+	ack := publishProjectionFixtureV2(t, coordinator, "over-budget", "mission", "mission-over-budget")
+	err = authority.PublishAcknowledged(ack)
+	if !IsKindV2(err, ErrorProjectionCorruptV2) || err.(*ErrorV2).Field != "aggregate_budget" || authority.revision != 0 || len(authority.states) != playback.MaxPlaybackAggregates {
+		t.Fatalf("over-budget admission err=%v revision=%d states=%d", err, authority.revision, len(authority.states))
+	}
+}
+
 func projectionReducersFixtureV2(registry journalv2.EventRegistryV2) (journalv2.ReducerSetV2, error) {
 	registrations := make([]journalv2.ReducerRegistration, 0, len(journalv2.ExpectedEventTuples()))
 	for _, tuple := range journalv2.ExpectedEventTuples() {

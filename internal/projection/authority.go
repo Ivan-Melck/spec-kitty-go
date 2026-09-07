@@ -278,6 +278,7 @@ func (a *AuthorityV2) applyAcknowledgedLockedV2(ack journalv2.AcknowledgedPublic
 	events := plan.Events()
 	materialized := make([]playback.MaterializedEventV2, 0, len(events))
 	baseByCoordinate := make(map[string]playback.StateV2, len(events))
+	newCoordinates := make(map[string]struct{}, len(events))
 	var epoch journalv2.RuntimeEpochID
 	for _, event := range events {
 		head, ok := headByEvent[event.EventID()]
@@ -297,7 +298,12 @@ func (a *AuthorityV2) applyAcknowledgedLockedV2(ack journalv2.AcknowledgedPublic
 		key, _ := journalv2.CanonicalAggregateCoordinate(event.Coordinate())
 		if prior, ok := a.states[string(key)]; ok {
 			baseByCoordinate[string(key)] = prior
+		} else {
+			newCoordinates[string(key)] = struct{}{}
 		}
+	}
+	if len(a.states)+len(newCoordinates) > playback.MaxPlaybackAggregates {
+		return &ErrorV2{ErrorProjectionCorruptV2, "aggregate_budget"}
 	}
 	if a.epoch != "" && epoch != a.epoch {
 		return &ErrorV2{ErrorProjectionCorruptV2, "runtime_epoch"}
