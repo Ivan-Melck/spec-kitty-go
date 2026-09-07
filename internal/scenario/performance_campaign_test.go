@@ -101,6 +101,23 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 			return true, nil
 		},
 	})
+	config := m2external.PerformanceConfig{
+		RunID: identity.runID, Repository: identity.repository, Executable: productionExecutable(t), QualifierExecutable: identity.qualifier, ProductExecutable: identity.product, Reference: identity.reference,
+		RuntimeRoot: filepath.Join(h.root, "performance-runtime"), DataRoot: h.data, Source: identity.source,
+		Warmup: performanceWarmups, Observations: performanceSuffixOps, RecoveryRuns: performanceRecoveries,
+		StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second,
+	}
+	environment, err := m2external.ObservePerformanceEnvironment(config)
+	if err != nil {
+		t.Fatalf("observe pre-run performance environment: %v", err)
+	}
+	reference, err := os.ReadFile(identity.reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.VerifyPerformanceEnvironmentReference(reference, environment); err != nil {
+		t.Fatalf("admit pre-run performance environment: %v", err)
+	}
 
 	collector.setMode(performanceCollectWarmup)
 	for index := 0; index < performanceWarmups; index++ {
@@ -109,12 +126,6 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 	collector.setMode(performanceCollectIdle)
 	h.close()
 
-	config := m2external.PerformanceConfig{
-		RunID: identity.runID, Repository: identity.repository, Executable: productionExecutable(t), QualifierExecutable: identity.qualifier, ProductExecutable: identity.product, Reference: identity.reference,
-		RuntimeRoot: filepath.Join(h.root, "performance-runtime"), DataRoot: h.data, Source: identity.source,
-		Warmup: performanceWarmups, Observations: performanceSuffixOps, RecoveryRuns: performanceRecoveries,
-		StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second,
-	}
 	hostAuthorityID := "host-" + shortDigest(h.config.Seed)
 	checkpoint, err := m2external.PreparePerformanceCheckpoint(t.Context(), config, hostAuthorityID)
 	if err != nil {
@@ -182,7 +193,7 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 	if finalStatus.ProjectionSHA256 != recoveries[0].ProjectionSHA256 {
 		t.Fatalf("live canonical projection digest differs from clean recovery: live=%s recovered=%s", finalStatus.ProjectionSHA256, recoveries[0].ProjectionSHA256)
 	}
-	raw := buildRawPerformance(t, identity, config, checkpoint, finalStatus, mutationSamples, querySamples, recoveries, familyCounts)
+	raw := buildRawPerformance(t, identity, environment, checkpoint, finalStatus, mutationSamples, querySamples, recoveries, familyCounts)
 	writePerformanceArtifact(t, output, raw)
 }
 
@@ -507,6 +518,26 @@ func (c *performanceCollector) includedOperationIDs() []string {
 	return result
 }
 
+func TestBuildRawPerformanceUsesCapturedPreRunEnvironment(t *testing.T) {
+	captured := m2.PerformanceEnvironment{
+		CPUModel: "captured-before-work", LogicalCPUs: 12, PhysicalCores: 6,
+		MemoryBytes: 64_000_000_000, KernelSystem: "linux", KernelRelease: "captured",
+		Architecture: "amd64", Filesystem: "ext4", StorageDevice: "/dev/nvme-captured",
+		PowerGovernor: "performance", BoostEnabled: true, Load1: 0.125,
+		GoVersion: "go1.26.7", CGOEnabled: "0", SidecarSHA256: strings.Repeat("a", 64),
+		QualifierSHA256: strings.Repeat("b", 64), ProductSHA256: strings.Repeat("c", 64),
+	}
+	identity := performanceIdentity{
+		runID: "captured-environment", repository: repositoryRoot(t),
+		reference: filepath.Join(repositoryRoot(t), "docs/programs/evidence/m2-performance-reference.json"),
+		source:    m2.Source{Commit: strings.Repeat("d", 40), Tree: strings.Repeat("e", 40), GoVersion: "go1.26.7", GoModSHA256: strings.Repeat("f", 64), GoSumSHA256: strings.Repeat("0", 64)},
+	}
+	raw := buildRawPerformance(t, identity, captured, m2external.CheckpointResult{}, productionruntime.HostStatus{}, nil, nil, nil, nil)
+	if raw.Environment != captured {
+		t.Fatalf("raw environment=%+v want immutable pre-run capture=%+v", raw.Environment, captured)
+	}
+}
+
 func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2external.RecoveredOperation, runtimeOperations []string) ([]m2.PerformanceSample, map[string]int) {
 	t.Helper()
 	c.mu.Lock()
@@ -668,13 +699,9 @@ func TestPerformanceCollectorFinalizationProjectsOneClosedRawCensus(t *testing.T
 	}
 }
 
-func buildRawPerformance(t *testing.T, identity performanceIdentity, config m2external.PerformanceConfig, checkpoint m2external.CheckpointResult, final productionruntime.HostStatus, mutations, queries []m2.PerformanceSample, recoveries []m2external.RecoveryObservation, familyCounts map[string]int) m2.RawPerformance {
+func buildRawPerformance(t *testing.T, identity performanceIdentity, environment m2.PerformanceEnvironment, checkpoint m2external.CheckpointResult, final productionruntime.HostStatus, mutations, queries []m2.PerformanceSample, recoveries []m2external.RecoveryObservation, familyCounts map[string]int) m2.RawPerformance {
 	t.Helper()
 	reference, err := os.ReadFile(identity.reference)
-	if err != nil {
-		t.Fatal(err)
-	}
-	environment, err := m2external.ObservePerformanceEnvironment(config)
 	if err != nil {
 		t.Fatal(err)
 	}

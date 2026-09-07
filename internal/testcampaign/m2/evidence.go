@@ -189,23 +189,19 @@ func SummarizePerformance(raw RawPerformance) (Performance, error) {
 }
 
 func VerifyPerformanceReference(referenceBytes []byte, raw RawPerformance) error {
+	if raw.ReferenceProfileSHA256 != SHA256(referenceBytes) {
+		return fmt.Errorf("performance reference digest differs from raw evidence")
+	}
+	if err := VerifyPerformanceEnvironmentReference(referenceBytes, raw.Environment); err != nil {
+		return err
+	}
 	var reference PerformanceReference
 	if err := DecodeStrict(referenceBytes, &reference); err != nil {
 		return fmt.Errorf("performance reference: %w", err)
 	}
-	if raw.ReferenceProfileSHA256 != SHA256(referenceBytes) {
-		return fmt.Errorf("performance reference digest differs from raw evidence")
-	}
 	wantFamilies := make([]string, len(authorityFamilies))
 	for index, definition := range authorityFamilies {
 		wantFamilies[index] = definition.ID
-	}
-	if reference.SchemaVersion != 1 || reference.CPUModel == "" || reference.LogicalCPUs <= 0 || reference.PhysicalCores <= 0 || reference.MemoryMinBytes == 0 || reference.MemoryMaxBytes < reference.MemoryMinBytes || reference.KernelSystem == "" || reference.KernelRelease == "" || reference.Architecture == "" || reference.Filesystem == "" || reference.StorageDevicePrefix == "" || reference.PowerGovernor == "" || reference.Load1Maximum <= 0 || reference.GoVersion != "go1.26.7" || reference.CGOEnabled != "0" || reference.DatasetGenerator == "" || !slices.Equal(reference.FamilyIDs, wantFamilies) {
-		return fmt.Errorf("performance reference profile is incomplete or differs from the frozen family registry")
-	}
-	environment := raw.Environment
-	if environment.CPUModel != reference.CPUModel || environment.LogicalCPUs != reference.LogicalCPUs || environment.PhysicalCores != reference.PhysicalCores || environment.MemoryBytes < reference.MemoryMinBytes || environment.MemoryBytes > reference.MemoryMaxBytes || environment.KernelSystem != reference.KernelSystem || environment.KernelRelease != reference.KernelRelease || environment.Architecture != reference.Architecture || environment.Filesystem != reference.Filesystem || !strings.HasPrefix(environment.StorageDevice, reference.StorageDevicePrefix) || environment.PowerGovernor != reference.PowerGovernor || environment.BoostEnabled != reference.BoostEnabled || environment.Load1 > reference.Load1Maximum || environment.GoVersion != reference.GoVersion || environment.CGOEnabled != reference.CGOEnabled || environment.SidecarSHA256 != AdmittedSidecarSHA256 || !validDigest(environment.QualifierSHA256) || !validDigest(environment.ProductSHA256) {
-		return fmt.Errorf("observed performance environment is outside the source-bound reference profile")
 	}
 	if raw.Dataset.Generator != reference.DatasetGenerator || raw.Dataset.WarmupOperations != raw.WarmupExcluded || raw.Dataset.SuffixOperations != len(raw.MutationMS) || len(raw.Dataset.FamilyOperationCounts)+len(raw.Dataset.FamilyRecoveryCounts) != len(wantFamilies) || !validDigest(raw.Dataset.ExpectedProjectionSHA) {
 		return fmt.Errorf("performance dataset differs from the source-bound reference")
@@ -218,6 +214,26 @@ func VerifyPerformanceReference(referenceBytes []byte, raw RawPerformance) error
 	}
 	if len(raw.Dataset.FamilyRecoveryCounts) != 1 || raw.Dataset.FamilyRecoveryCounts["family/runtime_host"] != len(raw.RecoveryMS) || raw.Dataset.FamilyOperationCounts["family/runtime_host"] != 0 {
 		return fmt.Errorf("runtime_host must be bound only to the closed restart/recovery census")
+	}
+	return nil
+}
+
+// VerifyPerformanceEnvironmentReference admits the immutable pre-run host
+// observation before any warmup or timed work can influence its load control.
+func VerifyPerformanceEnvironmentReference(referenceBytes []byte, environment PerformanceEnvironment) error {
+	var reference PerformanceReference
+	if err := DecodeStrict(referenceBytes, &reference); err != nil {
+		return fmt.Errorf("performance reference: %w", err)
+	}
+	wantFamilies := make([]string, len(authorityFamilies))
+	for index, definition := range authorityFamilies {
+		wantFamilies[index] = definition.ID
+	}
+	if reference.SchemaVersion != 1 || reference.CPUModel == "" || reference.LogicalCPUs <= 0 || reference.PhysicalCores <= 0 || reference.MemoryMinBytes == 0 || reference.MemoryMaxBytes < reference.MemoryMinBytes || reference.KernelSystem == "" || reference.KernelRelease == "" || reference.Architecture == "" || reference.Filesystem == "" || reference.StorageDevicePrefix == "" || reference.PowerGovernor == "" || reference.Load1Maximum <= 0 || reference.GoVersion != "go1.26.7" || reference.CGOEnabled != "0" || reference.DatasetGenerator == "" || !slices.Equal(reference.FamilyIDs, wantFamilies) {
+		return fmt.Errorf("performance reference profile is incomplete or differs from the frozen family registry")
+	}
+	if environment.CPUModel != reference.CPUModel || environment.LogicalCPUs != reference.LogicalCPUs || environment.PhysicalCores != reference.PhysicalCores || environment.MemoryBytes < reference.MemoryMinBytes || environment.MemoryBytes > reference.MemoryMaxBytes || environment.KernelSystem != reference.KernelSystem || environment.KernelRelease != reference.KernelRelease || environment.Architecture != reference.Architecture || environment.Filesystem != reference.Filesystem || !strings.HasPrefix(environment.StorageDevice, reference.StorageDevicePrefix) || environment.PowerGovernor != reference.PowerGovernor || environment.BoostEnabled != reference.BoostEnabled || environment.Load1 > reference.Load1Maximum || environment.GoVersion != reference.GoVersion || environment.CGOEnabled != reference.CGOEnabled || environment.SidecarSHA256 != AdmittedSidecarSHA256 || !validDigest(environment.QualifierSHA256) || !validDigest(environment.ProductSHA256) {
+		return fmt.Errorf("observed performance environment is outside the source-bound reference profile")
 	}
 	return nil
 }
