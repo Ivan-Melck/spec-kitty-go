@@ -3,7 +3,7 @@ package gapdb
 import storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 
 const (
-	M2QualificationCandidateRecordSHA256 = "0849525884de248ab1e544343a0e6d12cfa78c383767cc3115fd418676bed274"
+	M2QualificationCandidateRecordSHA256 = "d66a4794e9d1c436fd68f5852edf4cb2470819db82c3ec3022ab187b4791a2e2"
 	m2QualificationProgramID             = "production-runtime"
 	m2QualificationMissionID             = "gapdb-only-production-authority-01M1GWDJ"
 	m2QualificationState                 = "technical_candidate_requires_independent_review"
