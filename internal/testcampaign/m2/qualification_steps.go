@@ -68,7 +68,7 @@ func RunRaceQualification(ctx context.Context, repository, sidecar string, attem
 	arguments := []string{"test", "-json", "-race", "-p=1", "-count=1", "-timeout=20m", "./internal/scenario", "./internal/productionruntime", "./internal/testcampaign/m2", "-run", "^(TestTwoItemMissionRestartAfterEachDurableBoundary|TestConcurrentIndependentAuthoritySmoke|TestConcurrentSameAggregateConflictSmoke|TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch|TestManifestCensusVerifyRoundTripIsCanonicalAndSourceBound|TestFrozenCensusRejectsDeletionReorderAndSubstitution|TestRealGitTwoItemCrownUsesConcreteAdapterAndWorktrees|TestTwoItemRealGitGapDBCrown)$"}
 	command := exec.CommandContext(ctx, "go", arguments...)
 	command.Dir = repository
-	command.Env = append(os.Environ(), "SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="+sidecar)
+	command.Env = append(os.Environ(), "SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="+sidecar, "SPEC_KITTY_M2_QUALIFICATION_CANDIDATE=true")
 	raw, commandErr := command.CombinedOutput()
 	exitCode := 0
 	if commandErr != nil {

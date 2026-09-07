@@ -189,7 +189,7 @@ m2-fault: ## Run exact 100-trial fault, ambiguity, tracker, concurrency, and res
 m2-mutants: m2-mutants-smoke ## Kill the full M2 mutant census, including exact admitted-sidecar production-runtime mutants.
 	@test -x "$(M2_GAPDBD)" || { echo 'm2-mutants requires executable M2_GAPDBD' >&2; exit 1; }
 	@test "$$(sha256sum "$(M2_GAPDBD)" | awk '{print $$1}')" = 366a893d36c7c60282e84f43e67674c5d5e9a63b6e092227fffcdf861014ce21 || { echo 'M2_GAPDBD is not the exact qualification candidate' >&2; exit 1; }
-	SPEC_KITTY_WP13_GAPDBD="$(M2_GAPDBD)" $(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group mutants-full --timeout 8m
+	SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="$(M2_GAPDBD)" SPEC_KITTY_WP13_GAPDBD="$(M2_GAPDBD)" $(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group mutants-full --timeout 8m
 
 m2-mutants-smoke: ## Strictly prove the sidecar-free PR mutant census with no missing or skipped selector.
 	$(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group mutants --timeout 8m

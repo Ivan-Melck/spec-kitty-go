@@ -877,9 +877,13 @@ func productionRuntimeWorkRevision(t *testing.T, projectID ids.ProjectID, missio
 }
 
 func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testing.T) {
-	binary := os.Getenv("SPEC_KITTY_WP13_GAPDBD")
+	binary := os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE")
+	qualificationCandidate := binary != ""
 	if binary == "" {
-		t.Skip("set SPEC_KITTY_WP13_GAPDBD to the exact assertion-extension sidecar")
+		binary = os.Getenv("SPEC_KITTY_WP13_GAPDBD")
+	}
+	if binary == "" {
+		t.Skip("set the exact assertion-extension or M2 qualification sidecar")
 	}
 	binary, _ = filepath.Abs(binary)
 	repository, _ := filepath.Abs(filepath.Join("..", ".."))
@@ -897,6 +901,12 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	}
 	data := filepath.Join(root, "authority")
 	reconciler := &missionCreatingReconciler{}
+	admissionPath := filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-admission.json")
+	startHost := Start
+	if qualificationCandidate {
+		admissionPath = filepath.Join(repository, "docs", "programs", "evidence", "m2-gapdb-qualification-candidate.json")
+		startHost = StartQualificationCandidate
+	}
 	config := Config{
 		ControlRoot:                          data,
 		HostAuthorityID:                      "host-real-sidecar",
@@ -904,7 +914,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		M1AdoptionRecordPath:                 filepath.Join(repository, "docs", "programs", "evidence", "m1-adoption.json"),
 		AssertionExtensionAdoptionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json"),
 		Sidecar: sidecargapdb.LifecycleConfig{
-			ExecutablePath: binary, AdmissionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-admission.json"),
+			ExecutablePath: binary, AdmissionRecordPath: admissionPath,
 			RuntimeRoot: runtimeRoot, DataDirectory: data, SupervisorRunID: "supervisor-real-1", ProductPolicySHA256: repeatByte('e', 64),
 		},
 		MonitorInterval:       250 * time.Millisecond,
@@ -915,7 +925,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		Reconciler:            reconciler,
 		CheckpointEvery:       1,
 	}
-	first, err := Start(t.Context(), config)
+	first, err := startHost(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1142,7 +1152,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	}
 	config.Sidecar.SupervisorRunID = "supervisor-real-2"
 	config.Reconciler = nil
-	second, err := Start(t.Context(), config)
+	second, err := startHost(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1224,7 +1234,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 		t.Fatal(err)
 	}
 	config.Sidecar.SupervisorRunID = "supervisor-real-3"
-	third, err := Start(t.Context(), config)
+	third, err := startHost(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}

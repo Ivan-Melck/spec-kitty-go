@@ -148,6 +148,7 @@ func runDefinitionProcesses(ctx context.Context, config CampaignConfig, definiti
 			"SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="+config.SidecarPath,
 			"SPEC_KITTY_WP13_GAPDBD="+config.SidecarPath,
 			"SPEC_KITTY_ASSERTION_CANDIDATE_GAPDBD="+config.SidecarPath,
+			"SPEC_KITTY_M2_QUALIFICATION_CANDIDATE=true",
 			"SPEC_KITTY_WP14_CAMPAIGN=100",
 			"SPEC_KITTY_WP14_SOURCE_REVISION="+config.Source.Commit,
 		)

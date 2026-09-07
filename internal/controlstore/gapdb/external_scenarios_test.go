@@ -173,7 +173,11 @@ func assertionCandidateTestConfiguration() (externalConfiguration, error) {
 	if err != nil {
 		return externalConfiguration{}, fmt.Errorf("assertion-candidate sidecar is inaccessible: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Size() != AssertionCandidateSidecarBytes {
+	wantBytes, wantSHA := int64(AssertionCandidateSidecarBytes), AssertionCandidateSidecarSHA256
+	if m2QualificationCandidateRequested() {
+		wantBytes, wantSHA = int64(QualificationSidecarBytes), QualificationSidecarSHA256
+	}
+	if !info.Mode().IsRegular() || info.Size() != wantBytes {
 		return externalConfiguration{}, errors.New("sidecar type or size does not match the assertion candidate")
 	}
 	contents, err := os.ReadFile(binaryPath)
@@ -181,7 +185,7 @@ func assertionCandidateTestConfiguration() (externalConfiguration, error) {
 		return externalConfiguration{}, fmt.Errorf("assertion-candidate sidecar cannot be hashed: %w", err)
 	}
 	digest := sha256.Sum256(contents)
-	if hex.EncodeToString(digest[:]) != AssertionCandidateSidecarSHA256 {
+	if hex.EncodeToString(digest[:]) != wantSHA {
 		return externalConfiguration{}, errors.New("sidecar digest does not match the assertion candidate")
 	}
 	rootInfo, err := os.Stat(dataRoot)
@@ -189,6 +193,11 @@ func assertionCandidateTestConfiguration() (externalConfiguration, error) {
 		return externalConfiguration{}, errors.New("assertion-candidate data-root must name an existing directory")
 	}
 	return externalConfiguration{binary: binaryPath, dataRoot: dataRoot}, nil
+}
+
+func m2QualificationCandidateRequested() bool {
+	value, _ := strconv.ParseBool(os.Getenv("SPEC_KITTY_M2_QUALIFICATION_CANDIDATE"))
+	return value
 }
 
 func assertionCandidateQualificationRequested() bool {

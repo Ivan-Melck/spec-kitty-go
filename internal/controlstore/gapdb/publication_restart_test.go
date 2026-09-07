@@ -35,9 +35,15 @@ func TestProductionPublicationRecoveryAcrossOwnerRestartCuts(t *testing.T) {
 			}
 			repository := gapdbRepositoryRoot(t)
 			admissionPath := filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-admission.json")
-			admission, err := sidecargapdb.VerifyAssertionExtensionAdoption(
-				filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json"), admissionPath,
-			)
+			var admission sidecargapdb.ExecutableAdmission
+			if os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE") != "" {
+				admissionPath = filepath.Join(repository, "docs", "programs", "evidence", "m2-gapdb-qualification-candidate.json")
+				admission, err = sidecargapdb.VerifyM2QualificationCandidateAdmission(admissionPath)
+			} else {
+				admission, err = sidecargapdb.VerifyAssertionExtensionAdoption(
+					filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json"), admissionPath,
+				)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,6 +76,16 @@ func TestProductionPublicationRecoveryAcrossOwnerRestartCuts(t *testing.T) {
 			coordinator := publicationCutCoordinator(t, adapter)
 			if _, err := coordinator.Publish(t.Context(), plan); !storegapdb.IsKind(err, storegapdb.OutcomeAmbiguous) || coordinator.UnresolvedCount() != 1 {
 				t.Fatalf("durable response cut was not retained as ambiguous: unresolved=%d err=%v", coordinator.UnresolvedCount(), err)
+			}
+			// The response-drop cut deliberately destroys the selected transport.
+			// Reconciliation is a fresh read attempt, never a continuation on the
+			// connection whose delivery outcome is unknown.
+			if err := closer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			adapter, closer, err = storegapdb.Dial(owner.Provenance().ConnectedSocket, 2*time.Second)
+			if err != nil {
+				t.Fatal(err)
 			}
 
 			var committedRevision uint64
