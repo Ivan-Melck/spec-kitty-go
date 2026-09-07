@@ -45,6 +45,7 @@ type PerformanceConfig struct {
 	CheckpointRevision   uint64
 	CheckpointOperations int
 	ExpectedOperationIDs []string
+	RetainRoot           string
 	StartTimeout         time.Duration
 	StopTimeout          time.Duration
 	TestTimeout          time.Duration
@@ -468,6 +469,15 @@ func MeasurePerformance(ctx context.Context, config PerformanceConfig) (m2.RawPe
 	if err := os.MkdirAll(config.RuntimeRoot, 0o700); err != nil {
 		return result, nil, err
 	}
+	if config.RetainRoot == "" {
+		config.RetainRoot = filepath.Join(config.RuntimeRoot, "scenario-dataset")
+	}
+	if !filepath.IsAbs(config.RetainRoot) {
+		return result, nil, fmt.Errorf("performance retained dataset root must be absolute")
+	}
+	if _, err := os.Lstat(config.RetainRoot); !os.IsNotExist(err) {
+		return result, nil, fmt.Errorf("performance retained dataset root must not exist: %v", err)
+	}
 	output := filepath.Join(config.RuntimeRoot, "performance.raw.json")
 	command := exec.CommandContext(ctx, "go", performanceTestArguments(config.TestTimeout)...)
 	command.Dir = config.Repository
@@ -527,6 +537,7 @@ func performanceChildEnvironment(base []string, config PerformanceConfig, output
 		"SPEC_KITTY_M2_PERFORMANCE_REFERENCE",
 		"SPEC_KITTY_M2_PERFORMANCE_QUALIFIER",
 		"SPEC_KITTY_M2_PERFORMANCE_PRODUCT",
+		"SPEC_KITTY_M2_PERFORMANCE_RETAIN_ROOT",
 		"SPEC_KITTY_WP13_GAPDBD",
 		"SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE",
 		"SPEC_KITTY_WP15_GAPDBD",
@@ -550,6 +561,7 @@ func performanceChildEnvironment(base []string, config PerformanceConfig, output
 		"SPEC_KITTY_M2_PERFORMANCE_REFERENCE="+config.Reference,
 		"SPEC_KITTY_M2_PERFORMANCE_QUALIFIER="+config.QualifierExecutable,
 		"SPEC_KITTY_M2_PERFORMANCE_PRODUCT="+config.ProductExecutable,
+		"SPEC_KITTY_M2_PERFORMANCE_RETAIN_ROOT="+config.RetainRoot,
 		// WP14 is the production scenario's explicit admitted authority
 		// executable contract. WP15 is retained for the direct/native
 		// companion paths. Both receive the same already-verified binary.

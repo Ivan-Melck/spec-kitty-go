@@ -98,6 +98,7 @@ type portableHarness struct {
 	git                 scenarioGit
 	crownClockOffset    time.Duration
 	observationRevision uint64
+	preserveRoot        bool
 }
 
 // absentCapabilityReadiness is an explicit, source-bound absence observer for
@@ -165,6 +166,9 @@ func newPortableHarness(t *testing.T, config ProductionConfig) *portableHarness 
 	h.start()
 	t.Cleanup(func() {
 		h.close()
+		if h.preserveRoot {
+			return
+		}
 		if err := os.RemoveAll(root); err != nil {
 			t.Errorf("remove scenario root: %v", err)
 		}

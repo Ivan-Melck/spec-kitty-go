@@ -195,11 +195,12 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 	}
 	raw := buildRawPerformance(t, identity, environment, checkpoint, finalStatus, mutationSamples, querySamples, recoveries, familyCounts)
 	writePerformanceArtifact(t, output, raw)
+	preservePerformanceDataset(t, h, identity.retainRoot)
 }
 
 type performanceIdentity struct {
-	runID, repository, reference, qualifier, product string
-	source                                           m2.Source
+	runID, repository, reference, qualifier, product, retainRoot string
+	source                                                       m2.Source
 }
 
 func performanceIdentityFromEnvironment(t *testing.T, output string) performanceIdentity {
@@ -208,9 +209,10 @@ func performanceIdentityFromEnvironment(t *testing.T, output string) performance
 		runID: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_RUN_ID"), repository: repositoryRoot(t),
 		reference: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_REFERENCE"),
 		qualifier: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_QUALIFIER"), product: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_PRODUCT"),
-		source: m2.Source{Commit: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_COMMIT"), Tree: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_TREE"), GoVersion: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_GO"), GoModSHA256: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOMOD"), GoSumSHA256: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOSUM")},
+		retainRoot: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_RETAIN_ROOT"),
+		source:     m2.Source{Commit: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_COMMIT"), Tree: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_TREE"), GoVersion: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_GO"), GoModSHA256: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOMOD"), GoSumSHA256: os.Getenv("SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOSUM")},
 	}
-	if identity.runID == "" || len(identity.source.Commit) != 40 || len(identity.source.Tree) != 40 || !filepath.IsAbs(output) || !filepath.IsAbs(identity.reference) || !filepath.IsAbs(identity.qualifier) || !filepath.IsAbs(identity.product) {
+	if identity.runID == "" || len(identity.source.Commit) != 40 || len(identity.source.Tree) != 40 || !filepath.IsAbs(output) || !filepath.IsAbs(identity.reference) || !filepath.IsAbs(identity.qualifier) || !filepath.IsAbs(identity.product) || !filepath.IsAbs(identity.retainRoot) {
 		t.Fatal("performance campaign identity is incomplete")
 	}
 	parent := filepath.Dir(output)
@@ -225,6 +227,18 @@ func performanceIdentityFromEnvironment(t *testing.T, output string) performance
 		t.Fatalf("performance output must not exist: %v", err)
 	}
 	return identity
+}
+
+func preservePerformanceDataset(t *testing.T, h *portableHarness, destination string) {
+	t.Helper()
+	h.close()
+	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+		t.Fatalf("performance retained dataset destination exists: %v", err)
+	}
+	if err := os.Rename(h.root, destination); err != nil {
+		t.Fatalf("retain performance dataset: %v", err)
+	}
+	h.preserveRoot = true
 }
 
 type performanceCollectMode uint8

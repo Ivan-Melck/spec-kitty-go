@@ -183,7 +183,7 @@ func SummarizePerformance(raw RawPerformance) (Performance, error) {
 		}
 	}
 	if result.RecoveryP95MS > 2000 || result.QueryP95MS > 2 || result.MutationP95MS > 8 {
-		return result, fmt.Errorf("performance threshold exceeded")
+		return result, fmt.Errorf("performance threshold exceeded: recovery_p95_ms=%.6f limit=2000 query_p95_ms=%.6f limit=2 mutation_p95_ms=%.6f limit=8", result.RecoveryP95MS, result.QueryP95MS, result.MutationP95MS)
 	}
 	return result, nil
 }

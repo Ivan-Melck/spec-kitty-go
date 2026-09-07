@@ -83,18 +83,35 @@ func run(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		defer os.RemoveAll(privateRoot)
+		removePrivateRoot := true
+		defer func() {
+			if removePrivateRoot {
+				_ = os.RemoveAll(privateRoot)
+			}
+		}()
 		qualifier, err := os.Executable()
 		if err != nil {
 			return err
 		}
 		raw, transcript, err := m2external.MeasurePerformance(context.Background(), m2external.PerformanceConfig{RunID: *runID, Repository: *repository, Executable: *sidecar, QualifierExecutable: qualifier, ProductExecutable: *product, Reference: filepath.Join(*repository, "docs/programs/evidence/m2-performance-reference.json"), RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second, TestTimeout: 60 * time.Minute})
 		transcriptPath := *output + ".events.jsonl"
-		if transcriptErr := atomicWrite(transcriptPath, transcript); transcriptErr != nil {
+		if transcriptErr := atomicWriteCreateOnce(transcriptPath, transcript); transcriptErr != nil {
 			return errors.Join(err, fmt.Errorf("retain performance transcript: %w", transcriptErr))
 		}
 		if err != nil {
-			return fmt.Errorf("%w (transcript=%s)", err, transcriptPath)
+			observationPath := ""
+			if raw.SchemaVersion != 0 {
+				data, encodeErr := m2.CanonicalJSON(raw)
+				if encodeErr != nil {
+					return errors.Join(err, fmt.Errorf("encode failed performance observation: %w", encodeErr))
+				}
+				observationPath = *output + ".failed.json"
+				if writeErr := atomicWriteCreateOnce(observationPath, data); writeErr != nil {
+					return errors.Join(err, fmt.Errorf("retain failed performance observation: %w", writeErr))
+				}
+				removePrivateRoot = false
+			}
+			return fmt.Errorf("%w (transcript=%s failed_observation=%s retained_private_root=%s)", err, transcriptPath, observationPath, privateRoot)
 		}
 		if _, err := m2.SummarizePerformance(raw); err != nil {
 			return err
@@ -264,6 +281,33 @@ func atomicWrite(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+func atomicWriteCreateOnce(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".spk-m2-")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(name, path); err != nil {
+		return err
+	}
+	return nil
 }
 
 func flags(arguments []string) (m2.PreflightConfig, time.Duration, error) {
