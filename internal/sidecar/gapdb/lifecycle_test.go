@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -504,9 +505,10 @@ func TestLifecycleStorageTopologyRefusesGitSharedUnknownAndSplitAuthority(t *tes
 
 func TestLifecyclePidfdObservationAndSignalingSeams(t *testing.T) {
 	executed := ExecutedImageProvenance{SHA256: strings.Repeat("a", 64), Size: 17, Device: 3, Inode: 5}
-	identity := fileIdentity{device: 3, inode: 5, size: 17}
+	identity := fileIdentity{device: 3, inode: 5, size: 17, nlink: 1}
 	base := systemProcessAPI
 	base.startTicks = func(int) (uint64, error) { return 11, nil }
+	base.executableIdentity = func(int) (fileIdentity, error) { return identity, nil }
 	base.executable = func(int) (fileIdentity, string, error) { return identity, executed.SHA256, nil }
 	base.closeFD = func(int) error { return nil }
 	t.Run("pidfd-success", func(t *testing.T) {
@@ -551,7 +553,7 @@ func TestLifecyclePidfdObservationAndSignalingSeams(t *testing.T) {
 		api := base
 		api.pidfdSignal = func(int, unix.Signal, *unix.Siginfo, int) error { called = true; return nil }
 		lifecycle := &Lifecycle{
-			pidfd: -1, processes: api,
+			pidfd: -1, processes: api, processImage: identity,
 			process: ProcessIdentity{PID: 7, StartTicks: 11, Device: 3, Inode: 5, Size: 17, SHA256: executed.SHA256},
 		}
 		if err := lifecycle.signalLocked(unix.SIGTERM); err == nil || called {
@@ -573,6 +575,62 @@ func TestLifecyclePidfdObservationAndSignalingSeams(t *testing.T) {
 			t.Fatalf("pidfd signal err=%v called=%v", err, called)
 		}
 	})
+}
+
+func TestLifecycleOwnershipCachesVerifiedImageAndFailsClosedOnIdentityDrift(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	stable := fileIdentity{
+		device: 3, inode: 5, size: 17, mode: uint32(syscall.S_IFREG | 0o500),
+		uid: uint32(os.Getuid()), gid: uint32(os.Getgid()), nlink: 1, mtimeNsec: 19, ctimeNsec: 23,
+	}
+	current := stable
+	start := uint64(11)
+	digestResult := digest
+	var identityErr error
+	digestCalls := 0
+	processes := systemProcessAPI
+	processes.startTicks = func(int) (uint64, error) { return start, nil }
+	processes.executableIdentity = func(int) (fileIdentity, error) { return current, identityErr }
+	processes.executable = func(int) (fileIdentity, string, error) {
+		digestCalls++
+		return current, digestResult, nil
+	}
+	lifecycle := &Lifecycle{
+		pidfd: 43, processes: processes, processImage: stable,
+		process: ProcessIdentity{PID: 7, StartTicks: 11, Device: 3, Inode: 5, Size: 17, SHA256: digest},
+	}
+
+	if diagnostic := lifecycle.InspectOwnership(); diagnostic.State != OwnershipOwnedLive || digestCalls != 0 {
+		t.Fatalf("stable diagnostic=%+v digest_calls=%d", diagnostic, digestCalls)
+	}
+	current.ctimeNsec++
+	if diagnostic := lifecycle.InspectOwnership(); diagnostic.State != OwnershipOwnedLive || digestCalls != 1 {
+		t.Fatalf("revalidated diagnostic=%+v digest_calls=%d", diagnostic, digestCalls)
+	}
+	if diagnostic := lifecycle.InspectOwnership(); diagnostic.State != OwnershipOwnedLive || digestCalls != 1 {
+		t.Fatalf("recached diagnostic=%+v digest_calls=%d", diagnostic, digestCalls)
+	}
+
+	tests := []struct {
+		name     string
+		mutate   func()
+		expected OwnershipState
+	}{
+		{"pid-reuse", func() { start++ }, OwnershipForeignLive},
+		{"inode-replacement", func() { current.inode++ }, OwnershipForeignLive},
+		{"deleted-image", func() { current.nlink = 0 }, OwnershipForeignLive},
+		{"digest-drift", func() { current.ctimeNsec++; digestResult = strings.Repeat("b", 64) }, OwnershipForeignLive},
+		{"identity-probe-error", func() { identityErr = os.ErrNotExist }, OwnershipIndeterminate},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			current, start, digestResult, identityErr = lifecycle.processImage, lifecycle.process.StartTicks, digest, nil
+			test.mutate()
+			if diagnostic := lifecycle.InspectOwnership(); diagnostic.State != test.expected || len(diagnostic.Recovery) == 0 {
+				t.Fatalf("diagnostic=%+v", diagnostic)
+			}
+		})
+	}
 }
 
 func TestLifecyclePostStartObservationFailureTerminatesAndReapsChild(t *testing.T) {

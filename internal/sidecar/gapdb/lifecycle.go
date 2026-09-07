@@ -59,16 +59,17 @@ type filesystemIdentity struct {
 type filesystemProbe func(string) (filesystemIdentity, error)
 
 type processAPI struct {
-	startTicks  func(int) (uint64, error)
-	executable  func(int) (fileIdentity, string, error)
-	pidfdOpen   func(int, int) (int, error)
-	pidfdSignal func(int, unix.Signal, *unix.Siginfo, int) error
-	closeFD     func(int) error
-	poll        func([]unix.PollFd, int) (int, error)
+	startTicks         func(int) (uint64, error)
+	executableIdentity func(int) (fileIdentity, error)
+	executable         func(int) (fileIdentity, string, error)
+	pidfdOpen          func(int, int) (int, error)
+	pidfdSignal        func(int, unix.Signal, *unix.Siginfo, int) error
+	closeFD            func(int) error
+	poll               func([]unix.PollFd, int) (int, error)
 }
 
 var systemProcessAPI = processAPI{
-	startTicks: processStartTicks, executable: processExecutable,
+	startTicks: processStartTicks, executableIdentity: processExecutableIdentity, executable: processExecutable,
 	pidfdOpen: unix.PidfdOpen, pidfdSignal: unix.PidfdSendSignal,
 	closeFD: unix.Close, poll: unix.Poll,
 }
@@ -241,6 +242,7 @@ type Lifecycle struct {
 	exit            chan error
 	pidfd           int
 	process         ProcessIdentity
+	processImage    fileIdentity
 	provenance      SidecarProvenance
 	runtimeID       fileIdentity
 	socketID        fileIdentity
@@ -340,7 +342,18 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 		}
 		return nil, errors.Join(err, lifecycle.cleanupRuntime(false))
 	}
+	processImage, err := config.processes.executableIdentity(command.Process.Pid)
+	if err != nil || !sameProcessImage(processImage, process) {
+		if pidfd >= 0 {
+			_ = config.processes.closeFD(pidfd)
+		}
+		if abortErr := terminateUnobservedChild(command); abortErr != nil {
+			return nil, errors.Join(failure(FailureIdentityUnprovable, "process", "running executable metadata is unavailable", err), abortErr, lifecycle.cleanupRuntime(false))
+		}
+		return nil, errors.Join(failure(FailureIdentityUnprovable, "process", "running executable metadata is unavailable", err), lifecycle.cleanupRuntime(false))
+	}
 	lifecycle.process, lifecycle.pidfd = process, pidfd
+	lifecycle.processImage = processImage
 	lifecycle.exit = make(chan error, 1)
 	go func() { lifecycle.exit <- command.Wait() }()
 
@@ -447,6 +460,13 @@ func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvena
 		runtimeID: runtimeID, socketID: socketID,
 		stdout: &boundedBuffer{maximum: maxDiagnosticBytes}, stderr: &boundedBuffer{maximum: maxDiagnosticBytes},
 		processes: config.processes,
+	}
+	lifecycle.processImage, err = config.processes.executableIdentity(recorded.Process.PID)
+	if err != nil || !sameProcessImage(lifecycle.processImage, recorded.Process) {
+		if pidfd >= 0 {
+			_ = config.processes.closeFD(pidfd)
+		}
+		return nil, failure(FailureOwnership, "attach", "recorded executable metadata differs", err)
 	}
 	lifecycle.exit = monitorRecordedProcess(config.processes, pidfd, recorded.Process)
 	lifecycle.provenance = recorded
@@ -920,6 +940,8 @@ func normalizeLifecycleConfig(config *LifecycleConfig) error {
 	}
 	if config.processes.startTicks == nil {
 		config.processes = systemProcessAPI
+	} else if config.processes.executableIdentity == nil {
+		config.processes.executableIdentity = systemProcessAPI.executableIdentity
 	}
 	if err := validateStorageTopology(*config); err != nil {
 		return failure(FailureUnsafePath, "configure", "runtime and data topology is not admitted", err)
@@ -1138,6 +1160,28 @@ func processExecutable(pid int) (fileIdentity, string, error) {
 	return identity, digest, err
 }
 
+func processExecutableIdentity(pid int) (fileIdentity, error) {
+	fd, err := unix.Open(fmt.Sprintf("/proc/%d/exe", pid), unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fileIdentity{}, err
+	}
+	file := os.NewFile(uintptr(fd), "process-executable-identity")
+	defer file.Close()
+	identity, err := identityOf(file)
+	if err != nil {
+		return fileIdentity{}, err
+	}
+	if identity.size <= 0 || identity.size > 64<<20 {
+		return fileIdentity{}, errors.New("process executable identity is outside bound")
+	}
+	return identity, nil
+}
+
+func sameProcessImage(identity fileIdentity, expected ProcessIdentity) bool {
+	return identity.device == expected.Device && identity.inode == expected.Inode &&
+		identity.size == expected.Size
+}
+
 func peerProcess(socket string, timeout time.Duration) (int, error) {
 	connection, err := net.DialTimeout("unix", socket, min(timeout, time.Second))
 	if err != nil {
@@ -1191,16 +1235,35 @@ func (l *Lifecycle) InspectOwnership() OwnershipDiagnostic {
 		diagnostic.Recovery = operatorRecovery()
 		return diagnostic
 	}
-	identity, digest, err := processes.executable(l.process.PID)
+	identity, err := processes.executableIdentity(l.process.PID)
 	if err != nil {
 		diagnostic.State = OwnershipIndeterminate
 		diagnostic.Recovery = operatorRecovery()
 		return diagnostic
 	}
-	if identity.device != l.process.Device || identity.inode != l.process.Inode || identity.size != l.process.Size || digest != l.process.SHA256 {
+	if !sameProcessImage(identity, l.process) {
 		diagnostic.State = OwnershipForeignLive
 		diagnostic.Recovery = operatorRecovery()
 		return diagnostic
+	}
+	if l.processImage.nlink > 0 && identity.nlink == 0 {
+		diagnostic.State = OwnershipForeignLive
+		diagnostic.Recovery = operatorRecovery()
+		return diagnostic
+	}
+	if identity != l.processImage {
+		verifiedIdentity, digest, verifyErr := processes.executable(l.process.PID)
+		if verifyErr != nil {
+			diagnostic.State = OwnershipIndeterminate
+			diagnostic.Recovery = operatorRecovery()
+			return diagnostic
+		}
+		if verifiedIdentity != identity || !sameProcessImage(verifiedIdentity, l.process) || digest != l.process.SHA256 {
+			diagnostic.State = OwnershipForeignLive
+			diagnostic.Recovery = operatorRecovery()
+			return diagnostic
+		}
+		l.processImage = identity
 	}
 	diagnostic.State = OwnershipOwnedLive
 	if l.pidfd < 0 {
@@ -1440,7 +1503,14 @@ func (l *Lifecycle) hostProcesses() processAPI {
 	if l.processes.startTicks == nil {
 		return systemProcessAPI
 	}
-	return l.processes
+	processes := l.processes
+	if processes.executableIdentity == nil && processes.executable != nil {
+		processes.executableIdentity = func(pid int) (fileIdentity, error) {
+			identity, _, err := processes.executable(pid)
+			return identity, err
+		}
+	}
+	return processes
 }
 
 func (l *Lifecycle) abortStart() error {
