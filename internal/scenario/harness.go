@@ -191,7 +191,7 @@ func (h *portableHarness) start() {
 		AssertionExtensionAdoptionRecordPath: filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json"),
 		Sidecar: sidecar.LifecycleConfig{
 			ExecutablePath:      h.config.ExecutablePath,
-			AdmissionRecordPath: filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m1-assertion-extension-admission.json"),
+			AdmissionRecordPath: filepath.Join(h.config.RepositoryRoot, "docs", "programs", "evidence", "m2-gapdb-qualification-candidate.json"),
 			RuntimeRoot:         h.runtime,
 			DataDirectory:       h.data,
 			SupervisorRunID:     fmt.Sprintf("scenario-%s-%d", shortDigest(h.config.Seed), h.starts),
@@ -207,7 +207,7 @@ func (h *portableHarness) start() {
 		PublicationBoundaryObserver: h.config.PublicationBoundaryObserver,
 	}
 	started := time.Now()
-	host, err := productionruntime.Start(h.t.Context(), config)
+	host, err := productionruntime.StartQualificationCandidate(h.t.Context(), config)
 	if err != nil {
 		h.t.Fatalf("start production authority host: %v", err)
 	}

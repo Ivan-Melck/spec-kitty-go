@@ -1865,3 +1865,30 @@ func wp13RunKiller(t *testing.T, root string, mutant wp13ProductionMutant, overl
 	}
 	return string(output), err
 }
+
+func TestM2QualificationCandidateCompositionIsConfinedToScenarioHarness(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate repository source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
+	allowed := filepath.Join(root, "internal", "scenario", "harness.go")
+	for _, subtree := range []string{"cmd", "internal"} {
+		err := filepath.WalkDir(filepath.Join(root, subtree), func(path string, entry os.DirEntry, err error) error {
+			if err != nil || entry.IsDir() || filepath.Ext(path) != ".go" || path == source || path == allowed {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if bytes.Contains(data, []byte(".StartQualificationCandidate(")) {
+				return fmt.Errorf("qualification-only composition called outside scenario harness: %s", path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}

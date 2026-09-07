@@ -129,6 +129,18 @@ func (o *productionOwner) Close(ctx context.Context) error {
 // Start is the production composition root. It returns only the Host and its
 // authority-free progress surface; no raw GapDB or lifecycle handle escapes.
 func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
+	return start(ctx, config, false)
+}
+
+// StartQualificationCandidate is the test-campaign-only composition root for
+// an exact M2 technical candidate. It preserves the adopted M1 product
+// prerequisite while preventing the candidate admission from being mistaken
+// for adoption or release readiness.
+func StartQualificationCandidate(ctx context.Context, config Config) (_ *Host, resultErr error) {
+	return start(ctx, config, true)
+}
+
+func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *Host, resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -147,7 +159,12 @@ func Start(ctx context.Context, config Config) (_ *Host, resultErr error) {
 	if _, err = sidecargapdb.VerifyAdoptionRecord(config.M1AdoptionRecordPath); err != nil {
 		return nil, err
 	}
-	extensionAdmission, err := sidecargapdb.VerifyAssertionExtensionAdoption(config.AssertionExtensionAdoptionRecordPath, config.Sidecar.AdmissionRecordPath)
+	var extensionAdmission sidecargapdb.ExecutableAdmission
+	if qualificationCandidate {
+		extensionAdmission, err = sidecargapdb.VerifyM2QualificationCandidateAdmission(config.Sidecar.AdmissionRecordPath)
+	} else {
+		extensionAdmission, err = sidecargapdb.VerifyAssertionExtensionAdoption(config.AssertionExtensionAdoptionRecordPath, config.Sidecar.AdmissionRecordPath)
+	}
 	if err != nil {
 		return nil, err
 	}
