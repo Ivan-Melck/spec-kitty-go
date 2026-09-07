@@ -248,7 +248,7 @@ func (c *performanceCollector) ObservePublicationBoundary(_ context.Context, sna
 	if snapshot.Stage == journalv2.PublicationAckCreatedBeforeProjectionV2 && snapshot.Ack != nil {
 		operation := string(snapshot.Plan.OperationState().OperationID())
 		c.mu.Lock()
-		if c.mode == performanceCollectSuffix {
+		if c.mode == performanceCollectWarmup || c.mode == performanceCollectSuffix {
 			if isPerformanceCheckpointPlan(snapshot.Plan) {
 				c.checkpointOperations[operation]++
 			} else {
@@ -532,6 +532,9 @@ func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2extern
 		if sample.ExclusionReason == "idempotent_replay" {
 			continue
 		}
+		if sample.ExclusionReason == "runtime_bootstrap" {
+			continue
+		}
 		operation := sample.OperationID
 		recovered, ok := actual[operation]
 		if !ok || len(recovered.Families) == 0 {
@@ -579,10 +582,90 @@ func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2extern
 	if len(runtimeOperations) != 0 {
 		t.Fatalf("post-checkpoint product census contains runtime-host operations=%d", len(runtimeOperations))
 	}
-	if !slices.Equal(sortedMapKeys(counts), m2.AuthorityFamilyIDs()) {
-		t.Fatalf("performance suffix family census=%v want=%v", sortedMapKeys(counts), m2.AuthorityFamilyIDs())
+	wantFamilies := slices.DeleteFunc(m2.AuthorityFamilyIDs(), func(family string) bool { return family == "family/runtime_host" })
+	if !slices.Equal(sortedMapKeys(counts), wantFamilies) {
+		t.Fatalf("performance suffix family census=%v want=%v", sortedMapKeys(counts), wantFamilies)
 	}
 	return append([]m2.PerformanceSample(nil), c.samples...), counts
+}
+
+func TestPerformanceCollectorFinalizationProjectsOneClosedRawCensus(t *testing.T) {
+	collector := newPerformanceCollector(t)
+	collector.samples = []m2.PerformanceSample{
+		{Index: 0, Kind: "mutation", OperationID: "warmup", DurationNS: int64(time.Millisecond), Included: false, ExclusionReason: "warmup", BeforeRevision: 1, AfterRevision: 2, MutationCount: 1, PublicationCount: 1},
+		{Index: 1, Kind: "mutation", OperationID: "replay", DurationNS: int64(time.Millisecond), Included: false, ExclusionReason: "idempotent_replay", BeforeRevision: 3, AfterRevision: 3, ProjectionRevision: 3},
+		{Index: 2, Kind: "mutation", OperationID: "runtime-host-start-3", DurationNS: int64(time.Millisecond), Included: false, ExclusionReason: "runtime_bootstrap"},
+	}
+	actual := map[string]m2external.RecoveredOperation{}
+	revision := uint64(100)
+	for _, family := range m2.AuthorityFamilyIDs() {
+		if family == "family/runtime_host" || family == "family/operation" {
+			continue
+		}
+		operation := "fixture-" + strings.TrimPrefix(family, "family/")
+		families := []string{family, "family/operation"}
+		slices.Sort(families)
+		publications := []string{m2.SHA256([]byte(operation + "-publication-0"))}
+		trace := []performancePublicationTrace{{publicationID: publications[0], revision: revision, mutationCount: 3}}
+		if len(collector.byOperation) == 0 {
+			publications = append(publications, m2.SHA256([]byte(operation+"-publication-1")))
+			slices.Sort(publications)
+			trace = append(trace, performancePublicationTrace{publicationID: publications[1], revision: revision + 1, mutationCount: 4})
+			revision++
+		}
+		index := len(collector.samples)
+		collector.samples = append(collector.samples, m2.PerformanceSample{Index: index, Kind: "mutation", OperationID: operation, DurationNS: int64(200 * time.Microsecond), Included: true})
+		collector.byOperation[operation] = index
+		collector.publishedOperations[operation] = len(trace)
+		collector.timedPublications[operation] = len(trace)
+		collector.publicationTrace[operation] = trace
+		actual[operation] = m2external.RecoveredOperation{Families: families, PublicationIDs: publications}
+		revision++
+	}
+	collector.checkpointOperations["opaque-checkpoint-identity"] = 1
+	collector.assertPublicationCoverage()
+	samples, familyCounts := collector.finalize(t, actual, nil)
+	if len(samples) != len(actual)+3 || samples[0].Family != "" || samples[2].ExclusionReason != "runtime_bootstrap" {
+		t.Fatalf("collector did not preserve the closed exclusion census: samples=%d first=%+v bootstrap=%+v", len(samples), samples[0], samples[2])
+	}
+
+	raw := m2.RawPerformance{
+		SchemaVersion: 1, RunID: "collector-finalize", SourceCommit: strings.Repeat("a", 40), SourceTree: strings.Repeat("b", 40), ReferenceProfileSHA256: strings.Repeat("c", 64),
+		Dataset:            m2.PerformanceDataset{Generator: m2external.PerformanceGenerator, WarmupOperations: 1, SuffixOperations: performanceSuffixOps, CheckpointRevision: 99, FamilyOperationCounts: familyCounts, FamilyRecoveryCounts: map[string]int{"family/runtime_host": performanceRecoveries}, ExpectedProjectionSHA: strings.Repeat("d", 64), FinalRevision: revision + 20_000},
+		RecoveryOperations: performanceSuffixOps, Samples: samples, WarmupExcluded: 1, ReplayExcluded: 1, RuntimeBootstrapExcluded: 1, Method: "monotonic-nearest-rank-inclusive",
+	}
+	for _, sample := range samples {
+		if sample.Included {
+			raw.MutationMS = append(raw.MutationMS, float64(sample.DurationNS)/float64(time.Millisecond))
+		}
+	}
+	for len(raw.MutationMS) < performanceSuffixOps {
+		index := len(raw.MutationMS)
+		operation := fmt.Sprintf("bulk-fixture-%05d", index)
+		publication := m2.SHA256([]byte(operation + "-publication"))
+		sample := m2.PerformanceSample{Index: len(raw.Samples), Kind: "mutation", Family: "family/mission", OperationID: operation, EmittedFamilies: []string{"family/mission", "family/operation"}, DurationNS: int64(200 * time.Microsecond), Included: true, BeforeRevision: revision, AfterRevision: revision + 1, MutationCount: 3, PublicationCount: 1, ProjectionRevision: revision + 1, PublicationIDs: []string{publication}}
+		revision++
+		raw.Samples = append(raw.Samples, sample)
+		raw.MutationMS = append(raw.MutationMS, .2)
+		raw.Dataset.FamilyOperationCounts["family/mission"]++
+		raw.Dataset.FamilyOperationCounts["family/operation"]++
+	}
+	for range performanceQueries {
+		raw.Samples = append(raw.Samples, m2.PerformanceSample{Index: len(raw.Samples), Kind: "query", Family: "family/mission", DurationNS: int64(100 * time.Microsecond), Included: true})
+		raw.QueryMS = append(raw.QueryMS, .1)
+	}
+	for range performanceRecoveries {
+		raw.Samples = append(raw.Samples, m2.PerformanceSample{Index: len(raw.Samples), Kind: "recovery", Family: "family/runtime_host", EmittedFamilies: []string{"family/runtime_host"}, DurationNS: int64(time.Millisecond), Included: true, ProjectionSHA256: raw.Dataset.ExpectedProjectionSHA, ObservedOperations: performanceSuffixOps, ProjectionRevision: raw.Dataset.FinalRevision})
+		raw.RecoveryMS = append(raw.RecoveryMS, 1)
+	}
+	raw.Statistics = []m2.PerformanceStatistics{
+		m2.PerformanceStatisticsFor("mutation", raw.MutationMS, raw.WarmupExcluded+raw.ReplayExcluded+raw.RuntimeBootstrapExcluded),
+		m2.PerformanceStatisticsFor("query", raw.QueryMS, 0),
+		m2.PerformanceStatisticsFor("recovery", raw.RecoveryMS, 0),
+	}
+	if _, err := m2.SummarizePerformance(raw); err != nil {
+		t.Fatalf("closed collector projection failed the full raw verifier: %v", err)
+	}
 }
 
 func buildRawPerformance(t *testing.T, identity performanceIdentity, config m2external.PerformanceConfig, checkpoint m2external.CheckpointResult, final productionruntime.HostStatus, mutations, queries []m2.PerformanceSample, recoveries []m2external.RecoveryObservation, familyCounts map[string]int) m2.RawPerformance {
