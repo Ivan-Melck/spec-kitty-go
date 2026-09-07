@@ -231,9 +231,17 @@ type performanceCollector struct {
 	samples              []m2.PerformanceSample
 	byOperation          map[string]int
 	publishedOperations  map[string]int
+	timedPublications    map[string]int
+	publicationTrace     map[string][]performancePublicationTrace
 	checkpointOperations map[string]int
 	sourcePlan           journalv2.SealedCommitPlanV2
 	sourceRecordRevision uint64
+}
+
+type performancePublicationTrace struct {
+	publicationID string
+	revision      uint64
+	mutationCount uint64
 }
 
 func (c *performanceCollector) ObservePublicationBoundary(_ context.Context, snapshot journalv2.PublicationBoundarySnapshotV2) {
@@ -245,6 +253,9 @@ func (c *performanceCollector) ObservePublicationBoundary(_ context.Context, sna
 				c.checkpointOperations[operation]++
 			} else {
 				c.publishedOperations[operation]++
+				c.publicationTrace[operation] = append(c.publicationTrace[operation], performancePublicationTrace{
+					publicationID: string(snapshot.Ack.PublicationID()), revision: snapshot.Ack.ProviderRevision(), mutationCount: uint64(snapshot.Ack.MutationCount()),
+				})
 			}
 		}
 		c.mu.Unlock()
@@ -296,6 +307,9 @@ func (c *performanceCollector) appendDirect(t *testing.T, sample m2.PerformanceS
 	if c.mode == performanceCollectSuffix {
 		c.byOperation[sample.OperationID] = len(c.samples) - 1
 		c.publishedOperations[sample.OperationID]++
+		c.publicationTrace[sample.OperationID] = append(c.publicationTrace[sample.OperationID], performancePublicationTrace{
+			publicationID: sample.PublicationIDs[0], revision: sample.AfterRevision, mutationCount: sample.MutationCount,
+		})
 	}
 }
 
@@ -323,7 +337,7 @@ func infoMode(info os.FileInfo) os.FileMode {
 }
 
 func newPerformanceCollector(t *testing.T) *performanceCollector {
-	return &performanceCollector{t: t, byOperation: map[string]int{}, publishedOperations: map[string]int{}, checkpointOperations: map[string]int{}}
+	return &performanceCollector{t: t, byOperation: map[string]int{}, publishedOperations: map[string]int{}, timedPublications: map[string]int{}, publicationTrace: map[string][]performancePublicationTrace{}, checkpointOperations: map[string]int{}}
 }
 
 func TestPerformanceCollectorClassifiesIdempotentReplayWithoutInventingPublication(t *testing.T) {
@@ -362,6 +376,8 @@ func (c *performanceCollector) startSuffix(checkpointRevision uint64) {
 	c.mode = performanceCollectSuffix
 	c.byOperation = map[string]int{}
 	c.publishedOperations = map[string]int{}
+	c.timedPublications = map[string]int{}
+	c.publicationTrace = map[string][]performancePublicationTrace{}
 	c.checkpointOperations = map[string]int{}
 	for index := range c.samples {
 		c.samples[index].Index = index
@@ -427,14 +443,16 @@ func (c *performanceCollector) observe(observation MutationObservation) {
 		c.t.Errorf("observed performance mutation %s failed: %v", observation.OperationID, observation.Err)
 		return
 	}
-	if observation.OperationID != "" && observation.AfterRecordRevision == observation.BeforeRecordRevision && observation.MutationCount == 0 && observation.ProjectedThroughRevision == observation.AfterRecordRevision {
+	acknowledged := observation.OperationID != "" && c.publishedOperations[observation.OperationID] > c.timedPublications[observation.OperationID]
+	if !acknowledged && observation.OperationID != "" && observation.AfterRecordRevision == observation.BeforeRecordRevision && observation.MutationCount == 0 && observation.ProjectedThroughRevision == observation.AfterRecordRevision {
 		c.samples = append(c.samples, m2.PerformanceSample{Index: len(c.samples), Kind: "mutation", OperationID: observation.OperationID, DurationNS: observation.Duration.Nanoseconds(), Included: false, ExclusionReason: "idempotent_replay", BeforeRevision: observation.BeforeRecordRevision, AfterRevision: observation.AfterRecordRevision, ProjectionRevision: observation.ProjectedThroughRevision})
 		return
 	}
-	if observation.OperationID == "" || observation.AfterRecordRevision <= observation.BeforeRecordRevision || observation.MutationCount == 0 || observation.ProjectedThroughRevision != observation.AfterRecordRevision {
+	if !acknowledged {
 		c.t.Errorf("observed performance mutation lacks durable acknowledgement: %+v", observation)
 		return
 	}
+	c.timedPublications[observation.OperationID] = c.publishedOperations[observation.OperationID]
 	families := normalizePerformanceFamilies(observation.Families)
 	if existing, ok := c.byOperation[observation.OperationID]; ok && c.mode == performanceCollectSuffix {
 		sample := &c.samples[existing]
@@ -524,6 +542,30 @@ func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2extern
 		sample.EmittedFamilies = append([]string(nil), recovered.Families...)
 		sample.Family = primaryPerformanceFamily(sample.EmittedFamilies)
 		sample.PublicationIDs = append([]string(nil), recovered.PublicationIDs...)
+		trace := append([]performancePublicationTrace(nil), c.publicationTrace[operation]...)
+		slices.SortFunc(trace, func(left, right performancePublicationTrace) int {
+			if left.revision < right.revision {
+				return -1
+			}
+			if left.revision > right.revision {
+				return 1
+			}
+			return strings.Compare(left.publicationID, right.publicationID)
+		})
+		traceIDs := make([]string, len(trace))
+		var mutationCount uint64
+		for traceIndex, publication := range trace {
+			traceIDs[traceIndex] = publication.publicationID
+			mutationCount += publication.mutationCount
+		}
+		slices.Sort(traceIDs)
+		if len(trace) == 0 || !slices.Equal(traceIDs, recovered.PublicationIDs) || trace[0].revision == 0 || mutationCount == 0 {
+			t.Fatalf("operation %s durable publication trace differs from recovery: trace=%v recovered=%v", operation, traceIDs, recovered.PublicationIDs)
+		}
+		sample.BeforeRevision = trace[0].revision - 1
+		sample.AfterRevision = trace[len(trace)-1].revision
+		sample.ProjectionRevision = sample.AfterRevision
+		sample.MutationCount = mutationCount
 		// One accepted authority operation may cross nested provider services.
 		// The timing observer sees outer returns; restored durable envelopes own
 		// the complete publication membership and its exact count.
