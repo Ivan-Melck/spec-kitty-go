@@ -222,12 +222,31 @@ func VerifyPerformanceReference(referenceBytes []byte, raw RawPerformance) error
 	return nil
 }
 
+const PerformanceCampaignSelectorV1 = "TestM2AcceptedAuthorityPerformanceCampaign"
+
+var performanceTerminalMembershipMutantIDsV1 = [...]string{
+	"acceptance_membership_omitted",
+	"effect_membership_omitted",
+	"integration_member_unbound",
+	"review_membership_duplicated",
+}
+
+// PerformanceTerminalMembershipMutantIDsV1 returns the closed child-test
+// census shared by the executing campaign and its receipt verifier.
+func PerformanceTerminalMembershipMutantIDsV1() []string {
+	return append([]string(nil), performanceTerminalMembershipMutantIDsV1[:]...)
+}
+
 // VerifyPerformanceTranscript proves the gated real-authority performance
 // scenario actually ran once. The raw machine stream, rather than a producer
 // summary, is the authority for run/pass/skip/fail membership.
 func VerifyPerformanceTranscript(raw []byte) error {
-	const selector = "TestM2AcceptedAuthorityPerformanceCampaign"
+	const selector = PerformanceCampaignSelectorV1
 	counts := map[string]int{}
+	childCounts := map[string]map[string]int{}
+	for _, id := range performanceTerminalMembershipMutantIDsV1 {
+		childCounts[selector+"/terminal-membership-mutant/"+id] = map[string]int{}
+	}
 	for _, line := range bytes.Split(raw, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
@@ -246,11 +265,23 @@ func VerifyPerformanceTranscript(raw []byte) error {
 				return fmt.Errorf("performance selector action=%s", event.Action)
 			}
 		} else if event.Test != "" && strings.HasPrefix(event.Test, selector+"/") {
-			return fmt.Errorf("performance selector emitted unexpected subtest %q", event.Test)
+			actions, ok := childCounts[event.Test]
+			if !ok {
+				return fmt.Errorf("performance selector emitted unexpected subtest %q", event.Test)
+			}
+			actions[event.Action]++
+			if event.Action == "skip" || event.Action == "fail" {
+				return fmt.Errorf("performance subtest %q action=%s", event.Test, event.Action)
+			}
 		}
 	}
 	if counts["run"] != 1 || counts["pass"] != 1 || counts["skip"] != 0 || counts["fail"] != 0 {
 		return fmt.Errorf("performance selector receipt run=%d pass=%d skip=%d fail=%d", counts["run"], counts["pass"], counts["skip"], counts["fail"])
+	}
+	for child, actions := range childCounts {
+		if actions["run"] != 1 || actions["pass"] != 1 || actions["skip"] != 0 || actions["fail"] != 0 {
+			return fmt.Errorf("performance subtest %q receipt run=%d pass=%d skip=%d fail=%d", child, actions["run"], actions["pass"], actions["skip"], actions["fail"])
+		}
 	}
 	return nil
 }

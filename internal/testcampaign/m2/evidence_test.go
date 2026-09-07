@@ -1,6 +1,7 @@
 package m2
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -46,11 +47,12 @@ func TestPerformanceTranscriptRequiresOneObservedSelectorPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	mutants := map[string][]byte{
-		"missing":   nil,
-		"renamed":   []byte("{\"Action\":\"run\",\"Test\":\"TestRenamed\"}\n{\"Action\":\"pass\",\"Test\":\"TestRenamed\"}\n"),
-		"skipped":   []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n{\"Action\":\"skip\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n"),
-		"duplicate": append(append([]byte(nil), good...), good...),
-		"subtest":   []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign/forged\"}\n{\"Action\":\"pass\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n"),
+		"missing":       nil,
+		"renamed":       []byte("{\"Action\":\"run\",\"Test\":\"TestRenamed\"}\n{\"Action\":\"pass\",\"Test\":\"TestRenamed\"}\n"),
+		"skipped":       []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n{\"Action\":\"skip\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n"),
+		"duplicate":     append(append([]byte(nil), good...), good...),
+		"subtest":       []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign/forged\"}\n{\"Action\":\"pass\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n"),
+		"child-omitted": bytes.ReplaceAll(good, []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign/terminal-membership-mutant/acceptance_membership_omitted\"}\n{\"Action\":\"pass\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign/terminal-membership-mutant/acceptance_membership_omitted\"}\n"), nil),
 	}
 	for name, mutant := range mutants {
 		t.Run(name, func(t *testing.T) {
@@ -680,7 +682,15 @@ func fixtureRawPerformance(t *testing.T, runID string, source Source, referenceB
 }
 
 func fixturePerformanceTranscript() []byte {
-	return []byte("{\"Action\":\"run\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n{\"Action\":\"pass\",\"Test\":\"TestM2AcceptedAuthorityPerformanceCampaign\"}\n")
+	var transcript bytes.Buffer
+	fmt.Fprintf(&transcript, "{\"Action\":\"run\",\"Test\":%q}\n", PerformanceCampaignSelectorV1)
+	for _, id := range PerformanceTerminalMembershipMutantIDsV1() {
+		child := PerformanceCampaignSelectorV1 + "/terminal-membership-mutant/" + id
+		fmt.Fprintf(&transcript, "{\"Action\":\"run\",\"Test\":%q}\n", child)
+		fmt.Fprintf(&transcript, "{\"Action\":\"pass\",\"Test\":%q}\n", child)
+	}
+	fmt.Fprintf(&transcript, "{\"Action\":\"pass\",\"Test\":%q}\n", PerformanceCampaignSelectorV1)
+	return transcript.Bytes()
 }
 
 func fixtureAbsenceInputs(t *testing.T, source Source) []ArtifactInput {

@@ -2,8 +2,10 @@ package scenario
 
 import (
 	"encoding/json"
-	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 	"testing"
+
+	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
+	m2 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m2"
 )
 
 func TestUniversalInvariantOracleControlledMutants(t *testing.T) {
@@ -142,7 +144,15 @@ func assertUniversalTerminalMembershipMutants(t *testing.T, status productionrun
 			value.Integration[0].AggregateID = "attempt-substituted"
 		},
 	}
-	for name, mutate := range mutants {
+	ids := m2.PerformanceTerminalMembershipMutantIDsV1()
+	if len(ids) != len(mutants) {
+		t.Fatalf("terminal membership mutant census=%d implementations=%d", len(ids), len(mutants))
+	}
+	for _, name := range ids {
+		mutate, ok := mutants[name]
+		if !ok {
+			t.Fatalf("terminal membership mutant %q has no implementation", name)
+		}
 		t.Run("terminal-membership-mutant/"+name, func(t *testing.T) {
 			candidate := cloneMissionProgressForOracle(t, progress)
 			mutate(&candidate)
