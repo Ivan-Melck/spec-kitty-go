@@ -5,9 +5,12 @@ package v2
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -631,6 +634,10 @@ func NewEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2) (Eve
 }
 
 func newEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2, canonicalInputsSealed bool) (EventEnvelopeV2, error) {
+	return newEventEnvelopeWithTrustedDigestV2(input, registry, canonicalInputsSealed, nil)
+}
+
+func newEventEnvelopeWithTrustedDigestV2(input EventEnvelopeInput, registry EventRegistryV2, canonicalInputsSealed bool, trustedDigest *Digest) (EventEnvelopeV2, error) {
 	if err := preflightGovernanceRevisions(input.GovernanceRevisions); err != nil {
 		return EventEnvelopeV2{}, err
 	}
@@ -665,7 +672,10 @@ func newEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2, cano
 			return EventEnvelopeV2{}, invalid(ErrorInvalidIdentity, optional.field)
 		}
 	}
-	governance := append([]string(nil), input.GovernanceRevisions...)
+	governance := input.GovernanceRevisions
+	if !canonicalInputsSealed {
+		governance = append([]string(nil), governance...)
+	}
 	if !sort.StringsAreSorted(governance) {
 		return EventEnvelopeV2{}, invalid(ErrorInvalidCanonicalData, "governance_revisions")
 	}
@@ -674,7 +684,7 @@ func newEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2, cano
 			return EventEnvelopeV2{}, invalid(ErrorInvalidCanonicalData, "governance_revisions")
 		}
 	}
-	payload := append([]byte(nil), input.Payload...)
+	payload := input.Payload
 	observations := []byte("{}")
 	if !canonicalInputsSealed {
 		var err error
@@ -689,10 +699,14 @@ func newEventEnvelopeV2(input EventEnvelopeInput, registry EventRegistryV2, cano
 			}
 		}
 	} else if len(input.Observations) != 0 {
-		observations = append([]byte(nil), input.Observations...)
+		observations = input.Observations
 	}
 	input.Payload, input.Observations, input.GovernanceRevisions = nil, nil, governance
-	envelope := EventEnvelopeV2{input: input, payload: append([]byte(nil), payload...), observations: append([]byte(nil), observations...)}
+	envelope := EventEnvelopeV2{input: input, payload: payload, observations: observations}
+	if trustedDigest != nil {
+		envelope.digest = *trustedDigest
+		return envelope, nil
+	}
 	unsigned, err := envelope.canonical(false)
 	if err != nil {
 		return EventEnvelopeV2{}, err
@@ -796,23 +810,453 @@ func DecodeEventEnvelopeRecordV2(record RecoveryRecordV2, registry EventRegistry
 	return decodeEventEnvelopeV2(record.canonical, registry, true)
 }
 
+type canonicalObjectMemberV2 struct {
+	name  []byte
+	value []byte
+}
+
+type canonicalMemberRuleV2 struct {
+	name     string
+	required bool
+}
+
+var eventEnvelopeMemberRulesV2 = [...]canonicalMemberRuleV2{
+	{"aggregate_logical_version", true}, {"actor_id", false}, {"canonical_event_sha256", true},
+	{"committed_runtime_epoch_id", true}, {"coordinate", true}, {"envelope_version", true},
+	{"event_count", true}, {"event_id", true}, {"event_index", true}, {"event_schema_version", true},
+	{"event_type", true}, {"family", true}, {"governance_revisions", false}, {"observations", true},
+	{"operation_id", true}, {"operation_logical_version", true}, {"payload", true}, {"policy_revision", false},
+	{"process_id", false}, {"publication_id", true}, {"reducer_version", true}, {"work_revision_id", false},
+}
+
+var coordinateMemberRulesV2 = [...]canonicalMemberRuleV2{{"id", true}, {"kind", true}, {"scope", true}}
+var scopeMemberRulesV2 = [...]canonicalMemberRuleV2{
+	{"kind", true}, {"mission_id", false}, {"project_id", false}, {"repository_id", false},
+	{"work_id", false}, {"work_revision_id", false},
+}
+
+// inspectRecoveryEventCanonicalV2 recognizes the exact closed event object
+// already sealed by RecoveryRecordV2. It does not normalize or repair input:
+// unknown, duplicate, escaped-key, reordered, or malformed members fail.
+// The returned digest is the established declaration-order unsigned preimage,
+// assembled from the exact recursively canonical value bytes without a second
+// reflection marshal.
+func inspectRecoveryEventCanonicalV2(encoded []byte) (eventEnvelopeWire, Digest, bool) {
+	var wire eventEnvelopeWire
+	if len(encoded) == 0 || len(encoded) > MaxEventEnvelopeBytes {
+		return wire, Digest{}, false
+	}
+	var eventMembers [len(eventEnvelopeMemberRulesV2)]canonicalObjectMemberV2
+	eventCount, ok := scanCanonicalObjectMembersV2(encoded, eventMembers[:])
+	if !ok || !validateCanonicalMemberSetV2(eventMembers[:eventCount], eventEnvelopeMemberRulesV2[:]) {
+		return wire, Digest{}, false
+	}
+	coordinateBytes, _ := canonicalMemberValueV2(eventMembers[:eventCount], "coordinate")
+	var coordinateMembers [len(coordinateMemberRulesV2)]canonicalObjectMemberV2
+	coordinateCount, ok := scanCanonicalObjectMembersV2(coordinateBytes, coordinateMembers[:])
+	if !ok || !validateCanonicalMemberSetV2(coordinateMembers[:coordinateCount], coordinateMemberRulesV2[:]) {
+		return wire, Digest{}, false
+	}
+	scopeBytes, _ := canonicalMemberValueV2(coordinateMembers[:coordinateCount], "scope")
+	var scopeMembers [len(scopeMemberRulesV2)]canonicalObjectMemberV2
+	scopeCount, ok := scanCanonicalObjectMembersV2(scopeBytes, scopeMembers[:])
+	if !ok || !validateCanonicalMemberSetV2(scopeMembers[:scopeCount], scopeMemberRulesV2[:]) {
+		return wire, Digest{}, false
+	}
+	// The trusted recovery path must accept only bytes that the established
+	// omitempty encoder could mint. A present empty optional member is a new
+	// signed preimage even though encoding/json decodes it to the same Go zero
+	// value as an omitted member.
+	for _, name := range []string{"actor_id", "process_id", "work_revision_id", "policy_revision"} {
+		if value, exists := canonicalMemberValueV2(eventMembers[:eventCount], name); exists && bytes.Equal(value, []byte(`""`)) {
+			return wire, Digest{}, false
+		}
+	}
+	if value, exists := canonicalMemberValueV2(eventMembers[:eventCount], "governance_revisions"); exists && bytes.Equal(value, []byte(`[]`)) {
+		return wire, Digest{}, false
+	}
+	for _, name := range []string{"project_id", "mission_id", "repository_id", "work_revision_id", "work_id"} {
+		if value, exists := canonicalMemberValueV2(scopeMembers[:scopeCount], name); exists && bytes.Equal(value, []byte(`""`)) {
+			return wire, Digest{}, false
+		}
+	}
+
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(canonicalEventDomain))
+	_, _ = hasher.Write([]byte{0, '{'})
+	first := true
+	writeName := func(name string) {
+		if !first {
+			_, _ = hasher.Write([]byte{','})
+		}
+		first = false
+		_, _ = hasher.Write([]byte{'"'})
+		_, _ = hasher.Write([]byte(name))
+		_, _ = hasher.Write([]byte{'"', ':'})
+	}
+	writeMember := func(name string, value []byte) {
+		writeName(name)
+		_, _ = hasher.Write(value)
+	}
+	for _, name := range []string{"envelope_version", "event_id", "event_type", "family", "event_schema_version", "reducer_version"} {
+		value, _ := canonicalMemberValueV2(eventMembers[:eventCount], name)
+		writeMember(name, value)
+	}
+	writeName("coordinate")
+	_, _ = hasher.Write([]byte(`{"kind":`))
+	value, _ := canonicalMemberValueV2(coordinateMembers[:coordinateCount], "kind")
+	_, _ = hasher.Write(value)
+	_, _ = hasher.Write([]byte(`,"id":`))
+	value, _ = canonicalMemberValueV2(coordinateMembers[:coordinateCount], "id")
+	_, _ = hasher.Write(value)
+	_, _ = hasher.Write([]byte(`,"scope":{"kind":`))
+	value, _ = canonicalMemberValueV2(scopeMembers[:scopeCount], "kind")
+	_, _ = hasher.Write(value)
+	for _, name := range []string{"project_id", "mission_id", "repository_id", "work_revision_id", "work_id"} {
+		if value, exists := canonicalMemberValueV2(scopeMembers[:scopeCount], name); exists {
+			_, _ = hasher.Write([]byte(`,"`))
+			_, _ = hasher.Write([]byte(name))
+			_, _ = hasher.Write([]byte(`":`))
+			_, _ = hasher.Write(value)
+		}
+	}
+	_, _ = hasher.Write([]byte(`}}`))
+	for _, rule := range []canonicalMemberRuleV2{
+		{"aggregate_logical_version", true}, {"operation_id", true}, {"operation_logical_version", true},
+		{"publication_id", true}, {"committed_runtime_epoch_id", true}, {"event_index", true}, {"event_count", true},
+		{"actor_id", false}, {"process_id", false}, {"work_revision_id", false}, {"policy_revision", false},
+		{"governance_revisions", false}, {"observations", true}, {"payload", true},
+	} {
+		if value, exists := canonicalMemberValueV2(eventMembers[:eventCount], rule.name); exists {
+			writeMember(rule.name, value)
+		}
+	}
+	_, _ = hasher.Write([]byte{'}'})
+	var result Digest
+	copy(result[:], hasher.Sum(nil))
+
+	// RecoveryRecordV2 has already performed complete canonical JSON
+	// validation. Decode the closed wire directly from its exact member spans;
+	// this avoids encoding/json's second whole-object syntax pass and reflection
+	// walk while retaining every schema, semantic, and digest check below.
+	var decoded bool
+	wire.EnvelopeVersion, decoded = canonicalUint32MemberV2(eventMembers[:eventCount], "envelope_version")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.EventID, decoded = canonicalStringMemberV2(eventMembers[:eventCount], "event_id")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.EventType, decoded = canonicalStringMemberV2(eventMembers[:eventCount], "event_type")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.Family, decoded = canonicalStringMemberV2(eventMembers[:eventCount], "family")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.EventSchemaVersion, decoded = canonicalUint32MemberV2(eventMembers[:eventCount], "event_schema_version")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.ReducerVersion, decoded = canonicalUint32MemberV2(eventMembers[:eventCount], "reducer_version")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.Coordinate.Kind, decoded = canonicalAggregateKindMemberV2(coordinateMembers[:coordinateCount], "kind")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.Coordinate.ID, decoded = canonicalAggregateIDMemberV2(coordinateMembers[:coordinateCount], "id")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.Coordinate.Scope.Kind, decoded = canonicalScopeKindMemberV2(scopeMembers[:scopeCount], "kind")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	projectID, projectOK := canonicalOptionalStringMemberV2(scopeMembers[:scopeCount], "project_id")
+	missionID, missionOK := canonicalOptionalStringMemberV2(scopeMembers[:scopeCount], "mission_id")
+	repositoryID, repositoryOK := canonicalOptionalStringMemberV2(scopeMembers[:scopeCount], "repository_id")
+	scopeRevisionID, scopeRevisionOK := canonicalOptionalStringMemberV2(scopeMembers[:scopeCount], "work_revision_id")
+	workID, workOK := canonicalOptionalStringMemberV2(scopeMembers[:scopeCount], "work_id")
+	if !projectOK || !missionOK || !repositoryOK || !scopeRevisionOK || !workOK {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.Coordinate.Scope.ProjectID = ProjectID(projectID)
+	wire.Coordinate.Scope.MissionID = MissionID(missionID)
+	wire.Coordinate.Scope.RepositoryID = RepositoryID(repositoryID)
+	wire.Coordinate.Scope.WorkRevisionID = WorkRevisionID(scopeRevisionID)
+	wire.Coordinate.Scope.WorkID = WorkID(workID)
+	wire.AggregateLogicalVersion, decoded = canonicalUint64MemberV2(eventMembers[:eventCount], "aggregate_logical_version")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.OperationID, decoded = canonicalStringMemberV2(eventMembers[:eventCount], "operation_id")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.OperationLogicalVersion, decoded = canonicalUint64MemberV2(eventMembers[:eventCount], "operation_logical_version")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.PublicationID, decoded = canonicalStringMemberV2(eventMembers[:eventCount], "publication_id")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.CommittedRuntimeEpochID, decoded = canonicalStringMemberV2(eventMembers[:eventCount], "committed_runtime_epoch_id")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	index, indexOK := canonicalUint64MemberV2(eventMembers[:eventCount], "event_index")
+	count, countOK := canonicalUint64MemberV2(eventMembers[:eventCount], "event_count")
+	if !indexOK || !countOK || index > uint64(^uint16(0)) || count > uint64(^uint16(0)) {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.EventIndex, wire.EventCount = uint16(index), uint16(count)
+	wire.ActorID, projectOK = canonicalOptionalStringMemberV2(eventMembers[:eventCount], "actor_id")
+	wire.ProcessID, missionOK = canonicalOptionalStringMemberV2(eventMembers[:eventCount], "process_id")
+	wire.WorkRevisionID, repositoryOK = canonicalOptionalStringMemberV2(eventMembers[:eventCount], "work_revision_id")
+	wire.PolicyRevision, scopeRevisionOK = canonicalOptionalStringMemberV2(eventMembers[:eventCount], "policy_revision")
+	if !projectOK || !missionOK || !repositoryOK || !scopeRevisionOK {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	if governance, exists := canonicalMemberValueV2(eventMembers[:eventCount], "governance_revisions"); exists &&
+		(bytes.Equal(governance, []byte(`null`)) || json.Unmarshal(governance, &wire.GovernanceRevisions) != nil || len(wire.GovernanceRevisions) == 0) {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.Observations, decoded = canonicalBase64MemberV2(eventMembers[:eventCount], "observations")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.Payload, decoded = canonicalBase64MemberV2(eventMembers[:eventCount], "payload")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	wire.CanonicalEventSHA256, decoded = canonicalStringMemberV2(eventMembers[:eventCount], "canonical_event_sha256")
+	if !decoded {
+		return eventEnvelopeWire{}, Digest{}, false
+	}
+	return wire, result, true
+}
+
+func canonicalStringMemberV2(members []canonicalObjectMemberV2, name string) (string, bool) {
+	value, exists := canonicalMemberValueV2(members, name)
+	if !exists || len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' || bytes.IndexByte(value[1:len(value)-1], '\\') >= 0 {
+		return "", false
+	}
+	return string(value[1 : len(value)-1]), true
+}
+
+func canonicalOptionalStringMemberV2(members []canonicalObjectMemberV2, name string) (string, bool) {
+	if _, exists := canonicalMemberValueV2(members, name); !exists {
+		return "", true
+	}
+	return canonicalStringMemberV2(members, name)
+}
+
+func canonicalUint64MemberV2(members []canonicalObjectMemberV2, name string) (uint64, bool) {
+	value, exists := canonicalMemberValueV2(members, name)
+	if !exists || len(value) == 0 {
+		return 0, false
+	}
+	result, err := strconv.ParseUint(string(value), 10, 64)
+	return result, err == nil
+}
+
+func canonicalUint32MemberV2(members []canonicalObjectMemberV2, name string) (uint32, bool) {
+	value, ok := canonicalUint64MemberV2(members, name)
+	return uint32(value), ok && value <= uint64(^uint32(0))
+}
+
+func canonicalAggregateKindMemberV2(members []canonicalObjectMemberV2, name string) (AggregateKind, bool) {
+	value, ok := canonicalStringMemberV2(members, name)
+	return AggregateKind(value), ok
+}
+
+func canonicalAggregateIDMemberV2(members []canonicalObjectMemberV2, name string) (AggregateID, bool) {
+	value, ok := canonicalStringMemberV2(members, name)
+	return AggregateID(value), ok
+}
+
+func canonicalScopeKindMemberV2(members []canonicalObjectMemberV2, name string) (ScopeKind, bool) {
+	value, ok := canonicalStringMemberV2(members, name)
+	return ScopeKind(value), ok
+}
+
+func canonicalBase64MemberV2(members []canonicalObjectMemberV2, name string) ([]byte, bool) {
+	value, exists := canonicalMemberValueV2(members, name)
+	if !exists || len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return nil, false
+	}
+	value = value[1 : len(value)-1]
+	decoded := make([]byte, base64.StdEncoding.DecodedLen(len(value)))
+	count, err := base64.StdEncoding.Decode(decoded, value)
+	if err != nil {
+		return nil, false
+	}
+	return decoded[:count:count], true
+}
+
+func validateCanonicalMemberSetV2(members []canonicalObjectMemberV2, rules []canonicalMemberRuleV2) bool {
+	for _, member := range members {
+		known := false
+		for _, rule := range rules {
+			if bytes.Equal(member.name, []byte(rule.name)) {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return false
+		}
+	}
+	for _, rule := range rules {
+		_, exists := canonicalMemberValueV2(members, rule.name)
+		if rule.required && !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalMemberValueV2(members []canonicalObjectMemberV2, name string) ([]byte, bool) {
+	for _, member := range members {
+		if bytes.Equal(member.name, []byte(name)) {
+			return member.value, true
+		}
+	}
+	return nil, false
+}
+
+func scanCanonicalObjectMembersV2(encoded []byte, destination []canonicalObjectMemberV2) (int, bool) {
+	if len(encoded) < 2 || encoded[0] != '{' || encoded[len(encoded)-1] != '}' {
+		return 0, false
+	}
+	index, count := 1, 0
+	var prior []byte
+	if index == len(encoded)-1 {
+		return 0, true
+	}
+	for index < len(encoded)-1 {
+		if count == len(destination) || encoded[index] != '"' {
+			return 0, false
+		}
+		index++
+		nameStart := index
+		for index < len(encoded)-1 && encoded[index] != '"' {
+			if encoded[index] == '\\' || encoded[index] < 0x20 {
+				return 0, false
+			}
+			index++
+		}
+		if index == len(encoded)-1 {
+			return 0, false
+		}
+		name := encoded[nameStart:index]
+		if len(name) == 0 || prior != nil && bytes.Compare(prior, name) >= 0 {
+			return 0, false
+		}
+		prior = name
+		index++
+		if index >= len(encoded)-1 || encoded[index] != ':' {
+			return 0, false
+		}
+		index++
+		valueStart := index
+		valueEnd, delimiter, ok := scanCanonicalMemberValueV2(encoded, index)
+		if !ok || valueEnd == valueStart {
+			return 0, false
+		}
+		destination[count] = canonicalObjectMemberV2{name: name, value: encoded[valueStart:valueEnd]}
+		count++
+		index = valueEnd + 1
+		if delimiter == '}' {
+			return count, index == len(encoded)
+		}
+	}
+	return 0, false
+}
+
+func scanCanonicalMemberValueV2(encoded []byte, start int) (int, byte, bool) {
+	var stack [maxCanonicalFastDepth]byte
+	depth := 0
+	inString, escaped := false, false
+	for index := start; index < len(encoded); index++ {
+		char := encoded[index]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{', '[':
+			if depth == len(stack) {
+				return 0, 0, false
+			}
+			stack[depth], depth = char, depth+1
+		case '}', ']':
+			if depth == 0 {
+				if char == '}' {
+					return index, char, true
+				}
+				return 0, 0, false
+			}
+			want := byte('{')
+			if char == ']' {
+				want = '['
+			}
+			if stack[depth-1] != want {
+				return 0, 0, false
+			}
+			depth--
+		case ',':
+			if depth == 0 {
+				return index, char, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
 func decodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2, canonicalSealed bool) (EventEnvelopeV2, error) {
 	var wire eventEnvelopeWire
-	if err := decodeStrict(encoded, MaxEventEnvelopeBytes, &wire); err != nil || wire.EnvelopeVersion != EnvelopeVersion {
+	var trustedDigest *Digest
+	if canonicalSealed {
+		decoded, digest, ok := inspectRecoveryEventCanonicalV2(encoded)
+		if !ok {
+			return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
+		}
+		wire = decoded
+		trustedDigest = &digest
+	} else if err := decodeStrict(encoded, MaxEventEnvelopeBytes, &wire); err != nil {
+		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
+	}
+	if wire.EnvelopeVersion != EnvelopeVersion {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
 	}
 	want, err := ParseDigest("canonical_event_sha256", wire.CanonicalEventSHA256)
-	if err != nil {
+	if err != nil || trustedDigest != nil && *trustedDigest != want {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
 	}
-	envelope, err := newEventEnvelopeV2(EventEnvelopeInput{
+	envelope, err := newEventEnvelopeWithTrustedDigestV2(EventEnvelopeInput{
 		EventID: EventID(wire.EventID), EventType: wire.EventType, Family: wire.Family, EventSchemaVersion: wire.EventSchemaVersion,
 		ReducerVersion: wire.ReducerVersion, Coordinate: wire.Coordinate, AggregateLogicalVersion: LogicalVersion(wire.AggregateLogicalVersion),
 		OperationID: OperationID(wire.OperationID), OperationLogicalVersion: LogicalVersion(wire.OperationLogicalVersion), PublicationID: PublicationID(wire.PublicationID),
 		CommittedRuntimeEpochID: RuntimeEpochID(wire.CommittedRuntimeEpochID), EventIndex: wire.EventIndex, EventCount: wire.EventCount,
 		ActorID: ActorID(wire.ActorID), ProcessID: ProcessID(wire.ProcessID), WorkRevisionID: WorkRevisionID(wire.WorkRevisionID),
 		PolicyRevision: wire.PolicyRevision, GovernanceRevisions: wire.GovernanceRevisions, Observations: wire.Observations, Payload: wire.Payload,
-	}, registry, canonicalSealed)
+	}, registry, canonicalSealed, trustedDigest)
 	if err != nil || envelope.digest != want {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
 	}

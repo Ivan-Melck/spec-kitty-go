@@ -304,7 +304,11 @@ func newRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uin
 	if revision == 0 || len(canonical) == 0 || len(canonical) > maximum {
 		return RecoveryRecordV2{}, invalid(ErrorBudgetExceeded, "recovery_record")
 	}
-	value, err := canonicalDurableObject(canonical, maximum)
+	// Validate the exact caller bytes without manufacturing a full-size
+	// intermediate copy. canonicalObjectOwned returns the input only for the
+	// complete canonical fast path; its reference path still normalizes into a
+	// distinct value, so bytes.Equal continues to reject alternate spellings.
+	value, err := canonicalObjectOwned(canonical, maximum)
 	if err != nil || !bytes.Equal(value, canonical) {
 		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
 	}
@@ -490,7 +494,10 @@ func NewRecoveryReadManyResultV2(observedRevision uint64, asOf string, records [
 		if bytesUsed > MaxRecoveryReadManyBytes {
 			return RecoveryReadManyResultV2{}, invalid(ErrorBudgetExceeded, "read_many_bytes")
 		}
-		owned[index] = cloneRecoveryRecord(record)
+		// RecoveryRecordV2 owns bytes sealed by its validating constructor and
+		// exposes those bytes only through a defensive accessor. Copy the record
+		// table, not every immutable payload, at post-seal composition boundaries.
+		owned[index] = record
 	}
 	return RecoveryReadManyResultV2{observedRevision: observedRevision, asOf: asOf, records: owned}, nil
 }
@@ -499,9 +506,7 @@ func (r RecoveryReadManyResultV2) ObservedRevision() uint64 { return r.observedR
 func (r RecoveryReadManyResultV2) AsOf() string             { return r.asOf }
 func (r RecoveryReadManyResultV2) Records() []RecoveryRecordV2 {
 	result := make([]RecoveryRecordV2, len(r.records))
-	for index := range r.records {
-		result[index] = cloneRecoveryRecord(r.records[index])
-	}
+	copy(result, r.records)
 	return result
 }
 

@@ -567,9 +567,11 @@ func BuildOperationSummaryV2(states []OperationStateV2) (OperationSummaryV2, err
 		return OperationSummaryV2{}, err
 	}
 	summary.digest = digest
-	if err := validateOperationSummaryStructure(summary); err != nil {
-		return OperationSummaryV2{}, err
-	}
+	// Every field above is derived from validated immutable operation states;
+	// boundaries are sorted and collision-checked before the digest is minted.
+	// Do not immediately re-hash and re-encode the value through the decoder-
+	// side validator. Decode/Validate still perform that independent proof for
+	// summaries received across a trust boundary.
 	return summary, nil
 }
 

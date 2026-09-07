@@ -141,7 +141,9 @@ func TestRecoveryReadManyContractIsExactBoundedAndDefensive(t *testing.T) {
 
 	requests, records := request.Requests(), result.Records()
 	requests[0] = ReadRequestV2{}
-	records[0].canonical[0] = 'x'
+	records[0] = RecoveryRecordV2{}
+	canonical := result.Records()[0].CanonicalValue()
+	canonical[0] = 'x'
 	if request.Requests()[0].Address() != firstAddress || string(result.Records()[0].CanonicalValue()) != `{"status":"resolved"}` || result.ObservedRevision() != 17 || result.AsOf() != "2026-09-02T12:00:00Z" || request.MaxBytes() != MaxRecoveryReadManyBytes {
 		t.Fatal("read-many contract exposed aliases or lost frozen identity")
 	}

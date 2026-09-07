@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -2225,6 +2226,209 @@ func TestDurableEventFinalCanonicalizationPreservesDigestPreimage(t *testing.T) 
 	}
 }
 
+func TestRecoveryEventCanonicalScannerRejectsStructuralAndDigestMutants(t *testing.T) {
+	registry := DefaultEventRegistryV2()
+	event := fixtureMissionEnvelope(t, []byte(`{"canonical_event_sha256":"payload-only","nested":{"value":true}}`))
+	encoded, err := EncodeEventEnvelopeV2(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, digest, ok := inspectRecoveryEventCanonicalV2(encoded); !ok || digest != event.CanonicalDigest() {
+		t.Fatalf("valid recovery event inspection differs: ok=%t digest=%s want=%s", ok, digest, event.CanonicalDigest())
+	}
+	if decoded, err := decodeEventEnvelopeV2(encoded, registry, true); err != nil || decoded.CanonicalDigest() != event.CanonicalDigest() {
+		t.Fatalf("payload-contained digest key confused recovery decoder: event=%+v err=%v", decoded, err)
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	canonicalDigestMember := append([]byte(`"canonical_event_sha256":`), fields["canonical_event_sha256"]...)
+	duplicateDigest := bytes.Replace(encoded, canonicalDigestMember, append(append(append([]byte(nil), canonicalDigestMember...), ','), canonicalDigestMember...), 1)
+	escapedKey := bytes.Replace(encoded, []byte(`"event_id"`), []byte(`"\u0065vent_id"`), 1)
+	malformedBoundary := bytes.Replace(encoded, append([]byte{','}, canonicalDigestMember...), canonicalDigestMember, 1)
+	reordered := reverseTopLevelObjectForTest(t, encoded)
+
+	unknownFields := maps.Clone(fields)
+	unknownFields["zz_unknown"] = json.RawMessage(`true`)
+	unknown, _ := json.Marshal(unknownFields)
+	nestedFields := maps.Clone(fields)
+	nestedFields["zz_nested"] = json.RawMessage(`{"canonical_event_sha256":"lookalike"}`)
+	nestedLookalike, _ := json.Marshal(nestedFields)
+	wrongDigestFields := maps.Clone(fields)
+	wrongDigestFields["canonical_event_sha256"] = json.RawMessage(`"0000000000000000000000000000000000000000000000000000000000000000"`)
+	wrongDigest, _ := json.Marshal(wrongDigestFields)
+
+	for name, mutant := range map[string][]byte{
+		"unknown_top_level": unknown, "duplicate_digest": duplicateDigest, "nested_lookalike": nestedLookalike,
+		"escaped_key": escapedKey, "malformed_digest_boundary": malformedBoundary, "reordered": reordered, "wrong_digest": wrongDigest,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+				t.Fatal("recovery event mutant was accepted")
+			}
+		})
+	}
+
+	optionalInput := event.input
+	optionalInput.ActorID = "actor-01"
+	optionalInput.ProcessID = "process-01"
+	optionalInput.WorkRevisionID = "revision-01"
+	optionalInput.PolicyRevision = "policy-01"
+	optionalInput.GovernanceRevisions = []string{"governance-01"}
+	optionalInput.Payload = event.Payload()
+	optionalInput.Observations = event.Observations()
+	optionalEvent, err := NewEventEnvelopeV2(optionalInput, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, scope := range map[string]Scope{
+		"host":          {Kind: ScopeHost},
+		"project":       {Kind: ScopeProject, ProjectID: "project"},
+		"mission":       {Kind: ScopeMission, ProjectID: "project", MissionID: "mission"},
+		"repository":    {Kind: ScopeRepository, ProjectID: "project", RepositoryID: "repository"},
+		"work_revision": {Kind: ScopeWorkRevision, ProjectID: "project", MissionID: "mission", WorkRevisionID: "revision"},
+		"work":          {Kind: ScopeWork, ProjectID: "project", MissionID: "mission", WorkRevisionID: "revision", WorkID: "work"},
+	} {
+		t.Run("valid_optional_"+name, func(t *testing.T) {
+			input := optionalInput
+			input.Coordinate.Scope = scope
+			candidate, err := NewEventEnvelopeV2(input, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encodedCandidate, err := EncodeEventEnvelopeV2(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, inspected, ok := inspectRecoveryEventCanonicalV2(encodedCandidate)
+			decoded, decodeErr := decodeEventEnvelopeV2(encodedCandidate, registry, true)
+			if !ok || inspected != candidate.CanonicalDigest() || decodeErr != nil || decoded.CanonicalDigest() != candidate.CanonicalDigest() {
+				t.Fatalf("valid optional event changed: inspected=%s ok=%t decoded=%+v err=%v", inspected, ok, decoded, decodeErr)
+			}
+		})
+	}
+	for name, replacement := range map[string][2][]byte{
+		"empty_actor":      {[]byte(`"actor_id":"actor-01"`), []byte(`"actor_id":""`)},
+		"empty_process":    {[]byte(`"process_id":"process-01"`), []byte(`"process_id":""`)},
+		"empty_work":       {[]byte(`"work_revision_id":"revision-01"`), []byte(`"work_revision_id":""`)},
+		"empty_policy":     {[]byte(`"policy_revision":"policy-01"`), []byte(`"policy_revision":""`)},
+		"empty_governance": {[]byte(`"governance_revisions":["governance-01"]`), []byte(`"governance_revisions":[]`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutant := eventMutantWithRecomputedDigestForTest(t, optionalEvent, replacement[0], replacement[1])
+			if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+				t.Fatal("recovery event admitted an optional top-level member that its encoder omits")
+			}
+		})
+	}
+	for name, replacement := range map[string][2][]byte{
+		"wrong_type_actor":      {[]byte(`"actor_id":"actor-01"`), []byte(`"actor_id":1`)},
+		"null_governance":       {[]byte(`"governance_revisions":["governance-01"]`), []byte(`"governance_revisions":null`)},
+		"wrong_type_governance": {[]byte(`"governance_revisions":["governance-01"]`), []byte(`"governance_revisions":true`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutant := eventMutantWithRecomputedDigestForTest(t, optionalEvent, replacement[0], replacement[1])
+			if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+				t.Fatal("recovery event admitted a wrong-type optional member")
+			}
+		})
+	}
+
+	hostInput := event.input
+	hostInput.Coordinate.Scope = Scope{Kind: ScopeHost}
+	hostInput.Payload = event.Payload()
+	hostInput.Observations = event.Observations()
+	hostEvent, err := NewEventEnvelopeV2(hostInput, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"project_id", "mission_id", "repository_id", "work_revision_id", "work_id"} {
+		t.Run("empty_scope_"+name, func(t *testing.T) {
+			mutant := eventMutantWithRecomputedDigestForTest(t, hostEvent,
+				[]byte(`"scope":{"kind":"host"}`), []byte(`"scope":{"kind":"host","`+name+`":""}`))
+			if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+				t.Fatal("recovery event admitted an optional scope member that its encoder omits")
+			}
+		})
+	}
+	t.Run("wrong_type_scope_optional", func(t *testing.T) {
+		mutant := eventMutantWithRecomputedDigestForTest(t, hostEvent,
+			[]byte(`"scope":{"kind":"host"}`), []byte(`"scope":{"kind":"host","project_id":1}`))
+		if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+			t.Fatal("recovery event admitted a wrong-type scope optional")
+		}
+	})
+}
+
+func eventMutantWithRecomputedDigestForTest(t *testing.T, event EventEnvelopeV2, before, after []byte) []byte {
+	t.Helper()
+	unsigned, err := event.canonical(false)
+	if err != nil || bytes.Count(unsigned, before) != 1 {
+		t.Fatalf("cannot mutate unsigned event preimage count=%d err=%v", bytes.Count(unsigned, before), err)
+	}
+	unsigned = bytes.Replace(unsigned, before, after, 1)
+	mutantDigest := digest(canonicalEventDomain, unsigned)
+	signed, err := EncodeEventEnvelopeV2(event)
+	if err != nil || bytes.Count(signed, before) != 1 {
+		t.Fatalf("cannot mutate signed event count=%d err=%v", bytes.Count(signed, before), err)
+	}
+	signed = bytes.Replace(signed, before, after, 1)
+	want := []byte(`"canonical_event_sha256":"` + event.CanonicalDigest().String() + `"`)
+	replacement := []byte(`"canonical_event_sha256":"` + mutantDigest.String() + `"`)
+	if bytes.Count(signed, want) != 1 {
+		t.Fatal("cannot replace signed event digest")
+	}
+	return bytes.Replace(signed, want, replacement, 1)
+}
+
+func TestRecoveryOperationPreimageScannerRejectsStructuralAndOmissionMutants(t *testing.T) {
+	publicationID := testPublicationID("recovery-operation-preimage")
+	accepted := fixtureState(t, StatusAccepted, 1, nil, []EventID{"event-01"}, []EffectID{"effect-01"})
+	payload := operationPayload(t, accepted)
+	if state, err := reconstructOperationStateV2(payload, publicationID, true); err != nil || state.OperationID() != accepted.OperationID() {
+		t.Fatalf("valid sealed operation preimage changed: state=%+v err=%v", state, err)
+	}
+	resolved := fixtureState(t, StatusResolved, 2, []byte(`{"done":true}`), []EventID{"event-01"}, []EffectID{"effect-01"})
+	resolvedPayload := operationPayload(t, resolved)
+	if state, err := reconstructOperationStateV2(resolvedPayload, publicationID, true); err != nil || state.ResultDigest() != resolved.ResultDigest() {
+		t.Fatalf("valid sealed operation optional members changed: state=%+v err=%v", state, err)
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	unknownFields := maps.Clone(fields)
+	unknownFields["zz_unknown"] = json.RawMessage(`true`)
+	unknown, _ := json.Marshal(unknownFields)
+	operationMember := append([]byte(`"operation_id":`), fields["operation_id"]...)
+	duplicate := bytes.Replace(payload, operationMember, append(append(append([]byte(nil), operationMember...), ','), operationMember...), 1)
+
+	mutants := map[string][]byte{
+		"unknown": unknown, "duplicate": duplicate, "reordered": reverseTopLevelObjectForTest(t, payload),
+	}
+	for name, value := range map[string]json.RawMessage{
+		"canonical_result":      json.RawMessage(`""`),
+		"last_publication_id":   json.RawMessage(`""`),
+		"result_kind":           json.RawMessage(`""`),
+		"result_schema_version": json.RawMessage(`0`),
+		"result_sha256":         json.RawMessage(`""`),
+	} {
+		candidate := maps.Clone(fields)
+		candidate[name] = value
+		mutants["present_empty_"+name], _ = json.Marshal(candidate)
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if _, err := reconstructOperationStateV2(mutant, publicationID, true); err == nil {
+				t.Fatal("sealed operation preimage mutant was accepted")
+			}
+		})
+	}
+}
+
 func reverseTopLevelObjectForTest(t *testing.T, encoded []byte) []byte {
 	t.Helper()
 	var fields map[string]json.RawMessage
@@ -2494,9 +2698,26 @@ func TestTakeRecoveryRecordValidatesBeforeSealingAndKeepsPublicCopiesDefensive(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	invalidBytes := []byte(`{"z":1,"a":2}`)
-	if _, err := TakeRecoveryRecordV2(address, &invalidBytes, 1, ""); err == nil || invalidBytes == nil {
-		t.Fatal("unchecked or consumed invalid provider bytes")
+	for name, input := range map[string][]byte{
+		"reordered":   []byte(`{"z":1,"a":2}`),
+		"duplicate":   []byte(`{"a":1,"a":1}`),
+		"escaped_key": []byte(`{"\u0061":1}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalidBytes := append([]byte(nil), input...)
+			if _, err := TakeRecoveryRecordV2(address, &invalidBytes, 1, ""); err == nil || invalidBytes == nil {
+				t.Fatal("unchecked or consumed invalid provider bytes")
+			}
+		})
+	}
+	callerBytes := []byte(`{"a":1}`)
+	defensive, err := NewRecoveryRecordV2(address, callerBytes, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerBytes[2] = 'x'
+	if string(defensive.CanonicalValue()) != `{"a":1}` {
+		t.Fatal("public constructor retained caller-owned canonical bytes")
 	}
 	owned := []byte(`{"a":1}`)
 	record, err := TakeRecoveryRecordV2(address, &owned, 1, "")

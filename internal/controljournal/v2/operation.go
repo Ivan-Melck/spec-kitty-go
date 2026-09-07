@@ -474,12 +474,52 @@ func ReconstructOperationStateFromEventV2(event EventEnvelopeV2) (OperationState
 	return reconstructOperationStateV2(event.payload, event.input.PublicationID, true)
 }
 
+var operationStatePreimageMemberRulesV2 = [...]canonicalMemberRuleV2{
+	{"canonical_result", false}, {"effect_ids", true}, {"event_ids", true}, {"last_publication_id", false},
+	{"logical_version", true}, {"operation_id", true}, {"result_kind", false}, {"result_schema_version", false},
+	{"result_sha256", false}, {"status", true},
+}
+
+var operationStatePreimageOmittedMembersV2 = [...]struct {
+	name  string
+	value string
+}{
+	{"canonical_result", `""`}, {"last_publication_id", `""`}, {"result_kind", `""`},
+	{"result_schema_version", `0`}, {"result_sha256", `""`},
+}
+
+func inspectRecoveryOperationStatePreimageV2(payload []byte) bool {
+	if len(payload) == 0 || len(payload) > MaxCanonicalPayloadBytes {
+		return false
+	}
+	var members [len(operationStatePreimageMemberRulesV2)]canonicalObjectMemberV2
+	count, ok := scanCanonicalObjectMembersV2(payload, members[:])
+	if !ok || !validateCanonicalMemberSetV2(members[:count], operationStatePreimageMemberRulesV2[:]) {
+		return false
+	}
+	for _, omitted := range operationStatePreimageOmittedMembersV2 {
+		if value, exists := canonicalMemberValueV2(members[:count], omitted.name); exists && bytes.Equal(value, []byte(omitted.value)) {
+			return false
+		}
+	}
+	return true
+}
+
 func reconstructOperationStateV2(payload []byte, publicationID PublicationID, canonicalSealed bool) (OperationStateV2, error) {
 	if _, err := DecodePublicationID(string(publicationID)); err != nil {
 		return OperationStateV2{}, err
 	}
 	var wire operationStatePreimageWire
-	if err := decodeStrict(payload, MaxCanonicalPayloadBytes, &wire); err != nil || wire.LastPublicationID != "" {
+	var decodeErr error
+	if canonicalSealed {
+		if !inspectRecoveryOperationStatePreimageV2(payload) {
+			return OperationStateV2{}, invalid(ErrorJournalCorrupt, "operation_event_payload")
+		}
+		decodeErr = json.Unmarshal(payload, &wire)
+	} else {
+		decodeErr = decodeStrict(payload, MaxCanonicalPayloadBytes, &wire)
+	}
+	if decodeErr != nil || wire.LastPublicationID != "" {
 		return OperationStateV2{}, invalid(ErrorJournalCorrupt, "operation_event_payload")
 	}
 	resultDigest := Digest{}
