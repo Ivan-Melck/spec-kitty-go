@@ -248,11 +248,11 @@ while IFS= read -r name; do
   strings -a "$binary" >"$evidence_root/$name.strings.txt"
   readelf -d -W "$binary" >"$evidence_root/$name.dynamic.txt"
   ldd "$binary" >"$evidence_root/$name.libraries.txt" 2>&1 || true
-	  case "$name" in
-	    spec-kitty) (cd -- "$build_root" && ./spec-kitty --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
-	    spk-m1-proving-ground) (cd -- "$build_root" && ./spk-m1-proving-ground --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
-	    spk-m2-qualification) (cd -- "$build_root" && ./spk-m2-qualification --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
-	    spk-phase1-helper) (cd -- "$build_root" && ./spk-phase1-helper --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
+  case "$name" in
+    spec-kitty) (cd -- "$build_root" && ./spec-kitty --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
+    spk-m1-proving-ground) (cd -- "$build_root" && ./spk-m1-proving-ground --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
+    spk-m2-qualification) (cd -- "$build_root" && ./spk-m2-qualification --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
+    spk-phase1-helper) (cd -- "$build_root" && ./spk-phase1-helper --help) >"$evidence_root/$name.help.txt" 2>&1 || true ;;
     *) echo "unexpected command binary: $name" >&2; exit 1 ;;
   esac
   check_binary "$evidence_root/$name.version.txt"
