@@ -133,6 +133,18 @@
       "transcript_bytes": 20480,
       "attempt_events_sha256": "671bb1ee77a5428edbf439f83fe4c749f0eb6676fd2b147630e095acbb3b2eca",
       "terminal_sha256": "6af650246e211425a7fd3817db00b258b201b92dd9750f77712c828274a6dbe9"
+    },
+    {
+      "run_id": "wp17-qualification-d4822c03-final09",
+      "source_commit": "d4822c031ea8e0186f79aa1083148114a6b06fff",
+      "source_tree": "d1c6588bc88cf3b2a71dc5303d0afa0fb62955a0",
+      "outcome": "fail",
+      "reason": "all 100 zombie-isolation iterations and their Go test passed, but go test split each long logical machine receipt across two output events and the qualifier rejected the first partial JSON fragment as malformed",
+      "transcript_path": "/tmp/go-kitty3-qualification-d4822c03-final09/m2/wp17-qualification-d4822c03-final09/evidence/campaigns/behavior-zombie-workspace-isolation.go-test.jsonl",
+      "transcript_sha256": "90d8b6bbc1022e1fdbfdef1cc17ece9eb4c62998a69b8342bc1a73c13b1a43a7",
+      "transcript_bytes": 163102,
+      "attempt_events_sha256": "c52af711ad6a2a1283c0bb078e1a3df9191443b885c788d07ebd11d50f529973",
+      "terminal_sha256": "b415e79d775c0697b0c840826a0f16c445c14b4a564eaa60de2f3dc546c01c43"
     }
   ]
 }
