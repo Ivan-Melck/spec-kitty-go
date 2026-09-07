@@ -169,6 +169,7 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 	h.close()
 	config.CheckpointRevision = checkpoint.Revision
 	config.CheckpointOperations = checkpoint.OperationCount
+	config.ExpectedOperationIDs = collector.includedOperationIDs()
 	recoveries, err := m2external.RecoverPerformance(context.Background(), config, hostAuthorityID)
 	if err != nil {
 		t.Fatalf("performance recovery: %v", err)
@@ -398,6 +399,17 @@ func (c *performanceCollector) finishSuffix(want int) {
 		c.t.Fatalf("performance suffix operation census=%d want=%d", len(c.byOperation), want)
 	}
 	c.mode = performanceCollectIdle
+}
+
+func (c *performanceCollector) includedOperationIDs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result := make([]string, 0, len(c.byOperation))
+	for operation := range c.byOperation {
+		result = append(result, operation)
+	}
+	slices.Sort(result)
+	return result
 }
 
 func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2external.RecoveredOperation, runtimeOperations []string) ([]m2.PerformanceSample, map[string]int) {

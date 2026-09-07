@@ -44,6 +44,7 @@ type PerformanceConfig struct {
 	RecoveryRuns         int
 	CheckpointRevision   uint64
 	CheckpointOperations int
+	ExpectedOperationIDs []string
 	StartTimeout         time.Duration
 	StopTimeout          time.Duration
 	TestTimeout          time.Duration
@@ -64,8 +65,13 @@ type RecoveryObservation struct {
 }
 
 type RecoveredOperation struct {
-	Families       []string
-	PublicationIDs []string
+	Families        []string
+	PublicationIDs  []string
+	EventTypes      []string
+	ActorIDs        []string
+	ProcessIDs      []string
+	RuntimeEpochIDs []string
+	PolicyRevisions []string
 }
 
 // PublishPerformanceOutboxConnected executes one real direct-provider outbox
@@ -155,6 +161,14 @@ func ObservePerformanceEnvironment(config PerformanceConfig) (m2.PerformanceEnvi
 // RecoverPerformance starts a fresh admitted sidecar process for every run
 // and performs the production reducer restore into clean process memory.
 func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAuthorityID string) ([]RecoveryObservation, error) {
+	if len(config.ExpectedOperationIDs) != config.Observations || !slices.IsSorted(config.ExpectedOperationIDs) {
+		return nil, fmt.Errorf("performance expected operation census is incomplete")
+	}
+	for index, operation := range config.ExpectedOperationIDs {
+		if operation == "" || index > 0 && operation == config.ExpectedOperationIDs[index-1] {
+			return nil, fmt.Errorf("performance expected operation census is noncanonical")
+		}
+	}
 	observations := make([]RecoveryObservation, 0, config.RecoveryRuns)
 	var projectionSHA string
 	for run := 0; run < config.RecoveryRuns; run++ {
@@ -194,7 +208,13 @@ func RecoverPerformance(ctx context.Context, config PerformanceConfig, hostAutho
 				state.close()
 				return observations, fmt.Errorf("recovery post-checkpoint event census=%d states=%d", len(observation.Operations), postCheckpointStates)
 			}
-			observation.ObservedOperations = len(observation.Operations)
+			if err := validatePerformanceOperationCensus(observation.Operations, config.ExpectedOperationIDs, func(operation string) (journalv2.OperationBindingV2, error) {
+				return readPerformanceOperationBinding(ctx, state.adapter, recovered.StoreRevision(), operation)
+			}); err != nil {
+				state.close()
+				return observations, err
+			}
+			observation.ObservedOperations = len(config.ExpectedOperationIDs)
 		} else {
 			if postCheckpointStates != len(observations[0].Operations) {
 				state.close()
@@ -242,6 +262,11 @@ func PreparePerformanceCheckpoint(ctx context.Context, config PerformanceConfig,
 func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result restorev2.ResultV2, afterRevision uint64) (map[string]RecoveredOperation, []string, error) {
 	byOperation := map[string]map[string]struct{}{}
 	publications := map[string]map[string]struct{}{}
+	eventTypes := map[string]map[string]struct{}{}
+	actors := map[string]map[string]struct{}{}
+	processes := map[string]map[string]struct{}{}
+	epochs := map[string]map[string]struct{}{}
+	policies := map[string]map[string]struct{}{}
 	runtimeRevisions := map[string]uint64{}
 	seen := 0
 	for _, state := range result.Playback().States() {
@@ -273,9 +298,19 @@ func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result
 			if byOperation[operation] == nil {
 				byOperation[operation] = map[string]struct{}{}
 				publications[operation] = map[string]struct{}{}
+				eventTypes[operation] = map[string]struct{}{}
+				actors[operation] = map[string]struct{}{}
+				processes[operation] = map[string]struct{}{}
+				epochs[operation] = map[string]struct{}{}
+				policies[operation] = map[string]struct{}{}
 			}
 			byOperation[operation]["family/"+event.Family()] = struct{}{}
 			publications[operation][string(event.PublicationID())] = struct{}{}
+			eventTypes[operation][event.EventType()] = struct{}{}
+			actors[operation][string(event.ActorID())] = struct{}{}
+			processes[operation][string(event.ProcessID())] = struct{}{}
+			epochs[operation][string(event.CommittedRuntimeEpochID())] = struct{}{}
+			policies[operation][event.PolicyRevision()] = struct{}{}
 			if event.Family() == "runtime_host" && (runtimeRevisions[operation] == 0 || record.RecordRevision() < runtimeRevisions[operation]) {
 				runtimeRevisions[operation] = record.RecordRevision()
 			}
@@ -293,7 +328,12 @@ func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result
 			publicationIDs = append(publicationIDs, publication)
 		}
 		slices.Sort(publicationIDs)
-		resultMap[operation] = RecoveredOperation{Families: families, PublicationIDs: publicationIDs}
+		resultMap[operation] = RecoveredOperation{
+			Families: families, PublicationIDs: publicationIDs,
+			EventTypes: sortedSet(eventTypes[operation]), ActorIDs: sortedSet(actors[operation]),
+			ProcessIDs: sortedSet(processes[operation]), RuntimeEpochIDs: sortedSet(epochs[operation]),
+			PolicyRevisions: sortedSet(policies[operation]),
+		}
 	}
 	runtimeOperations := make([]string, 0, len(runtimeRevisions))
 	for operation := range runtimeRevisions {
@@ -312,6 +352,84 @@ func operationsFromEvents(ctx context.Context, reader restorev2.ReaderV2, result
 		return nil, nil, fmt.Errorf("performance post-checkpoint runtime_host event census=%d want=0", len(runtimeOperations))
 	}
 	return resultMap, runtimeOperations, nil
+}
+
+func sortedSet(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func readPerformanceOperationBinding(ctx context.Context, reader restorev2.ReaderV2, revision journalv2.StoreRevisionV2, operation string) (journalv2.OperationBindingV2, error) {
+	address, err := journalv2.NewOperationBindingAddressV2(journalv2.OperationID(operation))
+	if err != nil {
+		return journalv2.OperationBindingV2{}, err
+	}
+	request, err := journalv2.NewReadRequestV2(address, revision)
+	if err != nil {
+		return journalv2.OperationBindingV2{}, err
+	}
+	record, err := reader.ReadV2(ctx, request)
+	if err != nil {
+		return journalv2.OperationBindingV2{}, err
+	}
+	binding, err := journalv2.DecodeOperationBindingRecordV2(record)
+	if err != nil {
+		return journalv2.OperationBindingV2{}, fmt.Errorf("performance operation binding is invalid: %w", err)
+	}
+	if binding.OperationID() != journalv2.OperationID(operation) {
+		return journalv2.OperationBindingV2{}, fmt.Errorf("performance operation binding identity differs")
+	}
+	return binding, nil
+}
+
+func validatePerformanceOperationCensus(actual map[string]RecoveredOperation, expectedIDs []string, bindingFor func(string) (journalv2.OperationBindingV2, error)) error {
+	expected := make(map[string]struct{}, len(expectedIDs))
+	for _, operation := range expectedIDs {
+		expected[operation] = struct{}{}
+		if _, found := actual[operation]; !found {
+			return fmt.Errorf("recovery omitted measured operation %s", operation)
+		}
+	}
+	bootstrap := 0
+	for operation, recoveredOperation := range actual {
+		if _, measured := expected[operation]; measured {
+			continue
+		}
+		binding, err := bindingFor(operation)
+		if err != nil || !isPerformanceBootstrapOperation(recoveredOperation, binding) {
+			return fmt.Errorf("recovery contains unmeasured product operation %s: binding=%v", operation, err)
+		}
+		bootstrap++
+	}
+	if bootstrap > 1 {
+		return fmt.Errorf("recovery bootstrap operation census=%d want<=1", bootstrap)
+	}
+	return nil
+}
+
+// isPerformanceBootstrapOperation admits only the scheduler's sealed
+// checkpoint publication. The decision is bound to the durable command and
+// envelope provenance; an arbitrary operation-only publication cannot balance
+// a missing measured authority operation by choosing a convenient identifier.
+func isPerformanceBootstrapOperation(operation RecoveredOperation, binding journalv2.OperationBindingV2) bool {
+	scope := binding.Scope()
+	return slices.Equal(operation.Families, []string{"family/operation"}) &&
+		slices.Equal(operation.EventTypes, []string{"operation.accepted"}) &&
+		len(operation.PublicationIDs) == 1 &&
+		slices.Equal(operation.ActorIDs, []string{"runtime-checkpoint"}) &&
+		slices.Equal(operation.ProcessIDs, []string{"runtime-checkpoint"}) &&
+		len(operation.RuntimeEpochIDs) == 1 && operation.RuntimeEpochIDs[0] != "" &&
+		slices.Equal(operation.PolicyRevisions, []string{"runtime-v2"}) &&
+		binding.CommandKind() == "checkpoint.write" && binding.CommandSchemaVersion() == 2 &&
+		scope == (journalv2.Scope{Kind: journalv2.ScopeHost}) &&
+		binding.ActorID() == "runtime-checkpoint" && binding.ProcessID() == "runtime-checkpoint" &&
+		binding.DoctrineRevision() == "runtime-v2" && binding.ProfileRevision() == "runtime-v2" && binding.PolicyRevision() == "runtime-v2" &&
+		binding.OriginatingEpoch() == journalv2.RuntimeEpochID(operation.RuntimeEpochIDs[0]) &&
+		binding.ObservedCreatedAt() == "1970-01-01T00:00:00Z"
 }
 
 func restoredPerformanceTracker(reducers journalv2.ReducerSetV2, recovered restorev2.ResultV2) (*journalv2.ProjectionTrackerV2, error) {
