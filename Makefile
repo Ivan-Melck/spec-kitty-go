@@ -22,6 +22,8 @@ M2_PROCESS_ID ?=
 M2_PROFILE_REVISION ?=
 M2_IMPLEMENTATION_CONTRIBUTORS ?=
 M2_PROFILE_DOCUMENT ?= $(CURDIR)/docs/programs/evidence/m2-producer-profile.json
+M2_GIT_DIR := $(shell git rev-parse --absolute-git-dir)
+M2_BUILD_ENV := GIT_DIR="$(M2_GIT_DIR)" GIT_WORK_TREE="$(CURDIR)" CGO_ENABLED=0
 
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
@@ -209,8 +211,8 @@ m2-sbom: ## Generate deterministic CycloneDX twice and require byte identity.
 
 m2-performance: ## Run independently observed recovery/query/durable-mutation qualification.
 	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
-	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
-	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
+	$(M2_BUILD_ENV) $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
+	$(M2_BUILD_ENV) $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
 	"$(M2_QUALIFIER_BINARY)" measure --repository "$(CURDIR)" --sidecar "$(M2_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" --output "$(M2_EVIDENCE_ROOT)/performance.json"
 
 m2-short: m2-mutants-smoke ## Run the strict sidecar-free PR contracts, structural absence, bounded race, mutant, static, and module gates.
@@ -228,8 +230,8 @@ m2-qualification: ## Produce one immutable technical-pass bundle eligible for in
 	@test -n "$(M2_PROFILE_REVISION)" || { echo 'M2_PROFILE_REVISION is required' >&2; exit 1; }
 	@test -n "$(M2_IMPLEMENTATION_CONTRIBUTORS)" || { echo 'M2_IMPLEMENTATION_CONTRIBUTORS is required' >&2; exit 1; }
 	@mkdir -p "$(M2_EVIDENCE_ROOT)" "$(BUILD_DIR)"
-	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
-	CGO_ENABLED=0 $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
+	$(M2_BUILD_ENV) $(GO) build -trimpath -o "$(M2_PRODUCT_BINARY)" ./cmd/spec-kitty
+	$(M2_BUILD_ENV) $(GO) build -trimpath -o "$(M2_QUALIFIER_BINARY)" ./cmd/spk-m2-qualification
 	"$(M2_QUALIFIER_BINARY)" run --repository "$(CURDIR)" --output "$(M2_EVIDENCE_ROOT)" \
 		--sidecar "$(M2_GAPDBD)" --product-binary "$(M2_PRODUCT_BINARY)" --run-id "$(M2_RUN_ID)" \
 		--actor-id "$(M2_ACTOR_ID)" --process-id "$(M2_PROCESS_ID)" \
