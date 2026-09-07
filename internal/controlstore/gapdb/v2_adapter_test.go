@@ -385,6 +385,37 @@ func TestV2ReadManyPreservesExactOrderRevisionAndMissingEvidence(t *testing.T) {
 	}
 }
 
+func TestV2ReadManyRefusesAboveAdmittedProviderBatchAsTypedBudget(t *testing.T) {
+	attempt, _ := journalv2.NewStoreRevisionV2("db-1", 17, 17)
+	reads := make([]journalv2.ReadRequestV2, MaxMutationsPerBatch+1)
+	for index := range reads {
+		address, err := journalv2.NewOperationHeadAddressV2(journalv2.OperationID(fmt.Sprintf("operation-%03d", index)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		reads[index], err = journalv2.NewReadRequestV2(address, attempt)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	request, err := journalv2.NewReadManyRequestV2(reads, journalv2.MaxRecoveryReadManyBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	provider := &fakeProvider{readManyFn: func(context.Context, []string) (gapdbapi.ReadManyResult, error) {
+		called = true
+		return gapdbapi.ReadManyResult{}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	if _, err := adapter.ReadManyV2(t.Context(), request); !journalv2.IsKind(err, journalv2.ErrorBudgetExceeded) {
+		t.Fatalf("oversized exact read error=%v, want typed budget", err)
+	}
+	if called {
+		t.Fatal("oversized exact read crossed the provider boundary")
+	}
+}
+
 func TestV2ReaderUsesFoundationPublicationWitnessAddressAndRejectsExpiry(t *testing.T) {
 	plan := v2TestPlan(t)
 	key, err := v2PublicationWitnessKey(plan.PublicationID())

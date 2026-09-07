@@ -85,6 +85,13 @@ func (a *Adapter) ReadManyV2(ctx context.Context, request journalv2.ReadManyRequ
 	if len(requests) == 0 || request.AttemptRevision().CurrentRevision() == 0 || request.MaxBytes() <= 0 {
 		return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorInvalidCanonicalData, "read_many_request")
 	}
+	// The foundation recovery contract deliberately admits a larger logical
+	// census than one product-provider call. Refuse above the adapter's admitted
+	// atomic-operation ceiling as a typed budget result so RestoreV2 can split
+	// the exact set without depending on provider error text or configuration.
+	if len(requests) > MaxMutationsPerBatch {
+		return journalv2.RecoveryReadManyResultV2{}, recoveryError(journalv2.ErrorBudgetExceeded, "read_many_request")
+	}
 	keys := make([]string, len(requests))
 	keyModels := make([]v2Key, len(requests))
 	for index, item := range requests {
