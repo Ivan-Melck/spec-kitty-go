@@ -7,13 +7,13 @@
   "release_ready": false,
   "adopted": false,
   "gapdb_tuple": {
-    "source_revision": "c27646533cde29bcc9840b4d5feac54aa2215d04",
-    "source_tree": "093d22c790d90859aec5ecb8d53912122688994d",
-    "module_version": "v0.0.0-20260907061131-c27646533cde",
+    "source_revision": "f9f3695076001eb6fcb3c4ee5366439b20a4b950",
+    "source_tree": "4fd41ec2dc0c899926142b6b16f956c96c8b569a",
+    "module_version": "v0.0.0-20260907072313-f9f369507600",
     "sidecar": {
       "command": "gapdbd",
-      "sha256": "4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2",
-      "size_bytes": 5357809
+      "sha256": "366a893d36c7c60282e84f43e67674c5d5e9a63b6e092227fffcdf861014ce21",
+      "size_bytes": 5365521
     },
     "protocol": {
       "wire_version": 1,

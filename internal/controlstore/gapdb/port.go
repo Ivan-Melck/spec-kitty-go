@@ -25,11 +25,11 @@ const (
 	AssertionCandidateSourceTree      = "a109220e3dae287e321fb37e904d3bea0802b911"
 	AssertionCandidateSidecarSHA256   = "947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad"
 	AssertionCandidateSidecarBytes    = 5_327_126
-	QualificationClientModuleVersion  = "v0.0.0-20260907061131-c27646533cde"
-	QualificationClientSourceRevision = "c27646533cde29bcc9840b4d5feac54aa2215d04"
-	QualificationClientSourceTree     = "093d22c790d90859aec5ecb8d53912122688994d"
-	QualificationSidecarSHA256        = "4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2"
-	QualificationSidecarBytes         = 5_357_809
+	QualificationClientModuleVersion  = "v0.0.0-20260907072313-f9f369507600"
+	QualificationClientSourceRevision = "f9f3695076001eb6fcb3c4ee5366439b20a4b950"
+	QualificationClientSourceTree     = "4fd41ec2dc0c899926142b6b16f956c96c8b569a"
+	QualificationSidecarSHA256        = "366a893d36c7c60282e84f43e67674c5d5e9a63b6e092227fffcdf861014ce21"
+	QualificationSidecarBytes         = 5_365_521
 	MaxKeyBytes                       = 1 << 10
 	MaxOrdinaryValueBytes             = 256 << 10
 	MaxCheckpointValueBytes           = 4 << 20

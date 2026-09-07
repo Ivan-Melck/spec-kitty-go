@@ -9,7 +9,7 @@ modernc_driver=modernc.org/$legacy_word
 catalog_name=${legacy_word}_master
 journal_pragma='pragma journal_''mode'
 sql_package=database/sql
-qualification_sidecar_sha=4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2
+qualification_sidecar_sha=366a893d36c7c60282e84f43e67674c5d5e9a63b6e092227fffcdf861014ce21
 script_directory=${0%/*}
 if [ "$script_directory" = "$0" ]; then script_directory=.; fi
 CDPATH= cd -- "$script_directory/../.."

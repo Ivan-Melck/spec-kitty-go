@@ -12,7 +12,7 @@ QUALIFIED_BEADS_DIGEST := 0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff
 BEADS_BIN ?=
 BEADS_INSTALL_RESULT ?=
 OFFLINE_ENFORCED ?=
-M2_GAPDBD ?= /tmp/gapdb-m2-reviewed.RTOAmn/gapdbd
+M2_GAPDBD ?= /tmp/gapdb-m2-indexed-reviewed.3dNe06/gapdbd
 M2_RUN_ID ?= m2-$$(git rev-parse --short=12 HEAD)-$$(date -u +%Y%m%dT%H%M%SZ)
 M2_EVIDENCE_ROOT ?= $(ARTIFACT_DIR)/m2
 M2_PRODUCT_BINARY ?= $(BUILD_DIR)/spec-kitty
@@ -163,7 +163,7 @@ m2-contract: ## Verify frozen M2 contracts, family registry, manifest, census, a
 
 m2-capabilities: ## Strictly run capability/readiness contracts, including the admitted-sidecar real-host concurrency scenario.
 	@test -x "$(M2_GAPDBD)" || { echo 'm2-capabilities requires executable M2_GAPDBD' >&2; exit 1; }
-	@test "$$(sha256sum "$(M2_GAPDBD)" | awk '{print $$1}')" = 4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2 || { echo 'M2_GAPDBD is not the exact qualification candidate' >&2; exit 1; }
+	@test "$$(sha256sum "$(M2_GAPDBD)" | awk '{print $$1}')" = 366a893d36c7c60282e84f43e67674c5d5e9a63b6e092227fffcdf861014ce21 || { echo 'M2_GAPDBD is not the exact qualification candidate' >&2; exit 1; }
 	SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="$(M2_GAPDBD)" $(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group capabilities-full --timeout 8m
 
 m2-recovery: ## Run the checkpoint-plus-10k recovery qualification and deadline laws.
@@ -188,7 +188,7 @@ m2-fault: ## Run exact 100-trial fault, ambiguity, tracker, concurrency, and res
 
 m2-mutants: m2-mutants-smoke ## Kill the full M2 mutant census, including exact admitted-sidecar production-runtime mutants.
 	@test -x "$(M2_GAPDBD)" || { echo 'm2-mutants requires executable M2_GAPDBD' >&2; exit 1; }
-	@test "$$(sha256sum "$(M2_GAPDBD)" | awk '{print $$1}')" = 4571ee2724e4b8194c8dda057adc471fcc1bcedc592e7c47a78282a9ef6388d2 || { echo 'M2_GAPDBD is not the exact qualification candidate' >&2; exit 1; }
+	@test "$$(sha256sum "$(M2_GAPDBD)" | awk '{print $$1}')" = 366a893d36c7c60282e84f43e67674c5d5e9a63b6e092227fffcdf861014ce21 || { echo 'M2_GAPDBD is not the exact qualification candidate' >&2; exit 1; }
 	SPEC_KITTY_WP13_GAPDBD="$(M2_GAPDBD)" $(GO) run ./cmd/spk-m2-qualification short --repository "$(CURDIR)" --group mutants-full --timeout 8m
 
 m2-mutants-smoke: ## Strictly prove the sidecar-free PR mutant census with no missing or skipped selector.
