@@ -342,19 +342,7 @@ func MeasurePerformance(ctx context.Context, config PerformanceConfig) (m2.RawPe
 	output := filepath.Join(config.RuntimeRoot, "performance.raw.json")
 	command := exec.CommandContext(ctx, "go", "test", "-json", "./internal/scenario", "-run", "^TestM2AcceptedAuthorityPerformanceCampaign$", "-count=1")
 	command.Dir = config.Repository
-	command.Env = append(os.Environ(),
-		"SPEC_KITTY_M2_PERFORMANCE_OUTPUT="+output,
-		"SPEC_KITTY_M2_PERFORMANCE_RUN_ID="+config.RunID,
-		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_COMMIT="+config.Source.Commit,
-		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_TREE="+config.Source.Tree,
-		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GO="+config.Source.GoVersion,
-		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOMOD="+config.Source.GoModSHA256,
-		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOSUM="+config.Source.GoSumSHA256,
-		"SPEC_KITTY_M2_PERFORMANCE_REFERENCE="+config.Reference,
-		"SPEC_KITTY_M2_PERFORMANCE_QUALIFIER="+config.QualifierExecutable,
-		"SPEC_KITTY_M2_PERFORMANCE_PRODUCT="+config.ProductExecutable,
-		"SPEC_KITTY_WP15_GAPDBD="+config.Executable,
-	)
+	command.Env = performanceChildEnvironment(os.Environ(), config, output)
 	var transcript boundedBuffer
 	transcript.limit = 64 << 20
 	command.Stdout, command.Stderr = &transcript, &transcript
@@ -392,6 +380,49 @@ func MeasurePerformance(ctx context.Context, config PerformanceConfig) (m2.RawPe
 		return result, transcript.Bytes(), err
 	}
 	return result, transcript.Bytes(), nil
+}
+
+func performanceChildEnvironment(base []string, config PerformanceConfig, output string) []string {
+	keys := []string{
+		"SPEC_KITTY_M2_PERFORMANCE_OUTPUT",
+		"SPEC_KITTY_M2_PERFORMANCE_RUN_ID",
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_COMMIT",
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_TREE",
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GO",
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOMOD",
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOSUM",
+		"SPEC_KITTY_M2_PERFORMANCE_REFERENCE",
+		"SPEC_KITTY_M2_PERFORMANCE_QUALIFIER",
+		"SPEC_KITTY_M2_PERFORMANCE_PRODUCT",
+		"SPEC_KITTY_WP13_GAPDBD",
+		"SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE",
+		"SPEC_KITTY_WP15_GAPDBD",
+	}
+	result := make([]string, 0, len(base)+len(keys)-1)
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && slices.Contains(keys, key) {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result,
+		"SPEC_KITTY_M2_PERFORMANCE_OUTPUT="+output,
+		"SPEC_KITTY_M2_PERFORMANCE_RUN_ID="+config.RunID,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_COMMIT="+config.Source.Commit,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_TREE="+config.Source.Tree,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GO="+config.Source.GoVersion,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOMOD="+config.Source.GoModSHA256,
+		"SPEC_KITTY_M2_PERFORMANCE_SOURCE_GOSUM="+config.Source.GoSumSHA256,
+		"SPEC_KITTY_M2_PERFORMANCE_REFERENCE="+config.Reference,
+		"SPEC_KITTY_M2_PERFORMANCE_QUALIFIER="+config.QualifierExecutable,
+		"SPEC_KITTY_M2_PERFORMANCE_PRODUCT="+config.ProductExecutable,
+		// WP14 is the production scenario's explicit admitted authority
+		// executable contract. WP15 is retained for the direct/native
+		// companion paths. Both receive the same already-verified binary.
+		"SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE="+config.Executable,
+		"SPEC_KITTY_WP15_GAPDBD="+config.Executable,
+	)
 }
 
 type boundedBuffer struct {
