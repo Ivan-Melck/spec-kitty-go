@@ -302,6 +302,47 @@ func (h *portableHarness) createMission(project, missionID, operation string) mi
 	return result
 }
 
+// recordMissionActivity supplies a real, reducer-validated mutation against a
+// bounded mission census. Performance qualification can therefore observe
+// 10,000 unique accepted operations without exceeding the frozen aggregate
+// budget by manufacturing 10,000 throwaway missions.
+func (h *portableHarness) recordMissionActivity(prior mission.ReadinessAuthorityResultV2, operation string, sequence int) mission.ReadinessAuthorityResultV2 {
+	h.t.Helper()
+	previous := prior.State()
+	definitionDigest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"portable-scenario"}`))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	observedAt := time.Date(2026, 9, 5, 12, 1, h.starts, 0, time.UTC).Format(time.RFC3339)
+	next, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+		ProjectID: previous.ProjectID(), MissionID: previous.MissionID(), DefinitionRevision: "definition-1", DefinitionDigest: definitionDigest,
+		Version: previous.Version() + 1, Lifecycle: previous.Lifecycle(), CurrentWorkRevision: previous.CurrentWorkRevision(), ActivityCount: previous.ActivityCount() + 1,
+		ActiveFacts: previous.ActiveFacts(), LastOperationID: journalv2.OperationID(operation), ObservedAt: observedAt,
+	})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	resultDigest, err := journalv2.ReducerStateDigestV2([]byte(fmt.Sprintf(`{"sequence":%d}`, sequence)))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	started := time.Now()
+	result, err := h.host.ExecuteReadiness(h.t.Context(), h.host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{
+		SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: journalv2.OperationID(operation), ProjectID: previous.ProjectID(), MissionID: previous.MissionID(),
+		ActorID: "actor-scenario", ProcessID: "process-scenario", OriginatingRuntimeEpochID: h.host.RuntimeEpochID(), DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1",
+		ObservedAt: observedAt, EventType: mission.ReadinessEventActivityRecordedV2, Expected: previous, Updated: next,
+		Activity: &mission.MissionActivityV2{ActivityID: fmt.Sprintf("activity-performance-%05d", sequence), Action: mission.ActionRef{ID: mission.ActionArtifactPublish, Scope: mission.AuthorityScope{Kind: mission.ScopeArtifact, Identity: "performance"}}, Outcome: "succeeded", ResultDigest: resultDigest.String()},
+	})
+	h.observeMutation([]string{"mission", "operation"}, operation, started, err)
+	if err != nil {
+		h.t.Fatalf("record mission activity %s: %v", previous.MissionID(), err)
+	}
+	if result.PublicationID() == "" {
+		h.t.Fatalf("record mission activity %s returned no publication", previous.MissionID())
+	}
+	return result
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

@@ -13,6 +13,7 @@ import (
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/productionruntime"
 	m2 "github.com/spec-kitty/go-kitty3/internal/testcampaign/m2"
 	m2external "github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/external"
@@ -56,6 +57,17 @@ func TestM2DirectOutboxPerformanceMutationUsesDurableEffectSource(t *testing.T) 
 	h.close()
 	if sample.Family != "family/outbox" || !slices.Equal(sample.EmittedFamilies, []string{"family/operation", "family/outbox"}) || sample.AfterRevision <= sample.BeforeRevision || sample.PublicationCount != 1 || len(sample.PublicationIDs) != 1 {
 		t.Fatalf("direct outbox performance sample=%+v", sample)
+	}
+}
+
+func TestPerformanceSuffixReusesBoundedMissionWithRealActivityMutations(t *testing.T) {
+	h := newPortableHarness(t, ProductionConfig{ExecutablePath: productionExecutable(t), Seed: t.Name()})
+	result := h.createMission("project-performance-bounded", "mission-performance-bounded", "operation-performance-bounded-create")
+	for sequence := 0; sequence < 2; sequence++ {
+		result = h.recordMissionActivity(result, fmt.Sprintf("operation-performance-bounded-%d", sequence), sequence)
+	}
+	if result.State().Version() != 3 || result.State().ActivityCount() != 2 || result.PublicationID() == "" {
+		t.Fatalf("bounded performance mission did not publish real activities: version=%d activities=%d publication=%s", result.State().Version(), result.State().ActivityCount(), result.PublicationID())
 	}
 }
 
@@ -125,14 +137,18 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 	continueTwoItemMissionScenario(t, h, missionResult, revision, governance, &scenarioEffectReconciler{}, false)
 
 	queryMissions := []performanceMission{{projectID, missionID}}
+	fillMissions := make([]mission.ReadinessAuthorityResultV2, 0, performanceFillSlots)
 	for index := 0; collector.suffixCount() < performanceSuffixOps; index++ {
 		project := "project-performance-fill"
-		// Keep the product aggregate census inside the frozen playback budget;
-		// every operation identity remains unique and durably acknowledged.
-		missionID := fmt.Sprintf("mission-performance-fill-%05d", index%performanceFillSlots)
 		operationID := fmt.Sprintf("operation-performance-fill-%05d", index)
-		h.createMission(project, missionID, operationID)
-		queryMissions = append(queryMissions, performanceMission{project, missionID})
+		if index < performanceFillSlots {
+			missionID := fmt.Sprintf("mission-performance-fill-%05d", index)
+			fillMissions = append(fillMissions, h.createMission(project, missionID, operationID))
+			queryMissions = append(queryMissions, performanceMission{project, missionID})
+			continue
+		}
+		slot := index % len(fillMissions)
+		fillMissions[slot] = h.recordMissionActivity(fillMissions[slot], operationID, index)
 	}
 	collector.finishSuffix(performanceSuffixOps)
 
