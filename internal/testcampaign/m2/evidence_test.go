@@ -100,6 +100,22 @@ func TestPerformanceRuntimeHostIsBoundOnlyToObservedRecovery(t *testing.T) {
 			t.Fatal("runtime_host startup label became mutation evidence")
 		}
 	})
+	t.Run("runtime-bootstrap-retained-without-journal-claim", func(t *testing.T) {
+		mutant := fixtureRawPerformance(t, "run-performance-runtime-bootstrap", source, referenceBytes)
+		mutant.Samples = append(mutant.Samples, PerformanceSample{Index: len(mutant.Samples), Kind: "mutation", OperationID: "runtime-host-start-3", DurationNS: int64(time.Millisecond), Included: false, ExclusionReason: "runtime_bootstrap"})
+		mutant.RuntimeBootstrapExcluded = 1
+		mutant.Statistics[0] = PerformanceStatisticsFor("mutation", mutant.MutationMS, mutant.WarmupExcluded+mutant.RuntimeBootstrapExcluded)
+		if _, err := SummarizePerformance(mutant); err != nil {
+			t.Fatalf("truthful runtime bootstrap exclusion rejected: %v", err)
+		}
+		mutant.Samples[len(mutant.Samples)-1].Family = "family/runtime_host"
+		mutant.Samples[len(mutant.Samples)-1].EmittedFamilies = []string{"family/operation", "family/runtime_host"}
+		mutant.Samples[len(mutant.Samples)-1].MutationCount = 5
+		mutant.Samples[len(mutant.Samples)-1].PublicationCount = 1
+		if _, err := SummarizePerformance(mutant); err == nil {
+			t.Fatal("runtime bootstrap fabricated journal publication evidence")
+		}
+	})
 	t.Run("recovery-family-receipt-omitted", func(t *testing.T) {
 		mutant := fixtureRawPerformance(t, "run-performance-runtime-missing", source, referenceBytes)
 		for index := range mutant.Samples {

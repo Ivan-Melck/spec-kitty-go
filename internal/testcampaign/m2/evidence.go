@@ -57,23 +57,24 @@ type Verification struct {
 }
 
 type RawPerformance struct {
-	SchemaVersion          int                     `json:"schema_version"`
-	RunID                  string                  `json:"run_id"`
-	SourceCommit           string                  `json:"source_commit"`
-	SourceTree             string                  `json:"source_tree"`
-	ReferenceProfileSHA256 string                  `json:"reference_profile_sha256"`
-	Environment            PerformanceEnvironment  `json:"environment"`
-	Dataset                PerformanceDataset      `json:"dataset"`
-	RecoveryOperations     int                     `json:"recovery_operations"`
-	RecoveryMS             []float64               `json:"recovery_ms"`
-	QueryMS                []float64               `json:"query_ms"`
-	MutationMS             []float64               `json:"mutation_ms"`
-	Samples                []PerformanceSample     `json:"samples"`
-	Statistics             []PerformanceStatistics `json:"statistics"`
-	WarmupExcluded         int                     `json:"warmup_excluded"`
-	ReplayExcluded         int                     `json:"replay_excluded"`
-	Failures               int                     `json:"failures"`
-	Method                 string                  `json:"method"`
+	SchemaVersion            int                     `json:"schema_version"`
+	RunID                    string                  `json:"run_id"`
+	SourceCommit             string                  `json:"source_commit"`
+	SourceTree               string                  `json:"source_tree"`
+	ReferenceProfileSHA256   string                  `json:"reference_profile_sha256"`
+	Environment              PerformanceEnvironment  `json:"environment"`
+	Dataset                  PerformanceDataset      `json:"dataset"`
+	RecoveryOperations       int                     `json:"recovery_operations"`
+	RecoveryMS               []float64               `json:"recovery_ms"`
+	QueryMS                  []float64               `json:"query_ms"`
+	MutationMS               []float64               `json:"mutation_ms"`
+	Samples                  []PerformanceSample     `json:"samples"`
+	Statistics               []PerformanceStatistics `json:"statistics"`
+	WarmupExcluded           int                     `json:"warmup_excluded"`
+	ReplayExcluded           int                     `json:"replay_excluded"`
+	RuntimeBootstrapExcluded int                     `json:"runtime_bootstrap_excluded"`
+	Failures                 int                     `json:"failures"`
+	Method                   string                  `json:"method"`
 }
 
 // PerformanceReference is the source-bound admission predicate for one
@@ -255,8 +256,8 @@ func VerifyPerformanceTranscript(raw []byte) error {
 }
 
 func validatePerformanceSamples(raw RawPerformance) error {
-	wantTotal := raw.WarmupExcluded + raw.ReplayExcluded + len(raw.MutationMS) + len(raw.QueryMS) + len(raw.RecoveryMS)
-	if len(raw.Samples) != wantTotal || raw.Dataset.SuffixOperations != len(raw.MutationMS) || raw.RecoveryOperations != raw.Dataset.SuffixOperations || raw.WarmupExcluded < 0 {
+	wantTotal := raw.WarmupExcluded + raw.ReplayExcluded + raw.RuntimeBootstrapExcluded + len(raw.MutationMS) + len(raw.QueryMS) + len(raw.RecoveryMS)
+	if len(raw.Samples) != wantTotal || raw.Dataset.SuffixOperations != len(raw.MutationMS) || raw.RecoveryOperations != raw.Dataset.SuffixOperations || raw.WarmupExcluded < 0 || raw.RuntimeBootstrapExcluded < 0 {
 		return fmt.Errorf("performance raw sample census is incomplete")
 	}
 	observed := map[string][]float64{"mutation": {}, "query": {}, "recovery": {}}
@@ -273,7 +274,7 @@ func validatePerformanceSamples(raw RawPerformance) error {
 			return fmt.Errorf("performance sample %d has unknown kind %q", index, sample.Kind)
 		}
 		if !sample.Included {
-			if sample.Kind != "mutation" || sample.ExclusionReason != "warmup" && sample.ExclusionReason != "idempotent_replay" {
+			if sample.Kind != "mutation" || sample.ExclusionReason != "warmup" && sample.ExclusionReason != "idempotent_replay" && sample.ExclusionReason != "runtime_bootstrap" {
 				return fmt.Errorf("performance sample %d has unapproved exclusion", index)
 			}
 			if sample.ExclusionReason == "warmup" && (sample.Family != "" || len(sample.EmittedFamilies) != 0 || sample.BeforeRevision != 0 || sample.AfterRevision != 0 || sample.ProjectionRevision != 0 || sample.MutationCount != 0 || sample.PublicationCount != 0 || len(sample.PublicationIDs) != 0) {
@@ -281,6 +282,9 @@ func validatePerformanceSamples(raw RawPerformance) error {
 			}
 			if sample.ExclusionReason == "idempotent_replay" && (sample.AfterRevision != sample.BeforeRevision || sample.MutationCount != 0 || sample.PublicationCount != 0 || len(sample.PublicationIDs) != 0 || len(sample.EmittedFamilies) != 0) {
 				return fmt.Errorf("performance replay sample %d fabricates a durable acknowledgement", index)
+			}
+			if sample.ExclusionReason == "runtime_bootstrap" && (sample.Family != "" || len(sample.EmittedFamilies) != 0 || sample.BeforeRevision != 0 || sample.AfterRevision != 0 || sample.ProjectionRevision != 0 || sample.MutationCount != 0 || sample.PublicationCount != 0 || len(sample.PublicationIDs) != 0) {
+				return fmt.Errorf("performance runtime bootstrap sample %d fabricates journal authority evidence", index)
 			}
 			excluded[sample.Kind]++
 			excluded[sample.ExclusionReason]++
@@ -319,7 +323,7 @@ func validatePerformanceSamples(raw RawPerformance) error {
 			recoveryFamilyCounts[sample.Family]++
 		}
 	}
-	if excluded["warmup"] != raw.WarmupExcluded || excluded["idempotent_replay"] != raw.ReplayExcluded || !slices.Equal(observed["mutation"], raw.MutationMS) || !slices.Equal(observed["query"], raw.QueryMS) || !slices.Equal(observed["recovery"], raw.RecoveryMS) {
+	if excluded["warmup"] != raw.WarmupExcluded || excluded["idempotent_replay"] != raw.ReplayExcluded || excluded["runtime_bootstrap"] != raw.RuntimeBootstrapExcluded || !slices.Equal(observed["mutation"], raw.MutationMS) || !slices.Equal(observed["query"], raw.QueryMS) || !slices.Equal(observed["recovery"], raw.RecoveryMS) {
 		return fmt.Errorf("performance arrays are not a projection of the retained raw samples")
 	}
 	if len(familyCounts) != len(raw.Dataset.FamilyOperationCounts) {

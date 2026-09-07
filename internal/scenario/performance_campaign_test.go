@@ -323,6 +323,18 @@ func TestPerformanceCollectorClassifiesIdempotentReplayWithoutInventingPublicati
 	}
 }
 
+func TestPerformanceCollectorDoesNotCountRuntimeAdmissionAsAuthorityMutation(t *testing.T) {
+	collector := newPerformanceCollector(t)
+	collector.setMode(performanceCollectSuffix)
+	collector.observe(MutationObservation{
+		OperationID: "runtime-host-start-3", BeforeRecordRevision: 42, AfterRecordRevision: 47,
+		ProjectedThroughRevision: 47, MutationCount: 5, Duration: time.Millisecond,
+	})
+	if collector.suffixCount() != 0 || len(collector.samples) != 1 || collector.samples[0].Included || collector.samples[0].ExclusionReason != "runtime_bootstrap" || collector.samples[0].OperationID != "runtime-host-start-3" || collector.samples[0].MutationCount != 0 || collector.samples[0].PublicationCount != 0 || len(collector.samples[0].EmittedFamilies) != 0 {
+		t.Fatalf("runtime admission entered authority mutation evidence: suffix=%d samples=%d", collector.suffixCount(), len(collector.samples))
+	}
+}
+
 func (c *performanceCollector) setMode(mode performanceCollectMode) {
 	c.mu.Lock()
 	c.mode = mode
@@ -344,6 +356,17 @@ func (c *performanceCollector) observe(observation MutationObservation) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.mode == performanceCollectIdle {
+		return
+	}
+	// Runtime epoch admission is direct owner-startup control metadata rather
+	// than a command-family publication. Recovery timing below is the sole M2
+	// runtime_host performance authority; counting this harness observation
+	// would replace one of the exact 10,000 accepted product operations.
+	if strings.HasPrefix(observation.OperationID, "runtime-host-start-") {
+		c.samples = append(c.samples, m2.PerformanceSample{
+			Index: len(c.samples), Kind: "mutation", OperationID: observation.OperationID,
+			DurationNS: observation.Duration.Nanoseconds(), Included: false, ExclusionReason: "runtime_bootstrap",
+		})
 		return
 	}
 	if observation.Err != nil {
@@ -417,7 +440,6 @@ func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2extern
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	counts := map[string]int{}
-	runtimeIndex := 0
 	for index := range c.samples {
 		sample := &c.samples[index]
 		sample.Index = index
@@ -439,14 +461,6 @@ func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2extern
 			continue
 		}
 		operation := sample.OperationID
-		if strings.HasPrefix(operation, "runtime-host-start-") {
-			if runtimeIndex >= len(runtimeOperations) {
-				t.Fatal("no restored runtime-host operation can bind the measured startup")
-			}
-			operation = runtimeOperations[runtimeIndex]
-			runtimeIndex++
-			sample.OperationID = operation
-		}
 		recovered, ok := actual[operation]
 		if !ok || len(recovered.Families) == 0 {
 			t.Fatalf("operation %s has no restored emitted-family evidence", operation)
@@ -466,8 +480,8 @@ func (c *performanceCollector) finalize(t *testing.T, actual map[string]m2extern
 			}
 		}
 	}
-	if runtimeIndex != len(runtimeOperations) {
-		t.Fatalf("runtime-host publication census measured=%d restored=%d", runtimeIndex, len(runtimeOperations))
+	if len(runtimeOperations) != 0 {
+		t.Fatalf("post-checkpoint product census contains runtime-host operations=%d", len(runtimeOperations))
 	}
 	if !slices.Equal(sortedMapKeys(counts), m2.AuthorityFamilyIDs()) {
 		t.Fatalf("performance suffix family census=%v want=%v", sortedMapKeys(counts), m2.AuthorityFamilyIDs())
@@ -489,7 +503,7 @@ func buildRawPerformance(t *testing.T, identity performanceIdentity, config m2ex
 		SchemaVersion: 1, RunID: identity.runID, SourceCommit: identity.source.Commit, SourceTree: identity.source.Tree,
 		ReferenceProfileSHA256: m2.SHA256(reference), Environment: environment,
 		Dataset:            m2.PerformanceDataset{Generator: m2external.PerformanceGenerator, WarmupOperations: performanceWarmups, SuffixOperations: performanceSuffixOps, CheckpointRevision: checkpoint.Revision, FamilyOperationCounts: familyCounts, FamilyRecoveryCounts: map[string]int{"family/runtime_host": len(recoveries)}, ExpectedProjectionSHA: final.ProjectionSHA256, FinalRevision: final.ProjectionRevision},
-		RecoveryOperations: performanceSuffixOps, WarmupExcluded: performanceWarmups, ReplayExcluded: countReplayExclusions(mutations), Method: "monotonic-nearest-rank-inclusive",
+		RecoveryOperations: performanceSuffixOps, WarmupExcluded: performanceWarmups, ReplayExcluded: countExclusions(mutations, "idempotent_replay"), RuntimeBootstrapExcluded: countExclusions(mutations, "runtime_bootstrap"), Method: "monotonic-nearest-rank-inclusive",
 	}
 	raw.Samples = append(raw.Samples, mutations...)
 	for _, sample := range mutations {
@@ -508,17 +522,17 @@ func buildRawPerformance(t *testing.T, identity performanceIdentity, config m2ex
 		raw.RecoveryMS = append(raw.RecoveryMS, float64(recovered.DurationNS)/float64(time.Millisecond))
 	}
 	raw.Statistics = []m2.PerformanceStatistics{
-		m2.PerformanceStatisticsFor("mutation", raw.MutationMS, performanceWarmups+raw.ReplayExcluded),
+		m2.PerformanceStatisticsFor("mutation", raw.MutationMS, performanceWarmups+raw.ReplayExcluded+raw.RuntimeBootstrapExcluded),
 		m2.PerformanceStatisticsFor("query", raw.QueryMS, 0),
 		m2.PerformanceStatisticsFor("recovery", raw.RecoveryMS, 0),
 	}
 	return raw
 }
 
-func countReplayExclusions(samples []m2.PerformanceSample) int {
+func countExclusions(samples []m2.PerformanceSample, reason string) int {
 	count := 0
 	for _, sample := range samples {
-		if sample.ExclusionReason == "idempotent_replay" {
+		if sample.ExclusionReason == reason {
 			count++
 		}
 	}
