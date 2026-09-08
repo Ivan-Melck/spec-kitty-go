@@ -235,6 +235,19 @@
       "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
       "attempt_events_sha256": "243d4817c41f576d4ea96214d7380d95715a0f1502be94cff035ee105dcd41d7",
       "terminal_sha256": "59ea564ff563e76e27bbf62a6dddd2496d7ead9dbefd980829ba4f4d19febe5e"
+    },
+    {
+      "run_id": "wp17-qualification-54261389-final19",
+      "source_commit": "542613892469540249a7e669c0804621b886eed2",
+      "source_tree": "610720db8da23fab1cd0050fbff23aed79998cbe",
+      "outcome": "non_admissible",
+      "reason": "all 45 campaigns, nested WP16 absence, and the 19-test race census passed; performance admission then correctly refused load1=6.68 against the unchanged source-bound maximum of 4 because the immediately preceding race workload had not quiesced",
+      "transcript_path": "/tmp/go-kitty3-qualification-54261389-final19/m2/wp17-qualification-54261389-final19/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "351cc15a444717aba3db20c4ef2de8054b894014f9373e9c230265e46d5c12ac",
+      "transcript_bytes": 1855,
+      "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
+      "attempt_events_sha256": "67ae6516a3c32b5fba818ae8cd6d8391d5ab2bd6a3899c906a7c09e19f02ae2b",
+      "terminal_sha256": "070e571478ee9a578622846e337be6e7fa37ebb408f439f774bf8fd506eb3262"
     }
   ]
 }

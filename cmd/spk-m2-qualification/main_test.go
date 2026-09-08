@@ -38,6 +38,23 @@ func TestFailedPerformanceTranscriptIsPreservedCreateOnce(t *testing.T) {
 	}
 }
 
+func TestQualificationCannotBypassPerformanceQuiescence(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait := strings.Index(string(source), "m2external.AwaitPerformanceEnvironment(ctx, performanceConfig")
+	measure := strings.Index(string(source), "m2external.MeasurePerformance(ctx, performanceConfig)")
+	if wait < 0 || measure < 0 || wait >= measure {
+		t.Fatal("qualification no longer admits quiescent environment before performance measurement")
+	}
+	for _, receipt := range []string{`attempt.Record("performance-quiescence", "running"`, `attempt.Record("performance-quiescence", "pass"`} {
+		if !strings.Contains(string(source), receipt) {
+			t.Fatalf("qualification omitted quiescence receipt %q", receipt)
+		}
+	}
+}
+
 func TestSBOMCommandPublishesAtomically(t *testing.T) {
 	repository, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

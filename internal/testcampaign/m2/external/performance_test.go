@@ -60,6 +60,87 @@ func TestPerformanceChildEnvironmentSuppliesExactProductionAuthorityExecutable(t
 	}
 }
 
+func TestPerformanceQuiescenceRetriesOnlyLoadDriftThenPasses(t *testing.T) {
+	reference, valid := performanceEnvironmentFixture(t)
+	observations := []m2.PerformanceEnvironment{valid, valid}
+	observations[0].Load1 = 4.25
+	observations[1].Load1 = 3.75
+	calls := 0
+	err := awaitPerformanceEnvironment(context.Background(), reference, time.Second, time.Millisecond, func() (m2.PerformanceEnvironment, error) {
+		observed := observations[calls]
+		calls++
+		return observed, nil
+	})
+	if err != nil {
+		t.Fatalf("load quiescence refused: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("environment observations=%d want=2", calls)
+	}
+}
+
+func TestPerformanceQuiescenceRefusesNonLoadDriftWithoutRetry(t *testing.T) {
+	reference, observed := performanceEnvironmentFixture(t)
+	observed.GoVersion = "go1.26.4"
+	calls := 0
+	err := awaitPerformanceEnvironment(context.Background(), reference, time.Second, time.Millisecond, func() (m2.PerformanceEnvironment, error) {
+		calls++
+		return observed, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "non-load drift") || !strings.Contains(err.Error(), "go_version=go1.26.4") {
+		t.Fatalf("non-load refusal=%v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("non-load drift was retried: observations=%d", calls)
+	}
+}
+
+func TestPerformanceQuiescenceCancellationAndTimeoutRetainLastLoadDiagnostic(t *testing.T) {
+	reference, observed := performanceEnvironmentFixture(t)
+	observed.Load1 = 6.68
+	observe := func() (m2.PerformanceEnvironment, error) { return observed, nil }
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := awaitPerformanceEnvironment(cancelled, reference, time.Second, time.Second, observe)
+	if err == nil || !strings.Contains(err.Error(), "cancelled") || !strings.Contains(err.Error(), "load1=6.68") {
+		t.Fatalf("cancellation diagnostic=%v", err)
+	}
+
+	err = awaitPerformanceEnvironment(context.Background(), reference, 10*time.Millisecond, 2*time.Millisecond, observe)
+	if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "load1=6.68") {
+		t.Fatalf("timeout diagnostic=%v", err)
+	}
+}
+
+func TestPerformanceQuiescenceRejectsInvalidBounds(t *testing.T) {
+	for _, bounds := range [][2]time.Duration{{0, time.Second}, {time.Second, 0}, {time.Second, 2 * time.Second}} {
+		if err := AwaitPerformanceEnvironment(context.Background(), PerformanceConfig{}, bounds[0], bounds[1]); err == nil {
+			t.Fatalf("invalid bounds accepted: wait=%s poll=%s", bounds[0], bounds[1])
+		}
+	}
+}
+
+func performanceEnvironmentFixture(t *testing.T) ([]byte, m2.PerformanceEnvironment) {
+	t.Helper()
+	referenceBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "programs", "evidence", "m2-performance-reference.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reference m2.PerformanceReference
+	if err := m2.DecodeStrict(referenceBytes, &reference); err != nil {
+		t.Fatal(err)
+	}
+	return referenceBytes, m2.PerformanceEnvironment{
+		CPUModel: reference.CPUModel, LogicalCPUs: reference.LogicalCPUs, PhysicalCores: reference.PhysicalCores,
+		MemoryBytes: reference.MemoryMinBytes, KernelSystem: reference.KernelSystem, KernelRelease: reference.KernelRelease,
+		Architecture: reference.Architecture, Filesystem: reference.Filesystem, StorageDevice: reference.StorageDevicePrefix + "0n1p1",
+		PowerGovernor: reference.PowerGovernor, BoostEnabled: reference.BoostEnabled, Load1: 0.1,
+		GoVersion: reference.GoVersion, CGOEnabled: reference.CGOEnabled, SidecarSHA256: m2.QualificationCandidateSidecarSHA256,
+		QualifierSHA256: strings.Repeat("a", 64), ProductSHA256: strings.Repeat("b", 64),
+	}
+}
+
 func TestPerformanceRecoveryReceiptRejectsMalformedSubstitutedAndStaleEvidence(t *testing.T) {
 	request := performanceRecoveryRequestV1{
 		SchemaVersion: 1, RunID: "run-1", RunIndex: 3,

@@ -241,16 +241,30 @@ func VerifyPerformanceReference(referenceBytes []byte, raw RawPerformance) error
 // VerifyPerformanceEnvironmentReference admits the immutable pre-run host
 // observation before any warmup or timed work can influence its load control.
 func VerifyPerformanceEnvironmentReference(referenceBytes []byte, environment PerformanceEnvironment) error {
+	mismatches, err := PerformanceEnvironmentDrift(referenceBytes, environment)
+	if err != nil {
+		return err
+	}
+	if len(mismatches) != 0 {
+		return fmt.Errorf("observed performance environment is outside the source-bound reference profile: %s", strings.Join(mismatches, "; "))
+	}
+	return nil
+}
+
+// PerformanceEnvironmentDrift returns the closed, field-level differences
+// from the source-bound reference. Callers may retry only a load-only drift;
+// all identity and host-shape differences remain immediate refusals.
+func PerformanceEnvironmentDrift(referenceBytes []byte, environment PerformanceEnvironment) ([]string, error) {
 	var reference PerformanceReference
 	if err := DecodeStrict(referenceBytes, &reference); err != nil {
-		return fmt.Errorf("performance reference: %w", err)
+		return nil, fmt.Errorf("performance reference: %w", err)
 	}
 	wantFamilies := make([]string, len(authorityFamilies))
 	for index, definition := range authorityFamilies {
 		wantFamilies[index] = definition.ID
 	}
 	if reference.SchemaVersion != 1 || reference.CPUModel == "" || reference.LogicalCPUs <= 0 || reference.PhysicalCores <= 0 || reference.MemoryMinBytes == 0 || reference.MemoryMaxBytes < reference.MemoryMinBytes || reference.KernelSystem == "" || reference.KernelRelease == "" || reference.Architecture == "" || reference.Filesystem == "" || reference.StorageDevicePrefix == "" || reference.PowerGovernor == "" || reference.Load1Maximum <= 0 || reference.GoVersion != "go1.26.7" || reference.CGOEnabled != "0" || reference.DatasetGenerator == "" || !slices.Equal(reference.FamilyIDs, wantFamilies) {
-		return fmt.Errorf("performance reference profile is incomplete or differs from the frozen family registry")
+		return nil, fmt.Errorf("performance reference profile is incomplete or differs from the frozen family registry")
 	}
 	var mismatches []string
 	addExactMismatch := func(field string, observed, expected any) {
@@ -287,10 +301,7 @@ func VerifyPerformanceEnvironmentReference(referenceBytes []byte, environment Pe
 	if !validDigest(environment.ProductSHA256) {
 		mismatches = append(mismatches, "product_sha256 is invalid")
 	}
-	if len(mismatches) != 0 {
-		return fmt.Errorf("observed performance environment is outside the source-bound reference profile: %s", strings.Join(mismatches, "; "))
-	}
-	return nil
+	return mismatches, nil
 }
 
 const PerformanceCampaignSelectorV1 = "TestM2AcceptedAuthorityPerformanceCampaign"

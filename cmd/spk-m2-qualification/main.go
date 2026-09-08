@@ -402,7 +402,17 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 	if err != nil {
 		return m2.Publication{}, err
 	}
-	performance, performanceTranscript, err := m2external.MeasurePerformance(ctx, m2external.PerformanceConfig{RunID: config.RunID, Repository: config.Repository, Executable: config.SidecarPath, QualifierExecutable: qualifierPath, ProductExecutable: config.ProductBinary, Reference: referencePath, RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: preflight.Source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second, TestTimeout: 60 * time.Minute})
+	performanceConfig := m2external.PerformanceConfig{RunID: config.RunID, Repository: config.Repository, Executable: config.SidecarPath, QualifierExecutable: qualifierPath, ProductExecutable: config.ProductBinary, Reference: referencePath, RuntimeRoot: filepath.Join(privateRoot, "runtime"), DataRoot: filepath.Join(privateRoot, "data"), Source: preflight.Source, Warmup: 100, Observations: 10_000, RecoveryRuns: 30, StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second, TestTimeout: 60 * time.Minute}
+	if err := attempt.Record("performance-quiescence", "running", ""); err != nil {
+		return publication, err
+	}
+	if err := m2external.AwaitPerformanceEnvironment(ctx, performanceConfig, 15*time.Minute, 10*time.Second); err != nil {
+		return publication, err
+	}
+	if err := attempt.Record("performance-quiescence", "pass", ""); err != nil {
+		return publication, err
+	}
+	performance, performanceTranscript, err := m2external.MeasurePerformance(ctx, performanceConfig)
 	performanceBytes, marshalPerformanceErr := m2.CanonicalJSON(performance)
 	if marshalPerformanceErr == nil {
 		_ = attempt.Capture("performance.json", performanceBytes)
