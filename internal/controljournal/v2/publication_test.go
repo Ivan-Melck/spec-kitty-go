@@ -17,6 +17,195 @@ type observingPortV2 struct {
 	registeredBeforeCall atomic.Bool
 }
 
+type assertionObservingPortV2 struct {
+	assertionCount int
+}
+
+type boundaryProbeV2 struct {
+	interrupt PublicationBoundaryStageV2
+	once      bool
+	snapshots []PublicationBoundarySnapshotV2
+}
+
+func (p *boundaryProbeV2) PublicationBoundary(_ context.Context, snapshot PublicationBoundarySnapshotV2) error {
+	p.snapshots = append(p.snapshots, snapshot)
+	if snapshot.Stage == p.interrupt && !p.once {
+		p.once = true
+		return InterruptQualificationPublicationV2(snapshot.Stage)
+	}
+	return nil
+}
+
+type boundaryPortV2 struct {
+	calls    int
+	lastPlan SealedCommitPlanV2
+}
+
+func (p *boundaryPortV2) Commit(_ context.Context, plan SealedCommitPlanV2) (CommitObservationV2, error) {
+	p.calls++
+	p.lastPlan = plan
+	return NewCommitObservationV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), uint64(p.calls), uint64(p.calls), plan.MutationCount())
+}
+
+func TestPublicationBoundaryProbeIsZeroDefaultAndInterruptsWithoutMintingAuthority(t *testing.T) {
+	for _, stage := range []PublicationBoundaryStageV2{
+		PublicationRegisteredBeforeCommitV2,
+		PublicationDurableObservedBeforeAckV2,
+		PublicationAckCreatedBeforeProjectionV2,
+	} {
+		t.Run(string(stage), func(t *testing.T) {
+			tracker := fixtureProjectionTracker(t)
+			port := &boundaryPortV2{}
+			probe := &boundaryProbeV2{interrupt: stage}
+			coordinator, err := NewQualificationPublicationCoordinatorV2(port, tracker, probe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := projectionPlan(t, OperationID("operation-boundary-"+string(stage)), "mission-boundary", "planned")
+			if _, err := coordinator.Publish(t.Context(), plan); err == nil {
+				t.Fatal("configured publication interruption reported success")
+			} else if _, ok := err.(*QualificationPublicationInterruptionV2); !ok {
+				t.Fatalf("publication interruption lost its typed identity: %T %v", err, err)
+			}
+			wantCalls := 1
+			if stage == PublicationRegisteredBeforeCommitV2 {
+				wantCalls = 0
+			}
+			if port.calls != wantCalls || coordinator.UnresolvedCount() != 1 || tracker.LedgerSize() != 0 {
+				t.Fatalf("interruption escaped its boundary: calls=%d unresolved=%d ledger=%d", port.calls, coordinator.UnresolvedCount(), tracker.LedgerSize())
+			}
+			if len(probe.snapshots) == 0 || probe.snapshots[len(probe.snapshots)-1].Plan.Digest() != plan.Digest() {
+				t.Fatal("probe did not receive the exact immutable sealed plan")
+			}
+
+			// The before-commit cut has no durable observation to reconcile. A
+			// retry must remain a duplicate registration rather than fabricating
+			// delivery authority.
+			if stage == PublicationRegisteredBeforeCommitV2 {
+				if _, err := coordinator.Publish(t.Context(), plan); !IsKind(err, ErrorAmbiguous) {
+					t.Fatalf("registered interruption was retried as new authority: %v", err)
+				}
+				return
+			}
+			observation, err := NewCommitObservationV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ack, err := coordinator.ReconcileComplete(plan, observation)
+			if err != nil || ack.PlanDigest() != plan.Digest() || coordinator.UnresolvedCount() != 0 || tracker.LedgerSize() != 1 {
+				t.Fatalf("exact reconciliation failed: ack=%+v unresolved=%d ledger=%d err=%v", ack, coordinator.UnresolvedCount(), tracker.LedgerSize(), err)
+			}
+		})
+	}
+}
+
+func TestPublicationBoundaryProbeRejectsUntypedOrWrongStageErrors(t *testing.T) {
+	tests := map[string]QualificationPublicationBoundaryProbeV2{
+		"untyped": publicationProbeFuncV2(func(context.Context, PublicationBoundarySnapshotV2) error {
+			return errors.New("raw probe failure with secret material")
+		}),
+		"wrong_stage": publicationProbeFuncV2(func(context.Context, PublicationBoundarySnapshotV2) error {
+			return InterruptQualificationPublicationV2(PublicationAckCreatedBeforeProjectionV2)
+		}),
+	}
+	for name, probe := range tests {
+		t.Run(name, func(t *testing.T) {
+			tracker := fixtureProjectionTracker(t)
+			coordinator, _ := NewQualificationPublicationCoordinatorV2(&boundaryPortV2{}, tracker, probe)
+			plan := projectionPlan(t, OperationID("operation-probe-"+name), "mission-probe", "planned")
+			if _, err := coordinator.Publish(t.Context(), plan); !IsKind(err, ErrorInvalidCanonicalData) || coordinator.UnresolvedCount() != 1 || tracker.LedgerSize() != 0 {
+				t.Fatalf("invalid probe result escaped fail-closed normalization: %v", err)
+			}
+		})
+	}
+}
+
+type reconcileBarrierProbeV2 struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p reconcileBarrierProbeV2) PublicationBoundary(_ context.Context, snapshot PublicationBoundarySnapshotV2) error {
+	if snapshot.Stage == PublicationAckCreatedBeforeProjectionV2 {
+		p.entered <- struct{}{}
+		<-p.release
+	}
+	return nil
+}
+
+func TestQualificationProbeConcurrentReconciliationStillProjectsExactlyOnce(t *testing.T) {
+	tracker := fixtureProjectionTracker(t)
+	probe := reconcileBarrierProbeV2{entered: make(chan struct{}, 2), release: make(chan struct{})}
+	coordinator, _ := NewQualificationPublicationCoordinatorV2(&boundaryPortV2{}, tracker, probe)
+	plan := projectionPlan(t, "operation-reconcile-race", "mission-reconcile-race", "planned")
+	if _, err := coordinator.register(plan); err != nil {
+		t.Fatal(err)
+	}
+	observation, _ := NewCommitObservationV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount())
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() { _, err := coordinator.ReconcileComplete(plan, observation); errs <- err }()
+	}
+	for range 2 {
+		select {
+		case <-probe.entered:
+		case <-time.After(time.Second):
+			t.Fatal("concurrent reconciliation did not reach the probe boundary")
+		}
+	}
+	close(probe.release)
+	success, refused := 0, 0
+	for range 2 {
+		if err := <-errs; err == nil {
+			success++
+		} else if IsKind(err, ErrorAmbiguous) {
+			refused++
+		} else {
+			t.Fatalf("unexpected reconciliation result: %v", err)
+		}
+	}
+	if success != 1 || refused != 1 || coordinator.UnresolvedCount() != 0 || tracker.LedgerSize() != 1 {
+		t.Fatalf("concurrent reconciliation minted authority: success=%d refused=%d unresolved=%d ledger=%d", success, refused, coordinator.UnresolvedCount(), tracker.LedgerSize())
+	}
+}
+
+type publicationProbeFuncV2 func(context.Context, PublicationBoundarySnapshotV2) error
+
+func (f publicationProbeFuncV2) PublicationBoundary(ctx context.Context, snapshot PublicationBoundarySnapshotV2) error {
+	return f(ctx, snapshot)
+}
+
+func (p assertionObservingPortV2) Commit(_ context.Context, plan SealedCommitPlanV2) (CommitObservationV2, error) {
+	return NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount(), p.assertionCount)
+}
+
+func TestCoordinatorRequiresExactAssertionAcknowledgementCount(t *testing.T) {
+	input := fixturePlanInput(t)
+	coordinate, _ := NewAggregateCoordinate("execution_slot", "slot-read", fixtureScope())
+	assertion, _ := NewAuthorityAssertionV2(AuthorityAssertionInputV2{Target: ConditionTarget{Kind: ConditionTargetAggregateHead, Coordinate: coordinate}, Kind: ConditionAbsent})
+	input.Assertions = []AuthorityAssertionV2{assertion}
+	plan, err := SealCommitPlanV2(input, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []int{0, 2} {
+		tracker := fixtureProjectionTracker(t)
+		coordinator, _ := NewPublicationCoordinatorV2(assertionObservingPortV2{assertionCount: count}, tracker)
+		if _, err := coordinator.Publish(context.Background(), plan); !IsKind(err, ErrorInvalidDigest) || coordinator.UnresolvedCount() != 1 {
+			t.Fatalf("assertion count %d attributed as committed: err=%v unresolved=%d", count, err, coordinator.UnresolvedCount())
+		}
+	}
+	observation, err := NewCommitObservationWithAssertionsV2(plan.PublicationID(), plan.Digest(), plan.RecordSetDigest(), 1, 1, plan.MutationCount(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seal, err := acknowledgementSeal(plan, observation)
+	ack := AcknowledgedPublicationV2{plan: plan, observation: observation, seal: seal}
+	if err != nil || validateAcknowledgement(ack) != nil || ack.AssertionCount() != 1 || ack.MutationCount() != plan.MutationCount() {
+		t.Fatalf("exact assertion acknowledgement rejected: ack=%+v err=%v", ack, err)
+	}
+}
+
 func (p *observingPortV2) Commit(_ context.Context, plan SealedCommitPlanV2) (CommitObservationV2, error) {
 	p.tracker.mu.Lock()
 	_, registered := p.tracker.pending[plan.PublicationID()]
@@ -159,7 +348,7 @@ func TestAcknowledgementAttributionAndOpaqueSealMutants(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tracker := fixtureProjectionTracker(t)
 			coordinator, _ := NewPublicationCoordinatorV2(&observingPortV2{tracker: tracker}, tracker)
-			if err := coordinator.register(plan); err != nil {
+			if _, err := coordinator.register(plan); err != nil {
 				t.Fatal(err)
 			}
 			candidate := valid
@@ -176,6 +365,32 @@ func TestAcknowledgementAttributionAndOpaqueSealMutants(t *testing.T) {
 	partial := AcknowledgedPublicationV2{plan: plan, observation: valid}
 	if err := tracker.applyAcknowledged(partial); err == nil {
 		t.Fatal("partial acknowledgement seal accepted")
+	}
+}
+
+func TestCoordinatorFreezesValidatedRegistrationAndRejectsLaterCallerMutation(t *testing.T) {
+	plan := projectionPlan(t, "operation-frozen-registration", "mission-frozen-registration", "planned")
+	clean := cloneSealedCommitPlanV2(plan)
+	tracker := fixtureProjectionTracker(t)
+	coordinator, _ := NewPublicationCoordinatorV2(&boundaryPortV2{}, tracker)
+	registered, err := coordinator.register(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mutate the pre-registration caller alias and the defensive bytes exposed
+	// by the registered plan. Neither is allowed to rewrite the coordinator's
+	// frozen registration.
+	plan.records[0].canonical[0] ^= 1
+	exposed := registered.CanonicalBytes()
+	exposed[0] ^= 1
+	observation, _ := NewCommitObservationV2(clean.PublicationID(), clean.Digest(), clean.RecordSetDigest(), 1, 1, clean.MutationCount())
+	if _, err := coordinator.ReconcileComplete(plan, observation); !IsKind(err, ErrorInvalidDigest) {
+		t.Fatalf("mutated caller plan reconciled: %v", err)
+	}
+	ack, err := coordinator.ReconcileComplete(clean, observation)
+	if err != nil || ack.PlanDigest() != clean.Digest() || tracker.LedgerSize() != 1 || coordinator.UnresolvedCount() != 0 {
+		t.Fatalf("frozen registration was not recoverable: ack=%+v ledger=%d unresolved=%d err=%v", ack, tracker.LedgerSize(), coordinator.UnresolvedCount(), err)
 	}
 }
 

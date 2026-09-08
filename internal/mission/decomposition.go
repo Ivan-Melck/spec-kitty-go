@@ -134,8 +134,8 @@ func (service *DecompositionService) Decompose(ctx context.Context, command Deco
 	if err != nil {
 		return DecompositionResult{}, decompositionError(DecompositionMissionChanged, DecompositionRefreshAuthority, "mission", "current mission state is unavailable", err)
 	}
-	if !equalDecompositionSnapshot(current, command.ExpectedMission) || current.MissionID != command.MissionID || current.ProjectID != command.ProjectID || current.CurrentStep != StepPlanApproved {
-		return DecompositionResult{}, decompositionError(DecompositionMissionChanged, DecompositionRefreshAuthority, "expected_mission", "mission is not at the exact approved-plan state", nil)
+	if !equalDecompositionSnapshot(current, command.ExpectedMission) || current.MissionID != command.MissionID || current.ProjectID != command.ProjectID || current.Lifecycle != LifecycleOpen {
+		return DecompositionResult{}, decompositionError(DecompositionMissionChanged, DecompositionRefreshAuthority, "expected_mission", "mission is not at the exact open authority state", nil)
 	}
 	planObservation, err := service.plans.ObserveCurrentApproval(ctx, command.MissionID.String(), artifact.KindPlan)
 	if err != nil {

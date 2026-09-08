@@ -29,7 +29,7 @@ jobs:
       - name: Install pinned Go toolchain
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.7
           cache: true
 
       - name: Configure isolated mutable paths
@@ -76,3 +76,24 @@ jobs:
           path: ${{ env.ARTIFACT_DIR }}
           if-no-files-found: error
           retention-days: 14
+
+  m2-short:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.7
+          cache: true
+      - name: Install pinned static analyzer
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+      - name: Run bounded M2 tier
+        run: make m2-short

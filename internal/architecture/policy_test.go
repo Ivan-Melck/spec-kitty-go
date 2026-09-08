@@ -645,7 +645,6 @@ func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T)
 			{path: module + "/internal/workgraph", tier: TierAuthority},
 			{path: module + "/internal/workspace", tier: TierAuthority},
 			{path: module + "/internal/tracker", tier: TierProviderContract},
-			{path: module + "/internal/controlstore/sqlite", tier: TierAdapter},
 			{path: module + "/internal/gitrepo", tier: TierAdapter},
 			{path: module + "/internal/tracker/fake", tier: TierAdapter},
 			{path: module + "/internal/tracker/beads", tier: TierAdapter},
@@ -666,6 +665,7 @@ func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T)
 		for _, path := range []string{
 			module + "/internal/tracker/beadsx",
 			module + "/internal/tracker/beads-protocol",
+			module + "/internal/controlstore/sqlite",
 		} {
 			_, err := policy.Classify(path)
 			violation, ok := err.(Violation)
@@ -735,7 +735,6 @@ func checkDefaultPolicyClassifiesPhase3CapabilitiesExactly(t *testing.T) {
 		{module + "/internal/tracker", TierProviderContract},
 		{module + "/internal/tracker/fake", TierAdapter},
 		{module + "/internal/tracker/beads/protocol", TierAdapter},
-		{module + "/internal/controlstore/sqlite", TierAdapter},
 		{module + "/internal/gitrepo", TierAdapter},
 	} {
 		assertTier(t, policy, test.path, test.tier)
@@ -760,7 +759,7 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 	controlstore := module + "/internal/controlstore"
 	beads := module + "/internal/tracker/beads"
 	fake := module + "/internal/tracker/fake"
-	sqlite := module + "/internal/controlstore/sqlite"
+	gapdb := module + "/internal/controlstore/gapdb"
 	git := module + "/internal/gitrepo"
 	ids := module + "/internal/ids"
 
@@ -778,7 +777,7 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 		{"projection-to-mission-read-model", projection, missionReadModel},
 		{"projection-to-artifact-read-model", projection, artifactReadModel},
 		{"projection-to-workgraph-read-model", projection, workgraphReadModel},
-		{"control-store-to-mission-port", sqlite, mission},
+		{"control-store-to-mission-port", gapdb, mission},
 	}
 	for _, test := range accepted {
 		t.Run("accept-"+test.name, func(t *testing.T) {
@@ -799,10 +798,10 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 	}{
 		{"mission-to-beads", mission, TierMissionAuthority, beads, TierAdapter},
 		{"mission-to-fake-tracker", mission, TierMissionAuthority, fake, TierAdapter},
-		{"mission-to-sqlite", mission, TierMissionAuthority, sqlite, TierAdapter},
+		{"mission-to-gapdb", mission, TierMissionAuthority, gapdb, TierAdapter},
 		{"mission-to-git", mission, TierMissionAuthority, git, TierAdapter},
 		{"mission-to-projection", mission, TierMissionAuthority, projection, TierProjection},
-		{"artifact-to-adapter", artifact, TierArtifactAuthority, sqlite, TierAdapter},
+		{"artifact-to-adapter", artifact, TierArtifactAuthority, gapdb, TierAdapter},
 		{"artifact-to-projection", artifact, TierArtifactAuthority, projection, TierProjection},
 		{"projection-to-mission-authority", projection, TierProjection, mission, TierMissionAuthority},
 		{"projection-to-artifact-authority", projection, TierProjection, artifact, TierArtifactAuthority},

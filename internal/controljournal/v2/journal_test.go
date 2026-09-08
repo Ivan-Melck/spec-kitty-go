@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestIdentityScopeCodecAndKeyBudgets(t *testing.T) {
@@ -115,6 +117,49 @@ func TestIdentityScopeCodecAndKeyBudgets(t *testing.T) {
 	}
 }
 
+func TestIdentityASCIIAllowlistSubsumesUTF8Validation(t *testing.T) {
+	reference := func(value string) bool {
+		if len(value) == 0 || len(value) > MaxIdentityBytes || !utf8.ValidString(value) {
+			return false
+		}
+		for index := range len(value) {
+			char := value[index]
+			ok := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9'
+			if index > 0 {
+				ok = ok || char == '.' || char == '_' || char == ':' || char == '-'
+			}
+			if !ok {
+				return false
+			}
+		}
+		return true
+	}
+	assertEquivalent := func(value string) {
+		t.Helper()
+		got := validateIdentity("identity", value) == nil
+		if got != reference(value) {
+			t.Fatalf("identity byte-class equivalence differs for %x: got=%t", []byte(value), got)
+		}
+	}
+	assertEquivalent("")
+	for first := 0; first <= 0xff; first++ {
+		assertEquivalent(string([]byte{byte(first)}))
+		for second := 0; second <= 0xff; second++ {
+			assertEquivalent(string([]byte{byte(first), byte(second)}))
+		}
+	}
+	for _, value := range []string{
+		strings.Repeat("a", MaxIdentityBytes),
+		strings.Repeat("a", MaxIdentityBytes+1),
+		string([]byte{0xc0, 0x80}),
+		string([]byte{0xed, 0xa0, 0x80}),
+		string([]byte{0xf4, 0x90, 0x80, 0x80}),
+		"a" + string([]byte{0xff}) + "b",
+	} {
+		assertEquivalent(value)
+	}
+}
+
 func TestOperationBindingCollisionIntentAndGlobalKey(t *testing.T) {
 	binding := fixtureBinding(t, "epoch-17")
 	encoded, err := EncodeOperationBindingV2(binding)
@@ -124,6 +169,12 @@ func TestOperationBindingCollisionIntentAndGlobalKey(t *testing.T) {
 	decoded, err := DecodeOperationBindingV2(encoded)
 	if err != nil {
 		t.Fatal(err)
+	}
+	bindingAddress, _ := NewOperationBindingAddressV2(binding.OperationID())
+	bindingRecord, _ := NewRecoveryRecordV2(bindingAddress, encoded, 1, "")
+	trustedBinding, err := DecodeOperationBindingRecordV2(bindingRecord)
+	if err != nil || trustedBinding.OperationID() != binding.OperationID() || trustedBinding.IntentDigest() != binding.IntentDigest() {
+		t.Fatalf("trusted binding decode=%+v err=%v", trustedBinding, err)
 	}
 	if resolution, err := ResolveOperationBinding(decoded, encoded, true); err != nil || resolution != BindingExact {
 		t.Fatalf("exact resolution=%s err=%v", resolution, err)
@@ -200,6 +251,12 @@ func TestOperationStateTransitionTerminalAndAmbiguousLaws(t *testing.T) {
 	if err != nil || !bytes.Equal(decoded.Result(), resolved.Result()) {
 		t.Fatalf("state roundtrip err=%v", err)
 	}
+	stateAddress, _ := NewOperationHeadAddressV2(resolved.OperationID())
+	stateRecord, _ := NewRecoveryRecordV2(stateAddress, encoded, 1, "")
+	trustedState, err := DecodeOperationStateRecordV2(stateRecord)
+	if err != nil || !EqualOperationStatesV2(trustedState, resolved) {
+		t.Fatalf("trusted state decode=%+v err=%v", trustedState, err)
+	}
 	if _, err := AdvanceOperationState(resolved, OperationTransition{3, 4, StatusResolved, "mission.result", 1, []byte(`{"ok":false}`), []EventID{"event-01", "event-02"}, nil, ""}); !IsKind(err, ErrorInvalidTransition) {
 		t.Fatal("terminal result mutation accepted")
 	}
@@ -270,6 +327,158 @@ func TestOperationStateCompleteTransitionMatrixAndSetExtension(t *testing.T) {
 			t.Fatalf("invalid membership accepted: %+v", transition)
 		}
 	}
+}
+
+func TestOperationReconciliationResumeRequiresFreshBoundEffectPermission(t *testing.T) {
+	prior := fixtureState(t, StatusReconciliationRequired, 7, nil,
+		[]EventID{"event-observation", "event-reconcile"}, []EffectID{"effect-bound"})
+	transition := OperationTransition{
+		ExpectedVersion: 7,
+		NextVersion:     8,
+		Status:          StatusInProgress,
+		EventIDs:        []EventID{"event-observation", "event-permission", "event-reconcile"},
+		EffectIDs:       []EffectID{"effect-bound"},
+	}
+	permission := fixtureEffectPermission(t, "event-permission", "effect-bound")
+
+	if _, err := AdvanceOperationState(prior, transition); !IsKind(err, ErrorInvalidTransition) {
+		t.Fatalf("generic transition admitted reconciliation resume: %v", err)
+	}
+	resumed, err := ResumeOperationStateWithEffectPermissionV2(prior, transition, permission)
+	if err != nil {
+		t.Fatalf("permission-bound reconciliation resume: %v", err)
+	}
+	if resumed.Status() != StatusInProgress || resumed.LogicalVersion() != 8 || !equalIDs(resumed.EventIDs(), transition.EventIDs) || !equalIDs(resumed.EffectIDs(), transition.EffectIDs) {
+		t.Fatalf("resumed state = status %s version %d events %v effects %v", resumed.Status(), resumed.LogicalVersion(), resumed.EventIDs(), resumed.EffectIDs())
+	}
+
+	mutants := map[string]struct {
+		prior      OperationStateV2
+		transition OperationTransition
+		permission EffectPermissionCoordinateV2
+	}{
+		"missing_permission_event": {prior, OperationTransition{7, 8, StatusInProgress, "", 0, nil, []EventID{"event-observation", "event-reconcile"}, []EffectID{"effect-bound"}, ""}, permission},
+		"reused_permission_event": {
+			fixtureState(t, StatusReconciliationRequired, 7, nil, []EventID{"event-observation", "event-permission", "event-reconcile"}, []EffectID{"effect-bound"}),
+			transition,
+			permission,
+		},
+		"unbound_effect":                  {prior, transition, fixtureEffectPermission(t, "event-permission", "effect-unbound")},
+		"newly_added_not_prebound_effect": {prior, OperationTransition{7, 8, StatusInProgress, "", 0, nil, transition.EventIDs, []EffectID{"effect-bound", "effect-new"}, ""}, fixtureEffectPermission(t, "event-permission", "effect-new")},
+		"empty_event":                     {prior, transition, EffectPermissionCoordinateV2{}},
+		"empty_effect":                    {prior, transition, EffectPermissionCoordinateV2{}},
+		"version_skip":                    {prior, OperationTransition{7, 9, StatusInProgress, "", 0, nil, transition.EventIDs, transition.EffectIDs, ""}, permission},
+		"event_regression":                {prior, OperationTransition{7, 8, StatusInProgress, "", 0, nil, []EventID{"event-permission", "event-reconcile"}, transition.EffectIDs, ""}, permission},
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ResumeOperationStateWithEffectPermissionV2(mutant.prior, mutant.transition, mutant.permission); !IsKind(err, ErrorInvalidTransition) {
+				t.Fatalf("permission mutant admitted: %v", err)
+			}
+		})
+	}
+}
+
+func TestOperationReconciliationResumeDoesNotWidenOtherStatusPairs(t *testing.T) {
+	permission := fixtureEffectPermission(t, "event-permission", "effect-bound")
+	for _, test := range []struct {
+		name string
+		from OperationStatus
+		to   OperationStatus
+	}{
+		{"accepted_to_in_progress", StatusAccepted, StatusInProgress},
+		{"in_progress_to_in_progress", StatusInProgress, StatusInProgress},
+		{"ambiguous_to_in_progress", StatusAmbiguous, StatusInProgress},
+		{"reconciliation_to_accepted", StatusReconciliationRequired, StatusAccepted},
+		{"reconciliation_to_ambiguous", StatusReconciliationRequired, StatusAmbiguous},
+		{"reconciliation_to_reconciliation", StatusReconciliationRequired, StatusReconciliationRequired},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prior := fixtureState(t, test.from, 4, nil, []EventID{"event-old"}, []EffectID{"effect-bound"})
+			transition := OperationTransition{4, 5, test.to, "", 0, nil, []EventID{"event-old", "event-permission"}, []EffectID{"effect-bound"}, ""}
+			if _, err := ResumeOperationStateWithEffectPermissionV2(prior, transition, permission); !IsKind(err, ErrorInvalidTransition) {
+				t.Fatalf("widened permission transition %s -> %s: %v", test.from, test.to, err)
+			}
+		})
+	}
+}
+
+func TestCommitPlanUsesPermissionBoundResumeWithoutWideningGenericTransition(t *testing.T) {
+	prior := fixtureState(t, StatusReconciliationRequired, 3, nil,
+		[]EventID{"event-old"}, []EffectID{"effect-bound"})
+	next := mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 4, Status: StatusInProgress,
+		EventIDs: []EventID{"event-old", "event-permission"}, EffectIDs: []EffectID{"effect-bound"}})
+	permission := fixtureEffectPermission(t, "event-permission", "effect-bound")
+	if err := exactPublicationMembership(&prior, next, []EventID{"event-permission"}, nil, nil); !IsKind(err, ErrorInvalidTransition) {
+		t.Fatalf("generic publication path admitted permission-only edge: %v", err)
+	}
+	if err := exactPublicationMembership(&prior, next, []EventID{"event-permission"}, nil, &permission); err != nil {
+		t.Fatalf("sealed permission path rejected exact resume: %v", err)
+	}
+	for name, mutant := range map[string]EffectPermissionCoordinateV2{
+		"reused_event":   fixtureEffectPermission(t, "event-old", "effect-bound"),
+		"unbound_effect": fixtureEffectPermission(t, "event-permission", "effect-other"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := exactPublicationMembership(&prior, next, []EventID{"event-permission"}, nil, &mutant); !IsKind(err, ErrorInvalidTransition) {
+				t.Fatalf("permission coordinate mutant admitted: %v", err)
+			}
+		})
+	}
+}
+
+func TestSealCommitPlanBindsExactCanonicalEffectPermissionEvent(t *testing.T) {
+	prior := fixtureState(t, StatusReconciliationRequired, 3, nil, []EventID{"event-old"}, []EffectID{"effect-bound"})
+	next := mustState(t, OperationStateInput{OperationID: "operation-01", LogicalVersion: 4, Status: StatusInProgress,
+		EventIDs: []EventID{"event-old", "event-operation", "event-permission"}, EffectIDs: []EffectID{"effect-bound"}})
+	operationCoordinate, _ := NewAggregateCoordinate("operation", "operation-01", Scope{Kind: ScopeHost})
+	effectCoordinate, _ := NewAggregateCoordinate("external_effect", "effect-bound", fixtureScope())
+	permissionEvent := EventDraftV2{EventID: "event-permission", EventType: "external_effect.allow_retry", Family: "external_effect", EventSchemaVersion: 1, ReducerVersion: 1,
+		Coordinate: effectCoordinate, AggregateLogicalVersion: 2, CommittedRuntimeEpochID: "epoch-18", Observations: []byte(`{"source":"test"}`), Payload: []byte(`{"permission":"retry"}`)}
+	permission, err := NewEffectPermissionCoordinateV2(permissionEvent, "effect-bound")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []EventDraftV2{
+		{EventID: "event-operation", EventType: "operation.progressed", Family: "operation", EventSchemaVersion: 2, ReducerVersion: 2, Coordinate: operationCoordinate, AggregateLogicalVersion: 4, CommittedRuntimeEpochID: "epoch-18", Payload: operationPayload(t, next)},
+		permissionEvent,
+	}
+	heads := []HeadTransitionV2{
+		{Coordinate: operationCoordinate, ExpectedLogicalVersion: 3, NextLogicalVersion: 4, EventID: "event-operation", ExpectedRecordRevision: 30, CommittedRuntimeEpochID: "epoch-18", CanonicalStateDigest: digest("state", []byte("operation-4")), AuthoritySummary: []byte(`{"status":"in_progress"}`)},
+		{Coordinate: effectCoordinate, ExpectedLogicalVersion: 1, NextLogicalVersion: 2, EventID: "event-permission", ExpectedRecordRevision: 31, CommittedRuntimeEpochID: "epoch-18", CanonicalStateDigest: digest("state", []byte("effect-2")), AuthoritySummary: []byte(`{"stage":"retry_allowed"}`)},
+	}
+	base := CommitPlanInput{PriorOperationState: &prior, OperationState: next, Events: events, Heads: heads,
+		Conditions: []ProviderCondition{mustHeadCondition(t, heads[0]), mustHeadCondition(t, heads[1])}, EffectPermissionResume: &permission}
+	if _, err := SealCommitPlanV2(base, DefaultEventRegistryV2()); err != nil {
+		t.Fatalf("exact permission event failed public sealing: %v", err)
+	}
+	for name, mutate := range map[string]func(*CommitPlanInput){
+		"operation_event_substitution": func(v *CommitPlanInput) {
+			v.EffectPermissionResume = ptrEffectPermission(fixtureEffectPermission(t, "event-operation", "effect-bound"))
+		},
+		"unrelated_registered_event": func(v *CommitPlanInput) { v.Events[1].EventType = "external_effect.observation_recorded" },
+		"wrong_effect_aggregate": func(v *CommitPlanInput) {
+			v.Events[1].Coordinate.ID = "effect-other"
+			v.Heads[1].Coordinate.ID = "effect-other"
+		},
+		"wrong_tuple":          func(v *CommitPlanInput) { v.Events[1].Family = "workspace" },
+		"altered_payload":      func(v *CommitPlanInput) { v.Events[1].Payload = []byte(`{"permission":"compensation"}`) },
+		"altered_observations": func(v *CommitPlanInput) { v.Events[1].Observations = []byte(`{"source":"other"}`) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			candidate.Events = cloneEventDrafts(base.Events)
+			candidate.Heads = cloneHeadTransitions(base.Heads)
+			mutate(&candidate)
+			if _, err := SealCommitPlanV2(candidate, DefaultEventRegistryV2()); err == nil {
+				t.Fatal("permission semantic mutant admitted")
+			}
+		})
+	}
+}
+
+func ptrEffectPermission(value EffectPermissionCoordinateV2) *EffectPermissionCoordinateV2 {
+	return &value
 }
 
 func TestOperationBindingRFC3339CalendarBoundaries(t *testing.T) {
@@ -388,6 +597,163 @@ func TestCommitPlanPublicationSealMembershipAndImmutability(t *testing.T) {
 		if err != nil || decoded.CanonicalDigest() != event.CanonicalDigest() {
 			t.Fatalf("event roundtrip err=%v", err)
 		}
+		address, _ := NewJournalEventAddressV2(event.Coordinate(), event.LogicalVersion())
+		record, _ := NewRecoveryRecordV2(address, encoded, 1, "")
+		trusted, trustedErr := DecodeEventEnvelopeRecordV2(record, registry)
+		if trustedErr != nil || trusted.CanonicalDigest() != event.CanonicalDigest() || trusted.CanonicalSizeV2() != len(encoded) {
+			t.Fatalf("trusted event roundtrip err=%v", trustedErr)
+		}
+		reencoded, reencodeErr := EncodeEventEnvelopeV2(trusted)
+		if reencodeErr != nil || !bytes.Equal(reencoded, encoded) {
+			t.Fatalf("trusted typed decoder changed event semantics: err=%v", reencodeErr)
+		}
+		if event.Family() == "operation" {
+			state, stateErr := ReconstructOperationStateFromEventV2(trusted)
+			if stateErr != nil || state.OperationID() != event.OperationID() {
+				t.Fatalf("trusted operation event state=%+v err=%v", state, stateErr)
+			}
+		}
+	}
+
+	encoded, err := EncodeEventEnvelopeV2(first.Events()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["zz_unknown"] = json.RawMessage(`true`)
+	unknown, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, _ := NewJournalEventAddressV2(first.Events()[0].Coordinate(), first.Events()[0].LogicalVersion())
+	record, err := NewRecoveryRecordV2(address, unknown, 1, "")
+	if err != nil {
+		t.Fatalf("canonical unknown-field mutant was not admitted to the typed boundary: %v", err)
+	}
+	if _, err := DecodeEventEnvelopeRecordV2(record, registry); err == nil {
+		t.Fatal("sealed internal decoder accepted an unknown event field")
+	}
+	if _, err := NewRecoveryRecordV2(address, []byte(`{"a":1,"a":2}`), 1, ""); err == nil {
+		t.Fatal("duplicate-field event bytes reached the sealed typed decoder")
+	}
+}
+
+func TestAuthorityAssertionsAndWorkspacePathClaimAreSealedWithDistinctSemantics(t *testing.T) {
+	input := fixturePlanInput(t)
+	readHead, _ := NewAggregateCoordinate("execution_slot", "slot-read", fixtureScope())
+	observedDigest, err := ReducerStateDigestV2([]byte(`{"slot":"current"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	present, err := NewAuthorityAssertionV2(AuthorityAssertionInputV2{
+		Target: ConditionTarget{Kind: ConditionTargetAggregateHead, Coordinate: readHead}, Kind: ConditionRecordRevision,
+		ObservedRevision: 41, ExpectedLogicalVersion: 7, ObservedValueDigest: observedDigest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent, err := NewAuthorityAssertionV2(AuthorityAssertionInputV2{
+		Target: ConditionTarget{Kind: ConditionTargetEligibilityGuard, MissionID: "mission", ShardID: "guard-read"}, Kind: ConditionAbsent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := NewWorkspacePathClaimV2(digest("workspace.path.claim", []byte("/managed/workspace")), []byte(`{"workspace_id":"workspace-01"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Assertions = []AuthorityAssertionV2{present, absent}
+	input.WorkspacePathClaim = &claim
+	sealed, err := SealCommitPlanV2(input, DefaultEventRegistryV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.AssertionCount() != 2 || sealed.MutationCount() != 11 || len(sealed.Events()) != len(input.Events) {
+		t.Fatalf("assertions leaked into mutations/events: assertions=%d mutations=%d events=%d", sealed.AssertionCount(), sealed.MutationCount(), len(sealed.Events()))
+	}
+	claims := 0
+	for _, record := range sealed.Records() {
+		if record.Role() != RecordWorkspacePathClaim {
+			continue
+		}
+		claims++
+		if record.Target().WorkspacePathClaimDigest() != claim.ClaimDigest() || record.Condition().Kind() != ConditionAbsent ||
+			record.Condition().ObservedRevision() != 0 || !bytes.Equal(record.CanonicalValue(), claim.CanonicalValue()) {
+			t.Fatalf("workspace claim record drifted: %+v", record)
+		}
+	}
+	if claims != 1 || int(sealed.PublicationWitness().AuthorityRecordCount()) != sealed.MutationCount()-1 {
+		t.Fatalf("workspace claim/witness accounting: claims=%d record_count=%d mutations=%d", claims, sealed.PublicationWitness().AuthorityRecordCount(), sealed.MutationCount())
+	}
+	assertions := sealed.Assertions()
+	assertions[0] = AuthorityAssertionV2{}
+	claimCopy := sealed.WorkspacePathClaim()
+	claimBytes := claimCopy.CanonicalValue()
+	claimBytes[0] = 'x'
+	if sealed.Assertions()[0].ObservedValueDigest().IsZero() || sealed.WorkspacePathClaim().CanonicalValue()[0] == 'x' {
+		t.Fatal("sealed assertion or workspace claim aliases returned state")
+	}
+
+	reversed := fixturePlanInput(t)
+	reversed.Assertions = []AuthorityAssertionV2{absent, present}
+	reversed.WorkspacePathClaim = &claim
+	second, err := SealCommitPlanV2(reversed, DefaultEventRegistryV2())
+	if err != nil || second.Digest() != sealed.Digest() || !bytes.Equal(second.CanonicalBytes(), sealed.CanonicalBytes()) {
+		t.Fatalf("assertion input order changed sealed identity: %v", err)
+	}
+	withoutAssertion := fixturePlanInput(t)
+	withoutAssertion.WorkspacePathClaim = &claim
+	third, _ := SealCommitPlanV2(withoutAssertion, DefaultEventRegistryV2())
+	withoutClaim := fixturePlanInput(t)
+	withoutClaim.Assertions = []AuthorityAssertionV2{present, absent}
+	fourth, _ := SealCommitPlanV2(withoutClaim, DefaultEventRegistryV2())
+	if third.Digest() == sealed.Digest() || fourth.Digest() == sealed.Digest() || third.RecordSetDigest() == sealed.RecordSetDigest() || fourth.RecordSetDigest() == sealed.RecordSetDigest() {
+		t.Fatal("assertion or workspace claim failed to influence its sealed commitments")
+	}
+}
+
+func TestAuthorityAssertionAndWorkspaceClaimMutantsRefuse(t *testing.T) {
+	readHead, _ := NewAggregateCoordinate("execution_slot", "slot-read", fixtureScope())
+	presentInput := AuthorityAssertionInputV2{Target: ConditionTarget{Kind: ConditionTargetAggregateHead, Coordinate: readHead}, Kind: ConditionRecordRevision,
+		ObservedRevision: 41, ExpectedLogicalVersion: 7, ObservedValueDigest: digest("observed", []byte("head"))}
+	present, _ := NewAuthorityAssertionV2(presentInput)
+	for name, mutate := range map[string]func(*AuthorityAssertionInputV2){
+		"checkpoint_target": func(v *AuthorityAssertionInputV2) {
+			v.Target = ConditionTarget{Kind: ConditionTargetCheckpointSlot, CheckpointSlotID: "slot"}
+		},
+		"present_zero_revision": func(v *AuthorityAssertionInputV2) { v.ObservedRevision = 0 },
+		"present_zero_version":  func(v *AuthorityAssertionInputV2) { v.ExpectedLogicalVersion = 0 },
+		"present_zero_digest":   func(v *AuthorityAssertionInputV2) { v.ObservedValueDigest = Digest{} },
+		"absent_with_revision":  func(v *AuthorityAssertionInputV2) { v.Kind = ConditionAbsent },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := presentInput
+			mutate(&candidate)
+			if _, err := NewAuthorityAssertionV2(candidate); !IsKind(err, ErrorInvalidTransition) {
+				t.Fatalf("malformed assertion admitted: %v", err)
+			}
+		})
+	}
+	input := fixturePlanInput(t)
+	input.Assertions = []AuthorityAssertionV2{present, present}
+	if _, err := SealCommitPlanV2(input, DefaultEventRegistryV2()); !IsKind(err, ErrorInvalidTransition) {
+		t.Fatalf("duplicate assertion admitted: %v", err)
+	}
+	input = fixturePlanInput(t)
+	mutatedHead := input.Heads[1]
+	overlap, _ := NewAuthorityAssertionV2(AuthorityAssertionInputV2{Target: ConditionTarget{Kind: ConditionTargetAggregateHead, Coordinate: mutatedHead.Coordinate}, Kind: ConditionAbsent})
+	input.Assertions = []AuthorityAssertionV2{overlap}
+	if _, err := SealCommitPlanV2(input, DefaultEventRegistryV2()); !IsKind(err, ErrorInvalidTransition) {
+		t.Fatalf("same-value-write assertion substitute admitted: %v", err)
+	}
+	if _, err := NewWorkspacePathClaimV2(Digest{}, []byte(`{"workspace_id":"workspace-01"}`)); !IsKind(err, ErrorInvalidDigest) {
+		t.Fatalf("zero workspace claim digest admitted: %v", err)
+	}
+	if _, err := NewWorkspacePathClaimV2(digest("claim", nil), []byte(`{"z":1,"a":2}`)); !IsKind(err, ErrorInvalidCanonicalData) {
+		t.Fatalf("noncanonical workspace claim admitted: %v", err)
 	}
 }
 
@@ -475,7 +841,7 @@ func TestSealedRecordProjectionIsPersistenceCompleteAndImmutable(t *testing.T) {
 func TestPublicationWitnessRoundTripAndSealedProjectionSemantics(t *testing.T) {
 	input := fixturePlanInput(t)
 	preimage, err := planPreimage(input.OperationBinding, input.PriorOperationState, input.OperationState, input.Events, input.Heads,
-		input.EffectIntents, input.EligibilityGuards, input.Checkpoints, input.Conditions)
+		input.EffectIntents, input.EligibilityGuards, input.Checkpoints, input.Conditions, input.Assertions, input.WorkspacePathClaim, input.EffectPermissionResume)
 	if err != nil || !bytes.Contains(preimage, []byte(`"publication_witness_schema_version":1`)) || bytes.Contains(preimage, []byte(`"witness_sha256"`)) {
 		t.Fatalf("plan preimage does not bind only the witness contract version: %s %v", preimage, err)
 	}
@@ -500,7 +866,7 @@ func TestPublicationWitnessRoundTripAndSealedProjectionSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonical witness did not cross the public recovery record boundary: %v", err)
 	}
-	recovered, err := DecodePublicationWitnessV2(recoveryRecord.CanonicalValue())
+	recovered, err := DecodePublicationWitnessRecordV2(recoveryRecord)
 	if err != nil || recovered != witness || recovered.WitnessDigest() != witness.WitnessDigest() {
 		t.Fatalf("recovery record changed witness semantics or digest: %+v %v", recovered, err)
 	}
@@ -1159,6 +1525,14 @@ func TestCollectionBudgetBoundaries(t *testing.T) {
 	if sealedMetadata.PublicationWitness().AuthorityRecordCount() != MaxMembers-1 || sealedMetadata.MutationCount() != MaxMembers {
 		t.Fatalf("255 non-witness plus one witness accounting drifted: reported=%d mutations=%d",
 			sealedMetadata.PublicationWitness().AuthorityRecordCount(), sealedMetadata.MutationCount())
+	}
+	readHead, _ := NewAggregateCoordinate("execution_slot", "slot-read", fixtureScope())
+	readAssertion, _ := NewAuthorityAssertionV2(AuthorityAssertionInputV2{Target: ConditionTarget{Kind: ConditionTargetAggregateHead, Coordinate: readHead},
+		Kind: ConditionAbsent})
+	assertionOverflow := maximumMetadata
+	assertionOverflow.Assertions = []AuthorityAssertionV2{readAssertion}
+	if _, err := SealCommitPlanV2(assertionOverflow, DefaultEventRegistryV2()); !IsKind(err, ErrorBudgetExceeded) {
+		t.Fatalf("combined assertion plus mutation maximum-plus-one admitted: %v", err)
 	}
 	overProjection := maximumMetadata
 	overProjection.EligibilityGuards = append([]EligibilityGuardTransition(nil), maximumMetadata.EligibilityGuards...)
@@ -1852,6 +2226,209 @@ func TestDurableEventFinalCanonicalizationPreservesDigestPreimage(t *testing.T) 
 	}
 }
 
+func TestRecoveryEventCanonicalScannerRejectsStructuralAndDigestMutants(t *testing.T) {
+	registry := DefaultEventRegistryV2()
+	event := fixtureMissionEnvelope(t, []byte(`{"canonical_event_sha256":"payload-only","nested":{"value":true}}`))
+	encoded, err := EncodeEventEnvelopeV2(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, digest, ok := inspectRecoveryEventCanonicalV2(encoded); !ok || digest != event.CanonicalDigest() {
+		t.Fatalf("valid recovery event inspection differs: ok=%t digest=%s want=%s", ok, digest, event.CanonicalDigest())
+	}
+	if decoded, err := decodeEventEnvelopeV2(encoded, registry, true); err != nil || decoded.CanonicalDigest() != event.CanonicalDigest() {
+		t.Fatalf("payload-contained digest key confused recovery decoder: event=%+v err=%v", decoded, err)
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	canonicalDigestMember := append([]byte(`"canonical_event_sha256":`), fields["canonical_event_sha256"]...)
+	duplicateDigest := bytes.Replace(encoded, canonicalDigestMember, append(append(append([]byte(nil), canonicalDigestMember...), ','), canonicalDigestMember...), 1)
+	escapedKey := bytes.Replace(encoded, []byte(`"event_id"`), []byte(`"\u0065vent_id"`), 1)
+	malformedBoundary := bytes.Replace(encoded, append([]byte{','}, canonicalDigestMember...), canonicalDigestMember, 1)
+	reordered := reverseTopLevelObjectForTest(t, encoded)
+
+	unknownFields := maps.Clone(fields)
+	unknownFields["zz_unknown"] = json.RawMessage(`true`)
+	unknown, _ := json.Marshal(unknownFields)
+	nestedFields := maps.Clone(fields)
+	nestedFields["zz_nested"] = json.RawMessage(`{"canonical_event_sha256":"lookalike"}`)
+	nestedLookalike, _ := json.Marshal(nestedFields)
+	wrongDigestFields := maps.Clone(fields)
+	wrongDigestFields["canonical_event_sha256"] = json.RawMessage(`"0000000000000000000000000000000000000000000000000000000000000000"`)
+	wrongDigest, _ := json.Marshal(wrongDigestFields)
+
+	for name, mutant := range map[string][]byte{
+		"unknown_top_level": unknown, "duplicate_digest": duplicateDigest, "nested_lookalike": nestedLookalike,
+		"escaped_key": escapedKey, "malformed_digest_boundary": malformedBoundary, "reordered": reordered, "wrong_digest": wrongDigest,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+				t.Fatal("recovery event mutant was accepted")
+			}
+		})
+	}
+
+	optionalInput := event.input
+	optionalInput.ActorID = "actor-01"
+	optionalInput.ProcessID = "process-01"
+	optionalInput.WorkRevisionID = "revision-01"
+	optionalInput.PolicyRevision = "policy-01"
+	optionalInput.GovernanceRevisions = []string{"governance-01"}
+	optionalInput.Payload = event.Payload()
+	optionalInput.Observations = event.Observations()
+	optionalEvent, err := NewEventEnvelopeV2(optionalInput, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, scope := range map[string]Scope{
+		"host":          {Kind: ScopeHost},
+		"project":       {Kind: ScopeProject, ProjectID: "project"},
+		"mission":       {Kind: ScopeMission, ProjectID: "project", MissionID: "mission"},
+		"repository":    {Kind: ScopeRepository, ProjectID: "project", RepositoryID: "repository"},
+		"work_revision": {Kind: ScopeWorkRevision, ProjectID: "project", MissionID: "mission", WorkRevisionID: "revision"},
+		"work":          {Kind: ScopeWork, ProjectID: "project", MissionID: "mission", WorkRevisionID: "revision", WorkID: "work"},
+	} {
+		t.Run("valid_optional_"+name, func(t *testing.T) {
+			input := optionalInput
+			input.Coordinate.Scope = scope
+			candidate, err := NewEventEnvelopeV2(input, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encodedCandidate, err := EncodeEventEnvelopeV2(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, inspected, ok := inspectRecoveryEventCanonicalV2(encodedCandidate)
+			decoded, decodeErr := decodeEventEnvelopeV2(encodedCandidate, registry, true)
+			if !ok || inspected != candidate.CanonicalDigest() || decodeErr != nil || decoded.CanonicalDigest() != candidate.CanonicalDigest() {
+				t.Fatalf("valid optional event changed: inspected=%s ok=%t decoded=%+v err=%v", inspected, ok, decoded, decodeErr)
+			}
+		})
+	}
+	for name, replacement := range map[string][2][]byte{
+		"empty_actor":      {[]byte(`"actor_id":"actor-01"`), []byte(`"actor_id":""`)},
+		"empty_process":    {[]byte(`"process_id":"process-01"`), []byte(`"process_id":""`)},
+		"empty_work":       {[]byte(`"work_revision_id":"revision-01"`), []byte(`"work_revision_id":""`)},
+		"empty_policy":     {[]byte(`"policy_revision":"policy-01"`), []byte(`"policy_revision":""`)},
+		"empty_governance": {[]byte(`"governance_revisions":["governance-01"]`), []byte(`"governance_revisions":[]`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutant := eventMutantWithRecomputedDigestForTest(t, optionalEvent, replacement[0], replacement[1])
+			if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+				t.Fatal("recovery event admitted an optional top-level member that its encoder omits")
+			}
+		})
+	}
+	for name, replacement := range map[string][2][]byte{
+		"wrong_type_actor":      {[]byte(`"actor_id":"actor-01"`), []byte(`"actor_id":1`)},
+		"null_governance":       {[]byte(`"governance_revisions":["governance-01"]`), []byte(`"governance_revisions":null`)},
+		"wrong_type_governance": {[]byte(`"governance_revisions":["governance-01"]`), []byte(`"governance_revisions":true`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutant := eventMutantWithRecomputedDigestForTest(t, optionalEvent, replacement[0], replacement[1])
+			if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+				t.Fatal("recovery event admitted a wrong-type optional member")
+			}
+		})
+	}
+
+	hostInput := event.input
+	hostInput.Coordinate.Scope = Scope{Kind: ScopeHost}
+	hostInput.Payload = event.Payload()
+	hostInput.Observations = event.Observations()
+	hostEvent, err := NewEventEnvelopeV2(hostInput, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"project_id", "mission_id", "repository_id", "work_revision_id", "work_id"} {
+		t.Run("empty_scope_"+name, func(t *testing.T) {
+			mutant := eventMutantWithRecomputedDigestForTest(t, hostEvent,
+				[]byte(`"scope":{"kind":"host"}`), []byte(`"scope":{"kind":"host","`+name+`":""}`))
+			if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+				t.Fatal("recovery event admitted an optional scope member that its encoder omits")
+			}
+		})
+	}
+	t.Run("wrong_type_scope_optional", func(t *testing.T) {
+		mutant := eventMutantWithRecomputedDigestForTest(t, hostEvent,
+			[]byte(`"scope":{"kind":"host"}`), []byte(`"scope":{"kind":"host","project_id":1}`))
+		if _, err := decodeEventEnvelopeV2(mutant, registry, true); err == nil {
+			t.Fatal("recovery event admitted a wrong-type scope optional")
+		}
+	})
+}
+
+func eventMutantWithRecomputedDigestForTest(t *testing.T, event EventEnvelopeV2, before, after []byte) []byte {
+	t.Helper()
+	unsigned, err := event.canonical(false)
+	if err != nil || bytes.Count(unsigned, before) != 1 {
+		t.Fatalf("cannot mutate unsigned event preimage count=%d err=%v", bytes.Count(unsigned, before), err)
+	}
+	unsigned = bytes.Replace(unsigned, before, after, 1)
+	mutantDigest := digest(canonicalEventDomain, unsigned)
+	signed, err := EncodeEventEnvelopeV2(event)
+	if err != nil || bytes.Count(signed, before) != 1 {
+		t.Fatalf("cannot mutate signed event count=%d err=%v", bytes.Count(signed, before), err)
+	}
+	signed = bytes.Replace(signed, before, after, 1)
+	want := []byte(`"canonical_event_sha256":"` + event.CanonicalDigest().String() + `"`)
+	replacement := []byte(`"canonical_event_sha256":"` + mutantDigest.String() + `"`)
+	if bytes.Count(signed, want) != 1 {
+		t.Fatal("cannot replace signed event digest")
+	}
+	return bytes.Replace(signed, want, replacement, 1)
+}
+
+func TestRecoveryOperationPreimageScannerRejectsStructuralAndOmissionMutants(t *testing.T) {
+	publicationID := testPublicationID("recovery-operation-preimage")
+	accepted := fixtureState(t, StatusAccepted, 1, nil, []EventID{"event-01"}, []EffectID{"effect-01"})
+	payload := operationPayload(t, accepted)
+	if state, err := reconstructOperationStateV2(payload, publicationID, true); err != nil || state.OperationID() != accepted.OperationID() {
+		t.Fatalf("valid sealed operation preimage changed: state=%+v err=%v", state, err)
+	}
+	resolved := fixtureState(t, StatusResolved, 2, []byte(`{"done":true}`), []EventID{"event-01"}, []EffectID{"effect-01"})
+	resolvedPayload := operationPayload(t, resolved)
+	if state, err := reconstructOperationStateV2(resolvedPayload, publicationID, true); err != nil || state.ResultDigest() != resolved.ResultDigest() {
+		t.Fatalf("valid sealed operation optional members changed: state=%+v err=%v", state, err)
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	unknownFields := maps.Clone(fields)
+	unknownFields["zz_unknown"] = json.RawMessage(`true`)
+	unknown, _ := json.Marshal(unknownFields)
+	operationMember := append([]byte(`"operation_id":`), fields["operation_id"]...)
+	duplicate := bytes.Replace(payload, operationMember, append(append(append([]byte(nil), operationMember...), ','), operationMember...), 1)
+
+	mutants := map[string][]byte{
+		"unknown": unknown, "duplicate": duplicate, "reordered": reverseTopLevelObjectForTest(t, payload),
+	}
+	for name, value := range map[string]json.RawMessage{
+		"canonical_result":      json.RawMessage(`""`),
+		"last_publication_id":   json.RawMessage(`""`),
+		"result_kind":           json.RawMessage(`""`),
+		"result_schema_version": json.RawMessage(`0`),
+		"result_sha256":         json.RawMessage(`""`),
+	} {
+		candidate := maps.Clone(fields)
+		candidate[name] = value
+		mutants["present_empty_"+name], _ = json.Marshal(candidate)
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if _, err := reconstructOperationStateV2(mutant, publicationID, true); err == nil {
+				t.Fatal("sealed operation preimage mutant was accepted")
+			}
+		})
+	}
+}
+
 func reverseTopLevelObjectForTest(t *testing.T, encoded []byte) []byte {
 	t.Helper()
 	var fields map[string]json.RawMessage
@@ -1883,6 +2460,20 @@ func reverseTopLevelObjectForTest(t *testing.T, encoded []byte) []byte {
 
 func fixtureScope() Scope {
 	return Scope{Kind: ScopeMission, ProjectID: "project", MissionID: "mission"}
+}
+
+func fixtureEffectPermission(t *testing.T, eventID EventID, effectID EffectID) EffectPermissionCoordinateV2 {
+	t.Helper()
+	coordinate, err := NewAggregateCoordinate("external_effect", AggregateID(effectID), fixtureScope())
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := NewEffectPermissionCoordinateV2(EventDraftV2{EventID: eventID, EventType: "external_effect.allow_retry", Family: "external_effect",
+		EventSchemaVersion: 1, ReducerVersion: 1, Coordinate: coordinate, Payload: []byte(`{"permission":"retry"}`), Observations: []byte(`{"source":"test"}`)}, effectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return permission
 }
 
 func fixtureBindingInput(t *testing.T, epoch RuntimeEpochID) OperationBindingInput {
@@ -2043,5 +2634,99 @@ func TestCanonicalJSONPropertyCorpus(t *testing.T) {
 		if err != nil || !bytes.Equal(canonical, again) {
 			t.Fatalf("canonical instability at %d", index)
 		}
+	}
+}
+
+func TestCanonicalObjectFastPathMatchesReferenceBoundary(t *testing.T) {
+	sawFast := false
+	inputs := [][]byte{
+		[]byte(`{"a":1,"b":{"c":true,"d":[null,"plain",-0,1.0,1e2,1E+2]}}`),
+		[]byte(`{"a":-0,"b":0,"c":0.0,"d":1e-9,"e":9E+9}`),
+		[]byte(`{"é":1,"界":2}`),
+		[]byte(`{"b":1,"a":2}`),
+		[]byte(`{"a":1,"a":2}`),
+		[]byte(`{"a":{"b":1,"b":2}}`),
+		[]byte(`{"a":"line\\n"}`),
+		[]byte(`{"a":"\\u0061"}`),
+		[]byte(`{"a":"<html>"}`),
+		[]byte("{\"a\":\"\u2028\"}"),
+		[]byte(` {"a":1}`),
+		[]byte("{\n\"a\":1}"),
+		[]byte(`{"a" :1}`),
+		[]byte(`{"a":01}`),
+		[]byte(`{"a":+1}`),
+		[]byte(`{"a":1.}`),
+		[]byte(`{"a":NaN}`),
+		[]byte(`[]`),
+		{'{', '"', 'a', '"', ':', '"', 0xff, '"', '}'},
+	}
+	for _, encoded := range inputs {
+		valid := utf8.Valid(encoded) && json.Valid(encoded)
+		fast := valid && canonicalObjectFastPath(encoded)
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		value, err := decodeUniqueValue(decoder)
+		if err != nil || !valid {
+			if fast {
+				t.Fatalf("fast path admitted invalid input %q", encoded)
+			}
+			continue
+		}
+		object, objectOK := value.(map[string]any)
+		canonical, marshalErr := json.Marshal(object)
+		wantFast := objectOK && marshalErr == nil && bytes.Equal(canonical, encoded)
+		if fast && !wantFast {
+			t.Fatalf("fast path admitted noncanonical input=%q canonical=%q", encoded, canonical)
+		}
+		got, gotErr := CanonicalObject(encoded)
+		if objectOK && marshalErr == nil {
+			if gotErr != nil || !bytes.Equal(got, canonical) {
+				t.Fatalf("canonical equivalence input=%q got=%q err=%v want=%q", encoded, got, gotErr, canonical)
+			}
+		} else if gotErr == nil {
+			t.Fatalf("non-object canonical input accepted: %q", encoded)
+		}
+		sawFast = sawFast || fast
+	}
+	if !sawFast {
+		t.Fatal("fast path did not admit the canonical no-escape control")
+	}
+}
+
+func TestTakeRecoveryRecordValidatesBeforeSealingAndKeepsPublicCopiesDefensive(t *testing.T) {
+	address, err := NewOperationBindingAddressV2("operation-owned-record")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, input := range map[string][]byte{
+		"reordered":   []byte(`{"z":1,"a":2}`),
+		"duplicate":   []byte(`{"a":1,"a":1}`),
+		"escaped_key": []byte(`{"\u0061":1}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalidBytes := append([]byte(nil), input...)
+			if _, err := TakeRecoveryRecordV2(address, &invalidBytes, 1, ""); err == nil || invalidBytes == nil {
+				t.Fatal("unchecked or consumed invalid provider bytes")
+			}
+		})
+	}
+	callerBytes := []byte(`{"a":1}`)
+	defensive, err := NewRecoveryRecordV2(address, callerBytes, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerBytes[2] = 'x'
+	if string(defensive.CanonicalValue()) != `{"a":1}` {
+		t.Fatal("public constructor retained caller-owned canonical bytes")
+	}
+	owned := []byte(`{"a":1}`)
+	record, err := TakeRecoveryRecordV2(address, &owned, 1, "")
+	if err != nil || owned != nil {
+		t.Fatalf("owned seal err=%v retained_input=%t", err, owned != nil)
+	}
+	public := record.CanonicalValue()
+	public[2] = 'x'
+	if string(record.CanonicalValue()) != `{"a":1}` {
+		t.Fatal("public canonical bytes mutated the sealed record")
 	}
 }

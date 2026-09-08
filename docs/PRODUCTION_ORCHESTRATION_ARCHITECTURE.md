@@ -1,12 +1,12 @@
 # Production Orchestration Architecture
 
-Status: **proposed normative production architecture**
+Status: **normative architecture — M2 GapDB authority implementation candidate**
 
 Decision record: [ADR 0002](adr/0002-production-orchestration-architecture.md)
 
 Scope: first production runtime with one machine and one local-filesystem authority
 
-Delivery effect: documentation only; no proposed capability in this record ships by virtue of this document
+Delivery effect: M2 implements the authority/storage boundary; later surfaces remain governed successors
 
 <a id="fr-001"></a>
 ## 1. Scope, status, and precedence
@@ -36,14 +36,14 @@ replicated, or multi-owner runtime requires a separate ADR and proving ground.
 
 | Surface | Current evidence-backed truth | Target disposition |
 |---|---|---|
-| Storage | **delivered** — SQLite-backed Phase 1 authority and Phase 3 mission control are qualified only at their exact source/evidence commits; see the [Phase 1 index](phase1-evidence/README.md), [ADR 0001](adr/0001-phase1-authority-proving-ground-verdict.md), and [Phase 3 index](phase3-evidence/README.md). | **proposed** — GapDB is the only production control-state substrate. SQLite has no production runtime, driver, fallback, migration, or hidden module dependency after M2. The current SQLite implementation remains **historical** and qualified for its Phase 1–3 boundary until M1 and M2 produce their own evidence. |
+| Storage | **implemented for M2 qualification** — GapDB is the only compiled production control-state substrate; source/module/SBOM/binary/install/help/runtime guards forbid SQLite resurrection. Historical Phase 1–3 SQLite evidence remains immutable but is not executable fallback. | **qualification boundary** — release readiness belongs only to the exact source/tree/RunID admitted by the closed M2 manifest and independent review. |
 | Tracker | **delivered** — provider-neutral ports and the pinned Beads 1.2.2 JSON adapter are qualified by the [Phase 2 evidence](phase2-evidence/README.md). | **retained/amended** — Beads is the default first-party mutable work substrate, never execution, review, acceptance, integration, or mission authority. |
 | Git and workspaces | **delivered** — distinct concurrent workspaces, lease generations, quarantine, repository-first integration fencing, and conflict preservation are qualified inside the [Phase 1 boundary](adr/0001-phase1-authority-proving-ground-verdict.md). | **retained/strengthened** — every replacement lease receives a fresh workspace; remote callers never mutate host workspaces or Git directly. |
-| Executable work and composition | **delivered** — immutable WorkRevision behavior, mission-method transitions, reconciliation dispositions, and a portable two-item composition are qualified by the [Phase 3 evidence](phase3-evidence/README.md). The composition is proving/helper oriented, not the production host. | **proposed** — a production host composes real dispatch, leases, workspaces, candidate handoff, independent review, acceptance, and serialized integration through typed capabilities. |
+| Executable work and composition | **implemented for M2 qualification** — the GapDB production host composes typed mission/workgraph, execution leases, workspaces, candidate handoff, independent review, acceptance, serialized integration, external effects, progress, restart, and playback. Earlier Phase 3 evidence remains the historical portable-method proof. | **M3 boundary** — compose real agents, the admitted Beads provider, and real repositories against the unchanged native capability laws. |
 | Application API | **historical/proposed compatibility** — [API 1.3](ORCHESTRATOR_API_1_3_PROJECTION.md) is a design projection; transport serving and several mission-wide operations are deferred. | **proposed** — process-complete Orchestrator API 2.0 is the sole application seam. It does not ship today. |
 | Acceptance | **delivered** — Phase 1–3 repository-specific Go campaigns and candidate-bound review evidence are source-bound proof, not a universal acceptance runtime; see the [Phase 1](phase1-evidence/README.md) and [Phase 3](phase3-evidence/README.md) indexes. | **proposed** — stack-neutral claims, revision-pinned provider bindings, evidence envelopes, and a policy gate. Neutral acceptance does not ship today. |
 | MCP | **retired as a core assumption** — no MCP runtime ships in Phases 1–3. | **proposed** — an optional, separately packaged MCP `2026-07-28` adapter projects API 2.0 and native operations. MCP does not ship today and contributes no unique workflow semantic. |
-| Packaging and host | **delivered** — the qualified repository builds Go packages and proving/helper binaries at cited boundaries. | **proposed** — the production `spec-kitty` host and pinned project-local `gapdbd` lifecycle are later program outcomes. No current install or run command may imply they already exist. |
+| Packaging and host | **implemented for M2 qualification** — `cmd/spec-kitty` owns the native authority command surface and exact admitted project-local `gapdbd` lifecycle. | **later** — process-complete CLI/API delivery and remote clients remain M5; qualification code is never production authority. |
 | Evidence | **delivered** — immutable, source-bound Phase 1–3 payloads remain historical truth at their cited commits. | **retained** — later claims require new candidate-bound evidence; copying old payloads into a new tree does not transfer qualification. |
 
 <a id="fr-003"></a>
@@ -218,14 +218,14 @@ discover, start or connect to, health-check, reconnect to, and stop the exact
 pinned sidecar. It must not import GapDB `internal/server`, locate an arbitrary
 binary on `PATH`, or assume a future embedding API.
 
-M1 must qualify and obtain human signature over the adoption tuple: GapDB source
+M1 qualified and obtained human signature over the adoption tuple: GapDB source
 revision, `gapdbd` binary digest, public client version/digest, protocol
 version, lifecycle policy, platform/filesystem boundary, and evidence digest.
-M2 may remove SQLite only after M1 passes. M2 then proves SQLite is absent from
-production source, `go.mod` and transitive graph, SBOM, built binaries, install,
-fallback, runtime configuration, and hidden migration paths. Historical
-SQLite evidence remains unchanged and unsupported old state fails honestly;
-dual-write or fallback operation is not permitted.
+M2 removes the retired implementation after that admitted decision and proves
+its absence from production source, `go.mod` and transitive graph, SBOM, built
+binaries, install, fallback, runtime configuration, and hidden migration paths.
+Historical evidence remains unchanged and unsupported old state fails
+honestly; dual-write or fallback operation is not permitted.
 
 <a id="fr-006"></a>
 ## 8. Recovery protocol
@@ -466,10 +466,9 @@ production reachability, and executable refusal behavior.
 - [The Python inventory](PYTHON_BEHAVIOR_INVENTORY.md) and
   [mini-review resolution](MINI_REVIEW_RESOLUTION.md) remain behavioral evidence,
   not active package or persistence recommendations.
-- `README.md` and [the technical project plan](TECHNICAL_PROJECT_PLAN.md) require
-  a dependent documentation migration before publication. Until then, their
-  statements about current SQLite qualification remain current delivery truth;
-  SQLite-shaped future production guidance is superseded by this document.
+- `README.md` and [the technical project plan](TECHNICAL_PROJECT_PLAN.md) retain
+  historical evidence links while describing the current GapDB-only production
+  graph. Older source-bound delivery claims do not become a fallback.
 - The future [historical dispositions record](HISTORICAL_ARCHITECTURE_DISPOSITIONS.md)
   will enumerate exact retained/amended/superseded passages without editing
   frozen payloads.
@@ -543,3 +542,34 @@ the immutable production adoption tuple.
   `MCP_2026_07_28_ADAPTER.md`, `PRODUCTION_RUNTIME_PROGRAM.md`, and
   `HISTORICAL_ARCHITECTURE_DISPOSITIONS.md`.
 - Frozen evidence payloads were read only and are outside this change.
+
+## 18. M2 successor contract
+
+M3 and M4 may consume only a verifier-admitted tuple from one immutable M2
+manifest. The stable surface is consumer-owned domain ports plus the exact
+`family/event_schema/reducer` registry, operation binding and replay rules,
+checkpoint and fresh-epoch recovery, memory-primary progress snapshots, and
+typed historical-root disposition. Storage keys, provider clients, sidecar
+lifecycle objects, qualification packages, and evidence-directory layouts are
+not consumer contracts.
+
+The first host has one machine and one filesystem authority. A successor calls
+the production host; it never opens the database. Tracker observations and Git
+facts remain external evidence and cannot grant mission, execution, review,
+acceptance, or integration authority. Playback remains pure and external-effect
+free. Any incompatible schema/reducer, absent admission, stale epoch, mixed
+source identity, or unsupported historical root fails closed.
+
+The dependency split is deliberate:
+
+- M3 composes real agents, the qualified tracker, Git, and lease-scoped
+  workspaces through these ports.
+- M4 binds stack-neutral acceptance claims to qualified evidence providers.
+- M5 later exposes the joined capabilities through API 2.0 and the ordinary
+  complete CLI.
+- Team Kitty and the optional stateless MCP Tasks adapter consume the API later
+  and contribute no authority semantic.
+
+No successor may import `internal/testcampaign/m2`, invoke the qualifier as a
+runtime service, import a concrete store adapter into a kernel, infer readiness
+from a workflow cursor, or add a dual-write, importer, selector, or fallback.

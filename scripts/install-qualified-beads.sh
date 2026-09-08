@@ -2,6 +2,11 @@
 set -eu
 LC_ALL=C
 export LC_ALL
+umask 077
+capture_root=${TMPDIR:-/tmp}/spec-kitty-beads-install-capture.$$
+mkdir -- "$capture_root"
+capture_file=$capture_root/value
+trap 'rm -f -- "$capture_file"; rmdir -- "$capture_root" 2>/dev/null || true' EXIT HUP INT TERM
 
 qualified_version='1.2.2'
 qualified_source_commit='6c124203e771433a3550c348771a5b5e27fd3c21'
@@ -39,7 +44,8 @@ case "$destination" in
     *) printf '%s\n' 'destination must be absolute' >&2; exit 2 ;;
 esac
 
-destination=$(realpath -m -- "$destination")
+realpath -m -- "$destination" >"$capture_file"
+IFS= read -r destination <"$capture_file"
 case "$destination" in
     /|/home|/tmp|/usr|/var) printf '%s\n' 'destination is too broad' >&2; exit 2 ;;
     *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./+=,@:%-]*)
@@ -48,8 +54,10 @@ case "$destination" in
         ;;
 esac
 
-if repository_root=$(git rev-parse --show-toplevel 2>/dev/null); then
-    repository_root=$(realpath -m -- "$repository_root")
+if git rev-parse --show-toplevel >"$capture_file" 2>/dev/null; then
+    IFS= read -r repository_root <"$capture_file"
+    realpath -m -- "$repository_root" >"$capture_file"
+    IFS= read -r repository_root <"$capture_file"
     case "$destination" in
         "$repository_root"|"$repository_root"/*)
             printf '%s\n' 'destination must be outside the source repository' >&2
@@ -58,8 +66,10 @@ if repository_root=$(git rev-parse --show-toplevel 2>/dev/null); then
     esac
 fi
 
-goos=$(go env GOOS)
-goarch=$(go env GOARCH)
+go env GOOS >"$capture_file"
+IFS= read -r goos <"$capture_file"
+go env GOARCH >"$capture_file"
+IFS= read -r goarch <"$capture_file"
 case "$goos/$goarch/$qualified_build_method" in
     linux/amd64/go-install-cgo-gms_pure_go-trimpath-nobuildid-go1.26.4)
         qualified_digest='0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6'
@@ -75,11 +85,12 @@ target="$tool_directory/bd"
 
 verify_target() {
     [ -f "$target" ] && [ -x "$target" ] || return 1
-    observed_digest=$(sha256sum -- "$target" | awk '{print $1}')
+    sha256sum -- "$target" >"$capture_file"
+    IFS=' ' read -r observed_digest ignored_digest_path <"$capture_file"
     [ "$observed_digest" = "$qualified_digest" ] || return 1
-    identity=$(BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$target" version --json)
-    printf '%s' "$identity" | grep -F '"schema_version": 1' >/dev/null
-    printf '%s' "$identity" | grep -F '"version": "1.2.2"' >/dev/null
+    (cd -- "$tool_directory" && BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 ./bd version --json) >"$capture_file"
+    grep -F '"schema_version": 1' "$capture_file" >/dev/null
+    grep -F '"version": "1.2.2"' "$capture_file" >/dev/null
 }
 
 emit_result() {
@@ -102,7 +113,8 @@ fi
     exit 1
 }
 
-observed_go_version=$(go version | awk '{print $3}')
+go version >"$capture_file"
+IFS=' ' read -r ignored_go_word ignored_version_word observed_go_version ignored_platform <"$capture_file"
 [ "$observed_go_version" = "$qualified_go_version" ] || {
     printf '%s\n' 'the reviewed build requires Go 1.26.4 exactly' >&2
     exit 1
@@ -112,13 +124,16 @@ command -v gcc >/dev/null 2>&1 || {
     exit 1
 }
 
-install_scratch=$(mktemp -d "${TMPDIR:-/tmp}/spec-kitty-beads-install.XXXXXX")
+mktemp -d "${TMPDIR:-/tmp}/spec-kitty-beads-install.XXXXXX" >"$capture_file"
+IFS= read -r install_scratch <"$capture_file"
 cleanup_install_scratch() {
     if [ -d "$install_scratch/modcache" ]; then
         GOMODCACHE="$install_scratch/modcache" go clean -modcache >/dev/null 2>&1 || true
     fi
     chmod -R u+w -- "$install_scratch" 2>/dev/null || true
     rm -rf -- "$install_scratch"
+    rm -f -- "$capture_file"
+    rmdir -- "$capture_root" 2>/dev/null || true
 }
 trap cleanup_install_scratch EXIT HUP INT TERM
 
@@ -147,7 +162,8 @@ GOTOOLCHAIN="$qualified_go_version" \
 go install "github.com/steveyegge/beads/cmd/bd@v${qualified_version}"
 
 built="$install_scratch/out/bd"
-built_digest=$(sha256sum -- "$built" | awk '{print $1}')
+sha256sum -- "$built" >"$capture_file"
+IFS=' ' read -r built_digest ignored_built_path <"$capture_file"
 [ "$built_digest" = "$qualified_digest" ] || {
     printf '%s\n' 'built binary digest is not allowlisted for this toolchain and platform' >&2
     exit 1

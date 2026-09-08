@@ -16,6 +16,8 @@ import (
 
 type publicClient interface {
 	Get(context.Context, string) (gapdbapi.Record, error)
+	ReadMany(context.Context, []string) (gapdbapi.ReadManyResult, error)
+	ReadRecoverySnapshot(context.Context, gapdbapi.RecoverySnapshotRequest) (gapdbapi.RecoverySnapshotResult, error)
 	Put(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
 	PutIfAbsent(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
 	CompareAndSwap(context.Context, string, gapdbapi.Revision, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
@@ -39,6 +41,7 @@ type providerWatch interface {
 
 type provider interface {
 	Get(context.Context, string) (gapdbapi.Record, error)
+	ReadMany(context.Context, []string) (gapdbapi.ReadManyResult, error)
 	Put(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
 	PutIfAbsent(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
 	CompareAndSwap(context.Context, string, gapdbapi.Revision, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
@@ -51,6 +54,10 @@ type provider interface {
 	DescribeConfig(context.Context) (gapdbapi.ConfigResult, error)
 }
 
+type recoverySnapshotProvider interface {
+	ReadRecoverySnapshot(context.Context, gapdbapi.RecoverySnapshotRequest) (gapdbapi.RecoverySnapshotResult, error)
+}
+
 // publicProvider is the only production bridge to the admitted public client.
 // The internal provider seam exists solely to inject dishonest observations in
 // adapter tests without embedding a server.
@@ -60,6 +67,12 @@ var _ provider = (*publicProvider)(nil)
 
 func (p *publicProvider) Get(ctx context.Context, key string) (gapdbapi.Record, error) {
 	return p.client.Get(ctx, key)
+}
+func (p *publicProvider) ReadMany(ctx context.Context, keys []string) (gapdbapi.ReadManyResult, error) {
+	return p.client.ReadMany(ctx, keys)
+}
+func (p *publicProvider) ReadRecoverySnapshot(ctx context.Context, request gapdbapi.RecoverySnapshotRequest) (gapdbapi.RecoverySnapshotResult, error) {
+	return p.client.ReadRecoverySnapshot(ctx, request)
 }
 func (p *publicProvider) Put(ctx context.Context, key string, value []byte, expiry *time.Time, ack gapdbapi.AckMode) (gapdbapi.MutationResult, error) {
 	return p.client.Put(ctx, key, value, expiry, ack)
@@ -145,7 +158,7 @@ func Dial(endpoint string, timeout time.Duration) (*Adapter, io.Closer, error) {
 	if endpoint == "" || timeout <= 0 {
 		return nil, nil, adapterError("dial", "", OutcomeInvalid, RecoveryFixRequest, "endpoint and positive timeout are required", nil)
 	}
-	client, err := gapdbapi.Dial(endpoint, gapdbapi.ClientOptions{Timeout: timeout})
+	client, err := gapdbapi.Dial(endpoint, gapdbapi.ClientOptions{Timeout: timeout, ReuseUnaryConnection: true})
 	if err != nil {
 		return nil, nil, translateError("dial", "", err)
 	}

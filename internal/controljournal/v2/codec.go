@@ -60,13 +60,29 @@ func CanonicalObject(input []byte) ([]byte, error) {
 	return canonicalObjectBounded(input, MaxCanonicalPayloadBytes)
 }
 
+// canonicalObjectOwned validates reducer-owned bytes while avoiding an
+// intermediate defensive copy on the already-canonical fast path. The final
+// playback state is copied at its public ownership boundary.
+func canonicalObjectOwned(input []byte, maximum int) ([]byte, error) {
+	if maximum > 0 && len(input) > 0 && len(input) <= maximum && utf8.Valid(input) && canonicalObjectFastPath(input) {
+		return input, nil
+	}
+	return canonicalObjectBounded(input, maximum)
+}
+
 func canonicalObjectBounded(input []byte, maximum int) ([]byte, error) {
-	if maximum <= 0 || len(input) == 0 || len(input) > maximum || !utf8.Valid(input) || !json.Valid(input) {
+	if maximum <= 0 || len(input) == 0 || len(input) > maximum || !utf8.Valid(input) {
 		kind := ErrorInvalidCanonicalData
 		if len(input) > maximum {
 			kind = ErrorBudgetExceeded
 		}
 		return nil, invalid(kind, "canonical_object")
+	}
+	if canonicalObjectFastPath(input) {
+		return append([]byte(nil), input...), nil
+	}
+	if !json.Valid(input) {
+		return nil, invalid(ErrorInvalidCanonicalData, "canonical_object")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(input))
 	decoder.UseNumber()
@@ -85,6 +101,171 @@ func canonicalObjectBounded(input []byte, maximum int) ([]byte, error) {
 		return nil, invalid(ErrorBudgetExceeded, "canonical_object")
 	}
 	return canonical, nil
+}
+
+// canonicalObjectFastPath is a complete bounded recognizer for the common
+// already-canonical subset emitted by encoding/json. It deliberately rejects
+// escapes and deep inputs to the reference decoder/marshal path. It never
+// normalizes or repairs input.
+func canonicalObjectFastPath(input []byte) bool {
+	if len(input) < 2 || input[0] != '{' || input[len(input)-1] != '}' {
+		return false
+	}
+	parser := canonicalJSONParser{input: input}
+	return parser.object(0) && parser.index == len(input)
+}
+
+const maxCanonicalFastDepth = 128
+
+type canonicalJSONParser struct {
+	input []byte
+	index int
+}
+
+func (p *canonicalJSONParser) object(depth int) bool {
+	if depth > maxCanonicalFastDepth || !p.take('{') {
+		return false
+	}
+	if p.take('}') {
+		return true
+	}
+	var prior []byte
+	for {
+		key, ok := p.string()
+		if !ok || prior != nil && bytes.Compare(prior, key) >= 0 || !p.take(':') || !p.value(depth+1) {
+			return false
+		}
+		prior = key
+		if p.take('}') {
+			return true
+		}
+		if !p.take(',') {
+			return false
+		}
+	}
+}
+
+func (p *canonicalJSONParser) array(depth int) bool {
+	if depth > maxCanonicalFastDepth || !p.take('[') {
+		return false
+	}
+	if p.take(']') {
+		return true
+	}
+	for {
+		if !p.value(depth + 1) {
+			return false
+		}
+		if p.take(']') {
+			return true
+		}
+		if !p.take(',') {
+			return false
+		}
+	}
+}
+
+func (p *canonicalJSONParser) value(depth int) bool {
+	if p.index >= len(p.input) {
+		return false
+	}
+	switch p.input[p.index] {
+	case '{':
+		return p.object(depth)
+	case '[':
+		return p.array(depth)
+	case '"':
+		_, ok := p.string()
+		return ok
+	case 't':
+		return p.literal("true")
+	case 'f':
+		return p.literal("false")
+	case 'n':
+		return p.literal("null")
+	default:
+		return p.number()
+	}
+}
+
+func (p *canonicalJSONParser) string() ([]byte, bool) {
+	if !p.take('"') {
+		return nil, false
+	}
+	start := p.index
+	for p.index < len(p.input) {
+		char := p.input[p.index]
+		if char == '"' {
+			value := p.input[start:p.index]
+			p.index++
+			return value, true
+		}
+		// encoding/json escapes these ASCII bytes and the two JavaScript line
+		// separators. Reject them in the same single pass that validates the
+		// string instead of rescanning every durable object several times.
+		if char < 0x20 || char == '\\' || char == '<' || char == '>' || char == '&' ||
+			char == 0xe2 && p.index+2 < len(p.input) && p.input[p.index+1] == 0x80 &&
+				(p.input[p.index+2] == 0xa8 || p.input[p.index+2] == 0xa9) {
+			return nil, false
+		}
+		p.index++
+	}
+	return nil, false
+}
+
+func (p *canonicalJSONParser) number() bool {
+	start := p.index
+	p.take('-')
+	if p.take('0') {
+		if p.index < len(p.input) && p.input[p.index] >= '0' && p.input[p.index] <= '9' {
+			return false
+		}
+	} else {
+		if p.index >= len(p.input) || p.input[p.index] < '1' || p.input[p.index] > '9' {
+			return false
+		}
+		for p.index < len(p.input) && p.input[p.index] >= '0' && p.input[p.index] <= '9' {
+			p.index++
+		}
+	}
+	if p.take('.') {
+		fraction := p.index
+		for p.index < len(p.input) && p.input[p.index] >= '0' && p.input[p.index] <= '9' {
+			p.index++
+		}
+		if p.index == fraction {
+			return false
+		}
+	}
+	if p.take('e') || p.take('E') {
+		if !p.take('+') {
+			p.take('-')
+		}
+		exponent := p.index
+		for p.index < len(p.input) && p.input[p.index] >= '0' && p.input[p.index] <= '9' {
+			p.index++
+		}
+		if p.index == exponent {
+			return false
+		}
+	}
+	return p.index > start
+}
+
+func (p *canonicalJSONParser) literal(value string) bool {
+	if len(p.input)-p.index < len(value) || string(p.input[p.index:p.index+len(value)]) != value {
+		return false
+	}
+	p.index += len(value)
+	return true
+}
+
+func (p *canonicalJSONParser) take(want byte) bool {
+	if p.index >= len(p.input) || p.input[p.index] != want {
+		return false
+	}
+	p.index++
+	return true
 }
 
 func decodeUniqueValue(decoder *json.Decoder) (any, error) {
@@ -225,6 +406,20 @@ func publicationWitnessWire(witness PublicationWitnessV2) publicationWitnessWire
 }
 
 func DecodePublicationWitnessV2(encoded []byte) (PublicationWitnessV2, error) {
+	return decodePublicationWitnessV2(encoded, false)
+}
+
+// DecodePublicationWitnessRecordV2 consumes canonical bytes already sealed by
+// RecoveryRecordV2 while retaining strict schema, coordinate, and self-digest
+// validation.
+func DecodePublicationWitnessRecordV2(record RecoveryRecordV2) (PublicationWitnessV2, error) {
+	if record.address.kind != AddressPublicationWitness || record.expiresAt != "" {
+		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	}
+	return decodePublicationWitnessV2(record.canonical, true)
+}
+
+func decodePublicationWitnessV2(encoded []byte, canonicalSealed bool) (PublicationWitnessV2, error) {
 	var wire publicationWitnessWireV2
 	if err := decodeStrict(encoded, MaxCanonicalPayloadBytes, &wire); err != nil {
 		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
@@ -241,9 +436,11 @@ func DecodePublicationWitnessV2(encoded []byte) (PublicationWitnessV2, error) {
 	if err := ValidatePublicationWitnessV2(witness); err != nil {
 		return PublicationWitnessV2{}, err
 	}
-	canonical, err := EncodePublicationWitnessV2(witness)
-	if err != nil || !bytes.Equal(canonical, encoded) {
-		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	if !canonicalSealed {
+		canonical, err := EncodePublicationWitnessV2(witness)
+		if err != nil || !bytes.Equal(canonical, encoded) {
+			return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+		}
 	}
 	return witness, nil
 }

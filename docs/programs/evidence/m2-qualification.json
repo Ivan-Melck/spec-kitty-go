@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "mission_id": "M2",
+  "qualification_state": "candidate_requires_exact_run_and_independent_review",
+  "manifest_schema": "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/m2-qualification-v1.schema.json",
+  "source_binding": "manifest.source",
+  "run_binding": "manifest.run_id",
+  "archive_binding": "external_immutable_run_directory",
+  "producer_outcome": "technical_pass_review_eligible_not_release_ready",
+  "outer_review_outcome": "release_ready_not_adopted",
+  "adoption_authority": "separate_human_program_gate",
+  "prior_attempt_policy": "retain_every_failed_incomplete_and_non_admissible_run_immutably"
+}

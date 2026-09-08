@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,20 @@ type ReaderV2 interface {
 	VerifyRevisionV2(context.Context, journal.StoreRevisionV2) error
 	ReadV2(context.Context, journal.ReadRequestV2) (journal.RecoveryRecordV2, error)
 	ScanV2(context.Context, journal.ScanRequestV2) (journal.RecoveryPageV2, error)
+}
+
+// ReadManyReaderV2 is the optional exact-read accelerator. Restore preserves
+// the ReaderV2 path for provider-neutral fixtures, while production readers
+// can collapse a bounded key set into one stable provider observation.
+type ReadManyReaderV2 interface {
+	ReadManyV2(context.Context, journal.ReadManyRequestV2) (journal.RecoveryReadManyResultV2, error)
+}
+
+// RecoverySnapshotReaderV2 is an optional transport accelerator. The result
+// is still consumed through ReaderV2/ReadManyReaderV2 below, so every existing
+// checkpoint, membership, witness, reducer, and revision proof remains active.
+type RecoverySnapshotReaderV2 interface {
+	ReadRecoverySnapshotV2(context.Context, journal.RecoverySnapshotRequestV2) (journal.RecoverySnapshotV2, error)
 }
 
 type BudgetsV2 struct {
@@ -39,6 +54,21 @@ type BudgetsV2 struct {
 func DefaultBudgetsV2() BudgetsV2 {
 	return BudgetsV2{MaximumRestarts: 3, MaximumPages: 256, MaximumRecords: 30_000, MaximumValueBytes: 256 * 1024 * 1024,
 		MaximumKeyBytes: 16 * 1024 * 1024, MaximumSuffixEvents: 100_000, MaximumWorkers: 8, MaximumDuration: 30 * time.Second}
+}
+
+// BudgetsForLogicalCPUsV2 binds bounded recovery parallelism to the caller's
+// admitted scheduler capacity without importing host discovery into the typed
+// foundation package.
+func BudgetsForLogicalCPUsV2(logicalCPUs int) BudgetsV2 {
+	budgets := DefaultBudgetsV2()
+	// Recovery alternates provider conversion, typed decoding, and reducer
+	// groups. Keep bounded work available across those independent stages while
+	// respecting the frozen ceiling and the admitted scheduler capacity.
+	if logicalCPUs < 1 {
+		logicalCPUs = 1
+	}
+	budgets.MaximumWorkers = min(64, max(8, logicalCPUs*8))
+	return budgets
 }
 
 type InputV2 struct {
@@ -180,6 +210,10 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 	if attempt.CurrentRevision() == 0 || attempt.DurableThroughRevision() < attempt.CurrentRevision() {
 		return ResultV2{}, &Error{Kind: ErrorUnstableStore, Field: "capture"}
 	}
+	reader, err := recoveryAttemptReader(ctx, input.Reader, attempt)
+	if err != nil {
+		return ResultV2{}, err
+	}
 	evidence := &scanEvidence{}
 	eventDescriptor, err := input.EventRegistry.Descriptor()
 	if err != nil {
@@ -190,16 +224,16 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 		return ResultV2{}, err
 	}
 	compatibility := checkpoint.CompatibilityV2{EventRegistryDigest: eventDescriptor.Digest(), ReducerRegistryDigest: reducerDescriptor.Digest(), CanonicalCodecVersion: journal.CanonicalCodecVersionV2}
-	selection, err := selectCheckpoint(ctx, input.Reader, attempt, compatibility, budgets, evidence)
+	selection, err := selectCheckpoint(ctx, reader, attempt, compatibility, budgets, evidence)
 	if err != nil {
 		return ResultV2{}, err
 	}
-	aggregates, aggregatePages, err := scanAggregates(ctx, input.Reader, attempt, budgets)
+	aggregates, aggregatePages, err := scanAggregates(ctx, reader, attempt, budgets)
 	if err != nil {
 		return ResultV2{}, err
 	}
 	evidence.pages = append(evidence.pages, aggregatePages...)
-	operations, operationPages, err := scanOperations(ctx, input.Reader, attempt, budgets)
+	operations, operationPages, err := scanOperations(ctx, reader, attempt, budgets)
 	if err != nil {
 		return ResultV2{}, err
 	}
@@ -253,12 +287,12 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 			}
 			matched[found] = true
 			coordinate := operationCoordinate(found)
-			record, event, err := exactEvent(ctx, input.Reader, attempt, input.EventRegistry, coordinate, boundary.LogicalVersion(), 0, watermark)
+			record, event, err := exactEvent(ctx, reader, attempt, input.EventRegistry, coordinate, boundary.LogicalVersion(), 0, watermark)
 			if err != nil {
 				return ResultV2{}, err
 			}
 			evidence.records = append(evidence.records, record)
-			state, err := journal.ReconstructOperationStateV2(event.Payload(), event.PublicationID())
+			state, err := journal.ReconstructOperationStateFromEventV2(event)
 			if err != nil || state.OperationID() != found || state.LogicalVersion() != boundary.LogicalVersion() {
 				return ResultV2{}, corrupt("operation_boundary_state")
 			}
@@ -282,7 +316,7 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 		basePlayback, err := playback.RunV2(playback.InputV2{Base: projectionBase, EventRegistry: input.EventRegistry, Reducers: input.Reducers,
 			ExpectedEventRegistryDigest: eventDescriptor.Digest(), ExpectedReducerRegistryDigest: reducerDescriptor.Digest(),
 			MaximumAggregates: playback.MaxPlaybackAggregates, MaximumEvents: budgets.MaximumSuffixEvents,
-			MaximumBytes: min(budgets.MaximumValueBytes, playback.MaxPlaybackBytes)})
+			MaximumBytes: min(budgets.MaximumValueBytes, playback.MaxPlaybackBytes), MaximumWorkers: min(budgets.MaximumWorkers, playback.MaxPlaybackWorkers)})
 		if err != nil || basePlayback.CanonicalProjectionDigest() != c.CanonicalProjectionDigest() {
 			return ResultV2{}, corrupt("checkpoint_projection_digest")
 		}
@@ -292,19 +326,19 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 	if err != nil {
 		return ResultV2{}, err
 	}
-	material, records, err := fetchEvents(ctx, input.Reader, attempt, input.EventRegistry, requests, watermark, budgets)
+	material, records, err := fetchEvents(ctx, reader, attempt, input.EventRegistry, requests, watermark, budgets)
 	if err != nil {
 		return ResultV2{}, err
 	}
 	evidence.records = append(evidence.records, records...)
-	ordered, finalOperations, nextPrefix, witnessRecords, err := validateMembership(ctx, input.Reader, attempt, material, operations, boundaryStates, prefix, watermark, budgets)
+	ordered, finalOperations, nextPrefix, witnessRecords, err := validateMembership(ctx, reader, attempt, material, operations, boundaryStates, prefix, watermark, budgets)
 	if err != nil {
 		return ResultV2{}, err
 	}
 	evidence.records = append(evidence.records, witnessRecords...)
 	played, err := playback.RunV2(playback.InputV2{Base: base, Events: ordered, EventRegistry: input.EventRegistry, Reducers: input.Reducers,
 		ExpectedEventRegistryDigest: eventDescriptor.Digest(), ExpectedReducerRegistryDigest: reducerDescriptor.Digest(), MaximumAggregates: playback.MaxPlaybackAggregates,
-		MaximumEvents: budgets.MaximumSuffixEvents, MaximumBytes: min(budgets.MaximumValueBytes, playback.MaxPlaybackBytes)})
+		MaximumEvents: budgets.MaximumSuffixEvents, MaximumBytes: min(budgets.MaximumValueBytes, playback.MaxPlaybackBytes), MaximumWorkers: min(budgets.MaximumWorkers, playback.MaxPlaybackWorkers)})
 	if err != nil {
 		return ResultV2{}, err
 	}
@@ -329,7 +363,7 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 	if err := journal.ValidateStableRecoveryAttemptV2(attempt, evidence.pages, evidence.records, attempt); err != nil {
 		return ResultV2{}, err
 	}
-	if err := input.Reader.VerifyRevisionV2(ctx, attempt); err != nil {
+	if err := reader.VerifyRevisionV2(ctx, attempt); err != nil {
 		return ResultV2{}, err
 	}
 	result := ResultV2{played, attempt, nextPrefix, input.HostAuthorityID, input.PriorRuntimeEpochID, input.RecoveryAttemptID, journal.Digest{}}
@@ -368,10 +402,10 @@ func scanAll(ctx context.Context, reader ReaderV2, attempt journal.StoreRevision
 			if record.RecordRevision() == 0 || record.RecordRevision() > attempt.CurrentRevision() || record.ExpiresAt() != "" {
 				return nil, nil, corrupt("scan_record")
 			}
-			if len(record.CanonicalValue()) > budgets.MaximumValueBytes-bytesUsed {
+			if record.CanonicalSizeV2() > budgets.MaximumValueBytes-bytesUsed {
 				return nil, nil, budget("value_bytes")
 			}
-			bytesUsed += len(record.CanonicalValue())
+			bytesUsed += record.CanonicalSizeV2()
 			keyBytesUsed += semanticAddressBytes(record.Address())
 			if keyBytesUsed > budgets.MaximumKeyBytes {
 				return nil, nil, budget("key_bytes")
@@ -538,7 +572,7 @@ func scanOperations(ctx context.Context, reader ReaderV2, attempt journal.StoreR
 			if item.hasBinding {
 				return nil, nil, corrupt("duplicate_operation_binding")
 			}
-			value, err := journal.DecodeOperationBindingV2(record.CanonicalValue())
+			value, err := journal.DecodeOperationBindingRecordV2(record)
 			if err != nil || value.OperationID() != id {
 				return nil, nil, corrupt("operation_binding")
 			}
@@ -547,7 +581,7 @@ func scanOperations(ctx context.Context, reader ReaderV2, attempt journal.StoreR
 			if item.hasState {
 				return nil, nil, corrupt("duplicate_operation_head")
 			}
-			value, err := journal.DecodeOperationStateV2(record.CanonicalValue())
+			value, err := journal.DecodeOperationStateRecordV2(record)
 			if err != nil || value.OperationID() != id {
 				return nil, nil, corrupt("operation_head")
 			}
@@ -569,6 +603,7 @@ func scanOperations(ctx context.Context, reader ReaderV2, attempt journal.StoreR
 
 type eventRequest struct {
 	coordinate        journal.AggregateCoordinate
+	coordinateKey     string
 	version           journal.LogicalVersion
 	terminalTombstone bool
 }
@@ -584,8 +619,13 @@ func suffixPlan(aggregates map[string]aggregateCurrent, operations map[journal.O
 		if difference > uint64(maximum-len(requests)) {
 			return budget("suffix_events")
 		}
+		encodedCoordinate, err := journal.CanonicalAggregateCoordinate(coordinate)
+		if err != nil {
+			return err
+		}
+		sortKey := string(encodedCoordinate)
 		for version := prior + 1; version <= current; version++ {
-			requests = append(requests, eventRequest{coordinate, version, tombstone && version == current})
+			requests = append(requests, eventRequest{coordinate: coordinate, coordinateKey: sortKey, version: version, terminalTombstone: tombstone && version == current})
 			if version == journal.LogicalVersion(^uint64(0)) {
 				return budget("logical_version")
 			}
@@ -603,9 +643,7 @@ func suffixPlan(aggregates map[string]aggregateCurrent, operations map[journal.O
 		}
 	}
 	sort.Slice(requests, func(i, k int) bool {
-		left, _ := journal.CanonicalAggregateCoordinate(requests[i].coordinate)
-		right, _ := journal.CanonicalAggregateCoordinate(requests[k].coordinate)
-		if cmp := bytes.Compare(left, right); cmp != 0 {
+		if cmp := strings.Compare(requests[i].coordinateKey, requests[k].coordinateKey); cmp != 0 {
 			return cmp < 0
 		}
 		return requests[i].version < requests[k].version
@@ -626,10 +664,14 @@ func exactEvent(ctx context.Context, reader ReaderV2, attempt journal.StoreRevis
 		}
 		return journal.RecoveryRecordV2{}, journal.EventEnvelopeV2{}, err
 	}
+	return decodeExactEvent(record, address, registry, coordinate, version, lower, upper)
+}
+
+func decodeExactEvent(record journal.RecoveryRecordV2, address journal.RecordAddressV2, registry journal.EventRegistryV2, coordinate journal.AggregateCoordinate, version journal.LogicalVersion, lower, upper uint64) (journal.RecoveryRecordV2, journal.EventEnvelopeV2, error) {
 	if record.Address() != address || record.ExpiresAt() != "" || record.RecordRevision() <= lower || record.RecordRevision() > upper {
 		return journal.RecoveryRecordV2{}, journal.EventEnvelopeV2{}, corrupt("event_record")
 	}
-	event, err := journal.DecodeEventEnvelopeV2(record.CanonicalValue(), registry)
+	event, err := journal.DecodeEventEnvelopeRecordV2(record, registry)
 	if err != nil || event.Coordinate() != coordinate || event.LogicalVersion() != version {
 		return journal.RecoveryRecordV2{}, journal.EventEnvelopeV2{}, corrupt("event_envelope")
 	}
@@ -657,6 +699,58 @@ func fetchEvents(ctx context.Context, reader ReaderV2, attempt journal.StoreRevi
 		}
 		keyBytes += size
 	}
+	if batchReader, ok := reader.(ReadManyReaderV2); ok {
+		readRequests := make([]journal.ReadRequestV2, len(requests))
+		for index, item := range requests {
+			address, _ := journal.NewJournalEventAddressV2(item.coordinate, item.version)
+			readRequests[index], _ = journal.NewReadRequestV2(address, attempt)
+		}
+		records, err := readManyRequired(ctx, batchReader, readRequests, budgets.MaximumValueBytes)
+		if err != nil {
+			if journal.IsKind(err, journal.ErrorNotFound) {
+				return nil, nil, corrupt("missing_event")
+			}
+			return nil, nil, err
+		}
+		fetched := make([]fetchedEvent, len(records))
+		decodeErrors := make([]error, len(records))
+		jobs := make(chan int)
+		var decodeWG sync.WaitGroup
+		decodeWorker := func() {
+			defer decodeWG.Done()
+			for index := range jobs {
+				record, item := records[index], requests[index]
+				address := readRequests[index].Address()
+				_, event, decodeErr := decodeExactEvent(record, address, registry, item.coordinate, item.version, watermark, attempt.CurrentRevision())
+				if decodeErr != nil {
+					decodeErrors[index] = decodeErr
+					continue
+				}
+				material, materialErr := playback.NewMaterializedEventV2(record.RecordRevision(), event, item.terminalTombstone)
+				if materialErr != nil {
+					decodeErrors[index] = materialErr
+					continue
+				}
+				fetched[index] = fetchedEvent{material, record}
+			}
+		}
+		decodeWG.Add(min(budgets.MaximumWorkers, len(records)))
+		for worker := 0; worker < min(budgets.MaximumWorkers, len(records)); worker++ {
+			go decodeWorker()
+		}
+		for index := range records {
+			jobs <- index
+		}
+		close(jobs)
+		decodeWG.Wait()
+		for _, decodeErr := range decodeErrors {
+			if decodeErr != nil {
+				return nil, nil, decodeErr
+			}
+		}
+		sort.Slice(fetched, func(i, k int) bool { return compareEvents(fetched[i].material, fetched[k].material) < 0 })
+		return fetched, records, nil
+	}
 	workers := min(budgets.MaximumWorkers, len(requests))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -678,7 +772,7 @@ func fetchEvents(ctx context.Context, reader ReaderV2, attempt journal.StoreRevi
 				}
 				continue
 			}
-			valueSize := len(record.CanonicalValue())
+			valueSize := record.CanonicalSizeV2()
 			bytesMu.Lock()
 			if valueSize > budgets.MaximumValueBytes-bytesUsed {
 				bytesMu.Unlock()
@@ -732,11 +826,11 @@ func fetchEvents(ctx context.Context, reader ReaderV2, attempt journal.StoreRevi
 	records := make([]journal.RecoveryRecordV2, 0, len(requests))
 	observedBytes := 0
 	for item := range results {
-		value := item.record.CanonicalValue()
-		if len(value) > budgets.MaximumValueBytes-observedBytes {
+		valueSize := item.record.CanonicalSizeV2()
+		if valueSize > budgets.MaximumValueBytes-observedBytes {
 			return nil, nil, budget("suffix_bytes")
 		}
-		observedBytes += len(value)
+		observedBytes += valueSize
 		fetched = append(fetched, item)
 		records = append(records, item.record)
 	}
@@ -745,6 +839,62 @@ func fetchEvents(ctx context.Context, reader ReaderV2, attempt journal.StoreRevi
 	}
 	sort.Slice(fetched, func(i, k int) bool { return compareEvents(fetched[i].material, fetched[k].material) < 0 })
 	return fetched, records, nil
+}
+
+func readManyRequired(ctx context.Context, reader ReadManyReaderV2, requests []journal.ReadRequestV2, maximumBytes int) ([]journal.RecoveryRecordV2, error) {
+	if len(requests) == 0 {
+		return nil, nil
+	}
+	attempt := requests[0].AttemptRevision()
+	remainingBytes := maximumBytes
+	result := make([]journal.RecoveryRecordV2, 0, len(requests))
+	for start := 0; start < len(requests); {
+		end := min(start+journal.MaxRecoveryReadManyRecords, len(requests))
+		chunk, err := readManyChunk(ctx, reader, requests[start:end], min(remainingBytes, journal.MaxRecoveryReadManyBytes))
+		if err != nil {
+			return nil, err
+		}
+		for index, record := range chunk {
+			if record.Address() != requests[start+index].Address() || record.RecordRevision() > attempt.CurrentRevision() {
+				return nil, corrupt("read_many_membership")
+			}
+			if record.CanonicalSizeV2() > remainingBytes {
+				return nil, budget("read_many_bytes")
+			}
+			remainingBytes -= record.CanonicalSizeV2()
+			result = append(result, record)
+		}
+		start = end
+	}
+	return result, nil
+}
+
+func readManyChunk(ctx context.Context, reader ReadManyReaderV2, requests []journal.ReadRequestV2, maximumBytes int) ([]journal.RecoveryRecordV2, error) {
+	request, err := journal.NewReadManyRequestV2(requests, maximumBytes)
+	if err != nil {
+		return nil, err
+	}
+	result, err := reader.ReadManyV2(ctx, request)
+	if err != nil {
+		if journal.IsKind(err, journal.ErrorBudgetExceeded) && len(requests) > 1 {
+			middle := len(requests) / 2
+			left, leftErr := readManyChunk(ctx, reader, requests[:middle], maximumBytes)
+			if leftErr != nil {
+				return nil, leftErr
+			}
+			right, rightErr := readManyChunk(ctx, reader, requests[middle:], maximumBytes)
+			if rightErr != nil {
+				return nil, rightErr
+			}
+			return append(left, right...), nil
+		}
+		return nil, err
+	}
+	records := result.Records()
+	if result.ObservedRevision() != request.AttemptRevision().CurrentRevision() || len(records) != len(request.Requests()) {
+		return nil, corrupt("read_many_result")
+	}
+	return records, nil
 }
 
 func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.StoreRevisionV2, fetched []fetchedEvent, operations map[journal.OperationID]operationCurrent, boundaryStates map[journal.OperationID]journal.OperationStateV2, prefix journal.Digest, watermark uint64, budgets BudgetsV2) ([]playback.MaterializedEventV2, map[journal.OperationID]journal.OperationStateV2, journal.Digest, []journal.RecoveryRecordV2, error) {
@@ -784,6 +934,77 @@ func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.St
 		}
 		return orderedGroups[i].id < orderedGroups[k].id
 	})
+	var batchedWitnesses map[journal.PublicationID]journal.RecoveryRecordV2
+	if batchReader, ok := reader.(ReadManyReaderV2); ok && len(orderedGroups) != 0 {
+		requests := make([]journal.ReadRequestV2, len(orderedGroups))
+		for index, entry := range orderedGroups {
+			address, _ := entry.id.WitnessAddressV2()
+			requests[index], _ = journal.NewReadRequestV2(address, attempt)
+		}
+		records, err := readManyRequired(ctx, batchReader, requests, budgets.MaximumValueBytes)
+		if err != nil {
+			if journal.IsKind(err, journal.ErrorNotFound) {
+				return nil, nil, journal.Digest{}, nil, corrupt("missing_publication_witness")
+			}
+			return nil, nil, journal.Digest{}, nil, err
+		}
+		batchedWitnesses = make(map[journal.PublicationID]journal.RecoveryRecordV2, len(records))
+		for index, record := range records {
+			batchedWitnesses[orderedGroups[index].id] = record
+		}
+	}
+	type decodedPublication struct {
+		state   journal.OperationStateV2
+		witness journal.PublicationWitnessV2
+		err     error
+	}
+	decoded := make([]decodedPublication, len(orderedGroups))
+	if batchedWitnesses != nil {
+		jobs := make(chan int)
+		var workers sync.WaitGroup
+		worker := func() {
+			defer workers.Done()
+			for index := range jobs {
+				entry := orderedGroups[index]
+				var operationEvent journal.EventEnvelopeV2
+				for _, item := range entry.group.events {
+					if item.material.Envelope().Family() == "operation" {
+						if operationEvent.EventID() != "" {
+							decoded[index].err = corrupt("operation_event")
+							break
+						}
+						operationEvent = item.material.Envelope()
+					}
+				}
+				if decoded[index].err != nil || operationEvent.EventID() == "" {
+					if decoded[index].err == nil {
+						decoded[index].err = corrupt("operation_event")
+					}
+					continue
+				}
+				decoded[index].state, decoded[index].err = journal.ReconstructOperationStateFromEventV2(operationEvent)
+				if decoded[index].err != nil {
+					continue
+				}
+				decoded[index].witness, decoded[index].err = journal.DecodePublicationWitnessRecordV2(batchedWitnesses[entry.id])
+			}
+		}
+		workerCount := min(budgets.MaximumWorkers, len(orderedGroups))
+		workers.Add(workerCount)
+		for range workerCount {
+			go worker()
+		}
+		for index := range orderedGroups {
+			jobs <- index
+		}
+		close(jobs)
+		workers.Wait()
+		for _, item := range decoded {
+			if item.err != nil {
+				return nil, nil, journal.Digest{}, nil, item.err
+			}
+		}
+	}
 	states := make(map[journal.OperationID]journal.OperationStateV2, len(boundaryStates))
 	for id, state := range boundaryStates {
 		states[id] = state
@@ -828,9 +1049,13 @@ func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.St
 		if opEvent.EventID() == "" || opEvent.OperationID() != g.operationID || opEvent.OperationVersion() != g.operationVersion {
 			return nil, nil, journal.Digest{}, nil, corrupt("operation_event")
 		}
-		state, err := journal.ReconstructOperationStateV2(opEvent.Payload(), id)
-		if err != nil {
-			return nil, nil, journal.Digest{}, nil, err
+		state := decoded[len(witnessRecords)].state
+		if batchedWitnesses == nil {
+			var err error
+			state, err = journal.ReconstructOperationStateFromEventV2(opEvent)
+			if err != nil {
+				return nil, nil, journal.Digest{}, nil, err
+			}
 		}
 		if state.OperationID() != g.operationID || state.LogicalVersion() != g.operationVersion || !equalEventIDs(state.EventIDs(), ids, states[g.operationID].EventIDs()) {
 			return nil, nil, journal.Digest{}, nil, corrupt("operation_membership")
@@ -843,20 +1068,28 @@ func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.St
 		states[g.operationID] = state
 		g.state = state
 		address, _ := id.WitnessAddressV2()
-		request, _ := journal.NewReadRequestV2(address, attempt)
-		record, err := reader.ReadV2(ctx, request)
-		if err != nil {
-			if journal.IsKind(err, journal.ErrorNotFound) {
-				return nil, nil, journal.Digest{}, nil, corrupt("missing_publication_witness")
+		record, batched := batchedWitnesses[id]
+		if !batched {
+			request, _ := journal.NewReadRequestV2(address, attempt)
+			var err error
+			record, err = reader.ReadV2(ctx, request)
+			if err != nil {
+				if journal.IsKind(err, journal.ErrorNotFound) {
+					return nil, nil, journal.Digest{}, nil, corrupt("missing_publication_witness")
+				}
+				return nil, nil, journal.Digest{}, nil, err
 			}
-			return nil, nil, journal.Digest{}, nil, err
 		}
 		if record.Address() != address || record.ExpiresAt() != "" || record.RecordRevision() != g.revision {
 			return nil, nil, journal.Digest{}, nil, corrupt("publication_witness_record")
 		}
-		witness, err := journal.DecodePublicationWitnessV2(record.CanonicalValue())
-		if err != nil {
-			return nil, nil, journal.Digest{}, nil, corrupt("publication_witness_codec")
+		witness := decoded[len(witnessRecords)].witness
+		if batchedWitnesses == nil {
+			var err error
+			witness, err = journal.DecodePublicationWitnessRecordV2(record)
+			if err != nil {
+				return nil, nil, journal.Digest{}, nil, corrupt("publication_witness_codec")
+			}
 		}
 		if journal.ValidatePublicationWitnessV2(witness) != nil {
 			return nil, nil, journal.Digest{}, nil, corrupt("publication_witness_digest")
@@ -867,10 +1100,11 @@ func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.St
 		if witness.AuthorityRecordCount() < uint32(2*len(g.events)) {
 			return nil, nil, journal.Digest{}, nil, corrupt("publication_witness_membership")
 		}
-		prefix, err = journal.AdvanceProjectionPrefixV2(prefix, g.revision, id, witness.PlanDigest(), witness.AuthorityRecordSetDigest())
+		nextPrefix, err := journal.AdvanceProjectionPrefixV2(prefix, g.revision, id, witness.PlanDigest(), witness.AuthorityRecordSetDigest())
 		if err != nil {
 			return nil, nil, journal.Digest{}, nil, err
 		}
+		prefix = nextPrefix
 		witnessRecords = append(witnessRecords, record)
 	}
 	for id, current := range operations {
@@ -907,9 +1141,7 @@ func validateTerminal(result playback.ResultV2, aggregates map[string]aggregateC
 }
 
 func sameOperation(a, b journal.OperationStateV2) bool {
-	left, e1 := journal.EncodeOperationStateV2(a)
-	right, e2 := journal.EncodeOperationStateV2(b)
-	return e1 == nil && e2 == nil && bytes.Equal(left, right)
+	return journal.EqualOperationStatesV2(a, b)
 }
 func equalEventIDs(current, group, prior []journal.EventID) bool {
 	if len(current) != len(prior)+len(group) {

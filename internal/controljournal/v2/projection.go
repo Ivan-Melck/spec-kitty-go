@@ -10,6 +10,7 @@ const (
 	CanonicalCodecVersionV2         = uint32(2)
 	MaxAcknowledgementsBetweenSeals = 10_000
 	MaxOperationSummaryBytesV2      = 2_112_000
+	MaxProjectionRestoreEntriesV2   = 20_000
 	maxOperationBoundariesV2        = 10_000
 )
 
@@ -94,6 +95,26 @@ type ProjectionTrackerV2 struct {
 	highestObserved       uint64
 }
 
+// ProjectionRestoreEntryV2 is a copy-only replay result accepted by the live
+// tracker restore seam. It contains no storage or mutation capability.
+type ProjectionRestoreEntryV2 struct {
+	Coordinate     AggregateCoordinate
+	LogicalVersion LogicalVersion
+	LastEventID    EventID
+	CanonicalState []byte
+	StateDigest    Digest
+	Tombstone      bool
+}
+
+// ProjectionRestoreSeedV2 binds replayed state to the exact durable prefix
+// from which future acknowledged publications must continue.
+type ProjectionRestoreSeedV2 struct {
+	ThroughRecordRevision     uint64
+	RollingPrefixDigest       Digest
+	CanonicalProjectionDigest Digest
+	Entries                   []ProjectionRestoreEntryV2
+}
+
 func NewProjectionTrackerV2(reducers ReducerSetV2, codecVersion uint32) (*ProjectionTrackerV2, error) {
 	eventDescriptor, err := reducers.registry.Descriptor()
 	if err != nil {
@@ -113,12 +134,67 @@ func NewProjectionTrackerV2(reducers ReducerSetV2, codecVersion uint32) (*Projec
 		pending: make(map[PublicationID]Digest), ledger: make(map[uint64]acknowledgedLedgerEntryV2), priorPrefix: genesis}, nil
 }
 
-func (t *ProjectionTrackerV2) registerPublication(plan SealedCommitPlanV2) error {
+// Restore installs one validated replay snapshot into a pristine tracker.
+// It is deliberately one-shot: a live or previously restored tracker cannot
+// be rewound or replaced underneath a publication coordinator.
+func (t *ProjectionTrackerV2) Restore(seed ProjectionRestoreSeedV2) error {
+	if t == nil || seed.ThroughRecordRevision == 0 || seed.RollingPrefixDigest.IsZero() || seed.CanonicalProjectionDigest.IsZero() || len(seed.Entries) > MaxProjectionRestoreEntriesV2 {
+		return invalid(ErrorInvalidCanonicalData, "projection_restore_seed")
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if len(t.states) != 0 || len(t.operations) != 0 || len(t.pending) != 0 || len(t.ledger) != 0 || t.sealedWatermark != 0 || t.highestObserved != 0 || t.priorPrefix != ProjectionPrefixGenesisV2() {
+		return invalid(ErrorInvalidTransition, "projection_restore_not_pristine")
+	}
+	states := make(map[string]projectionEntryV2, len(seed.Entries))
+	operations := make(map[OperationID]OperationStateV2)
+	for _, restored := range seed.Entries {
+		_, err := CanonicalAggregateCoordinate(restored.Coordinate)
+		if err != nil || restored.LogicalVersion == 0 || restored.LastEventID == "" || restored.StateDigest.IsZero() {
+			return invalid(ErrorInvalidCanonicalData, "projection_restore_entry")
+		}
+		canonical, err := CanonicalObject(restored.CanonicalState)
+		actual, digestErr := ReducerStateDigestV2(canonical)
+		key := restored.Coordinate.canonical()
+		if err != nil || digestErr != nil || !bytes.Equal(canonical, restored.CanonicalState) || actual != restored.StateDigest || states[key].coordinate.Kind != "" {
+			return invalid(ErrorInvalidCanonicalData, "projection_restore_entry")
+		}
+		entry := projectionEntryV2{coordinate: restored.Coordinate, canonical: append([]byte(nil), canonical...), digest: restored.StateDigest, version: restored.LogicalVersion, lastEventID: restored.LastEventID, tombstone: restored.Tombstone}
+		states[key] = entry
+		if restored.Coordinate.Kind == AggregateKind("operation") {
+			operation, decodeErr := DecodeOperationStateV2(canonical)
+			if decodeErr != nil || operation.logicalVersion != restored.LogicalVersion || operation.operationID == "" {
+				return invalid(ErrorInvalidCanonicalData, "projection_restore_operation")
+			}
+			if _, duplicate := operations[operation.operationID]; duplicate {
+				return invalid(ErrorInvalidCanonicalData, "projection_restore_operation")
+			}
+			operations[operation.operationID] = operation
+		}
+	}
+	entries := snapshotProjectionEntries(states)
+	actualProjection, err := digestProjectionEntries(entries)
+	if err != nil || actualProjection != seed.CanonicalProjectionDigest {
+		return invalid(ErrorInvalidDigest, "projection_restore_digest")
+	}
+	t.states = states
+	t.operations = operations
+	t.priorPrefix = seed.RollingPrefixDigest
+	t.sealedWatermark = seed.ThroughRecordRevision
+	t.highestObserved = seed.ThroughRecordRevision
+	return nil
+}
+
+func (t *ProjectionTrackerV2) registerPublication(plan SealedCommitPlanV2) error {
 	if err := validateSealedPlanIdentity(plan); err != nil {
 		return err
 	}
+	return t.registerValidatedPublication(cloneSealedCommitPlanV2(plan))
+}
+
+func (t *ProjectionTrackerV2) registerValidatedPublication(plan SealedCommitPlanV2) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if _, exists := t.pending[plan.publicationID]; exists {
 		return invalid(ErrorAmbiguous, "projection_publication_registered")
 	}
@@ -130,6 +206,10 @@ func (t *ProjectionTrackerV2) applyAcknowledged(ack AcknowledgedPublicationV2) e
 	if err := validateAcknowledgement(ack); err != nil {
 		return err
 	}
+	return t.applyValidatedAcknowledged(ack)
+}
+
+func (t *ProjectionTrackerV2) applyValidatedAcknowledged(ack AcknowledgedPublicationV2) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	plan := ack.plan
@@ -363,20 +443,18 @@ func (t *ProjectionTrackerV2) sealPrefix() (SealedProjectionPrefixV2, error) {
 }
 
 func snapshotProjectionEntries(states map[string]projectionEntryV2) []ProjectionEntryV2 {
-	keys := make([]string, 0, len(states))
-	for key, value := range states {
+	result := make([]ProjectionEntryV2, 0, len(states))
+	for _, value := range states {
 		if value.coordinate.Kind == AggregateKind("operation") {
 			continue
 		}
-		keys = append(keys, key)
+		result = append(result, ProjectionEntryV2{coordinate: value.coordinate, canonical: append([]byte(nil), value.canonical...), digest: value.digest,
+			version: value.version, lastEventID: value.lastEventID, tombstone: value.tombstone})
 	}
-	sort.Strings(keys)
-	result := make([]ProjectionEntryV2, len(keys))
-	for index, key := range keys {
-		value := states[key]
-		result[index] = ProjectionEntryV2{coordinate: value.coordinate, canonical: append([]byte(nil), value.canonical...), digest: value.digest,
-			version: value.version, lastEventID: value.lastEventID, tombstone: value.tombstone}
-	}
+	sort.Slice(result, func(i, j int) bool {
+		order, err := CompareAggregateCoordinates(result[i].coordinate, result[j].coordinate)
+		return err == nil && order < 0
+	})
 	return result
 }
 
@@ -489,9 +567,11 @@ func BuildOperationSummaryV2(states []OperationStateV2) (OperationSummaryV2, err
 		return OperationSummaryV2{}, err
 	}
 	summary.digest = digest
-	if err := validateOperationSummaryStructure(summary); err != nil {
-		return OperationSummaryV2{}, err
-	}
+	// Every field above is derived from validated immutable operation states;
+	// boundaries are sorted and collision-checked before the digest is minted.
+	// Do not immediately re-hash and re-encode the value through the decoder-
+	// side validator. Decode/Validate still perform that independent proof for
+	// summaries received across a trust boundary.
 	return summary, nil
 }
 

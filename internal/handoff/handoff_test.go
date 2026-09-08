@@ -25,7 +25,7 @@ func TestSubmitBindsVerifiedCandidateAndDurableAuthority(t *testing.T) {
 		OwnedBranch: scope.OwnedBranch, ObservedBranchHead: request.Candidate,
 	}}
 	hook := &recordingHook{}
-	service := NewService(store, verifier).WithFaults(hook)
+	service := NewService(store, verifier).WithEligibilityFacts(&recordingEligibilityReader{fact: request.ExpectedEligibility}).WithFaults(hook)
 
 	record, err := service.Submit(context.Background(), request)
 	if err != nil {
@@ -72,11 +72,13 @@ func TestSubmitReturnsDurableReplayBeforeLiveAuthorityAndGit(t *testing.T) {
 
 func TestSubmitRefusesReconciledWorkBeforeFaultAuthorityAndGit(t *testing.T) {
 	request := validRequest(time.Now().UTC())
+	denied := mustEligibilityFact("reconciliation-handoff", "revision-1", "revision-2", request.WorkID, workgraph.StatusActive, workgraph.Invalidate, workgraph.EligibilityHandoff)
+	request.ExpectedEligibility = denied
 	store := &recordingStore{eligibility: workgraph.Consequence{Reason: "superseded work cannot hand off"}, eligibilityID: "reconciliation-handoff"}
 	verifier := &recordingVerifier{}
 	hook := &recordingHook{}
-	_, err := NewService(store, verifier).WithFaults(hook).Submit(context.Background(), request)
-	if !IsKind(err, KindRevisionIneligible) || !store.eligibilityRead || store.inspected || verifier.candidate != "" || len(hook.boundaries) != 0 {
+	_, err := NewService(store, verifier).WithEligibilityFacts(&recordingEligibilityReader{fact: denied}).WithFaults(hook).Submit(context.Background(), request)
+	if !IsKind(err, KindRevisionIneligible) || store.eligibilityRead || store.inspected || verifier.candidate != "" || len(hook.boundaries) != 0 {
 		t.Fatalf("error=%v eligibility=%v inspect=%v verify=%q boundaries=%v", err, store.eligibilityRead, store.inspected, verifier.candidate, hook.boundaries)
 	}
 }
@@ -164,9 +166,11 @@ func TestCompleteHandoffEligibilityConfigurationCannotBeDowngraded(t *testing.T)
 	assertRefused := func(t *testing.T, service *Service, legacy *recordingStore, reader *recordingEligibilityReader) {
 		t.Helper()
 		verifier := service.verifier.(*recordingVerifier)
-		_, err := service.WithEligibilityFacts(nil).Submit(context.Background(), validRequest(time.Date(2026, 8, 28, 20, 0, 0, 0, time.UTC)))
-		if !IsKind(err, KindRevisionIneligible) || service.mode != eligibilityComplete || service.eligibility == nil || legacy.eligibilityRead || legacy.inspected || verifier.candidate != "" || reader.calls != 0 {
-			t.Fatalf("error=%v mode=%v full=%v full_reads=%d legacy=%v inspect=%v verify=%q", err, service.mode, service.eligibility != nil, reader.calls, legacy.eligibilityRead, legacy.inspected, verifier.candidate)
+		request := validRequest(time.Date(2026, 8, 28, 20, 0, 0, 0, time.UTC))
+		request.ExpectedEligibility = denied
+		_, err := service.WithEligibilityFacts(nil).Submit(context.Background(), request)
+		if !IsKind(err, KindRevisionIneligible) || service.eligibility == nil || legacy.eligibilityRead || legacy.inspected || verifier.candidate != "" || reader.calls != 1 {
+			t.Fatalf("error=%v full=%v full_reads=%d legacy=%v inspect=%v verify=%q", err, service.eligibility != nil, reader.calls, legacy.eligibilityRead, legacy.inspected, verifier.candidate)
 		}
 	}
 	t.Run("auto-detected reader survives nil", func(t *testing.T) {
@@ -203,7 +207,7 @@ func TestSubmitReturnsDurableRefusalBeforeLiveAuthorityAndGit(t *testing.T) {
 	}
 	store := &recordingStore{refusal: &want}
 	verifier := &recordingVerifier{}
-	_, err := NewService(store, verifier).Submit(context.Background(), request)
+	_, err := NewService(store, verifier).WithEligibilityFacts(&recordingEligibilityReader{fact: request.ExpectedEligibility}).Submit(context.Background(), request)
 	var mismatch *Error
 	if !errors.As(err, &mismatch) || mismatch.Kind != KindCandidateMismatch || !reflect.DeepEqual(mismatch.Observed, want.Observed) || !reflect.DeepEqual(mismatch.Expected, want.Expected) {
 		t.Fatalf("refusal replay=%v", err)
@@ -219,7 +223,7 @@ func TestSubmitReturnsEvidenceConflictInsteadOfStoredPreservationClaim(t *testin
 	conflict := &Error{Kind: KindCandidateMismatch, Message: "handoff evidence ref state conflicts", Observed: map[string]string{"preservation_kind": EvidenceRefMutated}, Expected: map[string]string{"evidence_candidate_ref_head": request.Candidate}, RecoveryActions: evidenceConflictActions()}
 	store := &recordingStore{refusal: &want}
 	verifier := &recordingVerifier{revalidateErr: conflict}
-	_, err := NewService(store, verifier).Submit(context.Background(), request)
+	_, err := NewService(store, verifier).WithEligibilityFacts(&recordingEligibilityReader{fact: request.ExpectedEligibility}).Submit(context.Background(), request)
 	if !errors.Is(err, conflict) || strings.Contains(err.Error(), "preserved") {
 		t.Fatalf("replay error=%v", err)
 	}
@@ -235,14 +239,14 @@ func TestSubmitDoesNotRecordRefusalWhenEvidencePreservationFails(t *testing.T) {
 		RecoveryActions: []string{"stop"}, Cause: preservation,
 	}}
 	store := &recordingStore{scope: scope}
-	_, err := NewService(store, verifier).Submit(context.Background(), request)
+	_, err := NewService(store, verifier).WithEligibilityFacts(&recordingEligibilityReader{fact: request.ExpectedEligibility}).Submit(context.Background(), request)
 	if !errors.Is(err, preservation) || store.committedRefusal {
 		t.Fatalf("error=%v committed_refusal=%v", err, store.committedRefusal)
 	}
 }
 
 func validRequest(now time.Time) Request {
-	return Request{
+	request := Request{
 		SchemaVersion: 1, CorrelationID: "correlation-1", OperationID: "operation-handoff-1",
 		HandoffID: "handoff-1", ProjectID: "project-1", MissionID: "mission-1",
 		WorkRevisionID: "revision-1", WorkID: "work-1", RunID: "run-1",
@@ -251,6 +255,16 @@ func validRequest(now time.Time) Request {
 		Candidate: commit('b'), Contributors: []ids.ActorID{"actor-implementer"},
 		EvidenceDigest: digest('e'), SubmittedAt: now,
 	}
+	request.ExpectedEligibility = mustEligibilityFact("reconciliation-handoff-default", request.WorkRevisionID, "revision-2", request.WorkID, workgraph.StatusActive, workgraph.Continue, workgraph.EligibilityHandoff)
+	return request
+}
+
+func mustEligibilityFact(reconciliation string, oldRevision, newRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, disposition workgraph.Disposition, operation workgraph.EligibilityOperation) EligibilityFact {
+	fact, err := workgraph.NewEligibilityFact(reconciliation, oldRevision, newRevision, workID, status, disposition, operation)
+	if err != nil {
+		panic(err)
+	}
+	return fact
 }
 
 func commit(character byte) string { return string(makeBytes(character, 40)) }

@@ -609,17 +609,34 @@ func TestM2CurrentRepositoryActivatesCompleteGuard(t *testing.T) {
 	}
 }
 
-func TestM2LaterCapabilityCannotHideBehindLegacySQLite(t *testing.T) {
+func TestM2ResurrectedSQLiteAdapterAndLaterCapabilityBothFailClosed(t *testing.T) {
 	policy := m2ClosedPolicy(t, m2ModulePath)
+	retired := m2ModulePath + "/internal/controlstore/sqlite"
+	capability := m2ModulePath + "/internal/workgraph"
 	graph := fixtureGraph(
-		[]string{m2ModulePath + "/internal/controlstore/sqlite", m2ModulePath + "/internal/workgraph"},
-		ImportEdge{SourcePackage: m2ModulePath + "/internal/controlstore/sqlite", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal},
-		ImportEdge{SourcePackage: m2ModulePath + "/internal/workgraph", TargetPackage: "modernc.org/sqlite", Kind: ImportExternal},
+		[]string{retired, capability},
+		ImportEdge{SourcePackage: retired, TargetPackage: "modernc.org/sqlite", Kind: ImportExternal},
+		ImportEdge{SourcePackage: capability, TargetPackage: "modernc.org/sqlite", Kind: ImportExternal},
 	)
 	graph.ModulePath = m2ModulePath
 	violations := m2EvaluateIncrementalRepository(policy, graph)
-	if len(violations) != 1 || violations[0].SourcePackage != m2ModulePath+"/internal/workgraph" || violations[0].TargetPackage != "modernc.org/sqlite" {
-		t.Fatalf("evidence=SQLITE-SQL-DENIAL reviewer-probe observed=%v expected=workgraph SQLite violation", violations)
+	want := map[string]bool{
+		string(RuleUnknownPackage) + "\x00" + retired + "\x00" + retired:             false,
+		string(RuleDeferredSurface) + "\x00" + capability + "\x00modernc.org/sqlite": false,
+	}
+	for _, violation := range violations {
+		key := string(violation.Rule) + "\x00" + violation.SourcePackage + "\x00" + violation.TargetPackage
+		if _, ok := want[key]; ok {
+			want[key] = true
+		}
+	}
+	for key, seen := range want {
+		if !seen {
+			t.Fatalf("evidence=SQLITE-STRUCTURAL-ABSENCE missing=%q observed=%v", key, violations)
+		}
+	}
+	if len(violations) != len(want) {
+		t.Fatalf("evidence=SQLITE-STRUCTURAL-ABSENCE unexpected violations=%v", violations)
 	}
 }
 

@@ -1,0 +1,203 @@
+package m2
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/spec-kitty/go-kitty3/internal/testcampaign/m2/iterationreceipt"
+)
+
+const wp14CampaignSourceSHA256 = "3d79d11c6eee3686fdfb8d043eeb80d93031922a3ff8f766c7e0a3a1bc6a76c6"
+
+type WP14CampaignReceipt struct {
+	SchemaVersion    int                   `json:"schema_version"`
+	SourceSHA256     string                `json:"source_sha256"`
+	RawSHA256        string                `json:"raw_sha256"`
+	ExpectedChildren []string              `json:"expected_children"`
+	RunChildren      []string              `json:"run_children"`
+	PassedChildren   []string              `json:"passed_children"`
+	Families         int                   `json:"families"`
+	FamilyClaims     int                   `json:"family_claims"`
+	PublicationCuts  int                   `json:"publication_cuts"`
+	MutantSuites     int                   `json:"mutant_suites"`
+	Concurrency      int                   `json:"concurrency"`
+	Universal        int                   `json:"universal"`
+	IterationCensus  []WP14IterationCensus `json:"iteration_census"`
+	Verdict          string                `json:"verdict"`
+}
+
+type WP14IterationCensus struct {
+	Child         string `json:"child"`
+	Expected      int    `json:"expected"`
+	Observed      int    `json:"observed"`
+	RecordsSHA256 string `json:"records_sha256"`
+}
+
+type wp14IterationContract struct {
+	count      int
+	boundaries map[string]struct{}
+	outcomes   map[string]struct{}
+}
+
+var wp14IterationContracts = map[string]wp14IterationContract{
+	"TestAcceptanceLostAuthorityResponsesReconcileOneHundredTrialsV2":    {100, stringSet("acceptance-publication-ack"), stringSet("reconciled-lost-ack")},
+	"TestIntegrationLostAuthorityResponseAtEveryStageOneHundredTrialsV2": {100, stringSet("integration-publication-ack"), stringSet("reconciled-lost-ack")},
+	"TestIntegrationTargetAuthorityAdmitsOneOfOneHundredContendersV2":    {100, stringSet("integration-target-authority"), stringSet("target-authority-completed", "target-cas-conflict")},
+	"TestExecutionAuthorityProductionContentionMatrixV2":                 {400, stringSet("execution-concurrent-claim", "execution-renew-vs-expire", "execution-replacement", "execution-independent-slots"), stringSet("one-winner", "two-winners")},
+	"TestEffectAuthoritySameSlotAndUnrelatedSlotContentionCampaignV2":    {100, stringSet("effect-slot-contention"), stringSet("one-shared-two-independent")},
+	"TestWorkspacePathClaimAndIndependentWorkspaceCampaignV2":            {100, stringSet("workspace-path-claim"), stringSet("one-shared-one-independent")},
+}
+
+var wp14FamilyClaims = map[string][]string{
+	"acceptance":          {"TestAcceptanceRefusesStaleEvidenceAndSameActorBeforePublicationV2", "TestAcceptanceAndIntegrationPublishThroughRealGapDBAndReconcileLostCASV2", "TestAcceptanceLostAuthorityResponsesReconcileOneHundredTrialsV2"},
+	"artifact_catalog":    {"TestArtifactV2RefusesStaleCatalogAndFailedValidationApproval", "TestCapabilityAuthorityRecoversCommittedLostResponseWithoutRepublishing", "TestPublishReplayConflictAndAmbiguousCommitRecovery"},
+	"artifact_revision":   {"TestArtifactV2RequiresExactObservedContentBytes", "TestCapabilityAuthorityRecoversCommittedLostResponseWithoutRepublishing", "TestPublishReplayConflictAndAmbiguousCommitRecovery"},
+	"execution_slot":      {"TestExecutionAuthorityMintsGrantFenceAndEligibilityOnlyForGrantsV2", "TestExecutionAndEffectAuthoritiesProductionConstructorsCommitAndRecoverAmbiguityV2", "TestExecutionAuthorityRestartCutsHeartbeatExpiryAndReplacementV2"},
+	"external_effect":     {"TestAuthorityAdapterNeverDeliversAfterPreRegistrationRefusalV2", "TestAuthorityAdapterReconcilesRegisteredAmbiguousPublicationV2", "TestExternalEffectRetryProgressionReplaysEveryPublicationV2"},
+	"handoff_slot":        {"TestHandoffCandidateRefusalIsDurableBoundedAndReplaysBeforeGitV2", "TestHandoffGapDBRegisteredLostAcknowledgementReconcilesExactPublicationV2", "TestHandoffDroppedAcknowledgementAtEveryStageRecoversWithoutDuplicateGitV2"},
+	"integration_attempt": {"TestIntegrationCannotDowngradeZeroEligibilityBeforeGitV2", "TestIntegrationLostAuthorityResponseAtEveryStageOneHundredTrialsV2", "TestIntegrationConflictAndManualMovementRequireRepairV2"},
+	"integration_target":  {"TestIntegrationRefusesBeforeAnyRepositoryObservationV2", "TestIntegrationLostAuthorityResponseAtEveryStageOneHundredTrialsV2", "TestIntegrationRepairRequiredRestoresThroughCheckpointSuffixWithoutGitV2"},
+	"mission":             {"TestReadinessRelatedFactRefusesCompetingFactRevisionBeforePublication", "TestReadinessServiceExactReplayAndCollisionPrecedeEpochAndAuthorityReads", "TestReadinessAuthorityRealGapDBCheckpointSuffixMatchesOriginAndProjectionLossV2"},
+	"operation":           {"TestServiceOneBatchStableIdentityAndNoSilentRetry", "TestServiceAmbiguityVisibleThenSameIDReadReconciles", "TestServiceMalformedAcknowledgementIsIndeterminate"},
+	"outbox":              {"TestOutboxAdapterAdmitsOnlyExactCapabilityPlanV2", "TestOutboxGapDBHistoryRestoresDisposableProjectionAfterDroppedAckV2", "TestOutboxGapDBFaultsPreserveStableIdentityAndNeverMintPermissionV2"},
+	"review_slot":         {"TestReviewRejectsPartialCriterionSetChangedVerdictAndReducerRewriteV2", "TestReviewGapDBRegisteredLostAcknowledgementReconcilesExactPublicationV2", "TestReviewDroppedAcknowledgementAtEveryStageResumesSameOperationV2"},
+	"runtime_host":        {"TestFreshEpochRequiresSealedRestoreAndRotatesPredecessorDurably", "TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch", "TestHostProjectionRefreshRetriesConcurrentStablePrefixMovement"},
+	"workgraph":           {"TestWorkgraphV2RefusesIncompleteEligibilityAndWrongLineage", "TestWorkgraphAuthorityPublishesCompleteBatchThroughCoordinatorAndGapDB", "TestWorkgraphV2ExactReplayPrecedesEpochAndChangedBindingConflicts"},
+	"workspace":           {"TestPreparationRefusesRepositoryObservationDriftV2", "TestWorkspaceAuthorityCommitsBindingAndPermanentPathClaimThroughGapDBV2", "TestPreparationRestartFromEveryDurableStageIsCanonicalV2"},
+}
+
+var wp14PublicationCuts = []string{"after_durable_commit_before_response", "before_publication", "lost_response", "malformed_acknowledgement", "restart_after_reconciliation", "restart_before_reconciliation"}
+var wp14MutantSuites = []string{"effect_authority_mutants", "execution_authority_mutants", "integration_source_overlay", "journal_acknowledgement_mutants", "production_composition_bypass", "production_host_source_overlay", "readiness_source_overlay", "terminal_semantic_oracle", "universal_progress_oracle", "work_coordinate_oracle", "workspace_semantic_mutants"}
+var wp14Concurrency = []string{"TestEffectAuthoritySameSlotAndUnrelatedSlotContentionCampaignV2", "TestExecutionAuthorityProductionContentionMatrixV2", "TestHostIndependentCommandsRunConcurrentlyWithoutGlobalCommandMutex", "TestIndependentTargetsProgressConcurrentlyWithoutGlobalLockV2", "TestIntegrationLostAuthorityResponseAtEveryStageOneHundredTrialsV2", "TestIntegrationTargetAuthorityAdmitsOneOfOneHundredContendersV2", "TestReviewerIndependenceUsesActorIDNotProcessAndNeedsExactNarrowExceptionV2", "TestWorkspacePathClaimAndIndependentWorkspaceCampaignV2"}
+var wp14Universal = []string{"TestDishonestFakeTrackerMatrixPreservesAuthorityV2", "TestHarnessProductionLifecycleAndTypedQueries", "TestProductionCapabilityCompositionHasOnePublicationBoundary", "TestTwoItemMissionRestartAfterEachDurableBoundary", "TestUniversalInvariantOracleControlledMutants", "TestZombieWorkspaceRemainsWritableButAuthorityIsFenced"}
+
+func VerifyWP14CampaignReceipt(repository string, raw []byte) (WP14CampaignReceipt, error) {
+	source, err := os.ReadFile(filepath.Join(repository, "internal/scenario/campaign_test.go"))
+	if err != nil {
+		return WP14CampaignReceipt{}, err
+	}
+	return VerifyWP14CampaignReceiptBytes(source, raw)
+}
+
+func VerifyWP14CampaignReceiptBytes(source, raw []byte) (WP14CampaignReceipt, error) {
+	receipt := WP14CampaignReceipt{SchemaVersion: 1, RawSHA256: SHA256(raw), Families: len(wp14FamilyClaims), PublicationCuts: len(wp14PublicationCuts), MutantSuites: len(wp14MutantSuites), Concurrency: len(wp14Concurrency), Universal: len(wp14Universal), Verdict: "fail"}
+	receipt.SourceSHA256 = SHA256(source)
+	if receipt.SourceSHA256 != wp14CampaignSourceSHA256 {
+		return receipt, fmt.Errorf("WP14 structured campaign source differs from frozen accepted bytes")
+	}
+	parent := "TestCrashAmbiguousDishonestUniversalCampaign100"
+	receipt.ExpectedChildren = expectedWP14Children()
+	receipt.FamilyClaims = len(wp14FamilyClaims) * 3
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	scanner.Buffer(make([]byte, 64<<10), 16<<20)
+	iterations := make(map[string][]iterationreceipt.Record)
+	for scanner.Scan() {
+		var event goTestEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return receipt, err
+		}
+		if !strings.HasPrefix(event.Test, parent+"/") {
+			continue
+		}
+		if index := strings.Index(event.Output, iterationreceipt.Prefix); index >= 0 {
+			var record iterationreceipt.Record
+			decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(event.Output[index+len(iterationreceipt.Prefix):])))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&record); err != nil || record.Validate() != nil || record.DefinitionID != event.Test {
+				return receipt, fmt.Errorf("WP14 campaign iteration receipt is malformed or unbound")
+			}
+			iterations[event.Test] = append(iterations[event.Test], record)
+		}
+		switch event.Action {
+		case "run":
+			receipt.RunChildren = append(receipt.RunChildren, event.Test)
+		case "pass":
+			receipt.PassedChildren = append(receipt.PassedChildren, event.Test)
+		case "fail", "skip":
+			return receipt, fmt.Errorf("WP14 campaign child %s ended %s", event.Test, event.Action)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return receipt, err
+	}
+	slices.Sort(receipt.RunChildren)
+	slices.Sort(receipt.PassedChildren)
+	if !slices.Equal(receipt.RunChildren, receipt.ExpectedChildren) || !slices.Equal(receipt.PassedChildren, receipt.ExpectedChildren) {
+		return receipt, fmt.Errorf("WP14 campaign child census is missing, duplicated, extra, or substituted")
+	}
+	for _, child := range receipt.ExpectedChildren {
+		selector := child[strings.LastIndex(child, "/")+1:]
+		contract, required := wp14IterationContracts[selector]
+		if !required {
+			continue
+		}
+		records := iterations[child]
+		if err := validateWP14Iterations(child, contract, records); err != nil {
+			return receipt, err
+		}
+		encoded, _ := CanonicalJSON(records)
+		receipt.IterationCensus = append(receipt.IterationCensus, WP14IterationCensus{child, contract.count, len(records), SHA256(encoded)})
+	}
+	if len(receipt.IterationCensus) != 8 { // lost-integration is required by two families and the concurrency axis.
+		return receipt, fmt.Errorf("WP14 internal iteration contract census is incomplete")
+	}
+	receipt.Verdict = "pass"
+	return receipt, nil
+}
+
+func validateWP14Iterations(child string, contract wp14IterationContract, records []iterationreceipt.Record) error {
+	if len(records) != contract.count {
+		return fmt.Errorf("WP14 campaign child %s iteration receipts=%d want=%d", child, len(records), contract.count)
+	}
+	indices := make(map[int]struct{}, len(records))
+	seeds := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		if record.DefinitionID != child || record.Index < 0 || record.Index >= contract.count {
+			return fmt.Errorf("WP14 campaign child %s has foreign iteration", child)
+		}
+		if _, ok := contract.boundaries[record.FaultBoundary]; !ok {
+			return fmt.Errorf("WP14 campaign child %s has foreign boundary %s", child, record.FaultBoundary)
+		}
+		if _, ok := contract.outcomes[record.Outcome]; !ok {
+			return fmt.Errorf("WP14 campaign child %s has foreign outcome %s", child, record.Outcome)
+		}
+		if _, duplicate := indices[record.Index]; duplicate {
+			return fmt.Errorf("WP14 campaign child %s duplicates index %d", child, record.Index)
+		}
+		if _, duplicate := seeds[record.Seed]; duplicate {
+			return fmt.Errorf("WP14 campaign child %s duplicates seed %s", child, record.Seed)
+		}
+		indices[record.Index], seeds[record.Seed] = struct{}{}, struct{}{}
+	}
+	return nil
+}
+
+func expectedWP14Children() []string {
+	parent := "TestCrashAmbiguousDishonestUniversalCampaign100"
+	var expected []string
+	for family, tests := range wp14FamilyClaims {
+		for _, test := range tests {
+			expected = append(expected, parent+"/family/"+family+"/"+test)
+		}
+	}
+	for _, cut := range wp14PublicationCuts {
+		expected = append(expected, parent+"/publication-cut/"+cut)
+	}
+	for _, mutant := range wp14MutantSuites {
+		expected = append(expected, parent+"/mutant-suite/"+mutant)
+	}
+	for _, test := range wp14Concurrency {
+		expected = append(expected, parent+"/concurrency/"+test)
+	}
+	for _, test := range wp14Universal {
+		expected = append(expected, parent+"/universal/"+test)
+	}
+	slices.Sort(expected)
+	return expected
+}

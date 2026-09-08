@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"sort"
+	"sync"
 
 	journal "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
@@ -19,6 +20,7 @@ const (
 	MaxPlaybackAggregates = 20_000
 	MaxPlaybackEvents     = 100_000
 	MaxPlaybackBytes      = 128 * 1024 * 1024
+	MaxPlaybackWorkers    = 32
 )
 
 type StateV2 struct {
@@ -55,19 +57,25 @@ func (s StateV2) Tombstone() bool                          { return s.tombstone 
 func (s StateV2) LastPublicationID() journal.PublicationID { return s.lastPublicationID }
 
 type MaterializedEventV2 struct {
-	revision  uint64
-	envelope  journal.EventEnvelopeV2
-	tombstone bool
+	revision      uint64
+	envelope      journal.EventEnvelopeV2
+	tombstone     bool
+	canonicalSize int
 }
 
 func NewMaterializedEventV2(revision uint64, envelope journal.EventEnvelopeV2, terminalTombstone bool) (MaterializedEventV2, error) {
 	if revision == 0 {
 		return MaterializedEventV2{}, &Error{"INVALID_EVENT_REVISION"}
 	}
-	if _, err := journal.EncodeEventEnvelopeV2(envelope); err != nil {
-		return MaterializedEventV2{}, err
+	canonicalSize := envelope.CanonicalSizeV2()
+	if canonicalSize == 0 {
+		encoded, err := journal.EncodeEventEnvelopeV2(envelope)
+		if err != nil {
+			return MaterializedEventV2{}, err
+		}
+		canonicalSize = len(encoded)
 	}
-	return MaterializedEventV2{revision, envelope, terminalTombstone}, nil
+	return MaterializedEventV2{revision, envelope, terminalTombstone, canonicalSize}, nil
 }
 func (e MaterializedEventV2) RecordRevision() uint64            { return e.revision }
 func (e MaterializedEventV2) Envelope() journal.EventEnvelopeV2 { return e.envelope }
@@ -83,6 +91,7 @@ type InputV2 struct {
 	MaximumAggregates             int
 	MaximumEvents                 int
 	MaximumBytes                  int
+	MaximumWorkers                int
 }
 
 type ResultV2 struct {
@@ -107,7 +116,7 @@ type Error struct{ Field string }
 func (e *Error) Error() string { return "PLAYBACK_REFUSED: " + e.Field }
 
 func RunV2(input InputV2) (ResultV2, error) {
-	maxAggregates, maxEvents, maxBytes := input.MaximumAggregates, input.MaximumEvents, input.MaximumBytes
+	maxAggregates, maxEvents, maxBytes, maxWorkers := input.MaximumAggregates, input.MaximumEvents, input.MaximumBytes, input.MaximumWorkers
 	if maxAggregates == 0 {
 		maxAggregates = MaxPlaybackAggregates
 	}
@@ -117,7 +126,10 @@ func RunV2(input InputV2) (ResultV2, error) {
 	if maxBytes == 0 {
 		maxBytes = MaxPlaybackBytes
 	}
-	if maxAggregates < 1 || maxAggregates > MaxPlaybackAggregates || maxEvents < 1 || maxEvents > MaxPlaybackEvents || maxBytes < 1 || maxBytes > MaxPlaybackBytes || len(input.Base) > maxAggregates || len(input.Events) > maxEvents {
+	if maxWorkers == 0 {
+		maxWorkers = 1
+	}
+	if maxAggregates < 1 || maxAggregates > MaxPlaybackAggregates || maxEvents < 1 || maxEvents > MaxPlaybackEvents || maxBytes < 1 || maxBytes > MaxPlaybackBytes || maxWorkers < 1 || maxWorkers > MaxPlaybackWorkers || len(input.Base) > maxAggregates || len(input.Events) > maxEvents {
 		return ResultV2{}, &Error{"budget"}
 	}
 	eventDescriptor, err := input.EventRegistry.Descriptor()
@@ -164,43 +176,99 @@ func RunV2(input InputV2) (ResultV2, error) {
 		}
 		return events[i].envelope.EventID() < events[k].envelope.EventID()
 	})
+	type eventGroup struct {
+		key    string
+		events []MaterializedEventV2
+		state  StateV2
+		err    error
+	}
+	groupsByKey := make(map[string]*eventGroup)
+	groups := make([]*eventGroup, 0)
 	var through uint64
 	for index, material := range events {
 		if material.revision == 0 || index > 0 && compareMaterialized(events[index-1], material) >= 0 {
 			return ResultV2{}, &Error{"event_order"}
 		}
-		encoded, err := journal.EncodeEventEnvelopeV2(material.envelope)
-		if err != nil {
-			return ResultV2{}, err
-		}
-		if len(encoded) > maxBytes-bytesUsed {
+		if material.canonicalSize <= 0 || material.canonicalSize > maxBytes-bytesUsed {
 			return ResultV2{}, &Error{"bytes"}
 		}
-		bytesUsed += len(encoded)
+		bytesUsed += material.canonicalSize
 		coordinateBytes, err := journal.CanonicalAggregateCoordinate(material.envelope.Coordinate())
 		if err != nil {
 			return ResultV2{}, err
 		}
 		key := string(coordinateBytes)
-		prior := []byte(`{}`)
-		priorVersion := journal.LogicalVersion(0)
-		if current, exists := states[key]; exists {
-			prior, priorVersion = current.canonical, current.version
+		group := groupsByKey[key]
+		if group == nil {
+			group = &eventGroup{key: key}
+			groupsByKey[key] = group
+			groups = append(groups, group)
 		}
-		if uint64(priorVersion) == ^uint64(0) || material.envelope.LogicalVersion() != priorVersion+1 {
-			return ResultV2{}, &Error{"logical_version"}
-		}
-		output, outputDigest, err := input.Reducers.Apply(prior, material.envelope)
-		if err != nil {
-			return ResultV2{}, err
-		}
-		states[key] = StateV2{coordinate: material.envelope.Coordinate(), version: material.envelope.LogicalVersion(), lastEventID: material.envelope.EventID(), canonical: append([]byte(nil), output...), digest: outputDigest, tombstone: material.tombstone, lastPublicationID: material.envelope.PublicationID()}
+		group.events = append(group.events, material)
 		if material.revision > through {
 			through = material.revision
 		}
-		if len(states) > maxAggregates {
-			return ResultV2{}, &Error{"aggregates"}
+	}
+	newAggregates := 0
+	for _, group := range groups {
+		if _, exists := states[group.key]; !exists {
+			newAggregates++
 		}
+	}
+	if len(states)+newAggregates > maxAggregates {
+		return ResultV2{}, &Error{"aggregates"}
+	}
+	sort.Slice(groups, func(i, k int) bool { return groups[i].key < groups[k].key })
+	applyGroup := func(group *eventGroup) {
+		prior := []byte(`{}`)
+		priorVersion := journal.LogicalVersion(0)
+		if current, exists := states[group.key]; exists {
+			prior, priorVersion = current.canonical, current.version
+		}
+		envelopes := make([]journal.EventEnvelopeV2, len(group.events))
+		for index, material := range group.events {
+			if uint64(priorVersion) == ^uint64(0) || material.envelope.LogicalVersion() != priorVersion+1 {
+				group.err = &Error{"logical_version"}
+				return
+			}
+			envelopes[index] = material.envelope
+			priorVersion = material.envelope.LogicalVersion()
+		}
+		output, outputDigest, err := input.Reducers.ApplyPlaybackSequenceV2(prior, envelopes)
+		if err != nil {
+			group.err = err
+			return
+		}
+		last := group.events[len(group.events)-1]
+		group.state = StateV2{coordinate: last.envelope.Coordinate(), version: last.envelope.LogicalVersion(), lastEventID: last.envelope.EventID(), canonical: append([]byte(nil), output...), digest: outputDigest, tombstone: last.tombstone, lastPublicationID: last.envelope.PublicationID()}
+	}
+	if maxWorkers == 1 || len(groups) < 2 {
+		for _, group := range groups {
+			applyGroup(group)
+		}
+	} else {
+		jobs := make(chan *eventGroup)
+		var workers sync.WaitGroup
+		for range min(maxWorkers, len(groups)) {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				for group := range jobs {
+					applyGroup(group)
+				}
+			}()
+		}
+		for _, group := range groups {
+			jobs <- group
+		}
+		close(jobs)
+		workers.Wait()
+	}
+	for _, group := range groups {
+		if group.err != nil {
+			return ResultV2{}, group.err
+		}
+		states[group.key] = group.state
 	}
 	ordered := make([]StateV2, 0, len(states))
 	for _, state := range states {
@@ -211,7 +279,7 @@ func RunV2(input InputV2) (ResultV2, error) {
 		right, _ := journal.CanonicalAggregateCoordinate(ordered[k].coordinate)
 		return bytes.Compare(left, right) < 0
 	})
-	projectionDigest, err := digestProjection(ordered)
+	projectionDigest, err := digestProjection(ordered, false)
 	if err != nil {
 		return ResultV2{}, err
 	}
@@ -224,7 +292,7 @@ func (r ResultV2) Validate() error {
 	if r.seal.IsZero() || resultSeal(r) != r.seal {
 		return &Error{"result_seal"}
 	}
-	digest, err := digestProjection(r.states)
+	digest, err := digestProjection(r.states, true)
 	if err != nil || digest != r.projectionDigest {
 		return &Error{"result_projection"}
 	}
@@ -247,7 +315,7 @@ func compareMaterialized(a, b MaterializedEventV2) int {
 	return bytes.Compare([]byte(a.envelope.EventID()), []byte(b.envelope.EventID()))
 }
 
-func digestProjection(states []StateV2) (journal.Digest, error) {
+func digestProjection(states []StateV2, validateStates bool) (journal.Digest, error) {
 	type wire struct {
 		Coordinate  journal.AggregateCoordinate `json:"coordinate"`
 		Version     uint64                      `json:"version"`
@@ -261,11 +329,13 @@ func digestProjection(states []StateV2) (journal.Digest, error) {
 		if state.coordinate.Kind == journal.AggregateKind("operation") {
 			continue
 		}
-		actual, err := journal.ReducerStateDigestV2(state.canonical)
-		if err != nil || actual != state.digest {
-			return journal.Digest{}, &Error{"state_digest"}
+		if validateStates {
+			actual, err := journal.ReducerStateDigestV2(state.canonical)
+			if err != nil || actual != state.digest {
+				return journal.Digest{}, &Error{"state_digest"}
+			}
 		}
-		values = append(values, wire{state.coordinate, uint64(state.version), string(state.lastEventID), state.tombstone, append([]byte(nil), state.canonical...), state.digest.String()})
+		values = append(values, wire{state.coordinate, uint64(state.version), string(state.lastEventID), state.tombstone, state.canonical, state.digest.String()})
 	}
 	encoded, err := json.Marshal(values)
 	if err != nil {

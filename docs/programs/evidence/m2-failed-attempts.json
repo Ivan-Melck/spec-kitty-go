@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "mission_id": "gapdb-only-production-authority-01M1GWDJ",
+  "evidence_class": "non_admissible_attempt_history",
+  "release_ready": false,
+  "adopted": false,
+  "attempts": [
+    {
+      "run_id": "wp17-performance-1b3fbf5a",
+      "source_commit": "1b3fbf5a51ee610d4e382239edb703cfe7401b04",
+      "source_tree": "f97e6cd6f3f2fb2fc084c9b32952f48cdb9e4dec",
+      "outcome": "timeout",
+      "reason": "quadratic full journal restore after each accepted mutation",
+      "transcript_path": "/tmp/go-kitty3-m2-performance.7Ag6lQ/performance.json.events.jsonl",
+      "transcript_sha256": "e426553c379609f46eebfe0357b2e5ac7913f2736950779a7804e0ea89ed92c4",
+      "transcript_bytes": 53302
+    },
+    {
+      "run_id": "wp17-performance-9a9037fe-final-01",
+      "source_commit": "9a9037fed1472dfd88f808fdc8f86631f1f7fff6",
+      "source_tree": "b65a82e16519805a54eb59811fb7e934079b400b",
+      "outcome": "fail",
+      "reason": "preflight candidate admission record digest was stale",
+      "transcript_path": "/tmp/go-kitty3-m2-performance-9a9037fe.FfS4qk/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "2bacf3e02568c3e90fb62dd826ee2249c21740bcd0544393b57be9ab3d9f8c6a",
+      "transcript_bytes": 1825
+    },
+    {
+      "run_id": "wp17-performance-215cc4df-final-02",
+      "source_commit": "215cc4df01c0652cfe75826852251dde12186d78",
+      "source_tree": "c5c2dd6192841ef00652be25d811d28a718599ea",
+      "outcome": "fail",
+      "reason": "mutation and recovery p95 exceeded the frozen reference thresholds",
+      "transcript_path": "/tmp/go-kitty3-m2-performance-215cc4df.0JTObd/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "bb27be6c65dce8c996385e79000e6ee1192b4e174f31120af94c0cff4b262a9e",
+      "transcript_bytes": 6262,
+      "failed_observation_path": "/tmp/go-kitty3-m2-performance-215cc4df.0JTObd/evidence/performance.json.failed.json",
+      "failed_observation_sha256": "bdc16467134fba994fd63cbdb63ac8cabe77a7607cce89884073764e9c8c4a3f",
+      "failed_observation_bytes": 5273223,
+      "retained_private_root": "/tmp/spk-m2-measure-636524007",
+      "statistics": {
+        "mutation_p95_ms": 11.381904,
+        "mutation_limit_ms": 8,
+        "query_p95_ms": 1.819115,
+        "query_limit_ms": 2,
+        "recovery_p95_ms": 2104.798478,
+        "recovery_limit_ms": 2000
+      }
+    },
+    {
+      "run_id": "wp17-performance-a8539a03-final-03",
+      "source_commit": "a8539a034e745947f599417026ff2f96726b7b01",
+      "source_tree": "97582fa10ef7c207cca17b8beafaaa00560c164d",
+      "outcome": "non_admissible",
+      "reason": "pre-run environment observation was outside the source-bound reference profile after the architecture qualification load; no performance workload executed",
+      "transcript_path": "/tmp/go-kitty3-m2-performance-a8539a03.2oTwro/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "fee804d7b1c9ead9b687c3efba2304cb1b5395f6e0f4f0626aafa21b340e94c5",
+      "transcript_bytes": 1829
+    },
+    {
+      "run_id": "wp17-performance-85b8acef-final-04",
+      "source_commit": "85b8acef674950c928bf5005c0d09fe9cddfcbc2",
+      "source_tree": "a7c1f6a6d92b0052df40331ff72bc984e65239c2",
+      "outcome": "fail",
+      "reason": "mutation and recovery p95 exceeded the frozen reference thresholds; query p95 passed",
+      "transcript_path": "/tmp/go-kitty3-m2-performance-85b8acef.iDOOXK/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "5f000695fcf9a75383c7c3d741dd6b01ece34e40c9528d3256c97ec6f23e04cd",
+      "transcript_bytes": 6258,
+      "failed_observation_path": "/tmp/go-kitty3-m2-performance-85b8acef.iDOOXK/evidence/performance.json.failed.json",
+      "failed_observation_sha256": "449a0c4c6ac5c79733b8f36631f71abd1ab90053e923007e7e40cf26c09483d5",
+      "failed_observation_bytes": 5268423,
+      "retained_private_root": "/tmp/spk-m2-measure-93687388",
+      "statistics": {
+        "mutation_p95_ms": 8.960949,
+        "mutation_limit_ms": 8,
+        "query_p95_ms": 1.994779,
+        "query_limit_ms": 2,
+        "recovery_p95_ms": 2181.454797,
+        "recovery_limit_ms": 2000
+      }
+    },
+    {
+      "run_id": "wp17-performance-a14a1b4a-final05",
+      "source_commit": "a14a1b4a3a7e4fecf2eaefd089a817b8217c806d",
+      "source_tree": "4eca03827cf5812db80c18335ab3a06a45d0fb58",
+      "outcome": "fail",
+      "reason": "fresh-process recovery receipt verifier compared the later-child empty operation census against noncanonical JSON bytes",
+      "transcript_path": "/tmp/go-kitty3-campaign-a14a1b4a.sSkKcr/m2/performance.json.events.jsonl",
+      "transcript_sha256": "5a498314ebe1549a8f25d1d40be31fffa28e4d78f04adb75c4518cd450746e26",
+      "transcript_bytes": 6559
+    },
+    {
+      "run_id": "wp17-performance-2c46c45a-final06",
+      "source_commit": "2c46c45aaf5c7a5c65fbfc63da55131d1b6c93c5",
+      "source_tree": "d2679bbf4abfe995fcde2806a8c17a9bd8dc2faf",
+      "outcome": "fail",
+      "reason": "fresh-process mutation, query, and recovery p95 exceeded the frozen reference thresholds",
+      "transcript_path": "/tmp/go-kitty3-campaign-2c46c45a.bYZZHt/m2/performance.json.events.jsonl",
+      "transcript_sha256": "19ed12551f9a98bb4bace480ac97c492e33535f6227f0ec81763766b1dd0722f",
+      "transcript_bytes": 6257,
+      "failed_observation_path": "/tmp/go-kitty3-campaign-2c46c45a.bYZZHt/m2/performance.json.failed.json",
+      "failed_observation_sha256": "485183d02b66621c22f66c8dd0ed77706e0f62f23ccc6cdfbc307eedee84de0e",
+      "failed_observation_bytes": 5269665,
+      "retained_private_root": "/tmp/spk-m2-measure-390776297",
+      "statistics": {
+        "mutation_p95_ms": 8.305338,
+        "mutation_limit_ms": 8,
+        "query_p95_ms": 2.124591,
+        "query_limit_ms": 2,
+        "recovery_p95_ms": 2416.207486,
+        "recovery_limit_ms": 2000
+      }
+    },
+    {
+      "run_id": "wp17-performance-dd6fdb4d-final07",
+      "source_commit": "dd6fdb4dd1f74ba66387815036c055cf491917ae",
+      "source_tree": "edd000e8defbdc48497ee2fe5bda584e15f8736a",
+      "outcome": "non_admissible",
+      "reason": "pre-run environment observation was outside the source-bound reference profile; no performance workload executed",
+      "transcript_path": "/tmp/go-kitty3-campaign-dd6fdb4d-final07/m2/performance.json.events.jsonl",
+      "transcript_sha256": "e29fd3016ed5f88aa2670dab5b3ebb5b242780c079df83c3f78586ea06b962df",
+      "transcript_bytes": 1827
+    },
+    {
+      "run_id": "wp17-qualification-049ebd92-final08",
+      "source_commit": "049ebd9259d1351f8de07de2d1cfa1bb1a5e9a31",
+      "source_tree": "8a8d9cf88aaeda5170feec9124ee5dc5dd8562f5",
+      "outcome": "fail",
+      "reason": "real Git and GapDB crown restart at workspace dependencies_requested restored a contribution that workspace authority refused as invalid_command; qualifier additionally misreported the missing success-only process receipt as an unterminated process transcript",
+      "transcript_path": "/tmp/go-kitty3-qualification-049ebd92-final08/m2/wp17-qualification-049ebd92-final08/evidence/campaigns/behavior-real-git-gapdb-two-item-crown.go-test.jsonl",
+      "transcript_sha256": "141c79f19dfd20d3718b26b17334e5ad4ac76bd6e0520d8f73689d467dae1fe2",
+      "transcript_bytes": 20480,
+      "attempt_events_sha256": "671bb1ee77a5428edbf439f83fe4c749f0eb6676fd2b147630e095acbb3b2eca",
+      "terminal_sha256": "6af650246e211425a7fd3817db00b258b201b92dd9750f77712c828274a6dbe9"
+    },
+    {
+      "run_id": "wp17-qualification-d4822c03-final09",
+      "source_commit": "d4822c031ea8e0186f79aa1083148114a6b06fff",
+      "source_tree": "d1c6588bc88cf3b2a71dc5303d0afa0fb62955a0",
+      "outcome": "fail",
+      "reason": "all 100 zombie-isolation iterations and their Go test passed, but go test split each long logical machine receipt across two output events and the qualifier rejected the first partial JSON fragment as malformed",
+      "transcript_path": "/tmp/go-kitty3-qualification-d4822c03-final09/m2/wp17-qualification-d4822c03-final09/evidence/campaigns/behavior-zombie-workspace-isolation.go-test.jsonl",
+      "transcript_sha256": "90d8b6bbc1022e1fdbfdef1cc17ece9eb4c62998a69b8342bc1a73c13b1a43a7",
+      "transcript_bytes": 163102,
+      "attempt_events_sha256": "c52af711ad6a2a1283c0bb078e1a3df9191443b885c788d07ebd11d50f529973",
+      "terminal_sha256": "b415e79d775c0697b0c840826a0f16c445c14b4a564eaa60de2f3dc546c01c43"
+    },
+    {
+      "run_id": "wp17-qualification-c0190e4b-final10",
+      "source_commit": "c0190e4b8989e2fbd0bc6764a5c41c047d4e661f",
+      "source_tree": "cd53f86a3ca02ab005e293cd35433af80e3baa18",
+      "outcome": "fail",
+      "reason": "the exact WP14 adversarial tracker campaign rejected two stale readiness source-mutant anchors after the underlying code evolved; all preceding crown and campaign evidence remained immutable and non-admissible",
+      "transcript_path": "/tmp/go-kitty3-qualification-c0190e4b-final10/m2/wp17-qualification-c0190e4b-final10/evidence/campaigns/fault-adversarial-tracker.go-test.jsonl",
+      "transcript_sha256": "cbfb48dfae7f0a065e7fe720f6cb16319303c60d2e48e3dda2af6c62a456b886",
+      "transcript_bytes": 1289439,
+      "attempt_events_sha256": "ed2ecb4ce1cafa9e4cae7f14bffbfa2a2e627f11bf056487d075961c8c347885",
+      "terminal_sha256": "7d9d09e6dd67e0ec9e20602fc47ae422981adb132c827d1b8571fd2259654225"
+    },
+    {
+      "run_id": "wp17-qualification-50e7753e-final11",
+      "source_commit": "50e7753e5e2eaeea4a029d28c312dbb5d1068dfe",
+      "source_tree": "750fad58902c755edf5a7cdba59562267c7665d0",
+      "outcome": "fail",
+      "reason": "all 45 crown campaigns passed, but nested WP16 runtime absence proof was incorrectly supplied the non-adopted M2 GapDB candidate instead of the frozen adopted assertion-extension sidecar and correctly refused its executable metadata",
+      "attempt_events_sha256": "c51e0eb5b3f5932a75f3d10caa64b4a6d982e182d4c85df4c6f6ec000fb3729d",
+      "terminal_sha256": "6ed9f90efed115581f08256ec136c4c805f827ec6334941d5bf54f99e687c2a2"
+    },
+    {
+      "run_id": "wp17-qualification-984ccd1a-final12",
+      "source_commit": "984ccd1a18ec16d1f9c9d84da9b18788c607cae7",
+      "source_tree": "9862dfc5f491beec25b53fd533fef9d4a8de2ab1",
+      "outcome": "fail",
+      "reason": "all 45 crown campaigns passed, but cleanup of the private nested absence module cache failed because the Go toolchain download retained read-only cache directories",
+      "attempt_events_sha256": "e057441a2520822ec3a7dabbaf6acd1adccbf830f6d5be4fcf3227a17322dcde",
+      "terminal_sha256": "6617c63ebf5d4c95a926618e33964bd37775551d319615c904746f757b4e3f24"
+    },
+    {
+      "run_id": "wp17-qualification-4b4d1926-final13",
+      "source_commit": "4b4d19269ccc93790c44d17ad5e29ecd83c74bc6",
+      "source_tree": "588692847a93dc4e491c9ee7aab21f364015c73f",
+      "outcome": "fail",
+      "reason": "all 45 crown campaigns passed, but Go's toolchain module remained read-only because the module-cache writable flag does not govern downloaded toolchains, so attempt-local absence cleanup still failed",
+      "attempt_events_sha256": "6727bd0b65b460180f3e1371be64a59d58091f2ffe6b1f4ddc57204cf34df9ac",
+      "terminal_sha256": "44d63d7dc64b274984a4ff9e7ad9b7fb2200e6699feeab28dd97446a9934bb72"
+    },
+    {
+      "run_id": "wp17-qualification-e8e018b7-final14",
+      "source_commit": "e8e018b77d0fc9f269e41fd3a01315801f469e6c",
+      "source_tree": "bb47ad64af4c0151022e8505a6dc39dc33a25e8b",
+      "outcome": "fail",
+      "reason": "all 45 crown campaigns, nested absence cleanup, race, and the 10k/10k/30 performance proof passed, but the nested absence script overrode the source-bound Go 1.26.7 toolchain with local Go 1.26.4 and final semantic verification refused the mismatch",
+      "attempt_events_sha256": "d9e3e0cef04e561583137811f628fab6157bdc5722a688ab83bcbeec0606ecb8",
+      "terminal_sha256": "f7b92c4a8624a29ae10d7d4d7586591d06d4dfd8fb2922fb3527a796770a3dac"
+    },
+    {
+      "run_id": "wp17-qualification-f357a0a6-final15",
+      "source_commit": "f357a0a68f80c7aee1bcab409ab856a3f3fb1f5b",
+      "source_tree": "d22389b5fecd61376244d7d08af05450fc617ad2",
+      "outcome": "fail",
+      "reason": "the source-bound toolchain refusal worked, but the closed SQLite-absence layer-mutant driver had not yet supplied that new explicit input and correctly failed before probing its first mutant",
+      "transcript_path": "/tmp/go-kitty3-qualification-f357a0a6-final15/m2/wp17-qualification-f357a0a6-final15/evidence/campaigns/mutant-sqlite-absence-layers.go-test.jsonl",
+      "transcript_sha256": "ebce0a2284cd9ca7d47a891650c033499a4a052abe000c46242679b37460fda9",
+      "attempt_events_sha256": "3e40e20ced1ac969d2661980bfea958157d957b7822e99cc29f5e6748b1132ea",
+      "terminal_sha256": "5ab83baff2b034a12cfc85de8f2f4e8c99d34da64eeacc79e391ca531c3633e4"
+    },
+    {
+      "run_id": "wp17-qualification-9e36bcc5-final16",
+      "source_commit": "9e36bcc53a3d135f68eba90556477326ad0a440f",
+      "source_tree": "59cb31a1304bdd60bcfb96603ab58a7f767702ca",
+      "outcome": "fail",
+      "reason": "all campaign, nested absence, race, and performance gates passed, but final semantic verification strictly decoded standard go test JSON against an incomplete envelope type that omitted the Time field",
+      "attempt_events_sha256": "1d96460aae9183f11cd2159532e89e81bd29e76c16dd16533372d3d1a44a81a4",
+      "terminal_sha256": "c2c6d42660162406e08d9fada27fc29a38b58e0b9581fcf1d055e416228388ce"
+    },
+    {
+      "run_id": "wp17-qualification-63549f4f-final17",
+      "source_commit": "63549f4fccc5500eb799757a0956593260a3a824",
+      "source_tree": "5310af1ef4bd70d088bd7e8084238928a2431baa",
+      "outcome": "fail",
+      "reason": "all campaign, nested absence, race, and performance gates passed, but final semantic verification looked for the frozen WP16 bytes at the M2 candidate sidecar artifact path instead of preserving the two independently bound sidecar roles",
+      "attempt_events_sha256": "53ada491d0d81200d38cf5e4d8fa25b59b15d282e4b35fb5e988233ce2b60ac9",
+      "terminal_sha256": "0dfd2a633bd8605546b6b8a5cff0b4c72ff0841475bea42af4b2261f41968992"
+    },
+    {
+      "run_id": "wp17-qualification-eaac5065-final18",
+      "source_commit": "eaac50656fd4f6fe10c819d61ce673cea9d24fab",
+      "source_tree": "76f87e81bf1e742cd7e30a868dd9f2bece7c880a",
+      "outcome": "fail",
+      "reason": "all 45 campaigns, nested WP16 absence, and the 19-test race census passed; the performance child refused its pre-run environment because child toolchain and CGO controls were inherited rather than source-bound, and the qualifier exposed a second preservation defect by dropping the private Go test transcript on failure",
+      "diagnostic_transcript_path": "/tmp/go-kitty3-performance-diagnostic-eaac5065.json.events.jsonl",
+      "diagnostic_transcript_sha256": "66c1525232f66569f9d5ca761aa0740008fcc23b97cdfe47278d1698b2669bcf",
+      "diagnostic_transcript_bytes": 1830,
+      "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
+      "attempt_events_sha256": "243d4817c41f576d4ea96214d7380d95715a0f1502be94cff035ee105dcd41d7",
+      "terminal_sha256": "59ea564ff563e76e27bbf62a6dddd2496d7ead9dbefd980829ba4f4d19febe5e"
+    },
+    {
+      "run_id": "wp17-qualification-54261389-final19",
+      "source_commit": "542613892469540249a7e669c0804621b886eed2",
+      "source_tree": "610720db8da23fab1cd0050fbff23aed79998cbe",
+      "outcome": "non_admissible",
+      "reason": "all 45 campaigns, nested WP16 absence, and the 19-test race census passed; performance admission then correctly refused load1=6.68 against the unchanged source-bound maximum of 4 because the immediately preceding race workload had not quiesced",
+      "transcript_path": "/tmp/go-kitty3-qualification-54261389-final19/m2/wp17-qualification-54261389-final19/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "351cc15a444717aba3db20c4ef2de8054b894014f9373e9c230265e46d5c12ac",
+      "transcript_bytes": 1855,
+      "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
+      "attempt_events_sha256": "67ae6516a3c32b5fba818ae8cd6d8391d5ab2bd6a3899c906a7c09e19f02ae2b",
+      "terminal_sha256": "070e571478ee9a578622846e337be6e7fa37ebb408f439f774bf8fd506eb3262"
+    },
+    {
+      "run_id": "wp17-qualification-1cc2f9d2-final20",
+      "source_commit": "1cc2f9d2c4b11a0808e0a8e448692becadff3b3a",
+      "source_tree": "1bc9e6e39dde2096a5b022b589f525b458d89930",
+      "outcome": "non_admissible",
+      "reason": "all 45 campaigns, nested WP16 absence, and exact race passed; outer quiescence admitted after 20 seconds, but launching and compiling the fresh performance child then raised load1 to 5.26 before its own observation, exposing a time-of-check/time-of-use gap between processes",
+      "transcript_path": "/tmp/go-kitty3-qualification-1cc2f9d2-final20/m2/wp17-qualification-1cc2f9d2-final20/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "6d57bae09d073580096c4b3f3e18e1d4b96296f3b9a345f3eae3358dc487f118",
+      "transcript_bytes": 1851,
+      "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
+      "attempt_events_sha256": "54c4077a3c194bf4c73f2cebd70fffeb40ea53c869241915a01eedf9c3f40e4b",
+      "terminal_sha256": "360530e8729636847ccde464fa36c31213a18d12ebbf2d9980e90aacf44db1db"
+    },
+    {
+      "run_id": "wp17-qualification-67a4f1e6-cycle2-final22",
+      "source_commit": "67a4f1e6b0e59a7a4377f79e913cf39b365260ca",
+      "source_tree": "e69a9c553eae9780b25f6f6f3317a7da1a09dfb7",
+      "outcome": "fail",
+      "reason": "all 45 campaigns, nested WP16 absence, and exact race passed; the admitted reference environment load1 was 3.84, but mutation and recovery p95 exceeded the unchanged thresholds while query p95 passed",
+      "transcript_path": "/tmp/go-kitty3-qualification-67a4f1e6-cycle2-final22/m2/wp17-qualification-67a4f1e6-cycle2-final22/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "c928a67dfcfd50e7346357165086ac5142e4b31060fec24f39041e88e0d632de",
+      "transcript_bytes": 6261,
+      "performance_artifact_sha256": "58feef51d2b45e7d99725fe7ec6c2c3bfdd66855498189c4b0c349e87b8ed7a2",
+      "attempt_events_sha256": "f8b74075fc2e59294ec321c20f2954d0feda2fd30a444dafd2b307aa310bf156",
+      "terminal_sha256": "fd29ff34a2c0b14e950cfea089f1c1fba692f48e189de3222d46fc20f0073bff",
+      "statistics": {
+        "mutation_p95_ms": 8.252977,
+        "mutation_limit_ms": 8,
+        "query_p95_ms": 1.935238,
+        "query_limit_ms": 2,
+        "recovery_p95_ms": 2159.4667,
+        "recovery_limit_ms": 2000
+      }
+    }
+  ]
+}

@@ -3822,7 +3822,15 @@ func m2IsAdmittedM1RawBridge(importPath, module, owner string, candidate types.T
 		got = append(got, set.At(index).Obj().Name())
 	}
 	slices.Sort(got)
-	want := []string{"AtomicBatch", "CompareAndSwap", "DeleteIfRevision", "DescribeConfig", "Get", "Health", "Put", "PutIfAbsent", "ScanPrefix", "Status", "Watch"}
+	// ReadMany and the bounded recovery snapshot are the exact M2 additions to
+	// the concrete public bridge. The narrower dishonest-provider seam retains
+	// its old method set. Exact equality keeps a renamed or extra god-store
+	// method from being sheltered by this path allowance.
+	want := []string{"AtomicBatch", "CompareAndSwap", "DeleteIfRevision", "DescribeConfig", "Get", "Health", "Put", "PutIfAbsent", "ReadMany", "ScanPrefix", "Status", "Watch"}
+	if owner == "publicClient" || owner == "publicProvider" {
+		want = append(want, "ReadRecoverySnapshot")
+		slices.Sort(want)
+	}
 	return slices.Equal(got, want)
 }
 

@@ -59,6 +59,7 @@ type SuccessorPublicationResult struct {
 	Actions        []AuthorityAction
 	RequestDigest  string
 	Replayed       bool
+	publication    workRevisionPublicationV2
 }
 
 type SuccessorPublicationCommit struct {
@@ -109,6 +110,7 @@ func (service *SuccessorPublicationService) Publish(ctx context.Context, command
 			return SuccessorPublicationResult{}, err
 		}
 		replay.Replayed = true
+		replay.publication = newWorkRevisionPublicationV2(replay.Revision, replay.RequestDigest, replay.Reconciliation.RequestDigest())
 		return cloneSuccessorResult(replay), nil
 	}
 	result, err := service.store.PublishSuccessorAtomically(ctx, SuccessorPublicationCommit{
@@ -124,6 +126,7 @@ func (service *SuccessorPublicationService) Publish(ctx context.Context, command
 	if err := validateSuccessorResult(command, actions, requestDigest, result); err != nil {
 		return SuccessorPublicationResult{}, err
 	}
+	result.publication = newWorkRevisionPublicationV2(result.Revision, result.RequestDigest, result.Reconciliation.RequestDigest())
 	return cloneSuccessorResult(result), nil
 }
 
@@ -149,8 +152,8 @@ func validateSuccessorPublication(command SuccessorPublicationCommand) ([]Author
 	if !boundedPublicationText(command.Rationale, 4096) || command.OccurredAt.IsZero() || command.OccurredAt.Location() != time.UTC {
 		return nil, "", refusal(KindInvalidRequest, RecoveryCorrectInput, "authority", "bounded rationale and UTC occurrence time are required")
 	}
-	if command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID || command.ExpectedMission.Lifecycle != LifecycleTerminal || command.ExpectedMission.CurrentStep != StepWorkFinalized || command.ExpectedMission.TerminalOutcome != OutcomeWorkFinalized || command.ExpectedMission.CurrentWorkRevisionID != command.ExpectedOld.ID() {
-		return nil, "", refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_mission", "mission must name the exact finalized predecessor")
+	if command.ExpectedMission.Validate() != nil || command.ExpectedMission.MissionID != command.MissionID || command.ExpectedMission.ProjectID != command.ProjectID || command.ExpectedMission.Lifecycle != LifecycleOpen || command.ExpectedMission.CurrentWorkRevisionID != command.ExpectedOld.ID() {
+		return nil, "", refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_mission", "open mission must name the exact current predecessor")
 	}
 	if command.OccurredAt.Before(command.ExpectedMission.UpdatedAt) || command.ExpectedCurrentGeneration == 0 || command.ExpectedCurrentGeneration != command.ExpectedOld.Generation() {
 		return nil, "", refusal(KindInvalidRequest, RecoveryCorrectInput, "expected_generation", "expected current generation is invalid")
