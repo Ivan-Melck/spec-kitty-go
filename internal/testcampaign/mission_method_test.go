@@ -33,7 +33,8 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		"mission-adversarial:", "-profile mission-adversarial", "-campaign mission_full",
 		"phase3-publication:", "$(GO) run ./internal/testcampaign/cmd/campaign", "-publication-root", "-payload-commit", "-attestation-commit",
 		"contract-full:", "$(GO) test -short", "race-full:", "full-campaign: contract-full race-full quality",
-		"quality-core: preflight contract mission-contract mission-acceptance race static dependencies",
+		"quality-bounded: preflight contract mission-contract mission-acceptance static dependencies",
+		"quality-core: quality-bounded race",
 		"quality: beads-contract m2-short quality-core",
 		`$$0 !~ /\/architecture$$/`, `$$0 !~ /\/tracker\/beads$$/`, `$$0 !~ /\/testcampaign\/m2(\/|$$)/`,
 	} {
@@ -42,7 +43,7 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		}
 	}
 	quality := read(".github/workflows/quality.yml")
-	for _, required := range []string{"permissions:\n  contents: read", "timeout-minutes: 15", "go-version: 1.26.7", "duration_seconds\" -ge 600", "if: always()", "make quality-core"} {
+	for _, required := range []string{"permissions:\n  contents: read", "timeout-minutes: 15", "go-version: 1.26.7", "duration_seconds\" -ge 600", "if: always()", "make quality-bounded", "make race", "name: Upload race timing evidence"} {
 		if !strings.Contains(quality, required) {
 			t.Fatalf("quality workflow contract omitted %q", required)
 		}

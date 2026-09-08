@@ -28,7 +28,7 @@ M2_PROFILE_DOCUMENT ?= $(CURDIR)/docs/programs/evidence/m2-producer-profile.json
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract contract-full acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 race-full static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-build-candidate m2-performance m2-short m2-qualification m2-verify-evidence
+.PHONY: help tools preflight contract contract-full acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 race-full static dependencies quality-bounded quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-build-candidate m2-performance m2-short m2-qualification m2-verify-evidence
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -123,9 +123,12 @@ beads-contract: ## Run the exact portable and adversarial provider campaign with
 	@mkdir -p "$(ARTIFACT_DIR)"
 	env -u BEADS_BIN -u BEADS_SERVER_ID -u BEADS_SERVER_ENDPOINT -u DOLT_SERVER_HOST -u DOLT_SERVER_PORT -u DOLT_CREDENTIALS_PATH GOPROXY=off GOSUMDB=off $(GO) run ./internal/testcampaign/cmd/campaign -campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 
-quality-core: preflight contract mission-contract mission-acceptance race static dependencies ## Run the bounded core pull-request campaign; provider qualification is a separate CI job.
+quality-bounded: preflight contract mission-contract mission-acceptance static dependencies ## Run the non-race bounded pull-request campaign; race is an independent CI job.
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign quality -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
-	@printf 'core quality campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
+	@printf 'bounded quality campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
+
+quality-core: quality-bounded race ## Run the complete local core pull-request aggregate.
+	@printf 'core quality aggregate passed; evidence=%s\n' "$(ARTIFACT_DIR)"
 
 quality: beads-contract m2-short quality-core ## Run the complete local pull-request gate aggregate, including delegated provider and M2 tiers.
 	@printf 'quality aggregate passed; evidence=%s\n' "$(ARTIFACT_DIR)"

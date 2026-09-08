@@ -383,7 +383,7 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		t.Fatal(err)
 	}
 	makefile := string(content)
-	for target, campaign := range map[string]string{"quality-core": "quality", "full-campaign": "full_campaign", "beads-contract": "provider_bounded"} {
+	for target, campaign := range map[string]string{"quality-bounded": "quality", "full-campaign": "full_campaign", "beads-contract": "provider_bounded"} {
 		if err := validateMakeCampaignBinding(makefile, target, campaign); err != nil {
 			t.Fatal(err)
 		}

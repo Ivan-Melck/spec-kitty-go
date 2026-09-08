@@ -209,6 +209,13 @@ still composes all three tiers for local use, while `contract-full` and the
 nightly path continue to execute the exhaustive non-scenario package set.
 This removes duplicate execution without deleting a proof obligation.
 
+Finally, hosted timings showed that the non-race correctness/static ladder and
+the race detector were independently healthy but too slow when serialized
+under one ten-minute receipt. CI now runs them as separate required jobs with
+independent bounded timing evidence. `quality-core` remains their complete
+local aggregate, so the parallel hosted topology changes scheduling only—not
+the set of proofs required for completion.
+
 ## Risk findings
 
 ### RISK-1 — Local absence scan observes ignored tracker metadata
