@@ -377,7 +377,11 @@ func ReducerStateDigestV2(canonical []byte) (Digest, error) {
 	if err != nil || !bytes.Equal(normalized, canonical) {
 		return Digest{}, invalid(ErrorInvalidCanonicalData, "reducer_state")
 	}
-	return digest("spec-kitty.reducer-state.v2", normalized), nil
+	return reducerStateDigestCanonicalV2(normalized), nil
+}
+
+func reducerStateDigestCanonicalV2(canonical []byte) Digest {
+	return digest("spec-kitty.reducer-state.v2", canonical)
 }
 
 type AggregateCoordinate struct {
@@ -593,10 +597,11 @@ type EventEnvelopeInput struct {
 }
 
 type EventEnvelopeV2 struct {
-	input        EventEnvelopeInput
-	payload      []byte
-	observations []byte
-	digest       Digest
+	input         EventEnvelopeInput
+	payload       []byte
+	observations  []byte
+	digest        Digest
+	canonicalSize int
 }
 
 func preflightGovernanceRevisions(revisions []string) error {
@@ -714,6 +719,11 @@ func (e EventEnvelopeV2) Payload() []byte         { return append([]byte(nil), e
 func (e EventEnvelopeV2) Observations() []byte    { return append([]byte(nil), e.observations...) }
 func (e EventEnvelopeV2) CanonicalDigest() Digest { return e.digest }
 
+// CanonicalSizeV2 is nonzero only when the envelope was decoded from and
+// matched exact durable bytes. It lets recovery carry the already-validated
+// byte budget into pure playback without canonicalizing the envelope again.
+func (e EventEnvelopeV2) CanonicalSizeV2() int { return e.canonicalSize }
+
 type eventEnvelopeWire struct {
 	EnvelopeVersion         uint32              `json:"envelope_version"`
 	EventID                 string              `json:"event_id"`
@@ -763,6 +773,21 @@ func EncodeEventEnvelopeV2(envelope EventEnvelopeV2) ([]byte, error) {
 }
 
 func DecodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2) (EventEnvelopeV2, error) {
+	return decodeEventEnvelopeV2(encoded, registry, false)
+}
+
+// DecodeEventEnvelopeRecordV2 decodes an event from canonical bytes already
+// sealed by RecoveryRecordV2. Schema, registry membership, semantic identity,
+// and the event digest remain mandatory; only duplicate JSON normalization is
+// omitted.
+func DecodeEventEnvelopeRecordV2(record RecoveryRecordV2, registry EventRegistryV2) (EventEnvelopeV2, error) {
+	if record.address.kind != AddressJournalEvent || record.expiresAt != "" {
+		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
+	}
+	return decodeEventEnvelopeV2(record.canonical, registry, true)
+}
+
+func decodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2, canonicalSealed bool) (EventEnvelopeV2, error) {
 	var wire eventEnvelopeWire
 	if err := decodeStrict(encoded, MaxEventEnvelopeBytes, &wire); err != nil || wire.EnvelopeVersion != EnvelopeVersion {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
@@ -782,10 +807,13 @@ func DecodeEventEnvelopeV2(encoded []byte, registry EventRegistryV2) (EventEnvel
 	if err != nil || envelope.digest != want {
 		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
 	}
-	canonical, _ := EncodeEventEnvelopeV2(envelope)
-	if !bytes.Equal(canonical, encoded) {
-		return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
+	if !canonicalSealed {
+		canonical, _ := EncodeEventEnvelopeV2(envelope)
+		if !bytes.Equal(canonical, encoded) {
+			return EventEnvelopeV2{}, invalid(ErrorJournalCorrupt, "event_envelope")
+		}
 	}
+	envelope.canonicalSize = len(encoded)
 	return envelope, nil
 }
 
@@ -1056,8 +1084,24 @@ func NewReducerSetV2(registry EventRegistryV2, registrations []ReducerRegistrati
 }
 
 func (r ReducerSetV2) Apply(prior []byte, event EventEnvelopeV2) ([]byte, Digest, error) {
-	if _, err := EncodeEventEnvelopeV2(event); err != nil {
-		return nil, Digest{}, err
+	return r.apply(prior, event, false)
+}
+
+// ApplyPlaybackV2 is the reducer route for playback's already-validated state
+// map. It preserves output validation but does not re-canonicalize a prior
+// value which entered the map only through NewStateV2 or an earlier validated
+// reducer result.
+func (r ReducerSetV2) ApplyPlaybackV2(prior []byte, event EventEnvelopeV2) ([]byte, Digest, error) {
+	return r.apply(prior, event, true)
+}
+
+func (r ReducerSetV2) apply(prior []byte, event EventEnvelopeV2, priorIsCanonical bool) ([]byte, Digest, error) {
+	// EventEnvelopeV2 is immutable outside this package and every constructor
+	// seals its canonical digest. Playback already materializes through the
+	// validating constructor, so re-encoding the same envelope for every
+	// reducer invocation would perform a fourth identical canonicalization.
+	if event.digest.IsZero() {
+		return nil, Digest{}, invalid(ErrorInvalidDigest, "event_envelope")
 	}
 	if _, err := r.registry.Resolve(event.input.Family, event.input.EventSchemaVersion, event.input.ReducerVersion); err != nil {
 		return nil, Digest{}, err
@@ -1066,9 +1110,13 @@ func (r ReducerSetV2) Apply(prior []byte, event EventEnvelopeV2) ([]byte, Digest
 	if call == nil {
 		return nil, Digest{}, invalid(ErrorUnknownEventTuple, "reducer")
 	}
-	canonicalPrior, err := CanonicalObject(prior)
-	if err != nil {
-		return nil, Digest{}, err
+	canonicalPrior := prior
+	if !priorIsCanonical {
+		var err error
+		canonicalPrior, err = CanonicalObject(prior)
+		if err != nil {
+			return nil, Digest{}, err
+		}
 	}
 	output, err := call(append([]byte(nil), canonicalPrior...), event)
 	if err != nil {
@@ -1078,10 +1126,7 @@ func (r ReducerSetV2) Apply(prior []byte, event EventEnvelopeV2) ([]byte, Digest
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	outputDigest, err := ReducerStateDigestV2(output)
-	if err != nil {
-		return nil, Digest{}, err
-	}
+	outputDigest := reducerStateDigestCanonicalV2(output)
 	return append([]byte(nil), output...), outputDigest, nil
 }
 

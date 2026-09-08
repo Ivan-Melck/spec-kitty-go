@@ -497,3 +497,7 @@ samples, unregistered families, grep-only mutants, fake-store crown runs,
 provider/Git authority leakage, or qualification code reachable by production.
 The final verdict may say `release_ready`; adoption remains an explicit later
 human decision.
+
+## Activity Log
+
+- 2026-09-07T01:59:05Z – codex – shell_pid=232941 – Scope extension approved during qualification: the exact 10,000-operation performance campaign demonstrated that productionruntime afterMutation performs full durable RestoreV2 and projection snapshot reconstruction after every acknowledged mutation, yielding a doubly quadratic hot path. WP17 may modify the minimum required internal/controljournal/v2, internal/projection, and internal/productionruntime files to implement revision-ordered acknowledged delta projection and scoped query indexes. The 10,000 mutation/query and 30 clean-memory recovery workload, GapDB durable authority, startup/ambiguity restore, checkpoint/restart digest equivalence, concurrent publication ordering, and architecture confinement must be preserved; weakening evidence is prohibited.

@@ -129,7 +129,7 @@ func TestRenderTasksDisclosesSourceAndEscapesAdversarialContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(rendered)
-	for _, required := range []string{"GENERATED, NON-AUTHORITATIVE PROJECTION", "Edits, checkbox changes, deletion, and prose changes have no effect", "Mission ID:** mission\\-1", "Mission state version:** 17", "Current step:** implementation", "WorkRevision ID:** revision\\-2", "Generation:** 2", "Graph digest:** " + strings.Repeat("a", 64), "Drift observation:** not\\_checked", "2026\\-08\\-28T12:34:56\\.000000123Z", "Work `WP01`", "Work `WP02`", "Lane `lane\\-a`", "Criterion `AC\\-2`", "Metadata JSON", "Reconciliation facts", "legacy\\-1", "supersede"} {
+	for _, required := range []string{"GENERATED, NON-AUTHORITATIVE PROJECTION", "Edits, checkbox changes, deletion, and prose changes have no effect", "Mission ID:** mission\\-1", "Mission state version:** 17", "WorkRevision ID:** revision\\-2", "Generation:** 2", "Graph digest:** " + strings.Repeat("a", 64), "Drift observation:** not\\_checked", "2026\\-08\\-28T12:34:56\\.000000123Z", "Work `WP01`", "Work `WP02`", "Lane `lane\\-a`", "Criterion `AC\\-2`", "Metadata JSON", "Reconciliation facts", "legacy\\-1", "supersede"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("render lacks %q\n%s", required, text)
 		}
@@ -138,6 +138,9 @@ func TestRenderTasksDisclosesSourceAndEscapesAdversarialContent(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("untrusted structure survived: %q", forbidden)
 		}
+	}
+	if strings.Contains(text, "Current step") {
+		t.Fatal("legacy phase ceremony leaked into the task projection")
 	}
 	if !strings.Contains(text, `\u202E`) || !strings.Contains(text, `\- \[x\]`) || !strings.Contains(text, `\<script\>`) {
 		t.Fatalf("content was not visibly preserved safely:\n%s", text)
