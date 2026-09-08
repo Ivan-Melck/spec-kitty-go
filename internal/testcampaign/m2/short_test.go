@@ -46,3 +46,27 @@ func TestShortGateDefinitionCensusRejectsRemovalAndSubstitution(t *testing.T) {
 		}
 	}
 }
+
+func TestShortGateChildCensusRejectsParentLookalikesAndUnexpectedNesting(t *testing.T) {
+	definition := shortDefinition("core", "./internal/example", false, []string{"TestParent"}, []string{"TestParent/child"})
+	event := func(action, test string) string {
+		return fmt.Sprintf("{\"Action\":%q,\"Test\":%q}\n", action, test)
+	}
+	base := event("run", "TestParent") + event("run", "TestParent/child") + event("pass", "TestParent/child") + event("pass", "TestParent")
+	if _, err := VerifyShortTranscript([]byte(base), definition); err != nil {
+		t.Fatalf("exact parent/child census rejected: %v", err)
+	}
+	for name, unexpected := range map[string]string{
+		"top-level":          "TestOther",
+		"parent-prefix":      "TestParentLookalike/child",
+		"unexpected-sibling": "TestParent/sibling",
+		"unexpected-nesting": "TestParent/child/grandchild",
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutant := []byte(base + event("run", unexpected) + event("pass", unexpected))
+			if _, err := VerifyShortTranscript(mutant, definition); err == nil {
+				t.Fatalf("unexpected selector %q crossed the closed child boundary", unexpected)
+			}
+		})
+	}
+}
