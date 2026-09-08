@@ -248,6 +248,19 @@
       "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
       "attempt_events_sha256": "67ae6516a3c32b5fba818ae8cd6d8391d5ab2bd6a3899c906a7c09e19f02ae2b",
       "terminal_sha256": "070e571478ee9a578622846e337be6e7fa37ebb408f439f774bf8fd506eb3262"
+    },
+    {
+      "run_id": "wp17-qualification-1cc2f9d2-final20",
+      "source_commit": "1cc2f9d2c4b11a0808e0a8e448692becadff3b3a",
+      "source_tree": "1bc9e6e39dde2096a5b022b589f525b458d89930",
+      "outcome": "non_admissible",
+      "reason": "all 45 campaigns, nested WP16 absence, and exact race passed; outer quiescence admitted after 20 seconds, but launching and compiling the fresh performance child then raised load1 to 5.26 before its own observation, exposing a time-of-check/time-of-use gap between processes",
+      "transcript_path": "/tmp/go-kitty3-qualification-1cc2f9d2-final20/m2/wp17-qualification-1cc2f9d2-final20/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "6d57bae09d073580096c4b3f3e18e1d4b96296f3b9a345f3eae3358dc487f118",
+      "transcript_bytes": 1851,
+      "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
+      "attempt_events_sha256": "54c4077a3c194bf4c73f2cebd70fffeb40ea53c869241915a01eedf9c3f40e4b",
+      "terminal_sha256": "360530e8729636847ccde464fa36c31213a18d12ebbf2d9980e90aacf44db1db"
     }
   ]
 }

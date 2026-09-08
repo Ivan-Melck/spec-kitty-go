@@ -122,15 +122,11 @@ func TestM2AcceptedAuthorityPerformanceCampaign(t *testing.T) {
 		StartTimeout: 5 * time.Second, StopTimeout: 5 * time.Second,
 		RecoveryExecutable: recoveryExecutable,
 	}
-	environment, err := m2external.ObservePerformanceEnvironment(config)
+	// This child owns authoritative admission after go test compilation and
+	// process startup. The returned observation is the exact admitted snapshot;
+	// re-observing here would recreate a load TOCTOU before the first warmup.
+	environment, err := m2external.AwaitPerformanceEnvironment(t.Context(), config, 15*time.Minute, 10*time.Second)
 	if err != nil {
-		t.Fatalf("observe pre-run performance environment: %v", err)
-	}
-	reference, err := os.ReadFile(identity.reference)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m2.VerifyPerformanceEnvironmentReference(reference, environment); err != nil {
 		t.Fatalf("admit pre-run performance environment: %v", err)
 	}
 

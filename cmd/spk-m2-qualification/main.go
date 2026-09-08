@@ -406,7 +406,7 @@ func execute(ctx context.Context, config m2.PreflightConfig, timeout time.Durati
 	if err := attempt.Record("performance-quiescence", "running", ""); err != nil {
 		return publication, err
 	}
-	if err := m2external.AwaitPerformanceEnvironment(ctx, performanceConfig, 15*time.Minute, 10*time.Second); err != nil {
+	if _, err := m2external.AwaitPerformanceEnvironment(ctx, performanceConfig, 15*time.Minute, 10*time.Second); err != nil {
 		return publication, err
 	}
 	if err := attempt.Record("performance-quiescence", "pass", ""); err != nil {

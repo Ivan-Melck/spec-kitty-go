@@ -66,7 +66,7 @@ func TestPerformanceQuiescenceRetriesOnlyLoadDriftThenPasses(t *testing.T) {
 	observations[0].Load1 = 4.25
 	observations[1].Load1 = 3.75
 	calls := 0
-	err := awaitPerformanceEnvironment(context.Background(), reference, time.Second, time.Millisecond, func() (m2.PerformanceEnvironment, error) {
+	admitted, err := awaitPerformanceEnvironment(context.Background(), reference, time.Second, time.Millisecond, func() (m2.PerformanceEnvironment, error) {
 		observed := observations[calls]
 		calls++
 		return observed, nil
@@ -77,13 +77,16 @@ func TestPerformanceQuiescenceRetriesOnlyLoadDriftThenPasses(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("environment observations=%d want=2", calls)
 	}
+	if admitted.Load1 != observations[1].Load1 {
+		t.Fatalf("returned load1=%v want exact admitted snapshot %v", admitted.Load1, observations[1].Load1)
+	}
 }
 
 func TestPerformanceQuiescenceRefusesNonLoadDriftWithoutRetry(t *testing.T) {
 	reference, observed := performanceEnvironmentFixture(t)
 	observed.GoVersion = "go1.26.4"
 	calls := 0
-	err := awaitPerformanceEnvironment(context.Background(), reference, time.Second, time.Millisecond, func() (m2.PerformanceEnvironment, error) {
+	_, err := awaitPerformanceEnvironment(context.Background(), reference, time.Second, time.Millisecond, func() (m2.PerformanceEnvironment, error) {
 		calls++
 		return observed, nil
 	})
@@ -102,12 +105,12 @@ func TestPerformanceQuiescenceCancellationAndTimeoutRetainLastLoadDiagnostic(t *
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := awaitPerformanceEnvironment(cancelled, reference, time.Second, time.Second, observe)
+	_, err := awaitPerformanceEnvironment(cancelled, reference, time.Second, time.Second, observe)
 	if err == nil || !strings.Contains(err.Error(), "cancelled") || !strings.Contains(err.Error(), "load1=6.68") {
 		t.Fatalf("cancellation diagnostic=%v", err)
 	}
 
-	err = awaitPerformanceEnvironment(context.Background(), reference, 10*time.Millisecond, 2*time.Millisecond, observe)
+	_, err = awaitPerformanceEnvironment(context.Background(), reference, 10*time.Millisecond, 2*time.Millisecond, observe)
 	if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "load1=6.68") {
 		t.Fatalf("timeout diagnostic=%v", err)
 	}
@@ -115,7 +118,7 @@ func TestPerformanceQuiescenceCancellationAndTimeoutRetainLastLoadDiagnostic(t *
 
 func TestPerformanceQuiescenceRejectsInvalidBounds(t *testing.T) {
 	for _, bounds := range [][2]time.Duration{{0, time.Second}, {time.Second, 0}, {time.Second, 2 * time.Second}} {
-		if err := AwaitPerformanceEnvironment(context.Background(), PerformanceConfig{}, bounds[0], bounds[1]); err == nil {
+		if _, err := AwaitPerformanceEnvironment(context.Background(), PerformanceConfig{}, bounds[0], bounds[1]); err == nil {
 			t.Fatalf("invalid bounds accepted: wait=%s poll=%s", bounds[0], bounds[1])
 		}
 	}
