@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -258,7 +259,7 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 				return ResultV2{}, err
 			}
 			evidence.records = append(evidence.records, record)
-			state, err := journal.ReconstructOperationStateV2(event.Payload(), event.PublicationID())
+			state, err := journal.ReconstructOperationStateFromEventV2(event)
 			if err != nil || state.OperationID() != found || state.LogicalVersion() != boundary.LogicalVersion() {
 				return ResultV2{}, corrupt("operation_boundary_state")
 			}
@@ -368,10 +369,10 @@ func scanAll(ctx context.Context, reader ReaderV2, attempt journal.StoreRevision
 			if record.RecordRevision() == 0 || record.RecordRevision() > attempt.CurrentRevision() || record.ExpiresAt() != "" {
 				return nil, nil, corrupt("scan_record")
 			}
-			if len(record.CanonicalValue()) > budgets.MaximumValueBytes-bytesUsed {
+			if record.CanonicalSizeV2() > budgets.MaximumValueBytes-bytesUsed {
 				return nil, nil, budget("value_bytes")
 			}
-			bytesUsed += len(record.CanonicalValue())
+			bytesUsed += record.CanonicalSizeV2()
 			keyBytesUsed += semanticAddressBytes(record.Address())
 			if keyBytesUsed > budgets.MaximumKeyBytes {
 				return nil, nil, budget("key_bytes")
@@ -538,7 +539,7 @@ func scanOperations(ctx context.Context, reader ReaderV2, attempt journal.StoreR
 			if item.hasBinding {
 				return nil, nil, corrupt("duplicate_operation_binding")
 			}
-			value, err := journal.DecodeOperationBindingV2(record.CanonicalValue())
+			value, err := journal.DecodeOperationBindingRecordV2(record)
 			if err != nil || value.OperationID() != id {
 				return nil, nil, corrupt("operation_binding")
 			}
@@ -547,7 +548,7 @@ func scanOperations(ctx context.Context, reader ReaderV2, attempt journal.StoreR
 			if item.hasState {
 				return nil, nil, corrupt("duplicate_operation_head")
 			}
-			value, err := journal.DecodeOperationStateV2(record.CanonicalValue())
+			value, err := journal.DecodeOperationStateRecordV2(record)
 			if err != nil || value.OperationID() != id {
 				return nil, nil, corrupt("operation_head")
 			}
@@ -569,6 +570,7 @@ func scanOperations(ctx context.Context, reader ReaderV2, attempt journal.StoreR
 
 type eventRequest struct {
 	coordinate        journal.AggregateCoordinate
+	coordinateKey     string
 	version           journal.LogicalVersion
 	terminalTombstone bool
 }
@@ -584,8 +586,13 @@ func suffixPlan(aggregates map[string]aggregateCurrent, operations map[journal.O
 		if difference > uint64(maximum-len(requests)) {
 			return budget("suffix_events")
 		}
+		encodedCoordinate, err := journal.CanonicalAggregateCoordinate(coordinate)
+		if err != nil {
+			return err
+		}
+		sortKey := string(encodedCoordinate)
 		for version := prior + 1; version <= current; version++ {
-			requests = append(requests, eventRequest{coordinate, version, tombstone && version == current})
+			requests = append(requests, eventRequest{coordinate: coordinate, coordinateKey: sortKey, version: version, terminalTombstone: tombstone && version == current})
 			if version == journal.LogicalVersion(^uint64(0)) {
 				return budget("logical_version")
 			}
@@ -603,9 +610,7 @@ func suffixPlan(aggregates map[string]aggregateCurrent, operations map[journal.O
 		}
 	}
 	sort.Slice(requests, func(i, k int) bool {
-		left, _ := journal.CanonicalAggregateCoordinate(requests[i].coordinate)
-		right, _ := journal.CanonicalAggregateCoordinate(requests[k].coordinate)
-		if cmp := bytes.Compare(left, right); cmp != 0 {
+		if cmp := strings.Compare(requests[i].coordinateKey, requests[k].coordinateKey); cmp != 0 {
 			return cmp < 0
 		}
 		return requests[i].version < requests[k].version
@@ -629,7 +634,7 @@ func exactEvent(ctx context.Context, reader ReaderV2, attempt journal.StoreRevis
 	if record.Address() != address || record.ExpiresAt() != "" || record.RecordRevision() <= lower || record.RecordRevision() > upper {
 		return journal.RecoveryRecordV2{}, journal.EventEnvelopeV2{}, corrupt("event_record")
 	}
-	event, err := journal.DecodeEventEnvelopeV2(record.CanonicalValue(), registry)
+	event, err := journal.DecodeEventEnvelopeRecordV2(record, registry)
 	if err != nil || event.Coordinate() != coordinate || event.LogicalVersion() != version {
 		return journal.RecoveryRecordV2{}, journal.EventEnvelopeV2{}, corrupt("event_envelope")
 	}
@@ -678,7 +683,7 @@ func fetchEvents(ctx context.Context, reader ReaderV2, attempt journal.StoreRevi
 				}
 				continue
 			}
-			valueSize := len(record.CanonicalValue())
+			valueSize := record.CanonicalSizeV2()
 			bytesMu.Lock()
 			if valueSize > budgets.MaximumValueBytes-bytesUsed {
 				bytesMu.Unlock()
@@ -732,11 +737,11 @@ func fetchEvents(ctx context.Context, reader ReaderV2, attempt journal.StoreRevi
 	records := make([]journal.RecoveryRecordV2, 0, len(requests))
 	observedBytes := 0
 	for item := range results {
-		value := item.record.CanonicalValue()
-		if len(value) > budgets.MaximumValueBytes-observedBytes {
+		valueSize := item.record.CanonicalSizeV2()
+		if valueSize > budgets.MaximumValueBytes-observedBytes {
 			return nil, nil, budget("suffix_bytes")
 		}
-		observedBytes += len(value)
+		observedBytes += valueSize
 		fetched = append(fetched, item)
 		records = append(records, item.record)
 	}
@@ -828,7 +833,7 @@ func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.St
 		if opEvent.EventID() == "" || opEvent.OperationID() != g.operationID || opEvent.OperationVersion() != g.operationVersion {
 			return nil, nil, journal.Digest{}, nil, corrupt("operation_event")
 		}
-		state, err := journal.ReconstructOperationStateV2(opEvent.Payload(), id)
+		state, err := journal.ReconstructOperationStateFromEventV2(opEvent)
 		if err != nil {
 			return nil, nil, journal.Digest{}, nil, err
 		}
@@ -854,7 +859,7 @@ func validateMembership(ctx context.Context, reader ReaderV2, attempt journal.St
 		if record.Address() != address || record.ExpiresAt() != "" || record.RecordRevision() != g.revision {
 			return nil, nil, journal.Digest{}, nil, corrupt("publication_witness_record")
 		}
-		witness, err := journal.DecodePublicationWitnessV2(record.CanonicalValue())
+		witness, err := journal.DecodePublicationWitnessRecordV2(record)
 		if err != nil {
 			return nil, nil, journal.Digest{}, nil, corrupt("publication_witness_codec")
 		}
@@ -907,9 +912,7 @@ func validateTerminal(result playback.ResultV2, aggregates map[string]aggregateC
 }
 
 func sameOperation(a, b journal.OperationStateV2) bool {
-	left, e1 := journal.EncodeOperationStateV2(a)
-	right, e2 := journal.EncodeOperationStateV2(b)
-	return e1 == nil && e2 == nil && bytes.Equal(left, right)
+	return journal.EqualOperationStatesV2(a, b)
 }
 func equalEventIDs(current, group, prior []journal.EventID) bool {
 	if len(current) != len(prior)+len(group) {

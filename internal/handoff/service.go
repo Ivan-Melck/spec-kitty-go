@@ -12,7 +12,6 @@ import (
 type Store interface {
 	LookupHandoffOperation(context.Context, Request) (Record, bool, error)
 	LookupHandoffRefusal(context.Context, Request) (Refusal, bool, error)
-	WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error)
 	InspectHandoffAuthority(context.Context, Request) (AuthorityScope, error)
 	CommitHandoffRefusal(context.Context, Request, *Error) (Refusal, error)
 	CommitHandoff(context.Context, Request, CandidateEvidence) (Record, error)
@@ -20,30 +19,21 @@ type Store interface {
 type EligibilityFactStore interface {
 	WorkEligibilityFact(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus, workgraph.EligibilityOperation) (workgraph.EligibilityFact, error)
 }
-type eligibilityMode uint8
-
-const (
-	eligibilityLegacyV1 eligibilityMode = iota + 1
-	eligibilityComplete
-)
-
 type CandidateVerifier interface {
 	Verify(context.Context, AuthorityScope, string) (CandidateEvidence, error)
 	RevalidateRefusal(context.Context, Refusal) error
 }
 type Service struct {
 	store       Store
-	mode        eligibilityMode
 	eligibility EligibilityFactStore
 	verifier    CandidateVerifier
 	faults      faults.Hook
 }
 
 func NewService(store Store, verifier CandidateVerifier) *Service {
-	service := &Service{store: store, mode: eligibilityLegacyV1, verifier: verifier, faults: faults.Noop{}}
+	service := &Service{store: store, verifier: verifier, faults: faults.Noop{}}
 	if eligibility, ok := any(store).(EligibilityFactStore); ok {
 		service.eligibility = eligibility
-		service.mode = eligibilityComplete
 	}
 	return service
 }
@@ -53,7 +43,6 @@ func NewService(store Store, verifier CandidateVerifier) *Service {
 func (s *Service) WithEligibilityFacts(reader EligibilityFactStore) *Service {
 	if reader != nil {
 		s.eligibility = reader
-		s.mode = eligibilityComplete
 	}
 	return s
 }
@@ -119,39 +108,19 @@ func (s *Service) Submit(ctx context.Context, request Request) (Record, error) {
 }
 
 func (s *Service) requireEligibility(ctx context.Context, request Request) error {
-	if s.mode == eligibilityComplete {
-		if s.eligibility == nil {
-			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision handoff eligibility reader is unavailable"}
-		}
-		expected := request.ExpectedEligibility
-		if !expected.Complete() || !expected.MatchesComplete(expected.ReconciliationID(), request.WorkRevisionID, expected.NewRevisionID(), request.WorkID, workgraph.StatusActive, expected.Disposition(), workgraph.EligibilityHandoff) {
-			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision handoff eligibility is required"}
-		}
-		fact, err := s.eligibility.WorkEligibilityFact(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusActive, workgraph.EligibilityHandoff)
-		if err != nil {
-			return &Error{Kind: KindConflict, Message: "read complete WorkRevision handoff eligibility", Cause: err}
-		}
-		if !fact.SameComplete(expected) {
-			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision handoff eligibility does not match the request"}
-		}
-		if !fact.Permitted() {
-			return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids handoff", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityHandoff)}}
-		}
-		return nil
-	}
-	if s.mode != eligibilityLegacyV1 {
-		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision handoff eligibility mode is invalid"}
-	}
-	if !request.ExpectedEligibility.IsZero() {
+	if s.eligibility == nil {
 		return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision handoff eligibility reader is unavailable"}
 	}
-	consequence, reconciliationID, err := s.store.WorkEligibility(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusActive)
-	if err != nil {
-		return &Error{Kind: KindConflict, Message: "read WorkRevision handoff eligibility", Cause: err}
+	expected := request.ExpectedEligibility
+	if !expected.Complete() || !expected.MatchesComplete(expected.ReconciliationID(), request.WorkRevisionID, expected.NewRevisionID(), request.WorkID, workgraph.StatusActive, expected.Disposition(), workgraph.EligibilityHandoff) {
+		return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision handoff eligibility is required"}
 	}
-	fact, err := workgraph.NewLegacyEligibilityFact(reconciliationID, request.WorkRevisionID, request.WorkID, workgraph.StatusActive, workgraph.EligibilityHandoff, consequence)
-	if err != nil || !fact.MatchesLegacy(request.WorkRevisionID, request.WorkID, workgraph.StatusActive, workgraph.EligibilityHandoff) {
-		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision handoff eligibility is malformed"}
+	fact, err := s.eligibility.WorkEligibilityFact(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusActive, workgraph.EligibilityHandoff)
+	if err != nil {
+		return &Error{Kind: KindConflict, Message: "read complete WorkRevision handoff eligibility", Cause: err}
+	}
+	if !fact.SameComplete(expected) {
+		return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision handoff eligibility does not match the request"}
 	}
 	if !fact.Permitted() {
 		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids handoff", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityHandoff)}}

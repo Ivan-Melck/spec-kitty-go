@@ -55,19 +55,25 @@ func (s StateV2) Tombstone() bool                          { return s.tombstone 
 func (s StateV2) LastPublicationID() journal.PublicationID { return s.lastPublicationID }
 
 type MaterializedEventV2 struct {
-	revision  uint64
-	envelope  journal.EventEnvelopeV2
-	tombstone bool
+	revision      uint64
+	envelope      journal.EventEnvelopeV2
+	tombstone     bool
+	canonicalSize int
 }
 
 func NewMaterializedEventV2(revision uint64, envelope journal.EventEnvelopeV2, terminalTombstone bool) (MaterializedEventV2, error) {
 	if revision == 0 {
 		return MaterializedEventV2{}, &Error{"INVALID_EVENT_REVISION"}
 	}
-	if _, err := journal.EncodeEventEnvelopeV2(envelope); err != nil {
-		return MaterializedEventV2{}, err
+	canonicalSize := envelope.CanonicalSizeV2()
+	if canonicalSize == 0 {
+		encoded, err := journal.EncodeEventEnvelopeV2(envelope)
+		if err != nil {
+			return MaterializedEventV2{}, err
+		}
+		canonicalSize = len(encoded)
 	}
-	return MaterializedEventV2{revision, envelope, terminalTombstone}, nil
+	return MaterializedEventV2{revision, envelope, terminalTombstone, canonicalSize}, nil
 }
 func (e MaterializedEventV2) RecordRevision() uint64            { return e.revision }
 func (e MaterializedEventV2) Envelope() journal.EventEnvelopeV2 { return e.envelope }
@@ -169,14 +175,10 @@ func RunV2(input InputV2) (ResultV2, error) {
 		if material.revision == 0 || index > 0 && compareMaterialized(events[index-1], material) >= 0 {
 			return ResultV2{}, &Error{"event_order"}
 		}
-		encoded, err := journal.EncodeEventEnvelopeV2(material.envelope)
-		if err != nil {
-			return ResultV2{}, err
-		}
-		if len(encoded) > maxBytes-bytesUsed {
+		if material.canonicalSize <= 0 || material.canonicalSize > maxBytes-bytesUsed {
 			return ResultV2{}, &Error{"bytes"}
 		}
-		bytesUsed += len(encoded)
+		bytesUsed += material.canonicalSize
 		coordinateBytes, err := journal.CanonicalAggregateCoordinate(material.envelope.Coordinate())
 		if err != nil {
 			return ResultV2{}, err
@@ -190,7 +192,7 @@ func RunV2(input InputV2) (ResultV2, error) {
 		if uint64(priorVersion) == ^uint64(0) || material.envelope.LogicalVersion() != priorVersion+1 {
 			return ResultV2{}, &Error{"logical_version"}
 		}
-		output, outputDigest, err := input.Reducers.Apply(prior, material.envelope)
+		output, outputDigest, err := input.Reducers.ApplyPlaybackV2(prior, material.envelope)
 		if err != nil {
 			return ResultV2{}, err
 		}
