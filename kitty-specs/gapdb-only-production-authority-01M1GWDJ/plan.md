@@ -188,7 +188,7 @@ reconstructing foundation wire.
 | Aggregate owner | Representative facts and invariants |
 |---|---|
 | Runtime host | epoch admission, readiness, predecessor invalidation; no commands before ready |
-| Mission | lifecycle, actions, blockers, decisions, terminal outcome |
+| Mission | coarse lifecycle, activity history, blockers, decisions, terminal outcome, derived readiness census |
 | Artifact catalog/revision | immutable content/provenance, latest-revision CAS, exact verdict |
 | Work graph | immutable generation, drift, `continue/supersede/invalidate/fork`, eligibility guards |
 | Execution slot | run, lease generation, heartbeat, expiry, one current authority |
