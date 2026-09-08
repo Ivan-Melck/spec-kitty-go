@@ -651,7 +651,7 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 			t.Fatalf("expensive test %s crossed fast/slow boundary", expensive)
 		}
 	}
-	for _, portable := range []string{"TestDishonestFakeTrackerMatrixPreservesAuthorityV2", "TestProductionCapabilityCompositionHasOnePublicationBoundary", "TestWorkCoordinateAgreementControlledMutants"} {
+	for _, portable := range []string{"TestProductionCapabilityCompositionHasOnePublicationBoundary", "TestTerminalSemanticEquivalenceControlledMutants", "TestWorkCoordinateAgreementControlledMutants"} {
 		if !slices.Contains(fast.ExpectedTests, portable) || slices.Contains(slow.ExpectedTests, portable) {
 			t.Fatalf("portable acceptance test %s crossed fast/slow boundary", portable)
 		}

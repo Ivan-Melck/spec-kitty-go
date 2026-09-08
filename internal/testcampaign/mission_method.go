@@ -85,10 +85,10 @@ var missionProfiles = map[string]Profile{
 	},
 	MissionAcceptanceProfile: {
 		Name: MissionAcceptanceProfile, Package: "./internal/scenario",
-		Pattern: "^(TestDishonestFakeTrackerMatrixPreservesAuthorityV2|TestProductionCapabilityCompositionHasOnePublicationBoundary|TestWorkCoordinateAgreementControlledMutants)$",
+		Pattern: "^(TestProductionCapabilityCompositionHasOnePublicationBoundary|TestTerminalSemanticEquivalenceControlledMutants|TestWorkCoordinateAgreementControlledMutants)$",
 		ExpectedTests: []string{
-			"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
 			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestTerminalSemanticEquivalenceControlledMutants",
 			"TestWorkCoordinateAgreementControlledMutants",
 		},
 	},
@@ -128,11 +128,10 @@ func init() {
 		Name:             MissionFullCampaign,
 		Profiles:         []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile},
 		RequiredProfiles: []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile},
-		UniversalTest:    "TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
+		UniversalTest:    "TestProductionCapabilityCompositionHasOnePublicationBoundary",
 		RequiredTests: []string{
 			"TestBehaviorParityCensusMutants",
 			"TestCrashAmbiguousDishonestUniversalCensus",
-			"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
 			"TestM2FocusedEvidenceCensus",
 			"TestM2MutantsAreKilledByOneExecutableCensus",
 			"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
@@ -158,7 +157,6 @@ func ValidateMissionCampaign(campaign Campaign) error {
 	wantTests := []string{
 		"TestBehaviorParityCensusMutants",
 		"TestCrashAmbiguousDishonestUniversalCensus",
-		"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
 		"TestM2FocusedEvidenceCensus",
 		"TestM2MutantsAreKilledByOneExecutableCensus",
 		"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
@@ -173,7 +171,7 @@ func ValidateMissionCampaign(campaign Campaign) error {
 	if !slices.Equal(campaign.RequiredTests, wantTests) {
 		return fmt.Errorf("mission campaign test census changed")
 	}
-	if campaign.UniversalTest != "TestDishonestFakeTrackerMatrixPreservesAuthorityV2" || !campaign.RequireUniversal || !campaign.RequireStaleProbe {
+	if campaign.UniversalTest != "TestProductionCapabilityCompositionHasOnePublicationBoundary" || !campaign.RequireUniversal || !campaign.RequireStaleProbe {
 		return fmt.Errorf("mission campaign universal invariant changed")
 	}
 	return ValidateCampaign(campaign)

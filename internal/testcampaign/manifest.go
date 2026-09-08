@@ -111,10 +111,10 @@ var profiles = map[string]Profile{
 	"acceptance": {
 		Name:    "acceptance",
 		Package: "./internal/scenario",
-		Pattern: "^(TestDishonestFakeTrackerMatrixPreservesAuthorityV2|TestProductionCapabilityCompositionHasOnePublicationBoundary|TestWorkCoordinateAgreementControlledMutants)$",
+		Pattern: "^(TestProductionCapabilityCompositionHasOnePublicationBoundary|TestTerminalSemanticEquivalenceControlledMutants|TestWorkCoordinateAgreementControlledMutants)$",
 		ExpectedTests: []string{
-			"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
 			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestTerminalSemanticEquivalenceControlledMutants",
 			"TestWorkCoordinateAgreementControlledMutants",
 		},
 	},
@@ -205,12 +205,11 @@ var profiles = map[string]Profile{
 	"portable-scenario": {
 		Name:    "portable-scenario",
 		Package: "./internal/scenario",
-		Pattern: "^(TestBehaviorParityCensus|TestBehaviorParityCensusMutants|TestCrashAmbiguousDishonestUniversalCensus|TestDishonestFakeTrackerMatrixPreservesAuthorityV2|TestHarnessArchitectureGuardKillsRetiredFileMutant|TestHarnessArchitectureGuardKillsStorageMutants|TestHarnessArchitectureIsPortable|TestProductionCapabilityCompositionBoundaryBypassMutant|TestProductionCapabilityCompositionHasOnePublicationBoundary|TestTerminalSemanticEquivalenceControlledMutants|TestUniversalCampaignCensusMutants|TestWorkCoordinateAgreementControlledMutants)$",
+		Pattern: "^(TestBehaviorParityCensus|TestBehaviorParityCensusMutants|TestCrashAmbiguousDishonestUniversalCensus|TestHarnessArchitectureGuardKillsRetiredFileMutant|TestHarnessArchitectureGuardKillsStorageMutants|TestHarnessArchitectureIsPortable|TestProductionCapabilityCompositionBoundaryBypassMutant|TestProductionCapabilityCompositionHasOnePublicationBoundary|TestTerminalSemanticEquivalenceControlledMutants|TestUniversalCampaignCensusMutants|TestWorkCoordinateAgreementControlledMutants)$",
 		ExpectedTests: []string{
 			"TestBehaviorParityCensus",
 			"TestBehaviorParityCensusMutants",
 			"TestCrashAmbiguousDishonestUniversalCensus",
-			"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
 			"TestHarnessArchitectureGuardKillsRetiredFileMutant",
 			"TestHarnessArchitectureGuardKillsStorageMutants",
 			"TestHarnessArchitectureIsPortable",
@@ -305,16 +304,16 @@ var profiles = map[string]Profile{
 var campaigns = map[string]Campaign{
 	"quality": {
 		Name: "quality", Profiles: []string{"acceptance", "architecture", "scope"},
-		UniversalTest: "TestDishonestFakeTrackerMatrixPreservesAuthorityV2", RequireUniversal: true, RequireStaleProbe: true,
+		UniversalTest: "TestProductionCapabilityCompositionHasOnePublicationBoundary", RequireUniversal: true, RequireStaleProbe: true,
 	},
 	"full_campaign": {
 		Name: "full_campaign", Profiles: []string{"fault", "portable-scenario", "soak"},
 		RequiredProfiles: []string{"fault", "portable-scenario", "soak"},
-		UniversalTest:    "TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
+		UniversalTest:    "TestProductionCapabilityCompositionHasOnePublicationBoundary",
 		RequiredTests: []string{
 			"TestCapabilityAuthorityRecoversCommittedLostResponseWithoutRepublishing",
-			"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
 			"TestExecutionAuthorityProductionContentionMatrixV2",
+			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
 			"TestWorkspaceProductionZombieReplacementCampaignV2",
 		},
 		RequireUniversal: true, RequireStaleProbe: true,

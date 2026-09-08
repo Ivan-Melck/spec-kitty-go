@@ -174,6 +174,14 @@ mutant campaigns remain executable in the full nightly and dedicated release
 tiers. This is a selector/tiering correction only, not a change to any product
 acceptance result.
 
+An exact-profile probe also exposed an anti-vacuity hazard: the former
+portable universal could report a passing top-level test while all of its
+sidecar-dependent subtests were skipped. It has been removed from every
+portable authority role and replaced by a sidecar-independent production
+composition invariant. Dishonest-provider behavior remains covered by the
+dedicated Beads and M2 qualification tiers, where the required fixtures and
+terminal-test census make a skipped proof fail closed.
+
 ## Risk findings
 
 ### RISK-1 — Local absence scan observes ignored tracker metadata
