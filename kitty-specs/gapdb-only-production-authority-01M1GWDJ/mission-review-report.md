@@ -125,10 +125,32 @@ not by the implementation actor.
 
 ## Drift findings
 
-None. The diff from qualified source commit
-`416138f490ad6d908fc445c12b91440ca66ef18c` to merged HEAD, excluding
-Spec Kitty mission metadata, is empty. The lane consolidation therefore did
-not alter reviewed production, test, build, or documentation bytes.
+At the review point, none. The diff from qualified source commit
+`416138f490ad6d908fc445c12b91440ca66ef18c` to reviewed merged HEAD
+`275a1fb6ec1f0dd1d33a0dfa8e5bfb2a983b9035`, excluding Spec Kitty mission
+metadata, was empty. Lane consolidation therefore did not alter the qualified
+production, test, build, or documentation bytes.
+
+### Post-review delivery correction
+
+The first hosted PR run then exposed a non-product campaign-registry defect:
+`provider-adversarial` still selected 20 scenario tests intentionally removed
+when WP14 replaced the storage-coupled suite. The resulting `go test` process
+reported “no tests to run,” and the exact-census gate correctly failed rather
+than minting a vacuous pass.
+
+The delivery correction binds `provider-adversarial` to the current 23-test
+`internal/tracker/beads` adversarial census, retains explicit human-change,
+stale-executable, and compensation-mutant controls, and updates current CI
+jobs to Go 1.26.7. Historical Phase 3 evidence was decoupled from the evolving
+live registry by frozen count/digest commitments; mutation tests still reject
+substituted historical test identities. Documentation command validation was
+narrowly extended for the two exact binaries documented in this README.
+
+These changes affect campaign metadata, CI configuration, and their tests;
+they do not change production authority, runtime behavior, the qualified M2
+source commit, or the release archive. The corrected bounded campaign and
+`m2-short` are rerun on the correction commit before PR merge.
 
 ## Risk findings
 
@@ -139,7 +161,8 @@ not alter reviewed production, test, build, or documentation bytes.
 **Location:** local ignored `.beads/.gitignore`, not the Git tree or release
 
 Running `m2-short` directly in the long-lived operator checkout initially
-reported the string `sqlite3` from Beads' private, git-excluded `.gitignore`.
+reported the legacy SQLite command-line client name from Beads' private,
+git-excluded `.gitignore`.
 The same gate passed from the clean merged clone and from the immutable release
 source. This does not create a Go Kitty production SQLite edge, and the release
 absence proof remains valid. A future tooling-hardening change should either

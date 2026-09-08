@@ -40,7 +40,7 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		}
 	}
 	quality := read(".github/workflows/quality.yml")
-	for _, required := range []string{"permissions:\n  contents: read", "timeout-minutes: 15", "go-version: 1.26.5", "duration_seconds\" -ge 600", "if: always()", "make quality-core"} {
+	for _, required := range []string{"permissions:\n  contents: read", "timeout-minutes: 15", "go-version: 1.26.7", "duration_seconds\" -ge 600", "if: always()", "make quality-core"} {
 		if !strings.Contains(quality, required) {
 			t.Fatalf("quality workflow contract omitted %q", required)
 		}
@@ -49,7 +49,7 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		t.Fatal("slow mission campaign leaked into pull-request workflow")
 	}
 	full := read(".github/workflows/full-campaign.yml")
-	for _, required := range []string{"schedule:", "workflow_dispatch:", "go-version: 1.26.5", "make full-campaign", "if: always()"} {
+	for _, required := range []string{"schedule:", "workflow_dispatch:", "go-version: 1.26.7", "make full-campaign", "if: always()"} {
 		if !strings.Contains(full, required) {
 			t.Fatalf("full workflow contract omitted %q", required)
 		}
@@ -96,6 +96,12 @@ func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
 		},
 		"bad_go_mod_verb": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "README.md"), "go mod download", "go mod overwrite")
+		},
+		"bad_go_build_output": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), "-o bin/spec-kitty ./cmd/spec-kitty", "-o bin/spec-kitty-unreviewed ./cmd/spec-kitty")
+		},
+		"bad_go_install_source": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), "go install ./cmd/spec-kitty ./cmd/spk-m2-qualification", "go install ./cmd/spec-kitty ./cmd/spk-phase1-helper")
 		},
 		"bad_provider_verb": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "README.md"), `"$beads_bin" version --json`, `"$beads_bin" destroy --json`)
@@ -393,7 +399,12 @@ func phase3RepositoryRoot(t *testing.T) string {
 func phase3PublicationFixture(t *testing.T, source string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, relative := range []string{"README.md", "Makefile", "LICENSE"} {
+	for _, relative := range []string{
+		"README.md",
+		"Makefile",
+		"LICENSE",
+		"kitty-specs/gapdb-only-production-authority-01M1GWDJ/mission-review-report.md",
+	} {
 		input, err := os.ReadFile(filepath.Join(source, relative))
 		if err != nil {
 			t.Fatal(err)
@@ -460,6 +471,9 @@ func phase3UpgradeFixtureSchema(t *testing.T, root string) {
 		record["schema_version"] = float64(phase3PublicationSchema)
 		for _, raw := range record["supporting_profiles"].([]any) {
 			profile := raw.(map[string]any)
+			if tests, ok := profile["tests"].([]any); ok && len(tests) > 0 {
+				continue
+			}
 			registryName := profile["name"].(string)
 			switch registryName {
 			case "historical-full-scenario":

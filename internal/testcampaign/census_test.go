@@ -180,13 +180,18 @@ func TestProviderAdversarialParallelismIsExplicitAndBounded(t *testing.T) {
 
 func TestProviderProfilesMatchAcceptedTopLevelTests(t *testing.T) {
 	root := campaignRepositoryRoot(t)
+	adversarial, err := ProfileByName("provider-adversarial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adversarialSelector := regexp.MustCompile(adversarial.Pattern)
 	tests := []struct {
 		profile   string
 		directory string
 		relevant  func(string) bool
 	}{
 		{"provider-portable", filepath.Join(root, "internal", "tracker", "conformance"), func(name string) bool { return strings.HasPrefix(name, "Test") }},
-		{"provider-adversarial", filepath.Join(root, "internal", "scenario"), func(name string) bool { return strings.HasPrefix(name, "TestBeads") }},
+		{"provider-adversarial", filepath.Join(root, "internal", "tracker", "beads"), adversarialSelector.MatchString},
 		{"provider-real", filepath.Join(root, "internal", "tracker", "beads"), func(name string) bool {
 			return strings.HasPrefix(name, "TestRealBeads") && name != "TestRealBeadsProcessCreate"
 		}},
@@ -227,7 +232,7 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 		{"portable profile", "provider-portable", func(c *Campaign) { c.Profiles = c.Profiles[1:] }},
 		{"universal", "stale probing", func(c *Campaign) { c.RequireStaleProbe = false }},
 		{"universal test", "TestDeletedUniversal", func(c *Campaign) { c.UniversalTest = "TestDeletedUniversal" }},
-		{"human preservation", "TestDeletedHumanPreservation", func(c *Campaign) { c.RequiredTests[1] = "TestDeletedHumanPreservation" }},
+		{"human preservation", "TestDeletedHumanPreservation", func(c *Campaign) { c.RequiredTests[0] = "TestDeletedHumanPreservation" }},
 	}
 	for _, test := range mutants {
 		t.Run(test.name, func(t *testing.T) {
@@ -243,10 +248,12 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 
 	original := profiles["provider-adversarial"]
 	mutantProfile := original
-	mutantProfile.ExpectedTests = slices.DeleteFunc(append([]string(nil), original.ExpectedTests...), func(name string) bool { return name == "TestBeadsHumanAssignmentPreservation100" })
+	mutantProfile.ExpectedTests = slices.DeleteFunc(append([]string(nil), original.ExpectedTests...), func(name string) bool {
+		return name == "TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces"
+	})
 	profiles["provider-adversarial"] = mutantProfile
 	t.Cleanup(func() { profiles["provider-adversarial"] = original })
-	if err := ValidateCampaign(bounded); err == nil || !strings.Contains(err.Error(), "TestBeadsHumanAssignmentPreservation100") {
+	if err := ValidateCampaign(bounded); err == nil || !strings.Contains(err.Error(), "TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces") {
 		t.Fatalf("missing expected-test mutant did not name the control: %v", err)
 	}
 
