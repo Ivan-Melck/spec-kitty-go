@@ -4,7 +4,7 @@
   "flattened": false,
   "friendly_name": "GapDB-Only Production Authority",
   "mission_id": "01M1GWDJV8MMEF5VJJMD3AD0QE",
-  "mission_number": null,
+  "mission_number": 4,
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
   "pr_bound": true,
