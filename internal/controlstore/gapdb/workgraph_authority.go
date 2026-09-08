@@ -22,6 +22,10 @@ func newWorkgraphAuthorityV2(coordinator *journalv2.PublicationCoordinatorV2) (*
 	return &workgraphAuthorityV2{publisher: coordinator}, nil
 }
 
+func NewWorkgraphAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2) (workgraph.AuthorityPortV2, error) {
+	return newWorkgraphAuthorityV2(coordinator)
+}
+
 func newWorkgraphAuthorityV2ForTest(port workgraphPublicationPortV2) *workgraphAuthorityV2 {
 	return &workgraphAuthorityV2{publisher: port}
 }

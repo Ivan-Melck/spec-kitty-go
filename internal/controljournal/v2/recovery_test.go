@@ -94,6 +94,9 @@ func TestRecoveryValuesAreBoundedAndDefensive(t *testing.T) {
 	expiry = "2026-09-02T13:00:00Z"
 	gotRecords := page.Records()
 	gotValue, gotCursor, requestCursor := gotRecords[0].CanonicalValue(), page.Cursor(), request.Cursor()
+	if gotRecords[0].CanonicalSizeV2() != len(`{"status":"resolved"}`) {
+		t.Fatalf("canonical size=%d", gotRecords[0].CanonicalSizeV2())
+	}
 	if !bytes.Equal(gotValue, []byte(`{"status":"resolved"}`)) || string(gotCursor) != "opaque-provider-cursor" || string(requestCursor) != "opaque-provider-cursor" {
 		t.Fatal("recovery construction aliased caller bytes")
 	}
