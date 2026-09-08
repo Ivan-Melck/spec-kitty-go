@@ -785,7 +785,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Recovered allocator-created blocked state after verified manual dependency merge; no WP17 implementation began and no guard is bypassed.",
-        "Force acknowledges only pre-existing coordinator status.events history in the reused lane. Exact clean producer candidate df41eaf49a50e608220682467d34d688f97fea01 tree 983870ea482420b7ba57cb093be213a9a2bd85e2 passed all WP17 gates; manifest 9bd9089ea691a3fac7abd1af015a0af1f98e6adf45a14e8a224d80e0e4b45700 and producer archive 0b9b1ecccba6db4e7b1b5962b2bcecc990a3c966975baeb754d84fedd7f395d4 independently require review; release_ready=false adopted=false. No product/test/evidence failure is bypassed."
+        "Force acknowledges only pre-existing coordinator status.events history in the reused lane. Exact clean producer candidate df41eaf49a50e608220682467d34d688f97fea01 tree 983870ea482420b7ba57cb093be213a9a2bd85e2 passed all WP17 gates; manifest 9bd9089ea691a3fac7abd1af015a0af1f98e6adf45a14e8a224d80e0e4b45700 and producer archive 0b9b1ecccba6db4e7b1b5962b2bcecc990a3c966975baeb754d84fedd7f395d4 independently require review; release_ready=false adopted=false. No product/test/evidence failure is bypassed.",
+        "Independent review passed: actor=reviewer-renata process=2255024 profile_revision=d5c9862368f056879cc80f3feded73d677cdc582e7f46eb260e8ed634669aa09 source=416138f490ad6d908fc445c12b91440ca66ef18c tree=2b68ee733305465d5acdfe8680f053b91d867a8d run_id=wp17-qualification-416138f4-cycle2-final23 manifest=8d7731992a35b0ace4cdcd816651df302d4459c8af91d1a2c31cf5d3aeb285a0 producer=250bad6ef3115b154794db61407736133ec0b1f5a5fc61117ec1267e77057fc2 review=a35f944548bd766887344192f59c36fd6002519d88588e07e3cdc48989510e50 release=098fa8d3fae6f33e227ce290530fc172f820c961ffd326adb820a26aa44e2414 release_ready=true adopted=false evidence_root=/tmp/wp17-cycle3-review.ubrcEj"
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
@@ -796,7 +797,7 @@
         "verdict": "approved"
       },
       "role": "reviewer",
-      "shell_pid": 3753728,
+      "shell_pid": 2255024,
       "shell_pid_created_at": "1788448726.47",
       "subtasks": {
         "T086": "done",
