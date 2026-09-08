@@ -24,6 +24,9 @@ requirement_refs:
 planning_base_branch: feat/gapdb-only-production-authority
 merge_target_branch: feat/gapdb-only-production-authority
 branch_strategy: Planning artifacts for this mission were generated on feat/gapdb-only-production-authority. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/gapdb-only-production-authority unless the human explicitly redirects the landing branch.
+base_branch: kitty/mission-gapdb-only-production-authority-01M1GWDJ
+base_commit: 3eca877b7accdf30a93d4064735180cbde566c67
+created_at: '2026-09-05T14:06:21.043051+00:00'
 subtasks:
 - T075
 - T076
@@ -128,6 +131,8 @@ At completion, these statements must all be true:
 - `cmd/spec-kitty` provides the bounded native command surface for M2;
 - commands and queries enter through production host capabilities;
 - status and progress are derived from typed projections;
+- the native surface exposes autonomous `drive` over the full readiness census,
+  not a fixed phase-command ladder;
 - operation resume uses the original stable operation identity and typed input;
 - historical or unsafe roots are refused before a sidecar or runtime is opened;
 - black-box tests prove the help, configuration, restart, and refusal contracts;
@@ -232,13 +237,23 @@ is now. Results should include, where applicable:
 - pinned work revision and execution generation;
 - current operation stage and terminal result, if committed;
 - active blockers or degraded-mode reason;
-- legal next actions derived by the kernel projection; and
+- all authorized and unavailable actions with typed reasons, derived by the
+  kernel projection; and
 - a typed diagnostic when the requested identity does not exist.
 
 The command layer must not synthesize progress by scraping logs, Markdown task
 lists, Git output, provider prose, or a human-oriented renderer. It serializes a
 closed typed query result. An optional human presentation may be derived from
 that result, but it must never be read back as input to automation.
+
+### Autonomous drive
+
+Expose a bounded local `drive` operation that repeatedly queries one exact
+readiness census, schedules safe independent actions, and re-evaluates after
+durable publication. It stops only at terminal state, a typed decision,
+conflict, unavailable external dependency, cancellation, or explicit policy-
+mandated human authority. It never advances a generic phase and never treats a
+prompt completion claim as evidence.
 
 ### Machine output
 

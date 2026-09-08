@@ -257,7 +257,11 @@ func coherentCurrentGroup(files map[string]fileObservation) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if hex.EncodeToString(identity.DatabaseID[:]) != manifest.DatabaseID || identity.Generation != manifest.Generation {
+	// IDENTITY owns revision-range reservation and advances its generation on
+	// every durable reservation. CURRENT owns the active snapshot/WAL
+	// generation and may legitimately lag by any number of reservations. GapDB
+	// recovery requires only that identity has not regressed beneath CURRENT.
+	if hex.EncodeToString(identity.DatabaseID[:]) != manifest.DatabaseID || identity.Generation < manifest.Generation {
 		return "", errors.New("identity and manifest authority disagree")
 	}
 	snapshot, snapshotOK := files[manifest.SnapshotFile]

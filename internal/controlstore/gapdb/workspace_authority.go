@@ -225,7 +225,15 @@ func (a *workspaceAuthorityV2) PublishWorkspace(ctx context.Context, capability 
 			return execution.WorkspaceAuthorityAckV2{}, err
 		}
 	}
-	return execution.NewWorkspaceAuthorityAckV2(capability, ack)
+	coordinate, err := workspaceCoordinateFromPlanV2(plan)
+	if err != nil {
+		return execution.WorkspaceAuthorityAckV2{}, err
+	}
+	observed, err := a.ObserveWorkspace(ctx, coordinate)
+	if err != nil || observed.State == nil || observed.RecordRevision == 0 || observed.LastPublicationID != plan.PublicationID() {
+		return execution.WorkspaceAuthorityAckV2{}, invalidV2Plan("workspace post-publication observation")
+	}
+	return execution.NewWorkspaceAuthorityAckV2(capability, ack, observed.RecordRevision)
 }
 
 func (a *workspaceAuthorityV2) PublishWorkspaceStage(ctx context.Context, capability workspace.StageAuthorityPlanV2) (workspace.StageAuthorityAckV2, error) {
@@ -246,7 +254,32 @@ func (a *workspaceAuthorityV2) PublishWorkspaceStage(ctx context.Context, capabi
 			return workspace.StageAuthorityAckV2{}, err
 		}
 	}
-	return workspace.NewStageAuthorityAckV2(capability, ack)
+	coordinate, err := workspaceCoordinateFromPlanV2(plan)
+	if err != nil {
+		return workspace.StageAuthorityAckV2{}, err
+	}
+	observed, err := a.ObserveWorkspaceStage(ctx, coordinate)
+	if err != nil || observed.State == nil || observed.RecordRevision == 0 || observed.LastPublicationID != plan.PublicationID() {
+		return workspace.StageAuthorityAckV2{}, invalidV2Plan("workspace stage post-publication observation")
+	}
+	return workspace.NewStageAuthorityAckV2(capability, ack, observed.RecordRevision)
+}
+
+func workspaceCoordinateFromPlanV2(plan journalv2.SealedCommitPlanV2) (journalv2.AggregateCoordinate, error) {
+	var coordinate journalv2.AggregateCoordinate
+	for _, event := range plan.Events() {
+		if event.Family() != "workspace" {
+			continue
+		}
+		if coordinate != (journalv2.AggregateCoordinate{}) {
+			return journalv2.AggregateCoordinate{}, invalidV2Plan("workspace publication coordinate")
+		}
+		coordinate = event.Coordinate()
+	}
+	if coordinate == (journalv2.AggregateCoordinate{}) {
+		return journalv2.AggregateCoordinate{}, invalidV2Plan("workspace publication coordinate")
+	}
+	return coordinate, nil
 }
 
 func workspacePlanMembershipV2(plan journalv2.SealedCommitPlanV2) bool {

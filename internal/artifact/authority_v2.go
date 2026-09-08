@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,11 @@ import (
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 )
+
+// AuthorityPortV2 is the artifact-owned durable publication contract.
+type AuthorityPortV2 interface {
+	Publish(context.Context, AuthorityPlanV2) (journalv2.AcknowledgedPublicationV2, error)
+}
 
 const (
 	ArtifactEventSchemaV2  = uint32(1)

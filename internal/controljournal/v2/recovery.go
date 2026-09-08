@@ -259,6 +259,7 @@ func recoveryRecordMaximumV2(kind RecordAddressKindV2) (int, error) {
 
 func (r RecoveryRecordV2) Address() RecordAddressV2 { return r.address }
 func (r RecoveryRecordV2) CanonicalValue() []byte   { return append([]byte(nil), r.canonical...) }
+func (r RecoveryRecordV2) CanonicalSizeV2() int     { return len(r.canonical) }
 func (r RecoveryRecordV2) RecordRevision() uint64   { return r.revision }
 func (r RecoveryRecordV2) ExpiresAt() string        { return r.expiresAt }
 

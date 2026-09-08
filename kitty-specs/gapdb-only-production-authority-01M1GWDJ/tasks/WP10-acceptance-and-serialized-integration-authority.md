@@ -23,6 +23,9 @@ requirement_refs:
 planning_base_branch: feat/gapdb-only-production-authority
 merge_target_branch: feat/gapdb-only-production-authority
 branch_strategy: Planning artifacts for this mission were generated on feat/gapdb-only-production-authority. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/gapdb-only-production-authority unless the human explicitly redirects the landing branch.
+base_branch: kitty/mission-gapdb-only-production-authority-01M1GWDJ
+base_commit: 415fe448e3230f68a281cfb15453e075bf2768cc
+created_at: '2026-09-05T00:33:26.044444+00:00'
 subtasks:
 - T049
 - T050
@@ -74,7 +77,8 @@ exact current candidates, independent reviews, artifact/workgraph revisions,
 policy, and visible waivers. Only a completely eligible accepted candidate may
 approach the repository fence. Integration then owns one staged attempt and one
 target authority while treating every Git value as an observed external fact,
-never as mission authority.
+never as mission authority. Acceptance is available whenever its exact safety
+predicates hold; it neither reads nor advances an exclusive mission phase.
 
 Implementation command:
 
@@ -123,6 +127,16 @@ methods or the current staged table shape.
    never auto-resolved or silently published.
 10. At-most-once admission means one accepted candidate/result membership in
     mission authority, not an assumption that external Git calls execute once.
+11. Acceptance is a capability-readiness decision, not a ceremony gate. A
+    `CurrentStep`, successor edge, prompt completion claim, primary-checkout
+    directory, or edited projection can neither grant nor withhold it.
+12. Every required criterion has a typed deterministic evidence producer and
+    an explicit applicability result. Inapplicable evidence is not required;
+    unavailable or failed evidence is never fabricated as an empty/fake
+    artifact.
+13. Project verification is provider-neutral. This package must not assume a
+    language, framework, directory convention, API contract, test runner, or
+    human-formatted command output.
 
 ## T049: Define the acceptance aggregate and exact evidence decision
 
@@ -161,6 +175,13 @@ authority evidence rather than an incidental check inside Git integration.
    explicit operation/decision; never edit a prior acceptance in place.
 10. Return bounded typed result evidence suitable for later projections without
     exposing GapDB keys, Git handles, or mutable source objects.
+11. Bind each criterion to a closed applicability result: applicable with its
+    typed producer/evidence contract, or inapplicable with exact policy basis.
+    Missing producer, unavailable verification, failed verification, and
+    inapplicability remain distinct outcomes.
+12. Evaluate only authoritative candidate/workspace facts. Do not inspect the
+    primary checkout for deliverables that intentionally exist in a candidate
+    tree, and do not infer evidence from path names or empty directories.
 
 **Required tests**:
 
@@ -171,6 +192,11 @@ authority evidence rather than an incidental check inside Git integration.
 - Hidden or expired waiver never makes an ineligible candidate acceptable.
 - Exact retry returns byte-identical acceptance; changed binding conflicts.
 - Reducer playback is deterministic and performs zero external calls.
+- A non-network CLI with no API-contract criterion accepts without a
+  `contracts/` directory, while an applicable missing contract refuses with its
+  exact producer and recovery.
+- Changing an exclusive mission step or any human/derived status projection
+  has no effect on the acceptance result.
 
 **Exit evidence**:
 
@@ -408,6 +434,10 @@ git diff --check
 
 - Acceptance cites exact current candidate, reviews, artifacts, workgraph,
   policy, governance, and visible waiver evidence.
+- Acceptance is callable whenever those exact predicates hold and has no phase,
+  prompt, primary-checkout, or directory-ceremony dependency.
+- Every criterion is producer-backed and applicability-aware; inapplicable,
+  unavailable, failed, and satisfied are distinct typed states.
 - Reviewer independence uses ActorID and complete contributor identity.
 - Complete eligibility is the only path; all legacy/default modes are absent.
 - Every pre-fence refusal occurs before Git/fence/workspace mutation.

@@ -23,6 +23,10 @@ func newArtifactAuthorityV2(coordinator *journalv2.PublicationCoordinatorV2) (*a
 	return &artifactAuthorityV2{publisher: coordinator}, nil
 }
 
+func NewArtifactAuthorityPortV2(coordinator *journalv2.PublicationCoordinatorV2) (artifact.AuthorityPortV2, error) {
+	return newArtifactAuthorityV2(coordinator)
+}
+
 func newArtifactAuthorityV2ForTest(port artifactPublicationPortV2) *artifactAuthorityV2 {
 	return &artifactAuthorityV2{publisher: port}
 }

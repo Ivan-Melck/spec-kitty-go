@@ -152,6 +152,22 @@ func TestClassificationMatrix(t *testing.T) {
 	}
 }
 
+func TestCurrentRootAcceptsIdentityReservationGenerationAheadOfManifest(t *testing.T) {
+	root := t.TempDir()
+	writeCurrentRoot(t, root, 0x19)
+	identity := mustReadFile(t, filepath.Join(root, "IDENTITY"))
+	// GapDB increments IDENTITY generation whenever it durably reserves another
+	// revision range. CURRENT and its WAL remain on their active generation.
+	binary.BigEndian.PutUint64(identity[28:36], 4096)
+	binary.BigEndian.PutUint64(identity[36:44], 9)
+	binary.BigEndian.PutUint32(identity[60:64], crc32.Checksum(identity[:60], crc32.MakeTable(crc32.Castagnoli)))
+	writeFile(t, filepath.Join(root, "IDENTITY"), identity)
+	disposition, err := testClassifier(t).Classify(t.Context(), root)
+	if err != nil || disposition.Classification != CurrentSupported || disposition.Action != Recover {
+		t.Fatalf("reserved current root disposition=%+v err=%v", disposition, err)
+	}
+}
+
 func TestAbsentRootIsSafeToInitializeWithoutCreation(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "not-created")
 	disposition, err := testClassifier(t).Classify(t.Context(), root)
