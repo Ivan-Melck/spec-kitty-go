@@ -81,6 +81,17 @@ type ReleaseReceipt struct {
 	Adopted            bool   `json:"adopted"`
 }
 
+const maximumReleaseProducerArchive int64 = 128 << 20
+
+const releaseProducerArchiveMember = "producer/producer.tar"
+
+func releaseMemberLimit(name string) int64 {
+	if name == releaseProducerArchiveMember {
+		return maximumReleaseProducerArchive
+	}
+	return int64(maximumFile)
+}
+
 func VerifyProducerArchive(evidenceDirectory, archivePath, receiptPath string, expected Source, expectedManifestSHA, expectedArchiveSHA string) (Verification, ProducerArchiveReceipt, error) {
 	verification, _, err := Verify(context.Background(), evidenceDirectory, filepath.Join(evidenceDirectory, "contract-m2.json"), &expected)
 	if err != nil {
@@ -90,11 +101,11 @@ func VerifyProducerArchive(evidenceDirectory, archivePath, receiptPath string, e
 	if err != nil {
 		return Verification{}, ProducerArchiveReceipt{}, err
 	}
-	archiveBytes, err := os.ReadFile(archivePath)
+	archiveBytes, err := readReleaseMemberFile(archivePath, releaseProducerArchiveMember)
 	if err != nil {
 		return Verification{}, ProducerArchiveReceipt{}, err
 	}
-	receiptBytes, err := os.ReadFile(receiptPath)
+	receiptBytes, err := readReleaseMemberFile(receiptPath, "producer/producer.sha256.json")
 	if err != nil {
 		return Verification{}, ProducerArchiveReceipt{}, err
 	}
@@ -113,6 +124,9 @@ func VerifyProducerArchive(evidenceDirectory, archivePath, receiptPath string, e
 }
 
 func FinalizeIndependentReview(outputRoot, evidenceDirectory, producerArchivePath, producerReceiptPath, reviewBundle string, expected Source, expectedManifestSHA, expectedArchiveSHA string) (ReleaseReceipt, error) {
+	if err := validateReleaseMemberFile(producerArchivePath, releaseProducerArchiveMember); err != nil {
+		return ReleaseReceipt{}, err
+	}
 	verification, producer, err := VerifyProducerArchive(evidenceDirectory, producerArchivePath, producerReceiptPath, expected, expectedManifestSHA, expectedArchiveSHA)
 	if err != nil || !verification.ReviewEligible {
 		return ReleaseReceipt{}, fmt.Errorf("producer evidence is not review eligible: %w", err)
@@ -126,7 +140,7 @@ func FinalizeIndependentReview(outputRoot, evidenceDirectory, producerArchivePat
 		return ReleaseReceipt{}, err
 	}
 	reviewReceiptPath := filepath.Join(reviewBundle, "review.json")
-	reviewBytes, err := os.ReadFile(reviewReceiptPath)
+	reviewBytes, err := readReleaseMemberFile(reviewReceiptPath, "review/review.json")
 	if err != nil {
 		return ReleaseReceipt{}, err
 	}
@@ -141,11 +155,11 @@ func FinalizeIndependentReview(outputRoot, evidenceDirectory, producerArchivePat
 	if err != nil || criticalOpen != 0 || highOpen != 0 || review.CriticalOpen != criticalOpen || review.HighOpen != highOpen {
 		return ReleaseReceipt{}, fmt.Errorf("review evidence or recomputed findings do not permit release: %w", err)
 	}
-	producerArchive, err := os.ReadFile(producerArchivePath)
+	producerArchive, err := readReleaseMemberFile(producerArchivePath, releaseProducerArchiveMember)
 	if err != nil {
 		return ReleaseReceipt{}, err
 	}
-	producerReceiptBytes, err := os.ReadFile(producerReceiptPath)
+	producerReceiptBytes, err := readReleaseMemberFile(producerReceiptPath, "producer/producer.sha256.json")
 	if err != nil {
 		return ReleaseReceipt{}, err
 	}
@@ -158,7 +172,7 @@ func FinalizeIndependentReview(outputRoot, evidenceDirectory, producerArchivePat
 		return ReleaseReceipt{}, err
 	}
 	releaseMembers = append(releaseMembers, tarMember{"final-acceptance-matrix.json", finalMatrix})
-	releasePayload, err := deterministicTar(releaseMembers)
+	releasePayload, err := deterministicReleaseTar(releaseMembers)
 	if err != nil {
 		return ReleaseReceipt{}, err
 	}
@@ -207,15 +221,17 @@ func VerifyReleaseArchive(archivePath, receiptPath string, expected Source, expe
 		if err != nil {
 			return receipt, err
 		}
-		if !safeRelativePath(header.Name) || header.Typeflag != tar.TypeReg || header.Size < 0 || header.Size > maximumFile || members[header.Name] != nil {
+		limit := releaseMemberLimit(header.Name)
+		_, duplicate := members[header.Name]
+		if !safeRelativePath(header.Name) || header.Typeflag != tar.TypeReg || header.Size < 0 || header.Size > limit || duplicate {
 			return receipt, fmt.Errorf("release archive contains unsafe, duplicate, or oversized member")
 		}
 		total += header.Size
 		if total > maximumTotal {
 			return receipt, fmt.Errorf("release archive exceeds total budget")
 		}
-		data, err := io.ReadAll(io.LimitReader(reader, maximumFile+1))
-		if err != nil || int64(len(data)) != header.Size {
+		data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+		if err != nil || int64(len(data)) != header.Size || int64(len(data)) > limit {
 			return receipt, fmt.Errorf("release archive member is truncated")
 		}
 		members[header.Name] = data
@@ -475,4 +491,81 @@ func deterministicTar(members []tarMember) ([]byte, error) {
 		return nil, err
 	}
 	return buffer.Bytes(), nil
+}
+
+func deterministicReleaseTar(members []tarMember) ([]byte, error) {
+	var total int64
+	seen := make(map[string]bool, len(members))
+	for _, member := range members {
+		limit := releaseMemberLimit(member.name)
+		if !safeRelativePath(member.name) || seen[member.name] || int64(len(member.data)) > limit {
+			return nil, fmt.Errorf("unsafe release archive member")
+		}
+		seen[member.name] = true
+		if int64(len(member.data)) > int64(maximumTotal)-total {
+			return nil, fmt.Errorf("release archive exceeds total budget")
+		}
+		total += int64(len(member.data))
+	}
+
+	slices.SortFunc(members, func(a, b tarMember) int { return strings.Compare(a.name, b.name) })
+	var buffer bytes.Buffer
+	writer := tar.NewWriter(&buffer)
+	for _, member := range members {
+		header := &tar.Header{Name: member.name, Mode: 0o400, Size: int64(len(member.data)), ModTime: time.Unix(0, 0), AccessTime: time.Unix(0, 0), ChangeTime: time.Unix(0, 0), Uid: 0, Gid: 0, Format: tar.FormatPAX}
+		if err := writer.WriteHeader(header); err != nil {
+			return nil, err
+		}
+		if _, err := writer.Write(member.data); err != nil {
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+func validateReleaseMemberFile(path, name string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	limit := releaseMemberLimit(name)
+	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > limit {
+		return fmt.Errorf("release member %q is not a bounded regular file (limit=%d)", name, limit)
+	}
+	return nil
+}
+
+func readReleaseMemberFile(path, name string) ([]byte, error) {
+	limit := releaseMemberLimit(name)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !openedInfo.Mode().IsRegular() || !pathInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) || openedInfo.Size() < 0 || openedInfo.Size() > limit {
+		return nil, fmt.Errorf("release member %q changed or is not a bounded regular file (limit=%d)", name, limit)
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	finalInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(contents)) > limit || int64(len(contents)) != openedInfo.Size() || finalInfo.Size() != openedInfo.Size() || finalInfo.ModTime() != openedInfo.ModTime() {
+		return nil, fmt.Errorf("release member %q changed or exceeds its bounded read limit", name)
+	}
+	return contents, nil
 }
